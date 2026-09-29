@@ -216,6 +216,9 @@ impl Method {
             Self::ResumeExternal | Self::Close | Self::ExtendDeadline | Self::ControlStatus => {
                 Some(BoardRole::Host)
             }
+            // The harness's request ledger and inference admission read
+            // (#2274).
+            Self::RecordRequest | Self::RequestAdmission => Some(BoardRole::Host),
             Self::TaskCreate
             | Self::Dependencies
             | Self::Claim
@@ -231,7 +234,8 @@ impl Method {
             | Self::Complete
             | Self::RevalidateTask
             | Self::Amend
-            | Self::Evidence => None,
+            | Self::Evidence
+            | Self::UsageBudget => None,
             // Test-only halves the differential harness drives as the host;
             // the member-facing `create`, `_bootstrap` and `task` S12 serves
             // record the caller's own role.
@@ -275,7 +279,10 @@ impl Method {
             | Self::Complete
             | Self::RevalidateTask
             | Self::Amend
-            | Self::Evidence => true,
+            | Self::Evidence
+            | Self::UsageBudget
+            | Self::RecordRequest
+            | Self::RequestAdmission => true,
             // A member's own resume is refused before any gate (#2273), so
             // it never answers.
             Self::Resume => false,

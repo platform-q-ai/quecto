@@ -3,6 +3,8 @@
 //! applies.
 use std::sync::Arc;
 
+use super::OverRepository;
+
 use crate::application::swarm::board_control::current;
 use crate::application::swarm::board_operation::operation;
 use crate::application::swarm::board_usage::apply_usage_budget;
@@ -55,6 +57,15 @@ impl ReadRequestAdmission {
                 })
             },
         )
+    }
+}
+
+impl OverRepository for ReadRequestAdmission {
+    fn over(&self, repository: Arc<dyn BoardRepository>) -> Self {
+        Self {
+            repository,
+            clock: self.clock.clone(),
+        }
     }
 }
 

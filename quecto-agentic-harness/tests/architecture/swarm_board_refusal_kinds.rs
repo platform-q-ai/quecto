@@ -110,6 +110,11 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "Internal",
     ),
     (
+        "src/application/swarm/use_cases/configure_usage_budget.rs:ConfigureUsageBudget::execute",
+        "expr: BUDGET_ARGUMENTS",
+        "Invalid",
+    ),
+    (
         "src/application/swarm/use_cases/create_run.rs:CreateRun::deadline",
         "deadline must be in the next seven days",
         "Invalid",
@@ -193,6 +198,26 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "src/application/swarm/use_cases/record_member_launch.rs:RecordMemberLaunch::execute",
         "stale launch reservation",
         "StaleToken",
+    ),
+    (
+        "src/application/swarm/use_cases/record_request_usage.rs:RecordRequestUsage::execute",
+        "invalid request observation",
+        "Invalid",
+    ),
+    (
+        "src/application/swarm/use_cases/record_request_usage.rs:RecordRequestUsage::execute",
+        "request diagnostic exceeds {MAX_REQUEST_PAYLOAD_BYTES} bytes",
+        "Invalid",
+    ),
+    (
+        "src/application/swarm/use_cases/record_request_usage.rs:RecordRequestUsage::execute",
+        "request diagnostic ledger full; export before starting another run",
+        "CapacityFull",
+    ),
+    (
+        "src/application/swarm/use_cases/record_request_usage.rs:RecordRequestUsage::execute",
+        "request observation ID reused with different data",
+        "RequestIdReused",
     ),
     (
         "src/application/swarm/use_cases/release_unlaunched_member.rs:ReleaseUnlaunchedMember::execute",
@@ -523,6 +548,16 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "src/infrastructure/persistence/swarm_board/repository_tasks.rs:SqliteBoard::retry",
         "expr: stored . to_string ()",
         "Store",
+    ),
+    (
+        "src/infrastructure/persistence/swarm_board/repository_usage.rs:SqliteBoard::configure_usage_budget",
+        "expr: error . to_string ()",
+        "Invalid",
+    ),
+    (
+        "src/infrastructure/persistence/swarm_board/repository_usage.rs:SqliteBoard::insert_request_usage",
+        "count beyond i64: {value}",
+        "Invalid",
     ),
     (
         "src/infrastructure/tools/swarm_board_dispatch.rs:bind",

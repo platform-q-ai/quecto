@@ -7,10 +7,13 @@
 use serde_json::Value;
 
 use super::control::{receipt, report};
-use super::{Parameter, Served, SwarmBoardHandles, float, member_row, object, required, take};
+use super::{Parameter, Served, float, member_row, object, required, take};
 use crate::application::swarm::dto::{
     BudgetChange, BudgetEffect, ConfigureUsageBudgetRequest, RecordRequestUsageRequest,
     RequestDelivery,
+};
+use crate::application::swarm::use_cases::{
+    ConfigureUsageBudget, ReadRequestAdmission, RecordRequestUsage,
 };
 use crate::domain::swarm::BoardError;
 
@@ -35,18 +38,16 @@ fn decided(effect: BudgetEffect, otherwise: &'static str) -> &'static str {
 }
 
 pub(super) fn usage_budget(
-    handles: &SwarmBoardHandles,
+    configure_usage_budget: &ConfigureUsageBudget,
     actor: &str,
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
     let [token_limit, strict_unknown] = take(arguments)?;
-    let configured = handles
-        .configure_usage_budget
-        .execute(ConfigureUsageBudgetRequest {
-            actor: actor.to_owned(),
-            token_limit,
-            strict_unknown,
-        })?;
+    let configured = configure_usage_budget.execute(ConfigureUsageBudgetRequest {
+        actor: actor.to_owned(),
+        token_limit,
+        strict_unknown,
+    })?;
     let otherwise = match configured.change {
         BudgetChange::Configured => "configured",
         BudgetChange::Unchanged => "unchanged",
@@ -54,21 +55,22 @@ pub(super) fn usage_budget(
     Ok(Served {
         value: report(configured.report),
         decision: decided(configured.effect, otherwise),
+        task_id: None,
+        message_id: None,
+        cursor_moved: None,
     })
 }
 
 pub(super) fn record_request(
-    handles: &SwarmBoardHandles,
+    record_request_usage: &RecordRequestUsage,
     actor: &str,
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
     let [record] = take(arguments)?;
-    let recorded = handles
-        .record_request_usage
-        .execute(RecordRequestUsageRequest {
-            actor: actor.to_owned(),
-            record,
-        })?;
+    let recorded = record_request_usage.execute(RecordRequestUsageRequest {
+        actor: actor.to_owned(),
+        record,
+    })?;
     let otherwise = match recorded.delivery {
         RequestDelivery::Recorded => "recorded",
         RequestDelivery::Redelivered => "redelivered",
@@ -77,15 +79,18 @@ pub(super) fn record_request(
     Ok(Served {
         value: receipt(recorded.receipt),
         decision: decided(recorded.effect, otherwise),
+        task_id: None,
+        message_id: None,
+        cursor_moved: None,
     })
 }
 
 /// `_request_admission()`'s dict, in Python's key order.
 pub(super) fn request_admission(
-    handles: &SwarmBoardHandles,
+    read_request_admission: &ReadRequestAdmission,
     actor: &str,
 ) -> Result<Served, BoardError> {
-    let admission = handles.read_request_admission.execute(actor)?;
+    let admission = read_request_admission.execute(actor)?;
     let view = admission.view;
     let text = |value: Option<String>| value.map_or(Value::Null, Value::String);
     Ok(Served {
@@ -101,6 +106,9 @@ pub(super) fn request_admission(
             ("control_generation", Value::from(view.control_generation)),
         ]),
         decision: decided(admission.effect, "read"),
+        task_id: None,
+        message_id: None,
+        cursor_moved: None,
     })
 }
 

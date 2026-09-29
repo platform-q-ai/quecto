@@ -4,6 +4,8 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use super::OverRepository;
+
 use crate::application::swarm::board_control::{edited, receipt};
 use crate::application::swarm::board_operation::operation;
 use crate::application::swarm::board_usage::apply_usage_budget;
@@ -12,8 +14,8 @@ use crate::application::swarm::dto::{
 };
 use crate::application::swarm::ports::{BoardEncoding, BoardRepository, Clock};
 use crate::domain::swarm::{
-    Access, BoardError, MAX_REQUEST_PAYLOAD_BYTES, MAX_REQUEST_ROWS, Redelivery, python_equal,
-    redelivery, request_measurement,
+    Access, BoardError, MAX_REQUEST_PAYLOAD_BYTES, MAX_REQUEST_ROWS, Redelivery, RefusalKind,
+    python_equal, redelivery, request_measurement,
 };
 
 /// The record is measured before the operation gate
@@ -56,7 +58,10 @@ impl RecordRequestUsage {
             (&record, record.get("request_id"))
         else {
             // `request_measurement` accepts only an object with a text id.
-            return Err(BoardError::new("invalid request observation"));
+            return Err(BoardError::new(
+                RefusalKind::Invalid,
+                "invalid request observation",
+            ));
         };
         let reading = Access {
             read_only: true,
@@ -70,9 +75,10 @@ impl RecordRequestUsage {
             |transaction, _| {
                 let payload = self.encoding.encode(&record)?;
                 if payload.len() > MAX_REQUEST_PAYLOAD_BYTES {
-                    return Err(BoardError::new(format!(
-                        "request diagnostic exceeds {MAX_REQUEST_PAYLOAD_BYTES} bytes"
-                    )));
+                    return Err(BoardError::new(
+                        RefusalKind::Invalid,
+                        format!("request diagnostic exceeds {MAX_REQUEST_PAYLOAD_BYTES} bytes"),
+                    ));
                 }
                 let delivery = match transaction.request_usage(request_id)? {
                     Some(prior) => {
@@ -88,6 +94,7 @@ impl RecordRequestUsage {
                             }
                             Redelivery::Different => {
                                 return Err(BoardError::new(
+                                    RefusalKind::RequestIdReused,
                                     "request observation ID reused with different data",
                                 ));
                             }
@@ -111,6 +118,7 @@ impl RecordRequestUsage {
                     }
                     None => {
                         return Err(BoardError::new(
+                            RefusalKind::CapacityFull,
                             "request diagnostic ledger full; export before starting another run",
                         ));
                     }
@@ -123,6 +131,16 @@ impl RecordRequestUsage {
                 })
             },
         )
+    }
+}
+
+impl OverRepository for RecordRequestUsage {
+    fn over(&self, repository: Arc<dyn BoardRepository>) -> Self {
+        Self {
+            repository,
+            clock: self.clock.clone(),
+            encoding: self.encoding.clone(),
+        }
     }
 }
 

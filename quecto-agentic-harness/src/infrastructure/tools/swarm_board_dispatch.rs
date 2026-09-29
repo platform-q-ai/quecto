@@ -196,6 +196,9 @@ pub const BOARD_OPS: &[&str] = &[
     "revalidate_task",
     "amend",
     "evidence",
+    "usage_budget",
+    "_record_request",
+    "_request_admission",
     #[cfg(any(test, feature = "test-support"))]
     "create_run",
     #[cfg(any(test, feature = "test-support"))]
@@ -467,9 +470,19 @@ fn serve(
         Method::Evidence => {
             completion::evidence(&serving(&*handles.record_evidence, over), member, arguments)
         }
-        Method::UsageBudget => usage::usage_budget(handles, member, arguments),
-        Method::RecordRequest => usage::record_request(handles, member, arguments),
-        Method::RequestAdmission => usage::request_admission(handles, member),
+        Method::UsageBudget => usage::usage_budget(
+            &serving(&*handles.configure_usage_budget, over),
+            member,
+            arguments,
+        ),
+        Method::RecordRequest => usage::record_request(
+            &serving(&*handles.record_request_usage, over),
+            member,
+            arguments,
+        ),
+        Method::RequestAdmission => {
+            usage::request_admission(&serving(&*handles.read_request_admission, over), member)
+        }
         #[cfg(any(test, feature = "test-support"))]
         Method::CreateRun => {
             test_only::create_run(&serving(&*handles.create_run, over), member, arguments)

@@ -39,6 +39,9 @@ fn every_method() -> Vec<Method> {
         Method::RevalidateTask,
         Method::Amend,
         Method::Evidence,
+        Method::UsageBudget,
+        Method::RecordRequest,
+        Method::RequestAdmission,
         Method::CreateRun,
         Method::BootstrapRun,
         Method::BootstrapJoin,
@@ -73,6 +76,9 @@ fn every_method() -> Vec<Method> {
             | Method::RevalidateTask
             | Method::Amend
             | Method::Evidence
+            | Method::UsageBudget
+            | Method::RecordRequest
+            | Method::RequestAdmission
             | Method::CreateRun
             | Method::BootstrapRun
             | Method::BootstrapJoin
@@ -237,6 +243,14 @@ fn acted_on(
                 None,
             )
         }
+        Method::UsageBudget => (json!([100]), None, None, None),
+        Method::RecordRequest => (
+            json!([{"request_id": "q", "instrumented_attempts": 0, "outcome": "rejected"}]),
+            None,
+            None,
+            None,
+        ),
+        Method::RequestAdmission => (json!([]), None, None, None),
         Method::CreateRun => (create_args(), None, None, None),
         Method::BootstrapRun => (json!([1, "s", null]), None, None, None),
         Method::BootstrapJoin => (json!([1, "s", null]), None, None, None),
@@ -392,6 +406,27 @@ fn completion_records_the_callers_run_role() {
         log.clear();
         call(&handles, member, method, args).unwrap();
         assert_eq!(only(&log).role, Some(role), "{member} {method}");
+    }
+}
+
+/// Usage (#2274): the coordinator's `usage_budget` records its role in
+/// the run; the harness's `_record_request` and `_request_admission`
+/// record `host`, whoever the member.
+#[test]
+fn usage_records_the_coordinator_or_the_host() {
+    let log = Arc::new(Recorded::default());
+    let (_dir, handles) = logged(&log);
+    call(&handles, "parent", "bootstrap_run", json!([1, "s", null])).unwrap();
+    running(&handles);
+    let record = json!([{"request_id": "q", "instrumented_attempts": 0, "outcome": "rejected"}]);
+    for (method, args, role) in [
+        ("usage_budget", json!([100]), BoardRole::Coordinator),
+        ("_record_request", record, BoardRole::Host),
+        ("_request_admission", json!([]), BoardRole::Host),
+    ] {
+        log.clear();
+        call(&handles, "parent", method, args).unwrap();
+        assert_eq!(only(&log).role, Some(role), "{method}");
     }
 }
 

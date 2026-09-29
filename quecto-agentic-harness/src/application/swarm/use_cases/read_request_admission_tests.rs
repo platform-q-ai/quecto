@@ -5,7 +5,7 @@ use crate::application::swarm::board_test_support::{
     MemoryBoard, SteppingClock, member_row, paused, running_board, usage,
 };
 use crate::application::swarm::dto::BudgetEffect;
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, RefusalKind};
 
 /// Any member, a dead one included, reads the run and its members; a
 /// budget that allows changes nothing.
@@ -27,7 +27,10 @@ fn the_admission_reads_the_run_and_its_members() {
     assert!(board.journal().is_empty(), "nothing written");
     assert_eq!(
         service.execute("stranger").unwrap_err(),
-        BoardError::new("invoking member is unknown or death confirmed")
+        BoardError::new(
+            RefusalKind::NotMember,
+            "invoking member is unknown or death confirmed"
+        )
     );
 }
 

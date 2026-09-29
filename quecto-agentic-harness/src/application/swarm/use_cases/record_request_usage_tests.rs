@@ -8,7 +8,7 @@ use crate::application::swarm::dto::{
     BudgetEffect, NewRequestUsage, RecordRequestUsageRequest, RequestDelivery,
 };
 use crate::application::swarm::ports::BoardEncoding;
-use crate::domain::swarm::{BoardError, RunState};
+use crate::domain::swarm::{BoardError, RefusalKind, RunState};
 
 fn service(state: BoardState) -> (std::sync::Arc<MemoryBoard>, RecordRequestUsage) {
     let board = MemoryBoard::with(state);
@@ -53,7 +53,7 @@ fn an_invalid_record_is_refused_before_the_store() {
         service
             .execute(record("worker", json!({"request_id": "r"})))
             .unwrap_err(),
-        BoardError::new("invalid request observation")
+        BoardError::new(RefusalKind::Invalid, "invalid request observation")
     );
     assert!(board.transactions().is_empty());
 }
@@ -95,7 +95,10 @@ fn an_oversized_record_is_refused() {
     huge["error_class"] = Value::from("x".repeat(32_768));
     assert_eq!(
         service.execute(record("worker", huge)).unwrap_err(),
-        BoardError::new("request diagnostic exceeds 32768 bytes")
+        BoardError::new(
+            RefusalKind::Invalid,
+            "request diagnostic exceeds 32768 bytes"
+        )
     );
     assert!(board.snapshot().request_usage.is_empty());
 }
@@ -111,7 +114,10 @@ fn a_redelivery_is_accepted_only_as_the_same_record() {
     service.execute(record("worker", pending.clone())).unwrap();
     let again = service.execute(record("worker", pending.clone())).unwrap();
     assert_eq!(again.delivery, RequestDelivery::Redelivered);
-    let reused = BoardError::new("request observation ID reused with different data");
+    let reused = BoardError::new(
+        RefusalKind::RequestIdReused,
+        "request observation ID reused with different data",
+    );
     assert_eq!(
         service.execute(record("parent", pending)).unwrap_err(),
         reused
@@ -155,7 +161,10 @@ fn the_ledger_holds_ten_thousand_rows() {
     let (board, full) = service(with_rows(10_000));
     assert_eq!(
         full.execute(record("worker", failed)).unwrap_err(),
-        BoardError::new("request diagnostic ledger full; export before starting another run")
+        BoardError::new(
+            RefusalKind::CapacityFull,
+            "request diagnostic ledger full; export before starting another run"
+        )
     );
     assert!(board.journal().is_empty());
 }

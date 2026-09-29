@@ -6,7 +6,7 @@ use crate::application::swarm::board_test_support::{
     MemoryBoard, SteppingClock, paused, running_board, usage,
 };
 use crate::application::swarm::dto::BudgetEffect;
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, RefusalKind};
 
 fn applied(board: &MemoryBoard) -> Result<BudgetEffect, BoardError> {
     let clock = SteppingClock::fixed(50.0);
@@ -87,6 +87,9 @@ fn a_paused_run_is_not_ended_again_and_an_edited_budget_is_refused() {
     let board = MemoryBoard::with(state);
     assert_eq!(
         applied(&board).unwrap_err(),
-        BoardError::new("the board's usage budget is not as the board writes it")
+        BoardError::new(
+            RefusalKind::Store,
+            "the board's usage budget is not as the board writes it"
+        )
     );
 }

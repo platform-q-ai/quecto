@@ -2,7 +2,7 @@ use serde_json::{Value, json};
 
 use super::super::TELEMETRY_TARGET;
 use super::super::tests::{board, captured, captured_on, running};
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, RefusalKind};
 use crate::infrastructure::tools::swarm_board_dispatch::call;
 
 fn failed(request_id: &str) -> Value {
@@ -72,7 +72,7 @@ fn usage_methods_bind_pythons_signatures() {
     ] {
         assert_eq!(
             call(&handles, "parent", method, args).unwrap_err(),
-            BoardError::new(message)
+            BoardError::new(RefusalKind::Calling, message)
         );
     }
     let report = call(

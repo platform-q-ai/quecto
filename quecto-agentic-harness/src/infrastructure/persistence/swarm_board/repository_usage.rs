@@ -19,7 +19,7 @@ use crate::application::swarm::dto::{
     NewRequestUsage, RecentRequest, StoredRequestUsage, UsageReport, UsageRow,
 };
 use crate::application::swarm::ports::BoardUsage;
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, RefusalKind};
 
 /// `Transaction._usage_schema`, statement by statement.
 const USAGE_SCHEMA: [&str; 2] = [
@@ -79,7 +79,7 @@ impl BoardUsage for SqliteBoard<'_> {
         self.usage_schema()?;
         let payload = PyJson::try_from(budget)
             .and_then(|budget| py_json::dumps(&budget))
-            .map_err(|error| BoardError::new(error.to_string()))?;
+            .map_err(|error| BoardError::new(RefusalKind::Invalid, error.to_string()))?;
         let changed = self
             .connection
             .execute(
@@ -112,7 +112,9 @@ impl BoardUsage for SqliteBoard<'_> {
     fn insert_request_usage(&self, usage: &NewRequestUsage) -> Result<(), BoardError> {
         self.usage_schema()?;
         let count = |value: u64| {
-            i64::try_from(value).map_err(|_| BoardError::new(format!("count beyond i64: {value}")))
+            i64::try_from(value).map_err(|_| {
+                BoardError::new(RefusalKind::Invalid, format!("count beyond i64: {value}"))
+            })
         };
         let reported = |value: Option<u64>| value.map(count).transpose();
         let changed = self

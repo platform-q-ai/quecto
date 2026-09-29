@@ -4,12 +4,14 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use super::OverRepository;
+
 use crate::application::swarm::board_control::edited;
 use crate::application::swarm::board_operation::{detail, operation};
 use crate::application::swarm::board_usage::apply_usage_budget;
 use crate::application::swarm::dto::{BudgetChange, ConfigureUsageBudgetRequest, ConfiguredBudget};
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::{Access, BoardError, python_equal};
+use crate::domain::swarm::{Access, BoardError, RefusalKind, python_equal};
 
 /// The refusal of a token limit or a strictness Python does not take.
 pub const BUDGET_ARGUMENTS: &str =
@@ -45,7 +47,7 @@ impl ConfigureUsageBudget {
             strict_unknown,
         } = request;
         if !(token_limit_accepted(&token_limit) && strict_unknown.is_boolean()) {
-            return Err(BoardError::new(BUDGET_ARGUMENTS));
+            return Err(BoardError::new(RefusalKind::Invalid, BUDGET_ARGUMENTS));
         }
         let coordinating = Access {
             coordinator: true,
@@ -108,6 +110,15 @@ fn unchanged(old: &Value, limit: &Value, strict_unknown: &Value) -> Result<bool,
     let stored = |key: &str| old.get(key).ok_or_else(|| edited("usage budget"));
     Ok(python_equal(stored("token_limit")?, limit)
         && python_equal(stored("strict_unknown")?, strict_unknown))
+}
+
+impl OverRepository for ConfigureUsageBudget {
+    fn over(&self, repository: Arc<dyn BoardRepository>) -> Self {
+        Self {
+            repository,
+            clock: self.clock.clone(),
+        }
+    }
 }
 
 #[cfg(test)]

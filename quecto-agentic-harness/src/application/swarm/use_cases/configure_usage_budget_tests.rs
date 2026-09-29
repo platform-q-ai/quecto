@@ -5,7 +5,7 @@ use crate::application::swarm::board_test_support::{
     MemoryBoard, SteppingClock, member_row, running_board, usage,
 };
 use crate::application::swarm::dto::{BudgetChange, BudgetEffect, ConfigureUsageBudgetRequest};
-use crate::domain::swarm::{BoardError, RunState};
+use crate::domain::swarm::{BoardError, RefusalKind, RunState};
 
 fn budget(actor: &str, token_limit: Value, strict_unknown: Value) -> ConfigureUsageBudgetRequest {
     ConfigureUsageBudgetRequest {
@@ -36,7 +36,7 @@ fn the_arguments_are_checked_before_the_store() {
             service
                 .execute(budget("parent", limit, strict))
                 .unwrap_err(),
-            BoardError::new(BUDGET_ARGUMENTS)
+            BoardError::new(RefusalKind::Invalid, BUDGET_ARGUMENTS)
         );
     }
     assert!(board.transactions().is_empty(), "refused before the store");
@@ -53,7 +53,10 @@ fn only_the_coordinator_configures_the_budget() {
         service
             .execute(budget("worker", json!(200), json!(true)))
             .unwrap_err(),
-        BoardError::new("only the designated coordinator may do this")
+        BoardError::new(
+            RefusalKind::NotCoordinator,
+            "only the designated coordinator may do this"
+        )
     );
     assert!(board.journal().is_empty());
 }
