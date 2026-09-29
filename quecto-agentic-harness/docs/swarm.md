@@ -659,6 +659,15 @@ interleaves with another record; a record the log cannot take (a full log, a
 failed write) is dropped with one warning, and never changes the op's answer.
 The first record that does not fit, from whichever writer, is replaced by the
 log's one `log_capped` record, and nothing is written after it.
+
+Telemetry never holds up the board: a record waits for the write gate at most
+50 ms. Past that (another writer is stuck), the record is dropped and counted,
+and the next record written is preceded, in the same write, by one
+`{"event":"swarm_ops_dropped","dropped":N}` line giving how many were dropped
+since the last. Drops never followed by a written record (the log caps, or the
+session ends first) go unnoted. The write itself runs on the calling thread and
+is not bounded: a filesystem that never returns from a write holds the one
+call that is writing, while every other call gives up at the gate.
 A record carries ids, kinds, durations and sizes only, never a task title,
 body, evidence, reason, path or other board text:
 

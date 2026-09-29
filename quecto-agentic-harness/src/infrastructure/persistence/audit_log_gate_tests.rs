@@ -30,6 +30,10 @@ fn swarm_op() -> AuditEvent {
     })
 }
 
+/// The gate wait of these tests' appends: long enough never to give up
+/// on a writer that is writing.
+const WAIT: Duration = Duration::from_secs(60);
+
 fn error(message: String) -> AuditEvent {
     AuditEvent::Error {
         source: "agent".into(),
@@ -79,7 +83,7 @@ async fn no_line_follows_log_capped_under_two_writers() {
         let line = log.crash_line().unwrap();
         let appender = std::thread::spawn(move || {
             for _ in 0..200 {
-                let _full = line.append(None, swarm_op());
+                let _full = line.append(None, vec![swarm_op()], WAIT);
             }
         });
         for index in 0..200 {
@@ -107,11 +111,11 @@ async fn swarm_op_appends_that_fill_the_log_cap_it() {
         .with_cap(4 * 1024);
     let line = log.crash_line().unwrap();
     let mut written = 0;
-    while line.append(None, swarm_op()).is_ok() {
+    while line.append(None, vec![swarm_op()], WAIT).is_ok() {
         written += 1;
         assert!(written < 1_000, "the cap is reached");
     }
-    let refused = line.append(None, swarm_op()).unwrap_err();
+    let refused = line.append(None, vec![swarm_op()], WAIT).unwrap_err();
     assert_eq!(refused.kind(), std::io::ErrorKind::StorageFull);
     log.emit(1, error("after".into())).await.unwrap();
     let lines = lines(base.path(), "cli:ops");
@@ -132,7 +136,7 @@ async fn long_lines_from_two_writers_never_interleave() {
     let line = log.crash_line().unwrap();
     let appender = std::thread::spawn(move || {
         for _ in 0..400 {
-            line.append(None, swarm_op()).unwrap();
+            line.append(None, vec![swarm_op()], WAIT).unwrap();
         }
     });
     let long = "x".repeat(3 * 1024 * 1024);
@@ -169,4 +173,17 @@ fn the_crash_line_gives_up_on_a_gate_that_stays_held() {
     );
     assert!(lines(base.path(), "cli:held").is_empty());
     line.write(1, error("dying".into())).unwrap();
+}
+
+/// An append of no events writes nothing and is an error, not a panic.
+#[test]
+fn an_append_of_nothing_is_refused() {
+    let base = tempfile::tempdir().unwrap();
+    let log = AuditLog::open_sync(base.path(), "cli:none").unwrap();
+    let refused = log.crash_line().unwrap().append(None, vec![], WAIT);
+    assert_eq!(
+        refused.unwrap_err().kind(),
+        std::io::ErrorKind::InvalidInput
+    );
+    assert!(lines(base.path(), "cli:none").is_empty());
 }

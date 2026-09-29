@@ -178,15 +178,38 @@ impl AuditCrashLine {
         written(appended)
     }
 
-    /// Append `event` filed under no turn (`turn` `None`, written `null`):
-    /// a board op's `swarm_op` (#2303), from the board call's own thread,
-    /// synchronously, with no runtime. It shares the log's cap budget and
-    /// write gate with every writer; a record that does not fit is refused,
-    /// not written, and when it is the first line that does not fit, the
-    /// log's one `log_capped` record is written in its place and the log
-    /// stops, as the async writer stops it.
-    pub fn append(&self, turn: Option<u32>, event: AuditEvent) -> std::io::Result<()> {
-        let line = self.line(turn, event)?;
+    /// Append `events`, each filed under `turn` (`None` is written `null`),
+    /// as one `write` of their lines: all of them or none. A board op's
+    /// `swarm_op` (#2303), from the board call's own thread, synchronously,
+    /// with no runtime. The write gate is waited for at most `bound`: past
+    /// it nothing is written and the error is `WouldBlock`, so an
+    /// observational record never holds up its caller behind another
+    /// writer. The lines share the log's cap budget and write gate with
+    /// every writer; lines that do not fit are refused, not written, and
+    /// when they are the first that do not fit, the log's one `log_capped`
+    /// record is written in their place and the log stops, as the async
+    /// writer stops it.
+    ///
+    /// Once the gate is held, the `write` itself is not bounded: a
+    /// filesystem that never returns from it still holds this caller
+    /// (every other writer then gives up at its own bound).
+    pub fn append(
+        &self,
+        turn: Option<u32>,
+        events: Vec<AuditEvent>,
+        bound: Duration,
+    ) -> std::io::Result<()> {
+        let mut line = String::new();
+        for event in events {
+            line.push_str(&self.line(turn, event)?);
+        }
+        // Never a panic on a board call's thread: no line is an error.
+        let Some(_last) = line.strip_suffix('\n') else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "an append writes at least one line",
+            ));
+        };
         let capped = || {
             let cap_bytes = self.cap_bytes;
             envelope_line(
@@ -197,9 +220,13 @@ impl AuditCrashLine {
             )
             .ok()
         };
-        let appended = self
-            .gate
-            .append(&self.file, self.cap_bytes, &line, Some(&capped), None)?;
+        let appended = self.gate.append(
+            &self.file,
+            self.cap_bytes,
+            &line,
+            Some(&capped),
+            Some(bound),
+        )?;
         written(appended)
     }
 

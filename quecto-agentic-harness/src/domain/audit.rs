@@ -52,6 +52,11 @@ pub enum AuditEvent {
     LogCapped { cap_bytes: u64 },
     /// One swarm board op (#2303): ids, kinds, durations and sizes only.
     SwarmOp(super::swarm::BoardOpObservation),
+    /// `dropped` swarm board ops went unrecorded since the last `swarm_op`
+    /// written: the log's write gate stayed busy past the bound a record
+    /// waits for it (#2303). Written just before the next `swarm_op`, in
+    /// the same write.
+    SwarmOpsDropped { dropped: u64 },
     LlmTurnStart {
         input_tokens_estimate: usize,
         message_count: usize,
