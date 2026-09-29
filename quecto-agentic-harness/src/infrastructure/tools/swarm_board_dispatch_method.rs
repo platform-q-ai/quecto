@@ -7,7 +7,9 @@ use serde_json::Value;
 use super::Level;
 #[cfg(any(test, feature = "test-support"))]
 use super::test_only;
-use super::{completion, control, members, messages, reservations, submissions, tasks, usage};
+use super::{
+    completion, control, members, messages, reservations, submissions, tasks, usage, wakes,
+};
 use crate::domain::swarm::BoardRole;
 
 /// The board methods this dispatcher serves.
@@ -52,6 +54,8 @@ pub(super) enum Method {
     Withdraw,
     Inbox,
     Ack,
+    Notifications,
+    AcceptWake,
     #[cfg(any(test, feature = "test-support"))]
     CreateRun,
     #[cfg(any(test, feature = "test-support"))]
@@ -118,6 +122,8 @@ impl Method {
             "withdraw" => Some(Self::Withdraw),
             "inbox" => Some(Self::Inbox),
             "ack" => Some(Self::Ack),
+            "_notifications" => Some(Self::Notifications),
+            "_accept_wake" => Some(Self::AcceptWake),
             #[cfg(any(test, feature = "test-support"))]
             "create_run" => Some(Self::CreateRun),
             #[cfg(any(test, feature = "test-support"))]
@@ -171,6 +177,8 @@ impl Method {
             Self::Withdraw => "withdraw",
             Self::Inbox => "inbox",
             Self::Ack => "ack",
+            Self::Notifications => "_notifications",
+            Self::AcceptWake => "_accept_wake",
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun => "create_run",
             #[cfg(any(test, feature = "test-support"))]
@@ -196,6 +204,10 @@ impl Method {
             | Self::RequestAdmission
             | Self::FileOwners
             | Self::Inbox => Level::Read,
+            // The wake claims run as Python's `read_only` operation and
+            // after every board change; the cursor they move is recorded
+            // as `cursor_moved`, not as a level.
+            Self::Notifications | Self::AcceptWake => Level::Read,
             Self::Admit
             | Self::Activate
             | Self::RecordLaunch
@@ -255,6 +267,8 @@ impl Method {
             // The harness's request ledger and inference admission read
             // (#2274).
             Self::RecordRequest | Self::RequestAdmission => Some(BoardRole::Host),
+            // The harness's wake hints, sent and accepted (#2276).
+            Self::Notifications | Self::AcceptWake => Some(BoardRole::Host),
             Self::TaskCreate
             | Self::Dependencies
             | Self::Claim
@@ -336,7 +350,9 @@ impl Method {
             | Self::Send
             | Self::Withdraw
             | Self::Inbox
-            | Self::Ack => true,
+            | Self::Ack
+            | Self::Notifications
+            | Self::AcceptWake => true,
             // A member's own resume is refused before any gate (#2273), so
             // it never answers.
             Self::Resume => false,
@@ -405,6 +421,8 @@ impl Method {
             Self::Send => &messages::SEND,
             Self::Withdraw | Self::Ack => &messages::MESSAGE_ID,
             Self::Inbox => &messages::INBOX,
+            Self::Notifications => &wakes::NOTIFICATIONS,
+            Self::AcceptWake => &wakes::ACCEPT_WAKE,
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun => &test_only::CREATE,
             #[cfg(any(test, feature = "test-support"))]

@@ -11,12 +11,14 @@ use std::sync::Arc;
 
 use crate::application::swarm::ports::BoardRepository;
 
+mod accept_wake;
 mod acknowledge_message;
 mod activate_member;
 mod admit_member;
 mod amend_run_contract;
 mod block_task;
 mod bootstrap_run;
+mod claim_notifications;
 mod claim_task;
 mod close_run;
 mod complete_run;
@@ -55,12 +57,14 @@ mod unblock_task;
 mod verify_task;
 mod withdraw_message;
 
+pub use accept_wake::AcceptWake;
 pub use acknowledge_message::AcknowledgeMessage;
 pub use activate_member::ActivateMember;
 pub use admit_member::AdmitMember;
 pub use amend_run_contract::AmendRunContract;
 pub use block_task::BlockTask;
 pub use bootstrap_run::BootstrapRun;
+pub use claim_notifications::ClaimNotifications;
 pub use claim_task::ClaimTask;
 pub use close_run::CloseRun;
 pub use complete_run::CompleteRun;

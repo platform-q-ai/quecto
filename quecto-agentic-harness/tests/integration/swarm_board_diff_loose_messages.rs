@@ -18,13 +18,40 @@
 //!   Python answers with bytes: `inbox` then cannot write its JSON, and
 //!   `withdraw` or a superseding `send` takes a BLOB sender as another
 //!   member's (`only your own message can be …`).
+//! - `wake_target_sort_error_order`: when the targets a wake op judges mix
+//!   a member name with `None` (a NULL coordinator, only a hand edit writes
+//!   one) or a number (a recipient `send` stored as given, e.g. `5` for the
+//!   member `'5'`), Python's `sorted(targets)` raises a `TypeError` whose
+//!   operand order follows the set's iteration order, which the hash seed
+//!   decides; the Rust board refuses the op as a store failure with one
+//!   fixed text (`domain::swarm::notification`'s `sort_error`).
+//! - `outside_edited_wake_records`: an event detail the wake ops read that
+//!   is not JSON text, or a `wake_cursors` row whose event is not an
+//!   integer (only a hand edit writes either), is refused as a store
+//!   failure. Python raises for a detail (`JSONDecodeError`) and for a
+//!   TEXT or NULL cursor (`TypeError`), but compares and binds a REAL
+//!   cursor as it is: after `('parent', 2.5)`, `_accept_wake(4)` claims
+//!   past it and answers `true`, where Rust refuses reading it (`Invalid
+//!   column type Real`). A stored dependency list is read as
+//!   `outside_edited_task_columns` reads it, keeping its integer entries:
+//!   a ready task whose dependencies are `'"9"'` wakes nobody in Python,
+//!   and the free member and the coordinator in Rust. A live member whose
+//!   id is NULL is no member the Rust policy can name, so it is never
+//!   woken: after `task_create`, Python's `sorted(targets)` raises
+//!   `TypeError` (`None` beside a name, in either operand order) in
+//!   `_notifications()` and `_accept_wake`, where Rust answers the named
+//!   members (`[parent]`, and `true`).
+//! - `arguments_beyond_a_serde_value`, for `_accept_wake` too (pinned in
+//!   `swarm_board_diff_loose.rs`): a generation above u64 is ahead of the
+//!   board in Python; Rust refuses the argument text.
 use serde_json::json;
 
 use crate::swarm_board_diff_loose::PERMITTED_DIVERGENCES;
 use crate::swarm_board_diff_membership::at;
 use crate::swarm_board_diff_messages::{inbox, joined, send};
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
-use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{run_rust, sql, try_run_both};
+use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{Step, run_rust, sql, try_run_both};
+use crate::swarm_board_diff_wakes::{accept, hints};
 
 /// The divergences this file pins also pinned in `src`: the name, the
 /// test file's source and the pinning test in it.
@@ -160,4 +187,177 @@ fn outside_edited_messages() {
             "{edit}: {outcome:?}"
         );
     }
+}
+
+/// A number beside a name (`send` stores the recipient `5` as given, and
+/// the member `'5'` makes it deliverable), and `None` beside a name (a
+/// NULL coordinator woken by evidence): Python's `TypeError` names the
+/// two types in the order its set iterates, the Rust board in one order.
+/// The sender's claim (`_notifications`) and the receiver's
+/// (`_accept_wake`, judging the same events with the empty actor) meet it.
+#[test]
+fn wake_target_sort_error_order() {
+    let numbered = |probe: Step| {
+        joined([
+            at(2.1, "parent", "_admit", json!(["5", "res-5"])),
+            at(
+                2.2,
+                "parent",
+                "_activate",
+                json!(["5", "res-5", 5, "f", null]),
+            ),
+            at(3.0, "worker", "send", json!(["n", 5, "to five"])),
+            send(4.0, "worker", "p", "parent", "to parent"),
+            probe,
+        ])
+    };
+    let nobody = joined([
+        send(3.0, "worker", "p", "parent", "to parent"),
+        sql("UPDATE run SET coordinator=NULL"),
+        sql("INSERT INTO events(actor,time,action,detail) VALUES('worker',0,'evidence','{}')"),
+        hints(5.0, "worker"),
+    ]);
+    for (steps, rust) in [
+        (numbered(hints(5.0, "worker")), "'int' and 'str'"),
+        (numbered(accept(5.0, "parent", json!(7))), "'int' and 'str'"),
+        (nobody, "'str' and 'NoneType'"),
+    ] {
+        let last = steps.len() - 1;
+        let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+        assert!(
+            difference.starts_with(&format!("step {last}: "))
+                && difference
+                    .contains("Python raised TypeError: '<' not supported between instances of '"),
+            "{difference}"
+        );
+        assert_eq!(
+            run_rust(&steps),
+            Outcome::Refused(format!("'<' not supported between instances of {rust}"))
+        );
+    }
+}
+
+/// An event detail that is not JSON, and a wake cursor that is text:
+/// Python raises, the Rust board refuses as a store failure. A REAL wake
+/// cursor Python compares and binds as it is (`4 <= 2.5` is false, so it
+/// claims past it and answers), where the Rust board refuses reading it.
+#[test]
+fn outside_edited_wake_records() {
+    let cursor = |value: &str| {
+        format!(
+            "CREATE TABLE wake_cursors (actor TEXT PRIMARY KEY, event INTEGER);
+             INSERT INTO wake_cursors VALUES('parent',{value})"
+        )
+    };
+    for (edit, probe, python, rust) in [
+        (
+            "INSERT INTO events(actor,time,action,detail) VALUES('worker',0,'amended','x')"
+                .to_owned(),
+            hints(5.0, "worker"),
+            "Python raised JSONDecodeError",
+            "",
+        ),
+        (
+            cursor("'abc'"),
+            accept(5.0, "parent", json!(4)),
+            "Python raised TypeError",
+            "Invalid column type Text",
+        ),
+        (
+            cursor("NULL"),
+            accept(5.0, "parent", json!(4)),
+            "Python raised TypeError",
+            "Invalid column type Null",
+        ),
+        (
+            cursor("2.5"),
+            accept(5.0, "parent", json!(4)),
+            "python Ok(Bool(true))",
+            "Invalid column type Real",
+        ),
+    ] {
+        let steps = joined([send(3.0, "worker", "a", "parent", "one"), sql(&edit), probe]);
+        let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+        assert!(
+            difference.starts_with("step 5: ") && difference.contains(python),
+            "{edit}: {difference}"
+        );
+        let outcome = run_rust(&steps);
+        assert!(
+            matches!(&outcome, Outcome::Refused(text)
+                if text.starts_with(CONTENDED) && text.contains(rust)),
+            "{edit}: {outcome:?}"
+        );
+    }
+    // `n` live and free (events 4 and 5), hand-edited, then task 1 created
+    // (event 6) and the probe at step 7.
+    let task = |offset: f64| {
+        at(
+            offset,
+            "worker",
+            "task_create",
+            json!(["t", "implement behavior", ["tests pass"], []]),
+        )
+    };
+    let edited = |edit: &str, probe: Step| {
+        joined([
+            at(3.0, "parent", "_admit", json!(["n", "res-n"])),
+            at(
+                3.1,
+                "parent",
+                "_activate",
+                json!(["n", "res-n", 12, "n", null]),
+            ),
+            sql(edit),
+            task(4.0),
+            probe,
+        ])
+    };
+    let nameless = "UPDATE members SET id=NULL WHERE id='n'";
+    let differs = |steps: &[Step], python: &[&str]| {
+        let difference = try_run_both(steps, |_, _, _| {}).unwrap_err();
+        assert!(
+            difference.starts_with("step 7: ") && python.iter().all(|t| difference.contains(t)),
+            "{difference}"
+        );
+    };
+    let none_beside_a_name = [
+        "Python raised TypeError: '<' not supported between instances of '",
+        "'NoneType'",
+        "'str'",
+    ];
+    let steps = edited(nameless, hints(5.0, "worker"));
+    differs(&steps, &none_beside_a_name);
+    assert_eq!(woken_ids(&run_rust(&steps)), ["parent"]);
+    let steps = edited(nameless, accept(5.0, "parent", json!(6)));
+    differs(&steps, &none_beside_a_name);
+    assert_eq!(run_rust(&steps), Outcome::Ok(json!(true)));
+    // A ready task whose dependencies read `'"9"'`: Python wakes nobody,
+    // Rust (reading them as `outside_edited_task_columns` does, as none)
+    // the free member and the coordinator.
+    let steps = joined([
+        at(3.0, "parent", "_admit", json!(["n", "res-n"])),
+        at(
+            3.1,
+            "parent",
+            "_activate",
+            json!(["n", "res-n", 12, "n", null]),
+        ),
+        task(4.0),
+        sql(r#"UPDATE tasks SET dependencies='"9"' WHERE id=1"#),
+        hints(5.0, "worker"),
+    ]);
+    differs(&steps, &["python Ok(Array [])"]);
+    assert_eq!(woken_ids(&run_rust(&steps)), ["n", "parent"]);
+}
+
+/// The ids of the members a `_notifications()` answer names.
+fn woken_ids(outcome: &Outcome) -> Vec<&str> {
+    let Outcome::Ok(serde_json::Value::Array(members)) = outcome else {
+        panic!("not a member list: {outcome:?}");
+    };
+    members
+        .iter()
+        .map(|member| member["id"].as_str().expect("a named member"))
+        .collect()
 }

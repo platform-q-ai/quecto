@@ -10,6 +10,7 @@ pub mod location;
 pub mod measure;
 pub mod membership;
 pub mod messages;
+pub mod notifications;
 pub mod run;
 pub mod submissions;
 pub mod tasks;
@@ -38,6 +39,10 @@ pub use membership::{
 pub use messages::{
     MessageIdRequest, MessageRow, NewMessage, ReadInboxRequest, SendMessageRequest, SentMessage,
     Settled,
+};
+pub use notifications::{
+    AcceptWakeRequest, ClaimNotificationsRequest, NotificationBatch, NotificationCursor,
+    WakeAccepted,
 };
 pub use run::{
     BootstrapRunRequest, Bootstrapped, CreateBranch, CreateRunRequest, CreatedRun,

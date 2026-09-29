@@ -685,7 +685,7 @@ body, evidence, reason, path or other board text:
 | `lock_wait_us` | From `BEGIN IMMEDIATE` issued to acquired (or given up), summed over the op's transactions; `null` when the op began no transaction, so nothing was measured |
 | `busy_wait_us` | The time the store's busy handler slept for the op, whichever statement found the database busy (`BEGIN`, a read or the commit); `null` when nothing was measured |
 | `busy` | Whether the busy handler fired at all: another connection held a lock the op needed (the write lock, or, at commit, a reader); `null` when nothing was measured |
-| `cursor_moved` | Whether the op moved the caller's message cursor; `null` for an op that has no cursor to move, and for a refusal |
+| `cursor_moved` | Whether the op moved the caller's cursor: its notification cursor for `_notifications`, its wake cursor for `_accept_wake`; `null` for an op that has no cursor to move, and for a refusal |
 | `result_bytes` | The size of the JSON the op answered, as its compact serialization (`serde_json`'s, which is not the size of Python's `json.dumps` text with its spaced separators); 0 for a refusal |
 
 Kinds are additive: a later release may add a kind (each refusal the Python
@@ -713,9 +713,10 @@ summed over the op's own transactions and only those: each op is measured on a
 repository built for it alone, never through state shared with another op.
 
 Every call also leaves a `tracing` record on target `quecto::swarm_board`
-(DEBUG for a read, unless the token budget warned or paused the run in it;
-INFO otherwise), at WARN for a `contended` refusal or a
-busy wait over 250 ms; `RUST_LOG=quecto::swarm_board=debug` shows them live.
+(DEBUG for a read, including the wake claims `_notifications` and
+`_accept_wake`, which run as reads after every board change, unless the token
+budget warned or paused the run in it; INFO otherwise), at WARN for a
+`contended` refusal or a busy wait over 250 ms; `RUST_LOG=quecto::swarm_board=debug` shows them live.
 Because the owner decided the event log is off by default and nothing is
 measured while it is off (decision T1), the tracing record's waits are
 measured, and the slow-lock WARN can fire, only while the event log is on;

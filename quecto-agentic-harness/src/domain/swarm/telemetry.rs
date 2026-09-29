@@ -177,8 +177,9 @@ pub struct BoardOpObservation {
     /// Whether the store's busy handler fired at least once; `None` when
     /// nothing was measured.
     pub busy: Option<bool>,
-    /// Whether the op moved the caller's message cursor; `None` (written
-    /// `null`) for an op that has no cursor to move, or a refusal.
+    /// Whether the op moved the caller's cursor (#2276: the notification
+    /// or wake cursor); `None` (written `null`) for an op that has no
+    /// cursor to move, or a refusal.
     pub cursor_moved: Option<bool>,
     /// The bytes of the JSON the op answered (0 for a refusal): its
     /// compact serialization, as `serde_json` writes it, which is not
