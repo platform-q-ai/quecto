@@ -77,6 +77,9 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   `claim` refuses `unmet dependencies`, where for a task that is not
 ///   ready (whose dependencies `_task` does not check) Python's claim
 ///   reads the missing dependency with `_task` and refuses `unknown task`.
+///   For a completed dependency with invalid JSON in `acceptance`, Python's
+///   `claim` loads the dependency's full `_task` and raises `JSONDecodeError`;
+///   Rust reads only its status and claims the dependent task (pinned below).
 /// - `real_to_text_digits` (#2269 review M1, pinned by
 ///   `swarm_board::binding_tests`): a float meeting a TEXT column is
 ///   written with the bundled SQLite's digits, which some hosts' libraries
@@ -688,6 +691,18 @@ fn outside_edited_task_columns() {
         claim("w2"),
         unknown,
         unmet,
+    );
+    // Claim checks the completed dependency using Python's full `_task`,
+    // including its acceptance JSON; Rust reads only its status.
+    pinned(
+        &[
+            at(7.0, "w1", "dependencies", json!([2, [1]])),
+            sql("UPDATE tasks SET status='completed' WHERE id=1"),
+        ],
+        "acceptance='not json'",
+        at(8.0, "w2", "claim", json!([2])),
+        "raised JSONDecodeError",
+        r#""status": String("claimed")"#,
     );
     let claimed = r#""status": String("claimed")"#;
     pinned(

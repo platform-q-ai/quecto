@@ -168,13 +168,13 @@ impl SqliteBoard<'_> {
             .map_err(failed)
     }
 
-    /// An `UPDATE` of the one task whose id the use case has just read in
-    /// this transaction: the id is the table's primary key, so it changes
-    /// that row alone.
+    /// An `UPDATE` of a task id the use case has just read in this
+    /// transaction. A hand-edited table without a primary key may hold
+    /// duplicate ids, so an update can change multiple rows.
     fn run_on_task(&self, sql: &str, parameters: &[SqlValue]) -> Result<(), BoardError> {
         debug_assert!(sql.starts_with("UPDATE tasks SET "), "a task update: {sql}");
         let changed = self.run(sql, parameters)?;
-        debug_assert_eq!(changed, 1, "{sql} changes the one task read before it");
+        debug_assert!(changed >= 1, "{sql} changes a task read before it");
         Ok(())
     }
 }

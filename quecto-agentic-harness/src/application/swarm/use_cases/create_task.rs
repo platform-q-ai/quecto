@@ -115,7 +115,6 @@ impl CreateTask {
             )));
         }
         let inserted = transaction.insert_task(task)?;
-        debug_assert!(inserted > 0, "a task id is a positive rowid: {inserted}");
         let id = Value::from(inserted);
         let dependencies = dependency_list(&task.dependencies)?;
         validate_dependencies(&id, dependencies, &transaction.all_task_dependencies()?)?;

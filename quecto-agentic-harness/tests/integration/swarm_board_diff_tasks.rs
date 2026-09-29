@@ -49,6 +49,41 @@ fn scenario(mut steps: Vec<Step>, more: impl IntoIterator<Item = Step>) -> Vec<S
     steps
 }
 
+/// SQLite assigns a negative rowid after the highest hand-edited id is
+/// negative; the board must still create and read that task in debug builds.
+#[test]
+fn hand_edited_negative_task_ids_allow_creation() {
+    for (edited, inserted) in [(-5, -4), (-1, 0)] {
+        run_both(&scenario(
+            staffed(5),
+            [
+                task(3.0, "first", "first", json!(null)),
+                sql(&format!("UPDATE tasks SET id={edited} WHERE id=1")),
+                task(4.0, "next", "next", json!(null)),
+                raw(5.0, json!(inserted)),
+            ],
+        ));
+    }
+}
+
+/// A rebuilt table without its primary key can contain duplicate ids.
+/// Python updates both matching rows; the Rust adapter must not panic.
+#[test]
+fn duplicate_task_ids_without_primary_key_allow_updates() {
+    run_both(&scenario(
+        staffed(5),
+        [
+            task(3.0, "first", "first", json!(null)),
+            sql("ALTER TABLE tasks RENAME TO old_tasks;
+                 CREATE TABLE tasks AS SELECT * FROM old_tasks;
+                 DROP TABLE old_tasks;
+                 INSERT INTO tasks SELECT * FROM tasks WHERE id=1"),
+            at(4.0, "worker", "claim", json!([1])),
+            raw(5.0, json!(1)),
+        ],
+    ));
+}
+
 /// `test_claims_are_atomic_and_dependencies_block_claims`, sequentially:
 /// a dependent task reads blocked and is refused, the first claim wins and
 /// every later one is refused; the claimed task carries its token.
