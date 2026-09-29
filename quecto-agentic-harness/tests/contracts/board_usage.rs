@@ -1,7 +1,8 @@
 //! `BoardUsage` on the SQLite adapter (#2273): the usage report by
 //! Python's SQL. The report creates `request_usage` and `usage_budget`
 //! lazily, in Python's order and with its statements, and writes no
-//! default budget row; the aggregates are keyed by their SQL aliases.
+//! default budget row; the aggregates are keyed by their SQL aliases. The
+//! budget and request-ledger writes (#2274) store Python's bytes.
 use quecto::application::swarm::dto::BoardLocation;
 use quecto::application::swarm::ports::BoardRepository;
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
@@ -155,6 +156,172 @@ fn stored_requests_aggregate_by_pythons_sql() {
                 .collect();
             assert_eq!(recent.len(), 10);
             assert_eq!((&recent[0], &recent[9]), (&json!("r11"), &json!("r2")));
+            Ok(())
+        })
+        .unwrap();
+}
+
+fn raw_rows(database: &std::path::Path, sql: &str) -> Vec<Vec<rusqlite::types::Value>> {
+    let connection = rusqlite::Connection::open(database).unwrap();
+    let mut statement = connection.prepare(sql).unwrap();
+    let columns = statement.column_count();
+    statement
+        .query_map([], |row| {
+            (0..columns)
+                .map(|index| row.get::<_, rusqlite::types::Value>(index))
+                .collect()
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap()
+}
+
+/// The budget reads as the default without a row (and writes none), and
+/// a configured budget is stored as plain `json.dumps` writes it: insertion
+/// order, `", "` and `": "`, byte for byte; a second write replaces it.
+#[test]
+fn the_budget_payload_is_stored_as_json_dumps_writes_it() {
+    let (_dir, database, repository) = usage_board();
+    repository
+        .atomic(false, &mut |transaction| {
+            assert_eq!(
+                transaction.usage_budget()?.to_string(),
+                r#"{"token_limit":null,"strict_unknown":false,"warned":false}"#
+            );
+            Ok(())
+        })
+        .unwrap();
+    assert!(raw_rows(&database, "SELECT * FROM usage_budget").is_empty());
+    repository
+        .atomic(false, &mut |transaction| {
+            transaction.configure_usage_budget(
+                &json!({"token_limit": 100, "strict_unknown": true, "warned": false}),
+            )?;
+            transaction.configure_usage_budget(
+                &json!({"warned": true, "token_limit": 9_223_372_036_854_775_807_i64, "strict_unknown": false, "é": "é"}),
+            )
+        })
+        .unwrap();
+    assert_eq!(
+        raw_rows(&database, "SELECT id, payload FROM usage_budget"),
+        [vec![
+            rusqlite::types::Value::Integer(1),
+            rusqlite::types::Value::Text(
+                r#"{"warned": true, "token_limit": 9223372036854775807, "strict_unknown": false, "\u00e9": "\u00e9"}"#
+                    .to_owned()
+            ),
+        ]]
+    );
+    repository
+        .atomic(false, &mut |transaction| {
+            let budget = transaction.usage_budget()?;
+            assert_eq!(
+                serde_json::to_string(&budget).unwrap(),
+                r#"{"warned":true,"token_limit":9223372036854775807,"strict_unknown":false,"é":"é"}"#,
+                "read back in stored order"
+            );
+            Ok(())
+        })
+        .unwrap();
+}
+
+/// A request row is inserted in the table's column order (the payload
+/// stored as the encoded text given, the four reported counts NULL when
+/// unreported), read back by its id as its actor and decoded payload, its
+/// payload replaced in place by the text given, and counted.
+#[test]
+fn a_request_row_round_trips_its_payload_bytes() {
+    use quecto::application::swarm::dto::{NewRequestUsage, StoredRequestUsage};
+    let (_dir, database, repository) = usage_board();
+    let record = json!({"request_id": "r1", "outcome": "succeeded", "model": "m\u{e9}",
+        "duration_ms": 1.5, "runtime": {"process_instance_id": "p"}});
+    repository
+        .atomic(false, &mut |transaction| {
+            assert_eq!(transaction.request_usage("r1")?, None);
+            assert_eq!(transaction.request_usage_count()?, 0);
+            transaction.insert_request_usage(&NewRequestUsage {
+                request_id: "r1".to_owned(),
+                actor: "worker".to_owned(),
+                payload: r#"{"duration_ms":1.5,"model":"m\u00e9","outcome":"succeeded","request_id":"r1","runtime":{"process_instance_id":"p"}}"#.to_owned(),
+                tokens: 80,
+                unknown: 0,
+                attempts: 2,
+                input_tokens: Some(50),
+                output_tokens: None,
+                cache_read_tokens: Some(4_294_967_295),
+                cache_write_tokens: None,
+            })?;
+            assert_eq!(
+                transaction.request_usage("r1")?,
+                Some(StoredRequestUsage {
+                    actor: json!("worker"),
+                    payload: record.clone(),
+                })
+            );
+            assert_eq!(transaction.request_usage_count()?, 1);
+            Ok(())
+        })
+        .unwrap();
+    use rusqlite::types::Value as Sql;
+    assert_eq!(
+        raw_rows(&database, "SELECT * FROM request_usage"),
+        [vec![
+            Sql::Text("r1".to_owned()),
+            Sql::Text("worker".to_owned()),
+            Sql::Text(
+                r#"{"duration_ms":1.5,"model":"m\u00e9","outcome":"succeeded","request_id":"r1","runtime":{"process_instance_id":"p"}}"#
+                    .to_owned()
+            ),
+            Sql::Integer(80),
+            Sql::Integer(0),
+            Sql::Integer(2),
+            Sql::Integer(50),
+            Sql::Null,
+            Sql::Integer(4_294_967_295),
+            Sql::Null,
+        ]]
+    );
+    repository
+        .atomic(false, &mut |transaction| {
+            transaction.update_request_usage("r1", r#"{"a":2,"b":1,"request_id":"r1"}"#)
+        })
+        .unwrap();
+    assert_eq!(
+        raw_rows(&database, "SELECT payload, tokens FROM request_usage"),
+        [vec![
+            Sql::Text(r#"{"a":2,"b":1,"request_id":"r1"}"#.to_owned()),
+            Sql::Integer(80),
+        ]]
+    );
+}
+
+/// The count the 10,000-row cap reads counts every row, including rows
+/// only a file edited outside the board wrote; a row's actor is read as
+/// stored (the column's TEXT affinity keeps the number 7 as `'7'`).
+#[test]
+fn the_ledger_count_reads_every_row() {
+    let (_dir, database, repository) = usage_board();
+    repository
+        .atomic(false, &mut |transaction| {
+            transaction.usage_report().map(|_| ())
+        })
+        .unwrap();
+    let mut connection = rusqlite::Connection::open(&database).unwrap();
+    let filling = connection.transaction().unwrap();
+    for index in 0..10_000 {
+        filling
+            .execute(
+                "INSERT INTO request_usage VALUES(?,7,'{}',0,0,1,NULL,NULL,NULL,NULL)",
+                [format!("fill-{index}")],
+            )
+            .unwrap();
+    }
+    filling.commit().unwrap();
+    repository
+        .atomic(false, &mut |transaction| {
+            assert_eq!(transaction.request_usage_count()?, 10_000);
+            let stored = transaction.request_usage("fill-9999")?.unwrap();
+            assert_eq!((stored.actor, stored.payload), (json!("7"), json!({})));
             Ok(())
         })
         .unwrap();

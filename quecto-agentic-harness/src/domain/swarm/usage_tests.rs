@@ -211,3 +211,64 @@ fn a_negative_zero_count_decoded_by_serde_json_is_refused_until_the_py_json_code
         "invalid request usage output_tokens"
     );
 }
+
+fn object(value: Value) -> Map<String, Value> {
+    match value {
+        Value::Object(fields) => fields,
+        other => panic!("an object: {other}"),
+    }
+}
+
+fn digest(pending: bool, sha: Value) -> Value {
+    json!({"request_id": "d", "outcome": "failed",
+           "runtime": {"process_instance_id": "same", "executable_digest_pending": pending,
+                       "executable_sha256": sha}})
+}
+
+/// `test_request_redelivery_accepts_runtime_digest_becoming_available`'s
+/// rule: an identical record from the same actor is the same; a runtime
+/// whose digest became known is replaced; a different digest, a different
+/// runtime or another actor is different.
+#[test]
+fn redelivery_accepts_the_same_record_and_a_digest_becoming_known() {
+    let pending = object(json!({"request_id": "d", "outcome": "failed",
+        "runtime": {"process_instance_id": "same", "executable_digest_pending": true}}));
+    let known = object(digest(false, json!("abc")));
+    assert_eq!(redelivery(&pending, &pending, true), Redelivery::Same);
+    assert_eq!(redelivery(&pending, &pending, false), Redelivery::Different);
+    assert_eq!(redelivery(&pending, &known, true), Redelivery::Replaced);
+    assert_eq!(redelivery(&known, &known, true), Redelivery::Replaced);
+    assert_eq!(
+        redelivery(&known, &object(digest(false, json!("different"))), true),
+        Redelivery::Different
+    );
+    let moved = object(json!({"request_id": "d", "outcome": "failed",
+        "runtime": {"process_instance_id": "different", "executable_digest_pending": false,
+                    "executable_sha256": "abc"}}));
+    assert_eq!(redelivery(&known, &moved, true), Redelivery::Different);
+    assert_eq!(
+        redelivery(&object(digest(false, Value::Null)), &known, true),
+        Redelivery::Replaced,
+        "a stored null digest is not yet known"
+    );
+}
+
+/// Records compare by Python's `==` apart from `runtime`: `1 == 1.0`, key
+/// order is ignored, and a runtime that is not an object compares whole.
+#[test]
+fn redelivery_compares_records_by_pythons_equality() {
+    let stored = object(json!({"request_id": "r", "n": 1, "runtime": "x"}));
+    let reordered = object(json!({"runtime": "x", "n": 1.0, "request_id": "r"}));
+    assert_eq!(redelivery(&stored, &reordered, true), Redelivery::Same);
+    let other = object(json!({"request_id": "r", "n": 2, "runtime": "x"}));
+    assert_eq!(redelivery(&stored, &other, true), Redelivery::Different);
+    let bare = object(json!({"request_id": "r", "n": 1}));
+    assert_eq!(redelivery(&stored, &bare, true), Redelivery::Different);
+    assert_eq!(redelivery(&bare, &bare, true), Redelivery::Same);
+    let null_runtime = object(json!({"request_id": "r", "n": 1, "runtime": null}));
+    assert_eq!(
+        redelivery(&bare, &null_runtime, true),
+        Redelivery::Same,
+        "a missing runtime pops as None"
+    );
+}

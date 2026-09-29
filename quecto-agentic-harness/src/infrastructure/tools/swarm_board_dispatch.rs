@@ -33,7 +33,9 @@
 //! control methods `pause`, `resume`, `stop`, `_resume_external`,
 //! `_close`, `_extend_deadline`, `_control_status` and `usage_report`
 //! (#2273) by [`control`]; `complete`, `revalidate_task`, `amend` and the
-//! criterion `evidence` success needs (#2273) by [`completion`].
+//! criterion `evidence` success needs (#2273) by [`completion`]; the
+//! usage methods `usage_budget`, `_record_request` and
+//! `_request_admission` (#2274) by [`usage`].
 //!
 //! What S12 must keep when it adds the summaries Python answers with:
 //!
@@ -55,7 +57,8 @@
 //! method.
 //!
 //! Each call leaves one `tracing` record on [`TELEMETRY_TARGET`] (DEBUG
-//! for a read-only method, INFO otherwise, WARN for a contended refusal or,
+//! for a read-only method, unless the token budget warned or paused the
+//! run in it; INFO otherwise; WARN for a contended refusal or,
 //! while the event log is on, a busy wait over 250 ms) and, when the event
 //! log is switched on ([`SwarmBoardHandles::telemetry`], #2303), one
 //! `swarm_op` record in it, with the lock wait, busy wait and busy flag
@@ -84,9 +87,10 @@ use crate::application::swarm::dto::{MemberRow, RunSnapshotView, RunStatusView};
 use crate::application::swarm::ports::{BoardCallMeter, BoardOpLog, BoardRepository};
 use crate::application::swarm::use_cases::{
     ActivateMember, AdmitMember, AmendRunContract, BlockTask, BootstrapRun, ClaimTask, CloseRun,
-    CompleteRun, CreateRun, CreateTask, ExtendRunDeadline, JoinRun, OverRepository, PauseRun,
-    ReadControlStatus, ReadRunSnapshot, ReadRunStatus, ReadTask, ReadUsageReport, RecordEvidence,
-    RecordMemberLaunch, RegisterMemberSocket, ReleaseTask, ReleaseUnlaunchedMember, ResumeRun,
+    CompleteRun, ConfigureUsageBudget, CreateRun, CreateTask, ExtendRunDeadline, JoinRun,
+    OverRepository, PauseRun, ReadControlStatus, ReadRequestAdmission, ReadRunSnapshot,
+    ReadRunStatus, ReadTask, ReadUsageReport, RecordEvidence, RecordMemberLaunch,
+    RecordRequestUsage, RegisterMemberSocket, ReleaseTask, ReleaseUnlaunchedMember, ResumeRun,
     ResumeRunExternally, RevalidateTask, SetTaskDependencies, StopRun, SubmitTask, UnblockTask,
     VerifyTask,
 };
@@ -136,6 +140,9 @@ pub struct SwarmBoardHandles {
     pub revalidate_task: Arc<RevalidateTask>,
     pub amend_run_contract: Arc<AmendRunContract>,
     pub record_evidence: Arc<RecordEvidence>,
+    pub configure_usage_budget: Arc<ConfigureUsageBudget>,
+    pub record_request_usage: Arc<RecordRequestUsage>,
+    pub read_request_admission: Arc<ReadRequestAdmission>,
     /// Each call's `swarm_op` record and its measure (#2303), only when
     /// the event log is switched on (`telemetry.event_log.enabled`, owner
     /// decision T1): `None` measures and writes nothing.
@@ -189,6 +196,9 @@ pub const BOARD_OPS: &[&str] = &[
     "revalidate_task",
     "amend",
     "evidence",
+    "usage_budget",
+    "_record_request",
+    "_request_admission",
     #[cfg(any(test, feature = "test-support"))]
     "create_run",
     #[cfg(any(test, feature = "test-support"))]
@@ -243,7 +253,11 @@ pub fn call(
     let measure = metered.and_then(|metered| metered.measure());
     let finished = Finished {
         op: known.map_or("unknown", Method::name),
-        level: known.map_or(Level::Mutation, Method::level),
+        level: match (known, &answer) {
+            (Some(known), Ok(served)) => known.served_level(served.decision),
+            (Some(known), Err(_)) => known.level(),
+            (None, _) => Level::Mutation,
+        },
         role: known.map_or(Some(BoardRole::Host), Method::role),
         member,
         outcome: answer
@@ -456,6 +470,19 @@ fn serve(
         Method::Evidence => {
             completion::evidence(&serving(&*handles.record_evidence, over), member, arguments)
         }
+        Method::UsageBudget => usage::usage_budget(
+            &serving(&*handles.configure_usage_budget, over),
+            member,
+            arguments,
+        ),
+        Method::RecordRequest => usage::record_request(
+            &serving(&*handles.record_request_usage, over),
+            member,
+            arguments,
+        ),
+        Method::RequestAdmission => {
+            usage::request_admission(&serving(&*handles.read_request_admission, over), member)
+        }
         #[cfg(any(test, feature = "test-support"))]
         Method::CreateRun => {
             test_only::create_run(&serving(&*handles.create_run, over), member, arguments)
@@ -579,6 +606,9 @@ mod control;
 
 #[path = "swarm_board_dispatch_completion.rs"]
 mod completion;
+
+#[path = "swarm_board_dispatch_usage.rs"]
+mod usage;
 
 #[cfg(test)]
 #[path = "swarm_board_dispatch_tests.rs"]

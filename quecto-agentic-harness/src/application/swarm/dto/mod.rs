@@ -11,6 +11,7 @@ pub mod membership;
 pub mod run;
 pub mod submissions;
 pub mod tasks;
+pub mod usage;
 
 pub use completion::{
     AmendRunContractRequest, AmendedContract, CompleteRunRequest, CompletionState, EvidenceEntry,
@@ -40,4 +41,9 @@ pub use submissions::{
 pub use tasks::{
     ClaimTaskRequest, CreateTaskRequest, CreatedTask, NewTask, ReadTaskRequest, ReleaseTaskRequest,
     SetTaskDependenciesRequest, TaskRow, TaskUpdate,
+};
+pub use usage::{
+    BudgetChange, BudgetEffect, ConfigureUsageBudgetRequest, ConfiguredBudget, NewRequestUsage,
+    RecordRequestUsageRequest, RecordedRequest, RequestAdmission, RequestDelivery,
+    StoredRequestUsage,
 };

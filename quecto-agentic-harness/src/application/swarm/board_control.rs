@@ -23,7 +23,7 @@ use crate::domain::swarm::{
 };
 
 /// The refusal of a control record the board never writes.
-fn edited(record: &str) -> BoardError {
+pub(crate) fn edited(record: &str) -> BoardError {
     BoardError::new(
         RefusalKind::Store,
         format!("the board's {record} is not as the board writes it"),
@@ -31,7 +31,7 @@ fn edited(record: &str) -> BoardError {
 }
 
 /// The run the operation gate authorised, read again in its transaction.
-fn current(transaction: &(impl BoardRuns + ?Sized)) -> Result<RunRecord, BoardError> {
+pub(crate) fn current(transaction: &(impl BoardRuns + ?Sized)) -> Result<RunRecord, BoardError> {
     transaction
         .run()?
         .ok_or_else(|| BoardError::new(RefusalKind::RunMissing, "coordination run missing"))
@@ -151,7 +151,7 @@ fn lost_coordinator(
 
 /// `usage_budget_decision(report['budget'], report['totals'])`: no limit
 /// allows before anything else is read, as Python's does.
-fn budget_decision(report: &UsageReport) -> Result<UsageDecision, BoardError> {
+pub(crate) fn budget_decision(report: &UsageReport) -> Result<UsageDecision, BoardError> {
     let Value::Object(budget) = &report.budget else {
         return Err(edited("usage budget"));
     };

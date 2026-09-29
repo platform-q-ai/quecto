@@ -1,7 +1,8 @@
 //! Usage-budget policy ported from `swarm_policy.py` (#2267): the budget
 //! decision and the validation of one request's usage record.
-use serde_json::Value;
+use serde_json::{Map, Value};
 
+use super::python_value::python_equal;
 use super::{BoardError, RefusalKind};
 
 /// A run's token budget.
@@ -122,6 +123,90 @@ pub fn request_measurement(record: &Value) -> Result<(u64, u64, u64), BoardError
         u64::from(answered && attempts > 0 && !known),
         attempts,
     ))
+}
+
+/// The most bytes a request record's stored text may hold.
+pub const MAX_REQUEST_PAYLOAD_BYTES: usize = 32_768;
+/// The most rows the request ledger holds.
+pub const MAX_REQUEST_ROWS: i64 = 10_000;
+
+/// How a record meets the stored one of the same request id.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Redelivery {
+    /// The same record from the same actor, whose current runtime names
+    /// no executable digest: nothing changes.
+    Same,
+    /// Accepted as the same record, and the stored record is rewritten
+    /// because the current runtime names an `executable_sha256` (Python's
+    /// `isinstance(current_runtime.get('executable_sha256'), str)`), even
+    /// when the stored record already named the same digest.
+    Replaced,
+    /// Anything else: the request id is reused with different data.
+    Different,
+}
+
+/// `Transaction.record_request`'s redelivery rule, over the decoded
+/// `previous` record and the `current` one (both objects): the same actor,
+/// records equal by Python's `==` apart from `runtime`, and runtimes equal,
+/// except that two runtime objects may differ in `executable_digest_pending`
+/// and in an `executable_sha256` the stored one did not know yet.
+pub fn redelivery(
+    previous: &Map<String, Value>,
+    current: &Map<String, Value>,
+    same_actor: bool,
+) -> Redelivery {
+    let null = Value::Null;
+    let previous_runtime = previous.get(RUNTIME).unwrap_or(&null);
+    let current_runtime = current.get(RUNTIME).unwrap_or(&null);
+    let same_runtime = match (previous_runtime, current_runtime) {
+        (Value::Object(previous), Value::Object(current)) => {
+            python_equal(&stable(previous), &stable(current))
+                && digest_known_or_equal(previous, current)
+        }
+        (previous, current) => python_equal(previous, current),
+    };
+    if !(same_actor && same_records(previous, current) && same_runtime) {
+        return Redelivery::Different;
+    }
+    match current_runtime.get(SHA256) {
+        Some(Value::String(_)) => Redelivery::Replaced,
+        _ => Redelivery::Same,
+    }
+}
+
+const RUNTIME: &str = "runtime";
+const SHA256: &str = "executable_sha256";
+const DIGEST_PENDING: &str = "executable_digest_pending";
+
+/// `previous == current` with `runtime` popped from both.
+fn same_records(previous: &Map<String, Value>, current: &Map<String, Value>) -> bool {
+    let without = |record: &Map<String, Value>| {
+        Value::Object(
+            record
+                .iter()
+                .filter(|(key, _)| key.as_str() != RUNTIME)
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+        )
+    };
+    python_equal(&without(previous), &without(current))
+}
+
+/// `dict(value, executable_digest_pending=None, executable_sha256=None)`.
+fn stable(runtime: &Map<String, Value>) -> Value {
+    let mut stable = runtime.clone();
+    stable.insert(DIGEST_PENDING.to_owned(), Value::Null);
+    stable.insert(SHA256.to_owned(), Value::Null);
+    Value::Object(stable)
+}
+
+/// `previous.get('executable_sha256') in (None, current.get(...))`: a
+/// stored digest that is unknown, or the same.
+fn digest_known_or_equal(previous: &Map<String, Value>, current: &Map<String, Value>) -> bool {
+    match previous.get(SHA256) {
+        None | Some(Value::Null) => true,
+        Some(stored) => python_equal(stored, current.get(SHA256).unwrap_or(&Value::Null)),
+    }
 }
 
 /// A request id of 1 through 128 characters.

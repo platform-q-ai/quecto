@@ -125,7 +125,7 @@ pub(super) fn usage_report(
 }
 
 /// `Coordination._receipt`'s dict, in Python's key order.
-fn receipt(receipt: ControlReceipt) -> Value {
+pub(super) fn receipt(receipt: ControlReceipt) -> Value {
     let text = |value: Option<String>| value.map_or(Value::Null, Value::String);
     object([
         ("status", text(receipt.status)),
@@ -147,7 +147,7 @@ fn receipt(receipt: ControlReceipt) -> Value {
 }
 
 /// `usage_report()`'s dict, each aggregate row as `dict(row)`.
-fn report(report: UsageReport) -> Value {
+pub(super) fn report(report: UsageReport) -> Value {
     let row = |row: UsageRow| Value::Object(row.columns.into_iter().collect());
     object([
         ("budget", report.budget),

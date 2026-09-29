@@ -12,8 +12,9 @@ use serde_json::Value;
 
 use super::dto::{
     AmendedContract, CallMeasure, CompletionState, LaunchIdentity, MemberClaimCounts, MemberRow,
-    NewEvidence, NewMember, NewRun, NewTask, PriorEvidence, RunContract, RunOwnerRow, RunStatusRow,
-    StoredContract, TaskRow, TaskUpdate, UsageReport,
+    NewEvidence, NewMember, NewRequestUsage, NewRun, NewTask, PriorEvidence, RunContract,
+    RunOwnerRow, RunStatusRow, StoredContract, StoredRequestUsage, TaskRow, TaskUpdate,
+    UsageReport,
 };
 use crate::domain::error::DomainError;
 use crate::domain::swarm::{
@@ -302,7 +303,9 @@ pub trait BoardFiles {
     fn delete_claim_files(&self, task: &Value, claim: &Value) -> Result<(), BoardError>;
 }
 
-/// The request-usage ledger's read side (#2273; S9 adds its writes).
+/// The request-usage ledger and the token budget (#2273, #2274). Each
+/// method creates `request_usage` and `usage_budget` when absent, as
+/// Python's `_usage_schema` does, before it reads or writes them.
 pub trait BoardUsage {
     /// `Transaction.usage_report`: `request_usage` and `usage_budget` are
     /// created when absent (Python's statements, in its order), then the
@@ -311,6 +314,23 @@ pub trait BoardUsage {
     /// `{token_limit: null, strict_unknown: false, warned: false}` and no
     /// row is written.
     fn usage_report(&self) -> Result<UsageReport, BoardError>;
+    /// `usage_report()['budget']`: the stored budget payload as
+    /// `json.loads` reads it, or the default budget when there is no row.
+    fn usage_budget(&self) -> Result<Value, BoardError>;
+    /// `INSERT INTO usage_budget VALUES(1,?) ON CONFLICT(id) DO UPDATE`:
+    /// the budget row's payload becomes `budget` written by plain
+    /// `json.dumps` (insertion order, `", "` and `": "`).
+    fn configure_usage_budget(&self, budget: &Value) -> Result<(), BoardError>;
+    /// The row of `request_id`, when the ledger holds one.
+    fn request_usage(&self, request_id: &str) -> Result<Option<StoredRequestUsage>, BoardError>;
+    /// `INSERT INTO request_usage VALUES(?,?,?,?,?,?,?,?,?,?)`, the
+    /// payload stored as the text given.
+    fn insert_request_usage(&self, usage: &NewRequestUsage) -> Result<(), BoardError>;
+    /// The stored payload of `request_id`, which the caller has read in this
+    /// transaction, becomes `payload`, the record's `encode()` text.
+    fn update_request_usage(&self, request_id: &str, payload: &str) -> Result<(), BoardError>;
+    /// `SELECT count(*) FROM request_usage`.
+    fn request_usage_count(&self) -> Result<i64, BoardError>;
 }
 
 /// The criterion evidence and the task evidence completion reads (#2273;

@@ -1500,7 +1500,11 @@ fn application_path_allowed(path: &str) -> bool {
             | "AmendRunContract"
             | "CompleteRun"
             | "RecordEvidence"
-            | "RevalidateTask",
+            | "RevalidateTask"
+            // Usage accounting and the inference admission (#2274).
+            | "ConfigureUsageBudget"
+            | "ReadRequestAdmission"
+            | "RecordRequestUsage",
         ]
         | [
             "crate",
@@ -1572,7 +1576,15 @@ fn application_path_allowed(path: &str) -> bool {
             | "PriorEvidence"
             | "RecordEvidenceRequest"
             | "RevalidateTaskRequest"
-            | "StoredContract",
+            | "StoredContract"
+            // Usage accounting and the inference admission (#2274).
+            | "BudgetChange"
+            | "BudgetEffect"
+            | "ConfigureUsageBudgetRequest"
+            | "NewRequestUsage"
+            | "RecordRequestUsageRequest"
+            | "RequestDelivery"
+            | "StoredRequestUsage",
         ] => true,
         ["crate", "application", ..] => false,
         // Every other crate path must start at a layer infrastructure

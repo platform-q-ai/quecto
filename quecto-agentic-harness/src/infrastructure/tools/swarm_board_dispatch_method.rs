@@ -7,7 +7,7 @@ use serde_json::Value;
 use super::Level;
 #[cfg(any(test, feature = "test-support"))]
 use super::test_only;
-use super::{completion, control, members, submissions, tasks};
+use super::{completion, control, members, submissions, tasks, usage};
 use crate::domain::swarm::BoardRole;
 
 /// The board methods this dispatcher serves.
@@ -40,6 +40,9 @@ pub(super) enum Method {
     RevalidateTask,
     Amend,
     Evidence,
+    UsageBudget,
+    RecordRequest,
+    RequestAdmission,
     #[cfg(any(test, feature = "test-support"))]
     CreateRun,
     #[cfg(any(test, feature = "test-support"))]
@@ -94,6 +97,9 @@ impl Method {
             "revalidate_task" => Some(Self::RevalidateTask),
             "amend" => Some(Self::Amend),
             "evidence" => Some(Self::Evidence),
+            "usage_budget" => Some(Self::UsageBudget),
+            "_record_request" => Some(Self::RecordRequest),
+            "_request_admission" => Some(Self::RequestAdmission),
             #[cfg(any(test, feature = "test-support"))]
             "create_run" => Some(Self::CreateRun),
             #[cfg(any(test, feature = "test-support"))]
@@ -135,6 +141,9 @@ impl Method {
             Self::RevalidateTask => "revalidate_task",
             Self::Amend => "amend",
             Self::Evidence => "evidence",
+            Self::UsageBudget => "usage_budget",
+            Self::RecordRequest => "_record_request",
+            Self::RequestAdmission => "_request_admission",
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun => "create_run",
             #[cfg(any(test, feature = "test-support"))]
@@ -149,7 +158,15 @@ impl Method {
     /// [`Level::Read`] only for the methods listed as read-only.
     pub(super) fn level(self) -> Level {
         match self {
-            Self::Status | Self::Snapshot | Self::ControlStatus | Self::UsageReport => Level::Read,
+            // The admission read may pause the run by its budget; it runs
+            // before every model request, so it records at DEBUG as the
+            // read Python's `read_only` operation makes it, unless the
+            // budget warned or paused (`served_level`).
+            Self::Status
+            | Self::Snapshot
+            | Self::ControlStatus
+            | Self::UsageReport
+            | Self::RequestAdmission => Level::Read,
             Self::Admit
             | Self::Activate
             | Self::RecordLaunch
@@ -172,7 +189,9 @@ impl Method {
             | Self::Complete
             | Self::RevalidateTask
             | Self::Amend
-            | Self::Evidence => Level::Mutation,
+            | Self::Evidence
+            | Self::UsageBudget
+            | Self::RecordRequest => Level::Mutation,
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun | Self::BootstrapRun | Self::BootstrapJoin => Level::Mutation,
             #[cfg(any(test, feature = "test-support"))]
@@ -197,6 +216,9 @@ impl Method {
             Self::ResumeExternal | Self::Close | Self::ExtendDeadline | Self::ControlStatus => {
                 Some(BoardRole::Host)
             }
+            // The harness's request ledger and inference admission read
+            // (#2274).
+            Self::RecordRequest | Self::RequestAdmission => Some(BoardRole::Host),
             Self::TaskCreate
             | Self::Dependencies
             | Self::Claim
@@ -212,7 +234,8 @@ impl Method {
             | Self::Complete
             | Self::RevalidateTask
             | Self::Amend
-            | Self::Evidence => None,
+            | Self::Evidence
+            | Self::UsageBudget => None,
             // Test-only halves the differential harness drives as the host;
             // the member-facing `create`, `_bootstrap` and `task` S12 serves
             // record the caller's own role.
@@ -256,7 +279,10 @@ impl Method {
             | Self::Complete
             | Self::RevalidateTask
             | Self::Amend
-            | Self::Evidence => true,
+            | Self::Evidence
+            | Self::UsageBudget
+            | Self::RecordRequest
+            | Self::RequestAdmission => true,
             // A member's own resume is refused before any gate (#2273), so
             // it never answers.
             Self::Resume => false,
@@ -265,6 +291,23 @@ impl Method {
             // finds its own live row; `task_raw` passes the gate.
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun | Self::BootstrapRun | Self::BootstrapJoin | Self::TaskRaw => true,
+        }
+    }
+
+    /// The level a served call records at: [`Method::level`], raised to
+    /// [`Level::Mutation`] for a method the token budget applies in when
+    /// the decision is the budget's own (`paused` ends the run as
+    /// `budget-exhausted`, `warned` writes the warning), so a read that
+    /// changes the run is visible at INFO. Only the usage methods decide
+    /// `paused` or `warned` as the budget's; another method's decision of
+    /// the same name (`pause`'s `paused`) keeps its own level.
+    pub(super) fn served_level(self, decision: &str) -> Level {
+        match (self, decision) {
+            (
+                Self::UsageBudget | Self::RecordRequest | Self::RequestAdmission,
+                "paused" | "warned",
+            ) => Level::Mutation,
+            _ => self.level(),
         }
     }
 
@@ -277,7 +320,8 @@ impl Method {
             | Self::ResumeExternal
             | Self::Close
             | Self::ControlStatus
-            | Self::UsageReport => &[],
+            | Self::UsageReport
+            | Self::RequestAdmission => &[],
             Self::Admit => &members::ADMIT,
             Self::Activate => &members::ACTIVATE,
             Self::RecordLaunch => &members::RECORD_LAUNCH,
@@ -297,6 +341,8 @@ impl Method {
             Self::RevalidateTask => &completion::REVALIDATE_TASK,
             Self::Amend => &completion::AMEND,
             Self::Evidence => &completion::EVIDENCE,
+            Self::UsageBudget => &usage::USAGE_BUDGET,
+            Self::RecordRequest => &usage::RECORD_REQUEST,
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun => &test_only::CREATE,
             #[cfg(any(test, feature = "test-support"))]

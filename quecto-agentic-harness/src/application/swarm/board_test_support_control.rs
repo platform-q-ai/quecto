@@ -1,23 +1,94 @@
 //! Test support (compiled only under `cfg(test)`): the in-memory board's
-//! usage report and loss scan (#2273). The SQLite adapter's contract tests
-//! pin the real SQL.
+//! usage report, budget and request ledger (#2273, #2274) and loss scan.
+//! The SQLite adapter's contract tests pin the real SQL.
 use serde_json::{Value, json};
 
 use super::{BoardState, MemoryTransaction, RecordedEvent};
-use crate::application::swarm::dto::{UsageReport, UsageRow};
+use crate::application::swarm::dto::{NewRequestUsage, StoredRequestUsage, UsageReport, UsageRow};
 use crate::application::swarm::ports::BoardUsage;
 use crate::domain::swarm::{BoardError, RunState};
 
 impl BoardUsage for MemoryTransaction<'_> {
     fn usage_report(&self) -> Result<UsageReport, BoardError> {
-        Ok(self.state.borrow().usage.clone().unwrap_or_else(|| {
-            usage(
-                json!({"token_limit": null, "strict_unknown": false, "warned": false}),
-                0,
-                0,
-            )
-        }))
+        Ok(self
+            .state
+            .borrow()
+            .usage
+            .clone()
+            .unwrap_or_else(default_usage))
     }
+
+    fn usage_budget(&self) -> Result<Value, BoardError> {
+        self.usage_report().map(|report| report.budget)
+    }
+
+    fn configure_usage_budget(&self, budget: &Value) -> Result<(), BoardError> {
+        self.note(format!("configure_usage_budget {budget}"));
+        let mut state = self.state.borrow_mut();
+        state.usage.get_or_insert_with(default_usage).budget = budget.clone();
+        Ok(())
+    }
+
+    fn request_usage(&self, request_id: &str) -> Result<Option<StoredRequestUsage>, BoardError> {
+        Ok(self
+            .state
+            .borrow()
+            .request_usage
+            .iter()
+            .find(|row| row.request_id == request_id)
+            .map(|row| StoredRequestUsage {
+                actor: Value::from(row.actor.as_str()),
+                payload: serde_json::from_str(&row.payload)
+                    .expect("the fake stores the encoder's JSON text"),
+            }))
+    }
+
+    fn insert_request_usage(&self, row: &NewRequestUsage) -> Result<(), BoardError> {
+        self.note(format!("insert_request_usage {}", row.request_id));
+        let mut state = self.state.borrow_mut();
+        let report = state.usage.get_or_insert_with(default_usage);
+        for (column, added) in [
+            ("requests", 1),
+            ("observed_tokens", row.tokens),
+            ("unknown_usage_requests", row.unknown),
+        ] {
+            if let Some((_, total)) = report.totals.columns.iter_mut().find(|(n, _)| n == column) {
+                *total = json!(total.as_u64().unwrap_or(0) + added);
+            }
+        }
+        state.request_usage.push(row.clone());
+        Ok(())
+    }
+
+    fn update_request_usage(&self, request_id: &str, payload: &str) -> Result<(), BoardError> {
+        self.note(format!("update_request_usage {request_id}"));
+        let mut state = self.state.borrow_mut();
+        let row = state
+            .request_usage
+            .iter_mut()
+            .find(|row| row.request_id == request_id)
+            .expect("the updated request was read first");
+        payload.clone_into(&mut row.payload);
+        Ok(())
+    }
+
+    fn request_usage_count(&self) -> Result<i64, BoardError> {
+        let state = self.state.borrow();
+        let listed = state
+            .usage
+            .as_ref()
+            .and_then(|report| report.totals.get("requests").and_then(Value::as_i64));
+        Ok(listed.unwrap_or(0))
+    }
+}
+
+/// The report of a board with no budget row and no requests.
+fn default_usage() -> UsageReport {
+    usage(
+        json!({"token_limit": null, "strict_unknown": false, "warned": false}),
+        0,
+        0,
+    )
 }
 
 /// A report with `budget` and totals of `observed` tokens and `unknown`
