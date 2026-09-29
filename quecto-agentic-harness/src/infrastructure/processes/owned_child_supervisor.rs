@@ -479,12 +479,9 @@ impl OwnedChildSupervisor {
         self.lock().get(&id).map(|slot| slot.exit.subscribe())
     }
 
-    /// The exit the supervisor recorded for `id` once it reaped it — from
-    /// the live slot, or from the retired record — without waiting (#2260).
-    /// `None` while the child is unreaped, or for a handle never adopted
-    /// here or whose record has left the ring. The reap task records the
-    /// exit in the critical section that marks the slot reaped, so once
-    /// [`Self::retains`] is `false` for an adopted handle the exit is here.
+    /// The exit recorded for `id` once reaped (live slot or retired record),
+    /// without waiting (#2260); `None` while unreaped or unknown. It is set
+    /// with the reaped mark, so once [`Self::retains`] is `false` it is here.
     pub fn reaped_exit(&self, id: ChildHandleId) -> Option<ChildExit> {
         if let Some(slot) = self.lock().get(&id) {
             return match slot.reaped {
