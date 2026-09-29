@@ -94,6 +94,15 @@ pub(super) struct Tally {
 }
 
 impl Tally {
+    /// A measure that has measured nothing.
+    #[cfg(test)] // Red: wired in the fix commit.
+    pub(super) fn new() -> Self {
+        Self {
+            measure: Mutex::new(CallMeasure::default()),
+            outer: None,
+        }
+    }
+
     /// The measure, also after a panic elsewhere left the lock poisoned:
     /// nothing is ever left half-updated under it.
     fn held(&self) -> MutexGuard<'_, CallMeasure> {
@@ -179,6 +188,14 @@ pub(super) fn wait_metered(connection: &Connection, tally: &Tally) -> rusqlite::
         ffi::SQLITE_OK => Ok(()),
         code => Err(rusqlite::Error::SqliteFailure(ffi::Error::new(code), None)),
     }
+}
+
+/// Removes [`busy_callback`] from `connection` before it closes.
+#[cfg(test)] // Red: wired in the fix commit.
+pub(super) fn unwait_metered(connection: &Connection) -> rusqlite::Result<()> {
+    // Red stub (#2303 round-3 review L6): the handler stays registered.
+    let _ = connection;
+    Ok(())
 }
 
 /// SQLite's busy handler while metered: [`Tally::busy`] on the tally it

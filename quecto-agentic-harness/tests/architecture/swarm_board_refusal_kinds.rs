@@ -23,7 +23,7 @@ use syn::visit::Visit;
 
 /// `(file:function, text, kind)` for every construction site in the
 /// production sources, one row per site.
-const REFUSALS: &[(&str, &str, &str)] = &[
+pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
     (
         "src/application/swarm/board_operation.rs:atomic",
         "coordination store committed without running its work",
@@ -477,4 +477,10 @@ fn the_scan_reads_texts_templates_and_kinds() {
     assert!(production("src/domain/swarm/policy.rs"));
     assert!(!production("src/domain/swarm/telemetry_tests.rs"));
     assert!(!production("src/application/swarm/board_test_support.rs"));
+    // An allowlist (#2303 round-3 review L5): a file the production module
+    // tree does not mount is not production, whatever its name.
+    assert!(!production("src/nowhere.rs"));
+    assert!(!production(
+        "src/application/swarm/use_cases/create_run_tests.rs"
+    ));
 }

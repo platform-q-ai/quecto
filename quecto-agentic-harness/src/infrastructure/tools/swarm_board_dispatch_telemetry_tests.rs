@@ -416,9 +416,12 @@ fn a_held_lock_is_recorded_as_busy_with_its_wait() {
     let recorded = only(&log);
     assert_eq!(recorded.outcome, BoardOpOutcome::Ok);
     assert_eq!(recorded.busy, Some(true), "{recorded:?}");
+    // The op sat out the ~150 ms hold (#2303 round-3 review L2).
     let busy_wait = recorded.busy_wait_us.unwrap();
-    assert!(busy_wait >= 1_000, "{recorded:?}");
-    assert!(recorded.lock_wait_us.unwrap() >= busy_wait, "{recorded:?}");
+    assert!(busy_wait >= 100_000, "{recorded:?}");
+    let lock_wait = recorded.lock_wait_us.unwrap();
+    assert!(lock_wait >= 100_000, "{recorded:?}");
+    assert!(lock_wait >= busy_wait, "{recorded:?}");
 }
 
 /// Held for the whole op, the lock outlasts the store's timeout: the op is

@@ -7,6 +7,10 @@
 //! bounded to [`ACTOR_REF_CHARS`] characters, since a call can name any
 //! member id, admitted or not. What was not measured, or does not apply,
 //! is `None` (`null`), never a zero or a `false`.
+#[cfg(test)] // Red: wired in the fix commit.
+use std::collections::HashMap;
+#[cfg(test)] // Red: wired in the fix commit.
+use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 use serde_json::Value;
@@ -71,6 +75,42 @@ pub(super) fn actor_ref(member: &str) -> Redacted {
     match redacted.char_indices().nth(ACTOR_REF_CHARS) {
         Some((end, _)) => Redacted::from(&redacted[..end]),
         None => redacted,
+    }
+}
+
+/// The most member ids an [`ActorRefs`] keeps (#2303 round-3 review M1):
+/// a run's members are bounded by the board, and a refused call's id is
+/// redacted anew rather than kept.
+#[cfg(test)] // Red: wired in the fix commit.
+pub const ACTOR_REF_CACHE: usize = 64;
+
+/// Each member's [`actor_ref`], redacted once per member rather than once
+/// per call (#2303 round-3 review M1), for at most [`ACTOR_REF_CACHE`]
+/// members.
+#[cfg(test)] // Red: wired in the fix commit.
+#[derive(Debug, Default)]
+pub struct ActorRefs {
+    known: Mutex<HashMap<String, Redacted>>,
+}
+
+#[cfg(test)] // Red: wired in the fix commit.
+impl ActorRefs {
+    /// `member`'s [`actor_ref`].
+    pub(super) fn of(&self, member: &str) -> Redacted {
+        // Red stub: every id is kept.
+        let mut known = self.known.lock().unwrap_or_else(PoisonError::into_inner);
+        known
+            .entry(member.to_owned())
+            .or_insert_with(|| actor_ref(member))
+            .clone()
+    }
+
+    /// How many members' refs are kept.
+    fn len(&self) -> usize {
+        self.known
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len()
     }
 }
 
@@ -164,3 +204,7 @@ fn rendered_bytes(value: &Value) -> u64 {
     let _written = serde_json::to_writer(&mut count, value);
     count.0
 }
+
+#[cfg(test)]
+#[path = "swarm_board_telemetry_tests.rs"]
+mod tests;

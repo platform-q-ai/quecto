@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use rusqlite::Connection;
 
-use super::{SqliteBoardCallMeter, busy_delay};
+use super::{SqliteBoardCallMeter, Tally, busy_delay, unwait_metered, wait_metered};
 use crate::application::swarm::dto::{BoardLocation, CallMeasure};
 use crate::application::swarm::ports::{BoardCallMeter, BoardRepository, MeteredCall};
 use crate::domain::swarm::BoardError;
@@ -117,10 +117,46 @@ fn a_held_lock_is_measured_as_a_busy_wait() {
     let measure = measured(&*call);
     assert!(measure.busy, "{measure:?}");
     assert_eq!(measure.transactions, 1, "{measure:?}");
-    // The handler slept at least its first delay, inside `BEGIN`.
-    assert!(measure.busy_wait >= Duration::from_millis(1), "{measure:?}");
+    // The call sat out the ~150 ms hold inside `BEGIN` (#2303 round-3
+    // review L2: the criterion's number, not merely a first delay).
+    assert!(
+        measure.busy_wait >= Duration::from_millis(100),
+        "{measure:?}"
+    );
+    assert!(
+        measure.lock_wait >= Duration::from_millis(100),
+        "{measure:?}"
+    );
     assert!(measure.lock_wait >= measure.busy_wait, "{measure:?}");
     assert!(measure.lock_wait < BUSY_TIMEOUT, "{measure:?}");
+}
+
+/// The busy handler is unregistered before its connection closes (#2303
+/// round-3 review L6): once it is, a statement that finds the database
+/// busy never reaches the tally, and nothing waits.
+#[test]
+fn an_unregistered_busy_handler_never_reaches_the_tally() {
+    let (_dir, store, _plain, _meter) = created();
+    let tally = Tally::new();
+    let connection = Connection::open(store.path()).unwrap();
+    wait_metered(&connection, &tally).unwrap();
+    unwait_metered(&connection).unwrap();
+    let holder = Holder::take(&store);
+    let started = Instant::now();
+    let refused = connection.execute_batch("BEGIN IMMEDIATE");
+    let waited = started.elapsed();
+    holder.release();
+    assert!(refused.is_err(), "no handler retries: the lock is refused");
+    assert!(
+        !tally.held().busy,
+        "the handler is gone: {:?}",
+        tally.held()
+    );
+    assert!(
+        waited < Duration::from_millis(250),
+        "nothing waited: {waited:?}"
+    );
+    connection.close().unwrap();
 }
 
 /// A call's waits add up over its own transactions, and only its own: a

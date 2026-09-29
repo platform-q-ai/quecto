@@ -53,6 +53,12 @@ mod supervisor_runtime;
 /// harness self-test or expects the difference (#2270 round-2 review L3).
 #[path = "architecture/swarm_board_diff_hooks.rs"]
 mod swarm_board_diff_hooks;
+/// The board dispatcher names only application and domain paths (#2303).
+#[path = "architecture/swarm_board_ports.rs"]
+mod swarm_board_ports;
+/// Every Python board refusal text has a kind (#2303 round-3 review L4).
+#[path = "architecture/swarm_board_python_refusals.rs"]
+mod swarm_board_python_refusals;
 /// Every board refusal is built with its kind (#2303).
 #[path = "architecture/swarm_board_refusal_kinds.rs"]
 mod swarm_board_refusal_kinds;
@@ -6317,32 +6323,6 @@ fn swarm_board_ports_are_capability_local_and_contracted() {
             contracts.contains(&to_snake_case(port)),
             "{port} has no contract suite proven on the production adapter"
         );
-    }
-}
-
-/// The board's tool adapter (#2303 review H2) reaches the store's meter
-/// and the event log only through application ports: every crate path its
-/// production files import is the application's or the domain's.
-#[test]
-fn the_board_dispatcher_depends_only_on_ports() {
-    for path in [
-        "src/infrastructure/tools/swarm_board_dispatch.rs",
-        "src/infrastructure/tools/swarm_board_telemetry.rs",
-    ] {
-        let source = fs::read_to_string(path).unwrap_or_else(|_| panic!("read {path}"));
-        let imports: Vec<&str> = source
-            .lines()
-            .map(str::trim_start)
-            .filter(|line| line.starts_with("use crate::"))
-            .collect();
-        assert!(!imports.is_empty(), "{path} imports from the crate");
-        for import in imports {
-            assert!(
-                import.starts_with("use crate::application::")
-                    || import.starts_with("use crate::domain::"),
-                "{path}: {import}"
-            );
-        }
     }
 }
 
