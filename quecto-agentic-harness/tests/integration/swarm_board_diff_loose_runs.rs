@@ -6,7 +6,9 @@
 //! in its `EXTERNAL_PINS`).
 use serde_json::json;
 
+use crate::swarm_board_diff_loss::{GRACE, quarantine};
 use crate::swarm_board_diff_membership::{at, create};
+use crate::swarm_board_diff_messages::joined;
 use crate::swarm_board_diff_runs::NOW;
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
 use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
@@ -135,8 +137,9 @@ fn outside_edited_text_reads_as_python_reads_it() {
 /// float deadline where Python's records the integer (pinned by
 /// `extend_run_deadline_tests`). An event detail that is not an object,
 /// or whose `member` is not text (a list or an object Python cannot hash),
-/// names no member in the loss scan, where Python raises an
-/// `AttributeError` or a `TypeError`. And (#2274) a budget without
+/// names no member in the loss scan (a resume's blockers, or #2277's
+/// `_quarantine`), where Python raises an `AttributeError` or a
+/// `TypeError`. And (#2274) a budget without
 /// `token_limit` or `strict_unknown` meets `usage_budget`'s idempotence
 /// check, where Python raises a `KeyError`; a stored request whose actor is
 /// a BLOB, or whose payload is `'x'` or NULL, meets its redelivery as a
@@ -215,6 +218,60 @@ fn outside_edited_control_records() {
             panic!("{detail}: {unnamed:?}");
         };
         assert_eq!(receipt["resume_blockers"], json!([]), "{detail}: {receipt}");
+    }
+    // The same through `_quarantine`'s loss scan (#2277 final review N1): a
+    // `scope_unknown` or `activated` event whose `member` is a list or an
+    // object names no member, so the scan answers as without it, where
+    // Python raises a `TypeError` ("unhashable type") testing the member
+    // against the wanted set. The scan is `worker`'s observation and, after
+    // the grace, its recorded loss, then the run's status.
+    let scan = |edits: &[String]| {
+        let outcome = run_rust(&joined(
+            edits
+                .iter()
+                .map(|edit| sql(edit))
+                .chain([
+                    quarantine(3.0, "parent", json!("worker")),
+                    quarantine(3.0 + GRACE, "parent", json!("worker")),
+                    at(4.0 + GRACE, "parent", "_control_status", json!([])),
+                ])
+                .collect::<Vec<_>>(),
+        ));
+        // The receipt less its generation, which counts the edit's event.
+        let Outcome::Ok(mut receipt) = outcome else {
+            panic!("{edits:?}: {outcome:?}");
+        };
+        assert!(receipt["generation"].is_u64(), "{receipt}");
+        receipt["generation"] = json!(null);
+        receipt
+    };
+    let event = |action: &str, member: &str| {
+        format!(
+            r#"INSERT INTO events(actor,time,action,detail) VALUES('x',1.0,'{action}','{{"member": {member}}}')"#
+        )
+    };
+    let lost = event("scope_unknown", r#""worker""#);
+    assert_ne!(
+        scan(&[]),
+        scan(std::slice::from_ref(&lost)),
+        "the scan sees a loss"
+    );
+    assert_ne!(
+        scan(std::slice::from_ref(&lost)),
+        scan(&[lost.clone(), event("activated", r#""worker""#)]),
+        "the scan sees an activation"
+    );
+    for member in [r#"["worker"]"#, r#"{"id": "worker"}"#] {
+        assert_eq!(
+            scan(&[event("scope_unknown", member)]),
+            scan(&[]),
+            "scope_unknown {member}"
+        );
+        assert_eq!(
+            scan(&[lost.clone(), event("activated", member)]),
+            scan(std::slice::from_ref(&lost)),
+            "activated {member}"
+        );
     }
     // #2274: a stored request that is not an object meets its redelivery,
     // and a budget without `warned` meets the warning, where Python raises
