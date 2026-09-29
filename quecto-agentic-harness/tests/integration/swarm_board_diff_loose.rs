@@ -29,10 +29,13 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   must parse member input with `py_json`, as the harness does; a
 ///   `PyJson` dispatcher would end this divergence.
 /// - `integer_beyond_i64_is_refused`: an integer argument beyond i64 but
-///   within u64 (a `pid`, `started` or `socket`) makes Python's `sqlite3`
-///   raise `OverflowError`, which is not an `sqlite3.Error`, so the store
-///   does not turn it into a refusal and the call raises. The Rust board
-///   refuses it as a store failure naming Python's parameter position.
+///   within u64 (a `pid`, `started` or `socket`, or a membership method's
+///   member or reservation, #2271) makes Python's `sqlite3` raise
+///   `OverflowError` when it is bound, which is not an `sqlite3.Error`,
+///   so the store does not turn it into a refusal and the call raises.
+///   The Rust board refuses it as a store failure naming Python's
+///   parameter position. (Compared before it is bound, such an integer
+///   answers as Python's: it equals no stored value but an equal REAL.)
 /// - `outside_edited_columns`: a `run` column `_snapshot` reads as a
 ///   number (`deadline`, `member_limit`) holding anything but the number
 ///   the board writes (NULL, text, a REAL `member_limit`), or a BLOB in
@@ -50,8 +53,11 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   placeholder;
 ///   `_bootstrap` reads no column; the join (#2271) reads the
 ///   coordinator column alone and takes one that is not text (a BLOB, or
-///   a number without TEXT affinity) as nobody, where Python would act as
-///   that value; a NULL run or member status, a NULL
+///   a number without TEXT affinity) as nobody, where Python acts as that
+///   value: the gate refuses both unless a member row's id is that same
+///   value, when Python joins and Rust refuses (pinned below; matching it
+///   would thread a non-text actor through every use case, a cost out of
+///   proportion to a board no harness writes); a NULL run or member status, a NULL
 ///   coordinator, a NULL member id, added member columns and loosely typed
 ///   pids are read as they are stored.
 /// - `real_to_text_digits` (#2269 review M1, pinned by
@@ -375,6 +381,46 @@ fn integer_beyond_i64_is_refused() {
             ))
         );
     }
+    // The membership methods (#2271) bind their arguments the same way.
+    let bootstrap = json!([7, "s", null]);
+    for (method, args, position) in [
+        ("_socket", json!([u64::MAX]), 1),
+        ("_release_unlaunched", json!([u64::MAX]), 1),
+        // `bootstrap_run` draws the run's id, then the reservation.
+        (
+            "_activate",
+            json!(["parent", format!("{:032x}", 2), 7, "s", u64::MAX]),
+            3,
+        ),
+    ] {
+        let difference = try_run_both(
+            &[
+                step("parent", "bootstrap_run", bootstrap.clone(), NOW),
+                step("parent", method, args.clone(), NOW + 1.0),
+            ],
+            |_, _, _| {},
+        )
+        .unwrap_err();
+        assert_eq!(
+            difference,
+            format!(
+                "step 1: {method} as parent with {args} at {}: Python raised \
+                 OverflowError: Python int too large to convert to SQLite INTEGER",
+                NOW + 1.0
+            )
+        );
+        let outcomes = rust_alone(&[
+            ("parent", "bootstrap_run", bootstrap.clone()),
+            ("parent", method, args),
+        ]);
+        assert_eq!(
+            outcomes[1],
+            Outcome::Refused(format!(
+                "{CONTENDED}Error binding parameter {position}: \
+                 Python int too large to convert to SQLite INTEGER"
+            ))
+        );
+    }
 }
 
 #[test]
@@ -403,6 +449,46 @@ fn outside_edited_columns() {
             "{edit}: {difference}"
         );
     }
+    // The join (#2271) reads the coordinator column alone and takes one
+    // that is not text as nobody, which the gate refuses; Python acts as
+    // the value it finds, which the gate finds when a member row holds
+    // that same value as its id: a BLOB id (TEXT affinity keeps a BLOB),
+    // or a number's text under TEXT affinity.
+    for edit in [
+        "UPDATE run SET coordinator=x'706172656e74';
+         INSERT INTO members(id,reservation,status) VALUES(x'706172656e74','c','live')",
+        "DROP TABLE run;
+         CREATE TABLE run (id, goal, constraints, criteria, coordinator, integrator, member_limit, deadline, status);
+         INSERT INTO run(id,status,coordinator,member_limit,deadline) VALUES('r','running',2.5,5,4e9);
+         INSERT INTO members(id,reservation,status) VALUES('2.5','c','live')",
+    ] {
+        let difference = try_run_both(
+            &[
+                step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
+                sql(edit),
+                step("worker", "bootstrap_join", json!([8, "t", null]), NOW + 1.0),
+            ],
+            |_, _, _| {},
+        )
+        .unwrap_err();
+        assert_eq!(
+            difference,
+            format!(
+                "step 2: bootstrap_join as worker with [8,\"t\",null] at {}: results differ\n  \
+                 python Ok(Null)\n  \
+                 rust   {:?}",
+                NOW + 1.0,
+                Outcome::Refused("invoking member is unknown or death confirmed".into())
+            ),
+            "{edit}"
+        );
+    }
+    // Without a member of that id, Python's gate refuses the join too.
+    run_both(&[
+        step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
+        sql("UPDATE run SET coordinator=x'706172656e74'"),
+        step("worker", "bootstrap_join", json!([8, "t", null]), NOW + 1.0),
+    ]);
     // A BLOB: Python's answer is not JSON at all; Rust refuses it.
     let dir = tempfile::tempdir().unwrap();
     let database = dir.path().join("swarm.sqlite");

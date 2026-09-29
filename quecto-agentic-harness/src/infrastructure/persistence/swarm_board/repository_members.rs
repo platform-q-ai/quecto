@@ -1,8 +1,13 @@
 //! `BoardMembers` over the SQLite store (#2270, #2271): the `members` rows
 //! by Python's SQL (`swarm.py`, `swarm_repository.py`), split out of
-//! `repository.rs` to keep each file within its size budget.
+//! `repository.rs` to keep each file within its size budget. The
+//! membership statements (#2271 round-1 review M1) bind the caller's
+//! member, reservation, pid, start time and socket as Python's `sqlite3`
+//! binds them ([`loose`]), so the column affinity stores and compares
+//! them as Python's board does.
+use rusqlite::OptionalExtension;
 use rusqlite::types::Value as SqlValue;
-use rusqlite::{OptionalExtension, params};
+use serde_json::Value;
 
 use super::binding;
 use super::repository::{
@@ -91,71 +96,118 @@ impl BoardMembers for SqliteBoard<'_> {
 
     fn member_row(
         &self,
-        id: &str,
-        reservation: Option<&str>,
+        id: &Value,
+        reservation: Option<&Value>,
     ) -> Result<Option<MemberRow>, BoardError> {
-        let found = match reservation {
-            None => self
-                .connection
-                .query_row("SELECT * FROM members WHERE id=?", [id], row_dict),
-            Some(reservation) => self.connection.query_row(
+        match reservation {
+            None => self.fetch_member("SELECT * FROM members WHERE id=?", &[Bound::Loose(id)]),
+            Some(reservation) => self.fetch_member(
                 "SELECT * FROM members WHERE id=? AND reservation=?",
-                [id, reservation],
-                row_dict,
+                &[Bound::Loose(id), Bound::Loose(reservation)],
             ),
-        };
-        found.optional().map_err(failed)
+        }
     }
 
     fn reserve_member(
         &self,
         id: &str,
-        reservation: &str,
+        reservation: &Value,
         launcher: &str,
     ) -> Result<(), BoardError> {
         self.write(
             "INSERT INTO members(id,reservation,status,pid,started,socket,launcher) VALUES(?,?,'reserved',NULL,NULL,NULL,?)",
-            params![id, reservation, launcher],
+            &[Bound::Text(id), Bound::Loose(reservation), Bound::Text(launcher)],
         )
     }
 
     fn activate_member(
         &self,
-        id: &str,
+        id: &Value,
         launch: &LaunchIdentity,
-        socket: Option<&str>,
+        socket: &Value,
     ) -> Result<(), BoardError> {
         self.write(
             "UPDATE members SET status='live',pid=?,started=?,socket=? WHERE id=?",
-            params![launch.pid, launch.started, socket, id],
+            &[
+                Bound::Loose(&launch.pid),
+                Bound::Loose(&launch.started),
+                Bound::Loose(socket),
+                Bound::Loose(id),
+            ],
         )
     }
 
-    fn record_launch(&self, id: &str, launch: &LaunchIdentity) -> Result<(), BoardError> {
+    fn record_launch(&self, id: &Value, launch: &LaunchIdentity) -> Result<(), BoardError> {
         self.write(
             "UPDATE members SET pid=?,started=? WHERE id=?",
-            params![launch.pid, launch.started, id],
+            &[
+                Bound::Loose(&launch.pid),
+                Bound::Loose(&launch.started),
+                Bound::Loose(id),
+            ],
         )
     }
 
-    fn mark_member_dead_unlaunched(&self, id: &str) -> Result<(), BoardError> {
-        self.write("UPDATE members SET status='dead' WHERE id=?", params![id])
+    fn mark_member_dead_unlaunched(&self, id: &Value) -> Result<(), BoardError> {
+        self.write(
+            "UPDATE members SET status='dead' WHERE id=?",
+            &[Bound::Loose(id)],
+        )
     }
 
-    fn set_socket(&self, id: &str, socket: Option<&str>) -> Result<(), BoardError> {
+    fn set_socket(&self, id: &str, socket: &Value) -> Result<(), BoardError> {
         self.write(
             "UPDATE members SET socket=? WHERE id=?",
-            params![socket, id],
+            &[Bound::Loose(socket), Bound::Text(id)],
         )
     }
 }
 
+/// One parameter of a membership statement: text the board itself
+/// supplies (an actor, a bounded member id), or a caller's value bound as
+/// Python's `sqlite3` binds it (#2271 round-1 review M1).
+enum Bound<'v> {
+    Text(&'v str),
+    Loose(&'v Value),
+}
+
+/// The parameters in order, as Python binds them: the first a caller's
+/// value `sqlite3` cannot bind is refused, naming its position in the
+/// statement (Python's and the Rust board's statements are the same).
+fn bound(parameters: &[Bound<'_>]) -> Result<Vec<SqlValue>, BoardError> {
+    parameters
+        .iter()
+        .enumerate()
+        .map(|(index, parameter)| match parameter {
+            Bound::Text(text) => Ok(SqlValue::Text((*text).to_owned())),
+            Bound::Loose(value) => loose(index + 1, value),
+        })
+        .collect()
+}
+
 impl SqliteBoard<'_> {
-    /// One statement of Python's SQL with typed parameters.
-    fn write(&self, sql: &str, parameters: &[&dyn rusqlite::ToSql]) -> Result<(), BoardError> {
-        self.connection
-            .execute(sql, parameters)
+    /// One statement of Python's SQL with its parameters bound as Python
+    /// binds them.
+    fn write(&self, sql: &str, parameters: &[Bound<'_>]) -> Result<(), BoardError> {
+        let parameters = bound(parameters)?;
+        binding::bound_statement(self.connection, sql, &parameters)
+            .and_then(|mut statement| statement.raw_execute())
             .map(|_| ())
+            .map_err(failed)
+    }
+
+    /// The first member row `sql` selects, as `dict(row)`.
+    fn fetch_member(
+        &self,
+        sql: &str,
+        parameters: &[Bound<'_>],
+    ) -> Result<Option<MemberRow>, BoardError> {
+        let parameters = bound(parameters)?;
+        let mut statement =
+            binding::bound_statement(self.connection, sql, &parameters).map_err(failed)?;
+        let mut rows = statement.raw_query();
+        rows.next()
+            .and_then(|row| row.map(row_dict).transpose())
             .map_err(failed)
     }
 }

@@ -8,7 +8,7 @@ use crate::domain::swarm::BoardError;
 fn register(actor: &str, socket: Option<&str>) -> RegisterMemberSocketRequest {
     RegisterMemberSocketRequest {
         actor: actor.to_owned(),
-        socket: socket.map(str::to_owned),
+        socket: socket.map_or(serde_json::Value::Null, serde_json::Value::from),
     }
 }
 

@@ -5,16 +5,17 @@
 use serde_json::Value;
 
 use super::dto::{LaunchIdentity, MemberRow};
+use crate::domain::swarm::{python_equal, status_is_alive};
 
 /// `bounded(member, 'member', 128)`: the longest member id, in UTF-8 bytes.
 pub(crate) const MEMBER_MAX_BYTES: usize = 128;
 
-/// A member whose death is not confirmed: `live` or `reserved`. Python
-/// refuses only `'dead'`; any other status (NULL, or one the board never
-/// writes) is refused here too, the owner-decided divergence
-/// `unknown_member_status_is_not_alive` (#2295).
+/// A member whose death is not confirmed, by the domain's one allowlist
+/// ([`status_is_alive`]): the owner-decided divergence
+/// `unknown_member_status_is_not_alive` (#2295) where Python refuses only
+/// `'dead'`.
 pub(crate) fn alive(row: &MemberRow) -> bool {
-    matches!(row.text("status"), Some("live" | "reserved"))
+    status_is_alive(row.text("status"))
 }
 
 /// The member's row is `live`.
@@ -27,22 +28,23 @@ pub(crate) fn unlaunched(row: &MemberRow) -> bool {
     matches!(row.text("status"), Some("reserved")) && matches!(row.get("pid"), Some(Value::Null))
 }
 
-/// `row['reservation'] == reservation`: text equals the same text, and a
-/// NULL reservation equals only an absent one (`None == None`).
-pub(crate) fn holds_reservation(row: &MemberRow, reservation: Option<&str>) -> bool {
-    match (row.get("reservation"), reservation) {
-        (Some(Value::String(held)), Some(given)) => held == given,
-        (Some(Value::Null), None) => true,
-        _ => false,
-    }
+/// `row['reservation'] == reservation`, by Python's `==`: a NULL
+/// reservation equals only `None`, and a stored `'5'` is not `5`.
+pub(crate) fn holds_reservation(row: &MemberRow, reservation: &Value) -> bool {
+    row.get("reservation")
+        .is_some_and(|held| python_equal(held, reservation))
 }
 
-/// `row['pid'] == pid and row['started'] == started`: the row names this
-/// process. A stored pid equals the integer as a number (`7.0 == 7`), never
-/// as text; the start time equals only the same text.
+/// `row['pid'] == pid and row['started'] == started`, by Python's `==`:
+/// the row names this process. A stored pid equals a number exactly
+/// (`7 == 7.0`, `1 == True`, but a REAL 2^63 is not `i64::MAX`), never
+/// its text; a NULL equals only `None`.
 pub(crate) fn same_process(row: &MemberRow, launch: &LaunchIdentity) -> bool {
-    row.get("pid").is_some_and(|pid| same_pid(pid, launch.pid))
-        && row.text("started") == Some(launch.started.as_str())
+    let equal = |column: &str, given: &Value| {
+        row.get(column)
+            .is_some_and(|stored| python_equal(stored, given))
+    };
+    equal("pid", &launch.pid) && equal("started", &launch.started)
 }
 
 /// `row['pid'] is not None and (row['pid'], row['started']) != (pid, started)`:
@@ -51,25 +53,6 @@ pub(crate) fn launched_elsewhere(row: &MemberRow, launch: &LaunchIdentity) -> bo
     match row.get("pid") {
         Some(Value::Null) | None => false,
         Some(_) => !same_process(row, launch),
-    }
-}
-
-/// Python's `stored == pid` for an INTEGER or REAL cell: exact, so a float
-/// equals only the integer it is (`2.0**53 != 2**53 + 1`).
-fn same_pid(stored: &Value, pid: i64) -> bool {
-    match stored {
-        Value::Number(number) => match (number.as_i64(), number.as_f64()) {
-            (Some(integer), _) => integer == pid,
-            // An integral float within i64 converts exactly, and converting
-            // back finds it again; one beyond i64 saturates and does not.
-            (None, Some(float)) => {
-                float.fract() == 0.0 && float as i64 == pid && (float as i64) as f64 == float
-            }
-            (None, None) => false,
-        },
-        Value::Null | Value::Bool(_) | Value::String(_) | Value::Array(_) | Value::Object(_) => {
-            false
-        }
     }
 }
 

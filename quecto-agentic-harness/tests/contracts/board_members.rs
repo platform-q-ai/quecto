@@ -299,14 +299,14 @@ fn launch_records_are_written_by_pythons_sql() {
     let dir = tempfile::tempdir().unwrap();
     let repository = repository_in(&dir);
     let launch = LaunchIdentity {
-        pid: 4242,
-        started: "Mon Sep 28".into(),
+        pid: json!(4242),
+        started: json!("Mon Sep 28"),
     };
     within(&repository, true, |transaction| {
         transaction.insert_member(&new_member("parent", MemberState::LIVE))?;
-        transaction.reserve_member("worker", "worker-r", "parent")?;
+        transaction.reserve_member("worker", &json!("worker-r"), "parent")?;
         assert_eq!(
-            transaction.member_row("worker", None)?,
+            transaction.member_row(&json!("worker"), None)?,
             Some(row([
                 ("id", json!("worker")),
                 ("reservation", json!("worker-r")),
@@ -317,16 +317,20 @@ fn launch_records_are_written_by_pythons_sql() {
                 ("launcher", json!("parent")),
             ]))
         );
-        assert!(transaction.member_row("worker", Some("other"))?.is_none());
-        assert!(transaction.member_row("stranger", None)?.is_none());
+        assert!(
+            transaction
+                .member_row(&json!("worker"), Some(&json!("other")))?
+                .is_none()
+        );
+        assert!(transaction.member_row(&json!("stranger"), None)?.is_none());
         assert_eq!(
             transaction
-                .member_row("worker", Some("worker-r"))?
+                .member_row(&json!("worker"), Some(&json!("worker-r")))?
                 .and_then(|row| row.text("id").map(str::to_owned)),
             Some("worker".to_owned())
         );
-        transaction.record_launch("worker", &launch)?;
-        let recorded = transaction.member_row("worker", None)?.unwrap();
+        transaction.record_launch(&json!("worker"), &launch)?;
+        let recorded = transaction.member_row(&json!("worker"), None)?.unwrap();
         assert_eq!(
             (
                 recorded.get("pid"),
@@ -335,34 +339,34 @@ fn launch_records_are_written_by_pythons_sql() {
             ),
             (Some(&json!(4242)), Some("Mon Sep 28"), Some("reserved"))
         );
-        transaction.activate_member("worker", &launch, Some("/w.sock"))?;
-        let active = transaction.member_row("worker", None)?.unwrap();
+        transaction.activate_member(&json!("worker"), &launch, &json!("/w.sock"))?;
+        let active = transaction.member_row(&json!("worker"), None)?.unwrap();
         assert_eq!(
             (active.text("status"), active.text("socket")),
             (Some("live"), Some("/w.sock"))
         );
-        transaction.activate_member("worker", &launch, None)?;
+        transaction.activate_member(&json!("worker"), &launch, &Value::Null)?;
         assert_eq!(
             transaction
-                .member_row("worker", None)?
+                .member_row(&json!("worker"), None)?
                 .unwrap()
                 .get("socket"),
             Some(&json!(null))
         );
-        transaction.set_socket("worker", Some("/again.sock"))?;
+        transaction.set_socket("worker", &json!("/again.sock"))?;
         assert_eq!(
             transaction
-                .member_row("worker", None)?
+                .member_row(&json!("worker"), None)?
                 .unwrap()
                 .text("socket"),
             Some("/again.sock")
         );
         // An unknown member is left as it is: nothing to update, no error.
-        transaction.set_socket("stranger", Some("/s"))?;
-        assert!(transaction.member_row("stranger", None)?.is_none());
-        transaction.reserve_member("unlaunched", "u-r", "worker")?;
-        transaction.mark_member_dead_unlaunched("unlaunched")?;
-        let dead = transaction.member_row("unlaunched", None)?.unwrap();
+        transaction.set_socket("stranger", &json!("/s"))?;
+        assert!(transaction.member_row(&json!("stranger"), None)?.is_none());
+        transaction.reserve_member("unlaunched", &json!("u-r"), "worker")?;
+        transaction.mark_member_dead_unlaunched(&json!("unlaunched"))?;
+        let dead = transaction.member_row(&json!("unlaunched"), None)?.unwrap();
         assert_eq!(
             (dead.text("status"), dead.text("launcher")),
             (Some("dead"), Some("worker"))
@@ -373,6 +377,123 @@ fn launch_records_are_written_by_pythons_sql() {
     .unwrap();
 }
 
+/// #2271 round-1 review M1: the membership statements bind the caller's
+/// values as Python's `sqlite3` does. The column affinity stores them (an
+/// INTEGER pid takes numeric text, a TEXT column a number's text), `id=?`
+/// finds `'5'` by `5`, `reservation=?` finds nothing by NULL, and a value
+/// `sqlite3` cannot bind is refused naming its position in the statement.
+#[test]
+fn membership_values_bind_as_pythons_sqlite3_binds_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let repository = repository_in(&dir);
+    within(&repository, true, |transaction| {
+        transaction.reserve_member("5", &json!(5), "parent")?;
+        let row = transaction.member_row(&json!(5), None)?.unwrap();
+        assert_eq!(row.get("reservation"), Some(&json!("5")));
+        assert!(
+            transaction
+                .member_row(&json!("5"), Some(&json!(5)))?
+                .is_some()
+        );
+        assert!(
+            transaction
+                .member_row(&json!(5), Some(&Value::Null))?
+                .is_none()
+        );
+        assert!(transaction.member_row(&Value::Null, None)?.is_none());
+        let launch = LaunchIdentity {
+            pid: json!("7"),
+            started: json!(5.5),
+        };
+        transaction.record_launch(&json!(5), &launch)?;
+        transaction.activate_member(&json!(5.0), &launch, &json!(true))?;
+        let row = transaction.member_row(&json!("5"), None)?.unwrap();
+        assert_eq!(
+            (row.get("pid"), row.get("started"), row.get("status")),
+            (
+                Some(&json!(7)),
+                Some(&json!("5.5")),
+                Some(&json!("reserved"))
+            ),
+            "5.0 is the text '5.0' under TEXT affinity: no row was activated"
+        );
+        transaction.activate_member(&json!(5), &launch, &json!(true))?;
+        transaction.set_socket("5", &json!(false))?;
+        let row = transaction.member_row(&json!("5"), None)?.unwrap();
+        assert_eq!(
+            (row.get("status"), row.get("socket")),
+            (Some(&json!("live")), Some(&json!("0")))
+        );
+        Ok(())
+    })
+    .unwrap();
+    let list = |position: usize| {
+        BoardError::new(format!(
+            "coordination store unavailable or contended: \
+             Error binding parameter {position}: type 'list' is not supported"
+        ))
+    };
+    let launch = |pid: Value, started: Value| LaunchIdentity { pid, started };
+    for (position, refused) in [
+        (
+            1,
+            within(&repository, false, |transaction| {
+                transaction.member_row(&json!([5]), None).map(drop)
+            }),
+        ),
+        (
+            2,
+            within(&repository, false, |transaction| {
+                transaction
+                    .member_row(&json!("5"), Some(&json!(["5"])))
+                    .map(drop)
+            }),
+        ),
+        (
+            2,
+            within(&repository, false, |transaction| {
+                transaction.reserve_member("6", &json!([6]), "parent")
+            }),
+        ),
+        (
+            3,
+            within(&repository, false, |transaction| {
+                transaction.activate_member(&json!("5"), &launch(json!(1), json!("s")), &json!([]))
+            }),
+        ),
+        (
+            4,
+            within(&repository, false, |transaction| {
+                transaction.activate_member(
+                    &json!(["5"]),
+                    &launch(json!(1), json!("s")),
+                    &Value::Null,
+                )
+            }),
+        ),
+        (
+            2,
+            within(&repository, false, |transaction| {
+                transaction.record_launch(&json!("5"), &launch(json!(1), json!([])))
+            }),
+        ),
+        (
+            1,
+            within(&repository, false, |transaction| {
+                transaction.mark_member_dead_unlaunched(&json!([]))
+            }),
+        ),
+        (
+            1,
+            within(&repository, false, |transaction| {
+                transaction.set_socket("5", &json!([]))
+            }),
+        ),
+    ] {
+        assert_eq!(refused, Err(list(position)));
+    }
+}
+
 /// A reservation is unique, as the schema declares, and a second row for
 /// one member is refused: both are store refusals with SQLite's text.
 #[test]
@@ -380,7 +501,7 @@ fn a_reused_reservation_or_identity_is_a_store_refusal() {
     let dir = tempfile::tempdir().unwrap();
     let repository = repository_in(&dir);
     within(&repository, true, |transaction| {
-        transaction.reserve_member("worker", "r", "parent")
+        transaction.reserve_member("worker", &json!("r"), "parent")
     })
     .unwrap();
     for (member, reservation, column) in [
@@ -388,7 +509,7 @@ fn a_reused_reservation_or_identity_is_a_store_refusal() {
         ("worker", "s", "members.id"),
     ] {
         let refused = within(&repository, false, |transaction| {
-            transaction.reserve_member(member, reservation, "parent")
+            transaction.reserve_member(member, &json!(reservation), "parent")
         })
         .unwrap_err();
         assert_eq!(

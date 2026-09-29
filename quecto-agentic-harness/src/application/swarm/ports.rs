@@ -177,29 +177,38 @@ pub trait BoardMembers {
     fn claim_counts(&self, coordinator: Option<&str>) -> Result<MemberClaimCounts, BoardError>;
     fn insert_member(&self, member: &NewMember) -> Result<(), BoardError>;
     /// `SELECT * FROM members WHERE id=?` (and `AND reservation=?` when
-    /// `reservation` is given) as `dict(row)`.
+    /// `reservation` is given) as `dict(row)`. The id and reservation are
+    /// the caller's values, bound as Python's `sqlite3` binds them (so `5`
+    /// finds the id `'5'` through TEXT affinity, and a NULL matches
+    /// nothing); a value it cannot bind is refused naming its parameter.
     fn member_row(
         &self,
-        id: &str,
-        reservation: Option<&str>,
+        id: &Value,
+        reservation: Option<&Value>,
     ) -> Result<Option<MemberRow>, BoardError>;
     /// `Transaction.reserve_member`: a `reserved` row with no process yet,
-    /// launched by `launcher` (#1961).
-    fn reserve_member(&self, id: &str, reservation: &str, launcher: &str)
-    -> Result<(), BoardError>;
-    /// The member is live in the process `launch` at `socket`.
-    fn activate_member(
+    /// launched by `launcher` (#1961), the reservation bound as given.
+    fn reserve_member(
         &self,
         id: &str,
-        launch: &LaunchIdentity,
-        socket: Option<&str>,
+        reservation: &Value,
+        launcher: &str,
     ) -> Result<(), BoardError>;
-    /// The launcher's record of the member's process.
-    fn record_launch(&self, id: &str, launch: &LaunchIdentity) -> Result<(), BoardError>;
+    /// The member is live in the process `launch` at `socket`, each bound
+    /// as given.
+    fn activate_member(
+        &self,
+        id: &Value,
+        launch: &LaunchIdentity,
+        socket: &Value,
+    ) -> Result<(), BoardError>;
+    /// The launcher's record of the member's process, bound as given.
+    fn record_launch(&self, id: &Value, launch: &LaunchIdentity) -> Result<(), BoardError>;
     /// An admission that was never launched is abandoned: the member is dead.
-    fn mark_member_dead_unlaunched(&self, id: &str) -> Result<(), BoardError>;
-    /// The member's endpoint; a member without a row is left as it is.
-    fn set_socket(&self, id: &str, socket: Option<&str>) -> Result<(), BoardError>;
+    fn mark_member_dead_unlaunched(&self, id: &Value) -> Result<(), BoardError>;
+    /// The member's endpoint, bound as given; a member without a row is
+    /// left as it is.
+    fn set_socket(&self, id: &str, socket: &Value) -> Result<(), BoardError>;
 }
 
 /// The `events` log.

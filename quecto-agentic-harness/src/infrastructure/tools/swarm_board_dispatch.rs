@@ -13,19 +13,33 @@
 //! and never sequences two use cases. It serves `_status` and `_snapshot`
 //! (#2270) and the harness's membership methods `_admit`, `_activate`,
 //! `_record_launch`, `_release_unlaunched` and `_socket` (#2271); later
-//! slices add methods, and S13 wires it into `SwarmContext`. The
-//! membership methods are harness-internal, so their launch identity binds
-//! as the Rust callers pass it (`swarm_coordination.rs`): the pid a JSON
-//! integer, `started` and a reservation text, a socket text or `null`; any
-//! other type is calling syntax (epic P2). `_admit`'s member stays loose,
-//! for the board's own bound. `create_run`, `bootstrap_run` and
-//! `bootstrap_join` (the transactional halves of `create` and
-//! `_bootstrap`, and `_bootstrap`'s join, which the differential harness
-//! drives) exist only in `test` and `test-support` builds: a production
-//! build parses none of them and refuses each as an unknown method.
-//! Python's real `create` commits and then calls `summary()`, which can
-//! still raise: S12 must keep that order, a created run answered with a
-//! refusal, and so must `_bootstrap`'s join, whose summary S12 adds too.
+//! slices add methods, and S13 wires it into `SwarmContext`. Every
+//! membership argument (member, reservation, pid, start time, socket)
+//! reaches the use case as the JSON value passed (#2271 round-1 review
+//! M1): Python binds each untyped, so the store binds it as Python's
+//! `sqlite3` does and the board compares it by Python's `==`; no type is
+//! refused here. `create_run`, `bootstrap_run` and `bootstrap_join` (the
+//! transactional halves of `create` and `_bootstrap`, and `_bootstrap`'s
+//! join, which the differential harness drives) exist only in `test` and
+//! `test-support` builds: a production build parses none of them and
+//! refuses each as an unknown method.
+//!
+//! What S12 must keep when it adds the summaries Python answers with:
+//!
+//! - `create` commits and then calls `summary()`, which can still raise: a
+//!   created run answered with a refusal.
+//! - `_bootstrap`'s join ends every branch with `coordinator.summary()`,
+//!   after its writes commit, so an admitted or re-activated member can be
+//!   answered with a refusal too.
+//! - The join's already-live branch writes nothing and still ends with
+//!   `coordinator.summary()`, whose gate can refuse (a coordinator that is
+//!   nobody, or dead). `Joined::AlreadyLive` carries the coordinator the
+//!   join read, so S12 runs that gate as it without reading the run again.
+//!
+//! `JoinRun` composes `AdmitMember` and `ActivateMember` by a deliberate
+//! decision (#2271 round-1 review L3): Python's `join_process` calls those
+//! two `Workbench` methods, so the use case sequences them, and the
+//! dispatcher still calls one use case per method.
 //!
 //! Each call leaves one `tracing` record on [`TELEMETRY_TARGET`] (DEBUG for
 //! a read-only method, INFO otherwise) with the
@@ -390,12 +404,11 @@ fn admit(
     actor: &str,
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
-    let method = Method::Admit;
     let [member, reservation] = take(arguments)?;
     let admitted = handles.admit_member.execute(AdmitMemberRequest {
         actor: actor.to_owned(),
         member,
-        reservation: text_argument(method, "reservation", reservation)?,
+        reservation,
     })?;
     Ok(Served {
         value: member_row(admitted.row),
@@ -411,14 +424,13 @@ fn activate(
     actor: &str,
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
-    let method = Method::Activate;
     let [member, reservation, pid, started, socket] = take(arguments)?;
     handles.activate_member.execute(ActivateMemberRequest {
         actor: actor.to_owned(),
-        member: text_argument(method, "member", member)?,
-        reservation: optional_text_argument(method, "reservation", reservation)?,
-        launch: launch_identity(method, pid, started)?,
-        socket: optional_text_argument(method, "socket", socket)?,
+        member,
+        reservation,
+        launch: LaunchIdentity { pid, started },
+        socket,
     })?;
     Ok(done("activated"))
 }
@@ -428,15 +440,14 @@ fn record_launch(
     actor: &str,
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
-    let method = Method::RecordLaunch;
     let [member, reservation, pid, started] = take(arguments)?;
     handles
         .record_member_launch
         .execute(RecordMemberLaunchRequest {
             actor: actor.to_owned(),
-            member: text_argument(method, "member", member)?,
-            reservation: text_argument(method, "reservation", reservation)?,
-            launch: launch_identity(method, pid, started)?,
+            member,
+            reservation,
+            launch: LaunchIdentity { pid, started },
         })?;
     Ok(done("recorded"))
 }
@@ -451,7 +462,7 @@ fn release_unlaunched(
         .release_unlaunched_member
         .execute(ReleaseUnlaunchedMemberRequest {
             actor: actor.to_owned(),
-            member: text_argument(Method::ReleaseUnlaunched, "member", member)?,
+            member,
         })?;
     Ok(done("released"))
 }
@@ -466,7 +477,7 @@ fn socket(
         .register_member_socket
         .execute(RegisterMemberSocketRequest {
             actor: actor.to_owned(),
-            socket: optional_text_argument(Method::Socket, "socket", socket)?,
+            socket,
         })?;
     Ok(done("registered"))
 }
@@ -476,53 +487,6 @@ fn done(decision: &'static str) -> Served {
     Served {
         value: Value::Null,
         decision,
-    }
-}
-
-/// The launch identity as the Rust callers bind it
-/// (`swarm_coordination.rs`): the pid an INTEGER, `started` TEXT.
-fn launch_identity(
-    method: Method,
-    pid: Value,
-    started: Value,
-) -> Result<LaunchIdentity, BoardError> {
-    let Some(pid) = pid.as_i64() else {
-        return Err(BoardError::new(format!(
-            "{}: pid must be an integer",
-            method.name()
-        )));
-    };
-    Ok(LaunchIdentity {
-        pid,
-        started: text_argument(method, "started", started)?,
-    })
-}
-
-/// A harness-internal text argument (epic P2: calling syntax, this
-/// module's own text).
-fn text_argument(method: Method, name: &str, value: Value) -> Result<String, BoardError> {
-    match value {
-        Value::String(text) => Ok(text),
-        _ => Err(BoardError::new(format!(
-            "{}: {name} must be a string",
-            method.name()
-        ))),
-    }
-}
-
-/// [`text_argument`] that may be `null`.
-fn optional_text_argument(
-    method: Method,
-    name: &str,
-    value: Value,
-) -> Result<Option<String>, BoardError> {
-    match value {
-        Value::String(text) => Ok(Some(text)),
-        Value::Null => Ok(None),
-        _ => Err(BoardError::new(format!(
-            "{}: {name} must be a string or null",
-            method.name()
-        ))),
     }
 }
 
@@ -539,9 +503,8 @@ mod test_only {
     use serde_json::Value;
 
     use super::{
-        BootstrapRunRequest, CreateBranch, CreateRunRequest, JoinRunRequest, Joined, Method,
-        Parameter, Served, SwarmBoardHandles, done, launch_identity, optional_text_argument,
-        required, take,
+        BootstrapRunRequest, CreateBranch, CreateRunRequest, JoinRunRequest, Joined,
+        LaunchIdentity, Parameter, Served, SwarmBoardHandles, done, required, take,
     };
     use crate::domain::swarm::BoardError;
 
@@ -619,17 +582,16 @@ mod test_only {
         member: &str,
         arguments: Vec<Value>,
     ) -> Result<Served, BoardError> {
-        let method = Method::BootstrapJoin;
         let [pid, started, socket, reservation] = take(arguments)?;
         let joined = handles.join_run.execute(JoinRunRequest {
             member: member.to_owned(),
-            reservation: optional_text_argument(method, "reservation", reservation)?,
-            launch: launch_identity(method, pid, started)?,
-            socket: optional_text_argument(method, "socket", socket)?,
+            reservation,
+            launch: LaunchIdentity { pid, started },
+            socket,
         })?;
         Ok(done(match joined {
             Joined::Admitted => "admitted",
-            Joined::AlreadyLive => "already_live",
+            Joined::AlreadyLive { .. } => "already_live",
             Joined::Reactivated => "reactivated",
         }))
     }

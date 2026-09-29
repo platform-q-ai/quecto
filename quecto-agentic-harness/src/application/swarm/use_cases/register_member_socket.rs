@@ -28,7 +28,7 @@ impl RegisterMemberSocket {
             &*self.clock,
             actor,
             Access::default(),
-            |transaction, _run| transaction.set_socket(actor, request.socket.as_deref()),
+            |transaction, _run| transaction.set_socket(actor, &request.socket),
         )
     }
 }

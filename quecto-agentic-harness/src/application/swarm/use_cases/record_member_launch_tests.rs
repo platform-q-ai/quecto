@@ -10,11 +10,11 @@ use crate::domain::swarm::BoardError;
 fn record(member: &str, reservation: &str, pid: i64, started: &str) -> RecordMemberLaunchRequest {
     RecordMemberLaunchRequest {
         actor: "parent".to_owned(),
-        member: member.to_owned(),
-        reservation: reservation.to_owned(),
+        member: json!(member),
+        reservation: json!(reservation),
         launch: LaunchIdentity {
-            pid,
-            started: started.to_owned(),
+            pid: json!(pid),
+            started: json!(started),
         },
     }
 }

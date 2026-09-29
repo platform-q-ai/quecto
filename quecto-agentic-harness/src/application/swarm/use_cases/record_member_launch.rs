@@ -10,7 +10,10 @@ use crate::domain::swarm::{Access, BoardError};
 
 /// Through the operation gate (`active=False`): the member's row under the
 /// reservation must be alive (`unknown_member_status_is_not_alive`,
-/// #2295), and a process already recorded must be this one. No event.
+/// #2295), and a process already recorded must be this one. No event. The
+/// row is found in SQL with the caller's member and reservation bound as
+/// given (a NULL reservation finds nothing), and the process is compared
+/// by Python's `==`.
 pub struct RecordMemberLaunch {
     repository: Arc<dyn BoardRepository>,
     clock: Arc<dyn Clock + Send + Sync>,
@@ -25,7 +28,7 @@ impl RecordMemberLaunch {
     /// An authorisation refusal, `stale launch reservation`, `conflicting
     /// launch identity`, or the store's.
     pub fn execute(&self, request: RecordMemberLaunchRequest) -> Result<(), BoardError> {
-        let member = request.member.as_str();
+        let member = &request.member;
         operation(
             &*self.repository,
             &*self.clock,

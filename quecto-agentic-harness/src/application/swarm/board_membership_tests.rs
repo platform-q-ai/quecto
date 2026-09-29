@@ -14,10 +14,11 @@ fn row(reservation: Value, status: &str, pid: Value, started: Value) -> MemberRo
 }
 
 fn launch(pid: i64, started: &str) -> LaunchIdentity {
-    LaunchIdentity {
-        pid,
-        started: started.to_owned(),
-    }
+    loose(json!(pid), json!(started))
+}
+
+fn loose(pid: Value, started: Value) -> LaunchIdentity {
+    LaunchIdentity { pid, started }
 }
 
 #[test]
@@ -72,15 +73,15 @@ fn only_a_reserved_row_without_a_pid_is_unlaunched() {
 #[test]
 fn reservations_compare_as_python_compares_them() {
     let held = row(json!("r"), "live", json!(null), json!(null));
-    assert!(holds_reservation(&held, Some("r")));
-    assert!(!holds_reservation(&held, Some("R")));
-    assert!(!holds_reservation(&held, None));
+    assert!(holds_reservation(&held, &json!("r")));
+    assert!(!holds_reservation(&held, &json!("R")));
+    assert!(!holds_reservation(&held, &Value::Null));
     let null = row(json!(null), "live", json!(null), json!(null));
-    assert!(holds_reservation(&null, None));
-    assert!(!holds_reservation(&null, Some("")));
+    assert!(holds_reservation(&null, &Value::Null));
+    assert!(!holds_reservation(&null, &json!("")));
     let number = row(json!(5), "live", json!(null), json!(null));
-    assert!(!holds_reservation(&number, Some("5")));
-    assert!(!holds_reservation(&number, None));
+    assert!(!holds_reservation(&number, &json!("5")));
+    assert!(!holds_reservation(&number, &Value::Null));
 }
 
 #[test]
@@ -137,6 +138,44 @@ fn a_process_is_the_same_only_when_pid_and_start_time_are() {
         &recorded(json!(-two_to_the_63), json!("t")),
         &launch(i64::MIN, "t")
     ));
+}
+
+/// The launch identity is the caller's value as given, compared by
+/// Python's `==` (#2271 round-1 review M1).
+#[test]
+fn a_loose_launch_identity_compares_as_python_compares_it() {
+    let recorded = |pid, started| row(json!("r"), "live", pid, started);
+    for (stored, given) in [
+        ((json!(7), json!("t")), (json!(7.0), json!("t"))),
+        ((json!(1), json!("t")), (json!(true), json!("t"))),
+        ((json!(7), json!("5")), (json!(7), json!("5"))),
+        ((json!(null), json!(null)), (json!(null), json!(null))),
+    ] {
+        assert!(
+            same_process(
+                &recorded(stored.0.clone(), stored.1.clone()),
+                &loose(given.0.clone(), given.1.clone())
+            ),
+            "{stored:?} {given:?}"
+        );
+    }
+    for (stored, given) in [
+        ((json!(7), json!("t")), (json!("7"), json!("t"))),
+        ((json!(7), json!("5")), (json!(7), json!(5))),
+        ((json!(7), json!("t")), (json!([7]), json!("t"))),
+        ((json!(null), json!("t")), (json!(0), json!("t"))),
+    ] {
+        assert!(
+            !same_process(
+                &recorded(stored.0.clone(), stored.1.clone()),
+                &loose(given.0.clone(), given.1.clone())
+            ),
+            "{stored:?} {given:?}"
+        );
+    }
+    let numeric = row(json!("5"), "live", json!(null), json!(null));
+    assert!(holds_reservation(&numeric, &json!("5")));
+    assert!(!holds_reservation(&numeric, &json!(5)));
 }
 
 #[test]

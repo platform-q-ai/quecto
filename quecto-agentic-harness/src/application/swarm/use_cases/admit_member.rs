@@ -15,8 +15,10 @@ use crate::domain::swarm::{Access, BoardError, admission, bounded};
 /// read in the one transaction that inserts the row, so concurrent
 /// admissions never pass the member limit. A new admission is a `reserved`
 /// row launched by the actor and the event `reserved`; a retry under the
-/// same reservation writes nothing. Either way the answer is the member's
-/// row as `dict(row)`.
+/// same reservation (Python's `==`) writes nothing. Either way the answer
+/// is the member's row as `dict(row)`. The reservation is the caller's
+/// value, bound as given: a number is stored as its text, and a value
+/// `sqlite3` cannot bind is refused only after admission decided.
 pub struct AdmitMember {
     repository: Arc<dyn BoardRepository>,
     clock: Arc<dyn Clock + Send + Sync>,
@@ -33,7 +35,7 @@ impl AdmitMember {
     pub fn execute(&self, request: AdmitMemberRequest) -> Result<AdmittedMember, BoardError> {
         let member = bounded(&request.member, "member", MEMBER_MAX_BYTES)?;
         let actor = request.actor.as_str();
-        let reservation = request.reservation.as_str();
+        let reservation = &request.reservation;
         operation(
             &*self.repository,
             &*self.clock,
@@ -43,7 +45,7 @@ impl AdmitMember {
                 let prior = transaction.member(member)?;
                 let usage = transaction.usage()?;
                 let now = self.clock.now_seconds();
-                let decision = if admission(run, prior.as_ref(), Some(reservation), usage, now)? {
+                let decision = if admission(run, prior.as_ref(), reservation, usage, now)? {
                     transaction.reserve_member(member, reservation, actor)?;
                     transaction.event(
                         actor,
@@ -56,9 +58,11 @@ impl AdmitMember {
                     AdmissionDecision::Retry
                 };
                 // Admission answered for a row it either found or wrote.
-                let row = transaction.member_row(member, None)?.ok_or_else(|| {
-                    BoardError::new("coordination store lost the member it admitted")
-                })?;
+                let row = transaction
+                    .member_row(&text(member), None)?
+                    .ok_or_else(|| {
+                        BoardError::new("coordination store lost the member it admitted")
+                    })?;
                 debug_assert_eq!(row.text("id"), Some(member), "the admitted member's row");
                 Ok(AdmittedMember { row, decision })
             },

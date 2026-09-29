@@ -4,19 +4,23 @@
 //! and `JoinRun`.
 //!
 //! `actor` is the member the call acts as (Python's `store.actor`): the
-//! events' actor, and the `launcher` an admission records. Each is a
-//! harness-internal method, so the launch identity is typed as the harness
-//! passes it (`ProcessIdentity`: an integer pid and the start-time text).
+//! events' actor, and the `launcher` an admission records. Every other
+//! argument stays the JSON value the caller passed (#2271 round-1 review
+//! M1): Python binds each to its SQL untyped, the column affinity decides
+//! what is stored, and the board compares stored values with the argument
+//! by Python's `==` (`domain::swarm::python_equal`).
 use serde_json::Value;
 
 use super::MemberRow;
 
-/// A launched member's process: `members.pid` INTEGER and `members.started`
-/// TEXT, as the Rust callers bind them (`swarm_coordination.rs`).
+/// A launched member's process as the caller passed it: `members.pid`
+/// (INTEGER affinity) and `members.started` (TEXT affinity) are bound as
+/// given, and a recorded process is this one only when both compare equal
+/// by Python's `==`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LaunchIdentity {
-    pub pid: i64,
-    pub started: String,
+    pub pid: Value,
+    pub started: Value,
 }
 
 /// `Workbench._admit(member, reservation)` as `actor`. `member` stays the
@@ -26,7 +30,7 @@ pub struct LaunchIdentity {
 pub struct AdmitMemberRequest {
     pub actor: String,
     pub member: Value,
-    pub reservation: String,
+    pub reservation: Value,
 }
 
 /// Which of admission's answers was taken.
@@ -47,23 +51,22 @@ pub struct AdmittedMember {
 }
 
 /// `Workbench._activate(member, reservation, pid, started, socket)` as
-/// `actor`. `reservation` is `None` only when a join passes on a NULL
-/// stored reservation (Python compares `None != None` as equal).
+/// `actor`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivateMemberRequest {
     pub actor: String,
-    pub member: String,
-    pub reservation: Option<String>,
+    pub member: Value,
+    pub reservation: Value,
     pub launch: LaunchIdentity,
-    pub socket: Option<String>,
+    pub socket: Value,
 }
 
 /// `Workbench._record_launch(member, reservation, pid, started)` as `actor`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RecordMemberLaunchRequest {
     pub actor: String,
-    pub member: String,
-    pub reservation: String,
+    pub member: Value,
+    pub reservation: Value,
     pub launch: LaunchIdentity,
 }
 
@@ -71,14 +74,14 @@ pub struct RecordMemberLaunchRequest {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReleaseUnlaunchedMemberRequest {
     pub actor: String,
-    pub member: String,
+    pub member: Value,
 }
 
 /// `Workbench._socket(socket)` as `actor`: the actor's own endpoint.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RegisterMemberSocketRequest {
     pub actor: String,
-    pub socket: Option<String>,
+    pub socket: Value,
 }
 
 /// `join_process(context, reservation, pid, started, socket)` for the
@@ -86,18 +89,24 @@ pub struct RegisterMemberSocketRequest {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JoinRunRequest {
     pub member: String,
-    pub reservation: Option<String>,
+    pub reservation: Value,
     pub launch: LaunchIdentity,
-    pub socket: Option<String>,
+    pub socket: Value,
 }
 
-/// Which of the join's branches ran.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Which of the join's branches ran. Python answers every branch with the
+/// coordinator's `summary()`, a read model S12 adds.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Joined {
     /// A new identity: the coordinator admitted it, then activated it.
     Admitted,
     /// This process is already the member's live one: nothing was written.
-    AlreadyLive,
+    /// Python still answers `coordinator.summary()`, whose gate can refuse
+    /// (a coordinator that is nobody, or dead), so the branch carries the
+    /// coordinator the join read for S12 to run that gate as, without
+    /// reading the run again. `None` is a run whose coordinator is NULL or
+    /// not text, which Python's `Workbench` would act as.
+    AlreadyLive { coordinator: Option<String> },
     /// A known identity under its own reservation: the coordinator
     /// activated it.
     Reactivated,

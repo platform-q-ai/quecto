@@ -9,8 +9,8 @@ use crate::domain::swarm::{BoardError, RunState};
 
 fn launch(pid: i64, started: &str) -> LaunchIdentity {
     LaunchIdentity {
-        pid,
-        started: started.to_owned(),
+        pid: json!(pid),
+        started: json!(started),
     }
 }
 
@@ -22,10 +22,10 @@ fn activate(
 ) -> ActivateMemberRequest {
     ActivateMemberRequest {
         actor: "parent".to_owned(),
-        member: member.to_owned(),
-        reservation: reservation.map(str::to_owned),
+        member: json!(member),
+        reservation: reservation.map_or(Value::Null, Value::from),
         launch: launch(pid, started),
-        socket: Some("/w.sock".to_owned()),
+        socket: json!("/w.sock"),
     }
 }
 

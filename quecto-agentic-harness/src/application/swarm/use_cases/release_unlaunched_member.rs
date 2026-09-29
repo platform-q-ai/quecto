@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::application::swarm::board_membership::unlaunched;
-use crate::application::swarm::board_operation::{detail, operation, text};
+use crate::application::swarm::board_operation::{detail, operation};
 use crate::application::swarm::dto::ReleaseUnlaunchedMemberRequest;
 use crate::application::swarm::ports::{BoardRepository, Clock};
 use crate::domain::swarm::{Access, BoardError};
@@ -25,7 +25,7 @@ impl ReleaseUnlaunchedMember {
     /// An authorisation refusal, `only an unlaunched reservation may be
     /// released`, or the store's.
     pub fn execute(&self, request: ReleaseUnlaunchedMemberRequest) -> Result<(), BoardError> {
-        let member = request.member.as_str();
+        let member = &request.member;
         let actor = request.actor.as_str();
         operation(
             &*self.repository,
@@ -44,7 +44,7 @@ impl ReleaseUnlaunchedMember {
                     actor,
                     self.clock.now_seconds(),
                     "launch_abandoned",
-                    &detail([("member", text(member))]),
+                    &detail([("member", member.clone())]),
                 )
             },
         )

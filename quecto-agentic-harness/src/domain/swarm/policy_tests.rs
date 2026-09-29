@@ -226,12 +226,12 @@ fn admission_is_idempotent_for_the_same_live_reservation() {
     for status in [MemberState::LIVE, MemberState::RESERVED] {
         let prior = member("worker", status, "token");
         assert_eq!(
-            admission(&running(), Some(&prior), Some("token"), 1, 50.0),
+            admission(&running(), Some(&prior), &json!("token"), 1, 50.0),
             Ok(false)
         );
     }
     assert_eq!(
-        admission(&run(RunState::SETUP), None, Some("token"), 1, 500.0),
+        admission(&run(RunState::SETUP), None, &json!("token"), 1, 500.0),
         Ok(true)
     );
 }
@@ -240,30 +240,30 @@ fn admission_is_idempotent_for_the_same_live_reservation() {
 fn admission_counts_capacity_before_identity_reuse() {
     let reused = member("worker", MemberState::LIVE, "old");
     assert_eq!(
-        message(admission(&running(), Some(&reused), Some("new"), 2, 50.0)),
+        message(admission(&running(), Some(&reused), &json!("new"), 2, 50.0)),
         "swarm limit 2, current usage 2; reuse the existing pool"
     );
     // The same live reservation is answered before capacity (Python order).
     let same = member("worker", MemberState::LIVE, "token");
     assert_eq!(
-        admission(&running(), Some(&same), Some("token"), 2, 50.0),
+        admission(&running(), Some(&same), &json!("token"), 2, 50.0),
         Ok(false)
     );
     assert_eq!(
-        message(admission(&running(), Some(&reused), Some("new"), 1, 50.0)),
+        message(admission(&running(), Some(&reused), &json!("new"), 1, 50.0)),
         "member identity already used; choose a stable new identity"
     );
     let dead = member("worker", MemberState::DEAD, "token");
     assert_eq!(
-        message(admission(&running(), Some(&dead), Some("token"), 1, 50.0)),
+        message(admission(&running(), Some(&dead), &json!("token"), 1, 50.0)),
         "member identity already used; choose a stable new identity"
     );
     assert_eq!(
-        message(admission(&running(), None, Some("token"), 3, 50.0)),
+        message(admission(&running(), None, &json!("token"), 3, 50.0)),
         "swarm limit 2, current usage 3; reuse the existing pool"
     );
     assert_eq!(
-        admission(&running(), None, Some("token"), 1, 50.0),
+        admission(&running(), None, &json!("token"), 1, 50.0),
         Ok(true)
     );
 }
@@ -281,13 +281,25 @@ fn admission_refuses_stopped_and_expired_runs() {
         let expected = format!("run is {}; no new admission", status.as_str());
         let same = member("worker", MemberState::LIVE, "token");
         assert_eq!(
-            message(admission(&run(status), Some(&same), Some("token"), 0, 0.0)),
+            message(admission(
+                &run(status),
+                Some(&same),
+                &json!("token"),
+                0,
+                0.0
+            )),
             expected
         );
     }
     let same = member("worker", MemberState::LIVE, "token");
     assert_eq!(
-        message(admission(&running(), Some(&same), Some("token"), 1, 100.0)),
+        message(admission(
+            &running(),
+            Some(&same),
+            &json!("token"),
+            1,
+            100.0
+        )),
         "run is running; no new admission"
     );
 }
@@ -581,7 +593,7 @@ fn unknown_statuses_found_in_a_file_are_refused_affirmatively() {
         message(admission(
             &running(),
             Some(&odd_prior),
-            Some("token"),
+            &json!("token"),
             1,
             50.0
         )),
@@ -595,7 +607,7 @@ fn unknown_statuses_found_in_a_file_are_refused_affirmatively() {
         message(admission(
             &run(RunState::new("odd")),
             None,
-            Some("token"),
+            &json!("token"),
             0,
             0.0
         )),
@@ -657,14 +669,14 @@ fn admission_retries_a_null_reservation_idempotently() {
         reservation: None,
     };
     assert_eq!(
-        admission(&running(), Some(&unreserved), None, 2, 50.0),
+        admission(&running(), Some(&unreserved), &Value::Null, 2, 50.0),
         Ok(false)
     );
     assert_eq!(
         message(admission(
             &running(),
             Some(&unreserved),
-            Some("token"),
+            &json!("token"),
             1,
             50.0
         )),
@@ -672,10 +684,16 @@ fn admission_retries_a_null_reservation_idempotently() {
     );
     let reserved = member("worker", MemberState::LIVE, "token");
     assert_eq!(
-        message(admission(&running(), Some(&reserved), None, 1, 50.0)),
+        message(admission(
+            &running(),
+            Some(&reserved),
+            &Value::Null,
+            1,
+            50.0
+        )),
         "member identity already used; choose a stable new identity"
     );
-    assert_eq!(admission(&running(), None, None, 1, 50.0), Ok(true));
+    assert_eq!(admission(&running(), None, &Value::Null, 1, 50.0), Ok(true));
 }
 
 /// Rows edited outside the board (#2270 review L5): a run with no

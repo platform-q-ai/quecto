@@ -10,7 +10,7 @@ use crate::domain::swarm::BoardError;
 fn release(member: &str) -> ReleaseUnlaunchedMemberRequest {
     ReleaseUnlaunchedMemberRequest {
         actor: "parent".to_owned(),
-        member: member.to_owned(),
+        member: json!(member),
     }
 }
 

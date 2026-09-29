@@ -5,13 +5,13 @@ use crate::application::swarm::board_test_support::{
     MemoryBoard, SteppingClock, member_row, running_board, stored_member,
 };
 use crate::application::swarm::dto::{AdmissionDecision, AdmitMemberRequest};
-use crate::domain::swarm::{BoardError, RunState};
+use crate::domain::swarm::{BoardError, MemberRecord, MemberState, RunState, admission};
 
 fn admit(actor: &str, member: Value, reservation: &str) -> AdmitMemberRequest {
     AdmitMemberRequest {
         actor: actor.to_owned(),
         member,
-        reservation: reservation.to_owned(),
+        reservation: json!(reservation),
     }
 }
 
@@ -45,6 +45,16 @@ fn admission_retries_and_capacity_use_same_atomic_port() {
     assert_eq!(state.events.len(), 1);
     assert_eq!(state.events[0].action, "reserved");
     assert_eq!(state.events[0].detail, json!({"member": "worker"}));
+    // `admission(repo.run(), first, 'token', 2, 100)`: at the deadline the
+    // same admission is refused, as Python's final assertion checks.
+    let run = state.run.expect("the board's run").record;
+    let prior = MemberRecord {
+        id: first.row.text("id").unwrap().to_owned(),
+        status: first.row.text("status").map(MemberState::new),
+        reservation: first.row.text("reservation").map(str::to_owned),
+    };
+    let refused = admission(&run, Some(&prior), &json!("token"), 2, 100.0).unwrap_err();
+    assert!(refused.0.contains("no new admission"), "{refused}");
 }
 
 /// The reserving actor is the member's launcher (#1961), the actor of the
@@ -78,11 +88,7 @@ fn the_actor_is_recorded_as_launcher_and_the_whole_row_is_answered() {
     );
     assert_eq!(
         board.journal(),
-        [
-            "reserve_member child by worker",
-            "insert_member r-child",
-            "event reserved"
-        ]
+        ["reserve_member child by worker", "event reserved"]
     );
     assert_eq!(
         board.transactions(),
