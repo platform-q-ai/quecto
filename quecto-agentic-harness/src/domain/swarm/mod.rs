@@ -41,7 +41,9 @@ pub use telemetry::{BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind};
 pub use usage::{
     UsageBudget, UsageDecision, UsageTotals, request_measurement, usage_budget_decision,
 };
-pub use validation::{bounded, bounded_text, criteria};
+pub use validation::{
+    bounded, bounded_text, completion_revision, criteria, edited_criteria, stored_criteria,
+};
 
 /// A refusal by the board. `Display` is the exact message members see;
 /// [`RefusalKind`] is what telemetry records (#2303). The fields are

@@ -8,7 +8,7 @@ use super::python_value::python_equal;
 use super::records::{
     Criterion, EvidenceRow, MemberRecord, MemberState, RunRecord, RunState, TaskRecord,
 };
-use super::validation::has_content;
+use super::validation::{completion_revision, has_content};
 use super::{BoardError, RefusalKind};
 
 /// Outcomes a coordinator may propose. Each ends the run as a resumable
@@ -270,15 +270,7 @@ pub fn completion(
     has_reservations: bool,
     revision: &Value,
 ) -> Result<RunState, BoardError> {
-    let revision = match revision {
-        Value::String(revision) if has_content(revision) => revision.as_str(),
-        _ => {
-            return Err(BoardError::new(
-                RefusalKind::Invalid,
-                "completion revision required",
-            ));
-        }
-    };
+    let revision = completion_revision(revision)?;
     let satisfied = |criterion: &Criterion| {
         evidence.iter().any(|row| {
             row.criterion == criterion.id

@@ -66,7 +66,7 @@ fn row_id(row: &TaskRow) -> Option<i64> {
 }
 
 impl MemoryTransaction<'_> {
-    fn change_task(&self, id: &Value, change: impl Fn(&mut TaskRow)) {
+    pub(super) fn change_task(&self, id: &Value, change: impl Fn(&mut TaskRow)) {
         let wanted = affinity(id);
         let mut state = self.state.borrow_mut();
         for row in &mut state.tasks {

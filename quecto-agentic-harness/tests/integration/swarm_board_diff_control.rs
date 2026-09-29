@@ -3,7 +3,7 @@
 //! compared after every step by result, refusal text and logical database
 //! dump. Ported from `tests/swarm_helpers_test.py`, plus the loosely typed
 //! arguments Python accepts (epic P3). `complete`, `revalidate_task` and
-//! `amend` are a later slice: a proposed outcome here is `stop`'s.
+//! `amend` have their own scenarios (`swarm_board_diff_completion.rs`).
 use serde_json::json;
 
 use crate::swarm_board_diff_membership::{HOUR, at, create, snapshot};
@@ -108,10 +108,10 @@ fn coordinator_stop_is_a_resumable_pause_only_the_supervisor_lifts() {
     ]));
 }
 
-/// `test_completion_holds_success_until_the_supervisor_closes_it`, with
-/// `stop`'s outcome standing in for `complete`'s: a running run and a
-/// plain pause hold nothing to close; a held outcome is closed only by the
-/// supervisor, after which the run is terminal.
+/// `test_completion_holds_success_until_the_supervisor_closes_it`: a
+/// running run and a plain pause hold nothing to close; the success a
+/// real `complete` proposes is closed only by the supervisor, after which
+/// the run is terminal.
 #[test]
 fn a_proposed_outcome_is_held_until_the_supervisor_closes_it() {
     run_both(&with_worker([
@@ -124,7 +124,13 @@ fn a_proposed_outcome_is_held_until_the_supervisor_closes_it() {
         ),
         control(5.0, "parent", "_close"),
         control(6.0, "parent", "_resume_external"),
-        at(7.0, "parent", "stop", json!(["budget-exhausted", "spent"])),
+        at(
+            7.0,
+            "parent",
+            "evidence",
+            json!(["t", "ci.log", "R1", "command", true]),
+        ),
+        at(7.5, "parent", "complete", json!(["R1"])),
         snapshot(8.0),
         control(9.0, "worker", "_close"),
         control(10.0, "parent", "_close"),

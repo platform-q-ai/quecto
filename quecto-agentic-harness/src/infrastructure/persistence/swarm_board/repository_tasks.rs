@@ -180,7 +180,7 @@ impl BoardFiles for SqliteBoard<'_> {
 impl SqliteBoard<'_> {
     /// One statement with its parameters already bound as Python binds
     /// them: the number of rows it changed.
-    fn run(&self, sql: &str, parameters: &[SqlValue]) -> Result<usize, BoardError> {
+    pub(super) fn run(&self, sql: &str, parameters: &[SqlValue]) -> Result<usize, BoardError> {
         binding::bound_statement(self.connection, sql, parameters)
             .and_then(|mut statement| statement.raw_execute())
             .map_err(failed)
@@ -189,7 +189,7 @@ impl SqliteBoard<'_> {
     /// An `UPDATE` of a task id the use case has just read in this
     /// transaction. A hand-edited table without a primary key may hold
     /// duplicate ids, so an update can change multiple rows.
-    fn run_on_task(&self, sql: &str, parameters: &[SqlValue]) -> Result<(), BoardError> {
+    pub(super) fn run_on_task(&self, sql: &str, parameters: &[SqlValue]) -> Result<(), BoardError> {
         debug_assert!(sql.starts_with("UPDATE tasks SET "), "a task update: {sql}");
         let changed = self.run(sql, parameters)?;
         debug_assert!(changed >= 1, "{sql} changes a task read before it");
@@ -198,7 +198,7 @@ impl SqliteBoard<'_> {
 }
 
 /// `dict(row)` of a `SELECT * FROM tasks` row, its JSON columns loaded.
-fn task_row(row: &Row<'_>) -> rusqlite::Result<TaskRow> {
+pub(super) fn task_row(row: &Row<'_>) -> rusqlite::Result<TaskRow> {
     fetched(row)?;
     let columns = (0..row.as_ref().column_count())
         .map(|index| {

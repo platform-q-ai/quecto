@@ -1495,7 +1495,12 @@ fn application_path_allowed(path: &str) -> bool {
             | "ReadUsageReport"
             | "ResumeRun"
             | "ResumeRunExternally"
-            | "StopRun",
+            | "StopRun"
+            // Completion, revalidation, amendment and evidence (#2273).
+            | "AmendRunContract"
+            | "CompleteRun"
+            | "RecordEvidence"
+            | "RevalidateTask",
         ]
         | [
             "crate",
@@ -1555,7 +1560,19 @@ fn application_path_allowed(path: &str) -> bool {
             | "RunTransition"
             | "StopRunRequest"
             | "UsageReport"
-            | "UsageRow",
+            | "UsageRow"
+            // Completion, revalidation, amendment and evidence (#2273).
+            | "AmendRunContractRequest"
+            | "AmendedContract"
+            | "CompleteRunRequest"
+            | "CompletionState"
+            | "EvidenceEntry"
+            | "EvidenceTransition"
+            | "NewEvidence"
+            | "PriorEvidence"
+            | "RecordEvidenceRequest"
+            | "RevalidateTaskRequest"
+            | "StoredContract",
         ] => true,
         ["crate", "application", ..] => false,
         // Every other crate path must start at a layer infrastructure
@@ -6320,6 +6337,9 @@ const SWARM_BOARD_PORTS: &[&str] = &[
     // The usage report the control receipt carries (#2273; S9 adds the
     // budget's writes).
     "BoardUsage",
+    // Criterion and task evidence completion reads, revalidation replaces
+    // and amendment deletes (#2273; S10 extends it).
+    "BoardEvidence",
 ];
 
 /// Where the swarm capability declares ports: `ports.rs` (and a

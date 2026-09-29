@@ -57,6 +57,57 @@ fn too_long(label: &str, maximum: usize) -> BoardError {
     )
 }
 
+/// Read criteria already stored by the board for completion. Unlike input
+/// validation, descriptions may be absent or non-text, ids may repeat or be
+/// empty, and the list may be empty; only the fields completion uses matter.
+/// A malformed shape is an externally edited board record.
+pub fn stored_criteria(value: &Value) -> Result<Vec<Criterion>, BoardError> {
+    let Value::Array(entries) = value else {
+        return Err(edited_criteria());
+    };
+    entries
+        .iter()
+        .map(|entry| {
+            let id = entry.get("id").and_then(Value::as_str);
+            let kind = entry
+                .get("kind")
+                .and_then(Value::as_str)
+                .and_then(CriterionKind::parse);
+            match (entry.is_object(), id, kind) {
+                (true, Some(id), Some(kind)) => Ok(Criterion {
+                    id: id.to_owned(),
+                    kind,
+                    description: entry
+                        .get("description")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                }),
+                _ => Err(edited_criteria()),
+            }
+        })
+        .collect()
+}
+
+/// Error for criteria not shaped as records written by the board.
+pub fn edited_criteria() -> BoardError {
+    BoardError::new(
+        RefusalKind::Store,
+        "the board's run criteria is not as the board writes it",
+    )
+}
+
+/// Validate a completion revision, preserving the original string unchanged.
+pub fn completion_revision(value: &Value) -> Result<&str, BoardError> {
+    match value {
+        Value::String(revision) if has_content(revision) => Ok(revision),
+        _ => Err(BoardError::new(
+            RefusalKind::Invalid,
+            "completion revision required",
+        )),
+    }
+}
+
 /// `Workbench._criteria`: a nonempty list of `{id, kind, description}` with
 /// distinct ids, checked entry by entry in Python's order, then the encoded
 /// list's size. `encoded_len` is the byte length of the list as the board

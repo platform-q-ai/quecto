@@ -35,6 +35,10 @@ fn every_method() -> Vec<Method> {
         Method::Stop,
         Method::ControlStatus,
         Method::UsageReport,
+        Method::Complete,
+        Method::RevalidateTask,
+        Method::Amend,
+        Method::Evidence,
         Method::CreateRun,
         Method::BootstrapRun,
         Method::BootstrapJoin,
@@ -65,6 +69,10 @@ fn every_method() -> Vec<Method> {
             | Method::Stop
             | Method::ControlStatus
             | Method::UsageReport
+            | Method::Complete
+            | Method::RevalidateTask
+            | Method::Amend
+            | Method::Evidence
             | Method::CreateRun
             | Method::BootstrapRun
             | Method::BootstrapJoin
@@ -103,6 +111,18 @@ fn claimed(handles: &SwarmBoardHandles) -> Value {
 /// Evidence for task 1's one criterion at revision `R1`.
 fn evidence() -> Value {
     json!([{"artifact": "report", "revision": "R1"}])
+}
+
+/// The parent's accepted evidence for the run's one criterion (`t`, a
+/// command check) at revision `R1`.
+fn accepted(handles: &SwarmBoardHandles) {
+    call(
+        handles,
+        "parent",
+        "evidence",
+        json!(["t", "report", "R1", "command", true]),
+    )
+    .unwrap();
 }
 
 /// What a call of `method` acted on, as its record must say:
@@ -190,6 +210,32 @@ fn acted_on(
         Method::ResumeExternal | Method::Close => {
             stopped();
             (json!([]), None, None, None)
+        }
+        Method::Complete => {
+            running(handles);
+            accepted(handles);
+            (json!(["R1"]), None, None, None)
+        }
+        Method::RevalidateTask => {
+            let token = claimed(handles);
+            call(handles, "parent", "submit", json!([1, token, evidence()])).unwrap();
+            call(handles, "parent", "verify_task", json!([1, token, "R1"])).unwrap();
+            let evidence = json!([{"artifact": "rerun", "revision": "R2"}]);
+            (json!(["1", "R2", evidence]), Some(1), None, None)
+        }
+        Method::Amend => {
+            running(handles);
+            let criteria = json!([{"id": "t", "kind": "review", "description": "d"}]);
+            (json!(["g", [], criteria, "why"]), None, None, None)
+        }
+        Method::Evidence => {
+            running(handles);
+            (
+                json!(["t", "report", "R1", "command", true]),
+                None,
+                None,
+                None,
+            )
         }
         Method::CreateRun => (create_args(), None, None, None),
         Method::BootstrapRun => (json!([1, "s", null]), None, None, None),
@@ -293,6 +339,67 @@ fn run_control_records_the_coordinator_or_the_host() {
     log.clear();
     call(&handles, "parent", "resume", json!([])).unwrap_err();
     assert_eq!(only(&log).role, None, "refused before any run read");
+}
+
+/// Completion (#2273): `complete`, `revalidate_task`, `amend` and
+/// `evidence` are member-facing, so each records the caller's role in the
+/// run: the coordinator's, or a worker's for its proposed evidence.
+#[test]
+fn completion_records_the_callers_run_role() {
+    let log = Arc::new(Recorded::default());
+    let (_dir, handles) = logged(&log);
+    call(&handles, "parent", "bootstrap_run", json!([1, "s", null])).unwrap();
+    running(&handles);
+    call(&handles, "parent", "_admit", json!(["worker", "r1"])).unwrap();
+    call(
+        &handles,
+        "parent",
+        "_activate",
+        json!(["worker", "r1", 7, "s", "/w.sock"]),
+    )
+    .unwrap();
+    let token = claimed_by_worker(&handles);
+    call(&handles, "worker", "submit", json!([1, token, evidence()])).unwrap();
+    call(&handles, "parent", "verify_task", json!([1, token, "R1"])).unwrap();
+    let criteria = json!([{"id": "t", "kind": "command", "description": "d"}]);
+    for (member, method, args, role) in [
+        (
+            "parent",
+            "amend",
+            json!(["g", [], criteria, "why"]),
+            BoardRole::Coordinator,
+        ),
+        (
+            "worker",
+            "evidence",
+            json!(["t", "report", "R1", "command", true]),
+            BoardRole::Worker,
+        ),
+        (
+            "parent",
+            "evidence",
+            json!(["t", "report", "R1", "command", true]),
+            BoardRole::Coordinator,
+        ),
+        (
+            "parent",
+            "revalidate_task",
+            json!([1, "R1", evidence()]),
+            BoardRole::Coordinator,
+        ),
+        ("parent", "complete", json!(["R1"]), BoardRole::Coordinator),
+    ] {
+        log.clear();
+        call(&handles, member, method, args).unwrap();
+        assert_eq!(only(&log).role, Some(role), "{member} {method}");
+    }
+}
+
+/// Task 1 on `handles`' board (a running run), created by the parent and
+/// claimed by the worker; the claim's token.
+fn claimed_by_worker(handles: &SwarmBoardHandles) -> Value {
+    task(handles, "r1");
+    call(handles, "worker", "claim", json!([1])).unwrap()["token"].clone()
 }
 
 #[test]

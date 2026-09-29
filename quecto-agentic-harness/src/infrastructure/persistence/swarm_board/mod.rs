@@ -17,6 +17,7 @@ pub mod meter;
 pub mod py_json;
 pub mod repository;
 mod repository_control;
+mod repository_evidence;
 mod repository_members;
 mod repository_tasks;
 mod repository_usage;
