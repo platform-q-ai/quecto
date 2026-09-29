@@ -11,6 +11,7 @@ mod common;
 mod container_runtime_docs;
 mod repo_docs;
 mod repository_file_reader;
+mod swarm_docs;
 mod workflow_config_refactor_template;
 mod workflow_config_template;
 mod workflow_docs;

@@ -229,3 +229,7 @@ impl Tool for DocsTool {
 #[cfg(test)]
 #[path = "docs_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "docs_swarm_embed_tests.rs"]
+mod swarm_embed_tests;
