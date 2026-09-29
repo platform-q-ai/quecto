@@ -3,6 +3,8 @@
 //! recorded however it ends (done, panicked or dropped unrun); closing the
 //! input counts against [`EXIT_GRACE`]; and both wait at most
 //! [`EXIT_GRACE`] plus [`END_RECORD_MARGIN`] even for work that never runs.
+//! Work that panics or is dropped unrun still records the end, as an
+//! unknown exit (round 4).
 
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -34,6 +36,26 @@ impl ExternalAgentSpawner for HoardingSpawner {
     }
 }
 
+/// #2304 review round 4: the `ended` records with no exit observed:
+/// `clean: false`, no exit code and no signal.
+fn unknown_ends(rig: &Rig) -> usize {
+    rig.records
+        .all()
+        .iter()
+        .filter(|record| {
+            matches!(
+                record,
+                SessionRecord::Ended {
+                    clean: false,
+                    exit_code: None,
+                    signal: None,
+                    ..
+                }
+            )
+        })
+        .count()
+}
+
 fn ends(rig: &Rig) -> usize {
     rig.records
         .all()
@@ -54,7 +76,12 @@ async fn a_panicking_exit_wait_releases_close_and_finish_at_once() {
     tokio::time::timeout(PROMPTLY, rig.session.finish())
         .await
         .expect("finish returns at once");
-    assert_eq!(ends(&rig), 0, "a panicked wait records no end");
+    assert_eq!(
+        unknown_ends(&rig),
+        1,
+        "a panicked wait records an unknown end: {:?}",
+        rig.records.kinds()
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -68,6 +95,12 @@ async fn exit_work_dropped_unrun_releases_close_and_finish_at_once() {
     tokio::time::timeout(PROMPTLY, rig.session.finish())
         .await
         .expect("finish returns at once");
+    assert_eq!(
+        unknown_ends(&rig),
+        1,
+        "work dropped unrun records an unknown end: {:?}",
+        rig.records.kinds()
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -90,6 +123,7 @@ async fn exit_work_never_run_holds_close_and_finish_only_to_the_bound() {
         1,
         "the work was handed off"
     );
+    assert_eq!(ends(&rig), 0, "work still held records no end yet");
 }
 
 #[tokio::test(start_paused = true)]

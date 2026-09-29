@@ -528,5 +528,11 @@ mod redacted_cov_tests {
 #[path = "redaction_command_line_tests.rs"]
 mod command_line_tests;
 #[cfg(test)]
+#[path = "redaction_corpus_tests.rs"]
+mod corpus_tests;
+#[cfg(test)]
 #[path = "redaction_encodings_tests.rs"]
 mod encodings_tests;
+#[cfg(test)]
+#[path = "redaction_newline_tests.rs"]
+mod newline_tests;
