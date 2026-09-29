@@ -102,6 +102,14 @@ pub fn symlink(link: &str, target: &str) -> Step {
     fs_step(&serde_json::json!(["symlink", link, target]))
 }
 
+/// Not a board call: `link` (relative) becomes a symlink to the bytes
+/// `target`, which need not be UTF-8 (a worker's filesystem can hold any),
+/// in both sides' checkouts; the step answers `null` on both.
+pub fn symlink_bytes(link: &str, target: &[u8]) -> Step {
+    let hex: String = target.iter().map(|byte| format!("{byte:02x}")).collect();
+    fs_step(&serde_json::json!(["symlink-bytes", link, hex]))
+}
+
 fn fs_step(args: &Value) -> Step {
     Step {
         member: String::new(),
@@ -120,6 +128,15 @@ fn shape(root: &Path, args: &str) -> Outcome {
         [kind, link, target] if kind == "symlink" => {
             std::os::unix::fs::symlink(target, root.join(link))
                 .unwrap_or_else(|error| panic!("symlink {link} -> {target}: {error}"));
+        }
+        [kind, link, hex] if kind == "symlink-bytes" => {
+            use std::os::unix::ffi::OsStrExt;
+            let target = (0..hex.len())
+                .step_by(2)
+                .map(|at| u8::from_str_radix(&hex[at..at + 2], 16).expect("a hex byte"))
+                .collect::<Vec<u8>>();
+            std::os::unix::fs::symlink(std::ffi::OsStr::from_bytes(&target), root.join(link))
+                .unwrap_or_else(|error| panic!("symlink {link} -> {hex}: {error}"));
         }
         other => panic!("an unknown filesystem step: {other:?}"),
     }

@@ -160,3 +160,29 @@ fn the_message_names_the_task_id_as_python_writes_it() {
         );
     }
 }
+
+/// Each event reads the clock when it is written, as Python's
+/// `store.event` calls `self.clock()`: the notice's `message_accepted`
+/// is stamped at or after the `revoked` it follows, never with a reading
+/// taken for another event.
+#[test]
+fn each_event_reads_the_clock_when_it_is_written() {
+    let board = MemoryBoard::with(board());
+    RevokeTask::new(
+        board.clone(),
+        SteppingClock::new(&[50.0, 60.0, 70.0, 80.0]),
+        Arc::new(CompactEncoding),
+    )
+    .execute(revoke("parent", json!(1), json!("r")))
+    .unwrap();
+    let state = board.snapshot();
+    let times: Vec<(&str, f64)> = state
+        .events
+        .iter()
+        .map(|event| (event.action.as_str(), event.time))
+        .collect();
+    assert_eq!(times.len(), 2, "{times:?}");
+    assert_eq!(times[0].0, "revoked");
+    assert_eq!(times[1].0, "message_accepted");
+    assert!(times[0].1 < times[1].1, "{times:?}");
+}

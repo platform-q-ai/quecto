@@ -352,6 +352,40 @@ fn revoke_after_death_records_the_audit_without_a_message() {
     ]));
 }
 
+/// A previous owner's row holding what the board never writes (#2321
+/// review): `revoke` and `recover` read only its status, as Python's
+/// `SELECT status FROM members WHERE id=?` does, so text that is not UTF-8
+/// in another column stops neither; a status that is not UTF-8 is the
+/// same refusal on both; bytes reading `dead` are not `dead` to `recover`.
+#[test]
+fn revoke_and_recover_read_only_the_owners_status() {
+    let corrupt = |column: &str| {
+        sql(&format!(
+            "UPDATE members SET {column}=CAST(X'FF' AS TEXT) WHERE id='worker'"
+        ))
+    };
+    run_both(&claimed([
+        corrupt("socket"),
+        at(5.0, "parent", "revoke", json!([1, "x"])),
+        raw(6.0),
+    ]));
+    run_both(&claimed([
+        corrupt("socket"),
+        dead("worker"),
+        at(5.0, "parent", "recover", json!([1])),
+        raw(6.0),
+    ]));
+    run_both(&claimed([
+        corrupt("status"),
+        at(5.0, "parent", "revoke", json!([1, "x"])),
+        at(6.0, "parent", "recover", json!([1])),
+    ]));
+    run_both(&claimed([
+        sql("UPDATE members SET status=CAST('dead' AS BLOB) WHERE id='worker'"),
+        at(5.0, "parent", "recover", json!([1])),
+    ]));
+}
+
 /// `test_stale_claim_cannot_modify_recovered_work`, in full: recovery
 /// needs the owner's confirmed death, and the old token is stale after it.
 #[test]
