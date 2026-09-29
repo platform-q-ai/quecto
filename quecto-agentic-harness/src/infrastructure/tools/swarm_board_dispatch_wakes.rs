@@ -12,7 +12,7 @@ use serde_json::{Map, Value};
 use super::{Parameter, Served, member_row, take};
 use crate::application::swarm::dto::{AcceptWakeRequest, ClaimNotificationsRequest};
 use crate::application::swarm::use_cases::{AcceptWake, ClaimNotifications};
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, BoardOpDetail};
 
 /// `_notifications(with_generation=False)`.
 pub(super) const NOTIFICATIONS: [Parameter; 1] = [Parameter {
@@ -30,6 +30,7 @@ fn on_cursor(value: Value, decision: &'static str, cursor_moved: bool) -> Served
         task_id: None,
         message_id: None,
         cursor_moved: Some(cursor_moved),
+        detail: BoardOpDetail::NONE,
     }
 }
 

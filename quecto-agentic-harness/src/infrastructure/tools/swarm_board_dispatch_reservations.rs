@@ -17,7 +17,7 @@ use crate::application::swarm::dto::{
 use crate::application::swarm::use_cases::{
     ListFileOwners, RecoverTask, ReleaseFiles, ReserveFiles, RevokeTask,
 };
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, BoardOpDetail};
 
 /// `reserve(task_id, token, paths)`.
 pub(super) const RESERVE: [Parameter; 3] =
@@ -58,6 +58,7 @@ fn on_task(value: Value, decision: &'static str, task_id: &Value) -> Served {
         task_id: acted_on(Some(task_id)),
         message_id: None,
         cursor_moved: None,
+        detail: BoardOpDetail::NONE,
     }
 }
 
@@ -117,6 +118,7 @@ pub(super) fn file_owners(
         task_id: None,
         message_id: None,
         cursor_moved: None,
+        detail: BoardOpDetail::NONE,
     })
 }
 

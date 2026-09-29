@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use super::{AuditLog, CRASH_GATE_WAIT};
 use crate::domain::audit::AuditEvent;
 use crate::domain::redaction::Redacted;
-use crate::domain::swarm::{BoardOpObservation, BoardOpOutcome, BoardRole};
+use crate::domain::swarm::{BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole};
 
 fn swarm_op() -> AuditEvent {
     AuditEvent::SwarmOp(BoardOpObservation {
@@ -27,6 +27,8 @@ fn swarm_op() -> AuditEvent {
         busy: None,
         cursor_moved: None,
         result_bytes: 2,
+        decision: None,
+        detail: BoardOpDetail::NONE,
     })
 }
 

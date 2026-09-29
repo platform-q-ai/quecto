@@ -367,7 +367,7 @@ fn launch_records_are_written_by_pythons_sql() {
         transaction.set_socket("stranger", &json!("/s"))?;
         assert!(transaction.member_row(&json!("stranger"), None)?.is_none());
         transaction.reserve_member("unlaunched", &json!("u-r"), "worker")?;
-        transaction.mark_member_dead_unlaunched(&json!("unlaunched"))?;
+        transaction.mark_member_dead(&json!("unlaunched"))?;
         let dead = transaction.member_row(&json!("unlaunched"), None)?.unwrap();
         assert_eq!(
             (dead.text("status"), dead.text("launcher")),
@@ -485,7 +485,7 @@ fn membership_values_bind_as_pythons_sqlite3_binds_them() {
         (
             1,
             within(&repository, false, |transaction| {
-                transaction.mark_member_dead_unlaunched(&json!([]))
+                transaction.mark_member_dead(&json!([]))
             }),
         ),
         (

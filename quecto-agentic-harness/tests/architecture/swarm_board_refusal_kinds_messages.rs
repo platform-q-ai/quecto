@@ -5,8 +5,19 @@
 
 /// `(file:function, text, kind)` for each construction site of the
 /// durable messages (`board_messages.rs` and the four message use cases)
-/// and the wake notifications (`accept_wake.rs`).
+/// and the wake notifications (`accept_wake.rs`), and the loss and death
+/// records (#2277: `confirm_member_dead.rs`, `lose_coordinator.rs`).
 pub(super) const MESSAGE_REFUSALS: &[(&str, &str, &str)] = &[
+    (
+        "src/application/swarm/use_cases/confirm_member_dead.rs:exit_kind",
+        "exit kind must be orderly or abrupt",
+        "Invalid",
+    ),
+    (
+        "src/application/swarm/use_cases/lose_coordinator.rs:LoseCoordinator::execute",
+        "coordination run missing",
+        "RunMissing",
+    ),
     (
         "src/application/swarm/use_cases/accept_wake.rs:claim",
         "wake generation is ahead of the board",

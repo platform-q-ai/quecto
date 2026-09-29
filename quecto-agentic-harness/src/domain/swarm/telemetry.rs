@@ -5,6 +5,7 @@
 //! run id is the board's own (a uuid it generated), recorded as found.
 use serde::{Deserialize, Serialize};
 
+use super::{MemberExit, RunState};
 use crate::domain::redaction::Redacted;
 
 /// Why the board refused an op: a stable, allowlisted kind for every
@@ -186,6 +187,93 @@ pub struct BoardOpObservation {
     /// always the size of Python's `json.dumps` text (whose separators
     /// carry spaces).
     pub result_bytes: u64,
+    /// The decision the op took (#2277 review M1): a snake_case kind the
+    /// dispatcher names from its own allowlist (`recorded`,
+    /// `grace_pending`, `already_dead`, ...), never argument or board
+    /// text; `None` (left out) for a refusal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision: Option<String>,
+    /// What the decision found and did, as counts and kinds only (#2277
+    /// review M1), flat beside the other fields; each is left out when it
+    /// does not apply.
+    #[serde(flatten)]
+    pub detail: BoardOpDetail,
+}
+
+/// Whether `decision` is shaped as a decision kind: nonempty lowercase
+/// ASCII letters, digits and underscores, so no text can pass as one.
+pub fn decision_kind(decision: &str) -> bool {
+    !decision.is_empty()
+        && decision
+            .bytes()
+            .all(|byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'_'))
+}
+
+/// A run status as telemetry records it (#2277 review M1): one of the
+/// statuses the board writes, or [`RunStatusKind::Unknown`] for a NULL or
+/// any other text (only an edit from outside the board writes one), so
+/// the text found is never recorded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunStatusKind {
+    Setup,
+    Running,
+    Paused,
+    Succeeded,
+    Blocked,
+    Failed,
+    Cancelled,
+    BudgetExhausted,
+    Unknown,
+}
+
+impl RunStatusKind {
+    /// The kind of the status `status` a run row holds.
+    pub fn of(status: Option<&RunState>) -> Self {
+        match status.map(RunState::as_str) {
+            Some("setup") => Self::Setup,
+            Some("running") => Self::Running,
+            Some("paused") => Self::Paused,
+            Some("succeeded") => Self::Succeeded,
+            Some("blocked") => Self::Blocked,
+            Some("failed") => Self::Failed,
+            Some("cancelled") => Self::Cancelled,
+            Some("budget-exhausted") => Self::BudgetExhausted,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+/// The counts and kinds a served op's decision found and acted on
+/// (#2277 review M1). Additive, as the refusal kinds are: a field is
+/// added, never renamed or reused, and one that does not apply to the op
+/// is `None` and left out. Never text.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BoardOpDetail {
+    /// The run's status as the op found it, before it wrote anything.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_status: Option<RunStatusKind>,
+    /// The exit kind a death confirmation was given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit: Option<MemberExit>,
+    /// The file reservations a confirmed death left held (an abrupt
+    /// exit's); 0 once an orderly exit released them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reservations_retained: Option<u64>,
+    /// Whether the op ended the run by loss (a recorded loss, or the
+    /// coordinator's confirmed death).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended_by_loss: Option<bool>,
+}
+
+impl BoardOpDetail {
+    /// No detail: nothing applies to the op.
+    pub const NONE: Self = Self {
+        run_status: None,
+        exit: None,
+        reservations_retained: None,
+        ended_by_loss: None,
+    };
 }
 
 /// The role `member` holds in a run whose coordinator and integrator are

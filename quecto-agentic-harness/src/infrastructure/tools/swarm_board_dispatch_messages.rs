@@ -14,7 +14,7 @@ use crate::application::swarm::dto::{MessageIdRequest, ReadInboxRequest, SendMes
 use crate::application::swarm::use_cases::{
     AcknowledgeMessage, ReadInbox, SendMessage, WithdrawMessage,
 };
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, BoardOpDetail};
 
 /// `send(request, recipient, body, revision=None, supersedes=None)`.
 pub(super) const SEND: [Parameter; 5] = [
@@ -46,6 +46,7 @@ fn on_message(value: Value, decision: &'static str, message_id: Option<&Value>) 
         task_id: None,
         message_id: message_id.and_then(Value::as_i64),
         cursor_moved: None,
+        detail: BoardOpDetail::NONE,
     }
 }
 

@@ -687,6 +687,11 @@ body, evidence, reason, path or other board text:
 | `busy` | Whether the busy handler fired at all: another connection held a lock the op needed (the write lock, or, at commit, a reader); `null` when nothing was measured |
 | `cursor_moved` | Whether the op moved the caller's cursor: its notification cursor for `_notifications`, its wake cursor for `_accept_wake`; `null` for an op that has no cursor to move, and for a refusal |
 | `result_bytes` | The size of the JSON the op answered, as its compact serialization (`serde_json`'s, which is not the size of Python's `json.dumps` text with its spaced separators); 0 for a refusal |
+| `decision` | What an answered op decided, as a snake_case kind the board names (`recorded`, `grace_pending`, `already_dead`, `coordinator_confirmed`, `lost`, ...); left out for a refusal |
+| `run_status` | For the loss and death ops (`_quarantine`, `_confirmed_dead`, `_lose_coordinator`), the run's status as the op found it, before it wrote anything: `setup`, `running`, `paused`, `succeeded`, `blocked`, `failed`, `cancelled`, `budget_exhausted`, or `unknown` for a NULL or edited status (whose text is never recorded); left out for other ops |
+| `exit` | For `_confirmed_dead`, the exit kind it was given: `orderly` or `abrupt` |
+| `reservations_retained` | For a confirmed death, the file reservations it left held: an abrupt exit's, or 0 once an orderly exit released them |
+| `ended_by_loss` | For a recorded loss (`_quarantine`'s `recorded`, `_lose_coordinator`) or a confirmed death, whether the op ended the run by loss; left out when the op recorded neither |
 
 Kinds are additive: a later release may add a kind (each refusal the Python
 board raises already has one), but never renames or reuses one. A consumer of

@@ -175,6 +175,22 @@ impl BoardTasks for MemoryTransaction<'_> {
         });
         Ok(())
     }
+
+    fn block_owned_tasks(&self, owner: &Value, blocker: &str) -> Result<(), BoardError> {
+        self.note(format!("block_owned_tasks {owner}"));
+        let mut state = self.state.borrow_mut();
+        for row in &mut state.tasks {
+            let active = matches!(
+                row.get("status").and_then(Value::as_str),
+                Some("claimed" | "blocked" | "submitted")
+            );
+            if active && owner.is_string() && row.get("owner") == Some(owner) {
+                row.set("status", Value::from("blocked"));
+                row.set("blocker", Value::from(blocker));
+            }
+        }
+        Ok(())
+    }
 }
 
 impl BoardRequests for MemoryTransaction<'_> {

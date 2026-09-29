@@ -8,7 +8,7 @@ use crate::application::swarm::dto::{
     BootstrapRunRequest, CreateBranch, CreateRunRequest, JoinRunRequest, Joined, LaunchIdentity,
 };
 use crate::application::swarm::use_cases::{BootstrapRun, CreateRun, JoinRun};
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, BoardOpDetail};
 
 pub(super) const CREATE: [Parameter; 5] = [
     required("goal"),
@@ -53,6 +53,7 @@ pub(super) fn create_run(
         task_id: None,
         message_id: None,
         cursor_moved: None,
+        detail: BoardOpDetail::NONE,
     })
 }
 
@@ -80,6 +81,7 @@ pub(super) fn bootstrap_run(
         task_id: None,
         message_id: None,
         cursor_moved: None,
+        detail: BoardOpDetail::NONE,
     })
 }
 

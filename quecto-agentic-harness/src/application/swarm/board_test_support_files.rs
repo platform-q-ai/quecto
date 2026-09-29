@@ -102,6 +102,23 @@ impl BoardFiles for MemoryTransaction<'_> {
         Ok(())
     }
 
+    fn owner_file_count(&self, owner: &Value) -> Result<i64, BoardError> {
+        let files = &self.state.borrow().files;
+        let owned = files
+            .iter()
+            .filter(|file| owner.as_str() == Some(&file.owner));
+        Ok(i64::try_from(owned.count()).unwrap())
+    }
+
+    fn delete_owner_files(&self, owner: &Value) -> Result<(), BoardError> {
+        self.note(format!("delete_owner_files {owner}"));
+        self.state
+            .borrow_mut()
+            .files
+            .retain(|file| owner.as_str() != Some(&file.owner));
+        Ok(())
+    }
+
     fn file_page(&self, offset: u64, limit: i64) -> Result<Vec<FileRow>, BoardError> {
         let mut files = self.state.borrow().files.clone();
         files.sort_by(|left, right| left.path.cmp(&right.path));

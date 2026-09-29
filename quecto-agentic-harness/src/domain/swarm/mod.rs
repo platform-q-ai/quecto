@@ -37,7 +37,9 @@ pub use records::{
     Criterion, CriterionKind, EvidenceRow, MemberRecord, MemberState, RunRecord, RunState,
     TaskRecord, TaskState,
 };
-pub use telemetry::{BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind};
+pub use telemetry::{
+    BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind, RunStatusKind,
+};
 pub use usage::{
     MAX_REQUEST_PAYLOAD_BYTES, MAX_REQUEST_ROWS, Redelivery, UsageBudget, UsageDecision,
     UsageTotals, redelivery, request_measurement, usage_budget_decision,
@@ -227,7 +229,8 @@ impl Snapshot {
 /// own teardown ran: a delegated kill, a protocol shutdown, an exit it
 /// chose, or a fallback signal this harness sent to its whole group) frees
 /// its file reservations.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MemberExit {
     Orderly,
     /// Killed by a signal this harness did not send, or an unobservable end.

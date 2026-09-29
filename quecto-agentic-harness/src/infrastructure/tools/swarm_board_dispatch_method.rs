@@ -8,7 +8,7 @@ use super::Level;
 #[cfg(any(test, feature = "test-support"))]
 use super::test_only;
 use super::{
-    completion, control, members, messages, reservations, submissions, tasks, usage, wakes,
+    completion, control, loss, members, messages, reservations, submissions, tasks, usage, wakes,
 };
 use crate::domain::swarm::BoardRole;
 
@@ -56,6 +56,9 @@ pub(super) enum Method {
     Ack,
     Notifications,
     AcceptWake,
+    Quarantine,
+    ConfirmedDead,
+    LoseCoordinator,
     #[cfg(any(test, feature = "test-support"))]
     CreateRun,
     #[cfg(any(test, feature = "test-support"))]
@@ -124,6 +127,9 @@ impl Method {
             "ack" => Some(Self::Ack),
             "_notifications" => Some(Self::Notifications),
             "_accept_wake" => Some(Self::AcceptWake),
+            "_quarantine" => Some(Self::Quarantine),
+            "_confirmed_dead" => Some(Self::ConfirmedDead),
+            "_lose_coordinator" => Some(Self::LoseCoordinator),
             #[cfg(any(test, feature = "test-support"))]
             "create_run" => Some(Self::CreateRun),
             #[cfg(any(test, feature = "test-support"))]
@@ -179,6 +185,9 @@ impl Method {
             Self::Ack => "ack",
             Self::Notifications => "_notifications",
             Self::AcceptWake => "_accept_wake",
+            Self::Quarantine => "_quarantine",
+            Self::ConfirmedDead => "_confirmed_dead",
+            Self::LoseCoordinator => "_lose_coordinator",
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun => "create_run",
             #[cfg(any(test, feature = "test-support"))]
@@ -240,6 +249,9 @@ impl Method {
             | Self::Send
             | Self::Withdraw
             | Self::Ack => Level::Mutation,
+            // The harness's loss and death records (#2277) write the
+            // board when they decide to; each is rare, so INFO.
+            Self::Quarantine | Self::ConfirmedDead | Self::LoseCoordinator => Level::Mutation,
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun | Self::BootstrapRun | Self::BootstrapJoin => Level::Mutation,
             #[cfg(any(test, feature = "test-support"))]
@@ -269,6 +281,8 @@ impl Method {
             Self::RecordRequest | Self::RequestAdmission => Some(BoardRole::Host),
             // The harness's wake hints, sent and accepted (#2276).
             Self::Notifications | Self::AcceptWake => Some(BoardRole::Host),
+            // The harness's loss and death records (#2277).
+            Self::Quarantine | Self::ConfirmedDead | Self::LoseCoordinator => Some(BoardRole::Host),
             Self::TaskCreate
             | Self::Dependencies
             | Self::Claim
@@ -352,7 +366,10 @@ impl Method {
             | Self::Inbox
             | Self::Ack
             | Self::Notifications
-            | Self::AcceptWake => true,
+            | Self::AcceptWake
+            | Self::Quarantine
+            | Self::ConfirmedDead
+            | Self::LoseCoordinator => true,
             // A member's own resume is refused before any gate (#2273), so
             // it never answers.
             Self::Resume => false,
@@ -370,13 +387,19 @@ impl Method {
     /// `budget-exhausted`, `warned` writes the warning), so a read that
     /// changes the run is visible at INFO. Only the usage methods decide
     /// `paused` or `warned` as the budget's; another method's decision of
-    /// the same name (`pause`'s `paused`) keeps its own level.
+    /// the same name (`pause`'s `paused`) keeps its own level. It is
+    /// lowered to [`Level::Read`] for a quarantine still inside its grace.
     pub(super) fn served_level(self, decision: &str) -> Level {
         match (self, decision) {
             (
                 Self::UsageBudget | Self::RecordRequest | Self::RequestAdmission,
                 "paused" | "warned",
             ) => Level::Mutation,
+            // #2277 review N6: a reconcile retries a quarantine until its
+            // grace ends, so one still inside the grace (which writes at
+            // most the observer's first observation) is DEBUG; every other
+            // decision keeps the method's INFO.
+            (Self::Quarantine, "grace_pending") => Level::Read,
             _ => self.level(),
         }
     }
@@ -391,7 +414,8 @@ impl Method {
             | Self::Close
             | Self::ControlStatus
             | Self::UsageReport
-            | Self::RequestAdmission => &[],
+            | Self::RequestAdmission
+            | Self::LoseCoordinator => &[],
             Self::Admit => &members::ADMIT,
             Self::Activate => &members::ACTIVATE,
             Self::RecordLaunch => &members::RECORD_LAUNCH,
@@ -423,6 +447,8 @@ impl Method {
             Self::Inbox => &messages::INBOX,
             Self::Notifications => &wakes::NOTIFICATIONS,
             Self::AcceptWake => &wakes::ACCEPT_WAKE,
+            Self::Quarantine => &loss::QUARANTINE,
+            Self::ConfirmedDead => &loss::CONFIRMED_DEAD,
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun => &test_only::CREATE,
             #[cfg(any(test, feature = "test-support"))]

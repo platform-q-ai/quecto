@@ -33,7 +33,7 @@ use super::store::{
 };
 use crate::application::swarm::dto::{
     AmendedContract, BoardLocation, MemberRow, NewRun, RunContract, RunOwnerRow, RunRoles,
-    RunStatusRow, StoredContract,
+    RunStatusRow, ScopeObservation, StoredContract,
 };
 use crate::application::swarm::ports::{BoardEvents, BoardRepository, BoardRuns, BoardWork};
 use crate::domain::swarm::{BoardError, RefusalKind, RunRecord, RunState};
@@ -264,6 +264,10 @@ impl BoardRuns for SqliteBoard<'_> {
         )
     }
 
+    fn hold_failed(&self, reason: &str) -> Result<(), BoardError> {
+        self.failed_hold(reason)
+    }
+
     fn set_outcome(&self, status: &RunState) -> Result<(), BoardError> {
         self.update_run("UPDATE run SET status=?", [status.as_str()])
     }
@@ -300,6 +304,10 @@ impl BoardEvents for SqliteBoard<'_> {
         let detail = PyJson::try_from(detail)
             .map_err(|error| BoardError::new(RefusalKind::Invalid, error.to_string()))?;
         ledger::event(self.connection, actor, time, action, &detail).map_err(refused)
+    }
+
+    fn scope_observations(&self) -> Result<Vec<ScopeObservation>, BoardError> {
+        self.observations()
     }
 
     fn control_generation(&self) -> Result<i64, BoardError> {

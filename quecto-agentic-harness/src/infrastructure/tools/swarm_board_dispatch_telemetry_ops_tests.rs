@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 use super::super::{BOARD_OPS, Method, SwarmBoardHandles, call};
 use super::{Recorded, create_args, logged, only};
 use crate::domain::swarm::BoardRole;
+use crate::domain::swarm::telemetry::decision_kind;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -54,6 +55,9 @@ fn every_method() -> Vec<Method> {
         Method::Ack,
         Method::Notifications,
         Method::AcceptWake,
+        Method::Quarantine,
+        Method::ConfirmedDead,
+        Method::LoseCoordinator,
         Method::CreateRun,
         Method::BootstrapRun,
         Method::BootstrapJoin,
@@ -102,6 +106,9 @@ fn every_method() -> Vec<Method> {
             | Method::Ack
             | Method::Notifications
             | Method::AcceptWake
+            | Method::Quarantine
+            | Method::ConfirmedDead
+            | Method::LoseCoordinator
             | Method::CreateRun
             | Method::BootstrapRun
             | Method::BootstrapJoin
@@ -323,6 +330,13 @@ fn acted_on(
             };
             (args, None, None, Some(true))
         }
+        // The loss and death records (#2277) act on a member: no task,
+        // message or cursor.
+        Method::Quarantine | Method::ConfirmedDead => {
+            admitted();
+            (json!(["worker"]), None, None, None)
+        }
+        Method::LoseCoordinator => (json!([]), None, None, None),
         Method::CreateRun => (create_args(), None, None, None),
         Method::BootstrapRun => (json!([1, "s", null]), None, None, None),
         Method::BootstrapJoin => (json!([1, "s", null]), None, None, None),
@@ -359,6 +373,21 @@ fn every_answered_op_records_what_it_acted_on() {
             (task_id, message_id, cursor_moved),
             "{recorded:?}"
         );
+        // #2277 review M1: an answered op records its decision, as a
+        // kind, and the detail its decision carries; a refusal neither.
+        let (decision, detail) = detail::decided(method);
+        match (&answer, recorded.decision.as_deref()) {
+            (Ok(_), Some(recorded_decision)) => {
+                assert!(decision_kind(recorded_decision), "{recorded:?}");
+                assert!(
+                    decision.is_none_or(|decision| decision == recorded_decision),
+                    "{recorded:?}"
+                );
+            }
+            (Err(_), None) => {}
+            _ => panic!("{}: {answer:?} recorded {recorded:?}", method.name()),
+        }
+        assert_eq!(recorded.detail, detail, "{}", method.name());
     }
 }
 
@@ -614,3 +643,6 @@ fn board_ops_names_every_method_once() {
         assert!(Method::parse(name).is_some(), "{name} parses");
     }
 }
+
+#[path = "swarm_board_dispatch_telemetry_detail_tests.rs"]
+mod detail;

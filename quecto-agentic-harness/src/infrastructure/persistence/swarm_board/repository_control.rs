@@ -5,14 +5,15 @@
 //! An event detail is loaded as Python's `json.loads` loads it; one that
 //! is not JSON text is refused as a store failure where Python raises
 //! (the `outside_edited_control_records` divergence), and a detail that is
-//! not an object, or whose `member` is not text (a list or an object,
-//! which Python cannot hash and raises on), names no member.
+//! not an object names no member. A detail's `member` names a member it
+//! equals by Python's `==`; one Python cannot hash (a list or an object,
+//! which only an edit writes) equals no member, where Python raises.
 use rusqlite::{Connection, OptionalExtension};
 use serde_json::Value;
 
 use super::repository::{failed, fetched, text};
 use super::repository_tasks::loaded;
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{BoardError, RefusalKind, python_equal};
 
 /// `Transaction.pause_started`'s read: the latest `paused` event's
 /// `started`, NULL when its detail has none; `None` without such an event.
@@ -45,6 +46,26 @@ pub(super) fn lost_members(
     connection: &Connection,
     members: &[&str],
 ) -> Result<Vec<String>, BoardError> {
+    let wanted: Vec<Value> = members.iter().map(|member| Value::from(*member)).collect();
+    let lost = lost_among(connection, &wanted)?;
+    debug_assert_eq!(lost.len(), members.len(), "one answer per member");
+    Ok(members
+        .iter()
+        .zip(lost)
+        .filter(|(_, lost)| *lost)
+        .map(|(member, _)| (*member).to_owned())
+        .collect())
+}
+
+/// Whether each of `members` is lost, by the one ordered scan of the two
+/// event kinds `lost_members` runs (#1961, #2277): an event names the
+/// first of `members` its detail's `member` equals by Python's `==`
+/// (Python's set lookup, which for the scalars a member is hashes as it
+/// compares).
+pub(super) fn lost_among(
+    connection: &Connection,
+    members: &[Value],
+) -> Result<Vec<bool>, BoardError> {
     let mut latest = vec![None::<Latest>; members.len()];
     let mut statement = connection
         .prepare(
@@ -60,8 +81,13 @@ pub(super) fn lost_members(
         .map_err(failed)?;
     for row in rows {
         let (id, action, detail) = row.map_err(failed)?;
-        let named = detail.get("member").and_then(Value::as_str);
-        let Some(index) = named.and_then(|named| members.iter().position(|m| *m == named)) else {
+        let Some(named) = detail.get("member") else {
+            continue;
+        };
+        let Some(index) = members
+            .iter()
+            .position(|member| python_equal(named, member))
+        else {
             continue;
         };
         let seen = latest[index].get_or_insert_with(Latest::default);
@@ -76,10 +102,8 @@ pub(super) fn lost_members(
             }
         }
     }
-    Ok(members
-        .iter()
-        .zip(latest)
-        .filter(|(_, seen)| seen.is_some_and(|seen| seen.scope_unknown > seen.activated))
-        .map(|(member, _)| (*member).to_owned())
+    Ok(latest
+        .into_iter()
+        .map(|seen| seen.is_some_and(|seen| seen.scope_unknown > seen.activated))
         .collect())
 }

@@ -167,7 +167,7 @@ impl BoardMembers for SqliteBoard<'_> {
         )
     }
 
-    fn mark_member_dead_unlaunched(&self, id: &Value) -> Result<(), BoardError> {
+    fn mark_member_dead(&self, id: &Value) -> Result<(), BoardError> {
         self.write(
             "UPDATE members SET status='dead' WHERE id=?",
             &[Bound::Loose(id)],
@@ -183,6 +183,14 @@ impl BoardMembers for SqliteBoard<'_> {
 
     fn lost_members(&self, members: &[&str]) -> Result<Vec<String>, BoardError> {
         super::repository_control::lost_members(self.connection, members)
+    }
+
+    fn member_launcher(&self, id: &Value) -> Result<Option<Option<String>>, BoardError> {
+        self.launcher_of(id)
+    }
+
+    fn lost_after_activation(&self, member: &Value) -> Result<bool, BoardError> {
+        self.lost_since_activation(member)
     }
 }
 

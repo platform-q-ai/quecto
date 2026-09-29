@@ -565,7 +565,7 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "Invalid",
     ),
     (
-        "src/infrastructure/persistence/swarm_board/repository_control.rs:lost_members",
+        "src/infrastructure/persistence/swarm_board/repository_control.rs:lost_among",
         "the loss scan read an event it did not select",
         "Internal",
     ),

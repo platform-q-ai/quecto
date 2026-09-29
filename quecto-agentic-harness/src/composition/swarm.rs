@@ -18,8 +18,9 @@ use crate::application::swarm::ports::{
 use crate::application::swarm::use_cases::{
     AcceptWake, AcknowledgeMessage, ActivateMember, AdmitMember, AmendRunContract, BlockTask,
     BootstrapRun, ClaimNotifications, ClaimTask, CloseRun, CompleteRun, ConfigureUsageBudget,
-    CreateRun, CreateTask, ExtendRunDeadline, JoinRun, ListFileOwners, PauseRun, ReadControlStatus,
-    ReadInbox, ReadRequestAdmission, ReadRunSnapshot, ReadRunStatus, ReadTask, ReadUsageReport,
+    ConfirmMemberDead, CreateRun, CreateTask, ExtendRunDeadline, JoinRun, ListFileOwners,
+    LoseCoordinator, PauseRun, QuarantineMember, ReadControlStatus, ReadInbox,
+    ReadRequestAdmission, ReadRunSnapshot, ReadRunStatus, ReadTask, ReadUsageReport,
     RecordEvidence, RecordMemberLaunch, RecordRequestUsage, RecoverTask, RegisterMemberSocket,
     ReleaseFiles, ReleaseTask, ReleaseUnlaunchedMember, ReserveFiles, ResumeRun,
     ResumeRunExternally, RevalidateTask, RevokeTask, SendMessage, SetTaskDependencies, StopRun,
@@ -170,6 +171,9 @@ pub fn build_swarm_board_handles_with(
         acknowledge_message: Arc::new(AcknowledgeMessage::new(repository.clone(), clock.clone())),
         claim_notifications: Arc::new(ClaimNotifications::new(repository.clone(), clock.clone())),
         accept_wake: Arc::new(AcceptWake::new(repository.clone(), clock.clone())),
+        quarantine_member: Arc::new(QuarantineMember::new(repository.clone(), clock.clone())),
+        confirm_member_dead: Arc::new(ConfirmMemberDead::new(repository.clone(), clock.clone())),
+        lose_coordinator: Arc::new(LoseCoordinator::new(repository.clone(), clock.clone())),
         configure_usage_budget: Arc::new(ConfigureUsageBudget::new(
             repository.clone(),
             clock.clone(),

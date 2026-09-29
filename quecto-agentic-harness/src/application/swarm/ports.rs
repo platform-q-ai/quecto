@@ -14,7 +14,8 @@ use super::dto::{
     AmendedContract, CallMeasure, CompletionState, FileRow, LaunchIdentity, MemberClaimCounts,
     MemberRow, MemberStatusRow, MessageRow, NewEvidence, NewMember, NewMessage, NewRequestUsage,
     NewReservation, NewRun, NewTask, NotificationCursor, PriorEvidence, RunContract, RunOwnerRow,
-    RunStatusRow, StoredContract, StoredRequestUsage, TaskRow, TaskUpdate, UsageReport,
+    RunStatusRow, ScopeObservation, StoredContract, StoredRequestUsage, TaskRow, TaskUpdate,
+    UsageReport,
 };
 use crate::domain::error::DomainError;
 use crate::domain::swarm::{
@@ -167,6 +168,9 @@ pub trait BoardRuns {
     fn propose_outcome(&self, outcome: &str, reason: &str) -> Result<(), BoardError>;
     /// The run holds no outcome and no reason (#2273).
     fn clear_outcome(&self) -> Result<(), BoardError>;
+    /// `_end_by_loss` on a pause holding no outcome (#2277): `UPDATE run
+    /// SET outcome='failed', outcome_reason=?`; the status stays paused.
+    fn hold_failed(&self, reason: &str) -> Result<(), BoardError>;
     /// `Transaction.set_outcome(status)`: the run's status alone becomes
     /// `status`; its outcome and reason are left as they are.
     fn set_outcome(&self, status: &RunState) -> Result<(), BoardError>;
@@ -232,8 +236,20 @@ pub trait BoardMembers {
     ) -> Result<(), BoardError>;
     /// The launcher's record of the member's process, bound as given.
     fn record_launch(&self, id: &Value, launch: &LaunchIdentity) -> Result<(), BoardError>;
-    /// An admission that was never launched is abandoned: the member is dead.
-    fn mark_member_dead_unlaunched(&self, id: &Value) -> Result<(), BoardError>;
+    /// `UPDATE members SET status='dead' WHERE id=?`: an admission that
+    /// was never launched is abandoned, or a death is confirmed (#2277).
+    fn mark_member_dead(&self, id: &Value) -> Result<(), BoardError>;
+    /// `SELECT launcher FROM members WHERE id=?` (#1961, #2277): `None`
+    /// when no row matches, and `Some(None)` for a launcher that is NULL
+    /// or not text. The id is bound as [`BoardMembers::member_row`] binds
+    /// it.
+    fn member_launcher(&self, id: &Value) -> Result<Option<Option<String>>, BoardError>;
+    /// `lost_after_activation(member)` (#1961, #2277): whether `member`'s
+    /// latest `scope_unknown` event is newer than its latest `activated`
+    /// one, in the one ordered scan of those two kinds
+    /// [`BoardMembers::lost_members`] runs. An event names `member` when
+    /// its detail's `member` equals it by Python's `==`.
+    fn lost_after_activation(&self, member: &Value) -> Result<bool, BoardError>;
     /// The member's endpoint, bound as given; a member without a row is
     /// left as it is.
     fn set_socket(&self, id: &str, socket: &Value) -> Result<(), BoardError>;
@@ -252,6 +268,10 @@ pub trait BoardEvents {
     -> Result<(), BoardError>;
     /// The id of the latest `paused` or `resumed` event, `0` for none.
     fn control_generation(&self) -> Result<i64, BoardError>;
+    /// `SELECT actor, time, detail FROM events WHERE
+    /// action='scope_observed' ORDER BY id` (#1961, #2277): every loss
+    /// observation, in id order.
+    fn scope_observations(&self) -> Result<Vec<ScopeObservation>, BoardError>;
 }
 
 /// The `tasks` rows (#2272). A task id is the caller's value, bound as
@@ -280,6 +300,11 @@ pub trait BoardTasks {
     fn update_task_claim(&self, id: &Value, owner: &str, token: &str) -> Result<(), BoardError>;
     /// The task's status changes as `update` says.
     fn update_task_status(&self, id: &Value, update: &TaskUpdate) -> Result<(), BoardError>;
+    /// `UPDATE tasks SET status='blocked',blocker=? WHERE owner=? AND
+    /// status IN ('claimed','blocked','submitted')` (#1961, #2277): every
+    /// active task of a member whose death is confirmed, the owner bound
+    /// as given.
+    fn block_owned_tasks(&self, owner: &Value, blocker: &str) -> Result<(), BoardError>;
 }
 
 /// The work a new request runs: its result, which the ledger stores.
@@ -334,6 +359,12 @@ pub trait BoardFiles {
     /// `dict(row)`. An offset beyond SQLite's integers is refused as the
     /// store refuses an integer it cannot bind.
     fn file_page(&self, offset: u64, limit: i64) -> Result<Vec<FileRow>, BoardError>;
+    /// `SELECT count(*) FROM files WHERE owner=?` (#2277), the owner bound
+    /// as given.
+    fn owner_file_count(&self, owner: &Value) -> Result<i64, BoardError>;
+    /// `DELETE FROM files WHERE owner=?` (#2277): every reservation of a
+    /// member whose orderly exit is confirmed.
+    fn delete_owner_files(&self, owner: &Value) -> Result<(), BoardError>;
 }
 
 /// The `messages` rows (#2275, #2276): those revocation writes, and the

@@ -38,8 +38,10 @@
 //! `_request_admission` (#2274) by [`usage`]; and the file reservations
 //! `reserve`, `release_files` and `file_owners`, with the coordinator's
 //! `recover` and `revoke` (#2275), by [`reservations`]; and the durable
-//! messages `send`, `withdraw`, `inbox` and `ack` (#2276) by [`messages`], and
-//! the wake notifications `_notifications` and `_accept_wake` by [`wakes`].
+//! messages `send`, `withdraw`, `inbox` and `ack` (#2276) by [`messages`],
+//! the wake notifications `_notifications` and `_accept_wake` by [`wakes`],
+//! and the loss and death records `_quarantine`, `_confirmed_dead` and
+//! `_lose_coordinator` (#2277) by [`loss`].
 //!
 //! What S12 must keep when it adds the summaries Python answers with:
 //!
@@ -92,14 +94,15 @@ use crate::application::swarm::ports::{BoardCallMeter, BoardOpLog, BoardReposito
 use crate::application::swarm::use_cases::{
     AcceptWake, AcknowledgeMessage, ActivateMember, AdmitMember, AmendRunContract, BlockTask,
     BootstrapRun, ClaimNotifications, ClaimTask, CloseRun, CompleteRun, ConfigureUsageBudget,
-    CreateRun, CreateTask, ExtendRunDeadline, JoinRun, ListFileOwners, OverRepository, PauseRun,
-    ReadControlStatus, ReadInbox, ReadRequestAdmission, ReadRunSnapshot, ReadRunStatus, ReadTask,
-    ReadUsageReport, RecordEvidence, RecordMemberLaunch, RecordRequestUsage, RecoverTask,
-    RegisterMemberSocket, ReleaseFiles, ReleaseTask, ReleaseUnlaunchedMember, ReserveFiles,
-    ResumeRun, ResumeRunExternally, RevalidateTask, RevokeTask, SendMessage, SetTaskDependencies,
-    StopRun, SubmitTask, UnblockTask, VerifyTask, WithdrawMessage,
+    ConfirmMemberDead, CreateRun, CreateTask, ExtendRunDeadline, JoinRun, ListFileOwners,
+    LoseCoordinator, OverRepository, PauseRun, QuarantineMember, ReadControlStatus, ReadInbox,
+    ReadRequestAdmission, ReadRunSnapshot, ReadRunStatus, ReadTask, ReadUsageReport,
+    RecordEvidence, RecordMemberLaunch, RecordRequestUsage, RecoverTask, RegisterMemberSocket,
+    ReleaseFiles, ReleaseTask, ReleaseUnlaunchedMember, ReserveFiles, ResumeRun,
+    ResumeRunExternally, RevalidateTask, RevokeTask, SendMessage, SetTaskDependencies, StopRun,
+    SubmitTask, UnblockTask, VerifyTask, WithdrawMessage,
 };
-use crate::domain::swarm::{BoardError, BoardRole, RefusalKind};
+use crate::domain::swarm::{BoardError, BoardOpDetail, BoardRole, RefusalKind};
 
 use self::method::{Method, Parameter, required};
 pub use super::swarm_board_telemetry::{ActorRefs, TELEMETRY_TARGET};
@@ -159,6 +162,9 @@ pub struct SwarmBoardHandles {
     pub acknowledge_message: Arc<AcknowledgeMessage>,
     pub claim_notifications: Arc<ClaimNotifications>,
     pub accept_wake: Arc<AcceptWake>,
+    pub quarantine_member: Arc<QuarantineMember>,
+    pub confirm_member_dead: Arc<ConfirmMemberDead>,
+    pub lose_coordinator: Arc<LoseCoordinator>,
     /// Each call's `swarm_op` record and its measure (#2303), only when
     /// the event log is switched on (`telemetry.event_log.enabled`, owner
     /// decision T1): `None` measures and writes nothing.
@@ -226,6 +232,9 @@ pub const BOARD_OPS: &[&str] = &[
     "ack",
     "_notifications",
     "_accept_wake",
+    "_quarantine",
+    "_confirmed_dead",
+    "_lose_coordinator",
     #[cfg(any(test, feature = "test-support"))]
     "create_run",
     #[cfg(any(test, feature = "test-support"))]
@@ -412,6 +421,7 @@ fn serve(
             task_id: None,
             message_id: None,
             cursor_moved: None,
+            detail: BoardOpDetail::NONE,
         }),
         Method::Snapshot => Ok(Served {
             value: snapshot(serving(&*handles.read_run_snapshot, over).execute(member)?)?,
@@ -419,6 +429,7 @@ fn serve(
             task_id: None,
             message_id: None,
             cursor_moved: None,
+            detail: BoardOpDetail::NONE,
         }),
         Method::Admit => members::admit(&serving(&*handles.admit_member, over), member, arguments),
         Method::Activate => {
@@ -547,6 +558,19 @@ fn serve(
         Method::AcceptWake => {
             wakes::accept_wake(&serving(&*handles.accept_wake, over), member, arguments)
         }
+        Method::Quarantine => loss::quarantine(
+            &serving(&*handles.quarantine_member, over),
+            member,
+            arguments,
+        ),
+        Method::ConfirmedDead => loss::confirmed_dead(
+            &serving(&*handles.confirm_member_dead, over),
+            member,
+            arguments,
+        ),
+        Method::LoseCoordinator => {
+            loss::lose_coordinator(&serving(&*handles.lose_coordinator, over), member)
+        }
         #[cfg(any(test, feature = "test-support"))]
         Method::CreateRun => {
             test_only::create_run(&serving(&*handles.create_run, over), member, arguments)
@@ -573,6 +597,7 @@ fn done(decision: &'static str) -> Served {
         task_id: None,
         message_id: None,
         cursor_moved: None,
+        detail: BoardOpDetail::NONE,
     }
 }
 
@@ -674,6 +699,8 @@ mod completion;
 #[path = "swarm_board_dispatch_reservations.rs"]
 mod reservations;
 
+#[path = "swarm_board_dispatch_loss.rs"]
+mod loss;
 #[path = "swarm_board_dispatch_messages.rs"]
 mod messages;
 #[path = "swarm_board_dispatch_usage.rs"]
@@ -692,3 +719,7 @@ mod telemetry_tests;
 #[cfg(test)]
 #[path = "swarm_board_dispatch_stall_tests.rs"]
 mod stall_tests;
+
+#[cfg(test)]
+#[path = "swarm_board_dispatch_loss_tests.rs"]
+mod loss_tests;

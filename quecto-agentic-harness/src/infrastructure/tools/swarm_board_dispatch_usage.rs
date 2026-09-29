@@ -15,7 +15,7 @@ use crate::application::swarm::dto::{
 use crate::application::swarm::use_cases::{
     ConfigureUsageBudget, ReadRequestAdmission, RecordRequestUsage,
 };
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, BoardOpDetail};
 
 /// `usage_budget(token_limit, strict_unknown=True)`.
 pub(super) const USAGE_BUDGET: [Parameter; 2] = [
@@ -58,6 +58,7 @@ pub(super) fn usage_budget(
         task_id: None,
         message_id: None,
         cursor_moved: None,
+        detail: BoardOpDetail::NONE,
     })
 }
 
@@ -82,6 +83,7 @@ pub(super) fn record_request(
         task_id: None,
         message_id: None,
         cursor_moved: None,
+        detail: BoardOpDetail::NONE,
     })
 }
 
@@ -109,6 +111,7 @@ pub(super) fn request_admission(
         task_id: None,
         message_id: None,
         cursor_moved: None,
+        detail: BoardOpDetail::NONE,
     })
 }
 
