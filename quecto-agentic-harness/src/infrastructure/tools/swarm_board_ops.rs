@@ -349,7 +349,11 @@ pub(super) fn requested(text: &str, wire: BoardWire) -> Option<BoardOpRequest> {
     let spec = op_spec(&(wire.op)(text)?)?;
     let arguments = member_arguments(&wire, text).and_then(|value| match value {
         Value::Object(mut fields) => {
-            fields.remove("op");
+            // Keeps the member's order (#2279 final review): the binding
+            // names the first unexpected field, as Python names the first
+            // unexpected keyword; `remove` would move the last into `op`'s
+            // slot.
+            fields.shift_remove("op");
             Ok(fields)
         }
         _ => Err("arguments: not a JSON object".to_owned()),
