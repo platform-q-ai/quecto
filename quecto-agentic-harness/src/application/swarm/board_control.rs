@@ -5,10 +5,14 @@
 //!
 //! A control record only a file edited outside the board can hold (a pause
 //! record without a numeric `started`, a boolean included; a budget
-//! payload that is not an object or a token limit that is not a count;
-//! usage totals that are not counts) is refused naming the record, where
-//! Python raises a `TypeError` or a `KeyError`, or computes with the
-//! value as it is: the `outside_edited_control_records` divergence.
+//! payload that is not an object or a token limit that is not a count) is
+//! refused naming the record, where Python raises a `TypeError` or a
+//! `KeyError`, or computes with the value as it is: the
+//! `outside_edited_control_records` divergence. Usage totals that are not
+//! counts (a REAL or a negative sum) are refused so only where a paused
+//! run's budget, with a token limit that is not null, is checked for a
+//! resume; everywhere else (the receipt's budget, the usage report) they
+//! pass through as Python passes them.
 use serde_json::Value;
 
 use super::dto::{ControlReceipt, UsageReport};
@@ -50,7 +54,6 @@ pub(crate) fn receipt(
     clock: &dyn Clock,
 ) -> Result<ControlReceipt, BoardError> {
     let generation = transaction.control_generation()?;
-    debug_assert!(generation >= 0, "an event id or 0: {generation}");
     let report = transaction.usage_report()?;
     let run = current(transaction)?;
     let Value::Object(mut budget) = report.budget else {

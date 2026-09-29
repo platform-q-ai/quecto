@@ -85,10 +85,13 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   `verify_task` as a refusal, where Python raises or iterates the value.
 /// - `outside_edited_control_records` (#2273, pinned in
 ///   `swarm_board_diff_loose_runs.rs` and `extend_run_deadline_tests`): a
-///   pause record whose `started` is not a number (a boolean included), a
-///   usage budget that is not an object or whose limit is not a count, or
-///   usage totals that are not counts (a REAL or negative sum) are refused
-///   naming the record, where Python raises or computes with them; an
+///   pause record whose `started` is not a number (a boolean included), or
+///   a usage budget that is not an object or whose limit is not a count,
+///   is refused naming the record, and so are usage totals that are not
+///   counts (a REAL or negative sum), but only where a paused run's
+///   budget with a non-null token limit is checked for a resume
+///   (elsewhere they pass through as Python passes them), where Python
+///   raises or computes with them; an
 ///   integer `started` is read as its float, so an extension from it
 ///   records a float deadline where Python records the integer; and a loss
 ///   event whose detail is not an object, or whose `member` is not text

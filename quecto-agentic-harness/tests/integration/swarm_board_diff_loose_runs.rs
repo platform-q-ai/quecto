@@ -36,12 +36,15 @@ fn bootstrap_and_create_use_only_the_run_columns_python_uses() {
 
 /// `outside_edited_control_records` (#2273), records only a file edited
 /// outside the board holds: a pause record whose `started` is not a
-/// number (a boolean included, which Python counts as 0 or 1), a budget
-/// payload that is not an object (or whose token limit is not a count),
-/// or usage totals that are not counts (a REAL or a negative sum) are
-/// refused naming the record, where Python raises a `TypeError` (or, for
-/// a list payload, answers a budget of the totals alone; for a boolean
-/// start or uncounted totals, answers as it computes). An integer
+/// number (a boolean included, which Python counts as 0 or 1), or a
+/// budget payload that is not an object (or whose token limit is not a
+/// count), is refused naming the record; usage totals that are not counts
+/// (a REAL or a negative sum) are refused so only when a paused run's
+/// budget, with a non-null token limit, is checked for a resume (elsewhere
+/// they pass through, as `uncounted_usage_totals_pass_through_elsewhere`
+/// pins). Python raises a `TypeError` (or, for a list payload, answers a
+/// budget of the totals alone; for a boolean start or uncounted totals,
+/// answers as it computes). An integer
 /// `started` is read as its float, so an extension from it records a
 /// float deadline where Python's records the integer (pinned by
 /// `extend_run_deadline_tests`). An event detail that is not an object,
@@ -121,5 +124,30 @@ fn outside_edited_control_records() {
             panic!("{detail}: {unnamed:?}");
         };
         assert_eq!(receipt["resume_blockers"], json!([]), "{detail}: {receipt}");
+    }
+}
+
+/// Usage totals that are not counts (a REAL or a negative sum) are refused
+/// only where a paused run's budget with a non-null token limit is checked
+/// for a resume (#2318 final review): a running run's receipt and usage
+/// report, and a paused run's under a null limit, carry them as Python
+/// does.
+#[test]
+fn uncounted_usage_totals_pass_through_elsewhere() {
+    for tokens in ["1.5", "-3"] {
+        run_both(&[
+            create(5),
+            at(1.0, "parent", "usage_report", json!([])),
+            sql(&format!(
+                "INSERT INTO request_usage(request_id, actor, payload, tokens) VALUES('r', 'parent', '{{}}', {tokens});"
+            )),
+            at(2.0, "parent", "_control_status", json!([])),
+            at(3.0, "parent", "usage_report", json!([])),
+            sql(
+                r#"INSERT INTO usage_budget VALUES(1, '{"token_limit": null, "strict_unknown": false}')"#,
+            ),
+            at(4.0, "parent", "pause", json!(["hold"])),
+            at(5.0, "parent", "_control_status", json!([])),
+        ]);
     }
 }

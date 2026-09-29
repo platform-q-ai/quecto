@@ -87,7 +87,8 @@ fn a_paused_runs_blockers_name_the_loss_the_deadline_and_the_budget() {
 /// that is not a number (a boolean included, which Python counts as 0 or
 /// 1), a budget that is not an object or whose limit is not a count, and
 /// usage totals that are not counts (a REAL or a negative sum, which
-/// Python compares with the limit as they are).
+/// Python compares with the limit as they are) where a paused run's
+/// budget, with a token limit, is checked for a resume.
 #[test]
 fn missing_and_edited_control_records_are_refused() {
     let mut unrecorded = paused(running_board(40.0), 50.0, None);

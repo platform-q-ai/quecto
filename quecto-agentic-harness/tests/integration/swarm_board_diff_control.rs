@@ -354,6 +354,20 @@ fn a_loss_event_at_id_zero_or_below_is_no_loss() {
     ]));
 }
 
+/// The control generation is the latest `paused` or `resumed` event id,
+/// whatever it is (#2318 final review): a `resumed` event a hand edit
+/// stored at id -5, the only control event, makes it -5, as Python
+/// answers it.
+#[test]
+fn a_control_event_below_id_zero_is_the_generation() {
+    run_both(&with_worker([
+        sql(&format!(
+            r#"INSERT INTO events(id,actor,time,action,detail) VALUES(-5,'supervisor',{NOW},'resumed','{{"paused_seconds": 0, "outcome": null}}')"#
+        )),
+        control(3.0, "parent", "_control_status"),
+    ]));
+}
+
 /// Loosely typed reasons and statuses, and members that are not the
 /// coordinator, are refused as Python refuses them.
 #[test]
