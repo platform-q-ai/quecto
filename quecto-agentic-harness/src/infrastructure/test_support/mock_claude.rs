@@ -18,7 +18,10 @@
 //!   `"cancel_queued":true` the user lines queued behind the running turn
 //!   are withdrawn, listed as `cancelled`, and never run; without it they
 //!   are listed as `still_queued` and run, together, as the next turn once
-//!   the stopped one has ended. Idle, it withdraws nothing.
+//!   the stopped one has ended: a merged batch, whose turn is its LAST
+//!   member's (`@UUID@`), and whose `@UUIDS@` keeps the batch's first 64
+//!   with, past that, the last member's in slot 63, as claude's collector
+//!   does. Idle, it withdraws nothing.
 //!
 //! - `QUECTO_MOCK_CLAUDE_SCRIPT` is the scenario: an NDJSON capture whose
 //!   Nth turn is the lines up to and including its Nth `result` line.
@@ -163,6 +166,11 @@ uuid_of() {{
 json_list() {{
   for word in $1; do printf '%s\n' "$word"; done | head -n 64 | awk 'NF {{ printf "%s\"%s\"", (n++ ? "," : ""), $0 }}'
 }}
+# The uuids a merged batch $1 names, as claude's collector keeps them: the
+# first 64, and past that the batch's own (its last member's) in slot 63.
+batch_of() {{
+  for word in $1; do printf '%s\n' "$word"; done | awk 'NF {{ w[++n] = $0 }} END {{ for (i = 1; i <= n && i <= 63; i++) print w[i]; if (n >= 64) print w[n] }}'
+}}
 answer_control() {{
   rid=$(printf '%s' "$1" | sed -n 's/.*"request_id":"\([^"]*\)".*/\1/p')
   case "$1" in
@@ -241,9 +249,9 @@ while IFS= read -r line; do
   # What an interrupt left queued runs, together, as the next turn.
   while [ -n "$queued" ]; do
     turn=$((turn + 1))
-    uuids=$queued
+    uuids=$(batch_of "$queued")
     queued=
-    uuid=$(for word in $uuids; do printf '%s\n' "$word"; done | head -n 1)
+    uuid=$(for word in $uuids; do printf '%s\n' "$word"; done | tail -n 1)
     run_turn
   done
 done

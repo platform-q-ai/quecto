@@ -25,6 +25,20 @@ pub(super) fn parse_backend_arg(arg: Option<&serde_json::Value>) -> Result<Membe
     }
 }
 
+/// The refusal for a `claude_code` launch the backend rule allows, until
+/// S4 (#2288) serves the member: without its endpoint the child could only
+/// start and fail, so it is refused before anything runs. S4 removes it.
+pub(super) const CLAUDE_CODE_NOT_AVAILABLE_YET: &str =
+    "claude_code members are not available yet (#2288)";
+
+/// Whether `backend` can serve a member yet: only quecto's, until #2288.
+pub(super) fn refuse_unserved_backend(backend: MemberBackend) -> Result<(), String> {
+    match backend {
+        MemberBackend::Quecto => Ok(()),
+        MemberBackend::ClaudeCode => Err(CLAUDE_CODE_NOT_AVAILABLE_YET.to_string()),
+    }
+}
+
 /// Who launches `config`, as the backend rule asks (#2287): a swarm
 /// participant, under an inherited tool policy, and forwarding a config.
 /// What the launch would hand the child outside `config` is part of the

@@ -110,6 +110,25 @@ pub const NAMES_TURNS_SINCE: [u64; 3] = [2, 1, 280];
 /// the interrupt's answer, rather than run afterwards.
 pub const CANCEL_QUEUED_CAPABILITY: &str = "interrupt_cancel_queued_v1";
 
+/// A version's `major.minor.patch`, read from its leading digits (a
+/// pre-release suffix such as `-beta.1` is ignored); `None` for anything
+/// else.
+fn release(version: &str) -> Option<[u64; 3]> {
+    let mut parts = version.splitn(3, '.');
+    let mut next = |last: bool| -> Option<u64> {
+        let part = parts.next()?;
+        let digits = match last {
+            true => part.split(|c: char| !c.is_ascii_digit()).next()?,
+            false => part,
+        };
+        match digits.bytes().all(|b| b.is_ascii_digit()) && !digits.is_empty() {
+            true => digits.parse().ok(),
+            false => None,
+        }
+    };
+    Some([next(false)?, next(false)?, next(true)?])
+}
+
 /// One MCP server's connection status in `system/init`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct McpServerStatus {
@@ -125,13 +144,18 @@ impl InitEvent {
     /// version is at least [`NAMES_TURNS_SINCE`]. An absent or unreadable
     /// version is not known to.
     pub fn names_turns(&self) -> bool {
-        false
+        self.cli_version
+            .as_deref()
+            .and_then(release)
+            .is_some_and(|version| version >= NAMES_TURNS_SINCE)
     }
 
     /// Whether this CLI's interrupt withdraws the queued user turns: it
     /// advertises [`CANCEL_QUEUED_CAPABILITY`].
     pub fn cancels_queued(&self) -> bool {
-        false
+        self.capabilities
+            .iter()
+            .any(|capability| capability == CANCEL_QUEUED_CAPABILITY)
     }
 
     /// Whether every MCP server reports [`MCP_SERVER_CONNECTED`]: the

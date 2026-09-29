@@ -12,7 +12,10 @@
 //!   its caller loops on it. A turn whose last event was a skipped line (it
 //!   may have been its `result`) is given up once the stream stays quiet
 //!   for [`ExternalAgentSessionSettings::skipped_line_grace`]: it is
-//!   interrupted, like an aborted one.
+//!   interrupted, like an aborted one. The reader waits for the next event
+//!   or the deadline then due; an abort or a `close` that changes what is
+//!   due wakes a reader already waiting, which waits again for the new
+//!   one, so a wedged agent that writes nothing more cannot hold it.
 //! - `abort` is quecto's (`handle_abort`): it drops the follow-ups and
 //!   answers at once; a running turn is interrupted. The member lives on.
 //! - An interrupted turn keeps the session busy, writing nothing, until
@@ -85,6 +88,10 @@ pub struct DriveExternalAgentSession {
     writes: tokio::sync::Mutex<()>,
     /// Set once the member has ended; releases every waiter.
     ended: tokio::sync::watch::Sender<bool>,
+    /// Bumped whenever what the reader waits for changes other than by
+    /// its own fold (an interrupt's deadline is set): a reader already
+    /// waiting recomputes its wait.
+    wait_changed: tokio::sync::watch::Sender<u64>,
 }
 
 impl DriveExternalAgentSession {
@@ -103,6 +110,7 @@ impl DriveExternalAgentSession {
             process: Mutex::default(),
             writes: tokio::sync::Mutex::new(()),
             ended: tokio::sync::watch::Sender::new(false),
+            wait_changed: tokio::sync::watch::Sender::new(0),
         }
     }
 
@@ -238,24 +246,32 @@ impl DriveExternalAgentSession {
             {
                 return Some(step);
             }
+            // Subscribed before the wait is read: a change after this
+            // point wakes the wait below, and one before it is in `wait`.
+            let mut changed = self.wait_changed.subscribe();
             let wait = self.core().wait();
             let timer = self.timer(wait);
             // `None`: the timer ran out; `Some(None)`: the output ended.
+            // Reading an event is cancel-safe: one left unread when the
+            // wait changes is read on the next pass.
             let read = tokio::select! {
                 biased;
                 () = self.until_ended() => return None,
+                // The sender lives as long as `self`: never an error.
+                _ = changed.changed() => continue,
                 event = process.next_event() => Some(event),
                 () = self.clock.sleep(timer.unwrap_or_default()), if timer.is_some() => None,
             };
             match (read, wait) {
                 (Some(Some(event)), _) => {
                     let _writes = self.writes.lock().await;
-                    let folded = self.core().fold(&event);
+                    let grace_end = self.deadline_after(self.settings.skipped_line_grace);
+                    let folded = self.core().fold(&event, grace_end);
                     self.settle(folded.records, folded.follow_up).await;
                     return Some(SessionStep::Folded(folded.step));
                 }
                 (Some(None), _) => return self.output_ended(process).await,
-                (None, Wait::Grace) => {
+                (None, Wait::Grace(_)) => {
                     if let Some(step) = self.lose_turn().await {
                         return Some(step);
                     }
@@ -305,8 +321,7 @@ impl DriveExternalAgentSession {
     fn timer(&self, wait: Wait) -> Option<Duration> {
         match wait {
             Wait::Event => None,
-            Wait::Grace => Some(self.settings.skipped_line_grace),
-            Wait::Until(deadline) => Some(Duration::from_millis(
+            Wait::Grace(deadline) | Wait::Until(deadline) => Some(Duration::from_millis(
                 deadline.0.saturating_sub(self.clock.now().0),
             )),
         }
@@ -316,7 +331,7 @@ impl DriveExternalAgentSession {
     /// it is interrupted.
     async fn lose_turn(&self) -> Option<SessionStep> {
         let _writes = self.writes.lock().await;
-        let turn = self.core().lost_turn()?;
+        let turn = self.core().lost_turn(self.clock.now())?;
         match self.interrupt(turn, "lost").await {
             Interrupt::Written => Some(SessionStep::TurnLost { turn }),
             Interrupt::Abandoned => Some(SessionStep::Abandoned { turn }),
@@ -346,6 +361,9 @@ impl DriveExternalAgentSession {
                 let waiting = core.interrupting(turn, deadline);
                 assert!(waiting, "a member that has not ended waits");
                 drop(core);
+                // A reader waiting on the turn's events waits for the
+                // deadline instead.
+                self.wait_changed.send_modify(|n| *n = n.wrapping_add(1));
                 self.record(SessionRecord::Interrupted { turn, cause });
                 Interrupt::Written
             }

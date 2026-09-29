@@ -235,8 +235,8 @@ fn init(line: &Object) -> InitEvent {
             .collect(),
         api_key_source: text(line, "apiKeySource"),
         permission_mode: text(line, "permissionMode"),
-        cli_version: None,
-        capabilities: Vec::new(),
+        cli_version: text(line, "claude_code_version"),
+        capabilities: texts(line, "capabilities"),
     }
 }
 
