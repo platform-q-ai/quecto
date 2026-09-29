@@ -355,3 +355,28 @@ fn a_call_that_read_only_the_run_status_keeps_the_run_roles() {
         })
     );
 }
+
+/// #2313 review nit: a call whose record's role is fixed (the harness's
+/// own op, `_status` among them) does not read the run's roles: once its
+/// run id is found, no telemetry statement of its own runs.
+#[test]
+fn a_call_with_a_fixed_role_reads_no_run_roles() {
+    let (dir, _store, _plain, meter) = created();
+    let generated = "0123456789abcdef0123456789abcdef";
+    run_with_id(&dir, generated);
+    let call = meter.open();
+    call.role_fixed();
+    call.atomic(false, &mut |board| board.run_status().map(|_| ()))
+        .unwrap();
+    let measure = measured(&*call);
+    assert_eq!(measure.run_id.as_deref(), Some(generated));
+    assert_eq!(measure.run_roles, None, "no roles were read for it");
+    let unread = meter.open();
+    unread.role_fixed();
+    transact(&*unread).unwrap();
+    assert_eq!(
+        measured(&*unread).run_id.as_deref(),
+        Some(generated),
+        "a call that read no run row still reads its id"
+    );
+}
