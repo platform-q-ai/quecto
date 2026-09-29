@@ -130,6 +130,18 @@ fn init_carries_the_session_configuration() {
             status: "connected".into()
         }]
     );
+    // #2287 review round 3 (L1, L3): the version and the capabilities.
+    assert_eq!(init.cli_version.as_deref(), Some("2.1.280"));
+    assert_eq!(
+        init.capabilities,
+        [
+            "interrupt_receipt_v1",
+            "interrupt_cancel_queued_v1",
+            "msg_lifecycle_v1",
+            "mcp_read_resource_v1",
+            "mcp_tool_ui_meta_v1",
+        ]
+    );
     let inits = events
         .iter()
         .filter(|e| matches!(e, ExternalAgentEvent::Init(_)))

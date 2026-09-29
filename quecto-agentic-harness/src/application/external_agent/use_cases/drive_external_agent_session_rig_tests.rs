@@ -15,7 +15,7 @@ use crate::application::external_agent::dto::{
 };
 use crate::application::external_agent::ports::{ExternalAgentProcess, PortFuture};
 use crate::domain::external_agent::stream::{
-    AssistantContent, ExternalAgentEvent, InterruptReceipt, ResultEvent, SkippedLine,
+    AssistantContent, ExternalAgentEvent, InitEvent, InterruptReceipt, ResultEvent, SkippedLine,
     SkippedLineReason,
 };
 
@@ -255,12 +255,14 @@ pub(super) async fn started() -> Rig {
     rig
 }
 
-/// A started session whose agent has named the user turn its first result
-/// answered (`u1`, turn 1), as claude 2.1.280 does: it takes steers. Its
-/// next user turn is `u2`.
+/// A started session whose agent is claude 2.1.280 (its `system/init`
+/// says so, and that it withdraws queued user turns on an interrupt) and
+/// has named the user turn its first result answered (`u1`, turn 1): it
+/// takes steers. Its next user turn is `u2`.
 pub(super) async fn named_started() -> Rig {
     let rig = started().await;
     rig.session.prompt("zero", None).await.unwrap();
+    rig.feed(capable_init()).await;
     rig.feed(answered(&["u1"], "completed", "zero")).await;
     assert_eq!(rig.phase(), SessionPhase::Idle);
     rig
@@ -360,4 +362,26 @@ pub(super) fn user_messages(session: &DriveExternalAgentSession) -> Vec<String> 
         .filter(|m| m.role == MessageRole::User)
         .map(|m| m.content)
         .collect()
+}
+
+/// A `system/init` naming the CLI's `version` and `capabilities`.
+pub(super) fn init_event(version: Option<&str>, capabilities: &[&str]) -> ExternalAgentEvent {
+    ExternalAgentEvent::Init(InitEvent {
+        cli_version: version.map(str::to_string),
+        capabilities: capabilities.iter().map(|c| c.to_string()).collect(),
+        ..InitEvent::default()
+    })
+}
+
+/// claude 2.1.280's `system/init`, as captured: it names turns (by its
+/// version) and withdraws queued user turns on an interrupt.
+pub(super) fn capable_init() -> ExternalAgentEvent {
+    init_event(
+        Some("2.1.280"),
+        &[
+            "interrupt_receipt_v1",
+            "interrupt_cancel_queued_v1",
+            "msg_lifecycle_v1",
+        ],
+    )
 }

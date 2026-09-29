@@ -495,3 +495,11 @@ mod interrupt_tests;
 #[cfg(test)]
 #[path = "drive_external_agent_session_binding_tests.rs"]
 mod binding_tests;
+
+#[cfg(test)]
+#[path = "drive_external_agent_session_wake_tests.rs"]
+mod wake_tests;
+
+#[cfg(test)]
+#[path = "drive_external_agent_session_capability_tests.rs"]
+mod capability_tests;
