@@ -34,6 +34,7 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
 use std::time::Duration;
 
+use quecto::infrastructure::persistence::swarm_board::py_json;
 use serde_json::{Value, json};
 
 use super::Outcome;
@@ -254,8 +255,7 @@ impl PyBoard {
                 panic!("the Python driver exited before answering {request}")
             }
         };
-        let answer: Value = serde_json::from_str(&line)
-            .unwrap_or_else(|error| panic!("the driver answered {line:?}: {error}"));
+        let answer = python_answer(&line);
         match (
             answer.get("ok"),
             answer.get("error"),
@@ -267,6 +267,19 @@ impl PyBoard {
             _ => panic!("the driver answered an unknown shape: {line}"),
         }
     }
+}
+
+/// The driver's answer line, read as Python's `json.loads` reads it
+/// (#2277 review M1): `py_json`'s float parse is correctly rounded, so
+/// every float compares as the exact double Python answered, where
+/// `serde_json` without `float_roundtrip` can misread its last digit. A
+/// value no `serde_json::Value` holds (`NaN`, `Infinity`, an integer
+/// beyond u64, a lone surrogate) is no answer the harness compares, and
+/// panics.
+pub fn python_answer(line: &str) -> Value {
+    py_json::decode(line)
+        .and_then(|answer| answer.to_value())
+        .unwrap_or_else(|error| panic!("the driver answered {line:?}: {error}"))
 }
 
 impl Drop for PyBoard {

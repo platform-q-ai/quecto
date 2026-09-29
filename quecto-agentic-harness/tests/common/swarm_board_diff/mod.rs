@@ -5,17 +5,21 @@
 //! After every step the results must be equal, refusals equal text, and the
 //! two files equal logical dumps.
 //!
-//! Results are compared after a serde round trip, not as Python's own
-//! text: the driver writes Python's result with `json.dumps`, the harness
-//! parses that into a `serde_json::Value`, and the two sides' `Value`s are
-//! compared as serde writes them (an integer never equals a float, and an
-//! object's keys compare in order). A difference the round trip erases is
-//! not seen here: float digits and exponent spelling (`1e+16` against
-//! serde's `1e16`), an integer beyond u64 (read as a float), and
-//! `NaN`/`Infinity`, which serde does not read (the harness panics on such
-//! an answer). The results are rendered in Python's text only on the wire,
-//! so S13's wire rendering must write them with `py_json` (`dumps`), never
-//! with serde, and compare that text against Python's.
+//! Results are compared as values, not as Python's own text: the driver
+//! writes Python's result with `json.dumps`, the harness reads that as
+//! Python's `json.loads` would (`py_json::decode`, whose float parse is
+//! correctly rounded, #2277 review M1) into a `serde_json::Value`, and the
+//! two sides' `Value`s are compared as serde writes them (an integer never
+//! equals a float, an object's keys compare in order, and serde writes
+//! each float's shortest round-tripping digits, so two floats compare
+//! equal only when they are the same double). The Rust side's `Value` is
+//! the dispatcher's own answer, never parsed from text. What is not seen
+//! here is spelling alone: exponent spelling (`1e+16` against serde's
+//! `1e16`); `NaN`, `Infinity`, an integer beyond u64 or a lone surrogate,
+//! which no `Value` holds, make the harness panic. The results are
+//! rendered in Python's text only on the wire, so S13's wire rendering
+//! must write them with `py_json` (`dumps`), never with serde, and compare
+//! that text against Python's.
 
 pub mod dump;
 pub mod python;
