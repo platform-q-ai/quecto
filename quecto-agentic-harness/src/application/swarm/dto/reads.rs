@@ -117,7 +117,7 @@ pub struct ListTasksRequest {
 /// One task as `summary`'s counts read it (`SELECT id,status,dependencies
 /// FROM tasks`): its id and status as stored, its dependencies loaded.
 #[derive(Clone, Debug, PartialEq)]
-pub struct TaskState {
+pub struct CountedTask {
     pub id: Value,
     pub status: Value,
     pub dependencies: Value,
@@ -142,4 +142,21 @@ pub struct BootstrapMemberRequest {
     pub started: Value,
     pub socket: Value,
     pub reservation: Value,
+}
+
+/// What `_join` answered: the join's branch, and the coordinator's
+/// summary every branch ends with.
+#[derive(Clone, Debug, PartialEq)]
+pub struct JoinedSummary {
+    pub joined: super::Joined,
+    pub summary: RunSummary,
+}
+
+/// What `_bootstrap` answered: whether it wrote the placeholder, the
+/// join's branch, and the coordinator's summary.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BootstrappedSummary {
+    pub created: bool,
+    pub joined: super::Joined,
+    pub summary: RunSummary,
 }

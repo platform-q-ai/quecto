@@ -27,8 +27,8 @@
 //! `test-support` builds: a production build parses none of them and
 //! refuses each as an unknown method. The task and claim methods
 //! `task_create`, `dependencies`, `claim` and `release` (#2272) are served
-//! by [`tasks`], with the test-only `task_raw` (`Tasks._task` inside a
-//! read-only operation, before S12 adds owner liveness to `task`); `block`,
+//! by [`tasks`], with `task` and the test-only `task_raw` (`task` without
+//! the owner liveness #2277 adds); `block`,
 //! `unblock`, `submit` and `verify_task` by [`submissions`]; the run
 //! control methods `pause`, `resume`, `stop`, `_resume_external`,
 //! `_close`, `_extend_deadline`, `_control_status` and `usage_report`
@@ -40,20 +40,17 @@
 //! `recover` and `revoke` (#2275), by [`reservations`]; and the durable
 //! messages `send`, `withdraw`, `inbox` and `ack` (#2276) by [`messages`],
 //! the wake notifications `_notifications` and `_accept_wake` by [`wakes`],
-//! and the loss and death records `_quarantine`, `_confirmed_dead` and
-//! `_lose_coordinator` (#2277) by [`loss`].
+//! the loss and death records `_quarantine`, `_confirmed_dead` and
+//! `_lose_coordinator` (#2277) by [`loss`], and the read models `summary`,
+//! `events` and `tasks`, with the summaries `create`, `_join` and
+//! `_bootstrap` answer with (#2277), by [`reads`].
 //!
-//! What S12 must keep when it adds the summaries Python answers with:
-//!
-//! - `create` commits and then calls `summary()`, which can still raise: a
-//!   created run answered with a refusal.
-//! - `_bootstrap`'s join ends every branch with `coordinator.summary()`,
-//!   after its writes commit, so an admitted or re-activated member can be
-//!   answered with a refusal too.
-//! - The join's already-live branch writes nothing and still ends with
-//!   `coordinator.summary()`, whose gate can refuse (a coordinator that is
-//!   nobody, or dead). `Joined::AlreadyLive` carries the coordinator the
-//!   join read, so S12 runs that gate as it without reading the run again.
+//! The summaries keep Python's order: `create` commits and then reads the
+//! creator's summary, which can still refuse (a created run answered with
+//! a refusal); `_join` and `_bootstrap` end every branch of the join with
+//! the coordinator's summary after its writes commit, the already-live
+//! branch (which writes nothing) included, so its gate can refuse a
+//! coordinator that is nobody.
 //!
 //! `JoinRun` runs `AdmitMember`'s and `ActivateMember`'s work by a
 //! deliberate decision (#2271 round-1 review L3): Python's `join_process`
@@ -87,20 +84,20 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use serde_json::{Map, Value};
+use serde_json::Value;
 
-use crate::application::swarm::dto::{MemberRow, RunSnapshotView, RunStatusView};
 use crate::application::swarm::ports::{BoardCallMeter, BoardOpLog, BoardRepository};
 use crate::application::swarm::use_cases::{
     AcceptWake, AcknowledgeMessage, ActivateMember, AdmitMember, AmendRunContract, BlockTask,
-    BootstrapRun, ClaimNotifications, ClaimTask, CloseRun, CompleteRun, ConfigureUsageBudget,
-    ConfirmMemberDead, CreateRun, CreateTask, ExtendRunDeadline, JoinRun, ListFileOwners,
-    LoseCoordinator, OverRepository, PauseRun, QuarantineMember, ReadControlStatus, ReadInbox,
-    ReadRequestAdmission, ReadRunSnapshot, ReadRunStatus, ReadTask, ReadUsageReport,
-    RecordEvidence, RecordMemberLaunch, RecordRequestUsage, RecoverTask, RegisterMemberSocket,
-    ReleaseFiles, ReleaseTask, ReleaseUnlaunchedMember, ReserveFiles, ResumeRun,
-    ResumeRunExternally, RevalidateTask, RevokeTask, SendMessage, SetTaskDependencies, StopRun,
-    SubmitTask, UnblockTask, VerifyTask, WithdrawMessage,
+    BootstrapMember, BootstrapRun, ClaimNotifications, ClaimTask, CloseRun, CompleteRun,
+    ConfigureUsageBudget, ConfirmMemberDead, CreateRun, CreateTask, ExtendRunDeadline, JoinMember,
+    JoinRun, ListFileOwners, ListTasks, LoseCoordinator, OverRepository, PauseRun,
+    QuarantineMember, ReadControlStatus, ReadInbox, ReadRequestAdmission, ReadRunEvents,
+    ReadRunSnapshot, ReadRunStatus, ReadRunSummary, ReadTask, ReadUsageReport, RecordEvidence,
+    RecordMemberLaunch, RecordRequestUsage, RecoverTask, RegisterMemberSocket, ReleaseFiles,
+    ReleaseTask, ReleaseUnlaunchedMember, ReserveFiles, ResumeRun, ResumeRunExternally,
+    RevalidateTask, RevokeTask, SendMessage, SetTaskDependencies, StopRun, SubmitTask, UnblockTask,
+    VerifyTask, WithdrawMessage,
 };
 use crate::domain::swarm::{BoardError, BoardOpDetail, BoardRole, RefusalKind};
 
@@ -122,15 +119,15 @@ pub struct SwarmBoardHandles {
     pub record_member_launch: Arc<RecordMemberLaunch>,
     pub release_unlaunched_member: Arc<ReleaseUnlaunchedMember>,
     pub register_member_socket: Arc<RegisterMemberSocket>,
-    /// Served only in test builds as `bootstrap_join` until S12 adds the
-    /// summary `_bootstrap` answers with.
+    /// Served only in test builds, as `bootstrap_join`: `_join` without
+    /// its closing summary.
     pub join_run: Arc<JoinRun>,
     pub create_task: Arc<CreateTask>,
     pub set_task_dependencies: Arc<SetTaskDependencies>,
     pub claim_task: Arc<ClaimTask>,
     pub release_task: Arc<ReleaseTask>,
-    /// Served only in test builds as `task_raw` until S12 adds the owner
-    /// liveness `task` answers with.
+    /// `task`, and in test builds `task_raw` (without the owner
+    /// liveness).
     pub read_task: Arc<ReadTask>,
     pub block_task: Arc<BlockTask>,
     pub unblock_task: Arc<UnblockTask>,
@@ -165,6 +162,11 @@ pub struct SwarmBoardHandles {
     pub quarantine_member: Arc<QuarantineMember>,
     pub confirm_member_dead: Arc<ConfirmMemberDead>,
     pub lose_coordinator: Arc<LoseCoordinator>,
+    pub read_run_summary: Arc<ReadRunSummary>,
+    pub read_run_events: Arc<ReadRunEvents>,
+    pub list_tasks: Arc<ListTasks>,
+    pub bootstrap_member: Arc<BootstrapMember>,
+    pub join_member: Arc<JoinMember>,
     /// Each call's `swarm_op` record and its measure (#2303), only when
     /// the event log is switched on (`telemetry.event_log.enabled`, owner
     /// decision T1): `None` measures and writes nothing.
@@ -235,6 +237,13 @@ pub const BOARD_OPS: &[&str] = &[
     "_quarantine",
     "_confirmed_dead",
     "_lose_coordinator",
+    "summary",
+    "events",
+    "task",
+    "tasks",
+    "create",
+    "_bootstrap",
+    "_join",
     #[cfg(any(test, feature = "test-support"))]
     "create_run",
     #[cfg(any(test, feature = "test-support"))]
@@ -571,6 +580,23 @@ fn serve(
         Method::LoseCoordinator => {
             loss::lose_coordinator(&serving(&*handles.lose_coordinator, over), member)
         }
+        Method::Summary => reads::summary(
+            &serving(&*handles.read_run_summary, over),
+            member,
+            arguments,
+        ),
+        Method::Events => {
+            reads::events(&serving(&*handles.read_run_events, over), member, arguments)
+        }
+        Method::Task => tasks::task(&serving(&*handles.read_task, over), member, arguments),
+        Method::Tasks => reads::tasks(&serving(&*handles.list_tasks, over), member, arguments),
+        Method::Create => reads::create(&serving(&*handles.create_run, over), member, arguments),
+        Method::Bootstrap => reads::bootstrap(
+            &serving(&*handles.bootstrap_member, over),
+            member,
+            arguments,
+        ),
+        Method::Join => reads::join(&serving(&*handles.join_member, over), member, arguments),
         #[cfg(any(test, feature = "test-support"))]
         Method::CreateRun => {
             test_only::create_run(&serving(&*handles.create_run, over), member, arguments)
@@ -611,67 +637,9 @@ fn take<const N: usize>(arguments: Vec<Value>) -> Result<[Value; N], BoardError>
     })
 }
 
-/// `_status`'s dict: the counts, then the run's fields as stored.
-fn status(view: RunStatusView) -> Value {
-    let text = |value: Option<String>| value.map_or(Value::Null, Value::String);
-    object([
-        (
-            "members_without_claim",
-            Value::from(view.counts.members_without_claim),
-        ),
-        ("members_dead", Value::from(view.counts.members_dead)),
-        ("id", text(view.id)),
-        ("status", text(view.status)),
-        ("deadline", view.deadline),
-        ("coordinator", text(view.coordinator)),
-        ("outcome", text(view.outcome)),
-    ])
-}
-
-/// `_snapshot`'s dict, with each member row as `dict(row)`.
-fn snapshot(view: RunSnapshotView) -> Result<Value, BoardError> {
-    Ok(object([
-        ("status", view.status.map_or(Value::Null, Value::String)),
-        (
-            "coordinator",
-            view.coordinator.map_or(Value::Null, Value::String),
-        ),
-        ("outcome", view.outcome.map_or(Value::Null, Value::String)),
-        ("control_generation", Value::from(view.control_generation)),
-        ("deadline", float(view.deadline)?),
-        (
-            "members",
-            Value::Array(view.members.into_iter().map(member_row).collect()),
-        ),
-    ]))
-}
-
-/// `dict(row)`: every column, in table order.
-fn member_row(row: MemberRow) -> Value {
-    Value::Object(row.columns.into_iter().collect())
-}
-
-fn object<const N: usize>(entries: [(&str, Value); N]) -> Value {
-    Value::Object(
-        entries
-            .into_iter()
-            .map(|(key, value)| (key.to_owned(), value))
-            .collect::<Map<String, Value>>(),
-    )
-}
-
-/// A stored REAL as Python's `json` writes a float. SQLite can hold an
-/// infinity that JSON cannot; that is refused rather than written as null.
-fn float(value: f64) -> Result<Value, BoardError> {
-    serde_json::Number::from_f64(value)
-        .map(Value::Number)
-        .ok_or_else(|| {
-            BoardError::new(
-                RefusalKind::Store,
-                format!("the board holds a non-finite number: {value}"),
-            )
-        })
-}
+#[path = "swarm_board_dispatch_render.rs"]
+mod render;
+use render::{float, member_row, object, snapshot, status};
 
 #[path = "swarm_board_dispatch_members.rs"]
 mod members;
@@ -703,6 +671,8 @@ mod reservations;
 mod loss;
 #[path = "swarm_board_dispatch_messages.rs"]
 mod messages;
+#[path = "swarm_board_dispatch_reads.rs"]
+mod reads;
 #[path = "swarm_board_dispatch_usage.rs"]
 mod usage;
 #[path = "swarm_board_dispatch_wakes.rs"]

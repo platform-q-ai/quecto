@@ -100,8 +100,13 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 /// - #2277's `outside_edited_loss_records` (a loss observation's time or
 ///   detail, or a member's launcher, only an edit holds; a detail that is
 ///   not JSON text, or NULL, met by `_quarantine`, is refused as a store
-///   failure where Python raises a `JSONDecodeError` or a `TypeError`):
-///   see `swarm_board_diff_loose_loss.rs`.
+///   failure where Python raises a `JSONDecodeError` or a `TypeError`; and
+///   an owner's latest event time the owner liveness measures from): see
+///   `swarm_board_diff_loose_loss.rs` and `swarm_board_diff_loose_reads.rs`,
+///   which also pins `outside_edited_task_columns` for `summary`'s counts
+///   and #2277's `unassigned_code_point_repr` (an owner id's code point
+///   Unicode has not assigned, which Python's `repr()` escapes and the Rust
+///   board writes).
 /// - `outside_edited_contract` (#2273, listed case by case and pinned in
 ///   `swarm_board_diff_loose_completion.rs`): a run contract, a criterion
 ///   or a task's evidence only a file edited outside the board holds
@@ -148,7 +153,7 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   (#2277, pinned in `swarm_board_diff_loose_loss.rs`): such a member is
 ///   already lost and its death already confirmed, where Python observes
 ///   or records its loss and confirms its death.
-pub const PERMITTED_DIVERGENCES: [&str; 15] = [
+pub const PERMITTED_DIVERGENCES: [&str; 16] = [
     "arguments_beyond_a_serde_value",
     "integer_beyond_i64_is_refused",
     "multi_conflict_names_the_smallest_path",
@@ -162,6 +167,7 @@ pub const PERMITTED_DIVERGENCES: [&str; 15] = [
     "outside_edited_task_columns",
     "outside_edited_wake_records",
     "real_to_text_digits",
+    "unassigned_code_point_repr",
     "unknown_member_status_is_not_alive",
     "wake_target_sort_error_order",
 ];
@@ -589,10 +595,11 @@ fn every_permitted_divergence_is_pinned_by_name() {
 /// The only files whose tests may expect a difference: this one, its
 /// task-column sibling, #2275's, #2276's and #2277's siblings, and the
 /// submission scenarios holding a [`SECOND_PINS`] test.
-const PIN_TABLE_FILES: [&str; 6] = [
+const PIN_TABLE_FILES: [&str; 7] = [
     include_str!("swarm_board_diff_loose.rs"),
     include_str!("swarm_board_diff_loose_files.rs"),
     include_str!("swarm_board_diff_loose_loss.rs"),
+    include_str!("swarm_board_diff_loose_reads.rs"),
     include_str!("swarm_board_diff_loose_messages.rs"),
     include_str!("swarm_board_diff_loose_tasks.rs"),
     include_str!("swarm_board_diff_submissions.rs"),

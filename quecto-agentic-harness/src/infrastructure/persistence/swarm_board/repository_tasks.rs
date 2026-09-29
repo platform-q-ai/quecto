@@ -153,7 +153,7 @@ impl BoardTasks for SqliteBoard<'_> {
         self.ids_page(offset, limit)
     }
 
-    fn task_states(&self) -> Result<Vec<crate::application::swarm::dto::TaskState>, BoardError> {
+    fn task_states(&self) -> Result<Vec<crate::application::swarm::dto::CountedTask>, BoardError> {
         self.states()
     }
 

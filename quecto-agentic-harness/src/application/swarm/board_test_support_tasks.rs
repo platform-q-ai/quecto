@@ -5,7 +5,7 @@
 use serde_json::{Value, json};
 
 use super::MemoryTransaction;
-use crate::application::swarm::dto::{NewTask, TaskRow, TaskState, TaskUpdate};
+use crate::application::swarm::dto::{CountedTask, NewTask, TaskRow, TaskUpdate};
 use crate::application::swarm::ports::{BoardRequests, BoardTasks, RequestAction};
 use crate::domain::swarm::{BoardError, RefusalKind};
 
@@ -189,13 +189,13 @@ impl BoardTasks for MemoryTransaction<'_> {
         Ok(ids.into_iter().skip(skip).take(take).collect())
     }
 
-    fn task_states(&self) -> Result<Vec<TaskState>, BoardError> {
+    fn task_states(&self) -> Result<Vec<CountedTask>, BoardError> {
         let state = self.state.borrow();
         let column = |row: &TaskRow, name: &str| row.get(name).cloned().unwrap_or(Value::Null);
         Ok(state
             .tasks
             .iter()
-            .map(|row| TaskState {
+            .map(|row| CountedTask {
                 id: column(row, "id"),
                 status: column(row, "status"),
                 dependencies: column(row, "dependencies"),

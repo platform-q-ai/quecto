@@ -165,17 +165,17 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "NotRunning",
     ),
     (
-        "src/application/swarm/use_cases/join_run.rs:JoinRun::execute",
+        "src/application/swarm/use_cases/join_run.rs:join",
         "coordination run missing",
         "RunMissing",
     ),
     (
-        "src/application/swarm/use_cases/join_run.rs:JoinRun::execute",
+        "src/application/swarm/use_cases/join_run.rs:join",
         "invoking member is unknown or death confirmed",
         "NotMember",
     ),
     (
-        "src/application/swarm/use_cases/join_run.rs:JoinRun::execute",
+        "src/application/swarm/use_cases/join_run.rs:join",
         "launch reservation does not match invoking process",
         "LaunchConflict",
     ),
@@ -635,7 +635,7 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "Calling",
     ),
     (
-        "src/infrastructure/tools/swarm_board_dispatch.rs:float",
+        "src/infrastructure/tools/swarm_board_dispatch_render.rs:float",
         "the board holds a non-finite number: {value}",
         "Store",
     ),

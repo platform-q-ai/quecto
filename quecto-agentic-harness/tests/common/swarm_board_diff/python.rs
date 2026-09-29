@@ -19,14 +19,15 @@
 //! closing summary, `bootstrap_run` is `_bootstrap` without its join, and
 //! `bootstrap_join` is that join, `join_process`, bound by `_bootstrap`'s
 //! signature and without the coordinator's closing summary, and
-//! `task_raw` is `Tasks._task` inside a read-only operation, before S12's
-//! owner liveness); they live here, never in the `.py` sources.
+//! `task_raw` is `Tasks._task` inside a read-only operation, without the
+//! owner liveness `task` adds); they live here, never in the `.py`
+//! sources.
 //!
 //! `create_run` stops where Python's real `create` commits: `create`'s
 //! transaction commits and only then does it call `summary()`, which can
 //! still raise, so a real `create` can answer a refusal for a run it has
-//! created. S12, which adds the summary, must keep that order and that
-//! outcome: committed, then refused.
+//! created. The Rust `create` keeps that order and that outcome (#2277):
+//! committed, then refused.
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};

@@ -32,7 +32,7 @@ pub use policy::{
     require_budget, require_unsubmitted, resume_blockers, revalidation, run_already,
     run_already_held, status_is_alive, validate_extension,
 };
-pub use python_value::{python_equal, python_truthy};
+pub use python_value::{python_equal, python_repr, python_truthy};
 pub use records::{
     Criterion, CriterionKind, EvidenceRow, MemberRecord, MemberState, RunRecord, RunState,
     TaskRecord, TaskState,

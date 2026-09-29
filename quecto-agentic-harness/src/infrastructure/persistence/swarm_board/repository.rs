@@ -335,7 +335,7 @@ impl SqliteBoard<'_> {
     /// Notes the run id and roles of a run row the op read, for telemetry
     /// only (#2303), for a metered call that has found them not yet: no
     /// statement of its own.
-    fn seen(&self, row: &Row<'_>) {
+    pub(super) fn seen(&self, row: &Row<'_>) {
         if let Some(tally) = self.tally.filter(|tally| tally.wants_run()) {
             run_noted(tally, row);
         }

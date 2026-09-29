@@ -264,9 +264,9 @@ pub fn run_rust(steps: &[Step]) -> Outcome {
     last
 }
 
-/// Runs `steps` on a Rust board alone and answers every step, refused or
-/// not: what the Rust board answered at each step of a scenario
-/// `run_both` has compared (so Python's answers too).
+/// Runs `steps` on a Rust board alone (each held as it says) and answers
+/// every step, refused or not: what the Rust board answered at each step
+/// of a scenario `run_both` has compared (so Python's answers too).
 pub fn rust_answers(steps: &[Step]) -> Vec<Outcome> {
     let dir = tempfile::tempdir().expect("a directory for the board");
     let side = Side::new(dir.path(), "rust");
@@ -279,10 +279,11 @@ pub fn rust_answers(steps: &[Step]) -> Vec<Outcome> {
             } else if step.method == FS_STEP {
                 shape(&side.root, &step.args)
             } else {
-                side.neutral(
+                let answer = with_lock(&side.database, step.hold, || {
                     rust.call_text(&step.member, &step.method, &step.args, step.now)
-                        .0,
-                )
+                        .0
+                });
+                side.neutral(answer)
             }
         })
         .collect()

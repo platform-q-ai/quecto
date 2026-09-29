@@ -1,0 +1,285 @@
+//! The read models of the board dispatch (#2277, #1969): `summary`,
+//! `events` and `tasks`, and the summaries `create`, `_join` and
+//! `_bootstrap` answer with, their Python signatures and their serving,
+//! and the summary rendered in Python's key order. Every argument reaches
+//! the use case as the JSON value passed (Python type-checks a cursor, an
+//! offset or a limit at run time). A record names no task or message.
+use serde_json::{Map, Value};
+
+use super::{Parameter, Served, done, member_row, required, take};
+use crate::application::swarm::dto::{
+    BootstrapMemberRequest, CreateBranch, CreateRunRequest, CreatedRun, EventPage, FullSummary,
+    JoinRunRequest, Joined, LaunchIdentity, ListTasksRequest, ReadRunEventsRequest,
+    ReadRunSummaryRequest, RunSummary,
+};
+use crate::application::swarm::use_cases::{
+    BootstrapMember, CreateRun, JoinMember, ListTasks, ReadRunEvents, ReadRunSummary,
+};
+use crate::domain::swarm::BoardError;
+
+/// `summary(since=None)`.
+pub(super) const SUMMARY: [Parameter; 1] = [Parameter {
+    name: "since",
+    default: Some(|| Value::Null),
+}];
+/// `events(after=0, limit=25)`.
+pub(super) const EVENTS: [Parameter; 2] = [
+    Parameter {
+        name: "after",
+        default: Some(|| Value::from(0)),
+    },
+    Parameter {
+        name: "limit",
+        default: Some(|| Value::from(25)),
+    },
+];
+/// `tasks(offset=0, limit=50)`.
+pub(super) const TASKS: [Parameter; 2] = [
+    Parameter {
+        name: "offset",
+        default: Some(|| Value::from(0)),
+    },
+    Parameter {
+        name: "limit",
+        default: Some(|| Value::from(50)),
+    },
+];
+/// `create(goal, constraints, criteria, member_limit, deadline)`, and
+/// the test-only `create_run`.
+pub(super) const CREATE: [Parameter; 5] = [
+    required("goal"),
+    required("constraints"),
+    required("criteria"),
+    required("member_limit"),
+    required("deadline"),
+];
+/// `_bootstrap(pid, started, socket, reservation=None)`, and the
+/// test-only `bootstrap_join`.
+pub(super) const BOOTSTRAP: [Parameter; 4] = [
+    required("pid"),
+    required("started"),
+    required("socket"),
+    Parameter {
+        name: "reservation",
+        default: Some(|| Value::Null),
+    },
+];
+/// `_join(reservation, pid, started, socket)`.
+pub(super) const JOIN: [Parameter; 4] = [
+    required("reservation"),
+    required("pid"),
+    required("started"),
+    required("socket"),
+];
+
+/// `value` answered with `decision`.
+fn answered(value: Value, decision: &'static str) -> Served {
+    let mut served = done(decision);
+    served.value = value;
+    served
+}
+
+/// The summary, or `{unchanged, event_cursor, status,
+/// next_liveness_check_at}` for a cursor that is the board's.
+pub(super) fn summary(
+    read_run_summary: &ReadRunSummary,
+    actor: &str,
+    arguments: Vec<Value>,
+) -> Result<Served, BoardError> {
+    let [since] = take(arguments)?;
+    let summary = read_run_summary.execute(ReadRunSummaryRequest {
+        actor: actor.to_owned(),
+        since,
+    })?;
+    let decision = match summary {
+        RunSummary::Unchanged { .. } => "unchanged",
+        RunSummary::Full(_) => "full",
+    };
+    Ok(answered(rendered(summary), decision))
+}
+
+/// `{events, cursor, has_more}`, each event as `dict(row)`.
+pub(super) fn events(
+    read_run_events: &ReadRunEvents,
+    actor: &str,
+    arguments: Vec<Value>,
+) -> Result<Served, BoardError> {
+    let [after, limit] = take(arguments)?;
+    let EventPage {
+        events,
+        cursor,
+        has_more,
+    } = read_run_events.execute(ReadRunEventsRequest {
+        actor: actor.to_owned(),
+        after,
+        limit,
+    })?;
+    let mut page = Map::new();
+    let events = events.into_iter().map(|event| event.into_value()).collect();
+    page.insert("events".to_owned(), Value::Array(events));
+    page.insert("cursor".to_owned(), Value::from(cursor));
+    page.insert("has_more".to_owned(), Value::Bool(has_more));
+    Ok(answered(Value::Object(page), "read"))
+}
+
+/// The page of tasks, each with its owner's liveness.
+pub(super) fn tasks(
+    list_tasks: &ListTasks,
+    actor: &str,
+    arguments: Vec<Value>,
+) -> Result<Served, BoardError> {
+    let [offset, limit] = take(arguments)?;
+    let page = list_tasks.execute(ListTasksRequest {
+        actor: actor.to_owned(),
+        offset,
+        limit,
+    })?;
+    let page = page.into_iter().map(|task| task.into_value()).collect();
+    Ok(answered(Value::Array(page), "read"))
+}
+
+/// The run `create` made (or took over), before its summary.
+pub(super) fn created(
+    create_run: &CreateRun,
+    member: &str,
+    arguments: Vec<Value>,
+) -> Result<CreatedRun, BoardError> {
+    let [goal, constraints, criteria, member_limit, deadline] = take(arguments)?;
+    create_run.execute(CreateRunRequest {
+        member: member.to_owned(),
+        goal,
+        constraints,
+        criteria,
+        member_limit,
+        deadline,
+    })
+}
+
+/// `create`'s decision.
+pub(super) fn branch(created: &CreatedRun) -> &'static str {
+    match created.branch {
+        CreateBranch::Fresh => "fresh",
+        CreateBranch::OverSetup => "over_setup",
+    }
+}
+
+/// The creator's summary, or its refusal: the run is created either way.
+pub(super) fn create(
+    create_run: &CreateRun,
+    member: &str,
+    arguments: Vec<Value>,
+) -> Result<Served, BoardError> {
+    let created = created(create_run, member, arguments)?;
+    let decision = branch(&created);
+    Ok(answered(rendered(created.summary?), decision))
+}
+
+fn joined(joined: &Joined) -> &'static str {
+    match joined {
+        Joined::Admitted => "admitted",
+        Joined::AlreadyLive { .. } => "already_live",
+        Joined::Reactivated => "reactivated",
+    }
+}
+
+/// The coordinator's summary.
+pub(super) fn bootstrap(
+    bootstrap_member: &BootstrapMember,
+    member: &str,
+    arguments: Vec<Value>,
+) -> Result<Served, BoardError> {
+    let [pid, started, socket, reservation] = take(arguments)?;
+    let answer = bootstrap_member.execute(BootstrapMemberRequest {
+        member: member.to_owned(),
+        pid,
+        started,
+        socket,
+        reservation,
+    })?;
+    let decision = joined(&answer.joined);
+    Ok(answered(rendered(answer.summary), decision))
+}
+
+/// The coordinator's summary.
+pub(super) fn join(
+    join_member: &JoinMember,
+    member: &str,
+    arguments: Vec<Value>,
+) -> Result<Served, BoardError> {
+    let [reservation, pid, started, socket] = take(arguments)?;
+    let answer = join_member.execute(JoinRunRequest {
+        member: member.to_owned(),
+        reservation,
+        launch: LaunchIdentity { pid, started },
+        socket,
+    })?;
+    let decision = joined(&answer.joined);
+    Ok(answered(rendered(answer.summary), decision))
+}
+
+fn float(value: Option<f64>) -> Value {
+    value.map_or(Value::Null, Value::from)
+}
+
+/// The summary as Python's dict: the run's columns, then the keys
+/// `summary` adds, in its order.
+fn rendered(summary: RunSummary) -> Value {
+    let mut answer = Map::new();
+    match summary {
+        RunSummary::Unchanged {
+            event_cursor,
+            status,
+            next_liveness_check_at,
+        } => {
+            answer.insert("unchanged".to_owned(), Value::Bool(true));
+            answer.insert("event_cursor".to_owned(), Value::from(event_cursor));
+            answer.insert("status".to_owned(), status);
+            answer.insert(
+                "next_liveness_check_at".to_owned(),
+                float(next_liveness_check_at),
+            );
+        }
+        RunSummary::Full(full) => full_summary(*full, &mut answer),
+    }
+    Value::Object(answer)
+}
+
+fn full_summary(full: FullSummary, answer: &mut Map<String, Value>) {
+    answer.extend(full.run.columns);
+    let mut put = |key: &str, value: Value| {
+        answer.insert(key.to_owned(), value);
+    };
+    put("next_liveness_check_at", float(full.next_liveness_check_at));
+    put(
+        "members",
+        Value::Array(full.members.into_iter().map(member_row).collect()),
+    );
+    put("usage", Value::from(full.usage));
+    put("task_count", Value::from(full.task_count));
+    let tasks = full.tasks.into_iter().map(|task| task.into_value());
+    put("tasks", Value::Array(tasks.collect()));
+    put("file_count", Value::from(full.file_count));
+    let files = full.files.into_iter().map(|file| file.into_value());
+    put("files", Value::Array(files.collect()));
+    let evidence = full.evidence.into_iter().map(|row| row.into_value());
+    put("evidence", Value::Array(evidence.collect()));
+    put("control_generation", Value::from(full.control_generation));
+    put("event_cursor", Value::from(full.event_cursor));
+    let counts = full.counts;
+    let mut by_status = Map::new();
+    for (key, count) in [
+        ("ready", counts.ready),
+        ("claimed", counts.claimed),
+        ("blocked", counts.blocked),
+        ("submitted", counts.submitted),
+        ("completed", counts.completed),
+        (
+            "members_without_claim",
+            counts.members.members_without_claim,
+        ),
+        ("members_dead", counts.members.members_dead),
+    ] {
+        by_status.insert(key.to_owned(), Value::from(count));
+    }
+    put("counts", Value::Object(by_status));
+}

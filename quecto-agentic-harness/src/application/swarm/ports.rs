@@ -11,11 +11,11 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use super::dto::{
-    AmendedContract, CallMeasure, CompletionState, DictRow, FileRow, LatestActivity,
+    AmendedContract, CallMeasure, CompletionState, CountedTask, DictRow, FileRow, LatestActivity,
     LaunchIdentity, MemberClaimCounts, MemberRow, MemberStatusRow, MessageRow, NewEvidence,
     NewMember, NewMessage, NewRequestUsage, NewReservation, NewRun, NewTask, NotificationCursor,
     PriorEvidence, RunContract, RunOwnerRow, RunStatusRow, ScopeObservation, StoredContract,
-    StoredRequestUsage, TaskRow, TaskState, TaskUpdate, UsageReport,
+    StoredRequestUsage, TaskRow, TaskUpdate, UsageReport,
 };
 use crate::domain::error::DomainError;
 use crate::domain::swarm::{
@@ -331,7 +331,7 @@ pub trait BoardTasks {
     fn task_ids(&self, offset: u64, limit: i64) -> Result<Vec<Value>, BoardError>;
     /// `SELECT id,status,dependencies FROM tasks` (#2277), in store order,
     /// the dependencies loaded from their JSON.
-    fn task_states(&self) -> Result<Vec<TaskState>, BoardError>;
+    fn task_states(&self) -> Result<Vec<CountedTask>, BoardError>;
     /// `SELECT id, owner, status FROM tasks WHERE owner IS NOT NULL AND
     /// status IN ('claimed','blocked','submitted')` (#1969, #2277): the
     /// owner of each held claim, one per task, in store order.

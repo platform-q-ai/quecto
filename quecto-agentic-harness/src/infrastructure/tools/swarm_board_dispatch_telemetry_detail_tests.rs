@@ -80,6 +80,13 @@ pub(super) fn decided(method: Method) -> (Option<&'static str>, BoardOpDetail) {
         | Method::Ack
         | Method::Notifications
         | Method::AcceptWake
+        | Method::Summary
+        | Method::Events
+        | Method::Task
+        | Method::Tasks
+        | Method::Create
+        | Method::Bootstrap
+        | Method::Join
         | Method::CreateRun
         | Method::BootstrapRun
         | Method::BootstrapJoin

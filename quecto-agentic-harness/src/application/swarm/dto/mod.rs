@@ -51,8 +51,9 @@ pub use notifications::{
     WakeAccepted,
 };
 pub use reads::{
-    BootstrapMemberRequest, DictRow, EventPage, FullSummary, LatestActivity, ListTasksRequest,
-    ReadRunEventsRequest, ReadRunSummaryRequest, RunSummary, SummaryCounts, TaskState,
+    BootstrapMemberRequest, BootstrappedSummary, CountedTask, DictRow, EventPage, FullSummary,
+    JoinedSummary, LatestActivity, ListTasksRequest, ReadRunEventsRequest, ReadRunSummaryRequest,
+    RunSummary, SummaryCounts,
 };
 pub use run::{
     BootstrapRunRequest, Bootstrapped, CreateBranch, CreateRunRequest, CreatedRun,

@@ -119,6 +119,86 @@ pub fn python_truthy(value: &Value) -> bool {
     }
 }
 
+/// Python's `repr()` of a `str` (#2277): quoted with `'`, or with `"`
+/// when the text holds a `'` and no `"`; a backslash, the quote, `\t`,
+/// `\n` and `\r` escaped; every other character Python does not print
+/// written as `\xhh`, `\uhhhh` or `\Uhhhhhhhh`. Printability follows
+/// Python's `str.isprintable` for ASCII, the C0 and C1 controls and the
+/// separator, format, surrogate and private-use code points it knows
+/// ([`not_printed`]); a code point Unicode has not assigned is printed as
+/// it is, where Python, whose Unicode tables change with its version,
+/// escapes it (the `unassigned_code_point_repr` divergence).
+pub fn python_repr(text: &str) -> String {
+    let quote = if text.contains('\'') && !text.contains('"') {
+        '"'
+    } else {
+        '\''
+    };
+    let mut written = String::with_capacity(text.len() + 2);
+    written.push(quote);
+    for character in text.chars() {
+        match character {
+            '\\' => written.push_str("\\\\"),
+            '\t' => written.push_str("\\t"),
+            '\n' => written.push_str("\\n"),
+            '\r' => written.push_str("\\r"),
+            c if c == quote => {
+                written.push('\\');
+                written.push(c);
+            }
+            c if not_printed(c) => {
+                let code = u32::from(c);
+                let escaped = match code {
+                    0..=0xff => format!("\\x{code:02x}"),
+                    0x100..=0xffff => format!("\\u{code:04x}"),
+                    _ => format!("\\U{code:08x}"),
+                };
+                written.push_str(&escaped);
+            }
+            c => written.push(c),
+        }
+    }
+    written.push(quote);
+    written
+}
+
+/// The code points Python's `str.isprintable` refuses that do not depend
+/// on its Unicode version: the controls (Cc), the separators other than
+/// the space (Zs, Zl, Zp), the format characters (Cf) and the private-use
+/// planes (Co), and the noncharacters of planes 15 and 16.
+fn not_printed(character: char) -> bool {
+    matches!(
+        u32::from(character),
+        0x00..=0x1f
+            | 0x7f..=0xa0
+            | 0xad
+            | 0x0600..=0x0605
+            | 0x061c
+            | 0x06dd
+            | 0x070f
+            | 0x0890..=0x0891
+            | 0x08e2
+            | 0x1680
+            | 0x180e
+            | 0x2000..=0x200f
+            | 0x2028..=0x202f
+            | 0x205f..=0x2064
+            | 0x2066..=0x206f
+            | 0x3000
+            | 0xe000..=0xf8ff
+            | 0xfeff
+            | 0xfff9..=0xfffb
+            | 0x110bd
+            | 0x110cd
+            | 0x13430..=0x1343f
+            | 0x1bca0..=0x1bca3
+            | 0x1d173..=0x1d17a
+            | 0xe0001
+            | 0xe0020..=0xe007f
+            | 0xf0000..=0x10ffff
+    )
+}
+
 #[cfg(test)]
 #[path = "python_value_tests.rs"]
 mod tests;

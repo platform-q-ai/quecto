@@ -1398,6 +1398,9 @@ const SWARM_BOARD_DTOS: &[&str] = &[
     "ScopeObservation",
     // The read models (#2277).
     "BootstrapMemberRequest",
+    "BootstrappedSummary",
+    "CreatedRun",
+    "JoinedSummary",
     "DictRow",
     "EventPage",
     "FullSummary",
@@ -1407,7 +1410,7 @@ const SWARM_BOARD_DTOS: &[&str] = &[
     "ReadRunSummaryRequest",
     "RunSummary",
     "SummaryCounts",
-    "TaskState",
+    "CountedTask",
 ];
 
 fn application_path_allowed(path: &str) -> bool {

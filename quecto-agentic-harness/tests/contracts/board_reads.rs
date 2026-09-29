@@ -4,7 +4,7 @@
 //! event page, `BoardEvidence`' rows, and `BoardTasks`' id page, task
 //! states and held-claim owners, each by Python's SQL (`swarm.py`,
 //! `swarm_tasks.py`).
-use quecto::application::swarm::dto::{BoardLocation, DictRow, LatestActivity, TaskState};
+use quecto::application::swarm::dto::{BoardLocation, CountedTask, DictRow, LatestActivity};
 use quecto::application::swarm::ports::{BoardRepository, BoardTransaction};
 use quecto::domain::swarm::{BoardError, RefusalKind};
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
@@ -196,7 +196,7 @@ fn evidence_and_task_reads_follow_pythons_sql() {
         let states = transaction.task_states()?;
         assert_eq!(
             states.first(),
-            Some(&TaskState {
+            Some(&CountedTask {
                 id: json!(1),
                 status: json!("completed"),
                 dependencies: json!([]),

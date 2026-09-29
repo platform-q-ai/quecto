@@ -1,12 +1,12 @@
-//! `Workbench.create` (#2270): a member creates the run and becomes its
-//! coordinator. Python's `create` then returns the summary, a read model a
-//! later slice (S12) adds to the response; this is the transactional part.
+//! `Workbench.create` (#2270, #2277): a member creates the run and becomes
+//! its coordinator, and answers with the summary.
 use std::sync::Arc;
 
 use serde_json::Value;
 
 use super::OverRepository;
 use crate::application::swarm::board_operation::{atomic, detail, text};
+use crate::application::swarm::board_read_models::summary;
 use crate::application::swarm::dto::{
     CreateBranch, CreateRunRequest, CreatedRun, NewMember, NewRun, RunContract, RunOwnerRow,
 };
@@ -28,7 +28,10 @@ const DEADLINE_HORIZON_SECONDS: f64 = 604_800.0;
 /// coordinator may, and only while the live and reserved members fit the
 /// new limit) or inserts a fresh run and the creator's live member row,
 /// drawing the run id before the member's reservation. Either way the event
-/// `created` records the contract as given.
+/// `created` records the contract as given. Once that transaction has
+/// committed, the creator's summary is read (`board_read_models`), which
+/// can still refuse: a created run answered with a refusal, as Python's
+/// `create` answers (#2307).
 pub struct CreateRun {
     repository: Arc<dyn BoardRepository>,
     clock: Arc<dyn Clock + Send + Sync>,
@@ -57,7 +60,7 @@ impl CreateRun {
     pub fn execute(&self, request: CreateRunRequest) -> Result<CreatedRun, BoardError> {
         let contract = self.validated(&request)?;
         let member = request.member.as_str();
-        atomic(&*self.repository, true, |transaction| {
+        let branch = atomic(&*self.repository, true, |transaction| {
             let branch = match transaction.run_owner()? {
                 Some(existing) => {
                     take_over_setup(transaction, member, &existing, &contract)?;
@@ -85,8 +88,10 @@ impl CreateRun {
                     ),
                 ]),
             )?;
-            Ok(CreatedRun { branch })
-        })
+            Ok(branch)
+        })?;
+        let summary = summary(&*self.repository, &*self.clock, Some(member), None);
+        Ok(CreatedRun { branch, summary })
     }
 
     /// `create`'s checks, in Python's order: the goal, the encoded
