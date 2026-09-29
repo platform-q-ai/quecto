@@ -27,6 +27,14 @@ fn every_method() -> Vec<Method> {
         Method::Unblock,
         Method::Submit,
         Method::VerifyTask,
+        Method::Pause,
+        Method::Resume,
+        Method::ResumeExternal,
+        Method::Close,
+        Method::ExtendDeadline,
+        Method::Stop,
+        Method::ControlStatus,
+        Method::UsageReport,
         Method::CreateRun,
         Method::BootstrapRun,
         Method::BootstrapJoin,
@@ -49,6 +57,14 @@ fn every_method() -> Vec<Method> {
             | Method::Unblock
             | Method::Submit
             | Method::VerifyTask
+            | Method::Pause
+            | Method::Resume
+            | Method::ResumeExternal
+            | Method::Close
+            | Method::ExtendDeadline
+            | Method::Stop
+            | Method::ControlStatus
+            | Method::UsageReport
             | Method::CreateRun
             | Method::BootstrapRun
             | Method::BootstrapJoin
@@ -89,17 +105,22 @@ fn evidence() -> Value {
     json!([{"artifact": "report", "revision": "R1"}])
 }
 
-/// What an answered call of `method` acted on, as its record must say:
+/// What a call of `method` acted on, as its record must say:
 /// `(args, task_id, message_id, cursor_moved)`, after the setup calls it
 /// needs on `handles` (a run the parent bootstrapped). The `match` is
 /// exhaustive, so a new method does not compile until its record's fields
 /// are stated here (#2303 review M2). A task id is the stored row's, not
-/// the argument as given: `"2"` acts on task 2.
+/// the argument as given: `"2"` acts on task 2. Every call answers but a
+/// member's own `resume`, which the board always refuses (#2273).
 fn acted_on(
     method: Method,
     handles: &SwarmBoardHandles,
 ) -> (Value, Option<i64>, Option<i64>, Option<bool>) {
     let admitted = || call(handles, "parent", "_admit", json!(["worker", "r1"])).unwrap();
+    let stopped = || {
+        running(handles);
+        call(handles, "parent", "stop", json!(["blocked", "why"])).unwrap();
+    };
     match method {
         Method::Status | Method::Snapshot => (json!([]), None, None, None),
         Method::Admit => (json!(["worker", "r1"]), None, None, None),
@@ -155,6 +176,21 @@ fn acted_on(
             call(handles, "parent", "submit", json!([1, token, evidence()])).unwrap();
             (json!([true, token, "R1"]), Some(1), None, None)
         }
+        Method::Pause | Method::Stop | Method::ExtendDeadline | Method::ControlStatus => {
+            running(handles);
+            let args = match method {
+                Method::Pause => json!(["hold"]),
+                Method::Stop => json!(["blocked", "why"]),
+                Method::ExtendDeadline => json!([60]),
+                _ => json!([]),
+            };
+            (args, None, None, None)
+        }
+        Method::Resume | Method::UsageReport => (json!([]), None, None, None),
+        Method::ResumeExternal | Method::Close => {
+            stopped();
+            (json!([]), None, None, None)
+        }
         Method::CreateRun => (create_args(), None, None, None),
         Method::BootstrapRun => (json!([1, "s", null]), None, None, None),
         Method::BootstrapJoin => (json!([1, "s", null]), None, None, None),
@@ -176,7 +212,13 @@ fn every_answered_op_records_what_it_acted_on() {
         call(&handles, "parent", "bootstrap_run", json!([1, "s", null])).unwrap();
         let (args, task_id, message_id, cursor_moved) = acted_on(method, &handles);
         log.clear();
-        call(&handles, "parent", method.name(), args).unwrap();
+        let answer = call(&handles, "parent", method.name(), args);
+        assert_eq!(
+            answer.is_ok(),
+            method != Method::Resume,
+            "{}: {answer:?}",
+            method.name()
+        );
         let recorded = only(&log);
         assert_eq!(recorded.op, method.name());
         assert_eq!(
@@ -218,6 +260,39 @@ fn a_member_facing_op_records_the_callers_run_role() {
     log.clear();
     call(&handles, "worker", "claim", json!([1, 2])).unwrap_err();
     assert_eq!(only(&log).role, None, "refused while binding: no run read");
+}
+
+/// Run control (#2273): the coordinator's `pause`, `stop` and
+/// `usage_report` record its role in the run; the supervisor's
+/// `_control_status`, `_extend_deadline`, `_resume_external` and `_close`
+/// record `host`; a member's own `resume`, refused before it reads any
+/// run, records `null`.
+#[test]
+fn run_control_records_the_coordinator_or_the_host() {
+    let log = Arc::new(Recorded::default());
+    let (_dir, handles) = logged(&log);
+    call(&handles, "parent", "bootstrap_run", json!([1, "s", null])).unwrap();
+    running(&handles);
+    for (method, args, role) in [
+        ("usage_report", json!([]), Some(BoardRole::Coordinator)),
+        ("_control_status", json!([]), Some(BoardRole::Host)),
+        ("_extend_deadline", json!([60]), Some(BoardRole::Host)),
+        ("pause", json!(["hold"]), Some(BoardRole::Coordinator)),
+        ("_resume_external", json!([]), Some(BoardRole::Host)),
+        (
+            "stop",
+            json!(["blocked", "why"]),
+            Some(BoardRole::Coordinator),
+        ),
+        ("_close", json!([]), Some(BoardRole::Host)),
+    ] {
+        log.clear();
+        call(&handles, "parent", method, args).unwrap();
+        assert_eq!(only(&log).role, role, "{method}");
+    }
+    log.clear();
+    call(&handles, "parent", "resume", json!([])).unwrap_err();
+    assert_eq!(only(&log).role, None, "refused before any run read");
 }
 
 #[test]

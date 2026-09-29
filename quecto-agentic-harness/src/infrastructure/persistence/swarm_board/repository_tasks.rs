@@ -216,7 +216,7 @@ fn task_row(row: &Row<'_>) -> rusqlite::Result<TaskRow> {
 
 /// `json.loads(row[column])` of the column at `index`, which the board
 /// writes as JSON text.
-fn loaded(row: &Row<'_>, index: usize) -> rusqlite::Result<Value> {
+pub(super) fn loaded(row: &Row<'_>, index: usize) -> rusqlite::Result<Value> {
     let stored = row.get_ref(index)?;
     let text = stored.as_str().map_err(|_| {
         rusqlite::Error::InvalidColumnType(

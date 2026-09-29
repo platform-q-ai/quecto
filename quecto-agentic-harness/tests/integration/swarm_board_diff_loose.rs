@@ -83,6 +83,20 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 /// - `outside_edited_evidence` (#2272): stored evidence that is not a list
 ///   of objects each carrying `revision` (only an edit holds it) meets
 ///   `verify_task` as a refusal, where Python raises or iterates the value.
+/// - `outside_edited_control_records` (#2273, pinned in
+///   `swarm_board_diff_loose_runs.rs` and `extend_run_deadline_tests`): a
+///   pause record whose `started` is not a number (a boolean included), or
+///   a usage budget that is not an object or whose limit is not a count,
+///   is refused naming the record, and so are usage totals that are not
+///   counts (a REAL or negative sum), but only where a paused run's
+///   budget with a non-null token limit is checked for a resume
+///   (elsewhere they pass through as Python passes them), where Python
+///   raises or computes with them; an
+///   integer `started` is read as its float, so an extension from it
+///   records a float deadline where Python records the integer; and a loss
+///   event whose detail is not an object, or whose `member` is not text
+///   (an unhashable list or object included), names no member, where
+///   Python raises.
 /// - `real_to_text_digits` (#2269 review M1, pinned by
 ///   `swarm_board::binding_tests`): a float meeting a TEXT column is
 ///   written with the bundled SQLite's digits, which some hosts' libraries
@@ -96,10 +110,11 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   membership methods (#2271) keep it: `_activate` and `_record_launch`
 ///   take such a member's reservation as stale, where Python goes on
 ///   (pinned by `activate_member_tests` and `record_member_launch_tests`).
-pub const PERMITTED_DIVERGENCES: [&str; 7] = [
+pub const PERMITTED_DIVERGENCES: [&str; 8] = [
     "arguments_beyond_a_serde_value",
     "integer_beyond_i64_is_refused",
     "outside_edited_columns",
+    "outside_edited_control_records",
     "outside_edited_evidence",
     "outside_edited_task_columns",
     "real_to_text_digits",
@@ -208,7 +223,7 @@ fn loosely_typed_rows_read_as_python_reads_them() {
 
 /// `create_run`'s arguments as JSON text, a criterion's extra key `w`
 /// written as `extra`.
-fn create_text(extra: &str) -> String {
+pub(crate) fn create_text(extra: &str) -> String {
     format!(
         r#"["g", [], [{{"id": "c", "kind": "review", "description": "d", "w": {extra}}}], 5, {}]"#,
         NOW + 3_600.0
@@ -278,26 +293,6 @@ fn arguments_beyond_a_serde_value() {
             ),
             "{extra}"
         );
-    }
-}
-
-/// `_bootstrap` asks only whether a run exists (`SELECT 1 FROM run`) and
-/// `create` fetches the whole run row but uses only its status and
-/// coordinator (#2270 round-3 review N1): columns either leaves unused may
-/// hold anything.
-#[test]
-fn bootstrap_and_create_use_only_the_run_columns_python_uses() {
-    for edit in [
-        "UPDATE run SET deadline='soon', member_limit='many'",
-        "UPDATE run SET deadline=NULL, member_limit=2.5, integrator=x'00'",
-    ] {
-        run_both(&[
-            step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
-            sql(edit),
-            step("parent", "bootstrap_run", json!([8, "t", null]), NOW + 1.0),
-            step_text("parent", "create_run", &create_text("1"), NOW + 2.0),
-            step("supervisor", "_status", json!([]), NOW + 3.0),
-        ]);
     }
 }
 
@@ -572,7 +567,17 @@ fn every_permitted_divergence_is_pinned_by_name() {
 
 /// Divergences pinned outside this suite: the name, the test file's
 /// source and the pinning test in it.
-const EXTERNAL_PINS: [(&str, &str, &str); 5] = [
+const EXTERNAL_PINS: [(&str, &str, &str); 7] = [
+    (
+        "outside_edited_control_records",
+        include_str!("swarm_board_diff_loose_runs.rs"),
+        "outside_edited_control_records",
+    ),
+    (
+        "outside_edited_control_records",
+        include_str!("../../src/application/swarm/use_cases/extend_run_deadline_tests.rs"),
+        "a_pause_start_that_is_not_a_float_diverges",
+    ),
     (
         "real_to_text_digits",
         include_str!("../../src/infrastructure/persistence/swarm_board/binding_tests.rs"),

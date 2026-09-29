@@ -27,6 +27,21 @@ use syn::visit::Visit;
 /// production sources, one row per site.
 pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
     (
+        "src/application/swarm/board_control.rs:current",
+        "coordination run missing",
+        "RunMissing",
+    ),
+    (
+        "src/application/swarm/board_control.rs:edited",
+        "the board's {record} is not as the board writes it",
+        "Store",
+    ),
+    (
+        "src/application/swarm/board_control.rs:pause_started",
+        "paused run has no pause record",
+        "Internal",
+    ),
+    (
         "src/application/swarm/board_operation.rs:atomic",
         "coordination store committed without running its work",
         "Internal",
@@ -82,6 +97,11 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "WrongState",
     ),
     (
+        "src/application/swarm/use_cases/close_run.rs:CloseRun::execute",
+        "run is {} without a proposed outcome; resume it or cancel the run",
+        "WrongState",
+    ),
+    (
         "src/application/swarm/use_cases/create_run.rs:CreateRun::deadline",
         "deadline must be in the next seven days",
         "Invalid",
@@ -117,6 +137,16 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "Invalid",
     ),
     (
+        "src/application/swarm/use_cases/extend_run_deadline.rs:ExtendRunDeadline::execute",
+        "deadline may be at most seven days ahead, as at creation",
+        "Invalid",
+    ),
+    (
+        "src/application/swarm/use_cases/extend_run_deadline.rs:ExtendRunDeadline::execute",
+        "run is {}; nothing to extend",
+        "NotRunning",
+    ),
+    (
         "src/application/swarm/use_cases/join_run.rs:JoinRun::execute",
         "coordination run missing",
         "RunMissing",
@@ -147,9 +177,34 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "WrongState",
     ),
     (
+        "src/application/swarm/use_cases/resume_run.rs:ResumeRun::execute",
+        "a paused run is resumed only by the supervisor outside the swarm (agent_cmd swarm_control resume); members cannot resume it",
+        "SupervisorOnly",
+    ),
+    (
+        "src/application/swarm/use_cases/resume_run_externally.rs:ResumeRunExternally::execute",
+        "only a paused run may resume",
+        "WrongState",
+    ),
+    (
+        "src/application/swarm/use_cases/resume_run_externally.rs:ResumeRunExternally::execute",
+        "resume would pause again at once: {}",
+        "BudgetExhausted",
+    ),
+    (
         "src/application/swarm/use_cases/set_task_dependencies.rs:SetTaskDependencies::execute",
         "dependencies may change only before claiming",
         "WrongState",
+    ),
+    (
+        "src/application/swarm/use_cases/stop_run.rs:StopRun::cancel",
+        "run not created yet; nothing to cancel. To start one: swarm op=create",
+        "RunMissing",
+    ),
+    (
+        "src/application/swarm/use_cases/stop_run.rs:StopRun::execute",
+        "invalid non-success outcome",
+        "Invalid",
     ),
     (
         "src/application/swarm/use_cases/submit_task.rs:evidence",
@@ -287,6 +342,16 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "WrongState",
     ),
     (
+        "src/domain/swarm/policy.rs:run_already",
+        "run already {}",
+        "expr: not_running (budget_spent (run))",
+    ),
+    (
+        "src/domain/swarm/policy.rs:run_already_held",
+        "run already {}; only the supervisor can resume or close it, and op=cancel_run cancels it",
+        "expr: not_running (budget_spent (run))",
+    ),
+    (
         "src/domain/swarm/policy.rs:validate_extension",
         "deadline extension must be 1..604800 seconds",
         "Invalid",
@@ -390,6 +455,11 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "src/infrastructure/persistence/swarm_board/repository.rs:loose",
         "{CONTENDED}: Error binding parameter {position}: {error}",
         "Invalid",
+    ),
+    (
+        "src/infrastructure/persistence/swarm_board/repository_control.rs:lost_members",
+        "the loss scan read an event it did not select",
+        "Internal",
     ),
     (
         "src/infrastructure/persistence/swarm_board/repository_tasks.rs:SqliteBoard::retry",
@@ -640,42 +710,7 @@ fn every_board_refusal_site_is_in_the_table_with_one_kind() {
     );
 }
 
-#[test]
-fn the_scan_reads_texts_templates_and_kinds() {
-    let found = built(
-        r#"fn f() {
-            let _ = BoardError::new(RefusalKind::Invalid, "plain");
-            let _ = BoardError::new(RefusalKind::NotRunning, format!("run is {}; no", x));
-            let _ = crate::domain::swarm::BoardError::new(kind, error.to_string());
-            let _ = StoreRefusal(m);
-        }
-        impl Store {
-            fn g(&self) {
-                let _ = || BoardError::new(RefusalKind::Invalid, "plain");
-                fn inner() { let _ = BoardError::new(RefusalKind::Invalid, "plain"); }
-            }
-        }"#,
-    );
-    let site = |function: &str, text: &str, kind: &str| {
-        (function.to_owned(), text.to_owned(), kind.to_owned())
-    };
-    assert_eq!(
-        found,
-        [
-            site("f", "plain", "Invalid"),
-            site("f", "run is {}; no", "NotRunning"),
-            site("f", "expr: error . to_string ()", "expr: kind"),
-            site("Store::g", "plain", "Invalid"),
-            site("inner", "plain", "Invalid"),
-        ]
-    );
-    assert!(production("src/domain/swarm/policy.rs"));
-    assert!(!production("src/domain/swarm/telemetry_tests.rs"));
-    assert!(!production("src/application/swarm/board_test_support.rs"));
-    // An allowlist (#2303 round-3 review L5): a file the production module
-    // tree does not mount is not production, whatever its name.
-    assert!(!production("src/nowhere.rs"));
-    assert!(!production(
-        "src/application/swarm/use_cases/create_run_tests.rs"
-    ));
-}
+/// The scan's own tests, beside the table (#2273: the table's file stays
+/// within 750 lines).
+#[path = "swarm_board_refusal_kinds_scan.rs"]
+mod scan;

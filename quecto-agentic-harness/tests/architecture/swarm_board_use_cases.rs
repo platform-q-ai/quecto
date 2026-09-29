@@ -12,7 +12,11 @@
 //! `_admit`'s and `_activate`'s) calls that work's shared function over its
 //! own repository (`admit_member::admit`, `activate_member::activate`),
 //! never a nested use case, so `over` meters every transaction of the call
-//! and no use case is allowlisted here.
+//! and no use case is allowlisted for a nested one.
+//!
+//! A use case that refuses before any transaction opens (S8's `ResumeRun`,
+//! a member's own resume) has no repository to swap: it is listed in
+//! [`TRANSACTION_FREE`] and must hold no field at all (#2273).
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -33,6 +37,10 @@ const OTHER_PORTS: &[&str] = &[
     "Arc < dyn Clock + Send + Sync >",
     "Arc < dyn IdSource >",
 ];
+
+/// The use cases that open no transaction, each a unit struct: `over`
+/// has nothing to swap, so the call is metered whole with no repository.
+const TRANSACTION_FREE: &[&str] = &["ResumeRun"];
 
 fn tokens(tokens: &impl ToTokens) -> String {
     tokens
@@ -82,6 +90,16 @@ fn violations(sources: &[&str]) -> (Vec<String>, BTreeSet<String>) {
             continue;
         }
         checked.insert(name.clone());
+        match (TRANSACTION_FREE.contains(&name.as_str()), &item.fields) {
+            (true, syn::Fields::Unit) => continue,
+            (true, _) => {
+                found.push(format!(
+                    "{name}: a transaction-free use case holds no field"
+                ));
+                continue;
+            }
+            (false, _) => {}
+        }
         let syn::Fields::Named(fields) = &item.fields else {
             found.push(format!("{name}: a use case names its fields"));
             continue;
@@ -202,4 +220,34 @@ fn the_rule_refuses_a_second_repository_a_nested_use_case_and_any_other_field() 
                  impl OverRepository for Tuple { fn over(&self, r: Arc<dyn BoardRepository>) -> Self { Self::new(r) } }";
     let (found, _) = violations(&[tuple]);
     assert_eq!(found, ["Tuple: a use case names its fields"]);
+}
+
+/// Only a use case listed as transaction-free may hold no repository, and
+/// then it holds no field at all (#2273): a listed one with a field, and
+/// an unlisted unit struct, both fail.
+#[test]
+fn only_a_listed_transaction_free_use_case_holds_no_repository() {
+    let over = |name: &str| {
+        format!(
+            "impl OverRepository for {name} {{ fn over(&self, _: Arc<dyn BoardRepository>) -> Self {{ Self }} }}"
+        )
+    };
+    let free = format!("pub struct ResumeRun;\n{}", over("ResumeRun"));
+    let (found, use_cases) = violations(&[&free]);
+    assert_eq!(found, Vec::<String>::new());
+    assert_eq!(use_cases.into_iter().collect::<Vec<_>>(), ["ResumeRun"]);
+
+    let holding = format!(
+        "pub struct ResumeRun {{ repository: Arc<dyn BoardRepository> }}\n{}",
+        over("ResumeRun")
+    );
+    let (found, _) = violations(&[&holding]);
+    assert_eq!(
+        found,
+        ["ResumeRun: a transaction-free use case holds no field"]
+    );
+
+    let unlisted = format!("pub struct Unlisted;\n{}", over("Unlisted"));
+    let (found, _) = violations(&[&unlisted]);
+    assert_eq!(found, ["Unlisted: a use case names its fields"]);
 }

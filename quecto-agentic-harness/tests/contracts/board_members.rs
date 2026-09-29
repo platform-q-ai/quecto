@@ -528,3 +528,35 @@ fn a_reused_reservation_or_identity_is_a_store_refusal() {
         );
     }
 }
+
+/// #2273: `lost_members` is Python's one ordered scan of `scope_unknown`
+/// and `activated` events: a member is lost when its latest
+/// `scope_unknown` is newer than its latest `activated`, and answered in
+/// the order asked.
+#[test]
+fn lost_members_are_those_quarantined_after_their_latest_activation() {
+    let dir = tempfile::tempdir().unwrap();
+    let repository = repository_in(&dir);
+    within(&repository, true, |transaction| {
+        let events = [
+            ("activated", json!({"member": "a"})),
+            ("scope_unknown", json!({"member": "a"})),
+            ("scope_unknown", json!({"member": "b"})),
+            ("activated", json!({"member": "b"})),
+            ("scope_unknown", json!({"member": "c"})),
+            ("scope_observed", json!({"member": "d"})),
+            ("scope_unknown", json!({"member": 5})),
+            ("scope_unknown", json!(["e"])),
+        ];
+        for (action, detail) in events {
+            transaction.event("x", 1.0, action, &detail)?;
+        }
+        assert_eq!(
+            transaction.lost_members(&["c", "b", "a", "d", "5"])?,
+            ["c", "a"]
+        );
+        assert!(transaction.lost_members(&[])?.is_empty());
+        Ok(())
+    })
+    .unwrap();
+}
