@@ -48,12 +48,14 @@ impl PauseRun {
                         let member = transaction.member(actor)?;
                         authorize(Some(run), actor, member.as_ref(), running)?;
                         transaction.set_outcome(&RunState::PAUSED)?;
-                        let now = self.clock.now_seconds();
+                        // Python reads the clock for `started` and again,
+                        // inside `store.event`, for the event's time.
+                        let started = seconds(self.clock.now_seconds());
                         transaction.event(
                             actor,
-                            now,
+                            self.clock.now_seconds(),
                             "paused",
-                            &detail([("reason", text(reason)), ("started", seconds(now))]),
+                            &detail([("reason", text(reason)), ("started", started)]),
                         )?;
                         RunTransition::Applied
                     }

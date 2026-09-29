@@ -60,9 +60,10 @@ impl ResumeRunExternally {
                         transaction.clear_outcome()?;
                         transaction.set_outcome(&RunState::RUNNING)?;
                         let outcome = run.outcome.clone().map_or(Value::Null, Value::String);
+                        // Python's `store.event` reads the clock again.
                         transaction.event(
                             actor,
-                            now,
+                            self.clock.now_seconds(),
                             "resumed",
                             &detail([("paused_seconds", paused_seconds), ("outcome", outcome)]),
                         )?;

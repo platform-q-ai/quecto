@@ -47,15 +47,10 @@ impl ExtendRunDeadline {
             |transaction, run| {
                 let base = match run.status.as_ref().map(RunState::as_str) {
                     Some("running") => run.deadline,
-                    Some("paused") => {
-                        let started = pause_started(transaction)?;
-                        // `max(deadline, started)` keeps the deadline on a tie.
-                        if started > run.deadline {
-                            started
-                        } else {
-                            run.deadline
-                        }
-                    }
+                    // `max(deadline, started)`: on a tie either is the
+                    // same value, and neither is NaN (SQLite stores none,
+                    // and `pause_started` admits only a finite start).
+                    Some("paused") => run.deadline.max(pause_started(transaction)?),
                     status => {
                         return Err(BoardError::new(format!(
                             "run is {}; nothing to extend",
@@ -68,17 +63,17 @@ impl ExtendRunDeadline {
                     "a validated extension, exact as a float: {granted}"
                 );
                 let deadline = base + granted as f64;
-                let now = self.clock.now_seconds();
-                let horizon = now + MAX_EXTENSION_SECONDS as f64;
+                let horizon = self.clock.now_seconds() + MAX_EXTENSION_SECONDS as f64;
                 if deadline > horizon {
                     return Err(BoardError::new(
                         "deadline may be at most seven days ahead, as at creation",
                     ));
                 }
                 transaction.set_deadline(deadline)?;
+                // Python's `store.event` reads the clock again.
                 transaction.event(
                     actor,
-                    now,
+                    self.clock.now_seconds(),
                     "extended",
                     &detail([
                         ("seconds", Value::from(granted)),

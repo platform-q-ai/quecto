@@ -4,10 +4,11 @@
 //! Capability-internal helpers, not a use case and not a port.
 //!
 //! A control record only a file edited outside the board can hold (a pause
-//! record without a numeric `started`, a budget payload that is not an
-//! object or a token limit that is not a count) is refused naming the
-//! record, where Python raises a `TypeError` or a `KeyError`: the
-//! `outside_edited_control_records` divergence.
+//! record without a numeric `started`, a boolean included; a budget
+//! payload that is not an object or a token limit that is not a count;
+//! usage totals that are not counts) is refused naming the record, where
+//! Python raises a `TypeError` or a `KeyError`, or computes with the
+//! value as it is: the `outside_edited_control_records` divergence.
 use serde_json::Value;
 
 use super::dto::{ControlReceipt, UsageReport};
@@ -58,7 +59,7 @@ pub(crate) fn receipt(
         let total = report
             .totals
             .get(key)
-            .ok_or_else(|| edited("usage totals"))?;
+            .ok_or_else(|| edited("usage totals record"))?;
         budget.insert(key.to_owned(), total.clone());
     }
     Ok(ControlReceipt {
@@ -160,7 +161,7 @@ fn budget_decision(report: &UsageReport) -> Result<UsageDecision, BoardError> {
             .totals
             .get(key)
             .and_then(Value::as_u64)
-            .ok_or_else(|| edited("usage totals"))
+            .ok_or_else(|| edited("usage totals record"))
     };
     Ok(usage_budget_decision(
         &UsageBudget {

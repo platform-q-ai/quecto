@@ -5,7 +5,8 @@
 //! An event detail is loaded as Python's `json.loads` loads it; one that
 //! is not JSON text is refused as a store failure where Python raises
 //! (the `outside_edited_control_records` divergence), and a detail that is
-//! not an object, or whose `member` is not text, names no member.
+//! not an object, or whose `member` is not text (a list or an object,
+//! which Python cannot hash and raises on), names no member.
 use rusqlite::{Connection, OptionalExtension};
 use serde_json::Value;
 
