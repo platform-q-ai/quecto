@@ -63,32 +63,42 @@ impl CheckoutPaths for ResolvedCheckout {
     }
 }
 
+/// One entry of the walk's stack: a component still to resolve, or the
+/// mark that the symlink at a path has had its whole target resolved.
+enum Entry {
+    Part(Vec<u8>),
+    Resolved(Vec<u8>),
+}
+
 /// `os.path.realpath(filename, strict=False)` for an absolute or relative
 /// `filename` (relative to the working directory, as Python's is).
+///
+/// Python keeps a stack `rest` of components (last first) in which a
+/// symlink met is pushed back as its path and a `None` above it, and
+/// counts the components left in `part_count`, stopping at 0. Here the
+/// pair is one [`Entry::Resolved`], so the walk ends when the stack is
+/// empty: once no component is left, the stack holds only marks, which
+/// record resolved targets and change no path, so the result is Python's.
+/// A component is a symlink exactly when `readlink` reads it (Python's
+/// `lstat` then `readlink`): a regular file, a directory or a missing
+/// name fails to read and is kept as written, as Python keeps it.
 fn realpath(filename: &[u8]) -> std::io::Result<Vec<u8>> {
     let mut path: Vec<u8> = if filename.starts_with(b"/") {
         b"/".to_vec()
     } else {
         std::env::current_dir()?.into_os_string().into_vec()
     };
-    // The unresolved components, last first; `None` marks a symlink whose
-    // target is resolved once the entries above it are consumed, and is
-    // followed by that symlink's path.
-    let mut rest: Vec<Option<Vec<u8>>> = split_reversed(filename);
-    let mut part_count = rest.len();
+    let mut rest: Vec<Entry> = split_reversed(filename);
     let mut seen: HashMap<Vec<u8>, Option<Vec<u8>>> = HashMap::new();
-    while part_count > 0 {
-        let Some(entry) = rest.pop() else {
-            break;
-        };
-        let Some(name) = entry else {
-            // A resolved symlink's target: record it for the symlink's path.
-            if let Some(Some(link)) = rest.pop() {
+    while let Some(entry) = rest.pop() {
+        let name = match entry {
+            Entry::Part(name) => name,
+            Entry::Resolved(link) => {
+                // A symlink's whole target is resolved: record it.
                 seen.insert(link, Some(path.clone()));
+                continue;
             }
-            continue;
         };
-        part_count -= 1;
         if name.is_empty() || name == b"." {
             continue;
         }
@@ -97,43 +107,33 @@ fn realpath(filename: &[u8]) -> std::io::Result<Vec<u8>> {
             continue;
         }
         let newpath = child(&path, &name);
-        match std::fs::symlink_metadata(OsStr::from_bytes(&newpath)) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {}
-            // Not a symlink, or not `lstat`-able: kept as written.
-            Ok(_) | Err(_) => {
-                path = newpath;
-                continue;
-            }
-        }
+        let Ok(target) = std::fs::read_link(OsStr::from_bytes(&newpath)) else {
+            // Not a symlink, or not readable: kept as written.
+            path = newpath;
+            continue;
+        };
         if let Some(cached) = seen.get(&newpath) {
             // Seen before: resolved already, or a loop kept as written.
             path = cached.clone().unwrap_or(newpath);
             continue;
         }
-        let Ok(target) = std::fs::read_link(OsStr::from_bytes(&newpath)) else {
-            path = newpath;
-            continue;
-        };
         let target = OsString::from(target).into_vec();
         if target.starts_with(b"/") {
             path = b"/".to_vec();
         }
         seen.insert(newpath.clone(), None);
-        rest.push(Some(newpath));
-        rest.push(None);
-        let parts = split_reversed(&target);
-        part_count += parts.len();
-        rest.extend(parts);
+        rest.push(Entry::Resolved(newpath));
+        rest.extend(split_reversed(&target));
     }
     debug_assert!(path.starts_with(b"/"), "the resolved path is absolute");
     Ok(path)
 }
 
 /// `text.split('/')[::-1]`, each part an entry of the walk.
-fn split_reversed(text: &[u8]) -> Vec<Option<Vec<u8>>> {
+fn split_reversed(text: &[u8]) -> Vec<Entry> {
     text.split(|&byte| byte == b'/')
         .rev()
-        .map(|part| Some(part.to_vec()))
+        .map(|part| Entry::Part(part.to_vec()))
         .collect()
 }
 
