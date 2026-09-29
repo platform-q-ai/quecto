@@ -293,14 +293,28 @@ impl<'a> Parser<'a> {
                 .bytes()
                 .position(|byte| byte == b'"' || byte == b'\\' || byte < 0x20)
                 .ok_or_else(|| self.error("Unterminated string starting at", start))?;
+            let before = self.pos;
             out.push_str(&rest[..run]);
             self.pos += run;
+            assert!(
+                self.pos >= before,
+                "a string's plain run never moves the parser back"
+            );
             match self.peek() {
                 Some(b'"') => {
                     self.pos += 1;
                     return Ok(out.finish());
                 }
-                Some(b'\\') => self.escape(start, &mut out)?,
+                Some(b'\\') => {
+                    let backslash = self.pos;
+                    self.escape(start, &mut out)?;
+                    // Every escape is at least two bytes: a parser that did not move
+                    // past it would decode it again forever, growing `out`.
+                    assert!(
+                        self.pos > backslash + 1,
+                        "an escape advances past its backslash"
+                    );
+                }
                 _ => return Err(self.error("Invalid control character at", self.pos)),
             }
         }
