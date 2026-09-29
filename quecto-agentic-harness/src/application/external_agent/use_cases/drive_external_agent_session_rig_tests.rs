@@ -44,6 +44,9 @@ pub(super) struct Wire {
     pub(super) ack_held: tokio::sync::watch::Sender<bool>,
     /// A queued user turn's write fails, as when the input's writer does.
     pub(super) fail_ack: AtomicBool,
+    /// The process never exits, even once its input is closed: an
+    /// agent wedged in a tool (#2304 review round 2).
+    pub(super) hang_exit: AtomicBool,
 }
 
 impl Wire {
@@ -157,7 +160,12 @@ impl ExternalAgentProcess for FakeProcess {
     }
 
     fn exited(&self) -> PortFuture<'_, ExternalAgentExit> {
-        Box::pin(async { ExternalAgentExit::Code(0) })
+        Box::pin(async move {
+            match self.0.hang_exit.load(Ordering::SeqCst) {
+                true => std::future::pending().await,
+                false => ExternalAgentExit::Code(0),
+            }
+        })
     }
 
     fn exited_discarding_output(&self) -> PortFuture<'_, ExternalAgentExit> {

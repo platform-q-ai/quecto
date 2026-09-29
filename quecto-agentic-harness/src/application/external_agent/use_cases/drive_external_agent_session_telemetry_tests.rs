@@ -398,8 +398,8 @@ async fn abandoning_mid_turn_records_the_open_call_the_cut_turn_and_the_end() {
             "tool_finished",
             "turn_reported",
             "abandoned",
-            "ended",
-            "aborted"
+            "aborted",
+            "ended"
         ],
         "{after:?}"
     );
@@ -458,6 +458,39 @@ async fn a_cumulative_cost_that_dropped_is_on_the_turn_record() {
                 previous_micro_usd: 30_000,
                 reported_micro_usd: 0,
             }),
+        ]
+    );
+}
+
+/// #2304 review round 2 (L4): a generic `api_error` names the turn by its
+/// HTTP status, else the assistant's error kind, never by the generic word.
+#[tokio::test]
+async fn a_generic_api_error_is_named_by_its_status_or_the_assistant_error() {
+    let rig = started().await;
+    rig.session.prompt("one", None).await.unwrap();
+    rig.feed(ExternalAgentEvent::Result(ResultEvent {
+        is_error: Some(true),
+        terminal_reason: Some("api_error".into()),
+        api_error_status: Some(529),
+        ..ResultEvent::default()
+    }))
+    .await;
+    rig.session.prompt("two", None).await.unwrap();
+    rig.feed(ExternalAgentEvent::AssistantError {
+        message_id: Some("m2".into()),
+        kind: "authentication_failed".into(),
+    })
+    .await;
+    rig.feed(result(true, "api_error", None)).await;
+    rig.session.prompt("three", None).await.unwrap();
+    rig.feed(result(true, "api_error", None)).await;
+    let reasons: Vec<Option<String>> = turns(&rig).into_iter().map(|t| t.reason_kind).collect();
+    assert_eq!(
+        reasons,
+        [
+            Some("api_529".into()),
+            Some("authentication_failed".into()),
+            Some("api_error".into()),
         ]
     );
 }

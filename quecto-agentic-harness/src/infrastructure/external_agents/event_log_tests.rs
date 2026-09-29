@@ -69,7 +69,7 @@ fn table() -> Vec<(SessionRecord, Option<&'static str>)> {
                 refusal: "busy",
                 bytes: 3,
             },
-            None,
+            lifecycle,
         ),
         (
             SessionRecord::ToolCalled {
@@ -123,7 +123,7 @@ fn table() -> Vec<(SessionRecord, Option<&'static str>)> {
                 bytes: 3,
                 refusal: "input",
             },
-            None,
+            lifecycle,
         ),
         (
             SessionRecord::Aborted {
@@ -207,4 +207,42 @@ fn a_record_is_filed_under_its_turn_and_names_the_credential_mode_only() {
     let json = serde_json::to_value(&started).unwrap();
     assert_eq!(json["kind"], "started");
     assert_eq!(json["credential_mode"], "api_key");
+}
+
+/// #2304 review round 2: a refused prompt and a follow-up that could not
+/// be written are logged by their refusal's kind alone: never the text,
+/// nor its size.
+#[test]
+fn a_refusal_is_logged_by_its_kind_alone() {
+    for (record, expected) in [
+        (
+            SessionRecord::PromptRefused {
+                refusal: "busy",
+                bytes: 3,
+            },
+            serde_json::json!({
+                "event": "external_agent_lifecycle",
+                "kind": "prompt_refused",
+                "member_ref": "C3",
+                "refusal": "busy",
+            }),
+        ),
+        (
+            SessionRecord::FollowUpFailed {
+                turn: 2,
+                bytes: 3,
+                refusal: "input",
+            },
+            serde_json::json!({
+                "event": "external_agent_lifecycle",
+                "kind": "follow_up_failed",
+                "member_ref": "C3",
+                "member_turn": 2,
+                "refusal": "input",
+            }),
+        ),
+    ] {
+        let (_, event) = audit_event(&record, &member()).expect("a refusal is logged");
+        assert_eq!(serde_json::to_value(&event).unwrap(), expected);
+    }
 }

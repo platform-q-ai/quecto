@@ -219,3 +219,25 @@ fn a_writer_that_panicked_is_told_apart_in_any_build() {
         Some(WriterEnd::Panicked)
     );
 }
+
+/// #2304 review round 2 (L5): dropping the adapter never waits for its
+/// writer (a runtime worker may be the one dropping it): only `finish`
+/// waits, at most its bound.
+#[test]
+fn dropping_the_adapter_never_waits_for_a_wedged_writer() {
+    let telemetry =
+        EventLogExternalAgentTelemetry::new(Arc::new(StuckSink { panics: false }), member())
+            .unwrap();
+    telemetry.record(&interrupted(1));
+    let (sent, answer) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        drop(telemetry);
+        let _ = sent.send(());
+    });
+    assert!(
+        answer
+            .recv_timeout(std::time::Duration::from_millis(500))
+            .is_ok(),
+        "dropped at once"
+    );
+}
