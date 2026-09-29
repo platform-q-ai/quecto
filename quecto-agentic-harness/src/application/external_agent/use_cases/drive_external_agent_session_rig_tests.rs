@@ -262,6 +262,11 @@ pub(super) fn settings() -> ExternalAgentSessionSettings {
 }
 
 pub(super) fn rig_with(refuse: bool) -> Rig {
+    rig_over(refuse, settings())
+}
+
+/// A session under `settings`, whose launcher refuses when `refuse`.
+pub(super) fn rig_over(refuse: bool, settings: ExternalAgentSessionSettings) -> Rig {
     let wire = Arc::new(Wire::default());
     let launcher = Arc::new(FakeLauncher {
         wire: wire.clone(),
@@ -273,7 +278,7 @@ pub(super) fn rig_with(refuse: bool) -> Rig {
         launcher.clone(),
         records.clone(),
         Arc::new(TokioTime(tokio::time::Instant::now())),
-        settings(),
+        settings,
     ));
     Rig {
         session,

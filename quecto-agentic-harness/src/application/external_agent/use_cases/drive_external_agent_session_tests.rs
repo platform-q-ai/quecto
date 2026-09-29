@@ -199,7 +199,7 @@ async fn the_agent_exiting_mid_turn_ends_the_member() {
         ["one"],
         "nothing is written to an exited agent"
     );
-    assert_eq!(rig.session.next_step().await, None);
+    assert_eq!(rig.step().await, None);
     assert_eq!(
         rig.session.prompt("three", None).await,
         Err(SessionRefusal::Ended)
@@ -214,7 +214,7 @@ async fn a_session_starts_its_agent_once_with_its_settings() {
         rig.session.prompt("early", None).await,
         Err(SessionRefusal::NotStarted)
     );
-    assert_eq!(rig.session.next_step().await, None);
+    assert_eq!(rig.step().await, None);
     rig.session.start().await.unwrap();
     assert_eq!(
         rig.session.start().await,

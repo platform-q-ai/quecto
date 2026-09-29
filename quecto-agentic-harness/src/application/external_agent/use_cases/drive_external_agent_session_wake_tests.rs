@@ -131,10 +131,14 @@ async fn the_skipped_line_grace_runs_from_the_line_not_from_the_write_gate() {
     let gate = rig.session.writes.lock().await;
     let began = tokio::time::Instant::now();
     rig.wire.emit(skipped(10));
-    let (folded, ()) = tokio::join!(rig.session.next_step(), async {
-        tokio::time::sleep(GRACE / 2).await;
-        drop(gate);
-    });
+    let (folded, ()) = tokio::join!(
+        tokio::time::timeout(Duration::from_secs(600), rig.session.next_step()),
+        async {
+            tokio::time::sleep(GRACE / 2).await;
+            drop(gate);
+        }
+    );
+    let folded = folded.expect("a step is bounded");
     assert!(matches!(folded, Some(SessionStep::Folded(_))), "{folded:?}");
     assert_eq!(
         rig.paused_step().await,

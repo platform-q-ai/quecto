@@ -116,6 +116,12 @@ fn a_pre_release_or_suffixed_version_is_not_known_to_name_turns() {
         "2.1.280.1",
         "2.1.280 ",
         "2.1.280x",
+        // A sign `u64` parsing would take is not an ASCII digit.
+        "+2.1.280",
+        "2.+1.280",
+        "2.1.+280",
+        "2..280",
+        "",
     ] {
         assert!(!versioned(Some(suffixed), &[]).names_turns(), "{suffixed}");
     }

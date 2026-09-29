@@ -303,20 +303,30 @@ impl DriveExternalAgentSession {
                     continue;
                 }
                 (Some(None), _) => return self.output_ended(process).await,
-                (None, Wait::Grace(_)) => {
-                    if let Some(step) = self.lose_turn().await {
+                (None, Wait::Grace(due) | Wait::Until(due)) => {
+                    // The clock's contract: a sleep lasts its duration.
+                    assert!(
+                        self.clock.now() >= due,
+                        "a timer runs out only once its wait is due"
+                    );
+                    let step = match wait {
+                        Wait::Grace(_) => self.lose_turn().await,
+                        Wait::Until(_) | Wait::Event => self.abandon_if_overdue().await,
+                    };
+                    if let Some(step) = step {
                         return Some(step);
                     }
+                    // A turn that ended or answered meanwhile is not lost:
+                    // read on, for what is due now. The due wait was acted
+                    // on, so it is never waited for again.
+                    assert_ne!(
+                        self.core().wait(),
+                        wait,
+                        "a due wait not acted on changed meanwhile"
+                    );
                 }
-                (None, Wait::Until(_)) => {
-                    if let Some(step) = self.abandon_if_overdue().await {
-                        return Some(step);
-                    }
-                }
-                // No timer runs without a wait: read on.
-                (None, Wait::Event) => {}
+                (None, Wait::Event) => unreachable!("no timer runs without a wait"),
             }
-            // A turn that ended or answered meanwhile is not lost: read on.
         }
     }
 
@@ -664,3 +674,7 @@ mod capability_tests;
 #[cfg(test)]
 #[path = "drive_external_agent_session_cancel_tests.rs"]
 mod cancel_tests;
+
+#[cfg(test)]
+#[path = "drive_external_agent_session_receipt_tests.rs"]
+mod receipt_tests;

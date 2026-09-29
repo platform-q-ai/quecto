@@ -165,7 +165,7 @@ async fn close_racing_an_abort_ends_the_member_without_a_panic() {
     let kinds = rig.records.kinds();
     assert!(kinds.contains(&"closed"), "{kinds:?}");
     assert!(!kinds.contains(&"interrupted"), "{kinds:?}");
-    assert_eq!(rig.session.next_step().await, None);
+    assert_eq!(rig.step().await, None);
 }
 
 // M2: the same race on a lost turn's interrupt.

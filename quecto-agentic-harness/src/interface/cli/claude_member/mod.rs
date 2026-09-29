@@ -48,20 +48,27 @@ pub(crate) fn run(ctx: &CliContext, flags: &AgentFlags, stderr: &mut String) -> 
             return 1;
         }
     };
-    runtime.block_on(start_and_end(&handles, stderr))
+    // Started or not, the member is not left running: the run fails.
+    stderr.push_str(&runtime.block_on(start_and_end(&handles)));
+    1
 }
 
+/// Why a member that started is not left running.
+const NO_ENDPOINT_YET: &str =
+    "agent: the claude-code member serves no endpoint yet (#2288); it was ended\n";
+
 /// Start the member and end it again: without its UDS server (#2288)
-/// nothing can reach it, so it is not left running.
-async fn start_and_end(handles: &ClaudeMemberHandles, stderr: &mut String) -> i32 {
-    if let Err(refusal) = handles.session.start().await {
-        stderr.push_str(&format!("agent: {refusal}\n"));
-        return 1;
+/// nothing can reach it, so it is not left running. Returns the line that
+/// says why it is not running: its start's refusal, or that it was ended.
+async fn start_and_end(handles: &ClaudeMemberHandles) -> String {
+    match handles.session.start().await {
+        Ok(()) => {
+            let ended = handles.session.close().await;
+            assert!(ended.is_ok(), "a started member can be ended: {ended:?}");
+            NO_ENDPOINT_YET.to_string()
+        }
+        Err(refusal) => format!("agent: {refusal}\n"),
     }
-    let ended = handles.session.close().await;
-    assert!(ended.is_ok(), "a started member can be ended: {ended:?}");
-    stderr.push_str("agent: the claude-code member serves no endpoint yet (#2288); it was ended\n");
-    1
 }
 
 #[cfg(test)]

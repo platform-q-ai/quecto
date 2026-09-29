@@ -67,3 +67,180 @@ fn a_member_composition_refuses_is_refused_with_its_reason() {
     assert_eq!(run(&ctx, &flags, &mut stderr), 1);
     assert_eq!(stderr, "agent: no credential for you\n");
 }
+
+/// Fakes of the member session's ports: a launcher that refuses or starts
+/// a process that never speaks. The real claude CLI never runs here.
+mod fakes {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use super::super::handles::{ClaudeMemberHandles, ClaudeMemberSettings};
+    use crate::application::external_agent::dto::{
+        AgentClockInstant, CredentialEnv, ExternalAgentExit, ExternalAgentInputError,
+        ExternalAgentLaunchError, ExternalAgentLaunchSpec, ExternalAgentSessionSettings,
+        SessionRecord,
+    };
+    use crate::application::external_agent::ports::{
+        ExternalAgentClock, ExternalAgentLauncher, ExternalAgentProcess, ExternalAgentTelemetry,
+        PortFuture, QueuedUserTurn,
+    };
+    use crate::application::external_agent::use_cases::DriveExternalAgentSession;
+    use crate::domain::external_agent::stream::ExternalAgentEvent;
+
+    struct Silent;
+
+    impl ExternalAgentProcess for Silent {
+        fn queue_user_turn<'a>(
+            &'a self,
+            _text: &'a str,
+        ) -> PortFuture<'a, Result<QueuedUserTurn<'a>, ExternalAgentInputError>> {
+            Box::pin(std::future::pending())
+        }
+        fn interrupt(&self) -> PortFuture<'_, Result<(), ExternalAgentInputError>> {
+            Box::pin(std::future::pending())
+        }
+        fn next_event(&self) -> PortFuture<'_, Option<ExternalAgentEvent>> {
+            Box::pin(std::future::pending())
+        }
+        fn close_input(&self) -> PortFuture<'_, ()> {
+            Box::pin(async {})
+        }
+        fn exited(&self) -> PortFuture<'_, ExternalAgentExit> {
+            Box::pin(std::future::pending())
+        }
+        fn exited_discarding_output(&self) -> PortFuture<'_, ExternalAgentExit> {
+            Box::pin(std::future::pending())
+        }
+        fn stderr_tail(&self) -> String {
+            String::new()
+        }
+    }
+
+    struct Launcher {
+        refuse: bool,
+    }
+
+    impl ExternalAgentLauncher for Launcher {
+        fn start<'a>(
+            &'a self,
+            _spec: ExternalAgentLaunchSpec,
+        ) -> PortFuture<'a, Result<Box<dyn ExternalAgentProcess>, ExternalAgentLaunchError>>
+        {
+            Box::pin(async move {
+                match self.refuse {
+                    true => Err(ExternalAgentLaunchError::NotFound {
+                        program: "claude".into(),
+                        required_for: "claude-code members".into(),
+                    }),
+                    false => Ok(Box::new(Silent) as Box<dyn ExternalAgentProcess>),
+                }
+            })
+        }
+    }
+
+    struct Unrecorded;
+
+    impl ExternalAgentTelemetry for Unrecorded {
+        fn record(&self, _record: &SessionRecord) {}
+    }
+
+    struct Frozen;
+
+    impl ExternalAgentClock for Frozen {
+        fn now(&self) -> AgentClockInstant {
+            AgentClockInstant(0)
+        }
+        fn sleep(&self, _duration: Duration) -> PortFuture<'_, ()> {
+            Box::pin(std::future::pending())
+        }
+    }
+
+    fn member(refuse: bool) -> ClaudeMemberHandles {
+        ClaudeMemberHandles {
+            session: Arc::new(DriveExternalAgentSession::new(
+                Arc::new(Launcher { refuse }),
+                Arc::new(Unrecorded),
+                Arc::new(Frozen),
+                ExternalAgentSessionSettings {
+                    launch: ExternalAgentLaunchSpec {
+                        model: "claude-sonnet".into(),
+                        tools: Vec::new(),
+                        mcp_config: serde_json::json!({}),
+                        settings: serde_json::json!({}),
+                        max_budget_usd: 1.0,
+                        checkout: "/work".into(),
+                        member_dir: "/members/w1".into(),
+                        credential: CredentialEnv {
+                            name: "ANTHROPIC_API_KEY".into(),
+                            value: "sk-ant-api03-SECRETSECRETSECRET".into(),
+                        },
+                    },
+                    skipped_line_grace: Duration::from_secs(60),
+                    interrupt_grace: Duration::from_secs(30),
+                },
+            )),
+        }
+    }
+
+    /// A member whose agent starts, and never speaks.
+    pub(super) fn starting(_: &ClaudeMemberSettings) -> Result<ClaudeMemberHandles, String> {
+        Ok(member(false))
+    }
+
+    /// A member whose agent cannot be started.
+    pub(super) fn refused(_: &ClaudeMemberSettings) -> Result<ClaudeMemberHandles, String> {
+        Ok(member(true))
+    }
+}
+
+fn claude_code_flags() -> AgentFlags {
+    let mut stderr = String::new();
+    let flags = parse_agent_flags(
+        &argv(&["--mode", "uds", "--backend", "claude-code", "-s", "w1"]),
+        &mut stderr,
+    )
+    .expect("valid flags");
+    assert_eq!(stderr, "");
+    flags
+}
+
+/// This slice's runner starts the member and ends it again (its endpoint
+/// lands with #2288): the run fails, saying so.
+#[test]
+fn a_started_member_is_ended_again_and_the_run_says_why() {
+    let ctx = CliContext {
+        claude_member: Some(fakes::starting),
+        ..Default::default()
+    };
+    let mut stderr = String::new();
+    assert_eq!(run(&ctx, &claude_code_flags(), &mut stderr), 1);
+    assert_eq!(stderr, NO_ENDPOINT_YET);
+}
+
+/// A member whose agent cannot start is refused with the launch's reason.
+#[test]
+fn a_member_whose_agent_cannot_start_is_refused_with_its_reason() {
+    let ctx = CliContext {
+        claude_member: Some(fakes::refused),
+        ..Default::default()
+    };
+    let mut stderr = String::new();
+    assert_eq!(run(&ctx, &claude_code_flags(), &mut stderr), 1);
+    assert_eq!(
+        stderr,
+        "agent: claude not found on PATH (required for claude-code members)\n"
+    );
+}
+
+/// The handles' `Debug` names them and shows nothing of the session.
+#[test]
+fn the_member_handles_debug_shows_nothing_of_the_session() {
+    let handles = fakes::starting(&ClaudeMemberSettings {
+        member: "w1".into(),
+        model: None,
+        checkout: "/work".into(),
+        base_dir: "/base".into(),
+    })
+    .expect("built");
+    assert_eq!(format!("{handles:?}"), "ClaudeMemberHandles { .. }");
+}

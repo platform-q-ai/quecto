@@ -446,32 +446,7 @@ pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
         }
     };
     let stdin_is_tty = std::io::IsTerminal::is_terminal(&std::io::stdin());
-    let ctx = CliContext {
-        config_path,
-        cwd: std::env::current_dir().ok(),
-        stdin_is_tty: Some(stdin_is_tty),
-        web_fetch_tool_factory: Some(composition.web_fetch_tool_factory),
-        teardown_graph: Some(composition.teardown_graph),
-        kill_tool: Some(composition.kill_tool),
-        sessions: Some(composition.sessions),
-        retention: Some(composition.retention),
-        fresh_session_identity: Some(composition.fresh_session_identity),
-        configuration: Some(composition.configuration),
-        admission: Some(composition.admission),
-        catalogue: Some(composition.catalogue),
-        provider_runtime: Some(composition.provider_runtime),
-        tool_policy_persistence: Some(composition.tool_policy_persistence),
-        container_configs: Some(composition.container_configs),
-        container_doctor: Some(composition.container_doctor),
-        environment_registry: Some(composition.environment_registry),
-        container_inventory: Some(composition.container_inventory),
-        container_init: Some(composition.container_init),
-        container_status: Some(composition.container_status),
-        run_end_fleet: Some(composition.run_end_fleet),
-        claude_member: Some(composition.claude_member),
-        live_output: true,
-        ..Default::default()
-    };
+    let ctx = composed_context(composition, config_path, stdin_is_tty);
 
     // Enter the live REPL when no command remains after global options.
     // `run_with_output` intentionally uses captured input, so this decision must
@@ -501,6 +476,41 @@ pub fn run(args: Vec<String>, composition: CliComposition) -> i32 {
         eprint!("{}", output.stderr);
     }
     output.exit_code
+}
+
+/// The context a real run's commands see: every builder `main` composed,
+/// the process's working directory and stdin, and live output.
+fn composed_context(
+    composition: CliComposition,
+    config_path: Option<PathBuf>,
+    stdin_is_tty: bool,
+) -> CliContext {
+    CliContext {
+        config_path,
+        cwd: std::env::current_dir().ok(),
+        stdin_is_tty: Some(stdin_is_tty),
+        web_fetch_tool_factory: Some(composition.web_fetch_tool_factory),
+        teardown_graph: Some(composition.teardown_graph),
+        kill_tool: Some(composition.kill_tool),
+        sessions: Some(composition.sessions),
+        retention: Some(composition.retention),
+        fresh_session_identity: Some(composition.fresh_session_identity),
+        configuration: Some(composition.configuration),
+        admission: Some(composition.admission),
+        catalogue: Some(composition.catalogue),
+        provider_runtime: Some(composition.provider_runtime),
+        tool_policy_persistence: Some(composition.tool_policy_persistence),
+        container_configs: Some(composition.container_configs),
+        container_doctor: Some(composition.container_doctor),
+        environment_registry: Some(composition.environment_registry),
+        container_inventory: Some(composition.container_inventory),
+        container_init: Some(composition.container_init),
+        container_status: Some(composition.container_status),
+        run_end_fleet: Some(composition.run_end_fleet),
+        claude_member: Some(composition.claude_member),
+        live_output: true,
+        ..Default::default()
+    }
 }
 
 /// Run the CLI with the given args and context, capturing all output for testing.

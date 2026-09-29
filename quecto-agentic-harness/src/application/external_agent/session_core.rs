@@ -573,3 +573,7 @@ fn outcome_kind(end: &TurnEnd) -> &'static str {
         },
     }
 }
+
+#[cfg(test)]
+#[path = "session_core_tests.rs"]
+mod tests;

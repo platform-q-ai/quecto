@@ -104,7 +104,7 @@ async fn an_interrupted_turn_that_never_answers_ends_the_member() {
     assert_eq!(rig.phase(), SessionPhase::Ended);
     assert!(rig.wire.dropped(), "the agent process is ended");
     assert_eq!(rig.wire.sent(), ["one"]);
-    assert_eq!(rig.session.next_step().await, None);
+    assert_eq!(rig.step().await, None);
     assert!(rig.records.all().contains(&SessionRecord::Abandoned {
         turn: 1,
         dropped_follow_ups: 0
@@ -256,7 +256,7 @@ async fn an_abort_whose_interrupt_cannot_be_written_ends_the_member() {
     );
     assert_eq!(rig.phase(), SessionPhase::Ended);
     assert!(rig.wire.dropped());
-    assert_eq!(rig.session.next_step().await, None);
+    assert_eq!(rig.step().await, None);
 }
 
 // M2 (the reviewer's scenario): claude emitted turn one's result; a steer
