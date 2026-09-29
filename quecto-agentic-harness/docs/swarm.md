@@ -168,8 +168,8 @@ argument binding are rendered from and held to it.
 | `task` | `task_id` integer | task, with owner liveness | any member |
 | `tasks` | `offset` integer (0), `limit` integer 1–100 (50) | list of tasks | any member |
 | `file_owners` | `offset` integer (0), `limit` integer 1–100 (50) | list of file reservations | any member |
-| `task_create` | `request` string, `title` string, `acceptance` nonempty list of nonblank strings, `dependencies` list of task ids (`null`) | task (replayed on a retry) | any member |
-| `dependencies` | `task_id` integer, `dependencies` list of task ids | `null` | any member |
+| `task_create` | `request` string, `title` string, `acceptance` nonempty list of nonblank strings, `dependencies` list of task ids or null (`null`) | task (replayed on a retry) | any member |
+| `dependencies` | `task_id` integer, `dependencies` list of task ids or null | `null` | any member |
 | `claim` | `task_id` integer | task with its claim `token` | any member |
 | `release` | `task_id` integer, `token` string | `null` | the owner |
 | `block` | `task_id` integer, `token` string, `reason` string | `null` | the owner |
@@ -177,17 +177,17 @@ argument binding are rendered from and held to it.
 | `submit` | `task_id` integer, `token` string, `evidence` list of `{artifact, revision}` | `null` | the owner |
 | `reserve` | `task_id` integer, `token` string, `paths` list of strings | `{token, paths}` | the owner |
 | `release_files` | `task_id` integer, `token` string, `reservation` string | `null` | the owner |
-| `send` | `request` string, `recipient` member id, `body` string, `revision` string (`null`), `supersedes` message id (`null`) | `{id, status}` | any member |
+| `send` | `request` string, `recipient` member id, `body` string, `revision` string or null (`null`), `supersedes` message id or null (`null`) | `{id, status}` | any member |
 | `withdraw` | `message_id` integer | `null` | the sender |
 | `inbox` | `include_consumed` boolean (`false`; bound loosely, so any nonzero number such as `1` also reads consumed history) | list of messages | any member |
 | `ack` | `message_id` integer | `null` | the recipient |
-| `evidence` | `criterion` string, `artifact` string, `revision` string, `kind` `command` or `review`, `passed` boolean | `null` | any member (a worker's is a proposal) |
+| `evidence` | `criterion` string, `artifact` string, `revision` string or null, `kind` `command` or `review`, `passed` boolean | `null` | any member (a worker's is a proposal) |
 | `amend` | `goal` string, `constraints` list of strings, `criteria` list of `{id, kind, description}`, `reason` string | `null` | coordinator |
-| `verify_task` | `task_id` integer, `token` string, `revision` string | `null` | coordinator |
-| `revalidate_task` | `task_id` integer, `revision` string, `evidence` list of `{artifact, revision}` | `null` | coordinator |
+| `verify_task` | `task_id` integer, `token` string, `revision` string or null | `null` | coordinator |
+| `revalidate_task` | `task_id` integer, `revision` string or null, `evidence` list of `{artifact, revision}` | `null` | coordinator |
 | `recover` | `task_id` integer, `release_files` boolean (`false`) | `null` | coordinator |
 | `revoke` | `task_id` integer, `reason` string | task | coordinator |
-| `complete` | `revision` string | `null` | coordinator |
+| `complete` | `revision` string or null | `null` | coordinator |
 | `stop` | `status` string, `reason` string | control receipt | coordinator |
 | `usage_report` | none | usage report (as `op=usage`) | any member |
 
@@ -205,12 +205,15 @@ How an op is served:
    it (`-0` is the integer 0, a repeated key keeps its last value). A value
    the board's JSON value cannot hold exactly is refused before the board,
    never coerced: an integer outside i64 and u64 (`18446744073709551616`), a
-   number with no finite value (`NaN`, `Infinity`, `1e400`) and a string
-   holding a lone surrogate (`"\ud800"`). The refusal is
+   number that overflows (`1e400`) and a string holding a lone surrogate
+   (`"\ud800"`). The refusal is
    `tool error: swarm: "arguments: not representable as a serde_json value: <why>"`, and
    its `swarm_op` record has kind `invalid`. These are inputs Python took (or
    read) but the board refuses; the differential suite lists them as
-   permitted divergences.
+   permitted divergences. `NaN`, `Infinity` and `-Infinity` never reach the
+   tool: they are not JSON, so the agent loop answers the call itself with
+   `the arguments for tool 'swarm' were not a JSON object, so it was not run
+   ... Received: <the text>`, and no `swarm_op` is recorded.
 2. **Binding.** Fields bind by name, as the Python signature binds them: a
    missing required field (`claim: missing required argument task_id`) and a
    field the op does not take (`claim: unexpected argument id`) are refused
@@ -224,13 +227,19 @@ How an op is served:
 3. **The running gate.** A board op is refused unless the run is `running`
    and within its deadline (owner decision, 2026-09-28: the gate the Python
    `run` op had; a running run whose deadline is missing or not a number is
-   refused as past it), with guidance naming what is allowed now (`summary`,
-   `events`, `usage`). This covers reads, `inbox`, `ack` and `withdraw` too.
+   refused as past it), with guidance naming what is allowed now: `summary`,
+   `events` and `usage (op=usage; the board op usage_report needs a running
+   run)`. This covers reads, `inbox`, `ack` and `withdraw` too. When the
+   run's status cannot be read, or a mutating op's first event-cursor read
+   fails, the op is refused with the store's text (kind `store`, gate
+   `unreadable`).
 4. **The call and its lifecycle.** A mutating op reads the board's event
    cursor before and after its call. When the cursor moved, the harness sends
    the wake hints, or settles the run when it no longer runs. A hint that
    failed rides the answer as `notification_warnings`, and a failure of this
-   step as `coordination_error` (beside a non-object answer as `result`). The
+   step as `coordination_error` (beside a non-object answer as `result`).
+   When the op is refused but its call moved the cursor, these notes follow
+   the refusal text on the next line, as one JSON object. The
    read-only ops (`task`, `tasks`, `file_owners`, `inbox`, `usage_report`)
    skip this step.
 5. **The answer** is written as Python's `json.dumps` writes it (insertion
@@ -295,7 +304,7 @@ launched it confirmed its exit; `lost` when its harness loss was recorded
 (`scope_unknown` after its latest activation, #1924/#1961); `reserved` when it
 was admitted but never launched; `active` or `idle` only for a live launched
 member, `idle` meaning it has written no board event for 300 seconds; and
-`unknown` for anything else. An `active` or `idle` owner is named as a `send`
+`unknown` for anything else, including an owner id that is not text (only a board edited from outside holds one). An `active` or `idle` owner is named as a `send`
 recipient in `contact` (`{"op":"send","request":...,"recipient":"<owner id>","body":...}`); for every
 other owner `contact` is null and `recovery` says how the coordinator moves the
 work (`recover(task) or revoke(task, reason)` for a dead owner; resume the run,
@@ -828,10 +837,10 @@ the board is still recorded as the op's own `swarm_op`, with no run read
 
 | Refused at | `kind` |
 |---|---|
-| Member input (a value the board's JSON value cannot hold, text that is no JSON object) | `invalid` |
+| Member input (a value the board's JSON value cannot hold: `1e400`, an integer beyond i64 and u64, a lone surrogate) | `invalid` |
 | The running gate, when the run is not `running` | `not_running` |
 | The running gate, when the running run's deadline has passed, is missing or is not a number | `budget_exhausted` |
-| The running gate, when the run's status could not be read | `store` |
+| The running gate, when the run's status could not be read, or a mutating op's first `_event_cursor` read failed (gate `unreadable`) | `store` |
 
 Each structured op also leaves one `tracing` event, `swarm structured op`,
 on target `quecto::swarm_board` (DEBUG for the read-only ops `task`, `tasks`,
@@ -841,7 +850,7 @@ not the event log is on. It carries no argument text:
 | Field | Meaning |
 |---|---|
 | `op` | The structured op |
-| `gate` | `open` (the op reached the board), `arguments` (member input refused), `not_running`, `deadline` or `unreadable` (the running gate refused it) |
+| `gate` | `open` (the op reached the board), `arguments` (member input refused), `not_running` or `deadline` (the running gate refused it), or `unreadable` (the run's status, or a mutating op's first event cursor, could not be read) |
 | `outcome` | `ok`, `refused` (the member got an error answer) or `failed` (the tool itself failed) |
 | `cursor_moved` | For a mutating op that reached the board, whether the event cursor moved (`Some(true)` or `Some(false)`); `None` otherwise |
 | `lifecycle` | What the post-call step did: `none` (not run), `unchanged`, `notified`, `settled` or `failed` |

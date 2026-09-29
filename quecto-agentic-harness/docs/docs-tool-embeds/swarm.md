@@ -85,7 +85,8 @@ returns nothing). Durable state lives on the board, not in your context.
   loosely, so any nonzero number (such as `1`) also returns consumed history.
   `acceptance`, `constraints` and `paths` are lists of strings, and
   `acceptance` refuses an empty list and a blank string; `dependencies` is a
-  list of task ids. `evidence` is a
+  list of task ids. `revision`, `supersedes` and `dependencies` also admit
+  `null`, even where the field is required. `evidence` is a
   nonempty list of `{"artifact":"tests.log","revision":"<commit>"}` objects.
   Member ids and tokens are the strings the ops return.
 - **Fields bind by name.** A missing required field is refused
@@ -94,27 +95,34 @@ returns nothing). Durable state lives on the board, not in your context.
   may be left out.
 - **Values the board cannot hold exactly are refused up front.** An
   integer outside i64 and u64 (such as `18446744073709551616`), a number
-  with no finite value (`NaN`, `Infinity`, or `1e400`, which overflows) and a
-  string holding a lone surrogate (`"\ud800"`) are refused with
-  `arguments: not representable as a serde_json value: <why>`, and the
-  board never sees the call. `-0` is the integer 0.
+  that overflows (`1e400`) and a string holding a lone surrogate
+  (`"\ud800"`) are refused with
+  `tool error: swarm: "arguments: not representable as a serde_json value: <why>"`,
+  and the board never sees the call. `-0` is the integer 0.
+- **`NaN`, `Infinity` and `-Infinity` are not JSON.** A call holding one is
+  not run at all: you get `the arguments for tool 'swarm' were not a JSON
+  object, so it was not run ... Received: <your text>`. Resend it with a
+  JSON number.
 - **Board ops need a running run within its deadline.** While the run is in
   `setup`, paused, ended or past its deadline, every board op (reads, `inbox`
   and `ack` included) is refused with a message naming what is allowed now:
-  `summary`, `events` and `usage` always are.
+  `summary`, `events` and `usage` always are (`usage_report` is a board op,
+  so it needs a running run like the others).
 - **Refusals keep the board's text**: you see `tool error: swarm: "<message>"`
   (a member-input refusal has the same prefix).
 - After an op that changed the board, the harness sends the wake hints (or
   settles a run that ended). A hint that could not be delivered is added to
   the answer as `notification_warnings`, and a failure of that step as
   `coordination_error`; the op itself was done. When the answer is not an
-  object, it moves under `result` beside them.
+  object, it moves under `result` beside them. When the op was refused but
+  its call still moved the board's cursor, they follow the refusal text on
+  the next line, as one JSON object.
 
 Any member:
 
 | Example | Behavior |
 |---|---|
-| `{"op":"task","task_id":3}` | Read one task. A claimed, blocked or submitted row (also from `tasks` and the summary) adds `owner_last_activity` (seconds since the owner's last board event) and `owner_state`: `active` or `idle` (live member; idle = no board event for 300 s, a prompt to look, not proof of a stall), `reserved` (never launched), `lost` (harness loss recorded; resume, then revoke), `dead` (exit confirmed by its launcher's harness) or `unknown`. An active or idle owner is named in `contact` (send it an `op=send` with that id as `recipient`); otherwise `contact` is null and `recovery` names the coordinator's move. A provider suspension is not visible on the board: use `agent_cmd status` |
+| `{"op":"task","task_id":3}` | Read one task. A claimed, blocked or submitted row (also from `tasks` and the summary) adds `owner_last_activity` (seconds since the owner's last board event) and `owner_state`: `active` or `idle` (live member; idle = no board event for 300 s, a prompt to look, not proof of a stall), `reserved` (never launched), `lost` (harness loss recorded; resume, then revoke), `dead` (exit confirmed by its launcher's harness) or `unknown` (anything else, including an owner id that is not text). An active or idle owner is named in `contact` (send it an `op=send` with that id as `recipient`); otherwise `contact` is null and `recovery` names the coordinator's move. A provider suspension is not visible on the board: use `agent_cmd status` |
 | `{"op":"tasks","offset":0,"limit":50}` | Page the tasks; `offset` integer ≥0 (default 0), `limit` integer 1–100 (default 50) |
 | `{"op":"file_owners","offset":0,"limit":50}` | Page the file reservations; same paging |
 | `{"op":"task_create","request":"implement-v1","title":"Implement behavior","acceptance":["Acceptance tests pass"],"dependencies":[]}` | Stable request string, title string, **nonempty list of strings** as `acceptance`, optional list of task ids as `dependencies` (default `null`, none); answers the task. A retry needs the same request **and** payload |
@@ -131,7 +139,7 @@ Any member:
 | `{"op":"inbox","include_consumed":false}` | At most 100 of your unread messages (`revision`, `supersedes`, `superseded_by` included); `true` adds consumed, superseded and withdrawn history |
 | `{"op":"ack","message_id":7}` | Acknowledge a message after reading it |
 | `{"op":"evidence","criterion":"tests","artifact":"tests.log","revision":"<commit>","kind":"command","passed":true}` | `kind` is `command` or `review`. A worker's call records a proposal with **accepted=0**; only the coordinator's `passed: true` accepts evidence |
-| `{"op":"usage_report"}` | Per-member usage totals and recent request diagnostics (the same report as `op=usage`) |
+| `{"op":"usage_report"}` | Per-member usage totals and recent request diagnostics (the same report as `op=usage`, which works whatever the run's state; `usage_report` needs a running run) |
 
 The harness's own ops: `{"op":"summary"}` (goal, members, counts of task
 statuses plus `members_without_claim` and `members_dead`, the first 50
