@@ -10,9 +10,9 @@ use serde_json::{Map, Value};
 
 use super::dto::{EvidenceEntry, TaskRow};
 use crate::domain::swarm::{
-    BoardError, CriterionKind, EvidenceRow, TaskRecord, TaskState, python_equal, python_truthy,
+    BoardError, CriterionKind, EvidenceRow, TaskRecord, TaskState, edited_criteria, python_equal,
+    python_truthy,
 };
-pub(crate) use crate::domain::swarm::{edited_criteria, stored_criteria as criteria};
 
 /// The evidence rows that can satisfy a criterion: those whose criterion,
 /// revision and kind are text and whose kind is known. Any other row (only

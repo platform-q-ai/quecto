@@ -4,12 +4,12 @@
 use std::sync::Arc;
 
 use super::OverRepository;
-use crate::application::swarm::board_completion::{criteria, evidence_rows, task_record};
+use crate::application::swarm::board_completion::{evidence_rows, task_record};
 use crate::application::swarm::board_operation::{detail, end, operation};
 use crate::application::swarm::dto::CompleteRunRequest;
 use crate::application::swarm::ports::{BoardRepository, Clock};
 use crate::domain::swarm::{
-    Access, BoardError, RefusalKind, RunState, completion, completion_revision,
+    Access, BoardError, RefusalKind, RunState, completion, completion_revision, stored_criteria,
 };
 
 /// Through the operation gate for the coordinator (a running run): the
@@ -52,7 +52,7 @@ impl CompleteRun {
                 completion_revision(&request.revision)?;
                 let tasks: Vec<_> = state.tasks.iter().map(task_record).collect();
                 let outcome = completion(
-                    &criteria(&state.criteria)?,
+                    &stored_criteria(&state.criteria)?,
                     &evidence_rows(&state.evidence),
                     &tasks,
                     state.has_reservations,

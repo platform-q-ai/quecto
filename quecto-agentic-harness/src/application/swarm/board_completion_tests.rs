@@ -1,15 +1,15 @@
 use serde_json::json;
 
-use super::{criteria, definition, edited_criteria, evidence_rows, task_record};
+use super::{definition, evidence_rows, task_record};
 use crate::application::swarm::board_test_support::stored_task;
 use crate::application::swarm::dto::EvidenceEntry;
-use crate::domain::swarm::{CriterionKind, TaskState};
+use crate::domain::swarm::{CriterionKind, TaskState, edited_criteria, stored_criteria};
 
 /// The board's criteria parse by id and kind; a missing description reads
 /// empty; anything else is refused naming the record.
 #[test]
 fn criteria_parse_as_the_board_writes_them() {
-    let parsed = criteria(&json!([
+    let parsed = stored_criteria(&json!([
         {"id": "t", "kind": "command", "description": "d"},
         {"id": "r", "kind": "review"}
     ]))
@@ -33,7 +33,7 @@ fn criteria_parse_as_the_board_writes_them() {
         json!([{"kind": "command"}]),
     ] {
         assert_eq!(
-            criteria(&edited).unwrap_err(),
+            stored_criteria(&edited).unwrap_err(),
             edited_criteria(),
             "{edited}"
         );

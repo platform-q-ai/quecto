@@ -8,11 +8,13 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use super::OverRepository;
-use crate::application::swarm::board_completion::{definition, edited_criteria};
+use crate::application::swarm::board_completion::definition;
 use crate::application::swarm::board_operation::{detail, operation, text};
 use crate::application::swarm::dto::{EvidenceTransition, NewEvidence, RecordEvidenceRequest};
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::{Access, BoardError, RefusalKind, bounded, python_equal};
+use crate::domain::swarm::{
+    Access, BoardError, RefusalKind, bounded, edited_criteria, python_equal,
+};
 
 /// The most bytes an artifact reference may take.
 const ARTIFACT_MAX_BYTES: usize = 2048;
