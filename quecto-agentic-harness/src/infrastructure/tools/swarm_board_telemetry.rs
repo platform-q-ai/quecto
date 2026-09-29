@@ -74,15 +74,18 @@ pub(super) struct Served {
     /// M1); [`BoardOpDetail::NONE`] for an op whose decision carries none.
     pub detail: BoardOpDetail,
     /// A refusal the op answers after its writes committed (#2277 review
-    /// M2: `create`'s summary): the call answers it, and its record keeps
-    /// the decision and detail, marked committed. `None` for an answer.
+    /// M2: `create`'s summary; final review L2: `_bootstrap`'s and
+    /// `_join`'s after the placeholder, admission or activation): the call
+    /// answers it, and its record keeps the decision and detail, marked
+    /// committed. `None` for an answer.
     pub refused: Option<BoardError>,
 }
 
 /// A served call split into what it answers and, for a refusal it
 /// answered after its writes committed (#2277 review M2: `create`'s
-/// summary), what its record keeps: the call answers the refusal, and
-/// the record the decision and detail, marked committed.
+/// summary; final review L2: `_bootstrap`'s and `_join`'s), what its
+/// record keeps: the call answers the refusal, and the record the
+/// decision and detail, marked committed.
 pub(super) fn split_committed(
     answer: Result<Served, BoardError>,
 ) -> (Result<Served, BoardError>, Option<Served>) {

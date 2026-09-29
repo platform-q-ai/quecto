@@ -173,18 +173,23 @@ pub struct BootstrapMemberRequest {
 }
 
 /// What `_join` answered: the join's branch, and the coordinator's
-/// summary every branch ends with.
+/// summary every branch ends with, or (#2277 final review L2) the
+/// refusal met after the join's writes committed: the activation's after
+/// the admission, or the summary's after the activation. A refusal
+/// before any write is the call's own, never held here.
 #[derive(Clone, Debug, PartialEq)]
 pub struct JoinedSummary {
     pub joined: super::Joined,
-    pub summary: RunSummary,
+    pub summary: Result<RunSummary, crate::domain::swarm::BoardError>,
 }
 
 /// What `_bootstrap` answered: whether it wrote the placeholder, the
-/// join's branch, and the coordinator's summary.
+/// join's branch (`None` when a refusal came before the join took one),
+/// and the coordinator's summary, or the refusal met after the
+/// placeholder or the join committed (#2277 final review L2).
 #[derive(Clone, Debug, PartialEq)]
 pub struct BootstrappedSummary {
     pub created: bool,
-    pub joined: super::Joined,
-    pub summary: RunSummary,
+    pub joined: Option<super::Joined>,
+    pub summary: Result<RunSummary, crate::domain::swarm::BoardError>,
 }

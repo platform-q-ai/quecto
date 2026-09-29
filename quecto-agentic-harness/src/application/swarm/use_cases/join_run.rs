@@ -63,7 +63,27 @@ impl JoinRun {
     /// invoking process`, an admission or activation refusal, or the
     /// store's.
     pub fn execute(&self, request: JoinRunRequest) -> Result<Joined, BoardError> {
-        join(&*self.repository, &*self.clock, &*self.ids, request).map(|(joined, _)| joined)
+        join(&*self.repository, &*self.clock, &*self.ids, request)
+            .map(|(joined, _)| joined)
+            .map_err(|refused| refused.refusal)
+    }
+}
+
+/// A join refused (#2277 final review L2): the refusal, and the branch
+/// whose admission committed before it (`Admitted`, whose activation was
+/// refused); `None` when the refusal came before any write.
+#[derive(Debug)]
+pub(super) struct JoinRefused {
+    pub(super) refusal: BoardError,
+    pub(super) committed: Option<Joined>,
+}
+
+impl From<BoardError> for JoinRefused {
+    fn from(refusal: BoardError) -> Self {
+        Self {
+            refusal,
+            committed: None,
+        }
     }
 }
 
@@ -72,13 +92,14 @@ impl JoinRun {
 /// for a coordinator that is NULL or not text).
 ///
 /// # Errors
-/// As [`JoinRun::execute`].
+/// As [`JoinRun::execute`], with the branch an admission committed
+/// before the activation's refusal.
 pub(super) fn join(
     repository: &dyn BoardRepository,
     clock: &(dyn Clock + Send + Sync),
     ids: &dyn IdSource,
     request: JoinRunRequest,
-) -> Result<(Joined, Option<String>), BoardError> {
+) -> Result<(Joined, Option<String>), JoinRefused> {
     let member = Value::from(request.member.as_str());
     let (coordinator, existing) = atomic(repository, false, |transaction| {
         let Some(coordinator) = transaction.run_coordinator()? else {
@@ -104,7 +125,8 @@ pub(super) fn join(
             return Err(BoardError::new(
                 RefusalKind::LaunchConflict,
                 "launch reservation does not match invoking process",
-            ));
+            )
+            .into());
         }
     };
     // Python's `reservation or uuid.uuid4().hex`, drawn before admitting.
@@ -125,7 +147,8 @@ pub(super) fn join(
         return Err(BoardError::new(
             RefusalKind::NotMember,
             "invoking member is unknown or death confirmed",
-        ));
+        )
+        .into());
     };
     if let Some(reservation) = &admitting {
         admit(
@@ -138,6 +161,13 @@ pub(super) fn join(
             },
         )?;
     }
+    // The admission, when there was one, has committed: a refused
+    // activation leaves it, so the refusal says so.
+    let admitted = admitting.is_some();
+    debug_assert!(
+        !admitted || joined == Joined::Admitted,
+        "only a new identity is admitted"
+    );
     activate(
         repository,
         clock,
@@ -148,7 +178,11 @@ pub(super) fn join(
             launch: request.launch,
             socket: request.socket,
         },
-    )?;
+    )
+    .map_err(|refusal| JoinRefused {
+        refusal,
+        committed: admitted.then(|| joined.clone()),
+    })?;
     Ok((joined, Some(coordinator)))
 }
 

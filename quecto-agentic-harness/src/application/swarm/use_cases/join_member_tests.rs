@@ -52,7 +52,7 @@ fn the_already_live_branch_answers_the_coordinators_summary() {
             coordinator: Some("parent".to_owned())
         }
     );
-    assert!(matches!(answer.summary, RunSummary::Full(_)));
+    assert!(matches!(answer.summary, Ok(RunSummary::Full(_))));
     assert!(board.snapshot().events.is_empty());
 }
 

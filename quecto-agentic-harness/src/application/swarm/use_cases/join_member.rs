@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use super::OverRepository;
-use super::join_run::join;
+use super::join_run::{JoinRefused, join};
 use crate::application::swarm::board_read_models::summary;
 use crate::application::swarm::dto::{JoinRunRequest, JoinedSummary};
 use crate::application::swarm::ports::{BoardRepository, Clock, IdSource};
@@ -34,16 +34,44 @@ impl JoinMember {
     }
 
     /// # Errors
-    /// The join's refusal, the summary's, or the store's.
+    /// The join's refusal, or the summary's after an already-live join,
+    /// or the store's: each before anything was written. A refusal after
+    /// the join's writes committed is answered in the summary's place.
     pub fn execute(&self, request: JoinRunRequest) -> Result<JoinedSummary, BoardError> {
-        let (joined, coordinator) = join(&*self.repository, &*self.clock, &*self.ids, request)?;
+        let (joined, coordinator) = match join(&*self.repository, &*self.clock, &*self.ids, request)
+        {
+            Ok(joined) => joined,
+            Err(JoinRefused {
+                refusal,
+                committed: Some(joined),
+            }) => {
+                return Ok(JoinedSummary {
+                    joined,
+                    summary: Err(refusal),
+                });
+            }
+            Err(JoinRefused {
+                refusal,
+                committed: None,
+            }) => return Err(refusal),
+        };
         let summary = summary(
             &*self.repository,
             &*self.clock,
             coordinator.as_deref(),
             None,
-        )?;
-        Ok(JoinedSummary { joined, summary })
+        );
+        match summary {
+            Ok(summary) => Ok(JoinedSummary {
+                joined,
+                summary: Ok(summary),
+            }),
+            Err(refusal) if joined.wrote() => Ok(JoinedSummary {
+                joined,
+                summary: Err(refusal),
+            }),
+            Err(refusal) => Err(refusal),
+        }
     }
 }
 

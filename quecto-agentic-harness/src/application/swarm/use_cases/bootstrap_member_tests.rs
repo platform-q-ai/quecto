@@ -33,11 +33,11 @@ fn the_placeholder_then_the_join_then_the_summary() {
     assert!(first.created);
     assert_eq!(
         first.joined,
-        Joined::AlreadyLive {
+        Some(Joined::AlreadyLive {
             coordinator: Some("parent".to_owned())
-        }
+        })
     );
-    let RunSummary::Full(summary) = first.summary else {
+    let Ok(RunSummary::Full(summary)) = first.summary else {
         panic!("the full summary");
     };
     assert_eq!(summary.run.get("status"), Some(&json!("setup")));

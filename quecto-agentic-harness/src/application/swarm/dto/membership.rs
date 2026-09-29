@@ -111,3 +111,12 @@ pub enum Joined {
     /// activated it.
     Reactivated,
 }
+
+impl Joined {
+    /// Whether the branch, once it ran to its end, wrote to the board:
+    /// the admission and activation, or the activation.
+    #[must_use]
+    pub fn wrote(&self) -> bool {
+        matches!(self, Self::Admitted | Self::Reactivated)
+    }
+}

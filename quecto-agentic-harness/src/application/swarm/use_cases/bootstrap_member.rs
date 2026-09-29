@@ -4,10 +4,10 @@ use std::sync::Arc;
 
 use super::OverRepository;
 use super::bootstrap_run::bootstrap;
-use super::join_run::join;
+use super::join_run::{JoinRefused, join};
 use crate::application::swarm::board_read_models::summary;
 use crate::application::swarm::dto::{
-    BootstrapMemberRequest, BootstrapRunRequest, BootstrappedSummary, JoinRunRequest,
+    BootstrapMemberRequest, BootstrapRunRequest, BootstrappedSummary, JoinRunRequest, Joined,
     LaunchIdentity,
 };
 use crate::application::swarm::ports::{BoardRepository, Clock, IdSource};
@@ -37,7 +37,10 @@ impl BootstrapMember {
     }
 
     /// # Errors
-    /// The store's, the join's refusal, or the summary's.
+    /// The placeholder's refusal, or the join's or the summary's when
+    /// neither the placeholder nor the join wrote anything. A refusal
+    /// after either committed is answered in the summary's place, with
+    /// the join's branch when it took one (#2277 final review L2).
     pub fn execute(
         &self,
         request: BootstrapMemberRequest,
@@ -50,7 +53,20 @@ impl BootstrapMember {
             socket: request.socket.clone(),
         };
         let created = bootstrap(repository, clock, ids, &placeholder)?.created;
-        let (joined, coordinator) = join(
+        // A refusal after the placeholder or the join committed is
+        // answered in the summary's place; before either, it is the call's.
+        let refused = |refusal: BoardError, joined: Option<Joined>| {
+            if created || joined.as_ref().is_some_and(Joined::wrote) {
+                Ok(BootstrappedSummary {
+                    created,
+                    joined,
+                    summary: Err(refusal),
+                })
+            } else {
+                Err(refusal)
+            }
+        };
+        let joined = join(
             repository,
             clock,
             ids,
@@ -63,13 +79,19 @@ impl BootstrapMember {
                 },
                 socket: request.socket,
             },
-        )?;
-        let summary = summary(repository, clock, coordinator.as_deref(), None)?;
-        Ok(BootstrappedSummary {
-            created,
-            joined,
-            summary,
-        })
+        );
+        let (joined, coordinator) = match joined {
+            Ok(joined) => joined,
+            Err(JoinRefused { refusal, committed }) => return refused(refusal, committed),
+        };
+        match summary(repository, clock, coordinator.as_deref(), None) {
+            Ok(summary) => Ok(BootstrappedSummary {
+                created,
+                joined: Some(joined),
+                summary: Ok(summary),
+            }),
+            Err(refusal) => refused(refusal, Some(joined)),
+        }
     }
 }
 

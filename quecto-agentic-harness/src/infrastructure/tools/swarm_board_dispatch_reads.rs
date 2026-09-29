@@ -9,7 +9,9 @@
 //! more, whether a cursor moved or an owner turned idle defeated the
 //! summary's fast path, and whether `_bootstrap` wrote the placeholder:
 //! counts and flags only. A `create` whose summary refuses after the run
-//! committed answers that refusal, recorded as committed.
+//! committed answers that refusal, recorded as committed, and so do
+//! `_bootstrap` and `_join` refused after the placeholder or the join
+//! committed (#2277 final review L2).
 use serde_json::{Map, Value};
 
 use super::{Parameter, Served, done, member_row, required, take};
@@ -213,15 +215,28 @@ pub(super) fn create(
 ) -> Result<Served, BoardError> {
     let created = created(create_run, member, arguments)?;
     let decision = branch(&created);
-    Ok(match created.summary {
-        Ok(summary) => answered(rendered(summary), decision),
-        // The run is committed: the call answers the refusal, and its
-        // record says what the op decided before it.
+    Ok(summarised(created.summary, decision, BoardOpDetail::NONE))
+}
+
+/// The summary answered with `decision` and `detail`, or the refusal met
+/// after the op's writes committed: the call answers that refusal, and
+/// its record says what the op decided before it.
+fn summarised(
+    summary: Result<RunSummary, BoardError>,
+    decision: &'static str,
+    detail: BoardOpDetail,
+) -> Served {
+    match summary {
+        Ok(summary) => Served {
+            detail,
+            ..answered(rendered(summary), decision)
+        },
         Err(refusal) => Served {
             refused: Some(refusal),
+            detail,
             ..done(decision)
         },
-    })
+    }
 }
 
 fn joined(joined: &Joined) -> &'static str {
@@ -232,7 +247,9 @@ fn joined(joined: &Joined) -> &'static str {
     }
 }
 
-/// The coordinator's summary.
+/// The coordinator's summary, or the refusal met after the placeholder
+/// or the join committed, recorded with the join's branch (`placeholder`
+/// when it took none) and whether the placeholder was written.
 pub(super) fn bootstrap(
     bootstrap_member: &BootstrapMember,
     member: &str,
@@ -246,16 +263,16 @@ pub(super) fn bootstrap(
         socket,
         reservation,
     })?;
-    let decision = joined(&answer.joined);
-    let mut served = answered(rendered(answer.summary), decision);
-    served.detail = BoardOpDetail {
+    let decision = answer.joined.as_ref().map_or("placeholder", joined);
+    let detail = BoardOpDetail {
         placeholder_created: Some(answer.created),
         ..BoardOpDetail::NONE
     };
-    Ok(served)
+    Ok(summarised(answer.summary, decision, detail))
 }
 
-/// The coordinator's summary.
+/// The coordinator's summary, or the refusal met after the join's
+/// writes committed, recorded with its branch.
 pub(super) fn join(
     join_member: &JoinMember,
     member: &str,
@@ -269,7 +286,7 @@ pub(super) fn join(
         socket,
     })?;
     let decision = joined(&answer.joined);
-    Ok(answered(rendered(answer.summary), decision))
+    Ok(summarised(answer.summary, decision, BoardOpDetail::NONE))
 }
 
 fn float(value: Option<f64>) -> Value {
