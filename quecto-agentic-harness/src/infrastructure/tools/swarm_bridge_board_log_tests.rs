@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 use super::log::PENDING_RECORDS;
 use crate::application::swarm::ports::{BoardOpLog, CoordinationPort};
-use crate::domain::swarm::{BoardOpObservation, BoardOpOutcome, RefusalKind, SwarmRunSummary};
+use crate::domain::swarm::{BoardOpObservation, SwarmRunSummary};
 use crate::infrastructure::persistence::audit_log::AuditLog;
 use crate::infrastructure::persistence::crash_record::Armed;
 use crate::infrastructure::tools::swarm_bridge::SwarmContext;
@@ -229,130 +229,6 @@ fn the_records_held_before_the_log_opens_are_bounded() {
     assert_eq!(recorded.ops()[0], "create", "the first are kept");
 }
 
-/// How many of `records` are of `run`, for `op`, answered with `decision`.
-fn answered(records: &[BoardOpObservation], run: &str, op: &str, decision: &str) -> u64 {
-    let count = records
-        .iter()
-        .filter(|record| record.run_id.as_deref() == Some(run) && record.op == op)
-        .filter(|record| record.outcome == BoardOpOutcome::Ok)
-        .filter(|record| record.decision.as_deref() == Some(decision))
-        .count();
-    u64::try_from(count).unwrap()
-}
-
-/// #2313: the coordinator's harness writes one `swarm_run_summary` once
-/// its run settles, and its counts are the run's `swarm_op` records: per
-/// op and refusal kind, tasks, messages and each member's requests. A
-/// member id shaped like a credential is never written.
-#[test]
-fn the_run_summary_counts_equal_the_runs_swarm_op_records() {
-    let checkout = tempfile::tempdir().unwrap();
-    let board = crate::composition::swarm::swarm_board();
-    let recorded = Arc::new(Recorded::default());
-    assert!(board.record_in(recorded.clone()));
-    let parent = context(checkout.path(), "parent", &board);
-    let worker = context(checkout.path(), "worker", &board);
-    let secret = "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-    let stranger = context(checkout.path(), secret, &board);
-    create(&parent);
-    parent.call("_admit", json!(["worker", "r1"])).unwrap();
-    parent
-        .call("_activate", json!(["worker", "r1", 7, "s", "/w.sock"]))
-        .unwrap();
-    for request in ["t1", "t2"] {
-        parent
-            .call("task_create", json!([request, "t", ["tests pass"]]))
-            .unwrap();
-    }
-    let token = worker.call("claim", json!([1])).unwrap()["token"].clone();
-    worker.call("claim", json!([999])).unwrap_err();
-    worker
-        .call(
-            "submit",
-            json!([1, token, [{"artifact": "report", "revision": "R1"}]]),
-        )
-        .unwrap();
-    parent.call("verify_task", json!([1, token, "R1"])).unwrap();
-    let sent = parent
-        .call("send", json!(["m1", "worker", "hello"]))
-        .unwrap();
-    worker.call("ack", json!([sent["id"]])).unwrap();
-    let record = json!([{"request_id": "q", "instrumented_attempts": 0, "outcome": "rejected"}]);
-    parent.call("_record_request", record.clone()).unwrap();
-    stranger.call("_record_request", record).unwrap_err();
-    stranger
-        .call("task_create", json!(["t3", "t", ["x"]]))
-        .unwrap_err();
-    parent.cancel_run().unwrap();
-    let snapshot = parent.snapshot().unwrap();
-    assert!(!worker.summarize_settled(&snapshot), "only the coordinator");
-    assert!(parent.summarize_settled(&snapshot));
-    assert!(!parent.summarize_settled(&snapshot), "once per run");
-
-    let summaries = recorded.summaries();
-    assert_eq!(summaries.len(), 1, "{summaries:?}");
-    let summary = &summaries[0];
-    let run = summary.run_id.as_str();
-    let records: Vec<_> = recorded
-        .records()
-        .into_iter()
-        .filter(|record| record.run_id.as_deref() == Some(run))
-        .collect();
-    assert_eq!(summary.records, u64::try_from(records.len()).unwrap());
-    let mut ok: BTreeMap<String, u64> = BTreeMap::new();
-    let mut refused: BTreeMap<(String, RefusalKind), u64> = BTreeMap::new();
-    for record in &records {
-        match record.outcome {
-            BoardOpOutcome::Ok => *ok.entry(record.op.clone()).or_default() += 1,
-            BoardOpOutcome::Refused { kind, .. } => {
-                *refused.entry((record.op.clone(), kind)).or_default() += 1;
-            }
-        }
-    }
-    for (op, counted) in &summary.ops {
-        assert_eq!(counted.ok, ok.get(op).copied().unwrap_or(0), "{op}");
-        for (kind, count) in &counted.refused {
-            assert_eq!(
-                Some(count),
-                refused.get(&(op.clone(), *kind)),
-                "{op} {kind:?}"
-            );
-        }
-    }
-    let summed: u64 = summary
-        .ops
-        .values()
-        .map(|op| op.ok + op.refused.values().sum::<u64>())
-        .sum();
-    assert_eq!(summed, summary.records);
-    assert!(
-        !summary.ops["claim"].refused.is_empty(),
-        "the unknown task's claim is a refusal: {refused:?}"
-    );
-    assert_eq!(
-        summary.tasks.created,
-        answered(&records, run, "task_create", "created")
-    );
-    assert_eq!(summary.tasks.created, 2);
-    assert_eq!(summary.tasks.claimed, 1);
-    assert_eq!(summary.tasks.submitted, 1);
-    assert_eq!(summary.tasks.accepted, 1);
-    assert_eq!(summary.messages.sent, 1);
-    assert_eq!(summary.messages.acked, 1);
-    let usage: Vec<_> = summary
-        .request_usage
-        .iter()
-        .map(|usage| (usage.actor_ref.as_str(), usage.recorded, usage.refused))
-        .collect();
-    assert_eq!(usage[0], ("parent", 1, 0), "{usage:?}");
-    let text = serde_json::to_string(&summaries).unwrap();
-    assert!(!text.contains("sk-ant"), "no secret-shaped id: {text}");
-    assert!(
-        !text.contains("hello") && !text.contains("report"),
-        "{text}"
-    );
-}
-
 /// A writer into a shared buffer, for the `tracing` records.
 struct Captured(Arc<Mutex<Vec<u8>>>);
 
@@ -415,3 +291,6 @@ fn a_run_summary_is_traced_on_the_boards_target() {
     );
     assert!(traced[0].contains("records="), "{text}");
 }
+
+#[path = "swarm_bridge_board_summary_tests.rs"]
+mod summary;

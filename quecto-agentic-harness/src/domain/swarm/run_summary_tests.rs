@@ -51,7 +51,7 @@ fn folded(records: &[BoardOpObservation]) -> SwarmRunSummary {
     for record in records {
         fold.observe(record);
     }
-    fold.summary(9_000)
+    fold.summary(9_000, None)
 }
 
 /// The counts by `(op, kind)` are the records': each answered record once
@@ -218,14 +218,15 @@ fn request_usage_is_counted_per_member_by_its_redacted_ref() {
     assert!(!text.contains("sk-ant"), "{text}");
 }
 
-/// The wall time runs from the start of the run's first record to the
-/// moment the summary is taken.
+/// The process's own span runs from the start of the first record it
+/// folded to the moment the summary is taken (#2313 review L3: the run's
+/// wall time is the run-wide section's, from the run's creation).
 #[test]
-fn the_wall_time_runs_from_the_first_record_to_the_summary() {
+fn the_process_span_runs_from_its_first_record_to_the_summary() {
     let mut fold = RunSummaryFold::new(RUN, 250);
     fold.observe(&record("claim", Some("claimed"), 50));
-    assert_eq!(fold.summary(10_250).wall_time_us, 10_000);
-    assert_eq!(fold.summary(100).wall_time_us, 0, "never negative");
+    assert_eq!(fold.summary(10_250, None).process_span_us, 10_000);
+    assert_eq!(fold.summary(100, None).process_span_us, 0, "never negative");
 }
 
 /// A long run keeps at most [`SAMPLES_PER_OP`] samples of an op, drawn
@@ -240,7 +241,7 @@ fn an_op_keeps_a_uniform_bounded_sample_and_an_exact_max() {
     for duration in 1..=total {
         fold.observe(&record("summary", Some("read"), duration));
     }
-    let summary = fold.summary(1);
+    let summary = fold.summary(1, None);
     let op = &summary.ops["summary"];
     assert_eq!(op.ok, total);
     assert_eq!(op.unsampled, total - SAMPLES_PER_OP as u64);
@@ -265,7 +266,7 @@ fn the_sample_is_deterministic_for_a_run() {
         for duration in 1..=(3 * SAMPLES_PER_OP as u64) {
             fold.observe(&record("claim", Some("claimed"), duration));
         }
-        fold.summary(1)
+        fold.summary(1, None)
     };
     assert_eq!(fold(), fold());
 }
@@ -320,10 +321,39 @@ fn a_run_summary_record_round_trips() {
     assert_eq!(line["ops"]["claim"]["ok"], 1);
     assert_eq!(line["ops"]["claim"]["refused"], json!({"wrong_state": 1}));
     assert_eq!(line["tasks"]["claimed"], 1);
-    assert_eq!(line["wall_time_us"], 8_000);
+    assert_eq!(line["scope"], "process", "the fold is this process's");
+    assert_eq!(line["process_span_us"], 8_000);
+    assert_eq!(line["wall_time_us"], Value::Null, "the run's is run-wide");
+    assert_eq!(line["run"], Value::Null, "no board read given");
     assert_eq!(line["unlisted_ops"], Value::Null, "left out when none");
     let read: AuditEvent = serde_json::from_value(line).unwrap();
     assert_eq!(read, event);
+}
+
+/// #2313 review M1: the board's run-wide totals, read at settle, are the
+/// record's `run` section, beside the process's own counts.
+#[test]
+fn the_run_wide_totals_are_the_records_run_section() {
+    let mut fold = RunSummaryFold::new(RUN, 0);
+    fold.observe(&record("summary", Some("full"), 5));
+    let totals = crate::domain::swarm::RunTotals::new(
+        crate::domain::swarm::TaskStates {
+            total: 3,
+            completed: 3,
+            ..Default::default()
+        },
+        crate::domain::swarm::MessageTotals::default(),
+        Vec::new(),
+        Some(10.0),
+        12.0,
+    );
+    let summary = fold.summary(5, Some(totals.clone()));
+    assert_eq!(summary.run, Some(totals));
+    let line = serde_json::to_value(AuditEvent::SwarmRunSummary(summary)).unwrap();
+    assert_eq!(line["scope"], "process");
+    assert_eq!(line["records"], 1);
+    assert_eq!(line["run"]["tasks"]["completed"], 3);
+    assert_eq!(line["run"]["wall_time_us"], 2_000_000);
 }
 
 /// The coordinator's harness writes the summary once its run settled

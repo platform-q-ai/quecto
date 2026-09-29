@@ -240,6 +240,14 @@ async fn the_coordinators_settlement_writes_the_run_summary_once() {
     let written = summaries.written();
     assert_eq!(written.len(), 1, "{written:?}");
     assert!(written[0].ops.contains_key("stop"), "{:?}", written[0]);
+    // #2313 review M1: the run-wide totals, read from the board at settle.
+    let run = written[0].run.as_ref().expect("the board's totals");
+    assert!(run.wall_time_us.is_some(), "{run:?}");
+    assert!(
+        written[0].ops.contains_key("_run_totals"),
+        "the read is recorded as the harness's own: {:?}",
+        written[0]
+    );
     settle(context).await.unwrap();
     assert_eq!(summaries.written().len(), 1, "written once per run");
 }
