@@ -168,7 +168,7 @@ argument binding are rendered from and held to it.
 | `task` | `task_id` integer | task, with owner liveness | any member |
 | `tasks` | `offset` integer (0), `limit` integer 1–100 (50) | list of tasks | any member |
 | `file_owners` | `offset` integer (0), `limit` integer 1–100 (50) | list of file reservations | any member |
-| `task_create` | `request` string, `title` string, `acceptance` nonempty list of strings, `dependencies` list of task ids (`null`) | task (replayed on a retry) | any member |
+| `task_create` | `request` string, `title` string, `acceptance` nonempty list of nonblank strings, `dependencies` list of task ids (`null`) | task (replayed on a retry) | any member |
 | `dependencies` | `task_id` integer, `dependencies` list of task ids | `null` | any member |
 | `claim` | `task_id` integer | task with its claim `token` | any member |
 | `release` | `task_id` integer, `token` string | `null` | the owner |
@@ -179,7 +179,7 @@ argument binding are rendered from and held to it.
 | `release_files` | `task_id` integer, `token` string, `reservation` string | `null` | the owner |
 | `send` | `request` string, `recipient` member id, `body` string, `revision` string (`null`), `supersedes` message id (`null`) | `{id, status}` | any member |
 | `withdraw` | `message_id` integer | `null` | the sender |
-| `inbox` | `include_consumed` boolean (`false`) | list of messages | any member |
+| `inbox` | `include_consumed` boolean (`false`; bound loosely, so any nonzero number such as `1` also reads consumed history) | list of messages | any member |
 | `ack` | `message_id` integer | `null` | the recipient |
 | `evidence` | `criterion` string, `artifact` string, `revision` string, `kind` `command` or `review`, `passed` boolean | `null` | any member (a worker's is a proposal) |
 | `amend` | `goal` string, `constraints` list of strings, `criteria` list of `{id, kind, description}`, `reason` string | `null` | coordinator |
@@ -207,7 +207,7 @@ How an op is served:
    never coerced: an integer outside i64 and u64 (`18446744073709551616`), a
    number with no finite value (`NaN`, `Infinity`, `1e400`) and a string
    holding a lone surrogate (`"\ud800"`). The refusal is
-   `swarm: "arguments: not representable as a serde_json value: <why>"`, and
+   `tool error: swarm: "arguments: not representable as a serde_json value: <why>"`, and
    its `swarm_op` record has kind `invalid`. These are inputs Python took (or
    read) but the board refuses; the differential suite lists them as
    permitted divergences.
@@ -216,10 +216,15 @@ How an op is served:
    field the op does not take (`claim: unexpected argument id`) are refused
    as calling errors (kind `calling`). Loosely typed values the Python board
    accepted, such as a string task id SQLite's affinity matches, behave as
-   they did.
+   they did: send task ids as `3`, not `true` or `3.0` (these bind loosely
+   as they always did: `true` reads task 1, `3.0` reads task 3). `passed`
+   and `release_files` count only `true` as true; `include_consumed` binds
+   loosely, so any nonzero number (such as `1`) also returns consumed
+   history.
 3. **The running gate.** A board op is refused unless the run is `running`
    and within its deadline (owner decision, 2026-09-28: the gate the Python
-   `run` op had), with guidance naming what is allowed now (`summary`,
+   `run` op had; a running run whose deadline is missing or not a number is
+   refused as past it), with guidance naming what is allowed now (`summary`,
    `events`, `usage`). This covers reads, `inbox`, `ack` and `withdraw` too.
 4. **The call and its lifecycle.** A mutating op reads the board's event
    cursor before and after its call. When the cursor moved, the harness sends
@@ -230,7 +235,9 @@ How an op is served:
    skip this step.
 5. **The answer** is written as Python's `json.dumps` writes it (insertion
    order, `", "` and `": "` separators, `ensure_ascii`, float `repr`). A board
-   refusal keeps the board's exact text, as `swarm: "<message>"`.
+   refusal keeps the board's exact text: the member sees
+   `tool error: swarm: "<message>"`, the same prefix a member-input refusal
+   gets.
 
 The board lives in the checkout's own git directory: `.git/quecto/swarm.sqlite`,
 or a linked worktree's git directory. Git's work-tree commands never touch it
@@ -823,7 +830,7 @@ the board is still recorded as the op's own `swarm_op`, with no run read
 |---|---|
 | Member input (a value the board's JSON value cannot hold, text that is no JSON object) | `invalid` |
 | The running gate, when the run is not `running` | `not_running` |
-| The running gate, when the running run's deadline has passed | `budget_exhausted` |
+| The running gate, when the running run's deadline has passed, is missing or is not a number | `budget_exhausted` |
 | The running gate, when the run's status could not be read | `store` |
 
 Each structured op also leaves one `tracing` event, `swarm structured op`,
@@ -845,7 +852,10 @@ not the event log is on. It carries no argument text:
 ### Finding a run's records
 
 Every agent writes its own event log, `<base_dir>/audit/<session>.jsonl`, one
-JSON record per line. A container member's `~/.quecto` is the host's
+JSON record per line. The file is named after the sanitised session key, not
+the `session` value verbatim: a key of letters, digits, `:`, `_`, `-` and `.`
+has each `:` replaced by `_` (`cli:ops` → `cli_ops.jsonl`); any other key, or
+one starting with `.`, is hex-encoded with a `key_` prefix. A container member's `~/.quecto` is the host's
 (identity-mounted), so the logs of every member of a swarm land in the host's
 `~/.quecto/audit/`, one file per member session. Each record carries the
 agent's `session`, its process id and its `host`: for a container member the

@@ -78,10 +78,14 @@ named JSON fields. The answer is the op's JSON result (`null` for an op that
 returns nothing). Durable state lives on the board, not in your context.
 
 - **Send the schema's types.** Task and message ids, `offset`, `limit` and
-  `supersedes` are JSON integers (`true` and `3.0` are not). `passed`,
-  `release_files` and `include_consumed` are booleans, and only `true`
-  counts as true. `acceptance`, `constraints` and `paths` are
-  lists of strings; `dependencies` is a list of task ids. `evidence` is a
+  `supersedes` are JSON integers: send `3`, not `true` or `3.0` (these bind
+  loosely as they always did: `true` reads task 1, `3.0` reads task 3).
+  `passed`, `release_files` and `include_consumed` are booleans. For `passed`
+  and `release_files` only `true` counts as true; `include_consumed` binds
+  loosely, so any nonzero number (such as `1`) also returns consumed history.
+  `acceptance`, `constraints` and `paths` are lists of strings, and
+  `acceptance` refuses an empty list and a blank string; `dependencies` is a
+  list of task ids. `evidence` is a
   nonempty list of `{"artifact":"tests.log","revision":"<commit>"}` objects.
   Member ids and tokens are the strings the ops return.
 - **Fields bind by name.** A missing required field is refused
@@ -98,7 +102,8 @@ returns nothing). Durable state lives on the board, not in your context.
   `setup`, paused, ended or past its deadline, every board op (reads, `inbox`
   and `ack` included) is refused with a message naming what is allowed now:
   `summary`, `events` and `usage` always are.
-- **Refusals keep the board's text**, as `swarm: "<message>"`.
+- **Refusals keep the board's text**: you see `tool error: swarm: "<message>"`
+  (a member-input refusal has the same prefix).
 - After an op that changed the board, the harness sends the wake hints (or
   settles a run that ended). A hint that could not be delivered is added to
   the answer as `notification_warnings`, and a failure of that step as

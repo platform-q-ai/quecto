@@ -3,11 +3,11 @@
 //! of `BOARD_OPS` a runnable example whose fields are exactly the op's
 //! arguments with values of the schema's types, states the member-input rule,
 //! pins the owner-idle threshold to its constant, and stays self-contained.
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use super::lookup_doc;
 use crate::domain::swarm::owner::OWNER_IDLE_AFTER;
-use crate::infrastructure::tools::swarm_board_ops::{ArgSpec, BOARD_OPS};
+use crate::infrastructure::tools::swarm_board_ops::{ArgSpec, BOARD_OPS, OpSpec};
 
 fn embed() -> &'static str {
     lookup_doc("swarm").expect("the swarm embed")
@@ -164,18 +164,99 @@ fn the_swarm_embed_lists_every_member_op() {
                 spec.name
             ));
         }
-        for arg in spec.args {
-            match fields.get(arg.name) {
-                Some(value) if argument_conforms(arg, value) => {}
-                Some(value) => problems.push(format!(
-                    "{}.{}: {value} is not {}",
-                    spec.name, arg.name, arg.json_type
-                )),
-                None => {}
+        problems.extend(type_problems(spec, fields));
+    }
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+/// The problems of each field of `fields` that `spec` takes: a value not of
+/// the argument's schema type.
+fn type_problems(spec: &OpSpec, fields: &Map<String, Value>) -> Vec<String> {
+    spec.args
+        .iter()
+        .filter_map(|arg| match fields.get(arg.name) {
+            Some(value) if argument_conforms(arg, value) => None,
+            Some(value) => Some(format!(
+                "{}.{}: {value} is not {}",
+                spec.name, arg.name, arg.json_type
+            )),
+            None => None,
+        })
+        .collect()
+}
+
+/// Every line of every fenced ```json block in `embed` that is a board op:
+/// its op's spec and its fields. Lines naming a harness op are left out.
+fn fenced_board_ops(embed: &str) -> Vec<(&'static OpSpec, Map<String, Value>)> {
+    let mut found = Vec::new();
+    for block in embed.split("```json\n").skip(1) {
+        let body = block.split("```").next().unwrap_or_default();
+        for line in body.lines().map(str::trim).filter(|line| !line.is_empty()) {
+            let value: Value = serde_json::from_str(line)
+                .unwrap_or_else(|error| panic!("fenced line `{line}` is no JSON: {error}"));
+            let Value::Object(fields) = value else {
+                panic!("fenced line `{line}` is no JSON object");
+            };
+            let op = fields["op"].as_str().expect("a fenced op names its op");
+            if let Some(spec) = BOARD_OPS.iter().find(|spec| spec.name == op) {
+                found.push((spec, fields));
             }
         }
     }
+    found
+}
+
+/// The problems of one fenced op: a field the op does not take, a required
+/// argument left out, or a value not of the schema's type. Defaulted
+/// arguments may be left out, as a member may leave them out.
+fn fenced_problems(spec: &OpSpec, fields: &Map<String, Value>) -> Vec<String> {
+    let mut problems: Vec<String> = fields
+        .keys()
+        .filter(|key| key.as_str() != "op")
+        .filter(|key| !spec.args.iter().any(|arg| arg.name == key.as_str()))
+        .map(|key| format!("{}: takes no field {key}", spec.name))
+        .collect();
+    problems.extend(
+        spec.args
+            .iter()
+            .filter(|arg| arg.required && !fields.contains_key(arg.name))
+            .map(|arg| format!("{}: misses required {}", spec.name, arg.name)),
+    );
+    problems.extend(type_problems(spec, fields));
+    problems
+}
+
+/// The fenced working sequences are copied as whole calls, so each of their
+/// board ops is held to the schema too, not only the first example per op.
+#[test]
+fn the_swarm_embed_fenced_sequences_match_the_schema() {
+    let ops = fenced_board_ops(embed());
+    assert!(!ops.is_empty(), "the swarm embed has no fenced board op");
+    let problems: Vec<String> = ops
+        .iter()
+        .flat_map(|(spec, fields)| fenced_problems(spec, fields))
+        .collect();
     assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+#[test]
+fn the_fenced_check_tells_a_wrong_call_apart() {
+    let sample = "```json\n{\"op\":\"claim\",\"task_id\":true}\n\
+                  {\"op\":\"claim\",\"id\":1}\n{\"op\":\"summary\"}\n```\n";
+    let ops = fenced_board_ops(sample);
+    assert_eq!(ops.len(), 2, "the harness op `summary` is left out");
+    let problems: Vec<String> = ops
+        .iter()
+        .flat_map(|(spec, fields)| fenced_problems(spec, fields))
+        .collect();
+    assert_eq!(problems.len(), 3, "{problems:?}");
+    assert!(problems.iter().any(|p| p.contains("task_id: true")));
+    assert!(problems.iter().any(|p| p.contains("takes no field id")));
+    assert!(
+        problems
+            .iter()
+            .any(|p| p.contains("misses required task_id"))
+    );
 }
 
 /// S14's member-input rule: text the board's value type cannot hold exactly
