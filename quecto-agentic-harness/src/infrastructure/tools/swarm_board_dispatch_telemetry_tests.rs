@@ -608,3 +608,6 @@ fn a_swarm_op_line_holds_no_board_text() {
 
 #[path = "swarm_board_dispatch_telemetry_ops_tests.rs"]
 mod ops;
+
+#[path = "swarm_board_dispatch_telemetry_race_tests.rs"]
+mod race;
