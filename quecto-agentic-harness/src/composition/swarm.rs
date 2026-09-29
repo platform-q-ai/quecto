@@ -2,13 +2,15 @@
 //! use cases are constructed. `build_swarm_board_handles` binds the SQLite
 //! repository of one board file, the wall clock and random ids, and the
 //! event log's `swarm_op` records when it is given one (#2303); `main`
-//! injects it through `CliComposition.swarm_board`, and S13 carries it on
-//! `CliContext` and threads it to `SwarmContext` and `HostedStore`, passing
-//! [`board_op_log`] of the session's log. `build_swarm_board_handles_with`
-//! composes the same graph over injected ports, for the differential
-//! harness's deterministic clock and ids. The file reservations (#2275)
-//! normalise paths in the board's checkout, through `CheckoutPaths` bound
-//! to `BoardLocation::checkout`.
+//! injects it, with [`board_op_log`], through `CliComposition`, and
+//! `CliContext` carries both to the agent's admission, which gives every
+//! `SwarmContext` of the process one [`SwarmBoard`] (#2278);
+//! `composition::environments` gives the host's `HostedStore` reads
+//! [`swarm_board`]. `build_swarm_board_handles_with` composes the same
+//! graph over injected ports, for the differential harness's
+//! deterministic clock and ids. The file reservations (#2275) normalise
+//! paths in the board's checkout, through `CheckoutPaths` bound to
+//! `BoardLocation::checkout`.
 use std::sync::Arc;
 
 use crate::application::swarm::dto::BoardLocation;

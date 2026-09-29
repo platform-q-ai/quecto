@@ -10,7 +10,7 @@
 //! as it was for the Python interpreter this replaced. Nothing here
 //! constructs a repository, a clock, an id source or a use case: the
 //! builder is composition's (`composition::swarm::build_swarm_board_handles`).
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use serde_json::Value;
 
@@ -18,7 +18,7 @@ use crate::application::swarm::dto::BoardLocation;
 use crate::application::swarm::ports::BoardOpLog;
 use crate::domain::error::DomainError;
 use crate::infrastructure::persistence::audit_log::AuditLog;
-use crate::infrastructure::tools::swarm_board_dispatch::SwarmBoardHandles;
+use crate::infrastructure::tools::swarm_board_dispatch::{self, SwarmBoardHandles};
 
 /// Builds the board handles over one board file, recording each call in
 /// the event log given (composition's `board_op_log`, only while the
@@ -42,6 +42,14 @@ struct Shared {
     build: SwarmBoardHandlesBuilder,
     session_log: Option<SwarmBoardOpLogBuilder>,
     event_log: OnceLock<Arc<dyn BoardOpLog>>,
+    built: Mutex<Option<Built>>,
+}
+
+/// The handles built for one board file, with the event log or without.
+struct Built {
+    location: BoardLocation,
+    logged: bool,
+    handles: Arc<SwarmBoardHandles>,
 }
 
 impl std::fmt::Debug for SwarmBoard {
@@ -61,6 +69,7 @@ impl SwarmBoard {
                 build,
                 session_log: None,
                 event_log: OnceLock::new(),
+                built: Mutex::new(None),
             }),
         }
     }
@@ -76,6 +85,7 @@ impl SwarmBoard {
                 build,
                 session_log: Some(session_log),
                 event_log: OnceLock::new(),
+                built: Mutex::new(None),
             }),
         }
     }
@@ -101,11 +111,6 @@ impl SwarmBoard {
         self.shared.event_log.set(log).is_ok()
     }
 
-    /// Composition's builder (red stub, #2278).
-    pub fn handles_builder(&self) -> SwarmBoardHandlesBuilder {
-        self.shared.build
-    }
-
     /// One board call against the file at `location`, as `member`: the
     /// dispatcher's answer, or its refusal as the tool boundary has always
     /// carried a board error, `swarm: "<text>"` (the text as a JSON
@@ -117,17 +122,46 @@ impl SwarmBoard {
         method: &str,
         args: Value,
     ) -> Result<Value, DomainError> {
-        // Red stub (#2278): still the Python interpreter.
-        super::super::swarm_board_worker::call(
-            &super::super::swarm_board_worker::Board {
-                checkout: &location.checkout,
-                database: &location.database,
-                member,
-            },
-            &super::bootstrap_source(&location.database, &location.checkout, member),
-            method,
-            args,
-        )
+        let handles = self.handles(location);
+        swarm_board_dispatch::call(&handles, member, method, args).map_err(|refusal| {
+            DomainError::Tool(format!(
+                "swarm: {}",
+                Value::String(refusal.message().to_owned())
+            ))
+        })
+    }
+
+    /// The handles for `location`: the ones built last when they are for
+    /// the same file and the same log, else newly built by composition's
+    /// builder (a context calls one board file; a hosted store may call
+    /// another each time).
+    fn handles(&self, location: BoardLocation) -> Arc<SwarmBoardHandles> {
+        let event_log = self.shared.event_log.get().cloned();
+        let logged = event_log.is_some();
+        let mut built = self
+            .shared
+            .built
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match built.as_ref() {
+            Some(last) if last.location == location && last.logged == logged => {
+                last.handles.clone()
+            }
+            Some(_) | None => {
+                let handles = Arc::new((self.shared.build)(location.clone(), event_log));
+                debug_assert_eq!(
+                    handles.telemetry.is_some(),
+                    logged,
+                    "composition's handles record in the log they were given"
+                );
+                *built = Some(Built {
+                    location,
+                    logged,
+                    handles: handles.clone(),
+                });
+                handles
+            }
+        }
     }
 }
 

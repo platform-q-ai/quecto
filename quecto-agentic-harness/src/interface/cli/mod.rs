@@ -517,6 +517,8 @@ fn composed_context(
         container_status: Some(composition.container_status),
         run_end_fleet: Some(composition.run_end_fleet),
         claude_member: Some(composition.claude_member),
+        swarm_board: Some(composition.swarm_board),
+        swarm_board_log: Some(composition.swarm_board_log),
         live_output: true,
         ..Default::default()
     }

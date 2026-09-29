@@ -78,6 +78,12 @@ impl SwarmContext {
     }
 
     pub fn accept_wake(&self, generation: u64) -> Result<bool, DomainError> {
+        // Its only caller, the supervisor's wake control, runs it on the
+        // blocking pool: a board call blocks up to its busy timeout.
+        debug_assert!(
+            super::call_work::may_block(),
+            "a wake is accepted off the async workers (#2278)"
+        );
         self.rpc("_accept_wake", json!([generation]))?
             .as_bool()
             .ok_or_else(|| DomainError::Tool("invalid wake receipt".into()))
@@ -156,7 +162,7 @@ pub fn store_database(checkout: &Path) -> PathBuf {
     super::swarm_store_location::located(checkout)
 }
 
-pub(super) fn bootstrap_source(database: &Path, checkout: &Path, member: &str) -> String {
+fn bootstrap_source(database: &Path, checkout: &Path, member: &str) -> String {
     let mut source = String::from("import sys, types, json\n");
     for (name, body) in [
         ("swarm_policy", include_str!("../../domain/swarm_policy.py")),

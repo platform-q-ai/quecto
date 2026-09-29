@@ -57,7 +57,7 @@ where
     F: FnOnce() -> T + Send + 'static,
     T: Send + 'static,
 {
-    join_carried(tokio::task::spawn_blocking(carry(job)))
+    join_carried(tokio::task::spawn_blocking(carry(blocking(job))))
 }
 
 /// As [`spawn_blocking_in_call`], on a given runtime's blocking pool.
@@ -66,7 +66,39 @@ where
     F: FnOnce() -> T + Send + 'static,
     T: Send + 'static,
 {
-    join_carried(runtime.spawn_blocking(carry(job)))
+    join_carried(runtime.spawn_blocking(carry(blocking(job))))
+}
+
+thread_local! {
+    /// Set while this thread runs a call's work on the blocking pool.
+    static ON_BLOCKING_WORK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// `job`, marked as blocking work on the thread that runs it (#2278): a
+/// runtime's worker threads and its blocking threads share one name, so
+/// the mark is what tells them apart.
+fn blocking<T>(job: impl FnOnce() -> T) -> impl FnOnce() -> T {
+    move || {
+        let _mark = BlockingMark(ON_BLOCKING_WORK.with(|mark| mark.replace(true)));
+        job()
+    }
+}
+
+/// Restores the thread's mark when the job ends, a panic included.
+struct BlockingMark(bool);
+
+impl Drop for BlockingMark {
+    fn drop(&mut self) {
+        ON_BLOCKING_WORK.with(|mark| mark.set(self.0));
+    }
+}
+
+/// Whether this thread may block: it is outside any async runtime, or it
+/// runs a call's work on the blocking pool ([`spawn_blocking_in_call`]).
+/// An async worker must never make a call that blocks (a board call waits
+/// up to its store's busy timeout).
+pub fn may_block() -> bool {
+    tokio::runtime::Handle::try_current().is_err() || ON_BLOCKING_WORK.with(std::cell::Cell::get)
 }
 
 /// Start a thread whose job is the calling tool call's own work: it runs in
