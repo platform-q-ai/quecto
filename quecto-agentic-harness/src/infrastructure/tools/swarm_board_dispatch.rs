@@ -45,31 +45,33 @@
 //! dispatcher still calls one use case per method.
 //!
 //! Each call leaves one `tracing` record on [`TELEMETRY_TARGET`] (DEBUG
-//! for a read-only method, INFO otherwise, WARN for a contended refusal or
-//! a lock wait over 250 ms) and, when the event log is switched on
-//! ([`SwarmBoardHandles::event_log`], #2303), one `swarm_op` record in it,
-//! with the lock wait and busy flag the store measured for this call only.
-//! Both carry the method, the member id, the outcome (a refusal's
-//! [`RefusalKind`]), the decision taken and the duration: ids, kinds,
-//! durations and sizes only, never argument text
-//! (`swarm_board_telemetry`). The member id is the board identity the
-//! harness assigned the caller (the `members.id` every board row names),
-//! not a secret; it is still passed through `Redacted` so an id shaped
-//! like a credential is masked, as every telemetry field that carries
-//! caller-chosen text is. A method a later slice adds is recorded with no
-//! further code: it gets an arm in [`Method::role`] and an entry in
-//! [`BOARD_OPS`], which the one-record-per-op test walks.
+//! for a read-only method, INFO otherwise, WARN for a contended refusal or,
+//! while the event log is on, a busy wait over 250 ms) and, when the event
+//! log is switched on ([`SwarmBoardHandles::telemetry`], #2303), one
+//! `swarm_op` record in it, with the lock wait, busy wait and busy flag
+//! the store measured for this call only. The dispatcher reaches both
+//! through application ports ([`BoardCallMeter`], [`BoardOpLog`]) that
+//! composition injects: it names no adapter. Both records carry the
+//! method, the member id, the outcome (a refusal's [`RefusalKind`]), the
+//! decision taken and the duration: ids, kinds, durations and sizes only,
+//! never argument text (`swarm_board_telemetry`). The member id is the
+//! board identity the caller chose for itself (the `members.id` every
+//! board row names, bounded by the board), not a secret; it is still
+//! passed through `Redacted` so an id shaped like a credential is masked,
+//! as every telemetry field that carries caller-chosen text is. A method a later slice adds is
+//! recorded with no further code: it gets an arm in [`Method::role`] and
+//! an entry in [`BOARD_OPS`], which the one-record-per-op test walks.
 use std::sync::Arc;
 use std::time::Instant;
 
 use serde_json::{Map, Value};
 
-use crate::application::audit::ports::AuditSink;
 use crate::application::swarm::dto::{
     ActivateMemberRequest, AdmissionDecision, AdmitMemberRequest, LaunchIdentity, MemberRow,
     RecordMemberLaunchRequest, RegisterMemberSocketRequest, ReleaseUnlaunchedMemberRequest,
     RunSnapshotView, RunStatusView,
 };
+use crate::application::swarm::ports::{BoardCallMeter, BoardOpLog};
 #[cfg(any(test, feature = "test-support"))]
 use crate::application::swarm::dto::{
     BootstrapRunRequest, CreateBranch, CreateRunRequest, JoinRunRequest, Joined,
@@ -80,10 +82,9 @@ use crate::application::swarm::use_cases::{
     ReleaseTask, ReleaseUnlaunchedMember, SetTaskDependencies,
 };
 use crate::domain::swarm::{BoardError, BoardRole, RefusalKind};
-use crate::infrastructure::persistence::swarm_board::meter::metered;
 
 pub use super::swarm_board_telemetry::TELEMETRY_TARGET;
-use super::swarm_board_telemetry::{Finished, Level, emit, observation, trace};
+use super::swarm_board_telemetry::{Finished, Level, observation, trace};
 
 /// One handle per board use case, composed once per board file. The
 /// `create_run` and `bootstrap_run` handles are served only in test builds
@@ -109,9 +110,19 @@ pub struct SwarmBoardHandles {
     /// Served only in test builds as `task_raw` until S12 adds the owner
     /// liveness `task` answers with.
     pub read_task: Arc<ReadTask>,
-    /// The event log every call records a `swarm_op` in (#2303), only
-    /// when it is switched on (`telemetry.event_log.enabled`).
-    pub event_log: Option<Arc<dyn AuditSink>>,
+    /// Each call's `swarm_op` record and its measure (#2303), only when
+    /// the event log is switched on (`telemetry.event_log.enabled`, owner
+    /// decision T1): `None` measures and writes nothing.
+    pub telemetry: Option<BoardTelemetry>,
+}
+
+/// The event log a board call records in, and the meter that measures it
+/// (#2303): both or neither, so a record is never written with waits that
+/// were not measured.
+#[derive(Clone)]
+pub struct BoardTelemetry {
+    pub log: Arc<dyn BoardOpLog>,
+    pub meter: Arc<dyn BoardCallMeter>,
 }
 
 impl std::fmt::Debug for SwarmBoardHandles {
@@ -321,7 +332,7 @@ pub fn call(
 ) -> Result<Value, BoardError> {
     let started = Instant::now();
     let known = Method::parse(method);
-    let answer = || match known {
+    let answer_once = || match known {
         Some(known) => bind(known, known.parameters(), args)
             .and_then(|arguments| serve(handles, member, known, arguments)),
         None => Err(BoardError::new(
@@ -329,12 +340,27 @@ pub fn call(
             format!("swarm board has no method {method}"),
         )),
     };
-    let (answer, meter) = match &handles.event_log {
-        Some(_) => {
-            let (answer, meter) = metered(answer);
-            (answer, Some(meter))
+    let (answer, measure) = match &handles.telemetry {
+        Some(telemetry) => {
+            let mut answer = None;
+            let mut pending = Some(answer_once);
+            // Run at most once, whatever the meter does: a second run
+            // finds nothing pending and leaves the first answer.
+            let measure = telemetry.meter.metered(&mut || {
+                if let Some(work) = pending.take() {
+                    answer = Some(work());
+                }
+            });
+            debug_assert!(answer.is_some(), "the meter runs the call exactly once");
+            let answer = answer.unwrap_or_else(|| {
+                Err(BoardError::new(
+                    RefusalKind::Internal,
+                    "swarm board meter did not run the call",
+                ))
+            });
+            (answer, measure)
         }
-        None => (answer(), None),
+        None => (answer_once(), None),
     };
     let finished = Finished {
         op: known.map_or("unknown", Method::name),
@@ -347,10 +373,12 @@ pub fn call(
             .map_err(BoardError::kind),
         elapsed: started.elapsed(),
     };
-    trace(&finished, meter.as_ref());
-    if let (Some(log), Some(meter)) = (&handles.event_log, meter) {
+    trace(&finished, measure.as_ref());
+    if let Some(telemetry) = &handles.telemetry {
         let value = answer.as_ref().ok().map(|served| &served.value);
-        emit(&**log, observation(&finished, value, meter));
+        telemetry
+            .log
+            .record(observation(&finished, value, measure.as_ref()));
     }
     answer.map(|served| served.value)
 }

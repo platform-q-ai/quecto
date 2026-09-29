@@ -2,13 +2,19 @@
 //! `python.rs`, over `swarm_board_dispatch::call` and handles composed by
 //! `composition::swarm::build_swarm_board_handles_with` on a clock the step
 //! sets and a counter that draws Python's id sequence. The harness never
-//! constructs a use case.
+//! constructs a use case. [`RustBoard::open_recorded`] composes the same
+//! handles with the event log on (`composition::swarm::with_event_log`,
+//! the store's own meter) over an in-memory log, so every scenario also
+//! runs with each call measured and recorded (#2303 review M1).
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use quecto::application::swarm::dto::BoardLocation;
-use quecto::application::swarm::ports::{Clock, IdSource};
-use quecto::composition::swarm::{SwarmBoardHandles, build_swarm_board_handles_with};
+use quecto::application::swarm::ports::{BoardOpLog, Clock, IdSource};
+use quecto::composition::swarm::{
+    SwarmBoardHandles, build_swarm_board_handles_with, with_event_log,
+};
+use quecto::domain::swarm::BoardOpObservation;
 use quecto::infrastructure::persistence::swarm_board::py_json;
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 use quecto::infrastructure::tools::swarm_board_dispatch::call;
@@ -38,12 +44,38 @@ impl IdSource for CounterIds {
     }
 }
 
+/// The event log, in memory: every `swarm_op` recorded, in order.
+#[derive(Default)]
+pub struct RecordedOps(Mutex<Vec<BoardOpObservation>>);
+
+impl BoardOpLog for RecordedOps {
+    fn record(&self, observation: BoardOpObservation) {
+        self.0.lock().unwrap().push(observation);
+    }
+}
+
+impl RecordedOps {
+    /// The records written so far, taken.
+    pub fn take(&self) -> Vec<BoardOpObservation> {
+        std::mem::take(&mut *self.0.lock().unwrap())
+    }
+}
+
 pub struct RustBoard {
     handles: SwarmBoardHandles,
     clock: Arc<StepClock>,
 }
 
 impl RustBoard {
+    /// The board with the event log on, recording in `log`.
+    pub fn open_recorded(database: &Path, checkout: &Path, log: Arc<RecordedOps>) -> Self {
+        let board = Self::open(database, checkout);
+        Self {
+            handles: with_event_log(board.handles, log),
+            clock: board.clock,
+        }
+    }
+
     pub fn open(database: &Path, checkout: &Path) -> Self {
         let clock = Arc::new(StepClock::default());
         let location = BoardLocation {
@@ -65,11 +97,13 @@ impl RustBoard {
     /// which takes a `serde_json::Value`. A text neither parser reads, or a
     /// value no `Value` holds, is refused here, before any board call (the
     /// `arguments_beyond_a_serde_value` divergence). S13/S14 must parse
-    /// member input the same way.
-    pub fn call_text(&self, member: &str, method: &str, args: &str, now: f64) -> Outcome {
+    /// member input the same way. Also whether the call reached the
+    /// dispatcher: a text refused here never does, and leaves no
+    /// `swarm_op`.
+    pub fn call_text(&self, member: &str, method: &str, args: &str, now: f64) -> (Outcome, bool) {
         match py_json::decode(args).and_then(|args| args.to_value()) {
-            Ok(args) => self.call(member, method, &args, now),
-            Err(error) => Outcome::Refused(format!("arguments: {error}")),
+            Ok(args) => (self.call(member, method, &args, now), true),
+            Err(error) => (Outcome::Refused(format!("arguments: {error}")), false),
         }
     }
 

@@ -1,22 +1,24 @@
 //! The board's call records (#2270, #2303): one `tracing` record per call
 //! on [`TELEMETRY_TARGET`], and, when the event log is switched on, one
-//! `swarm_op` record in it through the `AuditSink` port. Both carry ids,
-//! kinds, durations and sizes only, never argument or board text; the
-//! caller's member id is [`Redacted`].
+//! `swarm_op` record in it through the application's `BoardOpLog` port,
+//! written synchronously on the call's own thread (never through an async
+//! runtime). Both carry ids, kinds, durations and sizes only, never
+//! argument or board text; the caller's member id is [`Redacted`]. What
+//! was not measured is `None` (`null`), never a zero.
 use std::time::Duration;
 
 use serde_json::Value;
 
-use crate::application::audit::ports::AuditSink;
-use crate::domain::audit::AuditEvent;
+use crate::application::swarm::ports::CallMeasure;
 use crate::domain::redaction::Redacted;
 use crate::domain::swarm::{BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind};
-use crate::infrastructure::persistence::swarm_board::meter::CallMeter;
 
 /// The `tracing` target of every board call record.
 pub const TELEMETRY_TARGET: &str = "quecto::swarm_board";
 
-/// A lock wait this long is worth a warning.
+/// A busy wait this long is worth a warning. It is measured only while
+/// the event log is on (owner decision T1), so the warning is raised only
+/// then.
 const SLOW_LOCK: Duration = Duration::from_millis(250);
 
 /// The telemetry level of a call (#2270 round-3 review N3): a method that
@@ -44,8 +46,8 @@ fn micros(duration: Duration) -> u64 {
     u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
 }
 
-/// The call's `tracing` record, with its lock wait when it was metered.
-pub(super) fn trace(call: &Finished<'_>, meter: Option<&CallMeter>) {
+/// The call's `tracing` record, with its waits when they were measured.
+pub(super) fn trace(call: &Finished<'_>, measure: Option<&CallMeasure>) {
     let (op, duration_us) = (call.op, micros(call.elapsed));
     let member = Redacted::from(call.member);
     let member = member.as_str();
@@ -53,44 +55,48 @@ pub(super) fn trace(call: &Finished<'_>, meter: Option<&CallMeter>) {
         Ok(decision) => ("ok", decision, "none"),
         Err(kind) => ("refused", "none", kind.as_str()),
     };
-    let lock_wait_us = meter.map(|meter| micros(meter.lock_wait));
-    let busy = meter.map(|meter| meter.busy);
-    let slow = meter.is_some_and(|meter| meter.lock_wait > SLOW_LOCK);
+    let lock_wait_us = measure.map(|measure| micros(measure.lock_wait));
+    let busy_wait_us = measure.map(|measure| micros(measure.busy_wait));
+    let busy = measure.map(|measure| measure.busy);
+    let slow = measure.is_some_and(|measure| measure.busy_wait > SLOW_LOCK);
     match (
         call.outcome == Err(RefusalKind::Contended) || slow,
         call.level,
     ) {
         (true, _) => tracing::warn!(
             target: TELEMETRY_TARGET, op, member, outcome, decision, kind, duration_us,
-            ?lock_wait_us, ?busy, "swarm board call"
+            ?lock_wait_us, ?busy_wait_us, ?busy, "swarm board call"
         ),
         (false, Level::Read) => tracing::debug!(
             target: TELEMETRY_TARGET, op, member, outcome, decision, kind, duration_us,
-            ?lock_wait_us, ?busy, "swarm board call"
+            ?lock_wait_us, ?busy_wait_us, ?busy, "swarm board call"
         ),
         (false, Level::Mutation) => tracing::info!(
             target: TELEMETRY_TARGET, op, member, outcome, decision, kind, duration_us,
-            ?lock_wait_us, ?busy, "swarm board call"
+            ?lock_wait_us, ?busy_wait_us, ?busy, "swarm board call"
         ),
     }
 }
 
 /// The call's `swarm_op` record. `answer` is what it answered, sized as
-/// the JSON it renders to.
+/// the JSON it renders to; `measure` is `None` when the call began no
+/// transaction, and its waits are then `null`.
 pub(super) fn observation(
     call: &Finished<'_>,
     answer: Option<&Value>,
-    meter: CallMeter,
+    measure: Option<&CallMeasure>,
 ) -> BoardOpObservation {
     debug_assert!(
-        meter.lock_wait <= call.elapsed,
+        measure.is_none_or(|measure| measure.lock_wait <= call.elapsed),
         "a call's lock wait is part of its duration"
     );
     BoardOpObservation {
         op: call.op.to_owned(),
         actor_ref: Redacted::from(call.member),
         role: call.role,
-        run_id: meter.run_id.map(Redacted::from),
+        run_id: measure
+            .and_then(|measure| measure.run_id.as_deref())
+            .map(Redacted::from),
         task_id: None,
         message_id: None,
         outcome: match call.outcome {
@@ -98,20 +104,11 @@ pub(super) fn observation(
             Err(kind) => BoardOpOutcome::Refused { kind },
         },
         duration_us: micros(call.elapsed),
-        lock_wait_us: micros(meter.lock_wait),
-        busy: meter.busy,
+        lock_wait_us: measure.map(|measure| micros(measure.lock_wait)),
+        busy_wait_us: measure.map(|measure| micros(measure.busy_wait)),
+        busy: measure.map(|measure| measure.busy),
         cursor_moved: false,
         result_bytes: answer.map_or(0, rendered_bytes),
-    }
-}
-
-/// Writes `observation` to the event log. Board calls run on a blocking
-/// thread, so the sink's future is driven here; a failed write is a
-/// warning, never the call's failure.
-pub(super) fn emit(log: &dyn AuditSink, observation: BoardOpObservation) {
-    let written = futures::executor::block_on(log.emit(0, AuditEvent::SwarmOp(observation)));
-    if let Err(error) = written {
-        tracing::warn!(target: TELEMETRY_TARGET, %error, "swarm_op record not written");
     }
 }
 

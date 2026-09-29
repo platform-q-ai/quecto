@@ -650,28 +650,39 @@ supervisor controls remain available during spill reads.
 The Rust board (#2265) records one `swarm_op` in the event log for every board
 op it serves (#2303), only while the event log is on
 (`"telemetry": {"event_log": {"enabled": true}}`, off by default; swarm members
-get no default of their own). With it off nothing is measured or written. The
-board file itself is unchanged: its `events` table stays the audit history it
-always was, and telemetry lives only in the event log. A record carries ids,
-kinds, durations and sizes only, never a task title, body, evidence, reason,
-path or other board text:
+get no default of their own). With it off nothing is measured or written: the
+store takes no timings and keeps SQLite's own busy timeout. The board file
+itself is unchanged: its `events` table stays the audit history it always was,
+and telemetry lives only in the event log. A record is appended on the board
+call's own thread, synchronously, and a record the log cannot take (a full log,
+a failed write) is dropped with one warning; it never changes the op's answer.
+A record carries ids, kinds, durations and sizes only, never a task title,
+body, evidence, reason, path or other board text:
 
 | Field | Meaning |
 |---|---|
+| `turn` | Always `null`: a board op is not filed under an agent turn (the board is called without one) |
 | `op` | The board method (`unknown` for a name that is none) |
-| `actor_ref` | The caller's member id, redacted if it looks like a credential |
+| `actor_ref` | The caller's member id: the id the caller chose for itself on the board (`members.id`), bounded by the board, and redacted if it looks like a credential |
 | `role` | `coordinator`, `worker`, `integrator`, or `host` for the harness's own ops |
 | `run_id` | The run the op found, when it found one |
 | `task_id`, `message_id` | The task or message the op acted on, when it has one |
 | `outcome` | `ok` or `refused` |
-| `kind` | For a refusal, its stable kind: `run_missing`, `not_coordinator`, `not_member`, `not_running`, `budget_exhausted`, `member_limit`, `identity_taken`, `run_exists`, `completion_unmet`, `stale_revision`, `immutable`, `wrong_state`, `not_owner`, `stale_token`, `reserved_by_other`, `dependency_cycle`, `invalid`, `calling` (no such method, or arguments that do not bind), `contended` (the write lock stayed busy past 500 ms), `store_missing`, `store` (any other store failure) or `internal` |
+| `kind` | For a refusal, its stable kind: `run_missing`, `not_coordinator`, `not_member`, `not_running`, `budget_exhausted` (the deadline has passed, or the run is paused or ended as `budget-exhausted`), `member_limit`, `identity_taken`, `run_exists`, `completion_unmet`, `stale_revision`, `immutable`, `wrong_state`, `not_owner`, `stale_token`, `reserved_by_other`, `dependency_cycle`, `invalid`, `calling` (no such method, or arguments that do not bind), `contended` (the write lock stayed busy past 500 ms), `store_missing`, `store` (any other store failure) or `internal` |
 | `duration_us` | The whole op, in microseconds |
-| `lock_wait_us` | From `BEGIN IMMEDIATE` issued to acquired, summed over the op's transactions |
-| `busy` | Whether the store's busy handler fired: another writer held the lock |
+| `lock_wait_us` | From `BEGIN IMMEDIATE` issued to acquired (or given up), summed over the op's transactions; `null` when the op began no transaction, so nothing was measured |
+| `busy_wait_us` | The time the store's busy handler slept for the op, whichever statement found the database busy (`BEGIN`, a read or the commit); `null` when nothing was measured |
+| `busy` | Whether the busy handler fired at all: another connection held a lock the op needed (the write lock, or, at commit, a reader); `null` when nothing was measured |
 | `cursor_moved` | Whether the op moved the caller's message cursor |
 | `result_bytes` | The size of the JSON the op answered (0 for a refusal) |
 
+A zero is always a measure, never a stand-in for "not measured". An op that
+runs another board op inside it counts the inner op's waits in its own.
+
 Every call also leaves a `tracing` record on target `quecto::swarm_board`
 (DEBUG for a read, INFO otherwise), at WARN for a `contended` refusal or a
-lock wait over 250 ms; `RUST_LOG=quecto::swarm_board=debug` shows them live.
-Its lock wait and busy fields are measured only while the event log is on.
+busy wait over 250 ms; `RUST_LOG=quecto::swarm_board=debug` shows them live.
+Because the owner decided the event log is off by default and nothing is
+measured while it is off (decision T1), the tracing record's waits are
+measured, and the slow-lock WARN can fire, only while the event log is on;
+the `contended` WARN fires either way.

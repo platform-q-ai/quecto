@@ -618,7 +618,7 @@ fn panic_event(message: &str) -> AuditEvent {
 async fn a_crash_line_written_counts_against_the_async_writers_cap() {
     let base = tempfile::tempdir().unwrap();
     let line_len = |message: &str| {
-        envelope_line("cli:budget", None, 0, panic_event(message))
+        envelope_line("cli:budget", None, Some(0), panic_event(message))
             .unwrap()
             .len() as u64
     };

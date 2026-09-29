@@ -21,7 +21,8 @@ pub enum RefusalKind {
     NotMember,
     /// The run is not running (paused, stopped, or not yet created).
     NotRunning,
-    /// The run's deadline has passed.
+    /// The run's budget is spent: its deadline has passed, or it is paused
+    /// (or ended) as `budget-exhausted`.
     BudgetExhausted,
     /// The run's member limit is reached, or would be exceeded.
     MemberLimit,
@@ -109,12 +110,16 @@ pub enum BoardOpOutcome {
     Refused { kind: RefusalKind },
 }
 
-/// One board op, as the event log's `swarm_op` record holds it.
+/// One board op, as the event log's `swarm_op` record holds it. The
+/// envelope's `turn` is `null`: a board op is not filed under the agent's
+/// turn (the dispatcher is called without one).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BoardOpObservation {
     /// The board method's name.
     pub op: String,
-    /// The caller's board identity (`members.id`).
+    /// The caller's board identity (`members.id`): the member id the
+    /// caller chose, bounded by the board, and redacted when it is shaped
+    /// like a credential.
     pub actor_ref: Redacted,
     pub role: BoardRole,
     /// The run the op found, when it found one.
@@ -128,10 +133,16 @@ pub struct BoardOpObservation {
     /// The whole op, binding and rendering included.
     pub duration_us: u64,
     /// From `BEGIN IMMEDIATE` issued to acquired, summed over the op's
-    /// transactions.
-    pub lock_wait_us: u64,
-    /// Whether the store's busy handler fired at least once.
-    pub busy: bool,
+    /// transactions; `None` (written `null`) when nothing was measured: the
+    /// op began no transaction. Never a zero standing in for "unknown".
+    pub lock_wait_us: Option<u64>,
+    /// The time the store's busy handler slept for this op, over every
+    /// statement that found the database busy (`BEGIN`, a read, the
+    /// commit); `None` when nothing was measured.
+    pub busy_wait_us: Option<u64>,
+    /// Whether the store's busy handler fired at least once; `None` when
+    /// nothing was measured.
+    pub busy: Option<bool>,
     /// Whether the op moved the caller's message cursor.
     pub cursor_moved: bool,
     /// The bytes of the JSON the op answered (0 for a refusal).

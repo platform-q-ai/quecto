@@ -97,7 +97,7 @@ fn the_expiry_commit_survives_a_rejected_mutation() {
     let refused = atomic(&repository, false, |transaction| {
         transaction.event("parent", 11.0, "claimed", &json!({"task": 1}))?;
         Err(BoardError::new(
-            RefusalKind::NotRunning,
+            RefusalKind::BudgetExhausted,
             "run is paused (budget-exhausted: deadline); no new work permitted",
         ))
     });

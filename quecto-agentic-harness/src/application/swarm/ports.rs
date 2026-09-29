@@ -6,6 +6,7 @@
 //! capability's own DTOs.
 use std::future::Future;
 use std::pin::Pin;
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -15,8 +16,8 @@ use super::dto::{
 };
 use crate::domain::error::DomainError;
 use crate::domain::swarm::{
-    BoardError, Member, MemberExit, MemberRecord, ProcessIdentity, RunControlAction,
-    RunControlReceipt, RunRecord, RunStatus, Snapshot,
+    BoardError, BoardOpObservation, Member, MemberExit, MemberRecord, ProcessIdentity,
+    RunControlAction, RunControlReceipt, RunRecord, RunStatus, Snapshot,
 };
 
 pub type PortFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -311,4 +312,45 @@ pub trait BoardEncoding: Send + Sync {
     /// # Errors
     /// A value nested too deep to encode (Python raises `RecursionError`).
     fn encode(&self, value: &Value) -> Result<String, BoardError>;
+}
+
+/// What one board call's transactions measured (#2303): only the
+/// transactions the call began, and only while it was metered.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CallMeasure {
+    /// How many board transactions the call began (at least one: a call
+    /// that began none measured nothing, and has no measure).
+    pub transactions: u32,
+    /// From `BEGIN IMMEDIATE` issued to acquired (or given up), summed
+    /// over the call's transactions.
+    pub lock_wait: Duration,
+    /// The time the store's busy handler slept, summed over every
+    /// statement of the call that found the database busy: `BEGIN`, a
+    /// read or the commit.
+    pub busy_wait: Duration,
+    /// Whether the busy handler fired at all.
+    pub busy: bool,
+    /// The run id the call's first transaction to find one found.
+    pub run_id: Option<String>,
+}
+
+/// Port: measures the board transactions of one call (#2303). The
+/// dispatcher opens a measure around one call only while the event log is
+/// on (owner decision T1).
+pub trait BoardCallMeter: Send + Sync {
+    /// Runs `work` exactly once and measures the board transactions it
+    /// began on the calling thread; `None` when it began none, so nothing
+    /// was measured. A measure opened inside another adds what it measured
+    /// to the outer one as well: the outer call's lock wait includes every
+    /// wait it sat through.
+    fn metered(&self, work: &mut dyn FnMut()) -> Option<CallMeasure>;
+}
+
+/// Port: where each board op's `swarm_op` record goes (#2303): the event
+/// log, only while it is on.
+pub trait BoardOpLog: Send + Sync {
+    /// Appends `observation` synchronously: never on an async runtime,
+    /// never blocking on one, never panicking. A failed write is the
+    /// adapter's to report and never changes the op's answer.
+    fn record(&self, observation: BoardOpObservation);
 }

@@ -37,6 +37,8 @@ mod audit_sink;
 mod authority_admin;
 #[path = "contracts/authority_service_manager.rs"]
 mod authority_service_manager;
+#[path = "contracts/board_call_meter.rs"]
+mod board_call_meter;
 #[path = "contracts/board_encoding.rs"]
 mod board_encoding;
 #[path = "contracts/board_events.rs"]
@@ -45,6 +47,8 @@ mod board_events;
 mod board_files;
 #[path = "contracts/board_members.rs"]
 mod board_members;
+#[path = "contracts/board_op_log.rs"]
+mod board_op_log;
 #[path = "contracts/board_repository.rs"]
 mod board_repository;
 #[path = "contracts/board_requests.rs"]

@@ -1,8 +1,6 @@
 //! #2303: each board call records exactly one `swarm_op` in the event log
 //! (only when it is switched on), with its refusal kind, its real lock
 //! wait, and no board text.
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -10,18 +8,16 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use super::{BOARD_OPS, Method, SwarmBoardHandles, call};
-use crate::application::audit::ports::AuditSink;
+use super::{BOARD_OPS, BoardTelemetry, Method, SwarmBoardHandles, call};
 use crate::application::swarm::dto::BoardLocation;
-use crate::application::swarm::ports::{BoardRepository, BoardWork, Clock, IdSource};
-use crate::composition::swarm::{build_swarm_board_handles_with, with_event_log};
-use crate::domain::audit::AuditEvent;
-use crate::domain::error::DomainError;
+use crate::application::swarm::ports::{
+    BoardCallMeter, BoardOpLog, BoardRepository, CallMeasure, Clock, IdSource,
+};
+use crate::composition::swarm::{board_op_log, build_swarm_board_handles_with, with_event_log};
 use crate::domain::swarm::{
     BoardError, BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind,
 };
 use crate::infrastructure::persistence::audit_log::AuditLog;
-use crate::infrastructure::persistence::swarm_board::meter;
 use crate::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 
 struct Fixed(f64);
@@ -43,43 +39,33 @@ impl IdSource for Counter {
 
 /// The event log, in memory.
 #[derive(Default)]
-struct Recorded(Mutex<Vec<AuditEvent>>);
+struct Recorded(Mutex<Vec<BoardOpObservation>>);
 
-impl AuditSink for Recorded {
-    fn emit(
-        &self,
-        _turn: u32,
-        event: AuditEvent,
-    ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
-        self.0.lock().unwrap().push(event);
-        Box::pin(async { Ok(()) })
+impl BoardOpLog for Recorded {
+    fn record(&self, observation: BoardOpObservation) {
+        self.0.lock().unwrap().push(observation);
     }
 }
 
 impl Recorded {
     fn ops(&self) -> Vec<BoardOpObservation> {
-        self.0
-            .lock()
-            .unwrap()
-            .iter()
-            .filter_map(|event| match event {
-                AuditEvent::SwarmOp(observation) => Some(observation.clone()),
-                _ => None,
-            })
-            .collect()
+        self.0.lock().unwrap().clone()
+    }
+
+    fn clear(&self) {
+        self.0.lock().unwrap().clear();
     }
 }
 
-/// Whether each board transaction ran inside a metered call.
-struct Probe {
-    inner: SqliteBoardRepository,
-    metered: Mutex<Vec<bool>>,
-}
+/// A meter that measures nothing and counts how often it was asked.
+#[derive(Default)]
+struct Unmeasured(Mutex<u32>);
 
-impl BoardRepository for Probe {
-    fn atomic(&self, create: bool, work: &mut BoardWork<'_>) -> Result<(), BoardError> {
-        self.metered.lock().unwrap().push(meter::active());
-        self.inner.atomic(create, work)
+impl BoardCallMeter for Unmeasured {
+    fn metered(&self, work: &mut dyn FnMut()) -> Option<CallMeasure> {
+        *self.0.lock().unwrap() += 1;
+        work();
+        None
     }
 }
 
@@ -133,7 +119,7 @@ fn every_board_op_emits_exactly_one_swarm_op() {
             let log = Arc::new(Recorded::default());
             let (_dir, handles) = logged(&log);
             call(&handles, "parent", "bootstrap_run", json!([1, "s", null])).unwrap();
-            log.0.lock().unwrap().clear();
+            log.clear();
             let _answer = call(&handles, "parent", op, args);
             let recorded = only(&log);
             let named = match op {
@@ -179,7 +165,7 @@ fn board_ops_names_every_method_once() {
 fn refusal(log: &Recorded, answer: Result<Value, BoardError>) -> RefusalKind {
     let error = answer.expect_err("the board refuses");
     let recorded = only(log);
-    log.0.lock().unwrap().clear();
+    log.clear();
     let BoardOpOutcome::Refused { kind } = recorded.outcome else {
         panic!("a refusal records its kind: {recorded:?}");
     };
@@ -211,7 +197,7 @@ fn a_refused_op_records_its_kind() {
         RefusalKind::Invalid
     );
     call(&handles, "parent", "create_run", create_args()).unwrap();
-    log.0.lock().unwrap().clear();
+    log.clear();
     assert_eq!(
         refusal(&log, call(&handles, "parent", "create_run", create_args())),
         RefusalKind::RunExists
@@ -223,11 +209,11 @@ fn a_refused_op_records_its_kind() {
 }
 
 #[test]
-fn an_answered_op_records_its_run_role_and_size() {
+fn an_answered_op_records_its_run_role_size_and_measure() {
     let log = Arc::new(Recorded::default());
     let (_dir, handles) = logged(&log);
     call(&handles, "parent", "bootstrap_run", json!([1, "s", null])).unwrap();
-    log.0.lock().unwrap().clear();
+    log.clear();
     let answer = call(&handles, "parent", "_status", json!([])).unwrap();
     let recorded = only(&log);
     assert_eq!(recorded.op, "_status");
@@ -243,92 +229,134 @@ fn an_answered_op_records_its_run_role_and_size() {
         recorded.result_bytes,
         u64::try_from(serde_json::to_vec(&answer).unwrap().len()).unwrap()
     );
-    assert!(!recorded.busy);
+    assert_eq!(recorded.busy, Some(false), "{recorded:?}");
+    assert_eq!(recorded.busy_wait_us, Some(0), "{recorded:?}");
     assert!(!recorded.cursor_moved);
-    assert!(
-        recorded.duration_us >= recorded.lock_wait_us,
-        "{recorded:?}"
-    );
+    let lock_wait = recorded.lock_wait_us.expect("a transaction was measured");
+    assert!(recorded.duration_us >= lock_wait, "{recorded:?}");
     assert_eq!((recorded.task_id, recorded.message_id), (None, None));
 }
 
-/// A second connection holds `BEGIN IMMEDIATE` on the board for `hold`,
-/// then commits. Returns once the lock is held.
-fn hold(dir: &tempfile::TempDir, hold: Duration) -> thread::JoinHandle<()> {
+/// What was not measured is `null`, never a zero that reads as real
+/// (#2303 review H2): a call that began no transaction, or a meter that
+/// measured nothing.
+#[test]
+fn an_unmeasured_op_records_null_waits() {
+    let log = Arc::new(Recorded::default());
+    let (_dir, handles) = logged(&log);
+    let _refused = call(&handles, "parent", "no_such_method", json!([]));
+    let recorded = only(&log);
+    assert_eq!(
+        (
+            recorded.lock_wait_us,
+            recorded.busy_wait_us,
+            recorded.busy,
+            recorded.run_id
+        ),
+        (None, None, None, None),
+        "no transaction began"
+    );
+    log.clear();
+    let meter = Arc::new(Unmeasured::default());
+    let dir = tempfile::TempDir::new().unwrap();
+    let handles = SwarmBoardHandles {
+        telemetry: Some(BoardTelemetry {
+            log: log.clone(),
+            meter: meter.clone(),
+        }),
+        ..plain(Arc::new(SqliteBoardRepository::new(&location(&dir))))
+    };
+    call(&handles, "parent", "bootstrap_run", json!([1, "s", null])).unwrap();
+    let recorded = only(&log);
+    assert_eq!(recorded.outcome, BoardOpOutcome::Ok);
+    assert_eq!((recorded.lock_wait_us, recorded.busy), (None, None));
+    assert_eq!(*meter.0.lock().unwrap(), 1, "one measure per call");
+}
+
+/// A second connection holding `BEGIN IMMEDIATE` on the board until told
+/// to let go (#2303 review L5: no timer races the call). Returns once the
+/// lock is held, and the sender that lets it go.
+fn hold(dir: &tempfile::TempDir) -> (mpsc::Sender<()>, thread::JoinHandle<()>) {
     let path = location(dir).database;
     let (held, taken) = mpsc::channel();
+    let (release, released) = mpsc::channel::<()>();
     let holder = thread::spawn(move || {
         let connection = rusqlite::Connection::open(path).unwrap();
         connection.execute_batch("BEGIN IMMEDIATE").unwrap();
         held.send(()).unwrap();
-        thread::sleep(hold);
+        let _told = released.recv_timeout(Duration::from_secs(30));
         connection.execute_batch("COMMIT").unwrap();
     });
-    taken.recv_timeout(Duration::from_secs(10)).unwrap();
-    holder
+    taken.recv_timeout(Duration::from_secs(30)).unwrap();
+    (release, holder)
 }
 
-/// A second connection holds the write lock: the op waits it out, and the
-/// record says so.
+/// The lock is held when the op begins and let go 150 ms later: the op
+/// waits it out, and the record says it was busy and for how long.
 #[test]
 fn a_held_lock_is_recorded_as_busy_with_its_wait() {
     let log = Arc::new(Recorded::default());
     let (dir, handles) = logged(&log);
     call(&handles, "parent", "bootstrap_run", json!([1, "s", null])).unwrap();
-    log.0.lock().unwrap().clear();
-    let holder = hold(&dir, Duration::from_millis(100));
+    log.clear();
+    let (release, holder) = hold(&dir);
+    let releaser = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(150));
+        release.send(()).unwrap();
+    });
     call(&handles, "parent", "_status", json!([])).unwrap();
+    releaser.join().unwrap();
     holder.join().unwrap();
     let recorded = only(&log);
     assert_eq!(recorded.outcome, BoardOpOutcome::Ok);
-    assert!(recorded.busy, "{recorded:?}");
-    assert!(recorded.lock_wait_us >= 100_000, "{recorded:?}");
+    assert_eq!(recorded.busy, Some(true), "{recorded:?}");
+    let busy_wait = recorded.busy_wait_us.unwrap();
+    assert!(busy_wait >= 1_000, "{recorded:?}");
+    assert!(recorded.lock_wait_us.unwrap() >= busy_wait, "{recorded:?}");
 }
 
-/// Held past the store's timeout, the op is refused as contended.
+/// Held for the whole op, the lock outlasts the store's timeout: the op is
+/// refused as contended after sleeping the whole timeout.
 #[test]
 fn a_lock_held_past_the_timeout_is_a_contended_refusal() {
     let log = Arc::new(Recorded::default());
     let (dir, handles) = logged(&log);
     call(&handles, "parent", "bootstrap_run", json!([1, "s", null])).unwrap();
-    log.0.lock().unwrap().clear();
-    let holder = hold(&dir, Duration::from_millis(900));
+    log.clear();
+    let (release, holder) = hold(&dir);
     let answer = call(&handles, "parent", "_status", json!([]));
+    release.send(()).unwrap();
     holder.join().unwrap();
     let recorded = only(&log);
     assert_eq!(refusal(&log, answer), RefusalKind::Contended);
-    assert!(recorded.busy, "{recorded:?}");
-    assert!(recorded.lock_wait_us >= 500_000, "{recorded:?}");
+    assert_eq!(recorded.busy, Some(true), "{recorded:?}");
+    let busy_wait = recorded.busy_wait_us.unwrap();
+    assert!(busy_wait >= 500_000, "{recorded:?}");
+    assert!(recorded.lock_wait_us.unwrap() >= busy_wait, "{recorded:?}");
 }
 
 /// Owner decision T1: with the event log off (the default) no call is
-/// metered and nothing is recorded; with it on, every transaction is.
+/// measured and nothing is recorded; with it on, each call is measured
+/// once.
 #[test]
 fn with_the_event_log_off_nothing_is_measured_or_written() {
     let dir = tempfile::TempDir::new().unwrap();
-    let probe = Arc::new(Probe {
-        inner: SqliteBoardRepository::new(&location(&dir)),
-        metered: Mutex::new(Vec::new()),
-    });
-    let handles = plain(probe.clone());
-    assert!(handles.event_log.is_none(), "off unless switched on");
+    let handles = plain(Arc::new(SqliteBoardRepository::new(&location(&dir))));
+    assert!(handles.telemetry.is_none(), "off unless switched on");
     call(&handles, "parent", "bootstrap_run", json!([1, "s", null])).unwrap();
     call(&handles, "parent", "_status", json!([])).unwrap();
-    call(&handles, "parent", "_snapshot", json!([])).unwrap();
-    assert!(
-        probe.metered.lock().unwrap().iter().all(|metered| !metered),
-        "{:?}",
-        probe.metered
-    );
     let log = Arc::new(Recorded::default());
-    let handles = with_event_log(handles, log.clone());
-    probe.metered.lock().unwrap().clear();
+    let meter = Arc::new(Unmeasured::default());
+    let on = SwarmBoardHandles {
+        telemetry: Some(BoardTelemetry {
+            log: log.clone(),
+            meter: meter.clone(),
+        }),
+        ..handles.clone()
+    };
+    call(&on, "parent", "_snapshot", json!([])).unwrap();
     call(&handles, "parent", "_snapshot", json!([])).unwrap();
-    let metered = probe.metered.lock().unwrap().clone();
-    assert!(
-        !metered.is_empty() && metered.iter().all(|metered| *metered),
-        "{metered:?}"
-    );
+    assert_eq!(*meter.0.lock().unwrap(), 1, "only the call with it on");
     assert_eq!(log.ops().len(), 1);
 }
 
@@ -360,9 +388,72 @@ fn telemetry_leaves_the_board_file_unchanged() {
     );
 }
 
+/// Handles recording in a real event log under `base`, as composition
+/// builds them with the event log on.
+fn real(base: &tempfile::TempDir, dir: &tempfile::TempDir, cap: u64) -> SwarmBoardHandles {
+    let log = AuditLog::open_sync(base.path(), "cli:telemetry")
+        .unwrap()
+        .with_cap(cap);
+    let event_log = board_op_log(true, &log).expect("the event log is on");
+    let repository = Arc::new(SqliteBoardRepository::new(&location(dir)));
+    with_event_log(plain(repository), event_log)
+}
+
+fn lines(base: &tempfile::TempDir) -> (String, Vec<Value>) {
+    let text = std::fs::read_to_string(AuditLog::file_path(base.path(), "cli:telemetry"))
+        .unwrap_or_default();
+    let lines = text
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    (text, lines)
+}
+
+/// #2303 review H1: a board call writes its record to a real event log
+/// from a plain thread, outside any async runtime, without panicking or
+/// blocking on one; the record is filed under no turn.
+#[test]
+fn a_real_event_log_is_written_from_a_plain_thread() {
+    let (base, dir) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let handles = real(
+        &base,
+        &dir,
+        crate::infrastructure::persistence::audit_log::DEFAULT_CAP_BYTES,
+    );
+    thread::spawn(move || {
+        call(&handles, "parent", "bootstrap_run", json!([1, "s", null])).unwrap();
+        call(&handles, "parent", "_status", json!([])).unwrap();
+    })
+    .join()
+    .expect("no runtime is needed and nothing panics");
+    let (text, lines) = lines(&base);
+    assert_eq!(lines.len(), 2, "{text}");
+    for line in &lines {
+        assert_eq!(line["event"], "swarm_op", "{line}");
+        assert_eq!(line["turn"], Value::Null, "no turn is known: {line}");
+    }
+}
+
+/// A log that cannot take the record leaves the op's answer as it was.
+#[test]
+fn a_record_the_log_cannot_take_leaves_the_answer_unchanged() {
+    let (base, dir) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let handles = real(&base, &dir, 64);
+    call(&handles, "parent", "bootstrap_run", json!([1, "s", null])).unwrap();
+    let answer = call(&handles, "parent", "_status", json!([])).unwrap();
+    let plain_dir = tempfile::tempdir().unwrap();
+    let unlogged = plain(Arc::new(SqliteBoardRepository::new(&location(&plain_dir))));
+    call(&unlogged, "parent", "bootstrap_run", json!([1, "s", null])).unwrap();
+    assert_eq!(
+        answer,
+        call(&unlogged, "parent", "_status", json!([])).unwrap()
+    );
+    assert_eq!(lines(&base).1.len(), 0, "nothing past the cap");
+}
+
 /// The string fields a `swarm_op` line may hold: the envelope's and the
 /// record's ids and kinds. Anything else would be board text.
-const STRING_FIELDS: [&str; 10] = [
+const STRING_FIELDS: [&str; 11] = [
     "ts",
     "host",
     "session",
@@ -373,48 +464,45 @@ const STRING_FIELDS: [&str; 10] = [
     "role",
     "run_id",
     "outcome",
+    "kind",
 ];
 
 /// Written to a real event log, a `swarm_op` line holds no board text:
 /// only allowlisted string fields, and none of the secret-shaped title,
 /// constraint and criterion text the calls carried. A secret-shaped actor
 /// id is redacted.
-#[tokio::test]
-async fn a_swarm_op_line_holds_no_board_text() {
+#[test]
+fn a_swarm_op_line_holds_no_board_text() {
     let secret = "sk-ant-api03-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";
     let actor = "sk-ant-api03-DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD";
-    let base = tempfile::TempDir::new().unwrap();
-    let dir = tempfile::TempDir::new().unwrap();
-    let sink: Arc<dyn AuditSink> =
-        Arc::new(AuditLog::open_sync(base.path(), "cli:telemetry").unwrap());
-    let repository = Arc::new(SqliteBoardRepository::new(&location(&dir)));
-    let handles = with_event_log(plain(repository), sink);
-    tokio::task::spawn_blocking(move || {
-        call(&handles, actor, "bootstrap_run", json!([1, "s", null])).unwrap();
-        let mut args = create_args();
-        args["goal"] = json!(format!("title {secret}"));
-        args["constraints"] = json!([format!("body {secret}")]);
-        args["criteria"] =
-            json!([{"id": "t", "kind": "command", "description": format!("evidence {secret}")}]);
-        call(&handles, actor, "create_run", args.clone()).unwrap();
-        call(&handles, actor, "create_run", args).unwrap_err();
-        call(&handles, actor, "_snapshot", json!([])).unwrap();
-    })
-    .await
-    .unwrap();
-    let text = std::fs::read_to_string(AuditLog::file_path(base.path(), "cli:telemetry")).unwrap();
-    let lines: Vec<Value> = text
-        .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect();
+    let (base, dir) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let handles = real(
+        &base,
+        &dir,
+        crate::infrastructure::persistence::audit_log::DEFAULT_CAP_BYTES,
+    );
+    call(&handles, actor, "bootstrap_run", json!([1, "s", null])).unwrap();
+    let mut args = create_args();
+    args["goal"] = json!(format!("title {secret}"));
+    args["constraints"] = json!([format!("body {secret}")]);
+    args["criteria"] =
+        json!([{"id": "t", "kind": "command", "description": format!("evidence {secret}")}]);
+    call(&handles, actor, "create_run", args.clone()).unwrap();
+    call(&handles, actor, "create_run", args).unwrap_err();
+    call(&handles, actor, "_snapshot", json!([])).unwrap();
+    let (text, lines) = lines(&base);
     assert_eq!(lines.len(), 4, "{text}");
+    assert!(
+        lines.iter().any(|line| line.get("kind").is_some()),
+        "a refusal's kind is checked too: {text}"
+    );
     for line in &lines {
         assert_eq!(line["event"], "swarm_op", "{line}");
         let fields = line.as_object().unwrap();
         for (key, value) in fields {
             if value.is_string() {
                 assert!(
-                    STRING_FIELDS.contains(&key.as_str()) || key == "kind",
+                    STRING_FIELDS.contains(&key.as_str()),
                     "{key} is a string field outside the allowlist: {line}"
                 );
             }

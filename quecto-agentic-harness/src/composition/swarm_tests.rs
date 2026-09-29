@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use super::build_swarm_board_handles;
+use super::{board_op_log, build_swarm_board_handles};
 use crate::application::swarm::dto::BoardLocation;
 use crate::infrastructure::tools::swarm_board_dispatch::call;
 
@@ -10,10 +10,14 @@ use crate::infrastructure::tools::swarm_board_dispatch::call;
 fn production_handles_bootstrap_and_read_the_board_file() {
     let dir = tempfile::TempDir::new().unwrap();
     let database = dir.path().join("swarm.sqlite");
-    let handles = build_swarm_board_handles(BoardLocation {
-        database: database.clone(),
-        checkout: dir.path().to_path_buf(),
-    });
+    let handles = build_swarm_board_handles(
+        BoardLocation {
+            database: database.clone(),
+            checkout: dir.path().to_path_buf(),
+        },
+        None,
+    );
+    assert!(handles.telemetry.is_none(), "no event log, no telemetry");
     call(&handles, "parent", "bootstrap_run", json!([1, "s", "/p"])).unwrap();
     assert!(database.exists(), "bootstrap creates the board file");
     let status = call(&handles, "supervisor", "_status", json!([])).unwrap();
@@ -39,4 +43,32 @@ fn production_handles_bootstrap_and_read_the_board_file() {
     .unwrap();
     let status = call(&handles, "supervisor", "_status", json!([])).unwrap();
     assert_eq!(status["status"], json!("running"));
+}
+
+/// Owner decision T1 (#2303): the board records in the event log only when
+/// `telemetry.event_log.enabled` is on; the production builder then
+/// measures and records every call there.
+#[test]
+fn the_board_records_in_the_event_log_only_when_it_is_on() {
+    use crate::infrastructure::persistence::audit_log::AuditLog;
+    let base = tempfile::TempDir::new().unwrap();
+    let log = AuditLog::open_sync(base.path(), "cli:board").unwrap();
+    assert!(
+        board_op_log(false, &log).is_none(),
+        "off: nothing to record in"
+    );
+    let event_log = board_op_log(true, &log).expect("on: the session's log");
+    let dir = tempfile::TempDir::new().unwrap();
+    let handles = build_swarm_board_handles(
+        BoardLocation {
+            database: dir.path().join("swarm.sqlite"),
+            checkout: dir.path().to_path_buf(),
+        },
+        Some(event_log),
+    );
+    assert!(handles.telemetry.is_some());
+    call(&handles, "parent", "bootstrap_run", json!([1, "s", "/p"])).unwrap();
+    let text = std::fs::read_to_string(AuditLog::file_path(base.path(), "cli:board")).unwrap();
+    assert_eq!(text.lines().count(), 1, "{text}");
+    assert!(text.contains(r#""event":"swarm_op""#), "{text}");
 }

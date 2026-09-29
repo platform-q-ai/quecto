@@ -157,7 +157,9 @@ pub struct AuditEnvelope {
     /// A sub-agent's parent session (#2150).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
-    pub turn: u32,
+    /// The agent turn the record is filed under; `null` for a record
+    /// written outside any turn's knowledge (a `swarm_op`, #2303).
+    pub turn: Option<u32>,
     #[serde(flatten)]
     pub event: AuditEvent,
 }

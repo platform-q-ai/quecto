@@ -167,8 +167,9 @@ fn observation(outcome: BoardOpOutcome) -> BoardOpObservation {
         message_id: None,
         outcome,
         duration_us: 1_500,
-        lock_wait_us: 400,
-        busy: true,
+        lock_wait_us: Some(400),
+        busy_wait_us: Some(250),
+        busy: Some(true),
         cursor_moved: false,
         result_bytes: 42,
     }
@@ -194,6 +195,7 @@ fn a_swarm_op_record_is_flat_and_round_trips() {
             "kind": "not_member",
             "duration_us": 1_500,
             "lock_wait_us": 400,
+            "busy_wait_us": 250,
             "busy": true,
             "cursor_moved": false,
             "result_bytes": 42,
@@ -206,6 +208,74 @@ fn a_swarm_op_record_is_flat_and_round_trips() {
     assert_eq!(line["outcome"], "ok");
     assert_eq!(line.get("kind"), None);
     assert_eq!(serde_json::from_value::<AuditEvent>(line).unwrap(), ok);
+}
+
+/// Nothing measured is written as `null`, never as a zero that reads as
+/// a real measure.
+#[test]
+fn an_unmeasured_op_writes_null_waits() {
+    let line = serde_json::to_value(AuditEvent::SwarmOp(BoardOpObservation {
+        lock_wait_us: None,
+        busy_wait_us: None,
+        busy: None,
+        ..observation(BoardOpOutcome::Ok)
+    }))
+    .unwrap();
+    for field in ["lock_wait_us", "busy_wait_us", "busy"] {
+        assert_eq!(line.get(field), Some(&Value::Null), "{field}: {line}");
+    }
+}
+
+fn paused(outcome: &str) -> RunRecord {
+    RunRecord {
+        outcome: Some(outcome.into()),
+        outcome_reason: Some("deadline".into()),
+        ..run(RunState::PAUSED)
+    }
+}
+
+/// A run paused (or ended) as `budget-exhausted` refuses new work and new
+/// members as `budget_exhausted`, not `not_running` (#2303 review M4),
+/// with Python's text unchanged; another pause stays `not_running`.
+#[test]
+fn a_budget_exhausted_run_refuses_as_budget_exhausted() {
+    let parent = member("parent");
+    let refused = authorize(
+        Some(&paused("budget-exhausted")),
+        "parent",
+        Some(&parent),
+        ACTIVE,
+    )
+    .unwrap_err();
+    assert_eq!(refused.kind(), RefusalKind::BudgetExhausted);
+    assert_eq!(
+        refused.message(),
+        "run is paused (budget-exhausted: deadline); no new work permitted"
+    );
+    let ended = authorize(
+        Some(&run(RunState::BUDGET_EXHAUSTED)),
+        "parent",
+        Some(&parent),
+        ACTIVE,
+    )
+    .unwrap_err();
+    assert_eq!(ended.kind(), RefusalKind::BudgetExhausted);
+    assert_eq!(
+        ended.message(),
+        "run is budget-exhausted; no new work permitted"
+    );
+    let blocked = authorize(Some(&paused("blocked")), "parent", Some(&parent), ACTIVE).unwrap_err();
+    assert_eq!(blocked.kind(), RefusalKind::NotRunning);
+
+    let refused = admission(&paused("budget-exhausted"), None, Some("r"), 0, 0.0).unwrap_err();
+    assert_eq!(refused.kind(), RefusalKind::BudgetExhausted);
+    assert_eq!(refused.message(), "run is paused; no new admission");
+    // Still running, but past its deadline.
+    let expired = admission(&run(RunState::RUNNING), None, Some("r"), 0, 200.0).unwrap_err();
+    assert_eq!(expired.kind(), RefusalKind::BudgetExhausted);
+    assert_eq!(expired.message(), "run is running; no new admission");
+    let blocked = admission(&paused("blocked"), None, Some("r"), 0, 0.0).unwrap_err();
+    assert_eq!(blocked.kind(), RefusalKind::NotRunning);
 }
 
 /// Every kind serializes as the text `as_str` gives, which the tracing

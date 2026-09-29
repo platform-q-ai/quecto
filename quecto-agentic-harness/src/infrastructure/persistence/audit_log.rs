@@ -41,8 +41,9 @@ pub struct AuditLog {
     reserved: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
-/// Where a panic hook writes the `error` event of a fatal panic (#2192):
-/// the session's log, through its own append-mode handle, synchronously.
+/// Where a panic hook writes the `error` event of a fatal panic (#2192),
+/// and a board op its `swarm_op` (#2303, [`AuditCrashLine::append`]): the
+/// session's log, through its own append-mode handle, synchronously.
 /// One `write` of one line: on an `O_APPEND` file it lands whole after any
 /// line already written. The async writer also writes each line with one
 /// `write`, but a regular file does not promise that a concurrent write is
@@ -67,6 +68,15 @@ impl AuditCrashLine {
     /// takes no lock; a failure (or a full or capped log) is an error — the
     /// crash record still says why.
     pub fn write(&self, turn: u32, event: AuditEvent) -> std::io::Result<()> {
+        self.append(Some(turn), event)
+    }
+
+    /// [`Self::write`] for a record filed under no turn (`turn` `None`,
+    /// written `null`): a board op's `swarm_op` (#2303), appended from the
+    /// board call's own thread, synchronously, with no runtime and no lock.
+    /// It shares the log's cap budget as a crash line does, and a line
+    /// that does not fit is refused, not written.
+    pub fn append(&self, turn: Option<u32>, event: AuditEvent) -> std::io::Result<()> {
         use std::io::Write;
         use std::sync::atomic::Ordering;
         let line = envelope_line(&self.session_key, self.parent.as_ref(), turn, event)
@@ -216,7 +226,7 @@ impl AuditLog {
     }
 
     fn line(&self, turn: u32, event: AuditEvent) -> Result<String, DomainError> {
-        envelope_line(&self.session_key, self.parent.as_ref(), turn, event)
+        envelope_line(&self.session_key, self.parent.as_ref(), Some(turn), event)
     }
 
     /// The handle a panic hook writes this log's last line through (#2192);
@@ -332,7 +342,7 @@ impl AuditLog {
 fn envelope_line(
     session_key: &str,
     parent: Option<&String>,
-    turn: u32,
+    turn: Option<u32>,
     event: AuditEvent,
 ) -> Result<String, DomainError> {
     let now = std::time::SystemTime::now()

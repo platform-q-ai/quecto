@@ -34,7 +34,7 @@ fn deadline_transition_commits_before_rejected_mutation() {
 
     assert_eq!(
         refused,
-        BoardError::new(RefusalKind::NotRunning, PAUSED_BY_DEADLINE)
+        BoardError::new(RefusalKind::BudgetExhausted, PAUSED_BY_DEADLINE)
     );
     assert!(!ran.get(), "a refused operation never runs its work");
     let state = board.snapshot();

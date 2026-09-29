@@ -59,6 +59,24 @@ pub fn describe(run: &RunRecord) -> String {
     }
 }
 
+/// Whether the run's budget is spent (#2303): paused holding the
+/// `budget-exhausted` outcome, or ended as `budget-exhausted`.
+fn budget_spent(run: &RunRecord) -> bool {
+    matches!(
+        (status(run), run.outcome.as_deref()),
+        (Some("paused"), Some("budget-exhausted")) | (Some("budget-exhausted"), _)
+    )
+}
+
+/// The kind of a refusal to a run that is not taking work: the budget's
+/// when it is spent (or, for `expired`, its deadline has passed), else
+/// the run's state.
+fn not_running(spent: bool) -> RefusalKind {
+    // Red stub (#2303): the run's state only.
+    let _ = spent;
+    RefusalKind::NotRunning
+}
+
 /// Whether `actor`, whose row is `member`, may perform an operation needing
 /// `access` on `run`. Checks run in Python's order: the run, the coordinator,
 /// the member, then activity.
@@ -90,7 +108,7 @@ pub fn authorize(
     match (access.active, status(run)) {
         (false, _) | (true, Some("running")) => Ok(()),
         (true, _) => Err(BoardError::new(
-            RefusalKind::NotRunning,
+            not_running(budget_spent(run)),
             format!("run is {}; no new work permitted", describe(run)),
         )),
     }
@@ -182,7 +200,7 @@ pub fn admission(
     let admitting = matches!(status(run), Some("setup" | "running")) && !expired(run, now);
     if !admitting {
         return Err(BoardError::new(
-            RefusalKind::NotRunning,
+            not_running(budget_spent(run) || expired(run, now)),
             format!("run is {}; no new admission", status_text(run)),
         ));
     }

@@ -1,81 +1,107 @@
 //! Board call metering (#2303): what the transactions of one board call
-//! waited for, measured in the store where the lock is taken.
+//! waited for, measured in the store where the lock is taken, behind the
+//! application's [`BoardCallMeter`] port ([`SqliteBoardCallMeter`]).
 //!
-//! A call is metered only inside [`metered`], which the dispatcher opens
-//! only when the event log is switched on (owner decision T1): outside it
-//! the store takes no timing and installs no handler of its own. The
-//! measure is confined to the calling thread and to the one call, and is
-//! handed back as `metered`'s result: a board call runs its use case
-//! synchronously on one thread, so nothing another call measures, on this
-//! thread or another, is ever mixed into it. Scopes nest, each restoring
-//! the one it interrupted.
+//! A call is metered only inside [`SqliteBoardCallMeter::metered`], which
+//! the dispatcher opens only when the event log is switched on (owner
+//! decision T1): outside it the store takes no timing and installs no
+//! handler of its own. The measure lives in this adapter, confined to the
+//! calling thread and to the one call, and is handed back as the port's
+//! result: a board call runs its use case synchronously on one thread, so
+//! nothing another call measures, on this thread or another, is mixed
+//! into it. The thread-local state never leaves this module.
+//!
+//! Scopes nest: an inner scope's measure is its own, and when it closes
+//! it is added to the scope it interrupted (lock wait, busy wait and
+//! transactions summed, `busy` or-ed, the outer run id kept if it has
+//! one), so an outer call's lock wait includes every wait it sat through.
 //!
 //! While metered, the store's busy handler is [`metered_busy`] rather than
 //! SQLite's built-in 500 ms timeout: the same schedule ([`busy_delay`],
-//! `sqliteDefaultBusyCallback`'s), which also notes that it fired.
+//! `sqliteDefaultBusyCallback`'s), which also notes that it fired and how
+//! long it slept, whichever statement found the database busy.
 use std::cell::RefCell;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::store::BUSY_TIMEOUT;
+use crate::application::swarm::ports::{BoardCallMeter, CallMeasure};
 
-/// What one board call's transactions measured.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct CallMeter {
-    /// From `BEGIN IMMEDIATE` issued to acquired (or given up), summed
-    /// over the call's transactions.
-    pub lock_wait: Duration,
-    /// Whether the busy handler fired in any of them.
-    pub busy: bool,
-    /// The run id the call's first transaction to find one found.
-    pub run_id: Option<String>,
-}
+/// The production [`BoardCallMeter`]: the SQLite store's own measure.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SqliteBoardCallMeter;
 
-thread_local! {
-    static CURRENT: RefCell<Option<CallMeter>> = const { RefCell::new(None) };
-}
-
-/// Restores the scope a [`metered`] call interrupted, also on unwind.
-struct Scope(Option<Option<CallMeter>>);
-
-impl Drop for Scope {
-    fn drop(&mut self) {
-        if let Some(outer) = self.0.take() {
-            CURRENT.with(|current| *current.borrow_mut() = outer);
-        }
+impl BoardCallMeter for SqliteBoardCallMeter {
+    fn metered(&self, work: &mut dyn FnMut()) -> Option<CallMeasure> {
+        // Red stub (#2303): measures nothing.
+        let ((), _measure) = metered(work);
+        None
     }
 }
 
+thread_local! {
+    static CURRENT: RefCell<Option<CallMeasure>> = const { RefCell::new(None) };
+}
+
+/// Restores the scope a [`metered`] call interrupted (`None` for none),
+/// also on unwind, adding what this scope measured to it.
+struct Scope(Option<CallMeasure>);
+
+impl Drop for Scope {
+    fn drop(&mut self) {
+        let outer = self.0.take();
+        CURRENT.with(|current| {
+            let inner = current.borrow_mut().take();
+            *current.borrow_mut() = outer.map(|outer| fold(outer, inner.as_ref()));
+        });
+    }
+}
+
+/// `outer` with `inner`'s measure added to it.
+fn fold(mut outer: CallMeasure, inner: Option<&CallMeasure>) -> CallMeasure {
+    if let Some(inner) = inner.filter(|_| false) {
+        outer.transactions = outer.transactions.saturating_add(inner.transactions);
+        outer.lock_wait += inner.lock_wait;
+        outer.busy_wait += inner.busy_wait;
+        outer.busy |= inner.busy;
+        if outer.run_id.is_none() {
+            outer.run_id.clone_from(&inner.run_id);
+        }
+    }
+    outer
+}
+
 /// Runs `work`, metering the board transactions it runs on this thread.
-pub fn metered<T>(work: impl FnOnce() -> T) -> (T, CallMeter) {
-    let scope = Scope(Some(
-        CURRENT.with(|current| current.replace(Some(CallMeter::default()))),
-    ));
+fn metered<T>(work: impl FnOnce() -> T) -> (T, CallMeasure) {
+    let scope = Scope(CURRENT.with(|current| current.replace(Some(CallMeasure::default()))));
     let value = work();
-    let meter = CURRENT.with(|current| current.borrow_mut().take());
+    let measure = CURRENT.with(|current| current.borrow().clone());
     debug_assert!(
-        meter.is_some(),
-        "a scope's meter stays in place until it closes"
+        measure.is_some(),
+        "a scope's measure stays in place until it closes"
     );
     drop(scope);
-    (value, meter.unwrap_or_default())
+    (value, measure.unwrap_or_default())
 }
 
 /// Whether a call on this thread is being metered.
-pub fn active() -> bool {
+pub(super) fn active() -> bool {
     CURRENT.with(|current| current.borrow().is_some())
 }
 
-fn update(change: impl FnOnce(&mut CallMeter)) {
+fn update(change: impl FnOnce(&mut CallMeasure)) {
     CURRENT.with(|current| {
-        if let Some(meter) = current.borrow_mut().as_mut() {
-            change(meter);
+        if let Some(measure) = current.borrow_mut().as_mut() {
+            change(measure);
         }
     });
 }
 
-/// A transaction waited `wait` for its lock.
+/// A transaction began, having waited `wait` for its lock.
 pub(super) fn lock_waited(wait: Duration) {
-    update(|meter| meter.lock_wait += wait);
+    update(|measure| {
+        measure.transactions = measure.transactions.saturating_add(1);
+        measure.lock_wait += wait;
+    });
 }
 
 /// Whether the call is metered and has found no run id yet: only then
@@ -85,22 +111,26 @@ pub(super) fn wants_run_id() -> bool {
         current
             .borrow()
             .as_ref()
-            .is_some_and(|meter| meter.run_id.is_none())
+            .is_some_and(|measure| measure.run_id.is_none())
     })
 }
 
 /// A transaction found the run `id` (or none).
 pub(super) fn run_seen(id: Option<String>) {
-    update(|meter| meter.run_id = id);
+    update(|measure| measure.run_id = id);
 }
 
 /// The store's busy handler while metered: notes that it fired, then waits
-/// as SQLite's default handler does, giving up once the timeout is spent.
+/// as SQLite's default handler does, giving up once the timeout is spent,
+/// and adds what it slept to the call's busy wait.
 pub(super) fn metered_busy(count: i32) -> bool {
-    update(|meter| meter.busy = true);
+    update(|measure| measure.busy = true);
     match busy_delay(count) {
         Some(delay) => {
+            let slept = Instant::now();
             std::thread::sleep(delay);
+            let slept = slept.elapsed();
+            let _ = slept;
             true
         }
         None => false,
