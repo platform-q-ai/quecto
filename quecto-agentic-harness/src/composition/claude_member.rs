@@ -3,7 +3,6 @@
 //! `main` hands [`build_claude_member_handles`] to the CLI through
 //! `CliComposition.claude_member`; the interface only invokes the handles
 //! it receives.
-#![allow(dead_code, unused_imports)] // red-phase stub (#2304)
 
 use std::ffi::OsString;
 use std::sync::Arc;
@@ -12,14 +11,15 @@ use crate::application::external_agent::dto::{
     CredentialEnv, ExternalAgentLaunchSpec, ExternalAgentSessionSettings, INTERRUPT_GRACE,
     SKIPPED_LINE_GRACE,
 };
-use crate::application::external_agent::event_log::MemberIdentity;
 use crate::application::external_agent::ports::ExternalAgentTelemetry;
 use crate::application::external_agent::use_cases::DriveExternalAgentSession;
+use crate::domain::external_agent::telemetry::recorded_name;
 use crate::domain::session_identity::SessionIdentity;
 use crate::infrastructure::config::telemetry::{enabled_in, globally_enabled};
 use crate::infrastructure::external_agents::claude_code::environment::CREDENTIAL_VARIABLES;
 use crate::infrastructure::external_agents::claude_code::process::ClaudeCodeLauncher;
 use crate::infrastructure::external_agents::clock::TokioExternalAgentClock;
+use crate::infrastructure::external_agents::event_log::MemberIdentity;
 use crate::infrastructure::external_agents::telemetry::{
     EventLogExternalAgentTelemetry, TracingExternalAgentTelemetry,
 };
@@ -84,8 +84,43 @@ fn telemetry_for(
     parent_environment: &[(OsString, OsString)],
     credential: &CredentialEnv,
 ) -> Arc<dyn ExternalAgentTelemetry> {
-    let _ = (settings, parent_environment, credential);
-    Arc::new(TracingExternalAgentTelemetry)
+    let enabled = globally_enabled(&settings.base_dir)
+        || settings.config_path.as_deref().is_some_and(enabled_in);
+    match enabled {
+        true => event_log_telemetry(settings, parent_environment, credential),
+        false => Arc::new(TracingExternalAgentTelemetry),
+    }
+}
+
+/// The session's telemetry into the member's event log, or `tracing` alone
+/// when the log cannot be opened.
+fn event_log_telemetry(
+    settings: &ClaudeMemberSettings,
+    parent_environment: &[(OsString, OsString)],
+    credential: &CredentialEnv,
+) -> Arc<dyn ExternalAgentTelemetry> {
+    let member = MemberIdentity {
+        member_ref: member_ref(parent_environment, &settings.member),
+        credential_mode: credential_mode(credential),
+    };
+    let key = SessionIdentity::named_cli(&settings.member).map_or_else(
+        |_| settings.member.clone(),
+        |id| id.runtime_key().to_string(),
+    );
+    let opened = AuditLog::open_sync(&settings.base_dir, &key)
+        .map_err(|error| error.to_string())
+        .and_then(|log| {
+            let log = log.with_parent(settings.parent.clone());
+            EventLogExternalAgentTelemetry::new(Arc::new(log), member)
+                .map_err(|error| error.to_string())
+        });
+    match opened {
+        Ok(telemetry) => Arc::new(telemetry),
+        Err(error) => {
+            tracing::warn!(%error, "claude member event log could not be opened; the member runs unrecorded");
+            Arc::new(TracingExternalAgentTelemetry)
+        }
+    }
 }
 
 /// The member's ref on the board: the swarm's `QUECTO_SWARM_MEMBER`, else
@@ -97,7 +132,7 @@ fn member_ref(parent_environment: &[(OsString, OsString)], member: &str) -> Stri
         .find(|(name, _)| name == SWARM_MEMBER_VARIABLE)
         .and_then(|(_, value)| value.to_str())
         .filter(|value| !value.is_empty())
-        .map_or_else(|| member.to_string(), str::to_string)
+        .map_or_else(|| recorded_name(member), recorded_name)
 }
 
 /// The variable a swarm names its member by.

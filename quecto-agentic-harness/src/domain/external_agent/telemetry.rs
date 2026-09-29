@@ -8,7 +8,6 @@
 //! [`crate::domain::audit::AuditEvent`] beside the `member_ref` it belongs
 //! to; the envelope carries `session`, `parent` and `turn`, so a record's
 //! own turn is its `member_turn` (the envelope's is 32 bits wide).
-#![allow(dead_code, unused_imports)] // red-phase stub (#2304)
 
 use serde::{Deserialize, Serialize};
 
@@ -160,8 +159,32 @@ pub enum StreamTelemetry {
 /// Every event of the vocabulary, mapped: a new variant does not compile
 /// until it is placed here.
 pub fn stream_telemetry(event: &ExternalAgentEvent) -> StreamTelemetry {
-    let _ = event;
-    StreamTelemetry::Ignored
+    use StreamTelemetry::{Ignored, Recorded};
+    match event {
+        ExternalAgentEvent::Init(_) => Recorded("external_agent_lifecycle"),
+        ExternalAgentEvent::AssistantBlock { block, .. } => match block {
+            AssistantContent::ToolUse { .. } => Recorded("external_agent_tool"),
+            // An assistant's text and thinking are never logged.
+            AssistantContent::Text(_) | AssistantContent::Thinking { .. } => Ignored,
+        },
+        ExternalAgentEvent::AssistantError { .. } | ExternalAgentEvent::Result(_) => {
+            Recorded("external_agent_turn")
+        }
+        ExternalAgentEvent::ToolResult(_) => Recorded("external_agent_tool"),
+        ExternalAgentEvent::Unknown { .. } | ExternalAgentEvent::LineSkipped(_) => {
+            Recorded("external_agent_stream_diagnostic")
+        }
+        // Rate limits feed the admission record (#2290); background tasks
+        // and user text carry nothing the log keeps; an interrupt's answer
+        // is recorded when it is written.
+        ExternalAgentEvent::ThinkingTokens { .. }
+        | ExternalAgentEvent::UserText { .. }
+        | ExternalAgentEvent::TaskStarted(_)
+        | ExternalAgentEvent::TaskNotification(_)
+        | ExternalAgentEvent::BackgroundTasksChanged { .. }
+        | ExternalAgentEvent::RateLimit(_)
+        | ExternalAgentEvent::InterruptAnswered(_) => Ignored,
+    }
 }
 
 /// A name or an id from the stream as a record keeps it: at most
@@ -204,15 +227,34 @@ fn summary_fields(tool: &str) -> &'static [&'static str] {
 /// The board task a board tool's call names (its `task_id`), bounded as
 /// [`recorded_name`] bounds it; `None` for any other tool.
 pub fn board_task_id(tool: &str, input: &serde_json::Value) -> Option<String> {
-    let _ = (tool, input);
-    None
+    let board = BOARD_TOOL_PREFIXES
+        .iter()
+        .any(|prefix| tool.starts_with(prefix));
+    match (board, input.get("task_id")) {
+        (true, Some(serde_json::Value::String(id))) => Some(recorded_name(id)),
+        (true, Some(serde_json::Value::Number(id))) => Some(recorded_name(&id.to_string())),
+        _ => None,
+    }
 }
 
 /// A tool call's summary: its [`summary_fields`], redacted, then cut to
 /// [`TOOL_SUMMARY_BYTES`] on a character boundary; `None` when it has none.
 pub fn tool_summary(tool: &str, input: &serde_json::Value) -> Option<Redacted> {
-    let _ = (tool, input);
-    None
+    let parts: Vec<String> = summary_fields(tool)
+        .iter()
+        .filter_map(|field| match input.get(*field) {
+            Some(serde_json::Value::String(text)) => Some(text.clone()),
+            Some(serde_json::Value::Number(number)) => Some(number.to_string()),
+            _ => None,
+        })
+        .collect();
+    let [_, ..] = parts.as_slice() else {
+        return None;
+    };
+    let summary =
+        Redacted::from(redact_url_userinfo(&parts.join(" "))).truncated(TOOL_SUMMARY_BYTES);
+    assert!(summary.len() <= TOOL_SUMMARY_BYTES);
+    Some(summary)
 }
 
 #[cfg(test)]

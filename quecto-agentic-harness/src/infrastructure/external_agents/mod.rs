@@ -2,4 +2,5 @@
 
 pub mod claude_code;
 pub mod clock;
+pub mod event_log;
 pub mod telemetry;
