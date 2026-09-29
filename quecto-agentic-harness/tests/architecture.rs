@@ -1594,6 +1594,7 @@ fn application_path_allowed(path: &str) -> bool {
             // Reservations, recovery and revocation (#2275).
             | "FileRow"
             | "ListFileOwnersRequest"
+            | "MemberStatusRow"
             | "NewReservation"
             | "RecoverTaskRequest"
             | "Recovered"
