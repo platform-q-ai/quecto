@@ -7,8 +7,8 @@ use crate::domain::swarm::records::{MemberState, RunState};
 
 pub(super) fn run() -> RunRecord {
     RunRecord {
-        status: RunState::RUNNING,
-        coordinator: "parent".into(),
+        status: Some(RunState::RUNNING),
+        coordinator: Some("parent".into()),
         deadline: 100.0,
         member_limit: 2,
         outcome: None,
@@ -19,7 +19,7 @@ pub(super) fn run() -> RunRecord {
 pub(super) fn member(id: &str, status: MemberState) -> MemberRecord {
     MemberRecord {
         id: id.into(),
-        status,
+        status: Some(status),
         reservation: None,
     }
 }
@@ -107,7 +107,7 @@ fn notification_policy_ignores_bookkeeping_and_terminal_work() {
         woken(&run, "worker", &members, &accepted_only, &retired),
         NOBODY
     );
-    run.status = RunState::SUCCEEDED;
+    run.status = Some(RunState::SUCCEEDED);
     assert_eq!(woken(&run, "worker", &members, &events, &board), NOBODY);
 }
 
@@ -478,7 +478,7 @@ fn every_status_but_running_wakes_nobody() {
         RunState::new("future-status"),
     ] {
         let run = RunRecord {
-            status: status.clone(),
+            status: Some(status.clone()),
             ..run()
         };
         assert_eq!(
