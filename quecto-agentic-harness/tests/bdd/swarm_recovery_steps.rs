@@ -12,7 +12,10 @@ use std::time::Duration;
 
 #[path = "swarm_recovery_board.rs"]
 mod board;
-use board::{admit_and_activate, worker_claim, worker_claim_op};
+use board::{
+    CONTENDED_READ_PAUSE, CONTENDED_READS, admit_and_activate, contended_read, op, worker_claim,
+    worker_claim_op,
+};
 
 const WORKER_TASK: &str = "WORKER: claim the work";
 /// The worker's answer once one of its claim ops was refused.
@@ -58,46 +61,6 @@ fn context(workspace: &Path, member: &str) -> SwarmContext {
         member: member.into(),
         lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),
     }
-}
-
-/// One structured board op as `member` through the real swarm tool (#2281):
-/// its answer, or the refusal's text.
-async fn op(workspace: &Path, member: &str, request: Value) -> Result<Value, String> {
-    use quecto::application::tools::ports::Tool;
-    let root = std::sync::Arc::new(workspace.to_path_buf());
-    let tool = quecto::infrastructure::tools::swarm::SwarmTool::new(
-        root.clone(),
-        std::sync::Arc::new(quecto::infrastructure::security::sandbox::Sandbox::new(
-            Some(root.as_ref().clone()),
-        )),
-        quecto::infrastructure::tools::swarm::SwarmConfig::default(),
-    )
-    .with_context(Some(context(workspace, member)));
-    let result = tool
-        .execute(&request.to_string())
-        .await
-        .map_err(|e| e.to_string())?;
-    if result.is_error {
-        return Err(result.content);
-    }
-    serde_json::from_str(&result.content).map_err(|e| format!("{e}: {}", result.content))
-}
-
-/// Consecutive contended reads a board poll sits out, and the pause after
-/// each: the settlement watch's `SNAPSHOT_ATTEMPTS` and its one-second
-/// pause (`swarm_lifecycle.rs`).
-const CONTENDED_READS: u32 = 10;
-const CONTENDED_READ_PAUSE: Duration = Duration::from_secs(1);
-
-/// The store's refusal of a transaction that stayed busy past its 500 ms
-/// timeout (#2278): its text exactly, as the tool boundary carries it.
-/// Nothing else is contention.
-fn contended_read(error: &quecto::domain::error::DomainError) -> bool {
-    matches!(
-        error,
-        quecto::domain::error::DomainError::Tool(text)
-            if text == r#"swarm: "coordination store unavailable or contended: database is locked""#
-    )
 }
 
 async fn wait_summary(
