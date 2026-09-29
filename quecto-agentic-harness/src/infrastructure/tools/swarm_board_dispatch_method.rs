@@ -460,7 +460,6 @@ impl Method {
             | Self::Close
             | Self::ControlStatus
             | Self::UsageReport
-            | Self::RequestAdmission
             | Self::LoseCoordinator => &[],
             Self::Admit => &members::ADMIT,
             Self::Activate => &members::ACTIVATE,
@@ -483,6 +482,7 @@ impl Method {
             Self::Evidence => &completion::EVIDENCE,
             Self::UsageBudget => &usage::USAGE_BUDGET,
             Self::RecordRequest => &usage::RECORD_REQUEST,
+            Self::RequestAdmission => &usage::REQUEST_ADMISSION,
             Self::Reserve => &reservations::RESERVE,
             Self::ReleaseFiles => &reservations::RELEASE_FILES,
             Self::FileOwners => &reservations::FILE_OWNERS,

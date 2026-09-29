@@ -168,13 +168,12 @@ impl LlmProvider for RetryingProvider {
             let mut capped = crate::domain::provider_error::CappedFailures::default();
             loop {
                 // The loop already admitted the logical request; only retries
-                // re-check, so a first attempt never pays an extra admission
-                // round trip.
+                // re-check, as reattempts (#2339), so a first attempt never
+                // pays an extra admission round trip.
                 if attempt > 1 {
                     if let Some(admission) = &request.admission {
-                        // RED stub (#2339): the reattempt is not yet told apart.
                         admission
-                            .check(crate::domain::provider::RequestAttempt::First)
+                            .check(crate::domain::provider::RequestAttempt::Reattempt)
                             .await?;
                     }
                     if let Some(trace) = &request.trace {

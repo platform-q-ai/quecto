@@ -635,6 +635,11 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "Calling",
     ),
     (
+        "src/infrastructure/tools/swarm_board_dispatch_usage.rs:request_admission",
+        "_request_admission: gate must be one of model, retry, tool",
+        "Invalid",
+    ),
+    (
         "src/infrastructure/tools/swarm_board_dispatch_render.rs:float",
         "the board holds a non-finite number: {value}",
         "Store",

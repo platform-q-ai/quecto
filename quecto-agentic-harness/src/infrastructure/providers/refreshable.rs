@@ -320,9 +320,10 @@ impl RefreshableProvider {
                         // 401 + refresh when it resumes.
                         *self.inner.write().await = new_inner.clone();
                         if let Some(admission) = &owned.admission {
-                            // RED stub (#2339): the resend is not yet told apart.
+                            // The resend is a reattempt of a request the loop
+                            // already admitted (#2339).
                             admission
-                                .check(crate::domain::provider::RequestAttempt::First)
+                                .check(crate::domain::provider::RequestAttempt::Reattempt)
                                 .await?;
                         }
                         if let Some(trace) = &owned.trace {

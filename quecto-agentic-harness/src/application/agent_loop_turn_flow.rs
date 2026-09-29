@@ -186,12 +186,12 @@ impl AgentLoopImpl {
         let mut capped = crate::domain::provider_error::CappedFailures::default();
         for attempt in 1..=MAX_PROVIDER_ATTEMPTS {
             // The logical request was admitted above; only re-initiations
-            // re-check, so streaming never pays a second first-attempt check.
+            // re-check, as reattempts (#2339), so streaming never pays a
+            // second first-attempt check.
             if attempt > 1 {
                 if let Some(admission) = &self.request_admission {
                     admission
-                        // RED stub (#2339): the reattempt is not yet told apart.
-                        .check(crate::domain::provider::RequestAttempt::First)
+                        .check(crate::domain::provider::RequestAttempt::Reattempt)
                         .await
                         .map_err(StreamProviderError::before_output)?;
                 }
