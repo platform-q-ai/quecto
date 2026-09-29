@@ -1,7 +1,7 @@
 //! The coordination board a [`super::SwarmContext`] or a
 //! [`super::HostedStore`] reaches (#2278, epic #2265): composition's
-//! handles builder, the handles it built for the last board file called,
-//! and the event log each call is recorded in once the session has one.
+//! handles builder, the handles it built for each board file recently
+//! called, and the event log each call is recorded in once the session has one.
 //!
 //! Every board call is a direct call of the Rust dispatcher
 //! ([`swarm_board_dispatch::call`]) on the caller's thread: the store's
@@ -43,7 +43,9 @@ struct Shared {
     build: SwarmBoardHandlesBuilder,
     session_log: Option<SwarmBoardOpLogBuilder>,
     event_log: OnceLock<Arc<dyn BoardOpLog>>,
-    built: Mutex<Option<Built>>,
+    /// The handles built per file, the most recently called last; at
+    /// most [`BUILT_FILES`].
+    built: Mutex<Vec<Built>>,
 }
 
 /// The handles built for one board file, with the event log or without.
@@ -57,8 +59,7 @@ struct Built {
 /// nit): a context calls one file, and a host reads the few its
 /// environments hold; a board called for more drops the least recently
 /// called file's handles.
-#[cfg(test)]
-pub(super) const BUILT_FILES: usize = 1;
+pub(super) const BUILT_FILES: usize = 16;
 
 impl std::fmt::Debug for SwarmBoard {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -77,7 +78,7 @@ impl SwarmBoard {
                 build,
                 session_log: None,
                 event_log: OnceLock::new(),
-                built: Mutex::new(None),
+                built: Mutex::new(Vec::new()),
             }),
         }
     }
@@ -93,7 +94,7 @@ impl SwarmBoard {
                 build,
                 session_log: Some(session_log),
                 event_log: OnceLock::new(),
-                built: Mutex::new(None),
+                built: Mutex::new(Vec::new()),
             }),
         }
     }
@@ -154,10 +155,12 @@ impl SwarmBoard {
         })
     }
 
-    /// The handles for `location`: the ones built last when they are for
-    /// the same file and the same log, else newly built by composition's
-    /// builder (a context calls one board file; a hosted store may call
-    /// another each time).
+    /// The handles for `location`: the ones built for the same file and
+    /// the same log when the board kept them, else newly built by
+    /// composition's builder (a context calls one board file; a hosted
+    /// store may call another each time). The file becomes the most
+    /// recently called; past [`BUILT_FILES`] files, the least recently
+    /// called file's handles are dropped.
     ///
     /// The builder runs under the lock: a caller wanting another file waits
     /// while the handles are built, so two callers never build them twice.
@@ -171,25 +174,37 @@ impl SwarmBoard {
             .built
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        match built.as_ref() {
-            Some(last) if last.location == location && last.logged == logged => {
-                last.handles.clone()
-            }
-            Some(_) | None => {
+        let kept = built
+            .iter()
+            .position(|file| file.location == location)
+            .map(|index| built.remove(index))
+            .filter(|file| file.logged == logged);
+        let file = match kept {
+            Some(file) => file,
+            None => {
                 let handles = Arc::new((self.shared.build)(location.clone(), event_log));
                 debug_assert_eq!(
                     handles.telemetry.is_some(),
                     logged,
                     "composition's handles record in the log they were given"
                 );
-                *built = Some(Built {
+                Built {
                     location,
                     logged,
-                    handles: handles.clone(),
-                });
-                handles
+                    handles,
+                }
             }
+        };
+        let handles = file.handles.clone();
+        built.push(file);
+        if built.len() > BUILT_FILES {
+            built.remove(0);
         }
+        debug_assert!(
+            built.len() <= BUILT_FILES,
+            "a board keeps at most BUILT_FILES files"
+        );
+        handles
     }
 }
 

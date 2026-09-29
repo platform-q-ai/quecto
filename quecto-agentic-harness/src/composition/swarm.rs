@@ -59,8 +59,9 @@ pub fn build_swarm_board_handles(
 }
 
 /// The board a `SwarmContext` or `HostedStore` calls (#2278): the
-/// handles [`build_swarm_board_handles`] builds, once per board file, and
-/// the session's event log once it is given one
+/// handles [`build_swarm_board_handles`] builds, once per board file (kept
+/// for the files it called most recently), and the session's event log
+/// once it is given one
 /// ([`SwarmBoard::record_in`]).
 pub fn swarm_board() -> SwarmBoard {
     SwarmBoard::with_session_log(build_swarm_board_handles, board_op_log)
