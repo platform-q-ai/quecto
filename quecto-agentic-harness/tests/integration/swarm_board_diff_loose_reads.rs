@@ -2,12 +2,6 @@
 //! `swarm_board_diff_loose::PERMITTED_DIVERGENCES` and pinned here by the
 //! test of the same name:
 //!
-//! - `unassigned_code_point_repr`: a task owner's `contact` writes the
-//!   owner's id as Python's `repr()` does, but a code point Unicode has not
-//!   assigned is written as it is, where Python escapes it (`͸`).
-//!   Which code points are assigned changes with Python's Unicode version,
-//!   so no fixed table answers as every Python does; every assigned code
-//!   point is written as Python 3.13 and later write it.
 //! - `outside_edited_task_columns`, as the pin table describes it, for
 //!   `summary`'s counts too: a task status the board never writes is
 //!   refused naming the record, where Python raises `KeyError`, and a
@@ -36,38 +30,6 @@ fn task(
         "task_create",
         json!(["t", "implement behavior", ["tests pass"], []]),
     )
-}
-
-/// An owner whose id holds U+0378 (unassigned in every Unicode version):
-/// Python escapes it in the contact, the Rust board writes it.
-#[test]
-fn unassigned_code_point_repr() {
-    let owner = "w\u{0378}";
-    let steps = joined([
-        at(3.0, "parent", "_admit", json!([owner, "res-u"])),
-        at(
-            3.1,
-            "parent",
-            "_activate",
-            json!([owner, "res-u", 5, "u", null]),
-        ),
-        task(4.0, owner),
-        at(5.0, owner, "claim", json!([1])),
-        at(6.0, "parent", "task", json!([1])),
-    ]);
-    let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
-    assert!(
-        difference.starts_with("step 7: task as parent")
-            && difference.contains(r"board.send(request, 'w\\u0378', body)"),
-        "{difference}"
-    );
-    let Outcome::Ok(view) = run_rust(&steps) else {
-        panic!("the task answers");
-    };
-    assert_eq!(
-        view["contact"],
-        json!(format!("board.send(request, '{owner}', body)"))
-    );
 }
 
 /// A status the board never writes, or a dependency naming no task, met

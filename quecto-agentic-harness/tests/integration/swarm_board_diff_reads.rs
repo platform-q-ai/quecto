@@ -545,9 +545,11 @@ fn owner_liveness_floats_compare_exactly() {
     );
 }
 
-/// #2277 review L2: a member id holding code points Unicode 16.0 has not
+/// #2277 review L2: a member id holding code points Unicode has not
 /// assigned (U+0378, and U+E0080 beyond the basic plane) reaches its
-/// task's `contact` escaped as Python 3.14's `repr()` escapes it.
+/// task's `contact` escaped as Python's `repr()` escapes it. Neither is
+/// assigned in Unicode 15.1 or 16.0, so the scenario holds under CI's
+/// Python 3.13 as under 3.14, whose Unicode 16.0 table the board uses.
 #[test]
 fn an_unassigned_code_point_in_an_owner_id_is_escaped_as_python_does() {
     let owner = "w\u{0378}\u{e0080}";
@@ -567,6 +569,6 @@ fn an_unassigned_code_point_in_an_owner_id_is_escaped_as_python_does() {
     run_both(&steps);
     assert_eq!(
         answer(&steps, 7)["contact"],
-        json!(r"board.send(request, 'w͸\U000e0080', body)")
+        json!(r"board.send(request, 'w\u0378\U000e0080', body)")
     );
 }

@@ -104,10 +104,7 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   failure where Python raises a `JSONDecodeError` or a `TypeError`; and
 ///   an owner's latest event time the owner liveness measures from): see
 ///   `swarm_board_diff_loose_loss.rs` and `swarm_board_diff_loose_reads.rs`,
-///   which also pins `outside_edited_task_columns` for `summary`'s counts
-///   and #2277's `unassigned_code_point_repr` (an owner id's code point
-///   Unicode has not assigned, which Python's `repr()` escapes and the Rust
-///   board writes).
+///   which also pins `outside_edited_task_columns` for `summary`'s counts.
 /// - `outside_edited_contract` (#2273, listed case by case and pinned in
 ///   `swarm_board_diff_loose_completion.rs`): a run contract, a criterion
 ///   or a task's evidence only a file edited outside the board holds
@@ -154,7 +151,7 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   (#2277, pinned in `swarm_board_diff_loose_loss.rs`): such a member is
 ///   already lost and its death already confirmed, where Python observes
 ///   or records its loss and confirms its death.
-pub const PERMITTED_DIVERGENCES: [&str; 16] = [
+pub const PERMITTED_DIVERGENCES: [&str; 15] = [
     "arguments_beyond_a_serde_value",
     "integer_beyond_i64_is_refused",
     "multi_conflict_names_the_smallest_path",
@@ -168,7 +165,6 @@ pub const PERMITTED_DIVERGENCES: [&str; 16] = [
     "outside_edited_task_columns",
     "outside_edited_wake_records",
     "real_to_text_digits",
-    "unassigned_code_point_repr",
     "unknown_member_status_is_not_alive",
     "wake_target_sort_error_order",
 ];

@@ -17,6 +17,8 @@
 //! reaches them.
 use serde_json::{Number, Value};
 
+use super::python_unassigned::UNASSIGNED;
+
 /// A number as Python holds it: `bool` and `int` are exact integers (the
 /// argument's range is i64 ∪ u64), `float` a double.
 #[derive(Clone, Copy)]
@@ -123,11 +125,9 @@ pub fn python_truthy(value: &Value) -> bool {
 /// when the text holds a `'` and no `"`; a backslash, the quote, `\t`,
 /// `\n` and `\r` escaped; every other character Python does not print
 /// written as `\xhh`, `\uhhhh` or `\Uhhhhhhhh`. Printability follows
-/// Python's `str.isprintable` for ASCII, the C0 and C1 controls and the
-/// separator, format, surrogate and private-use code points it knows
-/// ([`not_printed`]); a code point Unicode has not assigned is printed as
-/// it is, where Python, whose Unicode tables change with its version,
-/// escapes it (the `unassigned_code_point_repr` divergence).
+/// Python 3.14's `str.isprintable` ([`not_printed`]): the code points it
+/// refuses whatever its Unicode version, and those Unicode 16.0, its
+/// version, has not assigned (#2277 review L2).
 pub fn python_repr(text: &str) -> String {
     let quote = if text.contains('\'') && !text.contains('"') {
         '"'
@@ -162,11 +162,31 @@ pub fn python_repr(text: &str) -> String {
     written
 }
 
-/// The code points Python's `str.isprintable` refuses that do not depend
-/// on its Unicode version: the controls (Cc), the separators other than
-/// the space (Zs, Zl, Zp), the format characters (Cf) and the private-use
-/// planes (Co), and the noncharacters of planes 15 and 16.
+/// The code points Python 3.14's `str.isprintable` refuses: those that do
+/// not depend on its Unicode version, listed here (the controls (Cc), the
+/// separators other than the space (Zs, Zl, Zp), the format characters
+/// (Cf) and the private-use planes (Co), and the noncharacters of planes
+/// 15 and 16), and those Unicode 16.0 has not assigned ([`unassigned`]).
+/// Swept against Python's own answer for every code point by
+/// `not_printed_is_exactly_what_python_does_not_print`.
 fn not_printed(character: char) -> bool {
+    version_independent(character) || unassigned(character)
+}
+
+/// Whether Unicode 16.0 (Python 3.14's `unicodedata`) has not assigned
+/// `character`: a binary search of the generated [`UNASSIGNED`] ranges.
+fn unassigned(character: char) -> bool {
+    let point = u32::from(character);
+    let (ranges, rest) = UNASSIGNED.as_chunks::<2>();
+    debug_assert!(rest.is_empty(), "the table holds (first, last) pairs");
+    // The ranges are sorted and disjoint: the first whose last point is
+    // not below `point` is the only one that can hold it.
+    let at = ranges.partition_point(|&[_, last]| last < point);
+    ranges.get(at).is_some_and(|&[first, _]| first <= point)
+}
+
+/// The code points `str.isprintable` refuses in every Unicode version.
+fn version_independent(character: char) -> bool {
     matches!(
         u32::from(character),
         0x00..=0x1f
