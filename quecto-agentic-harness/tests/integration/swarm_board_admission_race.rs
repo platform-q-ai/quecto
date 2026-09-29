@@ -3,6 +3,13 @@
 //! row in one `BEGIN IMMEDIATE` transaction, so no interleaving admits past
 //! the member limit, whether every writer is a Rust board or Python and
 //! Rust boards share the file (round-1 review N2).
+//!
+//! Contention is forced, not hoped for (round-2 review): a separate
+//! connection holds `BEGIN IMMEDIATE` while every contender starts, and
+//! releases it only once each contender has been refused as locked at
+//! least once (both boards wait out a 500 ms busy timeout, then refuse).
+//! Every contender is then retrying against the others when the lock goes.
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -24,6 +31,47 @@ const LIMIT_REACHED: &str = "swarm limit 4, current usage 4; reuse the existing 
 /// is presumed stuck.
 const RETRY_BOUND: Duration = Duration::from_secs(60);
 
+/// A writer outside every board, holding the file's write lock.
+struct LockHolder(rusqlite::Connection);
+
+impl LockHolder {
+    fn take(database: &std::path::Path) -> Self {
+        let connection = rusqlite::Connection::open(database).unwrap();
+        connection.execute_batch("BEGIN IMMEDIATE").unwrap();
+        Self(connection)
+    }
+
+    /// Releases the lock once `locked_out` contenders have each been
+    /// refused as locked, so every one of them contends at release.
+    fn release_after(self, locked_out: &AtomicUsize, contenders: usize) {
+        let began = Instant::now();
+        while locked_out.load(Ordering::SeqCst) < contenders {
+            assert!(
+                began.elapsed() < RETRY_BOUND,
+                "only {} of {contenders} contenders reached the held lock",
+                locked_out.load(Ordering::SeqCst)
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        self.0.execute_batch("COMMIT").unwrap();
+    }
+}
+
+/// One contender's lock retries: the first also counts the contender as
+/// locked out.
+#[derive(Default)]
+struct Retries(usize);
+
+impl Retries {
+    fn locked(&mut self, locked_out: &AtomicUsize, began: Instant, who: &str) {
+        if self.0 == 0 {
+            locked_out.fetch_add(1, Ordering::SeqCst);
+        }
+        self.0 += 1;
+        assert!(began.elapsed() < RETRY_BOUND, "{who} stayed locked out");
+    }
+}
+
 #[test]
 #[serial]
 fn concurrent_rust_admissions_never_exceed_the_limit() {
@@ -44,16 +92,20 @@ fn concurrent_rust_admissions_never_exceed_the_limit() {
         json!(["race", [], [{"id": "t", "kind": "command", "description": "d"}], 4, now + 3_600.0]),
     )
     .unwrap();
+    let holder = LockHolder::take(&location.database);
+    let locked_out = Arc::new(AtomicUsize::new(0));
     let start = Arc::new(Barrier::new(8));
     let threads: Vec<_> = (0..8)
         .map(|index| {
             let location = location.clone();
             let start = start.clone();
+            let locked_out = locked_out.clone();
             std::thread::spawn(move || {
                 // Each thread is its own harness: its own handles and store.
                 let handles = build_swarm_board_handles(location);
                 start.wait();
                 let began = Instant::now();
+                let mut retries = Retries::default();
                 loop {
                     let answer = call(
                         &handles,
@@ -63,21 +115,23 @@ fn concurrent_rust_admissions_never_exceed_the_limit() {
                     );
                     match answer {
                         Err(BoardError(text)) if text == LOCKED => {
-                            assert!(
-                                began.elapsed() < RETRY_BOUND,
-                                "child-{index} stayed locked out"
-                            );
+                            retries.locked(&locked_out, began, &format!("child-{index}"));
                         }
-                        definitive => return definitive,
+                        definitive => return (definitive, retries.0),
                     }
                 }
             })
         })
         .collect();
-    let answers: Vec<_> = threads
+    holder.release_after(&locked_out, 8);
+    let (answers, retries): (Vec<_>, Vec<usize>) = threads
         .into_iter()
         .map(|thread| thread.join().unwrap())
-        .collect();
+        .unzip();
+    assert!(
+        retries.iter().all(|&count| count >= 1),
+        "every contender retried a locked board: {retries:?}"
+    );
     let admitted = answers.iter().filter(|answer| answer.is_ok()).count();
     let refused: Vec<_> = answers
         .iter()
@@ -98,6 +152,11 @@ fn concurrent_rust_admissions_never_exceed_the_limit() {
         })
         .unwrap();
     assert_eq!(usage, Some(4));
+    let integrity: String = rusqlite::Connection::open(&location.database)
+        .unwrap()
+        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(integrity, "ok");
 }
 
 /// Python boards and Rust boards admit into one file at once: four
@@ -128,12 +187,15 @@ fn concurrent_python_and_rust_admissions_never_exceed_the_limit() {
         json!(["race", [], [{"id": "t", "kind": "command", "description": "d"}], LIMIT, now() + 3_600.0]),
     )
     .unwrap();
+    let holder = LockHolder::take(&location.database);
+    let locked_out = Arc::new(AtomicUsize::new(0));
     let start = Arc::new(Barrier::new(8));
     let python: Vec<_> = (0..4)
         .map(|index| {
             let location = location.clone();
             let workdir = dir.path().join(format!("python-{index}"));
             let start = start.clone();
+            let locked_out = locked_out.clone();
             std::thread::spawn(move || {
                 std::fs::create_dir_all(&workdir).unwrap();
                 let mut board = PyBoard::start(&location.database, &location.checkout, &workdir);
@@ -141,16 +203,14 @@ fn concurrent_python_and_rust_admissions_never_exceed_the_limit() {
                     json!([format!("py-{index}"), format!("reserve-py-{index}")]).to_string();
                 start.wait();
                 let began = Instant::now();
+                let mut retries = Retries::default();
                 loop {
                     match board.call("parent", "_admit", &args, now()) {
                         Outcome::Refused(text) if text == LOCKED => {
-                            assert!(
-                                began.elapsed() < RETRY_BOUND,
-                                "py-{index} stayed locked out"
-                            );
+                            retries.locked(&locked_out, began, &format!("py-{index}"));
                         }
-                        Outcome::Ok(_) => return Ok(()),
-                        Outcome::Refused(text) => return Err(text),
+                        Outcome::Ok(_) => return (Ok(()), retries.0),
+                        Outcome::Refused(text) => return (Err(text), retries.0),
                         Outcome::Raised(raised) => panic!("py-{index}: Python raised {raised}"),
                     }
                 }
@@ -161,10 +221,12 @@ fn concurrent_python_and_rust_admissions_never_exceed_the_limit() {
         .map(|index| {
             let location = location.clone();
             let start = start.clone();
+            let locked_out = locked_out.clone();
             std::thread::spawn(move || {
                 let handles = build_swarm_board_handles(location);
                 start.wait();
                 let began = Instant::now();
+                let mut retries = Retries::default();
                 loop {
                     let answer = call(
                         &handles,
@@ -174,22 +236,34 @@ fn concurrent_python_and_rust_admissions_never_exceed_the_limit() {
                     );
                     match answer {
                         Err(BoardError(text)) if text == LOCKED => {
-                            assert!(
-                                began.elapsed() < RETRY_BOUND,
-                                "rs-{index} stayed locked out"
-                            );
+                            retries.locked(&locked_out, began, &format!("rs-{index}"));
                         }
-                        Ok(_) => return Ok(()),
-                        Err(BoardError(text)) => return Err(text),
+                        Ok(_) => return (Ok(()), retries.0),
+                        Err(BoardError(text)) => return (Err(text), retries.0),
                     }
                 }
             })
         })
         .collect();
+    holder.release_after(&locked_out, 8);
+    let python: Vec<(Result<(), String>, usize)> = python
+        .into_iter()
+        .map(|thread| thread.join().unwrap())
+        .collect();
+    let rust: Vec<(Result<(), String>, usize)> = rust
+        .into_iter()
+        .map(|thread| thread.join().unwrap())
+        .collect();
+    for (side, contenders) in [("python", &python), ("rust", &rust)] {
+        assert!(
+            contenders.iter().all(|(_, retries)| *retries >= 1),
+            "every {side} contender retried a locked board: {contenders:?}"
+        );
+    }
     let answers: Vec<Result<(), String>> = python
         .into_iter()
         .chain(rust)
-        .map(|thread| thread.join().unwrap())
+        .map(|(answer, _)| answer)
         .collect();
     let admitted = answers.iter().filter(|answer| answer.is_ok()).count();
     assert_eq!(

@@ -238,6 +238,14 @@ struct Served {
 /// Invokes `method` as `member` with `args`: one use case, its result in
 /// Python's JSON shape.
 ///
+/// `args` must be the member's JSON text as `py_json::decode` reads it
+/// (`PyJson::to_value`), never `serde_json::from_str`: serde's default
+/// float parser is not correctly rounded (`9007199254740993.0` parses as
+/// `9007199254740994.0`, where Python's `json.loads` gives
+/// `9007199254740992.0`), so the board's `python_equal` would compare a
+/// value Python never held and answer a retry or a refusal differently
+/// (S13/S14; pinned by `serde_float_parsing_would_change_python_equal`).
+///
 /// # Errors
 /// An unknown method or an argument that does not bind (this module's
 /// text), or the board's refusal (Python's text).

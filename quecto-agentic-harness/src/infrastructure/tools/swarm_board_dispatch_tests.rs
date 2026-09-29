@@ -574,3 +574,25 @@ fn membership_calls_record_their_decisions_without_argument_text() {
     assert!(!log.contains(secret) && !log.contains(other), "{log}");
     assert!(!log.contains("sk-ant"), "{log}");
 }
+
+/// Why `call` takes its arguments from `py_json::decode`: serde's default
+/// float parser rounds `2^53 + 1` up, Python's `json.loads` rounds it to
+/// even, and `python_equal` then answers differently against the integer
+/// Python compares it with.
+#[test]
+fn serde_float_parsing_would_change_python_equal() {
+    use crate::domain::swarm::python_equal;
+    use crate::infrastructure::persistence::swarm_board::py_json;
+
+    let literal = "9007199254740993.0";
+    let python = py_json::decode(literal).unwrap().to_value().unwrap();
+    let serde: Value = serde_json::from_str(literal).unwrap();
+    let stored = json!(9_007_199_254_740_992_i64);
+    assert_eq!(python.as_f64(), Some(9_007_199_254_740_992.0));
+    assert!(python_equal(&python, &stored));
+    assert!(
+        !python_equal(&serde, &stored),
+        "serde parsed {serde}; if it now rounds correctly, the S13/S14 \
+         caution on `call` may be relaxed"
+    );
+}
