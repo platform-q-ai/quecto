@@ -431,3 +431,56 @@ fn revalidation_arguments_are_checked_as_python_checks_them() {
     ]);
     run_both(&with_worker(steps));
 }
+
+/// Every completion op needs a running run (`authorize(active=True)`, the
+/// #2316 paused-run table's sibling; the #2319 mutation report's
+/// `revalidate_task` survivor): on a paused run each is refused with
+/// Python's own text, and the board is left as it was. Each op is one the
+/// unpaused board grants, so only the run's status refuses it: task 1 is
+/// completed at R2, and the parent accepted both criteria there.
+#[test]
+fn every_completion_op_is_refused_on_a_paused_run() {
+    let mut setup = verified(3.0, 1, json!([]), "R2");
+    setup.extend([
+        evidence(5.0, "parent", "tests", "command", json!(true)),
+        evidence(5.1, "parent", "review", "review", json!(true)),
+    ]);
+    let setup = with_worker(setup);
+    let criteria = json!([{"id": "tests", "kind": "command", "description": "d"}]);
+    let ops = [
+        ("parent", "complete", json!(["R2"])),
+        (
+            "parent",
+            "revalidate_task",
+            json!([1, "R3", [{"artifact": "rerun", "revision": "R3"}]]),
+        ),
+        ("parent", "amend", json!(["g", [], criteria, "why"])),
+        (
+            "worker",
+            "evidence",
+            json!(["tests", "proposal", "R2", "command", false]),
+        ),
+        (
+            "parent",
+            "evidence",
+            json!(["review", "other", "R2", "review", true]),
+        ),
+    ];
+    let paused = sql("UPDATE run SET status='paused'");
+    let refusal = "run is paused; no new work permitted";
+    for (member, method, args) in ops {
+        let op = at(9.0, member, method, args);
+        let granted = [setup.clone(), vec![op.clone()]].concat();
+        assert!(
+            matches!(run_rust(&granted), Outcome::Ok(_)),
+            "{member} {method} is granted on the running run"
+        );
+        let steps = [setup.clone(), vec![paused.clone(), op, snapshot(10.0)]].concat();
+        run_both(&steps);
+        let outcome = run_rust(&steps[..steps.len() - 1]);
+        assert!(
+            matches!(&outcome, Outcome::Refused(text) if text == refusal),
+            "{member} {method}: {outcome:?}"
+        );
+    }
+}
