@@ -795,7 +795,7 @@ To use an OAuth-backed registry provider, first run `quecto auth login --provide
 
 Workflow is unavailable for swarm coordinators and workers; workflow flags, guards and bound specs are rejected on their launches. Agents can read the embedded manual with `docs {"name":"swarm"}`, which gives every board op with a runnable example. Members use the separately configured `bash` tool for Git, tests, computation and external commands. Do not change limits from agent code.
 
-For progress, ask the coordinator for `swarm {"op":"summary"}` and retrieve its report through `agent_cmd.get_messages`. After completion, `summary`, `events`, `usage` and ordinary artifact export remain available, but every board op (`inbox` and `ack` included) is refused until the supervisor resumes the run. There is no dedicated swarm dashboard or public UDS board API yet. See [inspection and results](docs/swarm.md#inspection-and-results-for-users-and-master-agents).
+For progress, ask the coordinator for `swarm {"op":"summary"}` and retrieve its report through `agent_cmd.get_messages`. After completion, `summary`, `events`, `usage` and ordinary artifact export remain available, but every board op (`inbox` and `ack` included) is refused unless the supervisor resumes the run. There is no dedicated swarm dashboard or public UDS board API yet. See [inspection and results](docs/swarm.md#inspection-and-results-for-users-and-master-agents).
 
 | Key | Default | Meaning |
 |---|---|---|

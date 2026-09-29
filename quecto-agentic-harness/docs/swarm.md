@@ -229,17 +229,20 @@ How an op is served:
    `run` op had; a running run whose deadline is missing or not a number is
    refused as past it), with guidance naming what is allowed now: `summary`,
    `events` and `usage (op=usage; the board op usage_report needs a running
-   run)`. This covers reads, `inbox`, `ack` and `withdraw` too. When the
-   run's status cannot be read, or a mutating op's first event-cursor read
-   fails, the op is refused with the store's text (kind `store`, gate
-   `unreadable`).
+   run)`. This covers reads, `inbox`, `ack` and `withdraw` too. The gate
+   also refuses with kind `store` and gate `unreadable` in two ways: when
+   the `_status` call or a mutating op's first `_event_cursor` call fails,
+   the refusal is the store's text; when the status reads but is not text,
+   it is `the swarm run status could not be read; call op=summary.`
 4. **The call and its lifecycle.** A mutating op reads the board's event
    cursor before and after its call. When the cursor moved, the harness sends
    the wake hints, or settles the run when it no longer runs. A hint that
    failed rides the answer as `notification_warnings`, and a failure of this
    step as `coordination_error` (beside a non-object answer as `result`).
-   When the op is refused but its call moved the cursor, these notes follow
-   the refusal text on the next line, as one JSON object. The
+   When the second cursor read fails, that failure is the `coordination_error`
+   and no lifecycle runs. When the op is refused but its call moved the
+   cursor, or the second cursor read failed, these notes follow the refusal
+   text on the next line, as one JSON object. The
    read-only ops (`task`, `tasks`, `file_owners`, `inbox`, `usage_report`)
    skip this step.
 5. **The answer** is written as Python's `json.dumps` writes it (insertion
@@ -427,7 +430,7 @@ coordinator's `swarm {"op":"resume"}`, cannot resume or close a run. Only
 `cancelled` (`op=cancel_run`, the parent cancellation operation) is terminal at
 once. Put final report data on the board before calling `complete` or `stop`:
 once the run holds its outcome, every board op is refused and only the native
-reads (`summary`, `events`, `usage`) answer until the supervisor resumes the
+reads (`summary`, `events`, `usage`) answer unless the supervisor resumes the
 run (it closes for good only on close or cancel).
 Reconciliation preserves readable partial progress and retains uncertain ownership. Keep the coordinator available to report to the parent.
 
@@ -831,7 +834,9 @@ op's own record (with its `task_id` or `message_id` and, for a refusal, its
 `kind`), plus one per harness-internal call it made, each with role `host`:
 `_status` for the running gate and, for a mutating op, `_event_cursor`
 before and after, then whatever the post-call lifecycle ran (`_notifications`,
-`_accept_wake`, or the settlement's calls). An op refused before it reached
+`_accept_wake`, or the settlement's calls). The lifecycle's own `summary`
+reads, the post-call one and the settlement's, are harness-internal calls
+too, so they are recorded with role `host` alongside the others. An op refused before it reached
 the board is still recorded as the op's own `swarm_op`, with no run read
 (`role` and `run_id` `null`):
 
@@ -840,7 +845,7 @@ the board is still recorded as the op's own `swarm_op`, with no run read
 | Member input (a value the board's JSON value cannot hold: `1e400`, an integer beyond i64 and u64, a lone surrogate) | `invalid` |
 | The running gate, when the run is not `running` | `not_running` |
 | The running gate, when the running run's deadline has passed, is missing or is not a number | `budget_exhausted` |
-| The running gate, when the run's status could not be read, or a mutating op's first `_event_cursor` read failed (gate `unreadable`) | `store` |
+| The running gate, when the `_status` call failed, the status read is not text, or a mutating op's first `_event_cursor` call failed (gate `unreadable`) | `store` |
 
 Each structured op also leaves one `tracing` event, `swarm structured op`,
 on target `quecto::swarm_board` (DEBUG for the read-only ops `task`, `tasks`,
@@ -852,7 +857,7 @@ not the event log is on. It carries no argument text:
 | `op` | The structured op |
 | `gate` | `open` (the op reached the board), `arguments` (member input refused), `not_running` or `deadline` (the running gate refused it), or `unreadable` (the run's status, or a mutating op's first event cursor, could not be read) |
 | `outcome` | `ok`, `refused` (the member got an error answer) or `failed` (the tool itself failed) |
-| `cursor_moved` | For a mutating op that reached the board, whether the event cursor moved (`Some(true)` or `Some(false)`); `None` otherwise |
+| `cursor_moved` | For a mutating op that reached the board, whether the event cursor moved (`Some(true)` or `Some(false)`); `None` otherwise, including when the second cursor read failed |
 | `lifecycle` | What the post-call step did: `none` (not run), `unchanged`, `notified`, `settled` or `failed` |
 | `warnings` | How many wake hints could not be delivered |
 | `result_bytes` | The size of the answer text the member received |
@@ -861,8 +866,9 @@ not the event log is on. It carries no argument text:
 ### Finding a run's records
 
 Every agent writes its own event log, `<base_dir>/audit/<session>.jsonl`, one
-JSON record per line. The file is named after the sanitised session key, not
-the `session` value verbatim: a key of letters, digits, `:`, `_`, `-` and `.`
+JSON record per line, except an ephemeral agent (`--no-session`, `-s -`),
+which writes none. The file is named after the sanitised session key, not
+the `session` value verbatim: a key of ASCII letters, ASCII digits, `:`, `_`, `-` and `.`
 has each `:` replaced by `_` (`cli:ops` → `cli_ops.jsonl`); any other key, or
 one starting with `.`, is hex-encoded with a `key_` prefix. A container member's `~/.quecto` is the host's
 (identity-mounted), so the logs of every member of a swarm land in the host's

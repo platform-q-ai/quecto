@@ -115,8 +115,9 @@ returns nothing). Durable state lives on the board, not in your context.
   the answer as `notification_warnings`, and a failure of that step as
   `coordination_error`; the op itself was done. When the answer is not an
   object, it moves under `result` beside them. When the op was refused but
-  its call still moved the board's cursor, they follow the refusal text on
-  the next line, as one JSON object.
+  its call still moved the board's cursor, or the cursor could not be read
+  after the call, they follow the refusal text on the next line, as one JSON
+  object.
 
 Any member:
 
