@@ -660,18 +660,6 @@ the file untouched.
         "enabled": false,
         "max_response_kb": 32
       }
-    },
-    "swarm": {
-      "default_timeout_seconds": 60,
-      "max_foreground_seconds": 300,
-      "max_background_seconds": 1800,
-      "default_max_output_bytes": 200000,
-      "max_output_bytes": 1000000,
-      "max_memory_bytes": null,
-      "max_cpu_seconds": null,
-      "max_processes": 1,
-      "max_concurrent_jobs": 2,
-      "inherit_environment": false
     }
   },
   "workflow": {
@@ -796,30 +784,6 @@ To use an OAuth-backed registry provider, first run `quecto auth login --provide
 Workflow is unavailable for swarm coordinators and workers; workflow flags, guards and bound specs are rejected on their launches. Agents can read the embedded manual with `docs {"name":"swarm"}`, which gives every board op with a runnable example. Members use the separately configured `bash` tool for Git, tests, computation and external commands. Do not change limits from agent code.
 
 For progress, ask the coordinator for `swarm {"op":"summary"}` and retrieve its report through `agent_cmd.get_messages`. After completion, `summary`, `events`, `usage` and ordinary artifact export remain available, but every board op (`inbox` and `ack` included) is refused unless the supervisor resumes the run. There is no dedicated swarm dashboard or public UDS board API yet. See [inspection and results](docs/swarm.md#inspection-and-results-for-users-and-master-agents).
-
-| Key | Default | Meaning |
-|---|---|---|
-| `default_timeout_seconds` | `60` | Timeout applied when a call omits `timeout_seconds` |
-| `max_foreground_seconds` | `300` | Ceiling a foreground call's `timeout_seconds` is clamped to |
-| `max_background_seconds` | `1800` | Ceiling a background job's `timeout_seconds` is clamped to |
-| `default_max_output_bytes` | `200000` | Inline stdout/stderr preview size when a call omits `max_output_bytes` |
-| `max_output_bytes` | `1000000` | Hard cap on bytes persisted per stream. stdout and stderr get separate budgets, so a program that floods one cannot erase the other; worst case per execution is twice this value |
-| `max_memory_bytes` | `null` | `RLIMIT_AS` for the interpreter; `null` leaves address space unbounded |
-| `max_cpu_seconds` | `null` | `RLIMIT_CPU` for the interpreter; `null` leaves CPU time unbounded |
-| `max_processes` | `1` | `RLIMIT_NPROC`; the default blocks the program from spawning subprocesses |
-| `max_concurrent_jobs` | `2` | Background jobs that may run at once; further starts are `rejected` |
-| `inherit_environment` | `false` | When false the interpreter starts from a cleared environment with only `PATH=/usr/local/bin:/usr/bin:/bin` and `PYTHONNOUSERSITE=1` |
-
-Runtime policy:
-
-- **Interpreter** — `python3` resolved from `PATH`, started with `-I` (isolated mode) directly via argv. No shell is involved, so arguments are never word-split or expanded.
-- **Working directory** — the agent's workspace. Files a program writes persist for the lifetime of the task and are reported back in `files_created_or_modified`.
-- **Path handling** — a `path` argument is joined to the workspace before execution. Because filesystem sandbox mode has been removed, `Sandbox::validate_path` no longer rejects traversal, absolute paths, or symlink escapes for agent entrypoints; file-mode `swarm` can execute any script path the Quecto process user can read, except the reserved `.quecto/swarm` artifact tree.
-- **Output** — the inline result carries a slim success envelope: `status`, `exit_code`, `execution_id`, `stdout`, `stderr`, and `duration_ms`. Extra metadata is included only when informative: truncation flags and `artifact_paths` when output is truncated, changed-file lists when non-empty, timeout/cancel fields on timeout or cancellation, and resource fields when configured limits are relevant. Full execution metadata remains available for background jobs via `op=status` and `job_id`. The preview is capped at `max_output_bytes` for the call; complete output is written to `.quecto/swarm/<execution_id>/{stdout,stderr}.txt` and listed in `artifact_paths` when the preview was truncated. Status, output and spill references use `artifact_namespace: "workspace-relative"`; join them to `artifact_base` inside the container, not to a host directory. Output beyond the configured `max_output_bytes` hard cap is dropped and flagged. That cap applies per stream, so an execution can retain up to twice it in total.
-- **Artifact retention** — every execution leaves a `.quecto/swarm/<execution_id>/` directory. The 32 most recent are kept and older ones are deleted as new runs start; a directory belonging to a job that has not finished is never removed. Paging a job's output re-reads these files, so `output` also reports `artifacts_modified` if their size no longer matches what was captured at completion.
-- **Resource limits** — memory, CPU, and process limits are applied with `setrlimit` in the child before `exec`, on Unix only. On non-Unix platforms these keys are accepted but not enforced. Two caveats worth knowing: `max_processes` maps to `RLIMIT_NPROC`, which the kernel counts **per user**, not per process — so it is only meaningful as the default `1` (block subprocess creation entirely), it is silently ineffective when the harness runs as root, and any larger value will behave unpredictably on a busy machine. `max_memory_bytes` maps to `RLIMIT_AS`, which bounds virtual address space rather than resident memory; CPython reserves far more address space than it resides, so set it generously or a program will fail to start at all.
-- **Background jobs** — live for the session. Cancellation, timeout, and dropping the tool kill the process group and its descendants.
-- **Network** — `swarm` adds no network isolation of its own; a program reaches whatever the surrounding process or container can reach. Restricting egress is the deployment's job (see [Security](#security)).
 
 ### Environment variable overrides
 

@@ -1,8 +1,8 @@
 use super::*;
 
 #[test]
-fn a_run_refused_during_setup_names_op_create_with_a_relative_deadline() {
-    let message = run_refused(Some("setup"));
+fn an_op_refused_during_setup_names_op_create_with_a_relative_deadline() {
+    let message = op_refused("claim", Some("setup"));
     assert!(message.contains(r#""op":"create""#), "{message}");
     assert!(
         message.contains("deadline_in_seconds"),
@@ -16,8 +16,8 @@ fn a_run_refused_during_setup_names_op_create_with_a_relative_deadline() {
 }
 
 #[test]
-fn a_run_refused_when_paused_names_every_allowed_op_and_the_supervisor() {
-    let message = run_refused(Some("paused"));
+fn an_op_refused_when_paused_names_every_allowed_op_and_the_supervisor() {
+    let message = op_refused("claim", Some("paused"));
     for op in ["summary", "events", "usage", "reconcile"] {
         assert!(message.contains(op), "{op}: {message}");
     }
@@ -31,13 +31,13 @@ fn a_run_refused_when_paused_names_every_allowed_op_and_the_supervisor() {
 
 #[test]
 fn an_ended_or_unreadable_run_says_what_to_do() {
-    let ended = run_refused(Some("succeeded"));
+    let ended = op_refused("claim", Some("succeeded"));
     assert!(
         ended.contains("succeeded") && ended.contains("Allowed: summary"),
         "{ended}"
     );
-    assert!(run_refused(None).contains("op=summary"));
-    assert!(deadline_passed().contains("extend"));
+    assert!(op_refused("claim", None).contains("op=summary"));
+    assert!(op_deadline_passed("claim").contains("extend"));
 }
 
 #[test]
@@ -103,13 +103,8 @@ fn a_gated_board_op_names_itself_and_what_is_allowed() {
         ended.contains("the swarm run is succeeded, so op=tasks is unavailable"),
         "{ended}"
     );
-    assert_eq!(
-        op_refused("run", Some("paused")),
-        run_refused(Some("paused"))
-    );
     let late = op_deadline_passed("send");
     assert!(late.contains("so op=send is unavailable"), "{late}");
-    assert_eq!(op_deadline_passed("run"), deadline_passed());
 }
 
 #[test]
@@ -151,16 +146,16 @@ fn the_tool_description_names_op_create_and_a_relative_deadline() {
 }
 
 #[tokio::test]
-async fn op_run_or_a_board_op_before_create_points_the_founder_at_op_create() {
+async fn a_board_op_before_create_points_the_founder_at_op_create() {
     // End to end through the tool: a bootstrapped, not yet created run.
     use crate::application::tools::ports::Tool;
     let directory = tempfile::tempdir().unwrap();
-    let workspace = std::sync::Arc::new(directory.path().to_path_buf());
+    let workspace = directory.path().to_path_buf();
     std::fs::create_dir_all(workspace.join(".quecto")).unwrap();
     let context = crate::infrastructure::tools::swarm_bridge::SwarmContext {
         board: crate::composition::swarm::swarm_board(),
         lifecycle: std::sync::Arc::new(crate::application::ports::SwarmTestLifecycle),
-        checkout: workspace.as_ref().clone(),
+        checkout: workspace,
         member: "coordinator".into(),
     };
     crate::infrastructure::tools::call_work::off_the_runtime(|| {
@@ -170,28 +165,15 @@ async fn op_run_or_a_board_op_before_create_points_the_founder_at_op_create() {
         )
     })
     .unwrap();
-    let tool = super::super::SwarmTool::new(
-        workspace.clone(),
-        std::sync::Arc::new(crate::infrastructure::security::sandbox::Sandbox::new(
-            Some(workspace.as_ref().clone()),
-        )),
-        super::super::SwarmConfig::default(),
-    )
-    .with_context(Some(context));
-    // `op=run` passes the same setup gate as a structured op until S17
-    // (#2282) deletes it; both point the founder at `op=create`.
-    for request in [
-        r#"{"op":"run","code":"print('hello')"}"#,
-        r#"{"op":"task_create","request":"r1","title":"t","acceptance":["pass"]}"#,
-    ] {
-        let result = tool.execute(request).await.unwrap();
-        assert!(result.is_error, "{request}: {}", result.content);
-        assert!(
-            result.content.contains(r#""op":"create""#),
-            "{request}: {}",
-            result.content
-        );
-    }
+    let tool = super::super::SwarmTool::new().with_context(Some(context));
+    let request = r#"{"op":"task_create","request":"r1","title":"t","acceptance":["pass"]}"#;
+    let result = tool.execute(request).await.unwrap();
+    assert!(result.is_error, "{request}: {}", result.content);
+    assert!(
+        result.content.contains(r#""op":"create""#),
+        "{request}: {}",
+        result.content
+    );
 }
 
 /// #2279 review N9: every refusal that allows `usage` says it is the
@@ -214,13 +196,8 @@ fn a_refusal_that_allows_usage_says_usage_report_is_not_it() {
 
 /// The swarm tool over a created, running run, as the tests above build it.
 fn running_tool(directory: &tempfile::TempDir) -> super::super::SwarmTool {
-    let workspace = std::sync::Arc::new(directory.path().to_path_buf());
     super::super::super::swarm_test_support::tool(
-        workspace.clone(),
-        std::sync::Arc::new(crate::infrastructure::security::sandbox::Sandbox::new(
-            Some(workspace.as_ref().clone()),
-        )),
-        super::super::SwarmConfig::default(),
+        std::sync::Arc::new(directory.path().to_path_buf()),
         crate::composition::swarm::swarm_board(),
     )
 }
@@ -242,7 +219,11 @@ async fn removed_ops_are_unknown_and_name_the_structured_alternative() {
         let result = tool.execute(request).await.unwrap();
         assert!(result.is_error, "{request}: {}", result.content);
         let prefix = format!("unknown op {op}; valid ops: ");
-        assert!(result.content.contains(&prefix), "{request}: {}", result.content);
+        assert!(
+            result.content.contains(&prefix),
+            "{request}: {}",
+            result.content
+        );
         assert!(result.content.contains("claim"), "{}", result.content);
         assert!(!directory.path().join("ran").exists(), "{request} ran code");
     }
@@ -258,11 +239,17 @@ async fn a_call_without_an_op_is_refused_with_the_valid_ops() {
     use crate::application::tools::ports::Tool;
     let directory = tempfile::tempdir().unwrap();
     let tool = running_tool(&directory);
-    for request in [r#"{"code":"open('ran','w').write('x')"}"#, r#"{"op":3}"#, "{}"] {
+    for request in [
+        r#"{"code":"open('ran','w').write('x')"}"#,
+        r#"{"op":3}"#,
+        "{}",
+    ] {
         let result = tool.execute(request).await.unwrap();
         assert!(result.is_error, "{request}: {}", result.content);
         assert!(
-            result.content.contains("op is required; valid ops: create, "),
+            result
+                .content
+                .contains("op is required; valid ops: create, "),
             "{request}: {}",
             result.content
         );

@@ -106,7 +106,6 @@ pub struct OfficialToolDeps {
     pub sandbox: crate::infrastructure::security::sandbox::Sandbox,
     pub exec_options: crate::infrastructure::tools::bash::ExecOptions,
     pub docs_content_policy: crate::infrastructure::tools::docs::DocsContentPolicy,
-    pub swarm_config: crate::infrastructure::tools::swarm::SwarmConfig,
 }
 
 pub fn build_official_tool_extensions(deps: OfficialToolDeps) -> Vec<Arc<dyn Extension>> {
@@ -150,14 +149,10 @@ pub fn build_official_tool_extensions(deps: OfficialToolDeps) -> Vec<Arc<dyn Ext
                 )),
             },
             Arc::new(
-                crate::infrastructure::tools::swarm::SwarmTool::new(
-                    workspace.clone(),
-                    sandbox.clone(),
-                    deps.swarm_config,
-                )
-                .with_context(deps.swarm_context)
-                .with_participation(deps.swarm_participation.clone())
-                .with_workflow_engine(deps.workflow_engine),
+                crate::infrastructure::tools::swarm::SwarmTool::new()
+                    .with_context(deps.swarm_context)
+                    .with_participation(deps.swarm_participation.clone())
+                    .with_workflow_engine(deps.workflow_engine),
             ),
             deps.find_tool,
             // Quecto operating manual, embedded in the binary. Runtime profile
@@ -382,7 +377,6 @@ pub fn build_official_tool_registry_with_context(
             sandbox,
             exec_options,
             docs_content_policy: crate::infrastructure::tools::docs::DocsContentPolicy::Parent,
-            swarm_config: crate::infrastructure::tools::swarm::SwarmConfig::default(),
         }),
     );
     registry

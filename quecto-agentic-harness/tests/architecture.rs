@@ -6904,7 +6904,10 @@ fn swarm_tool_has_no_pid_signalling() {
 #[test]
 fn no_production_code_starts_python() {
     let files = teardown_authority::production_files();
-    assert!(files.len() > 200, "the crate's production files must be scanned");
+    assert!(
+        files.len() > 200,
+        "the crate's production files must be scanned"
+    );
     for path in &files {
         let source = production_source(path);
         assert!(

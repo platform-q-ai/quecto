@@ -17,7 +17,6 @@ async fn terminal_tools_are_explicitly_allowlisted_and_pause_denies_every_tool()
     }
     for (name, arguments) in [
         ("bash", "{}"),
-        ("swarm", r#"{"op":"run"}"#),
         ("swarm", r#"{"op":"inbox"}"#),
         ("swarm", r#"{"op":"claim","task_id":1}"#),
         ("swarm", "invalid"),

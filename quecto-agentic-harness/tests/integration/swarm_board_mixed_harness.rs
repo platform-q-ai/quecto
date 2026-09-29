@@ -67,14 +67,8 @@ fn fixed_handles(location: BoardLocation, _log: Option<Arc<dyn BoardOpLog>>) -> 
 /// counter): it must succeed.
 async fn board_op(context: &SwarmContext, request: Value) {
     use quecto::application::tools::ports::Tool;
-    use quecto::infrastructure::security::sandbox::Sandbox;
-    use quecto::infrastructure::tools::swarm::{SwarmConfig, SwarmTool};
-    let workspace = Arc::new(context.checkout.clone());
-    let tool = SwarmTool::new(
-        workspace.clone(),
-        Arc::new(Sandbox::new(Some(workspace.as_ref().clone()))),
-        SwarmConfig::default(),
-    )
+    use quecto::infrastructure::tools::swarm::SwarmTool;
+    let tool = SwarmTool::new()
     .with_context(Some(context.clone()));
     let result = tool
         .execute(&request.to_string())

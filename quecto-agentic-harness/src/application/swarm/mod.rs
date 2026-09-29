@@ -165,11 +165,9 @@ pub async fn settle(
         "a run has one coordinator row"
     );
     if snapshot.status == crate::domain::swarm::RunStatus::Paused {
-        // Every pause suspends local executions admitted up to this control
-        // generation and keeps the registry open for a resume. An ended run
-        // (#1729) also keeps its coordinator's turn alive so it can report
-        // the outcome it proposed; every other member's inference suspends.
-        processes.suspend_local_executions(snapshot);
+        // An ended run (#1729) keeps its coordinator's turn alive so it can
+        // report the outcome it proposed; every other member's inference
+        // suspends, as it does on every other pause.
         if !(snapshot.ended() && actor == snapshot.coordinator) {
             processes.suspend_local_inference(snapshot);
         }
@@ -178,7 +176,6 @@ pub async fn settle(
     if !snapshot.status.terminal() {
         return Ok(());
     }
-    processes.cancel_local_executions();
     let coordinating = actor == snapshot.coordinator;
     if coordinating && snapshot.status.abort_coordinator() {
         processes.suspend_local_inference(snapshot);

@@ -1,9 +1,8 @@
 //! The coordination board's callers inside a container and on the host:
 //! [`SwarmContext`] and [`HostedStore`] reach the board through
 //! [`SwarmBoard`], the Rust dispatcher over composition's handles (#2278).
-//! Trusted packaged Python loading remains for `op=run` member programs
-//! only (until #2282); no helper source is imported from the shared
-//! checkout or user site packages.
+//! Nothing here runs Python (#2282); the packaged Python board sources are
+//! loaded only by tests, until #2283 deletes them.
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
@@ -56,6 +55,9 @@ impl SwarmContext {
         super::swarm_store_location::member_store_path(&self.checkout)
     }
 
+    /// The packaged Python board, bound to this member (test support only:
+    /// production runs no Python, #2282; #2283 deletes the sources).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn bootstrap(&self) -> String {
         bootstrap_source(&self.database(), &self.checkout, &self.member)
     }
@@ -189,6 +191,7 @@ pub fn store_database(checkout: &Path) -> PathBuf {
     super::swarm_store_location::located(checkout)
 }
 
+#[cfg(any(test, feature = "test-support"))]
 fn bootstrap_source(database: &Path, checkout: &Path, member: &str) -> String {
     let mut source = String::from("import sys, types, json\n");
     for (name, body) in [

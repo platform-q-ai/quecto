@@ -1,7 +1,6 @@
-use super::swarm::{SwarmConfig, SwarmTool};
+use super::swarm::SwarmTool;
 use super::swarm_bridge::{SwarmContext, process_confirmed_dead, process_start};
 use crate::application::tools::ports::Tool;
-use crate::infrastructure::security::sandbox::Sandbox;
 use serde_json::json;
 use std::sync::Arc;
 
@@ -60,21 +59,15 @@ fn missing_and_corrupt_databases_fail_closed() {
 }
 
 #[tokio::test]
-async fn host_tool_rejects_execution_even_with_a_planted_store() {
+async fn host_tool_rejects_every_op_even_with_a_planted_store() {
     let directory = tempfile::tempdir().unwrap();
     create(&context(&directory), 1);
-    let workspace = Arc::new(directory.path().to_path_buf());
-    let tool = SwarmTool::new(
-        workspace.clone(),
-        Arc::new(Sandbox::new(Some(workspace.as_ref().clone()))),
-        SwarmConfig::default(),
-    );
-    let result = tool
-        .execute(r#"{"op":"run","code":"print('escaped')"}"#)
-        .await
-        .unwrap();
-    assert!(result.is_error);
-    assert!(result.content.contains("container-only"));
+    let tool = SwarmTool::new();
+    for request in [r#"{"op":"summary"}"#, r#"{"op":"claim","task_id":1}"#] {
+        let result = tool.execute(request).await.unwrap();
+        assert!(result.is_error, "{request}");
+        assert!(result.content.contains("container-only"), "{request}");
+    }
 }
 
 #[test]
@@ -163,70 +156,11 @@ fn harness_death_alone_retains_a_recorded_launch() {
     assert!(process_confirmed_dead(std::process::id(), "stale"));
 }
 
-#[test]
-fn legacy_resource_configuration_is_preserved_without_parallel_tools() {
-    let tools: crate::infrastructure::config::ToolsConfig = serde_json::from_value(json!({"python_lab":{"max_cpu_seconds":3,"max_memory_bytes":123456,"max_concurrent_jobs":1}})).unwrap();
-    assert_eq!(tools.swarm.max_cpu_seconds, Some(3));
-    assert_eq!(tools.swarm.max_memory_bytes, Some(123456));
-    assert_eq!(tools.swarm.max_concurrent_jobs, 1);
-    let serialized = serde_json::to_value(tools).unwrap();
-    assert!(serialized.get("python_lab").is_none());
-    assert!(serialized.get("swarm").is_some());
-}
-
-#[tokio::test]
-async fn cancelling_run_stops_background_python_and_preserves_progress() {
-    let directory = tempfile::tempdir().unwrap();
-    let workspace = Arc::new(directory.path().to_path_buf());
-    let tool = super::swarm_test_support::tool(
-        workspace.clone(),
-        Arc::new(Sandbox::new(Some(workspace.as_ref().clone()))),
-        SwarmConfig::default(),
-        crate::composition::swarm::swarm_board(),
-    );
-    let started = tool
-        .execute(r#"{"op":"run","code":"import time; time.sleep(30)","background":true}"#)
-        .await
-        .unwrap();
-    assert!(!started.is_error, "{}", started.content);
-    let job: serde_json::Value = serde_json::from_str(&started.content).unwrap();
-    let cancelled = tool.execute(r#"{"op":"cancel_run"}"#).await.unwrap();
-    assert!(!cancelled.is_error, "{}", cancelled.content);
-    assert!(cancelled.content.contains("cancelled"));
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
-    loop {
-        let result = tool
-            .execute(&json!({"op":"status","job_id":job["job_id"]}).to_string())
-            .await
-            .unwrap();
-        let status: serde_json::Value = serde_json::from_str(&result.content).unwrap();
-        if status["status"] == "cancelled" {
-            break;
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "background work survived cancellation: {status}"
-        );
-        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-    }
-    let rejected = tool
-        .execute(r#"{"op":"run","code":"print('new work')"}"#)
-        .await
-        .unwrap();
-    assert!(rejected.is_error);
-}
-
 #[tokio::test]
 async fn run_creation_requires_authorized_container_and_bounded_policy() {
     let directory = tempfile::tempdir().unwrap();
     let context = context(&directory);
-    let workspace = Arc::new(directory.path().to_path_buf());
-    let tool = SwarmTool::new(
-        workspace.clone(),
-        Arc::new(Sandbox::new(Some(workspace.as_ref().clone()))),
-        SwarmConfig::default(),
-    )
-    .with_context(Some(context.clone()));
+    let tool = SwarmTool::new().with_context(Some(context.clone()));
     let invalid_deadline = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -310,108 +244,6 @@ async fn expired_budget_retains_coordinator_when_abort_endpoint_is_unavailable()
 }
 
 #[tokio::test]
-async fn failed_run_cancels_coordinator_detached_jobs() {
-    let directory = tempfile::tempdir().unwrap();
-    let workspace = Arc::new(directory.path().to_path_buf());
-    let tool = super::swarm_test_support::tool(
-        workspace.clone(),
-        Arc::new(Sandbox::new(Some(workspace.as_ref().clone()))),
-        SwarmConfig::default(),
-        crate::composition::swarm::swarm_board(),
-    );
-    use crate::application::swarm::ports::CoordinationPort;
-    let socket = directory.path().join("accept.sock");
-    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
-    let coordinator = SwarmContext {
-        board: crate::composition::swarm::swarm_board(),
-        lifecycle: std::sync::Arc::new(crate::application::swarm::LifecycleService),
-        checkout: directory.path().to_path_buf(),
-        member: "coordinator".into(),
-    };
-    crate::infrastructure::tools::call_work::off_the_runtime(|| {
-        coordinator.register_endpoint(socket.to_str().unwrap())
-    })
-    .unwrap();
-    let start = tool.execute(r#"{"code":"import time, pathlib; pathlib.Path('writer-ready').touch()\nwhile not pathlib.Path('release-writer').exists(): time.sleep(0.01)\nopen('late-write','w').write('unsafe')","background":true}"#).await.unwrap();
-    assert!(!start.is_error, "{}", start.content);
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        while !directory.path().join("writer-ready").exists() {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .unwrap();
-    let stop = tool
-        .execute(r#"{"op":"stop","status":"failed","reason":"review regression"}"#)
-        .await
-        .unwrap();
-    assert!(!stop.is_error, "{}", stop.content);
-    assert!(
-        tokio::time::timeout(std::time::Duration::from_millis(100), listener.accept())
-            .await
-            .is_err(),
-        "local suspension must not signal the coordinator through its socket"
-    );
-    std::fs::write(directory.path().join("release-writer"), "go").unwrap();
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    assert!(
-        !directory.path().join("late-write").exists(),
-        "background writer survived terminal settlement"
-    );
-}
-
-#[tokio::test]
-async fn terminal_cancellation_closes_queued_and_future_background_launches() {
-    let directory = tempfile::tempdir().unwrap();
-    let workspace = Arc::new(directory.path().to_path_buf());
-    let tool = super::swarm_test_support::tool(
-        workspace.clone(),
-        Arc::new(Sandbox::new(Some(workspace.as_ref().clone()))),
-        SwarmConfig::default(),
-        crate::composition::swarm::swarm_board(),
-    );
-    let context = SwarmContext {
-        board: crate::composition::swarm::swarm_board(),
-        checkout: directory.path().to_path_buf(),
-        member: "coordinator".into(),
-        lifecycle: Arc::new(crate::application::swarm::LifecycleService),
-    };
-    let started = tool
-        .execute(r#"{"background":true,"code":"open('must-not-start','w').write('unsafe')"}"#)
-        .await
-        .unwrap();
-    assert!(!started.is_error, "{}", started.content);
-    // Current-thread runtime: the queued background future has not been polled.
-    super::swarm::cancel_context_jobs(&context);
-    let later = tool
-        .execute(r#"{"background":true,"code":"print('new work')"}"#)
-        .await
-        .unwrap();
-    assert!(
-        later.is_error,
-        "closed registry admitted a new job: {}",
-        later.content
-    );
-    let job: serde_json::Value = serde_json::from_str(&started.content).unwrap();
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        loop {
-            let result = tool
-                .execute(&json!({"op":"status","job_id":job["job_id"]}).to_string())
-                .await
-                .unwrap();
-            let state: serde_json::Value = serde_json::from_str(&result.content).unwrap();
-            if state["status"] == "cancelled" {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .unwrap();
-    assert!(!directory.path().join("must-not-start").exists());
-}
-
-#[tokio::test]
 async fn terminal_notifications_do_not_queue_impossible_inbox_work() {
     let directory = tempfile::tempdir().unwrap();
     let context = context(&directory);
@@ -443,6 +275,40 @@ async fn terminal_notifications_do_not_queue_impossible_inbox_work() {
     assert_eq!(
         (summary["status"].as_str(), summary["outcome"].as_str()),
         (Some("paused"), Some("blocked"))
+    );
+}
+
+/// A failed run's settlement suspends the coordinator's own inference
+/// locally: it never signals the coordinator through its socket.
+#[tokio::test]
+async fn a_failed_run_never_signals_its_coordinator_through_its_socket() {
+    use crate::application::swarm::ports::CoordinationPort;
+    let directory = tempfile::tempdir().unwrap();
+    let tool = super::swarm_test_support::tool(
+        Arc::new(directory.path().to_path_buf()),
+        crate::composition::swarm::swarm_board(),
+    );
+    let socket = directory.path().join("accept.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let coordinator = SwarmContext {
+        board: crate::composition::swarm::swarm_board(),
+        lifecycle: std::sync::Arc::new(crate::application::swarm::LifecycleService),
+        checkout: directory.path().to_path_buf(),
+        member: "coordinator".into(),
+    };
+    coordinator
+        .register_endpoint(socket.to_str().unwrap())
+        .unwrap();
+    let stop = tool
+        .execute(r#"{"op":"stop","status":"failed","reason":"review regression"}"#)
+        .await
+        .unwrap();
+    assert!(!stop.is_error, "{}", stop.content);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), listener.accept())
+            .await
+            .is_err(),
+        "local suspension must not signal the coordinator through its socket"
     );
 }
 
@@ -495,120 +361,6 @@ async fn live_wake_hint_is_coalesced_and_carries_an_actionable_generation() {
             .await
             .is_err()
     );
-}
-
-#[tokio::test]
-async fn watcher_cancels_foreground_after_cancelled_outcome() {
-    foreground_terminal_watcher("cancelled").await;
-}
-
-#[tokio::test]
-async fn watcher_cancels_foreground_after_successful_outcome() {
-    foreground_terminal_watcher("succeeded").await;
-}
-
-async fn foreground_terminal_watcher(outcome: &str) {
-    // The production watcher is process-scoped. Give each outcome its own
-    // process, using the same test entry point and real lifecycle adapter.
-    if std::env::var("SWARM_WATCHER_TEST").as_deref() != Ok(outcome) {
-        let name = std::thread::current().name().unwrap().to_owned();
-        let output = tokio::process::Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", &name, "--nocapture"])
-            .env("SWARM_WATCHER_TEST", outcome)
-            .output()
-            .await
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        return;
-    }
-    use crate::application::swarm::ports::CoordinationPort;
-    let directory = tempfile::tempdir().unwrap();
-    let context = context(&directory);
-    create(&context, 1);
-    let workspace = Arc::new(directory.path().to_path_buf());
-    let tool = SwarmTool::new(
-        workspace.clone(),
-        Arc::new(Sandbox::new(Some(workspace.as_ref().clone()))),
-        SwarmConfig::default(),
-    )
-    .with_context(Some(context.clone()));
-    super::swarm_lifecycle::supervise(
-        context.clone(),
-        crate::infrastructure::tools::call_work::off_the_runtime(|| context.snapshot()).unwrap(),
-        super::swarm_bridge::Participation::none(),
-    );
-    // #2281: the foreground interpreter runs while the board call its
-    // program made ends the run, now made beside it; the watcher settles it.
-    let code = "import pathlib, time; pathlib.Path('interpreter-ready').touch(); time.sleep(2); open('late-write','w').write('escaped')";
-    let foreground = tool.execute(&json!({"code":code, "timeout_seconds":10}).to_string());
-    tokio::pin!(foreground);
-    // The terminal call waits for the interpreter's ready signal; a run that
-    // returns before signalling never reached the interpreter, so it fails
-    // here at once rather than as a later timeout.
-    let ready_by = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while !workspace.join("interpreter-ready").exists() {
-        tokio::select! {
-            early = &mut foreground => panic!(
-                "the foreground run returned before its interpreter signalled ready: {:?}",
-                early.map(|result| result.content)
-            ),
-            () = tokio::time::sleep(std::time::Duration::from_millis(10)) => {}
-        }
-        assert!(
-            std::time::Instant::now() < ready_by,
-            "the foreground interpreter never signalled ready"
-        );
-    }
-    let terminal = async {
-        let (ctx, outcome) = (context.clone(), outcome.to_owned());
-        // Off the async workers, as every board call is (#2278).
-        crate::infrastructure::tools::call_work::spawn_blocking_in_call(move || {
-            match outcome.as_str() {
-                "succeeded" => {
-                    ctx.call("evidence", json!(["tests", "proof", "R1", "command", true]))
-                        .unwrap();
-                    ctx.call("complete", json!(["R1"])).unwrap()
-                }
-                _ => ctx
-                    .call("stop", json!(["cancelled", "operator request"]))
-                    .unwrap(),
-            }
-        })
-        .await
-        .unwrap()
-    };
-    let (result, _) = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        tokio::join!(&mut foreground, terminal)
-    })
-    .await
-    .expect("the foreground interpreter returns once the run ends");
-    let result = result.unwrap();
-    assert!(
-        !workspace.join("late-write").exists(),
-        "foreground interpreter survived terminal settlement"
-    );
-    // Completion ends the run as a resumable pause holding `succeeded`;
-    // cancellation stays terminal (#1729).
-    let summary =
-        crate::infrastructure::tools::call_work::off_the_runtime(|| context.summary()).unwrap();
-    let expected = if outcome == "succeeded" {
-        ("paused", Some("succeeded"))
-    } else {
-        (outcome, None)
-    };
-    assert_eq!(
-        (
-            summary["status"].as_str().unwrap(),
-            summary["outcome"].as_str()
-        ),
-        expected
-    );
-    assert!(result.content.contains("cancelled"), "{}", result.content);
 }
 
 #[test]
@@ -665,42 +417,6 @@ async fn summary_cursor_suppresses_unchanged_tool_payload_and_rejects_bad_cursor
                 .is_err()
         );
     }
-}
-
-#[tokio::test]
-async fn resumed_swarm_can_start_python_jobs_after_suspension() {
-    let directory = tempfile::tempdir().unwrap();
-    let workspace = Arc::new(directory.path().to_path_buf());
-    let tool = super::swarm_test_support::tool(
-        workspace.clone(),
-        Arc::new(Sandbox::new(Some(workspace.as_ref().clone()))),
-        SwarmConfig::default(),
-        crate::composition::swarm::swarm_board(),
-    );
-    let context = SwarmContext {
-        board: crate::composition::swarm::swarm_board(),
-        checkout: directory.path().to_path_buf(),
-        member: "coordinator".into(),
-        lifecycle: Arc::new(crate::application::swarm::LifecycleService),
-    };
-    crate::infrastructure::tools::call_work::off_the_runtime(|| {
-        context.pause("inspect retained state")
-    })
-    .unwrap();
-    super::swarm_lifecycle::settle(context.clone())
-        .await
-        .unwrap();
-    crate::infrastructure::tools::call_work::off_the_runtime(|| context.resume_external()).unwrap();
-    let result = tool
-        .execute(r#"{"code":"print('resumed')"}"#)
-        .await
-        .unwrap();
-    assert!(
-        !result.is_error,
-        "resume permanently closed the execution registry: {}",
-        result.content
-    );
-    assert!(result.content.contains("resumed"));
 }
 
 #[tokio::test]

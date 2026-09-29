@@ -51,16 +51,7 @@ async fn native_supervisor_validates_budget_and_event_requests_without_mutation(
 }
 
 fn public_tool(context: SwarmContext) -> super::super::swarm::SwarmTool {
-    use std::sync::Arc;
-    let checkout = context.checkout.clone();
-    super::super::swarm::SwarmTool::new(
-        Arc::new(checkout.clone()),
-        Arc::new(crate::infrastructure::security::sandbox::Sandbox::new(
-            Some(checkout),
-        )),
-        Default::default(),
-    )
-    .with_context(Some(context))
+    super::super::swarm::SwarmTool::new().with_context(Some(context))
 }
 
 #[tokio::test]

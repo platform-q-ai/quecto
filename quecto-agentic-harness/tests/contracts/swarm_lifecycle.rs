@@ -28,12 +28,8 @@ pub(super) fn snapshot() -> Snapshot {
 }
 pub(super) struct Effects(pub Mutex<Vec<&'static str>>);
 impl ProcessControl for Effects {
-    fn suspend_local_executions(&self, _: &Snapshot) {
+    fn suspend_local_inference(&self, _: &Snapshot) {
         self.0.lock().unwrap().push("suspend");
-    }
-    fn suspend_local_inference(&self, _: &Snapshot) {}
-    fn cancel_local_executions(&self) {
-        self.0.lock().unwrap().push("cancel");
     }
     fn abort<'a>(&'a self, _: &'a Member) -> PortFuture<'a, bool> {
         Box::pin(async {
@@ -119,7 +115,7 @@ async fn injected_application_service_runs_through_its_public_contract() {
         .unwrap();
     assert_eq!(
         *effects.0.lock().unwrap(),
-        ["suspend", "cancel", "abort", "terminate"]
+        ["suspend", "abort", "terminate"]
     );
     let board = Board(Mutex::new(vec![]));
     service.reconcile(&board, &Observation).unwrap();

@@ -9,14 +9,8 @@ struct Processes {
     fail_terminate: bool,
 }
 impl ProcessControl for Processes {
-    fn suspend_local_executions(&self, _: &Snapshot) {
-        self.events.lock().unwrap().push("suspend-jobs".into());
-    }
     fn suspend_local_inference(&self, _: &Snapshot) {
         self.events.lock().unwrap().push("suspend-local".into());
-    }
-    fn cancel_local_executions(&self) {
-        self.events.lock().unwrap().push("cancel-jobs".into());
     }
     fn abort<'a>(&'a self, member: &'a Member) -> PortFuture<'a, bool> {
         Box::pin(async move {
@@ -65,7 +59,7 @@ fn snapshot(status: RunStatus) -> Snapshot {
     }
 }
 #[tokio::test]
-async fn terminal_settlement_cancels_jobs_before_any_abort_and_preserves_reporting_coordinator() {
+async fn terminal_settlement_aborts_members_and_preserves_reporting_coordinator() {
     for status in [
         RunStatus::Succeeded,
         RunStatus::Cancelled,
@@ -81,9 +75,9 @@ async fn terminal_settlement_cancels_jobs_before_any_abort_and_preserves_reporti
         settle(&snapshot(status), "parent", &processes, &AllAlive)
             .await
             .unwrap();
-        let mut expected = vec!["cancel-jobs", "abort:worker", "terminate:worker"];
+        let mut expected = vec!["abort:worker", "terminate:worker"];
         if status.abort_coordinator() {
-            expected.insert(1, "suspend-local");
+            expected.insert(0, "suspend-local");
         }
         assert_eq!(*processes.events.lock().unwrap(), expected);
     }
@@ -105,12 +99,7 @@ async fn failed_worker_abort_still_terminates_worker_and_suspends_local_coordina
     .unwrap();
     assert_eq!(
         *processes.events.lock().unwrap(),
-        [
-            "cancel-jobs",
-            "suspend-local",
-            "abort:worker",
-            "terminate:worker"
-        ]
+        ["suspend-local", "abort:worker", "terminate:worker"]
     );
 }
 #[tokio::test]
@@ -202,10 +191,7 @@ async fn suspension_cancels_only_local_work_without_terminating_members() {
     )
     .await
     .unwrap();
-    assert_eq!(
-        *processes.events.lock().unwrap(),
-        ["suspend-jobs", "suspend-local"]
-    );
+    assert_eq!(*processes.events.lock().unwrap(), ["suspend-local"]);
 }
 
 #[tokio::test]
@@ -232,7 +218,7 @@ async fn failed_or_expired_run_retains_coordinator_when_abort_delivery_fails() {
 }
 
 /// #1729: a run its coordinator ended is a pause that keeps the coordinator
-/// reporting (its finished interpreter is suspended, its turn is not) while
+/// reporting (its turn is not suspended) while
 /// every other member suspends intact; nobody is aborted or terminated.
 #[tokio::test]
 async fn an_ended_run_settles_as_a_pause_that_keeps_the_coordinator_reporting() {
@@ -251,8 +237,8 @@ async fn an_ended_run_settles_as_a_pause_that_keeps_the_coordinator_reporting() 
         .unwrap();
     assert_eq!(
         *coordinator.events.lock().unwrap(),
-        ["suspend-jobs"],
-        "the registry stays open for the resume; the turn keeps reporting"
+        Vec::<String>::new(),
+        "the turn keeps reporting"
     );
     let worker = Processes {
         events: Mutex::new(vec![]),
@@ -260,10 +246,7 @@ async fn an_ended_run_settles_as_a_pause_that_keeps_the_coordinator_reporting() 
         fail_terminate: false,
     };
     settle(&ended, "worker", &worker, &AllAlive).await.unwrap();
-    assert_eq!(
-        *worker.events.lock().unwrap(),
-        ["suspend-jobs", "suspend-local"]
-    );
+    assert_eq!(*worker.events.lock().unwrap(), ["suspend-local"]);
     // A plain pause suspends the coordinator too, and admits nobody.
     let plain = snapshot(RunStatus::Paused);
     assert!(!plain.ended() && !plain.admits_inference("parent"));
@@ -275,10 +258,7 @@ async fn an_ended_run_settles_as_a_pause_that_keeps_the_coordinator_reporting() 
     settle(&plain, "parent", &processes, &AllAlive)
         .await
         .unwrap();
-    assert_eq!(
-        *processes.events.lock().unwrap(),
-        ["suspend-jobs", "suspend-local"]
-    );
+    assert_eq!(*processes.events.lock().unwrap(), ["suspend-local"]);
     // Only proposable outcomes end a run.
     let mut odd = snapshot(RunStatus::Paused);
     odd.outcome = Some(RunStatus::Cancelled);
@@ -312,7 +292,6 @@ async fn an_unreachable_member_is_reported_after_the_others_were_asked() {
     assert_eq!(
         *processes.events.lock().unwrap(),
         [
-            "cancel-jobs",
             "abort:worker",
             "terminate:worker",
             "abort:second",
@@ -446,7 +425,7 @@ async fn a_member_settling_a_closed_run_ends_nobody_and_leaves_ending_to_the_coo
             .unwrap();
         assert_eq!(
             *processes.events.lock().unwrap(),
-            ["cancel-jobs", "suspend-local"],
+            ["suspend-local"],
             "{status:?}"
         );
     }
@@ -465,7 +444,7 @@ async fn members_end_the_run_themselves_once_the_coordinator_is_gone() {
     .unwrap();
     assert_eq!(
         *processes.events.lock().unwrap(),
-        ["cancel-jobs", "abort:worker", "terminate:worker"]
+        ["abort:worker", "terminate:worker"]
     );
 
     let mut dead = snapshot(RunStatus::Failed);
@@ -476,7 +455,7 @@ async fn members_end_the_run_themselves_once_the_coordinator_is_gone() {
         .unwrap();
     assert_eq!(
         *processes.events.lock().unwrap(),
-        ["cancel-jobs", "abort:worker", "terminate:worker"]
+        ["abort:worker", "terminate:worker"]
     );
 }
 
@@ -609,9 +588,7 @@ fn a_member_waits_for_its_launcher_until_the_grace_then_ends_itself() {
 /// Records when each member's end starts and finishes; `a` is slow to end.
 struct SlowFirst(Mutex<Vec<String>>);
 impl ProcessControl for SlowFirst {
-    fn suspend_local_executions(&self, _: &Snapshot) {}
     fn suspend_local_inference(&self, _: &Snapshot) {}
-    fn cancel_local_executions(&self) {}
     fn abort<'a>(&'a self, member: &'a Member) -> PortFuture<'a, bool> {
         Box::pin(async move {
             self.0.lock().unwrap().push(format!("abort:{}", member.id));

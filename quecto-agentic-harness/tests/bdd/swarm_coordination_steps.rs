@@ -179,15 +179,7 @@ fn durable_rejected_wake(world: &mut QuectoWorld) {
         lifecycle: std::sync::Arc::new(quecto::application::ports::SwarmTestLifecycle),
     };
     use quecto::application::tools::ports::Tool;
-    let workspace = std::sync::Arc::new(context.checkout.clone());
-    let tool = quecto::infrastructure::tools::swarm::SwarmTool::new(
-        workspace.clone(),
-        std::sync::Arc::new(quecto::infrastructure::security::sandbox::Sandbox::new(
-            Some(workspace.as_ref().clone()),
-        )),
-        quecto::infrastructure::tools::swarm::SwarmConfig::default(),
-    )
-    .with_context(Some(context));
+    let tool = quecto::infrastructure::tools::swarm::SwarmTool::new().with_context(Some(context));
     let result = super::runtime()
         .block_on(tool.execute(r#"{"op":"inbox"}"#))
         .unwrap();
@@ -239,83 +231,6 @@ fn contract_history(world: &mut QuectoWorld) {
     assert_eq!(amended["after"]["criteria"], criteria);
     assert_ne!(amended["before"]["criteria"], amended["after"]["criteria"]);
     assert_eq!(amended["reason"], "approved change");
-}
-
-#[given("swarm Python is permitted to create subprocesses")]
-fn permit_subprocesses(world: &mut QuectoWorld) {
-    let workspace = super::ensure_workspace(world);
-    let tool = quecto::infrastructure::tools::swarm_test_support::tool(
-        std::sync::Arc::new(workspace.clone()),
-        std::sync::Arc::new(quecto::infrastructure::security::sandbox::Sandbox::new(
-            Some(workspace),
-        )),
-        quecto::infrastructure::tools::swarm::SwarmConfig {
-            max_processes: None,
-            ..Default::default()
-        },
-        quecto::composition::swarm::swarm_board(),
-    );
-    world.swarm_tool = Some(crate::DebugSwarm(std::sync::Arc::new(tool)));
-}
-
-#[when(expr = "a {string} swarm interpreter returns before its ordinary child")]
-fn child_outlives_interpreter(world: &mut QuectoWorld, mode: String) {
-    assert!(matches!(mode.as_str(), "foreground" | "background"));
-    // The pid file is published atomically (write to a temp name, then
-    // rename): the interpreter polls for the file's existence and returns
-    // as soon as it appears, so a non-atomic `write_text` let the step
-    // read an empty file under load (CI shard 12 on #1958).
-    let child = "import pathlib,time,os; pathlib.Path('child-ready.tmp').write_text(str(os.getpid())); os.rename('child-ready.tmp','child-ready'); time.sleep(10)";
-    let code = format!(
-        "import pathlib,subprocess,sys,time\nsubprocess.Popen([sys.executable,'-c',{}],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\nwhile not pathlib.Path('child-ready').exists(): time.sleep(0.01)",
-        json!(child)
-    );
-    run(world, json!({"code":code,"background":mode=="background"}));
-    assert!(!result(world).is_error, "{}", result(world).content);
-    if mode == "background" {
-        let id = result_json(world)["job_id"].clone();
-        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        loop {
-            run(world, json!({"op":"status","job_id":id}));
-            if result_json(world)["status"] == "completed" {
-                break;
-            }
-            assert!(
-                std::time::Instant::now() < until,
-                "invocation did not complete"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-    }
-    assert_eq!(result_json(world)["status"], "completed");
-}
-
-#[then("the completed swarm invocation has stopped its child")]
-fn invocation_child_stopped(world: &mut QuectoWorld) {
-    let workspace = super::ensure_workspace(world);
-    let published = std::fs::read_to_string(workspace.join("child-ready")).unwrap();
-    let pid: u32 = published
-        .trim()
-        .parse()
-        .unwrap_or_else(|e| panic!("child-ready holds {published:?}: {e}"));
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-    loop {
-        let running = std::fs::read_to_string(format!("/proc/{pid}/stat"))
-            .ok()
-            .and_then(|s| {
-                s.rsplit_once(')')
-                    .map(|(_, tail)| !tail.trim_start().starts_with('Z'))
-            })
-            .unwrap_or(false);
-        if !running {
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "completed interpreter left its child running"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
 }
 
 #[given("an idle swarm peer with an unavailable endpoint")]

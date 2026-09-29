@@ -13,10 +13,6 @@ pub(super) const VALID_OPS: &[&str] = &[
     "events",
     "usage",
     "usage_budget",
-    "run",
-    "status",
-    "output",
-    "cancel",
     // The structured board ops (#2279), `swarm_board_ops::BOARD_OPS`.
     "task",
     "tasks",
@@ -49,13 +45,7 @@ pub(super) const VALID_OPS: &[&str] = &[
 /// its board-op alias `usage_report`, which the running gate refuses.
 const USAGE: &str = "usage (op=usage; the board op usage_report needs a running run)";
 
-/// Why `op=run` is refused while the run is in `status` (anything but
-/// running; `None` when the status could not be read).
-pub(super) fn run_refused(status: Option<&str>) -> String {
-    op_refused("run", status)
-}
-
-/// Why `op` (`run`, or a structured board op, #2279, which keeps
+/// Why `op` (a structured board op, #2279, which keeps the removed
 /// `op=run`'s running gate by owner decision) is refused while the run is
 /// in `status` (anything but running; `None` when the status could not be
 /// read).
@@ -82,11 +72,6 @@ pub(crate) fn op_refused(op: &str, status: Option<&str>) -> String {
     }
 }
 
-/// Why `op=run` is refused once the running run's deadline has passed.
-pub(super) fn deadline_passed() -> String {
-    op_deadline_passed("run")
-}
-
 /// Why `op` is refused once the running run's deadline has passed.
 pub(crate) fn op_deadline_passed(op: &str) -> String {
     format!(
@@ -96,7 +81,18 @@ pub(crate) fn op_deadline_passed(op: &str) -> String {
     )
 }
 
-/// The refusal for an op the tool does not have.
+/// The Python workbench ops #2282 removed: unknown ops now, counted apart in
+/// the refusal's telemetry.
+pub(super) const REMOVED_OPS: &[&str] = &["run", "status", "output", "cancel"];
+
+/// The refusal for a call that names no op (#2282: a call without one no
+/// longer runs Python).
+pub(super) fn op_required() -> String {
+    format!("op is required; valid ops: {}.", VALID_OPS.join(", "))
+}
+
+/// The refusal for an op the tool does not have, the removed Python
+/// workbench ops (`run`, `status`, `output`, `cancel`, #2282) included.
 pub(super) fn unknown_op(op: &str) -> String {
     format!(
         "unknown op {op}; valid ops: {}. To end a run, the coordinator calls op=stop \

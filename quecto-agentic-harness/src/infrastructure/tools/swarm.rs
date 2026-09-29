@@ -1,101 +1,37 @@
-use super::swarm_output::{job_id, ok_json, tool_err};
+use super::swarm_output::{ok_json, tool_err};
 use std::future::Future;
-use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
 
 use serde_json::json;
 
 #[path = "swarm_guidance.rs"]
 pub(super) mod swarm_guidance;
-#[path = "swarm_job_output.rs"]
-mod swarm_job_output;
-#[path = "swarm_process.rs"]
-mod swarm_process;
-#[path = "swarm_result.rs"]
-mod swarm_result;
-use swarm_process::{interpreter_version, kill_pid, kill_pid_tree_best_effort, run_child};
-use swarm_result::{ResultContext, artifacts_diverged, build_result, file_len};
 
 use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
 use crate::domain::tool::{ToolDefinition, ToolResult};
-use crate::infrastructure::security::sandbox::Sandbox;
 
-pub use super::swarm_config::{SwarmConfig, SwarmToolConfig};
-
-/// Background jobs and in-flight foreground executions share cancellation.
-type JobRegistry = Arc<Mutex<Jobs>>;
-
-/// Protect artifacts from creation through result publication, including the
-/// interval before an execution joins the cancellation registry.
-type ActiveExecutions = Arc<Mutex<std::collections::HashSet<String>>>;
-
-/// Removes its execution id on drop, so an early return or an error cannot
-/// leave an id marked active forever.
-struct ActiveGuard(ActiveExecutions, String);
-
-impl Drop for ActiveGuard {
-    fn drop(&mut self) {
-        swarm_registry::recovered(&self.0).remove(&self.1);
-    }
-}
-
+/// The container-only coordination tool: the harness's own run ops
+/// (`create`, `summary`, `cancel_run`, …) and the structured board ops
+/// (#2279). It spawns and signals nothing: the board runs in-process
+/// (ADR-0030) and members use `bash` for computation (#2282).
 pub struct SwarmTool {
     context: Option<super::swarm_bridge::SwarmContext>,
     /// Shared with the spawn and workflow tools (#1715); `create` flips it.
     participation: super::swarm_bridge::Participation,
     /// The composition's workflow engine (#1715); `create` refuses while engaged.
     workflow_engine: super::swarm_bridge::WorkflowEngineSlot,
-    workspace: Arc<PathBuf>,
-    sandbox: Arc<Sandbox>,
-    config: SwarmConfig,
-    session_key: Mutex<String>,
-    jobs: JobRegistry,
-    active: ActiveExecutions,
-    artifact_owner: String,
-}
-
-#[derive(Debug)]
-pub(crate) struct JobState {
-    pub(crate) admitted_generation: u64,
-    pub(crate) execution_id: String,
-    pub(crate) background: bool,
-    pub(crate) status: String,
-    pub(crate) exit_code: Option<i32>,
-    pub(crate) pid: Option<u32>,
-    pub(crate) started_ms: u128,
-    pub(crate) completed_ms: Option<u128>,
-    pub(crate) stdout_path: PathBuf,
-    pub(crate) stderr_path: PathBuf,
-    pub(crate) max_output_bytes: usize,
-    pub(crate) result: Option<serde_json::Value>,
-    pub(crate) cancel_requested: bool,
-    pub(crate) session_id: String,
-    pub(crate) invocation_type: String,
-    pub(crate) timeout_seconds: u64,
-    pub(crate) resource_limits: serde_json::Value,
-    pub(crate) inherit_environment: bool,
 }
 
 impl SwarmTool {
-    pub fn new(workspace: Arc<PathBuf>, sandbox: Arc<Sandbox>, config: SwarmConfig) -> Self {
+    pub fn new() -> Self {
         Self {
             context: None,
             participation: super::swarm_bridge::Participation::none(),
             workflow_engine: Default::default(),
-            workspace,
-            sandbox,
-            config,
-            session_key: Mutex::new(String::new()),
-            jobs: Arc::new(Mutex::new(Jobs::default())),
-            active: Arc::new(Mutex::new(std::collections::HashSet::new())),
-            artifact_owner: uuid::Uuid::new_v4().simple().to_string(),
         }
     }
-}
 
-impl SwarmTool {
     pub fn with_participation(mut self, participation: super::swarm_bridge::Participation) -> Self {
         self.participation = participation;
         self
@@ -107,35 +43,14 @@ impl SwarmTool {
     }
 
     pub fn with_context(mut self, context: Option<super::swarm_bridge::SwarmContext>) -> Self {
-        if let Some(ctx) = &context {
-            register_context_jobs(ctx, &self.jobs);
-        }
         self.context = context;
         self
     }
 }
 
-impl Drop for SwarmTool {
-    fn drop(&mut self) {
-        {
-            let jobs = swarm_registry::recovered(&self.jobs);
-            for job in jobs.values() {
-                {
-                    let mut j = swarm_registry::recovered(job);
-                    // Terminal jobs have already been reaped. Signalling them
-                    // would both stall teardown (each kill forks pgrep) and
-                    // risk hitting a recycled pid.
-                    if is_terminal(&j.status) {
-                        continue;
-                    }
-                    j.cancel_requested = true;
-                    if let Some(pid) = j.pid {
-                        kill_pid(pid);
-                        kill_pid_tree_best_effort(pid);
-                    }
-                }
-            }
-        }
+impl Default for SwarmTool {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -146,9 +61,6 @@ impl Tool for SwarmTool {
             description: include_str!("swarm_helpers/tool_description.txt").into(),
             parameters_schema: include_str!("swarm_helpers/tool_schema.json").into(),
         }
-    }
-    fn set_session_key(&self, session_key: String) {
-        *swarm_registry::recovered(&self.session_key) = session_key;
     }
     fn execute(
         &self,
@@ -164,13 +76,6 @@ impl Tool for SwarmTool {
             .as_ref()
             .and_then(|context| super::swarm_board_ops::requested(arguments, context.wire()));
         let parsed: Result<serde_json::Value, _> = serde_json::from_str(arguments);
-        let workspace = self.workspace.clone();
-        let sandbox = self.sandbox.clone();
-        let cfg = self.config.clone();
-        let jobs = self.jobs.clone();
-        let active = self.active.clone();
-        let artifact_owner = self.artifact_owner.clone();
-        let session_key = swarm_registry::recovered(&self.session_key).clone();
         Box::pin(async move {
             let Some(context) = context else {
                 return tool_err("swarm is container-only: use spawn with a registered isolated container, then create a bounded run inside it".into());
@@ -182,9 +87,10 @@ impl Tool for SwarmTool {
                 Ok(v) => v,
                 Err(e) => return tool_err(format!("invalid JSON arguments: {e}")),
             };
-            match v.get("op").and_then(|x| x.as_str()).unwrap_or("run") {
-                op @ ("create" | "summary" | "reconcile" | "cancel_run" | "pause" | "resume"
-                | "events" | "usage" | "usage_budget") => {
+            match v.get("op").and_then(|x| x.as_str()) {
+                // The harness's own ops; every other valid op is a structured board
+                // op, answered above.
+                Some(op) if super::swarm_board_ops::HARNESS_OPS.contains(&op) => {
                     match super::swarm_control::control_with_workflow(
                         context,
                         op,
@@ -194,533 +100,35 @@ impl Tool for SwarmTool {
                     )
                     .await
                     {
-                        Ok(value) => {
-                            if value["status"] == "cancelled" {
-                                cancel_jobs(&jobs);
-                            }
-                            ok_json(value, false)
-                        }
+                        Ok(value) => ok_json(value, false),
                         Err(error) => tool_err(error.to_string()),
                     }
                 }
-                "run" => {
-                    run_op(
-                        v,
-                        RunEnv {
-                            context,
-                            workspace,
-                            sandbox,
-                            cfg,
-                            jobs,
-                            active,
-                            session_key,
-                            artifact_owner,
-                        },
-                    )
-                    .await
-                }
-                "status" => status_op(&v, workspace, jobs).await,
-                "output" => swarm_job_output::output_op(&v, workspace, jobs).await,
-                "cancel" => cancel_op(&v, jobs).await,
-                op => ok_json(
-                    json!({"status":"error","message":swarm_guidance::unknown_op(op)}),
-                    true,
-                ),
+                refused => refuse_op(refused),
             }
         })
     }
 }
 
-/// Everything a run needs from the tool instance.
-struct RunEnv {
-    context: super::swarm_bridge::SwarmContext,
-    workspace: Arc<PathBuf>,
-    sandbox: Arc<Sandbox>,
-    cfg: SwarmConfig,
-    jobs: JobRegistry,
-    active: ActiveExecutions,
-    session_key: String,
-    artifact_owner: String,
-}
-
-async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainError> {
-    let RunEnv {
-        context,
-        workspace,
-        sandbox,
-        cfg,
-        jobs,
-        active,
-        session_key,
-        artifact_owner,
-    } = env;
-    let summary = match super::swarm_control::execution_state(context.clone()).await {
-        Ok(summary) => summary,
-        Err(error) => return tool_err(error.to_string()),
+/// The refusal of a call that names no valid op: one `tracing` record on
+/// the board's telemetry target carrying the refusal's kind and whether the
+/// op is a removed Python workbench op (#2282), never the member's text;
+/// then the guidance the member reads.
+fn refuse_op(op: Option<&str>) -> Result<ToolResult, DomainError> {
+    let (refusal, message) = match op {
+        Some(op) => ("unknown_op", swarm_guidance::unknown_op(op)),
+        None => ("op_required", swarm_guidance::op_required()),
     };
-    if summary["status"].as_str() != Some("running") {
-        return tool_err(swarm_guidance::run_refused(summary["status"].as_str()));
-    }
-    let mut spec = match parse_run(&v, &workspace, &sandbox, &cfg) {
-        Ok(s) => s,
-        Err(e) => return tool_err(e.to_string()),
-    };
-    let remaining = summary["deadline"].as_f64().unwrap_or(0.0) - now_ms() as f64 / 1000.0;
-    if remaining <= 0.0 {
-        return tool_err(swarm_guidance::deadline_passed());
-    }
-    spec.timeout_secs = spec.timeout_secs.min(remaining.ceil() as u64);
-    spec.bootstrap = Some(context.bootstrap());
-    let exec_id = format!(
-        "py_{artifact_owner}_{}_{:x}_{}",
-        std::process::id(),
-        now_ms(),
-        EXEC_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    let removed_workbench_op = op.is_some_and(|op| swarm_guidance::REMOVED_OPS.contains(&op));
+    tracing::info!(
+        target: super::swarm_board_telemetry::TELEMETRY_TARGET,
+        refusal,
+        removed_workbench_op,
+        "swarm op refused"
     );
-    let start = now_ms();
-    let before = {
-        let ws = workspace.clone();
-        // Recursive stat of the whole workspace: blocking work, not async work.
-        super::call_work::spawn_blocking_in_call(move || snapshot_files(&ws))
-            .await
-            .map_err(|e| DomainError::Other(e.to_string()))?
-    };
-    let artifact_dir = super::swarm_store_location::artifact_root(&workspace).join(&exec_id);
-    tokio::fs::create_dir_all(&artifact_dir)
-        .await
-        .map_err(ioerr)?;
-    swarm_registry::recovered(&active).insert(exec_id.clone());
-    // Held for the rest of the call. A background run also registers a job, so
-    // it stays protected after this guard drops at the end of run_op.
-    let _active_guard = ActiveGuard(active.clone(), exec_id.clone());
-    {
-        let (ws, jobs, active) = (workspace.clone(), jobs.clone(), active.clone());
-        let retained_dirs = cfg.retention.artifact_dirs;
-        // read_dir plus an unbounded number of remove_dir_all calls must not
-        // run on the async worker thread.
-        let _ = super::call_work::spawn_blocking_in_call(move || {
-            prune_artifact_dirs(&ws, &jobs, &active, &artifact_owner, retained_dirs)
-        })
-        .await;
-    }
-    let stdout_path = artifact_dir.join("stdout.txt");
-    let stderr_path = artifact_dir.join("stderr.txt");
-    let admitted_generation = summary["event_cursor"]
-        .as_u64()
-        .ok_or_else(|| DomainError::Tool("swarm execution generation unavailable".into()))?;
-    let state = Arc::new(Mutex::new(JobState {
-        admitted_generation,
-        execution_id: exec_id.clone(),
-        background: spec.background,
-        status: "running".into(),
-        exit_code: None,
-        pid: None,
-        started_ms: start,
-        completed_ms: None,
-        stdout_path: stdout_path.clone(),
-        stderr_path: stderr_path.clone(),
-        max_output_bytes: spec.max_out,
-        result: None,
-        cancel_requested: false,
-        session_id: session_key.clone(),
-        invocation_type: spec.invocation_type.clone(),
-        timeout_seconds: spec.timeout_secs,
-        resource_limits: json!({"memory_bytes":cfg.max_memory_bytes,"cpu_seconds":cfg.max_cpu_seconds,"processes":cfg.max_processes}),
-        inherit_environment: cfg.inherit_environment,
-    }));
-    if spec.background {
-        let job_id = format!("job_{}", exec_id);
-        {
-            let mut registry = swarm_registry::recovered(&jobs);
-            if registry.stopped {
-                return tool_err("swarm execution registry stopped".into());
-            }
-            let running = registry
-                .values()
-                .filter(|j| {
-                    let s = swarm_registry::recovered(j);
-                    s.background && !is_terminal(&s.status)
-                })
-                .count();
-            if running >= cfg.max_concurrent_jobs {
-                return ok_json(
-                    json!({"status":"rejected","message":"swarm concurrent job limit reached","max_concurrent_jobs":cfg.max_concurrent_jobs}),
-                    true,
-                );
-            }
-            evict_finished_jobs(&mut registry, cfg.retention.jobs);
-            registry.insert(job_id.clone(), state.clone());
-        }
-        let spec_bg = spec.clone();
-        let exec_id_bg = exec_id.clone();
-        let session_key_bg = session_key.clone();
-        let cfg_bg = cfg.clone();
-        tokio::spawn(async move {
-            let result = run_child(
-                spec_bg.clone(),
-                &workspace,
-                &stdout_path,
-                &stderr_path,
-                Some(state.clone()),
-            )
-            .await;
-            // The terminal status is computed here but published only once the
-            // result JSON is built. Flipping status first let a caller observe
-            // "completed" while `result` was still null.
-            let (canceled, max_output_bytes) = {
-                let s = swarm_registry::recovered(&state);
-                (s.cancel_requested, s.max_output_bytes)
-            };
-            let (st, exit_code) = match result {
-                Ok((st, code)) => (st, code),
-                Err(e) => (format!("failed: {e}"), None),
-            };
-            let final_status = if canceled {
-                "cancelled".to_string()
-            } else {
-                st
-            };
-            let completed_ms = now_ms();
-            let changed = {
-                let ws = workspace.clone();
-                // The background job outlives its call: not the call's work,
-                // so a panic here is fatal, never contained (#2192).
-                tokio::task::spawn_blocking(move || changed_files(&ws, before))
-                    .await
-                    .unwrap_or_default()
-            };
-            let res = build_result(ResultContext {
-                workspace: &workspace,
-                status: &final_status,
-                exit_code,
-                exec_id: &exec_id_bg,
-                _session_key: &session_key_bg,
-                _invocation_type: &spec_bg.invocation_type,
-                background: true,
-                start,
-                end: completed_ms,
-                timeout: spec_bg.timeout_secs,
-                stdout_path: &stdout_path,
-                stderr_path: &stderr_path,
-                max_out: max_output_bytes,
-                changed,
-                cfg: &cfg_bg,
-            })
-            .await
-            .unwrap_or_else(|e| json!({"status":"failed","message":e.to_string()}));
-            let mut res = res;
-            match super::swarm_control::after_execution(context, &summary).await {
-                Ok(warnings) if !warnings.is_empty() => {
-                    res["notification_warnings"] = json!(warnings)
-                }
-                Err(error) => res["coordination_error"] = json!(error.to_string()),
-                _ => {}
-            }
-            swarm_result::output_last(&mut res);
-            {
-                let mut s = swarm_registry::recovered(&state);
-                s.exit_code = exit_code;
-                s.completed_ms = Some(completed_ms);
-                s.result = Some(res);
-                // Re-read the cancel flag under the publishing lock. Building
-                // the result reads both artifacts, and a cancel arriving during
-                // that window would otherwise be overwritten — the caller would
-                // be told "cancelling" and the job would report "completed".
-                s.status = if s.cancel_requested {
-                    "cancelled".to_string()
-                } else {
-                    final_status
-                };
-            }
-        });
-        return ok_json(
-            json!({"status":"running","job_id":job_id,"execution_id":exec_id}),
-            false,
-        );
-    }
-    let _foreground = ForegroundRegistration::new(&jobs, &exec_id, state.clone())?;
-    let (status, code) = run_child(
-        spec.clone(),
-        &workspace,
-        &stdout_path,
-        &stderr_path,
-        Some(state.clone()),
-    )
-    .await?;
-    let status = if swarm_registry::recovered(&state).cancel_requested {
-        "cancelled".into()
-    } else {
-        status
-    };
-    let end = now_ms();
-    let changed = {
-        let ws = workspace.clone();
-        super::call_work::spawn_blocking_in_call(move || changed_files(&ws, before))
-            .await
-            .map_err(|e| DomainError::Other(e.to_string()))?
-    };
-    let result = build_result(ResultContext {
-        workspace: &workspace,
-        status: &status,
-        exit_code: code,
-        exec_id: &exec_id,
-        _session_key: &session_key,
-        _invocation_type: &spec.invocation_type,
-        background: false,
-        start,
-        end,
-        timeout: spec.timeout_secs,
-        stdout_path: &stdout_path,
-        stderr_path: &stderr_path,
-        max_out: spec.max_out,
-        changed,
-        cfg: &cfg,
-    })
-    .await?;
-    let warnings = super::swarm_control::after_execution(context, &summary).await?;
-    let mut result = result;
-    if !warnings.is_empty() {
-        result["notification_warnings"] = json!(warnings);
-    }
-    swarm_result::output_last(&mut result);
-    let is_err = status != "completed" || code.unwrap_or(0) != 0;
-    ok_json(result, is_err)
+    ok_json(json!({"status":"error","message":message}), true)
 }
 
-#[derive(Clone)]
-pub(crate) struct RunSpec {
-    pub(crate) bootstrap: Option<String>,
-    pub(crate) invocation_type: String,
-    pub(crate) code: Option<String>,
-    pub(crate) script: Option<PathBuf>,
-    pub(crate) args: Vec<String>,
-    pub(crate) stdin: Option<String>,
-    pub(crate) timeout_secs: u64,
-    /// Cap on the preview echoed back inline in the tool result.
-    pub(crate) max_out: usize,
-    /// Cap on what is written to the workspace artifact. Always the configured
-    /// hard maximum rather than the per-call preview cap, so the full output
-    /// stays recoverable after the inline preview is truncated.
-    pub(crate) artifact_max_bytes: usize,
-    pub(crate) background: bool,
-    pub(crate) inherit_environment: bool,
-    pub(crate) max_memory_bytes: Option<u64>,
-    pub(crate) max_cpu_seconds: Option<u64>,
-    pub(crate) max_processes: Option<u32>,
-}
-fn parse_run(
-    v: &serde_json::Value,
-    workspace: &Path,
-    sandbox: &Sandbox,
-    cfg: &SwarmConfig,
-) -> Result<RunSpec, DomainError> {
-    let code = v.get("code").and_then(|x| x.as_str()).map(str::to_string);
-    let path = v.get("path").and_then(|x| x.as_str());
-    if code.is_some() == path.is_some() {
-        return Err(DomainError::Other(
-            "exactly one of 'code' or 'path' is required".into(),
-        ));
-    }
-    let args = match v.get("args") {
-        None => vec![],
-        Some(a) => a
-            .as_array()
-            .ok_or_else(|| DomainError::Other("args must be an array of strings".into()))?
-            .iter()
-            .map(|i| {
-                i.as_str()
-                    .map(str::to_string)
-                    .ok_or_else(|| DomainError::Other("args must be an array of strings".into()))
-            })
-            .collect::<Result<Vec<_>, _>>()?,
-    };
-    let timeout_secs = bounded_u64(
-        v,
-        "timeout_seconds",
-        cfg.default_timeout_seconds,
-        if v.get("background")
-            .and_then(|x| x.as_bool())
-            .unwrap_or(false)
-        {
-            cfg.max_background_seconds
-        } else {
-            cfg.max_foreground_seconds
-        },
-    )
-    .map_err(DomainError::Other)?;
-    let max_out = bounded_u64(
-        v,
-        "max_output_bytes",
-        cfg.default_max_output_bytes as u64,
-        cfg.max_output_bytes as u64,
-    )
-    .map_err(DomainError::Other)? as usize;
-    let script = if let Some(p) = path {
-        // The tool's own artifact tree is off limits as a script source, so a
-        // program cannot stage code inside another execution's directory.
-        if is_reserved_artifact_path(workspace, Path::new(p)) {
-            return Err(DomainError::Security(
-                "the swarm artifact directory is reserved for swarm artifacts".into(),
-            ));
-        }
-        let p = workspace.join(p);
-        Some(
-            sandbox
-                .validate_path(&p.to_string_lossy())
-                .map_err(|e| DomainError::Security(e.to_string()))?,
-        )
-    } else {
-        None
-    };
-    Ok(RunSpec {
-        bootstrap: None,
-        invocation_type: if code.is_some() { "inline" } else { "file" }.into(),
-        code,
-        script,
-        args,
-        stdin: v.get("stdin").and_then(|x| x.as_str()).map(str::to_string),
-        timeout_secs,
-        max_out,
-        // bounded_u64 already clamps max_out to cfg.max_output_bytes, so the
-        // configured maximum is always the larger of the two.
-        artifact_max_bytes: cfg.max_output_bytes,
-        background: v
-            .get("background")
-            .and_then(|x| x.as_bool())
-            .unwrap_or(false),
-        inherit_environment: cfg.inherit_environment,
-        max_memory_bytes: cfg.max_memory_bytes,
-        max_cpu_seconds: cfg.max_cpu_seconds,
-        max_processes: cfg.max_processes,
-    })
-}
-
-async fn status_op(
-    v: &serde_json::Value,
-    workspace: Arc<PathBuf>,
-    jobs: JobRegistry,
-) -> Result<ToolResult, DomainError> {
-    let id = job_id(v)?;
-    let Some(job) = swarm_registry::recovered(&jobs).get(id).cloned() else {
-        return ok_json(json!({"status":"not_found","job_id":id}), true);
-    };
-    let (
-        status,
-        execution_id,
-        session_id,
-        invocation_type,
-        exit_code,
-        started_ms,
-        completed_ms,
-        timeout_seconds,
-        resource_limits,
-        inherit_environment,
-        stdout_path,
-        stderr_path,
-        max_output_bytes,
-        terminal_result,
-    ) = {
-        let s = swarm_registry::recovered(&job);
-        (
-            s.status.clone(),
-            s.execution_id.clone(),
-            s.session_id.clone(),
-            s.invocation_type.clone(),
-            s.exit_code,
-            s.started_ms,
-            s.completed_ms,
-            s.timeout_seconds,
-            s.resource_limits.clone(),
-            s.inherit_environment,
-            s.stdout_path.clone(),
-            s.stderr_path.clone(),
-            s.max_output_bytes,
-            s.result.clone(),
-        )
-    };
-    let mut detail = json!({"status":status,"job_id":id,"execution_id":execution_id,"session_id":session_id,"invocation_type":invocation_type,"interpreter":"python3","interpreter_version":interpreter_version(inherit_environment),"exit_code":exit_code,"start_time_ms":started_ms,"completion_time_ms":completed_ms,"duration_ms":completed_ms.unwrap_or_else(now_ms).saturating_sub(started_ms),"timeout_seconds":timeout_seconds,"timeout_or_cancel_reason": if status=="timed_out" {"timeout"} else if status=="cancelled" || status=="cancelling" {"cancelled"} else {""},"resource_limits":resource_limits,"resource_usage":{"stdout_bytes_retained":file_len(&stdout_path).await,"stderr_bytes_retained":file_len(&stderr_path).await,"cpu_time_ms":serde_json::Value::Null,"max_rss_bytes":serde_json::Value::Null}});
-    if let Some(result) = terminal_result {
-        if let Some(obj) = detail.as_object_mut() {
-            obj.insert("resource_usage".into(), json!({"stdout_bytes_retained":file_len(&stdout_path).await,"stderr_bytes_retained":file_len(&stderr_path).await,"cpu_time_ms":serde_json::Value::Null,"max_rss_bytes":serde_json::Value::Null}));
-            if let Some(files) = result.get("files_created_or_modified") {
-                obj.insert("files_created_or_modified".into(), files.clone());
-            }
-            if let Some(paths) = result.get("artifact_paths") {
-                obj.insert("artifact_paths".into(), paths.clone());
-            }
-            obj.entry("files_created_or_modified")
-                .or_insert_with(|| json!([]));
-            for key in ["output_truncated", "stdout_truncated", "stderr_truncated"] {
-                if let Some(value) = result.get(key) {
-                    obj.insert(key.into(), value.clone());
-                }
-            }
-        }
-    } else {
-        let artifacts = [stdout_path.as_path(), stderr_path.as_path()]
-            .into_iter()
-            .filter(|p| p.exists())
-            .map(|path| rel(&workspace, path))
-            .collect::<Vec<_>>();
-        if let Some(obj) = detail.as_object_mut() {
-            obj.insert("artifact_paths".into(), json!(artifacts));
-        }
-    }
-    if let Some(obj) = detail.as_object_mut() {
-        let artifact_root =
-            super::swarm_store_location::artifact_root(&workspace).join(&execution_id);
-        obj.insert("artifact_namespace".into(), json!("workspace-relative"));
-        obj.insert("artifact_base".into(), json!(workspace.as_ref()));
-        obj.insert(
-            "artifact_dir".into(),
-            json!(rel(&workspace, &artifact_root)),
-        );
-        obj.insert("max_output_bytes".into(), json!(max_output_bytes));
-    }
-    ok_json(
-        detail,
-        // The missing-job case already returned above, so a reported status is
-        // never an error here.
-        false,
-    )
-}
-
-async fn cancel_op(v: &serde_json::Value, jobs: JobRegistry) -> Result<ToolResult, DomainError> {
-    let id = job_id(v)?;
-    let Some(job) = swarm_registry::recovered(&jobs).get(id).cloned() else {
-        return ok_json(json!({"status":"not_found","job_id":id}), true);
-    };
-    let mut s = swarm_registry::recovered(&job);
-    if s.status != "running" {
-        return ok_json(
-            json!({"status":s.status,"job_id":id,"execution_id":s.execution_id,"message":"job is already terminal"}),
-            false,
-        );
-    }
-    s.cancel_requested = true;
-    if let Some(pid) = s.pid {
-        kill_pid(pid);
-        kill_pid_tree_best_effort(pid);
-    }
-    s.status = "cancelling".into();
-    ok_json(
-        json!({"status":"cancelling","job_id":id,"execution_id":s.execution_id}),
-        false,
-    )
-}
-
-#[path = "swarm_support.rs"]
-mod swarm_support;
-pub(crate) use swarm_support::*;
-#[path = "swarm_registry.rs"]
-pub(super) mod swarm_registry;
-pub(crate) use swarm_registry::*;
-
-/// End a locally owned execution job (a Python `ExecutionScope` process this
-/// tool spawned): its descendants are snapshotted while the parent is still
-/// present, then the group-or-pid containment applies. Execution containment
-/// only; a swarm member's harness is never ended this way (#1939).
-pub(crate) fn cancel_job_process(pid: u32) {
-    kill_pid_tree_best_effort(pid);
-    kill_pid(pid);
-}
+#[cfg(test)]
+#[path = "swarm_tests.rs"]
+mod tests;
