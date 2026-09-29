@@ -229,6 +229,39 @@ fn counts_derive_blocked_work_and_refuse_an_unknown_status() {
     );
 }
 
+/// The counts at the caps (#2277 final review L1): a full board of 1000
+/// tasks, 900 ready each naming 100 completed dependencies at the end of
+/// the board, is counted in bounded time. A linear search per dependency
+/// makes some 8.6e7 comparisons here; Python's dict makes 90 000 lookups.
+#[test]
+fn counts_at_the_caps_take_bounded_time() {
+    let mut state = running_board(10_000.0);
+    let dependencies = json!((901..=1000).collect::<Vec<i64>>());
+    state.tasks = (1..=1000)
+        .map(|id| match id {
+            ..=900 => stored_task(id, "ready", dependencies.clone(), None),
+            _ => stored_task(id, "completed", json!([]), None),
+        })
+        .collect();
+    let started = std::time::Instant::now();
+    let RunSummary::Full(full) = summarised(state, 10.0, None).unwrap() else {
+        panic!("no cursor given");
+    };
+    let elapsed = started.elapsed();
+    assert_eq!(
+        (
+            full.counts.ready,
+            full.counts.blocked,
+            full.counts.completed
+        ),
+        (900, 0, 100)
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(1),
+        "counted in {elapsed:?}"
+    );
+}
+
 /// A summary as nobody (a coordinator that is NULL) is refused by the
 /// gate; a board without a run by its run check.
 #[test]
