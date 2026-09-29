@@ -21,6 +21,13 @@ use crate::application::swarm::ports::BoardMembers;
 use crate::domain::swarm::{BoardError, MemberRecord, MemberState};
 
 impl BoardMembers for SqliteBoard<'_> {
+    /// Noted on the metered call's tally; an unmetered call notes nothing.
+    fn caller_authorized(&self) {
+        if let Some(tally) = self.tally {
+            tally.caller_authorized();
+        }
+    }
+
     fn member(&self, id: &str) -> Result<Option<MemberRecord>, BoardError> {
         self.connection
             .query_row("SELECT * FROM members WHERE id=?", [id], |row| {

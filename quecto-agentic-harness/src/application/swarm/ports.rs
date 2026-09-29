@@ -193,6 +193,11 @@ pub trait BoardRuns {
 /// The `members` rows.
 pub trait BoardMembers {
     fn member(&self, id: &str) -> Result<Option<MemberRecord>, BoardError>;
+    /// The operation gate authorised this transaction's caller as a member
+    /// of the run with the op's own access (#2313 review M2). A metered
+    /// call notes it, so a refusal the op then makes still records the
+    /// caller's role; it runs no statement and changes nothing.
+    fn caller_authorized(&self);
     /// Every member row, in store order.
     fn members(&self) -> Result<Vec<MemberRow>, BoardError>;
     /// Members whose status is `live` or `reserved`.

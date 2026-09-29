@@ -336,9 +336,14 @@ pub fn call_as(
             .map_err(BoardError::kind),
         elapsed: started.elapsed(),
     };
-    let caller = match (&answer, known.map(Method::answers_members_only)) {
-        (Ok(_), Some(true)) => Caller::Member,
-        _ => Caller::Unproven,
+    // A member: answered by an op that checks membership, or authorised by
+    // the operation gate before the op refused it (#2313 review M2).
+    let authorized = measure.as_ref().is_some_and(|measure| measure.authorized);
+    let caller = match (&answer, known.map(Method::answers_members_only), authorized) {
+        (Ok(_), Some(true), _) | (_, Some(_), true) => Caller::Member,
+        (Ok(_), Some(false) | None, false) | (Err(_), _, false) | (_, None, true) => {
+            Caller::Unproven
+        }
     };
     let served = answer.as_ref().ok().or(committed.as_ref());
     records::record(handles, &finished, caller, served, measure);

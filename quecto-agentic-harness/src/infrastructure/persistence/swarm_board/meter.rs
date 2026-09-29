@@ -128,6 +128,12 @@ impl Tally {
         }
     }
 
+    /// The operation gate authorised the call's caller as a member of the
+    /// run (#2313 review M2).
+    pub(super) fn caller_authorized(&self) {
+        self.held().authorized = true;
+    }
+
     /// The busy handler's step `count`: notes that it fired, then waits as
     /// SQLite's default handler does, giving up once the timeout is spent,
     /// and adds what it slept to the busy wait.

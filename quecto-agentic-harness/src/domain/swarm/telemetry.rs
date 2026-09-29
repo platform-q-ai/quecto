@@ -158,9 +158,11 @@ pub struct BoardOpObservation {
     /// like a credential.
     pub actor_ref: Redacted,
     /// The harness's own op is [`BoardRole::Host`]; a member-facing op
-    /// the board answered as a member's records the caller's role in the
-    /// run ([`run_role`]), or `None` (written `null`) when the op read no
-    /// run, or was refused (the caller is then proven no member, #2313).
+    /// the board answered as a member's, or refused only after the
+    /// operation gate authorised the caller as a member (#2313 review M2),
+    /// records the caller's role in the run ([`run_role`]); `None`
+    /// (written `null`) when the op read no run, or the caller was refused
+    /// before or by the gate (no member, not the coordinator, no run).
     /// Never a role guessed.
     pub role: Option<BoardRole>,
     /// The run the op found, when it found one and its id is one the

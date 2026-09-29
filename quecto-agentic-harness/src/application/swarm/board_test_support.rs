@@ -292,6 +292,9 @@ impl MemoryTransaction<'_> {
 }
 
 impl BoardMembers for MemoryTransaction<'_> {
+    /// The in-memory board measures nothing (#2313 review M2).
+    fn caller_authorized(&self) {}
+
     fn member(&self, id: &str) -> Result<Option<MemberRecord>, BoardError> {
         Ok(self
             .state

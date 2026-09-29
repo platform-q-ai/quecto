@@ -25,6 +25,11 @@ pub struct CallMeasure {
     /// read holds them (#2303 reconcile): only to name a member-facing
     /// op's caller role, never a field of its record.
     pub run_roles: Option<RunRoles>,
+    /// Whether the operation gate authorised the caller as a member of the
+    /// run, with the op's own access, in any of the call's transactions
+    /// (#2313 review M2): a refusal the op made after it still records the
+    /// caller's role.
+    pub authorized: bool,
 }
 
 /// Who holds a run's two named roles, as its row holds them.

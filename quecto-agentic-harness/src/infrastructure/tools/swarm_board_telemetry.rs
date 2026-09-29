@@ -124,10 +124,12 @@ pub const ACTOR_REF_CACHE: usize = 64;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Caller {
     /// The board accepted the call from a member of its run: an op that
-    /// checks membership (or makes the caller one) answered it.
+    /// checks membership (or makes the caller one) answered it, or the
+    /// operation gate authorised the caller before the op refused it
+    /// (#2313 review M2).
     Member,
-    /// Anything else: a refusal, or a membership-free op, which any id
-    /// can make.
+    /// Anything else: a refusal of the gate itself (or before it), or a
+    /// membership-free op, which any id can make.
     Unproven,
 }
 
