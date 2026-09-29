@@ -57,6 +57,11 @@ fn usage_decision_table() {
         usage_budget_decision(&budget(Some(100), false), &totals(0, 1)),
         Allow
     );
+    // A strict budget pauses only once a request went unmeasured.
+    assert_eq!(
+        usage_budget_decision(&budget(Some(100), true), &totals(0, 0)),
+        Allow
+    );
     assert_eq!(
         usage_budget_decision(&budget(Some(100), false), &totals(100, 0)),
         Pause
