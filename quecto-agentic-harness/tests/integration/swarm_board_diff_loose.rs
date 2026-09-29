@@ -26,7 +26,9 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   (`NaN`, `Infinity`, or a literal such as `1e400` that overflows), a
 ///   string holding a lone surrogate escape, an integer outside
 ///   i64 ∪ u64, or nesting deeper than `SERDE_MAX_DEPTH`. Python binds or stores each of
-///   them (or, for an integer beyond i64, raises `OverflowError`). S13/S14
+///   them (or, for an integer beyond i64, raises `OverflowError`), except
+///   `usage_budget`'s `token_limit` (#2274), which Python refuses with
+///   with the budget's own text where Rust refuses the argument text. S13/S14
 ///   must parse member input with `py_json`, as the harness does; a
 ///   `PyJson` dispatcher would end this divergence.
 /// - `integer_beyond_i64_is_refused`: an integer argument beyond i64 but
@@ -103,8 +105,10 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   event whose detail is not an object, or whose `member` is not text
 ///   (an unhashable list or object included), names no member, where
 ///   Python raises. So is (#2274) a stored
-///   request record that is not an object, met by its redelivery, and a
-///   budget without `warned`, met by the budget's warning.
+///   request record that is not an object, met by its redelivery, a
+///   budget without `warned`, met by the budget's warning, and a budget
+///   without `token_limit` or `strict_unknown`, met by `usage_budget`'s
+///   idempotence check.
 /// - `real_to_text_digits` (#2269 review M1, pinned by
 ///   `swarm_board::binding_tests`): a float meeting a TEXT column is
 ///   written with the bundled SQLite's digits, which some hosts' libraries
@@ -303,6 +307,28 @@ fn arguments_beyond_a_serde_value() {
             "{extra}"
         );
     }
+    // #2274: a budget beyond u64, which Python refuses with the budget's
+    // own text, before its gate.
+    let text = "[100000000000000000000]";
+    let difference = try_run_both(
+        &[step_text("parent", "usage_budget", text, NOW)],
+        |_, _, _| {},
+    )
+    .unwrap_err();
+    assert_eq!(
+        difference,
+        format!(
+            "step 0: usage_budget as parent with {text} at {NOW}: results differ\n  \
+             python {:?}\n  \
+             rust   {:?}",
+            Outcome::Refused(
+                "token limit must be positive or None, strict_unknown must be boolean".to_owned()
+            ),
+            Outcome::Refused(format!(
+                "{UNREPRESENTABLE}integer 100000000000000000000 is outside i64 and u64"
+            ))
+        )
+    );
 }
 
 /// A snapshot's member rows are `dict(row)` (#2270 round-3 review N5):

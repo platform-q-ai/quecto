@@ -50,7 +50,9 @@ fn bootstrap_and_create_use_only_the_run_columns_python_uses() {
 /// `extend_run_deadline_tests`). An event detail that is not an object,
 /// or whose `member` is not text (a list or an object Python cannot hash),
 /// names no member in the loss scan, where Python raises an
-/// `AttributeError` or a `TypeError`.
+/// `AttributeError` or a `TypeError`. And (#2274) a budget without
+/// `token_limit` or `strict_unknown` meets `usage_budget`'s idempotence
+/// check, where Python raises a `KeyError`.
 #[test]
 fn outside_edited_control_records() {
     let paused = |edit: &str| {
@@ -161,6 +163,34 @@ fn outside_edited_control_records() {
         ]),
         refused("usage budget")
     );
+    // A budget without `token_limit`, or without `strict_unknown` where the
+    // limit is the one asked for, meets `usage_budget`'s idempotence check,
+    // where Python raises a `KeyError`.
+    for (edit, limit) in [
+        (
+            r#"INSERT INTO usage_budget VALUES(1, '{"strict_unknown": true, "warned": false}')"#,
+            json!(5),
+        ),
+        (
+            r#"INSERT INTO usage_budget VALUES(1, '{"token_limit": 5, "warned": false}')"#,
+            json!(5),
+        ),
+        (
+            r#"INSERT INTO usage_budget VALUES(1, '{"token_limit": null, "warned": false}')"#,
+            json!(null),
+        ),
+    ] {
+        assert_eq!(
+            run_rust(&[
+                create(5),
+                at(0.5, "parent", "usage_report", json!([])),
+                sql(edit),
+                at(1.0, "parent", "usage_budget", json!([limit, true])),
+            ]),
+            refused("usage budget"),
+            "{edit}"
+        );
+    }
 }
 
 /// Usage totals that are not counts (a REAL or a negative sum) are refused
