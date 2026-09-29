@@ -17,7 +17,9 @@ use crate::application::swarm::dto::CallMeasure;
 use crate::domain::redaction::Redacted;
 use crate::domain::swarm::telemetry::run_role;
 use crate::domain::swarm::validation::MEMBER_ID_MAX_BYTES;
-use crate::domain::swarm::{BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind};
+use crate::domain::swarm::{
+    BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind,
+};
 
 /// The `tracing` target of every board call record.
 pub const TELEMETRY_TARGET: &str = "quecto::swarm_board";
@@ -225,6 +227,8 @@ pub(super) fn observation(
         busy: measure.map(|measure| measure.busy),
         cursor_moved: served.and_then(|served| served.cursor_moved),
         result_bytes: served.map_or(0, |served| rendered_bytes(&served.value)),
+        decision: None,
+        detail: BoardOpDetail::NONE,
     }
 }
 

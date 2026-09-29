@@ -6,9 +6,9 @@ use super::*;
 use crate::domain::audit::AuditEvent;
 use crate::domain::swarm::records::{MemberState, RunState, TaskState};
 use crate::domain::swarm::{
-    Access, BoardError, MemberRecord, RefusalKind, RunRecord, TaskRecord, admission, authorize,
-    bounded, completion, criteria, require_budget, require_unsubmitted, revalidation, run_already,
-    run_already_held, validate_extension,
+    Access, BoardError, MemberExit, MemberRecord, RefusalKind, RunRecord, TaskRecord, admission,
+    authorize, bounded, completion, criteria, require_budget, require_unsubmitted, revalidation,
+    run_already, run_already_held, validate_extension,
 };
 
 fn run(status: RunState) -> RunRecord {
@@ -170,6 +170,8 @@ fn observation(outcome: BoardOpOutcome) -> BoardOpObservation {
         busy: Some(true),
         cursor_moved: Some(false),
         result_bytes: 42,
+        decision: None,
+        detail: BoardOpDetail::NONE,
     }
 }
 
@@ -402,4 +404,78 @@ fn a_callers_run_role_is_read_from_the_run() {
         BoardRole::Worker
     );
     assert_eq!(run_role("worker", None, None), BoardRole::Worker);
+}
+
+/// A served op's decision and detail (#2277 review M1) sit beside the
+/// other fields, left out when they do not apply, and read back as
+/// written; a record without them (an older writer's) reads as none.
+#[test]
+fn a_decision_and_its_detail_are_recorded_as_kinds_and_counts() {
+    let recorded = AuditEvent::SwarmOp(BoardOpObservation {
+        decision: Some("coordinator_confirmed".into()),
+        detail: BoardOpDetail {
+            run_status: Some(RunStatusKind::BudgetExhausted),
+            exit: Some(MemberExit::Abrupt),
+            reservations_retained: Some(2),
+            ended_by_loss: Some(true),
+        },
+        ..observation(BoardOpOutcome::Ok)
+    });
+    let line = serde_json::to_value(&recorded).unwrap();
+    assert_eq!(line["decision"], "coordinator_confirmed");
+    assert_eq!(
+        line["detail"],
+        json!({
+            "run_status": "budget_exhausted",
+            "exit": "abrupt",
+            "reservations_retained": 2,
+            "ended_by_loss": true,
+        })
+    );
+    assert_eq!(
+        serde_json::from_value::<AuditEvent>(line).unwrap(),
+        recorded
+    );
+    let bare = serde_json::to_value(AuditEvent::SwarmOp(observation(BoardOpOutcome::Ok))).unwrap();
+    assert_eq!((bare.get("decision"), bare.get("detail")), (None, None));
+    let AuditEvent::SwarmOp(read) = serde_json::from_value(bare).unwrap() else {
+        panic!("a swarm_op record");
+    };
+    assert_eq!((read.decision, read.detail), (None, BoardOpDetail::NONE));
+}
+
+/// Only the statuses the board writes are recorded as themselves; a NULL
+/// or edited status is `unknown`, so its text never is.
+#[test]
+fn a_run_status_is_recorded_as_a_kind_of_the_boards_own() {
+    let cases = [
+        (Some(RunState::SETUP), RunStatusKind::Setup),
+        (Some(RunState::RUNNING), RunStatusKind::Running),
+        (Some(RunState::PAUSED), RunStatusKind::Paused),
+        (Some(RunState::SUCCEEDED), RunStatusKind::Succeeded),
+        (Some(RunState::BLOCKED), RunStatusKind::Blocked),
+        (Some(RunState::FAILED), RunStatusKind::Failed),
+        (Some(RunState::CANCELLED), RunStatusKind::Cancelled),
+        (
+            Some(RunState::BUDGET_EXHAUSTED),
+            RunStatusKind::BudgetExhausted,
+        ),
+        (Some(RunState::new("sk-ant-edited")), RunStatusKind::Unknown),
+        (Some(RunState::new("Running")), RunStatusKind::Unknown),
+        (None, RunStatusKind::Unknown),
+    ];
+    for (status, kind) in cases {
+        assert_eq!(RunStatusKind::of(status.as_ref()), kind, "{status:?}");
+    }
+}
+
+/// A decision kind is lowercase snake_case: no text passes as one.
+#[test]
+fn a_decision_kind_is_snake_case_only() {
+    for kind in ["recorded", "grace_pending", "a1"] {
+        assert!(decision_kind(kind), "{kind}");
+    }
+    for text in ["", "Recorded", "grace pending", "sk-ant", "é"] {
+        assert!(!decision_kind(text), "{text}");
+    }
 }

@@ -3,9 +3,11 @@ use serde_json::json;
 use super::tests::{captured, running};
 use super::{TELEMETRY_TARGET, call};
 
-/// Each loss call (#2277) leaves one INFO record (each is a harness
-/// mutation) with its decision and no argument text: a secret-shaped
-/// member or exit kind never reaches the log.
+/// Each loss call (#2277) leaves one record with its decision and no
+/// argument text: a secret-shaped member or exit kind never reaches the
+/// log. A decision that records something is INFO (each is a harness
+/// mutation); a quarantine still inside its grace, which a reconcile
+/// retries until the grace ends, is DEBUG (#2277 review N6).
 #[test]
 fn loss_calls_record_their_decisions_without_argument_text() {
     let secret = "sk-ant-api03-FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF";
@@ -47,18 +49,18 @@ fn loss_calls_record_their_decisions_without_argument_text() {
         .skip(3)
         .collect();
     let expected = [
-        ("_quarantine", "ok", "already_lost"),
-        ("_quarantine", "ok", "grace_pending"),
-        ("_confirmed_dead", "refused", "none"),
-        ("_confirmed_dead", "ok", "confirmed"),
-        ("_confirmed_dead", "ok", "already_dead"),
-        ("_lose_coordinator", "ok", "lost"),
-        ("_lose_coordinator", "ok", "not_lost"),
+        (" INFO ", "_quarantine", "ok", "already_lost"),
+        ("DEBUG ", "_quarantine", "ok", "grace_pending"),
+        (" INFO ", "_confirmed_dead", "refused", "none"),
+        (" INFO ", "_confirmed_dead", "ok", "confirmed"),
+        (" INFO ", "_confirmed_dead", "ok", "already_dead"),
+        (" INFO ", "_lose_coordinator", "ok", "lost"),
+        (" INFO ", "_lose_coordinator", "ok", "not_lost"),
     ];
     assert_eq!(records.len(), expected.len(), "{log}");
-    for (record, (op, outcome, decision)) in records.iter().zip(expected) {
+    for (record, (level, op, outcome, decision)) in records.iter().zip(expected) {
         for field in [
-            " INFO ".to_owned(),
+            level.to_owned(),
             format!("op=\"{op}\""),
             format!("outcome=\"{outcome}\""),
             format!("decision=\"{decision}\""),
