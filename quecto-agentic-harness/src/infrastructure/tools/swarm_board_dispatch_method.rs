@@ -7,7 +7,7 @@ use serde_json::Value;
 use super::Level;
 #[cfg(any(test, feature = "test-support"))]
 use super::test_only;
-use super::{members, submissions, tasks};
+use super::{control, members, submissions, tasks};
 use crate::domain::swarm::BoardRole;
 
 /// The board methods this dispatcher serves.
@@ -28,6 +28,14 @@ pub(super) enum Method {
     Unblock,
     Submit,
     VerifyTask,
+    Pause,
+    Resume,
+    ResumeExternal,
+    Close,
+    ExtendDeadline,
+    Stop,
+    ControlStatus,
+    UsageReport,
     #[cfg(any(test, feature = "test-support"))]
     CreateRun,
     #[cfg(any(test, feature = "test-support"))]
@@ -70,6 +78,14 @@ impl Method {
             "unblock" => Some(Self::Unblock),
             "submit" => Some(Self::Submit),
             "verify_task" => Some(Self::VerifyTask),
+            "pause" => Some(Self::Pause),
+            "resume" => Some(Self::Resume),
+            "_resume_external" => Some(Self::ResumeExternal),
+            "_close" => Some(Self::Close),
+            "_extend_deadline" => Some(Self::ExtendDeadline),
+            "stop" => Some(Self::Stop),
+            "_control_status" => Some(Self::ControlStatus),
+            "usage_report" => Some(Self::UsageReport),
             #[cfg(any(test, feature = "test-support"))]
             "create_run" => Some(Self::CreateRun),
             #[cfg(any(test, feature = "test-support"))]
@@ -99,6 +115,14 @@ impl Method {
             Self::Unblock => "unblock",
             Self::Submit => "submit",
             Self::VerifyTask => "verify_task",
+            Self::Pause => "pause",
+            Self::Resume => "resume",
+            Self::ResumeExternal => "_resume_external",
+            Self::Close => "_close",
+            Self::ExtendDeadline => "_extend_deadline",
+            Self::Stop => "stop",
+            Self::ControlStatus => "_control_status",
+            Self::UsageReport => "usage_report",
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun => "create_run",
             #[cfg(any(test, feature = "test-support"))]
@@ -113,7 +137,7 @@ impl Method {
     /// [`Level::Read`] only for the methods listed as read-only.
     pub(super) fn level(self) -> Level {
         match self {
-            Self::Status | Self::Snapshot => Level::Read,
+            Self::Status | Self::Snapshot | Self::ControlStatus | Self::UsageReport => Level::Read,
             Self::Admit
             | Self::Activate
             | Self::RecordLaunch
@@ -126,7 +150,13 @@ impl Method {
             | Self::Block
             | Self::Unblock
             | Self::Submit
-            | Self::VerifyTask => Level::Mutation,
+            | Self::VerifyTask
+            | Self::Pause
+            | Self::Resume
+            | Self::ResumeExternal
+            | Self::Close
+            | Self::ExtendDeadline
+            | Self::Stop => Level::Mutation,
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun | Self::BootstrapRun | Self::BootstrapJoin => Level::Mutation,
             #[cfg(any(test, feature = "test-support"))]
@@ -199,7 +229,13 @@ impl Method {
     /// The Python signature, `self` left out.
     pub(super) fn parameters(self) -> &'static [Parameter] {
         match self {
-            Self::Status | Self::Snapshot => &[],
+            Self::Status
+            | Self::Snapshot
+            | Self::Resume
+            | Self::ResumeExternal
+            | Self::Close
+            | Self::ControlStatus
+            | Self::UsageReport => &[],
             Self::Admit => &members::ADMIT,
             Self::Activate => &members::ACTIVATE,
             Self::RecordLaunch => &members::RECORD_LAUNCH,
@@ -212,6 +248,9 @@ impl Method {
             Self::Block | Self::Unblock => &submissions::BLOCK,
             Self::Submit => &submissions::SUBMIT,
             Self::VerifyTask => &submissions::VERIFY_TASK,
+            Self::Pause => &control::PAUSE,
+            Self::ExtendDeadline => &control::EXTEND,
+            Self::Stop => &control::STOP,
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun => &test_only::CREATE,
             #[cfg(any(test, feature = "test-support"))]

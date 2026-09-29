@@ -9,10 +9,11 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
+pub use self::control::{paused, recorded, usage};
 pub use self::tasks::{StoredFile, StoredRequest, stored_task};
 use crate::application::swarm::dto::{
     LaunchIdentity, MemberClaimCounts, MemberRow, NewMember, NewRun, RunContract, RunOwnerRow,
-    RunStatusRow, TaskRow,
+    RunStatusRow, TaskRow, UsageReport,
 };
 use crate::application::swarm::ports::{
     BoardEncoding, BoardEvents, BoardMembers, BoardRepository, BoardRuns, BoardWork, Clock,
@@ -46,6 +47,8 @@ pub struct BoardState {
     pub tasks: Vec<TaskRow>,
     pub requests: Vec<StoredRequest>,
     pub files: Vec<StoredFile>,
+    /// What `usage_report` answers; `None` for a board without usage.
+    pub usage: Option<UsageReport>,
 }
 
 /// A journal shared by the board and the id source, so a test reads the
@@ -192,6 +195,45 @@ impl BoardRuns for MemoryTransaction<'_> {
         run.record.outcome = Some(outcome.to_owned());
         run.record.outcome_reason = Some(reason.to_owned());
         Ok(())
+    }
+
+    fn clear_outcome(&self) -> Result<(), BoardError> {
+        self.note("clear_outcome".to_owned());
+        self.run_mut(|run| {
+            run.outcome = None;
+            run.outcome_reason = None;
+        });
+        Ok(())
+    }
+
+    fn set_outcome(&self, status: &RunState) -> Result<(), BoardError> {
+        self.note(format!("set_outcome {}", status.as_str()));
+        self.run_mut(|run| run.status = Some(status.clone()));
+        Ok(())
+    }
+
+    fn set_deadline(&self, deadline: f64) -> Result<(), BoardError> {
+        self.note(format!("set_deadline {deadline}"));
+        self.run_mut(|run| run.deadline = deadline);
+        Ok(())
+    }
+
+    fn pause_started(&self) -> Result<Option<Value>, BoardError> {
+        Ok(self
+            .state
+            .borrow()
+            .events
+            .iter()
+            .rev()
+            .find(|event| event.action == "paused")
+            .map(|event| event.detail.get("started").cloned().unwrap_or(Value::Null)))
+    }
+}
+
+impl MemoryTransaction<'_> {
+    fn run_mut(&self, change: impl FnOnce(&mut RunRecord)) {
+        let mut state = self.state.borrow_mut();
+        change(&mut state.run.as_mut().expect("a run to change").record);
     }
 }
 
@@ -357,6 +399,10 @@ impl BoardMembers for MemoryTransaction<'_> {
         });
         Ok(())
     }
+
+    fn lost_members(&self, members: &[&str]) -> Result<Vec<String>, BoardError> {
+        Ok(control::lost_members(&self.state.borrow().events, members))
+    }
 }
 
 /// A member id in a note: its text, or its JSON.
@@ -467,6 +513,9 @@ fn count(members: &[MemberRow], wanted: impl Fn(&str) -> bool) -> i64 {
 
 #[path = "board_test_support_tasks.rs"]
 mod tasks;
+
+#[path = "board_test_support_control.rs"]
+mod control;
 
 /// Readings in order, then the last one forever.
 pub struct SteppingClock {

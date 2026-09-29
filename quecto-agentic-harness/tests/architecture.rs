@@ -1486,7 +1486,16 @@ fn application_path_allowed(path: &str) -> bool {
             | "BlockTask"
             | "SubmitTask"
             | "UnblockTask"
-            | "VerifyTask",
+            | "VerifyTask"
+            // Run control and the control receipt (#2273).
+            | "CloseRun"
+            | "ExtendRunDeadline"
+            | "PauseRun"
+            | "ReadControlStatus"
+            | "ReadUsageReport"
+            | "ResumeRun"
+            | "ResumeRunExternally"
+            | "StopRun",
         ]
         | [
             "crate",
@@ -1536,7 +1545,17 @@ fn application_path_allowed(path: &str) -> bool {
             | "TaskChange"
             | "TaskTransition"
             | "UnblockTaskRequest"
-            | "VerifyTaskRequest",
+            | "VerifyTaskRequest"
+            // Run control and the control receipt (#2273).
+            | "ControlAnswer"
+            | "ControlReceipt"
+            | "ExtendRunDeadlineRequest"
+            | "PauseRunRequest"
+            | "RecentRequest"
+            | "RunTransition"
+            | "StopRunRequest"
+            | "UsageReport"
+            | "UsageRow",
         ] => true,
         ["crate", "application", ..] => false,
         // Every other crate path must start at a layer infrastructure
@@ -6298,6 +6317,9 @@ const SWARM_BOARD_PORTS: &[&str] = &[
     "BoardCallMeter",
     "MeteredCall",
     "BoardOpLog",
+    // The usage report the control receipt carries (#2273; S9 adds the
+    // budget's writes).
+    "BoardUsage",
 ];
 
 /// Where the swarm capability declares ports: `ports.rs` (and a

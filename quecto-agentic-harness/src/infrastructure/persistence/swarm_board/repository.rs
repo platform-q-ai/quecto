@@ -250,6 +250,22 @@ impl BoardRuns for SqliteBoard<'_> {
             .map_err(failed)?;
         Ok(())
     }
+
+    fn clear_outcome(&self) -> Result<(), BoardError> {
+        Err(BoardError::new("pending #2273"))
+    }
+
+    fn set_outcome(&self, _status: &RunState) -> Result<(), BoardError> {
+        Err(BoardError::new("pending #2273"))
+    }
+
+    fn set_deadline(&self, _deadline: f64) -> Result<(), BoardError> {
+        Err(BoardError::new("pending #2273"))
+    }
+
+    fn pause_started(&self) -> Result<Option<Value>, BoardError> {
+        super::repository_control::pause_started(self.connection)
+    }
 }
 
 impl BoardEvents for SqliteBoard<'_> {

@@ -44,6 +44,7 @@ mod repl_production;
 mod swarm_agent_loop;
 mod swarm_board_admission_race;
 mod swarm_board_claim_race;
+mod swarm_board_diff_control;
 mod swarm_board_diff_loose;
 mod swarm_board_diff_loose_runs;
 mod swarm_board_diff_membership;

@@ -161,6 +161,10 @@ impl BoardMembers for SqliteBoard<'_> {
             &[Bound::Loose(socket), Bound::Text(id)],
         )
     }
+
+    fn lost_members(&self, members: &[&str]) -> Result<Vec<String>, BoardError> {
+        super::repository_control::lost_members(self.connection, members)
+    }
 }
 
 /// One parameter of a membership statement: text the board itself

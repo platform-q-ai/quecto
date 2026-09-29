@@ -29,7 +29,10 @@
 //! `task_create`, `dependencies`, `claim` and `release` (#2272) are served
 //! by [`tasks`], with the test-only `task_raw` (`Tasks._task` inside a
 //! read-only operation, before S12 adds owner liveness to `task`); `block`,
-//! `unblock`, `submit` and `verify_task` by [`submissions`].
+//! `unblock`, `submit` and `verify_task` by [`submissions`]; the run
+//! control methods `pause`, `resume`, `stop`, `_resume_external`,
+//! `_close`, `_extend_deadline`, `_control_status` and `usage_report`
+//! (#2273) by [`control`].
 //!
 //! What S12 must keep when it adds the summaries Python answers with:
 //!
@@ -79,10 +82,11 @@ use serde_json::{Map, Value};
 use crate::application::swarm::dto::{MemberRow, RunSnapshotView, RunStatusView};
 use crate::application::swarm::ports::{BoardCallMeter, BoardOpLog, BoardRepository};
 use crate::application::swarm::use_cases::{
-    ActivateMember, AdmitMember, BlockTask, BootstrapRun, ClaimTask, CreateRun, CreateTask,
-    JoinRun, OverRepository, ReadRunSnapshot, ReadRunStatus, ReadTask, RecordMemberLaunch,
-    RegisterMemberSocket, ReleaseTask, ReleaseUnlaunchedMember, SetTaskDependencies, SubmitTask,
-    UnblockTask, VerifyTask,
+    ActivateMember, AdmitMember, BlockTask, BootstrapRun, ClaimTask, CloseRun, CreateRun,
+    CreateTask, ExtendRunDeadline, JoinRun, OverRepository, PauseRun, ReadControlStatus, ReadRunSnapshot,
+    ReadRunStatus, ReadTask, ReadUsageReport, RecordMemberLaunch, RegisterMemberSocket,
+    ReleaseTask, ReleaseUnlaunchedMember, ResumeRun, ResumeRunExternally, SetTaskDependencies,
+    StopRun, SubmitTask, UnblockTask, VerifyTask,
 };
 use crate::domain::swarm::{BoardError, BoardRole, RefusalKind};
 
@@ -118,6 +122,14 @@ pub struct SwarmBoardHandles {
     pub unblock_task: Arc<UnblockTask>,
     pub submit_task: Arc<SubmitTask>,
     pub verify_task: Arc<VerifyTask>,
+    pub pause_run: Arc<PauseRun>,
+    pub resume_run: Arc<ResumeRun>,
+    pub resume_run_externally: Arc<ResumeRunExternally>,
+    pub close_run: Arc<CloseRun>,
+    pub extend_run_deadline: Arc<ExtendRunDeadline>,
+    pub stop_run: Arc<StopRun>,
+    pub read_control_status: Arc<ReadControlStatus>,
+    pub read_usage_report: Arc<ReadUsageReport>,
     /// Each call's `swarm_op` record and its measure (#2303), only when
     /// the event log is switched on (`telemetry.event_log.enabled`, owner
     /// decision T1): `None` measures and writes nothing.
@@ -392,6 +404,24 @@ fn serve(
         Method::VerifyTask => {
             submissions::verify_task(&serving(&*handles.verify_task, over), member, arguments)
         }
+        Method::Pause => control::pause(&serving(&*handles.pause_run, over), member, arguments),
+        Method::Resume => control::resume(&*handles.resume_run, member),
+        Method::ResumeExternal => {
+            control::resume_external(&serving(&*handles.resume_run_externally, over), member)
+        }
+        Method::Close => control::close(&serving(&*handles.close_run, over), member),
+        Method::ExtendDeadline => control::extend(
+            &serving(&*handles.extend_run_deadline, over),
+            member,
+            arguments,
+        ),
+        Method::Stop => control::stop(&serving(&*handles.stop_run, over), member, arguments),
+        Method::ControlStatus => {
+            control::control_status(&serving(&*handles.read_control_status, over), member)
+        }
+        Method::UsageReport => {
+            control::usage_report(&serving(&*handles.read_usage_report, over), member)
+        }
         #[cfg(any(test, feature = "test-support"))]
         Method::CreateRun => {
             test_only::create_run(&serving(&*handles.create_run, over), member, arguments)
@@ -509,6 +539,9 @@ mod submissions;
 #[cfg(any(test, feature = "test-support"))]
 #[path = "swarm_board_dispatch_test_only.rs"]
 mod test_only;
+
+#[path = "swarm_board_dispatch_control.rs"]
+mod control;
 
 #[cfg(test)]
 #[path = "swarm_board_dispatch_tests.rs"]

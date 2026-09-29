@@ -12,12 +12,12 @@ use serde_json::Value;
 
 use super::dto::{
     CallMeasure, LaunchIdentity, MemberClaimCounts, MemberRow, NewMember, NewRun, NewTask,
-    RunContract, RunOwnerRow, RunStatusRow, TaskRow, TaskUpdate,
+    RunContract, RunOwnerRow, RunStatusRow, TaskRow, TaskUpdate, UsageReport,
 };
 use crate::domain::error::DomainError;
 use crate::domain::swarm::{
     BoardError, BoardOpObservation, Member, MemberExit, MemberRecord, ProcessIdentity,
-    RunControlAction, RunControlReceipt, RunRecord, RunStatus, Snapshot,
+    RunControlAction, RunControlReceipt, RunRecord, RunState, RunStatus, Snapshot,
 };
 
 pub type PortFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -162,6 +162,17 @@ pub trait BoardRuns {
     fn update_run_contract(&self, contract: &RunContract) -> Result<(), BoardError>;
     /// The run pauses holding `outcome` for the supervisor (#1729).
     fn propose_outcome(&self, outcome: &str, reason: &str) -> Result<(), BoardError>;
+    /// The run holds no outcome and no reason (#2273).
+    fn clear_outcome(&self) -> Result<(), BoardError>;
+    /// `Transaction.set_outcome(status)`: the run's status alone becomes
+    /// `status`; its outcome and reason are left as they are.
+    fn set_outcome(&self, status: &RunState) -> Result<(), BoardError>;
+    /// The run's deadline, in Unix seconds (a REAL).
+    fn set_deadline(&self, deadline: f64) -> Result<(), BoardError>;
+    /// `Transaction.pause_started`'s read: the `started` value of the
+    /// latest `paused` event's detail as stored (NULL when the detail has
+    /// none), `None` when no `paused` event exists.
+    fn pause_started(&self) -> Result<Option<Value>, BoardError>;
 }
 
 /// The `members` rows.
@@ -210,6 +221,12 @@ pub trait BoardMembers {
     /// The member's endpoint, bound as given; a member without a row is
     /// left as it is.
     fn set_socket(&self, id: &str, socket: &Value) -> Result<(), BoardError>;
+    /// `swarm_repository.lost_members` (#1924, #1961, #1969): those of
+    /// `members` whose latest `scope_unknown` event is newer than their
+    /// latest `activated` one, in one ordered scan of those two event
+    /// kinds, in the order given. An event names its member by the text
+    /// of its detail's `member`.
+    fn lost_members(&self, members: &[&str]) -> Result<Vec<String>, BoardError>;
 }
 
 /// The `events` log.
@@ -276,14 +293,32 @@ pub trait BoardFiles {
     fn delete_claim_files(&self, task: &Value, claim: &Value) -> Result<(), BoardError>;
 }
 
+/// The request-usage ledger's read side (#2273; S9 adds its writes).
+pub trait BoardUsage {
+    /// `Transaction.usage_report`: `request_usage` and `usage_budget` are
+    /// created when absent (Python's statements, in its order), then the
+    /// budget, the totals, the per-actor aggregates and the ten latest
+    /// observations are read. Without a budget row the budget reads as
+    /// `{token_limit: null, strict_unknown: false, warned: false}` and no
+    /// row is written.
+    fn usage_report(&self) -> Result<UsageReport, BoardError>;
+}
+
 /// Every role over one transaction.
 pub trait BoardTransaction:
-    BoardRuns + BoardMembers + BoardEvents + BoardTasks + BoardRequests + BoardFiles
+    BoardRuns + BoardMembers + BoardEvents + BoardTasks + BoardRequests + BoardFiles + BoardUsage
 {
 }
 
 impl<T> BoardTransaction for T where
-    T: BoardRuns + BoardMembers + BoardEvents + BoardTasks + BoardRequests + BoardFiles + ?Sized
+    T: BoardRuns
+        + BoardMembers
+        + BoardEvents
+        + BoardTasks
+        + BoardRequests
+        + BoardFiles
+        + BoardUsage
+        + ?Sized
 {
 }
 

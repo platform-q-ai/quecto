@@ -83,6 +83,10 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 /// - `outside_edited_evidence` (#2272): stored evidence that is not a list
 ///   of objects each carrying `revision` (only an edit holds it) meets
 ///   `verify_task` as a refusal, where Python raises or iterates the value.
+/// - `outside_edited_control_records` (#2273, pinned in
+///   `swarm_board_diff_loose_runs.rs`): a pause record, a usage budget or
+///   a loss event the board never writes is refused naming the record, or
+///   names no member, where Python raises.
 /// - `real_to_text_digits` (#2269 review M1, pinned by
 ///   `swarm_board::binding_tests`): a float meeting a TEXT column is
 ///   written with the bundled SQLite's digits, which some hosts' libraries
@@ -96,10 +100,11 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   membership methods (#2271) keep it: `_activate` and `_record_launch`
 ///   take such a member's reservation as stale, where Python goes on
 ///   (pinned by `activate_member_tests` and `record_member_launch_tests`).
-pub const PERMITTED_DIVERGENCES: [&str; 7] = [
+pub const PERMITTED_DIVERGENCES: [&str; 8] = [
     "arguments_beyond_a_serde_value",
     "integer_beyond_i64_is_refused",
     "outside_edited_columns",
+    "outside_edited_control_records",
     "outside_edited_evidence",
     "outside_edited_task_columns",
     "real_to_text_digits",
@@ -572,7 +577,12 @@ fn every_permitted_divergence_is_pinned_by_name() {
 
 /// Divergences pinned outside this suite: the name, the test file's
 /// source and the pinning test in it.
-const EXTERNAL_PINS: [(&str, &str, &str); 5] = [
+const EXTERNAL_PINS: [(&str, &str, &str); 6] = [
+    (
+        "outside_edited_control_records",
+        include_str!("swarm_board_diff_loose_runs.rs"),
+        "outside_edited_control_records",
+    ),
     (
         "real_to_text_digits",
         include_str!("../../src/infrastructure/persistence/swarm_board/binding_tests.rs"),

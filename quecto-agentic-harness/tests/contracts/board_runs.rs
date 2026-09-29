@@ -243,3 +243,59 @@ fn the_coordinator_is_read_alone() {
         });
     }
 }
+
+/// #2273: the control writes change the run row as Python's
+/// `set_outcome`, `clear_outcome` and `set_deadline` do, and
+/// `pause_started` reads the latest `paused` event's `started` as stored.
+#[test]
+fn control_writes_and_the_pause_record() {
+    let (dir, repository) = board();
+    within(&repository, true, |transaction| {
+        assert_eq!(transaction.pause_started()?, None, "no pause yet");
+        transaction.insert_run(&NewRun {
+            id: "abc".into(),
+            contract: contract("first", 10.0),
+            coordinator: "parent".into(),
+            integrator: "parent".into(),
+            status: RunState::RUNNING,
+        })?;
+        transaction.propose_outcome("blocked", "why")?;
+        transaction.set_outcome(&RunState::new("blocked"))?;
+        transaction.set_deadline(12.5)
+    });
+    within(&repository, false, |transaction| {
+        let run = transaction.run()?.unwrap();
+        assert_eq!(run.status, Some(RunState::BLOCKED), "the status alone");
+        assert_eq!(run.outcome.as_deref(), Some("blocked"));
+        assert_eq!(run.deadline, 12.5);
+        transaction.clear_outcome()?;
+        let run = transaction.run()?.unwrap();
+        assert_eq!((run.outcome, run.outcome_reason), (None, None));
+        transaction.event(
+            "parent",
+            1.0,
+            "paused",
+            &json!({"reason": "a", "started": 5.5}),
+        )?;
+        transaction.event("parent", 2.0, "resumed", &json!({"paused_seconds": 0}))?;
+        transaction.event(
+            "parent",
+            3.0,
+            "paused",
+            &json!({"reason": "b", "started": 7}),
+        )?;
+        assert_eq!(
+            transaction.pause_started()?,
+            Some(json!(7)),
+            "the latest, as stored"
+        );
+        transaction.event("parent", 4.0, "paused", &json!({"reason": "c"}))?;
+        assert_eq!(transaction.pause_started()?, Some(json!(null)));
+        Ok(())
+    });
+    let deadline: String = rusqlite::Connection::open(dir.path().join("swarm.sqlite"))
+        .unwrap()
+        .query_row("SELECT typeof(deadline) FROM run", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(deadline, "real");
+}
