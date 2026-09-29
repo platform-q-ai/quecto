@@ -14,10 +14,15 @@
 //!   from it (text, or NULL for the caller's own observation) is refused
 //!   naming the record, where Python raises a `TypeError`; and a BLOB time
 //!   in any loss observation is refused as a store failure, where Python
-//!   passes over an observation of another member. A launcher that is not
+//!   passes over an observation of another member. An observation whose
+//!   detail is not an object (#2277 review L2) names no member, so the
+//!   caller observes afresh, where Python's `.get` raises an
+//!   `AttributeError`. A launcher that is not
 //!   text (a BLOB) is no launcher, so the member's loss is recorded at
 //!   once, where Python compares the bytes with the caller and asks
 //!   whether that launcher is lost.
+//! - `integer_beyond_i64_is_refused` (#2277 review L3), as the pin table
+//!   describes it, for `_quarantine`'s and `_confirmed_dead`'s member.
 use serde_json::json;
 
 use crate::swarm_board_diff_loose::PERMITTED_DIVERGENCES;
@@ -110,6 +115,18 @@ fn outside_edited_loss_records() {
         );
         assert_eq!(run_rust(&steps), unmeasurable, "{edit}");
     }
+    // A detail that is not an object: Python's `.get` raises; the Rust
+    // board reads it as naming no member, so the caller observes afresh
+    // and the grace runs from now.
+    let listed = observed("UPDATE events SET detail='[1]' WHERE action='scope_observed'");
+    let difference = try_run_both(&listed, |_, _, _| {}).unwrap_err();
+    assert!(
+        difference.starts_with("step 5: _quarantine as parent")
+            && difference
+                .contains("Python raised AttributeError: 'list' object has no attribute 'get'"),
+        "{difference}"
+    );
+    assert_eq!(run_rust(&listed), Outcome::Ok(json!(null)));
     let blob = observed(
         r#"INSERT INTO events(actor,time,action,detail) VALUES('x',x'00','scope_observed','{"member":"other"}')"#,
     );
@@ -141,4 +158,31 @@ fn outside_edited_loss_records() {
         panic!("the receipt answers");
     };
     assert_eq!(receipt["outcome"], json!("failed"));
+}
+
+/// A member beyond i64 but within u64: Python's `sqlite3` raises
+/// `OverflowError` binding it; the Rust board refuses it as a store
+/// failure naming Python's parameter position.
+#[test]
+fn integer_beyond_i64_is_refused() {
+    let beyond = json!(9_223_372_036_854_775_808_u64);
+    for method in ["_quarantine", "_confirmed_dead"] {
+        let steps = joined([at(3.0, "parent", method, json!([beyond]))]);
+        let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+        assert!(
+            difference.starts_with(&format!("step 3: {method} as parent"))
+                && difference.contains(
+                    "Python raised OverflowError: Python int too large to convert to SQLite INTEGER"
+                ),
+            "{difference}"
+        );
+        assert_eq!(
+            run_rust(&steps),
+            Outcome::Refused(format!(
+                "{CONTENDED}Error binding parameter 1: \
+                 Python int too large to convert to SQLite INTEGER"
+            )),
+            "{method}"
+        );
+    }
 }

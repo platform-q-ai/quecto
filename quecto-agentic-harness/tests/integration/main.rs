@@ -53,6 +53,7 @@ mod swarm_board_diff_loose_files;
 mod swarm_board_diff_loose_loss;
 mod swarm_board_diff_loose_messages;
 mod swarm_board_diff_loose_runs;
+mod swarm_board_diff_loose_tasks;
 mod swarm_board_diff_loss;
 mod swarm_board_diff_loss_checks;
 mod swarm_board_diff_membership;

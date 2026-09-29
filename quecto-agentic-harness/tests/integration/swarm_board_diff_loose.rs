@@ -42,7 +42,8 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   within u64 (a `pid`, `started` or `socket`, a membership method's
 ///   member or reservation, #2271, a task id, #2272, a message id,
 ///   `withdraw`'s, `ack`'s or `send`'s `supersedes`, `send`'s `recipient`
-///   or `inbox`'s `include_consumed`, #2276) makes Python's
+///   or `inbox`'s `include_consumed`, #2276, `_quarantine`'s or
+///   `_confirmed_dead`'s member, #2277) makes Python's
 ///   `sqlite3` raise `OverflowError` when it is bound, which is not an
 ///   `sqlite3.Error`, so the store does not turn it into a refusal and the
 ///   call raises.
@@ -90,13 +91,14 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   For a completed dependency with invalid JSON in `acceptance`, Python's
 ///   `claim` loads the dependency's full `_task` and raises `JSONDecodeError`;
 ///   Rust reads only its status and claims the dependent task (pinned below).
-/// - `outside_edited_evidence` (#2272): stored evidence that is not a list
+/// - `outside_edited_evidence` (#2272, pinned with
+///   `outside_edited_task_columns` in `swarm_board_diff_loose_tasks.rs`): stored evidence that is not a list
 ///   of objects each carrying `revision` (only an edit holds it) meets
 ///   `verify_task` as a refusal, where Python raises or iterates the value.
 /// - #2276's `outside_edited_messages`, `outside_edited_wake_records` and
 ///   `wake_target_sort_error_order`: see `swarm_board_diff_loose_messages.rs`.
-/// - #2277's `outside_edited_loss_records` (a loss observation's time, or
-///   a member's launcher, only an edit holds): see
+/// - #2277's `outside_edited_loss_records` (a loss observation's time or
+///   detail, or a member's launcher, only an edit holds): see
 ///   `swarm_board_diff_loose_loss.rs`.
 /// - `outside_edited_contract` (#2273, listed case by case and pinned in
 ///   `swarm_board_diff_loose_completion.rs`): a run contract, a criterion
@@ -114,9 +116,10 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   through as Python passes them), where Python raises or computes with
 ///   them; an integer `started` is read as its float, so an extension from it
 ///   records a float deadline where Python records the integer; and a loss
-///   event whose detail is not an object, or whose `member` is not text (an
-///   unhashable list or object included), names no member, where Python
-///   raises. So is (#2274) a stored request record that is not an object, met
+///   event whose detail is not an object, or whose `member` is a list or an
+///   object (unhashable to Python), names no member, where Python raises (a
+///   numeric `member` is compared by Python's `==`, as Python compares it).
+///   So is (#2274) a stored request record that is not an object, met
 ///   by its redelivery, a budget without `warned`, met by the budget's
 ///   warning, and a budget without `token_limit` or `strict_unknown`, met by
 ///   `usage_budget`'s idempotence check. The redelivery check's reads of a
@@ -579,14 +582,15 @@ fn every_permitted_divergence_is_pinned_by_name() {
     }
 }
 
-/// The only files whose tests may expect a difference: this one, #2275's,
-/// #2276's and #2277's siblings, and the submission scenarios holding a
-/// [`SECOND_PINS`] test.
-const PIN_TABLE_FILES: [&str; 5] = [
+/// The only files whose tests may expect a difference: this one, its
+/// task-column sibling, #2275's, #2276's and #2277's siblings, and the
+/// submission scenarios holding a [`SECOND_PINS`] test.
+const PIN_TABLE_FILES: [&str; 6] = [
     include_str!("swarm_board_diff_loose.rs"),
     include_str!("swarm_board_diff_loose_files.rs"),
     include_str!("swarm_board_diff_loose_loss.rs"),
     include_str!("swarm_board_diff_loose_messages.rs"),
+    include_str!("swarm_board_diff_loose_tasks.rs"),
     include_str!("swarm_board_diff_submissions.rs"),
 ];
 
@@ -620,134 +624,3 @@ const EXTERNAL_PINS: [(&str, &str, &str); 4] = [
         "a_float_reaching_text_affinity_reads_as_the_bundled_sqlite_writes_it",
     ),
 ];
-
-/// `outside_edited_task_columns`: each hand edit of task 1 (after
-/// `before`), then the `probe` where the boards differ: `python` is in
-/// Python's side of the difference, `rust` in the Rust board's answer.
-#[test]
-fn outside_edited_task_columns() {
-    let setup = [
-        create(5),
-        at(1.0, "parent", "_admit", json!(["w1", "r1"])),
-        at(
-            2.0,
-            "parent",
-            "_activate",
-            json!(["w1", "r1", 11, "t", null]),
-        ),
-        at(3.0, "parent", "_admit", json!(["w2", "r2"])),
-        at(
-            4.0,
-            "parent",
-            "_activate",
-            json!(["w2", "r2", 12, "t", null]),
-        ),
-        at(5.0, "w1", "task_create", json!(["a", "one", ["ok"]])),
-        at(6.0, "w1", "task_create", json!(["b", "two", ["ok"]])),
-    ];
-    let pinned = |before: &[Step], edit: &str, probe: Step, python: &str, rust: &str| {
-        let mut steps = setup.to_vec();
-        steps.extend_from_slice(before);
-        let prefix = format!("step {}: {}", steps.len() + 1, probe.method);
-        steps.extend([sql(&format!("UPDATE tasks SET {edit} WHERE id=1")), probe]);
-        let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
-        let python_side = difference.split("\n  rust").next().unwrap_or_default();
-        assert!(
-            difference.starts_with(&prefix) && python_side.contains(python),
-            "{edit}: {difference}"
-        );
-        let outcome = format!("{:?}", run_rust(&steps));
-        assert!(outcome.contains(rust), "{edit}: {outcome}");
-    };
-    let raw = || at(7.0, "parent", "task_raw", json!([1]));
-    let claim = |member| at(8.0, member, "claim", json!([1]));
-    let (ready, blocked) = (
-        r#""status": String("ready")"#,
-        r#""status": String("blocked")"#,
-    );
-    for (edit, python, rust) in [
-        ("acceptance='not json'", "raised JSONDecodeError", CONTENDED),
-        ("evidence=NULL", "raised TypeError", CONTENDED),
-        ("dependencies='[99]'", "raised TypeError", blocked),
-        (r#"dependencies='{"2":1}'"#, blocked, ready),
-        (r#"dependencies='"12"'"#, blocked, ready),
-        ("dependencies='null'", "raised TypeError", ready),
-        ("dependencies='5'", "raised TypeError", ready),
-    ] {
-        pinned(&[], edit, raw(), python, rust);
-    }
-    let unknown = r#"python Refused("unknown task")"#;
-    let unmet = r#"Refused("unmet dependencies")"#;
-    pinned(
-        &[claim("w1")],
-        "dependencies='[99]'",
-        claim("w2"),
-        unknown,
-        unmet,
-    );
-    // Claim checks the completed dependency using Python's full `_task`,
-    // including its acceptance JSON; Rust reads only its status.
-    pinned(
-        &[
-            at(7.0, "w1", "dependencies", json!([2, [1]])),
-            sql("UPDATE tasks SET status='completed' WHERE id=1"),
-        ],
-        "acceptance='not json'",
-        at(8.0, "w2", "claim", json!([2])),
-        "raised JSONDecodeError",
-        r#""status": String("claimed")"#,
-    );
-    let claimed = r#""status": String("claimed")"#;
-    pinned(
-        &[],
-        r#"dependencies='{"2":1}'"#,
-        claim("w1"),
-        unmet,
-        claimed,
-    );
-    // The cycle check walks task 1's stored `[[2]]` from a new edge to it.
-    for (probe, rust) in [
-        (
-            at(9.0, "w1", "task_create", json!(["c", "three", ["ok"], [1]])),
-            blocked,
-        ),
-        (at(9.0, "w1", "dependencies", json!([2, [1]])), "Ok("),
-    ] {
-        pinned(
-            &[],
-            "dependencies='[[2]]'",
-            probe,
-            "unhashable type: 'list'",
-            rust,
-        );
-    }
-}
-
-/// `outside_edited_evidence`: Python raises, or verifies an empty dict or
-/// text, where the Rust board refuses.
-#[test]
-fn outside_edited_evidence() {
-    let task = at(1.0, "parent", "task_create", json!(["r", "t", ["ok"]]));
-    let mut steps = vec![create(5), task];
-    for (evidence, python) in [
-        (r#"[{"artifact":"a"}]"#, "Python raised KeyError"),
-        (r#"{"revision":"R1"}"#, "Python raised TypeError"),
-        ("null", "Python raised TypeError"),
-        ("{}", "python Ok(Null)"),
-        (r#""""#, "python Ok(Null)"),
-    ] {
-        steps.truncate(2);
-        let edit = format!("UPDATE tasks SET status='submitted',token='t',evidence='{evidence}'");
-        steps.extend([
-            sql(&edit),
-            at(2.0, "parent", "verify_task", json!([1, "t", "R1"])),
-        ]);
-        let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
-        assert!(
-            difference.starts_with("step 3: verify_task") && difference.contains(python),
-            "{evidence}: {difference}"
-        );
-        let outcome = format!("{:?}", run_rust(&steps));
-        assert!(outcome.contains("not a list of revisioned"), "{outcome}");
-    }
-}
