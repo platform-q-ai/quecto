@@ -58,12 +58,12 @@ fn policy_has_all(context: &str, policy: &str, terms: &[&str]) {
 fn heavy_verification_is_ci_evidence_not_local_work() {
     let policy = bundled_policy();
     policy_has_all(
-        "CI owns expensive verification",
+        "CI owns full suites; mutation is one scoped local pass",
         policy,
         &[
             "mutation",
-            "sharded",
-            "diff-scoped",
+            "scoped local mutation pass",
+            "memory cap",
             "CI",
             "full",
             "BDD",
@@ -86,7 +86,7 @@ fn heavy_verification_is_ci_evidence_not_local_work() {
         ],
     );
     policy_has_all(
-        "review and fixes consume CI mutant evidence",
+        "review and fixes consume the parent's mutant report",
         policy,
         &[
             "review",
@@ -100,7 +100,7 @@ fn heavy_verification_is_ci_evidence_not_local_work() {
         policy.contains("not run mutation")
             || policy.contains("don't run mutation")
             || policy.contains("never run mutation"),
-        "reviewers and fix swarms must not launch local mutation tools"
+        "only the parent runs the one scoped mutation pass; CI runs none"
     );
     assert!(
         policy.contains("full suites run in CI")

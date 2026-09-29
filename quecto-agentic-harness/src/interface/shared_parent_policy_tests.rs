@@ -198,7 +198,7 @@ fn new_red_first_and_bounded_verification_rules_are_parent_only() {
         "SIGKILL",
         "MISSED",
         "TIMEOUT",
-        "diff-scoped",
+        "scoped local mutation pass",
     ];
     for parent in [
         build_system_prompt(&None, false),
