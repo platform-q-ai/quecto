@@ -41,7 +41,14 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   the tool's refusal too (parent decision on #2279: integers beyond i64
 ///   and u64, non-finite numbers and lone surrogates are refused, not
 ///   coerced; `-0` is the integer 0); a `PyJson` dispatcher would end this
-///   divergence.
+///   divergence. A member's `NaN`, `Infinity` or `-Infinity` never reaches
+///   the tool at all: they are not JSON, so the agent loop's
+///   `ToolCall::argument_shape` finds no object in the call and the loop
+///   answers its invalid-arguments text without running the tool (#2279
+///   review L3; pinned by `swarm_agent_loop::
+///   a_non_finite_argument_is_answered_by_the_loop_before_the_tool`, where
+///   `1e400` and a lone surrogate escape, which are JSON, reach the tool and
+///   are refused there).
 /// - `integer_beyond_i64_is_refused`: an integer argument beyond i64 but
 ///   within u64 (a `pid`, `started` or `socket`, a membership method's
 ///   member or reservation, #2271, a task id, #2272, a message id,

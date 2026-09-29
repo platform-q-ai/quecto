@@ -12,8 +12,10 @@
 //! 1. The member's text is read as Python's `json.loads` reads it
 //!    ([`member_arguments`]: `-0` is the integer 0); a value the board's
 //!    value type cannot hold exactly (an integer beyond i64 and u64, a
-//!    non-finite number, a lone surrogate) is refused with the store's
-//!    error shape, never coerced (parent decision on #2278/#2279).
+//!    number that overflows, such as `1e400`, a lone surrogate) is refused
+//!    with the store's error shape, never coerced (parent decision on
+//!    #2278/#2279). `NaN` and `±Infinity`, which are not JSON, never get
+//!    here: the agent loop answers such a call as invalid arguments.
 //! 2. `op=run`'s running gate (owner decision 2026-09-28, overruling the
 //!    epic's P4): unless the run is running and within its deadline, the
 //!    op is refused with the guidance `op=run` gives.
