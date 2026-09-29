@@ -118,6 +118,11 @@ pub enum SessionRefusal {
     /// on an older CLI a steer's own result could not be told from the
     /// running turn's.
     SteerUnavailable,
+    /// A steer, to an agent whose interrupt does not withdraw the user
+    /// turns queued behind the running turn (no
+    /// `interrupt_cancel_queued_v1`): one still queued at an abort would
+    /// survive it and run afterwards.
+    SteerNotWithdrawable,
     /// The running turn is being interrupted: nothing is written into it.
     Interrupting,
     /// The member has ended: aborted, or its agent exited.
@@ -137,6 +142,7 @@ impl SessionRefusal {
             Self::Busy => "busy",
             Self::QueueFull => "queue_full",
             Self::SteerUnavailable => "steer_unavailable",
+            Self::SteerNotWithdrawable => "steer_not_withdrawable",
             Self::Interrupting => "interrupting",
             Self::Ended => "ended",
             Self::Launch(_) => "launch",
@@ -161,6 +167,11 @@ impl std::fmt::Display for SessionRefusal {
                 f,
                 "the claude-code member cannot steer until its agent names the turns its results \
                  answer; send a follow-up"
+            ),
+            Self::SteerNotWithdrawable => write!(
+                f,
+                "the claude-code member cannot steer: its agent does not withdraw a queued steer \
+                 when a turn is interrupted; send a follow-up"
             ),
             Self::Interrupting => write!(
                 f,

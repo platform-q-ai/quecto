@@ -110,6 +110,10 @@ async fn an_id_less_error_result_ends_the_running_turn() {
 async fn an_older_cli_takes_no_steer_until_it_names_the_turns_it_answers() {
     let rig = started().await;
     rig.session.prompt("one", None).await.unwrap();
+    // An older version (#2287 review round 3, L1): its init says nothing
+    // of naming turns, though it withdraws queued ones on an interrupt.
+    rig.feed(init_event(Some("2.1.279"), &["interrupt_cancel_queued_v1"]))
+        .await;
     let refusal = rig.session.steer("two").await.unwrap_err();
     assert_eq!(refusal, SessionRefusal::SteerUnavailable);
     assert_eq!(

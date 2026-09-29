@@ -76,3 +76,52 @@ fn only_an_allowed_rate_limit_status_needs_no_warning() {
     );
     assert!(RateLimitStatus::parse("throttled").warrants_warning());
 }
+
+fn versioned(version: Option<&str>, capabilities: &[&str]) -> InitEvent {
+    InitEvent {
+        cli_version: version.map(str::to_string),
+        capabilities: capabilities.iter().map(|c| c.to_string()).collect(),
+        ..InitEvent::default()
+    }
+}
+
+// #2287 review round 3 (L1): claude advertises no capability for naming
+// the user turns a result consumed; a CLI at or past the version verified
+// to (2.1.280) does, any older or unreadable version is not known to.
+#[test]
+fn a_cli_names_turns_from_the_verified_version_on() {
+    assert_eq!(NAMES_TURNS_SINCE, [2, 1, 280]);
+    for named in [
+        "2.1.280",
+        "2.1.281",
+        "2.2.0",
+        "3.0.0",
+        "2.1.280-beta.1",
+        "2.1.1000",
+    ] {
+        assert!(versioned(Some(named), &[]).names_turns(), "{named}");
+    }
+    for unknown in [
+        "2.1.279", "2.0.999", "1.9.300", "2.1", "2", "", "v2.1.280", "x.y.z",
+    ] {
+        assert!(!versioned(Some(unknown), &[]).names_turns(), "{unknown}");
+    }
+    assert!(!versioned(None, &[]).names_turns());
+}
+
+// #2287 review round 3 (L3): only a CLI advertising
+// `interrupt_cancel_queued_v1` withdraws the queued user turns on an
+// interrupt.
+#[test]
+fn a_cli_cancels_queued_turns_only_when_it_advertises_it() {
+    assert_eq!(CANCEL_QUEUED_CAPABILITY, "interrupt_cancel_queued_v1");
+    assert!(
+        versioned(
+            None,
+            &["interrupt_receipt_v1", "interrupt_cancel_queued_v1"]
+        )
+        .cancels_queued()
+    );
+    assert!(!versioned(Some("2.1.280"), &["interrupt_receipt_v1"]).cancels_queued());
+    assert!(!versioned(Some("2.1.280"), &[]).cancels_queued());
+}

@@ -93,10 +93,19 @@ async fn swarm_worker_launch_revalidates_workflow_before_effects() {
 fn the_backend_parameter_selects_the_brain_under_the_backend_rule() {
     use crate::application::tools::ports::Tool;
     use crate::domain::external_agent::backend::{CLAUDE_CODE_WORKERS_ONLY, MemberBackend};
-    let worker = swarm_tool(true)
-        .parse_args(r#"{"agent_id":"w1","backend":"claude_code"}"#)
-        .unwrap();
-    assert_eq!(worker.backend, MemberBackend::ClaudeCode);
+    // Until S4 (#2288) serves the member, a launch the backend rule
+    // allows is refused with its own exact text, before anything runs
+    // (#2287 review round 3).
+    assert_eq!(
+        swarm_tool(true)
+            .parse_args(r#"{"agent_id":"w1","backend":"claude_code"}"#)
+            .unwrap_err(),
+        "claude_code members are not available yet (#2288)"
+    );
+    assert_eq!(
+        super::super::spawn_launch_args::parse_backend_arg(Some(&serde_json::json!("claude_code"))),
+        Ok(MemberBackend::ClaudeCode)
+    );
     for input in [r#"{}"#, r#"{"backend":"quecto"}"#, r#"{"backend":null}"#] {
         for participating in [false, true] {
             let config = swarm_tool(participating).parse_args(input).unwrap();
@@ -183,9 +192,11 @@ fn claude_code_is_refused_to_a_launcher_whose_restrictions_it_would_drop() {
         restricted
             .parse_args(r#"{"agent_id":"w1"}"#)
             .expect("a quecto child takes the policy");
-        swarm_tool(true)
-            .parse_args(claude)
-            .expect("an unrestricted coordinator launches a claude worker");
+        assert_eq!(
+            swarm_tool(true).parse_args(claude).unwrap_err(),
+            "claude_code members are not available yet (#2288)",
+            "an unrestricted coordinator passes the rule, until S4 (#2288)"
+        );
     });
     with_runtime_config(Some("/run/quecto/global.toml"), || {
         assert_eq!(

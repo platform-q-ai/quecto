@@ -294,6 +294,14 @@ async fn steers_fold_into_the_claude_turn_and_an_abort_withdraws_a_queued_one() 
     std::fs::write(
         &scenario,
         [
+            // claude 2.1.280's init (#2287 review round 3): it names turns
+            // and withdraws queued ones, so the member takes steers.
+            concat!(
+                r#"{"type":"system","subtype":"init","claude_code_version":"2.1.280","#,
+                r#""capabilities":["interrupt_receipt_v1","interrupt_cancel_queued_v1"]}"#,
+                "\n"
+            )
+            .into(),
             result("completed", "first"),
             "@await-steers 1\n".into(),
             result("completed", "folded"),

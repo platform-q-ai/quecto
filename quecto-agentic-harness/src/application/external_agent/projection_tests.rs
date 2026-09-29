@@ -25,6 +25,7 @@ pub(super) fn init() -> ExternalAgentEvent {
         }],
         api_key_source: Some("none".into()),
         permission_mode: Some("bypassPermissions".into()),
+        ..InitEvent::default()
     })
 }
 

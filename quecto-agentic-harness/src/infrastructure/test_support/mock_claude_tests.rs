@@ -238,3 +238,51 @@ fn an_idle_interrupt_is_answered_with_nothing_withdrawn() {
         .concat()
     );
 }
+
+/// #2287 review round 3: the messages an interrupt left queued run as one
+/// merged batch, whose turn is the LAST member's (`user_message_uuid`), as
+/// claude runs "several messages sent close together".
+#[test]
+fn a_merged_batch_is_the_last_members_turn() {
+    let scenario = concat!(
+        "@await-interrupt\n",
+        "{\"type\":\"result\",\"user_message_uuid\":\"@UUID@\",\"user_message_uuids\":[@UUIDS@]}\n",
+        "{\"type\":\"result\",\"user_message_uuid\":\"@UUID@\",\"user_message_uuids\":[@UUIDS@]}\n",
+    );
+    let input = [user("a"), user("b"), user("c"), interrupt("r1", false)].concat();
+    let (stdout, _) = run(scenario, &input);
+    assert_eq!(
+        stdout,
+        [
+            control_response("r1", "\"b\",\"c\"", ""),
+            "{\"type\":\"result\",\"user_message_uuid\":\"a\",\"user_message_uuids\":[\"a\"]}\n"
+                .to_string(),
+            "{\"type\":\"result\",\"user_message_uuid\":\"c\",\"user_message_uuids\":[\"b\",\"c\"]}\n"
+                .to_string(),
+        ]
+        .concat()
+    );
+}
+
+/// #2287 review round 3: claude's collector keeps a merged batch's first
+/// 64 uuids and, past that, overwrites slot 63 with the turn's own (the
+/// last member's), so the list always names the turn.
+#[test]
+fn a_merged_batch_past_64_keeps_its_own_uuid_in_slot_63() {
+    let scenario = concat!(
+        "@await-interrupt\n",
+        "{\"type\":\"result\",\"n\":1}\n",
+        "{\"type\":\"result\",\"user_message_uuid\":\"@UUID@\",\"user_message_uuids\":[@UUIDS@]}\n",
+    );
+    let queued: String = (1..=70).map(|n| user(&format!("m{n}"))).collect();
+    let input = [user("m0"), queued, interrupt("r1", false)].concat();
+    let (stdout, _) = run(scenario, &input);
+    let last = stdout.lines().last().unwrap();
+    let result: serde_json::Value = serde_json::from_str(last).unwrap();
+    assert_eq!(result["user_message_uuid"], "m70");
+    let named = result["user_message_uuids"].as_array().unwrap();
+    assert_eq!(named.len(), 64);
+    assert_eq!(named[0], "m1");
+    assert_eq!(named[62], "m63");
+    assert_eq!(named[63], "m70", "the turn's own, in slot 63");
+}
