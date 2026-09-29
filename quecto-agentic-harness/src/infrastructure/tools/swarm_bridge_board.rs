@@ -111,6 +111,13 @@ impl SwarmBoard {
         self.shared.event_log.set(log).is_ok()
     }
 
+    /// Whether `other` is this board (a clone of it), not merely one over
+    /// the same builder.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn is_the_same_board(&self, other: &SwarmBoard) -> bool {
+        Arc::ptr_eq(&self.shared, &other.shared)
+    }
+
     /// One board call against the file at `location`, as `member`: the
     /// dispatcher's answer, or its refusal as the tool boundary has always
     /// carried a board error, `swarm: "<text>"` (the text as a JSON

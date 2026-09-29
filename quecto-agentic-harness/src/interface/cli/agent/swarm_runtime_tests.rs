@@ -270,33 +270,76 @@ fn counted(
     crate::composition::swarm::build_swarm_board_handles(location, log)
 }
 
-/// The board admission gives a member's context is built by the builder
-/// `CliContext` carries from composition (#2278): the admission's own
-/// reads reach the board through it.
+/// Set in the child that runs the real admission (#2278 review M2).
+const ADMIT_CHILD: &str = "QUECTO_TEST_2278_ADMIT_CHILD";
+
+/// The board admission binds for this process is built by the builder
+/// `CliContext` carries from composition (#2278): the real `admit`, under
+/// the container contract, binds it as the process's board, its own reads
+/// reach the board through it, and the context the tools discover calls
+/// that same board. The process's board is bound once per process, so the
+/// admission runs in a child of its own.
 #[test]
 fn admission_reaches_the_board_through_the_contexts_builder() {
+    assert!(
+        super::board(&crate::interface::cli::CliContext::default()).is_none(),
+        "no builder, no board"
+    );
+    if let Ok(checkout) = std::env::var(ADMIT_CHILD) {
+        return admitted_child(std::path::Path::new(&checkout));
+    }
     let checkout = tempfile::tempdir().unwrap();
     bootstrapped(checkout.path());
+    let name = std::thread::current().name().unwrap().to_owned();
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", &name, "--nocapture", "--test-threads=1"])
+        .env(ADMIT_CHILD, checkout.path())
+        .env("QUECTO_SWARM_CHECKOUT", checkout.path())
+        .env("QUECTO_SWARM_CONTAINER", "isolated-pid-v1")
+        // Any namespace but this process's own: the child is "contained".
+        .env("QUECTO_SWARM_HOST_PID_NS", "pid:[1]")
+        .env("QUECTO_SWARM_MEMBER", "worker")
+        .env_remove("QUECTO_SWARM_BOOTSTRAP")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains("1 passed"),
+        "{stdout}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// The child's half: the real admission of a quecto member.
+fn admitted_child(checkout: &std::path::Path) {
+    use std::sync::atomic::Ordering;
+    assert!(swarm_bridge::process_board().is_none(), "nothing bound yet");
     let ctx = crate::interface::cli::CliContext {
         swarm_board: Some(counted),
         swarm_board_log: Some(crate::composition::swarm::board_op_log),
         ..Default::default()
     };
-    let board = super::board(&ctx).expect("a composed board");
-    let worker = SwarmContext {
-        board,
-        ..member(checkout.path(), "worker")
-    };
     let mut flags = flags_with(&[]);
     let mut stderr = String::new();
-    let _ = admit_with(Some(worker), false, &mut flags, &mut stderr);
+    assert!(super::admit(&ctx, &mut flags, &mut stderr), "{stderr}");
+    let admitted = ADMITTED_BUILDS.load(Ordering::SeqCst);
     assert!(
-        ADMITTED_BUILDS.load(std::sync::atomic::Ordering::SeqCst) >= 1,
+        admitted >= 1,
         "the admission's reads went through the composed builder"
     );
+    let bound = swarm_bridge::process_board().expect("admission bound the process's board");
+    let context = crate::interface::tool_runtime::swarm_context().expect("a contracted context");
+    assert_eq!(context.checkout, checkout);
     assert!(
-        super::board(&crate::interface::cli::CliContext::default()).is_none(),
-        "no builder, no board"
+        context.board.is_the_same_board(bound),
+        "the tools' context calls the board admission bound"
+    );
+    context.summary().expect("a read through the bound board");
+    assert_eq!(
+        ADMITTED_BUILDS.load(Ordering::SeqCst),
+        admitted,
+        "the same file: the handles admission built"
     );
 }
 
