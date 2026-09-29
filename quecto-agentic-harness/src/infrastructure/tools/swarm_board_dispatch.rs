@@ -38,7 +38,8 @@
 //! `_request_admission` (#2274) by [`usage`]; and the file reservations
 //! `reserve`, `release_files` and `file_owners`, with the coordinator's
 //! `recover` and `revoke` (#2275), by [`reservations`]; and the durable
-//! messages `send`, `withdraw`, `inbox` and `ack` (#2276) by [`messages`].
+//! messages `send`, `withdraw`, `inbox` and `ack` (#2276) by [`messages`], and
+//! the wake notifications `_notifications` and `_accept_wake` by [`wakes`].
 //!
 //! What S12 must keep when it adds the summaries Python answers with:
 //!
@@ -89,14 +90,14 @@ use serde_json::{Map, Value};
 use crate::application::swarm::dto::{MemberRow, RunSnapshotView, RunStatusView};
 use crate::application::swarm::ports::{BoardCallMeter, BoardOpLog, BoardRepository};
 use crate::application::swarm::use_cases::{
-    AcknowledgeMessage, ActivateMember, AdmitMember, AmendRunContract, BlockTask, BootstrapRun,
-    ClaimTask, CloseRun, CompleteRun, ConfigureUsageBudget, CreateRun, CreateTask,
-    ExtendRunDeadline, JoinRun, ListFileOwners, OverRepository, PauseRun, ReadControlStatus,
-    ReadInbox, ReadRequestAdmission, ReadRunSnapshot, ReadRunStatus, ReadTask, ReadUsageReport,
-    RecordEvidence, RecordMemberLaunch, RecordRequestUsage, RecoverTask, RegisterMemberSocket,
-    ReleaseFiles, ReleaseTask, ReleaseUnlaunchedMember, ReserveFiles, ResumeRun,
-    ResumeRunExternally, RevalidateTask, RevokeTask, SendMessage, SetTaskDependencies, StopRun,
-    SubmitTask, UnblockTask, VerifyTask, WithdrawMessage,
+    AcceptWake, AcknowledgeMessage, ActivateMember, AdmitMember, AmendRunContract, BlockTask,
+    BootstrapRun, ClaimNotifications, ClaimTask, CloseRun, CompleteRun, ConfigureUsageBudget,
+    CreateRun, CreateTask, ExtendRunDeadline, JoinRun, ListFileOwners, OverRepository, PauseRun,
+    ReadControlStatus, ReadInbox, ReadRequestAdmission, ReadRunSnapshot, ReadRunStatus, ReadTask,
+    ReadUsageReport, RecordEvidence, RecordMemberLaunch, RecordRequestUsage, RecoverTask,
+    RegisterMemberSocket, ReleaseFiles, ReleaseTask, ReleaseUnlaunchedMember, ReserveFiles,
+    ResumeRun, ResumeRunExternally, RevalidateTask, RevokeTask, SendMessage, SetTaskDependencies,
+    StopRun, SubmitTask, UnblockTask, VerifyTask, WithdrawMessage,
 };
 use crate::domain::swarm::{BoardError, BoardRole, RefusalKind};
 
@@ -156,6 +157,8 @@ pub struct SwarmBoardHandles {
     pub withdraw_message: Arc<WithdrawMessage>,
     pub read_inbox: Arc<ReadInbox>,
     pub acknowledge_message: Arc<AcknowledgeMessage>,
+    pub claim_notifications: Arc<ClaimNotifications>,
+    pub accept_wake: Arc<AcceptWake>,
     /// Each call's `swarm_op` record and its measure (#2303), only when
     /// the event log is switched on (`telemetry.event_log.enabled`, owner
     /// decision T1): `None` measures and writes nothing.
@@ -221,6 +224,8 @@ pub const BOARD_OPS: &[&str] = &[
     "withdraw",
     "inbox",
     "ack",
+    "_notifications",
+    "_accept_wake",
     #[cfg(any(test, feature = "test-support"))]
     "create_run",
     #[cfg(any(test, feature = "test-support"))]
@@ -534,6 +539,14 @@ fn serve(
             member,
             arguments,
         ),
+        Method::Notifications => wakes::notifications(
+            &serving(&*handles.claim_notifications, over),
+            member,
+            arguments,
+        ),
+        Method::AcceptWake => {
+            wakes::accept_wake(&serving(&*handles.accept_wake, over), member, arguments)
+        }
         #[cfg(any(test, feature = "test-support"))]
         Method::CreateRun => {
             test_only::create_run(&serving(&*handles.create_run, over), member, arguments)
@@ -665,6 +678,8 @@ mod reservations;
 mod messages;
 #[path = "swarm_board_dispatch_usage.rs"]
 mod usage;
+#[path = "swarm_board_dispatch_wakes.rs"]
+mod wakes;
 
 #[cfg(test)]
 #[path = "swarm_board_dispatch_tests.rs"]

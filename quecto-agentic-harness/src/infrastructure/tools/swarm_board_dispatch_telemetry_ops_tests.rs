@@ -52,6 +52,8 @@ fn every_method() -> Vec<Method> {
         Method::Withdraw,
         Method::Inbox,
         Method::Ack,
+        Method::Notifications,
+        Method::AcceptWake,
         Method::CreateRun,
         Method::BootstrapRun,
         Method::BootstrapJoin,
@@ -98,6 +100,8 @@ fn every_method() -> Vec<Method> {
             | Method::Withdraw
             | Method::Inbox
             | Method::Ack
+            | Method::Notifications
+            | Method::AcceptWake
             | Method::CreateRun
             | Method::BootstrapRun
             | Method::BootstrapJoin
@@ -309,6 +313,16 @@ fn acted_on(
             (json!([1]), None, Some(1), None)
         }
         Method::Inbox => (json!([true]), None, None, None),
+        // The first claim moves the caller's cursor from none to the
+        // board's generation (#2276).
+        Method::Notifications | Method::AcceptWake => {
+            running(handles);
+            let args = match method {
+                Method::AcceptWake => json!([1]),
+                _ => json!([]),
+            };
+            (args, None, None, Some(true))
+        }
         Method::CreateRun => (create_args(), None, None, None),
         Method::BootstrapRun => (json!([1, "s", null]), None, None, None),
         Method::BootstrapJoin => (json!([1, "s", null]), None, None, None),

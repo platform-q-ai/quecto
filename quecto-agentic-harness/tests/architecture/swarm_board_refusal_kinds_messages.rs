@@ -4,8 +4,19 @@
 //! the table's test reads with it ([`super::refusals`]).
 
 /// `(file:function, text, kind)` for each construction site of the
-/// durable messages (`board_messages.rs` and the four message use cases).
+/// durable messages (`board_messages.rs` and the four message use cases)
+/// and the wake notifications (`accept_wake.rs`).
 pub(super) const MESSAGE_REFUSALS: &[(&str, &str, &str)] = &[
+    (
+        "src/application/swarm/use_cases/accept_wake.rs:claim",
+        "wake generation is ahead of the board",
+        "Invalid",
+    ),
+    (
+        "src/application/swarm/use_cases/accept_wake.rs:wake_generation",
+        "wake generation must be a nonnegative integer",
+        "Invalid",
+    ),
     (
         "src/application/swarm/board_messages.rs:message_id",
         "message id must be a positive integer",
