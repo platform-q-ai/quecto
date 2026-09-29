@@ -155,7 +155,7 @@ fn the_tool_description_names_op_create_and_a_relative_deadline() {
 }
 
 #[tokio::test]
-async fn op_run_before_create_points_the_founder_at_op_create() {
+async fn op_run_or_a_board_op_before_create_points_the_founder_at_op_create() {
     // End to end through the tool: a bootstrapped, not yet created run.
     use crate::application::tools::ports::Tool;
     let directory = tempfile::tempdir().unwrap();
@@ -182,16 +182,20 @@ async fn op_run_before_create_points_the_founder_at_op_create() {
         super::super::SwarmConfig::default(),
     )
     .with_context(Some(context));
-    let result = tool
-        .execute(r#"{"op":"run","code":"print('hello')"}"#)
-        .await
-        .unwrap();
-    assert!(result.is_error);
-    assert!(
-        result.content.contains(r#""op":"create""#),
-        "{}",
-        result.content
-    );
+    // `op=run` passes the same setup gate as a structured op until S17
+    // (#2282) deletes it; both point the founder at `op=create`.
+    for request in [
+        r#"{"op":"run","code":"print('hello')"}"#,
+        r#"{"op":"task_create","request":"r1","title":"t","acceptance":["pass"]}"#,
+    ] {
+        let result = tool.execute(request).await.unwrap();
+        assert!(result.is_error, "{request}: {}", result.content);
+        assert!(
+            result.content.contains(r#""op":"create""#),
+            "{request}: {}",
+            result.content
+        );
+    }
 }
 
 /// #2279 review N9: every refusal that allows `usage` says it is the

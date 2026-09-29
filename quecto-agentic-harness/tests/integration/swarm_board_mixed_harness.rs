@@ -1,6 +1,6 @@
-//! The harness's Rust board and Python member programs on one board file
-//! (#2278): the calls the harness makes through its `SwarmContext`s and
-//! the calls a member's `op=run` program makes through the Python board
+//! The harness's Rust board and members' structured board ops on one board
+//! file (#2278, #2281): the calls the harness makes through its
+//! `SwarmContext`s and the calls a member's structured `swarm` ops make
 //! leave the file the pure-Python board leaves for the same calls. Both
 //! sides run on one fixed instant and draw ids from one counter (review
 //! L3), so the two files are compared unmasked: every time, id and float
@@ -22,7 +22,7 @@ use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
 use crate::swarm_board_diff_runs::swarm_board_diff::dump::{first_difference, logical_dump};
 use crate::swarm_board_diff_runs::swarm_board_diff::python::PyBoard;
 
-/// The instant every call reads, the harness's and the programs' alike:
+/// The instant every call reads, the harness's and the members' ops alike:
 /// fixed when the test starts (the tool checks the run's deadline against
 /// the wall clock, so it is the start's own time), as `f64` bits.
 static INSTANT: AtomicU64 = AtomicU64::new(0);
@@ -41,7 +41,7 @@ impl Clock for FixedClock {
 
 /// How many ids the harness's boards have drawn: every board this test
 /// builds draws from it, `format(n, '032x')` as the Python driver's
-/// `uuid4` and the program's own counter (below) draw.
+/// `uuid4` draws.
 static DRAWN: AtomicU64 = AtomicU64::new(0);
 
 struct CounterIds;
@@ -62,26 +62,13 @@ fn fixed_handles(location: BoardLocation, _log: Option<Arc<dyn BoardOpLog>>) -> 
     )
 }
 
-/// A member's `op=run` program on the real `SwarmTool`, as `context`'s
-/// member, on the harness's instant and continuing its id counter: it
-/// must succeed.
-async fn run_program(context: &SwarmContext, code: &str) {
+/// A member's structured board op on the real `SwarmTool`, as `context`'s
+/// member (#2281), on the harness's board (its fixed instant and id
+/// counter): it must succeed.
+async fn board_op(context: &SwarmContext, request: Value) {
     use quecto::application::tools::ports::Tool;
     use quecto::infrastructure::security::sandbox::Sandbox;
     use quecto::infrastructure::tools::swarm::{SwarmConfig, SwarmTool};
-    let (drawn, now) = (DRAWN.load(Ordering::SeqCst), instant());
-    let fixed = format!(
-        "import time, uuid\n\
-         from swarm import board\n\
-         time.time = lambda: {now:?}\n\
-         board.coordination.clock = lambda: {now:?}\n\
-         class _Uuid:\n    def __init__(self, n): self.hex = format(n, '032x')\n\
-         _drawn = [{drawn}]\n\
-         def _uuid4():\n    _drawn[0] += 1\n    return _Uuid(_drawn[0])\n\
-         uuid.uuid4 = _uuid4\n\
-         {code}\n\
-         print('drawn', _drawn[0])\n"
-    );
     let workspace = Arc::new(context.checkout.clone());
     let tool = SwarmTool::new(
         workspace.clone(),
@@ -90,23 +77,14 @@ async fn run_program(context: &SwarmContext, code: &str) {
     )
     .with_context(Some(context.clone()));
     let result = tool
-        .execute(&json!({"op": "run", "code": fixed}).to_string())
+        .execute(&request.to_string())
         .await
-        .expect("the program ran");
-    assert!(!result.is_error, "{code}: {}", result.content);
-    // The program's draws continue the harness's counter.
-    let drawn_after = result
-        .content
-        .split("drawn ")
-        .nth(1)
-        .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
-        .and_then(|digits| digits.parse::<u64>().ok())
-        .unwrap_or_else(|| panic!("the program reports its draws: {}", result.content));
-    DRAWN.store(drawn_after, Ordering::SeqCst);
+        .expect("the op ran");
+    assert!(!result.is_error, "{request}: {}", result.content);
 }
 
 #[tokio::test]
-async fn python_member_programs_and_rust_harness_share_one_board() {
+async fn member_board_ops_and_rust_harness_share_one_board() {
     use quecto::application::swarm::ports::CoordinationPort;
     use quecto::domain::swarm::{MemberExit, ProcessIdentity};
     use quecto::infrastructure::tools::swarm_bridge::process_start;
@@ -147,20 +125,21 @@ async fn python_member_programs_and_rust_harness_share_one_board() {
         worker.join(&identity, None, Some("res-w"))
     })
     .unwrap();
-    // 1. A Python member program creates and claims a task.
-    run_program(
+    // 1. A member creates and claims a task through structured ops.
+    board_op(
         &worker,
-        "t = board.task_create('r1', 'first', ['tests pass']); board.claim(t['id'])",
+        json!({"op": "task_create", "request": "r1", "title": "first", "acceptance": ["tests pass"]}),
     )
     .await;
+    board_op(&worker, json!({"op": "claim", "task_id": 1})).await;
     // 2. The harness's Rust summary sees it.
     let summary = off_the_runtime(|| coordinator.summary()).unwrap();
     assert_eq!(summary["tasks"][0]["status"], "claimed", "{summary}");
     assert_eq!(summary["tasks"][0]["owner"], "worker");
     // 3. The harness's Rust `_confirmed_dead` blocks it.
     off_the_runtime(|| coordinator.confirm_dead("worker", MemberExit::Orderly)).unwrap();
-    // 4. A Python `recover` reopens it.
-    run_program(&coordinator, "board.recover(1)").await;
+    // 4. The coordinator's `recover` op reopens it.
+    board_op(&coordinator, json!({"op": "recover", "task_id": 1})).await;
     let summary = off_the_runtime(|| coordinator.summary()).unwrap();
     assert_eq!(summary["tasks"][0]["status"], "ready", "{summary}");
 
@@ -197,20 +176,25 @@ async fn python_member_programs_and_rust_harness_share_one_board() {
         ("parent", "_snapshot", json!([])),
         ("parent", "_admit", json!(["worker", "res-w"])),
         ("worker", "_bootstrap", json!([pid, started, null, "res-w"])),
-        // The worker's op=run: the tool's summary, the program, the tool's
-        // summary, and its notifications (the event cursor moved).
-        ("worker", "summary", json!([null])),
+        // Each of the worker's structured ops: the running gate's
+        // `_status`, the op, and, the event cursor having moved (its reads,
+        // `_event_cursor`, write nothing and are Rust's alone), the
+        // lifecycle's summary and notifications.
+        ("worker", "_status", json!([])),
         (
             "worker",
             "task_create",
             json!(["r1", "first", ["tests pass"]]),
         ),
+        ("worker", "summary", json!([null])),
+        ("worker", "_notifications", json!([true])),
+        ("worker", "_status", json!([])),
         ("worker", "claim", json!([1])),
         ("worker", "summary", json!([null])),
         ("worker", "_notifications", json!([true])),
         ("parent", "summary", json!([null])),
         ("parent", "_confirmed_dead", json!(["worker", "orderly"])),
-        ("parent", "summary", json!([null])),
+        ("parent", "_status", json!([])),
         ("parent", "recover", json!([1])),
         ("parent", "summary", json!([null])),
         ("parent", "_notifications", json!([true])),
@@ -228,6 +212,6 @@ async fn python_member_programs_and_rust_harness_share_one_board() {
     assert_eq!(
         first_difference(&pure, &harness),
         None,
-        "the harness's Rust calls and Python member programs leave the pure-Python board, byte for byte"
+        "the harness's Rust calls and the members' structured ops leave the pure-Python board, byte for byte"
     );
 }

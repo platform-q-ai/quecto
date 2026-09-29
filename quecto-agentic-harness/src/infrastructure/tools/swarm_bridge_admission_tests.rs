@@ -49,6 +49,8 @@ async fn terminal_tool_admission_allows_only_native_read_operations() {
         ("bash", "{}"),
         ("spawn_agent", "{}"),
         ("swarm", r#"{"op":"run","code":"print(1)"}"#),
+        ("swarm", r#"{"op":"inbox"}"#),
+        ("swarm", r#"{"op":"claim","task_id":1}"#),
         ("swarm", r#"{"op":"resume"}"#),
         ("swarm", "{}"),
         ("swarm", "invalid"),
@@ -84,7 +86,7 @@ async fn a_resumed_coordinator_runs_python_again_after_ending_the_run() {
         lifecycle: Arc::new(crate::application::swarm::LifecycleService),
     };
     let ended = tool
-        .execute(r#"{"code":"from swarm import board; board.stop('blocked','needs the master')"}"#)
+        .execute(r#"{"op":"stop","status":"blocked","reason":"needs the master"}"#)
         .await
         .unwrap();
     assert!(!ended.is_error, "{}", ended.content);
@@ -101,7 +103,7 @@ async fn a_resumed_coordinator_runs_python_again_after_ending_the_run() {
     );
     crate::infrastructure::tools::call_work::off_the_runtime(|| context.resume_external()).unwrap();
     let again = tool
-        .execute(r#"{"code":"from swarm import board; print(board.summary()['status'])"}"#)
+        .execute(r#"{"code":"print('ran again')"}"#)
         .await
         .unwrap();
     assert!(
@@ -109,5 +111,9 @@ async fn a_resumed_coordinator_runs_python_again_after_ending_the_run() {
         "the registry closed on the end: {}",
         again.content
     );
-    assert!(again.content.contains("running"), "{}", again.content);
+    assert!(again.content.contains("ran again"), "{}", again.content);
+    let summary = tool.execute(r#"{"op":"summary"}"#).await.unwrap();
+    assert!(!summary.is_error, "{}", summary.content);
+    let summary: serde_json::Value = serde_json::from_str(&summary.content).unwrap();
+    assert_eq!(summary["status"], "running", "{summary}");
 }

@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
     time::Duration,
@@ -23,6 +23,9 @@ pub struct Runtime {
     child: Child,
     socket: PathBuf,
     pub requests: Arc<AtomicUsize>,
+    /// Every text answer the fake provider gave (coordinator and members
+    /// alike), each with the latest tool answer it followed.
+    texts: Arc<Mutex<Vec<String>>>,
     _server: wiremock::MockServer,
 }
 impl Drop for Runtime {
@@ -61,6 +64,10 @@ pub type ContentScript = fn(&Turn) -> Reply;
 pub struct Turn {
     pub user: String,
     pub after_tool: bool,
+    /// The answers of the tool calls made since the latest user message, in
+    /// order, each read as JSON (`Null` when it is not), so a script can
+    /// chain structured ops (#2281: a claim's token into its reserve).
+    pub tool_results: Vec<Value>,
 }
 
 impl Turn {
@@ -72,8 +79,50 @@ impl Turn {
         Self {
             user: latest_user_text(input),
             after_tool,
+            tool_results: tool_results_since_user(input),
         }
     }
+}
+
+/// The text of a chat message's content (string or text parts).
+fn content_text(content: &Value) -> String {
+    match content {
+        Value::String(text) => text.clone(),
+        Value::Array(parts) => parts
+            .iter()
+            .filter_map(|part| part["text"].as_str())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    }
+}
+
+/// The text of the latest `tool` message in a chat request; empty when
+/// there is none.
+fn last_tool_text(input: &Value) -> String {
+    input["messages"]
+        .as_array()
+        .and_then(|messages| messages.iter().rev().find(|m| m["role"] == "tool"))
+        .map(|message| content_text(&message["content"]))
+        .unwrap_or_default()
+}
+
+/// The `tool` messages after the latest `user` message, each read as JSON.
+fn tool_results_since_user(input: &Value) -> Vec<Value> {
+    let Some(messages) = input["messages"].as_array() else {
+        return Vec::new();
+    };
+    let since = messages
+        .iter()
+        .rposition(|message| message["role"] == "user")
+        .map_or(0, |index| index + 1);
+    messages[since..]
+        .iter()
+        .filter(|message| message["role"] == "tool")
+        .map(|message| {
+            serde_json::from_str(&content_text(&message["content"])).unwrap_or(Value::Null)
+        })
+        .collect()
 }
 
 /// The text of the latest `user` message in a chat request (string or
@@ -86,15 +135,7 @@ fn latest_user_text(input: &Value) -> String {
         .iter()
         .rev()
         .find(|message| message["role"] == "user")
-        .map(|message| match &message["content"] {
-            Value::String(text) => text.clone(),
-            Value::Array(parts) => parts
-                .iter()
-                .filter_map(|part| part["text"].as_str())
-                .collect::<Vec<_>>()
-                .join("\n"),
-            _ => String::new(),
-        })
+        .map(|message| content_text(&message["content"]))
         .unwrap_or_default()
 }
 
@@ -131,6 +172,8 @@ impl Runtime {
         let server = wiremock::MockServer::start().await;
         let requests = Arc::new(AtomicUsize::new(0));
         let seen = requests.clone();
+        let texts = Arc::new(Mutex::new(Vec::new()));
+        let answered = texts.clone();
         let deadline = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -159,7 +202,10 @@ impl Runtime {
                         json!({"role":"assistant","content":null,"tool_calls":[{"index":0,"id":format!("call-{index}"),"type":"function","function":{"name":name,"arguments":arguments.to_string()}}]}),
                         "tool_calls",
                     ),
-                    Reply::Text(text) => (json!({"role":"assistant","content":text}), "stop"),
+                    Reply::Text(text) => {
+                        answered.lock().unwrap().push(format!("{text} (after: {})", last_tool_text(&input)));
+                        (json!({"role":"assistant","content":text}), "stop")
+                    }
                 };
                 let usage = json!({"prompt_tokens":10,"completion_tokens":2,"total_tokens":12});
                 let response = if input["stream"] == true {
@@ -218,6 +264,7 @@ impl Runtime {
             child,
             socket,
             requests,
+            texts,
             _server: server,
         };
         let until = tokio::time::Instant::now() + STARTUP_CEILING;
@@ -233,6 +280,17 @@ impl Runtime {
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
         runtime
+    }
+    /// The first text answer the fake provider gave that starts with
+    /// `prefix`, with the tool answer it followed; read in process, so a
+    /// wait can check it on every poll without a socket round trip.
+    pub fn text_starting(&self, prefix: &str) -> Option<String> {
+        self.texts
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|text| text.starts_with(prefix))
+            .cloned()
     }
     pub async fn command(&self, input: Value) -> Value {
         let reply = send_subagent_uds_command_with_timeout(

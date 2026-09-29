@@ -34,28 +34,53 @@ impl crate::application::providers::ports::LlmProvider for ApprovalProvider {
             self.started.notify_one();
             return Box::pin(std::future::pending());
         }
-        let acted = request
+        // #2281: the approval applied one call at a time: read the task,
+        // write the artifact, submit it under the task's token.
+        let answers: Vec<&crate::domain::message::Message> = request
             .messages
             .iter()
-            .any(|m| m.role == crate::domain::message::Role::Tool);
+            .filter(|m| m.role == crate::domain::message::Role::Tool)
+            .collect();
+        assert!(
+            answers.iter().all(|m| !m.is_error),
+            "an approval call was refused: {:?}",
+            answers.iter().map(|m| &m.content).collect::<Vec<_>>()
+        );
+        let call = |id: &str, name: &str, arguments: serde_json::Value| ToolCall {
+            id: id.into(),
+            name: name.into(),
+            arguments: arguments.to_string(),
+        };
+        let tool_calls = match answers.as_slice() {
+            [] => vec![call(
+                "read-task",
+                "swarm",
+                serde_json::json!({"op":"task","task_id":1}),
+            )],
+            [_] => vec![call(
+                "write-artifact",
+                "write",
+                serde_json::json!({"path":"approved.txt","content":"schema v2"}),
+            )],
+            [task, _] => {
+                let task: serde_json::Value = serde_json::from_str(&task.content).unwrap();
+                vec![call(
+                    "apply-approval",
+                    "swarm",
+                    serde_json::json!({"op":"submit","task_id":1,"token":task["token"],
+                        "evidence":[{"artifact":"approved.txt","revision":"R2"}]}),
+                )]
+            }
+            _ => vec![],
+        };
+        let content = match tool_calls.is_empty() {
+            true => "Acknowledged schema v2; resumed the blocked task.",
+            false => "",
+        };
         Box::pin(async move {
             Ok(LlmResponse {
-                content: Some(
-                    if acted {
-                        "Acknowledged schema v2; resumed the blocked task."
-                    } else {
-                        ""
-                    }
-                    .into(),
-                ),
-                tool_calls: if acted {
-                    vec![]
-                } else {
-                    vec![ToolCall {
-                id:"apply-approval".into(), name:"swarm".into(),
-                arguments: serde_json::json!({"op":"run","code":"from swarm import board; t=board.task(1); open('approved.txt','w').write('schema v2'); board.submit(1,t['token'],[{'artifact':'approved.txt','revision':'R2'}])"}).to_string(),
-            }]
-                },
+                content: Some(content.into()),
+                tool_calls,
                 usage: None,
                 stop_reason: None,
                 thinking_blocks: vec![],
@@ -104,10 +129,35 @@ async fn approval_exchange(busy: bool) {
         SwarmConfig::default(),
     )
     .with_context(Some(board.clone()));
-    let result = tool.execute(r#"{"op":"run","code":"from swarm import board; t=board.task_create('wishlist','wishlist',['approved schema']); c=board.claim(t['id']); board.block(t['id'],c['token'],'awaiting master approval')"}"#).await.unwrap();
-    assert!(!result.is_error, "{}", result.content);
+    let op = |request: serde_json::Value| {
+        let tool = &tool;
+        async move {
+            let result = tool.execute(&request.to_string()).await.unwrap();
+            assert!(!result.is_error, "{request}: {}", result.content);
+            serde_json::from_str::<serde_json::Value>(&result.content).unwrap()
+        }
+    };
+    let task = op(
+        serde_json::json!({"op":"task_create","request":"wishlist","title":"wishlist",
+        "acceptance":["approved schema"]}),
+    )
+    .await;
+    let claim = op(serde_json::json!({"op":"claim","task_id":task["id"]})).await;
+    op(
+        serde_json::json!({"op":"block","task_id":task["id"],"token":claim["token"],
+        "reason":"awaiting master approval"}),
+    )
+    .await;
     let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
     registry.register(Arc::new(tool));
+    registry.register(Arc::new(
+        crate::infrastructure::tools::filesystem::WriteTool::new(
+            workspace.clone(),
+            Arc::new(crate::infrastructure::security::sandbox::Sandbox::new(
+                Some(workspace.as_ref().clone()),
+            )),
+        ),
+    ));
     env.agent.swap_registry(Box::new(registry));
     let socket = workspace.join("coordinator.sock");
     let mut ctx = env.ctx();
@@ -191,10 +241,11 @@ async fn approval_exchange(busy: bool) {
         std::fs::read_to_string(workspace.join("approved.txt")).unwrap(),
         "schema v2"
     );
-    assert_eq!(
-        crate::infrastructure::tools::call_work::off_the_runtime(|| board.summary()).unwrap()["status"],
-        "running"
-    );
+    let summary =
+        crate::infrastructure::tools::call_work::off_the_runtime(|| board.summary()).unwrap();
+    assert_eq!(summary["status"], "running", "{summary}");
+    // The approval was applied on the board: the blocked task is submitted.
+    assert_eq!(summary["tasks"][0]["status"], "submitted", "{summary}");
     accept.abort();
 }
 
