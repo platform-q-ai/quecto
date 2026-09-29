@@ -15,6 +15,8 @@
 //! comparisons are only as exact as their inputs: an argument must be decoded
 //! by `py_json` (correctly rounded floats), not by `serde_json`, before it
 //! reaches them.
+use std::collections::HashMap;
+
 use serde_json::{Number, Value};
 
 use super::python_unassigned::UNASSIGNED;
@@ -56,9 +58,13 @@ const BEYOND: f64 = 18_446_744_073_709_551_616.0;
 /// (2^63 against i64::MAX, say) is never saturated into one; within it
 /// the conversion to i128 is exact.
 fn integer_equals_float(integer: i128, float: f64) -> bool {
-    let integral = float.is_finite() && float.fract() == 0.0;
-    let within = (LOWEST..BEYOND).contains(&float);
-    integral && within && float as i128 == integer
+    integral_within(float) && float as i128 == integer
+}
+
+/// Whether `float` is integral and within `[-2^63, 2^64)`, so that the
+/// conversion to i128 is exact.
+fn integral_within(float: f64) -> bool {
+    float.is_finite() && float.fract() == 0.0 && (LOWEST..BEYOND).contains(&float)
 }
 
 fn numbers_equal(left: Numeric, right: Numeric) -> bool {
@@ -102,6 +108,89 @@ pub fn python_equal(left: &Value, right: &Value) -> bool {
             }
         }
         _ => false,
+    }
+}
+
+/// A value's key under Python's `==` and `hash`, for the values Python
+/// can hash: `None`, text, and a number, where the equal `bool`, `int` and
+/// `float` (`True == 1 == 1.0`, `0 == -0.0`) share one key, as their
+/// hashes do. A float no integer equals keys by its bits. A list or a
+/// dict (unhashable to Python) has no key.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum PythonKey<'a> {
+    None,
+    Integer(i128),
+    Float(u64),
+    Text(&'a str),
+}
+
+fn python_key(value: &Value) -> Option<PythonKey<'_>> {
+    match value {
+        Value::Null => Some(PythonKey::None),
+        Value::String(text) => Some(PythonKey::Text(text)),
+        Value::Bool(_) | Value::Number(_) => match numeric(value)? {
+            Numeric::Integer(integer) => Some(PythonKey::Integer(integer)),
+            // NaN equals nothing, itself included: no key finds it.
+            Numeric::Float(float) if float.is_nan() => None,
+            Numeric::Float(float) if integral_within(float) => {
+                // Exact: the range check bounds the conversion.
+                Some(PythonKey::Integer(float as i128))
+            }
+            Numeric::Float(float) => Some(PythonKey::Float(float.to_bits())),
+        },
+        Value::Array(_) | Value::Object(_) => None,
+    }
+}
+
+/// The first of some values equal to a key under Python's `==`, found as
+/// Python's dict finds it: by hash for a value with a [`PythonKey`], by
+/// `python_equal` among the values without one (lists, dicts). So
+/// `position` answers as a linear search with `python_equal` does, in
+/// constant time for a hashable key.
+pub struct PythonLookup<'a> {
+    values: Vec<&'a Value>,
+    keyed: HashMap<PythonKey<'a>, usize>,
+    unkeyed: Vec<usize>,
+}
+
+impl<'a> PythonLookup<'a> {
+    #[must_use]
+    pub fn new(values: impl IntoIterator<Item = &'a Value>) -> Self {
+        let values: Vec<&'a Value> = values.into_iter().collect();
+        let (mut keyed, mut unkeyed) = (HashMap::with_capacity(values.len()), Vec::new());
+        for (index, value) in values.iter().enumerate() {
+            match python_key(value) {
+                Some(key) => {
+                    keyed.entry(key).or_insert(index);
+                }
+                None => unkeyed.push(index),
+            }
+        }
+        Self {
+            values,
+            keyed,
+            unkeyed,
+        }
+    }
+
+    /// The index of the first value equal to `key` under Python's `==`.
+    /// A keyed value equals only values of the same key, and an unkeyed
+    /// one only unkeyed values, so each side is searched alone.
+    #[must_use]
+    pub fn position(&self, key: &Value) -> Option<usize> {
+        let found = match python_key(key) {
+            Some(hashed) => {
+                let keyed: &HashMap<PythonKey<'_>, usize> = &self.keyed;
+                keyed.get(&hashed).copied()
+            }
+            None => self
+                .unkeyed
+                .iter()
+                .copied()
+                .find(|&index| python_equal(self.values[index], key)),
+        };
+        debug_assert!(found.is_none_or(|index| python_equal(self.values[index], key)));
+        found
     }
 }
 

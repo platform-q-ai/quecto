@@ -21,8 +21,8 @@ use super::ports::{
     BoardEvents, BoardMembers, BoardRepository, BoardTasks, BoardTransaction, Clock,
 };
 use crate::domain::swarm::{
-    Access, BoardError, OWNER_IDLE_AFTER, OwnerState, RefusalKind, authorize, idle_transition,
-    owner_recovery, owner_state, python_equal, python_repr,
+    Access, BoardError, OWNER_IDLE_AFTER, OwnerState, PythonLookup, RefusalKind, authorize,
+    idle_transition, owner_recovery, owner_state, python_repr,
 };
 
 /// The tasks and files a summary holds.
@@ -302,11 +302,11 @@ fn counts(
     coordinator: Option<&str>,
 ) -> Result<SummaryCounts, BoardError> {
     let states = transaction.task_states()?;
+    // Python's `states[d]` is a dict lookup: by hash, not a search.
+    let ids = PythonLookup::new(states.iter().map(|task| &task.id));
     let completed = |dependency: &Value| {
-        states
-            .iter()
-            .find(|task| python_equal(&task.id, dependency))
-            .is_some_and(|task| task.status.as_str() == Some("completed"))
+        ids.position(dependency)
+            .is_some_and(|index| states[index].status.as_str() == Some("completed"))
     };
     let mut counts = SummaryCounts {
         members: transaction.claim_counts(coordinator)?,

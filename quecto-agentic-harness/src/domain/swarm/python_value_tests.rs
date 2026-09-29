@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use super::{not_printed, python_equal, python_repr, python_truthy};
+use super::{PythonLookup, not_printed, python_equal, python_repr, python_truthy};
 
 #[test]
 fn none_equals_only_none() {
@@ -154,4 +154,65 @@ fn python_repr_escapes_an_unassigned_code_point() {
     assert_eq!(python_repr("w\u{0378}"), r"'w\u0378'");
     assert_eq!(python_repr("\u{e0080}x"), r"'\U000e0080x'");
     assert_eq!(python_repr("\u{1fae9}"), "'\u{1fae9}'", "assigned in 16.0");
+}
+
+/// Values Python's `==` and `hash` meet: bools, ints and floats that are
+/// equal (`1 == 1.0 == True`, `0 == -0.0`), integers at and beyond a
+/// double's exact range, floats no integer equals, text, `None`, NaN and
+/// the unhashable list and dict.
+fn mixed_values() -> Vec<serde_json::Value> {
+    vec![
+        json!(1),
+        json!(1.0),
+        json!(true),
+        json!(false),
+        json!(0),
+        json!(0.0),
+        json!(-0.0),
+        json!("1"),
+        json!(""),
+        json!(null),
+        json!(1.5),
+        json!(-1),
+        json!(-1.0),
+        json!(9_007_199_254_740_992_i64),
+        json!(9_007_199_254_740_992.0),
+        json!(9_007_199_254_740_993_i64),
+        json!(i64::MAX),
+        json!(9_223_372_036_854_775_808.0),
+        json!(9_223_372_036_854_775_808_u64),
+        json!(u64::MAX),
+        json!(18_446_744_073_709_551_616.0),
+        json!(i64::MIN),
+        json!(-9_223_372_036_854_775_808.0),
+        json!(1e300),
+        json!(f64::MAX),
+        json!([1]),
+        json!([1.0]),
+        json!([]),
+        json!({"a": 1}),
+        json!({"a": true}),
+        json!({}),
+    ]
+}
+
+/// The lookup finds the first value equal to a key under Python's `==`,
+/// as a linear search with `python_equal` does, for every mix of types,
+/// in both orders of the values it indexes.
+#[test]
+fn a_lookup_agrees_with_a_linear_search_under_python_equality() {
+    let mut values = mixed_values();
+    let mut keys = mixed_values();
+    keys.extend([json!(2), json!("x"), json!([2]), json!({"b": 1})]);
+    for _ in 0..2 {
+        let lookup = PythonLookup::new(&values);
+        for key in &keys {
+            assert_eq!(
+                lookup.position(key),
+                values.iter().position(|value| python_equal(value, key)),
+                "{key} in {values:?}"
+            );
+        }
+        values.reverse();
+    }
 }
