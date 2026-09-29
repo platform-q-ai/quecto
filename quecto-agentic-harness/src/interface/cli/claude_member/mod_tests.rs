@@ -81,8 +81,8 @@ mod fakes {
         SessionRecord,
     };
     use crate::application::external_agent::ports::{
-        ExternalAgentClock, ExternalAgentLauncher, ExternalAgentProcess, ExternalAgentTelemetry,
-        PortFuture, QueuedUserTurn,
+        DetachedWork, ExternalAgentClock, ExternalAgentLauncher, ExternalAgentProcess,
+        ExternalAgentSpawner, ExternalAgentTelemetry, PortFuture, QueuedUserTurn,
     };
     use crate::application::external_agent::use_cases::DriveExternalAgentSession;
     use crate::domain::external_agent::stream::ExternalAgentEvent;
@@ -108,8 +108,9 @@ mod fakes {
         fn exited(&self) -> PortFuture<'_, ExternalAgentExit> {
             Box::pin(std::future::pending())
         }
+        // Its input closed, it exits at once.
         fn exited_discarding_output(&self) -> PortFuture<'_, ExternalAgentExit> {
-            Box::pin(std::future::pending())
+            Box::pin(async { ExternalAgentExit::Code(0) })
         }
         fn stderr_tail(&self) -> String {
             String::new()
@@ -142,6 +143,18 @@ mod fakes {
 
     impl ExternalAgentTelemetry for Unrecorded {
         fn record(&self, _record: &SessionRecord) {}
+        fn finish(&self) -> PortFuture<'_, ()> {
+            Box::pin(async {})
+        }
+    }
+
+    /// Runs detached work as a tokio task of the test's runtime.
+    struct Tasks;
+
+    impl ExternalAgentSpawner for Tasks {
+        fn spawn(&self, work: DetachedWork) {
+            drop(tokio::spawn(work));
+        }
     }
 
     struct Frozen;
@@ -161,6 +174,7 @@ mod fakes {
                 Arc::new(Launcher { refuse }),
                 Arc::new(Unrecorded),
                 Arc::new(Frozen),
+                Arc::new(Tasks),
                 ExternalAgentSessionSettings {
                     launch: ExternalAgentLaunchSpec {
                         model: "claude-sonnet".into(),
@@ -240,9 +254,14 @@ fn the_member_handles_debug_shows_nothing_of_the_session() {
         model: None,
         checkout: "/work".into(),
         base_dir: "/base".into(),
+        parent: None,
+        config_path: None,
+        log_key: None,
     })
     .expect("built");
     assert_eq!(format!("{handles:?}"), "ClaudeMemberHandles { .. }");
+}
+
 fn log_key_for(args: &[&str]) -> Option<String> {
     let mut stderr = String::new();
     let mut parts = vec!["--mode", "uds", "--backend", "claude-code"];

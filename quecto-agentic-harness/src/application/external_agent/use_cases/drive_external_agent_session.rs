@@ -85,8 +85,8 @@ use crate::application::external_agent::ports::{
 use crate::application::external_agent::session_core::{
     AbortDecision, Admission, SessionCore, Wait,
 };
-use crate::domain::external_agent::stream::ExternalAgentEvent;
 use crate::application::external_agent::session_telemetry::TurnCut;
+use crate::domain::external_agent::stream::ExternalAgentEvent;
 
 type Process = Arc<dyn ExternalAgentProcess>;
 
@@ -726,7 +726,8 @@ impl DriveExternalAgentSession {
 
     fn unfolded_slot(
         &self,
-    ) -> std::sync::MutexGuard<'_, Option<(ExternalAgentEvent, AgentClockInstant, AgentClockInstant)>> {
+    ) -> std::sync::MutexGuard<'_, Option<(ExternalAgentEvent, AgentClockInstant, AgentClockInstant)>>
+    {
         self.unfolded
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())

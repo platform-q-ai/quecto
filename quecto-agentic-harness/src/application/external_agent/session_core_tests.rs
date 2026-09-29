@@ -22,6 +22,7 @@ fn skipped_in_turn_one(grace_end: u64) -> SessionCore {
             reason: SkippedLineReason::OverCap,
             bytes: 9,
         }),
+        AgentClockInstant(0),
         AgentClockInstant(grace_end),
     );
     assert_eq!(core.wait(), Wait::Grace(AgentClockInstant(grace_end)));
