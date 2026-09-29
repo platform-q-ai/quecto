@@ -30,7 +30,9 @@ impl FinalReport {
         loop {
             let mut end = rest.len().min(FINAL_REPORT_PAGE_BYTES);
             while !rest.is_char_boundary(end) {
+                let before = end;
                 end -= 1;
+                assert!(end < before, "backing off to a char boundary moves back");
             }
             // A page always advances unless the rest is empty.
             debug_assert!(end > 0 || rest.is_empty());

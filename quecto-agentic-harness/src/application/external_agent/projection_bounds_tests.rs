@@ -344,3 +344,116 @@ fn a_failure_is_described_the_same_in_the_turn_end_and_the_report() {
         Some(expected.describe())
     );
 }
+
+#[test]
+fn a_result_with_an_id_closes_that_call_not_another() {
+    let mut projector = Projector::new();
+    fold(
+        &mut projector,
+        &[
+            tool_use("msg_o", "toolu_a", "Bash"),
+            tool_use("msg_o", "toolu_b", "Bash"),
+            tool_result("toolu_b", json!("b done"), false),
+            ExternalAgentEvent::ToolResult(ToolResultEvent {
+                tool_use_id: None,
+                content: json!("a done"),
+                is_error: false,
+                permission_denied: false,
+            }),
+        ],
+    );
+    let closed: Vec<_> = projector.messages()[1..]
+        .iter()
+        .map(|m| m.tool_call_id.as_deref())
+        .collect();
+    assert_eq!(
+        closed,
+        [Some("toolu_b"), Some("toolu_a")],
+        "b's result closed b, so a is the oldest call still open"
+    );
+}
+
+#[test]
+fn a_listed_background_job_stays_backgrounded_when_its_start_says_not() {
+    let mut projector = Projector::new();
+    fold(
+        &mut projector,
+        &[
+            ExternalAgentEvent::BackgroundTasksChanged {
+                tasks: vec![BackgroundTask {
+                    task_id: "listed".into(),
+                    description: None,
+                }],
+            },
+            started("listed", false),
+            started("fresh", true),
+        ],
+    );
+    let backgrounded = |id: &str| {
+        projector
+            .background_jobs()
+            .find(|j| j.task_id == id)
+            .map(|j| j.is_backgrounded)
+    };
+    assert_eq!(backgrounded("listed"), Some(true), "the list said so");
+    assert_eq!(backgrounded("fresh"), Some(true), "its start said so");
+}
+
+#[test]
+fn init_is_none_before_an_init_event_and_that_event_after() {
+    let mut projector = Projector::new();
+    assert_eq!(projector.init(), None);
+    let event = init();
+    projector.apply(&event);
+    let ExternalAgentEvent::Init(expected) = &event else {
+        panic!("init() is an init event");
+    };
+    assert_eq!(projector.init(), Some(expected));
+    assert_ne!(expected, &InitEvent::default());
+}
+
+#[test]
+fn the_tool_result_budget_is_64_kib() {
+    assert_eq!(TOOL_RESULT_CONTENT_BYTES, 65_536);
+}
+
+#[test]
+fn a_tool_result_of_exactly_the_budget_is_kept_whole() {
+    let content = "a".repeat(TOOL_RESULT_CONTENT_BYTES);
+    assert_eq!(bounded_tool_content(content.clone()), (content, None));
+}
+
+#[test]
+fn a_tool_result_one_byte_over_is_cut_at_the_budget() {
+    let (stored, from) = bounded_tool_content("a".repeat(TOOL_RESULT_CONTENT_BYTES + 1));
+    assert_eq!(
+        stored,
+        format!(
+            "{}{TRUNCATION_MARKER}",
+            "a".repeat(TOOL_RESULT_CONTENT_BYTES)
+        )
+    );
+    assert_eq!(from, Some(TOOL_RESULT_CONTENT_BYTES + 1));
+}
+
+#[test]
+fn a_char_straddling_the_tool_result_budget_is_dropped_whole() {
+    // "a" then "é" at bytes 1-2, …, 65535-65536: the budget splits one.
+    let content = format!("a{}", "é".repeat(TOOL_RESULT_CONTENT_BYTES / 2));
+    let length = content.len();
+    let (stored, from) = bounded_tool_content(content);
+    let kept = format!("a{}", "é".repeat(TOOL_RESULT_CONTENT_BYTES / 2 - 1));
+    assert_eq!(kept.len(), TOOL_RESULT_CONTENT_BYTES - 1);
+    assert_eq!(stored, format!("{kept}{TRUNCATION_MARKER}"));
+    assert_eq!(from, Some(length));
+}
+
+#[test]
+fn a_four_byte_char_straddling_the_budget_backs_off_three_bytes() {
+    // "a" then "😀" at bytes 1-4, …, 65533-65536: byte 65536 is inside one.
+    let content = format!("a{}", "😀".repeat(TOOL_RESULT_CONTENT_BYTES / 4));
+    let (stored, _) = bounded_tool_content(content);
+    let kept = format!("a{}", "😀".repeat(TOOL_RESULT_CONTENT_BYTES / 4 - 1));
+    assert_eq!(kept.len(), TOOL_RESULT_CONTENT_BYTES - 3);
+    assert_eq!(stored, format!("{kept}{TRUNCATION_MARKER}"));
+}

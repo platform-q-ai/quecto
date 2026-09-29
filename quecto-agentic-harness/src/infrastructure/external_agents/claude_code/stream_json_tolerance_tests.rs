@@ -248,3 +248,23 @@ fn a_task_event_without_its_task_id_is_unknown_not_an_error() {
     );
     assert_eq!(decoder.unknown_kinds_logged(), 2, "logged once per kind");
 }
+
+#[test]
+fn unknown_kinds_are_logged_up_to_the_capacity_and_no_further() {
+    assert_eq!(UNKNOWN_KINDS_LOGGED_CAPACITY, 64);
+    let mut decoder = StreamJsonDecoder::new();
+    for index in 0..=UNKNOWN_KINDS_LOGGED_CAPACITY {
+        let line = format!(r#"{{"type": "unknown_{index}"}}"#);
+        assert_eq!(
+            decoder.decode_line(&line).expect("decodes"),
+            vec![ExternalAgentEvent::Unknown {
+                kind: format!("unknown_{index}")
+            }]
+        );
+    }
+    assert_eq!(
+        decoder.unknown_kinds_logged(),
+        UNKNOWN_KINDS_LOGGED_CAPACITY,
+        "the kind past the capacity is decoded but not logged"
+    );
+}

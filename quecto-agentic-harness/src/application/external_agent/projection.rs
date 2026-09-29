@@ -425,7 +425,9 @@ fn bounded_tool_content(mut content: String) -> (String, Option<usize>) {
         false => {
             let mut end = TOOL_RESULT_CONTENT_BYTES;
             while !content.is_char_boundary(end) {
+                let before = end;
                 end -= 1;
+                assert!(end < before, "backing off to a char boundary moves back");
             }
             content.truncate(end);
             content.push_str(TRUNCATION_MARKER);

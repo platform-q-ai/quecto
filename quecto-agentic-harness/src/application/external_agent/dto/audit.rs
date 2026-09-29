@@ -32,8 +32,14 @@ pub fn input_preview(input: &Value) -> String {
     let mut json = input.to_string();
     let mut end = json.len().min(AUDIT_INPUT_PREVIEW_BYTES);
     while !json.is_char_boundary(end) {
+        let before = end;
         end -= 1;
+        assert!(end < before, "backing off to a char boundary moves back");
     }
     json.truncate(end);
     json
 }
+
+#[cfg(test)]
+#[path = "audit_tests.rs"]
+mod tests;
