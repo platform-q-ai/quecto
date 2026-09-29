@@ -638,6 +638,9 @@ mod completion;
 
 #[path = "swarm_board_dispatch_reservations.rs"]
 mod reservations;
+
+#[path = "swarm_board_dispatch_messages.rs"]
+mod messages;
 #[path = "swarm_board_dispatch_usage.rs"]
 mod usage;
 

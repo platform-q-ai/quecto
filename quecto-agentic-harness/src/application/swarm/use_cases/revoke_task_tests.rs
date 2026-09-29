@@ -76,6 +76,7 @@ fn revocation_reopens_the_task_and_tells_the_previous_owner() {
             recipient: json!("worker"),
             body: "claim on task 1 revoked by the coordinator: member suspended".to_owned(),
             status: "accepted".to_owned(),
+            ..StoredMessage::default()
         }]
     );
     let events: Vec<(&str, &Value)> = state

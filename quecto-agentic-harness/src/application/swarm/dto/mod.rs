@@ -9,6 +9,7 @@ pub mod files;
 pub mod location;
 pub mod measure;
 pub mod membership;
+pub mod messages;
 pub mod run;
 pub mod submissions;
 pub mod tasks;
@@ -33,6 +34,10 @@ pub use membership::{
     ActivateMemberRequest, AdmissionDecision, AdmitMemberRequest, AdmittedMember, JoinRunRequest,
     Joined, LaunchIdentity, RecordMemberLaunchRequest, RegisterMemberSocketRequest,
     ReleaseUnlaunchedMemberRequest,
+};
+pub use messages::{
+    MessageIdRequest, MessageRow, NewMessage, ReadInboxRequest, SendMessageRequest, SentMessage,
+    Settled,
 };
 pub use run::{
     BootstrapRunRequest, Bootstrapped, CreateBranch, CreateRunRequest, CreatedRun,
