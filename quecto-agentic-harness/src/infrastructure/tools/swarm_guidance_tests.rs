@@ -193,3 +193,21 @@ async fn op_run_before_create_points_the_founder_at_op_create() {
         result.content
     );
 }
+
+/// #2279 review N9: every refusal that allows `usage` says it is the
+/// harness op, not the board op `usage_report`, which the running gate
+/// refuses with the rest.
+#[test]
+fn a_refusal_that_allows_usage_says_usage_report_is_not_it() {
+    for message in [
+        op_refused("usage_report", Some("paused")),
+        op_refused("usage_report", Some("setup")),
+        op_refused("usage_report", Some("succeeded")),
+        op_deadline_passed("usage_report"),
+    ] {
+        assert!(
+            message.contains("usage (op=usage; the board op usage_report needs a running run)"),
+            "{message}"
+        );
+    }
+}
