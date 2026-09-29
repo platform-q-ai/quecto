@@ -35,6 +35,7 @@ use super::teardown_authority::{production_code, production_files, walk};
 const USE_CASES: &[&str] = &[
     "ActivateMember",
     "AdmitMember",
+    "BlockTask",
     "BootstrapRun",
     "ChangeActiveModel",
     "ChangeReasoningEffort",
@@ -101,12 +102,15 @@ const USE_CASES: &[&str] = &[
     "SettleDelegatedChild",
     "SettleDelegatedChildPorts",
     "StartFreshConversation",
+    "SubmitTask",
     "SynchronizeTranscript",
     "TerminateAllDelegatedAgents",
     "TerminateAllDelegatedAgentsPorts",
     "TerminateDelegatedAgent",
     "TrustConfigOverlay",
+    "UnblockTask",
     "UninstallAuthorityService",
+    "VerifyTask",
     "WebFetchUseCase",
 ];
 

@@ -12,9 +12,9 @@ use std::sync::Arc;
 use crate::application::swarm::dto::BoardLocation;
 use crate::application::swarm::ports::{BoardOpLog, BoardRepository, Clock, IdSource};
 use crate::application::swarm::use_cases::{
-    ActivateMember, AdmitMember, BootstrapRun, ClaimTask, CreateRun, CreateTask, JoinRun,
-    ReadRunSnapshot, ReadRunStatus, ReadTask, RecordMemberLaunch, RegisterMemberSocket,
-    ReleaseTask, ReleaseUnlaunchedMember, SetTaskDependencies,
+    ActivateMember, AdmitMember, BlockTask, BootstrapRun, ClaimTask, CreateRun, CreateTask,
+    JoinRun, ReadRunSnapshot, ReadRunStatus, ReadTask, RecordMemberLaunch, RegisterMemberSocket,
+    ReleaseTask, ReleaseUnlaunchedMember, SetTaskDependencies, SubmitTask, UnblockTask, VerifyTask,
 };
 use crate::infrastructure::persistence::audit_log::AuditLog;
 use crate::infrastructure::persistence::board_op_log::EventLogBoardOps;
@@ -99,6 +99,14 @@ pub fn build_swarm_board_handles_with(
         )),
         release_task: Arc::new(ReleaseTask::new(repository.clone(), clock.clone())),
         read_task: Arc::new(ReadTask::new(repository.clone(), clock.clone())),
+        block_task: Arc::new(BlockTask::new(repository.clone(), clock.clone())),
+        unblock_task: Arc::new(UnblockTask::new(repository.clone(), clock.clone())),
+        submit_task: Arc::new(SubmitTask::new(
+            repository.clone(),
+            clock.clone(),
+            Arc::new(PyJsonEncoding),
+        )),
+        verify_task: Arc::new(VerifyTask::new(repository.clone(), clock.clone())),
         admit_member: Arc::new(AdmitMember::new(repository.clone(), clock.clone())),
         activate_member: Arc::new(ActivateMember::new(repository.clone(), clock.clone())),
         join_run: Arc::new(JoinRun::new(repository, clock, ids)),

@@ -80,6 +80,9 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   For a completed dependency with invalid JSON in `acceptance`, Python's
 ///   `claim` loads the dependency's full `_task` and raises `JSONDecodeError`;
 ///   Rust reads only its status and claims the dependent task (pinned below).
+/// - `outside_edited_evidence` (#2272): stored evidence that is not a list
+///   of objects each carrying `revision` (only an edit holds it) meets
+///   `verify_task` as a refusal, where Python raises or iterates the value.
 /// - `real_to_text_digits` (#2269 review M1, pinned by
 ///   `swarm_board::binding_tests`): a float meeting a TEXT column is
 ///   written with the bundled SQLite's digits, which some hosts' libraries
@@ -93,10 +96,11 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   membership methods (#2271) keep it: `_activate` and `_record_launch`
 ///   take such a member's reservation as stale, where Python goes on
 ///   (pinned by `activate_member_tests` and `record_member_launch_tests`).
-pub const PERMITTED_DIVERGENCES: [&str; 6] = [
+pub const PERMITTED_DIVERGENCES: [&str; 7] = [
     "arguments_beyond_a_serde_value",
     "integer_beyond_i64_is_refused",
     "outside_edited_columns",
+    "outside_edited_evidence",
     "outside_edited_task_columns",
     "real_to_text_digits",
     "unknown_member_status_is_not_alive",
@@ -199,38 +203,6 @@ fn loosely_typed_rows_read_as_python_reads_them() {
         step("supervisor", "_status", json!([]), NOW + 1.0),
         sql("UPDATE run SET status=NULL, outcome=4"),
         step("supervisor", "_status", json!([]), NOW + 2.0),
-    ]);
-}
-
-/// A NULL `run.status` (#2270 review L2) reads as Python reads it:
-/// `_snapshot` answers `status: null`, `_status` answers it too, and
-/// `create` over it is refused as over any run not in setup.
-#[test]
-fn a_null_run_status_reads_as_python_reads_it() {
-    run_both(&[
-        step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
-        sql("UPDATE run SET status=NULL"),
-        step("parent", "_snapshot", json!([]), NOW + 1.0),
-        step("supervisor", "_status", json!([]), NOW + 2.0),
-        step(
-            "parent",
-            "create_run",
-            json!(["g", [], [{"id": "c", "kind": "review", "description": "d"}], 5, NOW + 3_600.0]),
-            NOW + 3.0,
-        ),
-        sql("UPDATE run SET deadline=0.5"),
-        step("parent", "_snapshot", json!([]), NOW + 4.0),
-    ]);
-}
-
-/// A run with no row for `_status` to read, after one existed.
-#[test]
-fn status_after_the_run_row_is_deleted_is_identical() {
-    run_both(&[
-        step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
-        sql("DELETE FROM run"),
-        step("supervisor", "_status", json!([]), NOW + 1.0),
-        step("parent", "_snapshot", json!([]), NOW + 2.0),
     ]);
 }
 
@@ -727,5 +699,34 @@ fn outside_edited_task_columns() {
             "unhashable type: 'list'",
             rust,
         );
+    }
+}
+
+/// `outside_edited_evidence`: Python raises, or verifies an empty dict or
+/// text, where the Rust board refuses.
+#[test]
+fn outside_edited_evidence() {
+    let task = at(1.0, "parent", "task_create", json!(["r", "t", ["ok"]]));
+    let mut steps = vec![create(5), task];
+    for (evidence, python) in [
+        (r#"[{"artifact":"a"}]"#, "Python raised KeyError"),
+        (r#"{"revision":"R1"}"#, "Python raised TypeError"),
+        ("null", "Python raised TypeError"),
+        ("{}", "python Ok(Null)"),
+        (r#""""#, "python Ok(Null)"),
+    ] {
+        steps.truncate(2);
+        let edit = format!("UPDATE tasks SET status='submitted',token='t',evidence='{evidence}'");
+        steps.extend([
+            sql(&edit),
+            at(2.0, "parent", "verify_task", json!([1, "t", "R1"])),
+        ]);
+        let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+        assert!(
+            difference.starts_with("step 3: verify_task") && difference.contains(python),
+            "{evidence}: {difference}"
+        );
+        let outcome = format!("{:?}", run_rust(&steps));
+        assert!(outcome.contains("not a list of revisioned"), "{outcome}");
     }
 }

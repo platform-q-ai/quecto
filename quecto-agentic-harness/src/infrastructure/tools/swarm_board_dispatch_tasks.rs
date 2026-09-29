@@ -155,7 +155,7 @@ pub(super) fn task_raw(
 
 /// The task an op acted on, for its records: the row's stored id when it
 /// is an integer, as the board writes it.
-fn acted_on(id: Option<&Value>) -> Option<i64> {
+pub(super) fn acted_on(id: Option<&Value>) -> Option<i64> {
     id.and_then(Value::as_i64)
 }
 

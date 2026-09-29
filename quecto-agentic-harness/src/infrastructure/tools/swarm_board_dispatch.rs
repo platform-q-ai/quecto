@@ -28,7 +28,8 @@
 //! refuses each as an unknown method. The task and claim methods
 //! `task_create`, `dependencies`, `claim` and `release` (#2272) are served
 //! by [`tasks`], with the test-only `task_raw` (`Tasks._task` inside a
-//! read-only operation, before S12 adds owner liveness to `task`).
+//! read-only operation, before S12 adds owner liveness to `task`); `block`,
+//! `unblock`, `submit` and `verify_task` by [`submissions`].
 //!
 //! What S12 must keep when it adds the summaries Python answers with:
 //!
@@ -78,12 +79,14 @@ use serde_json::{Map, Value};
 use crate::application::swarm::dto::{MemberRow, RunSnapshotView, RunStatusView};
 use crate::application::swarm::ports::{BoardCallMeter, BoardOpLog, BoardRepository};
 use crate::application::swarm::use_cases::{
-    ActivateMember, AdmitMember, BootstrapRun, ClaimTask, CreateRun, CreateTask, JoinRun,
-    OverRepository, ReadRunSnapshot, ReadRunStatus, ReadTask, RecordMemberLaunch,
-    RegisterMemberSocket, ReleaseTask, ReleaseUnlaunchedMember, SetTaskDependencies,
+    ActivateMember, AdmitMember, BlockTask, BootstrapRun, ClaimTask, CreateRun, CreateTask,
+    JoinRun, OverRepository, ReadRunSnapshot, ReadRunStatus, ReadTask, RecordMemberLaunch,
+    RegisterMemberSocket, ReleaseTask, ReleaseUnlaunchedMember, SetTaskDependencies, SubmitTask,
+    UnblockTask, VerifyTask,
 };
 use crate::domain::swarm::{BoardError, BoardRole, RefusalKind};
 
+use self::method::{Method, Parameter, required};
 pub use super::swarm_board_telemetry::{ActorRefs, TELEMETRY_TARGET};
 use super::swarm_board_telemetry::{Caller, Finished, Level, Served, observation, trace};
 
@@ -111,6 +114,10 @@ pub struct SwarmBoardHandles {
     /// Served only in test builds as `task_raw` until S12 adds the owner
     /// liveness `task` answers with.
     pub read_task: Arc<ReadTask>,
+    pub block_task: Arc<BlockTask>,
+    pub unblock_task: Arc<UnblockTask>,
+    pub submit_task: Arc<SubmitTask>,
+    pub verify_task: Arc<VerifyTask>,
     /// Each call's `swarm_op` record and its measure (#2303), only when
     /// the event log is switched on (`telemetry.event_log.enabled`, owner
     /// decision T1): `None` measures and writes nothing.
@@ -148,6 +155,10 @@ pub const BOARD_OPS: &[&str] = &[
     "dependencies",
     "claim",
     "release",
+    "block",
+    "unblock",
+    "submit",
+    "verify_task",
     #[cfg(any(test, feature = "test-support"))]
     "create_run",
     #[cfg(any(test, feature = "test-support"))]
@@ -157,190 +168,6 @@ pub const BOARD_OPS: &[&str] = &[
     #[cfg(any(test, feature = "test-support"))]
     "task_raw",
 ];
-
-/// The board methods this dispatcher serves.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Method {
-    Status,
-    Snapshot,
-    Admit,
-    Activate,
-    RecordLaunch,
-    ReleaseUnlaunched,
-    Socket,
-    TaskCreate,
-    Dependencies,
-    Claim,
-    Release,
-    #[cfg(any(test, feature = "test-support"))]
-    CreateRun,
-    #[cfg(any(test, feature = "test-support"))]
-    BootstrapRun,
-    #[cfg(any(test, feature = "test-support"))]
-    BootstrapJoin,
-    #[cfg(any(test, feature = "test-support"))]
-    TaskRaw,
-}
-
-/// One parameter of a Python signature: required, or with a default.
-#[derive(Clone, Copy)]
-struct Parameter {
-    name: &'static str,
-    default: Option<fn() -> Value>,
-}
-
-const fn required(name: &'static str) -> Parameter {
-    Parameter {
-        name,
-        default: None,
-    }
-}
-
-impl Method {
-    fn parse(name: &str) -> Option<Self> {
-        match name {
-            "_status" => Some(Self::Status),
-            "_snapshot" => Some(Self::Snapshot),
-            "_admit" => Some(Self::Admit),
-            "_activate" => Some(Self::Activate),
-            "_record_launch" => Some(Self::RecordLaunch),
-            "_release_unlaunched" => Some(Self::ReleaseUnlaunched),
-            "_socket" => Some(Self::Socket),
-            "task_create" => Some(Self::TaskCreate),
-            "dependencies" => Some(Self::Dependencies),
-            "claim" => Some(Self::Claim),
-            "release" => Some(Self::Release),
-            #[cfg(any(test, feature = "test-support"))]
-            "create_run" => Some(Self::CreateRun),
-            #[cfg(any(test, feature = "test-support"))]
-            "bootstrap_run" => Some(Self::BootstrapRun),
-            #[cfg(any(test, feature = "test-support"))]
-            "bootstrap_join" => Some(Self::BootstrapJoin),
-            #[cfg(any(test, feature = "test-support"))]
-            "task_raw" => Some(Self::TaskRaw),
-            _ => None,
-        }
-    }
-
-    fn name(self) -> &'static str {
-        match self {
-            Self::Status => "_status",
-            Self::Snapshot => "_snapshot",
-            Self::Admit => "_admit",
-            Self::Activate => "_activate",
-            Self::RecordLaunch => "_record_launch",
-            Self::ReleaseUnlaunched => "_release_unlaunched",
-            Self::Socket => "_socket",
-            Self::TaskCreate => "task_create",
-            Self::Dependencies => "dependencies",
-            Self::Claim => "claim",
-            Self::Release => "release",
-            #[cfg(any(test, feature = "test-support"))]
-            Self::CreateRun => "create_run",
-            #[cfg(any(test, feature = "test-support"))]
-            Self::BootstrapRun => "bootstrap_run",
-            #[cfg(any(test, feature = "test-support"))]
-            Self::BootstrapJoin => "bootstrap_join",
-            #[cfg(any(test, feature = "test-support"))]
-            Self::TaskRaw => "task_raw",
-        }
-    }
-
-    /// [`Level::Read`] only for the methods listed as read-only.
-    fn level(self) -> Level {
-        match self {
-            Self::Status | Self::Snapshot => Level::Read,
-            Self::Admit
-            | Self::Activate
-            | Self::RecordLaunch
-            | Self::ReleaseUnlaunched
-            | Self::Socket
-            | Self::TaskCreate
-            | Self::Dependencies
-            | Self::Claim
-            | Self::Release => Level::Mutation,
-            #[cfg(any(test, feature = "test-support"))]
-            Self::CreateRun | Self::BootstrapRun | Self::BootstrapJoin => Level::Mutation,
-            #[cfg(any(test, feature = "test-support"))]
-            Self::TaskRaw => Level::Read,
-        }
-    }
-
-    /// Who calls it (#2303): [`BoardRole::Host`] for the harness's own
-    /// ops; `None` for a member-facing op, whose role is the caller's in
-    /// the run, as the call's own measure read it
-    /// ([`run_role`](crate::domain::swarm::telemetry::run_role)).
-    fn role(self) -> Option<BoardRole> {
-        match self {
-            Self::Status
-            | Self::Snapshot
-            | Self::Admit
-            | Self::Activate
-            | Self::RecordLaunch
-            | Self::ReleaseUnlaunched
-            | Self::Socket => Some(BoardRole::Host),
-            Self::TaskCreate | Self::Dependencies | Self::Claim | Self::Release => None,
-            // Test-only halves the differential harness drives as the host;
-            // the member-facing `create`, `_bootstrap` and `task` S12 serves
-            // record the caller's own role.
-            #[cfg(any(test, feature = "test-support"))]
-            Self::CreateRun | Self::BootstrapRun | Self::BootstrapJoin | Self::TaskRaw => {
-                Some(BoardRole::Host)
-            }
-        }
-    }
-
-    /// Whether an answer proves the caller a member of the run (#2303
-    /// round-4 review L1): the op checks membership, or makes the caller
-    /// the run's coordinator. `_status` is membership-free, so any id can
-    /// have it answered.
-    fn answers_members_only(self) -> bool {
-        match self {
-            Self::Status => false,
-            // Through the operation gate, which refuses a caller that is
-            // no member of the run (or whose death was confirmed).
-            Self::Snapshot
-            | Self::Admit
-            | Self::Activate
-            | Self::RecordLaunch
-            | Self::ReleaseUnlaunched
-            | Self::Socket
-            | Self::TaskCreate
-            | Self::Dependencies
-            | Self::Claim
-            | Self::Release => true,
-            // `create_run` and `bootstrap_run` make the caller the run's
-            // coordinator; `bootstrap_join` admits and activates it, or
-            // finds its own live row; `task_raw` passes the gate.
-            #[cfg(any(test, feature = "test-support"))]
-            Self::CreateRun | Self::BootstrapRun | Self::BootstrapJoin | Self::TaskRaw => true,
-        }
-    }
-
-    /// The Python signature, `self` left out.
-    fn parameters(self) -> &'static [Parameter] {
-        match self {
-            Self::Status | Self::Snapshot => &[],
-            Self::Admit => &members::ADMIT,
-            Self::Activate => &members::ACTIVATE,
-            Self::RecordLaunch => &members::RECORD_LAUNCH,
-            Self::ReleaseUnlaunched => &members::RELEASE_UNLAUNCHED,
-            Self::Socket => &members::SOCKET,
-            Self::TaskCreate => &tasks::TASK_CREATE,
-            Self::Dependencies => &tasks::DEPENDENCIES,
-            Self::Claim => &tasks::CLAIM,
-            Self::Release => &tasks::RELEASE,
-            #[cfg(any(test, feature = "test-support"))]
-            Self::CreateRun => &test_only::CREATE,
-            #[cfg(any(test, feature = "test-support"))]
-            Self::BootstrapRun => &test_only::BOOTSTRAP,
-            #[cfg(any(test, feature = "test-support"))]
-            Self::BootstrapJoin => &test_only::JOIN,
-            #[cfg(any(test, feature = "test-support"))]
-            Self::TaskRaw => &tasks::CLAIM,
-        }
-    }
-}
 
 /// Invokes `method` as `member` with `args`: one use case, its result in
 /// Python's JSON shape. The call leaves one `tracing` record and, when the
@@ -553,6 +380,18 @@ fn serve(
         Method::Release => {
             tasks::release(&serving(&*handles.release_task, over), member, arguments)
         }
+        Method::Block => {
+            submissions::block(&serving(&*handles.block_task, over), member, arguments)
+        }
+        Method::Unblock => {
+            submissions::unblock(&serving(&*handles.unblock_task, over), member, arguments)
+        }
+        Method::Submit => {
+            submissions::submit(&serving(&*handles.submit_task, over), member, arguments)
+        }
+        Method::VerifyTask => {
+            submissions::verify_task(&serving(&*handles.verify_task, over), member, arguments)
+        }
         #[cfg(any(test, feature = "test-support"))]
         Method::CreateRun => {
             test_only::create_run(&serving(&*handles.create_run, over), member, arguments)
@@ -657,8 +496,14 @@ fn float(value: f64) -> Result<Value, BoardError> {
 #[path = "swarm_board_dispatch_members.rs"]
 mod members;
 
+#[path = "swarm_board_dispatch_method.rs"]
+mod method;
+
 #[path = "swarm_board_dispatch_tasks.rs"]
 mod tasks;
+
+#[path = "swarm_board_dispatch_submissions.rs"]
+mod submissions;
 
 /// The test-only methods: their signatures and their serving.
 #[cfg(any(test, feature = "test-support"))]

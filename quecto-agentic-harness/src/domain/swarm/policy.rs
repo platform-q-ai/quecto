@@ -344,8 +344,8 @@ pub fn revalidation<'a>(
 
 /// Submitted evidence is immutable: only a task in another known status may
 /// be revised. An unknown status found in a file is refused by name.
-pub fn require_unsubmitted(task: &TaskRecord) -> Result<(), BoardError> {
-    match task.status.as_str() {
+pub fn require_unsubmitted(status: &str) -> Result<(), BoardError> {
+    match status {
         "ready" | "claimed" | "blocked" | "completed" => Ok(()),
         "submitted" => Err(BoardError::new(
             RefusalKind::Immutable,

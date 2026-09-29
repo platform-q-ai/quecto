@@ -1481,7 +1481,12 @@ fn application_path_allowed(path: &str) -> bool {
             | "CreateTask"
             | "ReadTask"
             | "ReleaseTask"
-            | "SetTaskDependencies",
+            | "SetTaskDependencies"
+            // Blockers, submissions and verification (#2272).
+            | "BlockTask"
+            | "SubmitTask"
+            | "UnblockTask"
+            | "VerifyTask",
         ]
         | [
             "crate",
@@ -1524,7 +1529,14 @@ fn application_path_allowed(path: &str) -> bool {
             // The measure the store's meter hands back (#2303), and the
             // run roles it keeps for a member-facing op's caller role.
             | "CallMeasure"
-            | "RunRoles",
+            | "RunRoles"
+            // Blockers, submissions and verification (#2272).
+            | "BlockTaskRequest"
+            | "SubmitTaskRequest"
+            | "TaskChange"
+            | "TaskTransition"
+            | "UnblockTaskRequest"
+            | "VerifyTaskRequest",
         ] => true,
         ["crate", "application", ..] => false,
         // Every other crate path must start at a layer infrastructure

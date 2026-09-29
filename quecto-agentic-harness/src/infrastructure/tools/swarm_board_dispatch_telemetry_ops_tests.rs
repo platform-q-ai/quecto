@@ -23,6 +23,10 @@ fn every_method() -> Vec<Method> {
         Method::Dependencies,
         Method::Claim,
         Method::Release,
+        Method::Block,
+        Method::Unblock,
+        Method::Submit,
+        Method::VerifyTask,
         Method::CreateRun,
         Method::BootstrapRun,
         Method::BootstrapJoin,
@@ -41,6 +45,10 @@ fn every_method() -> Vec<Method> {
             | Method::Dependencies
             | Method::Claim
             | Method::Release
+            | Method::Block
+            | Method::Unblock
+            | Method::Submit
+            | Method::VerifyTask
             | Method::CreateRun
             | Method::BootstrapRun
             | Method::BootstrapJoin
@@ -66,6 +74,19 @@ fn task(handles: &SwarmBoardHandles, request: &str) -> Value {
         json!([request, "t", ["tests pass"]]),
     )
     .unwrap()
+}
+
+/// Task 1 on `handles`' board (a running run), claimed by the parent; the
+/// claim's token.
+fn claimed(handles: &SwarmBoardHandles) -> Value {
+    running(handles);
+    task(handles, "r1");
+    call(handles, "parent", "claim", json!([1])).unwrap()["token"].clone()
+}
+
+/// Evidence for task 1's one criterion at revision `R1`.
+fn evidence() -> Value {
+    json!([{"artifact": "report", "revision": "R1"}])
 }
 
 /// What an answered call of `method` acted on, as its record must say:
@@ -115,6 +136,24 @@ fn acted_on(
             task(handles, "r1");
             let claimed = call(handles, "parent", "claim", json!([1])).unwrap();
             (json!([true, claimed["token"]]), Some(1), None, None)
+        }
+        Method::Block => {
+            let token = claimed(handles);
+            (json!(["1", token, "waiting"]), Some(1), None, None)
+        }
+        Method::Unblock => {
+            let token = claimed(handles);
+            call(handles, "parent", "block", json!([1, token, "waiting"])).unwrap();
+            (json!([true, token, "resolved"]), Some(1), None, None)
+        }
+        Method::Submit => {
+            let token = claimed(handles);
+            (json!(["1", token, evidence()]), Some(1), None, None)
+        }
+        Method::VerifyTask => {
+            let token = claimed(handles);
+            call(handles, "parent", "submit", json!([1, token, evidence()])).unwrap();
+            (json!([true, token, "R1"]), Some(1), None, None)
         }
         Method::CreateRun => (create_args(), None, None, None),
         Method::BootstrapRun => (json!([1, "s", null]), None, None, None),

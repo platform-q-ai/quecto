@@ -550,7 +550,7 @@ fn validate_extension_bounds() {
 #[test]
 fn require_unsubmitted_message() {
     assert_eq!(
-        message(require_unsubmitted(&task(TaskState::SUBMITTED, &["R1"]))),
+        message(require_unsubmitted("submitted")),
         "submitted evidence is immutable; release and reclaim before revising"
     );
     for status in [
@@ -559,7 +559,7 @@ fn require_unsubmitted_message() {
         TaskState::BLOCKED,
         TaskState::COMPLETED,
     ] {
-        assert_eq!(require_unsubmitted(&task(status, &[])), Ok(()));
+        assert_eq!(require_unsubmitted(status.as_str()), Ok(()));
     }
 }
 
@@ -600,7 +600,7 @@ fn unknown_statuses_found_in_a_file_are_refused_affirmatively() {
         "member identity already used; choose a stable new identity"
     );
     assert_eq!(
-        message(require_unsubmitted(&task(TaskState::new("odd"), &[]))),
+        message(require_unsubmitted("odd")),
         "task status 'odd' is not a known status; no revision permitted"
     );
     assert_eq!(
