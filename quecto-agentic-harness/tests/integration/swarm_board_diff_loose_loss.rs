@@ -127,6 +127,33 @@ fn outside_edited_loss_records() {
         "{difference}"
     );
     assert_eq!(run_rust(&listed), Outcome::Ok(json!(null)));
+    // A detail that is not JSON text, or NULL (#2277 final review L1):
+    // Python's `json.loads` raises; the Rust board refuses the column as a
+    // store failure.
+    for (edit, python, failure) in [
+        (
+            "UPDATE events SET detail='x' WHERE action='scope_observed'",
+            "Python raised JSONDecodeError: Expecting value: line 1 column 1 (char 0)",
+            "Conversion error from type Text at index: 2, Expecting value: line 1 column 1 (char 0)",
+        ),
+        (
+            "UPDATE events SET detail=NULL WHERE action='scope_observed'",
+            "Python raised TypeError: the JSON object must be str, bytes or bytearray, not NoneType",
+            "Invalid column type Null at index: 2, name: detail",
+        ),
+    ] {
+        let steps = observed(edit);
+        let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+        assert!(
+            difference.starts_with("step 5: _quarantine as parent") && difference.contains(python),
+            "{edit}: {difference}"
+        );
+        assert_eq!(
+            run_rust(&steps),
+            Outcome::Refused(format!("{CONTENDED}{failure}")),
+            "{edit}"
+        );
+    }
     let blob = observed(
         r#"INSERT INTO events(actor,time,action,detail) VALUES('x',x'00','scope_observed','{"member":"other"}')"#,
     );
