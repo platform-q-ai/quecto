@@ -483,14 +483,20 @@ fn the_hook_checker_requires_expected_differences_to_be_pinned() {
         }
     "#;
     assert_eq!(violations(PIN_TABLE, pinned), Vec::<String>::new());
-    // A sibling of the pin table may hold a slice's pins (#2275); a file
-    // merely named like one, or below a folder so named, may not.
+    // A sibling of the pin table may hold a slice's pins (#2275) when the
+    // pin table lists it in `PIN_TABLE_FILES`; a file merely named like
+    // one, below a folder so named, or unlisted (PR #2321 final review:
+    // `_probe.rs`, and `_runs.rs` and `_completion.rs`, which hold only
+    // pins of `EXTERNAL_PINS`) may not.
     let sibling = "tests/integration/swarm_board_diff_loose_files.rs";
     assert_eq!(violations(sibling, pinned), Vec::<String>::new());
     for elsewhere in [
         "tests/integration/swarm_board_diff_loose_files.txt",
         "tests/integration/swarm_board_diff_loose_x/files.rs",
         "tests/integration/swarm_board_diff_loosely.rs",
+        "tests/integration/swarm_board_diff_loose_probe.rs",
+        "tests/integration/swarm_board_diff_loose_runs.rs",
+        "tests/integration/swarm_board_diff_loose_completion.rs",
     ] {
         assert_eq!(violations(elsewhere, pinned).len(), 2, "{elsewhere}");
     }
