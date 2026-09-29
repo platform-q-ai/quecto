@@ -47,9 +47,13 @@ impl LaunchReservation {
     /// the run keeps going. `exit` says whether the member ended orderly
     /// (it answered the protocol, or this harness's fallback signal reached
     /// its whole group) or was already gone before it was asked.
+    ///
+    /// The confirmation is made here, before the first await point, and
+    /// finishes before this returns (#2278 final review L1): a rollback
+    /// cancelled mid-way never leaves it running beside the drop's release
+    /// of the same member, which follows it.
     pub async fn rolled_back(&mut self, exit: MemberExit) -> Result<(), DomainError> {
-        let (context, member) = (self.context.clone(), self.member.clone());
-        off_the_workers(move || context.confirm_dead(&member, exit)).await?;
+        super::call_work::block_here(|| self.context.confirm_dead(&self.member, exit))?;
         self.launched = true;
         Ok(())
     }
@@ -95,14 +99,12 @@ impl Drop for LaunchReservation {
     fn drop(&mut self) {
         match self.launched {
             true => {}
-            false => {
-                let (context, member) = (self.context.clone(), self.member.clone());
-                super::swarm_lifecycle::run_off_the_workers(move || {
-                    if let Err(error) = context.confirm_unlaunched(&member) {
-                        tracing::error!(%error, "swarm failed-launch reservation retained");
-                    }
-                });
-            }
+            // Released before the drop returns (#2278 final review L1).
+            false => super::swarm_lifecycle::run_off_the_workers(|| {
+                if let Err(error) = self.context.confirm_unlaunched(&self.member) {
+                    tracing::error!(%error, "swarm failed-launch reservation retained");
+                }
+            }),
         }
     }
 }

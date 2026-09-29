@@ -119,3 +119,26 @@ async fn blocking_work_runs_off_the_async_workers() {
     assert!(outside, "outside any runtime: run in place");
     assert!(off_the_runtime(may_block), "a test's own thread may block");
 }
+
+/// Work run here finishes before `block_here` returns, and runs as
+/// blocking work, on either runtime flavor and outside any runtime (#2278
+/// final review L1, L2).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn work_run_here_is_blocking_work_on_a_multi_thread_worker() {
+    assert!(!may_block(), "an async worker may not block");
+    assert!(block_here(may_block));
+    assert!(!may_block(), "the mark ends with the work");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn work_run_here_is_blocking_work_on_a_current_thread_runtime() {
+    assert!(!may_block(), "an async worker may not block");
+    assert!(block_here(may_block));
+    assert!(!may_block(), "the mark ends with the work");
+}
+
+#[test]
+fn work_run_here_outside_any_runtime_runs_here() {
+    let caller = std::thread::current().id();
+    assert_eq!(block_here(|| std::thread::current().id()), caller);
+}

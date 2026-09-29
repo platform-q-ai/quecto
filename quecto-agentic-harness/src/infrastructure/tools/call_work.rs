@@ -118,6 +118,26 @@ pub fn off_the_runtime<T: Send>(job: impl FnOnce() -> T + Send) -> T {
 }
 
 /// Runs `job`, which blocks (a board call waits up to its store's busy
+/// timeout), on this thread, and returns once it has finished (#2278
+/// final review L1, L2): for a caller that must not return before the
+/// work is done and cannot await it (a drop, a synchronous port method).
+/// Here when this thread may block ([`may_block`]); on a multi-thread
+/// runtime's worker through `block_in_place`, which first hands the
+/// worker's other tasks to another thread; on a current-thread runtime,
+/// which has no other thread to hand them to, here, as blocking work.
+pub fn block_here<T>(job: impl FnOnce() -> T) -> T {
+    use tokio::runtime::{Handle, RuntimeFlavor};
+    match (
+        may_block(),
+        Handle::try_current().map(|h| h.runtime_flavor()),
+    ) {
+        (true, _) | (false, Err(_)) => job(),
+        (false, Ok(RuntimeFlavor::MultiThread)) => tokio::task::block_in_place(blocking(job)),
+        (false, Ok(RuntimeFlavor::CurrentThread | _)) => blocking(job)(),
+    }
+}
+
+/// Runs `job`, which blocks (a board call waits up to its store's busy
 /// timeout), off the async workers (#2278 review L6): here when this
 /// thread may block ([`may_block`]: outside any runtime, or already on the
 /// blocking pool), else as the calling tool call's work on the blocking

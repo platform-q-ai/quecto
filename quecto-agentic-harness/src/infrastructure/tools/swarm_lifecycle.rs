@@ -260,17 +260,12 @@ pub(super) fn observe(
 }
 
 /// Runs `job`, which makes board calls, off the async workers (#2278
-/// review L6): here when this thread may block, else on the blocking
-/// pool, where it runs to completion on its own (the caller cannot wait:
-/// a drop, or a synchronous port method on an async worker).
-pub(super) fn run_off_the_workers(job: impl FnOnce() + Send + 'static) {
-    use super::call_work::{blocking, may_block};
-    match (may_block(), tokio::runtime::Handle::try_current()) {
-        (false, Ok(runtime)) => {
-            let _detached = runtime.spawn_blocking(blocking(job));
-        }
-        (true, _) | (false, Err(_)) => job(),
-    }
+/// review L6), and returns once it has finished (#2278 final review L1,
+/// L2): the caller cannot await it (a drop, or a synchronous port method
+/// on an async worker), yet what follows depends on it (a released slot,
+/// a suspended turn). See [`super::call_work::block_here`].
+pub(super) fn run_off_the_workers(job: impl FnOnce()) {
+    super::call_work::block_here(job);
 }
 
 /// A per-process watcher also observes outcomes set by other members. This
