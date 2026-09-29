@@ -39,9 +39,10 @@ pub(super) fn records_admission(
     backend: MemberBackend,
     decided: impl FnOnce() -> bool,
 ) -> bool {
-    // RED stub (#2313): the admission's calls are not recorded.
-    let _ = (contracted, backend, decided);
-    false
+    match (contracted, backend) {
+        (true, MemberBackend::Quecto) => decided(),
+        (true, MemberBackend::ClaudeCode) | (false, _) => false,
+    }
 }
 
 /// The board a process is admitted with: composition's, when composed; a

@@ -58,9 +58,37 @@ pub(super) fn decided_before_admission(
     ctx: &crate::interface::cli::CliContext,
     flags: &super::AgentFlags,
 ) -> bool {
-    // RED stub (#2313): the switch is not read before admission.
-    let _ = (ctx, flags);
-    false
+    let base_dir = ctx.base_dir();
+    let config_on = match (flags.configuration, ctx.config_selection()) {
+        (Some(build), Ok(selection)) => {
+            crate::interface::cli::config_loading::load_selected_config(
+                build,
+                &base_dir,
+                &selection,
+                false,
+                &crate::interface::cli::config_loading::quecto_env_overrides(),
+                flags.admission_context.is_some(),
+            )
+            .is_ok_and(|loaded| loaded.config.telemetry.event_log.enabled)
+        }
+        (None, _) | (_, Err(_)) => false,
+    };
+    switched_on(config_on, &base_dir)
+}
+
+/// The session switched to `session_key` (#2192): the crash target
+/// follows it, and the event log with it, when the log was the departing
+/// session's own; the process's swarm board then records in the arriving
+/// session's log too (#2313). Answers the log the agent writes to from
+/// now on.
+pub(in crate::interface::cli) fn follow_session(
+    session_key: Option<&str>,
+) -> Option<Arc<dyn AuditSink>> {
+    let log = crate::infrastructure::persistence::crash_record::follow(session_key)?;
+    if let Some(board) = crate::infrastructure::tools::swarm_bridge::process_board() {
+        board.follow_session(&log);
+    }
+    Some(Arc::new(log))
 }
 
 /// A key for a session without one: unique to this process and start.

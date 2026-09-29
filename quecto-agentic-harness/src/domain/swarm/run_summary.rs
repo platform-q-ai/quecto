@@ -266,23 +266,6 @@ impl RunSummaryFold {
     /// The summary of the records folded so far, taken at `at_us` (the
     /// clock [`Self::new`] was given).
     pub fn summary(&self, at_us: u64) -> SwarmRunSummary {
-        // RED stub (#2313): the fold is taken, and an empty summary answered.
-        let computed = self.computed(at_us);
-        SwarmRunSummary {
-            run_id: computed.run_id,
-            records: 0,
-            ops: BTreeMap::new(),
-            busy: 0,
-            tasks: TaskCounts::default(),
-            messages: MessageCounts::default(),
-            wall_time_us: 0,
-            request_usage: Vec::new(),
-            unlisted_ops: 0,
-            unlisted_requests: 0,
-        }
-    }
-
-    fn computed(&self, at_us: u64) -> SwarmRunSummary {
         let ops: BTreeMap<String, OpSummary> = self
             .ops
             .iter()
@@ -380,9 +363,7 @@ impl Snapshot {
     /// is the run's coordinator, and the run has settled (ended, or was
     /// cancelled).
     pub fn summarized_by(&self, actor: &str) -> bool {
-        // RED stub (#2313): no harness writes it yet.
-        let _ = (self.status, actor);
-        false
+        self.status.terminal() && self.coordinator == actor
     }
 }
 

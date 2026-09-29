@@ -75,8 +75,13 @@ fn create(parent: &SwarmContext) {
 /// the session whose log holds them.
 fn ops_by_session(base: &std::path::Path) -> BTreeMap<String, Vec<String>> {
     let mut sessions: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for file in std::fs::read_dir(base.join("audit")).unwrap() {
-        let text = std::fs::read_to_string(file.unwrap().path()).unwrap();
+    // Only the logs: the crash records keep a directory beside them.
+    let logs = std::fs::read_dir(base.join("audit"))
+        .unwrap()
+        .map(|file| file.unwrap().path())
+        .filter(|path| path.extension().and_then(|extension| extension.to_str()) == Some("jsonl"));
+    for path in logs {
+        let text = std::fs::read_to_string(path).unwrap();
         for line in text.lines() {
             let line: Value = serde_json::from_str(line).unwrap();
             let session = line["session"].as_str().unwrap().to_owned();
@@ -362,10 +367,9 @@ impl std::io::Write for Captured {
     }
 }
 
-/// #2313: the summary also leaves one `tracing` record on the board's
-/// target, with the run's id and its counts only.
-#[test]
-fn a_run_summary_is_traced_on_the_boards_target() {
+/// The `tracing` records of one settled run's summary, written under a
+/// subscriber of this thread's own.
+fn traced_summary() -> String {
     let checkout = tempfile::tempdir().unwrap();
     let board = crate::composition::swarm::swarm_board();
     assert!(board.record_in(Arc::new(Recorded::default())));
@@ -384,7 +388,23 @@ fn a_run_summary_is_traced_on_the_boards_target() {
         tracing::callsite::rebuild_interest_cache();
         assert!(parent.summarize_settled(&snapshot));
     });
-    let text = String::from_utf8(buffer.lock().unwrap().clone()).unwrap();
+    String::from_utf8(buffer.lock().unwrap().clone()).unwrap()
+}
+
+/// #2313: the summary also leaves one `tracing` record on the board's
+/// target, with the run's id and its counts only. A test running at the
+/// same time can leave a callsite's cached interest stale for a moment, so
+/// a record missed is looked for again on a fresh run, as the dispatcher's
+/// capture does.
+#[test]
+fn a_run_summary_is_traced_on_the_boards_target() {
+    let mut text = String::new();
+    for _ in 0..5 {
+        text = traced_summary();
+        if text.contains("swarm run summary") {
+            break;
+        }
+    }
     let traced: Vec<_> = text
         .lines()
         .filter(|line| line.contains("swarm run summary"))

@@ -24,7 +24,7 @@ use crate::domain::error::DomainError;
 use crate::domain::swarm::RefusalKind;
 use crate::infrastructure::persistence::audit_log::AuditLog;
 use crate::infrastructure::tools::swarm_board_dispatch::{
-    self, BoardWire, CallOrigin, SwarmBoardHandles,
+    self, BoardWire, CallOrigin, SwarmBoardHandles, TELEMETRY_TARGET,
 };
 
 /// Builds the board handles over one board file, recording each call in
@@ -120,39 +120,44 @@ impl SwarmBoard {
     /// log is open ([`Self::record_in_session`]), and written there first.
     /// With the event log off nothing is measured (owner decision T1).
     pub fn record_from_admission(&self, event_log_on: bool) {
-        // RED stub (#2313): the admission's calls are not recorded.
-        let _ = event_log_on;
+        tracing::debug!(
+            target: TELEMETRY_TARGET,
+            event_log_on,
+            "swarm board recording decided before admission"
+        );
+        if event_log_on {
+            self.recording_or_pending();
+        }
     }
 
     /// Records every later call in the session's audit `log` when the
     /// event log is on (`enabled`) and this board was given composition's
     /// `session_log`; whether it now records there. Otherwise the board
-    /// records nothing from now on, and what it held is dropped.
+    /// records nothing from now on, and what it held is dropped; a board
+    /// without `session_log` is left as it is.
     pub fn record_in_session(&self, enabled: bool, log: &AuditLog) -> bool {
-        match self
-            .shared
-            .session_log
-            .and_then(|build| build(enabled, log))
-        {
+        let Some(build) = self.shared.session_log else {
+            return false;
+        };
+        match build(enabled, log) {
             Some(log) => self.record_in(log),
-            None => false,
+            None => {
+                self.stop_recording();
+                false
+            }
         }
     }
 
     /// Records nothing from now on (#2313: the session keeps no event
     /// log), and drops what it held since admission.
     pub fn stop_recording(&self) {
-        // RED stub (#2313).
+        *self.recording_lock() = None;
     }
 
     /// Records every later call in `log`, the current session's event log
     /// (#2313: a later session's replaces an earlier one's); what the board
     /// held until now is written there first.
     pub fn record_in(&self, log: Arc<dyn BoardOpLog>) -> bool {
-        // RED stub (#2313): the first log only.
-        if self.recording().is_some() {
-            return false;
-        }
         self.recording_or_pending().bind(log);
         true
     }
@@ -161,9 +166,16 @@ impl SwarmBoard {
     /// a board recording in the departing session's log records in `log`
     /// from now on; one that records nothing still does not.
     pub fn follow_session(&self, log: &AuditLog) -> bool {
-        // RED stub (#2313): the records stay in the first session's log.
-        let _ = log;
-        false
+        let followed = match self.recording() {
+            Some(_) => self.record_in_session(true, log),
+            None => false,
+        };
+        tracing::debug!(
+            target: TELEMETRY_TARGET,
+            followed,
+            "swarm board records follow the session"
+        );
+        followed
     }
 
     /// Writes the summary of the run on the file at `location` (#2313),

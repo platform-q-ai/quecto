@@ -257,8 +257,7 @@ pub(super) fn observation(
                 call.member,
                 roles.coordinator.as_deref(),
                 roles.integrator.as_deref(),
-                // RED stub (#2313): membership is not consulted.
-                caller == Caller::Member || caller == Caller::Unproven,
+                caller == Caller::Member,
             )
         }),
         run_id: measure.and_then(|measure| measure.run_id.clone()),

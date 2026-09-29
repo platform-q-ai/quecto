@@ -123,8 +123,10 @@ impl BoardOpLog for EventLogBoardOps {
     /// held off, the cap refused or a write failed is dropped with the
     /// log's one warning: it is written once, and never retried.
     fn summarize(&self, summary: SwarmRunSummary) {
-        // RED stub (#2313): nothing is written.
-        let _ = summary;
+        let event = AuditEvent::SwarmRunSummary(summary);
+        if let Err(error) = self.line.append(None, vec![event], self.gate_wait) {
+            self.warn(&error);
+        }
     }
 }
 

@@ -45,6 +45,10 @@ impl BoardOpLog for Discarded {
     fn record(&self, observation: BoardOpObservation) {
         std::hint::black_box(observation);
     }
+
+    fn summarize(&self, summary: quecto::domain::swarm::SwarmRunSummary) {
+        std::hint::black_box(summary);
+    }
 }
 
 /// How an arm records.

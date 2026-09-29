@@ -102,14 +102,9 @@ impl Tally {
         measure.lock_wait = measure.lock_wait.saturating_add(wait);
     }
 
-    /// Whether no run id has been found yet: only then does a transaction
-    /// that never read the run row read it (and the roles with it).
-    pub(super) fn wants_run_id(&self) -> bool {
-        self.held().run_id.is_none()
-    }
-
     /// Whether no run id, or no run roles, have been found yet: only then
-    /// is a run row the op read noted, which costs no statement.
+    /// is a run row the op read noted, and only then does a transaction
+    /// that found neither read the run row for them.
     pub(super) fn wants_run(&self) -> bool {
         let measure = self.held();
         measure.run_id.is_none() || measure.run_roles.is_none()

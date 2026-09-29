@@ -323,13 +323,15 @@ pub fn run_role(
     integrator: Option<&str>,
     member_of_run: bool,
 ) -> Option<BoardRole> {
-    // RED stub (#2313): any caller but the coordinator and integrator is
-    // a worker, member or not.
-    let _ = member_of_run;
-    match (coordinator == Some(member), integrator == Some(member)) {
-        (true, _) => Some(BoardRole::Coordinator),
-        (false, true) => Some(BoardRole::Integrator),
-        (false, false) => Some(BoardRole::Worker),
+    match (
+        member_of_run,
+        coordinator == Some(member),
+        integrator == Some(member),
+    ) {
+        (false, _, _) => None,
+        (true, true, _) => Some(BoardRole::Coordinator),
+        (true, false, true) => Some(BoardRole::Integrator),
+        (true, false, false) => Some(BoardRole::Worker),
     }
 }
 

@@ -117,10 +117,10 @@ impl BoardOpLog for SessionLog {
     }
 }
 
-/// The run being folded, and whether its summary was written.
+/// The run being folded, open until its summary is written.
 struct Folding {
     fold: RunSummaryFold,
-    summarized: bool,
+    open: bool,
 }
 
 /// One board file's run, folded on the way to the session log.
@@ -158,7 +158,7 @@ impl RunFold {
         let mut run = self.folding();
         match run.as_mut() {
             Some(folding) if folding.fold.run_id() == run_id => {
-                if !folding.summarized {
+                if folding.open {
                     folding.fold.observe(observation);
                 }
             }
@@ -166,10 +166,7 @@ impl RunFold {
                 let started = now.saturating_sub(observation.duration_us);
                 let mut fold = RunSummaryFold::new(run_id, started);
                 fold.observe(observation);
-                *run = Some(Folding {
-                    fold,
-                    summarized: false,
-                });
+                *run = Some(Folding { fold, open: true });
             }
         }
     }
@@ -180,8 +177,8 @@ impl RunFold {
         let summary = {
             let mut run = self.folding();
             match run.as_mut() {
-                Some(folding) if !folding.summarized => {
-                    folding.summarized = true;
+                Some(folding) if folding.open => {
+                    folding.open = false;
                     folding.fold.summary(self.now_us())
                 }
                 Some(_) | None => return false,

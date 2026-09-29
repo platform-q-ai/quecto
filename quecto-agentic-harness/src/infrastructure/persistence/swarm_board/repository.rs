@@ -106,10 +106,11 @@ pub(super) fn atomic_on(
                 usage_schema_created: std::cell::Cell::new(false),
             };
             let done = work(&board);
-            // Only a metered op that never read the run row's id asks for
-            // it, and the roles with it: `_status`, whose row names no
-            // integrator, costs no second statement.
-            if let Some(tally) = tally.filter(|tally| tally.wants_run_id()) {
+            // Only a metered op that has not found the run row's id and
+            // roles asks for them (#2313): one whose run rows named no
+            // integrator (`run_status`'s) reads the roles here, so its
+            // caller's role is still recorded.
+            if let Some(tally) = tally.filter(|tally| tally.wants_run()) {
                 board.run_read(tally);
             }
             done.map_err(|refusal| {
@@ -342,8 +343,9 @@ impl SqliteBoard<'_> {
     }
 
     /// Reads the run's id and roles into `tally`, for telemetry only
-    /// (#2303): only while metered and no run id is found yet (an op that
-    /// never read the run row). No run, or a failed read, notes nothing.
+    /// (#2303): only while metered and the run id or roles are not found
+    /// yet (an op that never read the run row, or read only some of it).
+    /// No run, or a failed read, notes nothing.
     fn run_read(&self, tally: &Tally) {
         let _noted =
             self.connection

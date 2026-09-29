@@ -16,7 +16,7 @@ pub(crate) struct AgentOutput<'a> {
 mod agent_deadline;
 #[path = "agent/build_result.rs"]
 mod build_result;
-mod event_log;
+pub(super) mod event_log;
 pub(crate) use build_result::AgentBuildResult;
 mod flag_parse;
 mod startup_effort;
