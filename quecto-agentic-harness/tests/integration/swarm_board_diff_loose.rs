@@ -38,9 +38,11 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   would end this divergence.
 /// - `integer_beyond_i64_is_refused`: an integer argument beyond i64 but
 ///   within u64 (a `pid`, `started` or `socket`, a membership method's
-///   member or reservation, #2271, or a task id, #2272) makes Python's
-///   `sqlite3` raise `OverflowError` when it is bound, which is not an `sqlite3.Error`,
-///   so the store does not turn it into a refusal and the call raises.
+///   member or reservation, #2271, a task id, #2272, or a message id,
+///   `withdraw`'s, `ack`'s or `send`'s `supersedes`, #2276) makes Python's
+///   `sqlite3` raise `OverflowError` when it is bound, which is not an
+///   `sqlite3.Error`, so the store does not turn it into a refusal and the
+///   call raises.
 ///   The Rust board refuses it as a store failure naming Python's
 ///   parameter position. (Compared before it is bound, such an integer
 ///   answers as Python's: it equals no stored value but an equal REAL.)
@@ -121,14 +123,15 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   written with the bundled SQLite's digits, which some hosts' libraries
 ///   (and so Python there) write with fewer.
 /// - `unknown_member_status_is_not_alive` (owner decision in #2295, pinned
-///   by `domain::swarm::policy_tests` and `policy_null_status_tests`): Python's `authorize` and
-///   `admission` refuse only a member whose status is `'dead'`, so an
-///   unknown or NULL status counts as alive there; Rust accepts only
-///   `live` or `reserved` (an affirmative guard), so such a member may
-///   read but not mutate, and is not an idempotent admission retry. The
-///   membership methods (#2271) keep it: `_activate` and `_record_launch`
-///   take such a member's reservation as stale, where Python goes on
-///   (pinned by `activate_member_tests` and `record_member_launch_tests`).
+///   in `swarm_board_diff_loose_messages.rs`, whose `SLICE_PINS` lists its
+///   `src` pins): Python's `authorize` and `admission` refuse only a member
+///   whose status is `'dead'`, so an unknown or NULL status counts as alive
+///   there; Rust accepts only `live` or `reserved` (an affirmative guard),
+///   so such a member may read but not mutate, and is not an idempotent
+///   admission retry. The membership methods (#2271) keep it: `_activate`
+///   and `_record_launch` take such a member's reservation as stale, where
+///   Python goes on; and so does `send` (#2276), refusing such a recipient
+///   as out of the swarm, where Python sends to it.
 pub const PERMITTED_DIVERGENCES: [&str; 12] = [
     "arguments_beyond_a_serde_value",
     "integer_beyond_i64_is_refused",
@@ -573,7 +576,7 @@ const SECOND_PINS: [(&str, &str); 1] = [(
 
 /// Divergences pinned outside this suite: the name, the test file's
 /// source and the pinning test in it.
-const EXTERNAL_PINS: [(&str, &str, &str); 8] = [
+const EXTERNAL_PINS: [(&str, &str, &str); 4] = [
     (
         "outside_edited_contract",
         include_str!("swarm_board_diff_loose_completion.rs"),
@@ -593,26 +596,6 @@ const EXTERNAL_PINS: [(&str, &str, &str); 8] = [
         "real_to_text_digits",
         include_str!("../../src/infrastructure/persistence/swarm_board/binding_tests.rs"),
         "a_float_reaching_text_affinity_reads_as_the_bundled_sqlite_writes_it",
-    ),
-    (
-        "unknown_member_status_is_not_alive",
-        include_str!("../../src/domain/swarm/policy_tests.rs"),
-        "unknown_statuses_found_in_a_file_are_refused_affirmatively",
-    ),
-    (
-        "unknown_member_status_is_not_alive",
-        include_str!("../../src/domain/swarm/policy_null_status_tests.rs"),
-        "a_null_member_status_is_not_alive",
-    ),
-    (
-        "unknown_member_status_is_not_alive",
-        include_str!("../../src/application/swarm/use_cases/activate_member_tests.rs"),
-        "an_unknown_member_status_is_not_activated",
-    ),
-    (
-        "unknown_member_status_is_not_alive",
-        include_str!("../../src/application/swarm/use_cases/record_member_launch_tests.rs"),
-        "an_unknown_member_status_records_no_launch",
     ),
 ];
 

@@ -212,3 +212,31 @@ fn an_unknown_recipient_status_is_out_of_the_swarm() {
     }
     assert!(board.snapshot().messages.is_empty());
 }
+
+/// A recipient stored as a number is the same inbox as its text, as the
+/// TEXT column's affinity keeps it: a hundred messages to `5` fill the
+/// inbox of member `"5"`.
+#[test]
+fn a_numeric_recipient_shares_its_texts_inbox() {
+    let mut state = board();
+    state.members.push(member_row("5", "live"));
+    state.messages = (1..=100)
+        .map(|id| StoredMessage {
+            id,
+            sender: "parent".to_owned(),
+            recipient: json!(5),
+            body: "x".to_owned(),
+            status: "accepted".to_owned(),
+            ..StoredMessage::default()
+        })
+        .collect();
+    let board = MemoryBoard::with(state);
+    assert_eq!(
+        service(&board).execute(plain("n", "5")).unwrap_err(),
+        BoardError::new(
+            RefusalKind::CapacityFull,
+            "recipient inbox full (100 unconsumed messages)"
+        )
+    );
+    assert_eq!(board.snapshot().messages.len(), 100);
+}

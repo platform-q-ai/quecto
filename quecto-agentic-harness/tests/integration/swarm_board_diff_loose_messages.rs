@@ -10,7 +10,8 @@
 //! - `unknown_member_status_is_not_alive`, as the pin table describes it,
 //!   for `send` too: a recipient whose status is unknown or NULL is out of
 //!   the swarm, where Python's `status == 'dead'` check sends to it.
-//!   Pinned by `send_message_tests`.
+//!   Pinned here and by [`SLICE_PINS`], which also lists the pins in `src`
+//!   of the methods the pin table names for it.
 //! - `outside_edited_messages`: a BLOB (only a hand edit writes one) in a
 //!   `messages` column the op reads is refused as a store failure, where
 //!   Python answers with bytes: `inbox` then cannot write its JSON, and
@@ -24,13 +25,35 @@ use crate::swarm_board_diff_messages::{inbox, joined, send};
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
 use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{run_rust, sql, try_run_both};
 
-/// This slice's divergences pinned in `src`: the name, the test file's
-/// source and the pinning test in it.
-const SLICE_PINS: [(&str, &str, &str); 1] = [(
-    "unknown_member_status_is_not_alive",
-    include_str!("../../src/application/swarm/use_cases/send_message_tests.rs"),
-    "an_unknown_recipient_status_is_out_of_the_swarm",
-)];
+/// The divergences this file pins also pinned in `src`: the name, the
+/// test file's source and the pinning test in it.
+const SLICE_PINS: [(&str, &str, &str); 5] = [
+    (
+        "unknown_member_status_is_not_alive",
+        include_str!("../../src/application/swarm/use_cases/send_message_tests.rs"),
+        "an_unknown_recipient_status_is_out_of_the_swarm",
+    ),
+    (
+        "unknown_member_status_is_not_alive",
+        include_str!("../../src/domain/swarm/policy_tests.rs"),
+        "unknown_statuses_found_in_a_file_are_refused_affirmatively",
+    ),
+    (
+        "unknown_member_status_is_not_alive",
+        include_str!("../../src/domain/swarm/policy_null_status_tests.rs"),
+        "a_null_member_status_is_not_alive",
+    ),
+    (
+        "unknown_member_status_is_not_alive",
+        include_str!("../../src/application/swarm/use_cases/activate_member_tests.rs"),
+        "an_unknown_member_status_is_not_activated",
+    ),
+    (
+        "unknown_member_status_is_not_alive",
+        include_str!("../../src/application/swarm/use_cases/record_member_launch_tests.rs"),
+        "an_unknown_member_status_records_no_launch",
+    ),
+];
 
 const CONTENDED: &str = "coordination store unavailable or contended: ";
 
@@ -71,6 +94,34 @@ fn integer_beyond_i64_is_refused() {
                  Python int too large to convert to SQLite INTEGER"
             )),
             "{method}"
+        );
+    }
+}
+
+/// A recipient whose status is unknown or NULL (only a hand edit writes
+/// one): Python's `status == 'dead'` check sends to it, where the Rust
+/// board refuses it as out of the swarm.
+#[test]
+fn unknown_member_status_is_not_alive() {
+    for status in ["'zombie'", "NULL"] {
+        let steps = joined([
+            at(3.0, "parent", "_admit", json!(["z", "res-z"])),
+            sql(&format!("UPDATE members SET status={status} WHERE id='z'")),
+            send(4.0, "worker", "a", "z", "hi"),
+        ]);
+        let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+        assert!(
+            difference.starts_with("step 5: send as worker")
+                && difference.contains(
+                    r#"python Ok(Object {"id": Number(1), "status": String("accepted")})"#
+                )
+                && difference.contains(r#"rust   Refused("unknown or out-of-swarm recipient")"#),
+            "{status}: {difference}"
+        );
+        assert_eq!(
+            run_rust(&steps),
+            Outcome::Refused("unknown or out-of-swarm recipient".to_owned()),
+            "{status}"
         );
     }
 }

@@ -5,8 +5,8 @@
 //! pin the real binding.
 use serde_json::Value;
 
-use super::MemoryTransaction;
 use super::tasks::affinity;
+use super::{MemoryTransaction, text_affinity};
 use crate::application::swarm::dto::{MessageRow, NewMessage};
 use crate::application::swarm::ports::BoardMessages;
 use crate::domain::swarm::{BoardError, python_truthy};
@@ -55,7 +55,18 @@ impl StoredMessage {
     }
 
     fn addressed_to(&self, recipient: &str) -> bool {
-        self.recipient.as_str() == Some(recipient)
+        recipient_text(&self.recipient).as_deref() == Some(recipient)
+    }
+}
+
+/// A recipient as the TEXT column keeps it (`5` and `"5"` alike), or
+/// `None` for NULL, which matches no recipient.
+fn recipient_text(recipient: &Value) -> Option<String> {
+    match text_affinity(recipient) {
+        Value::String(text) => Some(text),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_) => {
+            None
+        }
     }
 }
 
@@ -81,10 +92,13 @@ impl MemoryTransaction<'_> {
 
 impl BoardMessages for MemoryTransaction<'_> {
     fn inbox_count(&self, recipient: &Value) -> Result<i64, BoardError> {
+        let Some(wanted) = recipient_text(recipient) else {
+            return Ok(0);
+        };
         let messages = &self.state.borrow().messages;
         let count = messages
             .iter()
-            .filter(|message| &message.recipient == recipient && message.status == "accepted")
+            .filter(|message| message.addressed_to(&wanted) && message.status == "accepted")
             .count();
         Ok(i64::try_from(count).unwrap())
     }

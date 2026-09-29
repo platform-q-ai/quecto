@@ -15,12 +15,12 @@ pub(crate) const CONSUMED: &str = "consumed";
 pub(crate) const ACCEPTED: &str = "accepted";
 
 /// Python's `type(value) is int and value >= 1`: a JSON integer of at
-/// least 1, never a boolean or a float.
+/// least 1, never a boolean or a float. Every such integer is a u64; one
+/// beyond i64 is kept on purpose, so that binding it refuses it
+/// (`integer_beyond_i64_is_refused`).
 pub(crate) fn is_message_id(value: &Value) -> bool {
     match value {
-        Value::Number(number) => {
-            number.as_u64().is_some_and(|id| id >= 1) || number.as_i64().is_some_and(|id| id >= 1)
-        }
+        Value::Number(number) => number.as_u64().is_some_and(|id| id >= 1),
         Value::Null | Value::Bool(_) | Value::String(_) | Value::Array(_) | Value::Object(_) => {
             false
         }
