@@ -10,10 +10,11 @@
 //!   either sits in one of the pin table's own tests, checking the `Err`
 //!   (the receiver of `.unwrap_err()` or `.expect_err(..)`), or in the
 //!   harness's own `run_both`, without either (round-4 L2). A pin table's
-//!   own test is a top-level `#[test]` function of
-//!   `swarm_board_diff_loose.rs`, or of a sibling
-//!   `swarm_board_diff_loose_*.rs` holding a slice's pins (#2275), named
-//!   in `PERMITTED_DIVERGENCES` and not
+//!   own test is a top-level `#[test]` function of a file the pin table
+//!   lists in `PIN_TABLE_FILES` (`swarm_board_diff_loose.rs` itself, and
+//!   each sibling holding a slice's pins, #2275; a file is a pin table
+//!   only by being listed, PR #2321 final review), named in
+//!   `PERMITTED_DIVERGENCES` and not
 //!   pinned elsewhere (`EXTERNAL_PINS` names neither it nor its test), or
 //!   the explicit `outside_edited_evidence` supplemental pin in
 //!   `swarm_board_diff_submissions.rs`, and
@@ -37,8 +38,12 @@ const HARNESS_RUNNER: &str = "run_both";
 const SELF_TEST_PREFIX: &str = "harness_self_test_";
 /// The file holding the pin table.
 const PIN_TABLE: &str = "tests/integration/swarm_board_diff_loose.rs";
-/// The start of a sibling's path, which may hold its own pins (#2275).
-const PIN_SIBLING_PREFIX: &str = "tests/integration/swarm_board_diff_loose_";
+/// The folder the pin table's `include_str!` paths are relative to.
+const PIN_TABLE_DIR: &str = "tests/integration/";
+/// The pin table's constant listing, by `include_str!`, the files that
+/// hold its pins: itself and its siblings (#2275). The one source of
+/// truth for which files are pin tables (PR #2321 final review).
+const PIN_TABLE_FILES: &str = "PIN_TABLE_FILES";
 /// The file defining the harness and its `run_both`.
 const HARNESS_FILE: &str = "tests/common/swarm_board_diff/scenario.rs";
 /// One additional pin for `outside_edited_evidence`, kept in its focused
@@ -73,30 +78,78 @@ impl<'ast> Visit<'ast> for Literals {
     }
 }
 
-/// The string literals of the pin table's constant `name`.
-fn constant_literals(file: &syn::File, name: &str) -> Vec<String> {
-    let found: Vec<Vec<String>> = file
+/// The value of the pin table's constant `name`.
+fn constant<'file>(file: &'file syn::File, name: &str) -> &'file syn::Expr {
+    let found: Vec<&syn::Expr> = file
         .items
         .iter()
         .filter_map(|item| match item {
-            syn::Item::Const(constant) if constant.ident == name => {
-                let mut literals = Literals::default();
-                literals.visit_expr(&constant.expr);
-                Some(literals.0)
-            }
+            syn::Item::Const(constant) if constant.ident == name => Some(&*constant.expr),
             _ => None,
         })
         .collect();
     assert_eq!(found.len(), 1, "{PIN_TABLE} defines {name} once");
-    found.into_iter().flatten().collect()
+    found[0]
+}
+
+/// The string literals of the pin table's constant `name`.
+fn constant_literals(file: &syn::File, name: &str) -> Vec<String> {
+    let mut literals = Literals::default();
+    literals.visit_expr(constant(file, name));
+    literals.0
+}
+
+/// The pin table's file, parsed.
+fn pin_table() -> syn::File {
+    let source = std::fs::read_to_string(PIN_TABLE)
+        .unwrap_or_else(|error| panic!("read {PIN_TABLE}: {error}"));
+    syn::parse_file(&source).expect("the pin table parses")
+}
+
+/// The files the pin table lists in `PIN_TABLE_FILES`, as paths relative
+/// to the crate: each entry must be `include_str!("<file>.rs")` naming a
+/// file beside the pin table, and the pin table must list itself.
+fn pin_table_files() -> Vec<String> {
+    let file = pin_table();
+    let syn::Expr::Array(array) = constant(&file, PIN_TABLE_FILES) else {
+        panic!("{PIN_TABLE_FILES} is an array of include_str! calls");
+    };
+    let listed: Vec<String> = array
+        .elems
+        .iter()
+        .map(|element| {
+            let name = match element {
+                syn::Expr::Macro(call) if call.mac.path.is_ident("include_str") => call
+                    .mac
+                    .parse_body::<syn::LitStr>()
+                    .expect("include_str! takes one string literal")
+                    .value(),
+                _ => panic!("{PIN_TABLE_FILES} holds only include_str! calls"),
+            };
+            let plain = name.ends_with(".rs")
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.');
+            assert!(
+                plain,
+                "{PIN_TABLE_FILES} names a file beside the pin table: {name}"
+            );
+            let path = format!("{PIN_TABLE_DIR}{name}");
+            assert!(Path::new(&path).is_file(), "{PIN_TABLE_FILES} names {path}");
+            path
+        })
+        .collect();
+    assert!(
+        listed.iter().any(|path| path == PIN_TABLE),
+        "{PIN_TABLE_FILES} lists the pin table itself"
+    );
+    listed
 }
 
 /// The test names the pin table allows to expect a difference: the
 /// divergences it pins itself, so none `EXTERNAL_PINS` names.
 fn pinned_tests() -> Vec<String> {
-    let source = std::fs::read_to_string(PIN_TABLE)
-        .unwrap_or_else(|error| panic!("read {PIN_TABLE}: {error}"));
-    let file = syn::parse_file(&source).expect("the pin table parses");
+    let file = pin_table();
     let external = constant_literals(&file, EXTERNAL);
     assert!(!external.is_empty(), "{EXTERNAL} names its pins");
     let pinned: Vec<String> = constant_literals(&file, PERMITTED)
@@ -125,15 +178,13 @@ enum Role {
 }
 
 impl Role {
-    fn of(path: &str) -> Self {
-        let sibling = path
-            .strip_prefix(PIN_SIBLING_PREFIX)
-            .is_some_and(|rest| rest.ends_with(".rs") && !rest.contains('/'));
+    /// A pin table only when `pin_tables` (the pin table's
+    /// `PIN_TABLE_FILES`) lists `path` exactly.
+    fn of(path: &str, pin_tables: &[String]) -> Self {
         match path {
-            PIN_TABLE => Self::PinTable,
             EVIDENCE_PIN_FILE => Self::EvidencePin,
             HARNESS_FILE => Self::Harness,
-            _ if sibling => Self::PinTable,
+            _ if pin_tables.iter().any(|listed| listed == path) => Self::PinTable,
             _ => Self::Other,
         }
     }
@@ -336,7 +387,7 @@ fn harness_tokens(tokens: TokenStream) -> usize {
 /// a plain import is a violation of its own.
 fn violations(path: &str, source: &str) -> Vec<String> {
     let file = syn::parse_file(source).expect("the test file parses");
-    let mut calls = Calls::new(pinned_tests(), Role::of(path));
+    let mut calls = Calls::new(pinned_tests(), Role::of(path, &pin_table_files()));
     calls.visit_file(&file);
     let mut found: Vec<String> = calls
         .violations
@@ -641,5 +692,28 @@ fn the_hook_checker_permits_only_the_pin_tables_own_tests() {
             found[0].contains("outside a pinned divergence test"),
             "{path}: {bypass}: {found:?}"
         );
+    }
+}
+
+/// The pin tables are the files the pin table lists in `PIN_TABLE_FILES`
+/// (PR #2321 final review), read from its `include_str!` calls: itself and
+/// the #2275 sibling holding pins, and not the siblings holding only pins
+/// of `EXTERNAL_PINS`.
+#[test]
+fn the_pin_tables_are_the_files_pin_table_files_lists() {
+    let listed = pin_table_files();
+    for path in [
+        PIN_TABLE,
+        "tests/integration/swarm_board_diff_loose_files.rs",
+    ] {
+        assert!(listed.iter().any(|file| file == path), "{path}: {listed:?}");
+        assert!(Role::of(path, &listed) == Role::PinTable, "{path}");
+    }
+    for path in [
+        "tests/integration/swarm_board_diff_loose_runs.rs",
+        "tests/integration/swarm_board_diff_loose_completion.rs",
+    ] {
+        assert!(listed.iter().all(|file| file != path), "{path}: {listed:?}");
+        assert!(Role::of(path, &listed) == Role::Other, "{path}");
     }
 }

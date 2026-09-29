@@ -14,10 +14,10 @@ use crate::domain::swarm::{Access, BoardError};
 /// Through the operation gate for the coordinator (a running run): the
 /// task must hold a claim (`claimed`, `blocked` or `submitted`), and its
 /// owner's status must be the text `dead` (only the status is read, as
-/// Python's `SELECT status FROM members WHERE id=?` reads it). Reservations the task still holds (an
-/// abrupt exit retains them) are freed only when `release_files` is
-/// exactly `true` (Python's `is True`). The task is reopened (`_reopen`)
-/// and the event `recovered{task,reservations_released}` names the task
+/// Python's `SELECT status FROM members WHERE id=?` reads it).
+/// Reservations the task still holds (an abrupt exit retains them) are
+/// freed only when `release_files` is exactly `true` (Python's `is
+/// True`). The task is reopened (`_reopen`) and the event `recovered{task,reservations_released}` names the task
 /// id as given and how many reservations went.
 pub struct RecoverTask {
     repository: Arc<dyn BoardRepository>,
