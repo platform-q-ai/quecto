@@ -1,7 +1,7 @@
 //! #2304 review round 4: a corpus of realistic strings — shell commands,
 //! config lines, headers, JSON bodies, error bodies — each with the exact
 //! output redaction gives it. The whole corpus redacts to itself a second
-//! time, and redaction stays linear however adversarial the text.
+//! time; `redaction_linearity_tests.rs` keeps redaction linear.
 
 use super::*;
 
@@ -272,35 +272,5 @@ fn redaction_is_idempotent_over_the_corpus() {
     for (text, _) in CORPUS {
         let once = redact_secrets(text);
         assert_eq!(redact_secrets(&once), once, "{text:?}");
-    }
-}
-
-/// Every rule is a `regex` pattern or a scanner that moves forward: a
-/// long adversarial text of labels, flags, quotes and URLs redacts in
-/// time linear in its length (a quadratic pass over 256 KiB would take
-/// minutes, not the seconds allowed here even on a loaded debug build).
-#[test]
-fn redaction_stays_linear_over_adversarial_text() {
-    for unit in [
-        r#""password": " "#,
-        r#"password:" "#,
-        "'token=",
-        "--token ",
-        "curl -u a ",
-        "login -u -p ",
-        "x://a:b",
-        "Cookie: \"",
-        r#"{\"token\":\""#,
-        "password: Bearer ",
-    ] {
-        let text = unit.repeat(256 * 1024 / unit.len());
-        let started = std::time::Instant::now();
-        let redacted = redact_secrets(&text);
-        assert!(
-            started.elapsed() < std::time::Duration::from_secs(20),
-            "{unit:?} took {:?}",
-            started.elapsed()
-        );
-        assert_eq!(redact_secrets(&redacted), redacted, "{unit:?}");
     }
 }
