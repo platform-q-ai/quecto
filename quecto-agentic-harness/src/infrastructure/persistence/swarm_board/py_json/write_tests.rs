@@ -52,7 +52,7 @@ fn the_dumps_style_writes_nested_objects_with_python_separators() {
 
 #[test]
 fn exponential_writes_any_exponent_with_its_sign_and_two_digits() {
-    // python3: '%.1e' % 1.5, repr(1e-05), repr(1.5e16), repr(1e100)
+    // CPython: '%.1e' % 1.5, repr(1e-05), repr(1.5e16), repr(1e100)
     assert_eq!(exponential("15", 0), "1.5e+00");
     assert_eq!(exponential("1", -5), "1e-05");
     assert_eq!(exponential("15", 16), "1.5e+16");
@@ -61,7 +61,7 @@ fn exponential_writes_any_exponent_with_its_sign_and_two_digits() {
 
 #[test]
 fn the_exponent_form_starts_where_python_repr_starts_it() {
-    // python3: repr of each value, either side of the -4..16 positional range
+    // CPython: repr of each value, either side of the -4..16 positional range
     for (value, expected) in [
         (9_999_999_999_999_998.0, "9999999999999998.0"),
         (1e16, "1e+16"),

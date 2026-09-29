@@ -56,7 +56,7 @@ pub(super) fn tool_use(message_id: &str, id: &str, name: &str) -> ExternalAgentE
         AssistantContent::ToolUse {
             id: id.into(),
             name: name.into(),
-            input: json!({"command": "python3 hello.py"}),
+            input: json!({"command": "./hello"}),
         },
     )
 }
@@ -511,7 +511,7 @@ fn a_tool_use_block_is_a_tool_call_of_its_message() {
     let call = &projector.messages()[1].tool_calls[0];
     assert_eq!(call.id, "toolu_1");
     assert_eq!(call.name, "mcp__board__board_summary");
-    assert_eq!(call.arguments, json!({"command": "python3 hello.py"}));
+    assert_eq!(call.arguments, json!({"command": "./hello"}));
     assert_eq!(projector.session_totals().tool_calls, 3);
     assert_eq!(projector.session_totals().tool_results, 3);
 }

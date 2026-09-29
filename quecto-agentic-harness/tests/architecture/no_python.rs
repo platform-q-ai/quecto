@@ -201,11 +201,12 @@ fn no_python_sources_in_the_harness() {
     );
     let production = super::teardown_authority::production_files();
     assert!(production.len() > 200, "the production files are listed");
+    let named = format!("{:?}", "python3");
     for path in &production {
         let source = super::teardown_authority::production_source(path);
         assert!(
-            !source.contains("\"python3\""),
-            "{path} names \"python3\" in production code"
+            !source.contains(&named),
+            "{path} names {named} in production code"
         );
     }
 }

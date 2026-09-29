@@ -13,7 +13,7 @@ fn rig_with_edits() -> Rig {
     let rig = build_rig(Ok(None), ContainerConfigRosterReport::default(), None);
     {
         let mut disk = rig.assets.disk.lock().unwrap();
-        disk.insert(PathBuf::from(CONTAINERFILE), b"FROM python".to_vec());
+        disk.insert(PathBuf::from(CONTAINERFILE), b"FROM debian".to_vec());
         disk.insert(PathBuf::from(CREATE), b"edited".to_vec());
     }
     rig
@@ -27,7 +27,7 @@ fn the_projects_containerfile_is_kept_as_its_own_and_is_not_drift() {
     assert_eq!(report.differing, [PathBuf::from(CREATE)]);
     assert_eq!(
         rig.assets.disk.lock().unwrap()[Path::new(CONTAINERFILE)],
-        b"FROM python".to_vec()
+        b"FROM debian".to_vec()
     );
 }
 
@@ -43,7 +43,7 @@ fn a_refresh_restores_the_scripts_and_never_touches_the_projects_containerfile()
         assert_eq!(report.refreshed, [PathBuf::from(CREATE)], "{dry_run}");
         assert!(report.differing.is_empty(), "{dry_run}");
         let disk = rig.assets.disk.lock().unwrap();
-        assert_eq!(disk[Path::new(CONTAINERFILE)], b"FROM python".to_vec());
+        assert_eq!(disk[Path::new(CONTAINERFILE)], b"FROM debian".to_vec());
         let expected: &[u8] = if dry_run { b"edited" } else { b"#!/bin/sh" };
         assert_eq!(disk[Path::new(CREATE)], expected, "{dry_run}");
     }
@@ -200,7 +200,7 @@ fn the_report_names_a_containerfile_that_is_still_the_starter() {
         .disk
         .lock()
         .unwrap()
-        .insert(PathBuf::from(CONTAINERFILE), b"FROM python".to_vec());
+        .insert(PathBuf::from(CONTAINERFILE), b"FROM debian".to_vec());
     let report = rig.use_case.execute(&request("/p")).unwrap();
     assert!(report.starters.is_empty(), "{:?}", report.starters);
     assert!(report.kept.contains(&PathBuf::from(CREATE)));

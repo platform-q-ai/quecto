@@ -605,7 +605,7 @@ fn given_spawn_from_checkout_no_global_configs(world: &mut QuectoWorld) {
 
 /// A Containerfile no bundle ever shipped: the project's own (#2073).
 const PROJECTS_CONTAINERFILE: &str =
-    "FROM docker.io/library/python:3.13-slim\nLABEL ai.quecto.required-tools=\"python3 uv\"\n";
+    "FROM docker.io/library/node:22-slim\nLABEL ai.quecto.required-tools=\"node npm\"\n";
 
 #[when("the project writes its own standard Containerfile")]
 fn when_project_writes_its_containerfile(world: &mut QuectoWorld) {
@@ -695,11 +695,7 @@ fn given_fake_podman_running_on_host(world: &mut QuectoWorld) {
         .parent()
         .unwrap()
         .to_path_buf();
-    std::fs::write(
-        cfg_dir.join("fixture-processes.py"),
-        include_str!("fixture_processes.py"),
-    )
-    .unwrap();
+    crate::install_fixture_processes(&cfg_dir);
     let pid_dir = cfg_dir.join("env-pids");
     std::fs::create_dir_all(&pid_dir).unwrap();
     let body = format!(
@@ -728,7 +724,7 @@ case "$1" in
     setsid "$@" >/dev/null 2>&1 </dev/null &
     pid=$!
     printf '%s\n' "$pid" > '{containers}'/"$name"
-    python3 '{pid_dir}/../fixture-processes.py' track '{pid_dir}' "$name" "$pid"
+    '{pid_dir}/../fixture-processes' track '{pid_dir}' "$name" "$pid"
     echo "$name"
     exit 0 ;;
   inspect)

@@ -1556,6 +1556,19 @@ fn cpu_seconds_self_and_children() -> f64 {
     total
 }
 
+/// Installs `<cfg_dir>/fixture-processes`, which the fixture scripts call
+/// to own the processes they start (`track`, `live`, `clean`; #2283: the
+/// Rust `quecto-test-fixture processes`, where a Python helper was).
+pub(crate) fn install_fixture_processes(cfg_dir: &Path) {
+    quecto::infrastructure::test_support::executable::write_executable(
+        &cfg_dir.join("fixture-processes"),
+        format!(
+            "#!/bin/sh\nexec '{}' processes \"$@\"\n",
+            env!("CARGO_BIN_EXE_quecto-test-fixture")
+        ),
+    );
+}
+
 fn main() {
     // cucumber's debug-build scenario futures are stack-hungry (the runner
     // moves the World through several hundred-KB frames per nesting level),
@@ -1826,10 +1839,9 @@ impl Drop for QuectoWorld {
         // outlives runtime registry membership.
         if let Some(config) = self.config_path.as_ref() {
             let directory = Path::new(config).parent().unwrap();
-            let helper = directory.join("fixture-processes.py");
+            let helper = directory.join("fixture-processes");
             if helper.exists() {
-                let status = std::process::Command::new("python3")
-                    .arg(helper)
+                let status = std::process::Command::new(helper)
                     .arg("clean")
                     .arg(directory.join("env-pids"))
                     .status()

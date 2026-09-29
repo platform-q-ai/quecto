@@ -26,7 +26,7 @@ fn unreaped_children() -> String {
 }
 
 /// The host reads a board with no Python (#2278): in a child process
-/// whose `PATH` is an empty directory, where no `python3` can be found
+/// whose `PATH` is an empty directory, where no interpreter can be found
 /// (review M3), the read still succeeds, and it starts no process at all
 /// (final review nit): no child of the reading process ran and was
 /// reaped, and none is left running or unreaped.
@@ -34,15 +34,18 @@ fn unreaped_children() -> String {
 fn hosted_run_reads_without_python() {
     const CHILD: &str = "QUECTO_TEST_2278_NO_PYTHON_CHILD";
     if let Ok(checkout) = std::env::var(CHILD) {
-        // No interpreter can be found: the read is the Rust board's alone.
-        assert!(
-            std::process::Command::new("python3")
-                .arg("-c")
-                .arg("pass")
-                .status()
-                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
-            "python3 is not on this child's PATH"
-        );
+        // No program can be found by name, an interpreter included: every
+        // `PATH` entry is empty, so the read is the Rust board's alone.
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let dirs: Vec<std::path::PathBuf> = std::env::split_paths(&path).collect();
+        assert!(!dirs.is_empty(), "the child has a PATH");
+        for dir in &dirs {
+            assert!(
+                std::fs::read_dir(dir).unwrap().next().is_none(),
+                "{} holds no program",
+                dir.display()
+            );
+        }
         // The measure sees a child that ran: this test binary, listing
         // no test, by its absolute path.
         let before = reaped_children_faults();

@@ -290,7 +290,7 @@ async fn symlinks_of_the_other_kind_never_hide_an_entry() {
 #[tokio::test]
 async fn enough_kept_entries_stop_fd() {
     let (dir, effect) = fixture(
-        "import os,sys\nopen('pid','w').write(str(os.getpid()))\nopen('kept','w').close()\nwhile True: print(os.path.join(os.getcwd(), 'kept'), end='\\0', flush=True)",
+        "printf %s $$ > pid\n: > kept\nkept=\"$(pwd -P)/kept\"\nwhile :; do printf '%s\\0' \"$kept\"; done",
     );
     let mut req = request("*");
     req.kind = Some(FindEntryKind::File);

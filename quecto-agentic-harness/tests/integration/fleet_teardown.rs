@@ -106,30 +106,10 @@ fn fixture(container: bool) -> Fixture {
         "agents": {"defaults": {"model": "openai-api/gpt-4o-mini", "workspace": workspace}}
     });
     if container {
-        let bridge = base.join("bridge.py");
-        std::fs::write(
-            &bridge,
-            r#"import os, socket, sys, threading
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.connect(sys.argv[1])
-def pump():
-    while True:
-        d = os.read(0, 65536)
-        if not d:
-            try:
-                s.close()
-            finally:
-                os._exit(0)
-        s.sendall(d)
-threading.Thread(target=pump, daemon=True).start()
-while True:
-    d = s.recv(65536)
-    if not d:
-        break
-    os.write(1, d)
-"#,
-        )
-        .unwrap();
+        // The bridge is the Rust fixture's (#2283): on stdin's EOF (the
+        // parent side is gone) it drops the whole connection, so the child
+        // sees its bound connection lost, and leaves.
+        let bridge = env!("CARGO_BIN_EXE_quecto-test-fixture");
         let create = base.join("create.sh");
         let script = r#"#!/usr/bin/env bash
 set -euo pipefail
@@ -152,10 +132,10 @@ for arg in "$@"; do
 done
 setsid "${new_args[@]}" >/dev/null 2>&1 < /dev/null &
 echo "$!" > '__BASE__/child.pid'
-printf '{"environment_id":"env-1","workspace_path":"%s","metadata":{},"socket_proxy":{"argv":["python3","__BRIDGE__","%s"]}}' "$PWD" "$private_sock"
+printf '{"environment_id":"env-1","workspace_path":"%s","metadata":{},"socket_proxy":{"argv":["__BRIDGE__","uds-bridge","--close-on-stdin-eof","%s"]}}' "$PWD" "$private_sock"
 "#
         .replace("__BASE__", &base.display().to_string())
-        .replace("__BRIDGE__", &bridge.display().to_string());
+        .replace("__BRIDGE__", bridge);
         write_executable(&create, &script);
         let kill = base.join("kill.sh");
         write_executable(

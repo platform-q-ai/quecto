@@ -129,7 +129,7 @@ done
 "$@" >/dev/null 2>&1 &
 child_pid="$!"
 echo "{{\"kind\":\"child\",\"pid\":$child_pid,\"socket\":\"$socket_path\"}}" >> '{log}'
-python3 '{pid_dir}/../fixture-processes.py' track '{pid_dir}' "$env_id" "$child_pid"
+'{pid_dir}/../fixture-processes' track '{pid_dir}' "$env_id" "$child_pid"
 {result_line}
 "#,
         log = log.display(),
@@ -150,62 +150,22 @@ fn given_proxy_script_spawn(world: &mut QuectoWorld) {
     let decoy_marker = decoy_marker_path(world);
     let slow_accept_marker = slow_accept_marker_path(world);
 
-    // The bridge program lives in its OWN file: the proxy contract pumps the
-    // parent connection over the process's real stdio, so the program must
-    // not be fed to python via stdin (a heredoc would steal fd 0).
-    let bridge_py = base.join("env-proxy-bridge.py");
-    std::fs::write(
-        &bridge_py,
-        r#"import os, select, socket, sys, threading
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.connect(sys.argv[1])
-marker = '__SLOW_ACCEPT_MARKER__'
-prefetched = b''
-if os.path.exists(marker):
-    readable, _, _ = select.select([0], [], [], 0.2)
-    if readable:
-        prefetched = os.read(0, 65536)
-        if b'PROXY_RETRY_MARKER' in prefetched:
-            try:
-                os.unlink(marker)
-            except FileNotFoundError:
-                pass
-            sys.exit(1)
-def pump():
-    global prefetched
-    if prefetched:
-        s.sendall(prefetched)
-        prefetched = b''
-    while True:
-        d = os.read(0, 65536)
-        if not d:
-            try:
-                s.shutdown(socket.SHUT_WR)
-            except OSError:
-                pass
-            return
-        s.sendall(d)
-threading.Thread(target=pump, daemon=True).start()
-while True:
-    d = s.recv(65536)
-    if not d:
-        break
-    os.write(1, d)
-"#
-        .replace(
-            "__SLOW_ACCEPT_MARKER__",
-            &slow_accept_marker.display().to_string(),
-        ),
-    )
-    .unwrap();
+    // The bridge is the Rust fixture's (#2283): the proxy contract pumps the
+    // parent connection over the process's real stdio. While the slow-accept
+    // marker exists, a first chunk carrying `PROXY_RETRY_MARKER` makes it
+    // remove the marker and fail, as a refused first connection.
     let proxy = base.join("env-proxy.sh");
     let proxy_script = r#"#!/usr/bin/env bash
 set -euo pipefail
 echo "{\"kind\":\"proxy\",\"target\":\"$1\"}" >> '__LOG__'
-exec python3 '__BRIDGE__' "$1"
+exec '__FIXTURE__' uds-bridge --slow-accept-marker '__SLOW_ACCEPT_MARKER__' "$1"
 "#
     .replace("__LOG__", &log.display().to_string())
-    .replace("__BRIDGE__", &bridge_py.display().to_string());
+    .replace("__FIXTURE__", env!("CARGO_BIN_EXE_quecto-test-fixture"))
+    .replace(
+        "__SLOW_ACCEPT_MARKER__",
+        &slow_accept_marker.display().to_string(),
+    );
     write_executable(&proxy, proxy_script);
 
     let create = base.join("env-create-proxy.sh");
@@ -235,29 +195,12 @@ for arg in "$@"; do
   prev="$arg"
 done
 if [ -e '__DECOY_MARKER__' ]; then
-  python3 - "$requested" '__LOG__' <<'PY' >/dev/null 2>&1 &
-import json, os, socket, sys
-path, log = sys.argv[1], sys.argv[2]
-try:
-    os.unlink(path)
-except FileNotFoundError:
-    pass
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.bind(path)
-s.listen(8)
-with open(log, "a") as f:
-    f.write(json.dumps({"kind": "decoy-listening", "path": path}) + "\n")
-while True:
-    c, _ = s.accept()
-    with open(log, "a") as f:
-        f.write(json.dumps({"kind": "decoy-connection", "path": path}) + "\n")
-    c.close()
-PY
-python3 '__PID_DIR__/../fixture-processes.py' track '__PID_DIR__' "$env_id" "$!"
+  '__FIXTURE__' uds-listen "$requested" --unlink --decoy-log '__LOG__' >/dev/null 2>&1 &
+'__PID_DIR__/../fixture-processes' track '__PID_DIR__' "$env_id" "$!"
 fi
 "${new_args[@]}" >/dev/null 2>&1 &
 child_pid=$!
-python3 '__PID_DIR__/../fixture-processes.py' track '__PID_DIR__' "$env_id" "$child_pid"
+'__PID_DIR__/../fixture-processes' track '__PID_DIR__' "$env_id" "$child_pid"
 echo "{\"kind\":\"child\",\"pid\":$child_pid,\"socket\":\"$private_sock\"}" >> '__LOG__'
 ws="$(dirname "$0")/workspace-$env_id"; mkdir -p "$ws"; printf '{"environment_id":"%s","workspace_path":"%s","metadata":{},"socket_proxy":{"argv":["__PROXY__","%s"]}}' "$env_id" "$ws" "$private_sock"
 "#
@@ -268,6 +211,7 @@ ws="$(dirname "$0")/workspace-$env_id"; mkdir -p "$ws"; printf '{"environment_id
         &slow_accept_marker.display().to_string(),
     )
     .replace("__PID_DIR__", &cfg_dir(world).join("env-pids").display().to_string())
+    .replace("__FIXTURE__", env!("CARGO_BIN_EXE_quecto-test-fixture"))
     .replace("__PROXY__", &proxy.display().to_string());
     write_executable(&create, create_script);
 

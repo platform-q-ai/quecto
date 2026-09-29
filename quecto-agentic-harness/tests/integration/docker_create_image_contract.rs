@@ -192,8 +192,8 @@ fn an_image_with_no_rust_and_no_label_passes() {
 #[test]
 fn an_image_without_git_fails_the_base_check_and_its_tools_are_not_probed() {
     let run = preflight(&Image {
-        label: Some("python3"),
-        tools: &["python3"],
+        label: Some("node"),
+        tools: &["node"],
         ..Image::default()
     });
     assert_eq!(run.status, 1, "{}", run.checks);
@@ -209,8 +209,8 @@ fn an_image_without_git_fails_the_base_check_and_its_tools_are_not_probed() {
 #[test]
 fn a_label_naming_a_tool_the_image_lacks_fails_naming_that_tool() {
     let run = preflight(&Image {
-        label: Some("python3 ruff"),
-        tools: &["git", "python3"],
+        label: Some("node ruff"),
+        tools: &["git", "node"],
         ..Image::default()
     });
     assert_eq!(run.status, 1, "{}", run.checks);
@@ -224,8 +224,8 @@ fn a_label_naming_a_tool_the_image_lacks_fails_naming_that_tool() {
 fn a_runtime_warning_after_the_answer_does_not_hide_the_missing_tool() {
     const EXIT_NO_IMAGE: i32 = 6;
     let image = Image {
-        label: Some("python3 ruff"),
-        tools: &["git", "python3"],
+        label: Some("node ruff"),
+        tools: &["git", "node"],
         warns_last: true,
         ..Image::default()
     };
@@ -242,14 +242,14 @@ fn a_label_whose_tools_are_all_present_passes_and_lists_them() {
     // Any whitespace separates names — and the fake, like the real runtimes,
     // warns on stderr and ends its answer with CR LF: neither is a tool.
     let run = preflight(&Image {
-        label: Some("  python3\truff \n cargo-nextest "),
-        tools: &["git", "python3", "ruff", "cargo-nextest"],
+        label: Some("  node\truff \n cargo-nextest "),
+        tools: &["git", "node", "ruff", "cargo-nextest"],
         ..Image::default()
     });
     assert_eq!(run.status, 0, "{}", run.checks);
     let tools = run.line("required-tools");
     assert!(tools.starts_with("ok\t"), "{tools}");
-    assert!(tools.contains("python3 ruff cargo-nextest"), "{tools}");
+    assert!(tools.contains("node ruff cargo-nextest"), "{tools}");
 }
 
 #[test]
@@ -278,7 +278,7 @@ fn the_limits_are_inclusive() {
 #[test]
 fn a_label_that_is_not_a_list_of_tool_names_is_refused_and_never_run() {
     for label in [
-        "python3;touch${IFS}pwned",
+        "node;touch${IFS}pwned",
         "$(id)",
         "-rf",
         "a/b",
@@ -343,8 +343,8 @@ fn an_oversized_label_is_refused() {
 fn a_runtime_that_cannot_read_the_label_is_a_failure_not_a_pass() {
     for (inspect_rc, words) in [(125, "inspect refused"), (124, "did not answer within")] {
         let run = preflight(&Image {
-            label: Some("python3"),
-            tools: &["git", "python3"],
+            label: Some("node"),
+            tools: &["git", "node"],
             inspect_rc,
             ..Image::default()
         });

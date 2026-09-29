@@ -27,7 +27,7 @@ fn request(member: &str) -> CreateRunRequest {
     CreateRunRequest {
         member: member.to_owned(),
         goal: json!("ship the slice"),
-        constraints: json!(["no python"]),
+        constraints: json!(["no shortcuts"]),
         criteria: json!([
             {"id": "tests", "kind": "command", "description": "cargo test"},
             {"id": "review", "kind": "review", "description": "two cold reviews"},

@@ -177,8 +177,12 @@ mod real_adapters {
     }
 
     /// A stand-in child: binds the UDS socket passed via `--socket` and holds
-    /// accepted connections open so readiness and the monitor stay connected.
-    const LISTENER: &str = r#"#!/usr/bin/env bash
+    /// accepted connections open so readiness and the monitor stay
+    /// connected, until no connection has arrived for 15 s (the Rust
+    /// fixture's listener, #2283).
+    fn listener_script() -> String {
+        format!(
+            r#"#!/usr/bin/env bash
 set -euo pipefail
 sock=""
 prev=""
@@ -186,21 +190,11 @@ for a in "$@"; do
   if [ "$prev" = "--socket" ]; then sock="$a"; fi
   prev="$a"
 done
-exec python3 - "$sock" <<'PY'
-import socket, sys
-s = socket.socket(socket.AF_UNIX)
-s.bind(sys.argv[1])
-s.listen(8)
-s.settimeout(15)
-conns = []
-try:
-    while True:
-        c, _ = s.accept()
-        conns.append(c)
-except Exception:
-    pass
-PY
-"#;
+exec '{}' uds-listen "$sock" --hold --idle-exit 15
+"#,
+            env!("CARGO_BIN_EXE_quecto-test-fixture")
+        )
+    }
 
     fn tool(dir: &Path) -> SpawnTool {
         quecto::composition::subagent_lifecycle::compose_launcher(
@@ -246,7 +240,7 @@ PY
         let _env = ENV_LOCK.lock().await;
         let dir = tempfile::TempDir::new().unwrap();
         let child = dir.path().join("child.sh");
-        write_exec(&child, LISTENER);
+        write_exec(&child, &listener_script());
         // SAFETY: ENV_LOCK serializes every scenario touching this process-wide override, which is set before any child process is launched.
         unsafe { std::env::set_var("QUECTO_CHILD_BINARY", &child) };
 
@@ -322,7 +316,7 @@ PY
         let _env = ENV_LOCK.lock().await;
         let dir = tempfile::TempDir::new().unwrap();
         let listener = dir.path().join("listener.sh");
-        write_exec(&listener, LISTENER);
+        write_exec(&listener, &listener_script());
         let create_body = format!(
             r#"#!/usr/bin/env bash
 set -euo pipefail

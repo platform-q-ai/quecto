@@ -64,11 +64,7 @@ fn install_scripts(world: &mut QuectoWorld) {
     std::fs::create_dir_all(&runtime).unwrap();
     let cfg_path = PathBuf::from(world.config_path.clone().unwrap());
     let cfg_dir = cfg_path.parent().unwrap().to_path_buf();
-    std::fs::write(
-        cfg_dir.join("fixture-processes.py"),
-        include_str!("fixture_processes.py"),
-    )
-    .unwrap();
+    crate::install_fixture_processes(&cfg_dir);
     let pid_dir = cfg_dir.join("env-pids");
     std::fs::create_dir_all(&pid_dir).unwrap();
     let log = log_path(world);
@@ -78,7 +74,7 @@ set -euo pipefail
 state='{state}'
 runtime='{runtime}'
 log='{log}'
-track() {{ python3 '{pid_dir}/../fixture-processes.py' track '{pid_dir}' "$1" "$2"; }}
+track() {{ '{pid_dir}/../fixture-processes' track '{pid_dir}' "$1" "$2"; }}
 child_socket() {{
   while [ "$#" -gt 0 ]; do
     if [ "$1" = "--" ]; then shift; break; fi
@@ -170,7 +166,7 @@ fi
 op="${{1:-kill}}"
 id="${{QUECTO_CONTAINER_ENVIRONMENT_ID:?}}"
 echo "{{\"kind\":\"$op\",\"env_id\":\"$id\"}}" >>"$log"
-python3 '{pid_dir}/../fixture-processes.py' clean '{pid_dir}' "$id" || true
+'{pid_dir}/../fixture-processes' clean '{pid_dir}' "$id" || true
 rm -f "$runtime/quecto-$id"
 rm -rf "$state/$id"
 "#,

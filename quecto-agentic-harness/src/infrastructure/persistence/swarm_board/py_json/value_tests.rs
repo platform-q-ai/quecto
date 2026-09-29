@@ -179,7 +179,7 @@ fn from_code_points_refuses_a_high_surrogate_followed_by_a_low_one() {
 
 #[test]
 fn text_strings_order_by_code_point_as_python_orders_str() {
-    // python3: sorted(['é', 'z', 'ab', 'a', '\U0001f600', '￿', 'Z'])
+    // CPython: sorted(['é', 'z', 'ab', 'a', '\U0001f600', '￿', 'Z'])
     let mut keys: Vec<PyStr> = ["é", "z", "ab", "a", "\u{1f600}", "\u{ffff}", "Z"]
         .into_iter()
         .map(PyStr::from)
@@ -220,7 +220,7 @@ fn a_float_equals_another_only_by_bits_or_when_both_are_nan() {
 
 #[test]
 fn debug_prints_the_dumps_text() {
-    // python3: json.dumps({'a': [1, {}], 'b': 'x'})
+    // CPython: json.dumps({'a': [1, {}], 'b': 'x'})
     let value = loads(r#"{"a":[1,{}],"b":"x"}"#);
 
     assert_eq!(format!("{value:?}"), r#"{"a": [1, {}], "b": "x"}"#);
@@ -228,7 +228,7 @@ fn debug_prints_the_dumps_text() {
 
 #[test]
 fn a_str_debug_prints_its_dumps_text() {
-    // python3: json.dumps('a' + chr(0xE9) + '\n') and json.dumps('a' + chr(0xD800))
+    // CPython: json.dumps('a' + chr(0xE9) + '\n') and json.dumps('a' + chr(0xD800))
     let accented = PyStr::from_code_points(vec![0x61, 0xE9, 0x0A]).expect("code points");
     assert_eq!(format!("{accented:?}"), "\"a\\u00e9\\n\"");
     let lone = PyStr::from_code_points(vec![0x61, 0xD800]).expect("code points");
