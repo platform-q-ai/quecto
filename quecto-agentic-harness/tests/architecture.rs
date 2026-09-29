@@ -6900,7 +6900,8 @@ fn swarm_tool_has_no_pid_signalling() {
     assert!(ports.contains("fn suspend_local_inference(&self, snapshot: &Snapshot);"));
 }
 
-/// #2282: no production code of the harness starts `python3`.
+/// #2282: no production code of the harness starts a Python interpreter:
+/// no string literal names a `python` program, by any version or path.
 #[test]
 fn no_production_code_starts_python() {
     let files = teardown_authority::production_files();
@@ -6910,11 +6911,65 @@ fn no_production_code_starts_python() {
     );
     for path in &files {
         let source = production_source(path);
+        let named = python_programs_in(&source);
         assert!(
-            !source.contains("\"python3\""),
-            "{path} names the python3 interpreter"
+            named.is_empty(),
+            "{path} names a Python interpreter: {named:?}"
         );
     }
+}
+
+/// #2282 review N3: the scan catches every spelling a `Command` can start
+/// Python by, not only the literal `"python3"`, and nothing that merely
+/// begins with the word.
+#[test]
+fn the_python_scan_catches_every_interpreter_spelling() {
+    for caught in [
+        r#"Command::new("python3")"#,
+        r#"Command::new("python")"#,
+        r#"Command::new("/usr/bin/python3")"#,
+        r#"Command::new("python3.12")"#,
+        r#"Command::new("/usr/bin/env").arg("python3")"#,
+        r#"Command::new("sh").args(["-c", "/usr/bin/env python -c 'x'"])"#,
+        r#"const PROGRAM: &str = "python2";"#,
+        r##"Command::new(r#"python3"#)"##,
+    ] {
+        assert!(
+            !python_programs_in(caught).is_empty(),
+            "the scan misses {caught}"
+        );
+    }
+    for clean in [
+        r#"Command::new("bash")"#,
+        r#"let _ = "pythonic";"#,
+        r#"let _ = "cpython";"#,
+        r#"let _ = "python_lab";"#,
+        r#"let _ = "no Python workbench";"#,
+    ] {
+        assert_eq!(
+            python_programs_in(clean),
+            Vec::<String>::new(),
+            "a false positive in {clean}"
+        );
+    }
+}
+
+/// Every word of a string literal in `source` that names a Python
+/// program: `python`, optionally versioned (`python3`, `python3.12`),
+/// bare or by path.
+fn python_programs_in(source: &str) -> Vec<String> {
+    let literal = regex::Regex::new(r#""((?:[^"\\]|\\.)*)""#).expect("literal regex");
+    let program = regex::Regex::new(r"^python[0-9.]*$").expect("program regex");
+    literal
+        .captures_iter(source)
+        .flat_map(|captures| {
+            captures[1]
+                .split(|c: char| c.is_whitespace() || matches!(c, '\'' | ';' | '&' | '|'))
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .filter(|word| program.is_match(word.rsplit('/').next().unwrap_or(word)))
+        .collect()
 }
 
 /// The consolidated `integration` and `docs` targets run every former per-file

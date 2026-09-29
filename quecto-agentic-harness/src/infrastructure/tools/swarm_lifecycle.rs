@@ -56,7 +56,7 @@ pub(super) fn prepare_checkout(context: &SwarmContext) -> Result<(), DomainError
 
 /// Every non-terminal run needs a watcher: a member joining while the run is
 /// paused must still observe resume, deadline expiry, cancellation and later
-/// pauses, or its local jobs and inference are never settled.
+/// pauses, or its local inference is never suspended nor its end settled.
 pub(super) fn needs_supervision(status: RunStatus) -> bool {
     matches!(
         status,
@@ -271,8 +271,10 @@ pub(super) fn run_off_the_workers(job: impl FnOnce()) {
     super::call_work::block_here(job);
 }
 
-/// A per-process watcher also observes outcomes set by other members. This
-/// cancels detached local jobs even if a remote turn-abort leaves them alive.
+/// A per-process watcher also observes outcomes set by other members: it
+/// suspends this process's inference on each pause, and settles the run's
+/// terminal outcome for this member even if a remote turn-abort never
+/// reaches it.
 pub fn supervise(
     context: SwarmContext,
     mut snapshot: crate::domain::swarm::Snapshot,
