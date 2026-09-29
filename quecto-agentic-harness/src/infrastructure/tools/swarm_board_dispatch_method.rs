@@ -7,7 +7,7 @@ use serde_json::Value;
 use super::Level;
 #[cfg(any(test, feature = "test-support"))]
 use super::test_only;
-use super::{control, members, submissions, tasks};
+use super::{completion, control, members, submissions, tasks};
 use crate::domain::swarm::BoardRole;
 
 /// The board methods this dispatcher serves.
@@ -36,6 +36,10 @@ pub(super) enum Method {
     Stop,
     ControlStatus,
     UsageReport,
+    Complete,
+    RevalidateTask,
+    Amend,
+    Evidence,
     #[cfg(any(test, feature = "test-support"))]
     CreateRun,
     #[cfg(any(test, feature = "test-support"))]
@@ -86,6 +90,10 @@ impl Method {
             "stop" => Some(Self::Stop),
             "_control_status" => Some(Self::ControlStatus),
             "usage_report" => Some(Self::UsageReport),
+            "complete" => Some(Self::Complete),
+            "revalidate_task" => Some(Self::RevalidateTask),
+            "amend" => Some(Self::Amend),
+            "evidence" => Some(Self::Evidence),
             #[cfg(any(test, feature = "test-support"))]
             "create_run" => Some(Self::CreateRun),
             #[cfg(any(test, feature = "test-support"))]
@@ -123,6 +131,10 @@ impl Method {
             Self::Stop => "stop",
             Self::ControlStatus => "_control_status",
             Self::UsageReport => "usage_report",
+            Self::Complete => "complete",
+            Self::RevalidateTask => "revalidate_task",
+            Self::Amend => "amend",
+            Self::Evidence => "evidence",
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun => "create_run",
             #[cfg(any(test, feature = "test-support"))]
@@ -156,7 +168,11 @@ impl Method {
             | Self::ResumeExternal
             | Self::Close
             | Self::ExtendDeadline
-            | Self::Stop => Level::Mutation,
+            | Self::Stop
+            | Self::Complete
+            | Self::RevalidateTask
+            | Self::Amend
+            | Self::Evidence => Level::Mutation,
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun | Self::BootstrapRun | Self::BootstrapJoin => Level::Mutation,
             #[cfg(any(test, feature = "test-support"))]
@@ -269,6 +285,10 @@ impl Method {
             Self::Pause => &control::PAUSE,
             Self::ExtendDeadline => &control::EXTEND,
             Self::Stop => &control::STOP,
+            Self::Complete => &completion::COMPLETE,
+            Self::RevalidateTask => &completion::REVALIDATE_TASK,
+            Self::Amend => &completion::AMEND,
+            Self::Evidence => &completion::EVIDENCE,
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun => &test_only::CREATE,
             #[cfg(any(test, feature = "test-support"))]

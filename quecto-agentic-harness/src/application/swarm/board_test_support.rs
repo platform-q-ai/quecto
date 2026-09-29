@@ -10,10 +10,11 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 
 pub use self::control::{paused, recorded, usage};
+pub use self::evidence::accepted;
 pub use self::tasks::{StoredFile, StoredRequest, stored_task};
 use crate::application::swarm::dto::{
-    LaunchIdentity, MemberClaimCounts, MemberRow, NewMember, NewRun, RunContract, RunOwnerRow,
-    RunStatusRow, TaskRow, UsageReport,
+    AmendedContract, EvidenceEntry, LaunchIdentity, MemberClaimCounts, MemberRow, NewMember,
+    NewRun, RunContract, RunOwnerRow, RunStatusRow, StoredContract, TaskRow, UsageReport,
 };
 use crate::application::swarm::ports::{
     BoardEncoding, BoardEvents, BoardMembers, BoardRepository, BoardRuns, BoardWork, Clock,
@@ -49,6 +50,8 @@ pub struct BoardState {
     pub files: Vec<StoredFile>,
     /// What `usage_report` answers; `None` for a board without usage.
     pub usage: Option<UsageReport>,
+    /// The `evidence` rows, each with the actor that recorded it.
+    pub evidence: Vec<(String, EvidenceEntry)>,
 }
 
 /// A journal shared by the board and the id source, so a test reads the
@@ -227,6 +230,33 @@ impl BoardRuns for MemoryTransaction<'_> {
             .rev()
             .find(|event| event.action == "paused")
             .map(|event| event.detail.get("started").cloned().unwrap_or(Value::Null)))
+    }
+
+    fn run_criteria(&self) -> Result<Option<Value>, BoardError> {
+        Ok(self
+            .state
+            .borrow()
+            .run
+            .as_ref()
+            .map(|run| run.contract.criteria.clone()))
+    }
+
+    fn run_contract(&self) -> Result<Option<StoredContract>, BoardError> {
+        Ok(self.state.borrow().run.as_ref().map(|run| StoredContract {
+            goal: Value::String(run.contract.goal.clone()),
+            constraints: run.contract.constraints.clone(),
+            criteria: run.contract.criteria.clone(),
+        }))
+    }
+
+    fn amend_contract(&self, contract: &AmendedContract) -> Result<(), BoardError> {
+        self.note(format!("amend_contract {}", contract.goal));
+        let mut state = self.state.borrow_mut();
+        let stored = &mut state.run.as_mut().expect("a run to amend").contract;
+        stored.goal.clone_from(&contract.goal);
+        stored.constraints = contract.constraints.clone();
+        stored.criteria = contract.criteria.clone();
+        Ok(())
     }
 }
 
@@ -516,6 +546,9 @@ mod tasks;
 
 #[path = "board_test_support_control.rs"]
 mod control;
+
+#[path = "board_test_support_evidence.rs"]
+mod evidence;
 
 /// Readings in order, then the last one forever.
 pub struct SteppingClock {

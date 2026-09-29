@@ -1,0 +1,411 @@
+//! Differential scenarios (#2273, epic #2265): completion, task
+//! revalidation, contract amendment and the criterion evidence success
+//! needs, on the Python board and the Rust board, compared after every
+//! step by result, refusal text and logical database dump. Ported from
+//! `tests/swarm_helpers_test.py`, plus the loosely typed arguments Python
+//! accepts (epic P3).
+use serde_json::{Value, json};
+
+use crate::swarm_board_diff_membership::{HOUR, at, snapshot};
+use crate::swarm_board_diff_runs::NOW;
+use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{Step, run_both, sql, step};
+
+/// `WorkbenchBehavior.setUp`: `parent` creates `ship feature` with a
+/// command and a review criterion, and `worker` is admitted and live.
+fn with_worker(more: impl IntoIterator<Item = Step>) -> Vec<Step> {
+    let mut steps = vec![
+        step(
+            "parent",
+            "create_run",
+            json!([
+                "ship feature",
+                ["clean architecture"],
+                [
+                    {"id": "tests", "kind": "command", "description": "acceptance tests pass"},
+                    {"id": "review", "kind": "review", "description": "independent review"}
+                ],
+                3,
+                NOW + HOUR
+            ]),
+            NOW,
+        ),
+        at(1.0, "parent", "_admit", json!(["worker", "reservation-w"])),
+        at(
+            2.0,
+            "parent",
+            "_activate",
+            json!(["worker", "reservation-w", 12_345, "start-w", "/tmp/w.sock"]),
+        ),
+    ];
+    steps.extend(more);
+    steps
+}
+
+fn evidence(offset: f64, member: &str, criterion: &str, kind: &str, passed: Value) -> Step {
+    at(
+        offset,
+        member,
+        "evidence",
+        json!([criterion, "final-check", "R2", kind, passed]),
+    )
+}
+
+/// `worker` creates, claims, submits (at `revision`) and `parent`
+/// verifies task `id`, from `offset`.
+fn verified(offset: f64, id: i64, dependencies: Value, revision: &str) -> Vec<Step> {
+    let token = format!("{:032x}", id + 2);
+    vec![
+        at(
+            offset,
+            "worker",
+            "task_create",
+            json!([
+                format!("t{id}"),
+                format!("t{id}"),
+                ["tests pass"],
+                dependencies
+            ]),
+        ),
+        at(offset + 0.1, "worker", "claim", json!([id])),
+        at(
+            offset + 0.2,
+            "worker",
+            "submit",
+            json!([id, token, [{"artifact": format!("t{id}-tests"), "revision": revision}]]),
+        ),
+        at(
+            offset + 0.3,
+            "parent",
+            "verify_task",
+            json!([id, token, revision]),
+        ),
+    ]
+}
+
+/// `test_dependent_tasks_can_be_revalidated_at_final_revision`: a task
+/// verified at an earlier revision makes completion stale until the
+/// coordinator revalidates it at the final one; a worker cannot, and
+/// evidence at another revision is refused.
+#[test]
+fn dependent_tasks_can_be_revalidated_at_final_revision() {
+    let mut steps = verified(3.0, 1, json!([]), "R1");
+    steps.extend(verified(4.0, 2, json!([1]), "R2"));
+    steps.extend([
+        evidence(5.0, "parent", "tests", "command", json!(true)),
+        evidence(5.1, "parent", "review", "review", json!(true)),
+        at(6.0, "parent", "complete", json!(["R2"])),
+        at(
+            7.0,
+            "worker",
+            "revalidate_task",
+            json!([1, "R2", [{"artifact": "a-rerun-at-R2", "revision": "R2"}]]),
+        ),
+        at(
+            8.0,
+            "parent",
+            "revalidate_task",
+            json!([1, "R2", [{"artifact": "old", "revision": "R1"}]]),
+        ),
+        at(
+            9.0,
+            "parent",
+            "revalidate_task",
+            json!({"task_id": "1", "revision": "R2", "evidence": [{"revision": "R2", "artifact": "a-rerun-at-R2", "note": "é"}]}),
+        ),
+        at(10.0, "parent", "complete", json!({"revision": "R2"})),
+        snapshot(11.0),
+        at(12.0, "parent", "complete", json!(["R2"])),
+    ]);
+    run_both(&with_worker(steps));
+}
+
+/// `test_completion_holds_success_until_the_supervisor_closes_it` with a
+/// real `complete`: nothing to close before it, success held (members
+/// live) until the supervisor closes it, and then terminal.
+#[test]
+fn completion_holds_success_until_the_supervisor_closes_it() {
+    run_both(&with_worker([
+        evidence(3.0, "parent", "tests", "command", json!(true)),
+        evidence(3.1, "parent", "review", "review", json!(true)),
+        at(4.0, "parent", "_close", json!([])),
+        at(
+            5.0,
+            "parent",
+            "pause",
+            json!(["a plain pause holds nothing to close"]),
+        ),
+        at(6.0, "parent", "_close", json!([])),
+        at(7.0, "parent", "complete", json!(["R2"])),
+        at(8.0, "parent", "_resume_external", json!([])),
+        at(9.0, "parent", "complete", json!(["R2"])),
+        snapshot(10.0),
+        at(11.0, "parent", "_control_status", json!([])),
+        at(12.0, "parent", "_close", json!([])),
+        snapshot(13.0),
+        at(
+            14.0,
+            "worker",
+            "task_create",
+            json!(["after", "after close", ["ok"]]),
+        ),
+        at(15.0, "parent", "_resume_external", json!([])),
+    ]));
+}
+
+/// Completion's refusals in Python's order: the revision, then accepted
+/// evidence of each criterion's kind at it (a worker's proposal and a
+/// non-`True` pass are not accepted), then settled work and reservations.
+#[test]
+fn completion_refuses_each_unsatisfied_requirement() {
+    run_both(&with_worker([
+        at(3.0, "parent", "complete", json!([" "])),
+        at(3.1, "parent", "complete", json!([5])),
+        at(3.2, "parent", "complete", json!(["R2"])),
+        evidence(4.0, "worker", "tests", "command", json!(true)),
+        evidence(4.1, "parent", "review", "review", json!(1)),
+        at(4.2, "parent", "complete", json!(["R2"])),
+        evidence(5.0, "parent", "tests", "command", json!(true)),
+        evidence(5.1, "parent", "review", "review", json!(true)),
+        evidence(5.2, "parent", "review", "review", json!(true)),
+        at(
+            6.0,
+            "worker",
+            "task_create",
+            json!(["open", "open", ["ok"]]),
+        ),
+        at(6.1, "parent", "complete", json!(["R2"])),
+        at(6.2, "worker", "complete", json!(["R2"])),
+        sql("DELETE FROM tasks; INSERT INTO files VALUES('src/a.rs',1,'worker','c','t')"),
+        at(7.0, "parent", "complete", json!(["R2"])),
+        sql("DELETE FROM files"),
+        at(8.0, "parent", "complete", json!(["R1"])),
+        at(9.0, "parent", "complete", json!(["R2"])),
+        snapshot(10.0),
+    ]));
+}
+
+/// `evidence` refuses an unknown criterion or another kind and bounds the
+/// artifact and revision first; its criterion binds as Python binds it.
+#[test]
+fn evidence_arguments_are_checked_as_python_checks_them() {
+    run_both(&with_worker([
+        at(
+            3.0,
+            "parent",
+            "evidence",
+            json!(["missing", "a", "R1", "command", true]),
+        ),
+        at(
+            3.1,
+            "parent",
+            "evidence",
+            json!(["tests", "a", "R1", "review", true]),
+        ),
+        at(
+            3.2,
+            "parent",
+            "evidence",
+            json!(["tests", "x".repeat(2_049), "R1", "command", true]),
+        ),
+        at(
+            3.3,
+            "parent",
+            "evidence",
+            json!(["tests", "a", "x".repeat(257), "command", true]),
+        ),
+        at(
+            3.4,
+            "parent",
+            "evidence",
+            json!(["tests", " ", "R1", "command", true]),
+        ),
+        at(
+            3.5,
+            "parent",
+            "evidence",
+            json!([["tests"], "a", "R1", "command", true]),
+        ),
+        at(
+            3.6,
+            "parent",
+            "evidence",
+            json!(["tests", "a", "R1", "command", "yes"]),
+        ),
+        at(
+            3.7,
+            "parent",
+            "evidence",
+            json!({"criterion": "tests", "artifact": "a", "revision": "R1", "kind": "command", "passed": true}),
+        ),
+        at(
+            3.8,
+            "parent",
+            "evidence",
+            json!(["tests", "a", "R1", "command", true]),
+        ),
+        at(
+            3.9,
+            "stranger",
+            "evidence",
+            json!(["tests", "a", "R1", "command", true]),
+        ),
+        at(4.0, "parent", "stop", json!(["blocked", "hold"])),
+        at(
+            4.1,
+            "parent",
+            "evidence",
+            json!(["tests", "a", "R1", "command", true]),
+        ),
+    ]));
+}
+
+/// `test_amendment_preserves_the_entire_original_contract` and
+/// `test_goal_is_durable_and_workers_cannot_amend_it`: only the
+/// coordinator amends (a worker's bad criteria meet the coordinator check
+/// first), every evidence row goes, and the event holds both contracts.
+#[test]
+fn amendment_preserves_the_entire_original_contract() {
+    let changed = json!([{"id": "tests", "kind": "command", "description": "replacement test"}]);
+    run_both(&with_worker([
+        evidence(3.0, "parent", "tests", "command", json!(true)),
+        evidence(3.1, "worker", "review", "review", json!(false)),
+        at(
+            4.0,
+            "worker",
+            "amend",
+            json!(["wrong", [], [], "silent change"]),
+        ),
+        at(
+            5.0,
+            "parent",
+            "amend",
+            json!([
+                "ship feature",
+                ["replacement constraint"],
+                changed,
+                "approved change"
+            ]),
+        ),
+        snapshot(6.0),
+        at(
+            7.0,
+            "parent",
+            "amend",
+            json!({"goal": "new goal", "constraints": {"not": "a list"}, "criteria": [{"id": "tests", "kind": "command", "description": "pass", "extra": [1.5, "é"]}], "reason": "scope agreed"}),
+        ),
+        at(8.0, "worker", "complete", json!(["R1"])),
+    ]));
+}
+
+/// `amend` bounds the goal, the reason and the encoded constraints before
+/// the gate and checks the criteria inside it, in Python's order.
+#[test]
+fn amendment_arguments_are_checked_as_python_checks_them() {
+    let good = json!([{"id": "t", "kind": "review", "description": "d"}]);
+    run_both(&with_worker([
+        at(3.0, "parent", "amend", json!([" ", [], good, 5])),
+        at(3.1, "parent", "amend", json!(["g", [], good, null])),
+        at(
+            3.2,
+            "parent",
+            "amend",
+            json!(["g", ["x".repeat(8_200)], good, "r"]),
+        ),
+        at(3.3, "parent", "amend", json!(["g", [], [], "r"])),
+        at(3.4, "parent", "amend", json!(["g", [], "criteria", "r"])),
+        at(
+            3.5,
+            "parent",
+            "amend",
+            json!(["g", [], [{"id": "t", "kind": "manual", "description": "d"}], "r"]),
+        ),
+        at(
+            3.6,
+            "parent",
+            "amend",
+            json!(["g", [], [good[0], good[0]], "r"]),
+        ),
+        at(
+            3.7,
+            "parent",
+            "amend",
+            json!(["g", [], [{"id": "t", "kind": "review", "description": "x".repeat(16_400)}], "r"]),
+        ),
+        at(
+            3.8,
+            "parent",
+            "amend",
+            json!(["g", [], [{"id": "t", "kind": "review", "description": "d", "pad": "x".repeat(16_400)}], "r"]),
+        ),
+        at(3.9, "stranger", "amend", json!(["g", [], good, "r"])),
+        at(4.0, "parent", "pause", json!(["hold"])),
+        at(4.1, "parent", "amend", json!(["g", [], good, "r"])),
+    ]));
+}
+
+/// `revalidate_task` bounds the encoded evidence first, then needs the
+/// coordinator, a known completed task, a revision and new evidence at it.
+#[test]
+fn revalidation_arguments_are_checked_as_python_checks_them() {
+    let mut steps = verified(3.0, 1, json!([]), "R1");
+    steps.extend([
+        at(
+            4.0,
+            "worker",
+            "task_create",
+            json!(["open", "open", ["ok"]]),
+        ),
+        at(
+            5.0,
+            "parent",
+            "revalidate_task",
+            json!([1, "R2", [{"artifact": "x".repeat(8_200), "revision": "R2"}]]),
+        ),
+        at(
+            5.1,
+            "parent",
+            "revalidate_task",
+            json!([9, "R2", [{"artifact": "a", "revision": "R2"}]]),
+        ),
+        at(
+            5.2,
+            "parent",
+            "revalidate_task",
+            json!([2, "R2", [{"artifact": "a", "revision": "R2"}]]),
+        ),
+        at(
+            5.3,
+            "parent",
+            "revalidate_task",
+            json!([1, 2, [{"artifact": "a", "revision": 2}]]),
+        ),
+        at(5.4, "parent", "revalidate_task", json!([1, "R2", []])),
+        at(
+            5.5,
+            "parent",
+            "revalidate_task",
+            json!([1, "R2", {"artifact": "a"}]),
+        ),
+        at(5.6, "parent", "revalidate_task", json!([1, "R2", ["a"]])),
+        at(
+            5.7,
+            "parent",
+            "revalidate_task",
+            json!([1, "R2", [{"artifact": " ", "revision": "R2"}]]),
+        ),
+        at(
+            5.8,
+            "parent",
+            "revalidate_task",
+            json!([true, "R2", [{"artifact": "a", "revision": "R2"}]]),
+        ),
+        at(
+            5.9,
+            "parent",
+            "revalidate_task",
+            json!([1.0, "R3", [{"artifact": "b", "revision": "R3", "n": 1e16}]]),
+        ),
+        at(6.0, "parent", "task_raw", json!([1])),
+    ]);
+    run_both(&with_worker(steps));
+}

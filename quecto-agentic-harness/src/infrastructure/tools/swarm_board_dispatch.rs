@@ -32,7 +32,8 @@
 //! `unblock`, `submit` and `verify_task` by [`submissions`]; the run
 //! control methods `pause`, `resume`, `stop`, `_resume_external`,
 //! `_close`, `_extend_deadline`, `_control_status` and `usage_report`
-//! (#2273) by [`control`].
+//! (#2273) by [`control`]; `complete`, `revalidate_task`, `amend` and the
+//! criterion `evidence` success needs (#2273) by [`completion`].
 //!
 //! What S12 must keep when it adds the summaries Python answers with:
 //!
@@ -82,11 +83,12 @@ use serde_json::{Map, Value};
 use crate::application::swarm::dto::{MemberRow, RunSnapshotView, RunStatusView};
 use crate::application::swarm::ports::{BoardCallMeter, BoardOpLog, BoardRepository};
 use crate::application::swarm::use_cases::{
-    ActivateMember, AdmitMember, BlockTask, BootstrapRun, ClaimTask, CloseRun, CreateRun,
-    CreateTask, ExtendRunDeadline, JoinRun, OverRepository, PauseRun, ReadControlStatus,
-    ReadRunSnapshot, ReadRunStatus, ReadTask, ReadUsageReport, RecordMemberLaunch,
-    RegisterMemberSocket, ReleaseTask, ReleaseUnlaunchedMember, ResumeRun, ResumeRunExternally,
-    SetTaskDependencies, StopRun, SubmitTask, UnblockTask, VerifyTask,
+    ActivateMember, AdmitMember, AmendRunContract, BlockTask, BootstrapRun, ClaimTask, CloseRun,
+    CompleteRun, CreateRun, CreateTask, ExtendRunDeadline, JoinRun, OverRepository, PauseRun,
+    ReadControlStatus, ReadRunSnapshot, ReadRunStatus, ReadTask, ReadUsageReport, RecordEvidence,
+    RecordMemberLaunch, RegisterMemberSocket, ReleaseTask, ReleaseUnlaunchedMember, ResumeRun,
+    ResumeRunExternally, RevalidateTask, SetTaskDependencies, StopRun, SubmitTask, UnblockTask,
+    VerifyTask,
 };
 use crate::domain::swarm::{BoardError, BoardRole, RefusalKind};
 
@@ -130,6 +132,10 @@ pub struct SwarmBoardHandles {
     pub stop_run: Arc<StopRun>,
     pub read_control_status: Arc<ReadControlStatus>,
     pub read_usage_report: Arc<ReadUsageReport>,
+    pub complete_run: Arc<CompleteRun>,
+    pub revalidate_task: Arc<RevalidateTask>,
+    pub amend_run_contract: Arc<AmendRunContract>,
+    pub record_evidence: Arc<RecordEvidence>,
     /// Each call's `swarm_op` record and its measure (#2303), only when
     /// the event log is switched on (`telemetry.event_log.enabled`, owner
     /// decision T1): `None` measures and writes nothing.
@@ -430,6 +436,10 @@ fn serve(
         Method::UsageReport => {
             control::usage_report(&serving(&*handles.read_usage_report, over), member)
         }
+        Method::Complete => completion::complete(handles, member, arguments),
+        Method::RevalidateTask => completion::revalidate_task(handles, member, arguments),
+        Method::Amend => completion::amend(handles, member, arguments),
+        Method::Evidence => completion::evidence(handles, member, arguments),
         #[cfg(any(test, feature = "test-support"))]
         Method::CreateRun => {
             test_only::create_run(&serving(&*handles.create_run, over), member, arguments)
@@ -550,6 +560,9 @@ mod test_only;
 
 #[path = "swarm_board_dispatch_control.rs"]
 mod control;
+
+#[path = "swarm_board_dispatch_completion.rs"]
+mod completion;
 
 #[cfg(test)]
 #[path = "swarm_board_dispatch_tests.rs"]

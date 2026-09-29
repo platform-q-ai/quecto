@@ -43,6 +43,8 @@ mod board_call_meter;
 mod board_encoding;
 #[path = "contracts/board_events.rs"]
 mod board_events;
+#[path = "contracts/board_evidence.rs"]
+mod board_evidence;
 #[path = "contracts/board_files.rs"]
 mod board_files;
 #[path = "contracts/board_members.rs"]

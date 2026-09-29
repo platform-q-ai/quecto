@@ -3,6 +3,7 @@
 //! (`infrastructure::tools::swarm_board_dispatch`) builds the requests from
 //! a member's JSON arguments and renders the responses in Python's shape.
 
+pub mod completion;
 pub mod control;
 pub mod location;
 pub mod measure;
@@ -11,6 +12,11 @@ pub mod run;
 pub mod submissions;
 pub mod tasks;
 
+pub use completion::{
+    AmendRunContractRequest, AmendedContract, CompleteRunRequest, CompletionState, EvidenceEntry,
+    EvidenceTransition, NewEvidence, PriorEvidence, RecordEvidenceRequest, RevalidateTaskRequest,
+    StoredContract,
+};
 pub use control::{
     ControlAnswer, ControlReceipt, ExtendRunDeadlineRequest, PauseRunRequest, RecentRequest,
     RunTransition, StopRunRequest, UsageReport, UsageRow,

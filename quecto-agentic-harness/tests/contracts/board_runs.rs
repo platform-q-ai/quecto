@@ -2,7 +2,7 @@
 //! board writes it — the contract's JSON through the board's `encode()`,
 //! the deadline a REAL, the status text.
 use quecto::application::swarm::dto::{
-    BoardLocation, NewRun, RunContract, RunOwnerRow, RunStatusRow,
+    AmendedContract, BoardLocation, NewRun, RunContract, RunOwnerRow, RunStatusRow, StoredContract,
 };
 use quecto::application::swarm::ports::{BoardRepository, BoardTransaction};
 use quecto::domain::swarm::{BoardError, RunState};
@@ -298,4 +298,67 @@ fn control_writes_and_the_pause_record() {
         .query_row("SELECT typeof(deadline) FROM run", [], |row| row.get(0))
         .unwrap();
     assert_eq!(deadline, "real");
+}
+
+/// The contract `amend` reads (#2273): the goal as stored, the lists as
+/// `json.loads` reads them; the amendment stores the new lists with the
+/// board's `encode()` and leaves every other column as it was.
+#[test]
+fn the_contract_is_read_and_amended() {
+    let (dir, repository) = board();
+    within(&repository, true, |transaction| {
+        assert_eq!(transaction.run_contract()?, None, "no run yet");
+        assert_eq!(transaction.run_criteria()?, None, "no run yet");
+        transaction.insert_run(&NewRun {
+            id: "abc".into(),
+            contract: contract("first", 10.0),
+            coordinator: "parent".into(),
+            integrator: "parent".into(),
+            status: RunState::RUNNING,
+        })
+    });
+    within(&repository, false, |transaction| {
+        let criteria = json!([{"description": "d", "id": "c", "kind": "review"}]);
+        assert_eq!(transaction.run_criteria()?, Some(criteria.clone()));
+        assert_eq!(
+            transaction.run_contract()?,
+            Some(StoredContract {
+                goal: json!("first"),
+                constraints: json!(["é", "b"]),
+                criteria,
+            })
+        );
+        transaction.amend_contract(&AmendedContract {
+            goal: "second".into(),
+            constraints: json!({"z": 1, "a": "é"}),
+            criteria: json!([{"kind": "command", "id": "t", "description": "d", "x": 1.5}]),
+        })
+    });
+    let stored: (String, String, String, String, f64) =
+        rusqlite::Connection::open(dir.path().join("swarm.sqlite"))
+            .unwrap()
+            .query_row(
+                "SELECT goal, constraints, criteria, status, deadline FROM run",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .unwrap();
+    assert_eq!(
+        stored,
+        (
+            "second".to_owned(),
+            r#"{"a":"\u00e9","z":1}"#.to_owned(),
+            r#"[{"description":"d","id":"t","kind":"command","x":1.5}]"#.to_owned(),
+            "running".to_owned(),
+            10.0
+        )
+    );
 }

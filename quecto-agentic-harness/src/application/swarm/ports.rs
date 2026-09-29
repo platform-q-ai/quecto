@@ -11,8 +11,9 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use super::dto::{
-    CallMeasure, LaunchIdentity, MemberClaimCounts, MemberRow, NewMember, NewRun, NewTask,
-    RunContract, RunOwnerRow, RunStatusRow, TaskRow, TaskUpdate, UsageReport,
+    AmendedContract, CallMeasure, CompletionState, LaunchIdentity, MemberClaimCounts, MemberRow,
+    NewEvidence, NewMember, NewRun, NewTask, PriorEvidence, RunContract, RunOwnerRow,
+    RunStatusRow, StoredContract, TaskRow, TaskUpdate, UsageReport,
 };
 use crate::domain::error::DomainError;
 use crate::domain::swarm::{
@@ -173,6 +174,14 @@ pub trait BoardRuns {
     /// latest `paused` event's detail as stored (NULL when the detail has
     /// none), `None` when no `paused` event exists.
     fn pause_started(&self) -> Result<Option<Value>, BoardError>;
+    /// `json.loads(run['criteria'])` (#2273), when the store holds a run.
+    fn run_criteria(&self) -> Result<Option<Value>, BoardError>;
+    /// The contract `amend` reads before it changes it (#2273), when the
+    /// store holds a run.
+    fn run_contract(&self) -> Result<Option<StoredContract>, BoardError>;
+    /// `amend`'s `UPDATE run SET goal=?,constraints=?,criteria=?`, the two
+    /// lists stored with the board's `encode()` (#2273).
+    fn amend_contract(&self, contract: &AmendedContract) -> Result<(), BoardError>;
 }
 
 /// The `members` rows.
@@ -304,9 +313,39 @@ pub trait BoardUsage {
     fn usage_report(&self) -> Result<UsageReport, BoardError>;
 }
 
+/// The criterion evidence and the task evidence completion reads (#2273;
+/// S10 extends it).
+pub trait BoardEvidence {
+    /// `Transaction.completion_state()`: the run's criteria, every
+    /// evidence row, every task as `Transaction.task` reads it, and
+    /// whether a file reservation is left.
+    fn completion_state(&self) -> Result<CompletionState, BoardError>;
+    /// `UPDATE tasks SET evidence=? WHERE id=?` with the evidence written
+    /// by plain `json.dumps` (not the board's `encode()`), the id bound as
+    /// Python's `sqlite3` binds it.
+    fn replace_task_evidence(&self, id: &Value, evidence: &Value) -> Result<(), BoardError>;
+    /// `DELETE FROM evidence`: an amended contract keeps no evidence.
+    fn delete_all_evidence(&self) -> Result<(), BoardError>;
+    /// The row `actor` recorded for `criterion`, bound as given.
+    fn prior_evidence(
+        &self,
+        criterion: &Value,
+        actor: &str,
+    ) -> Result<Option<PriorEvidence>, BoardError>;
+    /// `INSERT OR REPLACE INTO evidence VALUES(?,?,?,?,?,?)`.
+    fn record_evidence(&self, evidence: &NewEvidence) -> Result<(), BoardError>;
+}
+
 /// Every role over one transaction.
 pub trait BoardTransaction:
-    BoardRuns + BoardMembers + BoardEvents + BoardTasks + BoardRequests + BoardFiles + BoardUsage
+    BoardRuns
+    + BoardMembers
+    + BoardEvents
+    + BoardTasks
+    + BoardRequests
+    + BoardFiles
+    + BoardUsage
+    + BoardEvidence
 {
 }
 
@@ -318,6 +357,7 @@ impl<T> BoardTransaction for T where
         + BoardRequests
         + BoardFiles
         + BoardUsage
+        + BoardEvidence
         + ?Sized
 {
 }

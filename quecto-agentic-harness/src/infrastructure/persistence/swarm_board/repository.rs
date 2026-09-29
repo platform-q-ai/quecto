@@ -32,7 +32,8 @@ use super::store::{
     BoardStore, CONTENDED, StoreFailure, TransactionError, Undecodable, contended, failure,
 };
 use crate::application::swarm::dto::{
-    BoardLocation, MemberRow, NewRun, RunContract, RunOwnerRow, RunRoles, RunStatusRow,
+    AmendedContract, BoardLocation, MemberRow, NewRun, RunContract, RunOwnerRow, RunRoles,
+    RunStatusRow, StoredContract,
 };
 use crate::application::swarm::ports::{BoardEvents, BoardRepository, BoardRuns, BoardWork};
 use crate::domain::swarm::{BoardError, RefusalKind, RunRecord, RunState};
@@ -268,6 +269,18 @@ impl BoardRuns for SqliteBoard<'_> {
 
     fn pause_started(&self) -> Result<Option<Value>, BoardError> {
         super::repository_control::pause_started(self.connection)
+    }
+
+    fn run_criteria(&self) -> Result<Option<Value>, BoardError> {
+        super::repository_evidence::run_criteria(self)
+    }
+
+    fn run_contract(&self) -> Result<Option<StoredContract>, BoardError> {
+        super::repository_evidence::run_contract(self)
+    }
+
+    fn amend_contract(&self, contract: &AmendedContract) -> Result<(), BoardError> {
+        super::repository_evidence::amend_contract(self, contract)
     }
 }
 
