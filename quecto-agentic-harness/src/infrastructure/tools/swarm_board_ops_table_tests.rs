@@ -182,6 +182,27 @@ fn read_only_and_mutating_ops_partition_the_board_ops() {
     }
 }
 
+/// Every argument whose default is `null` admits `null` in the schema
+/// (#2279 review N8).
+#[test]
+fn a_null_default_is_an_allowed_value() {
+    for spec in BOARD_OPS {
+        for arg in spec.args.iter().filter(|arg| arg.default == Some("null")) {
+            let schema: Value = serde_json::from_str(arg.json_type).unwrap();
+            let types = match &schema["type"] {
+                Value::Array(types) => types.clone(),
+                single => vec![single.clone()],
+            };
+            assert!(
+                types.contains(&json!("null")),
+                "{}.{}: {schema}",
+                spec.name,
+                arg.name
+            );
+        }
+    }
+}
+
 #[test]
 fn the_checked_in_schema_is_the_rendering_of_board_ops() {
     let checked_in: Value =
@@ -218,7 +239,6 @@ fn the_schema_types_the_new_fields() {
         "request",
         "recipient",
         "body",
-        "revision",
         "criterion",
         "artifact",
         "title",
@@ -226,9 +246,13 @@ fn the_schema_types_the_new_fields() {
     ] {
         assert_eq!(property(name), json!({"type": "string"}), "{name}");
     }
-    for name in ["task_id", "supersedes", "message_id"] {
+    for name in ["task_id", "message_id"] {
         assert_eq!(property(name), json!({"type": "integer"}), "{name}");
     }
+    // #2279 review N8: a field some op defaults to `null` admits `null`
+    // (one schema per field, so for every op that names it).
+    assert_eq!(property("revision"), json!({"type": ["string", "null"]}));
+    assert_eq!(property("supersedes"), json!({"type": ["integer", "null"]}));
     for name in ["include_consumed", "passed", "release_files"] {
         assert_eq!(property(name), json!({"type": "boolean"}), "{name}");
     }
@@ -241,7 +265,7 @@ fn the_schema_types_the_new_fields() {
     }
     assert_eq!(
         property("dependencies"),
-        json!({"type": "array", "items": {"type": "integer"}})
+        json!({"type": ["array", "null"], "items": {"type": "integer"}})
     );
     assert_eq!(
         property("kind"),
