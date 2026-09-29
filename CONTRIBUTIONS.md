@@ -86,62 +86,24 @@ scripts/check-bdd-quality.sh
 scripts/check-bdd-tags.sh
 ```
 
-## Mutation testing (CI only)
+## Mutation testing (local, scoped, optional)
 
-Mutation testing runs in CI, never on a workstation: every mutant is a rebuild
-plus a test run, and local runs have exhausted memory. When `merge-requested` is
-applied, `.github/workflows/mutation.yml` diffs the PR against its base
-(`git diff origin/master...HEAD`) and runs `cargo mutants --in-diff` on the
-changed lines only, sharded across runners (one shard per 4 mutants, at most
-16, `--shard k/N`). A diff of more than 64 mutants still runs, with more
-mutants per shard, and its summary says it is oversize; beyond about 190 the
-shards may run out of time and the report fails as incomplete. Each shard's
-`mutants.out` is uploaded as an artifact and summarised in its job summary; the
-**Mutation Testing (diff)** job combines the shards, lists every MISSED and
-TIMEOUT mutant (`file:line:col: mutation`), and fails when any mutant is
-MISSED or TIMEOUT, or when the shards did not test and classify every planned
-mutant. A TIMEOUT fails like a MISSED: a change under which the tests hang is
-not caught, so make the tests fail fast under it (a bounded wait, an iteration
-cap a test asserts). A diff with no mutable Rust code (docs-only, tests-only)
-passes without building. A push cancels a run in progress (it also removes the
-label).
-
-The check is advisory: it is not a required status check, and making it one
-is the repository owner's branch-protection decision. It is never skipped (a
-skipped required check would count as passing): in a run started by any other
-label or by a push, **Mutation Testing (diff)** fails with "not run for this
-event", as it does when a run is cancelled, so a head shows it passing only
-after mutation testing ran on it and passed. Re-apply `merge-requested` to
-replace a failure of that kind.
-
-`.cargo/mutants.toml` holds the configuration: tests run under nextest in the
-Workspace Tests shape (`--workspace --features quecto-agentic-harness/test-support`),
-and `additional_cargo_args` selects `--bins --lib --test contracts --test
-integration` for both the build (`cargo nextest run --no-run`) and the test
-phase, so a mutant builds and runs only those targets. Test files, test-support
-modules and binary entry points are not mutated. CI skips the baseline run
-(Workspace Tests already prove the unmutated tree passes) and sets explicit
-limits: 1500 s per build, 900 s per test run. Failing tests are retried once
-(`NEXTEST_RETRIES=1`); a test that fails under a mutant and then passes on the
-retry counts as passing, so a flaky test can turn a caught mutant into a MISSED
-one, never the reverse.
-
-A MISSED mutant means no test that ran failed when that changed line was
-altered. The cucumber BDD suites, the real-process targets (`parent_loss`,
-`selected_termination`) and the docs and architecture suites do not run here,
-so code that only they pin shows as MISSED and the check fails. Judge each
-MISSED line (they are common in `application/**/use_cases`, which BDD
-scenarios drive): if no test or scenario asserts the changed behaviour, add a
-test that fails with the mutation; if a scenario does, prefer adding a unit or
-contract test at the use case's boundary as well, or say in the PR why the
-scenario is enough. To see what a diff would mutate without building anything
-(listing only; do not run the mutants locally):
+CI does not run mutation testing. When a change needs its test strength
+checked, run `cargo mutants` locally on the change's own diff, restricted to
+the tests that exercise it, and under a memory cap (a full run is a rebuild
+plus a test run per mutant, and unbounded local runs have exhausted memory):
 
 ```bash
-git diff origin/master...HEAD > mutants-pr.diff   # in the checkout; mutants-pr.diff is scratch
-cargo mutants --list --in-diff mutants-pr.diff
-rm mutants-pr.diff
+git diff origin/master...HEAD > /tmp/pr.diff
+systemd-run --user --scope -q -p MemoryMax=20G \
+  cargo mutants --in-place --in-diff /tmp/pr.diff --baseline=skip \
+    --timeout 300 --build-timeout 900 -- -E 'test(/swarm/)'
 ```
+
+Run it in a scratch worktree (`--in-place` mutates the checkout). A MISSED
+mutant means no selected test failed when that line changed; a TIMEOUT means
+the tests hang under it, so make them fail fast (a bounded wait, an asserted
+iteration cap). `.cargo/mutants.toml` holds the shared configuration.
 
 ## Testing expectations
 
