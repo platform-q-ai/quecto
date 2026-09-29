@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use quecto::application::swarm::dto::BoardLocation;
 use quecto::application::swarm::ports::{BoardOpLog, Clock, IdSource};
 use quecto::composition::swarm::{
-    SwarmBoardHandles, build_swarm_board_handles_with, with_event_log,
+    SwarmBoardHandles, board_wire, build_swarm_board_handles_with, with_event_log,
 };
 use quecto::domain::swarm::BoardOpObservation;
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
@@ -118,7 +118,7 @@ impl RustBoard {
     /// Also whether the call reached the dispatcher: a text refused there
     /// never does (the tool records that refusal itself).
     pub fn call_text(&self, member: &str, method: &str, args: &str, now: f64) -> (Outcome, bool) {
-        match member_arguments(&self.handles.wire, args) {
+        match member_arguments(&board_wire(), args) {
             Ok(args) => (self.call(member, method, &args, now), true),
             Err(refusal) => (Outcome::Refused(refusal), false),
         }
@@ -127,7 +127,7 @@ impl RustBoard {
     /// `value` as the structured ops write an answer on the wire
     /// (`swarm_board_ops::wire_text`, #2279).
     pub fn wire_text(&self, value: &Value) -> String {
-        wire_text(&self.handles.wire, value).expect("a board answer is writable")
+        wire_text(&board_wire(), value).expect("a board answer is writable")
     }
 
     /// One board call as `member` at `now`.

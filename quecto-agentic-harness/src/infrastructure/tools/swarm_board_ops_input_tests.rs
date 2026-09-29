@@ -282,6 +282,7 @@ async fn reading_a_request_builds_no_board_handles() {
     let context = crate::infrastructure::tools::swarm_bridge::SwarmContext {
         board: crate::infrastructure::tools::swarm_bridge::SwarmBoard::new(
             counted as crate::infrastructure::tools::swarm_bridge::SwarmBoardHandlesBuilder,
+            board_wire(),
         ),
         checkout: directory.path().to_path_buf(),
         member: "worker".into(),

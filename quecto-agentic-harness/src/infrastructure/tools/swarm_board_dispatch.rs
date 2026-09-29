@@ -171,16 +171,15 @@ pub struct SwarmBoardHandles {
     pub list_tasks: Arc<ListTasks>,
     pub bootstrap_member: Arc<BootstrapMember>,
     pub join_member: Arc<JoinMember>,
-    /// How a structured op reads a member's text and writes its answer
-    /// (#2279), as composition binds it.
-    pub wire: BoardWire,
     /// Each call's `swarm_op` record and its measure (#2303), only when
     /// the event log is switched on (`telemetry.event_log.enabled`, owner
     /// decision T1): `None` measures and writes nothing.
     pub telemetry: Option<BoardTelemetry>,
 }
 
-/// The member-wire codec (#2279), bound by composition: Python's
+/// The member-wire codec (#2279), bound by composition and carried by the
+/// `SwarmBoard` (constant function pointers, so reading a request never
+/// resolves a board file, #2279 review L5): Python's
 /// `json.loads` for a member's argument text (refused, with the reason,
 /// where a `Value` cannot hold what Python read), the text field `op`
 /// such a text names (read even when the rest is refused), and plain

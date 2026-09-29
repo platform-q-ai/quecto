@@ -79,9 +79,10 @@ impl SwarmContext {
     }
 
     /// How structured ops read a member's text and write their answers on
-    /// this context's board (#2279).
+    /// this context's board (#2279): no board call, no file resolved, so
+    /// it is read on the async worker (#2279 review L5).
     pub(crate) fn wire(&self) -> super::swarm_board_dispatch::BoardWire {
-        self.board.wire(self.location())
+        self.board.wire()
     }
 
     /// Records `method` as refused with `kind` before it reached the board

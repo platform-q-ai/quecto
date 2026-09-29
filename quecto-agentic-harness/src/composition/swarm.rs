@@ -65,7 +65,7 @@ pub fn build_swarm_board_handles(
 /// once it is given one
 /// ([`SwarmBoard::record_in`]).
 pub fn swarm_board() -> SwarmBoard {
-    SwarmBoard::with_session_log(build_swarm_board_handles, board_op_log)
+    SwarmBoard::with_session_log(build_swarm_board_handles, board_wire(), board_op_log)
 }
 
 /// Where the board records its `swarm_op`s: the session's event log, only
@@ -231,7 +231,6 @@ pub fn build_swarm_board_handles_with(
         admit_member: Arc::new(AdmitMember::new(repository.clone(), clock.clone())),
         activate_member: Arc::new(ActivateMember::new(repository.clone(), clock.clone())),
         join_run: Arc::new(JoinRun::new(repository, clock, ids)),
-        wire: board_wire(),
         telemetry: None,
     }
 }

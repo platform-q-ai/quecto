@@ -43,6 +43,7 @@ pub struct SwarmBoard {
 
 struct Shared {
     build: SwarmBoardHandlesBuilder,
+    wire: BoardWire,
     session_log: Option<SwarmBoardOpLogBuilder>,
     event_log: OnceLock<Arc<dyn BoardOpLog>>,
     /// The handles built per file, the most recently called last; at
@@ -73,11 +74,13 @@ impl std::fmt::Debug for SwarmBoard {
 }
 
 impl SwarmBoard {
-    /// The board over composition's `build`.
-    pub fn new(build: SwarmBoardHandlesBuilder) -> Self {
+    /// The board over composition's `build`, reading and writing member
+    /// text with composition's `wire`.
+    pub fn new(build: SwarmBoardHandlesBuilder, wire: BoardWire) -> Self {
         Self {
             shared: Arc::new(Shared {
                 build,
+                wire,
                 session_log: None,
                 event_log: OnceLock::new(),
                 built: Mutex::new(Vec::new()),
@@ -89,11 +92,13 @@ impl SwarmBoard {
     /// event log through `session_log` ([`Self::record_in_session`]).
     pub fn with_session_log(
         build: SwarmBoardHandlesBuilder,
+        wire: BoardWire,
         session_log: SwarmBoardOpLogBuilder,
     ) -> Self {
         Self {
             shared: Arc::new(Shared {
                 build,
+                wire,
                 session_log: Some(session_log),
                 event_log: OnceLock::new(),
                 built: Mutex::new(Vec::new()),
@@ -172,10 +177,11 @@ impl SwarmBoard {
         swarm_board_dispatch::refused(&handles, member, method, kind, elapsed);
     }
 
-    /// How structured ops read and write member text on the file at
-    /// `location` (#2279): composition's codec.
-    pub(super) fn wire(&self, location: BoardLocation) -> BoardWire {
-        self.handles(location).wire
+    /// How structured ops read and write member text (#2279):
+    /// composition's codec, the same for every board file, so reading a
+    /// request resolves no file and builds no handles (#2279 review L5).
+    pub(super) fn wire(&self) -> BoardWire {
+        self.shared.wire
     }
 
     /// The handles for `location`: the ones built for the same file and

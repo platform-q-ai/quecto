@@ -55,6 +55,7 @@ fn test_composition() -> CliComposition {
         container_status: crate::composition::standard_container::build_container_status,
         run_end_fleet: crate::composition::subagent_teardown::build_run_end_fleet,
         swarm_board: crate::composition::swarm::build_swarm_board_handles,
+        swarm_board_wire: crate::composition::swarm::board_wire(),
         swarm_board_log: crate::composition::swarm::board_op_log,
         claude_member: crate::composition::claude_member::build_claude_member_handles,
     }

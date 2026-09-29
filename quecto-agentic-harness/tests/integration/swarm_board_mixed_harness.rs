@@ -126,7 +126,7 @@ async fn python_member_programs_and_rust_harness_share_one_board() {
         .path()
         .join(".quecto/container-environments/environment/workspace/repo");
     std::fs::create_dir_all(checkout.join(".quecto")).unwrap();
-    let board = SwarmBoard::new(fixed_handles);
+    let board = SwarmBoard::new(fixed_handles, quecto::composition::swarm::board_wire());
     let context = |member: &str| SwarmContext {
         checkout: checkout.clone(),
         member: member.into(),

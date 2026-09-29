@@ -349,6 +349,10 @@ pub struct CliContext {
     /// it. A process launched as a swarm member refuses to start without
     /// it, since the interface never constructs the board.
     pub swarm_board: Option<swarm_board_handles::SwarmBoardHandlesBuilder>,
+    /// Composition's `board_wire` (#2279): how the board's structured ops
+    /// read a member's text and write their answers. The board is built
+    /// only with it.
+    pub swarm_board_wire: Option<swarm_board_handles::BoardWire>,
     /// Composition's `board_op_log` (#2303): the session's event log the
     /// board records its `swarm_op`s in, while the event log is on.
     pub swarm_board_log: Option<swarm_board_handles::SwarmBoardOpLogBuilder>,
@@ -439,6 +443,8 @@ pub struct CliComposition {
     /// Composition's coordination-board handles builder (#2270), which
     /// `run` carries onto `CliContext` for `SwarmContext` (#2278).
     pub swarm_board: swarm_board_handles::SwarmBoardHandlesBuilder,
+    /// Composition's `board_wire` (#2279).
+    pub swarm_board_wire: swarm_board_handles::BoardWire,
     /// Composition's `board_op_log` (#2303, #2278).
     pub swarm_board_log: swarm_board_handles::SwarmBoardOpLogBuilder,
     pub claude_member: claude_member::ClaudeMemberHandlesBuilder,
@@ -518,6 +524,7 @@ fn composed_context(
         run_end_fleet: Some(composition.run_end_fleet),
         claude_member: Some(composition.claude_member),
         swarm_board: Some(composition.swarm_board),
+        swarm_board_wire: Some(composition.swarm_board_wire),
         swarm_board_log: Some(composition.swarm_board_log),
         live_output: true,
         ..Default::default()
