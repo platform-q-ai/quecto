@@ -6,7 +6,9 @@ use serde_json::Value;
 
 use super::dto::TaskRow;
 use super::ports::BoardTasks;
-use crate::domain::swarm::{BoardError, RefusalKind, python_equal};
+use crate::domain::swarm::{
+    BoardError, RefusalKind, TaskRecord, TaskState, python_equal, require_unsubmitted,
+};
 
 /// The statuses of a held claim (`swarm_repository.ACTIVE_CLAIM`).
 pub(crate) const HELD_CLAIM: [&str; 3] = ["claimed", "blocked", "submitted"];
@@ -85,6 +87,25 @@ pub(crate) fn stored_id(task: &TaskRow) -> Value {
     let id = task.get("id").cloned();
     debug_assert!(id.is_some(), "a task row holds its id column");
     id.unwrap_or(Value::Null)
+}
+
+/// `require_unsubmitted(task)` of a task [`owned`] returned: its evidence
+/// is immutable once submitted.
+///
+/// # Errors
+/// `submitted evidence is immutable; release and reclaim before revising`.
+pub(crate) fn unsubmitted(task: &TaskRow) -> Result<(), BoardError> {
+    let status = task.text("status").unwrap_or_default();
+    debug_assert!(
+        HELD_CLAIM.contains(&status),
+        "only a held claim is checked: {status}"
+    );
+    require_unsubmitted(&TaskRecord {
+        id: task.get("id").and_then(Value::as_i64).unwrap_or_default(),
+        status: TaskState::new(status),
+        owner: task.text("owner").map(str::to_owned),
+        evidence: task.get("evidence").cloned().unwrap_or(Value::Null),
+    })
 }
 
 #[cfg(test)]

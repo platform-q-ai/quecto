@@ -211,3 +211,74 @@ fn claims_and_dependencies_are_written_by_pythons_sql() {
         [[r#"Text("ready")"#, "Null", "Null", "Null"]]
     );
 }
+
+/// The owner operations' status writes (#2272): blocked by a reason,
+/// claimed again without blocker, submitted with evidence (the board's
+/// encoding) without blocker, completed; owner and token kept throughout,
+/// the task id bound as Python binds it.
+#[test]
+fn owner_status_updates_are_written_by_pythons_sql() {
+    let (_dir, database, repository) = board();
+    within(&repository, true, |transaction| {
+        transaction.insert_task(&new_task("first", json!([])))?;
+        transaction.insert_task(&new_task("second", json!([])))?;
+        transaction.update_task_claim(&json!(1), "worker", "tok")?;
+        transaction.update_task_claim(&json!(2), "worker", "other")
+    })
+    .unwrap();
+    let read = || {
+        raw(
+            &database,
+            "SELECT status, owner, token, evidence, blocker FROM tasks ORDER BY id",
+        )
+    };
+    let untouched = [
+        r#"Text("claimed")"#,
+        r#"Text("worker")"#,
+        r#"Text("other")"#,
+        r#"Text("[]")"#,
+        "Null",
+    ];
+    let reason = TaskUpdate::Block {
+        reason: "é wait".to_owned(),
+    };
+    for (id, update, status, evidence, blocker) in [
+        (json!("1"), reason, "blocked", "[]", r#"Text("é wait")"#),
+        (json!(1), TaskUpdate::Unblock, "claimed", "[]", "Null"),
+        (
+            json!(true),
+            TaskUpdate::Submit {
+                evidence: json!([{"revision": "R1", "artifact": "é"}]),
+            },
+            "submitted",
+            r#"[{"artifact":"\u00e9","revision":"R1"}]"#,
+            "Null",
+        ),
+        (
+            json!(1.0),
+            TaskUpdate::Complete,
+            "completed",
+            r#"[{"artifact":"\u00e9","revision":"R1"}]"#,
+            "Null",
+        ),
+    ] {
+        within(&repository, false, |transaction| {
+            transaction.update_task_status(&id, &update)
+        })
+        .unwrap();
+        assert_eq!(
+            read(),
+            [
+                [
+                    format!("Text({status:?})"),
+                    r#"Text("worker")"#.to_owned(),
+                    r#"Text("tok")"#.to_owned(),
+                    format!("Text({evidence:?})"),
+                    blocker.to_owned(),
+                ],
+                untouched.map(str::to_owned),
+            ],
+            "{update:?}"
+        );
+    }
+}

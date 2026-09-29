@@ -171,3 +171,35 @@ fn stored_evidence_without_revisions_is_refused() {
         assert_eq!(board.snapshot().tasks[0].text("status"), Some("submitted"));
     }
 }
+
+/// Entries are read in order until the first stale one, as Python's `any`
+/// reads them: a stale revision before an entry without one is refused as
+/// stale.
+#[test]
+fn entries_are_read_until_the_first_stale_revision() {
+    for (evidence, refusal) in [
+        (
+            json!([{"revision": "R2"}, "junk"]),
+            (RefusalKind::StaleRevision, "stale evidence revision"),
+        ),
+        (
+            json!([{"revision": "R1"}, "junk"]),
+            (
+                RefusalKind::Store,
+                "stored evidence is not a list of revisioned entries",
+            ),
+        ),
+    ] {
+        let mut state = board();
+        state.tasks[0].set("evidence", evidence.clone());
+        let board = MemoryBoard::with(state);
+        let service = VerifyTask::new(board, SteppingClock::fixed(50.0));
+        assert_eq!(
+            service
+                .execute(verify("parent", json!(1), "stored-token", json!("R1")))
+                .unwrap_err(),
+            BoardError::new(refusal.0, refusal.1),
+            "{evidence}"
+        );
+    }
+}

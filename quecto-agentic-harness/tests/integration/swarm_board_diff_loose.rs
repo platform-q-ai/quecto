@@ -741,9 +741,9 @@ fn outside_edited_evidence() {
     let task = at(1.0, "parent", "task_create", json!(["r", "t", ["ok"]]));
     let mut steps = vec![create(5), task];
     for (evidence, python) in [
-        (r#"[{"artifact":"a"}]"#, "raised KeyError"),
-        (r#"{"revision":"R1"}"#, "raised TypeError"),
-        ("null", "raised TypeError"),
+        (r#"[{"artifact":"a"}]"#, "Python raised KeyError"),
+        (r#"{"revision":"R1"}"#, "Python raised TypeError"),
+        ("null", "Python raised TypeError"),
         ("{}", "python Ok(Null)"),
         (r#""""#, "python Ok(Null)"),
     ] {
@@ -755,7 +755,7 @@ fn outside_edited_evidence() {
         ]);
         let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
         assert!(
-            difference.starts_with("step 4: verify_task") && difference.contains(python),
+            difference.starts_with("step 3: verify_task") && difference.contains(python),
             "{evidence}: {difference}"
         );
         let outcome = format!("{:?}", run_rust(&steps));
