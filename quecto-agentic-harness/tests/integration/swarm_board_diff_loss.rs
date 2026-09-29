@@ -20,7 +20,9 @@ use crate::swarm_board_diff_membership::{HOUR, at};
 use crate::swarm_board_diff_messages::joined;
 use crate::swarm_board_diff_runs::NOW;
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
-use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{Step, run_both, run_rust, step};
+use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
+    Step, run_both, rust_answers, step,
+};
 
 /// `Workbench.LOSS_GRACE`, in seconds.
 pub(crate) const GRACE: f64 = 10.0;
@@ -91,14 +93,14 @@ pub(crate) fn launched(offset: f64, launcher: &str, member: &str) -> [Step; 2] {
 /// The Rust board's answer at `steps[index]` (Python's, once `run_both`
 /// has compared them).
 pub(crate) fn answer(steps: &[Step], index: usize) -> Value {
-    match run_rust(&steps[..=index]) {
+    match rust_answers(steps).swap_remove(index) {
         Outcome::Ok(value) => value,
         other => panic!("step {index} was not answered: {other:?}"),
     }
 }
 
 pub(crate) fn refusal(steps: &[Step], index: usize) -> String {
-    match run_rust(&steps[..=index]) {
+    match rust_answers(steps).swap_remove(index) {
         Outcome::Refused(text) => text,
         other => panic!("step {index} was not refused: {other:?}"),
     }

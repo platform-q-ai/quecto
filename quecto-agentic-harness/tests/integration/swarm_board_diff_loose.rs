@@ -95,7 +95,8 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   `verify_task` as a refusal, where Python raises or iterates the value.
 /// - #2276's `outside_edited_messages`, `outside_edited_wake_records` and
 ///   `wake_target_sort_error_order`: see `swarm_board_diff_loose_messages.rs`.
-/// - #2277's `outside_edited_loss_records`: see
+/// - #2277's `outside_edited_loss_records` (a loss observation's time, or
+///   a member's launcher, only an edit holds): see
 ///   `swarm_board_diff_loose_loss.rs`.
 /// - `outside_edited_contract` (#2273, listed case by case and pinned in
 ///   `swarm_board_diff_loose_completion.rs`): a run contract, a criterion

@@ -256,6 +256,30 @@ pub fn run_rust(steps: &[Step]) -> Outcome {
     last
 }
 
+/// Runs `steps` on a Rust board alone and answers every step, refused or
+/// not: what the Rust board answered at each step of a scenario
+/// `run_both` has compared (so Python's answers too).
+pub fn rust_answers(steps: &[Step]) -> Vec<Outcome> {
+    let dir = tempfile::tempdir().expect("a directory for the board");
+    let side = Side::new(dir.path(), "rust");
+    let rust = RustBoard::open(&side.database, &side.root);
+    steps
+        .iter()
+        .map(|step| {
+            if step.method == SQL_STEP {
+                edit(&side.database, &step.args)
+            } else if step.method == FS_STEP {
+                shape(&side.root, &step.args)
+            } else {
+                side.neutral(
+                    rust.call_text(&step.member, &step.method, &step.args, step.now)
+                        .0,
+                )
+            }
+        })
+        .collect()
+}
+
 /// Runs `steps` on both boards, calling `after(index, rust_database,
 /// rust_outcome)` once each step has run on both and before they are
 /// compared (the harness's self-tests tamper with the Rust side's file or

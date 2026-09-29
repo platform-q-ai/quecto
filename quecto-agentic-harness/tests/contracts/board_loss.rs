@@ -56,7 +56,7 @@ fn list(position: usize) -> BoardError {
 const MEMBERS: &str = "
     INSERT INTO members(id,reservation,status,launcher) VALUES('parent','p','live',NULL);
     INSERT INTO members(id,reservation,status,launcher) VALUES('worker','w','live','parent');
-    INSERT INTO members(id,reservation,status,launcher) VALUES('5','f','live',5);";
+    INSERT INTO members(id,reservation,status,launcher) VALUES('5','f','live',x'35');";
 
 #[test]
 fn a_launcher_is_read_by_the_member_id_as_bound() {
@@ -70,7 +70,7 @@ fn a_launcher_is_read_by_the_member_id_as_bound() {
         assert_eq!(transaction.member_launcher(&json!("stranger"))?, None);
         assert_eq!(transaction.member_launcher(&Value::Null)?, None);
         // `id=5` finds `'5'` through TEXT affinity; a launcher stored as
-        // a number is not text.
+        // a BLOB is not text.
         assert_eq!(transaction.member_launcher(&json!(5))?, Some(None));
         Ok(())
     })

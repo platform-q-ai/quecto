@@ -1,6 +1,7 @@
 //! The divergences of loss and death recording (#2277; epic #2265 P3),
 //! named in `swarm_board_diff_loose::PERMITTED_DIVERGENCES` and pinned
-//! here by the test of the same name:
+//! here by the test of the same name (and, for a pin in `src`, listed in
+//! [`SLICE_PINS`]):
 //!
 //! - `unknown_member_status_is_not_alive`, as the pin table describes it,
 //!   for `_quarantine` and `_confirmed_dead` too: a member whose status is
@@ -13,16 +14,43 @@
 //!   from it (text, or NULL for the caller's own observation) is refused
 //!   naming the record, where Python raises a `TypeError`; and a BLOB time
 //!   in any loss observation is refused as a store failure, where Python
-//!   passes over an observation of another member.
+//!   passes over an observation of another member. A launcher that is not
+//!   text (a BLOB) is no launcher, so the member's loss is recorded at
+//!   once, where Python compares the bytes with the caller and asks
+//!   whether that launcher is lost.
 use serde_json::json;
 
+use crate::swarm_board_diff_loose::PERMITTED_DIVERGENCES;
 use crate::swarm_board_diff_loss::quarantine;
 use crate::swarm_board_diff_membership::at;
 use crate::swarm_board_diff_messages::joined;
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
 use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{run_rust, sql, try_run_both};
 
+/// The divergences this file pins also pinned in `src`: the name, the
+/// test file's source and the pinning test in it.
+const SLICE_PINS: [(&str, &str, &str); 2] = [
+    (
+        "unknown_member_status_is_not_alive",
+        include_str!("../../src/application/swarm/use_cases/quarantine_member_tests.rs"),
+        "an_unknown_member_status_is_already_lost",
+    ),
+    (
+        "unknown_member_status_is_not_alive",
+        include_str!("../../src/application/swarm/use_cases/confirm_member_dead_tests.rs"),
+        "an_unknown_member_status_is_already_dead",
+    ),
+];
+
 const CONTENDED: &str = "coordination store unavailable or contended: ";
+
+#[test]
+fn this_slices_pins_in_src_exist() {
+    for (name, source, test) in SLICE_PINS {
+        assert!(PERMITTED_DIVERGENCES.contains(&name), "{name}");
+        assert!(source.contains(&format!("fn {test}()")), "{test}");
+    }
+}
 
 /// A member whose status is unknown or NULL: Python confirms its death
 /// and observes its loss; the Rust board takes it as already dead, and
@@ -96,4 +124,21 @@ fn outside_edited_loss_records() {
         matches!(&outcome, Outcome::Refused(text) if text.starts_with(CONTENDED)),
         "{outcome:?}"
     );
+    // A BLOB launcher: Python observes the loss and waits out the grace;
+    // the Rust board has no launcher to wait for, and records it at once.
+    let launcher = joined([
+        sql("UPDATE members SET launcher=x'00' WHERE id='worker'"),
+        quarantine(3.0, "parent", json!("worker")),
+        at(4.0, "parent", "_control_status", json!([])),
+    ]);
+    let difference = try_run_both(&launcher, |_, _, _| {}).unwrap_err();
+    assert!(
+        difference.starts_with("step 4: _quarantine as parent")
+            && difference.contains("boards differ"),
+        "{difference}"
+    );
+    let Outcome::Ok(receipt) = run_rust(&launcher) else {
+        panic!("the receipt answers");
+    };
+    assert_eq!(receipt["outcome"], json!("failed"));
 }

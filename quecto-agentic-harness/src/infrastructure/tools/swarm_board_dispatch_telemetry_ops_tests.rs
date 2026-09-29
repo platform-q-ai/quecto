@@ -54,6 +54,9 @@ fn every_method() -> Vec<Method> {
         Method::Ack,
         Method::Notifications,
         Method::AcceptWake,
+        Method::Quarantine,
+        Method::ConfirmedDead,
+        Method::LoseCoordinator,
         Method::CreateRun,
         Method::BootstrapRun,
         Method::BootstrapJoin,
@@ -102,6 +105,9 @@ fn every_method() -> Vec<Method> {
             | Method::Ack
             | Method::Notifications
             | Method::AcceptWake
+            | Method::Quarantine
+            | Method::ConfirmedDead
+            | Method::LoseCoordinator
             | Method::CreateRun
             | Method::BootstrapRun
             | Method::BootstrapJoin
@@ -323,6 +329,13 @@ fn acted_on(
             };
             (args, None, None, Some(true))
         }
+        // The loss and death records (#2277) act on a member: no task,
+        // message or cursor.
+        Method::Quarantine | Method::ConfirmedDead => {
+            admitted();
+            (json!(["worker"]), None, None, None)
+        }
+        Method::LoseCoordinator => (json!([]), None, None, None),
         Method::CreateRun => (create_args(), None, None, None),
         Method::BootstrapRun => (json!([1, "s", null]), None, None, None),
         Method::BootstrapJoin => (json!([1, "s", null]), None, None, None),

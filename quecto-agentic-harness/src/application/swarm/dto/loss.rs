@@ -48,9 +48,10 @@ pub struct ConfirmMemberDeadRequest {
 pub enum DeathConfirmation {
     /// The member is unknown or its death is already confirmed.
     AlreadyDead,
-    /// The member is dead now and its active work blocked; `ended_run`
-    /// when it was the coordinator, which ends the run by loss.
-    Confirmed { ended_run: bool },
+    /// The member is dead now and its active work blocked; `coordinator`
+    /// when it was the run's coordinator, whose death ends the run by
+    /// loss.
+    Confirmed { coordinator: bool },
 }
 
 /// `Workbench._lose_coordinator()` as `actor`.
