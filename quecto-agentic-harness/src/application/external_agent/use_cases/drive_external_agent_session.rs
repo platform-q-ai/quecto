@@ -618,3 +618,7 @@ mod capability_tests;
 #[cfg(test)]
 #[path = "drive_external_agent_session_telemetry_tests.rs"]
 mod telemetry_tests;
+
+#[cfg(test)]
+#[path = "drive_external_agent_session_exit_tests.rs"]
+mod exit_tests;

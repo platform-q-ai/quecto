@@ -37,6 +37,9 @@ pub(super) struct Wire {
     /// Closes this session while an interrupt is being written, before
     /// the write returns `Ok`: `close` racing `abort` (#2287 review 2).
     pub(super) close_on_interrupt: Mutex<Option<Weak<DriveExternalAgentSession>>>,
+    /// The process never exits, even once its input is closed: an
+    /// agent wedged in a tool (#2304 review round 2).
+    pub(super) hang_exit: AtomicBool,
 }
 
 impl Wire {
@@ -123,7 +126,12 @@ impl ExternalAgentProcess for FakeProcess {
     }
 
     fn exited(&self) -> PortFuture<'_, ExternalAgentExit> {
-        Box::pin(async { ExternalAgentExit::Code(0) })
+        Box::pin(async move {
+            match self.0.hang_exit.load(Ordering::SeqCst) {
+                true => std::future::pending().await,
+                false => ExternalAgentExit::Code(0),
+            }
+        })
     }
 
     fn exited_discarding_output(&self) -> PortFuture<'_, ExternalAgentExit> {
