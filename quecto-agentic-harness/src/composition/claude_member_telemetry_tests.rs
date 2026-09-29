@@ -84,8 +84,9 @@ async fn run_member(root: &Path, scenario: &Path, config_path: Option<PathBuf>) 
         .expect("the turn ends within the bound");
     }
     session.close().await.unwrap();
+    // As the runner does: the event log keeps what it holds.
+    session.finish().await;
     drop(session);
-    // The last handle: its event log writes what it holds.
     drop(handles);
     let log = AuditLog::file_path(&root.join("base"), "cli:w1");
     std::fs::read_to_string(log)

@@ -2,8 +2,9 @@
 //!
 //! The session use case (#2287) starts the agent through
 //! [`ExternalAgentLauncher`], drives it through [`ExternalAgentProcess`],
-//! records its decisions through [`ExternalAgentTelemetry`] and times its
-//! waits through [`ExternalAgentClock`]. Signatures name only domain types and this
+//! records its decisions through [`ExternalAgentTelemetry`], times its
+//! waits through [`ExternalAgentClock`] and hands the work that must outlive
+//! its caller (an ended member's exit, #2304) to [`ExternalAgentSpawner`]. Signatures name only domain types and this
 //! capability's DTOs: no process, pipe, runtime or wire vocabulary crosses
 //! this boundary. Each port has a contract suite in
 //! `tests/contracts/<port>.rs`, proven on the production adapter against a
@@ -88,6 +89,12 @@ pub trait ExternalAgentProcess: Send + Sync {
 /// only. Recording never fails the session and never blocks it.
 pub trait ExternalAgentTelemetry: Send + Sync {
     fn record(&self, record: &SessionRecord);
+
+    /// Once the member's records are done (#2304): wait, for at most the
+    /// adapter's own bound and never blocking a thread, until what was
+    /// recorded is kept. A record made afterwards may be lost. Dropping an
+    /// adapter never waits: this is where its records are made safe.
+    fn finish(&self) -> PortFuture<'_, ()>;
 }
 
 /// The session's time (#2287): how long it waits on a quiet stream. The
@@ -98,4 +105,16 @@ pub trait ExternalAgentClock: Send + Sync {
 
     /// Resolves once `duration` has passed on the same scale.
     fn sleep(&self, duration: Duration) -> PortFuture<'_, ()>;
+}
+
+/// Work handed off to run on its own: it owns everything it uses.
+pub type DetachedWork = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+
+/// Runs work apart from the caller's future (#2304): an ended member's
+/// exit is waited for and recorded however long it takes (at most
+/// [`super::dto::EXIT_GRACE`]), while the session answers its callers, and
+/// even when the caller that ended it gives up.
+pub trait ExternalAgentSpawner: Send + Sync {
+    /// Run `work` to its end, whether or not the caller's future survives.
+    fn spawn(&self, work: DetachedWork);
 }

@@ -390,6 +390,8 @@ async fn abandoning_mid_turn_records_the_open_call_the_cut_turn_and_the_end() {
         .store(true, std::sync::atomic::Ordering::SeqCst);
     let outcome = rig.session.abort().await.unwrap();
     assert!(outcome.member_ended, "an unwritable interrupt ends it");
+    // Its exit is recorded apart from the caller that ended it.
+    rig.end_recorded().await;
     let after = after_the_call(&rig);
     let kinds: Vec<&str> = after.iter().map(SessionRecord::kind).collect();
     assert_eq!(

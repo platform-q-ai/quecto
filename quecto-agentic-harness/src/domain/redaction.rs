@@ -74,10 +74,11 @@ impl std::fmt::Display for Redacted {
 /// Credential-shaped patterns scrubbed to `[REDACTED]`.
 ///
 /// Covers both named spans (`<api_key|token|password|secret|access_token>=
-/// <value>`) and tokens that have recognisable prefixes (`Bearer <tok>`,
-/// `sk-` incl. `sk-proj-`/`sk-ant-`/`sk-or-`, AWS `AKIA`, GitHub
-/// `gh[pousr]_`, Slack `xox[baprs]-`, Google `AIza`, GitLab `glpat-`), and
-/// then the command-line shapes of [`COMMAND_LINE_SHAPES`]. This is best-effort:
+/// <value>`, a quoted value to its closing quote) and tokens that have
+/// recognisable prefixes (`Bearer <tok>`, `sk-` incl.
+/// `sk-proj-`/`sk-ant-`/`sk-or-`, AWS `AKIA`, GitHub `gh[pousr]_`, Slack
+/// `xox[baprs]-`, Google `AIza`, GitLab `glpat-`), and then the
+/// command-line shapes of [`COMMAND_LINE_SHAPES`]. This is best-effort:
 /// tokens with no distinguishing shape (bare passwords passed positionally,
 /// opaque JWTs) can still slip through, so callers must not treat output as
 /// guaranteed clean.
@@ -120,7 +121,7 @@ static PATTERNS: LazyLock<regex::Regex> = LazyLock::new(|| {
         r"sk-[A-Za-z0-9_-]{8,}",
         r"|AKIA[0-9A-Z]{12,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}",
         r"|AIza[A-Za-z0-9_-]{20,}|glpat-[A-Za-z0-9_-]{20,}",
-        r"|(?:api[_-]?key|token|password|secret|access[_-]?token)\s*[=:]\s*\S+)",
+        r#"|(?:api[_-]?key|token|password|secret|access[_-]?token)\s*[=:]\s*(?:"[^"]*"?|'[^']*'?|\S+))"#,
     ))
     .expect("static redaction regex is valid")
 });
@@ -187,13 +188,19 @@ fn is_ansi_csi(text: &str) -> bool {
 }
 
 /// A credential in a command line's shape (#2304 review): the flag or the
-/// name it follows (`keep`) is kept, the credential (`secret`) redacted.
-/// Each is tried after [`PATTERNS`], in order, over the whole text:
+/// name it follows (`keep`) is kept, the credential (`value`) redacted.
+/// Each is tried after [`PATTERNS`], in order, over the whole text.
 ///
-/// - `curl -u user:pass`, `--user user:pass`, `--user=…`, `-uuser:pass`:
-///   only a `user:password` (a `-u` naming a user alone, as `ps -u root`
-///   or `sort -u`, is no credential), and never a `uid:gid` of digits
-///   (`-u 1000:1000`);
+/// A value is a bare word, or quoted: a quoted one runs to its closing
+/// quote, spaces included (to the text's end when it never closes), and
+/// its quotes are kept around `[REDACTED]`. The shapes:
+///
+/// - `-u`/`--user user:pass` (also `--user=…`, glued `-uuser:pass`), and
+///   httpie's `-a`/`--auth`, only after an HTTP client in the same command
+///   (`curl`, `wget`, `http`, `https`, `httpie`, `xh`, a path before it
+///   allowed) and only a `user:password` (`curl -u alice` prompts): for
+///   every other tool `-u user:group` names a user (a container's `run
+///   -u app:app`, `sudo -u`);
 /// - `Authorization: Basic …` (and `Proxy-Authorization`), any case;
 /// - `--password X`, `--password=X`, `--passwd …`, `-pass …` (openssl's
 ///   `-pass pass:…`): a flag that is exactly one of these (`--passes=3` is
@@ -206,65 +213,143 @@ fn is_ansi_csi(text: &str) -> bool {
 ///   `psql -p 5432`), a flag (`git log -p`, `cp -p`) or a mode (`mkdir
 ///   -p`), so none of those is touched;
 /// - `sshpass -p <password>`, spaced or glued;
-/// - an upper-case environment name ending in `_KEY`, `_KEY_ID`, `_PASS`,
-///   `_PASSWD`, `_PWD`, `_CREDENTIAL(S)` or `_AUTH`, assigned (`export
-///   STRIPE_KEY=…`, `AWS_ACCESS_KEY_ID=…`); `*_TOKEN=`, `*_SECRET=`,
-///   `*_PASSWORD=` and `*_API_KEY=` are [`PATTERNS`]' own;
-/// - `aws_secret_access_key`, any case, then its value after `=`, `:` or
-///   a space (`aws configure set aws_secret_access_key …`).
-static COMMAND_LINE_SHAPES: LazyLock<[CommandLineShape; 7]> = LazyLock::new(|| {
-    let shape = |pattern: &str, is_credential: fn(&str) -> bool| CommandLineShape {
-        pattern: regex::Regex::new(&pattern.replace("SECRET", r#"(?P<secret>[^\s"']+)"#))
-            .expect("static command-line regex is valid"),
+/// - an upper-case environment name ending in `_PASS`, `_PASSWD`, `_PWD`
+///   or `_CREDENTIAL(S)`, assigned any value (`export DB_PASS=…`);
+/// - one ending in `_KEY`, `_KEY_ID` or `_AUTH`, only when its value looks
+///   secret ([`looks_secret`]: 16 characters or more, or a key's prefix),
+///   so `SORT_KEY=name` and `USE_AUTH=true` survive. `*_TOKEN=`,
+///   `*_SECRET=`, `*_PASSWORD=` and `*_API_KEY=` are [`PATTERNS`]' own. An
+///   assignment's value never starts with `=`: `FOO_KEY == x` is a test;
+/// - `aws_secret_access_key` then `=` or `:` and any value, or a space and
+///   a value shaped like an AWS secret ([`looks_aws_secret`]), so prose
+///   naming it survives.
+///
+/// The deliberate false positives (each pinned by a test): a long `*_KEY`
+/// value that is no secret (`CACHE_KEY=user-profile-cache-v2`, a key's
+/// path), any `*_PASS` value (`SKIP_PASS=1`), the word after a password
+/// flag or `Authorization: Basic` whatever it is, and a `curl -u` value of
+/// digits.
+///
+/// Every pattern is a `regex` one: matching is linear in the text.
+static COMMAND_LINE_SHAPES: LazyLock<[CommandLineShape; 8]> = LazyLock::new(|| {
+    let shape = |pattern: &str, is_credential: fn(&str, &str) -> bool| CommandLineShape {
+        pattern: regex::Regex::new(
+            &pattern
+                .replace("ASSIGNED", ASSIGNED_VALUE)
+                .replace("VALUE", VALUE),
+        )
+        .expect("static command-line regex is valid"),
         is_credential,
     };
-    let any = |_: &str| true;
+    let any = |_: &str, _: &str| true;
     [
         shape(
-            r#"(?P<keep>(?:^|[\s;&|(])(?:-u\s*|--user(?:\s+|=))["']?)(?P<secret>[^\s:"']+:[^\s"']+)"#,
+            r"(?P<keep>(?:^|[\s;&|(/])(?:curl|wget|https?|httpie|xh)(?:\s+[^\s;&|]+)*?\s+(?:-u\s*|--user(?:\s+|=)|-a\s*|--auth(?:\s+|=)))VALUE",
             is_user_password,
         ),
-        shape(r"(?i)(?P<keep>authorization\s*:\s*basic\s+)SECRET", any),
+        shape(r"(?i)(?P<keep>authorization\s*:\s*basic\s+)VALUE", any),
         shape(
-            r"(?P<keep>(?:^|\s)(?:--password|--passwd|-pass)(?:\s+|=))SECRET",
+            r"(?P<keep>(?:^|\s)(?:--password|--passwd|-pass)(?:\s+|=))VALUE",
             any,
         ),
         shape(
-            r"(?P<keep>(?:^|[\s;&|(])(?:mysql|mysqldump|mysqladmin|mysqlimport|mysqlshow|mysqlcheck|mysqlsh|mariadb|mariadb-dump)(?:\s+[^\s;&|]+)*?\s+-p)SECRET",
+            r"(?P<keep>(?:^|[\s;&|(/])(?:mysql|mysqldump|mysqladmin|mysqlimport|mysqlshow|mysqlcheck|mysqlsh|mariadb|mariadb-dump)(?:\s+[^\s;&|]+)*?\s+-p)VALUE",
             any,
         ),
         shape(
-            r"(?P<keep>(?:^|[\s;&|(])sshpass\s+(?:-[A-Za-z]\S*\s+)*?-p\s*)SECRET",
+            r"(?P<keep>(?:^|[\s;&|(/])sshpass\s+(?:-[A-Za-z]\S*\s+)*?-p\s*)VALUE",
             any,
         ),
         shape(
-            r"(?P<keep>\b[A-Z][A-Z0-9_]*_(?:KEY|KEY_ID|PASS|PASSWD|PWD|CREDENTIALS?|AUTH)\s*=\s*)SECRET",
+            r"(?P<keep>\b[A-Z][A-Z0-9_]*_(?:PASS|PASSWD|PWD|CREDENTIALS?)\s*=\s*)ASSIGNED",
             any,
         ),
         shape(
-            r"(?i)(?P<keep>aws_secret_access_key(?:\s*[=:]\s*|\s+))SECRET",
-            any,
+            r"(?P<keep>\b[A-Z][A-Z0-9_]*_(?:KEY|KEY_ID|AUTH)\s*=\s*)ASSIGNED",
+            |_, value| looks_secret(value),
+        ),
+        shape(
+            r"(?i)(?P<keep>aws_secret_access_key(?:\s*[=:]\s*|\s+))ASSIGNED",
+            |keep, value| keep.contains(['=', ':']) || looks_aws_secret(value),
         ),
     ]
 });
 
+/// A shape's value: a double- or single-quoted run (its closing quote
+/// optional, for a text cut inside it), or a bare word.
+const VALUE: &str = r#"(?P<value>"[^"]*"?|'[^']*'?|[^\s"']+)"#;
+
+/// An assignment's [`VALUE`]: a bare one starts with anything but `=`, so
+/// `FOO_KEY == x` is a comparison, never an assignment of `= x`.
+const ASSIGNED_VALUE: &str = r#"(?P<value>"[^"]*"?|'[^']*'?|[^\s"'=][^\s"']*)"#;
+
 /// One of [`COMMAND_LINE_SHAPES`]: its pattern, with a `keep` and a
-/// `secret` group, and whether a `secret` it matched is a credential.
+/// `value` group, and whether a value it matched (unquoted) after that
+/// `keep` is a credential.
 struct CommandLineShape {
     pattern: regex::Regex,
-    is_credential: fn(&str) -> bool,
+    is_credential: fn(&str, &str) -> bool,
 }
 
-/// Whether a `-u`/`--user` value is a credential: `user:password`, not a
-/// `uid:gid`.
-fn is_user_password(value: &str) -> bool {
-    value.split_once(':').is_some_and(|(user, password)| {
-        let uid_gid = user
+/// A matched value without its quotes: `(open, inner, close)`.
+fn unquoted(value: &str) -> (&str, &str, &str) {
+    for quote in ["\"", "'"] {
+        if let Some(rest) = value.strip_prefix(quote) {
+            return match rest.strip_suffix(quote) {
+                Some(inner) => (quote, inner, quote),
+                None => (quote, rest, ""),
+            };
+        }
+    }
+    ("", value, "")
+}
+
+/// Whether an HTTP client's `-u`/`--user` (or `-a`/`--auth`) value is a
+/// credential: a `user:password`.
+fn is_user_password(_keep: &str, value: &str) -> bool {
+    value.contains(':')
+}
+
+/// The prefixes a key's value starts with: Stripe's, GitHub's, GitLab's,
+/// Slack's, AWS's, Google's and `sk-`.
+const SECRET_PREFIXES: &[&str] = &[
+    "sk_",
+    "pk_",
+    "rk_",
+    "sk-",
+    "ghp_",
+    "gho_",
+    "ghu_",
+    "ghs_",
+    "ghr_",
+    "github_pat_",
+    "glpat-",
+    "xox",
+    "AKIA",
+    "ASIA",
+    "AIza",
+];
+
+/// The length from which a `*_KEY` value is taken for a secret whatever
+/// its shape.
+const SECRET_MIN_CHARS: usize = 16;
+
+/// Whether a `*_KEY`, `*_KEY_ID` or `*_AUTH` value looks secret: at least
+/// [`SECRET_MIN_CHARS`] characters, or one of [`SECRET_PREFIXES`].
+fn looks_secret(value: &str) -> bool {
+    value.chars().count() >= SECRET_MIN_CHARS
+        || SECRET_PREFIXES
+            .iter()
+            .any(|prefix| value.starts_with(prefix))
+}
+
+/// Whether a value looks like an AWS secret access key: at least
+/// [`SECRET_MIN_CHARS`] of `A-Z a-z 0-9 / + =`.
+fn looks_aws_secret(value: &str) -> bool {
+    value.chars().count() >= SECRET_MIN_CHARS
+        && value
             .chars()
-            .chain(password.chars())
-            .all(|c| c.is_ascii_digit());
-        !uid_gid
-    })
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '+' | '='))
 }
 
 /// Replace known secret shapes in `input` with `[REDACTED]`.
@@ -287,8 +372,10 @@ pub(crate) fn redact_secrets(input: &str) -> String {
         shape
             .pattern
             .replace_all(&text, |caps: &regex::Captures<'_>| {
-                match (shape.is_credential)(&caps["secret"]) {
-                    true => format!("{}[REDACTED]", &caps["keep"]),
+                let keep = &caps["keep"];
+                let (open, inner, close) = unquoted(&caps["value"]);
+                match (shape.is_credential)(keep, inner) {
+                    true => format!("{keep}{open}[REDACTED]{close}"),
                     false => caps[0].to_string(),
                 }
             })

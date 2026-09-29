@@ -5947,6 +5947,8 @@ const EXTERNAL_AGENT_PORTS: &[&str] = &[
     "ExternalAgentProcess",
     "ExternalAgentTelemetry",
     "ExternalAgentClock",
+    // The session's detached exit recording (#2304 review round 2).
+    "ExternalAgentSpawner",
 ];
 
 #[test]

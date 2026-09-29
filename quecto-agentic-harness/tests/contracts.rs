@@ -101,6 +101,8 @@ mod external_agent_clock;
 mod external_agent_launcher;
 #[path = "contracts/external_agent_process.rs"]
 mod external_agent_process;
+#[path = "contracts/external_agent_spawner.rs"]
+mod external_agent_spawner;
 #[path = "contracts/external_agent_telemetry.rs"]
 mod external_agent_telemetry;
 #[path = "contracts/fleet_settlement.rs"]

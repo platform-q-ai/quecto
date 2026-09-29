@@ -133,6 +133,6 @@ async fn an_overdue_interrupt_ends_the_member_without_waiting_for_its_exit() {
         .await
         .expect("the prompt is answered at once");
     assert_eq!(refused, Err(SessionRefusal::Ended));
-    tokio::time::sleep(EXIT_GRACE).await;
+    tokio::time::sleep(EXIT_GRACE + Duration::from_millis(1)).await;
     assert_eq!(ends(&rig).len(), 1, "{:?}", rig.records.kinds());
 }

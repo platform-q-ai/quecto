@@ -187,15 +187,23 @@ fn every_record_is_logged_once_under_the_external_agent_target() {
     }
 }
 
-#[test]
-fn recording_without_a_subscriber_is_harmless() {
+#[tokio::test]
+async fn recording_without_a_subscriber_is_harmless_and_finishes_at_once() {
     for record in every_kind() {
         TracingExternalAgentTelemetry.record(&record);
     }
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        TracingExternalAgentTelemetry.finish(),
+    )
+    .await
+    .expect("nothing is held back");
 }
 
-#[test]
-fn the_event_log_adapter_files_each_kept_record_once_in_order() {
+/// The port's `finish` (#2304 review round 2): once it resolves, every
+/// record made before it is kept; the tracing adapter keeps nothing back.
+#[tokio::test]
+async fn the_event_log_adapter_files_each_kept_record_once_in_order() {
     let base = tempfile::tempdir().unwrap();
     let log = AuditLog::open_sync(base.path(), "cli:w1")
         .unwrap()
@@ -212,7 +220,7 @@ fn the_event_log_adapter_files_each_kept_record_once_in_order() {
         telemetry.record(&record);
     }
     assert_eq!(telemetry.failures(), 0);
-    drop(telemetry);
+    telemetry.finish().await;
     let text = std::fs::read_to_string(AuditLog::file_path(base.path(), "cli:w1")).unwrap();
     let events: Vec<serde_json::Value> = text
         .lines()
@@ -226,6 +234,8 @@ fn the_event_log_adapter_files_each_kept_record_once_in_order() {
     assert_eq!(
         names,
         [
+            lifecycle,
+            lifecycle,
             lifecycle,
             lifecycle,
             lifecycle,

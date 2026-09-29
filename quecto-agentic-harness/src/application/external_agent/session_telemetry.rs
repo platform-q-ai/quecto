@@ -85,7 +85,12 @@ impl SessionTelemetry {
 
     /// Milliseconds since the process started, if it did.
     pub(crate) fn wall_ms(&self, now: AgentClockInstant) -> Option<u64> {
-        self.started_at.map(|start| now.0.saturating_sub(start.0))
+        wall_ms_since(self.started_at, now)
+    }
+
+    /// When the process started, if it did.
+    pub(crate) fn started_at(&self) -> Option<AgentClockInstant> {
+        self.started_at
     }
 
     /// Measure one event of running turn `turn`, read at `now`.
@@ -294,14 +299,29 @@ fn finished(
     SessionRecord::ToolFinished(Box::new(record))
 }
 
-/// A turn end's kind and, for one that did not complete, why.
+/// Milliseconds from `started_at`, if the process started, to `now`.
+pub(crate) fn wall_ms_since(
+    started_at: Option<AgentClockInstant>,
+    now: AgentClockInstant,
+) -> Option<u64> {
+    started_at.map(|start| now.0.saturating_sub(start.0))
+}
+
+/// A turn end's kind and, for one that did not complete, why: its
+/// `terminal_reason`, unless that is only the generic
+/// [`GENERIC_TERMINAL_REASON`], which the HTTP status (`api_<status>`) or
+/// the assistant's error kind names better; then the first error's words;
+/// the generic word last.
 fn end_kind(end: &TurnEnd) -> (&'static str, Option<String>) {
-    let TurnEnd::Failed(failure) = end else {
-        return ("completed", None);
+    let failure = match end {
+        TurnEnd::Completed => return ("completed", None),
+        TurnEnd::Failed(failure) => failure,
     };
-    let reason = failure
-        .terminal_reason
-        .as_deref()
+    let specific_reason = match failure.terminal_reason.as_deref() {
+        Some(GENERIC_TERMINAL_REASON) | None => None,
+        Some(reason) => Some(reason),
+    };
+    let reason = specific_reason
         .map(recorded_name)
         .or_else(|| {
             failure
@@ -309,7 +329,8 @@ fn end_kind(end: &TurnEnd) -> (&'static str, Option<String>) {
                 .map(|status| format!("api_{status}"))
         })
         .or_else(|| failure.assistant_error.as_deref().map(recorded_name))
-        .or_else(|| error_reason_kind(&failure.errors));
+        .or_else(|| error_reason_kind(&failure.errors))
+        .or_else(|| failure.terminal_reason.as_deref().map(recorded_name));
     let kind = match (failure.kind, failure.terminal_reason.as_deref()) {
         (FailureKind::Aborted, _) => "aborted",
         (FailureKind::Error, Some(BUDGET_EXHAUSTED)) => "budget_exceeded",
@@ -317,6 +338,10 @@ fn end_kind(end: &TurnEnd) -> (&'static str, Option<String>) {
     };
     (kind, reason)
 }
+
+/// The `terminal_reason` that says only that the API failed: the status or
+/// the assistant's error says how.
+const GENERIC_TERMINAL_REASON: &str = "api_error";
 
 #[cfg(test)]
 #[path = "session_telemetry_tests.rs"]

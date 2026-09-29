@@ -57,11 +57,15 @@ pub(crate) fn run(ctx: &CliContext, flags: &AgentFlags, stderr: &mut String) -> 
 /// nothing can reach it, so it is not left running.
 async fn start_and_end(handles: &ClaudeMemberHandles, stderr: &mut String) -> i32 {
     if let Err(refusal) = handles.session.start().await {
+        handles.session.finish().await;
         stderr.push_str(&format!("agent: {refusal}\n"));
         return 1;
     }
     let ended = handles.session.close().await;
     assert!(ended.is_ok(), "a started member can be ended: {ended:?}");
+    // Its records are kept before the process exits: dropping the
+    // telemetry would not wait for them.
+    handles.session.finish().await;
     stderr.push_str("agent: the claude-code member serves no endpoint yet (#2288); it was ended\n");
     1
 }

@@ -32,6 +32,11 @@
 //!   turn it cuts and the tool calls left open are recorded, then its
 //!   process's end (#2304): at once when its output ended, else once the
 //!   process exits after its input is closed, or [`EXIT_GRACE`] passes.
+//!   That wait is decided under the write gate but run apart from it,
+//!   through the [`ExternalAgentSpawner`] port, after every other record
+//!   of the end: an abort, a prompt or a reader is never held up by a
+//!   process slow to exit, the end is the last lifecycle record, and a
+//!   caller that gives up on `close` loses nothing.
 //!
 //! Two bounds are heuristics, not claude's word:
 //! - The lost-turn timer: a skipped line followed by
@@ -61,12 +66,13 @@ use crate::application::external_agent::dto::{
     SessionRecord, SessionRefusal, SessionStep, SessionView, StreamingBehavior,
 };
 use crate::application::external_agent::ports::{
-    ExternalAgentClock, ExternalAgentLauncher, ExternalAgentProcess, ExternalAgentTelemetry,
+    ExternalAgentClock, ExternalAgentLauncher, ExternalAgentProcess, ExternalAgentSpawner,
+    ExternalAgentTelemetry,
 };
 use crate::application::external_agent::session_core::{
     AbortDecision, Admission, SessionCore, Wait,
 };
-use crate::application::external_agent::session_telemetry::TurnCut;
+use crate::application::external_agent::session_telemetry::{TurnCut, wall_ms_since};
 
 type Process = Arc<dyn ExternalAgentProcess>;
 
@@ -74,10 +80,20 @@ type Process = Arc<dyn ExternalAgentProcess>;
 enum Interrupt {
     /// It was written: the session waits for what the turn owes.
     Written,
-    /// It could not be: the member was ended.
-    Abandoned,
+    /// It could not be: the member was ended, and its exit is to be
+    /// recorded once the caller has recorded the rest.
+    Abandoned(Option<PendingExit>),
     /// The member ended meanwhile.
     MemberEnded,
+}
+
+/// An ended member's process, whose exit is still to be recorded: handed
+/// to [`DriveExternalAgentSession::record_exit`] once every other record
+/// of the end is made, so the end is the last.
+#[must_use = "an ended member's exit is recorded"]
+struct PendingExit {
+    process: Option<Process>,
+    started_at: Option<AgentClockInstant>,
 }
 
 /// One claude-code member's session.
@@ -85,6 +101,7 @@ pub struct DriveExternalAgentSession {
     launcher: Arc<dyn ExternalAgentLauncher>,
     telemetry: Arc<dyn ExternalAgentTelemetry>,
     clock: Arc<dyn ExternalAgentClock>,
+    spawner: Arc<dyn ExternalAgentSpawner>,
     settings: ExternalAgentSessionSettings,
     core: Mutex<SessionCore>,
     process: Mutex<Option<Process>>,
@@ -94,6 +111,9 @@ pub struct DriveExternalAgentSession {
     writes: tokio::sync::Mutex<()>,
     /// Set once the member has ended; releases every waiter.
     ended: tokio::sync::watch::Sender<bool>,
+    /// Set once the member's end is recorded (or it never started): the
+    /// last of its lifecycle records is made.
+    end_recorded: Arc<tokio::sync::watch::Sender<bool>>,
     /// Bumped whenever what the reader waits for changes other than by
     /// its own fold (an interrupt's deadline is set): a reader already
     /// waiting recomputes its wait.
@@ -105,17 +125,20 @@ impl DriveExternalAgentSession {
         launcher: Arc<dyn ExternalAgentLauncher>,
         telemetry: Arc<dyn ExternalAgentTelemetry>,
         clock: Arc<dyn ExternalAgentClock>,
+        spawner: Arc<dyn ExternalAgentSpawner>,
         settings: ExternalAgentSessionSettings,
     ) -> Self {
         Self {
             launcher,
             telemetry,
             clock,
+            spawner,
             settings,
             core: Mutex::default(),
             process: Mutex::default(),
             writes: tokio::sync::Mutex::new(()),
             ended: tokio::sync::watch::Sender::new(false),
+            end_recorded: Arc::new(tokio::sync::watch::Sender::new(false)),
             wait_changed: tokio::sync::watch::Sender::new(0),
         }
     }
@@ -147,6 +170,8 @@ impl DriveExternalAgentSession {
                 self.core().end();
                 self.ended.send_replace(true);
                 self.record(SessionRecord::StartRefused { kind: error.kind() });
+                // Nothing ran: nothing more is recorded of it.
+                self.end_recorded.send_replace(true);
                 Err(SessionRefusal::Launch(error))
             }
         }
@@ -190,23 +215,25 @@ impl DriveExternalAgentSession {
     /// if one runs. The member lives on, unless the interrupt cannot be
     /// written.
     pub async fn abort(&self) -> Result<AbortOutcome, SessionRefusal> {
-        let _writes = self.writes.lock().await;
+        let writes = self.writes.lock().await;
         let decision = self.core().abort()?;
-        let (turn, dropped_follow_ups, member_ended) = match decision {
-            AbortDecision::Idle { dropped } => (None, dropped, false),
-            AbortDecision::Interrupting { turn, dropped } => (Some(turn), dropped, false),
+        let (turn, dropped_follow_ups, member_ended, exit) = match decision {
+            AbortDecision::Idle { dropped } => (None, dropped, false, None),
+            AbortDecision::Interrupting { turn, dropped } => (Some(turn), dropped, false, None),
             AbortDecision::Interrupt { turn, dropped } => {
-                let ended = match self.interrupt(turn, "abort").await {
-                    Interrupt::Written => false,
-                    Interrupt::Abandoned | Interrupt::MemberEnded => true,
-                };
-                (Some(turn), dropped, ended)
+                match self.interrupt(turn, "abort").await {
+                    Interrupt::Written => (Some(turn), dropped, false, None),
+                    Interrupt::Abandoned(exit) => (Some(turn), dropped, true, exit),
+                    Interrupt::MemberEnded => (Some(turn), dropped, true, None),
+                }
             }
         };
         self.record(SessionRecord::Aborted {
             turn,
             dropped_follow_ups,
         });
+        drop(writes);
+        self.record_exit(exit);
         Ok(AbortOutcome {
             turn,
             dropped_follow_ups,
@@ -216,21 +243,27 @@ impl DriveExternalAgentSession {
 
     /// End the member: its turn, its follow-ups and its agent's process.
     /// The turn it cuts and the calls left open are recorded, then the
-    /// process's end, once it exits (at most [`EXIT_GRACE`] later).
+    /// process's end, once it exits (at most [`EXIT_GRACE`] later), which
+    /// this waits for. A caller that gives up waiting loses nothing: the
+    /// end is recorded all the same.
     pub async fn close(&self) -> Result<AbortOutcome, SessionRefusal> {
         let now = self.clock.now();
         let mut cut = Vec::new();
-        let (turn, dropped_follow_ups) = {
+        let (turn, dropped_follow_ups, started_at) = {
             let mut core = self.core();
-            match core.phase {
+            let (turn, dropped) = match core.phase {
                 SessionPhase::Idle
                 | SessionPhase::Busy { .. }
                 | SessionPhase::Interrupting { .. } => core.end_cut(TurnCut::Closed, now, &mut cut),
                 SessionPhase::NotStarted => return Err(SessionRefusal::NotStarted),
                 SessionPhase::Ended => return Err(SessionRefusal::Ended),
-            }
+            };
+            (turn, dropped, core.telemetry.started_at())
         };
-        let process = self.release_process();
+        let exit = PendingExit {
+            process: self.release_process(),
+            started_at,
+        };
         for record in cut {
             self.record(record);
         }
@@ -238,7 +271,8 @@ impl DriveExternalAgentSession {
             turn,
             dropped_follow_ups,
         });
-        self.record_exit(process).await;
+        self.record_exit(Some(exit));
+        self.until_end_recorded().await;
         Ok(AbortOutcome {
             turn,
             dropped_follow_ups,
@@ -283,15 +317,18 @@ impl DriveExternalAgentSession {
                     // write holding the gate does not stretch it.
                     let now = self.clock.now();
                     let grace_end = self.deadline_after(self.settings.skipped_line_grace);
-                    let _writes = self.writes.lock().await;
+                    let writes = self.writes.lock().await;
                     let folded = self.core().fold(&event, now, grace_end);
                     self.settle(folded.records, folded.follow_up).await;
                     // claude's state became unknown: the member ends, and
                     // the reader is told next.
-                    if let Some(turn) = folded.abandon {
-                        let abandoned = self.abandon(turn).await;
-                        self.core().surface(abandoned);
-                    }
+                    let exit = folded.abandon.and_then(|turn| {
+                        let exit = self.abandon(turn);
+                        self.core().surface(SessionStep::Abandoned { turn });
+                        exit
+                    });
+                    drop(writes);
+                    self.record_exit(exit);
                     return Some(SessionStep::Folded(folded.step));
                 }
                 (Some(None), _) => return self.output_ended(process).await,
@@ -310,6 +347,23 @@ impl DriveExternalAgentSession {
             }
             // A turn that ended or answered meanwhile is not lost: read on.
         }
+    }
+
+    /// The runner's last call, once the member has ended (#2304): wait
+    /// for its end to be recorded, then have its telemetry keep what was
+    /// recorded, for at most the telemetry's own bound. A record made
+    /// afterwards (a late refusal) may be lost.
+    pub async fn finish(&self) {
+        let phase = self.core().phase;
+        match phase {
+            SessionPhase::Ended => self.until_end_recorded().await,
+            // Not started, or still live: nothing more to wait for.
+            SessionPhase::NotStarted
+            | SessionPhase::Idle
+            | SessionPhase::Busy { .. }
+            | SessionPhase::Interrupting { .. } => {}
+        }
+        self.telemetry.finish().await;
     }
 
     pub fn state(&self) -> SessionView {
@@ -354,17 +408,23 @@ impl DriveExternalAgentSession {
     /// Give up the running turn, if its last event is still a skipped line:
     /// it is interrupted.
     async fn lose_turn(&self) -> Option<SessionStep> {
-        let _writes = self.writes.lock().await;
+        let writes = self.writes.lock().await;
         let turn = self.core().lost_turn(self.clock.now())?;
-        match self.interrupt(turn, "lost").await {
+        let interrupt = self.interrupt(turn, "lost").await;
+        drop(writes);
+        match interrupt {
             Interrupt::Written => Some(SessionStep::TurnLost { turn }),
-            Interrupt::Abandoned => Some(SessionStep::Abandoned { turn }),
+            Interrupt::Abandoned(exit) => {
+                self.record_exit(exit);
+                Some(SessionStep::Abandoned { turn })
+            }
             Interrupt::MemberEnded => None,
         }
     }
 
     /// Interrupt running turn `turn`; the caller holds the write gate.
-    /// Written, the session waits for what the turn owes.
+    /// Written, the session waits for what the turn owes; abandoned, the
+    /// caller records the exit once it has recorded the rest.
     async fn interrupt(&self, turn: u64, cause: &'static str) -> Interrupt {
         let Some(process) = self.slot().clone() else {
             return Interrupt::MemberEnded;
@@ -378,31 +438,30 @@ impl DriveExternalAgentSession {
         let deadline = self.deadline_after(self.settings.interrupt_grace);
         // `close` may have ended the member while the interrupt was being
         // written: then there is nothing to wait for, or to abandon.
-        let interrupt = {
+        // What came of it: `Some(true)` written, `Some(false)` refused.
+        let written = {
             let mut core = self.core();
             match (written, core.ended()) {
-                (_, true) => Interrupt::MemberEnded,
+                (_, true) => None,
                 (Ok(()), false) => {
                     let waiting = core.interrupting(turn, deadline);
                     assert!(waiting, "a member that has not ended waits");
-                    Interrupt::Written
+                    Some(true)
                 }
-                (Err(_), false) => Interrupt::Abandoned,
+                (Err(_), false) => Some(false),
             }
         };
-        match interrupt {
-            Interrupt::Written => {
+        match written {
+            Some(true) => {
                 // A reader waiting on the turn's events waits for the
                 // deadline instead.
                 self.wait_changed.send_modify(|n| *n = n.wrapping_add(1));
                 self.record(SessionRecord::Interrupted { turn, cause });
+                Interrupt::Written
             }
-            Interrupt::Abandoned => {
-                self.abandon(turn).await;
-            }
-            Interrupt::MemberEnded => {}
+            Some(false) => Interrupt::Abandoned(self.abandon(turn)),
+            None => Interrupt::MemberEnded,
         }
-        interrupt
     }
 
     fn deadline_after(&self, grace: Duration) -> AgentClockInstant {
@@ -413,56 +472,90 @@ impl DriveExternalAgentSession {
 
     /// End the member if the interrupted turn is past its deadline.
     async fn abandon_if_overdue(&self) -> Option<SessionStep> {
-        let _writes = self.writes.lock().await;
+        let writes = self.writes.lock().await;
         let turn = self.core().interrupt_overdue(self.clock.now())?;
-        Some(self.abandon(turn).await)
+        let exit = self.abandon(turn);
+        drop(writes);
+        self.record_exit(exit);
+        Some(SessionStep::Abandoned { turn })
     }
 
     /// Interrupted turn `turn` never answered, or could not be
     /// interrupted: claude's state is unknown, so the member is ended. The
-    /// turn it cuts and the calls left open are recorded, then the
-    /// process's end, once it exits (at most [`EXIT_GRACE`] later). A
-    /// member `close` ended meanwhile is recorded by `close`.
-    async fn abandon(&self, turn: u64) -> SessionStep {
+    /// turn it cuts and the calls left open are recorded; the process's
+    /// end is the caller's to record, once it has recorded the rest
+    /// ([`Self::record_exit`]). A member `close` ended meanwhile is
+    /// recorded by `close`: `None`.
+    fn abandon(&self, turn: u64) -> Option<PendingExit> {
         let now = self.clock.now();
         let mut cut = Vec::new();
         let ended = {
             let mut core = self.core();
             match core.ended() {
-                false => Some(core.end_cut(TurnCut::Abandoned, now, &mut cut).1),
+                false => {
+                    let (_, dropped) = core.end_cut(TurnCut::Abandoned, now, &mut cut);
+                    Some((dropped, core.telemetry.started_at()))
+                }
                 true => None,
             }
         };
-        if let Some(dropped_follow_ups) = ended {
-            let process = self.release_process();
-            for record in cut {
-                self.record(record);
-            }
-            self.record(SessionRecord::Abandoned {
-                turn,
-                dropped_follow_ups,
-            });
-            self.record_exit(process).await;
+        let (dropped_follow_ups, started_at) = ended?;
+        let process = self.release_process();
+        for record in cut {
+            self.record(record);
         }
-        SessionStep::Abandoned { turn }
+        self.record(SessionRecord::Abandoned {
+            turn,
+            dropped_follow_ups,
+        });
+        Some(PendingExit {
+            process,
+            started_at,
+        })
     }
 
-    /// Close the ended member's input and wait, at most [`EXIT_GRACE`], for
-    /// its process to exit; then let it go and record its end.
-    async fn record_exit(&self, process: Option<Process>) {
-        let exit = match process {
-            Some(process) => {
-                process.close_input().await;
-                tokio::select! {
-                    biased;
-                    exit = process.exited_discarding_output() => Some(exit),
-                    () = self.clock.sleep(EXIT_GRACE) => None,
-                }
-            }
-            None => None,
+    /// Record an ended member's exit, apart from the caller (through the
+    /// spawner port): its input is closed and its process waited for, at
+    /// most [`EXIT_GRACE`], then let go and its end recorded. Called with
+    /// no write gate held, after every other record of the end.
+    fn record_exit(&self, exit: Option<PendingExit>) {
+        let Some(PendingExit {
+            process,
+            started_at,
+        }) = exit
+        else {
+            return;
         };
-        let wall_ms = self.core().telemetry.wall_ms(self.clock.now());
-        self.record(ended_record(exit.as_ref(), wall_ms));
+        assert!(
+            self.core().ended(),
+            "only an ended member's exit is recorded"
+        );
+        let clock = self.clock.clone();
+        let telemetry = self.telemetry.clone();
+        let end_recorded = self.end_recorded.clone();
+        self.spawner.spawn(Box::pin(async move {
+            let exit = match process {
+                Some(process) => {
+                    process.close_input().await;
+                    tokio::select! {
+                        biased;
+                        exit = process.exited_discarding_output() => Some(exit),
+                        () = clock.sleep(EXIT_GRACE) => None,
+                    }
+                }
+                None => None,
+            };
+            let wall_ms = wall_ms_since(started_at, clock.now());
+            telemetry.record(&ended_record(exit.as_ref(), wall_ms));
+            end_recorded.send_replace(true);
+        }));
+    }
+
+    /// Resolves once the member's end is recorded (or it never started).
+    async fn until_end_recorded(&self) {
+        let mut recorded = self.end_recorded.subscribe();
+        // The sender lives as long as `self`: an error cannot happen here.
+        let _ = recorded.wait_for(|recorded| *recorded).await;
     }
 
     async fn output_ended(&self, process: Process) -> Option<SessionStep> {
@@ -497,6 +590,7 @@ impl DriveExternalAgentSession {
             });
         }
         self.record(ended_record(Some(&exit), wall_ms));
+        self.end_recorded.send_replace(true);
         Some(SessionStep::Ended { turn, exit })
     }
 

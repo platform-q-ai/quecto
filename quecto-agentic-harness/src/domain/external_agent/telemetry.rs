@@ -123,6 +123,12 @@ pub enum ExternalAgentLifecycle {
         member_turn: u64,
         dropped_follow_ups: usize,
     },
+    /// A prompt was refused: its refusal's kind (`busy`, `ended` …), never
+    /// the prompt.
+    PromptRefused { refusal: String },
+    /// A dequeued follow-up could not be written: its refusal's kind,
+    /// never the text.
+    FollowUpFailed { member_turn: u64, refusal: String },
     /// The member was closed.
     Closed {
         member_turn: Option<u64>,

@@ -102,6 +102,8 @@ async fn an_interrupted_turn_that_never_answers_ends_the_member() {
         started.elapsed()
     );
     assert_eq!(rig.phase(), SessionPhase::Ended);
+    // Its exit is recorded apart from the caller that ended it.
+    rig.end_recorded().await;
     assert!(rig.wire.dropped(), "the agent process is ended");
     assert_eq!(rig.wire.sent(), ["one"]);
     assert_eq!(rig.session.next_step().await, None);
@@ -235,6 +237,8 @@ async fn a_busy_abort_whose_turn_never_answers_ends_the_member() {
     );
     assert!(started.elapsed() >= INTERRUPT, "only after the grace");
     assert_eq!(rig.phase(), SessionPhase::Ended);
+    // Its exit is recorded apart from the caller that ended it.
+    rig.end_recorded().await;
     assert!(rig.wire.dropped());
 }
 
@@ -256,6 +260,8 @@ async fn an_abort_whose_interrupt_cannot_be_written_ends_the_member() {
         })
     );
     assert_eq!(rig.phase(), SessionPhase::Ended);
+    // Its exit is recorded apart from the caller that ended it.
+    rig.end_recorded().await;
     assert!(rig.wire.dropped());
     assert_eq!(rig.session.next_step().await, None);
 }
