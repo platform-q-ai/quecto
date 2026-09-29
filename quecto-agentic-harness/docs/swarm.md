@@ -953,7 +953,11 @@ jq -c 'select(.event == "swarm_run_summary" and .run_id == "<run id>")' ~/.quect
 
 The board's records are written to the current session's log: when the
 harness switches session, its board calls are recorded in the arriving
-session's log from then on, as the agent's own records are. Records the
+session's log from then on, as the agent's own records are. They are not pinned
+to the session a call was made for: the process has one board, so its run
+watcher's calls, its settlement reads and the run's summary land in whichever
+session is current when they are made, and one run's records (and the fold its
+summary is taken from) can span two sessions' files. Records the
 departing log dropped at its write gate and had not noted yet are noted in the
 arriving log's first `swarm_ops_dropped` line.
 

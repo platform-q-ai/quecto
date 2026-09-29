@@ -124,9 +124,15 @@ Two recording gaps were known at the switch, and #2313 closed them:
   `--backend claude-code` member never attaches a log, so its admission's
   calls still leave `tracing` records only (E2).
 - **One log per process.** A board recorded in the first log it was given.
-  It now records in the current session's log: a session switch rebinds
-  the board's log (`SwarmBoard::follow_session`), so in multi-session UDS
-  mode each session's board calls go to its own log.
+  It now records in the *current* session's log: a session switch rebinds
+  the board's log (`SwarmBoard::follow_session`), and every board call made
+  from then on is recorded in the arriving session's log, whichever session
+  it is made for. The records are not pinned to the session that made the
+  call: the process has one board, so its run watcher's calls, its
+  settlement reads and the run's `swarm_run_summary` land in whichever
+  session is current when they are made, and the records of one run (and
+  so what its summary folds) can span two sessions' files when the harness
+  switched session during the run.
 
 Python remains only for `op=run` member programs until #2282, and those
 programs use the Python board over the same file as the harness's Rust
