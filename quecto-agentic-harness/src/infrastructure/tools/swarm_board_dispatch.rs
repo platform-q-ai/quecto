@@ -100,7 +100,7 @@ use crate::application::swarm::use_cases::{
     ResumeRunExternally, RevalidateTask, RevokeTask, SendMessage, SetTaskDependencies, StopRun,
     SubmitTask, UnblockTask, VerifyTask, WithdrawMessage,
 };
-use crate::domain::swarm::{BoardError, BoardOpDetail, BoardRole, RefusalKind};
+use crate::domain::swarm::{BoardError, BoardOpDetail, RefusalKind};
 
 use self::method::{Method, Parameter, required};
 pub use super::swarm_board_telemetry::{ActorRefs, TELEMETRY_TARGET};
@@ -331,6 +331,13 @@ pub fn call_as(
     };
     let (answer, committed) = split_committed(answer);
     let measure = metered.and_then(|metered| metered.measure());
+    debug_assert!(
+        known.is_some()
+            || measure
+                .as_ref()
+                .is_none_or(|measure| measure.run_roles.is_none()),
+        "a name that is no board method reads no run, so no role is read from one"
+    );
     let finished = Finished {
         op: known.map_or("unknown", Method::name),
         level: match (known, &answer) {
@@ -338,10 +345,7 @@ pub fn call_as(
             (Some(known), Err(_)) => known.level(),
             (None, _) => Level::Mutation,
         },
-        role: match origin {
-            CallOrigin::Harness => Some(BoardRole::Host),
-            CallOrigin::Member => known.map_or(Some(BoardRole::Host), Method::role),
-        },
+        role: records::recorded_role(origin, known),
         member,
         outcome: answer
             .as_ref()

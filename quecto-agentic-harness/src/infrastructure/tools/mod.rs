@@ -74,25 +74,18 @@ mod subagent_status;
 pub mod subagent_teardown_registry;
 pub mod subagent_teardown_wiring;
 pub mod swarm;
-#[cfg(test)]
-mod swarm_ac_gap_tests;
 mod swarm_admission;
 pub mod swarm_board_dispatch;
 pub mod swarm_board_ops;
 mod swarm_board_telemetry;
 pub mod swarm_bridge;
-mod swarm_config;
 pub mod swarm_control;
-#[cfg(test)]
-mod swarm_job_tests;
 pub mod swarm_lifecycle;
 pub mod swarm_member_termination;
 mod swarm_output;
 mod swarm_store_location;
 #[cfg(any(test, feature = "test-support"))]
 pub mod swarm_test_support;
-#[cfg(test)]
-mod swarm_tests;
 pub mod truncate;
 pub mod web_search;
 pub mod workflow_tool;
@@ -103,5 +96,3 @@ mod subagent_status_tests;
 
 #[cfg(test)]
 mod swarm_bridge_tests;
-#[cfg(test)]
-mod swarm_scope_tests;

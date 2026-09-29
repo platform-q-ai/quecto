@@ -1,8 +1,8 @@
 use super::*;
 
 #[test]
-fn a_run_refused_during_setup_names_op_create_with_a_relative_deadline() {
-    let message = run_refused(Some("setup"));
+fn an_op_refused_during_setup_names_op_create_with_a_relative_deadline() {
+    let message = op_refused("claim", Some("setup"));
     assert!(message.contains(r#""op":"create""#), "{message}");
     assert!(
         message.contains("deadline_in_seconds"),
@@ -16,8 +16,8 @@ fn a_run_refused_during_setup_names_op_create_with_a_relative_deadline() {
 }
 
 #[test]
-fn a_run_refused_when_paused_names_every_allowed_op_and_the_supervisor() {
-    let message = run_refused(Some("paused"));
+fn an_op_refused_when_paused_names_every_allowed_op_and_the_supervisor() {
+    let message = op_refused("claim", Some("paused"));
     for op in ["summary", "events", "usage", "reconcile"] {
         assert!(message.contains(op), "{op}: {message}");
     }
@@ -31,13 +31,13 @@ fn a_run_refused_when_paused_names_every_allowed_op_and_the_supervisor() {
 
 #[test]
 fn an_ended_or_unreadable_run_says_what_to_do() {
-    let ended = run_refused(Some("succeeded"));
+    let ended = op_refused("claim", Some("succeeded"));
     assert!(
         ended.contains("succeeded") && ended.contains("Allowed: summary"),
         "{ended}"
     );
-    assert!(run_refused(None).contains("op=summary"));
-    assert!(deadline_passed().contains("extend"));
+    assert!(op_refused("claim", None).contains("op=summary"));
+    assert!(op_deadline_passed("claim").contains("extend"));
 }
 
 #[test]
@@ -68,10 +68,6 @@ fn the_valid_ops_are_the_harness_ops_and_the_board_ops() {
         "events",
         "usage",
         "usage_budget",
-        "run",
-        "status",
-        "output",
-        "cancel",
     ]
     .into_iter()
     .chain(
@@ -80,7 +76,7 @@ fn the_valid_ops_are_the_harness_ops_and_the_board_ops() {
             .map(|spec| spec.name),
     )
     .collect();
-    assert_eq!(expected.len(), 13 + 25, "the harness's ops and the table's");
+    assert_eq!(expected.len(), 9 + 25, "the harness's ops and the table's");
     let mut ops = VALID_OPS.to_vec();
     expected.sort_unstable();
     ops.sort_unstable();
@@ -107,13 +103,8 @@ fn a_gated_board_op_names_itself_and_what_is_allowed() {
         ended.contains("the swarm run is succeeded, so op=tasks is unavailable"),
         "{ended}"
     );
-    assert_eq!(
-        op_refused("run", Some("paused")),
-        run_refused(Some("paused"))
-    );
     let late = op_deadline_passed("send");
     assert!(late.contains("so op=send is unavailable"), "{late}");
-    assert_eq!(op_deadline_passed("run"), deadline_passed());
 }
 
 #[test]
@@ -155,16 +146,16 @@ fn the_tool_description_names_op_create_and_a_relative_deadline() {
 }
 
 #[tokio::test]
-async fn op_run_or_a_board_op_before_create_points_the_founder_at_op_create() {
+async fn a_board_op_before_create_points_the_founder_at_op_create() {
     // End to end through the tool: a bootstrapped, not yet created run.
     use crate::application::tools::ports::Tool;
     let directory = tempfile::tempdir().unwrap();
-    let workspace = std::sync::Arc::new(directory.path().to_path_buf());
+    let workspace = directory.path().to_path_buf();
     std::fs::create_dir_all(workspace.join(".quecto")).unwrap();
     let context = crate::infrastructure::tools::swarm_bridge::SwarmContext {
         board: crate::composition::swarm::swarm_board(),
         lifecycle: std::sync::Arc::new(crate::application::ports::SwarmTestLifecycle),
-        checkout: workspace.as_ref().clone(),
+        checkout: workspace,
         member: "coordinator".into(),
     };
     crate::infrastructure::tools::call_work::off_the_runtime(|| {
@@ -174,28 +165,15 @@ async fn op_run_or_a_board_op_before_create_points_the_founder_at_op_create() {
         )
     })
     .unwrap();
-    let tool = super::super::SwarmTool::new(
-        workspace.clone(),
-        std::sync::Arc::new(crate::infrastructure::security::sandbox::Sandbox::new(
-            Some(workspace.as_ref().clone()),
-        )),
-        super::super::SwarmConfig::default(),
-    )
-    .with_context(Some(context));
-    // `op=run` passes the same setup gate as a structured op until S17
-    // (#2282) deletes it; both point the founder at `op=create`.
-    for request in [
-        r#"{"op":"run","code":"print('hello')"}"#,
-        r#"{"op":"task_create","request":"r1","title":"t","acceptance":["pass"]}"#,
-    ] {
-        let result = tool.execute(request).await.unwrap();
-        assert!(result.is_error, "{request}: {}", result.content);
-        assert!(
-            result.content.contains(r#""op":"create""#),
-            "{request}: {}",
-            result.content
-        );
-    }
+    let tool = super::super::SwarmTool::new().with_context(Some(context));
+    let request = r#"{"op":"task_create","request":"r1","title":"t","acceptance":["pass"]}"#;
+    let result = tool.execute(request).await.unwrap();
+    assert!(result.is_error, "{request}: {}", result.content);
+    assert!(
+        result.content.contains(r#""op":"create""#),
+        "{request}: {}",
+        result.content
+    );
 }
 
 /// #2279 review N9: every refusal that allows `usage` says it is the
@@ -212,6 +190,146 @@ fn a_refusal_that_allows_usage_says_usage_report_is_not_it() {
         assert!(
             message.contains("usage (op=usage; the board op usage_report needs a running run)"),
             "{message}"
+        );
+    }
+}
+
+/// The swarm tool over a created, running run, as the tests above build it.
+fn running_tool(directory: &tempfile::TempDir) -> super::super::SwarmTool {
+    super::super::super::swarm_test_support::tool(
+        std::sync::Arc::new(directory.path().to_path_buf()),
+        crate::composition::swarm::swarm_board(),
+    )
+}
+
+/// #2282: the Python workbench ops are gone. Each is an unknown op whose
+/// refusal lists the valid ops, the structured board ops among them, and
+/// never runs anything.
+#[tokio::test]
+async fn removed_ops_are_unknown_and_name_the_structured_alternative() {
+    use crate::application::tools::ports::Tool;
+    let directory = tempfile::tempdir().unwrap();
+    let tool = running_tool(&directory);
+    for (op, request) in [
+        ("run", r#"{"op":"run","code":"open('ran','w').write('x')"}"#),
+        ("status", r#"{"op":"status","job_id":"job_1"}"#),
+        ("output", r#"{"op":"output","job_id":"job_1"}"#),
+        ("cancel", r#"{"op":"cancel","job_id":"job_1"}"#),
+    ] {
+        let result = tool.execute(request).await.unwrap();
+        assert!(result.is_error, "{request}: {}", result.content);
+        let prefix = format!("unknown op {op}; valid ops: ");
+        assert!(
+            result.content.contains(&prefix),
+            "{request}: {}",
+            result.content
+        );
+        assert!(result.content.contains("claim"), "{}", result.content);
+        assert!(!directory.path().join("ran").exists(), "{request} ran code");
+    }
+    for removed in ["run", "status", "output", "cancel"] {
+        assert!(!VALID_OPS.contains(&removed), "{removed} is still valid");
+    }
+}
+
+/// #2282: a call without an op no longer defaults to running Python; it is
+/// refused with the valid ops, and nothing runs.
+#[tokio::test]
+async fn a_call_without_an_op_is_refused_with_the_valid_ops() {
+    use crate::application::tools::ports::Tool;
+    let directory = tempfile::tempdir().unwrap();
+    let tool = running_tool(&directory);
+    for request in [r#"{"code":"open('ran','w').write('x')"}"#, "{}"] {
+        let result = tool.execute(request).await.unwrap();
+        assert!(result.is_error, "{request}: {}", result.content);
+        assert!(
+            result
+                .content
+                .contains("op is required; valid ops: create, "),
+            "{request}: {}",
+            result.content
+        );
+        assert!(!directory.path().join("ran").exists(), "{request} ran code");
+    }
+}
+
+/// #2282 review N1: an op that is present but not a string (a number,
+/// `null`) is not a missing op: the refusal says the op must be a string
+/// naming a valid op, and lists them.
+#[tokio::test]
+async fn an_op_that_is_not_a_string_is_refused_as_such() {
+    use crate::application::tools::ports::Tool;
+    let directory = tempfile::tempdir().unwrap();
+    let tool = running_tool(&directory);
+    for request in [
+        r#"{"op":3,"code":"open('ran','w').write('x')"}"#,
+        r#"{"op":null}"#,
+        r#"{"op":["claim"]}"#,
+    ] {
+        let result = tool.execute(request).await.unwrap();
+        assert!(result.is_error, "{request}: {}", result.content);
+        assert!(
+            result
+                .content
+                .contains("op must be a string naming one of: create, "),
+            "{request}: {}",
+            result.content
+        );
+        assert!(
+            !result.content.contains("op is required"),
+            "{request}: {}",
+            result.content
+        );
+        assert!(!directory.path().join("ran").exists(), "{request} ran code");
+    }
+}
+
+/// #2282 review L3: arguments that are not JSON are refused as such, and
+/// nothing runs.
+#[tokio::test]
+async fn arguments_that_are_not_json_are_refused() {
+    use crate::application::tools::ports::Tool;
+    let directory = tempfile::tempdir().unwrap();
+    let tool = running_tool(&directory);
+    let result = tool.execute("not-json").await.unwrap();
+    assert!(result.is_error, "{}", result.content);
+    assert!(
+        result.content.contains("invalid JSON arguments"),
+        "{}",
+        result.content
+    );
+}
+
+#[test]
+fn an_op_not_a_string_lists_every_valid_op() {
+    let message = op_not_a_string();
+    assert!(
+        message.starts_with("op must be a string naming one of: "),
+        "{message}"
+    );
+    for op in VALID_OPS {
+        assert!(message.contains(op), "{op}: {message}");
+    }
+}
+
+/// #2282: the schema carries no execution argument.
+#[test]
+fn the_schema_has_no_execution_arguments() {
+    let schema: serde_json::Value =
+        serde_json::from_str(include_str!("swarm_helpers/tool_schema.json")).unwrap();
+    for removed in [
+        "code",
+        "path",
+        "args",
+        "stdin",
+        "timeout_seconds",
+        "max_output_bytes",
+        "background",
+        "job_id",
+    ] {
+        assert!(
+            schema["properties"].get(removed).is_none(),
+            "the schema still offers {removed}"
         );
     }
 }

@@ -46,19 +46,15 @@ fn readme_runtime_details_match_current_code() {
         !readme.contains("\"max_context_tokens\": 1000000"),
         "README should not document the old 1M context default"
     );
-    // The blanket ban on the numeral used to catch any rewording of the old 1M
-    // context claim. `tools.swarm` legitimately documents a 1000000-byte
-    // output cap, so the ban is scoped to lines that are not about that setting
-    // rather than dropped — a reworded context claim still fails here.
+    // The blanket ban on the numeral catches any rewording of the old 1M
+    // context claim. The `tools.swarm` output cap that once justified an
+    // exception is gone with the Python workbench (#2282).
     for (number, line) in readme.lines().enumerate() {
-        if line.contains("1000000") || line.contains("1,000,000") {
-            assert!(
-                line.contains("max_output_bytes"),
-                "README line {} mentions 1000000 outside the swarm output cap; \
-                 if this is a context-window claim it is stale: {line}",
-                number + 1
-            );
-        }
+        assert!(
+            !(line.contains("1000000") || line.contains("1,000,000")),
+            "README line {} mentions 1000000; if this is a context-window claim it is stale: {line}",
+            number + 1
+        );
     }
     assert!(
         !readme.contains("QUECTO_* environment variables (including API keys) are stripped"),

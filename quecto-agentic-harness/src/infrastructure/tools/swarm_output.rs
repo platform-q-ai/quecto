@@ -3,12 +3,6 @@
 use crate::domain::error::DomainError;
 use crate::domain::tool::ToolResult;
 
-pub(super) fn job_id(v: &serde_json::Value) -> Result<&str, DomainError> {
-    v.get("job_id")
-        .and_then(|x| x.as_str())
-        .ok_or_else(|| DomainError::Other("job_id is required".into()))
-}
-
 pub(super) fn tool_err(content: String) -> Result<ToolResult, DomainError> {
     Ok(ToolResult {
         content,

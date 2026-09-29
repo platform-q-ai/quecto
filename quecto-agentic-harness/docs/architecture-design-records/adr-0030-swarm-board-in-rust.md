@@ -136,6 +136,11 @@ interleave and contend without a difference from a single writer, and
 `swarm_board_mixed_harness.rs` that the harness's calls and a member's
 programs leave the pure-Python board's file).
 
+*Note (#2282):* #2282 removed `op=run` and its Python workbench (jobs,
+interpreter sandbox, the `tools.swarm` limits); members compute through
+`bash`, and every board call is a structured op on the Rust board. The
+paragraph above records the state before it.
+
 ## Consequences
 
 - No `python3` is started by the harness for its own board calls; each

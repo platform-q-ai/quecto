@@ -56,7 +56,7 @@ pub(super) fn prepare_checkout(context: &SwarmContext) -> Result<(), DomainError
 
 /// Every non-terminal run needs a watcher: a member joining while the run is
 /// paused must still observe resume, deadline expiry, cancellation and later
-/// pauses, or its local jobs and inference are never settled.
+/// pauses, or its local inference is never suspended nor its end settled.
 pub(super) fn needs_supervision(status: RunStatus) -> bool {
     matches!(
         status,
@@ -161,24 +161,19 @@ async fn send_wake_hints(
 /// The process's local-inference suspension, as composition bound it.
 type LocalSuspend = std::sync::Arc<dyn Fn(RunStatus, u64) + Send + Sync>;
 
-/// This process's executions and inference, and the suspension of its
-/// local inference that composition bound, if any.
-struct RuntimeProcesses<'a>(&'a SwarmContext, Option<LocalSuspend>);
-impl ProcessControl for RuntimeProcesses<'_> {
-    fn suspend_local_executions(&self, snapshot: &crate::domain::swarm::Snapshot) {
-        super::swarm::suspend_context_jobs(self.0, snapshot.control_generation);
-    }
+/// This process's inference and its members' ends, and the suspension of
+/// its local inference that composition bound, if any: nothing it does
+/// needs the context since its execution jobs went (#2282).
+struct RuntimeProcesses(Option<LocalSuspend>);
+impl ProcessControl for RuntimeProcesses {
     fn suspend_local_inference(&self, snapshot: &crate::domain::swarm::Snapshot) {
         // The suspension verifies the run's control status on the board
         // before it acts, so it runs off the async workers (#2278 L6).
-        if let Some(cancel) = &self.1 {
+        if let Some(cancel) = &self.0 {
             let (cancel, status, generation) =
                 (cancel.clone(), snapshot.status, snapshot.control_generation);
             run_off_the_workers(move || cancel(status, generation));
         }
-    }
-    fn cancel_local_executions(&self) {
-        super::swarm::cancel_context_jobs(self.0);
     }
     fn abort<'a>(&'a self, member: &'a Member) -> PortFuture<'a, bool> {
         Box::pin(async move {
@@ -241,7 +236,7 @@ async fn settle_suspending(
         .settle(
             &snapshot,
             &context.member,
-            &RuntimeProcesses(&context, suspend),
+            &RuntimeProcesses(suspend),
             &LinuxProcesses,
         )
         .await?;
@@ -261,7 +256,6 @@ pub(super) fn observe(
     match context.snapshot() {
         Ok(current) => *snapshot = current,
         Err(error) => {
-            super::swarm::cancel_context_jobs(context);
             tracing::error!(%error, "swarm supervisor lost coordination; retaining ownership");
         }
     }
@@ -277,8 +271,10 @@ pub(super) fn run_off_the_workers(job: impl FnOnce()) {
     super::call_work::block_here(job);
 }
 
-/// A per-process watcher also observes outcomes set by other members. This
-/// cancels detached local jobs even if a remote turn-abort leaves them alive.
+/// A per-process watcher also observes outcomes set by other members: it
+/// suspends this process's inference on each pause, and settles the run's
+/// terminal outcome for this member even if a remote turn-abort never
+/// reaches it.
 pub fn supervise(
     context: SwarmContext,
     mut snapshot: crate::domain::swarm::Snapshot,
@@ -322,7 +318,7 @@ pub fn supervise(
                 if let Err(error) = runtime.block_on(context.lifecycle.settle(
                     &snapshot,
                     &context.member,
-                    &RuntimeProcesses(&context, local_suspend()),
+                    &RuntimeProcesses(local_suspend()),
                     &LinuxProcesses,
                 )) {
                     tracing::error!(%error, "swarm terminal settlement failed");
@@ -406,13 +402,13 @@ fn watch_until_ended(context: &SwarmContext, runtime: &tokio::runtime::Runtime) 
             SettlementStep::Wait => runtime.block_on(context.lifecycle.settle(
                 &snapshot,
                 &context.member,
-                &RuntimeProcesses(context, local_suspend()),
+                &RuntimeProcesses(local_suspend()),
                 &LinuxProcesses,
             )),
             SettlementStep::EndSelf => runtime.block_on(context.lifecycle.settle_overdue(
                 &snapshot,
                 &context.member,
-                &RuntimeProcesses(context, local_suspend()),
+                &RuntimeProcesses(local_suspend()),
             )),
         };
         match (outcome, step) {
@@ -585,7 +581,7 @@ fn settle_observed_snapshot(
             if let Err(error) = runtime.block_on(context.lifecycle.settle(
                 snapshot,
                 &context.member,
-                &RuntimeProcesses(context, local_suspend()),
+                &RuntimeProcesses(local_suspend()),
                 &LinuxProcesses,
             )) {
                 tracing::error!(%error, "swarm suspension failed");

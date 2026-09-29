@@ -184,6 +184,11 @@ fn every_board_op_emits_exactly_one_swarm_op() {
                 known => known,
             };
             assert_eq!(recorded.op, named);
+            if named == "unknown" {
+                // `host` is the harness's own calls' role: a member naming
+                // no board method has none (#2282 final review).
+                assert_eq!(recorded.role, None, "{recorded:?}");
+            }
         }
     }
 }

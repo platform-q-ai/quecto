@@ -129,25 +129,12 @@ async fn with_resume_wakes(context: &SwarmContext, mut receipt: Value) -> Value 
     receipt
 }
 
-/// The summary the harness judges a run's execution by, before and after
-/// `op=run` and after a structured op: the harness's own read, recorded as
-/// `host` (#2279 S15 final review).
+/// The summary the harness judges a run by after a structured op: the
+/// harness's own read, recorded as `host` (#2279 S15 final review).
 pub async fn execution_state(context: SwarmContext) -> Result<Value, DomainError> {
     super::call_work::spawn_blocking_in_call(move || context.host_summary())
         .await
         .map_err(|e| DomainError::Tool(e.to_string()))?
-}
-
-/// Shared foreground/background post-execution lifecycle. Read-only programs
-/// produce no wake hints, avoiding notification-driven idle loops.
-pub async fn after_execution(
-    context: SwarmContext,
-    before: &Value,
-) -> Result<Vec<String>, DomainError> {
-    Ok(match lifecycle_after(context, before).await? {
-        AfterExecution::Notified(warnings) => warnings,
-        AfterExecution::Settled | AfterExecution::Unchanged => Vec::new(),
-    })
 }
 
 /// What the post-execution lifecycle did (#2279: a structured op records
@@ -163,9 +150,10 @@ pub enum AfterExecution {
     Unchanged,
 }
 
-/// [`after_execution`], saying what it did: settle when the run is no
-/// longer running, else notify when the event cursor moved past
-/// `before["event_cursor"]`.
+/// The lifecycle after a structured op, saying what it did: settle when
+/// the run is no longer running, else notify when the event cursor moved
+/// past `before["event_cursor"]`. Read-only ops leave the cursor where it
+/// was and so send no wake hints, avoiding notification-driven idle loops.
 pub async fn lifecycle_after(
     context: SwarmContext,
     before: &Value,

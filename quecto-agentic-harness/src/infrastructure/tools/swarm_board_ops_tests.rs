@@ -159,15 +159,7 @@ pub(super) fn board() -> (tempfile::TempDir, SwarmContext) {
 }
 
 pub(super) fn tool(context: &SwarmContext) -> SwarmTool {
-    let checkout = context.checkout.clone();
-    SwarmTool::new(
-        Arc::new(checkout.clone()),
-        Arc::new(crate::infrastructure::security::sandbox::Sandbox::new(
-            Some(checkout),
-        )),
-        Default::default(),
-    )
-    .with_context(Some(context.clone()))
+    SwarmTool::new().with_context(Some(context.clone()))
 }
 
 pub(super) async fn execute(context: &SwarmContext, arguments: &str) -> ToolResult {

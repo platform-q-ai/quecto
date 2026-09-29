@@ -849,7 +849,6 @@ any other `libc::kill`, `kill(`, `start_kill`, process-group signal or
 | TERM/KILL of a directly launched, unreaped child, and the own process group a `ProcessGroup::Own` spawn leads | `infrastructure/processes/owned_child_supervisor.rs` |
 | `PR_SET_PDEATHSIG` armed on a spawned process | `infrastructure/processes/parent_death_signal.rs` |
 | Bash tool invocation containment (its own process group) | `infrastructure/tools/bash/mod.rs` |
-| Python `ExecutionScope` containment of the legacy execution jobs (removed with them in #2282) | `infrastructure/tools/swarm_process.rs`, `infrastructure/tools/swarm_scope.rs`, and the job cancel in `infrastructure/tools/swarm.rs` |
 | Signal-0 liveness observation | `infrastructure/persistence/session_ownership.rs` |
 | Container-script runner: its own script child on timeout, and the process group of a create whose spawn was cancelled | `infrastructure/processes/containers/script_stderr.rs` |
 | Tool-child containment (`rg`, `fd`) | `infrastructure/tools/grep_run.rs`, `infrastructure/tools/find_fd.rs` |

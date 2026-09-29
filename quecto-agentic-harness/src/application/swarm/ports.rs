@@ -55,10 +55,6 @@ pub trait ProcessObservation {
 }
 
 pub trait ProcessControl: Sync {
-    /// Cancel this member's detached execution registry independently of turn abort.
-    fn cancel_local_executions(&self);
-    /// Cancel current jobs while retaining admission for a later resume.
-    fn suspend_local_executions(&self, snapshot: &Snapshot);
     /// Suspend only this process; never signal a future turn or another member.
     fn suspend_local_inference(&self, snapshot: &Snapshot);
     fn abort<'a>(&'a self, member: &'a Member) -> PortFuture<'a, bool>;

@@ -274,8 +274,10 @@ fn counted(
 
 /// #2279 review L5: `execute` reads which op a request names with the
 /// board's constant codec, on the async worker, without resolving the
-/// board's location or building its handles: a harness op (`status`) that
-/// never calls the board builds none.
+/// board's location or building its handles: its synchronous prefix,
+/// before the returned future is first polled, builds none for any request.
+/// (#2282: every op's future reaches the board once polled, an unknown
+/// op's refusal included, which records its `swarm_op` there.)
 #[tokio::test]
 async fn reading_a_request_builds_no_board_handles() {
     let directory = tempfile::tempdir().unwrap();
@@ -288,11 +290,16 @@ async fn reading_a_request_builds_no_board_handles() {
         member: "worker".into(),
         lifecycle: Arc::new(crate::application::swarm::LifecycleService),
     };
-    let result = execute(&context, r#"{"op": "status", "job_id": "none"}"#).await;
-    assert_eq!(
-        BUILDS.load(std::sync::atomic::Ordering::SeqCst),
-        0,
-        "{}",
-        result.content
-    );
+    let tool = crate::infrastructure::tools::swarm::SwarmTool::new().with_context(Some(context));
+    for text in [
+        r#"{"op": "claim", "task_id": 1}"#,
+        r#"{"op": "summary"}"#,
+        r#"{"op": "status", "job_id": "none"}"#,
+        r#"{"op": "_close"}"#,
+        "not-json",
+    ] {
+        // The synchronous prefix runs; the future is dropped unpolled.
+        drop(crate::application::tools::ports::Tool::execute(&tool, text));
+    }
+    assert_eq!(BUILDS.load(std::sync::atomic::Ordering::SeqCst), 0);
 }

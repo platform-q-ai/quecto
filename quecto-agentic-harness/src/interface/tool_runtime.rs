@@ -310,9 +310,6 @@ pub(crate) fn build_tool_runtime(
             } else {
                 crate::infrastructure::tools::docs::DocsContentPolicy::Parent
             },
-            swarm_config: crate::infrastructure::tools::swarm::SwarmConfig::from(
-                config.tools.swarm.clone(),
-            ),
         }),
         match profile_context {
             // A fresh top-level session has no user/profile policy yet. Leaving

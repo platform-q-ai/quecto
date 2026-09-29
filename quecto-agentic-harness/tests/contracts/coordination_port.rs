@@ -61,13 +61,15 @@ fn packaged_adapter_enforces_reservations_and_retains_unconfirmed_execution_scop
 
 /// Move every `scope_observed` event past the loss grace.
 fn backdate_observations(context: &SwarmContext) {
-    let status = std::process::Command::new("python3")
-        .args([
-            "-c",
-            "import sqlite3,sys; db=sqlite3.connect(sys.argv[1]); db.execute(\"UPDATE events SET time=time-60 WHERE action='scope_observed'\"); db.commit()",
-        ])
-        .arg(context.database())
-        .status()
+    let board = rusqlite::Connection::open(context.database()).unwrap();
+    let backdated = board
+        .execute(
+            "UPDATE events SET time=time-60 WHERE action='scope_observed'",
+            [],
+        )
         .unwrap();
-    assert!(status.success());
+    assert!(
+        backdated > 0,
+        "the board holds scope observations to backdate"
+    );
 }

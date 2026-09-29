@@ -48,6 +48,20 @@ fn test_deserialize_legacy_exec_fields_ignored() {
     let _config: Config = serde_json::from_str(json).unwrap();
 }
 
+/// #2282: the Python workbench's limits are gone. A config that still has
+/// a `tools.swarm` section (or its `python_lab` alias) loads, and the
+/// section is inert: nothing reads it and the tools config never writes it.
+#[test]
+fn a_legacy_tools_swarm_section_still_loads() {
+    for section in ["swarm", "python_lab"] {
+        let json = format!(r#"{{"tools":{{"{section}":{{"max_processes":1}}}}}}"#);
+        let config: Config = serde_json::from_str(&json).unwrap();
+        let tools = serde_json::to_value(&config.tools).unwrap();
+        assert!(tools.get(section).is_none(), "{section}: {tools}");
+        assert!(tools.get("swarm").is_none(), "{section}: {tools}");
+    }
+}
+
 fn workflow_config_with_steps(steps: &str) -> String {
     format!(
         r#"{{"workflow":{{"templates":[{{"id":"test","label":"Test","description":"d","steps":[{steps}]}}]}}}}"#

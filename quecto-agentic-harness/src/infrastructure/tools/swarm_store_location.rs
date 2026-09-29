@@ -26,9 +26,6 @@ const GIT_STORE_DIR: &str = "quecto";
 const WORK_TREE_STORE_DIR: &str = ".quecto";
 const STORE_FILE: &str = "swarm.sqlite";
 
-/// The artifacts' directory beside the board.
-const ARTIFACT_DIR: &str = "swarm";
-
 /// Boards this member process has found, by canonical checkout: never
 /// re-decided.
 static PINNED: Mutex<BTreeMap<PathBuf, PathBuf>> = Mutex::new(BTreeMap::new());
@@ -174,36 +171,6 @@ pub(super) fn forget_pin(checkout: &Path) {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .remove(&pin_key(checkout));
-}
-
-/// The directory, beside the board, where the swarm tool keeps each
-/// execution's artifacts (`<execution>/stdout.txt`, `stderr.txt`): out of
-/// git's reach like the board, so a live run's evidence survives
-/// `git clean -fdx`.
-pub(super) fn artifact_root(workspace: &Path) -> PathBuf {
-    board_dir(workspace).join(ARTIFACT_DIR)
-}
-
-/// Whether `path` is the swarm's own state rather than a file a program
-/// wrote: the board, its journal files, or the artifacts.
-pub(super) fn is_swarm_state(workspace: &Path, path: &Path) -> bool {
-    let board = member_store_path(workspace);
-    let journal = |name: &std::ffi::OsStr| {
-        board
-            .file_name()
-            .and_then(|board| name.to_str().zip(board.to_str()))
-            .is_some_and(|(name, board)| name.starts_with(board))
-    };
-    let beside_board = path.parent() == board.parent();
-    path.starts_with(artifact_root(workspace))
-        || (beside_board && path.file_name().is_some_and(journal))
-}
-
-fn board_dir(workspace: &Path) -> PathBuf {
-    member_store_path(workspace)
-        .parent()
-        .expect("the store has a directory")
-        .to_path_buf()
 }
 
 #[cfg(test)]

@@ -759,12 +759,8 @@ pub struct QuectoWorld {
     pub model_turn: Option<model_turn_progress_steps::ModelTurnRun>,
     /// Result from the most recent swarm tool execution
     pub swarm_result: Option<quecto::domain::tool::ToolResult>,
-    /// Scenario-scoped tool instance; owns the background job registry
+    /// Scenario-scoped swarm tool instance
     pub swarm_tool: Option<DebugSwarm>,
-    /// Job id returned by the most recent background run
-    pub swarm_job_id: Option<String>,
-    /// Pid a background swarm program recorded for itself
-    pub swarm_pid: Option<i32>,
     /// Claim token a swarm member held before the coordinator revoked it
     pub swarm_claim_token: Option<String>,
     // --- Find BDD fields ---

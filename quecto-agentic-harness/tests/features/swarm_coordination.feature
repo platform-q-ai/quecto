@@ -88,16 +88,6 @@ Feature: Container swarm coordination
     When the swarm coordinator changes only the done criteria
     Then the swarm audit retains both complete contracts
 
-  Scenario Outline: Completed invocations settle ordinary subprocesses
-    Given swarm Python is permitted to create subprocesses
-    When a "<mode>" swarm interpreter returns before its ordinary child
-    Then the completed swarm invocation has stopped its child
-
-    Examples:
-      | mode       |
-      | foreground |
-      | background |
-
   Scenario: Claimed work does not wake an idle peer
     Given an idle swarm peer with an unavailable endpoint
     When the coordinator creates and immediately claims a task

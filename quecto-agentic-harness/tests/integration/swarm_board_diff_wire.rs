@@ -92,15 +92,7 @@ fn an_op_with_two_unexpected_fields_names_the_first_as_python_does() {
             None,
         )
         .unwrap();
-    let workspace = std::sync::Arc::new(checkout.clone());
-    let tool = quecto::infrastructure::tools::swarm::SwarmTool::new(
-        workspace,
-        std::sync::Arc::new(quecto::infrastructure::security::sandbox::Sandbox::new(
-            Some(checkout),
-        )),
-        quecto::infrastructure::tools::swarm::SwarmConfig::default(),
-    )
-    .with_context(Some(context));
+    let tool = quecto::infrastructure::tools::swarm::SwarmTool::new().with_context(Some(context));
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

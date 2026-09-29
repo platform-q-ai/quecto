@@ -3,9 +3,7 @@
 `swarm` is a compiled native tool: members coordinate through structured board
 ops (`{"op":"claim","task_id":3}`), each served in-process by the Rust board
 over the run's SQLite file (ADR-0030). Members use the `bash` tool for Git,
-builds, tests and any other computation. `tools.swarm` (with its old alias
-`tools.python_lab`) still configures the legacy Python execution op, which
-issue #2282 removes; members are not taught it and should not use it.
+builds, tests and any other computation.
 
 ## Start from the TUI or master agent
 
@@ -849,6 +847,7 @@ the board is still recorded as the op's own `swarm_op`, with no run read
 | The running gate, when the run is not `running` | `not_running` |
 | The running gate, when the running run's deadline has passed, is missing or is not a number | `budget_exhausted` |
 | The running gate, when the `_status` call failed, the status read is not text, or a mutating op's first `_event_cursor` call failed (gate `unreadable`) | `store` |
+| No valid op: a name the tool does not serve (an internal board method's such as `_close` included), an op that is missing or not a string, or arguments that are not JSON; recorded as op `unknown`, never under the member's name, and never with role `host` | `calling` (`invalid` for arguments that are not JSON) |
 
 Each structured op also leaves one `tracing` event, `swarm structured op`,
 on target `quecto::swarm_board` (DEBUG for the read-only ops `task`, `tasks`,

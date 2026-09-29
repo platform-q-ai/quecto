@@ -265,29 +265,6 @@ const PROCESS_EFFECT_ALLOWLIST: &[(&str, &[&str], &str)] = &[
         "bash-owned invocation containment of the tool's own process group",
     ),
     (
-        "src/infrastructure/tools/swarm_process.rs",
-        &[
-            "libc::kill",
-            "kill(",
-            "kill_on_drop",
-            "kill_pid",
-            "setpgid",
-            "libc::SIGKILL",
-        ],
-        "Python ExecutionScope containment of an execution job this tool spawned",
-    ),
-    (
-        "src/infrastructure/tools/swarm_scope.rs",
-        &["kill_pid"],
-        "Python ExecutionScope: the job's own group-or-pid containment on scope end",
-    ),
-    (
-        "src/infrastructure/tools/swarm.rs",
-        &["kill_pid"],
-        "execution-job cancel (`cancel_job_process`, job registry) through the \
-         ExecutionScope containment; never a swarm member's harness (#1939)",
-    ),
-    (
         "src/infrastructure/persistence/session_ownership.rs",
         &["libc::kill", "kill("],
         "signal-0 liveness observation of a session lock holder",
@@ -357,7 +334,7 @@ fn process_effects_are_exactly_the_allowlisted_files_and_vocabulary() {
     assert!(
         violations.is_empty(),
         "process effects outside the #1940 allowlist (owned-handle supervisor, bash \
-         containment, Python ExecutionScope, signal-0 observation, retained-environment \
+         containment, signal-0 observation, retained-environment \
          command adapter, tool-child containment, /proc observation):\n{}",
         violations.join("\n")
     );

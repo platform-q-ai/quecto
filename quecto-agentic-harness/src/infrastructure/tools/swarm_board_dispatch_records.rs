@@ -25,6 +25,25 @@ pub enum CallOrigin {
     Harness,
 }
 
+/// The role a call's records carry (#2303; #2282 final review): `host`
+/// for the harness's own calls, whatever method they name; for a member's
+/// call, its method's ([`Method::role`]: `None` when it is read from the
+/// run the op found); and `None` for a member naming no board method,
+/// whose caller is unproven and which reads no run. `host` is the
+/// harness's alone (docs/swarm.md), so an unknown name never maps to it.
+pub(super) fn recorded_role(origin: CallOrigin, known: Option<Method>) -> Option<BoardRole> {
+    let role = match (origin, known) {
+        (CallOrigin::Harness, _) => Some(BoardRole::Host),
+        (CallOrigin::Member, Some(known)) => known.role(),
+        (CallOrigin::Member, None) => None,
+    };
+    debug_assert!(
+        known.is_some() || origin == CallOrigin::Harness || role.is_none(),
+        "a member's call naming no board method records no role"
+    );
+    role
+}
+
 /// The `tracing` record of `finished` and, while the event log is on, its
 /// `swarm_op`, by the caller's kept or fresh ref (`caller` says whether the
 /// board accepted it as a member).
@@ -61,7 +80,7 @@ pub fn refused(
     let finished = Finished {
         op: known.map_or("unknown", Method::name),
         level: known.map_or(Level::Mutation, Method::level),
-        role: known.map_or(Some(BoardRole::Host), Method::role),
+        role: recorded_role(CallOrigin::Member, known),
         member,
         outcome: Err(kind),
         elapsed,

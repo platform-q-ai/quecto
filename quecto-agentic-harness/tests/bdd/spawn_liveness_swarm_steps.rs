@@ -23,14 +23,9 @@ fn host_swarm_run(world: &mut QuectoWorld, ended_holding: Option<String>) {
     let checkout = base_path(world).join("swarm-checkout");
     std::fs::create_dir_all(&checkout).unwrap();
     let workspace = Arc::new(checkout.clone());
-    let sandbox = Arc::new(quecto::infrastructure::security::sandbox::Sandbox::new(
-        Some(checkout.clone()),
-    ));
     // Building the test-support tool creates the running run in the store.
     let tool = quecto::infrastructure::tools::swarm_test_support::tool(
         workspace,
-        sandbox,
-        quecto::infrastructure::tools::swarm::SwarmConfig::default(),
         quecto::composition::swarm::swarm_board(),
     );
     if let Some(outcome) = ended_holding {

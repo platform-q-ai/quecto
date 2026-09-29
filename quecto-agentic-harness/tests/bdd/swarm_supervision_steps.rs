@@ -217,16 +217,14 @@ fn git(dir: &std::path::Path, args: &[&str]) {
 
 /// The run id the board holds, read as the parent would (read-only).
 fn board_run_id(board: &std::path::Path) -> String {
-    let output = std::process::Command::new("python3")
-        .args([
-            "-c",
-            "import sqlite3,sys; print(sqlite3.connect('file:'+sys.argv[1]+'?mode=ro', uri=True).execute('SELECT id FROM run').fetchone()[0])",
-        ])
-        .arg(board)
-        .output()
-        .expect("python3 runs");
-    assert!(output.status.success(), "{output:?}");
-    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    let board = rusqlite::Connection::open_with_flags(
+        board,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .expect("open the board read-only");
+    board
+        .query_row("SELECT id FROM run", [], |row| row.get::<_, String>(0))
+        .expect("the board holds a run")
 }
 
 /// The fixture's own files in the checkout (its runtime base, log, config

@@ -1,19 +1,10 @@
-//! Explicit fake container composition for deterministic execution contracts.
-use super::{
-    swarm::{SwarmConfig, SwarmTool},
-    swarm_bridge::SwarmContext,
-};
-use crate::infrastructure::security::sandbox::Sandbox;
+//! Explicit fake container composition for deterministic tool contracts.
+use super::{swarm::SwarmTool, swarm_bridge::SwarmContext};
 use std::{path::PathBuf, sync::Arc};
 
 /// The tool over a fake container whose board is `board` (composition's,
 /// `composition::swarm::swarm_board`, #2278).
-pub fn tool(
-    workspace: Arc<PathBuf>,
-    sandbox: Arc<Sandbox>,
-    config: SwarmConfig,
-    board: super::swarm_bridge::SwarmBoard,
-) -> SwarmTool {
+pub fn tool(workspace: Arc<PathBuf>, board: super::swarm_bridge::SwarmBoard) -> SwarmTool {
     let context = SwarmContext {
         board,
         lifecycle: std::sync::Arc::new(crate::application::ports::SwarmTestLifecycle),
@@ -33,5 +24,5 @@ pub fn tool(
         })
         .unwrap();
     }
-    SwarmTool::new(workspace, sandbox, config).with_context(Some(context))
+    SwarmTool::new().with_context(Some(context))
 }

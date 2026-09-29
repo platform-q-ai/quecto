@@ -4,10 +4,7 @@ use quecto::application::agent_turn::ports::AgentLoop;
 use quecto::domain::message::{LlmResponse, Message, ToolCall};
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::{
-    filesystem::WriteTool,
-    registry::ToolRegistryImpl,
-    swarm::{SwarmConfig, SwarmTool},
-    swarm_bridge::SwarmContext,
+    filesystem::WriteTool, registry::ToolRegistryImpl, swarm::SwarmTool, swarm_bridge::SwarmContext,
 };
 use std::sync::Arc;
 
@@ -131,12 +128,7 @@ async fn fake_provider_decomposes_resolves_blocker_and_verifies_swarm() {
         + 60;
     quecto::infrastructure::tools::call_work::off_the_runtime(|| context.create_run(&serde_json::json!({"goal":"ship","constraints":[],"criteria":[{"id":"tests","kind":"command","description":"pass"}],"member_limit":1,"deadline":deadline}),
         &quecto::domain::swarm::ProcessIdentity { pid: std::process::id(), started: quecto::infrastructure::tools::swarm_bridge::process_start(std::process::id()).unwrap() }, None)).unwrap();
-    let tool = SwarmTool::new(
-        workspace.clone(),
-        Arc::new(Sandbox::new(Some(workspace.as_ref().clone()))),
-        SwarmConfig::default(),
-    )
-    .with_context(Some(context));
+    let tool = SwarmTool::new().with_context(Some(context));
     let provider = Arc::new(MockProvider::new(STEPS));
     let mut registry = ToolRegistryImpl::new();
     registry.register(Arc::new(tool));
@@ -200,12 +192,7 @@ async fn a_non_finite_argument_is_answered_by_the_loop_before_the_tool() {
     };
     let log = Arc::new(BoardCalls::default());
     assert!(context.board.record_in(log.clone()));
-    let tool = SwarmTool::new(
-        workspace.clone(),
-        Arc::new(Sandbox::new(Some(workspace.as_ref().clone()))),
-        SwarmConfig::default(),
-    )
-    .with_context(Some(context));
+    let tool = SwarmTool::new().with_context(Some(context));
     let texts = [
         r#"{"op": "claim", "task_id": NaN}"#,
         r#"{"op": "claim", "task_id": Infinity}"#,

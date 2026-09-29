@@ -52,15 +52,7 @@ fn structured_worker(world: &mut QuectoWorld) {
             Some("reservation"),
         )
         .unwrap();
-    let workspace = std::sync::Arc::new(workspace);
-    let tool = quecto::infrastructure::tools::swarm::SwarmTool::new(
-        workspace.clone(),
-        std::sync::Arc::new(quecto::infrastructure::security::sandbox::Sandbox::new(
-            Some(workspace.as_ref().clone()),
-        )),
-        quecto::infrastructure::tools::swarm::SwarmConfig::default(),
-    )
-    .with_context(Some(worker));
+    let tool = quecto::infrastructure::tools::swarm::SwarmTool::new().with_context(Some(worker));
     let call = |request: serde_json::Value| -> serde_json::Value {
         let result = super::runtime()
             .block_on(tool.execute(&request.to_string()))

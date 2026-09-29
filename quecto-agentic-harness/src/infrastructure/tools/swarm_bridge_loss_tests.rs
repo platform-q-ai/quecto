@@ -71,9 +71,7 @@ fn an_abrupt_exit_keeps_reservations_an_orderly_one_releases_them() {
     let directory = tempfile::tempdir().unwrap();
     let parent = context(&directory);
     create(&parent, 3);
-    let mut harness = std::process::Command::new("python3")
-        .args(["-c", "import subprocess,time; p=subprocess.Popen(['sh','-c','while true; do echo writing >> orphan-write; sleep 0.05; done'], start_new_session=True, stdout=subprocess.DEVNULL); print(p.pid,flush=True); time.sleep(30)"])
-        .current_dir(directory.path()).stdout(std::process::Stdio::piped()).spawn().unwrap();
+    let mut harness = orphaning_harness(directory.path());
     let mut line = String::new();
     std::io::BufReader::new(harness.stdout.take().unwrap())
         .read_line(&mut line)
@@ -117,7 +115,7 @@ fn an_abrupt_exit_keeps_reservations_an_orderly_one_releases_them() {
     )
     .unwrap();
     let surviving = !process_confirmed_dead(writer_pid, &writer_start);
-    crate::infrastructure::tools::swarm::cancel_job_process(writer_pid);
+    end_writer(writer_pid);
     assert!(surviving, "the orphaned writer outlived its harness");
     assert_eq!(after_abrupt["status"], "running", "{after_abrupt}");
     assert_eq!(after_abrupt["file_count"], 1, "reservation retained");
@@ -161,9 +159,7 @@ fn abrupt_harness_death_retains_ownership_while_orphan_writer_survives() {
     let directory = tempfile::tempdir().unwrap();
     let parent = context(&directory);
     create(&parent, 2);
-    let mut harness = std::process::Command::new("python3")
-        .args(["-c", "import subprocess,time; p=subprocess.Popen(['sh','-c','while true; do echo writing >> orphan-write; sleep 0.05; done'], start_new_session=True, stdout=subprocess.DEVNULL); print(p.pid,flush=True); time.sleep(30)"])
-        .current_dir(directory.path()).stdout(std::process::Stdio::piped()).spawn().unwrap();
+    let mut harness = orphaning_harness(directory.path());
     let mut line = String::new();
     std::io::BufReader::new(harness.stdout.take().unwrap())
         .read_line(&mut line)
@@ -209,7 +205,7 @@ fn abrupt_harness_death_retains_ownership_while_orphan_writer_survives() {
     backdate_observations(&parent);
     let snapshot = crate::infrastructure::tools::swarm_lifecycle::reconcile(&parent).unwrap();
     let surviving = !process_confirmed_dead(writer_pid, &writer_start);
-    crate::infrastructure::tools::swarm::cancel_job_process(writer_pid);
+    end_writer(writer_pid);
     assert!(surviving);
     assert_eq!(
         snapshot["file_count"], 1,
@@ -225,13 +221,37 @@ fn abrupt_harness_death_retains_ownership_while_orphan_writer_survives() {
 
 /// Move every `scope_observed` event past the loss grace.
 fn backdate_observations(context: &SwarmContext) {
-    let status = std::process::Command::new("python3")
+    let board = rusqlite::Connection::open(context.database()).unwrap();
+    board
+        .execute(
+            "UPDATE events SET time=time-60 WHERE action='scope_observed'",
+            [],
+        )
+        .unwrap();
+}
+
+/// A stand-in member harness (`sleep`) that first starts a writer in a
+/// session of its own, which keeps appending to `orphan-write` after the
+/// harness is killed. The writer's pid is the harness's first stdout line.
+fn orphaning_harness(directory: &std::path::Path) -> std::process::Child {
+    std::process::Command::new("sh")
         .args([
             "-c",
-            "import sqlite3,sys; db=sqlite3.connect(sys.argv[1]); db.execute(\"UPDATE events SET time=time-60 WHERE action='scope_observed'\"); db.commit()",
+            "setsid sh -c 'while true; do echo writing >> orphan-write; sleep 0.05; done' \
+             >/dev/null 2>&1 & echo $!; exec sleep 30",
         ])
-        .arg(context.database())
-        .status()
-        .unwrap();
-    assert!(status.success());
+        .current_dir(directory)
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap()
+}
+
+/// End the orphaned writer this test started.
+fn end_writer(pid: u32) {
+    let pid = libc::pid_t::try_from(pid).expect("a pid fits pid_t");
+    assert!(pid > 0, "never a process group or every process");
+    // `pid` is the positive pid of the writer this test started, so no
+    // process group and no broadcast is signalled.
+    // SAFETY: kill(2) takes plain integers and touches no Rust memory.
+    let _ = unsafe { libc::kill(pid, libc::SIGKILL) };
 }
