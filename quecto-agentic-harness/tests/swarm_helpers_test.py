@@ -1227,7 +1227,10 @@ class WorkbenchBehavior(unittest.TestCase):
         task = self.task()
         self.worker.claim(task['id'])
         contact = self.parent.task(task['id'])['contact']
-        receipt = eval(contact, {'board': self.parent, 'request': 'dependency-question-1', 'body': 'which schema?'})
+        # The structured `send` op (#2279), its request and body filled in.
+        filled = contact.replace('"request":...', '"request":"dependency-question-1"')
+        request = json.loads(filled.replace('"body":...', '"body":"which schema?"'))
+        receipt = getattr(self.parent, request.pop('op'))(**request)
         self.assertEqual(receipt['status'], 'accepted')
         inbox = self.worker.inbox()
         self.assertEqual([(m['sender'], m['body']) for m in inbox], [('coordinator', 'which schema?')])

@@ -270,7 +270,7 @@ pub fn run_both_wire(steps: &[Step]) {
         match (python_outcome, rust_outcome) {
             (Outcome::Ok(_), Outcome::Ok(value)) => assert_eq!(
                 python_text.as_deref(),
-                Some(quecto::infrastructure::tools::swarm_board_ops::wire_text(&value).as_str()),
+                Some(rust.wire_text(&value).as_str()),
                 "{context}: the wire texts differ"
             ),
             (python_outcome, rust_outcome) => assert_eq!(

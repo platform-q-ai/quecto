@@ -114,13 +114,23 @@ pub(super) fn board_with(
         member: "coordinator".into(),
         lifecycle,
     };
-    context
-        .call(
-            "create",
-            json!(["ship", [], [{"id":"tests","kind":"command","description":"pass"}], 5, deadline]),
-        )
-        .unwrap();
+    direct(
+        &context,
+        "create",
+        json!(["ship", [], [{"id":"tests","kind":"command","description":"pass"}], 5, deadline]),
+    )
+    .unwrap();
     (directory, context)
+}
+
+/// A direct board call by `context`, made off the async workers as the
+/// board's debug assertion requires of every caller (#2278 review L6).
+pub(super) fn direct(
+    context: &SwarmContext,
+    method: &str,
+    args: Value,
+) -> Result<Value, DomainError> {
+    crate::infrastructure::tools::call_work::off_the_runtime(|| context.call(method, args))
 }
 
 pub(super) fn deadline() -> u64 {
@@ -171,20 +181,18 @@ pub(super) async fn refused(context: &SwarmContext, arguments: &str) -> String {
 
 /// A task the coordinator created, and its claim's token.
 fn claimed(context: &SwarmContext) -> Value {
-    context
-        .call("task_create", json!(["r1", "t", ["pass"]]))
-        .unwrap();
-    context.call("claim", json!([1])).unwrap()["token"].clone()
+    direct(context, "task_create", json!(["r1", "t", ["pass"]])).unwrap();
+    direct(context, "claim", json!([1])).unwrap()["token"].clone()
 }
 
 fn submitted(context: &SwarmContext) -> Value {
     let token = claimed(context);
-    context
-        .call(
-            "submit",
-            json!([1, token, [{"artifact": "a", "revision": "R1"}]]),
-        )
-        .unwrap();
+    direct(
+        context,
+        "submit",
+        json!([1, token, [{"artifact": "a", "revision": "R1"}]]),
+    )
+    .unwrap();
     token
 }
 
@@ -204,32 +212,24 @@ fn prepared(op: &str, context: &SwarmContext) -> Value {
         }
         "file_owners" => {
             let token = claimed(context);
-            context
-                .call("reserve", json!([1, token, ["a.rs"]]))
-                .unwrap();
+            direct(context, "reserve", json!([1, token, ["a.rs"]])).unwrap();
             json!({})
         }
         "task_create" => json!({"request": "r1", "title": "t", "acceptance": ["pass"]}),
         "dependencies" => {
-            context
-                .call("task_create", json!(["r1", "a", ["pass"]]))
-                .unwrap();
-            context
-                .call("task_create", json!(["r2", "b", ["pass"]]))
-                .unwrap();
+            direct(context, "task_create", json!(["r1", "a", ["pass"]])).unwrap();
+            direct(context, "task_create", json!(["r2", "b", ["pass"]])).unwrap();
             json!({"task_id": 2, "dependencies": [1]})
         }
         "claim" => {
-            context
-                .call("task_create", json!(["r1", "t", ["pass"]]))
-                .unwrap();
+            direct(context, "task_create", json!(["r1", "t", ["pass"]])).unwrap();
             json!({"task_id": 1})
         }
         "release" => json!({"task_id": 1, "token": claimed(context)}),
         "block" => json!({"task_id": 1, "token": claimed(context), "reason": "waiting"}),
         "unblock" => {
             let token = claimed(context);
-            context.call("block", json!([1, token, "waiting"])).unwrap();
+            direct(context, "block", json!([1, token, "waiting"])).unwrap();
             json!({"task_id": 1, "token": token, "reason": "resolved"})
         }
         "submit" => json!({"task_id": 1, "token": claimed(context),
@@ -237,23 +237,17 @@ fn prepared(op: &str, context: &SwarmContext) -> Value {
         "reserve" => json!({"task_id": 1, "token": claimed(context), "paths": ["a.rs"]}),
         "release_files" => {
             let token = claimed(context);
-            let reserved = context
-                .call("reserve", json!([1, token, ["a.rs"]]))
-                .unwrap();
+            let reserved = direct(context, "reserve", json!([1, token, ["a.rs"]])).unwrap();
             json!({"task_id": 1, "token": token, "reservation": reserved["token"]})
         }
         "send" => json!({"request": "m1", "recipient": "coordinator", "body": "hi",
             "revision": "R1"}),
         "withdraw" | "ack" => {
-            context
-                .call("send", json!(["m1", "coordinator", "hi"]))
-                .unwrap();
+            direct(context, "send", json!(["m1", "coordinator", "hi"])).unwrap();
             json!({"message_id": 1})
         }
         "inbox" => {
-            context
-                .call("send", json!(["m1", "coordinator", "hi"]))
-                .unwrap();
+            direct(context, "send", json!(["m1", "coordinator", "hi"])).unwrap();
             json!({"include_consumed": true})
         }
         "evidence" => json!({"criterion": "tests", "artifact": "a", "revision": "R1",
@@ -264,9 +258,7 @@ fn prepared(op: &str, context: &SwarmContext) -> Value {
         "verify_task" => json!({"task_id": 1, "token": submitted(context), "revision": "R1"}),
         "revalidate_task" => {
             let token = submitted(context);
-            context
-                .call("verify_task", json!([1, token, "R1"]))
-                .unwrap();
+            direct(context, "verify_task", json!([1, token, "R1"])).unwrap();
             json!({"task_id": 1, "revision": "R2",
                 "evidence": [{"artifact": "b", "revision": "R2"}]})
         }
@@ -281,9 +273,12 @@ fn prepared(op: &str, context: &SwarmContext) -> Value {
             json!({"task_id": 1, "reason": "reassign"})
         }
         "complete" => {
-            context
-                .call("evidence", json!(["tests", "a", "R1", "command", true]))
-                .unwrap();
+            direct(
+                context,
+                "evidence",
+                json!(["tests", "a", "R1", "command", true]),
+            )
+            .unwrap();
             json!({"revision": "R1"})
         }
         "stop" => json!({"status": "blocked", "reason": "why"}),
@@ -333,7 +328,7 @@ async fn every_mapped_op_returns_exactly_what_the_board_method_returns() {
         let mut request = args;
         request["op"] = json!(spec.name);
         let result = execute(&by_op, &request.to_string()).await;
-        match by_method.call(spec.name, method_args) {
+        match direct(&by_method, spec.name, method_args) {
             Ok(expected) => {
                 assert!(!result.is_error, "{}: {}", spec.name, result.content);
                 let answer: Value = serde_json::from_str(&result.content).unwrap();
@@ -350,16 +345,16 @@ async fn every_mapped_op_returns_exactly_what_the_board_method_returns() {
 #[tokio::test]
 async fn claim_by_op_is_claim_by_board() {
     let (_directory, context) = board();
-    context
-        .call("task_create", json!(["r1", "t", ["pass"]]))
-        .unwrap();
+    direct(&context, "task_create", json!(["r1", "t", ["pass"]])).unwrap();
     let claim = answered(&context, json!({"op": "claim", "task_id": 1})).await;
     let token = claim["token"]
         .as_str()
         .expect("the claim carries its token");
     assert_eq!(token.len(), 32, "{claim}");
     assert_eq!(claim["status"], "claimed", "{claim}");
-    let events = context.events(0, 100).unwrap();
+    let events =
+        crate::infrastructure::tools::call_work::off_the_runtime(|| context.events(0, 100))
+            .unwrap();
     let claimed: Vec<&Value> = events["events"]
         .as_array()
         .unwrap()
@@ -368,7 +363,7 @@ async fn claim_by_op_is_claim_by_board() {
         .collect();
     assert_eq!(claimed.len(), 1, "{events}");
     // The token works for the board's next call.
-    context.call("release", json!([1, token])).unwrap();
+    direct(&context, "release", json!([1, token])).unwrap();
 }
 
 #[tokio::test]
@@ -389,13 +384,14 @@ async fn a_missing_argument_names_the_op_and_field() {
 #[tokio::test]
 async fn an_unexpected_argument_is_refused() {
     let (_directory, context) = board();
-    context
-        .call("task_create", json!(["r1", "t", ["pass"]]))
-        .unwrap();
+    direct(&context, "task_create", json!(["r1", "t", ["pass"]])).unwrap();
     let text = refused(&context, r#"{"op":"claim","task_id":1,"owner":"me"}"#).await;
     assert!(text.contains("claim: unexpected argument owner"), "{text}");
     // Nothing was claimed.
-    assert_eq!(context.call("task", json!([1])).unwrap()["status"], "ready");
+    assert_eq!(
+        direct(&context, "task", json!([1])).unwrap()["status"],
+        "ready"
+    );
 }
 
 /// Inherited behaviour (epic P3): Python binds `claim(True)` as task 1 and
@@ -403,13 +399,11 @@ async fn an_unexpected_argument_is_refused() {
 #[tokio::test]
 async fn a_boolean_is_not_a_task_id() {
     let (_directory, context) = board();
-    context
-        .call("task_create", json!(["r1", "t", ["pass"]]))
-        .unwrap();
+    direct(&context, "task_create", json!(["r1", "t", ["pass"]])).unwrap();
     let claim = answered(&context, json!({"op": "claim", "task_id": true})).await;
     assert_eq!(claim["id"], 1, "{claim}");
     assert_eq!(
-        context.call("task", json!([1])).unwrap()["status"],
+        direct(&context, "task", json!([1])).unwrap()["status"],
         "claimed"
     );
 }
@@ -419,9 +413,7 @@ async fn a_boolean_is_not_a_task_id() {
 #[tokio::test]
 async fn clashing_field_names_bind_to_the_op_named() {
     let (_directory, context) = board();
-    context
-        .call("task_create", json!(["r1", "a", ["pass"]]))
-        .unwrap();
+    direct(&context, "task_create", json!(["r1", "a", ["pass"]])).unwrap();
     answered(
         &context,
         json!({"op": "task_create", "request": "r2", "title": "b", "acceptance": ["pass"],
@@ -429,7 +421,7 @@ async fn clashing_field_names_bind_to_the_op_named() {
     )
     .await;
     assert_eq!(
-        context.call("task", json!([2])).unwrap()["dependencies"],
+        direct(&context, "task", json!([2])).unwrap()["dependencies"],
         json!([1])
     );
     answered(
@@ -438,7 +430,7 @@ async fn clashing_field_names_bind_to_the_op_named() {
     )
     .await;
     assert_eq!(
-        context.call("task", json!([2])).unwrap()["dependencies"],
+        direct(&context, "task", json!([2])).unwrap()["dependencies"],
         json!([])
     );
     let token = answered(&context, json!({"op": "claim", "task_id": 1})).await["token"].clone();
@@ -449,7 +441,7 @@ async fn clashing_field_names_bind_to_the_op_named() {
     )
     .await;
     assert_eq!(
-        context.call("task", json!([1])).unwrap()["evidence"],
+        direct(&context, "task", json!([1])).unwrap()["evidence"],
         json!([{"artifact": "a", "revision": "R1"}])
     );
     answered(
@@ -463,7 +455,12 @@ async fn clashing_field_names_bind_to_the_op_named() {
         r#"{"op":"recover","task_id":1,"release_files":true}"#,
     )
     .await;
-    assert!(text.contains("only abandoned active work"), "{text}");
+    // Bound to `recover` (its flag, not the op of that name): the board
+    // answers the recovery's own refusal for a live owner's submitted task.
+    assert!(
+        text.contains("recovery requires confirmed worker death"),
+        "{text}"
+    );
     let text = refused(&context, r#"{"op":"release_files","task_id":1}"#).await;
     assert!(
         text.contains("release_files: missing required argument token"),
@@ -476,21 +473,24 @@ fn rejecting_worker(context: &SwarmContext) -> std::thread::JoinHandle<()> {
     use std::io::Write;
     let socket = context.checkout.join("worker.sock");
     let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
-    context.reserve_member("worker", "reservation").unwrap();
     let worker = SwarmContext {
         member: "worker".into(),
         ..context.clone()
     };
-    worker
-        .join(
-            &ProcessIdentity {
-                pid: 123,
-                started: "identity".into(),
-            },
-            socket.to_str(),
-            Some("reservation"),
-        )
-        .unwrap();
+    // Board calls, made off the async workers (#2278 review L6).
+    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        context.reserve_member("worker", "reservation").unwrap();
+        worker
+            .join(
+                &ProcessIdentity {
+                    pid: 123,
+                    started: "identity".into(),
+                },
+                socket.to_str(),
+                Some("reservation"),
+            )
+            .unwrap();
+    });
     std::thread::spawn(move || {
         let (stream, _) = listener.accept().unwrap();
         stream
@@ -524,12 +524,11 @@ async fn a_mutating_op_that_moves_the_cursor_sends_wake_hints() {
     assert_eq!(sent["status"], "accepted", "{sent}");
     let warnings = sent["notification_warnings"].to_string();
     assert!(warnings.contains("wake hint failed for worker"), "{sent}");
-    let inbox = SwarmContext {
+    let worker = SwarmContext {
         member: "worker".into(),
         ..context.clone()
-    }
-    .call("inbox", json!([]))
-    .unwrap();
+    };
+    let inbox = direct(&worker, "inbox", json!([])).unwrap();
     assert_eq!(inbox.as_array().unwrap().len(), 1, "the message is durable");
 }
 
@@ -552,9 +551,7 @@ async fn stop_by_op_settles_the_run() {
 async fn read_ops_do_not_touch_the_lifecycle() {
     let lifecycle = Arc::new(CountingLifecycle::default());
     let (_directory, context) = board_with(deadline(), lifecycle.clone());
-    context
-        .call("task_create", json!(["r1", "t", ["pass"]]))
-        .unwrap();
+    direct(&context, "task_create", json!(["r1", "t", ["pass"]])).unwrap();
     let log = Arc::new(Recorded::default());
     assert!(context.board.record_in(log.clone()));
     for op in super::READ_ONLY_OPS {
@@ -564,11 +561,7 @@ async fn read_ops_do_not_touch_the_lifecycle() {
         };
         answered(&context, arguments).await;
         let ops: Vec<String> = log.take().into_iter().map(|record| record.op).collect();
-        match *op {
-            // An alias of the ungated `usage` op (epic P1).
-            "usage_report" => assert_eq!(ops, ["usage_report"], "{op}"),
-            _ => assert_eq!(ops, ["_status", *op], "{op}"),
-        }
+        assert_eq!(ops, ["_status", *op], "{op}");
     }
     assert_eq!(lifecycle.settled.load(Ordering::SeqCst), 0);
     // A mutation reads the cursor before and after, and notifies.
@@ -588,10 +581,8 @@ async fn read_ops_do_not_touch_the_lifecycle() {
 #[tokio::test]
 async fn inbox_and_ack_are_refused_while_paused() {
     let (_directory, context) = board();
-    context
-        .call("send", json!(["m1", "coordinator", "hi"]))
-        .unwrap();
-    context.pause("approval").unwrap();
+    direct(&context, "send", json!(["m1", "coordinator", "hi"])).unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| context.pause("approval")).unwrap();
     for (op, arguments) in [
         ("inbox", r#"{"op":"inbox"}"#),
         ("ack", r#"{"op":"ack","message_id":1}"#),
@@ -605,7 +596,7 @@ async fn inbox_and_ack_are_refused_while_paused() {
             "{text}"
         );
     }
-    let inbox = context.call("inbox", json!([])).unwrap();
+    let inbox = direct(&context, "inbox", json!([])).unwrap();
     assert_eq!(inbox[0]["status"], "accepted", "nothing was acknowledged");
 }
 
@@ -619,9 +610,12 @@ async fn an_op_before_create_points_the_founder_at_op_create() {
         member: "coordinator".into(),
         lifecycle: Arc::new(crate::application::swarm::LifecycleService),
     };
-    context
-        .call("_bootstrap", json!([1, "start", "/tmp/unused.sock"]))
-        .unwrap();
+    direct(
+        &context,
+        "_bootstrap",
+        json!([1, "start", "/tmp/unused.sock"]),
+    )
+    .unwrap();
     let text = refused(&context, r#"{"op":"claim","task_id":1}"#).await;
     assert!(
         text.contains("status setup), so op=claim is unavailable"),

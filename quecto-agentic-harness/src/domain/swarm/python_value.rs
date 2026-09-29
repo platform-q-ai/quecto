@@ -19,8 +19,6 @@ use std::collections::HashMap;
 
 use serde_json::{Number, Value};
 
-use super::python_unassigned::UNASSIGNED;
-
 /// A number as Python holds it: `bool` and `int` are exact integers (the
 /// argument's range is i64 ∪ u64), `float` a double.
 #[derive(Clone, Copy)]
@@ -210,111 +208,38 @@ pub fn python_truthy(value: &Value) -> bool {
     }
 }
 
-/// Python's `repr()` of a `str` (#2277): quoted with `'`, or with `"`
-/// when the text holds a `'` and no `"`; a backslash, the quote, `\t`,
-/// `\n` and `\r` escaped; every other character Python does not print
-/// written as `\xhh`, `\uhhhh` or `\Uhhhhhhhh`. Printability follows
-/// Python 3.14's `str.isprintable` ([`not_printed`]): the code points it
-/// refuses whatever its Unicode version, and those Unicode 16.0, its
-/// version, has not assigned (#2277 review L2).
-pub fn python_repr(text: &str) -> String {
-    let quote = if text.contains('\'') && !text.contains('"') {
-        '"'
-    } else {
-        '\''
-    };
+/// `json.dumps(text)` (#2279): the text as Python's `json` writes a `str`
+/// with `ensure_ascii`, quoted with `"`. The quote and the backslash are
+/// escaped, `\n`, `\r`, `\t`, `\b` and `\f` take their short forms, and
+/// every other character outside the printable ASCII range (`' '` to `'~'`)
+/// is written as `\u` and four lowercase hex digits, a character beyond the
+/// Basic Multilingual Plane as its UTF-16 surrogate pair. No character's
+/// escape depends on the Unicode version, so every Python writes the same
+/// text (the `repr()` this replaces in a task's contact did not).
+pub fn json_text(text: &str) -> String {
     let mut written = String::with_capacity(text.len() + 2);
-    written.push(quote);
+    written.push('"');
     for character in text.chars() {
         match character {
+            '"' => written.push_str("\\\""),
             '\\' => written.push_str("\\\\"),
-            '\t' => written.push_str("\\t"),
             '\n' => written.push_str("\\n"),
             '\r' => written.push_str("\\r"),
-            c if c == quote => {
-                written.push('\\');
-                written.push(c);
+            '\t' => written.push_str("\\t"),
+            '\u{8}' => written.push_str("\\b"),
+            '\u{c}' => written.push_str("\\f"),
+            ' '..='~' => written.push(character),
+            other => {
+                let mut units = [0_u16; 2];
+                for unit in other.encode_utf16(&mut units) {
+                    written.push_str(&format!("\\u{unit:04x}"));
+                }
             }
-            c if not_printed(c) => {
-                let code = u32::from(c);
-                let escaped = match code {
-                    0..=0xff => format!("\\x{code:02x}"),
-                    0x100..=0xffff => format!("\\u{code:04x}"),
-                    _ => format!("\\U{code:08x}"),
-                };
-                written.push_str(&escaped);
-            }
-            c => written.push(c),
         }
     }
-    written.push(quote);
+    written.push('"');
+    debug_assert!(written.is_ascii(), "ensure_ascii writes ASCII only");
     written
-}
-
-/// The code points Python 3.14's `str.isprintable` refuses: those that do
-/// not depend on its Unicode version, listed here (the controls (Cc), the
-/// separators other than the space (Zs, Zl, Zp), the format characters
-/// (Cf) and the private-use planes (Co), and the noncharacters of planes
-/// 15 and 16), and those Unicode 16.0 has not assigned ([`unassigned`]).
-/// Swept against Python's own answer for every code point by
-/// `not_printed_is_exactly_what_python_does_not_print`.
-fn not_printed(character: char) -> bool {
-    version_independent(character) || unassigned(character)
-}
-
-/// Whether Unicode 16.0 (Python 3.14's `unicodedata`) has not assigned
-/// `character`: a binary search of the generated [`UNASSIGNED`] ranges.
-fn unassigned(character: char) -> bool {
-    let point = u32::from(character);
-    debug_assert!(
-        UNASSIGNED.len() % 2 == 0,
-        "the table holds (first, last) pairs"
-    );
-    // The bounds are sorted (each range's first, then its last, below the
-    // next range's first). The first bound not below `point` is a range's
-    // last (an odd index) only when `point` is inside that range, or its
-    // first only when that first is `point`.
-    let at = UNASSIGNED.partition_point(|&bound| bound < point);
-    at % 2 == 1 || UNASSIGNED.get(at) == Some(&point)
-}
-
-/// The code points `str.isprintable` refuses in every Unicode version.
-fn version_independent(character: char) -> bool {
-    matches!(
-        u32::from(character),
-        0x00..=0x1f
-            | 0x7f..=0xa0
-            | 0xad
-            | 0x0600..=0x0605
-            | 0x061c
-            | 0x06dd
-            | 0x070f
-            | 0x0890..=0x0891
-            | 0x08e2
-            | 0x1680
-            | 0x180e
-            | 0x2000..=0x200f
-            | 0x2028..=0x202f
-            | 0x205f..=0x2064
-            | 0x2066..=0x206f
-            | 0x3000
-            | 0xe000..=0xf8ff
-            | 0xfeff
-            | 0xfff9..=0xfffb
-            | 0x110bd
-            | 0x110cd
-            | 0x13430..=0x1343f
-            | 0x1bca0..=0x1bca3
-            | 0x1d173..=0x1d17a
-            | 0xe0001
-            | 0xe0020..=0xe007f
-            | 0xf0000..=0x10ffff
-    )
-}
-
-/// RED STUB.
-pub fn json_text(text: &str) -> String {
-    python_repr(text)
 }
 
 #[cfg(test)]

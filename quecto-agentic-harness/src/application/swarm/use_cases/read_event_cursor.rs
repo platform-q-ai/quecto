@@ -28,7 +28,12 @@ impl ReadEventCursor {
     /// # Errors
     /// The store's refusal (a missing board, contention).
     pub fn execute(&self) -> Result<i64, BoardError> {
-        atomic(&*self.repository, false, |_transaction| Ok(0))
+        let cursor = atomic(&*self.repository, false, |transaction| {
+            transaction.event_generation()
+        })?;
+        // SQLite's rowids start at 1, and `coalesce` answers 0 for none.
+        debug_assert!(cursor >= 0, "an event cursor is never negative");
+        Ok(cursor)
     }
 }
 

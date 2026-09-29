@@ -79,6 +79,7 @@ pub(super) fn decided(method: Method) -> (Option<&'static str>, BoardOpDetail) {
         ),
         Method::Join => (Some("already_live"), BoardOpDetail::NONE),
         Method::Status
+        | Method::EventCursor
         | Method::Snapshot
         | Method::Admit
         | Method::Activate

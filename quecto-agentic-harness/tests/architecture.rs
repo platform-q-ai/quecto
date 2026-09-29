@@ -1287,6 +1287,8 @@ const SWARM_BOARD_USE_CASES: &[&str] = &[
     "ListTasks",
     "ReadRunEvents",
     "ReadRunSummary",
+    // The structured ops' event cursor (#2279).
+    "ReadEventCursor",
 ];
 
 /// The board DTOs infrastructure may name (#2270, epic #2265; each later

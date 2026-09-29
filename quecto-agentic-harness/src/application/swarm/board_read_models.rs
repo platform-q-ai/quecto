@@ -22,7 +22,7 @@ use super::ports::{
 };
 use crate::domain::swarm::{
     Access, BoardError, OWNER_IDLE_AFTER, OwnerState, PythonLookup, RefusalKind, authorize,
-    idle_transition, owner_recovery, owner_state, python_repr,
+    idle_transition, json_text, owner_recovery, owner_state,
 };
 
 /// The tasks and files a summary holds.
@@ -137,13 +137,7 @@ pub(crate) fn with_owner_liveness(
         task.set("owner_last_activity", activity);
         task.set("owner_state", Value::from(state.as_str()));
         if state.addressable() {
-            let name = owner
-                .as_str()
-                .map_or_else(|| owner.to_string(), python_repr);
-            task.set(
-                "contact",
-                Value::from(format!("board.send(request, {name}, body)")),
-            );
+            task.set("contact", Value::from(contact(owner)));
         } else {
             task.set("contact", Value::Null);
             task.set("recovery", Value::from(owner_recovery(state)));
@@ -165,6 +159,15 @@ struct Watch {
     crossed: bool,
     /// The owners it read.
     scanned: u64,
+}
+
+/// The structured `send` that reaches `owner` (#2279), as a member writes
+/// it: the owner's id as `json.dumps` writes a text, or (only on a board
+/// edited outside it) as the stored value's own JSON, as Python's `repr()`
+/// writes an integer.
+fn contact(owner: &Value) -> String {
+    let recipient = owner.as_str().map_or_else(|| owner.to_string(), json_text);
+    format!(r#"{{"op":"send","request":...,"recipient":{recipient},"body":...}}"#)
 }
 
 /// `Workbench._liveness_watch(db, cursor)`: when the earliest still-active

@@ -23,21 +23,22 @@ use crate::application::swarm::use_cases::{
     BootstrapMember, BootstrapRun, ClaimNotifications, ClaimTask, CloseRun, CompleteRun,
     ConfigureUsageBudget, ConfirmMemberDead, CreateRun, CreateTask, ExtendRunDeadline, JoinMember,
     JoinRun, ListFileOwners, ListTasks, LoseCoordinator, PauseRun, QuarantineMember,
-    ReadControlStatus, ReadInbox, ReadRequestAdmission, ReadRunEvents, ReadRunSnapshot,
-    ReadRunStatus, ReadRunSummary, ReadTask, ReadUsageReport, RecordEvidence, RecordMemberLaunch,
-    RecordRequestUsage, RecoverTask, RegisterMemberSocket, ReleaseFiles, ReleaseTask,
-    ReleaseUnlaunchedMember, ReserveFiles, ResumeRun, ResumeRunExternally, RevalidateTask,
-    RevokeTask, SendMessage, SetTaskDependencies, StopRun, SubmitTask, UnblockTask, VerifyTask,
-    WithdrawMessage,
+    ReadControlStatus, ReadEventCursor, ReadInbox, ReadRequestAdmission, ReadRunEvents,
+    ReadRunSnapshot, ReadRunStatus, ReadRunSummary, ReadTask, ReadUsageReport, RecordEvidence,
+    RecordMemberLaunch, RecordRequestUsage, RecoverTask, RegisterMemberSocket, ReleaseFiles,
+    ReleaseTask, ReleaseUnlaunchedMember, ReserveFiles, ResumeRun, ResumeRunExternally,
+    RevalidateTask, RevokeTask, SendMessage, SetTaskDependencies, StopRun, SubmitTask, UnblockTask,
+    VerifyTask, WithdrawMessage,
 };
 use crate::infrastructure::persistence::audit_log::AuditLog;
 use crate::infrastructure::persistence::board_op_log::EventLogBoardOps;
 use crate::infrastructure::persistence::swarm_board::encoding::PyJsonEncoding;
 use crate::infrastructure::persistence::swarm_board::ids::Uuid4Ids;
 use crate::infrastructure::persistence::swarm_board::meter::SqliteBoardCallMeter;
+use crate::infrastructure::persistence::swarm_board::py_json;
 use crate::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 pub use crate::infrastructure::tools::swarm_board_dispatch::SwarmBoardHandles;
-use crate::infrastructure::tools::swarm_board_dispatch::{ActorRefs, BoardTelemetry};
+use crate::infrastructure::tools::swarm_board_dispatch::{ActorRefs, BoardTelemetry, BoardWire};
 pub use crate::infrastructure::tools::swarm_bridge::SwarmBoard;
 use crate::infrastructure::tools::swarm_lifecycle::SystemClock;
 use crate::infrastructure::workspace::checkout_paths::ResolvedCheckout;
@@ -80,6 +81,18 @@ pub fn board_op_log(event_log_enabled: bool, log: &AuditLog) -> Option<Arc<dyn B
     }
 }
 
+/// How a structured `swarm` op reads a member's text and writes its
+/// answer (#2279): the board's Python-compatible JSON codec, so a member's
+/// text is read as `json.loads` reads it and an answer written as
+/// `json.dumps` writes it.
+pub fn board_wire() -> BoardWire {
+    BoardWire {
+        read: |text| py_json::decode_value(text).map_err(|error| error.to_string()),
+        op: |text| py_json::object_text(text, "op"),
+        write: |value| py_json::dumps_value(value).map_err(|error| error.to_string()),
+    }
+}
+
 /// The board handles over injected ports.
 pub fn build_swarm_board_handles_with(
     repository: Arc<dyn BoardRepository>,
@@ -100,6 +113,7 @@ pub fn build_swarm_board_handles_with(
             ids.clone(),
         )),
         read_run_status: Arc::new(ReadRunStatus::new(repository.clone())),
+        read_event_cursor: Arc::new(ReadEventCursor::new(repository.clone())),
         read_run_snapshot: Arc::new(ReadRunSnapshot::new(repository.clone(), clock.clone())),
         record_member_launch: Arc::new(RecordMemberLaunch::new(repository.clone(), clock.clone())),
         release_unlaunched_member: Arc::new(ReleaseUnlaunchedMember::new(
@@ -217,6 +231,7 @@ pub fn build_swarm_board_handles_with(
         admit_member: Arc::new(AdmitMember::new(repository.clone(), clock.clone())),
         activate_member: Arc::new(ActivateMember::new(repository.clone(), clock.clone())),
         join_run: Arc::new(JoinRun::new(repository, clock, ids)),
+        wire: board_wire(),
         telemetry: None,
     }
 }

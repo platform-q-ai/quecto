@@ -13,7 +13,7 @@ use crate::infrastructure::tools::swarm_board_dispatch;
 type Signature = Vec<(&'static str, Option<Value>)>;
 
 /// The epic's mapping table: each `board.` method's name and Python
-/// signature (`None` for a required parameter, else its default).
+/// signature.
 fn mapping_table() -> Vec<(&'static str, Signature)> {
     let required = |name| (name, None);
     vec![
@@ -120,7 +120,7 @@ fn mapping_table() -> Vec<(&'static str, Signature)> {
     ]
 }
 
-fn spec_signature(spec: &super::OpSpec) -> Vec<(&'static str, Option<Value>)> {
+fn spec_signature(spec: &super::OpSpec) -> Signature {
     spec.args
         .iter()
         .map(|arg| {

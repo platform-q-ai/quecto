@@ -72,9 +72,28 @@ impl SwarmContext {
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    /// One board call by name: the structured `swarm` ops' (#2279), and
+    /// tests'. Blocking: call it off the async workers.
     pub(crate) fn call(&self, method: &str, args: Value) -> Result<Value, DomainError> {
         self.rpc(method, args)
+    }
+
+    /// How structured ops read a member's text and write their answers on
+    /// this context's board (#2279).
+    pub(crate) fn wire(&self) -> super::swarm_board_dispatch::BoardWire {
+        self.board.wire(self.location())
+    }
+
+    /// Records `method` as refused with `kind` before it reached the board
+    /// (#2279), `elapsed` after the op began.
+    pub(crate) fn refused(
+        &self,
+        method: &str,
+        kind: crate::domain::swarm::RefusalKind,
+        elapsed: std::time::Duration,
+    ) {
+        self.board
+            .refused(self.location(), &self.member, method, kind, elapsed);
     }
 
     pub fn accept_wake(&self, generation: u64) -> Result<bool, DomainError> {

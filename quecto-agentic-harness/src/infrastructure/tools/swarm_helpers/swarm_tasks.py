@@ -7,6 +7,16 @@ from swarm_policy import ADDRESSABLE_OWNER_STATES, owner_recovery, owner_state, 
 from swarm_repository import lost_members
 from swarm_store import SwarmError, bounded, encode
 
+# How a member reaches a task's live owner (#2279): the structured `send` op.
+SEND_CONTACT = '{"op":"send","request":...,"recipient":%s,"body":...}'
+
+
+def _recipient(owner):
+    """The owner's id as `json.dumps` writes a str (ASCII-only escapes, the
+    same on every Python); any other stored value (only a board edited
+    outside the harness holds one) as its repr."""
+    return json.dumps(owner) if isinstance(owner, str) else repr(owner)
+
 
 class Tasks:
     def tasks(self, offset=0, limit=50):
@@ -44,7 +54,7 @@ class Tasks:
             task['owner_last_activity'] = None if last is None else max(0.0, now - last)
             task['owner_state'] = state
             if state in ADDRESSABLE_OWNER_STATES:
-                task['contact'] = f"board.send(request, {task['owner']!r}, body)"
+                task['contact'] = SEND_CONTACT % _recipient(task['owner'])
             else:
                 task['contact'] = None
                 task['recovery'] = owner_recovery(state)

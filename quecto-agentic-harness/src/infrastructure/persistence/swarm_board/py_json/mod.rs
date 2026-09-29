@@ -55,6 +55,8 @@ mod parse;
 mod value;
 mod write;
 
+use serde_json::Value;
+
 pub use value::{INT_MAX_STR_DIGITS, PyInt, PyJson, PyObject, PyStr, SERDE_MAX_DEPTH};
 
 /// The deepest nesting [`decode`] reads: at least what Python reads. Python's
@@ -128,6 +130,40 @@ pub fn encode(value: &PyJson) -> Result<String, PyJsonError> {
 /// [`PyJsonError::TooDeep`] beyond [`ENCODE_MAX_DEPTH`].
 pub fn dumps(value: &PyJson) -> Result<String, PyJsonError> {
     written(value, write::Style::DUMPS)
+}
+
+/// `json.loads(text)` as a `serde_json::Value` (#2279: a member's argument
+/// text for a structured `swarm` op).
+///
+/// # Errors
+/// [`decode`]'s, or [`PyJsonError::NotRepresentable`] for a value a
+/// `Value` cannot hold exactly (see [`PyJson::to_value`]).
+pub fn decode_value(text: &str) -> Result<Value, PyJsonError> {
+    decode(text)?.to_value()
+}
+
+/// The text field `key` of the JSON object `text` holds, as `json.loads`
+/// reads it; `None` when `text` is no object, has no such field, or the
+/// field is not text a Rust string holds. The rest of the object may hold
+/// anything Python reads.
+pub fn object_text(text: &str, key: &str) -> Option<String> {
+    let decoded = decode(text).ok()?;
+    let PyJson::Object(fields) = &decoded else {
+        return None;
+    };
+    match fields.get(&PyStr::from(key))? {
+        PyJson::Str(field) => field.as_str().map(str::to_owned),
+        _ => None,
+    }
+}
+
+/// Plain `json.dumps(value)` of a `serde_json::Value` (#2279: a board
+/// answer as a member reads it).
+///
+/// # Errors
+/// A value nested beyond what the codec converts or writes.
+pub fn dumps_value(value: &Value) -> Result<String, PyJsonError> {
+    dumps(&PyJson::try_from(value)?)
 }
 
 /// A float as Python's `json` writes it: `float.__repr__` for a finite

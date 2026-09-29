@@ -12,14 +12,16 @@
 //! constructs a repository, a clock, an id source or a use case: the
 //! builder is composition's (`composition::swarm::build_swarm_board_handles`).
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 
 use serde_json::Value;
 
 use crate::application::swarm::dto::BoardLocation;
 use crate::application::swarm::ports::BoardOpLog;
 use crate::domain::error::DomainError;
+use crate::domain::swarm::RefusalKind;
 use crate::infrastructure::persistence::audit_log::AuditLog;
-use crate::infrastructure::tools::swarm_board_dispatch::{self, SwarmBoardHandles};
+use crate::infrastructure::tools::swarm_board_dispatch::{self, BoardWire, SwarmBoardHandles};
 
 /// Builds the board handles over one board file, recording each call in
 /// the event log given (composition's `board_op_log`, only while the
@@ -153,6 +155,27 @@ impl SwarmBoard {
                 Value::String(refusal.message().to_owned())
             ))
         })
+    }
+
+    /// Records `method`, called by `member` on the file at `location`, as
+    /// refused with `kind` before it reached the board (#2279: a structured
+    /// op's argument text or its running gate), `elapsed` after it began.
+    pub(super) fn refused(
+        &self,
+        location: BoardLocation,
+        member: &str,
+        method: &str,
+        kind: RefusalKind,
+        elapsed: Duration,
+    ) {
+        let handles = self.handles(location);
+        swarm_board_dispatch::refused(&handles, member, method, kind, elapsed);
+    }
+
+    /// How structured ops read and write member text on the file at
+    /// `location` (#2279): composition's codec.
+    pub(super) fn wire(&self, location: BoardLocation) -> BoardWire {
+        self.handles(location).wire
     }
 
     /// The handles for `location`: the ones built for the same file and

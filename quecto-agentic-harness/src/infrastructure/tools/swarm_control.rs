@@ -141,15 +141,43 @@ pub async fn after_execution(
     context: SwarmContext,
     before: &Value,
 ) -> Result<Vec<String>, DomainError> {
+    Ok(match lifecycle_after(context, before).await? {
+        AfterExecution::Notified(warnings) => warnings,
+        AfterExecution::Settled | AfterExecution::Unchanged => Vec::new(),
+    })
+}
+
+/// What the post-execution lifecycle did (#2279: a structured op records
+/// it).
+#[derive(Debug, PartialEq, Eq)]
+pub enum AfterExecution {
+    /// The run is no longer running: it was settled.
+    Settled,
+    /// The board changed while the run runs: the wake hints were sent, with
+    /// the delivery warnings.
+    Notified(Vec<String>),
+    /// Nothing changed.
+    Unchanged,
+}
+
+/// [`after_execution`], saying what it did: settle when the run is no
+/// longer running, else notify when the event cursor moved past
+/// `before["event_cursor"]`.
+pub async fn lifecycle_after(
+    context: SwarmContext,
+    before: &Value,
+) -> Result<AfterExecution, DomainError> {
     let after = execution_state(context.clone()).await?;
     if after["status"] != "running" {
         super::swarm_lifecycle::settle(context).await?;
-        return Ok(Vec::new());
+        return Ok(AfterExecution::Settled);
     }
     if after["event_cursor"] != before["event_cursor"] {
-        return Ok(super::swarm_lifecycle::notify(&context).await);
+        return Ok(AfterExecution::Notified(
+            super::swarm_lifecycle::notify(&context).await,
+        ));
     }
-    Ok(Vec::new())
+    Ok(AfterExecution::Unchanged)
 }
 
 fn optional_cursor(input: &Value, field: &str) -> Result<Option<u64>, DomainError> {

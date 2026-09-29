@@ -18,7 +18,7 @@ use quecto::composition::swarm::{
 use quecto::domain::swarm::BoardOpObservation;
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 use quecto::infrastructure::tools::swarm_board_dispatch::call;
-use quecto::infrastructure::tools::swarm_board_ops::member_arguments;
+use quecto::infrastructure::tools::swarm_board_ops::{member_arguments, wire_text};
 use quecto::infrastructure::workspace::checkout_paths::ResolvedCheckout;
 use serde_json::Value;
 
@@ -118,10 +118,16 @@ impl RustBoard {
     /// Also whether the call reached the dispatcher: a text refused there
     /// never does (the tool records that refusal itself).
     pub fn call_text(&self, member: &str, method: &str, args: &str, now: f64) -> (Outcome, bool) {
-        match member_arguments(args) {
+        match member_arguments(&self.handles.wire, args) {
             Ok(args) => (self.call(member, method, &args, now), true),
             Err(refusal) => (Outcome::Refused(refusal), false),
         }
+    }
+
+    /// `value` as the structured ops write an answer on the wire
+    /// (`swarm_board_ops::wire_text`, #2279).
+    pub fn wire_text(&self, value: &Value) -> String {
+        wire_text(&self.handles.wire, value).expect("a board answer is writable")
     }
 
     /// One board call as `member` at `now`.

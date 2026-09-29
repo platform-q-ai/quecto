@@ -8,7 +8,8 @@ use std::sync::{Arc, Mutex};
 use serde_json::{Value, json};
 
 use super::super::{member_arguments, wire_text};
-use super::{Recorded, answered, board, execute, refused};
+use super::{Recorded, answered, board, direct, execute, refused};
+use crate::composition::swarm::board_wire;
 use crate::domain::swarm::{BoardOpOutcome, RefusalKind};
 
 const UNREPRESENTABLE: &str = "arguments: not representable as a serde_json value: ";
@@ -43,14 +44,16 @@ async fn big_integers_non_finite_numbers_and_lone_surrogates_are_refused_before_
         ),
     ] {
         let content = refused(&context, text).await;
-        let expected = format!(
+        // Shaped as every board refusal reaches the member.
+        let expected = crate::domain::error::DomainError::Tool(format!(
             "swarm: {}",
             Value::String(format!("{UNREPRESENTABLE}{reason}"))
-        );
+        ))
+        .to_string();
         assert_eq!(content, expected, "{text}");
     }
     assert_eq!(
-        context.call("tasks", json!([])).unwrap(),
+        direct(&context, "tasks", json!([])).unwrap(),
         json!([]),
         "no call reached the board"
     );
@@ -72,22 +75,27 @@ async fn minus_zero_is_the_integer_zero() {
 
 #[test]
 fn member_arguments_are_read_as_json_loads_reads_them() {
-    let read =
-        member_arguments(r#"{"a": -0, "b": 1E2, "c": 12345678901234567890, "a": 3}"#).unwrap();
+    let read = member_arguments(
+        &board_wire(),
+        r#"{"a": -0, "b": 1E2, "c": 12345678901234567890, "a": 3}"#,
+    )
+    .unwrap();
     assert_eq!(
         read.to_string(),
         r#"{"a":3,"b":100.0,"c":12345678901234567890}"#
     );
     assert_eq!(
-        member_arguments("[-0]").unwrap().to_string(),
+        member_arguments(&board_wire(), "[-0]").unwrap().to_string(),
         "[0]",
         "-0 is the integer 0"
     );
     assert_eq!(
-        member_arguments("[1e400]").unwrap_err().to_string(),
+        member_arguments(&board_wire(), "[1e400]")
+            .unwrap_err()
+            .to_string(),
         format!("{UNREPRESENTABLE}Infinity has no JSON number form")
     );
-    assert!(member_arguments("{").is_err());
+    assert!(member_arguments(&board_wire(), "{").is_err());
 }
 
 #[test]
@@ -95,21 +103,28 @@ fn the_wire_text_is_python_json_dumps() {
     let value = json!({"b": 1e16, "a": 1e-7, "c": "\u{e9}t\u{e9} \u{1f600}", "d": [1, 2.5, null],
         "e": {}, "f": true});
     assert_eq!(
-        wire_text(&value),
+        wire_text(&board_wire(), &value).unwrap(),
         r#"{"b": 1e+16, "a": 1e-07, "c": "\u00e9t\u00e9 \ud83d\ude00", "d": [1, 2.5, null], "e": {}, "f": true}"#
     );
-    assert_eq!(wire_text(&Value::Null), "null");
+    assert_eq!(wire_text(&board_wire(), &Value::Null).unwrap(), "null");
 }
 
 #[tokio::test]
 async fn an_answer_reaches_the_member_as_python_writes_it() {
     let (_directory, context) = board();
-    context
-        .call("task_create", json!(["r1", "\u{e9}t\u{e9}", ["pass"]]))
-        .unwrap();
+    direct(
+        &context,
+        "task_create",
+        json!(["r1", "\u{e9}t\u{e9}", ["pass"]]),
+    )
+    .unwrap();
     let result = execute(&context, r#"{"op":"task","task_id":1}"#).await;
     assert!(!result.is_error, "{}", result.content);
-    let expected = wire_text(&context.call("task", json!([1])).unwrap());
+    let expected = wire_text(
+        &board_wire(),
+        &direct(&context, "task", json!([1])).unwrap(),
+    )
+    .unwrap();
     assert_eq!(result.content, expected);
     assert!(
         result.content.starts_with(r#"{"id": 1, "#),
@@ -152,13 +167,12 @@ impl<'writer> tracing_subscriber::fmt::MakeWriter<'writer> for CapturedLog {
     }
 }
 
-/// Each structured op leaves its `swarm_op` records in the event log and
-/// one `tracing` record on the board's target (op, gate, lifecycle,
-/// sizes), a refusal before the board included; none carries argument
-/// text.
-#[tokio::test]
-async fn structured_ops_are_recorded_without_argument_text() {
-    let secret = "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const SECRET: &str = "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
+/// A served send, arguments refused before the board, and the running
+/// gate's refusal, on a fresh board recording in its event log, under a
+/// `fmt` subscriber: the records and the `tracing` text.
+async fn recorded_ops() -> (Vec<crate::domain::swarm::BoardOpObservation>, String) {
     let (_directory, context) = board();
     let log = Arc::new(Recorded::default());
     assert!(context.board.record_in(log.clone()));
@@ -172,18 +186,40 @@ async fn structured_ops_are_recorded_without_argument_text() {
     tracing::callsite::rebuild_interest_cache();
     answered(
         &context,
-        json!({"op": "send", "request": secret, "recipient": "coordinator",
-            "body": format!("key {secret}")}),
+        json!({"op": "send", "request": SECRET, "recipient": "coordinator",
+            "body": format!("key {SECRET}")}),
     )
     .await;
-    let text = format!(r#"{{"op":"claim","task_id":1e400,"note":"{secret}"}}"#);
+    let text = format!(r#"{{"op":"claim","task_id":1e400,"note":"{SECRET}"}}"#);
     refused(&context, &text).await;
-    context.pause("hold").unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| context.pause("hold")).unwrap();
     refused(&context, r#"{"op":"inbox"}"#).await;
     drop(guard);
-    let records = log.take();
+    let traced = captured.0.lock().unwrap().clone();
+    (log.take(), traced)
+}
+
+/// Each structured op leaves its `swarm_op` records in the event log and
+/// one `tracing` record on the board's target (op, gate, lifecycle,
+/// sizes), a refusal before the board included; none carries argument
+/// text.
+///
+/// `tracing`'s global level hint is rebuilt without a lock whenever any
+/// test thread creates a subscriber, so a concurrent test can filter these
+/// events out for a moment (see `swarm_board_dispatch_tests::captured`): a
+/// capture missing records reruns, at most five times.
+#[tokio::test]
+async fn structured_ops_are_recorded_without_argument_text() {
+    let marker = "swarm structured op";
+    let (mut records, mut traced) = recorded_ops().await;
+    for _ in 0..4 {
+        if traced.matches(marker).count() >= 3 {
+            break;
+        }
+        (records, traced) = recorded_ops().await;
+    }
     let written = serde_json::to_string(&records).unwrap();
-    assert!(!written.contains(secret), "{written}");
+    assert!(!written.contains(SECRET), "{written}");
     let outcome = |op: &str| {
         records
             .iter()
@@ -208,11 +244,10 @@ async fn structured_ops_are_recorded_without_argument_text() {
         }],
         "the running gate's refusal is recorded as the op's"
     );
-    let traced = captured.0.lock().unwrap().clone();
-    assert!(!traced.contains(secret), "{traced}");
+    assert!(!traced.contains(SECRET), "{traced}");
     let ops: Vec<&str> = traced
         .lines()
-        .filter(|line| line.contains("swarm structured op"))
+        .filter(|line| line.contains(marker))
         .collect();
     assert_eq!(ops.len(), 3, "{traced}");
     for (line, expected) in ops.iter().zip([

@@ -16,14 +16,14 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{run_both_wire, st
 /// page, the inbox, a control receipt and the usage report.
 #[test]
 fn board_answers_are_python_s_wire_text() {
-    let extra = r#"{"z": 1e16, "a": [1e-07, 0.1, -0.0, 2.5e-300, 18446744073709551615, -0], "é": "ü 😀", "k": {"y": null, "b": true}}"#;
+    let extra = r#"{"z": 1e16, "a": [1e-07, 0.1, -0.0, 2.5e-300, 18446744073709551615, -0], "\u00e9": "\u00fc\u2028\ud83d\ude00", "k": {"y": null, "b": true}}"#;
     run_both_wire(&[
         step_text("parent", "create_run", &create_text(extra), NOW),
         at(1.0, "parent", "summary", json!([])),
         step_text(
             "parent",
             "task_create",
-            r#"["r1", "naïve 😀", ["tests \"pass\""], []]"#,
+            r#"["r1", "na\u00efve \ud83d\ude00", ["tests \"pass\""], []]"#,
             NOW + 2.0,
         ),
         at(3.0, "parent", "claim", json!([1])),
@@ -32,7 +32,7 @@ fn board_answers_are_python_s_wire_text() {
         step_text(
             "parent",
             "send",
-            r#"{"request": "m1", "recipient": "parent", "body": "café\n\ttab", "revision": "Ré"}"#,
+            r#"{"request": "m1", "recipient": "parent", "body": "caf\u00e9\n\ttab", "revision": "R\u00e9"}"#,
             NOW + 6.0,
         ),
         at(7.0, "parent", "inbox", json!([])),
