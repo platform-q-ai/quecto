@@ -476,6 +476,7 @@ impl SpawnTool {
             DomainError::Tool(reason) => reason,
             other => other.to_string(),
         })?;
+        super::spawn_launch_args::refuse_unserved_backend(config.backend)?;
         Ok(config)
     }
 

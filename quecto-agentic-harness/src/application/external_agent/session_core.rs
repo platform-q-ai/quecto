@@ -18,7 +18,13 @@
 //! session-scoped failure, a zeroed or a delivery-failure result: none is
 //! followed by another result for it). Until claude has named them (an
 //! older CLI) a result answers everything written, so no steer is taken:
-//! its own result could not be told from the running turn's.
+//! its own result could not be told from the running turn's. claude's
+//! `system/init`, which opens its first turn, says it sooner: a CLI at or
+//! past the version verified to name them names them from its first
+//! result on. Nor is a steer taken from a CLI whose interrupt does not
+//! withdraw the user turns queued behind the running turn
+//! (`interrupt_cancel_queued_v1`): one still queued at an abort would
+//! survive it and run as a turn nobody bounds.
 //!
 //! Invariants, asserted: at most one turn is in flight (a turn begins only
 //! from `Idle`), turn ordinals strictly increase, a turn ends only when
@@ -45,17 +51,22 @@ pub(crate) struct SessionCore {
     pub(crate) projector: Projector,
     follow_ups: VecDeque<String>,
     last_turn: u64,
-    /// The last event was a skipped line of the running turn: it may have
-    /// been its `result`. Any other event disarms it.
-    skipped_last: bool,
+    /// The last event was a skipped line of the running turn (it may have
+    /// been its `result`): when the grace for it runs out. Any other event
+    /// disarms it.
+    skipped_last: Option<AgentClockInstant>,
     /// User turns written and not yet named by a result or withdrawn.
     owed: BTreeSet<UserTurnId>,
     /// User turns written into the running turn: its prompt and steers.
     in_turn: usize,
     /// Whether the agent names the turns its results consumed: learnt from
-    /// the first result that does. Until then (an older CLI) a result is
-    /// taken to answer everything written.
+    /// its init's version, or from the first result that does. Until then
+    /// (an older CLI) a result is taken to answer everything written.
+    /// Never unlearnt.
     names_turns: bool,
+    /// Whether the agent's interrupt withdraws the queued user turns:
+    /// learnt from its init's capabilities. Never unlearnt.
+    cancels_queued: bool,
     /// The outcome of a result that did not end the turn (something was
     /// still owed): reported when the turn ends on a withdrawal.
     held: Option<TurnOutcome>,
@@ -91,8 +102,9 @@ pub(crate) enum AbortDecision {
 pub(crate) enum Wait {
     /// Only the next event.
     Event,
-    /// The skipped-line grace: a skipped line was the last event.
-    Grace,
+    /// The skipped-line grace, which runs out at this instant: a skipped
+    /// line was the last event.
+    Grace(AgentClockInstant),
     /// The interrupted turn's deadline.
     Until(AgentClockInstant),
 }
@@ -122,7 +134,7 @@ impl SessionCore {
     pub(crate) fn wait(&self) -> Wait {
         match (self.phase, self.deadline, self.skipped_last) {
             (SessionPhase::Interrupting { .. }, Some(deadline), _) => Wait::Until(deadline),
-            (SessionPhase::Busy { .. }, _, true) => Wait::Grace,
+            (SessionPhase::Busy { .. }, _, Some(grace_end)) => Wait::Grace(grace_end),
             _ => Wait::Event,
         }
     }
@@ -148,11 +160,13 @@ impl SessionCore {
             (SessionPhase::Busy { turn }, Some(StreamingBehavior::Steer)) => {
                 match (
                     self.names_turns,
+                    self.cancels_queued,
                     self.in_turn < USER_TURNS_PER_TURN_CAPACITY,
                 ) {
-                    (true, true) => Ok(Admission::Write(PromptAccepted::Steered { turn })),
-                    (true, false) => Err(SessionRefusal::QueueFull),
-                    (false, _) => Err(SessionRefusal::SteerUnavailable),
+                    (true, true, true) => Ok(Admission::Write(PromptAccepted::Steered { turn })),
+                    (true, true, false) => Err(SessionRefusal::QueueFull),
+                    (true, false, _) => Err(SessionRefusal::SteerNotWithdrawable),
+                    (false, _, _) => Err(SessionRefusal::SteerUnavailable),
                 }
             }
             (SessionPhase::Interrupting { .. }, Some(StreamingBehavior::Steer)) => {
@@ -216,7 +230,7 @@ impl SessionCore {
         let turn = self.last_turn + 1;
         assert!(turn > self.last_turn, "turn ordinals strictly increase");
         self.last_turn = turn;
-        self.skipped_last = false;
+        self.skipped_last = None;
         self.in_turn = 0;
         self.phase = SessionPhase::Busy { turn };
         turn
@@ -230,7 +244,7 @@ impl SessionCore {
             "a turn ends only when nothing is owed"
         );
         self.phase = SessionPhase::Idle;
-        self.skipped_last = false;
+        self.skipped_last = None;
         self.held = None;
         self.deadline = None;
         if let Some(text) = self.follow_ups.pop_front() {
@@ -243,12 +257,21 @@ impl SessionCore {
         }
     }
 
-    /// Fold one event of the stream.
-    pub(crate) fn fold(&mut self, event: &ExternalAgentEvent) -> Folded {
+    /// Fold one event of the stream; a skipped line's grace, if this is
+    /// one, runs out at `grace_end`.
+    pub(crate) fn fold(
+        &mut self,
+        event: &ExternalAgentEvent,
+        grace_end: AgentClockInstant,
+    ) -> Folded {
         let turn = self.running_turn();
         let mut folded = Folded::default();
-        self.skipped_last = false;
+        self.skipped_last = None;
         match event {
+            ExternalAgentEvent::Init(init) => {
+                self.names_turns |= init.names_turns();
+                self.cancels_queued |= init.cancels_queued();
+            }
             ExternalAgentEvent::AssistantBlock {
                 block: AssistantContent::ToolUse { name, .. },
                 ..
@@ -257,7 +280,7 @@ impl SessionCore {
                 tool: recorded_tool_name(name),
             }),
             ExternalAgentEvent::LineSkipped(line) => {
-                self.skipped_last = turn.is_some();
+                self.skipped_last = turn.map(|_| grace_end);
                 folded.records.push(SessionRecord::LineSkipped {
                     turn,
                     bytes: line.bytes,
@@ -275,7 +298,9 @@ impl SessionCore {
                     }
                 }
             }
-            ExternalAgentEvent::InterruptAnswered(receipt) => {
+            // Only an accepted interrupt withdrew anything: a refused one
+            // leaves every user turn owed, whatever its answer lists.
+            ExternalAgentEvent::InterruptAnswered(receipt) if receipt.accepted => {
                 for id in &receipt.cancelled {
                     self.owed.remove(&UserTurnId(id.clone()));
                 }
@@ -296,6 +321,11 @@ impl SessionCore {
     /// success is a turn of claude's own (it consumed nothing of the
     /// member's): any other ends the running turn, as nothing more will
     /// answer what it owes.
+    ///
+    /// Revisit when members get tools (#2291): a failed turn of claude's
+    /// own (a background task's notification that errors) is id-less too,
+    /// and this ends the member's running turn early on it. With no tools
+    /// claude starts no turn of its own, so none arises today.
     fn id_less_result(&mut self, turn: Option<u64>, is_error: Option<bool>, folded: &mut Folded) {
         let Some(turn) = turn else {
             return;
@@ -335,7 +365,9 @@ impl SessionCore {
             }
             // Only an interrupt is answered: everything it owed was
             // withdrawn, so no result will come.
-            (ExternalAgentEvent::InterruptAnswered(_), true) if interrupting => {
+            (ExternalAgentEvent::InterruptAnswered(receipt), true)
+                if interrupting && receipt.accepted =>
+            {
                 step.turn_end = self.held.take();
                 self.end_with(turn, step, folded);
             }
@@ -356,11 +388,11 @@ impl SessionCore {
         self.end_turn(folded);
     }
 
-    /// The running turn to give up, if its last event was a skipped line
-    /// (the stream then stayed quiet for the grace).
-    pub(crate) fn lost_turn(&self) -> Option<u64> {
+    /// The running turn to give up at `now`, if its last event was a
+    /// skipped line whose grace has run out (the stream stayed quiet).
+    pub(crate) fn lost_turn(&self, now: AgentClockInstant) -> Option<u64> {
         match (self.phase, self.skipped_last) {
-            (SessionPhase::Busy { turn }, true) => Some(turn),
+            (SessionPhase::Busy { turn }, Some(grace_end)) if now >= grace_end => Some(turn),
             _ => None,
         }
     }
@@ -373,7 +405,7 @@ impl SessionCore {
         match self.phase {
             SessionPhase::Busy { turn: running } if running == turn => {
                 self.phase = SessionPhase::Interrupting { turn };
-                self.skipped_last = false;
+                self.skipped_last = None;
                 self.deadline = Some(deadline);
                 true
             }
