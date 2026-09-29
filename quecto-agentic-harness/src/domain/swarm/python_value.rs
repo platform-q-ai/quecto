@@ -177,12 +177,16 @@ fn not_printed(character: char) -> bool {
 /// `character`: a binary search of the generated [`UNASSIGNED`] ranges.
 fn unassigned(character: char) -> bool {
     let point = u32::from(character);
-    let (ranges, rest) = UNASSIGNED.as_chunks::<2>();
-    debug_assert!(rest.is_empty(), "the table holds (first, last) pairs");
-    // The ranges are sorted and disjoint: the first whose last point is
-    // not below `point` is the only one that can hold it.
-    let at = ranges.partition_point(|&[_, last]| last < point);
-    ranges.get(at).is_some_and(|&[first, _]| first <= point)
+    debug_assert!(
+        UNASSIGNED.len() % 2 == 0,
+        "the table holds (first, last) pairs"
+    );
+    // The bounds are sorted (each range's first, then its last, below the
+    // next range's first). The first bound not below `point` is a range's
+    // last (an odd index) only when `point` is inside that range, or its
+    // first only when that first is `point`.
+    let at = UNASSIGNED.partition_point(|&bound| bound < point);
+    at % 2 == 1 || UNASSIGNED.get(at) == Some(&point)
 }
 
 /// The code points `str.isprintable` refuses in every Unicode version.
