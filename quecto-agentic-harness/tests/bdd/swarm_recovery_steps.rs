@@ -688,21 +688,14 @@ fn owner_silent(world: &mut QuectoWorld, seconds: u64) {
     let database = quecto::infrastructure::tools::swarm_bridge::store_database(
         world.swarm_workspace.as_ref().unwrap(),
     );
-    let output = std::process::Command::new("python3")
-        .args([
-            "-I",
-            "-c",
-            "import sqlite3, sys\ndb = sqlite3.connect(sys.argv[1])\ndb.execute(\"UPDATE events SET time = time - ? WHERE actor = 'worker'\", (float(sys.argv[2]),))\ndb.commit()",
-            database.to_str().unwrap(),
-            &seconds.to_string(),
-        ])
-        .output()
-        .expect("python3 backdates the owner's events");
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let board = rusqlite::Connection::open(&database).expect("open the board");
+    let backdated = board
+        .execute(
+            "UPDATE events SET time = time - ?1 WHERE actor = 'worker'",
+            [seconds as f64],
+        )
+        .expect("backdate the owner's events");
+    assert!(backdated > 0, "the owner has board events to backdate");
 }
 
 #[then(

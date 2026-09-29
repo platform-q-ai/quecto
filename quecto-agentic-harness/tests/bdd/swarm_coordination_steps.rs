@@ -440,15 +440,13 @@ fn deadline_passed(world: &mut QuectoWorld) {
         .unwrap()
         .join(".quecto")
         .join("swarm.sqlite");
-    let status = std::process::Command::new("python3")
-        .args([
-            "-c",
-            "import sqlite3,sys; db=sqlite3.connect(sys.argv[1]); db.execute('UPDATE run SET deadline=1'); db.commit()",
-        ])
-        .arg(&store)
-        .status()
-        .unwrap();
-    assert!(status.success());
+    let board = rusqlite::Connection::open(&store).unwrap();
+    assert_eq!(
+        board.execute("UPDATE run SET deadline=1", []).unwrap(),
+        1,
+        "the board holds one run"
+    );
+    drop(board);
     run(world, json!({"op":"summary"}));
 }
 
