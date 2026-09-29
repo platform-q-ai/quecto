@@ -14,6 +14,7 @@ pub mod context_pruning;
 pub mod durable_prefix;
 pub mod environments;
 pub mod extensions;
+pub mod external_agent;
 pub mod ports;
 pub mod provider_runtime;
 pub mod providers;

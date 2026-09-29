@@ -5704,6 +5704,74 @@ fn environments_application_depends_only_inward() {
     }
 }
 
+/// The external-agent application context (#2285) names only the domain,
+/// its own capability, pure `std` and the opaque `serde_json::Value`: an
+/// allowlist. Relative paths are resolved first, so `super::` cannot
+/// climb out; a later slice widens it only by named contracts.
+fn external_agent_application_dependency_allowed(path: &str) -> bool {
+    let parts: Vec<_> = path.split("::").collect();
+    match parts.as_slice() {
+        ["crate", "domain", ..] | ["crate", "application", "external_agent", ..] => true,
+        ["serde_json", "Value"] => true,
+        [
+            "std",
+            "collections" | "fmt" | "cmp" | "mem" | "ops" | "iter" | "str" | "string" | "vec"
+            | "option" | "result" | "num" | "borrow" | "convert" | "default",
+            ..,
+        ] => true,
+        // A name already in scope (prelude, local item or checked import)
+        // and an associated item of one (`Self::…`, `MessageRole::User`).
+        [single] => single.starts_with(char::is_alphabetic),
+        [first, ..] => first.starts_with(|c: char| c.is_ascii_uppercase()),
+        [] => false,
+    }
+}
+
+#[test]
+fn external_agent_application_depends_only_inward() {
+    let mut files = Vec::new();
+    collect_rs_files(Path::new("src/application/external_agent"), &mut files);
+    assert!(!files.is_empty(), "the external_agent context has sources");
+    for file in &files {
+        let (path, source) = file.split_once(":\n").expect("a file entry");
+        let refused: Vec<_> = dependency_paths_at(path, source)
+            .unwrap_or_else(|| panic!("parse {path}"))
+            .into_iter()
+            .filter(|dep| !external_agent_application_dependency_allowed(dep))
+            .collect();
+        assert!(refused.is_empty(), "{path} depends outward: {refused:?}");
+    }
+    for dep in [
+        "crate::infrastructure::external_agents::claude_code::stream_json::StreamJsonDecoder",
+        "crate::interface::cli::protocol::SessionStats",
+        "crate::application::subagents::ports::DirectChildRouting",
+        "tokio::process::Command",
+        "std::process::Command",
+        "std::fs::read",
+        "serde_json::from_str",
+        "tracing::warn",
+        "libc::kill",
+    ] {
+        assert!(
+            !external_agent_application_dependency_allowed(dep),
+            "external_agent guard must reject {dep}"
+        );
+    }
+    for dep in [
+        "crate::domain::external_agent::stream::ExternalAgentEvent",
+        "crate::application::external_agent::dto::ProjectedMessage",
+        "serde_json::Value",
+        "std::collections::VecDeque",
+        "String",
+        "Self::Idle",
+    ] {
+        assert!(
+            external_agent_application_dependency_allowed(dep),
+            "external_agent guard must accept {dep}"
+        );
+    }
+}
+
 /// The domain keeps only pure environment entities, transitions and
 /// retention decisions (#1939): no use case, no effect port, no async, no
 /// I/O vocabulary. The orchestration that used to live in
