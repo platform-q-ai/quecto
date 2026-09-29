@@ -3,9 +3,7 @@
 `swarm` is a compiled native tool: members coordinate through structured board
 ops (`{"op":"claim","task_id":3}`), each served in-process by the Rust board
 over the run's SQLite file (ADR-0030). Members use the `bash` tool for Git,
-builds, tests and any other computation. `tools.swarm` (with its old alias
-`tools.python_lab`) still configures the legacy Python execution op, which
-issue #2282 removes; members are not taught it and should not use it.
+builds, tests and any other computation.
 
 ## Start from the TUI or master agent
 

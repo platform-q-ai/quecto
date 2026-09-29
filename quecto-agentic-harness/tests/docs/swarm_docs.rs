@@ -173,3 +173,31 @@ fn documented_files() -> BTreeSet<String> {
 fn the_subagents_allowlist_table_is_the_architecture_allowlist() {
     assert_eq!(documented_files(), allowlisted_files());
 }
+
+/// #2282 review L1: the Python workbench and its `tools.swarm` limits are
+/// gone, so no operator-facing page names them: the README, the swarm and
+/// subagents manuals and every page the `docs` tool embeds. Only the ADRs
+/// keep the history.
+#[test]
+fn no_operator_doc_names_the_removed_workbench() {
+    let embeds = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/docs-tool-embeds");
+    let mut pages: Vec<String> = std::fs::read_dir(&embeds)
+        .expect("read the docs-tool embeds")
+        .map(|entry| entry.expect("an embed entry").path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "md"))
+        .map(|path| {
+            format!(
+                "docs/docs-tool-embeds/{}",
+                path.file_name().unwrap().to_string_lossy()
+            )
+        })
+        .collect();
+    assert!(pages.len() > 5, "the embeds must be scanned: {pages:?}");
+    pages.extend(["README.md", "docs/swarm.md", "docs/subagents.md"].map(str::to_owned));
+    for page in &pages {
+        let text = read_repo_file(page);
+        for removed in ["tools.swarm", "python_lab", "op=run", "ExecutionScope"] {
+            assert!(!text.contains(removed), "{page} still names `{removed}`");
+        }
+    }
+}
