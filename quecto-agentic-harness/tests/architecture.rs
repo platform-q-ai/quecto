@@ -1273,6 +1273,10 @@ const SWARM_BOARD_USE_CASES: &[&str] = &[
     // Wake notifications (#2276).
     "AcceptWake",
     "ClaimNotifications",
+    // Loss and death recording (#2277).
+    "ConfirmMemberDead",
+    "LoseCoordinator",
+    "QuarantineMember",
 ];
 
 /// The board DTOs infrastructure may name (#2270, epic #2265; each later
@@ -1377,6 +1381,14 @@ const SWARM_BOARD_DTOS: &[&str] = &[
     "NotificationBatch",
     "NotificationCursor",
     "WakeAccepted",
+    // Loss and death recording (#2277).
+    "ConfirmMemberDeadRequest",
+    "CoordinatorLoss",
+    "DeathConfirmation",
+    "LoseCoordinatorRequest",
+    "Quarantine",
+    "QuarantineMemberRequest",
+    "ScopeObservation",
 ];
 
 fn application_path_allowed(path: &str) -> bool {

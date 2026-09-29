@@ -95,6 +95,8 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   `verify_task` as a refusal, where Python raises or iterates the value.
 /// - #2276's `outside_edited_messages`, `outside_edited_wake_records` and
 ///   `wake_target_sort_error_order`: see `swarm_board_diff_loose_messages.rs`.
+/// - #2277's `outside_edited_loss_records`: see
+///   `swarm_board_diff_loose_loss.rs`.
 /// - `outside_edited_contract` (#2273, listed case by case and pinned in
 ///   `swarm_board_diff_loose_completion.rs`): a run contract, a criterion
 ///   or a task's evidence only a file edited outside the board holds
@@ -134,8 +136,11 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   admission retry. The membership methods (#2271) keep it: `_activate`
 ///   and `_record_launch` take such a member's reservation as stale, where
 ///   Python goes on; and so does `send` (#2276), refusing such a recipient
-///   as out of the swarm, where Python sends to it.
-pub const PERMITTED_DIVERGENCES: [&str; 14] = [
+///   as out of the swarm, where Python sends to it. So do the loss ops
+///   (#2277, pinned in `swarm_board_diff_loose_loss.rs`): such a member is
+///   already lost and its death already confirmed, where Python observes
+///   or records its loss and confirms its death.
+pub const PERMITTED_DIVERGENCES: [&str; 15] = [
     "arguments_beyond_a_serde_value",
     "integer_beyond_i64_is_refused",
     "multi_conflict_names_the_smallest_path",
@@ -144,6 +149,7 @@ pub const PERMITTED_DIVERGENCES: [&str; 14] = [
     "outside_edited_contract",
     "outside_edited_control_records",
     "outside_edited_evidence",
+    "outside_edited_loss_records",
     "outside_edited_messages",
     "outside_edited_task_columns",
     "outside_edited_wake_records",
@@ -572,11 +578,13 @@ fn every_permitted_divergence_is_pinned_by_name() {
     }
 }
 
-/// The only files whose tests may expect a difference: this one, #2275's
-/// and #2276's siblings, and the submission scenarios holding a [`SECOND_PINS`] test.
-const PIN_TABLE_FILES: [&str; 4] = [
+/// The only files whose tests may expect a difference: this one, #2275's,
+/// #2276's and #2277's siblings, and the submission scenarios holding a
+/// [`SECOND_PINS`] test.
+const PIN_TABLE_FILES: [&str; 5] = [
     include_str!("swarm_board_diff_loose.rs"),
     include_str!("swarm_board_diff_loose_files.rs"),
+    include_str!("swarm_board_diff_loose_loss.rs"),
     include_str!("swarm_board_diff_loose_messages.rs"),
     include_str!("swarm_board_diff_submissions.rs"),
 ];

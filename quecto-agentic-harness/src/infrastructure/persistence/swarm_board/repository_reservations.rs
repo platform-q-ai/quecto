@@ -94,6 +94,14 @@ impl BoardFiles for SqliteBoard<'_> {
             .map(|_| ())
     }
 
+    fn owner_file_count(&self, owner: &Value) -> Result<i64, BoardError> {
+        self.owned_file_count(owner)
+    }
+
+    fn delete_owner_files(&self, owner: &Value) -> Result<(), BoardError> {
+        self.delete_owned_files(owner)
+    }
+
     fn file_page(&self, offset: u64, limit: i64) -> Result<Vec<FileRow>, BoardError> {
         let parameters = [SqlValue::Integer(limit), loose(2, &Value::from(offset))?];
         let mut statement = binding::bound_statement(

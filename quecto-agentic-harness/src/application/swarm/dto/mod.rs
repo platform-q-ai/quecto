@@ -7,6 +7,7 @@ pub mod completion;
 pub mod control;
 pub mod files;
 pub mod location;
+pub mod loss;
 pub mod measure;
 pub mod membership;
 pub mod messages;
@@ -30,6 +31,10 @@ pub use files::{
     ReleaseFilesRequest, Reservation, ReserveFilesRequest, Revocation, RevokeTaskRequest, Revoked,
 };
 pub use location::BoardLocation;
+pub use loss::{
+    ConfirmMemberDeadRequest, CoordinatorLoss, DeathConfirmation, LoseCoordinatorRequest,
+    Quarantine, QuarantineMemberRequest, ScopeObservation,
+};
 pub use measure::{CallMeasure, RunRoles};
 pub use membership::{
     ActivateMemberRequest, AdmissionDecision, AdmitMemberRequest, AdmittedMember, JoinRunRequest,

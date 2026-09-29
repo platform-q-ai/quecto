@@ -144,6 +144,10 @@ impl BoardTasks for SqliteBoard<'_> {
             ),
         }
     }
+
+    fn block_owned_tasks(&self, owner: &Value, blocker: &str) -> Result<(), BoardError> {
+        self.block_owned(owner, blocker)
+    }
 }
 
 impl BoardRequests for SqliteBoard<'_> {

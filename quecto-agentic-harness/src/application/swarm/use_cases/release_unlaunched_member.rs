@@ -41,7 +41,7 @@ impl ReleaseUnlaunchedMember {
                         "only an unlaunched reservation may be released",
                     ));
                 }
-                transaction.mark_member_dead_unlaunched(member)?;
+                transaction.mark_member_dead(member)?;
                 transaction.event(
                     actor,
                     self.clock.now_seconds(),

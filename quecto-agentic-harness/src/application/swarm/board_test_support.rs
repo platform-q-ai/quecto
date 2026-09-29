@@ -16,8 +16,8 @@ pub use self::messages::StoredMessage;
 pub use self::tasks::{StoredFile, StoredRequest, stored_task};
 use crate::application::swarm::dto::{
     AmendedContract, EvidenceEntry, LaunchIdentity, MemberClaimCounts, MemberRow, MemberStatusRow,
-    NewMember, NewRequestUsage, NewRun, RunContract, RunOwnerRow, RunStatusRow, StoredContract,
-    TaskRow, UsageReport,
+    NewMember, NewRequestUsage, NewRun, RunContract, RunOwnerRow, RunStatusRow, ScopeObservation,
+    StoredContract, TaskRow, UsageReport,
 };
 use crate::application::swarm::ports::{
     BoardEncoding, BoardEvents, BoardMembers, BoardRepository, BoardRuns, BoardWork, Clock,
@@ -217,6 +217,14 @@ impl BoardRuns for MemoryTransaction<'_> {
         self.run_mut(|run| {
             run.outcome = None;
             run.outcome_reason = None;
+        });
+        Ok(())
+    }
+
+    fn hold_failed(&self, reason: &str) -> Result<(), BoardError> {
+        self.note("hold_failed".to_owned());
+        self.run_mut(|run| {
+            (run.outcome, run.outcome_reason) = (Some("failed".into()), Some(reason.into()))
         });
         Ok(())
     }
@@ -434,8 +442,8 @@ impl BoardMembers for MemoryTransaction<'_> {
         Ok(())
     }
 
-    fn mark_member_dead_unlaunched(&self, id: &Value) -> Result<(), BoardError> {
-        self.note(format!("mark_member_dead_unlaunched {}", shown(id)));
+    fn mark_member_dead(&self, id: &Value) -> Result<(), BoardError> {
+        self.note(format!("mark_member_dead {}", shown(id)));
         self.update(id, |row| set(row, "status", Value::from("dead")));
         Ok(())
     }
@@ -450,6 +458,17 @@ impl BoardMembers for MemoryTransaction<'_> {
 
     fn lost_members(&self, members: &[&str]) -> Result<Vec<String>, BoardError> {
         Ok(control::lost_members(&self.state.borrow().events, members))
+    }
+
+    fn member_launcher(&self, id: &Value) -> Result<Option<Option<String>>, BoardError> {
+        Ok(loss::launcher(&self.state.borrow().members, id))
+    }
+
+    fn lost_after_activation(&self, member: &Value) -> Result<bool, BoardError> {
+        Ok(loss::lost_after_activation(
+            &self.state.borrow().events,
+            member,
+        ))
     }
 }
 
@@ -500,6 +519,10 @@ impl BoardEvents for MemoryTransaction<'_> {
             detail: detail.clone(),
         });
         Ok(())
+    }
+
+    fn scope_observations(&self) -> Result<Vec<ScopeObservation>, BoardError> {
+        Ok(loss::scope_observations(&self.state.borrow().events))
     }
 
     fn control_generation(&self) -> Result<i64, BoardError> {
@@ -576,6 +599,9 @@ mod messages;
 
 #[path = "board_test_support_wakes.rs"]
 mod wakes;
+
+#[path = "board_test_support_loss.rs"]
+mod loss;
 
 /// Readings in order, then the last one forever.
 pub struct SteppingClock {
