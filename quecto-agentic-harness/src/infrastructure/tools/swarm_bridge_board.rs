@@ -133,10 +133,12 @@ impl SwarmBoard {
     /// Records every later call in the session's audit `log` when the
     /// event log is on (`enabled`) and this board was given composition's
     /// `session_log`; whether it now records there. Otherwise the board
-    /// records nothing from now on, and what it held is dropped; a board
-    /// without `session_log` is left as it is.
+    /// records nothing from now on, and what it held is dropped: a board
+    /// without `session_log` can never record in a session's log, so it
+    /// stops too (#2313 review L6), rather than measure and hold forever.
     pub fn record_in_session(&self, enabled: bool, log: &AuditLog) -> bool {
         let Some(build) = self.shared.session_log else {
+            self.stop_recording();
             return false;
         };
         match build(enabled, log) {
