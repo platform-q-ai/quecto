@@ -1294,8 +1294,9 @@ sat *before* the preflight, so `quecto container doctor` could never have
 reported on it. Pin a digest in `--image` if you want one.
 
 **Image contents.** The starter is tooling-neutral: a digest-pinned Debian
-trixie base with a shell, Git/GitHub, search (`ripgrep`, `fd`), `jq`, Python
-and a C toolchain for native dependencies — no language toolchain and no
+trixie base with a shell, Git/GitHub, search (`ripgrep`, `fd`), `jq` and a
+C toolchain for native dependencies — no language toolchain (Python
+included: the harness needs none, #2283) and no
 `ai.quecto.required-tools` label. It ends with a commented section showing
 where the project's toolchain and that label go. This repository's own
 container is the worked example: `.quecto/containers/standard/Containerfile`

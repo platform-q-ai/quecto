@@ -469,7 +469,7 @@ fn the_starter_containerfile_is_tooling_neutral() {
         "RUN apt-get update \
          && apt-get install --no-install-recommends --yes \
          bash build-essential ca-certificates coreutils curl fd-find findutils \
-         git gh grep jq less openssh-client procps python3 python3-venv ripgrep sed \
+         git gh grep jq less openssh-client procps ripgrep sed \
          && rm -rf /var/lib/apt/lists/* \
          && ln -sf /usr/bin/fdfind /usr/local/bin/fd",
         "ENTRYPOINT []",

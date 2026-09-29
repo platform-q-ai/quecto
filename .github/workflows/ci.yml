@@ -105,13 +105,6 @@ jobs:
           ln -sf "$(command -v fdfind)" "$HOME/.local/bin/fd"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/fd" --version
-      # The swarm board JSON codec's differential test (#2268) compares
-      # json.loads error text, which is CPython >= 3.13's (3.13 added the
-      # "Illegal trailing comma" messages); pin it rather than take the
-      # runner's python3.
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
       - name: All workspace unit and integration tests except sharded BDD targets
         # One feature unification for every invocation. Cargo resolves
         # dependency features over the packages whose targets it builds, so a

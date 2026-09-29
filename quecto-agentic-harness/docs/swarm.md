@@ -540,9 +540,13 @@ inward:
   handles.
 
 Pure policy and fake-port tests supplement the real SQLite tests and the
-differential suite, which runs every operation sequence against the Python
-board and the Rust one and compares results, stored rows and errors until the
-Python board is deleted (#2283).
+differential suite, which ran every operation sequence against the Python
+board and the Rust one and compared results, stored rows and errors. #2283
+froze the Python board's answers into golden fixtures
+(`tests/fixtures/swarm_board/golden/`) and deleted it: the suite now replays
+the Rust board against them, and a board file the last Python board wrote
+(checked in beside them) must open and complete its run. The harness has no
+Python dependency, its tests included.
 
 ## Agent guidance
 

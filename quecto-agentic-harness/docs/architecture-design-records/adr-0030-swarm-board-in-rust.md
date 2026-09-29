@@ -223,3 +223,14 @@ Why this is safe:
   gone.
 - The differential suite stays until #2283 deletes the Python board and
   freezes it into golden fixtures.
+
+*Note (#2283):* #2283 recorded every differential scenario's Python answers
+(results as Python's `json.dumps` wrote them, refusal and exception texts,
+each step's logical-dump digest and the final dump) as golden fixtures,
+recorded twice and checked against the live Python board, then deleted the
+Python board, its unit suites and every other Python use in the harness's
+tests; `tests/architecture/no_python.rs` keeps it so. A board written by the
+last Python board, checked in as `legacy_python_board.sqlite`, opens and
+completes its run under Rust. `python3` left the starter Containerfile and
+the harness's Docker image (P6); this repository's own dev container keeps
+it for its scripts.
