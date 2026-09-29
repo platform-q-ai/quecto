@@ -14,6 +14,17 @@ use super::{Level, SwarmBoardHandles};
 use crate::application::swarm::dto::CallMeasure;
 use crate::domain::swarm::{BoardRole, RefusalKind};
 
+/// Whom a board call is made for (#2279 S15 final review): the calling
+/// member, whose role in the run a member-facing op records, or the
+/// harness itself, reading the board on the member's behalf (the post-call
+/// lifecycle's summary, a settlement's reconcile), recorded as `host` so
+/// it is never counted against the member.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CallOrigin {
+    Member,
+    Harness,
+}
+
 /// The `tracing` record of `finished` and, while the event log is on, its
 /// `swarm_op`, by the caller's kept or fresh ref (`caller` says whether the
 /// board accepted it as a member).

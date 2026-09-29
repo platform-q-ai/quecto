@@ -294,6 +294,21 @@ pub fn call(
     method: &str,
     args: Value,
 ) -> Result<Value, BoardError> {
+    call_as(handles, member, method, args, CallOrigin::Member)
+}
+
+/// [`call`], made for `origin`: a harness read on the member's behalf is
+/// recorded with role `host` (#2279 S15 final review).
+///
+/// # Errors
+/// As [`call`].
+pub fn call_as(
+    handles: &SwarmBoardHandles,
+    member: &str,
+    method: &str,
+    args: Value,
+    origin: CallOrigin,
+) -> Result<Value, BoardError> {
     let started = Instant::now();
     let known = Method::parse(method);
     // While the event log is on: this call's own measure, which is the
@@ -323,7 +338,10 @@ pub fn call(
             (Some(known), Err(_)) => known.level(),
             (None, _) => Level::Mutation,
         },
-        role: known.map_or(Some(BoardRole::Host), Method::role),
+        role: match origin {
+            CallOrigin::Harness => Some(BoardRole::Host),
+            CallOrigin::Member => known.map_or(Some(BoardRole::Host), Method::role),
+        },
         member,
         outcome: answer
             .as_ref()
@@ -664,7 +682,7 @@ fn take<const N: usize>(arguments: Vec<Value>) -> Result<[Value; N], BoardError>
 
 #[path = "swarm_board_dispatch_records.rs"]
 mod records;
-pub use records::{refused, signature};
+pub use records::{CallOrigin, refused, signature};
 
 #[path = "swarm_board_dispatch_render.rs"]
 mod render;

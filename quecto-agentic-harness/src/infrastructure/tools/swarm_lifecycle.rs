@@ -76,6 +76,15 @@ pub fn reconcile(context: &SwarmContext) -> Result<Value, DomainError> {
     context.summary()
 }
 
+/// A settlement's closing reconcile: the harness's own, so its summary is
+/// recorded as `host`, never against the member whose op settled the run
+/// (#2279 S15 final review). `op=reconcile` keeps [`reconcile`], the
+/// member's.
+fn settled(context: &SwarmContext) -> Result<Value, DomainError> {
+    context.lifecycle.reconcile(context, &LinuxProcesses)?;
+    context.host_summary()
+}
+
 /// The reaper of a member this harness launched observed its exit (#1961):
 /// confirm the member dead (its tasks block for `recover`; an orderly exit
 /// also releases its reservations) and reconcile.
@@ -236,7 +245,7 @@ async fn settle_suspending(
             &LinuxProcesses,
         )
         .await?;
-    super::call_work::spawn_blocking_in_call(move || reconcile(&context))
+    super::call_work::spawn_blocking_in_call(move || settled(&context))
         .await
         .map_err(|e| DomainError::Tool(e.to_string()))?
 }

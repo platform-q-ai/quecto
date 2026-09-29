@@ -21,7 +21,9 @@ use crate::application::swarm::ports::BoardOpLog;
 use crate::domain::error::DomainError;
 use crate::domain::swarm::RefusalKind;
 use crate::infrastructure::persistence::audit_log::AuditLog;
-use crate::infrastructure::tools::swarm_board_dispatch::{self, BoardWire, SwarmBoardHandles};
+use crate::infrastructure::tools::swarm_board_dispatch::{
+    self, BoardWire, CallOrigin, SwarmBoardHandles,
+};
 
 /// Builds the board handles over one board file, recording each call in
 /// the event log given (composition's `board_op_log`, only while the
@@ -145,6 +147,19 @@ impl SwarmBoard {
         method: &str,
         args: Value,
     ) -> Result<Value, DomainError> {
+        self.call_as(location, member, method, args, CallOrigin::Member)
+    }
+
+    /// [`Self::call`], made for `origin` (#2279 S15 final review: the
+    /// harness's own reads on a member's behalf are recorded as `host`).
+    pub(super) fn call_as(
+        &self,
+        location: BoardLocation,
+        member: &str,
+        method: &str,
+        args: Value,
+        origin: CallOrigin,
+    ) -> Result<Value, DomainError> {
         // A board call blocks (a contended transaction waits up to the
         // store's busy timeout): every caller makes it on the blocking pool
         // (`call_work::spawn_blocking_in_call`) or outside any runtime,
@@ -154,7 +169,7 @@ impl SwarmBoard {
             "a board call ({method}) is made off the async workers (#2278)"
         );
         let handles = self.handles(location);
-        swarm_board_dispatch::call(&handles, member, method, args).map_err(|refusal| {
+        swarm_board_dispatch::call_as(&handles, member, method, args, origin).map_err(|refusal| {
             DomainError::Tool(format!(
                 "swarm: {}",
                 Value::String(refusal.message().to_owned())

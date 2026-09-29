@@ -167,6 +167,19 @@ impl SwarmContext {
     pub fn summary_since(&self, since: Option<u64>) -> Result<Value, DomainError> {
         self.rpc("summary", json!([since]))
     }
+
+    /// The full summary the harness reads for itself on this member's
+    /// behalf (the post-call lifecycle's, a settlement's), recorded with
+    /// role `host` (#2279 S15 final review). Blocking.
+    pub(crate) fn host_summary(&self) -> Result<Value, DomainError> {
+        self.board.call_as(
+            self.location(),
+            &self.member,
+            "summary",
+            json!([null]),
+            super::swarm_board_dispatch::CallOrigin::Harness,
+        )
+    }
 }
 
 /// Where the coordination store of the container checked out at `checkout`
