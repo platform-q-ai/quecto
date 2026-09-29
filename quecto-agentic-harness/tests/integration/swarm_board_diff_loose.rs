@@ -38,8 +38,9 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   would end this divergence.
 /// - `integer_beyond_i64_is_refused`: an integer argument beyond i64 but
 ///   within u64 (a `pid`, `started` or `socket`, a membership method's
-///   member or reservation, #2271, a task id, #2272, or a message id,
-///   `withdraw`'s, `ack`'s or `send`'s `supersedes`, #2276) makes Python's
+///   member or reservation, #2271, a task id, #2272, a message id,
+///   `withdraw`'s, `ack`'s or `send`'s `supersedes`, `send`'s `recipient`
+///   or `inbox`'s `include_consumed`, #2276) makes Python's
 ///   `sqlite3` raise `OverflowError` when it is bound, which is not an
 ///   `sqlite3.Error`, so the store does not turn it into a refusal and the
 ///   call raises.

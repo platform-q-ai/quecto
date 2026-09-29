@@ -4,9 +4,10 @@
 //! [`SLICE_PINS`]):
 //!
 //! - `integer_beyond_i64_is_refused`, as the pin table describes it, for a
-//!   message id too (`withdraw`'s and `ack`'s, and `send`'s `supersedes`):
-//!   Python takes it as an `int` of at least 1 and raises `OverflowError`
-//!   binding it; the Rust board refuses it naming parameter 1.
+//!   message id too (`withdraw`'s and `ack`'s, and `send`'s `supersedes`),
+//!   `send`'s `recipient` and `inbox`'s `include_consumed`: Python raises
+//!   `OverflowError` binding it; the Rust board refuses it naming parameter
+//!   1 (parameter 2 for `include_consumed`).
 //! - `unknown_member_status_is_not_alive`, as the pin table describes it,
 //!   for `send` too: a recipient whose status is unknown or NULL is out of
 //!   the swarm, where Python's `status == 'dead'` check sends to it.
@@ -27,6 +28,7 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{run_rust, sql, tr
 
 /// The divergences this file pins also pinned in `src`: the name, the
 /// test file's source and the pinning test in it.
+// Also holds src pins unrelated to messages: the checker requires them here.
 const SLICE_PINS: [(&str, &str, &str); 5] = [
     (
         "unknown_member_status_is_not_alive",
@@ -65,15 +67,18 @@ fn this_slices_pins_in_src_exist() {
     }
 }
 
-/// A message id beyond i64 but within u64: Python raises `OverflowError`
-/// where the Rust board refuses it.
+/// A message id, `send`'s recipient or `inbox`'s `include_consumed` beyond
+/// i64 but within u64: Python raises `OverflowError` where the Rust board
+/// refuses it naming Python's parameter position.
 #[test]
 fn integer_beyond_i64_is_refused() {
     let beyond = json!(u64::MAX);
-    for (method, args) in [
-        ("withdraw", json!([beyond])),
-        ("ack", json!([beyond])),
-        ("send", json!(["s", "parent", "x", null, beyond])),
+    for (method, args, parameter) in [
+        ("withdraw", json!([beyond]), 1),
+        ("ack", json!([beyond]), 1),
+        ("send", json!(["s", "parent", "x", null, beyond]), 1),
+        ("send", json!(["s", beyond, "x"]), 1),
+        ("inbox", json!([beyond]), 2),
     ] {
         let steps = joined([
             send(3.0, "worker", "a", "parent", "one"),
@@ -90,10 +95,10 @@ fn integer_beyond_i64_is_refused() {
         assert_eq!(
             run_rust(&steps),
             Outcome::Refused(format!(
-                "{CONTENDED}Error binding parameter 1: \
+                "{CONTENDED}Error binding parameter {parameter}: \
                  Python int too large to convert to SQLite INTEGER"
             )),
-            "{method}"
+            "{method} {parameter}"
         );
     }
 }
