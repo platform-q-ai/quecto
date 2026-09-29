@@ -78,3 +78,7 @@ impl std::fmt::Display for ExternalAgentInputError {
 }
 
 impl std::error::Error for ExternalAgentInputError {}
+
+#[cfg(test)]
+#[path = "process_tests.rs"]
+mod tests;

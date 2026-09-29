@@ -4,8 +4,10 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use super::{
-    CREDENTIAL_VARIABLES, INHERITED_VARIABLES, MEMBER_CLAUDE_CONFIG_DIR, MEMBER_HOME_DIR,
-    MemberEnvironmentError, PRIVATE_DIR_MODE, member_environment,
+    CREDENTIAL_VARIABLES, INHERITED_VARIABLES, MEMBER_CLAUDE_CONFIG_DIR, MEMBER_DIR_OPEN_FLAGS,
+    MEMBER_HOME_DIR, MemberEnvironment, MemberEnvironmentError, PRIVATE_DIR_MODE,
+    PRIVATE_DIR_OPEN_FLAGS, effective_uid, member_environment, open_directory, open_flags,
+    plain_leaf,
 };
 use crate::application::external_agent::dto::CredentialEnv;
 
@@ -274,4 +276,127 @@ fn a_member_dir_only_its_owner_writes_is_kept_as_it_is() {
     std::fs::set_permissions(&member, std::fs::Permissions::from_mode(0o755)).unwrap();
     member_environment(&vars(&[]), &member, &api_key("k")).unwrap();
     assert_eq!(mode(&member), 0o755);
+}
+
+#[test]
+fn debug_names_the_variables_and_directories_never_a_value() {
+    let env = MemberEnvironment {
+        variables: vec![
+            ("PATH".into(), OsString::from("/secret-path")),
+            (
+                "ANTHROPIC_API_KEY".into(),
+                OsString::from("sk-member-secret"),
+            ),
+        ],
+        home: "/m/home".into(),
+        config_dir: "/m/claude-config".into(),
+    };
+    assert_eq!(
+        format!("{env:?}"),
+        r#"MemberEnvironment { names: ["PATH", "ANTHROPIC_API_KEY"], home: "/m/home", config_dir: "/m/claude-config" }"#
+    );
+}
+
+#[test]
+fn a_private_dir_name_is_one_plain_component() {
+    for plain in [MEMBER_HOME_DIR, MEMBER_CLAUDE_CONFIG_DIR, "a_b", "A9"] {
+        assert!(plain_leaf(plain), "{plain:?}");
+    }
+    for refused in ["", ".", "..", "a/b", "/a", "a b", "a.b"] {
+        assert!(!plain_leaf(refused), "{refused:?}");
+    }
+}
+
+#[test]
+fn the_open_flags_are_exactly_their_named_bits() {
+    assert_eq!(
+        open_flags(MEMBER_DIR_OPEN_FLAGS),
+        libc::O_NOFOLLOW | libc::O_DIRECTORY | libc::O_CLOEXEC
+    );
+    assert_eq!(
+        open_flags(PRIVATE_DIR_OPEN_FLAGS),
+        libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_DIRECTORY | libc::O_CLOEXEC
+    );
+    for flags in [MEMBER_DIR_OPEN_FLAGS, PRIVATE_DIR_OPEN_FLAGS] {
+        let nonzero: Vec<_> = flags.iter().copied().filter(|flag| *flag != 0).collect();
+        for (at, flag) in nonzero.iter().enumerate() {
+            assert_eq!(flag.count_ones(), 1, "{flag:#x} is one bit");
+            assert!(
+                nonzero[at + 1..].iter().all(|other| other & flag == 0),
+                "{flag:#x} is its own bit"
+            );
+        }
+    }
+}
+
+/// Whether `file`'s descriptor is closed on exec.
+fn close_on_exec(file: &std::fs::File) -> bool {
+    use std::os::fd::AsRawFd;
+    // `file` owns an open descriptor for the whole call; `F_GETFD` only
+    // reads its flags.
+    // SAFETY: a valid, open descriptor; nothing is written through it.
+    let flags = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETFD) };
+    assert!(flags >= 0, "F_GETFD: {}", std::io::Error::last_os_error());
+    flags & libc::FD_CLOEXEC != 0
+}
+
+#[test]
+fn the_member_dir_opens_only_as_a_real_directory_closed_on_exec() {
+    let base = tempfile::tempdir().unwrap();
+    let directory = base.path().join("dir");
+    std::fs::create_dir(&directory).unwrap();
+    let opened = open_directory(&directory).unwrap();
+    assert!(opened.metadata().unwrap().is_dir());
+    assert!(close_on_exec(&opened), "no spawned child inherits it");
+
+    let file = base.path().join("file");
+    std::fs::write(&file, b"").unwrap();
+    let link = base.path().join("link");
+    std::os::unix::fs::symlink(&directory, &link).unwrap();
+    for refused in [&file, &link] {
+        let error = open_directory(refused).unwrap_err();
+        assert!(
+            matches!(&error, MemberEnvironmentError::Directory { path, .. } if path == refused),
+            "{error:?}"
+        );
+    }
+}
+
+#[test]
+fn a_private_dir_that_is_a_file_is_refused() {
+    let member = tempfile::tempdir().unwrap();
+    std::fs::write(member.path().join(MEMBER_HOME_DIR), b"").unwrap();
+    let error = member_environment(&vars(&[]), member.path(), &api_key("k")).unwrap_err();
+    assert!(
+        matches!(
+            &error,
+            MemberEnvironmentError::Directory { path, detail }
+                if path == &member.path().join(MEMBER_HOME_DIR)
+                    && detail.starts_with("open as a directory")
+        ),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn a_private_dir_that_cannot_be_made_is_refused_at_its_creation() {
+    if effective_uid() == 0 {
+        eprintln!("skipped: root may make a directory in a read-only one");
+        return;
+    }
+    let base = tempfile::tempdir().unwrap();
+    let member = base.path().join("member");
+    std::fs::create_dir(&member).unwrap();
+    std::fs::set_permissions(&member, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let outcome = member_environment(&vars(&[]), &member, &api_key("k"));
+    std::fs::set_permissions(&member, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let error = outcome.unwrap_err();
+    assert!(
+        matches!(
+            &error,
+            MemberEnvironmentError::Directory { path, detail }
+                if path == &member.join(MEMBER_HOME_DIR) && detail.starts_with("create: ")
+        ),
+        "only an existing directory is accepted, not any failed create: {error:?}"
+    );
 }

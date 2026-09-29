@@ -204,13 +204,35 @@ fn refusal(path: &Path) -> impl Fn(String) -> MemberEnvironmentError + '_ {
     }
 }
 
+/// How the member directory is opened (read access comes from
+/// `OpenOptions`): a symlink at its last component is not followed, only a
+/// directory opens, and the descriptor is not inherited by a spawned child.
+const MEMBER_DIR_OPEN_FLAGS: &[libc::c_int] =
+    &[libc::O_NOFOLLOW, libc::O_DIRECTORY, libc::O_CLOEXEC];
+
+/// How a private directory is opened through the member directory's
+/// descriptor: read-only, and as [`MEMBER_DIR_OPEN_FLAGS`].
+const PRIVATE_DIR_OPEN_FLAGS: &[libc::c_int] = &[
+    libc::O_RDONLY,
+    libc::O_NOFOLLOW,
+    libc::O_DIRECTORY,
+    libc::O_CLOEXEC,
+];
+
+/// The union of `flags`. Each flag is its own bit, so the union is folded
+/// from a list rather than written as a `|` chain: over disjoint bits `|`
+/// and `^` agree, and a test pins the union's exact value.
+fn open_flags(flags: &[libc::c_int]) -> libc::c_int {
+    flags.iter().copied().fold(0, std::ops::BitOr::bitor)
+}
+
 /// `path` opened as a directory without following a symlink at its last
 /// component: a symlink, or anything but a directory, fails the open.
 fn open_directory(path: &Path) -> Result<std::fs::File, MemberEnvironmentError> {
     use std::os::unix::fs::OpenOptionsExt;
     std::fs::OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_DIRECTORY | libc::O_CLOEXEC)
+        .custom_flags(open_flags(MEMBER_DIR_OPEN_FLAGS))
         .open(path)
         .map_err(|error| {
             refusal(path)(format!(
@@ -308,7 +330,7 @@ fn private_dir(
         libc::openat(
             member.as_raw_fd(),
             name.as_ptr(),
-            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_DIRECTORY | libc::O_CLOEXEC,
+            open_flags(PRIVATE_DIR_OPEN_FLAGS),
         )
     };
     let opened = fd >= 0;

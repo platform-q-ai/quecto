@@ -67,10 +67,12 @@ async fn closing_the_input_does_not_wait_behind_a_stuck_write() {
             .await
             .expect("close_input returns while a write is stuck");
     }
-    assert_eq!(
-        process.send_user_turn("late").await,
-        Err(ExternalAgentInputError::Closed)
-    );
+    // Bounded: were the input left open, the late turn would queue behind
+    // the stuck write for good.
+    let late = tokio::time::timeout(Duration::from_secs(2), process.send_user_turn("late"))
+        .await
+        .expect("a turn sent after the close is answered at once");
+    assert_eq!(late, Err(ExternalAgentInputError::Closed));
     drop(process);
     until_retired(&rig.supervisor, FALLBACK_BOUND).await;
 }

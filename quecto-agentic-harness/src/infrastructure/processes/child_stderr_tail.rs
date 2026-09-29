@@ -90,7 +90,9 @@ fn tail_text(bytes: &[u8], capacity: usize) -> String {
     let text = text.trim();
     let mut start = text.len().saturating_sub(capacity);
     while !text.is_char_boundary(start) {
+        let before = start;
         start += 1;
+        assert!(start > before, "the cut moves forward to a boundary");
     }
     let tail = text[start..].trim_start();
     assert!(tail.len() <= capacity, "the tail's text fits its capacity");

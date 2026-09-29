@@ -6,7 +6,7 @@ use serde_json::json;
 use super::test_rig::{BOUND, RESULT_LINE, Rig, events_to_turn_end, finish};
 #[cfg(target_os = "linux")]
 use super::test_rig::{FALLBACK_BOUND, recorded_at_start, until_retired};
-use super::{claude_arguments, resolve_on_path};
+use super::{STREAM_BUFFER_BYTES, STREAM_LINE_CAP_BYTES, claude_arguments, resolve_on_path};
 use crate::application::external_agent::dto::{
     CredentialEnv, ExternalAgentExit, ExternalAgentLaunchError, ExternalAgentLaunchSpec,
 };
@@ -14,6 +14,12 @@ use crate::application::external_agent::ports::ExternalAgentLauncher;
 use crate::domain::external_agent::stream::ExternalAgentEvent;
 #[cfg(target_os = "linux")]
 use crate::infrastructure::processes::owned_child_supervisor::SentSignal;
+
+#[test]
+fn a_line_is_capped_at_16_mib_and_32_mib_of_lines_wait_for_the_reader() {
+    assert_eq!(STREAM_LINE_CAP_BYTES, 16_777_216);
+    assert_eq!(STREAM_BUFFER_BYTES, 33_554_432);
+}
 
 #[tokio::test]
 async fn argv_carries_the_stream_json_flags() {

@@ -2,7 +2,9 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::{LineLimits, LineWriteError, MIN_LINE_COST, StdinLines, StdoutLine};
+use super::{
+    LineLimits, LineWriteError, MIN_LINE_COST, PipeTask, StdinLines, StdoutLine, StdoutLines,
+};
 use crate::infrastructure::processes::owned_child_supervisor::{
     ChildExit, ChildHandleId, OwnedChildSupervisor, ProcessGroup, ProtocolOutcome,
     TerminationBudget,
@@ -223,6 +225,117 @@ async fn senders_racing_a_close_are_each_answered_and_only_their_ok_lines_are_re
     assert_eq!(
         read, answered_ok,
         "the child read exactly the lines answered Ok"
+    );
+    supervisor.retire(handle);
+}
+
+/// A child that reads nothing and writes nothing, held for 30 s; killed
+/// when dropped.
+fn silent_child(stdin: std::process::Stdio, stdout: std::process::Stdio) -> tokio::process::Child {
+    tokio::process::Command::new("sh")
+        .arg("-c")
+        .arg("exec sleep 30")
+        .stdin(stdin)
+        .stdout(stdout)
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap()
+}
+
+/// Dropping the reader stops its pump at once, even one waiting on a
+/// child that writes nothing.
+#[tokio::test]
+async fn dropping_the_reader_stops_its_pump() {
+    let mut child = silent_child(std::process::Stdio::null(), std::process::Stdio::piped());
+    let limits = LineLimits {
+        line_cap: 1024,
+        buffer_bytes: 4096,
+    };
+    let (lines, task) = StdoutLines::new(child.stdout.take().unwrap(), limits);
+    let pump = tokio::spawn(task.run());
+    let lines = lines.running(pump.abort_handle());
+    drop(lines);
+    let stopped = tokio::time::timeout(Duration::from_secs(5), pump)
+        .await
+        .expect("the pump stops when its reader is dropped");
+    assert!(stopped.unwrap_err().is_cancelled(), "the pump was aborted");
+}
+
+/// A writer for a silent child whose pump task is handed back unrun.
+fn unpumped_stdin(queue: usize) -> (tokio::process::Child, StdinLines, PipeTask) {
+    let mut child = silent_child(std::process::Stdio::piped(), std::process::Stdio::null());
+    let (stdin, task) = StdinLines::new(child.stdin.take().unwrap(), queue);
+    (child, stdin, task)
+}
+
+/// A writer that ends while the input is open fails the line: it was not
+/// closed, it was lost.
+#[tokio::test]
+async fn a_line_lost_to_a_writer_that_ended_while_open_is_failed() {
+    let (_child, stdin, task) = unpumped_stdin(1);
+    drop(task);
+    let lost = tokio::time::timeout(Duration::from_secs(5), stdin.write_line("x\n".into()))
+        .await
+        .expect("bounded");
+    assert_eq!(
+        lost,
+        Err(LineWriteError::Failed("the input's writer ended".into()))
+    );
+}
+
+/// A writer that ends after the input was closed, with a line queued and
+/// no write failed, answers that line `Closed`.
+#[tokio::test]
+async fn a_line_lost_to_a_writer_that_ended_after_a_close_is_closed() {
+    let (_child, stdin, task) = unpumped_stdin(1);
+    let mut queued = Box::pin(stdin.write_line("x\n".into()));
+    assert!(
+        still_pending(&mut queued).await,
+        "the line waits in the queue"
+    );
+    assert!(stdin.close(), "the first close closes");
+    drop(task);
+    let lost = tokio::time::timeout(Duration::from_secs(5), queued)
+        .await
+        .expect("bounded");
+    assert_eq!(lost, Err(LineWriteError::Closed));
+}
+
+/// Dropping the writer closes the input: a line still queued is never
+/// written, the line already taken is written whole, and the child reads
+/// its end of input.
+#[tokio::test]
+async fn dropping_the_writer_closes_the_input() {
+    let supervisor = Arc::new(OwnedChildSupervisor::new());
+    let root = tempfile::tempdir().unwrap();
+    let marker = root.path().join("release");
+    let out = root.path().join("read");
+    let (handle, stdin) = stdin_of(
+        &supervisor,
+        &format!("{HELD_UNTIL_MARKER}; exec cat > \"$1\""),
+        &[&marker, &out],
+        2,
+    )
+    .await;
+    let big = big_line();
+    let mut taken = Box::pin(stdin.write_line(big.clone()));
+    let mut queued = Box::pin(stdin.write_line("queued\n".into()));
+    assert!(still_pending(&mut taken).await, "the big line is stuck");
+    assert!(still_pending(&mut queued).await, "the small line is queued");
+    // Both sends are abandoned (cancel-safe: their lines stay queued), so
+    // only the writer's drop decides what is written.
+    drop((taken, queued));
+    drop(stdin);
+    release(&marker);
+    let exit = tokio::time::timeout(BOUND, supervisor.wait_exit(handle))
+        .await
+        .expect("the child ends at its input's end");
+    assert_eq!(exit, Some(ChildExit::Code(0)));
+    assert_eq!(
+        std::fs::read_to_string(&out).unwrap(),
+        big,
+        "the queued line was not written after the drop"
     );
     supervisor.retire(handle);
 }
