@@ -10,14 +10,14 @@ use serde_json::json;
 
 use crate::swarm_board_diff_membership::{at, create, snapshot};
 use crate::swarm_board_diff_runs::NOW;
-use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{run_both, sql, step};
+use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{run_golden, sql, step};
 
 /// `_admit` stores the reservation as given (TEXT affinity makes a number
 /// its text), and a retry compares the stored value with Python's `==`:
 /// `None == None`, but `'5' != 5` and `'1' != True`.
 #[test]
 fn admit_binds_the_reservation_as_python_does() {
-    run_both(&[
+    run_golden(&[
         create(12),
         at(1.0, "parent", "_admit", json!(["a", null])),
         at(2.0, "parent", "_admit", json!(["a", null])),
@@ -49,7 +49,7 @@ fn admit_binds_the_reservation_as_python_does() {
 /// process with Python's `==` (`7 == 7.0`, `1 == True`, `7 != '7'`).
 #[test]
 fn activate_binds_the_launch_identity_as_python_does() {
-    run_both(&[
+    run_golden(&[
         create(12),
         at(1.0, "parent", "_admit", json!(["w1", "r1"])),
         at(
@@ -160,7 +160,7 @@ fn activate_binds_the_launch_identity_as_python_does() {
 /// affinity) and compares a recorded process with Python's `==`.
 #[test]
 fn record_launch_binds_as_python_does() {
-    run_both(&[
+    run_golden(&[
         create(8),
         at(1.0, "parent", "_admit", json!(["worker", "r1"])),
         at(
@@ -213,7 +213,7 @@ fn record_launch_binds_as_python_does() {
 /// given.
 #[test]
 fn release_unlaunched_binds_the_member_as_python_does() {
-    run_both(&[
+    run_golden(&[
         create(8),
         at(1.0, "parent", "_admit", json!(["5", "r5"])),
         at(2.0, "parent", "_release_unlaunched", json!([5])),
@@ -230,7 +230,7 @@ fn release_unlaunched_binds_the_member_as_python_does() {
 /// `_socket` stores the socket as given (a number as its text).
 #[test]
 fn socket_binds_as_python_does() {
-    run_both(&[
+    run_golden(&[
         create(5),
         at(1.0, "parent", "_admit", json!(["worker", "r"])),
         at(
@@ -258,7 +258,7 @@ fn socket_binds_as_python_does() {
 /// it stale after the admission committed.
 #[test]
 fn join_binds_as_python_does() {
-    run_both(&[
+    run_golden(&[
         step(
             "parent",
             "bootstrap_run",
@@ -288,7 +288,7 @@ fn join_binds_as_python_does() {
 /// (#2271 round-1 review M2).
 #[test]
 fn a_stored_real_pid_of_two_to_the_63_is_not_i64_max() {
-    run_both(&[
+    run_golden(&[
         create(5),
         at(1.0, "parent", "_admit", json!(["worker", "r"])),
         at(
@@ -312,7 +312,7 @@ fn a_stored_real_pid_of_two_to_the_63_is_not_i64_max() {
         ),
         snapshot(5.0),
     ]);
-    run_both(&[
+    run_golden(&[
         step(
             "parent",
             "bootstrap_run",

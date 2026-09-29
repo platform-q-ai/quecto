@@ -229,8 +229,13 @@ impl PyBoard {
     pub fn start(database: &Path, checkout: &Path, workdir: &Path) -> Self {
         let script = workdir.join("board_driver.py");
         std::fs::write(&script, program()).expect("write the Python driver");
+        // `-I`'s isolation without its `-E`, so the hash seed is fixed:
+        // no environment but `PYTHONHASHSEED=0` (#2283), so a set's order,
+        // which a few refusal texts show, is the same in every recording.
         let mut child = Command::new("python3")
-            .arg("-I")
+            .args(["-P", "-s"])
+            .env_clear()
+            .env("PYTHONHASHSEED", "0")
             .arg(&script)
             .arg(database)
             .arg(checkout)

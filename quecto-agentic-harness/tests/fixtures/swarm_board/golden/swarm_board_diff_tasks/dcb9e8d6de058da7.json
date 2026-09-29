@@ -1,0 +1,129 @@
+{
+"steps": [
+ ["parent","create_run","{\"goal\":\"admit members\",\"constraints\":[],\"criteria\":[{\"id\":\"t\",\"kind\":\"command\",\"description\":\"test\"}],\"member_limit\":5,\"deadline\":1700003600.25}","1700000000.25",null],
+ ["parent","_admit","[\"worker\",\"res-w\"]","1700000001.25",null],
+ ["parent","_activate","[\"worker\",\"res-w\",11,\"t\",null]","1700000002.25",null],
+ ["worker","task_create","[\"first\",\"first\",[\"tests pass\"],null]","1700000003.25",null],
+ ["worker","task_create","[\"second\",\"second\",[\"tests pass\"],null]","1700000004.25",null],
+ ["worker","claim","[1]","1700000005.25",null],
+ ["parent","claim","[2]","1700000006.25",null],
+ ["","<sql>","INSERT INTO files SELECT 'a', 1, 'worker', token, 'r1' FROM tasks WHERE id=1;\n                 INSERT INTO files VALUES('b', 1, 'worker', 'older', 'r2');\n                 INSERT INTO files SELECT 'c', 2, 'parent', token, 'r3' FROM tasks WHERE id=2;","0.0",null],
+ ["worker","release","[1,\"stale\"]","1700000007.25",null],
+ ["worker","release","[1,null]","1700000008.25",null],
+ ["worker","release","{\"task_id\":2,\"token\":\"stale\"}","1700000009.25",null],
+ ["parent","release","[1,\"00000000000000000000000000000003\"]","1700000010.25",null],
+ ["worker","release","[1,\"00000000000000000000000000000003\"]","1700000011.25",null],
+ ["worker","release","[1,\"00000000000000000000000000000003\"]","1700000012.25",null],
+ ["worker","claim","[1]","1700000013.25",null],
+ ["parent","task_raw","[1]","1700000014.25",null],
+ ["worker","release","[1,\"00000000000000000000000000000003\"]","1700000015.25",null],
+ ["stranger","release","[1,\"00000000000000000000000000000005\"]","1700000016.25",null],
+ ["worker","release","[\"1\",\"00000000000000000000000000000005\"]","1700000017.25",null],
+ ["parent","task_raw","[1]","1700000018.25",null]
+],
+"answers": [
+ {"ok":"null"},
+ {"ok":"{\"id\": \"worker\", \"reservation\": \"res-w\", \"status\": \"reserved\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": \"parent\"}"},
+ {"ok":"null"},
+ {"ok":"{\"id\": 1, \"title\": \"first\", \"acceptance\": [\"tests pass\"], \"dependencies\": [], \"status\": \"ready\", \"owner\": null, \"token\": null, \"evidence\": [], \"blocker\": null}"},
+ {"ok":"{\"id\": 2, \"title\": \"second\", \"acceptance\": [\"tests pass\"], \"dependencies\": [], \"status\": \"ready\", \"owner\": null, \"token\": null, \"evidence\": [], \"blocker\": null}"},
+ {"ok":"{\"id\": 1, \"title\": \"first\", \"acceptance\": [\"tests pass\"], \"dependencies\": [], \"status\": \"claimed\", \"owner\": \"worker\", \"token\": \"00000000000000000000000000000003\", \"evidence\": [], \"blocker\": null}"},
+ {"ok":"{\"id\": 2, \"title\": \"second\", \"acceptance\": [\"tests pass\"], \"dependencies\": [], \"status\": \"claimed\", \"owner\": \"parent\", \"token\": \"00000000000000000000000000000004\", \"evidence\": [], \"blocker\": null}"},
+ {"ok":"null"},
+ {"refused":"stale or unowned claim"},
+ {"refused":"stale or unowned claim"},
+ {"refused":"stale or unowned claim"},
+ {"refused":"stale or unowned claim"},
+ {"ok":"null"},
+ {"refused":"stale or unowned claim"},
+ {"ok":"{\"id\": 1, \"title\": \"first\", \"acceptance\": [\"tests pass\"], \"dependencies\": [], \"status\": \"claimed\", \"owner\": \"worker\", \"token\": \"00000000000000000000000000000005\", \"evidence\": [], \"blocker\": null}"},
+ {"ok":"{\"id\": 1, \"title\": \"first\", \"acceptance\": [\"tests pass\"], \"dependencies\": [], \"status\": \"claimed\", \"owner\": \"worker\", \"token\": \"00000000000000000000000000000005\", \"evidence\": [], \"blocker\": null}"},
+ {"refused":"stale or unowned claim"},
+ {"refused":"invoking member is unknown or death confirmed"},
+ {"ok":"null"},
+ {"ok":"{\"id\": 1, \"title\": \"first\", \"acceptance\": [\"tests pass\"], \"dependencies\": [], \"status\": \"ready\", \"owner\": null, \"token\": null, \"evidence\": [], \"blocker\": null}"}
+],
+"files": [
+ "dump:8a1edc28e20b24098878218a87e13a9c2e0a8ae19f105d22653bae5ad3c791e8",
+ "dump:a681b117d1bc7ad75289571f4d83d61c1a2a8b988c3efaa7dccc551760bfde8b",
+ "dump:abe5002c4f6809ac57ea8a82d784b6771b62c568c42c2fd81ee05077a0dc2383",
+ "dump:23943d4a8287ccd3e8ffe756484cb9d7dc103e1ca63815a3b57ba2a5afdfd5a1",
+ "dump:d4775e4df7d59c8f862da31a9bd89e5fa529a267609bccd640372314120429aa",
+ "dump:d735e66127d6fdfef8f2c779720bbcaca7c44c2ede2022f2a689ee3d4a9dd6a1",
+ "dump:ddd539189e9fc87c4bbb89f8d15fa8f2a25ec1d418afe48cb56aef515857e757",
+ "dump:bcaf259391bdbd4486306b031c13760ffed6237f04c2812eecc807cc959e065c",
+ "dump:bcaf259391bdbd4486306b031c13760ffed6237f04c2812eecc807cc959e065c",
+ "dump:bcaf259391bdbd4486306b031c13760ffed6237f04c2812eecc807cc959e065c",
+ "dump:bcaf259391bdbd4486306b031c13760ffed6237f04c2812eecc807cc959e065c",
+ "dump:bcaf259391bdbd4486306b031c13760ffed6237f04c2812eecc807cc959e065c",
+ "dump:877c9b1802472e3d94d7973c3da2977372f48ea64991316d0d32156a275d5754",
+ "dump:877c9b1802472e3d94d7973c3da2977372f48ea64991316d0d32156a275d5754",
+ "dump:8f17653e89aa5b914cdc33252d13e7adcb64de9bca082534de0e78dd365c0435",
+ "dump:8f17653e89aa5b914cdc33252d13e7adcb64de9bca082534de0e78dd365c0435",
+ "dump:8f17653e89aa5b914cdc33252d13e7adcb64de9bca082534de0e78dd365c0435",
+ "dump:8f17653e89aa5b914cdc33252d13e7adcb64de9bca082534de0e78dd365c0435",
+ "dump:7670a8951e6036f116da956784e061183cf5a4773feafa3ee37a096e8c08cc4a",
+ "dump:7670a8951e6036f116da956784e061183cf5a4773feafa3ee37a096e8c08cc4a"
+],
+"dump": [
+  ["sqlite_master", [
+   [["text",{"text":"table"}],["text",{"text":"run"}],["text",{"text":"run"}],["text",{"text":"CREATE TABLE run (id TEXT PRIMARY KEY, goal TEXT, constraints TEXT, criteria TEXT,\n coordinator TEXT, integrator TEXT, member_limit INTEGER, deadline REAL, status TEXT, outcome TEXT, outcome_reason TEXT)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_run_1"}],["text",{"text":"run"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"members"}],["text",{"text":"members"}],["text",{"text":"CREATE TABLE members (id TEXT PRIMARY KEY, reservation TEXT UNIQUE, status TEXT,\n pid INTEGER, started TEXT, socket TEXT, launcher TEXT)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_members_1"}],["text",{"text":"members"}],["null",null]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_members_2"}],["text",{"text":"members"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"tasks"}],["text",{"text":"tasks"}],["text",{"text":"CREATE TABLE tasks (id INTEGER PRIMARY KEY, title TEXT, acceptance TEXT, dependencies TEXT,\n status TEXT, owner TEXT, token TEXT, evidence TEXT, blocker TEXT)"}]],
+   [["text",{"text":"table"}],["text",{"text":"files"}],["text",{"text":"files"}],["text",{"text":"CREATE TABLE files (path TEXT PRIMARY KEY, task INTEGER, owner TEXT, claim TEXT, token TEXT)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_files_1"}],["text",{"text":"files"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"messages"}],["text",{"text":"messages"}],["text",{"text":"CREATE TABLE messages (id INTEGER PRIMARY KEY, sender TEXT, recipient TEXT, body TEXT, status TEXT, revision TEXT, supersedes INTEGER, superseded_by INTEGER)"}]],
+   [["text",{"text":"table"}],["text",{"text":"evidence"}],["text",{"text":"evidence"}],["text",{"text":"CREATE TABLE evidence (criterion TEXT, artifact TEXT, revision TEXT, kind TEXT,\n actor TEXT, accepted INTEGER, PRIMARY KEY(criterion, actor))"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_evidence_1"}],["text",{"text":"evidence"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"requests"}],["text",{"text":"requests"}],["text",{"text":"CREATE TABLE requests (actor TEXT, request TEXT, payload TEXT, result TEXT,\n PRIMARY KEY(actor, request))"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_requests_1"}],["text",{"text":"requests"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"events"}],["text",{"text":"events"}],["text",{"text":"CREATE TABLE events (id INTEGER PRIMARY KEY, actor TEXT, time REAL, action TEXT, detail TEXT)"}]],
+   [["text",{"text":"index"}],["text",{"text":"events_by_actor"}],["text",{"text":"events"}],["text",{"text":"CREATE INDEX events_by_actor ON events(actor,id)"}]],
+   [["text",{"text":"table"}],["text",{"text":"notification_cursors"}],["text",{"text":"notification_cursors"}],["text",{"text":"CREATE TABLE notification_cursors (actor TEXT PRIMARY KEY, event INTEGER)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_notification_cursors_1"}],["text",{"text":"notification_cursors"}],["null",null]]
+  ]],
+  ["events", [
+   [["integer",{"integer":1}],["text",{"text":"parent"}],["real",{"real":"1700000000.25"}],["text",{"text":"created"}],["text",{"text":"{\"contract\":{\"constraints\":[],\"criteria\":[{\"description\":\"test\",\"id\":\"t\",\"kind\":\"command\"}],\"goal\":\"admit members\"},\"deadline\":1700003600.25,\"goal\":\"admit members\"}"}]],
+   [["integer",{"integer":2}],["text",{"text":"parent"}],["real",{"real":"1700000001.25"}],["text",{"text":"reserved"}],["text",{"text":"{\"member\":\"worker\"}"}]],
+   [["integer",{"integer":3}],["text",{"text":"parent"}],["real",{"real":"1700000002.25"}],["text",{"text":"activated"}],["text",{"text":"{\"member\":\"worker\",\"pid\":11}"}]],
+   [["integer",{"integer":4}],["text",{"text":"worker"}],["real",{"real":"1700000003.25"}],["text",{"text":"task_created"}],["text",{"text":"{\"task\":1}"}]],
+   [["integer",{"integer":5}],["text",{"text":"worker"}],["real",{"real":"1700000004.25"}],["text",{"text":"task_created"}],["text",{"text":"{\"task\":2}"}]],
+   [["integer",{"integer":6}],["text",{"text":"worker"}],["real",{"real":"1700000005.25"}],["text",{"text":"claimed"}],["text",{"text":"{\"task\":1,\"token\":\"00000000000000000000000000000003\"}"}]],
+   [["integer",{"integer":7}],["text",{"text":"parent"}],["real",{"real":"1700000006.25"}],["text",{"text":"claimed"}],["text",{"text":"{\"task\":2,\"token\":\"00000000000000000000000000000004\"}"}]],
+   [["integer",{"integer":8}],["text",{"text":"worker"}],["real",{"real":"1700000011.25"}],["text",{"text":"released"}],["text",{"text":"{\"task\":1}"}]],
+   [["integer",{"integer":9}],["text",{"text":"worker"}],["real",{"real":"1700000013.25"}],["text",{"text":"claimed"}],["text",{"text":"{\"task\":1,\"token\":\"00000000000000000000000000000005\"}"}]],
+   [["integer",{"integer":10}],["text",{"text":"worker"}],["real",{"real":"1700000017.25"}],["text",{"text":"released"}],["text",{"text":"{\"task\":\"1\"}"}]]
+  ]],
+  ["evidence", []],
+  ["files", [
+   [["text",{"text":"b"}],["integer",{"integer":1}],["text",{"text":"worker"}],["text",{"text":"older"}],["text",{"text":"r2"}]],
+   [["text",{"text":"c"}],["integer",{"integer":2}],["text",{"text":"parent"}],["text",{"text":"00000000000000000000000000000004"}],["text",{"text":"r3"}]]
+  ]],
+  ["members", [
+   [["text",{"text":"parent"}],["text",{"text":"00000000000000000000000000000002"}],["text",{"text":"live"}],["null",null],["null",null],["null",null],["null",null]],
+   [["text",{"text":"worker"}],["text",{"text":"res-w"}],["text",{"text":"live"}],["integer",{"integer":11}],["text",{"text":"t"}],["null",null],["text",{"text":"parent"}]]
+  ]],
+  ["messages", []],
+  ["notification_cursors", []],
+  ["requests", [
+   [["text",{"text":"worker"}],["text",{"text":"first"}],["text",{"text":"[\"task\",\"first\",[\"tests pass\"],[]]"}],["text",{"text":"{\"acceptance\":[\"tests pass\"],\"blocker\":null,\"dependencies\":[],\"evidence\":[],\"id\":1,\"owner\":null,\"status\":\"ready\",\"title\":\"first\",\"token\":null}"}]],
+   [["text",{"text":"worker"}],["text",{"text":"second"}],["text",{"text":"[\"task\",\"second\",[\"tests pass\"],[]]"}],["text",{"text":"{\"acceptance\":[\"tests pass\"],\"blocker\":null,\"dependencies\":[],\"evidence\":[],\"id\":2,\"owner\":null,\"status\":\"ready\",\"title\":\"second\",\"token\":null}"}]]
+  ]],
+  ["run", [
+   [["text",{"text":"00000000000000000000000000000001"}],["text",{"text":"admit members"}],["text",{"text":"[]"}],["text",{"text":"[{\"description\":\"test\",\"id\":\"t\",\"kind\":\"command\"}]"}],["text",{"text":"parent"}],["text",{"text":"parent"}],["integer",{"integer":5}],["real",{"real":"1700003600.25"}],["text",{"text":"running"}],["null",null],["null",null]]
+  ]],
+  ["tasks", [
+   [["integer",{"integer":1}],["text",{"text":"first"}],["text",{"text":"[\"tests pass\"]"}],["text",{"text":"[]"}],["text",{"text":"ready"}],["null",null],["null",null],["text",{"text":"[]"}],["null",null]],
+   [["integer",{"integer":2}],["text",{"text":"second"}],["text",{"text":"[\"tests pass\"]"}],["text",{"text":"[]"}],["text",{"text":"claimed"}],["text",{"text":"parent"}],["text",{"text":"00000000000000000000000000000004"}],["text",{"text":"[]"}],["null",null]]
+  ]],
+  ["PRAGMA journal_mode", [
+   [["text",{"text":"delete"}]]
+  ]],
+  ["PRAGMA user_version", [
+   [["integer",{"integer":0}]]
+  ]]
+ ]
+}

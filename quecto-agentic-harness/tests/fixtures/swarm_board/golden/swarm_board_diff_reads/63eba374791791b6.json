@@ -1,0 +1,134 @@
+{
+"steps": [
+ ["parent","create_run","{\"goal\":\"admit members\",\"constraints\":[],\"criteria\":[{\"id\":\"t\",\"kind\":\"command\",\"description\":\"test\"}],\"member_limit\":5,\"deadline\":1700003600.25}","1700000000.25",null],
+ ["parent","_admit","[\"worker\",\"res-w\"]","1700000001.25",null],
+ ["parent","_activate","[\"worker\",\"res-w\",11,\"t\",null]","1700000002.25",null],
+ ["parent","_admit","[\"w2\",\"res-w2\"]","1700000003.25",null],
+ ["parent","_activate","[\"w2\",\"res-w2\",20,\"o\",null]","1700000003.3",null],
+ ["parent","_admit","[\"w3\",\"res-w3\"]","1700000003.35",null],
+ ["parent","_activate","[\"w3\",\"res-w3\",21,\"o\",null]","1700000003.4",null],
+ ["parent","_admit","[\"w4\",\"res-w4\"]","1700000003.45",null],
+ ["parent","_activate","[\"w4\",\"res-w4\",22,\"o\",null]","1700000003.5",null],
+ ["worker","task_create","[\"task-0\",\"implement behavior\",[\"tests pass\"],[]]","1700000004.25",null],
+ ["worker","claim","[1]","1700000106.6",null],
+ ["worker","task_create","[\"task-1\",\"implement behavior\",[\"tests pass\"],[]]","1700000005.25",null],
+ ["w2","claim","[2]","1700000106.15",null],
+ ["worker","task_create","[\"task-2\",\"implement behavior\",[\"tests pass\"],[]]","1700000006.25",null],
+ ["w3","claim","[3]","1700000097.3734567",null],
+ ["worker","task_create","[\"task-3\",\"implement behavior\",[\"tests pass\"],[]]","1700000007.25",null],
+ ["w4","claim","[4]","1700000101.95",null],
+ ["parent","summary","[]","1700000200.25",null]
+],
+"answers": [
+ {"ok":"null"},
+ {"ok":"{\"id\": \"worker\", \"reservation\": \"res-w\", \"status\": \"reserved\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": \"parent\"}"},
+ {"ok":"null"},
+ {"ok":"{\"id\": \"w2\", \"reservation\": \"res-w2\", \"status\": \"reserved\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": \"parent\"}"},
+ {"ok":"null"},
+ {"ok":"{\"id\": \"w3\", \"reservation\": \"res-w3\", \"status\": \"reserved\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": \"parent\"}"},
+ {"ok":"null"},
+ {"ok":"{\"id\": \"w4\", \"reservation\": \"res-w4\", \"status\": \"reserved\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": \"parent\"}"},
+ {"ok":"null"},
+ {"ok":"{\"id\": 1, \"title\": \"implement behavior\", \"acceptance\": [\"tests pass\"], \"dependencies\": [], \"status\": \"ready\", \"owner\": null, \"token\": null, \"evidence\": [], \"blocker\": null}"},
+ {"ok":"{\"id\": 1, \"title\": \"implement behavior\", \"acceptance\": [\"tests pass\"], \"dependencies\": [], \"status\": \"claimed\", \"owner\": \"worker\", \"token\": \"00000000000000000000000000000003\", \"evidence\": [], \"blocker\": null}"},
+ {"ok":"{\"id\": 2, \"title\": \"implement behavior\", \"acceptance\": [\"tests pass\"], \"dependencies\": [], \"status\": \"ready\", \"owner\": null, \"token\": null, \"evidence\": [], \"blocker\": null}"},
+ {"ok":"{\"id\": 2, \"title\": \"implement behavior\", \"acceptance\": [\"tests pass\"], \"dependencies\": [], \"status\": \"claimed\", \"owner\": \"w2\", \"token\": \"00000000000000000000000000000004\", \"evidence\": [], \"blocker\": null}"},
+ {"ok":"{\"id\": 3, \"title\": \"implement behavior\", \"acceptance\": [\"tests pass\"], \"dependencies\": [], \"status\": \"ready\", \"owner\": null, \"token\": null, \"evidence\": [], \"blocker\": null}"},
+ {"ok":"{\"id\": 3, \"title\": \"implement behavior\", \"acceptance\": [\"tests pass\"], \"dependencies\": [], \"status\": \"claimed\", \"owner\": \"w3\", \"token\": \"00000000000000000000000000000005\", \"evidence\": [], \"blocker\": null}"},
+ {"ok":"{\"id\": 4, \"title\": \"implement behavior\", \"acceptance\": [\"tests pass\"], \"dependencies\": [], \"status\": \"ready\", \"owner\": null, \"token\": null, \"evidence\": [], \"blocker\": null}"},
+ {"ok":"{\"id\": 4, \"title\": \"implement behavior\", \"acceptance\": [\"tests pass\"], \"dependencies\": [], \"status\": \"claimed\", \"owner\": \"w4\", \"token\": \"00000000000000000000000000000006\", \"evidence\": [], \"blocker\": null}"},
+ {"ok":"{\"id\": \"00000000000000000000000000000001\", \"goal\": \"admit members\", \"constraints\": [], \"criteria\": [{\"description\": \"test\", \"id\": \"t\", \"kind\": \"command\"}], \"coordinator\": \"parent\", \"integrator\": \"parent\", \"member_limit\": 5, \"deadline\": 1700003600.25, \"status\": \"running\", \"outcome\": null, \"outcome_reason\": null, \"next_liveness_check_at\": 1700000397.3734567, \"members\": [{\"id\": \"parent\", \"reservation\": \"00000000000000000000000000000002\", \"status\": \"live\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": null}, {\"id\": \"worker\", \"reservation\": \"res-w\", \"status\": \"live\", \"pid\": 11, \"started\": \"t\", \"socket\": null, \"launcher\": \"parent\"}, {\"id\": \"w2\", \"reservation\": \"res-w2\", \"status\": \"live\", \"pid\": 20, \"started\": \"o\", \"socket\": null, \"launcher\": \"parent\"}, {\"id\": \"w3\", \"reservation\": \"res-w3\", \"status\": \"live\", \"pid\": 21, \"started\": \"o\", \"socket\": null, \"launcher\": \"parent\"}, {\"id\": \"w4\", \"reservation\": \"res-w4\", \"status\": \"live\", \"pid\": 22, \"started\": \"o\", \"socket\": null, \"launcher\": \"parent\"}], \"usage\": 5, \"task_count\": 4, \"tasks\": [{\"id\": 1, \"title\": \"implement behavior\", \"acceptance\": [\"tests pass\"], \"dependencies\": [], \"status\": \"claimed\", \"owner\": \"worker\", \"token\": \"00000000000000000000000000000003\", \"evidence\": [], \"blocker\": null, \"owner_last_activity\": 93.65000009536743, \"owner_state\": \"active\", \"contact\": \"{\\\"op\\\":\\\"send\\\",\\\"request\\\":...,\\\"recipient\\\":\\\"worker\\\",\\\"body\\\":...}\"}, {\"id\": 2, \"title\": \"implement behavior\", \"acceptance\": [\"tests pass\"], \"dependencies\": [], \"status\": \"claimed\", \"owner\": \"w2\", \"token\": \"00000000000000000000000000000004\", \"evidence\": [], \"blocker\": null, \"owner_last_activity\": 94.09999990463257, \"owner_state\": \"active\", \"contact\": \"{\\\"op\\\":\\\"send\\\",\\\"request\\\":...,\\\"recipient\\\":\\\"w2\\\",\\\"body\\\":...}\"}, {\"id\": 3, \"title\": \"implement behavior\", \"acceptance\": [\"tests pass\"], \"dependencies\": [], \"status\": \"claimed\", \"owner\": \"w3\", \"token\": \"00000000000000000000000000000005\", \"evidence\": [], \"blocker\": null, \"owner_last_activity\": 102.87654328346252, \"owner_state\": \"active\", \"contact\": \"{\\\"op\\\":\\\"send\\\",\\\"request\\\":...,\\\"recipient\\\":\\\"w3\\\",\\\"body\\\":...}\"}, {\"id\": 4, \"title\": \"implement behavior\", \"acceptance\": [\"tests pass\"], \"dependencies\": [], \"status\": \"claimed\", \"owner\": \"w4\", \"token\": \"00000000000000000000000000000006\", \"evidence\": [], \"blocker\": null, \"owner_last_activity\": 98.29999995231628, \"owner_state\": \"active\", \"contact\": \"{\\\"op\\\":\\\"send\\\",\\\"request\\\":...,\\\"recipient\\\":\\\"w4\\\",\\\"body\\\":...}\"}], \"file_count\": 0, \"files\": [], \"evidence\": [], \"control_generation\": 0, \"event_cursor\": 17, \"counts\": {\"ready\": 0, \"claimed\": 4, \"blocked\": 0, \"submitted\": 0, \"completed\": 0, \"members_without_claim\": 0, \"members_dead\": 0}}"}
+],
+"files": [
+ "dump:8a1edc28e20b24098878218a87e13a9c2e0a8ae19f105d22653bae5ad3c791e8",
+ "dump:a681b117d1bc7ad75289571f4d83d61c1a2a8b988c3efaa7dccc551760bfde8b",
+ "dump:abe5002c4f6809ac57ea8a82d784b6771b62c568c42c2fd81ee05077a0dc2383",
+ "dump:88bdc9f6f182b3fb5d9a02bebf8087ac92fdd66db0a4b48b9040c6f776a95af2",
+ "dump:75b8d9d1b2116060dc3c689e05825e4d79bce10210d6ec74e7f5ec136e1ef6a9",
+ "dump:a99dff1de9a746363d35c5e71ae3f351f18d6a1c226f3412391fdef996104281",
+ "dump:6edbe42ff8a1634100d440ea6fda0aa16dc18945ab4ba0e225b30299f255d4f6",
+ "dump:3896be68f3ae6af989b49e9e724aecd2bd406562fca7393a12a2fc6656cd7af8",
+ "dump:953ecbc9196d091198623995c7d0cc415e5456e334a2882721a7f232e09512d5",
+ "dump:6fc44b4d46cdd5d6eba0fd57e1650bb2475e82c3b673a4cb2f685fc1e8e1ae69",
+ "dump:e3cc21a7e22ff95bbf2284428a3f57b284772b0ed103c9ca0b0116176b327c98",
+ "dump:a5fba925b189165511ffae311f237dc53e8063b87d621daac51b07b67723f13b",
+ "dump:152c23de61f5d6f95290cdc42b77f35ed4f56a0ad0328080f44561ab03f1b75b",
+ "dump:7b967c4114f57398539609ca8a1bf3772446ac02d226fd83f25cab393233c7e1",
+ "dump:3116e2173b3a2754d0d89244264968a9a53d9386ca1f50a4779d59a88f768605",
+ "dump:18eb5420a5f2e70f9141d852c1d84ca936c151854544616b7bdd6b74cd4e5ab9",
+ "dump:5583a71d79a2a701573cd4f63203672891a065113ab7cd20ab2c2f3219fefaea",
+ "dump:5583a71d79a2a701573cd4f63203672891a065113ab7cd20ab2c2f3219fefaea"
+],
+"dump": [
+  ["sqlite_master", [
+   [["text",{"text":"table"}],["text",{"text":"run"}],["text",{"text":"run"}],["text",{"text":"CREATE TABLE run (id TEXT PRIMARY KEY, goal TEXT, constraints TEXT, criteria TEXT,\n coordinator TEXT, integrator TEXT, member_limit INTEGER, deadline REAL, status TEXT, outcome TEXT, outcome_reason TEXT)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_run_1"}],["text",{"text":"run"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"members"}],["text",{"text":"members"}],["text",{"text":"CREATE TABLE members (id TEXT PRIMARY KEY, reservation TEXT UNIQUE, status TEXT,\n pid INTEGER, started TEXT, socket TEXT, launcher TEXT)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_members_1"}],["text",{"text":"members"}],["null",null]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_members_2"}],["text",{"text":"members"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"tasks"}],["text",{"text":"tasks"}],["text",{"text":"CREATE TABLE tasks (id INTEGER PRIMARY KEY, title TEXT, acceptance TEXT, dependencies TEXT,\n status TEXT, owner TEXT, token TEXT, evidence TEXT, blocker TEXT)"}]],
+   [["text",{"text":"table"}],["text",{"text":"files"}],["text",{"text":"files"}],["text",{"text":"CREATE TABLE files (path TEXT PRIMARY KEY, task INTEGER, owner TEXT, claim TEXT, token TEXT)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_files_1"}],["text",{"text":"files"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"messages"}],["text",{"text":"messages"}],["text",{"text":"CREATE TABLE messages (id INTEGER PRIMARY KEY, sender TEXT, recipient TEXT, body TEXT, status TEXT, revision TEXT, supersedes INTEGER, superseded_by INTEGER)"}]],
+   [["text",{"text":"table"}],["text",{"text":"evidence"}],["text",{"text":"evidence"}],["text",{"text":"CREATE TABLE evidence (criterion TEXT, artifact TEXT, revision TEXT, kind TEXT,\n actor TEXT, accepted INTEGER, PRIMARY KEY(criterion, actor))"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_evidence_1"}],["text",{"text":"evidence"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"requests"}],["text",{"text":"requests"}],["text",{"text":"CREATE TABLE requests (actor TEXT, request TEXT, payload TEXT, result TEXT,\n PRIMARY KEY(actor, request))"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_requests_1"}],["text",{"text":"requests"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"events"}],["text",{"text":"events"}],["text",{"text":"CREATE TABLE events (id INTEGER PRIMARY KEY, actor TEXT, time REAL, action TEXT, detail TEXT)"}]],
+   [["text",{"text":"index"}],["text",{"text":"events_by_actor"}],["text",{"text":"events"}],["text",{"text":"CREATE INDEX events_by_actor ON events(actor,id)"}]],
+   [["text",{"text":"table"}],["text",{"text":"notification_cursors"}],["text",{"text":"notification_cursors"}],["text",{"text":"CREATE TABLE notification_cursors (actor TEXT PRIMARY KEY, event INTEGER)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_notification_cursors_1"}],["text",{"text":"notification_cursors"}],["null",null]]
+  ]],
+  ["events", [
+   [["integer",{"integer":1}],["text",{"text":"parent"}],["real",{"real":"1700000000.25"}],["text",{"text":"created"}],["text",{"text":"{\"contract\":{\"constraints\":[],\"criteria\":[{\"description\":\"test\",\"id\":\"t\",\"kind\":\"command\"}],\"goal\":\"admit members\"},\"deadline\":1700003600.25,\"goal\":\"admit members\"}"}]],
+   [["integer",{"integer":2}],["text",{"text":"parent"}],["real",{"real":"1700000001.25"}],["text",{"text":"reserved"}],["text",{"text":"{\"member\":\"worker\"}"}]],
+   [["integer",{"integer":3}],["text",{"text":"parent"}],["real",{"real":"1700000002.25"}],["text",{"text":"activated"}],["text",{"text":"{\"member\":\"worker\",\"pid\":11}"}]],
+   [["integer",{"integer":4}],["text",{"text":"parent"}],["real",{"real":"1700000003.25"}],["text",{"text":"reserved"}],["text",{"text":"{\"member\":\"w2\"}"}]],
+   [["integer",{"integer":5}],["text",{"text":"parent"}],["real",{"real":"1700000003.3"}],["text",{"text":"activated"}],["text",{"text":"{\"member\":\"w2\",\"pid\":20}"}]],
+   [["integer",{"integer":6}],["text",{"text":"parent"}],["real",{"real":"1700000003.35"}],["text",{"text":"reserved"}],["text",{"text":"{\"member\":\"w3\"}"}]],
+   [["integer",{"integer":7}],["text",{"text":"parent"}],["real",{"real":"1700000003.4"}],["text",{"text":"activated"}],["text",{"text":"{\"member\":\"w3\",\"pid\":21}"}]],
+   [["integer",{"integer":8}],["text",{"text":"parent"}],["real",{"real":"1700000003.45"}],["text",{"text":"reserved"}],["text",{"text":"{\"member\":\"w4\"}"}]],
+   [["integer",{"integer":9}],["text",{"text":"parent"}],["real",{"real":"1700000003.5"}],["text",{"text":"activated"}],["text",{"text":"{\"member\":\"w4\",\"pid\":22}"}]],
+   [["integer",{"integer":10}],["text",{"text":"worker"}],["real",{"real":"1700000004.25"}],["text",{"text":"task_created"}],["text",{"text":"{\"task\":1}"}]],
+   [["integer",{"integer":11}],["text",{"text":"worker"}],["real",{"real":"1700000106.6"}],["text",{"text":"claimed"}],["text",{"text":"{\"task\":1,\"token\":\"00000000000000000000000000000003\"}"}]],
+   [["integer",{"integer":12}],["text",{"text":"worker"}],["real",{"real":"1700000005.25"}],["text",{"text":"task_created"}],["text",{"text":"{\"task\":2}"}]],
+   [["integer",{"integer":13}],["text",{"text":"w2"}],["real",{"real":"1700000106.15"}],["text",{"text":"claimed"}],["text",{"text":"{\"task\":2,\"token\":\"00000000000000000000000000000004\"}"}]],
+   [["integer",{"integer":14}],["text",{"text":"worker"}],["real",{"real":"1700000006.25"}],["text",{"text":"task_created"}],["text",{"text":"{\"task\":3}"}]],
+   [["integer",{"integer":15}],["text",{"text":"w3"}],["real",{"real":"1700000097.3734567"}],["text",{"text":"claimed"}],["text",{"text":"{\"task\":3,\"token\":\"00000000000000000000000000000005\"}"}]],
+   [["integer",{"integer":16}],["text",{"text":"worker"}],["real",{"real":"1700000007.25"}],["text",{"text":"task_created"}],["text",{"text":"{\"task\":4}"}]],
+   [["integer",{"integer":17}],["text",{"text":"w4"}],["real",{"real":"1700000101.95"}],["text",{"text":"claimed"}],["text",{"text":"{\"task\":4,\"token\":\"00000000000000000000000000000006\"}"}]]
+  ]],
+  ["evidence", []],
+  ["files", []],
+  ["members", [
+   [["text",{"text":"parent"}],["text",{"text":"00000000000000000000000000000002"}],["text",{"text":"live"}],["null",null],["null",null],["null",null],["null",null]],
+   [["text",{"text":"worker"}],["text",{"text":"res-w"}],["text",{"text":"live"}],["integer",{"integer":11}],["text",{"text":"t"}],["null",null],["text",{"text":"parent"}]],
+   [["text",{"text":"w2"}],["text",{"text":"res-w2"}],["text",{"text":"live"}],["integer",{"integer":20}],["text",{"text":"o"}],["null",null],["text",{"text":"parent"}]],
+   [["text",{"text":"w3"}],["text",{"text":"res-w3"}],["text",{"text":"live"}],["integer",{"integer":21}],["text",{"text":"o"}],["null",null],["text",{"text":"parent"}]],
+   [["text",{"text":"w4"}],["text",{"text":"res-w4"}],["text",{"text":"live"}],["integer",{"integer":22}],["text",{"text":"o"}],["null",null],["text",{"text":"parent"}]]
+  ]],
+  ["messages", []],
+  ["notification_cursors", []],
+  ["requests", [
+   [["text",{"text":"worker"}],["text",{"text":"task-0"}],["text",{"text":"[\"task\",\"implement behavior\",[\"tests pass\"],[]]"}],["text",{"text":"{\"acceptance\":[\"tests pass\"],\"blocker\":null,\"dependencies\":[],\"evidence\":[],\"id\":1,\"owner\":null,\"status\":\"ready\",\"title\":\"implement behavior\",\"token\":null}"}]],
+   [["text",{"text":"worker"}],["text",{"text":"task-1"}],["text",{"text":"[\"task\",\"implement behavior\",[\"tests pass\"],[]]"}],["text",{"text":"{\"acceptance\":[\"tests pass\"],\"blocker\":null,\"dependencies\":[],\"evidence\":[],\"id\":2,\"owner\":null,\"status\":\"ready\",\"title\":\"implement behavior\",\"token\":null}"}]],
+   [["text",{"text":"worker"}],["text",{"text":"task-2"}],["text",{"text":"[\"task\",\"implement behavior\",[\"tests pass\"],[]]"}],["text",{"text":"{\"acceptance\":[\"tests pass\"],\"blocker\":null,\"dependencies\":[],\"evidence\":[],\"id\":3,\"owner\":null,\"status\":\"ready\",\"title\":\"implement behavior\",\"token\":null}"}]],
+   [["text",{"text":"worker"}],["text",{"text":"task-3"}],["text",{"text":"[\"task\",\"implement behavior\",[\"tests pass\"],[]]"}],["text",{"text":"{\"acceptance\":[\"tests pass\"],\"blocker\":null,\"dependencies\":[],\"evidence\":[],\"id\":4,\"owner\":null,\"status\":\"ready\",\"title\":\"implement behavior\",\"token\":null}"}]]
+  ]],
+  ["run", [
+   [["text",{"text":"00000000000000000000000000000001"}],["text",{"text":"admit members"}],["text",{"text":"[]"}],["text",{"text":"[{\"description\":\"test\",\"id\":\"t\",\"kind\":\"command\"}]"}],["text",{"text":"parent"}],["text",{"text":"parent"}],["integer",{"integer":5}],["real",{"real":"1700003600.25"}],["text",{"text":"running"}],["null",null],["null",null]]
+  ]],
+  ["tasks", [
+   [["integer",{"integer":1}],["text",{"text":"implement behavior"}],["text",{"text":"[\"tests pass\"]"}],["text",{"text":"[]"}],["text",{"text":"claimed"}],["text",{"text":"worker"}],["text",{"text":"00000000000000000000000000000003"}],["text",{"text":"[]"}],["null",null]],
+   [["integer",{"integer":2}],["text",{"text":"implement behavior"}],["text",{"text":"[\"tests pass\"]"}],["text",{"text":"[]"}],["text",{"text":"claimed"}],["text",{"text":"w2"}],["text",{"text":"00000000000000000000000000000004"}],["text",{"text":"[]"}],["null",null]],
+   [["integer",{"integer":3}],["text",{"text":"implement behavior"}],["text",{"text":"[\"tests pass\"]"}],["text",{"text":"[]"}],["text",{"text":"claimed"}],["text",{"text":"w3"}],["text",{"text":"00000000000000000000000000000005"}],["text",{"text":"[]"}],["null",null]],
+   [["integer",{"integer":4}],["text",{"text":"implement behavior"}],["text",{"text":"[\"tests pass\"]"}],["text",{"text":"[]"}],["text",{"text":"claimed"}],["text",{"text":"w4"}],["text",{"text":"00000000000000000000000000000006"}],["text",{"text":"[]"}],["null",null]]
+  ]],
+  ["PRAGMA journal_mode", [
+   [["text",{"text":"delete"}]]
+  ]],
+  ["PRAGMA user_version", [
+   [["integer",{"integer":0}]]
+  ]]
+ ]
+}

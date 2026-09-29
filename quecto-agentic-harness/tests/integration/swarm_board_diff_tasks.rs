@@ -1,16 +1,17 @@
 //! Differential scenarios (#2272, epic #2265): task creation, dependencies,
-//! claims and releases on the Python board and the Rust board, compared
-//! after every step by result, refusal text and logical database dump.
-//! Ported from `tests/swarm_helpers_test.py`, plus the loosely typed
-//! arguments Python accepts (epic P3).
+//! claims and releases on the Rust board against the Python board's answers
+//! frozen in its golden fixtures (#2283), compared after every step by
+//! result, refusal text and logical database dump. Ported from
+//! `tests/swarm_helpers_test.py`, plus the loosely typed arguments Python
+//! accepts (epic P3).
 use serde_json::{Value, json};
 
 use crate::swarm_board_diff_membership::{at, create};
 use crate::swarm_board_diff_runs::NOW;
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
-use crate::swarm_board_diff_runs::swarm_board_diff::python::PyBoard;
-use crate::swarm_board_diff_runs::swarm_board_diff::rust::RustBoard;
-use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{Step, run_both, sql};
+use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
+    Step, run_golden, rust_answers, sql, step, step_text,
+};
 
 /// A running run of `limit` coordinated by `parent`, with `worker` live.
 fn staffed(limit: i64) -> Vec<Step> {
@@ -54,7 +55,7 @@ fn scenario(mut steps: Vec<Step>, more: impl IntoIterator<Item = Step>) -> Vec<S
 #[test]
 fn hand_edited_negative_task_ids_allow_creation() {
     for (edited, inserted) in [(-5, -4), (-1, 0)] {
-        run_both(&scenario(
+        run_golden(&scenario(
             staffed(5),
             [
                 task(3.0, "first", "first", json!(null)),
@@ -70,7 +71,7 @@ fn hand_edited_negative_task_ids_allow_creation() {
 /// Python updates both matching rows; the Rust adapter must not panic.
 #[test]
 fn duplicate_task_ids_without_primary_key_allow_updates() {
-    run_both(&scenario(
+    run_golden(&scenario(
         staffed(5),
         [
             task(3.0, "first", "first", json!(null)),
@@ -89,7 +90,7 @@ fn duplicate_task_ids_without_primary_key_allow_updates() {
 /// every later one is refused; the claimed task carries its token.
 #[test]
 fn claims_are_atomic_and_dependencies_block_claims() {
-    run_both(&scenario(
+    run_golden(&scenario(
         staffed(5),
         [
             task(3.0, "task", "work", json!(null)),
@@ -112,7 +113,7 @@ fn claims_are_atomic_and_dependencies_block_claims() {
 /// member.
 #[test]
 fn request_retries_are_idempotent_but_payload_conflicts_fail() {
-    run_both(&scenario(
+    run_golden(&scenario(
         staffed(5),
         [
             task(3.0, "task", "work", json!(null)),
@@ -173,7 +174,7 @@ fn task_arguments_are_refused_identically() {
         steps.push(at(offset + 0.5, "stranger", "task_create", args));
         offset += 1.0;
     }
-    run_both(&steps);
+    run_golden(&steps);
 }
 
 /// `dependencies or []`: falsy values are no dependencies (one payload);
@@ -205,7 +206,7 @@ fn dependency_arguments_are_normalized_and_checked_identically() {
         offset += 1.0;
     }
     steps.push(raw(offset, json!(2)));
-    run_both(&steps);
+    run_golden(&steps);
 }
 
 /// `test_dependencies_reject_missing_self_and_cycles`, and a loose task id:
@@ -214,7 +215,7 @@ fn dependency_arguments_are_normalized_and_checked_identically() {
 /// `true` equal it and are refused.
 #[test]
 fn dependencies_reject_missing_self_and_cycles() {
-    run_both(&scenario(
+    run_golden(&scenario(
         staffed(5),
         [
             task(3.0, "first", "first", json!(null)),
@@ -281,7 +282,7 @@ fn claim_with_a_string_task_id_matches_by_affinity_identically() {
     steps.push(sql("UPDATE tasks SET token='tok' WHERE id=1"));
     steps.push(at(offset + 1.0, "worker", "release", json!(["1.0", "tok"])));
     steps.push(raw(offset + 2.0, json!(1)));
-    run_both(&steps);
+    run_golden(&steps);
 }
 
 /// `test_stale_claim_cannot_modify_recovered_work`'s claim-only prefix and
@@ -290,7 +291,7 @@ fn claim_with_a_string_task_id_matches_by_affinity_identically() {
 /// reserved under that claim only.
 #[test]
 fn only_the_current_claim_releases_and_its_files_go() {
-    run_both(&scenario(
+    run_golden(&scenario(
         staffed(5),
         [
             task(3.0, "first", "first", json!(null)),
@@ -328,7 +329,7 @@ fn only_the_current_claim_releases_and_its_files_go() {
 /// dead member may still read, and the expiry commits before the refusal.
 #[test]
 fn the_operation_gate_refuses_identically() {
-    run_both(&scenario(
+    run_golden(&scenario(
         staffed(5),
         [
             task(3.0, "first", "first", json!(null)),
@@ -355,7 +356,7 @@ fn the_operation_gate_refuses_identically() {
 /// each dependency's stored status.
 #[test]
 fn completed_dependencies_unblock_identically() {
-    run_both(&scenario(
+    run_golden(&scenario(
         staffed(5),
         [
             task(3.0, "first", "first", json!(null)),
@@ -376,7 +377,7 @@ fn completed_dependencies_unblock_identically() {
 /// already answered still replays.
 #[test]
 fn task_board_full_at_1000_identically() {
-    run_both(&scenario(
+    run_golden(&scenario(
         staffed(5),
         [
             task(3.0, "early", "early", json!(null)),
@@ -393,96 +394,61 @@ fn task_board_full_at_1000_identically() {
     ));
 }
 
-/// One call on each board, the same arguments at the same instant.
-fn both(
-    rust: &RustBoard,
-    python: &mut PyBoard,
-    member: &str,
-    method: &str,
-    args: Value,
-    offset: f64,
-) -> (Outcome, Outcome) {
-    let args = args.to_string();
-    let now = NOW + offset;
-    (
-        rust.call_text(member, method, &args, now).0,
-        python.call(member, method, &args, now),
-    )
-}
-
-/// Mixed writers: a `task_create` result the Rust board stored replays in
-/// the Python board, and the reverse, on one file; each answers the stored
-/// text (keys sorted) and conflicts on the other's payload.
+/// The request ledger replays a `task_create` result (#2283: once across
+/// the Python and the Rust board on one file, now against Python's frozen
+/// answers): a repeated request answers the stored text (keys sorted),
+/// whichever arguments' spelling repeats it, and another payload under the
+/// same request id conflicts.
 #[test]
 fn ledger_results_replay_across_implementations() {
-    let dir = tempfile::tempdir().unwrap();
-    let database = dir.path().join("swarm.sqlite");
-    let rust = RustBoard::open(&database, dir.path());
-    let mut python = PyBoard::start(&database, dir.path(), dir.path());
-    for step in staffed(5) {
-        let outcome = rust
-            .call_text(&step.member, &step.method, &step.args, step.now)
-            .0;
-        assert!(matches!(outcome, Outcome::Ok(_)), "{step:?}: {outcome:?}");
-    }
-    let created = rust
-        .call_text(
+    let mut steps = staffed(5);
+    let first = steps.len();
+    steps.extend([
+        step_text(
             "worker",
             "task_create",
             r#"["rust", "by rust", ["é"], [] ]"#,
             NOW + 3.0,
-        )
-        .0;
-    let Outcome::Ok(created) = created else {
-        panic!("{created:?}")
+        ),
+        step(
+            "worker",
+            "task_create",
+            json!(["rust", "by rust", ["é"]]),
+            NOW + 4.0,
+        ),
+        step(
+            "worker",
+            "task_create",
+            json!(["other", "by another", ["ok"], [1]]),
+            NOW + 5.0,
+        ),
+        step(
+            "worker",
+            "task_create",
+            json!(["other", "by another", ["ok"], [1]]),
+            NOW + 6.0,
+        ),
+        step(
+            "worker",
+            "task_create",
+            json!(["other", "changed", ["ok"], [1]]),
+            NOW + 7.0,
+        ),
+    ]);
+    run_golden(&steps);
+    let answers = rust_answers(&steps);
+    let value = |index: usize| match &answers[index] {
+        Outcome::Ok(value) => value.clone(),
+        other => panic!("step {index}: {other:?}"),
     };
-    let (rust_replay, python_replay) = both(
-        &rust,
-        &mut python,
-        "worker",
-        "task_create",
-        json!(["rust", "by rust", ["é"]]),
-        4.0,
-    );
-    assert_eq!(rust_replay, python_replay);
-    let Outcome::Ok(replayed) = python_replay else {
-        panic!("{python_replay:?}")
-    };
-    assert_eq!(replayed, created, "the same task");
-    assert_eq!(replayed["id"], json!(1));
-
-    let from_python = python.call(
-        "worker",
-        "task_create",
-        &json!(["python", "by python", ["ok"], [1]]).to_string(),
-        NOW + 5.0,
-    );
-    assert!(matches!(from_python, Outcome::Ok(_)), "{from_python:?}");
-    let (rust_replay, python_replay) = both(
-        &rust,
-        &mut python,
-        "worker",
-        "task_create",
-        json!(["python", "by python", ["ok"], [1]]),
-        6.0,
-    );
-    assert_eq!(rust_replay, python_replay);
-    let Outcome::Ok(replayed) = rust_replay else {
-        panic!("{rust_replay:?}")
-    };
-    assert_eq!(replayed["id"], json!(2));
-    assert_eq!(replayed["status"], json!("blocked"));
-    let (rust_conflict, python_conflict) = both(
-        &rust,
-        &mut python,
-        "worker",
-        "task_create",
-        json!(["python", "other", ["ok"], [1]]),
-        7.0,
-    );
-    assert_eq!(rust_conflict, python_conflict);
+    // The replay answers the stored text, its keys sorted: the same task.
+    assert_eq!(value(first + 1), value(first), "the same task");
+    assert_eq!(value(first)["id"], json!(1));
+    assert_eq!(value(first + 3), value(first + 2));
+    assert_eq!(value(first + 2)["id"], json!(2));
+    assert_eq!(value(first + 2)["status"], json!("blocked"));
     assert_eq!(
-        rust_conflict,
+        answers[first + 4],
         Outcome::Refused("request id reused with different payload".to_owned())
     );
 }

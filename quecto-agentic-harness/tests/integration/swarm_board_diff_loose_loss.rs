@@ -32,7 +32,7 @@ use crate::swarm_board_diff_loss::quarantine;
 use crate::swarm_board_diff_membership::at;
 use crate::swarm_board_diff_messages::joined;
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
-use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{run_rust, sql, try_run_both};
+use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{run_rust, sql, try_run_golden};
 
 /// The divergences this file pins also pinned in `src`: the name, the
 /// test file's source and the pinning test in it.
@@ -74,7 +74,7 @@ fn unknown_member_status_is_not_alive() {
                 sql(&format!("UPDATE members SET status={status} WHERE id='z'")),
                 at(4.0, "parent", method, args),
             ]);
-            let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+            let difference = try_run_golden(&steps, |_, _, _| {}).unwrap_err();
             assert!(
                 difference.starts_with(&format!("step 5: {method} as parent"))
                     && difference.contains("boards differ"),
@@ -110,7 +110,7 @@ fn outside_edited_loss_records() {
         ),
     ] {
         let steps = observed(edit);
-        let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+        let difference = try_run_golden(&steps, |_, _, _| {}).unwrap_err();
         assert!(
             difference.starts_with("step 5: _quarantine as parent") && difference.contains(python),
             "{edit}: {difference}"
@@ -121,7 +121,7 @@ fn outside_edited_loss_records() {
     // board reads it as naming no member, so the caller observes afresh
     // and the grace runs from now.
     let listed = observed("UPDATE events SET detail='[1]' WHERE action='scope_observed'");
-    let difference = try_run_both(&listed, |_, _, _| {}).unwrap_err();
+    let difference = try_run_golden(&listed, |_, _, _| {}).unwrap_err();
     assert!(
         difference.starts_with("step 5: _quarantine as parent")
             && difference
@@ -145,7 +145,7 @@ fn outside_edited_loss_records() {
         ),
     ] {
         let steps = observed(edit);
-        let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+        let difference = try_run_golden(&steps, |_, _, _| {}).unwrap_err();
         assert!(
             difference.starts_with("step 5: _quarantine as parent") && difference.contains(python),
             "{edit}: {difference}"
@@ -159,10 +159,10 @@ fn outside_edited_loss_records() {
     let blob = observed(
         r#"INSERT INTO events(actor,time,action,detail) VALUES('x',x'00','scope_observed','{"member":"other"}')"#,
     );
-    let difference = try_run_both(&blob, |_, _, _| {}).unwrap_err();
+    let difference = try_run_golden(&blob, |_, _, _| {}).unwrap_err();
     assert!(
         difference.starts_with("step 5: _quarantine as parent")
-            && difference.contains("python Ok(Null)"),
+            && difference.contains("golden Ok(Null)"),
         "{difference}"
     );
     let outcome = run_rust(&blob);
@@ -177,7 +177,7 @@ fn outside_edited_loss_records() {
         quarantine(3.0, "parent", json!("worker")),
         at(4.0, "parent", "_control_status", json!([])),
     ]);
-    let difference = try_run_both(&launcher, |_, _, _| {}).unwrap_err();
+    let difference = try_run_golden(&launcher, |_, _, _| {}).unwrap_err();
     assert!(
         difference.starts_with("step 4: _quarantine as parent")
             && difference.contains("boards differ"),
@@ -197,7 +197,7 @@ fn integer_beyond_i64_is_refused() {
     let beyond = json!(9_223_372_036_854_775_808_u64);
     for method in ["_quarantine", "_confirmed_dead"] {
         let steps = joined([at(3.0, "parent", method, json!([beyond]))]);
-        let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+        let difference = try_run_golden(&steps, |_, _, _| {}).unwrap_err();
         assert!(
             difference.starts_with(&format!("step 3: {method} as parent"))
                 && difference.contains(

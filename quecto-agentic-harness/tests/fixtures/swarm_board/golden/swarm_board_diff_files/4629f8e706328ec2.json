@@ -1,0 +1,111 @@
+{
+"steps": [
+ ["parent","create_run","{\"goal\":\"ship feature\",\"constraints\":[\"clean architecture\"],\"criteria\":[{\"id\":\"tests\",\"kind\":\"command\",\"description\":\"acceptance tests pass\"},{\"id\":\"review\",\"kind\":\"review\",\"description\":\"independent review\"}],\"member_limit\":3,\"deadline\":1700000300.25}","1700000000.25",null],
+ ["parent","_admit","[\"worker\",\"res-worker\"]","1700000001.25",null],
+ ["parent","_activate","[\"worker\",\"res-worker\",11,\"t\",null]","1700000001.35",null],
+ ["parent","complete","[\"abc\"]","1700000002.25",null],
+ ["worker","task_create","[\"task\",\"work\",[\"tests pass\"]]","1700000003.25",null],
+ ["worker","claim","[1]","1700000004.25",null],
+ ["worker","submit","[1,\"00000000000000000000000000000003\",[{\"artifact\":\"tests.log\",\"revision\":\"abc\"}]]","1700000005.25",null],
+ ["parent","evidence","[\"tests\",\"tests.log\",\"abc\",\"command\",true]","1700000006.25",null],
+ ["parent","evidence","[\"review\",\"review.md\",\"abc\",\"review\",true]","1700000007.25",null],
+ ["parent","complete","[\"abc\"]","1700000008.25",null],
+ ["parent","verify_task","[1,\"00000000000000000000000000000003\",\"abc\"]","1700000009.25",null],
+ ["parent","complete","[\"changed\"]","1700000010.25",null],
+ ["parent","complete","[\"abc\"]","1700000011.25",null],
+ ["parent","_snapshot","[]","1700000012.25",null]
+],
+"answers": [
+ {"ok":"null"},
+ {"ok":"{\"id\": \"worker\", \"reservation\": \"res-worker\", \"status\": \"reserved\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": \"parent\"}"},
+ {"ok":"null"},
+ {"refused":"completion requires accepted evidence at the current revision for every criterion"},
+ {"ok":"{\"id\": 1, \"title\": \"work\", \"acceptance\": [\"tests pass\"], \"dependencies\": [], \"status\": \"ready\", \"owner\": null, \"token\": null, \"evidence\": [], \"blocker\": null}"},
+ {"ok":"{\"id\": 1, \"title\": \"work\", \"acceptance\": [\"tests pass\"], \"dependencies\": [], \"status\": \"claimed\", \"owner\": \"worker\", \"token\": \"00000000000000000000000000000003\", \"evidence\": [], \"blocker\": null}"},
+ {"ok":"null"},
+ {"ok":"null"},
+ {"ok":"null"},
+ {"refused":"settle outstanding work and file reservations before success"},
+ {"ok":"null"},
+ {"refused":"completion requires accepted evidence at the current revision for every criterion"},
+ {"ok":"null"},
+ {"ok":"{\"status\": \"paused\", \"coordinator\": \"parent\", \"outcome\": \"succeeded\", \"control_generation\": 12, \"deadline\": 1700000300.25, \"members\": [{\"id\": \"parent\", \"reservation\": \"00000000000000000000000000000002\", \"status\": \"live\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": null}, {\"id\": \"worker\", \"reservation\": \"res-worker\", \"status\": \"live\", \"pid\": 11, \"started\": \"t\", \"socket\": null, \"launcher\": \"parent\"}]}"}
+],
+"files": [
+ "dump:55b191edd9bb3c3757caae716ede91616f8784e7b01b4b332ce5a9fb09ea5bcf",
+ "dump:6ff678d7c8283ae8a5cb180de379d6183df2d9f55645f50ca6ba1a8935c9490d",
+ "dump:6ce2a7bf36721db7aa68ecc7ce1b35570b22d41a1086f12a223ea5f15631366e",
+ "dump:6ce2a7bf36721db7aa68ecc7ce1b35570b22d41a1086f12a223ea5f15631366e",
+ "dump:69a8c88a7a44767bf2ce4f1915c741f4aa4f2b4f77fbe9dd611bd9d595918bc4",
+ "dump:facd30b32f9ef9e1da6889ee4883735e25689209dde996f404134548e09f75e1",
+ "dump:fe52468a2268d63ee25da4c49dca8173b04401f99c4080421dbe02134986bfc0",
+ "dump:7584328c849208afc7399039665db3c7e02360095a47f22900d273fe5eb54ef4",
+ "dump:a7f5d9ce1a972cc120add818aea2e353039ed93e5fcaeaff3217b922e3a925b6",
+ "dump:a7f5d9ce1a972cc120add818aea2e353039ed93e5fcaeaff3217b922e3a925b6",
+ "dump:f74d1332f787b724dfa2bcad8865f78a2bed29a38b3463f8430364775d741b7e",
+ "dump:f74d1332f787b724dfa2bcad8865f78a2bed29a38b3463f8430364775d741b7e",
+ "dump:046d60e6ecb051e55a2f3fb5c47ab686ca4f19184ad2a735e6dc47f6694bb86e",
+ "dump:046d60e6ecb051e55a2f3fb5c47ab686ca4f19184ad2a735e6dc47f6694bb86e"
+],
+"dump": [
+  ["sqlite_master", [
+   [["text",{"text":"table"}],["text",{"text":"run"}],["text",{"text":"run"}],["text",{"text":"CREATE TABLE run (id TEXT PRIMARY KEY, goal TEXT, constraints TEXT, criteria TEXT,\n coordinator TEXT, integrator TEXT, member_limit INTEGER, deadline REAL, status TEXT, outcome TEXT, outcome_reason TEXT)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_run_1"}],["text",{"text":"run"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"members"}],["text",{"text":"members"}],["text",{"text":"CREATE TABLE members (id TEXT PRIMARY KEY, reservation TEXT UNIQUE, status TEXT,\n pid INTEGER, started TEXT, socket TEXT, launcher TEXT)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_members_1"}],["text",{"text":"members"}],["null",null]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_members_2"}],["text",{"text":"members"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"tasks"}],["text",{"text":"tasks"}],["text",{"text":"CREATE TABLE tasks (id INTEGER PRIMARY KEY, title TEXT, acceptance TEXT, dependencies TEXT,\n status TEXT, owner TEXT, token TEXT, evidence TEXT, blocker TEXT)"}]],
+   [["text",{"text":"table"}],["text",{"text":"files"}],["text",{"text":"files"}],["text",{"text":"CREATE TABLE files (path TEXT PRIMARY KEY, task INTEGER, owner TEXT, claim TEXT, token TEXT)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_files_1"}],["text",{"text":"files"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"messages"}],["text",{"text":"messages"}],["text",{"text":"CREATE TABLE messages (id INTEGER PRIMARY KEY, sender TEXT, recipient TEXT, body TEXT, status TEXT, revision TEXT, supersedes INTEGER, superseded_by INTEGER)"}]],
+   [["text",{"text":"table"}],["text",{"text":"evidence"}],["text",{"text":"evidence"}],["text",{"text":"CREATE TABLE evidence (criterion TEXT, artifact TEXT, revision TEXT, kind TEXT,\n actor TEXT, accepted INTEGER, PRIMARY KEY(criterion, actor))"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_evidence_1"}],["text",{"text":"evidence"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"requests"}],["text",{"text":"requests"}],["text",{"text":"CREATE TABLE requests (actor TEXT, request TEXT, payload TEXT, result TEXT,\n PRIMARY KEY(actor, request))"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_requests_1"}],["text",{"text":"requests"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"events"}],["text",{"text":"events"}],["text",{"text":"CREATE TABLE events (id INTEGER PRIMARY KEY, actor TEXT, time REAL, action TEXT, detail TEXT)"}]],
+   [["text",{"text":"index"}],["text",{"text":"events_by_actor"}],["text",{"text":"events"}],["text",{"text":"CREATE INDEX events_by_actor ON events(actor,id)"}]],
+   [["text",{"text":"table"}],["text",{"text":"notification_cursors"}],["text",{"text":"notification_cursors"}],["text",{"text":"CREATE TABLE notification_cursors (actor TEXT PRIMARY KEY, event INTEGER)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_notification_cursors_1"}],["text",{"text":"notification_cursors"}],["null",null]]
+  ]],
+  ["events", [
+   [["integer",{"integer":1}],["text",{"text":"parent"}],["real",{"real":"1700000000.25"}],["text",{"text":"created"}],["text",{"text":"{\"contract\":{\"constraints\":[\"clean architecture\"],\"criteria\":[{\"description\":\"acceptance tests pass\",\"id\":\"tests\",\"kind\":\"command\"},{\"description\":\"independent review\",\"id\":\"review\",\"kind\":\"review\"}],\"goal\":\"ship feature\"},\"deadline\":1700000300.25,\"goal\":\"ship feature\"}"}]],
+   [["integer",{"integer":2}],["text",{"text":"parent"}],["real",{"real":"1700000001.25"}],["text",{"text":"reserved"}],["text",{"text":"{\"member\":\"worker\"}"}]],
+   [["integer",{"integer":3}],["text",{"text":"parent"}],["real",{"real":"1700000001.35"}],["text",{"text":"activated"}],["text",{"text":"{\"member\":\"worker\",\"pid\":11}"}]],
+   [["integer",{"integer":4}],["text",{"text":"worker"}],["real",{"real":"1700000003.25"}],["text",{"text":"task_created"}],["text",{"text":"{\"task\":1}"}]],
+   [["integer",{"integer":5}],["text",{"text":"worker"}],["real",{"real":"1700000004.25"}],["text",{"text":"claimed"}],["text",{"text":"{\"task\":1,\"token\":\"00000000000000000000000000000003\"}"}]],
+   [["integer",{"integer":6}],["text",{"text":"worker"}],["real",{"real":"1700000005.25"}],["text",{"text":"submitted"}],["text",{"text":"{\"task\":1}"}]],
+   [["integer",{"integer":7}],["text",{"text":"parent"}],["real",{"real":"1700000006.25"}],["text",{"text":"evidence"}],["text",{"text":"{\"accepted\":true,\"artifact\":\"tests.log\",\"criterion\":\"tests\",\"revision\":\"abc\"}"}]],
+   [["integer",{"integer":8}],["text",{"text":"parent"}],["real",{"real":"1700000007.25"}],["text",{"text":"evidence"}],["text",{"text":"{\"accepted\":true,\"artifact\":\"review.md\",\"criterion\":\"review\",\"revision\":\"abc\"}"}]],
+   [["integer",{"integer":9}],["text",{"text":"parent"}],["real",{"real":"1700000009.25"}],["text",{"text":"verified"}],["text",{"text":"{\"revision\":\"abc\",\"task\":1}"}]],
+   [["integer",{"integer":10}],["text",{"text":"parent"}],["real",{"real":"1700000011.25"}],["text",{"text":"completed"}],["text",{"text":"{\"revision\":\"abc\"}"}]],
+   [["integer",{"integer":11}],["text",{"text":"parent"}],["real",{"real":"1700000011.25"}],["text",{"text":"stop"}],["text",{"text":"{\"reason\":\"completed at abc\",\"status\":\"succeeded\"}"}]],
+   [["integer",{"integer":12}],["text",{"text":"parent"}],["real",{"real":"1700000011.25"}],["text",{"text":"paused"}],["text",{"text":"{\"outcome\":\"succeeded\",\"reason\":\"completed at abc\",\"started\":1700000011.25}"}]]
+  ]],
+  ["evidence", [
+   [["text",{"text":"tests"}],["text",{"text":"tests.log"}],["text",{"text":"abc"}],["text",{"text":"command"}],["text",{"text":"parent"}],["integer",{"integer":1}]],
+   [["text",{"text":"review"}],["text",{"text":"review.md"}],["text",{"text":"abc"}],["text",{"text":"review"}],["text",{"text":"parent"}],["integer",{"integer":1}]]
+  ]],
+  ["files", []],
+  ["members", [
+   [["text",{"text":"parent"}],["text",{"text":"00000000000000000000000000000002"}],["text",{"text":"live"}],["null",null],["null",null],["null",null],["null",null]],
+   [["text",{"text":"worker"}],["text",{"text":"res-worker"}],["text",{"text":"live"}],["integer",{"integer":11}],["text",{"text":"t"}],["null",null],["text",{"text":"parent"}]]
+  ]],
+  ["messages", []],
+  ["notification_cursors", []],
+  ["requests", [
+   [["text",{"text":"worker"}],["text",{"text":"task"}],["text",{"text":"[\"task\",\"work\",[\"tests pass\"],[]]"}],["text",{"text":"{\"acceptance\":[\"tests pass\"],\"blocker\":null,\"dependencies\":[],\"evidence\":[],\"id\":1,\"owner\":null,\"status\":\"ready\",\"title\":\"work\",\"token\":null}"}]]
+  ]],
+  ["run", [
+   [["text",{"text":"00000000000000000000000000000001"}],["text",{"text":"ship feature"}],["text",{"text":"[\"clean architecture\"]"}],["text",{"text":"[{\"description\":\"acceptance tests pass\",\"id\":\"tests\",\"kind\":\"command\"},{\"description\":\"independent review\",\"id\":\"review\",\"kind\":\"review\"}]"}],["text",{"text":"parent"}],["text",{"text":"parent"}],["integer",{"integer":3}],["real",{"real":"1700000300.25"}],["text",{"text":"paused"}],["text",{"text":"succeeded"}],["text",{"text":"completed at abc"}]]
+  ]],
+  ["tasks", [
+   [["integer",{"integer":1}],["text",{"text":"work"}],["text",{"text":"[\"tests pass\"]"}],["text",{"text":"[]"}],["text",{"text":"completed"}],["text",{"text":"worker"}],["text",{"text":"00000000000000000000000000000003"}],["text",{"text":"[{\"artifact\":\"tests.log\",\"revision\":\"abc\"}]"}],["null",null]]
+  ]],
+  ["PRAGMA journal_mode", [
+   [["text",{"text":"delete"}]]
+  ]],
+  ["PRAGMA user_version", [
+   [["integer",{"integer":0}]]
+  ]]
+ ]
+}

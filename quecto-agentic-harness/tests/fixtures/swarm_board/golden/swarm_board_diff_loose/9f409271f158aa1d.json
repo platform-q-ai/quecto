@@ -1,0 +1,26 @@
+{
+"steps": [
+ ["parent","bootstrap_run","[[1],\"s\",null]","1700000000.25",null],
+ ["parent","_snapshot","[]","1700000001.25",null],
+ ["supervisor","_status","[]","1700000002.25",null]
+],
+"answers": [
+ {"refused":"coordination store unavailable or contended: Error binding parameter 3: type 'list' is not supported"},
+ {"refused":"coordination store unavailable or contended: no such table: run"},
+ {"refused":"coordination store unavailable or contended: no such table: run"}
+],
+"files": [
+ "dump:99e3ee7d2d1334b9bacba0176c4f674943323915a3da36cecc852df79c6038c4",
+ "dump:99e3ee7d2d1334b9bacba0176c4f674943323915a3da36cecc852df79c6038c4",
+ "dump:99e3ee7d2d1334b9bacba0176c4f674943323915a3da36cecc852df79c6038c4"
+],
+"dump": [
+  ["sqlite_master", []],
+  ["PRAGMA journal_mode", [
+   [["text",{"text":"delete"}]]
+  ]],
+  ["PRAGMA user_version", [
+   [["integer",{"integer":0}]]
+  ]]
+ ]
+}

@@ -1,0 +1,36 @@
+{
+"steps": [
+ ["parent","create_run","{\"goal\":\"admit members\",\"constraints\":[],\"criteria\":[{\"id\":\"t\",\"kind\":\"command\",\"description\":\"test\"}],\"member_limit\":5,\"deadline\":1700003600.25}","1700000000.25",null],
+ ["parent","_admit","[\"worker\",\"res-w\"]","1700000001.25",null],
+ ["parent","_activate","[\"worker\",\"res-w\",11,\"t\",null]","1700000002.25",null],
+ ["worker","task_create","[\"early\",\"early\",[\"tests pass\"],null]","1700000003.25",null],
+ ["","<sql>","WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i < 998) INSERT INTO tasks(title,acceptance,dependencies,status,evidence) SELECT 'bulk', '[\"ok\"]', '[]', 'ready', '[]' FROM n","0.0",null],
+ ["worker","task_create","[\"last\",\"last\",[\"tests pass\"],null]","1700000004.25",null],
+ ["worker","task_create","[\"over\",\"over\",[\"tests pass\"],null]","1700000005.25",null],
+ ["worker","task_create","[\"early\",\"early\",[\"tests pass\"],null]","1700000006.25",null],
+ ["parent","task_raw","[1000]","1700000007.25",null]
+],
+"answers": [
+ {"ok":"null"},
+ {"ok":"{\"id\": \"worker\", \"reservation\": \"res-w\", \"status\": \"reserved\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": \"parent\"}"},
+ {"ok":"null"},
+ {"ok":"{\"id\": 1, \"title\": \"early\", \"acceptance\": [\"tests pass\"], \"dependencies\": [], \"status\": \"ready\", \"owner\": null, \"token\": null, \"evidence\": [], \"blocker\": null}"},
+ {"ok":"null"},
+ {"ok":"{\"id\": 1000, \"title\": \"last\", \"acceptance\": [\"tests pass\"], \"dependencies\": [], \"status\": \"ready\", \"owner\": null, \"token\": null, \"evidence\": [], \"blocker\": null}"},
+ {"refused":"task board full (1000); settle existing work"},
+ {"ok":"{\"acceptance\": [\"tests pass\"], \"blocker\": null, \"dependencies\": [], \"evidence\": [], \"id\": 1, \"owner\": null, \"status\": \"ready\", \"title\": \"early\", \"token\": null}"},
+ {"ok":"{\"id\": 1000, \"title\": \"last\", \"acceptance\": [\"tests pass\"], \"dependencies\": [], \"status\": \"ready\", \"owner\": null, \"token\": null, \"evidence\": [], \"blocker\": null}"}
+],
+"files": [
+ "dump:8a1edc28e20b24098878218a87e13a9c2e0a8ae19f105d22653bae5ad3c791e8",
+ "dump:a681b117d1bc7ad75289571f4d83d61c1a2a8b988c3efaa7dccc551760bfde8b",
+ "dump:abe5002c4f6809ac57ea8a82d784b6771b62c568c42c2fd81ee05077a0dc2383",
+ "dump:abfb92778255fa31f92fead43bb1b815191ee9bc604775a183f0d0fc132bb414",
+ "dump:e57edd708fe9e0c3af2995431f846c9ebd042d9ac070b49b3b4df3f60b4b0c84",
+ "dump:f7a7af46aa45a519eb3a0c9f7a71c61f3f6f9956b5c29c81214f4792514f3e2e",
+ "dump:f7a7af46aa45a519eb3a0c9f7a71c61f3f6f9956b5c29c81214f4792514f3e2e",
+ "dump:f7a7af46aa45a519eb3a0c9f7a71c61f3f6f9956b5c29c81214f4792514f3e2e",
+ "dump:f7a7af46aa45a519eb3a0c9f7a71c61f3f6f9956b5c29c81214f4792514f3e2e"
+],
+"dump": null
+}

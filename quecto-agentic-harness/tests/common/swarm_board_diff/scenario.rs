@@ -1,10 +1,12 @@
-//! Steps and the per-step comparison of the two boards.
+//! Steps, and the per-step comparison of the Rust board with a scenario's
+//! golden fixture (#2283): Python's frozen answers (`golden.rs`).
 //!
 //! Every scenario runs twice (#2303 review M1): once as the board runs by
 //! default, and once with the event log on, each Rust call measured by the
-//! store's meter and recorded in memory. Both runs must match Python step
-//! for step, by result, refusal text and dump, and the second must record
-//! exactly one `swarm_op` per call, busy for a step run with the lock held.
+//! store's meter and recorded in memory. Both runs must match the golden
+//! step for step, by result, refusal text and board file, and the second
+//! must record exactly one `swarm_op` per call, busy for a step run with
+//! the lock held.
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, mpsc};
 use std::thread;
@@ -12,9 +14,14 @@ use std::time::Duration;
 
 use serde_json::Value;
 
+use std::panic::Location;
+
 use super::Outcome;
 use super::dump::{first_difference, logical_dump};
-use super::golden::{Answer, FULL_DUMP_LIMIT, Golden, canonical, file_state};
+use super::golden::{
+    Answer, FULL_DUMP_LIMIT, GOLDEN_DIR, Golden, canonical, dump_of, file_state, fixture_path,
+    scenario_of,
+};
 use super::python::PyBoard;
 use super::rust::{RecordedOps, RustBoard};
 
@@ -235,32 +242,91 @@ impl Side {
     }
 }
 
-/// Runs `steps` on both boards and panics with the first difference.
-pub fn run_both(steps: &[Step]) {
-    if let Err(difference) = try_run_both(steps, |_, _, _| {}) {
+/// How a scenario run treats its golden fixture. Replay is the only mode
+/// once the Python board is gone; recording and verifying run it live.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Mode {
+    /// Compare the Rust board with the committed fixture.
+    Replay,
+    /// Run the scenario on the live Python board, write its fixture under
+    /// this folder, then compare the Rust board with it.
+    Record(PathBuf),
+    /// Run the scenario on the live Python board and require the committed
+    /// fixture to be what it answers, then compare the Rust board with it.
+    Verify,
+}
+
+/// `QUECTO_SWARM_GOLDEN`: unset for replay, `record` (into
+/// `QUECTO_SWARM_GOLDEN_DIR`, or the committed folder) or `verify`.
+fn mode() -> Mode {
+    match std::env::var("QUECTO_SWARM_GOLDEN").ok().as_deref() {
+        None => Mode::Replay,
+        Some("record") => Mode::Record(
+            std::env::var_os("QUECTO_SWARM_GOLDEN_DIR")
+                .map_or_else(|| PathBuf::from(GOLDEN_DIR), PathBuf::from),
+        ),
+        Some("verify") => Mode::Verify,
+        Some(other) => panic!("QUECTO_SWARM_GOLDEN is record or verify, not {other}"),
+    }
+}
+
+/// The fixture the scenario `steps`, run from `scenario`'s file, is
+/// compared with, as the mode says.
+fn golden_for(scenario: &str, steps: &[Step]) -> Result<(Golden, PathBuf), String> {
+    refuse_held_unlocked_reads(steps)?;
+    match mode() {
+        Mode::Replay => Ok((
+            Golden::load(Path::new(GOLDEN_DIR), scenario, steps)?,
+            PathBuf::from(GOLDEN_DIR),
+        )),
+        Mode::Record(dir) => {
+            let golden = record_python(steps);
+            golden.save(&dir, scenario, steps);
+            Ok((golden, dir))
+        }
+        Mode::Verify => {
+            let stored = Golden::load(Path::new(GOLDEN_DIR), scenario, steps)?;
+            let live = record_python(steps);
+            match live == stored {
+                true => Ok((stored, PathBuf::from(GOLDEN_DIR))),
+                false => Err(format!(
+                    "the golden {} is not what the live Python board answers:\n  golden {stored:?}\n  live   {live:?}",
+                    fixture_path(Path::new(GOLDEN_DIR), scenario, steps).display()
+                )),
+            }
+        }
+    }
+}
+
+/// Runs `steps` on the Rust board and panics with the first difference
+/// from the scenario's golden fixture (Python's frozen answers).
+#[track_caller]
+pub fn run_golden(steps: &[Step]) {
+    let scenario = scenario_of(Location::caller().file());
+    if let Err(difference) = compare_golden(&scenario, steps, |_, _, _| {}) {
         panic!("{difference}");
     }
 }
 
-/// Runs `steps` (board calls only) on both boards and panics at the first
-/// step whose answer differs as the member reads it (#2279): a result as
-/// the text Python's `json.dumps` writes against the Rust board's wire
-/// text (`swarm_board_ops::wire_text`, which the structured ops answer
-/// with), byte for byte, and a refusal by its text. `try_run_both`
-/// compares the same steps' values and files; this compares their text.
-pub fn run_both_wire(steps: &[Step]) {
-    let dir = tempfile::tempdir().expect("a directory for the two boards");
-    let python_side = Side::new(dir.path(), "python");
+/// Runs `steps` (board calls only) on the Rust board and panics at the
+/// first step whose answer differs from the golden's as the member reads
+/// it (#2279): a result as the Rust board's wire text
+/// (`swarm_board_ops::wire_text`, which the structured ops answer with)
+/// against the text Python's `json.dumps` wrote, byte for byte, and a
+/// refusal by its text. `run_golden` compares the same steps' values and
+/// files; this compares their text.
+#[track_caller]
+pub fn run_golden_wire(steps: &[Step]) {
+    let scenario = scenario_of(Location::caller().file());
+    let (golden, _) = golden_for(&scenario, steps).unwrap_or_else(|problem| panic!("{problem}"));
+    let dir = tempfile::tempdir().expect("a directory for the board");
     let rust_side = Side::new(dir.path(), "rust");
-    let mut python = PyBoard::start(&python_side.database, &python_side.root, dir.path());
     let rust = RustBoard::open(&rust_side.database, &rust_side.root);
-    for (index, step) in steps.iter().enumerate() {
+    for (index, (step, answer)) in steps.iter().zip(&golden.answers).enumerate() {
         assert!(
             step.method != SQL_STEP && step.method != FS_STEP && step.hold.is_none(),
             "step {index}: a wire scenario makes board calls only"
         );
-        let (python_outcome, python_text) =
-            python.call_wire(&step.member, &step.method, &step.args, step.now);
         let rust_outcome = rust
             .call_text(&step.member, &step.method, &step.args, step.now)
             .0;
@@ -268,14 +334,14 @@ pub fn run_both_wire(steps: &[Step]) {
             "step {index}: {} as {} with {}",
             step.method, step.member, step.args
         );
-        match (python_outcome, rust_outcome) {
-            (Outcome::Ok(_), Outcome::Ok(value)) => assert_eq!(
-                python_text.as_deref(),
-                Some(rust.wire_text(&value).as_str()),
+        match (answer, rust_outcome) {
+            (Answer::Ok(text), Outcome::Ok(value)) => assert_eq!(
+                text,
+                &rust.wire_text(&value),
                 "{context}: the wire texts differ"
             ),
-            (python_outcome, rust_outcome) => assert_eq!(
-                python_side.neutral(python_outcome),
+            (answer, rust_outcome) => assert_eq!(
+                answer.outcome(),
                 rust_side.neutral(rust_outcome),
                 "{context}"
             ),
@@ -306,30 +372,47 @@ pub fn run_rust(steps: &[Step]) -> Outcome {
     last
 }
 
-/// Runs `steps` on a Python board alone, each granted but the last: its
-/// answer (#2340). For a divergence, so its pin asserts what Python
-/// answers rather than naming it.
-pub fn run_python(steps: &[Step]) -> Outcome {
-    let dir = tempfile::tempdir().expect("a directory for the board");
-    let side = Side::new(dir.path(), "python");
-    let mut python = PyBoard::start(&side.database, &side.root, dir.path());
-    let mut last = Outcome::Ok(Value::Null);
-    for step in steps {
-        assert!(matches!(last, Outcome::Ok(_)), "before {step:?}: {last:?}");
-        last = if step.method == SQL_STEP {
-            edit(&side.database, &step.args)
-        } else if step.method == FS_STEP {
-            shape(&side.root, &step.args)
-        } else {
-            side.neutral(python.call(&step.member, &step.method, &step.args, step.now))
-        };
+/// What the Python board answered to the last of `steps`, each before it
+/// granted (#2340: a divergence's pin asserts Python's answer rather than
+/// naming it), from the scenario's golden fixture (#2283; recorded on the
+/// live Python board, as every fixture was).
+#[track_caller]
+pub fn golden_answer(steps: &[Step]) -> Outcome {
+    let scenario = scenario_of(Location::caller().file());
+    let (golden, _) = golden_for(&scenario, steps).unwrap_or_else(|problem| panic!("{problem}"));
+    let (last, before) = golden.answers.split_last().expect("a scenario has a step");
+    for (step, answer) in steps.iter().zip(before) {
+        let outcome = answer.outcome();
+        assert!(
+            matches!(outcome, Outcome::Ok(_)),
+            "before {step:?}: {outcome:?}"
+        );
     }
-    last
+    last.outcome()
+}
+
+/// A held step of an [`UNLOCKED_READS`] method is no differential scenario
+/// (#2338): refused before any fixture is read (or recorded).
+fn refuse_held_unlocked_reads(steps: &[Step]) -> Result<(), String> {
+    match steps
+        .iter()
+        .enumerate()
+        .find(|(_, step)| step.hold.is_some() && UNLOCKED_READS.contains(&step.method.as_str()))
+    {
+        Some((index, step)) => Err(format!(
+            "step {index}: {} as {} with {} at {}: a held step of a method read without the \
+             write lock is no differential scenario: Python refuses it while the lock is \
+             held, Rust answers it unbusied (ADR-0030, #2338; pinned by \
+             `a_snapshot_does_not_wait_for_a_writers_lock`)",
+            step.method, step.member, step.args, step.now
+        )),
+        None => Ok(()),
+    }
 }
 
 /// Runs `steps` on a Rust board alone (each held as it says) and answers
 /// every step, refused or not: what the Rust board answered at each step
-/// of a scenario `run_both` has compared (so Python's answers too).
+/// of a scenario `run_golden` has compared (so Python's answers too).
 pub fn rust_answers(steps: &[Step]) -> Vec<Outcome> {
     let dir = tempfile::tempdir().expect("a directory for the board");
     let side = Side::new(dir.path(), "rust");
@@ -352,29 +435,60 @@ pub fn rust_answers(steps: &[Step]) -> Vec<Outcome> {
         .collect()
 }
 
-/// Runs `steps` on both boards, calling `after(index, rust_database,
-/// rust_outcome)` once each step has run on both and before they are
-/// compared (the harness's self-tests tamper with the Rust side's file or
-/// answer there); the first difference is the error. The steps run twice,
-/// with the event log off and then on (see the module docs).
-pub fn try_run_both(
+/// Runs `steps` on the Rust board, calling `after(index, rust_database,
+/// rust_outcome)` once each step has run and before it is compared with
+/// the golden (the harness's self-tests tamper with the Rust side's file
+/// or answer there); the first difference is the error. The steps run
+/// twice, with the event log off and then on (see the module docs).
+#[track_caller]
+pub fn try_run_golden(
     steps: &[Step],
+    after: impl FnMut(usize, &Path, &mut Outcome),
+) -> Result<(), String> {
+    let scenario = scenario_of(Location::caller().file());
+    compare_golden(&scenario, steps, after)
+}
+
+/// [`run_golden`] against the fixture `scenario` holds under `dir` rather
+/// than the committed one, as it is on disk (never recorded), with no
+/// hook: the first difference is the error.
+pub fn try_run_golden_in(dir: &Path, scenario: &str, steps: &[Step]) -> Result<(), String> {
+    let golden = Golden::load(dir, scenario, steps)?;
+    replay(steps, &golden, |_, _, _| {})
+}
+
+fn compare_golden(
+    scenario: &str,
+    steps: &[Step],
+    after: impl FnMut(usize, &Path, &mut Outcome),
+) -> Result<(), String> {
+    let (golden, _) = golden_for(scenario, steps)?;
+    replay(steps, &golden, after)
+}
+
+fn replay(
+    steps: &[Step],
+    golden: &Golden,
     mut after: impl FnMut(usize, &Path, &mut Outcome),
 ) -> Result<(), String> {
-    run_in(steps, Telemetry::Off, &mut after)?;
-    run_in(steps, Telemetry::On, &mut after)
+    run_in(steps, golden, Telemetry::Off, &mut after)?;
+    run_in(steps, golden, Telemetry::On, &mut after)
         .map_err(|difference| format!("with the event log on, {difference}"))
 }
 
 fn run_in(
     steps: &[Step],
+    golden: &Golden,
     telemetry: Telemetry,
     after: &mut impl FnMut(usize, &Path, &mut Outcome),
 ) -> Result<(), String> {
-    let dir = tempfile::tempdir().expect("a directory for the two boards");
-    let python_side = Side::new(dir.path(), "python");
+    assert_eq!(
+        golden.answers.len(),
+        steps.len(),
+        "a golden answer per step"
+    );
+    let dir = tempfile::tempdir().expect("a directory for the board");
     let rust_side = Side::new(dir.path(), "rust");
-    let mut python = PyBoard::start(&python_side.database, &python_side.root, dir.path());
     let log = Arc::new(RecordedOps::default());
     let rust = match telemetry {
         Telemetry::Off => RustBoard::open(&rust_side.database, &rust_side.root),
@@ -382,6 +496,7 @@ fn run_in(
             RustBoard::open_recorded(&rust_side.database, &rust_side.root, log.clone())
         }
     };
+    let last = steps.len().saturating_sub(1);
     for (index, step) in steps.iter().enumerate() {
         let context = || {
             format!(
@@ -398,82 +513,63 @@ fn run_in(
                 context()
             ));
         }
-        let (python_outcome, mut rust_outcome, dispatched) = if step.method == SQL_STEP {
-            (
-                edit(&python_side.database, &step.args),
-                edit(&rust_side.database, &step.args),
-                false,
-            )
+        let (mut rust_outcome, dispatched) = if step.method == SQL_STEP {
+            (edit(&rust_side.database, &step.args), false)
         } else if step.method == FS_STEP {
-            (
-                shape(&python_side.root, &step.args),
-                shape(&rust_side.root, &step.args),
-                false,
-            )
+            (shape(&rust_side.root, &step.args), false)
         } else {
-            let python_outcome = with_lock(&python_side.database, step.hold, || {
-                python.call(&step.member, &step.method, &step.args, step.now)
-            });
             let (rust_outcome, dispatched) = with_lock(&rust_side.database, step.hold, || {
                 rust.call_text(&step.member, &step.method, &step.args, step.now)
             });
-            (
-                python_side.neutral(python_outcome),
-                rust_side.neutral(rust_outcome),
-                dispatched,
-            )
+            (rust_side.neutral(rust_outcome), dispatched)
         };
         if telemetry == Telemetry::On {
             recorded(&log, dispatched, step.hold)
                 .map_err(|problem| format!("{}: {problem}", context()))?;
         }
         after(index, &rust_side.database, &mut rust_outcome);
-        if let Outcome::Raised(raised) = &python_outcome {
-            return Err(format!("{}: Python raised {raised}", context()));
-        }
-        if python_outcome != rust_outcome {
+        let expected = golden.answers[index].outcome();
+        if let Outcome::Raised(raised) = &expected {
             return Err(format!(
-                "{}: results differ\n  python {python_outcome:?}\n  rust   {rust_outcome:?}",
+                "{}: Python raised {raised}\n  rust   {rust_outcome:?}",
                 context()
             ));
         }
-        match (python_side.database.exists(), rust_side.database.exists()) {
-            (true, true) if !database(&python_side.database) || !database(&rust_side.database) => {
-                // A file that is no database (a `corrupt` step) is compared
-                // byte for byte.
-                if std::fs::read(&python_side.database).ok()
-                    != std::fs::read(&rust_side.database).ok()
-                {
-                    return Err(format!("{}: board files differ as bytes", context()));
-                }
+        if expected != rust_outcome {
+            return Err(format!(
+                "{}: results differ\n  golden {expected:?}\n  rust   {rust_outcome:?}",
+                context()
+            ));
+        }
+        let state = file_state(&rust_side.database);
+        match (&golden.files[index], &state) {
+            (expected, state) if expected == state => {}
+            (Some(expected), Some(state))
+                if expected.starts_with("dump:") && state.starts_with("dump:") =>
+            {
+                let detail = match (index == last, &golden.dump) {
+                    (true, Some(dump)) => {
+                        first_difference(&dump_of(dump), &logical_dump(&rust_side.database))
+                            .unwrap_or_else(|| "the dumps' digests differ".to_owned())
+                    }
+                    _ => "the logical dump differs from the golden's".to_owned(),
+                };
+                return Err(format!("{}: boards differ: {detail}", context()));
             }
-            (true, true) => {
-                let difference = first_difference(
-                    &logical_dump(&python_side.database),
-                    &logical_dump(&rust_side.database),
-                );
-                if let Some(difference) = difference {
-                    return Err(format!("{}: boards differ: {difference}", context()));
-                }
+            (Some(_), Some(_)) => {
+                return Err(format!("{}: board files differ as bytes", context()));
             }
-            (false, false) => {}
-            (python_exists, rust_exists) => {
+            (expected, state) => {
                 return Err(format!(
-                    "{}: board file exists in python: {python_exists}, in rust: {rust_exists}",
-                    context()
+                    "{}: board file exists in golden: {}, in rust: {}",
+                    context(),
+                    expected.is_some(),
+                    state.is_some()
                 ));
             }
         }
     }
     Ok(())
-}
-
-/// Whether `path` holds a SQLite database (or is empty, which SQLite
-/// opens as one).
-fn database(path: &Path) -> bool {
-    std::fs::read(path)
-        .map(|bytes| bytes.is_empty() || bytes.starts_with(b"SQLite format 3\0"))
-        .unwrap_or(false)
 }
 
 /// The methods the Rust board reads in a read transaction that takes no
@@ -482,28 +578,6 @@ fn database(path: &Path) -> bool {
 /// Python's `BEGIN IMMEDIATE` waits and then refuses `database is locked`.
 /// A held step of one is refused by the harness, never compared.
 pub const UNLOCKED_READS: [&str; 3] = ["_snapshot", "_watch", "_event_cursor"];
-
-/// The event log holds exactly one record for a dispatched call (none for
-/// a step that never reached the dispatcher), busy when the lock was held.
-fn recorded(log: &RecordedOps, dispatched: bool, hold: Option<Hold>) -> Result<(), String> {
-    let records = log.take();
-    let expected = usize::from(dispatched);
-    if records.len() != expected {
-        return Err(format!(
-            "{} swarm_op records, {expected} expected: {records:?}",
-            records.len()
-        ));
-    }
-    match (hold, records.first()) {
-        (None, _) | (Some(_), None) => Ok(()),
-        (Some(_), Some(record)) => match record.busy {
-            Some(true) => Ok(()),
-            Some(false) | None => Err(format!(
-                "the lock was held, the record is not busy: {record:?}"
-            )),
-        },
-    }
-}
 
 /// Runs `steps` on a fresh board through `call` (each step held as it
 /// says) and records the fixture: each answer, the board file after each
@@ -551,6 +625,16 @@ fn record(
     golden
 }
 
+/// The fixture the live Python board records for `steps`.
+fn record_python(steps: &[Step]) -> Golden {
+    let dir = tempfile::tempdir().expect("a directory for the board");
+    let side = Side::new(dir.path(), "python");
+    let mut python = PyBoard::start(&side.database, &side.root, dir.path());
+    record(steps, &side, |step| {
+        python.call_wire(&step.member, &step.method, &step.args, step.now)
+    })
+}
+
 /// The fixture the Rust board would record for `steps`: for the harness's
 /// own tests, which need a fixture whose every value is known to match.
 pub fn record_rust(steps: &[Step]) -> Golden {
@@ -567,10 +651,24 @@ pub fn record_rust(steps: &[Step]) -> Golden {
     })
 }
 
-/// Runs `steps` on the Rust board against the fixture `scenario` holds
-/// under `dir`, as it is on disk; the first difference is the error.
-/// (#2283 red phase: not yet compared.)
-pub fn try_run_golden_in(dir: &Path, scenario: &str, steps: &[Step]) -> Result<(), String> {
-    let _golden = Golden::load(dir, scenario, steps)?;
-    Ok(())
+/// The event log holds exactly one record for a dispatched call (none for
+/// a step that never reached the dispatcher), busy when the lock was held.
+fn recorded(log: &RecordedOps, dispatched: bool, hold: Option<Hold>) -> Result<(), String> {
+    let records = log.take();
+    let expected = usize::from(dispatched);
+    if records.len() != expected {
+        return Err(format!(
+            "{} swarm_op records, {expected} expected: {records:?}",
+            records.len()
+        ));
+    }
+    match (hold, records.first()) {
+        (None, _) | (Some(_), None) => Ok(()),
+        (Some(_), Some(record)) => match record.busy {
+            Some(true) => Ok(()),
+            Some(false) | None => Err(format!(
+                "the lock was held, the record is not busy: {record:?}"
+            )),
+        },
+    }
 }

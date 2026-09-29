@@ -1,0 +1,98 @@
+{
+"steps": [
+ ["parent","bootstrap_run","[1,\"boot\",\"/p.sock\"]","1700000000.25",null],
+ ["w","bootstrap_join","[4242,\"Mon\",\"/w.sock\",0]","1700000001.25",null],
+ ["w","bootstrap_join","[\"4242\",\"Mon\",null]","1700000002.25",null],
+ ["w","bootstrap_join","[4242.0,\"Mon\",null]","1700000003.25",null],
+ ["x","bootstrap_join","[1,\"t\",null,5]","1700000004.25",null],
+ ["x","bootstrap_join","[1,\"t\",null,\"5\"]","1700000005.25",null],
+ ["y","bootstrap_join","[2,\"t\",7,\"\"]","1700000006.25",null],
+ ["z","bootstrap_join","[3,\"t\",null,false]","1700000007.25",null],
+ ["v","bootstrap_join","[4,4.5,null,0.0]","1700000008.25",null],
+ ["q","bootstrap_join","[true,5,null,[1]]","1700000009.25",null],
+ ["parent","_snapshot","[]","1700000010.25",null]
+],
+"answers": [
+ {"ok":"null"},
+ {"ok":"null"},
+ {"refused":"launch reservation does not match invoking process"},
+ {"ok":"null"},
+ {"refused":"unknown or stale launch reservation"},
+ {"ok":"null"},
+ {"ok":"null"},
+ {"ok":"null"},
+ {"ok":"null"},
+ {"refused":"coordination store unavailable or contended: Error binding parameter 2: type 'list' is not supported"},
+ {"ok":"{\"status\": \"setup\", \"coordinator\": \"parent\", \"outcome\": null, \"control_generation\": 0, \"deadline\": 0.0, \"members\": [{\"id\": \"parent\", \"reservation\": \"00000000000000000000000000000002\", \"status\": \"live\", \"pid\": 1, \"started\": \"boot\", \"socket\": \"/p.sock\", \"launcher\": null}, {\"id\": \"w\", \"reservation\": \"00000000000000000000000000000003\", \"status\": \"live\", \"pid\": 4242, \"started\": \"Mon\", \"socket\": \"/w.sock\", \"launcher\": \"parent\"}, {\"id\": \"x\", \"reservation\": \"5\", \"status\": \"live\", \"pid\": 1, \"started\": \"t\", \"socket\": null, \"launcher\": \"parent\"}, {\"id\": \"y\", \"reservation\": \"00000000000000000000000000000004\", \"status\": \"live\", \"pid\": 2, \"started\": \"t\", \"socket\": \"7\", \"launcher\": \"parent\"}, {\"id\": \"z\", \"reservation\": \"00000000000000000000000000000005\", \"status\": \"live\", \"pid\": 3, \"started\": \"t\", \"socket\": null, \"launcher\": \"parent\"}, {\"id\": \"v\", \"reservation\": \"00000000000000000000000000000006\", \"status\": \"live\", \"pid\": 4, \"started\": \"4.5\", \"socket\": null, \"launcher\": \"parent\"}]}"}
+],
+"files": [
+ "dump:8824da056e842bd04c302eeefa1ab8d564817c55fe1a095d181ebef206a3f496",
+ "dump:145b57b9882f77dccdd3be3d76aab5701bffe442f165a98f294d48b14527af6f",
+ "dump:145b57b9882f77dccdd3be3d76aab5701bffe442f165a98f294d48b14527af6f",
+ "dump:145b57b9882f77dccdd3be3d76aab5701bffe442f165a98f294d48b14527af6f",
+ "dump:2fc84d612aae6453d2ae54a1b265b8753a29398152f7d633fa53fbda583389d2",
+ "dump:5fc89e1149ba65101f27be66abfd0ba86031fbe6fe9fb57d4ad50b27ddcfccae",
+ "dump:237f44847307511cecd95e9ca06bf06a5c8fbbe628af7fe2ce7b17204412b3af",
+ "dump:ec1a627cece9f4f89f71eded7b9ae23c41477d312c301b48f4e8d64dfb31e1da",
+ "dump:2a4e32af57991c4f22f6f438f6514c91ceeadf1209a32d691e26e5a82fd73620",
+ "dump:2a4e32af57991c4f22f6f438f6514c91ceeadf1209a32d691e26e5a82fd73620",
+ "dump:2a4e32af57991c4f22f6f438f6514c91ceeadf1209a32d691e26e5a82fd73620"
+],
+"dump": [
+  ["sqlite_master", [
+   [["text",{"text":"table"}],["text",{"text":"run"}],["text",{"text":"run"}],["text",{"text":"CREATE TABLE run (id TEXT PRIMARY KEY, goal TEXT, constraints TEXT, criteria TEXT,\n coordinator TEXT, integrator TEXT, member_limit INTEGER, deadline REAL, status TEXT, outcome TEXT, outcome_reason TEXT)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_run_1"}],["text",{"text":"run"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"members"}],["text",{"text":"members"}],["text",{"text":"CREATE TABLE members (id TEXT PRIMARY KEY, reservation TEXT UNIQUE, status TEXT,\n pid INTEGER, started TEXT, socket TEXT, launcher TEXT)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_members_1"}],["text",{"text":"members"}],["null",null]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_members_2"}],["text",{"text":"members"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"tasks"}],["text",{"text":"tasks"}],["text",{"text":"CREATE TABLE tasks (id INTEGER PRIMARY KEY, title TEXT, acceptance TEXT, dependencies TEXT,\n status TEXT, owner TEXT, token TEXT, evidence TEXT, blocker TEXT)"}]],
+   [["text",{"text":"table"}],["text",{"text":"files"}],["text",{"text":"files"}],["text",{"text":"CREATE TABLE files (path TEXT PRIMARY KEY, task INTEGER, owner TEXT, claim TEXT, token TEXT)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_files_1"}],["text",{"text":"files"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"messages"}],["text",{"text":"messages"}],["text",{"text":"CREATE TABLE messages (id INTEGER PRIMARY KEY, sender TEXT, recipient TEXT, body TEXT, status TEXT, revision TEXT, supersedes INTEGER, superseded_by INTEGER)"}]],
+   [["text",{"text":"table"}],["text",{"text":"evidence"}],["text",{"text":"evidence"}],["text",{"text":"CREATE TABLE evidence (criterion TEXT, artifact TEXT, revision TEXT, kind TEXT,\n actor TEXT, accepted INTEGER, PRIMARY KEY(criterion, actor))"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_evidence_1"}],["text",{"text":"evidence"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"requests"}],["text",{"text":"requests"}],["text",{"text":"CREATE TABLE requests (actor TEXT, request TEXT, payload TEXT, result TEXT,\n PRIMARY KEY(actor, request))"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_requests_1"}],["text",{"text":"requests"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"events"}],["text",{"text":"events"}],["text",{"text":"CREATE TABLE events (id INTEGER PRIMARY KEY, actor TEXT, time REAL, action TEXT, detail TEXT)"}]],
+   [["text",{"text":"index"}],["text",{"text":"events_by_actor"}],["text",{"text":"events"}],["text",{"text":"CREATE INDEX events_by_actor ON events(actor,id)"}]],
+   [["text",{"text":"table"}],["text",{"text":"notification_cursors"}],["text",{"text":"notification_cursors"}],["text",{"text":"CREATE TABLE notification_cursors (actor TEXT PRIMARY KEY, event INTEGER)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_notification_cursors_1"}],["text",{"text":"notification_cursors"}],["null",null]]
+  ]],
+  ["events", [
+   [["integer",{"integer":1}],["text",{"text":"parent"}],["real",{"real":"1700000000.25"}],["text",{"text":"container_setup"}],["text",{"text":"{\"member\":\"parent\"}"}]],
+   [["integer",{"integer":2}],["text",{"text":"parent"}],["real",{"real":"1700000001.25"}],["text",{"text":"reserved"}],["text",{"text":"{\"member\":\"w\"}"}]],
+   [["integer",{"integer":3}],["text",{"text":"parent"}],["real",{"real":"1700000001.25"}],["text",{"text":"activated"}],["text",{"text":"{\"member\":\"w\",\"pid\":4242}"}]],
+   [["integer",{"integer":4}],["text",{"text":"parent"}],["real",{"real":"1700000004.25"}],["text",{"text":"reserved"}],["text",{"text":"{\"member\":\"x\"}"}]],
+   [["integer",{"integer":5}],["text",{"text":"parent"}],["real",{"real":"1700000005.25"}],["text",{"text":"activated"}],["text",{"text":"{\"member\":\"x\",\"pid\":1}"}]],
+   [["integer",{"integer":6}],["text",{"text":"parent"}],["real",{"real":"1700000006.25"}],["text",{"text":"reserved"}],["text",{"text":"{\"member\":\"y\"}"}]],
+   [["integer",{"integer":7}],["text",{"text":"parent"}],["real",{"real":"1700000006.25"}],["text",{"text":"activated"}],["text",{"text":"{\"member\":\"y\",\"pid\":2}"}]],
+   [["integer",{"integer":8}],["text",{"text":"parent"}],["real",{"real":"1700000007.25"}],["text",{"text":"reserved"}],["text",{"text":"{\"member\":\"z\"}"}]],
+   [["integer",{"integer":9}],["text",{"text":"parent"}],["real",{"real":"1700000007.25"}],["text",{"text":"activated"}],["text",{"text":"{\"member\":\"z\",\"pid\":3}"}]],
+   [["integer",{"integer":10}],["text",{"text":"parent"}],["real",{"real":"1700000008.25"}],["text",{"text":"reserved"}],["text",{"text":"{\"member\":\"v\"}"}]],
+   [["integer",{"integer":11}],["text",{"text":"parent"}],["real",{"real":"1700000008.25"}],["text",{"text":"activated"}],["text",{"text":"{\"member\":\"v\",\"pid\":4}"}]]
+  ]],
+  ["evidence", []],
+  ["files", []],
+  ["members", [
+   [["text",{"text":"parent"}],["text",{"text":"00000000000000000000000000000002"}],["text",{"text":"live"}],["integer",{"integer":1}],["text",{"text":"boot"}],["text",{"text":"/p.sock"}],["null",null]],
+   [["text",{"text":"w"}],["text",{"text":"00000000000000000000000000000003"}],["text",{"text":"live"}],["integer",{"integer":4242}],["text",{"text":"Mon"}],["text",{"text":"/w.sock"}],["text",{"text":"parent"}]],
+   [["text",{"text":"x"}],["text",{"text":"5"}],["text",{"text":"live"}],["integer",{"integer":1}],["text",{"text":"t"}],["null",null],["text",{"text":"parent"}]],
+   [["text",{"text":"y"}],["text",{"text":"00000000000000000000000000000004"}],["text",{"text":"live"}],["integer",{"integer":2}],["text",{"text":"t"}],["text",{"text":"7"}],["text",{"text":"parent"}]],
+   [["text",{"text":"z"}],["text",{"text":"00000000000000000000000000000005"}],["text",{"text":"live"}],["integer",{"integer":3}],["text",{"text":"t"}],["null",null],["text",{"text":"parent"}]],
+   [["text",{"text":"v"}],["text",{"text":"00000000000000000000000000000006"}],["text",{"text":"live"}],["integer",{"integer":4}],["text",{"text":"4.5"}],["null",null],["text",{"text":"parent"}]]
+  ]],
+  ["messages", []],
+  ["notification_cursors", []],
+  ["requests", []],
+  ["run", [
+   [["text",{"text":"00000000000000000000000000000001"}],["text",{"text":""}],["text",{"text":"[]"}],["text",{"text":"[]"}],["text",{"text":"parent"}],["text",{"text":"parent"}],["integer",{"integer":10}],["real",{"real":"0.0"}],["text",{"text":"setup"}],["null",null],["null",null]]
+  ]],
+  ["tasks", []],
+  ["PRAGMA journal_mode", [
+   [["text",{"text":"delete"}]]
+  ]],
+  ["PRAGMA user_version", [
+   [["integer",{"integer":0}]]
+  ]]
+ ]
+}

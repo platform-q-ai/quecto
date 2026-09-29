@@ -1,13 +1,14 @@
 //! Differential scenarios (#2271, epic #2265): membership admission,
-//! activation, the launch records and the join, on the Python board and
-//! the Rust board, compared after every step by result, refusal text and
-//! logical database dump.
+//! activation, the launch records and the join, on the Rust board against
+//! the Python board's answers frozen in its golden fixtures (#2283),
+//! compared after every step by result, refusal text and logical database
+//! dump.
 use serde_json::{Value, json};
 
 use crate::swarm_board_diff_runs::NOW;
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
 use crate::swarm_board_diff_runs::swarm_board_diff::rust::RustBoard;
-use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{Step, run_both, sql, step};
+use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{Step, run_golden, sql, step};
 
 pub(crate) const HOUR: f64 = 3_600.0;
 
@@ -37,7 +38,7 @@ pub(crate) fn snapshot(offset: f64) -> Step {
 
 #[test]
 fn admit_activate_record_launch_are_identical() {
-    run_both(&[
+    run_golden(&[
         create(5),
         at(1.0, "parent", "_admit", json!(["worker", "res-1"])),
         // The same reservation again is an idempotent retry answering the row.
@@ -143,7 +144,7 @@ fn join_admits_as_the_coordinator_identically() {
         ),
         snapshot(9.0),
     ];
-    run_both(&steps);
+    run_golden(&steps);
     // The acceptance criterion, asserted outright: the joined member's
     // launcher is the coordinator, the acting member.
     let dir = tempfile::tempdir().unwrap();
@@ -182,7 +183,7 @@ fn member_limit_accepts_upper_boundary_identically() {
         ));
     }
     steps.push(at(30.0, "supervisor", "_status", json!([])));
-    run_both(&steps);
+    run_golden(&steps);
     let dir = tempfile::tempdir().unwrap();
     let board = RustBoard::open(&dir.path().join("swarm.sqlite"), dir.path());
     let outcomes: Vec<Outcome> = steps
@@ -229,7 +230,7 @@ fn idle_and_reserved_members_count_against_the_limit_identically() {
     }
     steps.push(at(8.0, "worker", "_admit", json!(["nested", "nested"])));
     steps.push(snapshot(9.0));
-    run_both(&steps);
+    run_golden(&steps);
 }
 
 /// A wrong reservation, a dead member and a different process are refused
@@ -237,7 +238,7 @@ fn idle_and_reserved_members_count_against_the_limit_identically() {
 /// activation is refused.
 #[test]
 fn stale_or_conflicting_launch_identity_is_refused_identically() {
-    run_both(&[
+    run_golden(&[
         create(6),
         at(1.0, "parent", "_admit", json!(["worker", "res-w"])),
         at(
@@ -329,7 +330,7 @@ fn stale_or_conflicting_launch_identity_is_refused_identically() {
 
 #[test]
 fn release_unlaunched_only_for_reserved_members_without_pid() {
-    run_both(&[
+    run_golden(&[
         create(6),
         at(1.0, "parent", "_admit", json!(["launched", "res-a"])),
         at(
@@ -357,7 +358,7 @@ fn release_unlaunched_only_for_reserved_members_without_pid() {
 
 #[test]
 fn a_member_name_over_128_bytes_is_refused() {
-    run_both(&[
+    run_golden(&[
         create(6),
         at(1.0, "parent", "_admit", json!(["x".repeat(129), "r1"])),
         at(2.0, "parent", "_admit", json!(["é".repeat(65), "r2"])),
@@ -380,7 +381,7 @@ fn a_member_name_over_128_bytes_is_refused() {
 /// coordinator column alone and, acting as nobody, is refused by the gate.
 #[test]
 fn a_join_without_a_coordinator_is_refused_identically() {
-    run_both(&[
+    run_golden(&[
         step(
             "parent",
             "bootstrap_run",

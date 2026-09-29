@@ -1,20 +1,21 @@
 //! Differential scenarios (#2276, epic #2265): wake notifications
 //! (`_notifications` on the sender's side, `_accept_wake` on the
-//! receiver's) on the Python board and the Rust board, compared after
-//! every step by result, refusal text and logical database dump (which
-//! shows where `wake_cursors` sits in `sqlite_master`, so a table created
-//! earlier or later than Python's is a difference). Ported from
-//! `tests/swarm_helpers_test.py`; each test also states what the board
-//! answers at the steps the Python test asserts on. `summary()`'s event
-//! cursor is the latest event id, counted here: `joined` writes events 1
-//! (`created`), 2 (`reserved`) and 3 (`activated`).
+//! receiver's) on the Rust board against the Python board's answers frozen
+//! in its golden fixtures (#2283), compared after every step by result,
+//! refusal text and logical database dump (which shows where `wake_cursors`
+//! sits in `sqlite_master`, so a table created earlier or later than
+//! Python's is a difference). Ported from `tests/swarm_helpers_test.py`;
+//! each test also states what the board answers at the steps the Python
+//! test asserts on. `summary()`'s event cursor is the latest event id,
+//! counted here: `joined` writes events 1 (`created`), 2 (`reserved`) and 3
+//! (`activated`).
 use serde_json::{Value, json};
 
 use crate::swarm_board_diff_membership::at;
 use crate::swarm_board_diff_messages::{inbox, joined, send};
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
 use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
-    Step, run_both, run_rust, step_text,
+    Step, run_golden, run_rust, step_text,
 };
 
 /// `member`'s `_notifications()`.
@@ -81,7 +82,7 @@ fn submit_one(offset: f64) -> [Step; 5] {
 }
 
 /// What the Rust board answers at `steps[index]` (Python's answer, once
-/// `run_both` has compared them).
+/// `run_golden` has compared them).
 fn answer(steps: &[Step], index: usize) -> Outcome {
     run_rust(&steps[..=index])
 }
@@ -107,7 +108,7 @@ fn names(ids: &[&str]) -> Vec<String> {
 /// Runs `steps` on both boards, then checks the Rust answer at each
 /// `(index, expected)`.
 fn expect(steps: &[Step], expected: &[(usize, Outcome)]) {
-    run_both(steps);
+    run_golden(steps);
     for (index, outcome) in expected {
         assert_eq!(&answer(steps, *index), outcome, "step {index}");
     }
@@ -127,7 +128,7 @@ fn notification_batch_carries_atomic_board_generation() {
         batch(4.0, "parent"),
         batch(5.0, "parent"),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     let first = answer(&steps, 4);
     assert_eq!(woken(&first), names(&["worker"]));
     let Outcome::Ok(first) = first else {
@@ -232,7 +233,7 @@ fn unchanged_blocker_does_not_repeat_idle_wake_cycles() {
     }
     steps.push(block(11.0, "new blocker"));
     steps.push(hints(12.0, "worker"));
-    run_both(&steps);
+    run_golden(&steps);
     assert_eq!(woken(&answer(&steps, 6)), names(&["parent"]));
     assert_eq!(woken(&answer(&steps, 9)), names(&[]));
     assert_eq!(woken(&answer(&steps, steps.len() - 1)), names(&["parent"]));
@@ -255,7 +256,7 @@ fn identical_evidence_does_not_repeat_review_wake() {
         evidence(5.0),
         hints(6.0, "worker"),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     assert_eq!(woken(&answer(&steps, 4)), names(&["parent"]));
     assert_eq!(woken(&answer(&steps, 6)), names(&[]));
 }
@@ -274,7 +275,7 @@ fn dependency_work_only_wakes_when_claimable() {
         hints(10.0, "worker"),
         hints(11.0, "parent"),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     assert_eq!(woken(&answer(&steps, 7)), names(&[]));
     assert_eq!(
         woken(&answer(&steps, 10)),
@@ -323,7 +324,7 @@ fn a_member_that_submitted_is_parked_while_another_worker_is_free() {
         ),
         hints(9.0, "parent"),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     let batched = answer(&steps, 11);
     assert_eq!(woken(&batched), names(&["other"]));
     assert!(matches!(&batched, Outcome::Ok(value) if value["generation"] == json!(9)));
@@ -345,7 +346,7 @@ fn a_parked_member_takes_new_work_when_no_worker_is_free() {
         ),
         hints(5.0, "parent"),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     assert_eq!(woken(&answer(&steps, 9)), names(&["worker"]));
 }
 
@@ -365,7 +366,7 @@ fn a_release_wakes_the_parked_member_and_its_own_check_agrees() {
         batch(9.0, "other"),
         accept(10.0, "worker", json!(11)),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     let batched = answer(&steps, 15);
     assert_eq!(woken(&batched), names(&["parent", "worker"]));
     assert!(matches!(&batched, Outcome::Ok(value) if value["generation"] == json!(11)));
@@ -405,7 +406,7 @@ fn wake_hints_are_targeted_deduplicated_and_terminal_safe() {
         ),
         hints(12.0, "worker"),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     assert_eq!(woken(&answer(&steps, 6)), names(&["parent"]));
     assert_eq!(answer(&steps, 7), ok(json!([])));
     assert_eq!(
@@ -436,7 +437,7 @@ fn an_observers_read_does_not_broadcast_another_members_changes() {
         hints(6.0, "parent"),
         hints(7.0, "worker"),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     assert_eq!(answer(&steps, 6), ok(json!([])));
     assert_eq!(woken(&answer(&steps, 7)), names(&["parent"]));
 }
@@ -485,7 +486,7 @@ fn accept_wake_checks_its_generation_as_python_does() {
         at(10.0, "parent", "stop", json!(["blocked", "done"])),
         accept(11.0, "worker", json!(4)),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     assert_eq!(
         answer(&steps, 4),
         Outcome::Refused("wake generation must be a nonnegative integer".to_owned())
@@ -532,7 +533,7 @@ fn notifications_take_with_generation_by_its_truth() {
         json!({"with_generation": true}),
     ));
     steps.push(at(21.0, "stranger", "_notifications", json!([])));
-    run_both(&steps);
+    run_golden(&steps);
 }
 
 /// Wake ops are reads (`operation(active=False, read_only=True)`), so a
@@ -571,7 +572,7 @@ fn every_wake_op_on_a_paused_run() {
             _ => assert_eq!(answered, ok(running), "{method} on the running run"),
         }
         let steps = [setup.clone(), vec![paused.clone(), op.clone(), op]].concat();
-        run_both(&steps);
+        run_golden(&steps);
         assert_eq!(run_rust(&steps), ok(held), "{method} on the paused run");
     }
 }

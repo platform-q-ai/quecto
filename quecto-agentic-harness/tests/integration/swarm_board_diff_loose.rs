@@ -14,11 +14,18 @@ use crate::swarm_board_diff_runs::NOW;
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
 use crate::swarm_board_diff_runs::swarm_board_diff::rust::RustBoard;
 use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
-    Step, run_both, sql, step, step_text, try_run_both,
+    Step, run_golden, sql, step, step_text, try_run_golden,
 };
 
 /// Every way the Rust board may differ from the Python board on the
 /// methods this slice serves. Each name is a test in [`PIN_TABLE_FILES`].
+///
+/// Since #2283 deleted the Python board, a pin's Python side is the
+/// scenario's golden fixture (Python's answer, frozen): each pin asserts
+/// the Rust board's own answer (the `rust` side of the difference its
+/// `try_run_golden` reports, and a Rust-only run, `run_rust` or
+/// `rust_alone`), and keeps the Python answer it differs from, and the
+/// text below, as the record of the divergence.
 ///
 /// - `arguments_beyond_a_serde_value` (#2270 round-3 review L1): the
 ///   dispatcher takes a `serde_json::Value`, so argument text is parsed with
@@ -236,7 +243,7 @@ fn bootstrap_binds_loose_arguments_as_python_does() {
         json!({"pid": true, "started": 5, "socket": null}),
         json!({"socket": 1.25, "started": false, "pid": -1}),
     ] {
-        run_both(&bootstrap_then_snapshot(args));
+        run_golden(&bootstrap_then_snapshot(args));
     }
 }
 
@@ -263,7 +270,7 @@ fn unbindable_arguments_are_refused_as_python_refuses_them() {
             "Error binding parameter 5: type 'dict' is not supported",
         ),
     ] {
-        run_both(&bootstrap_then_snapshot(args.clone()));
+        run_golden(&bootstrap_then_snapshot(args.clone()));
         let outcomes = rust_alone(&[("parent", "bootstrap_run", args)]);
         assert_eq!(
             outcomes[0],
@@ -288,12 +295,12 @@ fn argument_text_parses_as_python_parses_it() {
         r#"{"k": 1, "j": 2, "k": 3}"#,
         r#""\u00e9\ud83d\ude00""#,
     ] {
-        run_both(&[
+        run_golden(&[
             step_text("parent", "create_run", &create_text(extra), NOW),
             step("parent", "_snapshot", json!([]), NOW + 1.0),
         ]);
     }
-    run_both(&[
+    run_golden(&[
         step_text("parent", "bootstrap_run", r#"[-0, "s", -0.0]"#, NOW),
         step("parent", "_snapshot", json!([]), NOW + 1.0),
     ]);
@@ -320,7 +327,7 @@ fn arguments_beyond_a_serde_value() {
         (&deep, "nesting deeper than 128 levels"),
     ] {
         let text = create_text(extra);
-        let difference = try_run_both(
+        let difference = try_run_golden(
             &[step_text("parent", "create_run", &text, NOW)],
             |_, _, _| {},
         )
@@ -329,7 +336,7 @@ fn arguments_beyond_a_serde_value() {
             difference,
             format!(
                 "step 0: create_run as parent with {text} at {NOW}: results differ\n  \
-                 python Ok(Null)\n  \
+                 golden Ok(Null)\n  \
                  rust   {:?}",
                 Outcome::Refused(format!("{UNREPRESENTABLE}{reason}"))
             ),
@@ -379,12 +386,12 @@ fn arguments_beyond_a_serde_value() {
     ] {
         let later = NOW + 1.0;
         let steps = [create(5), step_text("parent", method, &text, later)];
-        let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+        let difference = try_run_golden(&steps, |_, _, _| {}).unwrap_err();
         assert_eq!(
             difference,
             format!(
                 "step 1: {method} as parent with {text} at {later}: results differ\n  \
-                 python {:?}\n  \
+                 golden {:?}\n  \
                  rust   {:?}",
                 Outcome::Refused(python.to_owned()),
                 Outcome::Refused(format!("{UNREPRESENTABLE}{reason}"))
@@ -399,7 +406,7 @@ fn arguments_beyond_a_serde_value() {
 /// included.
 #[test]
 fn snapshot_member_rows_are_every_column_as_stored() {
-    run_both(&[
+    run_golden(&[
         step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
         sql("ALTER TABLE members ADD COLUMN extra TEXT"),
         sql("ALTER TABLE members ADD COLUMN score REAL"),
@@ -446,7 +453,11 @@ fn integer_beyond_i64_is_refused() {
         (json!([5, u64::MAX, null]), 4),
         (json!([5, "s", u64::MAX]), 5),
     ] {
-        let difference = try_run_both(
+        let refused = Outcome::Refused(format!(
+            "{CONTENDED}Error binding parameter {position}: \
+             Python int too large to convert to SQLite INTEGER"
+        ));
+        let difference = try_run_golden(
             &[step("parent", "bootstrap_run", args.clone(), NOW)],
             |_, _, _| {},
         )
@@ -455,17 +466,12 @@ fn integer_beyond_i64_is_refused() {
             difference,
             format!(
                 "step 0: bootstrap_run as parent with {args} at {NOW}: Python raised \
-                 OverflowError: Python int too large to convert to SQLite INTEGER"
+                 OverflowError: Python int too large to convert to SQLite INTEGER\n  \
+                 rust   {refused:?}"
             )
         );
         let outcomes = rust_alone(&[("parent", "bootstrap_run", args)]);
-        assert_eq!(
-            outcomes[0],
-            Outcome::Refused(format!(
-                "{CONTENDED}Error binding parameter {position}: \
-                 Python int too large to convert to SQLite INTEGER"
-            ))
-        );
+        assert_eq!(outcomes[0], refused);
     }
     // The membership methods (#2271) and the task methods (#2272) bind
     // their arguments the same way.
@@ -483,7 +489,11 @@ fn integer_beyond_i64_is_refused() {
             3,
         ),
     ] {
-        let difference = try_run_both(
+        let refused = Outcome::Refused(format!(
+            "{CONTENDED}Error binding parameter {position}: \
+             Python int too large to convert to SQLite INTEGER"
+        ));
+        let difference = try_run_golden(
             &[
                 step("parent", "bootstrap_run", bootstrap.clone(), NOW),
                 step("parent", method, args.clone(), NOW + 1.0),
@@ -495,7 +505,8 @@ fn integer_beyond_i64_is_refused() {
             difference,
             format!(
                 "step 1: {method} as parent with {args} at {}: Python raised \
-                 OverflowError: Python int too large to convert to SQLite INTEGER",
+                 OverflowError: Python int too large to convert to SQLite INTEGER\n  \
+                 rust   {refused:?}",
                 NOW + 1.0
             )
         );
@@ -503,13 +514,7 @@ fn integer_beyond_i64_is_refused() {
             ("parent", "bootstrap_run", bootstrap.clone()),
             ("parent", method, args),
         ]);
-        assert_eq!(
-            outcomes[1],
-            Outcome::Refused(format!(
-                "{CONTENDED}Error binding parameter {position}: \
-                 Python int too large to convert to SQLite INTEGER"
-            ))
-        );
+        assert_eq!(outcomes[1], refused);
     }
 }
 
@@ -520,7 +525,7 @@ fn outside_edited_columns() {
         "UPDATE run SET deadline='soon'",
         "UPDATE run SET member_limit='many'",
     ] {
-        let difference = try_run_both(
+        let difference = try_run_golden(
             &[
                 step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
                 sql(edit),
@@ -534,7 +539,7 @@ fn outside_edited_columns() {
             "{edit}: {difference}"
         );
         assert!(
-            difference.contains("python Ok(")
+            difference.contains("golden Ok(")
                 && difference.contains(&format!("rust   Refused(\"{CONTENDED}")),
             "{edit}: {difference}"
         );
@@ -552,7 +557,7 @@ fn outside_edited_columns() {
          INSERT INTO run(id,status,coordinator,member_limit,deadline) VALUES('r','running',2.5,5,4e9);
          INSERT INTO members(id,reservation,status) VALUES('2.5','c','live')",
     ] {
-        let difference = try_run_both(
+        let difference = try_run_golden(
             &[
                 step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
                 sql(edit),
@@ -565,7 +570,7 @@ fn outside_edited_columns() {
             difference,
             format!(
                 "step 2: bootstrap_join as worker with [8,\"t\",null] at {}: results differ\n  \
-                 python Ok(Null)\n  \
+                 golden Ok(Null)\n  \
                  rust   {:?}",
                 NOW + 1.0,
                 Outcome::Refused("invoking member is unknown or death confirmed".into())
@@ -574,7 +579,7 @@ fn outside_edited_columns() {
         );
     }
     // Without a member of that id, Python's gate refuses the join too.
-    run_both(&[
+    run_golden(&[
         step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
         sql("UPDATE run SET coordinator=x'706172656e74'"),
         step("worker", "bootstrap_join", json!([8, "t", null]), NOW + 1.0),

@@ -1,6 +1,6 @@
 //! The structured ops' wire text (#2279; parent decision on #2278/#2279):
 //! a board answer reaches the member as the text Python's `json.dumps`
-//! writes, compared byte for byte (`run_both_wire`), where the other
+//! writes, compared byte for byte (`run_golden_wire`), where the other
 //! scenarios compare values after a serde round trip that erases float
 //! spelling (`1e+16` against serde's `1e16`), escapes and key order.
 use serde_json::json;
@@ -8,7 +8,7 @@ use serde_json::json;
 use crate::swarm_board_diff_loose_runs::create_text;
 use crate::swarm_board_diff_membership::at;
 use crate::swarm_board_diff_runs::NOW;
-use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{run_both_wire, step_text};
+use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{run_golden_wire, step_text};
 
 /// Floats Python and serde spell differently, integers at the edge of
 /// u64, keys out of order, non-ASCII and separator characters, through
@@ -17,7 +17,7 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{run_both_wire, st
 #[test]
 fn board_answers_are_python_s_wire_text() {
     let extra = r#"{"z": 1e16, "a": [1e-07, 0.1, -0.0, 2.5e-300, 18446744073709551615, -0], "\u00e9": "\u00fc\u2028\ud83d\ude00", "k": {"y": null, "b": true}}"#;
-    run_both_wire(&[
+    run_golden_wire(&[
         step_text("parent", "create_run", &create_text(extra), NOW),
         at(1.0, "parent", "summary", json!([])),
         step_text(
@@ -43,28 +43,26 @@ fn board_answers_are_python_s_wire_text() {
     ]);
 }
 
+/// What Python's `board.tasks(x=1, y=2)` raised, frozen before the Python
+/// board was deleted (#2283).
+pub(crate) const PYTHON_TWO_UNEXPECTED: &str =
+    "TypeError: Tasks.tasks() got an unexpected keyword argument 'x'";
+
 /// #2279 final review: a structured op with two fields its method does not
 /// take is refused naming the first the member wrote, as Python's call
-/// with those keywords raises naming the first (`board.tasks(x=1, y=2)`).
+/// with those keywords raised naming the first (`board.tasks(x=1, y=2)`,
+/// [`PYTHON_TWO_UNEXPECTED`]).
 #[test]
 fn an_op_with_two_unexpected_fields_names_the_first_as_python_does() {
-    use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
-    use crate::swarm_board_diff_runs::swarm_board_diff::python::PyBoard;
     use quecto::application::tools::ports::Tool;
     let dir = tempfile::tempdir().unwrap();
-    let python_root = dir.path().join("python");
-    std::fs::create_dir_all(&python_root).unwrap();
-    let mut python = PyBoard::start(&python_root.join("swarm.sqlite"), &python_root, dir.path());
-    let Outcome::Raised(raised) = python.call("parent", "tasks", r#"{"x": 1, "y": 2}"#, NOW) else {
-        panic!("Python raises on the unexpected keywords");
-    };
-    let named = raised
+    let named = PYTHON_TWO_UNEXPECTED
         .split("unexpected keyword argument '")
         .nth(1)
         .and_then(|rest| rest.split('\'').next())
-        .unwrap_or_else(|| panic!("{raised}"))
+        .unwrap_or_else(|| panic!("{PYTHON_TWO_UNEXPECTED}"))
         .to_owned();
-    assert_eq!(named, "x", "{raised}");
+    assert_eq!(named, "x", "{PYTHON_TWO_UNEXPECTED}");
 
     let checkout = dir.path().join("rust");
     std::fs::create_dir_all(checkout.join(".quecto")).unwrap();

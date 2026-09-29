@@ -1,18 +1,19 @@
-//! Differential scenarios (#2277, epic #2265): the read models every
-//! member polls (`summary` with its cursor fast path and
-//! `next_liveness_check_at`, `events` paging, `task` and `tasks` with
-//! their owner's liveness, #1969) on the Python board and the Rust board,
-//! compared after every step by result (key order and float values
-//! included), refusal text and logical database dump. Ported from
-//! `tests/swarm_helpers_test.py`. `joined` writes events 1 (`created`),
-//! 2 (`reserved`) and 3 (`activated`); the first claim is token 3.
+//! Differential scenarios (#2277, epic #2265): the read models every member
+//! polls (`summary` with its cursor fast path and `next_liveness_check_at`,
+//! `events` paging, `task` and `tasks` with their owner's liveness, #1969)
+//! on the Rust board against the Python board's answers frozen in its
+//! golden fixtures (#2283), compared after every step by result (key order
+//! and float values included), refusal text and logical database dump.
+//! Ported from `tests/swarm_helpers_test.py`. `joined` writes events 1
+//! (`created`), 2 (`reserved`) and 3 (`activated`); the first claim is
+//! token 3.
 use serde_json::{Value, json};
 
 use crate::swarm_board_diff_files::token;
 use crate::swarm_board_diff_loss::{answer, dead, lose, refusal};
 use crate::swarm_board_diff_membership::at;
 use crate::swarm_board_diff_messages::{joined, send};
-use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{Step, run_both};
+use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{Step, run_golden};
 
 /// `swarm_policy.OWNER_IDLE_AFTER`, in seconds.
 pub(crate) const IDLE_AFTER: f64 = 300.0;
@@ -57,7 +58,7 @@ fn summary_cursor_avoids_unchanged_payload_and_history_cursor_is_validated() {
         steps.push(at(7.0, "parent", "events", json!({"after": invalid})));
         steps.push(summary(7.5, "parent", invalid));
     }
-    run_both(&steps);
+    run_golden(&steps);
     assert_eq!(answer(&steps, 3)["event_cursor"], json!(3));
     assert_eq!(
         answer(&steps, 4),
@@ -99,7 +100,7 @@ fn default_summary_does_not_replay_historical_contract_payloads() {
         at(23.0, "parent", "events", json!({"after": 15})),
         at(24.0, "parent", "events", json!([])),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     let summary = answer(&steps, 15);
     assert!(summary.to_string().len() < 20_000);
     assert!(summary.get("events").is_none());
@@ -133,7 +134,7 @@ fn summary_is_bounded_and_counts_include_later_pages() {
         at(6.0, "worker", "file_owners", json!([])),
         page(7.0, "worker", json!({"limit": 1000})),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     let summary = answer(&steps, 58);
     assert_eq!(summary["tasks"].as_array().map(Vec::len), Some(50));
     assert_eq!(
@@ -156,7 +157,7 @@ fn an_unclaimed_task_carries_no_owner_fields() {
         page(5.0, "parent", json!([])),
         full(6.0, "parent"),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     for found in [
         answer(&steps, 4),
         answer(&steps, 5)[0].clone(),
@@ -186,7 +187,7 @@ fn a_completed_task_keeps_its_owner_column_but_carries_no_liveness() {
         at(4.3, "worker", "claim", json!([2])),
         page(5.0, "parent", json!([])),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     let found = answer(&steps, 9);
     assert_eq!(
         (&found[0]["status"], &found[1]["status"], &found[0]["owner"]),
@@ -207,7 +208,7 @@ fn a_claimed_task_names_its_active_owner_and_how_to_reach_it() {
         view(5.0, "parent", 1),
         page(6.0, "worker", json!([])),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     let found = answer(&steps, 5);
     assert_eq!(
         (
@@ -246,7 +247,7 @@ fn a_quiet_owner_reads_as_idle_after_the_documented_threshold() {
         full(base + IDLE_AFTER, "parent"),
         view(base + 2.0 * IDLE_AFTER, "parent", 1),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     assert_eq!(answer(&steps, 7)["owner_state"], json!("active"));
     for found in [
         answer(&steps, 8),
@@ -282,7 +283,7 @@ fn a_dead_owner_reads_as_dead_with_recovery_instead_of_a_contact() {
         view(6.0, "parent", 1),
         send(7.0, "parent", "to-the-dead", "worker", "anyone there?"),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     let found = answer(&steps, 6);
     assert_eq!(
         (
@@ -320,7 +321,7 @@ fn a_lost_owner_reads_as_lost_with_the_resume_note_and_no_contact() {
         page(18.0, "parent", json!([])),
         view(17.0 + 2.0 * IDLE_AFTER, "parent", 1),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     assert_eq!(answer(&steps, 7)["status"], json!("paused"));
     for found in [
         answer(&steps, 8),
@@ -359,7 +360,7 @@ fn summary_cursor_reports_an_owner_turning_idle_by_clock_alone() {
         full(base + IDLE_AFTER, "parent"),
         summary(base + IDLE_AFTER, "parent", json!(7)),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     let first = answer(&steps, 6);
     let check = json!(crate::swarm_board_diff_runs::NOW + base + IDLE_AFTER);
     assert_eq!(
@@ -421,7 +422,7 @@ fn status_and_summary_count_members_without_a_claim_and_dead_members() {
         status(8.5),
         full(9.0, "parent"),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     let counts = |value: Value| {
         (
             value["members_without_claim"].clone(),
@@ -465,7 +466,7 @@ fn owner_liveness_is_one_grouped_events_scan_per_page() {
         steps.push(at(offset + 0.05, claimant, "claim", json!([index + 1])));
     }
     steps.push(page(5.0, "parent", json!([])));
-    run_both(&steps);
+    run_golden(&steps);
     let states: Vec<Value> = answer(&steps, steps.len() - 1)
         .as_array()
         .unwrap()
@@ -485,7 +486,7 @@ fn notification_batch_carries_atomic_board_generation() {
         full(5.0, "parent"),
         at(6.0, "parent", "_notifications", json!([true])),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     let batch = answer(&steps, 4);
     assert_eq!(batch["generation"], answer(&steps, 5)["event_cursor"]);
     assert!(
@@ -530,7 +531,7 @@ fn owner_liveness_floats_compare_exactly() {
         steps.push(at(offset, owner, "claim", json!([index + 1])));
     }
     steps.push(full(200.0, "parent"));
-    run_both(&steps);
+    run_golden(&steps);
     let summary = answer(&steps, steps.len() - 1);
     let quiet: Vec<f64> = summary["tasks"]
         .as_array()
@@ -566,7 +567,7 @@ fn an_unassigned_code_point_in_an_owner_id_is_escaped_as_json_dumps_does() {
         view(6.0, "parent", 1),
         page(6.5, "parent", json!([])),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     assert_eq!(
         answer(&steps, 7)["contact"],
         json!(r#"{"op":"send","request":...,"recipient":"w\u0378\udb40\udc80","body":...}"#)

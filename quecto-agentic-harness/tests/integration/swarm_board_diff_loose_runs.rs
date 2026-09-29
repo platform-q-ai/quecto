@@ -12,7 +12,7 @@ use crate::swarm_board_diff_messages::joined;
 use crate::swarm_board_diff_runs::NOW;
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
 use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
-    run_both, run_python, run_rust, sql, step, step_text,
+    golden_answer, run_golden, run_rust, sql, step, step_text,
 };
 
 /// `create_run`'s arguments as JSON text, a criterion's extra key `w`
@@ -34,7 +34,7 @@ fn bootstrap_and_create_use_only_the_run_columns_python_uses() {
         "UPDATE run SET deadline='soon', member_limit='many'",
         "UPDATE run SET deadline=NULL, member_limit=2.5, integrator=x'00'",
     ] {
-        run_both(&[
+        run_golden(&[
             step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
             sql(edit),
             step("parent", "bootstrap_run", json!([8, "t", null]), NOW + 1.0),
@@ -49,7 +49,7 @@ fn bootstrap_and_create_use_only_the_run_columns_python_uses() {
 /// `_status` reading only the columns Python's `_status` selects.
 #[test]
 fn loosely_typed_rows_read_as_python_reads_them() {
-    run_both(&[
+    run_golden(&[
         step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
         sql("INSERT INTO members(id,status) VALUES('odd',NULL)"),
         sql("INSERT INTO members(id,status,pid) VALUES('text','live','abc')"),
@@ -70,7 +70,7 @@ fn loosely_typed_rows_read_as_python_reads_them() {
             NOW + 7.0,
         ),
     ]);
-    run_both(&[
+    run_golden(&[
         step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
         // Columns `_status` does not select, and a NULL status it does.
         sql("UPDATE run SET member_limit='many', goal=x'00', criteria=NULL, integrator=3"),
@@ -97,7 +97,7 @@ fn outside_edited_text_reads_as_python_reads_it() {
         "UPDATE run SET goal=CAST(x'ff' AS TEXT)",
         "UPDATE members SET started=CAST(x'31ff32' AS TEXT)",
     ] {
-        run_both(&[
+        run_golden(&[
             step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
             sql(edit),
             create(NOW + 1.0),
@@ -114,7 +114,7 @@ fn outside_edited_text_reads_as_python_reads_it() {
          CREATE TABLE run (id, goal, constraints, criteria, coordinator, integrator, member_limit, deadline, status);
          INSERT INTO run(id,status,coordinator) VALUES('r',1,2.5)",
     ] {
-        run_both(&[
+        run_golden(&[
             step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
             sql(edit),
             create(NOW + 1.0),
@@ -372,7 +372,7 @@ fn outside_edited_control_records() {
         ];
         for (side, answer, observed) in [
             ("rust", run_rust(&steps), rusts),
-            ("python", run_python(&steps), pythons),
+            ("python", golden_answer(&steps), pythons),
         ] {
             let Outcome::Ok(receipt) = answer else {
                 panic!("{edit}: {side}: {answer:?}");
@@ -422,7 +422,7 @@ fn outside_edited_control_records() {
 #[test]
 fn uncounted_usage_totals_pass_through_elsewhere() {
     for tokens in ["1.5", "-3"] {
-        run_both(&[
+        run_golden(&[
             create(5),
             at(1.0, "parent", "usage_report", json!([])),
             sql(&format!(
@@ -485,7 +485,7 @@ fn unread_ledger_rows_and_totals(refused: &dyn Fn(&str) -> Outcome) {
                 sql(edit),
                 at(1.0, "parent", method, args),
             ];
-            let (rust, python) = (run_rust(&steps), run_python(&steps));
+            let (rust, python) = (run_rust(&steps), golden_answer(&steps));
             assert_eq!(python, pythons(), "{edit}: {method}");
             match method {
                 "usage_report" => {
@@ -509,7 +509,7 @@ fn unread_ledger_rows_and_totals(refused: &dyn Fn(&str) -> Outcome) {
                 at(1.0, "parent", method, args),
             ];
             assert_eq!(
-                run_python(&steps),
+                golden_answer(&steps),
                 Outcome::Refused(
                     "coordination store unavailable or contended: integer overflow".to_owned()
                 ),
@@ -531,7 +531,7 @@ fn unread_ledger_rows_and_totals(refused: &dyn Fn(&str) -> Outcome) {
             sql(real),
             at(1.0, "parent", method, args),
         ];
-        let (rust, python) = (run_rust(&steps), run_python(&steps));
+        let (rust, python) = (run_rust(&steps), golden_answer(&steps));
         assert!(matches!(python, Outcome::Ok(_)), "{method}: {python:?}");
         match method {
             "_control_status" => assert_eq!(rust, python, "{method}"),

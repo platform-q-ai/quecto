@@ -33,7 +33,7 @@ use crate::swarm_board_diff_membership::at;
 use crate::swarm_board_diff_runs::NOW;
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
 use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
-    Step, run_rust, step, symlink_bytes, try_run_both,
+    Step, run_rust, step, symlink_bytes, try_run_golden,
 };
 
 /// This slice's divergences pinned in `src`: the name, the test file's
@@ -114,7 +114,7 @@ fn non_utf8_resolved_path_is_refused() {
         symlink_bytes("l", b"\xff"),
         at(5.0, "worker", "reserve", json!([1, token(3), ["l/x"]])),
     ]);
-    let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+    let difference = try_run_golden(&steps, |_, _, _| {}).unwrap_err();
     assert!(
         difference.contains(": reserve as worker ")
             && difference.contains("Python raised UnicodeEncodeError"),
@@ -131,21 +131,20 @@ fn integer_beyond_i64_is_refused() {
         step("parent", "bootstrap_run", json!([7, "s", null]), NOW),
         step("parent", "file_owners", args.clone(), NOW + 1.0),
     ];
-    let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+    let refused = Outcome::Refused(
+        "coordination store unavailable or contended: Error binding parameter 2: \
+         Python int too large to convert to SQLite INTEGER"
+            .to_owned(),
+    );
+    let difference = try_run_golden(&steps, |_, _, _| {}).unwrap_err();
     assert_eq!(
         difference,
         format!(
             "step 1: file_owners as parent with {args} at {}: Python raised \
-             OverflowError: Python int too large to convert to SQLite INTEGER",
+             OverflowError: Python int too large to convert to SQLite INTEGER\n  \
+             rust   {refused:?}",
             NOW + 1.0
         )
     );
-    assert_eq!(
-        run_rust(&steps),
-        Outcome::Refused(
-            "coordination store unavailable or contended: Error binding parameter 2: \
-             Python int too large to convert to SQLite INTEGER"
-                .to_owned()
-        )
-    );
+    assert_eq!(run_rust(&steps), refused);
 }

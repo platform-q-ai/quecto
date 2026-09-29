@@ -5,7 +5,9 @@
 use serde_json::json;
 
 use crate::swarm_board_diff_membership::{at, create};
-use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{Step, run_rust, sql, try_run_both};
+use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
+    Step, run_rust, sql, try_run_golden,
+};
 
 const CONTENDED: &str = "coordination store unavailable or contended: ";
 
@@ -38,7 +40,7 @@ fn outside_edited_task_columns() {
         steps.extend_from_slice(before);
         let prefix = format!("step {}: {}", steps.len() + 1, probe.method);
         steps.extend([sql(&format!("UPDATE tasks SET {edit} WHERE id=1")), probe]);
-        let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+        let difference = try_run_golden(&steps, |_, _, _| {}).unwrap_err();
         let python_side = difference.split("\n  rust").next().unwrap_or_default();
         assert!(
             difference.starts_with(&prefix) && python_side.contains(python),
@@ -64,7 +66,7 @@ fn outside_edited_task_columns() {
     ] {
         pinned(&[], edit, raw(), python, rust);
     }
-    let unknown = r#"python Refused("unknown task")"#;
+    let unknown = r#"golden Refused("unknown task")"#;
     let unmet = r#"Refused("unmet dependencies")"#;
     pinned(
         &[claim("w1")],
@@ -121,8 +123,8 @@ fn outside_edited_evidence() {
         (r#"[{"artifact":"a"}]"#, "Python raised KeyError"),
         (r#"{"revision":"R1"}"#, "Python raised TypeError"),
         ("null", "Python raised TypeError"),
-        ("{}", "python Ok(Null)"),
-        (r#""""#, "python Ok(Null)"),
+        ("{}", "golden Ok(Null)"),
+        (r#""""#, "golden Ok(Null)"),
     ] {
         steps.truncate(2);
         let edit = format!("UPDATE tasks SET status='submitted',token='t',evidence='{evidence}'");
@@ -130,7 +132,7 @@ fn outside_edited_evidence() {
             sql(&edit),
             at(2.0, "parent", "verify_task", json!([1, "t", "R1"])),
         ]);
-        let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+        let difference = try_run_golden(&steps, |_, _, _| {}).unwrap_err();
         assert!(
             difference.starts_with("step 3: verify_task") && difference.contains(python),
             "{evidence}: {difference}"

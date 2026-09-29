@@ -1,0 +1,112 @@
+{
+"steps": [
+ ["parent","create_run","{\"goal\":\"admit members\",\"constraints\":[],\"criteria\":[{\"id\":\"t\",\"kind\":\"command\",\"description\":\"test\"}],\"member_limit\":12,\"deadline\":1700003600.25}","1700000000.25",null],
+ ["parent","_admit","[\"a\",null]","1700000001.25",null],
+ ["parent","_admit","[\"a\",null]","1700000002.25",null],
+ ["parent","_admit","[\"a2\",null]","1700000003.25",null],
+ ["parent","_admit","[\"b\",5]","1700000004.25",null],
+ ["parent","_admit","[\"b\",5]","1700000005.25",null],
+ ["parent","_admit","[\"b\",\"5\"]","1700000006.25",null],
+ ["parent","_admit","[\"c\",\"5\"]","1700000007.25",null],
+ ["parent","_admit","[\"d\",5.5]","1700000008.25",null],
+ ["parent","_admit","[\"e\",true]","1700000009.25",null],
+ ["parent","_admit","[\"e\",1]","1700000010.25",null],
+ ["parent","_admit","[\"f\",false]","1700000011.25",null],
+ ["parent","_admit","[\"g\",[1]]","1700000012.25",null],
+ ["parent","_admit","[\"h\",{\"k\":1}]","1700000013.25",null],
+ ["parent","_admit","{\"member\":\"i\",\"reservation\":-0.0}","1700000014.25",null],
+ ["parent","_snapshot","[]","1700000015.25",null]
+],
+"answers": [
+ {"ok":"null"},
+ {"ok":"{\"id\": \"a\", \"reservation\": null, \"status\": \"reserved\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": \"parent\"}"},
+ {"ok":"{\"id\": \"a\", \"reservation\": null, \"status\": \"reserved\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": \"parent\"}"},
+ {"ok":"{\"id\": \"a2\", \"reservation\": null, \"status\": \"reserved\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": \"parent\"}"},
+ {"ok":"{\"id\": \"b\", \"reservation\": \"5\", \"status\": \"reserved\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": \"parent\"}"},
+ {"refused":"member identity already used; choose a stable new identity"},
+ {"ok":"{\"id\": \"b\", \"reservation\": \"5\", \"status\": \"reserved\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": \"parent\"}"},
+ {"refused":"coordination store unavailable or contended: UNIQUE constraint failed: members.reservation"},
+ {"ok":"{\"id\": \"d\", \"reservation\": \"5.5\", \"status\": \"reserved\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": \"parent\"}"},
+ {"ok":"{\"id\": \"e\", \"reservation\": \"1\", \"status\": \"reserved\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": \"parent\"}"},
+ {"refused":"member identity already used; choose a stable new identity"},
+ {"ok":"{\"id\": \"f\", \"reservation\": \"0\", \"status\": \"reserved\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": \"parent\"}"},
+ {"refused":"coordination store unavailable or contended: Error binding parameter 2: type 'list' is not supported"},
+ {"refused":"coordination store unavailable or contended: Error binding parameter 2: type 'dict' is not supported"},
+ {"ok":"{\"id\": \"i\", \"reservation\": \"0.0\", \"status\": \"reserved\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": \"parent\"}"},
+ {"ok":"{\"status\": \"running\", \"coordinator\": \"parent\", \"outcome\": null, \"control_generation\": 0, \"deadline\": 1700003600.25, \"members\": [{\"id\": \"parent\", \"reservation\": \"00000000000000000000000000000002\", \"status\": \"live\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": null}, {\"id\": \"a\", \"reservation\": null, \"status\": \"reserved\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": \"parent\"}, {\"id\": \"a2\", \"reservation\": null, \"status\": \"reserved\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": \"parent\"}, {\"id\": \"b\", \"reservation\": \"5\", \"status\": \"reserved\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": \"parent\"}, {\"id\": \"d\", \"reservation\": \"5.5\", \"status\": \"reserved\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": \"parent\"}, {\"id\": \"e\", \"reservation\": \"1\", \"status\": \"reserved\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": \"parent\"}, {\"id\": \"f\", \"reservation\": \"0\", \"status\": \"reserved\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": \"parent\"}, {\"id\": \"i\", \"reservation\": \"0.0\", \"status\": \"reserved\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": \"parent\"}]}"}
+],
+"files": [
+ "dump:b85d41ad0f612f13ef0ac43d781b4ea71388ecada5173bfdb79419c6531ff637",
+ "dump:3bed4e65ad35aeeeee9261be62aed0ed3f7527b81c26caf689de1256275fde30",
+ "dump:3bed4e65ad35aeeeee9261be62aed0ed3f7527b81c26caf689de1256275fde30",
+ "dump:36e9b4f78b471d47a21a848300254006219e669040094965c7ee29c011fc346b",
+ "dump:f08e6d30d312db567e4ed7c7609b43be28d5c2c65e13b8502ccaa83f57636090",
+ "dump:f08e6d30d312db567e4ed7c7609b43be28d5c2c65e13b8502ccaa83f57636090",
+ "dump:f08e6d30d312db567e4ed7c7609b43be28d5c2c65e13b8502ccaa83f57636090",
+ "dump:f08e6d30d312db567e4ed7c7609b43be28d5c2c65e13b8502ccaa83f57636090",
+ "dump:35adadc81dd26aed54c551c240da144a2620b58e1d96c6d79b7d0104b7eee0a5",
+ "dump:f8bdbcda1348bcb32d6e902b8a421a24775cf9fe2dae8da682b2648119881a42",
+ "dump:f8bdbcda1348bcb32d6e902b8a421a24775cf9fe2dae8da682b2648119881a42",
+ "dump:081999cce7cb92a99b28afd23a2ab2f04a9b77c2290330d0060d8df92b37621f",
+ "dump:081999cce7cb92a99b28afd23a2ab2f04a9b77c2290330d0060d8df92b37621f",
+ "dump:081999cce7cb92a99b28afd23a2ab2f04a9b77c2290330d0060d8df92b37621f",
+ "dump:b0eff59b6f486b54471b49e32d4a9e840c9c75940d8ae8f6635fe7d7bff128b8",
+ "dump:b0eff59b6f486b54471b49e32d4a9e840c9c75940d8ae8f6635fe7d7bff128b8"
+],
+"dump": [
+  ["sqlite_master", [
+   [["text",{"text":"table"}],["text",{"text":"run"}],["text",{"text":"run"}],["text",{"text":"CREATE TABLE run (id TEXT PRIMARY KEY, goal TEXT, constraints TEXT, criteria TEXT,\n coordinator TEXT, integrator TEXT, member_limit INTEGER, deadline REAL, status TEXT, outcome TEXT, outcome_reason TEXT)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_run_1"}],["text",{"text":"run"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"members"}],["text",{"text":"members"}],["text",{"text":"CREATE TABLE members (id TEXT PRIMARY KEY, reservation TEXT UNIQUE, status TEXT,\n pid INTEGER, started TEXT, socket TEXT, launcher TEXT)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_members_1"}],["text",{"text":"members"}],["null",null]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_members_2"}],["text",{"text":"members"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"tasks"}],["text",{"text":"tasks"}],["text",{"text":"CREATE TABLE tasks (id INTEGER PRIMARY KEY, title TEXT, acceptance TEXT, dependencies TEXT,\n status TEXT, owner TEXT, token TEXT, evidence TEXT, blocker TEXT)"}]],
+   [["text",{"text":"table"}],["text",{"text":"files"}],["text",{"text":"files"}],["text",{"text":"CREATE TABLE files (path TEXT PRIMARY KEY, task INTEGER, owner TEXT, claim TEXT, token TEXT)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_files_1"}],["text",{"text":"files"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"messages"}],["text",{"text":"messages"}],["text",{"text":"CREATE TABLE messages (id INTEGER PRIMARY KEY, sender TEXT, recipient TEXT, body TEXT, status TEXT, revision TEXT, supersedes INTEGER, superseded_by INTEGER)"}]],
+   [["text",{"text":"table"}],["text",{"text":"evidence"}],["text",{"text":"evidence"}],["text",{"text":"CREATE TABLE evidence (criterion TEXT, artifact TEXT, revision TEXT, kind TEXT,\n actor TEXT, accepted INTEGER, PRIMARY KEY(criterion, actor))"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_evidence_1"}],["text",{"text":"evidence"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"requests"}],["text",{"text":"requests"}],["text",{"text":"CREATE TABLE requests (actor TEXT, request TEXT, payload TEXT, result TEXT,\n PRIMARY KEY(actor, request))"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_requests_1"}],["text",{"text":"requests"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"events"}],["text",{"text":"events"}],["text",{"text":"CREATE TABLE events (id INTEGER PRIMARY KEY, actor TEXT, time REAL, action TEXT, detail TEXT)"}]],
+   [["text",{"text":"index"}],["text",{"text":"events_by_actor"}],["text",{"text":"events"}],["text",{"text":"CREATE INDEX events_by_actor ON events(actor,id)"}]],
+   [["text",{"text":"table"}],["text",{"text":"notification_cursors"}],["text",{"text":"notification_cursors"}],["text",{"text":"CREATE TABLE notification_cursors (actor TEXT PRIMARY KEY, event INTEGER)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_notification_cursors_1"}],["text",{"text":"notification_cursors"}],["null",null]]
+  ]],
+  ["events", [
+   [["integer",{"integer":1}],["text",{"text":"parent"}],["real",{"real":"1700000000.25"}],["text",{"text":"created"}],["text",{"text":"{\"contract\":{\"constraints\":[],\"criteria\":[{\"description\":\"test\",\"id\":\"t\",\"kind\":\"command\"}],\"goal\":\"admit members\"},\"deadline\":1700003600.25,\"goal\":\"admit members\"}"}]],
+   [["integer",{"integer":2}],["text",{"text":"parent"}],["real",{"real":"1700000001.25"}],["text",{"text":"reserved"}],["text",{"text":"{\"member\":\"a\"}"}]],
+   [["integer",{"integer":3}],["text",{"text":"parent"}],["real",{"real":"1700000003.25"}],["text",{"text":"reserved"}],["text",{"text":"{\"member\":\"a2\"}"}]],
+   [["integer",{"integer":4}],["text",{"text":"parent"}],["real",{"real":"1700000004.25"}],["text",{"text":"reserved"}],["text",{"text":"{\"member\":\"b\"}"}]],
+   [["integer",{"integer":5}],["text",{"text":"parent"}],["real",{"real":"1700000008.25"}],["text",{"text":"reserved"}],["text",{"text":"{\"member\":\"d\"}"}]],
+   [["integer",{"integer":6}],["text",{"text":"parent"}],["real",{"real":"1700000009.25"}],["text",{"text":"reserved"}],["text",{"text":"{\"member\":\"e\"}"}]],
+   [["integer",{"integer":7}],["text",{"text":"parent"}],["real",{"real":"1700000011.25"}],["text",{"text":"reserved"}],["text",{"text":"{\"member\":\"f\"}"}]],
+   [["integer",{"integer":8}],["text",{"text":"parent"}],["real",{"real":"1700000014.25"}],["text",{"text":"reserved"}],["text",{"text":"{\"member\":\"i\"}"}]]
+  ]],
+  ["evidence", []],
+  ["files", []],
+  ["members", [
+   [["text",{"text":"parent"}],["text",{"text":"00000000000000000000000000000002"}],["text",{"text":"live"}],["null",null],["null",null],["null",null],["null",null]],
+   [["text",{"text":"a"}],["null",null],["text",{"text":"reserved"}],["null",null],["null",null],["null",null],["text",{"text":"parent"}]],
+   [["text",{"text":"a2"}],["null",null],["text",{"text":"reserved"}],["null",null],["null",null],["null",null],["text",{"text":"parent"}]],
+   [["text",{"text":"b"}],["text",{"text":"5"}],["text",{"text":"reserved"}],["null",null],["null",null],["null",null],["text",{"text":"parent"}]],
+   [["text",{"text":"d"}],["text",{"text":"5.5"}],["text",{"text":"reserved"}],["null",null],["null",null],["null",null],["text",{"text":"parent"}]],
+   [["text",{"text":"e"}],["text",{"text":"1"}],["text",{"text":"reserved"}],["null",null],["null",null],["null",null],["text",{"text":"parent"}]],
+   [["text",{"text":"f"}],["text",{"text":"0"}],["text",{"text":"reserved"}],["null",null],["null",null],["null",null],["text",{"text":"parent"}]],
+   [["text",{"text":"i"}],["text",{"text":"0.0"}],["text",{"text":"reserved"}],["null",null],["null",null],["null",null],["text",{"text":"parent"}]]
+  ]],
+  ["messages", []],
+  ["notification_cursors", []],
+  ["requests", []],
+  ["run", [
+   [["text",{"text":"00000000000000000000000000000001"}],["text",{"text":"admit members"}],["text",{"text":"[]"}],["text",{"text":"[{\"description\":\"test\",\"id\":\"t\",\"kind\":\"command\"}]"}],["text",{"text":"parent"}],["text",{"text":"parent"}],["integer",{"integer":12}],["real",{"real":"1700003600.25"}],["text",{"text":"running"}],["null",null],["null",null]]
+  ]],
+  ["tasks", []],
+  ["PRAGMA journal_mode", [
+   [["text",{"text":"delete"}]]
+  ]],
+  ["PRAGMA user_version", [
+   [["integer",{"integer":0}]]
+  ]]
+ ]
+}

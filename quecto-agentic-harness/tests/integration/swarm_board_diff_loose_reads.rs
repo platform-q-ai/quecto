@@ -24,7 +24,7 @@ use serde_json::{Value, json};
 use crate::swarm_board_diff_membership::at;
 use crate::swarm_board_diff_messages::joined;
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
-use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{run_rust, sql, try_run_both};
+use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{run_rust, sql, try_run_golden};
 
 fn task(
     offset: f64,
@@ -52,7 +52,7 @@ fn outside_edited_task_columns() {
         sql("UPDATE tasks SET status='weird'"),
         at(4.0, "parent", "summary", json!([])),
     ]);
-    let difference = try_run_both(&weird, |_, _, _| {}).unwrap_err();
+    let difference = try_run_golden(&weird, |_, _, _| {}).unwrap_err();
     assert!(
         difference.contains("Python raised KeyError: 'weird'"),
         "{difference}"
@@ -66,7 +66,7 @@ fn outside_edited_task_columns() {
         sql("UPDATE tasks SET dependencies='[9]'"),
         at(4.0, "parent", "summary", json!([])),
     ]);
-    let difference = try_run_both(&missing, |_, _, _| {}).unwrap_err();
+    let difference = try_run_golden(&missing, |_, _, _| {}).unwrap_err();
     // `_task` reads the missing dependency first: `fetchone()[0]` of None.
     assert!(
         difference.contains("Python raised TypeError: 'NoneType' object is not subscriptable"),
@@ -104,7 +104,7 @@ fn outside_edited_task_columns() {
              UPDATE events SET actor=1e16 WHERE actor='ow'"),
         at(6.0, "parent", "task", json!([1])),
     ]);
-    let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+    let difference = try_run_golden(&steps, |_, _, _| {}).unwrap_err();
     assert!(
         difference.starts_with("step 8: task as parent")
             && difference.contains(r#"\"recipient\":1e+16,"#)
@@ -134,7 +134,7 @@ fn outside_edited_loss_records() {
         sql("UPDATE events SET time='soon' WHERE actor='worker'"),
         at(5.0, "parent", "task", json!([1])),
     ]);
-    let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+    let difference = try_run_golden(&steps, |_, _, _| {}).unwrap_err();
     assert!(
         difference.starts_with("step 6: task as parent")
             && difference.contains("Python raised TypeError"),
@@ -169,9 +169,9 @@ fn outside_edited_loss_records() {
                 at(5.0, "parent", "summary", json!([])),
             ]),
     );
-    let difference = try_run_both(&beyond, |_, _, _| {}).unwrap_err();
+    let difference = try_run_golden(&beyond, |_, _, _| {}).unwrap_err();
     assert!(
-        difference.starts_with("step 56: summary as parent") && difference.contains("python Ok("),
+        difference.starts_with("step 56: summary as parent") && difference.contains("golden Ok("),
         "{difference}"
     );
     assert_eq!(
@@ -187,7 +187,7 @@ fn outside_edited_loss_records() {
 fn integer_beyond_i64_is_refused() {
     for (method, parameter) in [("events", 1), ("tasks", 2)] {
         let steps = joined([at(3.0, "parent", method, json!([u64::MAX, 5]))]);
-        let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+        let difference = try_run_golden(&steps, |_, _, _| {}).unwrap_err();
         assert!(
             difference.starts_with(&format!("step 3: {method} as parent"))
                 && difference.contains(

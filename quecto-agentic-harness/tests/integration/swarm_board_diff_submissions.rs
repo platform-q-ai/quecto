@@ -1,14 +1,15 @@
 //! Differential scenarios (#2272, epic #2265): blockers, submissions and
-//! verification on the Python board and the Rust board, compared after
-//! every step by result, refusal text and logical database dump. Ported
-//! from `tests/swarm_helpers_test.py`, plus the loosely typed arguments
-//! Python accepts (epic P3).
+//! verification on the Rust board against the Python board's answers frozen
+//! in its golden fixtures (#2283), compared after every step by result,
+//! refusal text and logical database dump. Ported from
+//! `tests/swarm_helpers_test.py`, plus the loosely typed arguments Python
+//! accepts (epic P3).
 use serde_json::{Value, json};
 
 use crate::swarm_board_diff_membership::{at, create};
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
 use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
-    Step, run_both, run_rust, sql, try_run_both,
+    Step, run_golden, run_rust, sql, try_run_golden,
 };
 
 /// A running run of five coordinated by `parent`, with `worker` live and
@@ -58,7 +59,7 @@ fn scenario(more: impl IntoIterator<Item = Step>) -> Vec<Step> {
 /// coordinator verifies, and verifying twice is idempotent.
 #[test]
 fn submission_is_not_completion_and_requires_current_token() {
-    run_both(&scenario([
+    run_golden(&scenario([
         at(
             5.0,
             "worker",
@@ -84,7 +85,7 @@ fn submission_is_not_completion_and_requires_current_token() {
 /// refused once submitted; the reviewed evidence is what completes.
 #[test]
 fn reviewed_submission_cannot_be_replaced_under_the_same_claim() {
-    run_both(&scenario([
+    run_golden(&scenario([
         at(
             5.0,
             "worker",
@@ -120,7 +121,7 @@ fn reviewed_submission_cannot_be_replaced_under_the_same_claim() {
 /// submission does.
 #[test]
 fn released_submission_requires_a_new_review_claim() {
-    run_both(&scenario([
+    run_golden(&scenario([
         at(
             5.0,
             "worker",
@@ -147,7 +148,7 @@ fn released_submission_requires_a_new_review_claim() {
 /// owner may resume, and submitted evidence cannot be reopened.
 #[test]
 fn resolved_blocker_resumes_original_claim_without_releasing_files() {
-    run_both(&scenario([
+    run_golden(&scenario([
         at(
             5.0,
             "worker",
@@ -192,7 +193,7 @@ fn resolved_blocker_resumes_original_claim_without_releasing_files() {
 fn blockers_are_set_and_resolved_identically() {
     let long = "é".repeat(4096);
     let longer = "é".repeat(4097);
-    run_both(&scenario([
+    run_golden(&scenario([
         at(5.0, "worker", "block", json!([1, token(3), " \n"])),
         at(5.5, "stranger", "block", json!([1, token(3), 5])),
         at(6.0, "worker", "block", json!([1, token(3), longer])),
@@ -279,7 +280,7 @@ fn submitted_evidence_is_checked_identically() {
         raw(36.0, json!(1)),
         at(37.0, "parent", "verify_task", json!([1, token(3), 1.0])),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
 }
 
 /// Verification: the coordinator gate, a token that is not the claim's,
@@ -288,7 +289,7 @@ fn submitted_evidence_is_checked_identically() {
 /// verified with its stored (NULL) token and no evidence.
 #[test]
 fn verification_is_checked_identically() {
-    run_both(&scenario([
+    run_golden(&scenario([
         at(4.5, "worker", "task_create", json!(["second", "t", ["ok"]])),
         at(4.6, "parent", "claim", json!([2])),
         at(5.0, "parent", "verify_task", json!([1, token(3), "R1"])),
@@ -336,7 +337,7 @@ fn edited_string_evidence_raises_in_python_and_is_refused_in_rust() {
         sql(r#"UPDATE tasks SET status='submitted',token='t',evidence='"R1"' WHERE id=1"#),
         at(2.0, "parent", "verify_task", json!([1, "t", "R1"])),
     ];
-    let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+    let difference = try_run_golden(&steps, |_, _, _| {}).unwrap_err();
     assert!(
         difference.starts_with("step 3: verify_task")
             && difference.contains("Python raised TypeError: string indices must be integers"),
@@ -362,12 +363,12 @@ fn edited_stale_first_malformed_later_evidence_is_refused_identically() {
         ),
         at(2.0, "parent", "verify_task", json!([1, "t", "R1"])),
     ];
-    run_both(&steps);
+    run_golden(&steps);
     let rust = format!("{:?}", run_rust(&steps));
     assert_eq!(rust, "Refused(\"stale evidence revision\")");
     let mut read_back = steps.to_vec();
     read_back.push(raw(3.0, json!(1)));
-    run_both(&read_back);
+    run_golden(&read_back);
 }
 
 /// The gate: a dead member neither blocks nor submits, the coordinator
@@ -375,7 +376,7 @@ fn edited_stale_first_malformed_later_evidence_is_refused_identically() {
 /// refusal.
 #[test]
 fn the_operation_gate_refuses_submissions_identically() {
-    run_both(&scenario([
+    run_golden(&scenario([
         sql("UPDATE members SET status='dead' WHERE id='worker'"),
         at(5.0, "worker", "block", json!([1, token(3), "r"])),
         at(
@@ -439,7 +440,7 @@ fn every_mutating_task_op_is_refused_on_a_paused_run() {
             "{method} is granted on the running run"
         );
         let steps = [setup.clone(), vec![paused.clone(), op, raw(10.0, json!(1))]].concat();
-        run_both(&steps);
+        run_golden(&steps);
         let outcome = run_rust(&steps[..steps.len() - 1]);
         assert!(
             matches!(&outcome, Outcome::Refused(text) if text == refusal),

@@ -268,8 +268,13 @@ fn a_legacy_python_board_opens_and_completes_under_rust() {
         28.1,
     );
     call("parent", "complete", json!(["R2"]), 29.0);
-    let status = call("supervisor", "_status", json!([]), 30.0);
-    assert_eq!(status["status"], json!("completed"), "{status}");
+    // The outcome is held for the supervisor, who makes it terminal.
+    let held = call("supervisor", "_status", json!([]), 29.5);
+    assert_eq!(held["outcome"], json!("succeeded"), "{held}");
+    call("parent", "_close", json!([]), 30.0);
+    let status = call("supervisor", "_status", json!([]), 31.0);
+    assert_eq!(status["status"], json!("succeeded"), "{status}");
+    assert_eq!(status["outcome"], json!("succeeded"), "{status}");
     assert_eq!(stored(&database, "PRAGMA integrity_check"), "ok");
     assert_eq!(stored(&database, "PRAGMA journal_mode"), "delete");
 }

@@ -1,7 +1,8 @@
 //! Differential scenarios (#2273, epic #2265): completion, task
 //! revalidation, contract amendment and the criterion evidence success
-//! needs, on the Python board and the Rust board, compared after every
-//! step by result, refusal text and logical database dump. Ported from
+//! needs, on the Rust board against the Python board's answers frozen in
+//! its golden fixtures (#2283), compared after every step by result,
+//! refusal text and logical database dump. Ported from
 //! `tests/swarm_helpers_test.py`, plus the loosely typed arguments Python
 //! accepts (epic P3).
 use serde_json::{Value, json};
@@ -10,7 +11,7 @@ use crate::swarm_board_diff_membership::{HOUR, at, snapshot};
 use crate::swarm_board_diff_runs::NOW;
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
 use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
-    Step, run_both, run_rust, sql, step,
+    Step, run_golden, run_rust, sql, step,
 };
 
 /// `WorkbenchBehavior.setUp`: `parent` creates `ship feature` with a
@@ -130,7 +131,7 @@ fn dependent_tasks_can_be_revalidated_at_final_revision() {
         .chain([&held])
         .cloned()
         .collect();
-    run_both(&with_worker(steps));
+    run_golden(&with_worker(steps));
     // Every step but the refused ones is granted, and the run is held.
     let alone: Vec<Step> = setup.into_iter().chain(granted).chain([held]).collect();
     assert_eq!(
@@ -146,7 +147,7 @@ fn dependent_tasks_can_be_revalidated_at_final_revision() {
 /// live) until the supervisor closes it, and then terminal.
 #[test]
 fn completion_holds_success_until_the_supervisor_closes_it() {
-    run_both(&with_worker([
+    run_golden(&with_worker([
         evidence(3.0, "parent", "tests", "command", json!(true)),
         evidence(3.1, "parent", "review", "review", json!(true)),
         at(4.0, "parent", "_close", json!([])),
@@ -179,7 +180,7 @@ fn completion_holds_success_until_the_supervisor_closes_it() {
 /// non-`True` pass are not accepted), then settled work and reservations.
 #[test]
 fn completion_refuses_each_unsatisfied_requirement() {
-    run_both(&with_worker([
+    run_golden(&with_worker([
         at(3.0, "parent", "complete", json!([" "])),
         at(3.1, "parent", "complete", json!([5])),
         at(3.2, "parent", "complete", json!(["R2"])),
@@ -210,7 +211,7 @@ fn completion_refuses_each_unsatisfied_requirement() {
 /// artifact and revision first; its criterion binds as Python binds it.
 #[test]
 fn evidence_arguments_are_checked_as_python_checks_them() {
-    run_both(&with_worker([
+    run_golden(&with_worker([
         at(
             3.0,
             "parent",
@@ -288,7 +289,7 @@ fn evidence_arguments_are_checked_as_python_checks_them() {
 #[test]
 fn amendment_preserves_the_entire_original_contract() {
     let changed = json!([{"id": "tests", "kind": "command", "description": "replacement test"}]);
-    run_both(&with_worker([
+    run_golden(&with_worker([
         evidence(3.0, "parent", "tests", "command", json!(true)),
         evidence(3.1, "worker", "review", "review", json!(false)),
         at(
@@ -324,7 +325,7 @@ fn amendment_preserves_the_entire_original_contract() {
 #[test]
 fn amendment_arguments_are_checked_as_python_checks_them() {
     let good = json!([{"id": "t", "kind": "review", "description": "d"}]);
-    run_both(&with_worker([
+    run_golden(&with_worker([
         at(3.0, "parent", "amend", json!([" ", [], good, 5])),
         at(3.1, "parent", "amend", json!(["g", [], good, null])),
         at(
@@ -429,7 +430,7 @@ fn revalidation_arguments_are_checked_as_python_checks_them() {
         ),
         at(6.0, "parent", "task_raw", json!([1])),
     ]);
-    run_both(&with_worker(steps));
+    run_golden(&with_worker(steps));
 }
 
 /// Every completion op needs a running run (`authorize(active=True)`, the
@@ -476,7 +477,7 @@ fn every_completion_op_is_refused_on_a_paused_run() {
             "{member} {method} is granted on the running run"
         );
         let steps = [setup.clone(), vec![paused.clone(), op, snapshot(10.0)]].concat();
-        run_both(&steps);
+        run_golden(&steps);
         let outcome = run_rust(&steps[..steps.len() - 1]);
         assert!(
             matches!(&outcome, Outcome::Refused(text) if text == refusal),

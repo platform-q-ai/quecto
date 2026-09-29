@@ -1,0 +1,27 @@
+{
+"steps": [
+ ["parent","create_run","{\"goal\":\"admit members\",\"constraints\":[],\"criteria\":[{\"id\":\"t\",\"kind\":\"command\",\"description\":\"test\"}],\"member_limit\":5,\"deadline\":1700003600.25}","1700000000.25",null],
+ ["parent","_admit","[\"worker\",\"res-w\"]","1700000001.25",null],
+ ["parent","_activate","[\"worker\",\"res-w\",11,\"t\",null]","1700000002.25",null],
+ ["worker","task_create","[\"task\",\"implement behavior\",[\"tests pass\"],[]]","1700000003.25","throughout"],
+ ["","<fs>","[\"corrupt\"]","0.0",null],
+ ["parent","summary","[]","1700000004.25",null]
+],
+"answers": [
+ {"ok":"null"},
+ {"ok":"{\"id\": \"worker\", \"reservation\": \"res-w\", \"status\": \"reserved\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": \"parent\"}"},
+ {"ok":"null"},
+ {"refused":"coordination store unavailable or contended: database is locked"},
+ {"ok":"null"},
+ {"refused":"coordination store unavailable or contended: file is not a database"}
+],
+"files": [
+ "dump:8a1edc28e20b24098878218a87e13a9c2e0a8ae19f105d22653bae5ad3c791e8",
+ "dump:a681b117d1bc7ad75289571f4d83d61c1a2a8b988c3efaa7dccc551760bfde8b",
+ "dump:abe5002c4f6809ac57ea8a82d784b6771b62c568c42c2fd81ee05077a0dc2383",
+ "dump:abe5002c4f6809ac57ea8a82d784b6771b62c568c42c2fd81ee05077a0dc2383",
+ "bytes:11d510e067d2cdcd7559bd86d27a2f4c20babd43670346b97af99b522c1f0075",
+ "bytes:11d510e067d2cdcd7559bd86d27a2f4c20babd43670346b97af99b522c1f0075"
+],
+"dump": null
+}

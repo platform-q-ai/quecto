@@ -11,7 +11,7 @@ use crate::swarm_board_diff_loss::{
 use crate::swarm_board_diff_membership::{HOUR, at, create};
 use crate::swarm_board_diff_messages::joined;
 use crate::swarm_board_diff_runs::NOW;
-use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{run_both, sql, step};
+use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{run_golden, sql, step};
 
 /// `_lose_coordinator` in every run state: a setup placeholder fails, a
 /// running run or an outcome-less pause is lost as a failed pause, and a
@@ -24,7 +24,7 @@ fn losing_the_coordinator_in_every_run_state() {
         at(1.0, "parent", "_lose_coordinator", json!([])),
         at(2.0, "parent", "_lose_coordinator", json!([])),
     ];
-    run_both(&setup);
+    run_golden(&setup);
     assert_eq!(answer(&setup, 1)["status"], json!("failed"));
     assert_eq!(answer(&setup, 2)["lost"], json!(false));
     for (name, before, lost, status) in [
@@ -60,7 +60,7 @@ fn losing_the_coordinator_in_every_run_state() {
         let mut steps = joined(before);
         steps.push(at(4.0, "parent", "_lose_coordinator", json!([])));
         steps.push(at(5.0, "worker", "_lose_coordinator", json!([])));
-        run_both(&steps);
+        run_golden(&steps);
         let receipt = answer(&steps, steps.len() - 2);
         assert_eq!(
             (&receipt["lost"], &receipt["status"]),
@@ -108,7 +108,7 @@ fn the_loss_ops_are_gated_and_checked_as_python_does() {
         json!({"exit": "abrupt", "member": "stranger"}),
     ));
     steps.push(at(HOUR + 1.0, "parent", "_lose_coordinator", json!([])));
-    run_both(&steps);
+    run_golden(&steps);
     let unknown = "invoking member is unknown or death confirmed";
     for index in [3, 4, 6, 8, 9, 10] {
         assert_eq!(refusal(&steps, index), unknown, "step {index}");
@@ -164,7 +164,7 @@ fn loss_ops_bind_the_member_as_python_does() {
         snapshot(47.0, "parent"),
         quarantine(48.0, "parent", json!({"member": 5})),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     assert_eq!(state(&answer(&steps, 9)), held("failed"));
     assert_eq!(state(&answer(&steps, 14)), held("failed"));
     let binding = |kind: &str| {
@@ -203,9 +203,9 @@ fn every_loss_op_on_a_paused_run() {
         at(9.0, "parent", "_lose_coordinator", json!([])),
     ] {
         let steps = joined([paused.clone(), op.clone(), op.clone()]);
-        run_both(&steps);
+        run_golden(&steps);
         let steps = joined([at(3.0, "parent", "pause", json!(["hold"])), op.clone(), op]);
-        run_both(&steps);
+        run_golden(&steps);
     }
 }
 
@@ -219,6 +219,6 @@ fn a_loss_on_the_setup_placeholder_fails_it() {
         at(2.0, "supervisor", "_status", json!([])),
         create(5),
     ];
-    run_both(&steps);
+    run_golden(&steps);
     assert_eq!(answer(&steps, 2)["status"], json!("failed"));
 }

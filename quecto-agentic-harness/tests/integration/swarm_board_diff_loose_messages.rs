@@ -50,7 +50,9 @@ use crate::swarm_board_diff_loose::PERMITTED_DIVERGENCES;
 use crate::swarm_board_diff_membership::at;
 use crate::swarm_board_diff_messages::{inbox, joined, send};
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
-use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{Step, run_rust, sql, try_run_both};
+use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
+    Step, run_rust, sql, try_run_golden,
+};
 use crate::swarm_board_diff_wakes::{accept, hints};
 
 /// The divergences this file pins also pinned in `src`: the name, the
@@ -111,7 +113,7 @@ fn integer_beyond_i64_is_refused() {
             send(3.0, "worker", "a", "parent", "one"),
             at(4.0, "worker", method, args),
         ]);
-        let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+        let difference = try_run_golden(&steps, |_, _, _| {}).unwrap_err();
         assert!(
             difference.starts_with(&format!("step 4: {method} as worker"))
                 && difference.contains(
@@ -141,11 +143,11 @@ fn unknown_member_status_is_not_alive() {
             sql(&format!("UPDATE members SET status={status} WHERE id='z'")),
             send(4.0, "worker", "a", "z", "hi"),
         ]);
-        let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+        let difference = try_run_golden(&steps, |_, _, _| {}).unwrap_err();
         assert!(
             difference.starts_with("step 5: send as worker")
                 && difference.contains(
-                    r#"python Ok(Object {"id": Number(1), "status": String("accepted")})"#
+                    r#"golden Ok(Object {"id": Number(1), "status": String("accepted")})"#
                 )
                 && difference.contains(r#"rust   Refused("unknown or out-of-swarm recipient")"#),
             "{status}: {difference}"
@@ -172,11 +174,11 @@ fn outside_edited_messages() {
         (
             "UPDATE messages SET sender=x'00'",
             at(5.0, "worker", "withdraw", json!([1])),
-            r#"python Refused("only your own message can be withdrawn")"#,
+            r#"golden Refused("only your own message can be withdrawn")"#,
         ),
     ] {
         let steps = joined([send(3.0, "worker", "a", "parent", "one"), sql(edit), probe]);
-        let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+        let difference = try_run_golden(&steps, |_, _, _| {}).unwrap_err();
         assert!(
             difference.starts_with("step 5: ") && difference.contains(python),
             "{edit}: {difference}"
@@ -223,7 +225,7 @@ fn wake_target_sort_error_order() {
         (nobody, "'str' and 'NoneType'"),
     ] {
         let last = steps.len() - 1;
-        let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+        let difference = try_run_golden(&steps, |_, _, _| {}).unwrap_err();
         assert!(
             difference.starts_with(&format!("step {last}: "))
                 && difference
@@ -272,12 +274,12 @@ fn outside_edited_wake_records() {
         (
             cursor("2.5"),
             accept(5.0, "parent", json!(4)),
-            "python Ok(Bool(true))",
+            "golden Ok(Bool(true))",
             "Invalid column type Real",
         ),
     ] {
         let steps = joined([send(3.0, "worker", "a", "parent", "one"), sql(&edit), probe]);
-        let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+        let difference = try_run_golden(&steps, |_, _, _| {}).unwrap_err();
         assert!(
             difference.starts_with("step 5: ") && difference.contains(python),
             "{edit}: {difference}"
@@ -315,7 +317,7 @@ fn outside_edited_wake_records() {
     };
     let nameless = "UPDATE members SET id=NULL WHERE id='n'";
     let differs = |steps: &[Step], python: &[&str]| {
-        let difference = try_run_both(steps, |_, _, _| {}).unwrap_err();
+        let difference = try_run_golden(steps, |_, _, _| {}).unwrap_err();
         assert!(
             difference.starts_with("step 7: ") && python.iter().all(|t| difference.contains(t)),
             "{difference}"
@@ -347,7 +349,7 @@ fn outside_edited_wake_records() {
         sql(r#"UPDATE tasks SET dependencies='"9"' WHERE id=1"#),
         hints(5.0, "worker"),
     ]);
-    differs(&steps, &["python Ok(Array [])"]);
+    differs(&steps, &["golden Ok(Array [])"]);
     assert_eq!(woken_ids(&run_rust(&steps)), ["n", "parent"]);
 }
 

@@ -7,12 +7,12 @@
 //! the scenarios read the run with `_snapshot` and `_control_status`.
 use quecto::domain::attempt_diagnostics::AttemptDiagnostics;
 use quecto::domain::provider_error::ProviderErrorClass;
-use quecto::domain::request_observation::RequestObservation;
+use quecto::domain::request_observation::{RequestObservation, RuntimeIdentity};
 use serde_json::{Value, json};
 
 use crate::swarm_board_diff_membership::{at, create, snapshot};
 use crate::swarm_board_diff_runs::NOW;
-use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{Step, run_both, sql, step_text};
+use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{Step, run_golden, sql, step_text};
 
 /// A running run of five coordinated by `parent`, with `worker` live.
 pub(crate) fn with_worker(more: impl IntoIterator<Item = Step>) -> Vec<Step> {
@@ -42,7 +42,7 @@ fn read(offset: f64, member: &str, method: &str) -> Step {
 /// `test_rejected_request_without_attempt_does_not_pause_usage_budget`.
 #[test]
 fn rejected_request_without_attempt_does_not_pause_usage_budget() {
-    run_both(&with_worker([
+    run_golden(&with_worker([
         at(3.0, "parent", "usage_budget", json!([100])),
         at(
             4.0,
@@ -76,7 +76,7 @@ fn request_redelivery_accepts_runtime_digest_becoming_available() {
     other_process["runtime"]["process_instance_id"] = json!("different");
     let mut other_data = known.clone();
     other_data["instrumented_attempts"] = json!(2);
-    run_both(&with_worker([
+    run_golden(&with_worker([
         request(3.0, "worker", pending.clone()),
         request(4.0, "worker", pending.clone()),
         request(5.0, "worker", known.clone()),
@@ -101,7 +101,7 @@ fn usage_budget_is_idempotent_warns_once_and_pauses_without_losing_claims() {
     second["request_id"] = json!("r2");
     second["context_input_tokens"] = json!(20);
     second["output_tokens"] = json!(5);
-    run_both(&with_worker([
+    run_golden(&with_worker([
         at(
             3.0,
             "worker",
@@ -129,7 +129,7 @@ fn usage_budget_is_idempotent_warns_once_and_pauses_without_losing_claims() {
 /// `test_unknown_usage_is_explicit_and_strict_budget_suspends`.
 #[test]
 fn unknown_usage_is_explicit_and_strict_budget_suspends() {
-    run_both(&with_worker([
+    run_golden(&with_worker([
         at(3.0, "parent", "usage_budget", json!([100, true])),
         request(
             4.0,
@@ -147,7 +147,7 @@ fn unknown_usage_is_explicit_and_strict_budget_suspends() {
 /// `test_cancelled_attempt_does_not_keep_a_strict_budget_paused`.
 #[test]
 fn cancelled_attempt_does_not_keep_a_strict_budget_paused() {
-    run_both(&with_worker([
+    run_golden(&with_worker([
         at(3.0, "parent", "usage_budget", json!([100, true])),
         request(
             4.0,
@@ -186,7 +186,7 @@ fn request_diagnostic_ledger_bounds_are_explicit() {
     // One byte more: `é` is written as its six-byte escape.
     let mut over = failed("over");
     over["error_class"] = json!(format!("{}é", "z".repeat(32_768 - fixed.len() - 5)));
-    run_both(&with_worker([
+    run_golden(&with_worker([
         request(3.0, "worker", failed("first")),
         request(4.0, "worker", huge),
         request(5.0, "worker", edge),
@@ -239,10 +239,32 @@ fn a_real_request_observation_round_trips_identically() {
         harness_prefix_unchanged: Some(true),
     };
     let mut value = serde_json::to_value(&observation).unwrap();
-    value["runtime"] =
+    // A runtime identity of the shape `runtime_identity::current()` writes,
+    // its values fixed so the scenario (and so its golden, #2283) is the
+    // same in every process and at every version.
+    value["runtime"] = serde_json::to_value(RuntimeIdentity {
+        process_instance_id: "0d7de168-9413-4e8a-8a92-87285baaa850".into(),
+        executable_digest_pending: true,
+        package_version: "0.107.189".into(),
+        build_source_revision: Some("8b90db2ba".into()),
+        build_dirty: Some(false),
+        executable_sha256: None,
+    })
+    .unwrap();
+    let current =
         serde_json::to_value(quecto::infrastructure::runtime_identity::current()).unwrap();
+    let keys = |value: &Value| {
+        value
+            .as_object()
+            .map(|entries| entries.keys().cloned().collect::<Vec<_>>())
+    };
+    assert_eq!(
+        keys(&value["runtime"]),
+        keys(&current),
+        "the fixed identity has the real one's shape"
+    );
     let text = json!([value]).to_string();
-    run_both(&with_worker([
+    run_golden(&with_worker([
         at(3.0, "parent", "usage_budget", json!([4_000, false])),
         step_text("worker", "_record_request", &text, NOW + 4.0),
         step_text("worker", "_record_request", &text, NOW + 5.0),
@@ -304,14 +326,14 @@ fn loose_usage_arguments_are_taken_as_python_takes_them() {
     steps.push(next("stranger", "_request_admission", "[]"));
     steps.push(next("stranger", "_record_request", "[{}]"));
     steps.push(next("worker", "_request_admission", "{}"));
-    run_both(&steps);
+    run_golden(&steps);
 }
 
 /// A dead member still records and reads the admission (`read_only`),
 /// never sets the budget; a run past its deadline is ended first.
 #[test]
 fn a_dead_member_records_and_an_expired_run_ends_first() {
-    run_both(&with_worker([
+    run_golden(&with_worker([
         sql("UPDATE members SET status='dead' WHERE id='worker'"),
         request(
             4.0,

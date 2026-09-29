@@ -1,6 +1,7 @@
 //! Differential scenarios (#2270, epic #2265): run creation and run status
-//! on the Python board and the Rust board, compared after every step by
-//! result, refusal text and logical database dump.
+//! on the Rust board against the Python board's answers frozen in its
+//! golden fixtures (#2283), compared after every step by result, refusal
+//! text and logical database dump.
 
 #[path = "../common/swarm_board_diff/mod.rs"]
 pub(crate) mod swarm_board_diff;
@@ -9,7 +10,7 @@ use rusqlite::Connection;
 use serde_json::{Map, Value, json};
 use swarm_board_diff::Outcome;
 use swarm_board_diff::dump::{Dump, first_difference, logical_dump};
-use swarm_board_diff::scenario::{Hold, held, run_both, sql, step, try_run_both};
+use swarm_board_diff::scenario::{Hold, held, run_golden, sql, step, try_run_golden};
 
 pub(crate) const NOW: f64 = 1_700_000_000.25;
 const HOUR: f64 = 3_600.0;
@@ -25,7 +26,7 @@ fn criteria() -> Value {
 fn contract(deadline: Value) -> Value {
     json!({
         "goal": "ship the board — naïve café 😀",
-        "constraints": ["no python", "keep the schema"],
+        "constraints": ["no shortcuts", "keep the schema"],
         "criteria": criteria(),
         "member_limit": 5,
         "deadline": deadline,
@@ -34,7 +35,7 @@ fn contract(deadline: Value) -> Value {
 
 #[test]
 fn bootstrap_then_status_is_identical() {
-    run_both(&[
+    run_golden(&[
         step("supervisor", "_status", json!([]), NOW),
         step(
             "parent",
@@ -57,14 +58,14 @@ fn bootstrap_then_status_is_identical() {
 
 #[test]
 fn create_fresh_run_is_identical() {
-    run_both(&[
+    run_golden(&[
         step("parent", "create_run", contract(json!(NOW + HOUR)), NOW),
         step("supervisor", "_status", json!([]), NOW + 1.0),
         step("parent", "_snapshot", json!([]), NOW + 2.0),
         // An integer deadline is stored as REAL and recorded as given.
         step("parent", "create_run", contract(json!(1_700_003_600)), NOW),
     ]);
-    run_both(&[step(
+    run_golden(&[step(
         "parent",
         "create_run",
         contract(json!(1_700_003_600)),
@@ -74,7 +75,7 @@ fn create_fresh_run_is_identical() {
 
 #[test]
 fn create_over_setup_placeholder_is_identical() {
-    run_both(&[
+    run_golden(&[
         step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
         step("worker", "create_run", contract(json!(NOW + HOUR)), NOW),
         step(
@@ -109,7 +110,7 @@ fn create_refusals_are_identical() {
     };
     let mut duplicate = criteria();
     duplicate[1]["id"] = json!("tests");
-    run_both(&[
+    run_golden(&[
         step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
         step("parent", "create_run", with("member_limit", json!(0)), NOW),
         step("parent", "create_run", with("member_limit", json!(26)), NOW),
@@ -153,7 +154,7 @@ fn create_refusals_are_identical() {
 
 #[test]
 fn snapshot_after_expiry_is_identical() {
-    run_both(&[
+    run_golden(&[
         step("parent", "create_run", contract(json!(NOW + 60.0)), NOW),
         step("parent", "_snapshot", json!([]), NOW + 10.0),
         // The deadline passes: the first transaction commits the pause.
@@ -169,7 +170,7 @@ fn snapshot_after_expiry_is_identical() {
 /// as busy.
 #[test]
 fn a_busy_board_waits_or_refuses_as_python_does() {
-    run_both(&[
+    run_golden(&[
         step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
         held(
             Hold::WaitedOut,
@@ -191,16 +192,17 @@ fn a_busy_board_waits_or_refuses_as_python_does() {
     ]);
 }
 
-/// The comparator can fail: tampering with the Rust board after a step is
-/// reported with the table and both rows.
+/// The comparator can fail: tampering with the Rust board after the last
+/// step is reported with the table and both rows (the golden holds that
+/// step's dump in full), and after an earlier step by its dump's digest.
 #[test]
 fn harness_self_test_detects_a_difference() {
     let steps = [
         step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
         step("supervisor", "_status", json!([]), NOW),
     ];
-    let difference = try_run_both(&steps, |index, rust, _| {
-        if index == 0 {
+    let difference = try_run_golden(&steps, |index, rust, _| {
+        if index == 1 {
             Connection::open(rust)
                 .unwrap()
                 .execute("UPDATE events SET action='tampered'", [])
@@ -208,16 +210,13 @@ fn harness_self_test_detects_a_difference() {
         }
     })
     .unwrap_err();
-    assert!(
-        difference.starts_with("step 0: bootstrap_run"),
-        "{difference}"
-    );
+    assert!(difference.starts_with("step 1: _status"), "{difference}");
     assert!(difference.contains("events row 0"), "{difference}");
     assert!(difference.contains("tampered"), "{difference}");
     assert!(difference.contains("container_setup"), "{difference}");
 
-    // A changed column is caught as well as a changed row.
-    let difference = try_run_both(&steps, |index, rust, _| {
+    // A changed column is caught as well as a changed row, at any step.
+    let difference = try_run_golden(&steps, |index, rust, _| {
         if index == 0 {
             Connection::open(rust)
                 .unwrap()
@@ -226,6 +225,10 @@ fn harness_self_test_detects_a_difference() {
         }
     })
     .unwrap_err();
+    assert!(
+        difference.starts_with("step 0: bootstrap_run"),
+        "{difference}"
+    );
     assert!(difference.contains("boards differ"), "{difference}");
 }
 
@@ -296,7 +299,7 @@ fn harness_self_test_detects_a_result_difference() {
         step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
         step("supervisor", "_status", json!([]), NOW),
     ];
-    let difference = try_run_both(&steps, |index, _, rust| {
+    let difference = try_run_golden(&steps, |index, _, rust| {
         if index == 0 {
             *rust = Outcome::Ok(json!(1));
         }
@@ -309,7 +312,7 @@ fn harness_self_test_detects_a_result_difference() {
     assert!(difference.contains("results differ"), "{difference}");
     // A refusal in place of an answer, and a changed refusal text, too.
     for tampered in [Outcome::Refused("no".to_owned()), Outcome::Ok(Value::Null)] {
-        let difference = try_run_both(&steps, |index, _, rust| {
+        let difference = try_run_golden(&steps, |index, _, rust| {
             if index == 1 {
                 *rust = tampered.clone();
             }
@@ -330,7 +333,7 @@ fn harness_self_test_detects_a_key_order_difference() {
         step("supervisor", "_status", json!([]), NOW),
     ];
     let mut reordered = false;
-    let difference = try_run_both(&steps, |index, _, rust| {
+    let difference = try_run_golden(&steps, |index, _, rust| {
         if let (1, Outcome::Ok(Value::Object(entries))) = (index, &*rust) {
             let reversed: Map<String, Value> = entries
                 .iter()
@@ -394,7 +397,7 @@ fn the_comparator_covers_the_schema_rows_counts_and_pragmas() {
     let (_a, python) = dump_of(base);
     for (change, expected) in [
         ("CREATE INDEX t_x ON t(x);", "sqlite_master"),
-        ("INSERT INTO t VALUES(2);", "t: python holds 1 rows, rust 2"),
+        ("INSERT INTO t VALUES(2);", "t: golden holds 1 rows, rust 2"),
         ("PRAGMA user_version=3;", "PRAGMA user_version"),
         ("CREATE TABLE u (y);", "tables differ"),
     ] {
@@ -424,7 +427,7 @@ fn the_comparator_covers_the_schema_rows_counts_and_pragmas() {
 /// `create` over it is refused as over any run not in setup.
 #[test]
 fn a_null_run_status_reads_as_python_reads_it() {
-    run_both(&[
+    run_golden(&[
         step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
         sql("UPDATE run SET status=NULL"),
         step("parent", "_snapshot", json!([]), NOW + 1.0),
@@ -443,7 +446,7 @@ fn a_null_run_status_reads_as_python_reads_it() {
 /// A run with no row for `_status` to read, after one existed.
 #[test]
 fn status_after_the_run_row_is_deleted_is_identical() {
-    run_both(&[
+    run_golden(&[
         step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
         sql("DELETE FROM run"),
         step("supervisor", "_status", json!([]), NOW + 1.0),
