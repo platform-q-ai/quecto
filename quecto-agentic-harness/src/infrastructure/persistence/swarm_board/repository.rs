@@ -26,13 +26,16 @@ use serde_json::Value;
 
 use super::binding;
 use super::ledger;
+use super::meter;
 use super::py_json::{self, PyJson};
-use super::store::{BoardStore, CONTENDED, TransactionError, Undecodable, contended};
+use super::store::{
+    BoardStore, CONTENDED, StoreFailure, TransactionError, Undecodable, contended, failure,
+};
 use crate::application::swarm::dto::{
     BoardLocation, MemberRow, NewRun, RunContract, RunOwnerRow, RunStatusRow,
 };
 use crate::application::swarm::ports::{BoardEvents, BoardRepository, BoardRuns, BoardWork};
-use crate::domain::swarm::{BoardError, RunRecord, RunState};
+use crate::domain::swarm::{BoardError, RefusalKind, RunRecord, RunState};
 
 /// `swarm_repository.ACTIVE_CLAIM`.
 pub(super) const ACTIVE_CLAIM: &str = "('claimed','blocked','submitted')";
@@ -70,15 +73,40 @@ impl SqliteBoardRepository {
 }
 
 impl BoardRepository for SqliteBoardRepository {
+    /// A refusal keeps its kind (#2303): `work`'s own refusal is returned
+    /// as it was raised, and the store's is classified by why it failed.
     fn atomic(&self, create: bool, work: &mut BoardWork<'_>) -> Result<(), BoardError> {
+        let mut refused: Option<BoardError> = None;
         self.store
-            .transaction(create, |transaction| {
+            .attempt(create, |transaction| {
                 let board = SqliteBoard {
                     connection: transaction,
                 };
-                work(&board).map_err(|refusal| TransactionError::Board(refusal.0))
+                let done = work(&board);
+                if meter::wants_run_id() {
+                    meter::run_seen(board.run_id());
+                }
+                done.map_err(|refusal| {
+                    let message = refusal.message().to_owned();
+                    refused = Some(refusal);
+                    TransactionError::Board(message)
+                })
             })
-            .map_err(|refusal| BoardError(refusal.0))
+            .map_err(|(refusal, failure)| match (failure, refused) {
+                (None, Some(refused)) => refused,
+                (failure, _) => BoardError::new(store_kind(failure), refusal.0),
+            })
+    }
+}
+
+/// The kind of a refusal the store raised itself; `None` (a body refusal
+/// that was not the work's) cannot happen, and is an internal fault.
+fn store_kind(failure: Option<StoreFailure>) -> RefusalKind {
+    match failure {
+        Some(StoreFailure::Missing) => RefusalKind::StoreMissing,
+        Some(StoreFailure::Busy) => RefusalKind::Contended,
+        Some(StoreFailure::Failed) => RefusalKind::Store,
+        None => RefusalKind::Internal,
     }
 }
 
@@ -203,9 +231,9 @@ impl BoardEvents for SqliteBoard<'_> {
         action: &str,
         detail: &Value,
     ) -> Result<(), BoardError> {
-        let detail =
-            PyJson::try_from(detail).map_err(|error| BoardError::new(error.to_string()))?;
-        ledger::event(self.connection, actor, time, action, &detail).map_err(refused)
+        let detail = PyJson::try_from(detail)
+            .map_err(|error| BoardError::new(RefusalKind::Invalid, error.to_string()))?;
+        ledger::event(self.connection, actor, time, action, &detail).map_err(event_refused)
     }
 
     fn control_generation(&self) -> Result<i64, BoardError> {
@@ -214,6 +242,18 @@ impl BoardEvents for SqliteBoard<'_> {
 }
 
 impl SqliteBoard<'_> {
+    /// The run's id, for telemetry only (#2303): read only while metered
+    /// and not yet found,
+    /// and `None` for no run or any value that is not text.
+    fn run_id(&self) -> Option<String> {
+        self.connection
+            .query_row("SELECT id FROM run", [], |row| {
+                row.get::<_, Option<String>>(0)
+            })
+            .ok()
+            .flatten()
+    }
+
     pub(super) fn count(&self, sql: &str) -> Result<i64, BoardError> {
         self.connection
             .query_row(sql, [], |row| row.get(0))
@@ -233,9 +273,10 @@ pub(super) fn loose(position: usize, value: &Value) -> Result<SqlValue, BoardErr
         .map_err(|error| error.to_string())
         .and_then(|value| binding::bind(&value).map_err(|error| error.to_string()))
         .map_err(|error| {
-            BoardError(format!(
-                "{CONTENDED}: Error binding parameter {position}: {error}"
-            ))
+            BoardError::new(
+                RefusalKind::Invalid,
+                format!("{CONTENDED}: Error binding parameter {position}: {error}"),
+            )
         })
 }
 
@@ -329,19 +370,24 @@ pub(super) fn member_row(row: &Row<'_>) -> rusqlite::Result<MemberRow> {
 
 /// The board's `encode(value)` of a JSON argument.
 pub(super) fn encoded(value: &Value) -> Result<SqlValue, BoardError> {
-    let value = PyJson::try_from(value).map_err(|error| BoardError::new(error.to_string()))?;
+    let invalid = |error: String| BoardError::new(RefusalKind::Invalid, error);
+    let value = PyJson::try_from(value).map_err(|error| invalid(error.to_string()))?;
     py_json::encode(&value)
         .map(SqlValue::Text)
-        .map_err(|error| BoardError::new(error.to_string()))
+        .map_err(|error| invalid(error.to_string()))
 }
 
+/// A SQLite failure inside a transaction, contended when SQLite was busy.
 pub(super) fn failed(error: rusqlite::Error) -> BoardError {
-    BoardError(contended(&error).0)
+    let kind = store_kind(Some(failure(&error)));
+    BoardError::new(kind, contended(&error).0)
 }
 
-pub(super) fn refused(error: TransactionError) -> BoardError {
+/// `ledger::event`'s failure: its one board refusal is a detail too deep
+/// to encode.
+pub(super) fn event_refused(error: TransactionError) -> BoardError {
     match error {
-        TransactionError::Board(message) => BoardError(message),
+        TransactionError::Board(message) => BoardError::new(RefusalKind::Invalid, message),
         TransactionError::Sqlite(error) => failed(error),
     }
 }

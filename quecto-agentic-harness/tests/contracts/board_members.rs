@@ -6,7 +6,7 @@ use quecto::application::swarm::dto::{
     BoardLocation, LaunchIdentity, MemberClaimCounts, MemberRow, NewMember,
 };
 use quecto::application::swarm::ports::{BoardRepository, BoardTransaction};
-use quecto::domain::swarm::{BoardError, MemberState};
+use quecto::domain::swarm::{BoardError, MemberState, RefusalKind};
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 use serde_json::{Value, json};
 
@@ -164,6 +164,7 @@ fn a_second_row_for_one_member_is_a_store_refusal() {
     assert_eq!(
         refused,
         BoardError::new(
+            RefusalKind::Store,
             "coordination store unavailable or contended: UNIQUE constraint failed: members.id"
         )
     );
@@ -267,9 +268,10 @@ fn loose_values_bind_as_python_binds_them_and_read_as_stored() {
         .unwrap_err();
         assert_eq!(
             refused,
-            BoardError::new(format!(
-                "coordination store unavailable or contended: {message}"
-            )),
+            BoardError::new(
+                RefusalKind::Invalid,
+                format!("coordination store unavailable or contended: {message}")
+            ),
             "{pid}"
         );
     }

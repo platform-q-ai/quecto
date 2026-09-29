@@ -644,3 +644,34 @@ retained without an inference attempt. Terminal completion notices do not start
 automatic report turns. Raw exports contain retained wire message records, run
 with at most two concurrent exports, and release the multi-client reader so
 supervisor controls remain available during spill reads.
+
+## Telemetry
+
+The Rust board (#2265) records one `swarm_op` in the event log for every board
+op it serves (#2303), only while the event log is on
+(`"telemetry": {"event_log": {"enabled": true}}`, off by default; swarm members
+get no default of their own). With it off nothing is measured or written. The
+board file itself is unchanged: its `events` table stays the audit history it
+always was, and telemetry lives only in the event log. A record carries ids,
+kinds, durations and sizes only, never a task title, body, evidence, reason,
+path or other board text:
+
+| Field | Meaning |
+|---|---|
+| `op` | The board method (`unknown` for a name that is none) |
+| `actor_ref` | The caller's member id, redacted if it looks like a credential |
+| `role` | `coordinator`, `worker`, `integrator`, or `host` for the harness's own ops |
+| `run_id` | The run the op found, when it found one |
+| `task_id`, `message_id` | The task or message the op acted on, when it has one |
+| `outcome` | `ok` or `refused` |
+| `kind` | For a refusal, its stable kind: `run_missing`, `not_coordinator`, `not_member`, `not_running`, `budget_exhausted`, `member_limit`, `identity_taken`, `run_exists`, `completion_unmet`, `stale_revision`, `immutable`, `wrong_state`, `not_owner`, `stale_token`, `reserved_by_other`, `dependency_cycle`, `invalid`, `calling` (no such method, or arguments that do not bind), `contended` (the write lock stayed busy past 500 ms), `store_missing`, `store` (any other store failure) or `internal` |
+| `duration_us` | The whole op, in microseconds |
+| `lock_wait_us` | From `BEGIN IMMEDIATE` issued to acquired, summed over the op's transactions |
+| `busy` | Whether the store's busy handler fired: another writer held the lock |
+| `cursor_moved` | Whether the op moved the caller's message cursor |
+| `result_bytes` | The size of the JSON the op answered (0 for a refusal) |
+
+Every call also leaves a `tracing` record on target `quecto::swarm_board`
+(DEBUG for a read, INFO otherwise), at WARN for a `contended` refusal or a
+lock wait over 250 ms; `RUST_LOG=quecto::swarm_board=debug` shows them live.
+Its lock wait and busy fields are measured only while the event log is on.

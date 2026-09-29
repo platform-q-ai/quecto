@@ -44,16 +44,23 @@
 //! two `Workbench` methods, so the use case sequences them, and the
 //! dispatcher still calls one use case per method.
 //!
-//! Each call leaves one `tracing` record on [`TELEMETRY_TARGET`] (DEBUG for
-//! a read-only method, INFO otherwise) with the
-//! method, the member id, the outcome, the decision taken and the
-//! duration: ids, kinds and durations only, never argument text. The
-//! member id is the board identity the harness assigned the caller (the
-//! `members.id` every board row names), not a secret; it is still passed
-//! through [`Redacted`] so an id shaped like a credential is masked in the
-//! log, as every telemetry field that carries caller-chosen text is.
+//! Each call leaves one `tracing` record on [`TELEMETRY_TARGET`] (DEBUG
+//! for a read-only method, INFO otherwise, WARN for a contended refusal or
+//! a lock wait over 250 ms) and, when the event log is switched on
+//! ([`SwarmBoardHandles::event_log`], #2303), one `swarm_op` record in it,
+//! with the lock wait and busy flag the store measured for this call only.
+//! Both carry the method, the member id, the outcome (a refusal's
+//! [`RefusalKind`]), the decision taken and the duration: ids, kinds,
+//! durations and sizes only, never argument text
+//! (`swarm_board_telemetry`). The member id is the board identity the
+//! harness assigned the caller (the `members.id` every board row names),
+//! not a secret; it is still passed through `Redacted` so an id shaped
+//! like a credential is masked, as every telemetry field that carries
+//! caller-chosen text is. A method a later slice adds is recorded with no
+//! further code: it gets an arm in [`Method::role`] and an entry in
+//! [`BOARD_OPS`], which the one-record-per-op test walks.
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use serde_json::{Map, Value};
 
@@ -72,11 +79,11 @@ use crate::application::swarm::use_cases::{
     ReadRunSnapshot, ReadRunStatus, ReadTask, RecordMemberLaunch, RegisterMemberSocket,
     ReleaseTask, ReleaseUnlaunchedMember, SetTaskDependencies,
 };
-use crate::domain::redaction::Redacted;
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, BoardRole, RefusalKind};
+use crate::infrastructure::persistence::swarm_board::meter::metered;
 
-/// The `tracing` target of every board call record.
-pub const TELEMETRY_TARGET: &str = "quecto::swarm_board";
+pub use super::swarm_board_telemetry::TELEMETRY_TARGET;
+use super::swarm_board_telemetry::{Finished, Level, emit, observation, trace};
 
 /// One handle per board use case, composed once per board file. The
 /// `create_run` and `bootstrap_run` handles are served only in test builds
@@ -147,15 +154,6 @@ enum Method {
     BootstrapJoin,
     #[cfg(any(test, feature = "test-support"))]
     TaskRaw,
-}
-
-/// The telemetry level of a call (#2270 round-3 review N3): a method that
-/// only reads the board records at DEBUG; anything else (a mutation, or a
-/// name that is no method) at INFO.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Level {
-    Read,
-    Mutation,
 }
 
 /// One parameter of a Python signature: required, or with a default.
@@ -259,6 +257,16 @@ impl Method {
         }
     }
 
+    /// Who calls it (#2303): every method served so far is the harness's
+    /// own.
+    fn role(self) -> BoardRole {
+        match self {
+            Self::Status | Self::Snapshot => BoardRole::Host,
+            #[cfg(any(test, feature = "test-support"))]
+            Self::CreateRun | Self::BootstrapRun => BoardRole::Host,
+        }
+    }
+
     /// The Python signature, `self` left out.
     fn parameters(self) -> &'static [Parameter] {
         match self {
@@ -291,7 +299,8 @@ struct Served {
 }
 
 /// Invokes `method` as `member` with `args`: one use case, its result in
-/// Python's JSON shape.
+/// Python's JSON shape. The call leaves one `tracing` record and, when the
+/// event log is on, one `swarm_op` record, measured only then (#2303).
 ///
 /// `args` must be the member's JSON text as `py_json::decode` reads it
 /// (`PyJson::to_value`), never `serde_json::from_str`: serde's default
@@ -311,71 +320,39 @@ pub fn call(
     args: Value,
 ) -> Result<Value, BoardError> {
     let started = Instant::now();
-    let Some(known) = Method::parse(method) else {
-        record(
-            "unknown",
-            Level::Mutation,
-            member,
-            "refused",
-            "none",
-            started.elapsed(),
-        );
-        return Err(BoardError::new(format!(
-            "swarm board has no method {method}"
-        )));
+    let known = Method::parse(method);
+    let answer = || match known {
+        Some(known) => bind(known, known.parameters(), args)
+            .and_then(|arguments| serve(handles, member, known, arguments)),
+        None => Err(BoardError::new(
+            RefusalKind::Calling,
+            format!("swarm board has no method {method}"),
+        )),
     };
-    let served = bind(known, known.parameters(), args)
-        .and_then(|arguments| serve(handles, member, known, arguments));
-    match served {
-        Ok(served) => {
-            record(
-                known.name(),
-                known.level(),
-                member,
-                "ok",
-                served.decision,
-                started.elapsed(),
-            );
-            Ok(served.value)
+    let (answer, meter) = match &handles.event_log {
+        Some(_) => {
+            let (answer, meter) = metered(answer);
+            (answer, Some(meter))
         }
-        Err(refusal) => {
-            record(
-                known.name(),
-                known.level(),
-                member,
-                "refused",
-                "none",
-                started.elapsed(),
-            );
-            Err(refusal)
-        }
+        None => (answer(), None),
+    };
+    let finished = Finished {
+        op: known.map_or("unknown", Method::name),
+        level: known.map_or(Level::Mutation, Method::level),
+        role: known.map_or(BoardRole::Host, Method::role),
+        member,
+        outcome: answer
+            .as_ref()
+            .map(|served| served.decision)
+            .map_err(BoardError::kind),
+        elapsed: started.elapsed(),
+    };
+    trace(&finished, meter.as_ref());
+    if let (Some(log), Some(meter)) = (&handles.event_log, meter) {
+        let value = answer.as_ref().ok().map(|served| &served.value);
+        emit(&**log, observation(&finished, value, meter));
     }
-}
-
-fn record(op: &str, level: Level, member: &str, outcome: &str, decision: &str, elapsed: Duration) {
-    let duration_us = u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX);
-    let member = Redacted::from(member);
-    let member = member.as_str();
-    match level {
-        Level::Read => tracing::debug!(
-            target: TELEMETRY_TARGET,
-            op,
-            member,
-            outcome,
-            decision,
-            duration_us,
-            "swarm board call"
-        ),
-        Level::Mutation => tracing::info!(
-            target: TELEMETRY_TARGET,
-            op,
-            member,
-            outcome,
-            decision,
-            duration_us,
-            "swarm board call"
-        ),
-    }
+    answer.map(|served| served.value)
 }
 
 /// Binds `args` to `parameters` as Python binds a call: positionally from
@@ -386,11 +363,14 @@ fn bind(method: Method, parameters: &[Parameter], args: Value) -> Result<Vec<Val
     match args {
         Value::Array(values) => {
             if values.len() > parameters.len() {
-                return Err(BoardError::new(format!(
-                    "{name}: takes {} arguments, {} given",
-                    parameters.len(),
-                    values.len()
-                )));
+                return Err(BoardError::new(
+                    RefusalKind::Calling,
+                    format!(
+                        "{name}: takes {} arguments, {} given",
+                        parameters.len(),
+                        values.len()
+                    ),
+                ));
             }
             for (slot, value) in slots.iter_mut().zip(values) {
                 *slot = Some(value);
@@ -399,17 +379,19 @@ fn bind(method: Method, parameters: &[Parameter], args: Value) -> Result<Vec<Val
         Value::Object(fields) => {
             for (key, value) in fields {
                 let Some(index) = parameters.iter().position(|p| p.name == key) else {
-                    return Err(BoardError::new(format!(
-                        "{name}: unexpected argument {key}"
-                    )));
+                    return Err(BoardError::new(
+                        RefusalKind::Calling,
+                        format!("{name}: unexpected argument {key}"),
+                    ));
                 };
                 slots[index] = Some(value);
             }
         }
         _ => {
-            return Err(BoardError::new(format!(
-                "{name}: arguments must be a JSON array or object"
-            )));
+            return Err(BoardError::new(
+                RefusalKind::Calling,
+                format!("{name}: arguments must be a JSON array or object"),
+            ));
         }
     }
     slots
@@ -418,10 +400,10 @@ fn bind(method: Method, parameters: &[Parameter], args: Value) -> Result<Vec<Val
         .map(|(slot, parameter)| match (slot, parameter.default) {
             (Some(value), _) => Ok(value),
             (None, Some(default)) => Ok(default()),
-            (None, None) => Err(BoardError::new(format!(
-                "{name}: missing required argument {}",
-                parameter.name
-            ))),
+            (None, None) => Err(BoardError::new(
+                RefusalKind::Calling,
+                format!("{name}: missing required argument {}", parameter.name),
+            )),
         })
         .collect()
 }
@@ -563,7 +545,12 @@ fn done(decision: &'static str) -> Served {
 fn take<const N: usize>(arguments: Vec<Value>) -> Result<[Value; N], BoardError> {
     arguments
         .try_into()
-        .map_err(|_| BoardError::new("swarm board bound the wrong number of arguments"))
+        .map_err(|_| {
+            BoardError::new(
+                RefusalKind::Internal,
+                "swarm board bound the wrong number of arguments",
+            )
+        })
 }
 
 /// The test-only methods: their signatures and their serving.
@@ -575,7 +562,7 @@ mod test_only {
         BootstrapRunRequest, CreateBranch, CreateRunRequest, JoinRunRequest, Joined,
         LaunchIdentity, Parameter, Served, SwarmBoardHandles, done, required, take,
     };
-    use crate::domain::swarm::BoardError;
+    use crate::domain::swarm::{BoardError, RefusalKind};
 
     pub(super) const CREATE: [Parameter; 5] = [
         required("goal"),
@@ -720,7 +707,12 @@ fn object<const N: usize>(entries: [(&str, Value); N]) -> Value {
 fn float(value: f64) -> Result<Value, BoardError> {
     serde_json::Number::from_f64(value)
         .map(Value::Number)
-        .ok_or_else(|| BoardError::new(format!("the board holds a non-finite number: {value}")))
+        .ok_or_else(|| {
+            BoardError::new(
+                RefusalKind::Store,
+                format!("the board holds a non-finite number: {value}"),
+            )
+        })
 }
 
 #[path = "swarm_board_dispatch_tasks.rs"]

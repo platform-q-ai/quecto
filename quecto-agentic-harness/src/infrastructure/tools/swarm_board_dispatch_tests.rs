@@ -6,7 +6,7 @@ use super::{Method, Parameter, SwarmBoardHandles, TELEMETRY_TARGET, bind, call, 
 use crate::application::swarm::dto::BoardLocation;
 use crate::application::swarm::ports::{Clock, IdSource};
 use crate::composition::swarm::build_swarm_board_handles_with;
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, RefusalKind};
 use crate::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 
 struct Fixed(f64);
@@ -105,7 +105,7 @@ fn arguments_bind_positionally_by_name_and_by_default() {
     for (args, message) in refusals {
         assert_eq!(
             bound(args.clone()).unwrap_err(),
-            BoardError::new(message),
+            BoardError::new(RefusalKind::Calling, message),
             "{args}"
         );
     }
@@ -124,7 +124,10 @@ fn an_unknown_method_is_refused() {
     let (_dir, handles) = board(1_000.0);
     assert_eq!(
         call(&handles, "parent", "drop_tables", json!([])).unwrap_err(),
-        BoardError::new("swarm board has no method drop_tables")
+        BoardError::new(
+            RefusalKind::Calling,
+            "swarm board has no method drop_tables"
+        )
     );
 }
 
@@ -135,7 +138,9 @@ fn status_renders_pythons_shape_and_key_order() {
     let (_dir, handles) = board(1_000.0);
     let missing = call(&handles, "supervisor", "_status", json!([])).unwrap_err();
     assert!(
-        missing.0.starts_with("coordination store missing at "),
+        missing
+            .message()
+            .starts_with("coordination store missing at "),
         "{missing}"
     );
     call(
@@ -203,7 +208,7 @@ fn bootstrap_arguments_bind_as_python_binds_them() {
     let refused = call(&handles, "parent", "bootstrap_run", json!([[1], "s", null])).unwrap_err();
     assert!(
         refused
-            .0
+            .message()
             .starts_with("coordination store unavailable or contended: "),
         "{refused}"
     );
@@ -223,11 +228,15 @@ fn create_run_returns_null_and_board_refusals_keep_their_text() {
     again["member_limit"] = json!(true);
     assert_eq!(
         call(&handles, "parent", "create_run", again).unwrap_err(),
-        BoardError::new("member limit must be 1 through 25 including coordinator")
+        BoardError::new(
+            RefusalKind::Invalid,
+            "member limit must be 1 through 25 including coordinator"
+        )
     );
     assert_eq!(
         call(&handles, "parent", "create_run", create_args()).unwrap_err(),
         BoardError::new(
+            RefusalKind::RunExists,
             "only the setup coordinator can create this run; existing runs cannot be reset"
         )
     );

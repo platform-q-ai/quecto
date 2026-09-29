@@ -78,7 +78,7 @@ impl RustBoard {
         *self.clock.0.lock().unwrap() = now;
         match call(&self.handles, member, method, args.clone()) {
             Ok(value) => Outcome::Ok(value),
-            Err(refusal) => Outcome::Refused(refusal.0),
+            Err(refusal) => Outcome::Refused(refusal.message().to_owned()),
         }
     }
 }

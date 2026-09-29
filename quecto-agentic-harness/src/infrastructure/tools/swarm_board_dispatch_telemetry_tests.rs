@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use super::{BOARD_OPS, SwarmBoardHandles, call};
+use super::{BOARD_OPS, Method, SwarmBoardHandles, call};
 use crate::application::audit::ports::AuditSink;
 use crate::application::swarm::dto::BoardLocation;
 use crate::application::swarm::ports::{BoardRepository, BoardWork, Clock, IdSource};
@@ -142,6 +142,37 @@ fn every_board_op_emits_exactly_one_swarm_op() {
             };
             assert_eq!(recorded.op, named);
         }
+    }
+}
+
+/// Every `Method` the dispatcher has. The `match` is exhaustive, so a new
+/// method does not compile until it is listed here too, and then
+/// [`BOARD_OPS`] must name it for the test below to pass.
+fn every_method() -> Vec<Method> {
+    let all = vec![
+        Method::Status,
+        Method::Snapshot,
+        Method::CreateRun,
+        Method::BootstrapRun,
+    ];
+    for method in &all {
+        match method {
+            Method::Status | Method::Snapshot | Method::CreateRun | Method::BootstrapRun => {}
+        }
+    }
+    all
+}
+
+#[test]
+fn board_ops_names_every_method_once() {
+    let names: Vec<&str> = every_method().into_iter().map(Method::name).collect();
+    let mut listed = BOARD_OPS.to_vec();
+    listed.sort_unstable();
+    let mut expected = names.clone();
+    expected.sort_unstable();
+    assert_eq!(listed, expected, "BOARD_OPS lists every method, once");
+    for name in names {
+        assert!(Method::parse(name).is_some(), "{name} parses");
     }
 }
 

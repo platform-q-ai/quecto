@@ -33,11 +33,12 @@
 use std::ffi::CStr;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rusqlite::limits::Limit;
-use rusqlite::{Connection, OpenFlags, Transaction, TransactionBehavior, ffi};
+use rusqlite::{Connection, ErrorCode, OpenFlags, Transaction, TransactionBehavior, ffi};
 
+use super::meter;
 use super::schema::{ADDED_COLUMNS, schema_statements};
 
 /// Python's `sqlite3.connect(..., timeout=0.5)`.
@@ -111,25 +112,69 @@ impl BoardStore {
         create: bool,
         body: impl FnOnce(&Transaction<'_>) -> Result<T, TransactionError>,
     ) -> Result<T, StoreRefusal> {
-        let path = absolutised(&self.path, std::env::current_dir)?;
+        self.attempt(create, body).map_err(|(refusal, _)| refusal)
+    }
+
+    /// [`Self::transaction`], with why a refusal came from the store
+    /// itself (#2303): `None` for `body`'s own [`TransactionError::Board`].
+    ///
+    /// # Errors
+    /// As [`Self::transaction`].
+    pub fn attempt<T>(
+        &self,
+        create: bool,
+        body: impl FnOnce(&Transaction<'_>) -> Result<T, TransactionError>,
+    ) -> Result<T, (StoreRefusal, Option<StoreFailure>)> {
+        let failed = |refusal| (refusal, Some(StoreFailure::Failed));
+        let path = absolutised(&self.path, std::env::current_dir).map_err(failed)?;
         // Opened only to create it, or where it is; anything else is a store
         // deleted from under its run (#2145), and mode=rw never recreates it.
         if create || path.exists() {
-            let mut connection = open(&path, create)?;
+            let mut connection = open(&path, create).map_err(failed)?;
             let outcome = run(&mut connection, create, body);
             debug_assert!(
                 connection.is_autocommit(),
                 "a board transaction is committed or rolled back before its connection closes"
             );
-            let closed = connection.close().map_err(|(_, error)| contended(&error));
-            let value = outcome.map_err(TransactionError::into_refusal)?;
+            let closed = connection
+                .close()
+                .map_err(|(_, error)| (contended(&error), Some(failure(&error))));
+            let value = outcome.map_err(|error| {
+                let failure = match &error {
+                    TransactionError::Board(_) => None,
+                    TransactionError::Sqlite(error) => Some(failure(error)),
+                };
+                (error.into_refusal(), failure)
+            })?;
             closed.map(|()| value)
         } else {
-            Err(StoreRefusal(format!(
-                "coordination store missing at {}: it was deleted while the run was live, so this run's board is lost",
-                path.display()
-            )))
+            Err((
+                StoreRefusal(format!(
+                    "coordination store missing at {}: it was deleted while the run was live, so this run's board is lost",
+                    path.display()
+                )),
+                Some(StoreFailure::Missing),
+            ))
         }
+    }
+}
+
+/// Why the store itself refused a transaction (#2303).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StoreFailure {
+    /// The board file is gone (#2145).
+    Missing,
+    /// SQLite stayed busy or locked past the timeout.
+    Busy,
+    /// Any other failure.
+    Failed,
+}
+
+/// The [`StoreFailure`] of a SQLite error.
+pub(super) fn failure(error: &rusqlite::Error) -> StoreFailure {
+    match error.sqlite_error_code() {
+        Some(ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked) => StoreFailure::Busy,
+        _ => StoreFailure::Failed,
     }
 }
 
@@ -223,9 +268,13 @@ fn open(path: &Path, create: bool) -> Result<Connection, StoreRefusal> {
         .pragma_query_value(None, "secure_delete", |row| row.get::<_, i64>(0))
         .map_err(|error| contended(&error))?;
     secure_delete_checked(secure_delete)?;
-    connection
-        .busy_timeout(BUSY_TIMEOUT)
-        .map_err(|error| contended(&error))?;
+    // A metered call (#2303) waits on the same schedule and notes that it
+    // waited; otherwise SQLite's own handler waits.
+    let waiting = match meter::active() {
+        true => connection.busy_handler(Some(meter::metered_busy)),
+        false => connection.busy_timeout(BUSY_TIMEOUT),
+    };
+    waiting.map_err(|error| contended(&error))?;
     Ok(connection)
 }
 
@@ -254,7 +303,13 @@ fn run<T>(
     body: impl FnOnce(&Transaction<'_>) -> Result<T, TransactionError>,
 ) -> Result<T, TransactionError> {
     connection.execute_batch("PRAGMA foreign_keys=ON")?;
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    // The lock wait is measured only for a metered call (#2303).
+    let asked = meter::active().then(Instant::now);
+    let begun = connection.transaction_with_behavior(TransactionBehavior::Immediate);
+    if let Some(asked) = asked {
+        meter::lock_waited(asked.elapsed());
+    }
+    let transaction = begun?;
     let value = match prepared(&transaction, create).and_then(|()| {
         debug_assert!(
             !transaction.is_autocommit(),

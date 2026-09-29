@@ -12,7 +12,9 @@
 use serde_json::{Map, Value};
 
 use super::ports::{BoardEvents, BoardRepository, BoardRuns, BoardTransaction, Clock};
-use crate::domain::swarm::{Access, BoardError, RunRecord, authorize, expired, require_budget};
+use crate::domain::swarm::{
+    Access, BoardError, RefusalKind, RunRecord, authorize, expired, require_budget,
+};
 
 /// Runs `work` once inside one board transaction and returns its value.
 ///
@@ -26,15 +28,23 @@ pub(crate) fn atomic<T>(
     let mut work = Some(work);
     let mut value = None;
     repository.atomic(create, &mut |transaction| {
-        let work = work
-            .take()
-            .ok_or_else(|| BoardError::new("coordination store ran a transaction's work twice"))?;
+        let work = work.take().ok_or_else(|| {
+            BoardError::new(
+                RefusalKind::Internal,
+                "coordination store ran a transaction's work twice",
+            )
+        })?;
         value = Some(work(transaction)?);
         Ok(())
     })?;
     // A store that committed without running the work is refused rather
     // than trusted: nothing the caller needed was read or written.
-    value.ok_or_else(|| BoardError::new("coordination store committed without running its work"))
+    value.ok_or_else(|| {
+        BoardError::new(
+            RefusalKind::Internal,
+            "coordination store committed without running its work",
+        )
+    })
 }
 
 /// `Coordination.operation(active, coordinator, read_only)` for `actor`:
@@ -71,7 +81,10 @@ pub(crate) fn operation<T>(
         authorize(run.as_ref(), actor, member.as_ref(), access)?;
         let Some(run) = run else {
             // `authorize` refuses a missing run first.
-            return Err(BoardError::new("coordination run missing"));
+            return Err(BoardError::new(
+                RefusalKind::RunMissing,
+                "coordination run missing",
+            ));
         };
         if access.active {
             require_budget(&run, clock.now_seconds())?;

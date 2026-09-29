@@ -101,7 +101,7 @@ fn a_run_row_of_the_wrong_shape_is_a_store_refusal() {
     .unwrap_err();
     assert!(
         refused
-            .0
+            .message()
             .starts_with("coordination store unavailable or contended: "),
         "{refused}"
     );
@@ -159,7 +159,9 @@ fn a_missing_board_is_refused_before_any_work() {
     let (_dir, repository) = repository();
     let refused = within(&repository, false, |_| panic!("no work on a missing board")).unwrap_err();
     assert!(
-        refused.0.starts_with("coordination store missing at "),
+        refused
+            .message()
+            .starts_with("coordination store missing at "),
         "{refused}"
     );
     assert_eq!(
@@ -218,7 +220,7 @@ fn the_run_owner_row_is_fetched_as_python_fetches_it() {
         })
         .unwrap_err();
         assert_eq!(
-            refused.0,
+            refused.message(),
             format!(
                 "coordination store unavailable or contended: Could not decode to UTF-8 column '{column}' with text '{text}'"
             ),
@@ -308,7 +310,7 @@ fn an_unbindable_member_value_names_pythons_parameter() {
         })
         .unwrap_err();
         assert_eq!(
-            refused.0,
+            refused.message(),
             format!(
                 "coordination store unavailable or contended: \
                  Error binding parameter {position}: type 'list' is not supported"

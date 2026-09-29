@@ -6,7 +6,7 @@ use quecto::application::swarm::dto::{BoardLocation, NewMember, NewRun, RunContr
 use quecto::application::swarm::ports::{
     BoardEvents, BoardMembers, BoardRepository, BoardRuns, BoardTransaction,
 };
-use quecto::domain::swarm::{BoardError, MemberState, RunState};
+use quecto::domain::swarm::{BoardError, MemberState, RefusalKind, RunState};
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 use serde_json::json;
 
@@ -68,9 +68,12 @@ fn every_role_shares_one_transaction() {
 
     let refused = repository.atomic(false, &mut |transaction| {
         write_through_every_role(transaction)?;
-        Err(BoardError::new("rolled back"))
+        Err(BoardError::new(RefusalKind::WrongState, "rolled back"))
     });
-    assert_eq!(refused.unwrap_err(), BoardError::new("rolled back"));
+    assert_eq!(
+        refused.unwrap_err(),
+        BoardError::new(RefusalKind::WrongState, "rolled back")
+    );
     repository
         .atomic(false, &mut |transaction| {
             assert!(transaction.run()?.is_none());

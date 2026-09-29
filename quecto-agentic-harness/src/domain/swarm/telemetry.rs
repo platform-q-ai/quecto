@@ -117,7 +117,7 @@ pub struct BoardOpObservation {
     /// The caller's board identity (`members.id`).
     pub actor_ref: Redacted,
     pub role: BoardRole,
-    /// The run the op's last transaction found, when it found one.
+    /// The run the op found, when it found one.
     pub run_id: Option<Redacted>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_id: Option<i64>,

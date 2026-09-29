@@ -8,7 +8,7 @@ use crate::application::swarm::board_test_support::{
 };
 use crate::application::swarm::dto::{CreateBranch, CreateRunRequest};
 use crate::application::swarm::ports::BoardEncoding;
-use crate::domain::swarm::{BoardError, RunState};
+use crate::domain::swarm::{BoardError, RefusalKind, RunState};
 
 const NOW: f64 = 1_000.0;
 const WEEK: f64 = 604_800.0;
@@ -144,7 +144,11 @@ fn create_validations_fire_in_python_order() {
         let refused = create_run(&board, SteppingClock::fixed(NOW))
             .execute(request.clone())
             .unwrap_err();
-        assert_eq!(refused, BoardError::new(expected), "{request:?}");
+        assert_eq!(
+            refused,
+            BoardError::new(RefusalKind::Invalid, expected),
+            "{request:?}"
+        );
         assert!(
             board.transactions().is_empty(),
             "a refused contract never opens the store: {request:?}"
@@ -187,7 +191,10 @@ fn the_deadline_window_reads_the_clock_as_python_does() {
         .unwrap_err();
     assert_eq!(
         refused,
-        BoardError::new("deadline must be in the next seven days")
+        BoardError::new(
+            RefusalKind::Invalid,
+            "deadline must be in the next seven days"
+        )
     );
 }
 
@@ -265,7 +272,7 @@ fn only_the_setup_coordinator_can_create_over_an_existing_run() {
     let refused = create_run(&board, SteppingClock::fixed(NOW))
         .execute(request("worker"))
         .unwrap_err();
-    assert_eq!(refused, BoardError::new(refusal));
+    assert_eq!(refused, BoardError::new(RefusalKind::RunExists, refusal));
     assert!(board.snapshot().events.is_empty());
 
     // A created run is never reset, not even by its coordinator.
@@ -273,7 +280,7 @@ fn only_the_setup_coordinator_can_create_over_an_existing_run() {
     let refused = create_run(&board, SteppingClock::fixed(NOW))
         .execute(request("parent"))
         .unwrap_err();
-    assert_eq!(refused, BoardError::new(refusal));
+    assert_eq!(refused, BoardError::new(RefusalKind::RunExists, refusal));
 
     // The placeholder's coordinator creates over it: the run keeps its id
     // and members, takes the contract and runs; no id is drawn.
@@ -311,6 +318,7 @@ fn members_not_confirmed_dead_must_fit_the_new_limit() {
     assert_eq!(
         refused,
         BoardError::new(
+            RefusalKind::MemberLimit,
             "existing live/reserved members exceed requested limit; terminate and reconcile first"
         )
     );
@@ -343,7 +351,10 @@ fn constraints_are_bounded_on_their_ascii_escaped_encoding() {
         .unwrap_err();
     assert_eq!(
         refused,
-        BoardError::new("constraints must be nonempty and at most 8192 bytes")
+        BoardError::new(
+            RefusalKind::Invalid,
+            "constraints must be nonempty and at most 8192 bytes"
+        )
     );
     let encoded = CompactEncoding
         .encode(&json!({"b": ["é😀"], "a": 1}))

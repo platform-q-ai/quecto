@@ -2,7 +2,7 @@ use super::ReadRunSnapshot;
 use crate::application::swarm::board_test_support::{
     BoardState, MemoryBoard, SteppingClock, member_row, running_board,
 };
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, RefusalKind};
 
 #[test]
 fn snapshot_reads_the_run_and_every_member_through_the_gate() {
@@ -45,11 +45,17 @@ fn snapshot_refuses_an_unknown_member_and_a_missing_run() {
         .unwrap_err();
     assert_eq!(
         refused,
-        BoardError::new("invoking member is unknown or death confirmed")
+        BoardError::new(
+            RefusalKind::NotMember,
+            "invoking member is unknown or death confirmed"
+        )
     );
     let empty = MemoryBoard::with(BoardState::default());
     let refused = ReadRunSnapshot::new(empty, SteppingClock::fixed(1.0))
         .execute("parent")
         .unwrap_err();
-    assert_eq!(refused, BoardError::new("coordination run missing"));
+    assert_eq!(
+        refused,
+        BoardError::new(RefusalKind::RunMissing, "coordination run missing")
+    );
 }

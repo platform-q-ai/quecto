@@ -5,7 +5,7 @@ use crate::application::swarm::board_test_support::{
     MemoryBoard, SteppingClock, member_row, running_board,
 };
 use crate::application::swarm::ports::BoardRepository;
-use crate::domain::swarm::{Access, BoardError, RunState};
+use crate::domain::swarm::{Access, BoardError, RefusalKind, RunState};
 
 const PAUSED_BY_DEADLINE: &str =
     "run is paused (budget-exhausted: deadline); no new work permitted";
@@ -32,7 +32,10 @@ fn deadline_transition_commits_before_rejected_mutation() {
     })
     .unwrap_err();
 
-    assert_eq!(refused, BoardError::new(PAUSED_BY_DEADLINE));
+    assert_eq!(
+        refused,
+        BoardError::new(RefusalKind::NotRunning, PAUSED_BY_DEADLINE)
+    );
     assert!(!ran.get(), "a refused operation never runs its work");
     let state = board.snapshot();
     let run = state.run.unwrap().record;
@@ -73,7 +76,10 @@ fn operation_authorises_twice_and_requires_budget_only_when_active() {
         |_, _| Ok(()),
     )
     .unwrap_err();
-    assert_eq!(refused, BoardError::new(PAUSED_BY_DEADLINE));
+    assert_eq!(
+        refused,
+        BoardError::new(RefusalKind::BudgetExhausted, PAUSED_BY_DEADLINE)
+    );
     let state = active.snapshot();
     assert_eq!(state.run.unwrap().record.status, Some(RunState::RUNNING));
     assert!(state.events.is_empty(), "require_budget writes nothing");
@@ -113,7 +119,10 @@ fn operation_authorises_twice_and_requires_budget_only_when_active() {
     .unwrap_err();
     assert_eq!(
         refused,
-        BoardError::new("invoking member is unknown or death confirmed")
+        BoardError::new(
+            RefusalKind::NotMember,
+            "invoking member is unknown or death confirmed"
+        )
     );
     let state = dead.snapshot();
     assert_eq!(state.run.unwrap().record.status, Some(RunState::PAUSED));
@@ -132,7 +141,10 @@ fn a_missing_run_is_refused_by_the_first_authorisation() {
         |_, _| Ok(()),
     )
     .unwrap_err();
-    assert_eq!(refused, BoardError::new("coordination run missing"));
+    assert_eq!(
+        refused,
+        BoardError::new(RefusalKind::RunMissing, "coordination run missing")
+    );
     assert_eq!(board.transactions(), [false]);
 }
 
@@ -197,9 +209,12 @@ fn a_refused_transaction_leaves_nothing_behind() {
     let clock = SteppingClock::fixed(1.0);
     let refused: Result<(), _> = atomic(&*board, false, |transaction| {
         end(transaction, &*clock, "parent", "failed", "lost")?;
-        Err(BoardError::new("refused"))
+        Err(BoardError::new(RefusalKind::Invalid, "refused"))
     });
-    assert_eq!(refused.unwrap_err(), BoardError::new("refused"));
+    assert_eq!(
+        refused.unwrap_err(),
+        BoardError::new(RefusalKind::Invalid, "refused")
+    );
     let state = board.snapshot();
     assert_eq!(state.run.unwrap().record.status, Some(RunState::RUNNING));
     assert!(state.events.is_empty());
@@ -221,7 +236,10 @@ fn atomic_refuses_a_store_that_skipped_the_work() {
     let skipped = atomic(&Skipping, false, |_| Ok(1));
     assert_eq!(
         skipped.unwrap_err(),
-        BoardError::new("coordination store committed without running its work")
+        BoardError::new(
+            RefusalKind::Internal,
+            "coordination store committed without running its work"
+        )
     );
 }
 
@@ -243,6 +261,9 @@ fn atomic_runs_the_work_at_most_once() {
     let twice = atomic(&Twice(board), false, |_| Ok(()));
     assert_eq!(
         twice.unwrap_err(),
-        BoardError::new("coordination store ran a transaction's work twice")
+        BoardError::new(
+            RefusalKind::Internal,
+            "coordination store ran a transaction's work twice"
+        )
     );
 }
