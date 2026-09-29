@@ -6,6 +6,10 @@
 use serde_json::{Value, json};
 
 use crate::swarm_board_diff_membership::{at, create};
+use crate::swarm_board_diff_runs::NOW;
+use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
+use crate::swarm_board_diff_runs::swarm_board_diff::python::PyBoard;
+use crate::swarm_board_diff_runs::swarm_board_diff::rust::RustBoard;
 use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{Step, run_both, sql};
 
 /// A running run of `limit` coordinated by `parent`, with `worker` live.
@@ -352,4 +356,94 @@ fn task_board_full_at_1000_identically() {
             raw(7.0, json!(1000)),
         ],
     ));
+}
+
+/// One call on each board, the same arguments at the same instant.
+fn both(
+    rust: &RustBoard,
+    python: &mut PyBoard,
+    member: &str,
+    method: &str,
+    args: Value,
+    offset: f64,
+) -> (Outcome, Outcome) {
+    let args = args.to_string();
+    let now = NOW + offset;
+    (
+        rust.call_text(member, method, &args, now),
+        python.call(member, method, &args, now),
+    )
+}
+
+/// Mixed writers: a `task_create` result the Rust board stored replays in
+/// the Python board, and the reverse, on one file; each answers the stored
+/// text (keys sorted) and conflicts on the other's payload.
+#[test]
+fn ledger_results_replay_across_implementations() {
+    let dir = tempfile::tempdir().unwrap();
+    let database = dir.path().join("swarm.sqlite");
+    let rust = RustBoard::open(&database, dir.path());
+    let mut python = PyBoard::start(&database, dir.path(), dir.path());
+    for step in staffed(5) {
+        let outcome = rust.call_text(&step.member, &step.method, &step.args, step.now);
+        assert!(matches!(outcome, Outcome::Ok(_)), "{step:?}: {outcome:?}");
+    }
+    let created = rust.call_text(
+        "worker",
+        "task_create",
+        r#"["rust", "by rust", ["é"], [] ]"#,
+        NOW + 3.0,
+    );
+    let Outcome::Ok(created) = created else {
+        panic!("{created:?}")
+    };
+    let (rust_replay, python_replay) = both(
+        &rust,
+        &mut python,
+        "worker",
+        "task_create",
+        json!(["rust", "by rust", ["é"]]),
+        4.0,
+    );
+    assert_eq!(rust_replay, python_replay);
+    let Outcome::Ok(replayed) = python_replay else {
+        panic!("{python_replay:?}")
+    };
+    assert_eq!(replayed, created, "the same task");
+    assert_eq!(replayed["id"], json!(1));
+
+    let from_python = python.call(
+        "worker",
+        "task_create",
+        &json!(["python", "by python", ["ok"], [1]]).to_string(),
+        NOW + 5.0,
+    );
+    assert!(matches!(from_python, Outcome::Ok(_)), "{from_python:?}");
+    let (rust_replay, python_replay) = both(
+        &rust,
+        &mut python,
+        "worker",
+        "task_create",
+        json!(["python", "by python", ["ok"], [1]]),
+        6.0,
+    );
+    assert_eq!(rust_replay, python_replay);
+    let Outcome::Ok(replayed) = rust_replay else {
+        panic!("{rust_replay:?}")
+    };
+    assert_eq!(replayed["id"], json!(2));
+    assert_eq!(replayed["status"], json!("blocked"));
+    let (rust_conflict, python_conflict) = both(
+        &rust,
+        &mut python,
+        "worker",
+        "task_create",
+        json!(["python", "other", ["ok"], [1]]),
+        7.0,
+    );
+    assert_eq!(rust_conflict, python_conflict);
+    assert_eq!(
+        rust_conflict,
+        Outcome::Refused("request id reused with different payload".to_owned())
+    );
 }

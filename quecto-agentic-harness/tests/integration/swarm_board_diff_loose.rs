@@ -60,6 +60,15 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   proportion to a board no harness writes); a NULL run or member status, a NULL
 ///   coordinator, a NULL member id, added member columns and loosely typed
 ///   pids are read as they are stored.
+/// - `outside_edited_task_columns` (#2272): a task's `acceptance`,
+///   `dependencies` or `evidence` column that is not JSON text, which only
+///   a file edited outside the board holds, is refused as a store failure
+///   where Python's `json.loads` raises (`JSONDecodeError`, `TypeError`);
+///   a stored dependency that names no task reads as incomplete (the task
+///   is blocked, and `claim` refuses `unmet dependencies`), where Python's
+///   `fetchone()[0]` raises `TypeError`; and stored dependencies that are
+///   not a list have no edges in the cycle check, where Python iterates
+///   the value.
 /// - `real_to_text_digits` (#2269 review M1, pinned by
 ///   `swarm_board::binding_tests`): a float meeting a TEXT column is
 ///   written with the bundled SQLite's digits, which some hosts' libraries
@@ -73,10 +82,11 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   membership methods (#2271) keep it: `_activate` and `_record_launch`
 ///   take such a member's reservation as stale, where Python goes on
 ///   (pinned by `activate_member_tests` and `record_member_launch_tests`).
-pub const PERMITTED_DIVERGENCES: [&str; 5] = [
+pub const PERMITTED_DIVERGENCES: [&str; 6] = [
     "arguments_beyond_a_serde_value",
     "integer_beyond_i64_is_refused",
     "outside_edited_columns",
+    "outside_edited_task_columns",
     "real_to_text_digits",
     "unknown_member_status_is_not_alive",
 ];
@@ -602,3 +612,60 @@ const EXTERNAL_PINS: [(&str, &str, &str); 5] = [
         "an_unknown_member_status_records_no_launch",
     ),
 ];
+
+/// `outside_edited_task_columns`: a task column the board writes as JSON
+/// holding something else, or a dependency naming no task, makes Python
+/// raise where the Rust board refuses (a JSON column) or answers (the
+/// missing dependency reads as incomplete).
+#[test]
+fn outside_edited_task_columns() {
+    let setup = [
+        step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
+        step(
+            "parent",
+            "create_run",
+            json!(["g", [], [{"id": "t", "kind": "command", "description": "d"}], 2, NOW + 60.0]),
+            NOW,
+        ),
+        step(
+            "parent",
+            "task_create",
+            json!(["r", "t", ["ok"]]),
+            NOW + 1.0,
+        ),
+    ];
+    let read = step("parent", "task_raw", json!([1]), NOW + 2.0);
+    for (edit, rust_answers) in [
+        ("UPDATE tasks SET acceptance='not json'", false),
+        ("UPDATE tasks SET evidence=NULL", false),
+        ("UPDATE tasks SET dependencies='[99]'", true),
+    ] {
+        let mut steps = setup.to_vec();
+        steps.extend([sql(edit), read.clone()]);
+        let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+        assert!(
+            difference.starts_with("step 4: task_raw") && difference.contains("Python raised"),
+            "{edit}: {difference}"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let database = dir.path().join("swarm.sqlite");
+        let board = RustBoard::open(&database, dir.path());
+        for step in &setup {
+            let outcome = board.call_text(&step.member, &step.method, &step.args, step.now);
+            assert!(matches!(outcome, Outcome::Ok(_)), "{step:?}: {outcome:?}");
+        }
+        rusqlite::Connection::open(&database)
+            .unwrap()
+            .execute_batch(edit)
+            .unwrap();
+        let outcome = board.call_text(&read.member, &read.method, &read.args, read.now);
+        match (rust_answers, &outcome) {
+            (true, Outcome::Ok(task)) => {
+                assert_eq!(task["status"], json!("blocked"), "{edit}");
+                assert_eq!(task["blocker"], json!("unmet dependencies"), "{edit}");
+            }
+            (false, refused) => assert!(refused_with(refused, CONTENDED), "{edit}: {outcome:?}"),
+            (true, other) => panic!("{edit}: {other:?}"),
+        }
+    }
+}

@@ -7,6 +7,7 @@ use crate::domain::swarm::{Member, MemberExit, MemberStatus, Snapshot};
 
 mod board_membership;
 mod board_operation;
+mod board_tasks;
 #[cfg(test)]
 pub(crate) mod board_test_support;
 pub mod dto;

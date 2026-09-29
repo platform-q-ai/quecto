@@ -90,6 +90,7 @@ fn ledger_replays_and_refuses_conflicts() {
 #[test]
 fn a_refused_action_stores_nothing() {
     let (_dir, database, repository) = board();
+    repository.atomic(true, &mut |_| Ok(())).unwrap();
     let refusal = BoardError::new("task board full (1000); settle existing work");
     let (answer, runs) = retry(
         &repository,

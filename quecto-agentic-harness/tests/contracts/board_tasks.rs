@@ -128,7 +128,7 @@ fn task_ids_bind_as_python_binds_them() {
     .unwrap();
     rusqlite::Connection::open(&database)
         .unwrap()
-        .execute("INSERT INTO tasks(id,status) VALUES(5, 7)", [])
+        .execute("INSERT INTO tasks(id,status) VALUES(5, x'6869')", [])
         .unwrap();
     within(&repository, false, |transaction| {
         for found in [json!(1), json!("1"), json!(true), json!(1.0)] {
@@ -149,7 +149,7 @@ fn task_ids_bind_as_python_binds_them() {
             assert!(transaction.task(&missing)?.is_none(), "{missing}");
             assert_eq!(transaction.task_status(&missing)?, None, "{missing}");
         }
-        // A status that is not text is none.
+        // A status that is not text (here a BLOB) is none.
         assert_eq!(transaction.task_status(&json!(5))?, None);
         Ok(())
     })
