@@ -68,7 +68,11 @@ const INTEGER: &str = r#"{"type":"integer"}"#;
 const STRING: &str = r#"{"type":"string"}"#;
 const BOOLEAN: &str = r#"{"type":"boolean"}"#;
 const STRINGS: &str = r#"{"type":"array","items":{"type":"string"}}"#;
-const INTEGERS: &str = r#"{"type":"array","items":{"type":"integer"}}"#;
+/// The fields some op defaults to `null` (#2279 review N8): one schema per
+/// field, so each admits `null` in every op that names it.
+const NULLABLE_STRING: &str = r#"{"type":["string","null"]}"#;
+const NULLABLE_INTEGER: &str = r#"{"type":["integer","null"]}"#;
+const NULLABLE_INTEGERS: &str = r#"{"type":["array","null"],"items":{"type":"integer"}}"#;
 const KIND: &str = r#"{"type":"string","enum":["command","review"]}"#;
 const EVIDENCE: &str = r#"{"type":"array","items":{"type":"object","properties":{"artifact":{"type":"string"},"revision":{"type":"string"}},"required":["artifact","revision"]}}"#;
 const CRITERIA: &str = r#"{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"type":"string","enum":["command","review"]},"description":{"type":"string"}},"required":["id","kind","description"]}}"#;
@@ -94,7 +98,7 @@ const fn defaulted(name: &'static str, json_type: &'static str, default: &'stati
 const TASK_ID: ArgSpec = required("task_id", INTEGER);
 const TOKEN: ArgSpec = required("token", STRING);
 const REASON: ArgSpec = required("reason", STRING);
-const REVISION: ArgSpec = required("revision", STRING);
+const REVISION: ArgSpec = required("revision", NULLABLE_STRING);
 const MESSAGE_ID: ArgSpec = required("message_id", INTEGER);
 const PAGE: [ArgSpec; 2] = [
     defaulted("offset", INTEGER, "0"),
@@ -121,13 +125,13 @@ pub const BOARD_OPS: &[OpSpec] = &[
             required("request", STRING),
             required("title", STRING),
             required("acceptance", STRINGS),
-            defaulted("dependencies", INTEGERS, "null"),
+            defaulted("dependencies", NULLABLE_INTEGERS, "null"),
         ],
         false,
     ),
     op(
         "dependencies",
-        &[TASK_ID, required("dependencies", INTEGERS)],
+        &[TASK_ID, required("dependencies", NULLABLE_INTEGERS)],
         false,
     ),
     op("claim", &[TASK_ID], false),
@@ -155,8 +159,8 @@ pub const BOARD_OPS: &[OpSpec] = &[
             required("request", STRING),
             required("recipient", STRING),
             required("body", STRING),
-            defaulted("revision", STRING, "null"),
-            defaulted("supersedes", INTEGER, "null"),
+            defaulted("revision", NULLABLE_STRING, "null"),
+            defaulted("supersedes", NULLABLE_INTEGER, "null"),
         ],
         false,
     ),
