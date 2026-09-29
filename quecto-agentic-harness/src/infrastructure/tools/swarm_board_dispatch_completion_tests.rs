@@ -2,7 +2,7 @@ use serde_json::{Value, json};
 
 use super::super::TELEMETRY_TARGET;
 use super::super::tests::{board, captured, running};
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, RefusalKind};
 use crate::infrastructure::tools::swarm_board_dispatch::call;
 
 /// Each completion method answers `None`, as Python's do; a completed run
@@ -57,7 +57,7 @@ fn completion_methods_bind_pythons_signatures() {
     ] {
         assert_eq!(
             call(&handles, "parent", method, args).unwrap_err(),
-            BoardError::new(message)
+            BoardError::new(RefusalKind::Calling, message)
         );
     }
     let amended = call(

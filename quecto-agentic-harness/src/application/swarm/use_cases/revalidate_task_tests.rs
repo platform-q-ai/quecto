@@ -7,7 +7,7 @@ use crate::application::swarm::board_test_support::{
     BoardState, CompactEncoding, MemoryBoard, SteppingClock, member_row, running_board, stored_task,
 };
 use crate::application::swarm::dto::RevalidateTaskRequest;
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, RefusalKind};
 
 /// A running run with task 1 completed at R1 and task 2 submitted.
 fn board_state() -> BoardState {
@@ -53,9 +53,25 @@ fn the_encoded_evidence_is_bounded_before_the_store() {
         service(&board)
             .execute(revalidate("parent", json!(1), json!("R2"), long))
             .unwrap_err(),
-        BoardError::new("evidence references must be nonempty and at most 8192 bytes")
+        BoardError::new(
+            RefusalKind::Invalid,
+            "evidence references must be nonempty and at most 8192 bytes"
+        )
     );
     assert!(board.transactions().is_empty(), "refused before the store");
+}
+
+/// The kind each revalidation refusal is recorded under (#2303), as the
+/// Python refusal table names it.
+fn refused_as(message: &str) -> RefusalKind {
+    match message {
+        "only the designated coordinator may do this" => RefusalKind::NotCoordinator,
+        "unknown task" => RefusalKind::NotFound,
+        "only completed tasks may be revalidated" => RefusalKind::WrongState,
+        "new artifact and revision evidence required"
+        | "new artifact evidence must match the revalidated revision" => RefusalKind::Invalid,
+        other => panic!("no kind stated for {other:?}"),
+    }
 }
 
 /// The coordinator alone revalidates, a known task, completed, with new
@@ -119,7 +135,7 @@ fn only_the_coordinator_revalidates_completed_work_at_the_revision() {
             service(&board)
                 .execute(revalidate(actor, task, revision, evidence))
                 .unwrap_err(),
-            BoardError::new(message)
+            BoardError::new(refused_as(message), message)
         );
         assert!(board.snapshot().events.is_empty(), "{message}");
         assert_eq!(
@@ -131,12 +147,13 @@ fn only_the_coordinator_revalidates_completed_work_at_the_revision() {
 
 /// The evidence is replaced as given (extra keys kept), and the event
 /// names the task id and revision as the caller gave them, with the
-/// evidence it replaced.
+/// evidence it replaced. The answer is the id the task's row holds, which
+/// the caller's `"1"` only binds to, for the op's record (#2303).
 #[test]
 fn the_evidence_is_replaced_and_the_previous_evidence_recorded() {
     let board = MemoryBoard::with(board_state());
     let evidence = json!([{"revision": "R2", "artifact": "b", "note": 1.5}]);
-    service(&board)
+    let stored = service(&board)
         .execute(revalidate(
             "parent",
             json!("1"),
@@ -144,6 +161,7 @@ fn the_evidence_is_replaced_and_the_previous_evidence_recorded() {
             evidence.clone(),
         ))
         .unwrap();
+    assert_eq!(stored, json!(1));
     let state = board.snapshot();
     assert_eq!(state.tasks[0].get("evidence"), Some(&evidence));
     assert_eq!(state.tasks[0].text("status"), Some("completed"));

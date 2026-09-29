@@ -7,7 +7,7 @@ use crate::application::swarm::board_test_support::{
 };
 use crate::application::swarm::dto::{CompleteRunRequest, RevalidateTaskRequest};
 use crate::application::swarm::use_cases::RevalidateTask;
-use crate::domain::swarm::{BoardError, RunState};
+use crate::domain::swarm::{BoardError, RefusalKind, RunState};
 
 /// Python's `MemoryRepository`: one command criterion with accepted
 /// evidence at R2, and one completed task whose evidence is at R1.
@@ -49,7 +49,10 @@ fn completion_revalidation_and_transition_without_storage() {
         service
             .execute(complete("parent", json!("R2")))
             .unwrap_err(),
-        BoardError::new("task evidence refers to stale revision")
+        BoardError::new(
+            RefusalKind::StaleRevision,
+            "task evidence refers to stale revision"
+        )
     );
     revalidate
         .execute(RevalidateTaskRequest {
@@ -115,6 +118,20 @@ fn success_records_the_revision_and_the_clock() {
 /// revision completed at.
 type Refusal = (&'static str, fn(&mut BoardState), Value);
 
+/// The kind each completion refusal is recorded under (#2303), as the
+/// Python refusal table names it.
+fn refused_as(message: &str) -> RefusalKind {
+    match message {
+        "completion revision required" => RefusalKind::Invalid,
+        "completion requires accepted evidence at the current revision for every criterion"
+        | "settle outstanding work and file reservations before success" => {
+            RefusalKind::CompletionUnmet
+        }
+        "task evidence refers to stale revision" => RefusalKind::StaleRevision,
+        other => panic!("no kind stated for {other:?}"),
+    }
+}
+
 /// `test_completion_rejects_each_unsatisfied_requirement`, through the use
 /// case: each refusal leaves the run running and records nothing.
 #[test]
@@ -162,7 +179,7 @@ fn completion_rejects_each_unsatisfied_requirement() {
         let service = CompleteRun::new(board.clone(), SteppingClock::fixed(50.0));
         assert_eq!(
             service.execute(complete("parent", revision)).unwrap_err(),
-            BoardError::new(message)
+            BoardError::new(refused_as(message), message)
         );
         assert_eq!(outcome(&board), (Some(RunState::RUNNING), None));
         assert!(board.snapshot().events.is_empty(), "{message}");
@@ -180,7 +197,10 @@ fn only_the_coordinator_completes_a_running_run() {
         service
             .execute(complete("worker", json!("R2")))
             .unwrap_err(),
-        BoardError::new("only the designated coordinator may do this")
+        BoardError::new(
+            RefusalKind::NotCoordinator,
+            "only the designated coordinator may do this"
+        )
     );
     let mut paused = memory_repository();
     paused.run.as_mut().unwrap().record.status = Some(RunState::PAUSED);
@@ -190,7 +210,10 @@ fn only_the_coordinator_completes_a_running_run() {
         service
             .execute(complete("parent", json!("R2")))
             .unwrap_err(),
-        BoardError::new("run is paused; no new work permitted")
+        BoardError::new(
+            RefusalKind::NotRunning,
+            "run is paused; no new work permitted"
+        )
     );
 }
 
@@ -203,7 +226,7 @@ fn invalid_revision_precedes_corrupted_criteria() {
     let service = CompleteRun::new(board.clone(), SteppingClock::fixed(50.0));
     assert_eq!(
         service.execute(complete("parent", json!(" "))).unwrap_err(),
-        BoardError::new("completion revision required")
+        BoardError::new(RefusalKind::Invalid, "completion revision required")
     );
     assert_eq!(outcome(&board), (Some(RunState::RUNNING), None));
     assert!(board.snapshot().events.is_empty());
@@ -228,7 +251,10 @@ fn edited_criteria_are_refused_and_edited_evidence_satisfies_nothing() {
             service
                 .execute(complete("parent", json!("R2")))
                 .unwrap_err(),
-            BoardError::new("the board's run criteria is not as the board writes it")
+            BoardError::new(
+                RefusalKind::Store,
+                "the board's run criteria is not as the board writes it"
+            )
         );
     }
     let mut state = memory_repository();
@@ -240,6 +266,7 @@ fn edited_criteria_are_refused_and_edited_evidence_satisfies_nothing() {
             .execute(complete("parent", json!("R2")))
             .unwrap_err(),
         BoardError::new(
+            RefusalKind::CompletionUnmet,
             "completion requires accepted evidence at the current revision for every criterion"
         )
     );

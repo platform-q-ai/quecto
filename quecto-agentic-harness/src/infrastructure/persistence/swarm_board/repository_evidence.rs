@@ -22,12 +22,12 @@ use crate::application::swarm::dto::{
     AmendedContract, CompletionState, EvidenceEntry, NewEvidence, PriorEvidence, StoredContract,
 };
 use crate::application::swarm::ports::BoardEvidence;
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, RefusalKind};
 
 impl BoardEvidence for SqliteBoard<'_> {
     fn completion_state(&self) -> Result<CompletionState, BoardError> {
-        let criteria =
-            run_criteria(self)?.ok_or_else(|| BoardError::new("coordination run missing"))?;
+        let criteria = run_criteria(self)?
+            .ok_or_else(|| BoardError::new(RefusalKind::RunMissing, "coordination run missing"))?;
         let evidence = self.rows("SELECT * FROM evidence", |row| {
             fetched(row)?;
             Ok(EvidenceEntry {
@@ -58,7 +58,7 @@ impl BoardEvidence for SqliteBoard<'_> {
         let evidence = PyJson::try_from(evidence)
             .map_err(|error| error.to_string())
             .and_then(|value| py_json::dumps(&value).map_err(|error| error.to_string()))
-            .map_err(BoardError::new)?;
+            .map_err(|error| BoardError::new(RefusalKind::Invalid, error))?;
         self.run_on_task(
             "UPDATE tasks SET evidence=? WHERE id=?",
             &[SqlValue::Text(evidence), loose(2, id)?],

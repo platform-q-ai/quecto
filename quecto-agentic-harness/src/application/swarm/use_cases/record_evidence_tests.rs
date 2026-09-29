@@ -7,7 +7,7 @@ use crate::application::swarm::board_test_support::{
     BoardState, MemoryBoard, SteppingClock, member_row, running_board,
 };
 use crate::application::swarm::dto::{EvidenceTransition, RecordEvidenceRequest};
-use crate::domain::swarm::{BoardError, RunState};
+use crate::domain::swarm::{BoardError, RefusalKind, RunState};
 
 fn board_state() -> BoardState {
     let mut state = running_board(100.0);
@@ -46,13 +46,19 @@ fn the_artifact_and_revision_are_bounded_before_the_store() {
     long_revision.artifact = json!(5);
     assert_eq!(
         service(&board).execute(long_revision).unwrap_err(),
-        BoardError::new("artifact reference must be nonempty and at most 2048 bytes")
+        BoardError::new(
+            RefusalKind::Invalid,
+            "artifact reference must be nonempty and at most 2048 bytes"
+        )
     );
     long_artifact.artifact = json!("a");
     long_artifact.revision = json!("x".repeat(257));
     assert_eq!(
         service(&board).execute(long_artifact).unwrap_err(),
-        BoardError::new("artifact revision must be nonempty and at most 256 bytes")
+        BoardError::new(
+            RefusalKind::Invalid,
+            "artifact revision must be nonempty and at most 256 bytes"
+        )
     );
     assert!(board.transactions().is_empty(), "refused before the store");
 }
@@ -71,7 +77,10 @@ fn evidence_must_match_a_configured_criterion_and_kind() {
             service(&board)
                 .execute(evidence("parent", criterion, kind, json!(true)))
                 .unwrap_err(),
-            BoardError::new("evidence must match a configured criterion and kind")
+            BoardError::new(
+                RefusalKind::Invalid,
+                "evidence must match a configured criterion and kind"
+            )
         );
     }
     let mut paused = board_state();
@@ -81,7 +90,10 @@ fn evidence_must_match_a_configured_criterion_and_kind() {
         service(&board)
             .execute(evidence("parent", json!("tests"), "command", json!(true)))
             .unwrap_err(),
-        BoardError::new("run is paused; no new work permitted")
+        BoardError::new(
+            RefusalKind::NotRunning,
+            "run is paused; no new work permitted"
+        )
     );
 }
 

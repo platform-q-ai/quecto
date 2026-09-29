@@ -208,7 +208,11 @@ impl Method {
             | Self::Pause
             | Self::Resume
             | Self::Stop
-            | Self::UsageReport => None,
+            | Self::UsageReport
+            | Self::Complete
+            | Self::RevalidateTask
+            | Self::Amend
+            | Self::Evidence => None,
             // Test-only halves the differential harness drives as the host;
             // the member-facing `create`, `_bootstrap` and `task` S12 serves
             // record the caller's own role.
@@ -248,7 +252,11 @@ impl Method {
             | Self::ExtendDeadline
             | Self::Stop
             | Self::ControlStatus
-            | Self::UsageReport => true,
+            | Self::UsageReport
+            | Self::Complete
+            | Self::RevalidateTask
+            | Self::Amend
+            | Self::Evidence => true,
             // A member's own resume is refused before any gate (#2273), so
             // it never answers.
             Self::Resume => false,

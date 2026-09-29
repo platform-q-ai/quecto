@@ -185,6 +185,10 @@ pub const BOARD_OPS: &[&str] = &[
     "stop",
     "_control_status",
     "usage_report",
+    "complete",
+    "revalidate_task",
+    "amend",
+    "evidence",
     #[cfg(any(test, feature = "test-support"))]
     "create_run",
     #[cfg(any(test, feature = "test-support"))]
@@ -436,10 +440,22 @@ fn serve(
         Method::UsageReport => {
             control::usage_report(&serving(&*handles.read_usage_report, over), member)
         }
-        Method::Complete => completion::complete(handles, member, arguments),
-        Method::RevalidateTask => completion::revalidate_task(handles, member, arguments),
-        Method::Amend => completion::amend(handles, member, arguments),
-        Method::Evidence => completion::evidence(handles, member, arguments),
+        Method::Complete => {
+            completion::complete(&serving(&*handles.complete_run, over), member, arguments)
+        }
+        Method::RevalidateTask => completion::revalidate_task(
+            &serving(&*handles.revalidate_task, over),
+            member,
+            arguments,
+        ),
+        Method::Amend => completion::amend(
+            &serving(&*handles.amend_run_contract, over),
+            member,
+            arguments,
+        ),
+        Method::Evidence => {
+            completion::evidence(&serving(&*handles.record_evidence, over), member, arguments)
+        }
         #[cfg(any(test, feature = "test-support"))]
         Method::CreateRun => {
             test_only::create_run(&serving(&*handles.create_run, over), member, arguments)

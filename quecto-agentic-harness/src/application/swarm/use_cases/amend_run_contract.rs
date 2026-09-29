@@ -5,11 +5,12 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use super::OverRepository;
 use crate::application::swarm::board_operation::{detail, operation, text};
 use crate::application::swarm::dto::{AmendRunContractRequest, AmendedContract, StoredContract};
 use crate::application::swarm::ports::{BoardEncoding, BoardRepository, Clock};
 use crate::domain::swarm::validation::TEXT_MAX_BYTES;
-use crate::domain::swarm::{Access, BoardError, bounded, bounded_text, criteria};
+use crate::domain::swarm::{Access, BoardError, RefusalKind, bounded, bounded_text, criteria};
 
 /// The goal, the reason and the encoded constraints are bounded before the
 /// operation gate, which admits only the coordinator (a running run); the
@@ -67,7 +68,10 @@ impl AmendRunContract {
                     self.encoding.encode(&request.criteria)?.len(),
                 )?;
                 let Some(before) = transaction.run_contract()? else {
-                    return Err(BoardError::new("coordination run missing"));
+                    return Err(BoardError::new(
+                        RefusalKind::RunMissing,
+                        "coordination run missing",
+                    ));
                 };
                 transaction.amend_contract(&AmendedContract {
                     goal: goal.to_owned(),
@@ -104,6 +108,16 @@ fn contract(contract: StoredContract) -> Value {
         ("constraints", contract.constraints),
         ("criteria", contract.criteria),
     ])
+}
+
+impl OverRepository for AmendRunContract {
+    fn over(&self, repository: Arc<dyn BoardRepository>) -> Self {
+        Self {
+            repository,
+            clock: self.clock.clone(),
+            encoding: self.encoding.clone(),
+        }
+    }
 }
 
 #[cfg(test)]

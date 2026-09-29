@@ -7,11 +7,12 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use super::OverRepository;
 use crate::application::swarm::board_completion::{definition, edited_criteria};
 use crate::application::swarm::board_operation::{detail, operation, text};
 use crate::application::swarm::dto::{EvidenceTransition, NewEvidence, RecordEvidenceRequest};
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::{Access, BoardError, bounded, python_equal};
+use crate::domain::swarm::{Access, BoardError, RefusalKind, bounded, python_equal};
 
 /// The most bytes an artifact reference may take.
 const ARTIFACT_MAX_BYTES: usize = 2048;
@@ -57,15 +58,16 @@ impl RecordEvidence {
             actor,
             running,
             |transaction, run| {
-                let criteria = transaction
-                    .run_criteria()?
-                    .ok_or_else(|| BoardError::new("coordination run missing"))?;
+                let criteria = transaction.run_criteria()?.ok_or_else(|| {
+                    BoardError::new(RefusalKind::RunMissing, "coordination run missing")
+                })?;
                 let configured = definition(&criteria, &request.criterion)?;
                 let kind = match configured {
                     Some(fields) => match (fields.get("kind"), request.kind.as_str()) {
                         (Some(stored), Some(kind)) if python_equal(stored, &request.kind) => kind,
                         (Some(_), _) => {
                             return Err(BoardError::new(
+                                RefusalKind::Invalid,
                                 "evidence must match a configured criterion and kind",
                             ));
                         }
@@ -73,6 +75,7 @@ impl RecordEvidence {
                     },
                     None => {
                         return Err(BoardError::new(
+                            RefusalKind::Invalid,
                             "evidence must match a configured criterion and kind",
                         ));
                     }
@@ -111,6 +114,15 @@ impl RecordEvidence {
                 Ok(EvidenceTransition::Recorded)
             },
         )
+    }
+}
+
+impl OverRepository for RecordEvidence {
+    fn over(&self, repository: Arc<dyn BoardRepository>) -> Self {
+        Self {
+            repository,
+            clock: self.clock.clone(),
+        }
     }
 }
 

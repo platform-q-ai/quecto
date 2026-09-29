@@ -12,8 +12,8 @@ use serde_json::Value;
 
 use super::dto::{
     AmendedContract, CallMeasure, CompletionState, LaunchIdentity, MemberClaimCounts, MemberRow,
-    NewEvidence, NewMember, NewRun, NewTask, PriorEvidence, RunContract, RunOwnerRow,
-    RunStatusRow, StoredContract, TaskRow, TaskUpdate, UsageReport,
+    NewEvidence, NewMember, NewRun, NewTask, PriorEvidence, RunContract, RunOwnerRow, RunStatusRow,
+    StoredContract, TaskRow, TaskUpdate, UsageReport,
 };
 use crate::domain::error::DomainError;
 use crate::domain::swarm::{

@@ -91,14 +91,20 @@ pub fn stored_criteria(value: &Value) -> Result<Vec<Criterion>, BoardError> {
 
 /// Error for criteria not shaped as records written by the board.
 pub fn edited_criteria() -> BoardError {
-    BoardError::new("the board's run criteria is not as the board writes it")
+    BoardError::new(
+        RefusalKind::Store,
+        "the board's run criteria is not as the board writes it",
+    )
 }
 
 /// Validate a completion revision, preserving the original string unchanged.
 pub fn completion_revision(value: &Value) -> Result<&str, BoardError> {
     match value {
         Value::String(revision) if has_content(revision) => Ok(revision),
-        _ => Err(BoardError::new("completion revision required")),
+        _ => Err(BoardError::new(
+            RefusalKind::Invalid,
+            "completion revision required",
+        )),
     }
 }
 

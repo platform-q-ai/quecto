@@ -3,11 +3,14 @@
 //! pause (#1729); only the supervisor outside the swarm closes it.
 use std::sync::Arc;
 
+use super::OverRepository;
 use crate::application::swarm::board_completion::{criteria, evidence_rows, task_record};
 use crate::application::swarm::board_operation::{detail, end, operation};
 use crate::application::swarm::dto::CompleteRunRequest;
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::{Access, BoardError, RunState, completion, completion_revision};
+use crate::domain::swarm::{
+    Access, BoardError, RefusalKind, RunState, completion, completion_revision,
+};
 
 /// Through the operation gate for the coordinator (a running run): the
 /// completion state is read and judged by the domain's `completion` (the
@@ -57,7 +60,10 @@ impl CompleteRun {
                 )?;
                 // `completion` refuses anything but a revision with content.
                 let revision = request.revision.as_str().ok_or_else(|| {
-                    BoardError::new("completion accepted a revision that is not text")
+                    BoardError::new(
+                        RefusalKind::Internal,
+                        "completion accepted a revision that is not text",
+                    )
                 })?;
                 debug_assert_eq!(outcome, RunState::SUCCEEDED, "completion only succeeds");
                 transaction.event(
@@ -75,6 +81,15 @@ impl CompleteRun {
                 )
             },
         )
+    }
+}
+
+impl OverRepository for CompleteRun {
+    fn over(&self, repository: Arc<dyn BoardRepository>) -> Self {
+        Self {
+            repository,
+            clock: self.clock.clone(),
+        }
     }
 }
 

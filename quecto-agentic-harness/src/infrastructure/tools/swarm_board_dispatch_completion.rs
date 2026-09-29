@@ -2,13 +2,19 @@
 //! `revalidate_task`, `amend` and the criterion `evidence` that success
 //! needs, with their Python signatures and their serving. Every argument
 //! reaches the use case as the JSON value passed, and each method answers
-//! `None`. The decision names what the call did.
+//! `None`. The decision names what the call did; `revalidate_task`'s
+//! record names the task its row holds (#2303), and the others act on no
+//! task, message or cursor.
 use serde_json::Value;
 
-use super::{Parameter, Served, SwarmBoardHandles, done, required, take};
+use super::tasks::acted_on;
+use super::{Parameter, Served, done, required, take};
 use crate::application::swarm::dto::{
     AmendRunContractRequest, CompleteRunRequest, EvidenceTransition, RecordEvidenceRequest,
     RevalidateTaskRequest,
+};
+use crate::application::swarm::use_cases::{
+    AmendRunContract, CompleteRun, RecordEvidence, RevalidateTask,
 };
 use crate::domain::swarm::BoardError;
 
@@ -37,58 +43,61 @@ pub(super) const EVIDENCE: [Parameter; 5] = [
 ];
 
 pub(super) fn complete(
-    handles: &SwarmBoardHandles,
+    complete_run: &CompleteRun,
     actor: &str,
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
     let [revision] = take(arguments)?;
-    handles.complete_run.execute(CompleteRunRequest {
+    complete_run.execute(CompleteRunRequest {
         actor: actor.to_owned(),
         revision,
     })?;
     Ok(done("completed"))
 }
 
+/// Records the task by the id its row holds (#2303), as the task methods'
+/// records do: `"1"` acts on task 1.
 pub(super) fn revalidate_task(
-    handles: &SwarmBoardHandles,
+    revalidate_task: &RevalidateTask,
     actor: &str,
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
     let [task_id, revision, evidence] = take(arguments)?;
-    handles.revalidate_task.execute(RevalidateTaskRequest {
+    let stored = revalidate_task.execute(RevalidateTaskRequest {
         actor: actor.to_owned(),
         task_id,
         revision,
         evidence,
     })?;
-    Ok(done("revalidated"))
+    Ok(Served {
+        task_id: acted_on(Some(&stored)),
+        ..done("revalidated")
+    })
 }
 
 pub(super) fn amend(
-    handles: &SwarmBoardHandles,
+    amend_run_contract: &AmendRunContract,
     actor: &str,
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
     let [goal, constraints, criteria, reason] = take(arguments)?;
-    handles
-        .amend_run_contract
-        .execute(AmendRunContractRequest {
-            actor: actor.to_owned(),
-            goal,
-            constraints,
-            criteria,
-            reason,
-        })?;
+    amend_run_contract.execute(AmendRunContractRequest {
+        actor: actor.to_owned(),
+        goal,
+        constraints,
+        criteria,
+        reason,
+    })?;
     Ok(done("amended"))
 }
 
 pub(super) fn evidence(
-    handles: &SwarmBoardHandles,
+    record_evidence: &RecordEvidence,
     actor: &str,
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
     let [criterion, artifact, revision, kind, passed] = take(arguments)?;
-    let transition = handles.record_evidence.execute(RecordEvidenceRequest {
+    let transition = record_evidence.execute(RecordEvidenceRequest {
         actor: actor.to_owned(),
         criterion,
         artifact,

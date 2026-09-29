@@ -7,7 +7,7 @@ use crate::application::swarm::board_test_support::{
     BoardState, CompactEncoding, MemoryBoard, SteppingClock, accepted, member_row, running_board,
 };
 use crate::application::swarm::dto::AmendRunContractRequest;
-use crate::domain::swarm::{BoardError, RunState};
+use crate::domain::swarm::{BoardError, RefusalKind, RunState};
 
 fn board_state() -> BoardState {
     let mut state = running_board(100.0);
@@ -83,7 +83,7 @@ fn the_goal_reason_and_constraints_are_bounded_before_the_store() {
                     reason
                 ))
                 .unwrap_err(),
-            BoardError::new(message)
+            BoardError::new(RefusalKind::Invalid, message)
         );
         assert!(board.transactions().is_empty(), "refused before the store");
     }
@@ -105,7 +105,10 @@ fn the_criteria_are_checked_after_authorisation() {
                 json!("silent change")
             ))
             .unwrap_err(),
-        BoardError::new("only the designated coordinator may do this")
+        BoardError::new(
+            RefusalKind::NotCoordinator,
+            "only the designated coordinator may do this"
+        )
     );
     for (bad, message) in [
         (json!([]), "explicit evidence criteria required"),
@@ -125,7 +128,7 @@ fn the_criteria_are_checked_after_authorisation() {
             service(&board)
                 .execute(amend("parent", json!("g"), json!([]), bad, json!("r")))
                 .unwrap_err(),
-            BoardError::new(message)
+            BoardError::new(RefusalKind::Invalid, message)
         );
     }
     let state = board.snapshot();
@@ -202,6 +205,9 @@ fn a_paused_run_is_not_amended() {
                 json!("r")
             ))
             .unwrap_err(),
-        BoardError::new("run is paused; no new work permitted")
+        BoardError::new(
+            RefusalKind::NotRunning,
+            "run is paused; no new work permitted"
+        )
     );
 }
