@@ -45,6 +45,10 @@ pub(super) const VALID_OPS: &[&str] = &[
     "usage_report",
 ];
 
+/// The harness op `usage` as a refusal allows it (#2279 review N9): not
+/// its board-op alias `usage_report`, which the running gate refuses.
+const USAGE: &str = "usage (op=usage; the board op usage_report needs a running run)";
+
 /// Why `op=run` is refused while the run is in `status` (anything but
 /// running; `None` when the status could not be read).
 pub(super) fn run_refused(status: Option<&str>) -> String {
@@ -62,17 +66,17 @@ pub(crate) fn op_refused(op: &str, status: Option<&str>) -> String {
              Next: swarm {{\"op\":\"create\",\"goal\":\"...\",\"constraints\":[],\"criteria\":\
              [{{\"id\":\"tests\",\"kind\":\"command\",\"description\":\"...\"}}],\
              \"member_limit\":3,\"deadline_in_seconds\":3600}}. Allowed now: create, summary, \
-             events, usage, usage_budget, reconcile."
+             events, {USAGE}, usage_budget, reconcile."
         ),
         Some("paused") => format!(
             "the swarm run is paused, so op={op} is unavailable. Allowed: \
-             summary, events, usage, reconcile; the coordinator may also usage_budget and \
+             summary, events, {USAGE}, reconcile; the coordinator may also usage_budget and \
              cancel_run; the supervisor outside the swarm resumes or closes it (agent_cmd \
              swarm_control)."
         ),
         Some(ended) => format!(
             "the swarm run is {ended}, so op={op} is unavailable. Allowed: summary, events, \
-             usage; report the outcome from the summary."
+             {USAGE}; report the outcome from the summary."
         ),
         None => "the swarm run status could not be read; call op=summary.".to_string(),
     }
@@ -87,7 +91,7 @@ pub(super) fn deadline_passed() -> String {
 pub(crate) fn op_deadline_passed(op: &str) -> String {
     format!(
         "the swarm run's deadline has passed (budget-exhausted), so op={op} is unavailable. \
-         Allowed: summary, events, usage; the supervisor outside the swarm grants more time \
+         Allowed: summary, events, {USAGE}; the supervisor outside the swarm grants more time \
          (agent_cmd swarm_control extend)."
     )
 }
