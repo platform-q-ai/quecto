@@ -10,23 +10,13 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-const WORKER_TASK: &str = "WORKER: claim the work";
+#[path = "swarm_recovery_board.rs"]
+mod board;
+use board::{admit_and_activate, worker_claim, worker_claim_op};
 
-/// The worker's claim as structured ops, one board method per call: the
-/// next op after `answers` (the ops answered so far), or `None` once the
-/// task is created, claimed and its file reserved.
-fn worker_claim_op(answers: &[Value]) -> Option<Value> {
-    match answers {
-        [] => Some(
-            json!({"op":"task_create","request":"w","title":"work","acceptance":["pass"],"dependencies":[]}),
-        ),
-        [task] => Some(json!({"op":"claim","task_id":task["id"]})),
-        [task, claim] => Some(
-            json!({"op":"reserve","task_id":task["id"],"token":claim["token"],"paths":["src/a.rs"]}),
-        ),
-        _ => None,
-    }
-}
+const WORKER_TASK: &str = "WORKER: claim the work";
+/// The worker's answer once one of its claim ops was refused.
+const CLAIM_FAILED: &str = "CLAIM FAILED: a board op was refused";
 
 /// One fake provider for the coordinator and the member it launches: the
 /// coordinator spawns, kills or reconciles on request; the member claims
@@ -40,6 +30,11 @@ fn recovery_script(turn: &Turn) -> Reply {
             call("spawn", json!({"agent_id":"worker","task":WORKER_TASK}))
         }
         (u, true) if u.contains("Launch the worker") => Reply::Text("LAUNCHED"),
+        // A refused op answers text, not JSON, which reads as `Null`: the
+        // claim stops at once, so a failed step is not a later wait timeout.
+        (u, _) if u.contains(WORKER_TASK) && turn.tool_results.iter().any(Value::is_null) => {
+            Reply::Text(CLAIM_FAILED)
+        }
         (u, _) if u.contains(WORKER_TASK) => match worker_claim_op(&turn.tool_results) {
             Some(op) => call("swarm", op),
             None => Reply::Text("CLAIMED"),
@@ -85,55 +80,6 @@ async fn op(workspace: &Path, member: &str, request: Value) -> Result<Value, Str
         return Err(result.content);
     }
     serde_json::from_str(&result.content).map_err(|e| format!("{e}: {}", result.content))
-}
-
-/// `member` creates a task, claims it and reserves `src/a.rs`, one op per
-/// board method; the claim's token.
-async fn worker_claim(workspace: &Path, member: &str) -> Value {
-    let mut answers = Vec::new();
-    while let Some(request) = worker_claim_op(&answers) {
-        let answer = op(workspace, member, request.clone())
-            .await
-            .unwrap_or_else(|refusal| panic!("{member} {request}: {refusal}"));
-        answers.push(answer);
-    }
-    answers[1]["token"].clone()
-}
-
-/// A harness-only board method (`_admit`, `_activate`) as `member`, through
-/// the dispatcher over composition's handles: the call `SwarmContext` makes.
-fn board_call(workspace: &Path, member: &str, method: &str, args: Value) -> Value {
-    let location = quecto::application::swarm::dto::BoardLocation {
-        database: quecto::infrastructure::tools::swarm_bridge::store_database(workspace),
-        checkout: workspace.to_path_buf(),
-    };
-    let handles = quecto::composition::swarm::build_swarm_board_handles(location, None);
-    quecto::infrastructure::tools::swarm_board_dispatch::call(&handles, member, method, args)
-        .unwrap_or_else(|refusal| panic!("{method} as {member}: {}", refusal.message()))
-}
-
-/// The coordinator admits and activates `member` as a live harness: this
-/// process, by pid and start time, at `/tmp/<member>.sock`.
-fn admit_and_activate(workspace: &Path, member: &str, pid: u32, started: &str) {
-    let reservation = format!("reservation-{member}");
-    board_call(
-        workspace,
-        "coordinator",
-        "_admit",
-        json!([member, reservation]),
-    );
-    board_call(
-        workspace,
-        "coordinator",
-        "_activate",
-        json!([
-            member,
-            reservation,
-            pid,
-            started,
-            format!("/tmp/{member}.sock")
-        ]),
-    );
 }
 
 /// Consecutive contended reads a board poll sits out, and the pause after

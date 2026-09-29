@@ -48,6 +48,7 @@ async fn terminal_tool_admission_allows_only_native_read_operations() {
     for (name, args) in [
         ("bash", "{}"),
         ("spawn_agent", "{}"),
+        ("swarm", r#"{"op":"run","code":"print(1)"}"#),
         ("swarm", r#"{"op":"inbox"}"#),
         ("swarm", r#"{"op":"claim","task_id":1}"#),
         ("swarm", r#"{"op":"resume"}"#),
