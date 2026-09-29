@@ -13,7 +13,7 @@ use crate::application::external_agent::dto::{
     ExternalAgentLaunchError, ExternalAgentLaunchSpec, MessageRole, SessionPhase, SessionRecord,
     UserTurnId,
 };
-use crate::application::external_agent::ports::{ExternalAgentProcess, PortFuture};
+use crate::application::external_agent::ports::{ExternalAgentProcess, PortFuture, QueuedUserTurn};
 use crate::domain::external_agent::stream::{
     AssistantContent, ExternalAgentEvent, InitEvent, InterruptReceipt, ResultEvent, SkippedLine,
     SkippedLineReason,
@@ -42,6 +42,8 @@ pub(super) struct Wire {
     /// While set, a queued user turn waits for its write to be
     /// acknowledged: it is in `sent`, and will be written.
     pub(super) ack_held: tokio::sync::watch::Sender<bool>,
+    /// A queued user turn's write fails, as when the input's writer does.
+    pub(super) fail_ack: AtomicBool,
 }
 
 impl Wire {
@@ -90,10 +92,10 @@ async fn released(hold: &tokio::sync::watch::Sender<bool>) {
 struct FakeProcess(Arc<Wire>);
 
 impl ExternalAgentProcess for FakeProcess {
-    fn send_user_turn<'a>(
+    fn queue_user_turn<'a>(
         &'a self,
         text: &'a str,
-    ) -> PortFuture<'a, Result<UserTurnId, ExternalAgentInputError>> {
+    ) -> PortFuture<'a, Result<QueuedUserTurn<'a>, ExternalAgentInputError>> {
         Box::pin(async move {
             released(&self.0.queue_held).await;
             let id = match self.0.closed.load(Ordering::SeqCst) {
@@ -104,8 +106,16 @@ impl ExternalAgentProcess for FakeProcess {
                     UserTurnId(format!("u{}", sent.len()))
                 }
             };
-            released(&self.0.ack_held).await;
-            Ok(id)
+            Ok(QueuedUserTurn {
+                id,
+                written: Box::pin(async move {
+                    released(&self.0.ack_held).await;
+                    match self.0.fail_ack.load(Ordering::SeqCst) {
+                        true => Err(ExternalAgentInputError::Write("broken pipe".into())),
+                        false => Ok(()),
+                    }
+                }),
+            })
         })
     }
 

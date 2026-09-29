@@ -2,7 +2,8 @@
 //! `ClaudeCodeProcess` against the mock `claude`: several turns over one
 //! process, an API-error turn that leaves the process running, a clean
 //! exit at input EOF, a bounded stderr, no turn after the input is
-//! closed, and a discarding wait that never hangs on unread output. The
+//! closed, a queued turn written without its wait awaited, and a
+//! discarding wait that never hangs on unread output. The
 //! events fold through the capability's `Projector`, which the
 //! session tells of every spawn (`process_started`).
 use quecto::application::external_agent::dto::{
@@ -306,5 +307,32 @@ async fn a_result_names_its_turn_and_an_interrupt_is_answered() {
         ids_of_last(events_to_turn_end(process.as_ref()).await),
         [third.0]
     );
+    assert_eq!(exit_of(process.as_ref()).await, ExternalAgentExit::Code(0));
+}
+
+/// A queued user turn is written whether or not its write is awaited
+/// (#2287 review 5): its result names the id `queue_user_turn` answered.
+#[tokio::test]
+async fn a_queued_user_turn_is_written_without_its_wait() {
+    use quecto::domain::external_agent::stream::ExternalAgentEvent;
+    let root = tempfile::tempdir().unwrap();
+    let scenario = root.path().join("queued.jsonl");
+    std::fs::write(
+        &scenario,
+        concat!(
+            r#"{"type":"result","subtype":"success","is_error":false,"terminal_reason":"completed","user_message_uuids":["@UUID@"]}"#,
+            "\n",
+        ),
+    )
+    .unwrap();
+    let rig = MockClaudeRig::replaying(&scenario);
+    let process = rig.start("m1").await;
+    let queued = process.queue_user_turn("go").await.unwrap();
+    let id = queued.id.clone();
+    drop(queued);
+    match events_to_turn_end(process.as_ref()).await.last() {
+        Some(ExternalAgentEvent::Result(result)) => assert_eq!(result.user_turn_ids, [id.0]),
+        other => panic!("the turn ends with its result: {other:?}"),
+    }
     assert_eq!(exit_of(process.as_ref()).await, ExternalAgentExit::Code(0));
 }

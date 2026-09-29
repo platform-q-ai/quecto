@@ -66,10 +66,10 @@ use super::input_json::{interrupt_line, user_message_line};
 use super::stream_json::StreamJsonDecoder;
 use crate::application::external_agent::dto::{
     EXTERNAL_AGENT_STDERR_TAIL_BYTES, ExternalAgentExit, ExternalAgentInputError,
-    ExternalAgentLaunchError, ExternalAgentLaunchSpec, UserTurnId,
+    ExternalAgentLaunchError, ExternalAgentLaunchSpec,
 };
 use crate::application::external_agent::ports::{
-    ExternalAgentLauncher, ExternalAgentProcess, PortFuture,
+    ExternalAgentLauncher, ExternalAgentProcess, PortFuture, QueuedUserTurn,
 };
 use crate::domain::external_agent::stream::{ExternalAgentEvent, SkippedLine, SkippedLineReason};
 use crate::domain::redaction::redact_secrets;
@@ -443,13 +443,7 @@ pub struct ClaudeCodeProcess {
 impl ClaudeCodeProcess {
     /// Write one whole input line.
     async fn write(&self, line: String) -> Result<(), ExternalAgentInputError> {
-        self.input
-            .write_line(line)
-            .await
-            .map_err(|error| match error {
-                LineWriteError::Closed => ExternalAgentInputError::Closed,
-                LineWriteError::Failed(detail) => ExternalAgentInputError::Write(detail),
-            })
+        self.input.write_line(line).await.map_err(input_error)
     }
 
     /// Close the input, logging the first close and what caused it.
@@ -518,14 +512,25 @@ impl ClaudeCodeProcess {
     }
 }
 
+fn input_error(error: LineWriteError) -> ExternalAgentInputError {
+    match error {
+        LineWriteError::Closed => ExternalAgentInputError::Closed,
+        LineWriteError::Failed(detail) => ExternalAgentInputError::Write(detail),
+    }
+}
+
 impl ExternalAgentProcess for ClaudeCodeProcess {
-    fn send_user_turn<'a>(
+    fn queue_user_turn<'a>(
         &'a self,
         text: &'a str,
-    ) -> PortFuture<'a, Result<UserTurnId, ExternalAgentInputError>> {
+    ) -> PortFuture<'a, Result<QueuedUserTurn<'a>, ExternalAgentInputError>> {
         Box::pin(async move {
             let (id, line) = user_message_line(text);
-            self.write(line).await.map(|()| id)
+            let written = self.input.queue_line(line).await.map_err(input_error)?;
+            Ok(QueuedUserTurn {
+                id,
+                written: Box::pin(async move { written.await.map_err(input_error) }),
+            })
         })
     }
 

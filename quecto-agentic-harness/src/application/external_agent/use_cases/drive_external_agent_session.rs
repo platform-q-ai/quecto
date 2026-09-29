@@ -46,6 +46,18 @@
 //! steer), and every decision and effect is a [`SessionRecord`]. Time is
 //! the [`ExternalAgentClock`] port's.
 //!
+//! Any caller's future may be dropped at any await (#2287 review 5):
+//! - An event the reader has read is kept in the session until it is
+//!   folded: a reader dropped while it waits for the write gate leaves it
+//!   for the next [`DriveExternalAgentSession::next_step`].
+//! - A user turn is queued in two steps
+//!   ([`ExternalAgentProcess::queue_user_turn`]). Dropped before it is
+//!   queued, a prompt is undone (a turn it began never started) and a
+//!   follow-up is kept, to be written before anything else by the next
+//!   holder of the gate. Once queued, the turn is owed a result at once:
+//!   dropped while its write is awaited, it is still written and still
+//!   ends its turn. Only a write that provably failed is rolled back.
+//!
 //! [`FOLLOW_UP_QUEUE_CAPACITY`]: crate::application::external_agent::dto::FOLLOW_UP_QUEUE_CAPACITY
 
 use std::sync::{Arc, Mutex};
@@ -62,6 +74,7 @@ use crate::application::external_agent::ports::{
 use crate::application::external_agent::session_core::{
     AbortDecision, Admission, SessionCore, Wait,
 };
+use crate::domain::external_agent::stream::ExternalAgentEvent;
 
 type Process = Arc<dyn ExternalAgentProcess>;
 
@@ -89,6 +102,11 @@ pub struct DriveExternalAgentSession {
     writes: tokio::sync::Mutex<()>,
     /// Set once the member has ended; releases every waiter.
     ended: tokio::sync::watch::Sender<bool>,
+    /// An event read and not yet folded: a dropped reader's.
+    unfolded: Mutex<Option<(ExternalAgentEvent, AgentClockInstant)>>,
+    /// A follow-up whose turn has begun but whose user turn is not yet
+    /// queued: its writer was dropped first. Nothing is written before it.
+    unwritten: Mutex<Option<(u64, String)>>,
     /// Bumped whenever what the reader waits for changes other than by
     /// its own fold (an interrupt's deadline is set): a reader already
     /// waiting recomputes its wait.
@@ -110,6 +128,8 @@ impl DriveExternalAgentSession {
             core: Mutex::default(),
             process: Mutex::default(),
             writes: tokio::sync::Mutex::new(()),
+            unfolded: Mutex::default(),
+            unwritten: Mutex::default(),
             ended: tokio::sync::watch::Sender::new(false),
             wait_changed: tokio::sync::watch::Sender::new(0),
         }
@@ -152,11 +172,14 @@ impl DriveExternalAgentSession {
         text: &str,
         behavior: Option<StreamingBehavior>,
     ) -> Result<PromptAccepted, SessionRefusal> {
-        let _writes = self.writes.lock().await;
+        let _writes = self.gate().await;
         let admitted = self.core().admit(text, behavior);
         let outcome = match admitted {
             Ok(Admission::Queued(accepted)) => Ok(accepted),
-            Ok(Admission::Write(accepted)) => self.write(accepted, text).await.map(|()| accepted),
+            Ok(Admission::Write(accepted)) => self
+                .write(accepted, text, Undo::Admission(accepted))
+                .await
+                .map(|()| accepted),
             Err(refusal) => Err(refusal),
         };
         self.record(match &outcome {
@@ -184,7 +207,7 @@ impl DriveExternalAgentSession {
     /// if one runs. The member lives on, unless the interrupt cannot be
     /// written.
     pub async fn abort(&self) -> Result<AbortOutcome, SessionRefusal> {
-        let _writes = self.writes.lock().await;
+        let _writes = self.gate().await;
         let decision = self.core().abort()?;
         let (turn, dropped_follow_ups, member_ended) = match decision {
             AbortDecision::Idle { dropped } => (None, dropped, false),
@@ -236,6 +259,12 @@ impl DriveExternalAgentSession {
     /// not started or has ended.
     pub async fn next_step(&self) -> Option<SessionStep> {
         loop {
+            // What a dropped step left undone is done first: an event it
+            // read is folded, a follow-up it began is written.
+            if self.slot().is_some() && self.left_undone() {
+                let _writes = self.gate().await;
+                self.fold_unfolded().await;
+            }
             if let Some(step) = self.core().take_surfaced() {
                 return Some(step);
             }
@@ -254,7 +283,8 @@ impl DriveExternalAgentSession {
             let timer = self.timer(wait);
             // `None`: the timer ran out; `Some(None)`: the output ended.
             // Reading an event is cancel-safe: one left unread when the
-            // wait changes is read on the next pass.
+            // wait changes is read on the next pass, and one read is kept
+            // in the session until it is folded.
             let read = tokio::select! {
                 biased;
                 () = self.until_ended() => return None,
@@ -268,16 +298,9 @@ impl DriveExternalAgentSession {
                     // A skipped line's grace runs from when it was read: a
                     // write holding the gate does not stretch it.
                     let grace_end = self.deadline_after(self.settings.skipped_line_grace);
-                    let _writes = self.writes.lock().await;
-                    let folded = self.core().fold(&event, grace_end);
-                    self.settle(folded.records, folded.follow_up).await;
-                    // claude's state became unknown: the member ends, and
-                    // the reader is told next.
-                    if let Some(turn) = folded.abandon {
-                        let abandoned = self.abandon(turn);
-                        self.core().surface(abandoned);
-                    }
-                    return Some(SessionStep::Folded(folded.step));
+                    *self.unfolded_slot() = Some((event, grace_end));
+                    // Folded, and its step surfaced, on the next pass.
+                    continue;
                 }
                 (Some(None), _) => return self.output_ended(process).await,
                 (None, Wait::Grace(_)) => {
@@ -339,7 +362,7 @@ impl DriveExternalAgentSession {
     /// Give up the running turn, if its last event is still a skipped line:
     /// it is interrupted.
     async fn lose_turn(&self) -> Option<SessionStep> {
-        let _writes = self.writes.lock().await;
+        let _writes = self.gate().await;
         let turn = self.core().lost_turn(self.clock.now())?;
         match self.interrupt(turn, "lost").await {
             Interrupt::Written => Some(SessionStep::TurnLost { turn }),
@@ -392,7 +415,7 @@ impl DriveExternalAgentSession {
 
     /// End the member if the interrupted turn is past its deadline.
     async fn abandon_if_overdue(&self) -> Option<SessionStep> {
-        let _writes = self.writes.lock().await;
+        let _writes = self.gate().await;
         let turn = self.core().interrupt_overdue(self.clock.now())?;
         Some(self.abandon(turn))
     }
@@ -437,20 +460,59 @@ impl DriveExternalAgentSession {
     fn release_process(&self) {
         let process = self.slot().take();
         self.ended.send_replace(true);
-        drop(process);
+        // What a dropped step left undone ends with the member.
+        let undone = (self.unfolded_slot().take(), self.unwritten_slot().take());
+        drop((process, undone));
     }
 
-    /// Record what a fold decided and start the follow-up it dequeued. A
-    /// follow-up that cannot be written is recorded and surfaced to the
-    /// reader; the member is idle.
-    async fn settle(&self, records: Vec<SessionRecord>, follow_up: Option<(u64, String)>) {
-        for record in &records {
-            self.telemetry.record(record);
-        }
-        let Some((turn, text)) = follow_up else {
+    /// Take the write gate. A follow-up whose turn has begun but whose
+    /// user turn a dropped holder left unqueued is written first.
+    async fn gate(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        let writes = self.writes.lock().await;
+        self.start_follow_up().await;
+        writes
+    }
+
+    /// Whether a dropped step left an event unfolded or a follow-up
+    /// unwritten.
+    fn left_undone(&self) -> bool {
+        self.unfolded_slot().is_some() || self.unwritten_slot().is_some()
+    }
+
+    /// Fold the event read and not yet folded, if any, surfacing its step
+    /// for the reader; the caller holds the write gate. The follow-up it
+    /// dequeued is started. A follow-up that cannot be written is
+    /// recorded and surfaced to the reader; the member is idle.
+    async fn fold_unfolded(&self) {
+        let Some((event, grace_end)) = self.unfolded_slot().take() else {
             return;
         };
-        if let Err(refusal) = self.write(PromptAccepted::Started { turn }, &text).await {
+        let folded = self.core().fold(&event, grace_end);
+        self.core().surface(SessionStep::Folded(folded.step));
+        for record in &folded.records {
+            self.telemetry.record(record);
+        }
+        // claude's state became unknown: the member ends, and the reader
+        // is told after the fold.
+        if let Some(turn) = folded.abandon {
+            let abandoned = self.abandon(turn);
+            self.core().surface(abandoned);
+        }
+        if let Some(follow_up) = folded.follow_up {
+            *self.unwritten_slot() = Some(follow_up);
+            self.start_follow_up().await;
+        }
+    }
+
+    /// Write the follow-up whose turn has begun, if any; the caller holds
+    /// the write gate. Dropped before it is queued, it is kept for the
+    /// next holder.
+    async fn start_follow_up(&self) {
+        let Some((turn, text)) = self.unwritten_slot().take() else {
+            return;
+        };
+        let accepted = PromptAccepted::Started { turn };
+        if let Err(refusal) = self.write(accepted, &text, Undo::Keep { turn }).await {
             self.record(SessionRecord::FollowUpFailed {
                 turn,
                 bytes: text.len(),
@@ -461,22 +523,46 @@ impl DriveExternalAgentSession {
         }
     }
 
-    /// Write `accepted`'s text to the agent, unless the member ends first;
-    /// once written it is part of the conversation, and owed a result.
-    async fn write(&self, accepted: PromptAccepted, text: &str) -> Result<(), SessionRefusal> {
+    /// Write `accepted`'s text to the agent, unless the member ends first.
+    /// Once queued it is part of the conversation, and owed a result;
+    /// `undo` says what a caller dropped before then leaves behind.
+    async fn write(
+        &self,
+        accepted: PromptAccepted,
+        text: &str,
+        undo: Undo,
+    ) -> Result<(), SessionRefusal> {
         let process = self.slot().clone().ok_or(SessionRefusal::Ended)?;
+        let mut unqueued = Unqueued {
+            session: self,
+            text,
+            undo: Some(undo),
+        };
+        let queued = tokio::select! {
+            biased;
+            () = self.until_ended() => Err(SessionRefusal::Ended),
+            queued = process.queue_user_turn(text) => queued.map_err(SessionRefusal::Input),
+        };
+        unqueued.undo = None;
+        let queued = match queued {
+            Ok(queued) => queued,
+            Err(refusal) => {
+                self.core().write_failed(accepted);
+                return Err(refusal);
+            }
+        };
+        let id = queued.id.clone();
+        self.core().written(queued.id, text);
         let written = tokio::select! {
             biased;
             () = self.until_ended() => Err(SessionRefusal::Ended),
-            sent = process.send_user_turn(text) => sent.map_err(SessionRefusal::Input),
+            written = queued.written => written.map_err(SessionRefusal::Input),
         };
-        let mut core = self.core();
         match written {
-            Ok(id) => {
-                core.written(id, text);
-                Ok(())
-            }
+            Ok(()) => Ok(()),
             Err(refusal) => {
+                let mut core = self.core();
+                core.not_written(&id);
                 core.write_failed(accepted);
                 Err(refusal)
             }
@@ -504,6 +590,50 @@ impl DriveExternalAgentSession {
         self.process
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn unfolded_slot(
+        &self,
+    ) -> std::sync::MutexGuard<'_, Option<(ExternalAgentEvent, AgentClockInstant)>> {
+        self.unfolded
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn unwritten_slot(&self) -> std::sync::MutexGuard<'_, Option<(u64, String)>> {
+        self.unwritten
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+/// What a write whose caller is dropped before its user turn is queued
+/// leaves behind.
+#[derive(Clone, Copy)]
+enum Undo {
+    /// The prompt's admission is undone: a turn it began never started.
+    Admission(PromptAccepted),
+    /// Follow-up turn `turn` is kept, for the next holder of the gate.
+    Keep { turn: u64 },
+}
+
+/// Armed until a write's user turn is queued or refused: dropped armed,
+/// the write's caller was, and its [`Undo`] is done.
+struct Unqueued<'a> {
+    session: &'a DriveExternalAgentSession,
+    text: &'a str,
+    undo: Option<Undo>,
+}
+
+impl Drop for Unqueued<'_> {
+    fn drop(&mut self) {
+        match self.undo.take() {
+            Some(Undo::Admission(accepted)) => self.session.core().write_failed(accepted),
+            Some(Undo::Keep { turn }) => {
+                *self.session.unwritten_slot() = Some((turn, self.text.to_string()));
+            }
+            None => {}
+        }
     }
 }
 

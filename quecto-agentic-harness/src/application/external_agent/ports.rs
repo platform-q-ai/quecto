@@ -21,6 +21,15 @@ use crate::domain::external_agent::stream::ExternalAgentEvent;
 
 pub type PortFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
+/// A user turn [`ExternalAgentProcess::queue_user_turn`] queued.
+pub struct QueuedUserTurn<'a> {
+    /// The id the agent's results name it by.
+    pub id: UserTurnId,
+    /// Resolves once it is written, or failed to be (the input closed or
+    /// its writer failed first). Dropping it does not withdraw the turn.
+    pub written: PortFuture<'a, Result<(), ExternalAgentInputError>>,
+}
+
 /// Starts one external agent process per call.
 pub trait ExternalAgentLauncher: Send + Sync {
     /// Start the agent `spec` describes, isolated in its member directory.
@@ -34,15 +43,32 @@ pub trait ExternalAgentLauncher: Send + Sync {
 /// One running external agent: turns in, events out. Dropping it closes
 /// its input and has its process ended.
 pub trait ExternalAgentProcess: Send + Sync {
-    /// Write one user turn. Several turns go to one process, also while
-    /// one runs: the agent folds a turn written mid-turn into the running
-    /// one, or runs it as its own turn once that ends. Answers the id it
-    /// was written under, by which the agent's results name it
-    /// ([`crate::domain::external_agent::stream::ResultEvent::user_turn_ids`]).
+    /// Queue one user turn for writing. Several turns go to one process,
+    /// also while one runs: the agent folds a turn written mid-turn into
+    /// the running one, or runs it as its own turn once that ends.
+    ///
+    /// Cancel-safe in two steps (#2287 review 5): dropped before it
+    /// answers, nothing is queued; once it answers, the turn is queued
+    /// under the id answered, by which the agent's results name it
+    /// ([`crate::domain::external_agent::stream::ResultEvent::user_turn_ids`]),
+    /// and is written whole unless the input closes or fails first,
+    /// whether or not [`QueuedUserTurn::written`] is awaited.
+    fn queue_user_turn<'a>(
+        &'a self,
+        text: &'a str,
+    ) -> PortFuture<'a, Result<QueuedUserTurn<'a>, ExternalAgentInputError>>;
+
+    /// Queue one user turn and wait until it is written; answers its id
+    /// (see [`Self::queue_user_turn`]).
     fn send_user_turn<'a>(
         &'a self,
         text: &'a str,
-    ) -> PortFuture<'a, Result<UserTurnId, ExternalAgentInputError>>;
+    ) -> PortFuture<'a, Result<UserTurnId, ExternalAgentInputError>> {
+        Box::pin(async move {
+            let queued = self.queue_user_turn(text).await?;
+            queued.written.await.map(|()| queued.id)
+        })
+    }
 
     /// Ask the agent to stop its running turn and withdraw every user turn
     /// still queued. It answers with an

@@ -4,6 +4,7 @@
 //! queued at all (the session is as it was) or queued and owed a result,
 //! whichever await the prompt, steer or follow-up is cancelled at.
 
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use super::test_rig::*;
@@ -129,4 +130,31 @@ async fn a_reader_cancelled_while_starting_a_follow_up_still_starts_it() {
     assert_eq!(rig.phase(), SessionPhase::Busy { turn: 3 });
     rig.feed(answered(&["u3"], "completed", "two")).await;
     assert_eq!(rig.phase(), SessionPhase::Idle);
+}
+
+// A user turn whose write provably failed once queued (its writer
+// failed) is rolled back: nothing owes it, a turn it began never started,
+// and a steer's turn ends on the result of what was written.
+#[tokio::test(start_paused = true)]
+async fn a_queued_user_turn_whose_write_fails_is_rolled_back() {
+    let rig = named_started().await;
+    rig.wire.fail_ack.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        rig.session.prompt("one", None).await,
+        Err(SessionRefusal::Input(_))
+    ));
+    assert_eq!(rig.phase(), SessionPhase::Idle);
+    rig.wire.fail_ack.store(false, Ordering::SeqCst);
+    assert_eq!(
+        rig.session.prompt("two", None).await,
+        Ok(PromptAccepted::Started { turn: 3 })
+    );
+    rig.wire.fail_ack.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        rig.session.steer("three").await,
+        Err(SessionRefusal::Input(_))
+    ));
+    assert_eq!(rig.phase(), SessionPhase::Busy { turn: 3 });
+    rig.feed(answered(&["u3"], "completed", "two")).await;
+    assert_eq!(rig.phase(), SessionPhase::Idle, "u4 was never owed");
 }

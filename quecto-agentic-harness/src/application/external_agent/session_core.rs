@@ -223,6 +223,16 @@ impl SessionCore {
         }
     }
 
+    /// A user turn queued under `id` was not written after all (the input
+    /// closed, or its writer failed, first): no result owes it. The
+    /// projection keeps it, as what the member was asked.
+    pub(crate) fn not_written(&mut self, id: &UserTurnId) {
+        if self.owed.remove(id) {
+            assert!(self.in_turn > 0, "an owed user turn is in the turn");
+            self.in_turn -= 1;
+        }
+    }
+
     /// A prompt could not be written. A turn it was to start never
     /// started: the member is idle again (its follow-ups wait for the next
     /// turn, or for the member's end).

@@ -5827,7 +5827,7 @@ fn external_agent_application_dependency_allowed(path: &str) -> bool {
         // are plain synchronisation, as `sessions` (`RwLock`, `Semaphore`)
         // and `extensions` (`oneshot`) use them.
         ["std", "sync", "Arc" | "Mutex" | "MutexGuard"] | ["std", "time", "Duration"] => true,
-        ["tokio", "select"] | ["tokio", "sync", "Mutex" | "watch", ..] => true,
+        ["tokio", "select"] | ["tokio", "sync", "Mutex" | "MutexGuard" | "watch", ..] => true,
         // A name already in scope (prelude, local item or checked import)
         // and an associated item of one (`Self::…`, `MessageRole::User`).
         [single] => single.starts_with(char::is_alphabetic),
