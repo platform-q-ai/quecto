@@ -93,6 +93,7 @@ const USE_CASES: &[&str] = &[
     "QuarantineMember",
     "ReadConfiguration",
     "ReadControlStatus",
+    "ReadEventCursor",
     "ReadHistory",
     "ReadInbox",
     "ReadRequestAdmission",

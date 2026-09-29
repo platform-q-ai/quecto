@@ -35,9 +35,20 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   observation`), a count of `1e400` (`invalid request usage
 ///   output_tokens`), a `usage_budget` token limit above u64 or of `1e400`
 ///   (the budget's argument refusal), and an `_accept_wake` generation above
-///   u64 (`wake generation is ahead of the board`). S13/S14 must parse
-///   member input with `py_json`, as the harness does; a `PyJson` dispatcher
-///   would end this divergence.
+///   u64 (`wake generation is ahead of the board`). The structured `swarm`
+///   ops (#2279) read a member's text with `swarm_board_ops::
+///   member_arguments`, which the harness's Rust side calls, so this pin is
+///   the tool's refusal too (parent decision on #2279: integers beyond i64
+///   and u64, non-finite numbers and lone surrogates are refused, not
+///   coerced; `-0` is the integer 0); a `PyJson` dispatcher would end this
+///   divergence. A member's `NaN`, `Infinity` or `-Infinity` never reaches
+///   the tool at all: they are not JSON, so the agent loop's
+///   `ToolCall::argument_shape` finds no object in the call and the loop
+///   answers its invalid-arguments text without running the tool (#2279
+///   review L3; pinned by `swarm_agent_loop::
+///   a_non_finite_argument_is_answered_by_the_loop_before_the_tool`, where
+///   `1e400` and a lone surrogate escape, which are JSON, reach the tool and
+///   are refused there).
 /// - `integer_beyond_i64_is_refused`: an integer argument beyond i64 but
 ///   within u64 (a `pid`, `started` or `socket`, a membership method's
 ///   member or reservation, #2271, a task id, #2272, a message id,
@@ -92,6 +103,12 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   For a completed dependency with invalid JSON in `acceptance`, Python's
 ///   `claim` loads the dependency's full `_task` and raises `JSONDecodeError`;
 ///   Rust reads only its status and claims the dependent task (pinned below).
+///   A task owner that is not text (only tables rebuilt without column
+///   types hold one) names no member to the Rust board, whose owner
+///   liveness reads only text ids: it reads `unknown`, with no `contact`
+///   and `revoke`'s recovery, where Python finds the member and its events
+///   by that value and names it in the contact as its `repr()` (`1e+16`,
+///   #2279 review L6; pinned in `swarm_board_diff_loose_reads.rs`).
 /// - `outside_edited_evidence` (#2272, pinned with
 ///   `outside_edited_task_columns` in `swarm_board_diff_loose_tasks.rs`): stored evidence that is not a list
 ///   of objects each carrying `revision` (only an edit holds it) meets

@@ -12,14 +12,18 @@
 //! constructs a repository, a clock, an id source or a use case: the
 //! builder is composition's (`composition::swarm::build_swarm_board_handles`).
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 
 use serde_json::Value;
 
 use crate::application::swarm::dto::BoardLocation;
 use crate::application::swarm::ports::BoardOpLog;
 use crate::domain::error::DomainError;
+use crate::domain::swarm::RefusalKind;
 use crate::infrastructure::persistence::audit_log::AuditLog;
-use crate::infrastructure::tools::swarm_board_dispatch::{self, SwarmBoardHandles};
+use crate::infrastructure::tools::swarm_board_dispatch::{
+    self, BoardWire, CallOrigin, SwarmBoardHandles,
+};
 
 /// Builds the board handles over one board file, recording each call in
 /// the event log given (composition's `board_op_log`, only while the
@@ -41,6 +45,7 @@ pub struct SwarmBoard {
 
 struct Shared {
     build: SwarmBoardHandlesBuilder,
+    wire: BoardWire,
     session_log: Option<SwarmBoardOpLogBuilder>,
     event_log: OnceLock<Arc<dyn BoardOpLog>>,
     /// The handles built per file, the most recently called last; at
@@ -71,11 +76,13 @@ impl std::fmt::Debug for SwarmBoard {
 }
 
 impl SwarmBoard {
-    /// The board over composition's `build`.
-    pub fn new(build: SwarmBoardHandlesBuilder) -> Self {
+    /// The board over composition's `build`, reading and writing member
+    /// text with composition's `wire`.
+    pub fn new(build: SwarmBoardHandlesBuilder, wire: BoardWire) -> Self {
         Self {
             shared: Arc::new(Shared {
                 build,
+                wire,
                 session_log: None,
                 event_log: OnceLock::new(),
                 built: Mutex::new(Vec::new()),
@@ -87,11 +94,13 @@ impl SwarmBoard {
     /// event log through `session_log` ([`Self::record_in_session`]).
     pub fn with_session_log(
         build: SwarmBoardHandlesBuilder,
+        wire: BoardWire,
         session_log: SwarmBoardOpLogBuilder,
     ) -> Self {
         Self {
             shared: Arc::new(Shared {
                 build,
+                wire,
                 session_log: Some(session_log),
                 event_log: OnceLock::new(),
                 built: Mutex::new(Vec::new()),
@@ -138,6 +147,19 @@ impl SwarmBoard {
         method: &str,
         args: Value,
     ) -> Result<Value, DomainError> {
+        self.call_as(location, member, method, args, CallOrigin::Member)
+    }
+
+    /// [`Self::call`], made for `origin` (#2279 S15 final review: the
+    /// harness's own reads on a member's behalf are recorded as `host`).
+    pub(super) fn call_as(
+        &self,
+        location: BoardLocation,
+        member: &str,
+        method: &str,
+        args: Value,
+        origin: CallOrigin,
+    ) -> Result<Value, DomainError> {
         // A board call blocks (a contended transaction waits up to the
         // store's busy timeout): every caller makes it on the blocking pool
         // (`call_work::spawn_blocking_in_call`) or outside any runtime,
@@ -147,12 +169,34 @@ impl SwarmBoard {
             "a board call ({method}) is made off the async workers (#2278)"
         );
         let handles = self.handles(location);
-        swarm_board_dispatch::call(&handles, member, method, args).map_err(|refusal| {
+        swarm_board_dispatch::call_as(&handles, member, method, args, origin).map_err(|refusal| {
             DomainError::Tool(format!(
                 "swarm: {}",
                 Value::String(refusal.message().to_owned())
             ))
         })
+    }
+
+    /// Records `method`, called by `member` on the file at `location`, as
+    /// refused with `kind` before it reached the board (#2279: a structured
+    /// op's argument text or its running gate), `elapsed` after it began.
+    pub(super) fn refused(
+        &self,
+        location: BoardLocation,
+        member: &str,
+        method: &str,
+        kind: RefusalKind,
+        elapsed: Duration,
+    ) {
+        let handles = self.handles(location);
+        swarm_board_dispatch::refused(&handles, member, method, kind, elapsed);
+    }
+
+    /// How structured ops read and write member text (#2279):
+    /// composition's codec, the same for every board file, so reading a
+    /// request resolves no file and builds no handles (#2279 review L5).
+    pub(super) fn wire(&self) -> BoardWire {
+        self.shared.wire
     }
 
     /// The handles for `location`: the ones built for the same file and

@@ -774,7 +774,7 @@ fn owner_idle_on_task_row(world: &mut QuectoWorld, seconds: u64) {
             "{row}"
         );
         assert_eq!(
-            row["contact"], "board.send(request, 'worker', body)",
+            row["contact"], r#"{"op":"send","request":...,"recipient":"worker","body":...}"#,
             "{row}"
         );
     }
@@ -789,7 +789,7 @@ fn description_names_owner_as_recipient(world: &mut QuectoWorld) {
     for expected in [
         "Any member may message any other member directly",
         "belongs with that task's owner",
-        "contact: board.send(request, '<owner id>', body)",
+        r#"contact: {"op":"send","request":...,"recipient":"<owner id>","body":...}"#,
         "owner_last_activity",
         "owner_state",
         "members_without_claim",

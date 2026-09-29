@@ -263,7 +263,10 @@ async fn a_panicking_accounting_job_is_an_error_not_a_panic_in_the_loop() {
     use crate::application::providers::ports::RequestAccounting;
     let directory = tempfile::tempdir().unwrap();
     let context = SwarmContext {
-        board: crate::infrastructure::tools::swarm_bridge::SwarmBoard::new(panicking_board),
+        board: crate::infrastructure::tools::swarm_bridge::SwarmBoard::new(
+            panicking_board,
+            crate::composition::swarm::board_wire(),
+        ),
         checkout: directory.path().to_path_buf(),
         member: "coordinator".into(),
         lifecycle: std::sync::Arc::new(crate::application::swarm::LifecycleService),

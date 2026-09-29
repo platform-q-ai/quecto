@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::json;
 
 #[path = "swarm_guidance.rs"]
-mod swarm_guidance;
+pub(super) mod swarm_guidance;
 #[path = "swarm_job_output.rs"]
 mod swarm_job_output;
 #[path = "swarm_process.rs"]
@@ -157,6 +157,12 @@ impl Tool for SwarmTool {
         let workflow_engine = self.workflow_engine.clone();
         let participation = self.participation.clone();
         let context = self.context.clone();
+        // A structured board op reads the member's text as `json.loads`
+        // does (#2279); every other op keeps serde's reading.
+        let board_op = self
+            .context
+            .as_ref()
+            .and_then(|context| super::swarm_board_ops::requested(arguments, context.wire()));
         let parsed: Result<serde_json::Value, _> = serde_json::from_str(arguments);
         let workspace = self.workspace.clone();
         let sandbox = self.sandbox.clone();
@@ -169,6 +175,9 @@ impl Tool for SwarmTool {
             let Some(context) = context else {
                 return tool_err("swarm is container-only: use spawn with a registered isolated container, then create a bounded run inside it".into());
             };
+            if let Some(request) = board_op {
+                return super::swarm_board_ops::board_op(context, request).await;
+            }
             let v = match parsed {
                 Ok(v) => v,
                 Err(e) => return tool_err(format!("invalid JSON arguments: {e}")),

@@ -22,7 +22,7 @@ use super::ports::{
 };
 use crate::domain::swarm::{
     Access, BoardError, OWNER_IDLE_AFTER, OwnerState, PythonLookup, RefusalKind, authorize,
-    idle_transition, owner_recovery, owner_state, python_repr,
+    idle_transition, json_text, owner_recovery, owner_state,
 };
 
 /// The tasks and files a summary holds.
@@ -136,17 +136,18 @@ pub(crate) fn with_owner_liveness(
         let activity = last.map_or(Value::Null, |last| since_activity(now, last));
         task.set("owner_last_activity", activity);
         task.set("owner_state", Value::from(state.as_str()));
-        if state.addressable() {
-            let name = owner
-                .as_str()
-                .map_or_else(|| owner.to_string(), python_repr);
-            task.set(
-                "contact",
-                Value::from(format!("board.send(request, {name}, body)")),
-            );
-        } else {
-            task.set("contact", Value::Null);
-            task.set("recovery", Value::from(owner_recovery(state)));
+        // An owner that is not text names no member ([`owner_views`]), so
+        // only a text owner is ever addressable (#2279 review L6).
+        debug_assert!(
+            !state.addressable() || owner.is_string(),
+            "only a text owner is addressable"
+        );
+        match owner.as_str().filter(|_| state.addressable()) {
+            Some(name) => task.set("contact", Value::from(contact(name))),
+            None => {
+                task.set("contact", Value::Null);
+                task.set("recovery", Value::from(owner_recovery(state)));
+            }
         }
     }
     Ok(count(held.len()))
@@ -165,6 +166,15 @@ struct Watch {
     crossed: bool,
     /// The owners it read.
     scanned: u64,
+}
+
+/// The structured `send` that reaches `owner` (#2279), as a member writes
+/// it: the owner's id as `json.dumps` writes a text. Only a text owner is
+/// addressable; one that is not text (a board edited outside it) reads
+/// `unknown` (the `outside_edited_task_columns` divergence).
+fn contact(owner: &str) -> String {
+    let recipient = json_text(owner);
+    format!(r#"{{"op":"send","request":...,"recipient":{recipient},"body":...}}"#)
 }
 
 /// `Workbench._liveness_watch(db, cursor)`: when the earliest still-active

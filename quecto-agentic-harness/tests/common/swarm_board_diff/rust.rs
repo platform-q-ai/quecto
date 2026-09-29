@@ -13,12 +13,12 @@ use std::sync::{Arc, Mutex};
 use quecto::application::swarm::dto::BoardLocation;
 use quecto::application::swarm::ports::{BoardOpLog, Clock, IdSource};
 use quecto::composition::swarm::{
-    SwarmBoardHandles, build_swarm_board_handles_with, with_event_log,
+    SwarmBoardHandles, board_wire, build_swarm_board_handles_with, with_event_log,
 };
 use quecto::domain::swarm::BoardOpObservation;
-use quecto::infrastructure::persistence::swarm_board::py_json;
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 use quecto::infrastructure::tools::swarm_board_dispatch::call;
+use quecto::infrastructure::tools::swarm_board_ops::{member_arguments, wire_text};
 use quecto::infrastructure::workspace::checkout_paths::ResolvedCheckout;
 use serde_json::Value;
 
@@ -108,20 +108,26 @@ impl RustBoard {
     }
 
     /// One board call as `member` at `now`, its arguments the JSON text
-    /// `args`, parsed as Python's `json.loads` parses it
-    /// (`py_json::decode`: `-0` is the integer 0, `1e400` is infinite, a
-    /// lone surrogate escape is kept) and then handed to the dispatcher,
-    /// which takes a `serde_json::Value`. A text neither parser reads, or a
-    /// value no `Value` holds, is refused here, before any board call (the
-    /// `arguments_beyond_a_serde_value` divergence). S13/S14 must parse
-    /// member input the same way. Also whether the call reached the
-    /// dispatcher: a text refused here never does, and leaves no
-    /// `swarm_op`.
+    /// `args`, read as the structured `swarm` ops read a member's text
+    /// (`swarm_board_ops::member_arguments`, #2279): as Python's
+    /// `json.loads` parses it (`py_json::decode`: `-0` is the integer 0,
+    /// `1e400` is infinite, a lone surrogate escape is kept), then handed to
+    /// the dispatcher, which takes a `serde_json::Value`. A text neither
+    /// parser reads, or a value no `Value` holds, is refused there, before
+    /// any board call (the `arguments_beyond_a_serde_value` divergence).
+    /// Also whether the call reached the dispatcher: a text refused there
+    /// never does (the tool records that refusal itself).
     pub fn call_text(&self, member: &str, method: &str, args: &str, now: f64) -> (Outcome, bool) {
-        match py_json::decode(args).and_then(|args| args.to_value()) {
+        match member_arguments(&board_wire(), args) {
             Ok(args) => (self.call(member, method, &args, now), true),
-            Err(error) => (Outcome::Refused(format!("arguments: {error}")), false),
+            Err(refusal) => (Outcome::Refused(refusal), false),
         }
+    }
+
+    /// `value` as the structured ops write an answer on the wire
+    /// (`swarm_board_ops::wire_text`, #2279).
+    pub fn wire_text(&self, value: &Value) -> String {
+        wire_text(&board_wire(), value).expect("a board answer is writable")
     }
 
     /// One board call as `member` at `now`.

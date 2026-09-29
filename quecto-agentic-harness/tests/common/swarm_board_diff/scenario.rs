@@ -241,6 +241,47 @@ pub fn run_both(steps: &[Step]) {
     }
 }
 
+/// Runs `steps` (board calls only) on both boards and panics at the first
+/// step whose answer differs as the member reads it (#2279): a result as
+/// the text Python's `json.dumps` writes against the Rust board's wire
+/// text (`swarm_board_ops::wire_text`, which the structured ops answer
+/// with), byte for byte, and a refusal by its text. `try_run_both`
+/// compares the same steps' values and files; this compares their text.
+pub fn run_both_wire(steps: &[Step]) {
+    let dir = tempfile::tempdir().expect("a directory for the two boards");
+    let python_side = Side::new(dir.path(), "python");
+    let rust_side = Side::new(dir.path(), "rust");
+    let mut python = PyBoard::start(&python_side.database, &python_side.root, dir.path());
+    let rust = RustBoard::open(&rust_side.database, &rust_side.root);
+    for (index, step) in steps.iter().enumerate() {
+        assert!(
+            step.method != SQL_STEP && step.method != FS_STEP && step.hold.is_none(),
+            "step {index}: a wire scenario makes board calls only"
+        );
+        let (python_outcome, python_text) =
+            python.call_wire(&step.member, &step.method, &step.args, step.now);
+        let rust_outcome = rust
+            .call_text(&step.member, &step.method, &step.args, step.now)
+            .0;
+        let context = format!(
+            "step {index}: {} as {} with {}",
+            step.method, step.member, step.args
+        );
+        match (python_outcome, rust_outcome) {
+            (Outcome::Ok(_), Outcome::Ok(value)) => assert_eq!(
+                python_text.as_deref(),
+                Some(rust.wire_text(&value).as_str()),
+                "{context}: the wire texts differ"
+            ),
+            (python_outcome, rust_outcome) => assert_eq!(
+                python_side.neutral(python_outcome),
+                rust_side.neutral(rust_outcome),
+                "{context}"
+            ),
+        }
+    }
+}
+
 /// Runs `steps` on a Rust board alone, each granted but the last: its
 /// answer. For a divergence, whose Python side the comparison shows.
 pub fn run_rust(steps: &[Step]) -> Outcome {

@@ -6,7 +6,9 @@
 //!   `summary`'s counts too: a task status the board never writes is
 //!   refused naming the record, where Python raises `KeyError`, and a
 //!   dependency naming no task counts the task blocked (Python's `_task`
-//!   raises `TypeError` reading it first).
+//!   raises `TypeError` reading it first); and for the owner liveness: an
+//!   owner that is not text reads `unknown` with no contact, where Python
+//!   names it in the contact as its `repr()` (#2279 review L6).
 //! - `integer_beyond_i64_is_refused` (#2277 review L1), as the pin table
 //!   describes it, for `events`' cursor and `tasks`' offset.
 //! - `outside_edited_loss_records`, as `swarm_board_diff_loose_loss.rs`
@@ -17,7 +19,7 @@
 //!   (`task`, `tasks`, or `summary`'s first 50); its liveness watch reads
 //!   such an owner as `unknown`, so a `summary` whose owned task is 51st or
 //!   later answers, where the Rust board refuses (#2277 final review L3).
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::swarm_board_diff_membership::at;
 use crate::swarm_board_diff_messages::joined;
@@ -38,7 +40,11 @@ fn task(
 
 /// A status the board never writes, or a dependency naming no task, met
 /// by `summary`'s counts: Python raises `KeyError`; the Rust board refuses
-/// the status and counts the task blocked.
+/// the status and counts the task blocked. And (#2279 review L6) an owner
+/// that is not text, in tables rebuilt without column types: Python finds
+/// the member of that id and names it in the contact as its `repr()`
+/// (`1e+16`); the Rust board reads it as naming no member, `unknown`, with
+/// no contact.
 #[test]
 fn outside_edited_task_columns() {
     let weird = joined([
@@ -70,6 +76,50 @@ fn outside_edited_task_columns() {
         panic!("the summary answers");
     };
     assert_eq!(summary["counts"]["blocked"], json!(1));
+    // The owner case: a task owned by `1e16` (a REAL), its member and its
+    // events rebuilt to name it so.
+    let steps = joined([
+        at(3.0, "parent", "_admit", json!(["ow", "res-u"])),
+        at(
+            3.1,
+            "parent",
+            "_activate",
+            json!(["ow", "res-u", 5, "u", null]),
+        ),
+        task(4.0, "ow"),
+        at(5.0, "ow", "claim", json!([1])),
+        sql("CREATE TABLE t2 AS SELECT * FROM tasks; DROP TABLE tasks;
+             CREATE TABLE tasks (id INTEGER PRIMARY KEY, title, acceptance, dependencies,
+                 status, owner, token, evidence, blocker);
+             INSERT INTO tasks SELECT * FROM t2; DROP TABLE t2;
+             CREATE TABLE m2 AS SELECT * FROM members; DROP TABLE members;
+             CREATE TABLE members (id PRIMARY KEY, reservation UNIQUE, status, pid, started,
+                 socket, launcher);
+             INSERT INTO members SELECT * FROM m2; DROP TABLE m2;
+             CREATE TABLE e2 AS SELECT * FROM events; DROP TABLE events;
+             CREATE TABLE events (id INTEGER PRIMARY KEY, actor, time REAL, action TEXT,
+                 detail TEXT);
+             INSERT INTO events SELECT * FROM e2; DROP TABLE e2;
+             UPDATE tasks SET owner=1e16; UPDATE members SET id=1e16 WHERE id='ow';
+             UPDATE events SET actor=1e16 WHERE actor='ow'"),
+        at(6.0, "parent", "task", json!([1])),
+    ]);
+    let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+    assert!(
+        difference.starts_with("step 8: task as parent")
+            && difference.contains(r#"\"recipient\":1e+16,"#)
+            && difference.contains(r#""owner_state": String("active")"#),
+        "{difference}"
+    );
+    let Outcome::Ok(view) = run_rust(&steps) else {
+        panic!("the task answers");
+    };
+    assert_eq!(
+        (&view["owner"], &view["owner_state"], &view["contact"]),
+        (&json!(1e16), &json!("unknown"), &Value::Null),
+        "{view}"
+    );
+    assert_eq!(view["recovery"], "revoke(task, reason)", "{view}");
 }
 
 /// An owner's latest event time an edit made text: Python subtracts it

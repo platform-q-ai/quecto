@@ -17,6 +17,7 @@ use crate::domain::swarm::BoardRole;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Method {
     Status,
+    EventCursor,
     Snapshot,
     Admit,
     Activate,
@@ -95,6 +96,7 @@ impl Method {
     pub(super) fn parse(name: &str) -> Option<Self> {
         match name {
             "_status" => Some(Self::Status),
+            "_event_cursor" => Some(Self::EventCursor),
             "_snapshot" => Some(Self::Snapshot),
             "_admit" => Some(Self::Admit),
             "_activate" => Some(Self::Activate),
@@ -160,6 +162,7 @@ impl Method {
     pub(super) fn name(self) -> &'static str {
         match self {
             Self::Status => "_status",
+            Self::EventCursor => "_event_cursor",
             Self::Snapshot => "_snapshot",
             Self::Admit => "_admit",
             Self::Activate => "_activate",
@@ -229,6 +232,7 @@ impl Method {
             // read Python's `read_only` operation makes it, unless the
             // budget warned or paused (`served_level`).
             Self::Status
+            | Self::EventCursor
             | Self::Snapshot
             | Self::ControlStatus
             | Self::UsageReport
@@ -292,6 +296,9 @@ impl Method {
     /// ([`run_role`](crate::domain::swarm::telemetry::run_role)).
     pub(super) fn role(self) -> Option<BoardRole> {
         match self {
+            // The structured ops' event cursor (#2279), read by the tool
+            // around a member's call.
+            Self::EventCursor => Some(BoardRole::Host),
             Self::Status
             | Self::Snapshot
             | Self::Admit
@@ -355,7 +362,8 @@ impl Method {
     /// have it answered.
     pub(super) fn answers_members_only(self) -> bool {
         match self {
-            Self::Status => false,
+            // Membership-free, like `_status` (#2279).
+            Self::Status | Self::EventCursor => false,
             // Through the operation gate, which refuses a caller that is
             // no member of the run (or whose death was confirmed).
             Self::Snapshot
@@ -445,6 +453,7 @@ impl Method {
     pub(super) fn parameters(self) -> &'static [Parameter] {
         match self {
             Self::Status
+            | Self::EventCursor
             | Self::Snapshot
             | Self::Resume
             | Self::ResumeExternal

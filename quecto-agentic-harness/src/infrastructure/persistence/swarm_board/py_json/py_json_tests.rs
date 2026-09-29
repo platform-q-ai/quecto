@@ -298,3 +298,53 @@ fn writers_accept_python_depth_and_refuse_one_level_more() {
         })
     ));
 }
+
+/// #2279: a member's text as a `Value`, refused where a `Value` cannot
+/// hold what Python read.
+#[test]
+fn decode_value_reads_as_json_loads_or_refuses() {
+    assert_eq!(
+        super::decode_value(r#"{"a": -0, "b": [1E2]}"#).unwrap(),
+        serde_json::json!({"a": 0, "b": [100.0]})
+    );
+    for text in [
+        "[1e400]",
+        "[NaN]",
+        "[18446744073709551616]",
+        "{",
+        r#"["\ud800"]"#,
+    ] {
+        assert!(super::decode_value(text).is_err(), "{text}");
+    }
+}
+
+/// #2279: an object's text field, read even when another field is
+/// refused as a `Value`.
+#[test]
+fn object_text_reads_one_text_field() {
+    let op = |text| super::object_text(text, "op");
+    assert_eq!(
+        op(r#"{"op": "claim", "task_id": 1e400}"#).as_deref(),
+        Some("claim")
+    );
+    assert_eq!(op(r#"{"op": "caf\u00e9"}"#).as_deref(), Some("caf\u{e9}"));
+    for text in [
+        r#"{"op": 1}"#,
+        r#"{"other": "claim"}"#,
+        r#"["op"]"#,
+        r#"{"op": "\ud800"}"#,
+        "{",
+    ] {
+        assert_eq!(op(text), None, "{text}");
+    }
+}
+
+/// #2279: a `Value` written as plain `json.dumps` writes it.
+#[test]
+fn dumps_value_writes_as_json_dumps() {
+    let value = serde_json::json!({"z": 1e16, "a": [0.1, "\u{e9}"], "n": null});
+    assert_eq!(
+        super::dumps_value(&value).unwrap(),
+        r#"{"z": 1e+16, "a": [0.1, "\u00e9"], "n": null}"#
+    );
+}

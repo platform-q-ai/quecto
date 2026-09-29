@@ -93,20 +93,18 @@ use crate::application::swarm::use_cases::{
     BootstrapMember, BootstrapRun, ClaimNotifications, ClaimTask, CloseRun, CompleteRun,
     ConfigureUsageBudget, ConfirmMemberDead, CreateRun, CreateTask, ExtendRunDeadline, JoinMember,
     JoinRun, ListFileOwners, ListTasks, LoseCoordinator, OverRepository, PauseRun,
-    QuarantineMember, ReadControlStatus, ReadInbox, ReadRequestAdmission, ReadRunEvents,
-    ReadRunSnapshot, ReadRunStatus, ReadRunSummary, ReadTask, ReadUsageReport, RecordEvidence,
-    RecordMemberLaunch, RecordRequestUsage, RecoverTask, RegisterMemberSocket, ReleaseFiles,
-    ReleaseTask, ReleaseUnlaunchedMember, ReserveFiles, ResumeRun, ResumeRunExternally,
-    RevalidateTask, RevokeTask, SendMessage, SetTaskDependencies, StopRun, SubmitTask, UnblockTask,
-    VerifyTask, WithdrawMessage,
+    QuarantineMember, ReadControlStatus, ReadEventCursor, ReadInbox, ReadRequestAdmission,
+    ReadRunEvents, ReadRunSnapshot, ReadRunStatus, ReadRunSummary, ReadTask, ReadUsageReport,
+    RecordEvidence, RecordMemberLaunch, RecordRequestUsage, RecoverTask, RegisterMemberSocket,
+    ReleaseFiles, ReleaseTask, ReleaseUnlaunchedMember, ReserveFiles, ResumeRun,
+    ResumeRunExternally, RevalidateTask, RevokeTask, SendMessage, SetTaskDependencies, StopRun,
+    SubmitTask, UnblockTask, VerifyTask, WithdrawMessage,
 };
 use crate::domain::swarm::{BoardError, BoardOpDetail, BoardRole, RefusalKind};
 
 use self::method::{Method, Parameter, required};
 pub use super::swarm_board_telemetry::{ActorRefs, TELEMETRY_TARGET};
-use super::swarm_board_telemetry::{
-    Caller, Finished, Level, Served, observation, split_committed, trace,
-};
+use super::swarm_board_telemetry::{Caller, Finished, Level, Served, split_committed};
 
 /// One handle per board use case, composed once per board file. The
 /// `create_run` and `bootstrap_run` handles are served only in test builds
@@ -116,6 +114,9 @@ pub struct SwarmBoardHandles {
     pub create_run: Arc<CreateRun>,
     pub bootstrap_run: Arc<BootstrapRun>,
     pub read_run_status: Arc<ReadRunStatus>,
+    /// `_event_cursor` (#2279): Rust-only, the structured ops' before and
+    /// after read.
+    pub read_event_cursor: Arc<ReadEventCursor>,
     pub read_run_snapshot: Arc<ReadRunSnapshot>,
     pub admit_member: Arc<AdmitMember>,
     pub activate_member: Arc<ActivateMember>,
@@ -176,6 +177,20 @@ pub struct SwarmBoardHandles {
     pub telemetry: Option<BoardTelemetry>,
 }
 
+/// The member-wire codec (#2279), bound by composition and carried by the
+/// `SwarmBoard` (constant function pointers, so reading a request never
+/// resolves a board file, #2279 review L5): Python's
+/// `json.loads` for a member's argument text (refused, with the reason,
+/// where a `Value` cannot hold what Python read), the text field `op`
+/// such a text names (read even when the rest is refused), and plain
+/// `json.dumps` for an answer.
+#[derive(Clone, Copy, Debug)]
+pub struct BoardWire {
+    pub read: fn(&str) -> Result<Value, String>,
+    pub op: fn(&str) -> Option<String>,
+    pub write: fn(&Value) -> Result<String, String>,
+}
+
 /// The event log a board call records in, the meter that measures it and
 /// each caller's kept ref (#2303): all or none, so a record is never
 /// written with waits that were not measured.
@@ -197,6 +212,7 @@ impl std::fmt::Debug for SwarmBoardHandles {
 /// Every board method this dispatcher serves, by name (#2303).
 pub const BOARD_OPS: &[&str] = &[
     "_status",
+    "_event_cursor",
     "_snapshot",
     "_admit",
     "_activate",
@@ -278,6 +294,21 @@ pub fn call(
     method: &str,
     args: Value,
 ) -> Result<Value, BoardError> {
+    call_as(handles, member, method, args, CallOrigin::Member)
+}
+
+/// [`call`], made for `origin`: a harness read on the member's behalf is
+/// recorded with role `host` (#2279 S15 final review).
+///
+/// # Errors
+/// As [`call`].
+pub fn call_as(
+    handles: &SwarmBoardHandles,
+    member: &str,
+    method: &str,
+    args: Value,
+    origin: CallOrigin,
+) -> Result<Value, BoardError> {
     let started = Instant::now();
     let known = Method::parse(method);
     // While the event log is on: this call's own measure, which is the
@@ -307,7 +338,10 @@ pub fn call(
             (Some(known), Err(_)) => known.level(),
             (None, _) => Level::Mutation,
         },
-        role: known.map_or(Some(BoardRole::Host), Method::role),
+        role: match origin {
+            CallOrigin::Harness => Some(BoardRole::Host),
+            CallOrigin::Member => known.map_or(Some(BoardRole::Host), Method::role),
+        },
         member,
         outcome: answer
             .as_ref()
@@ -315,20 +349,12 @@ pub fn call(
             .map_err(BoardError::kind),
         elapsed: started.elapsed(),
     };
-    match &handles.telemetry {
-        Some(telemetry) => {
-            let caller = match (&answer, known.map(Method::answers_members_only)) {
-                (Ok(_), Some(true)) => Caller::Member,
-                _ => Caller::Unproven,
-            };
-            let actor = telemetry.actors.of(member, caller);
-            trace(&finished, measure.as_ref(), Some(&actor));
-            let served = answer.as_ref().ok().or(committed.as_ref());
-            let observation = observation(&finished, actor, served, measure);
-            telemetry.log.record(observation);
-        }
-        None => trace(&finished, None, None),
-    }
+    let caller = match (&answer, known.map(Method::answers_members_only)) {
+        (Ok(_), Some(true)) => Caller::Member,
+        _ => Caller::Unproven,
+    };
+    let served = answer.as_ref().ok().or(committed.as_ref());
+    records::record(handles, &finished, caller, served, measure);
     answer.map(|served| served.value)
 }
 
@@ -431,6 +457,15 @@ fn serve(
     match method {
         Method::Status => Ok(Served {
             value: status(serving(&*handles.read_run_status, over).execute()?),
+            decision: "read",
+            task_id: None,
+            message_id: None,
+            cursor_moved: None,
+            detail: BoardOpDetail::NONE,
+            refused: None,
+        }),
+        Method::EventCursor => Ok(Served {
+            value: Value::from(serving(&*handles.read_event_cursor, over).execute()?),
             decision: "read",
             task_id: None,
             message_id: None,
@@ -644,6 +679,10 @@ fn take<const N: usize>(arguments: Vec<Value>) -> Result<[Value; N], BoardError>
         )
     })
 }
+
+#[path = "swarm_board_dispatch_records.rs"]
+mod records;
+pub use records::{CallOrigin, refused, signature};
 
 #[path = "swarm_board_dispatch_render.rs"]
 mod render;

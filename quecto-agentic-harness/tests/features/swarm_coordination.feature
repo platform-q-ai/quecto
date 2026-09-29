@@ -185,6 +185,13 @@ Feature: Container swarm coordination
     Then the task row reads the owner as idle for at least 400 seconds with a send contact
     And the swarm tool description says any member may message a task's owner
 
+  Scenario: A worker claims, reserves, submits and the coordinator verifies through structured ops
+    When the coordinator creates a task through a structured op
+    And a worker claims, reserves and submits it through structured ops
+    And the coordinator verifies the submitted task through a structured op
+    Then the swarm task status is "completed"
+    And the verified task's reservation is released
+
   @done @swarm-supervision
   Scenario: A member the coordinator kills is confirmed dead and its work recovered without pausing the run
     When a member the coordinator launched is killed while holding a claim and another member reconciles throughout

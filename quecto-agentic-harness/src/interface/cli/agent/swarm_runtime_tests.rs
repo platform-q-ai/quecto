@@ -317,6 +317,7 @@ fn admitted_child(checkout: &std::path::Path) {
     assert!(swarm_bridge::process_board().is_none(), "nothing bound yet");
     let ctx = crate::interface::cli::CliContext {
         swarm_board: Some(counted),
+        swarm_board_wire: Some(crate::composition::swarm::board_wire()),
         swarm_board_log: Some(crate::composition::swarm::board_op_log),
         ..Default::default()
     };

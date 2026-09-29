@@ -42,17 +42,17 @@ pub(super) fn board_admission(
 /// The refusal for a swarm member whose run composed no board (#2278).
 pub(super) const SWARM_BOARD_NOT_COMPOSED: &str = "agent: swarm board capability not composed\n";
 
-/// The board composition's builders carried on `ctx` make (#2278): it
-/// records in the session's event log when `ctx` also carries
-/// composition's `board_op_log`.
+/// The board composition's builders carried on `ctx` make (#2278), with
+/// composition's codec (#2279): it records in the session's event log
+/// when `ctx` also carries composition's `board_op_log`. Without the
+/// builder or the codec no board is composed.
 pub(super) fn board(ctx: &CliContext) -> Option<swarm_bridge::SwarmBoard> {
-    match (ctx.swarm_board, ctx.swarm_board_log) {
-        (Some(build), Some(session_log)) => Some(swarm_bridge::SwarmBoard::with_session_log(
-            build,
-            session_log,
-        )),
-        (Some(build), None) => Some(swarm_bridge::SwarmBoard::new(build)),
-        (None, _) => None,
+    match (ctx.swarm_board, ctx.swarm_board_wire, ctx.swarm_board_log) {
+        (Some(build), Some(wire), Some(session_log)) => Some(
+            swarm_bridge::SwarmBoard::with_session_log(build, wire, session_log),
+        ),
+        (Some(build), Some(wire), None) => Some(swarm_bridge::SwarmBoard::new(build, wire)),
+        (Some(_), None, _) | (None, _, _) => None,
     }
 }
 

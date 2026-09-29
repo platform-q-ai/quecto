@@ -67,6 +67,7 @@ mod swarm_board_diff_submissions;
 mod swarm_board_diff_tasks;
 mod swarm_board_diff_usage;
 mod swarm_board_diff_wakes;
+mod swarm_board_diff_wire;
 mod swarm_board_mixed;
 mod swarm_board_mixed_harness;
 mod swarm_board_notification_race;

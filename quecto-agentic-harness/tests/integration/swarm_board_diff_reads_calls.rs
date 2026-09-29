@@ -266,6 +266,10 @@ const INTERNAL_HELPERS: [&str; 15] = [
 /// The dispatcher test-only names, which no `Workbench` method has.
 const TEST_ONLY: [&str; 4] = ["create_run", "bootstrap_run", "bootstrap_join", "task_raw"];
 
+/// Dispatcher methods Python's `Workbench` has no counterpart of: the
+/// structured ops' event cursor (#2279), read around a member's call.
+const RUST_ONLY: [&str; 1] = ["_event_cursor"];
+
 /// Every method of Python's `Workbench` (`dir(Workbench)`, filtered to the
 /// callables `swarm.py` and `swarm_tasks.py` define) is a dispatcher
 /// method or a named internal helper, and the dispatcher serves nothing
@@ -275,7 +279,7 @@ fn the_dispatcher_serves_every_workbench_method() {
     let python: BTreeSet<String> = workbench_methods().into_iter().collect();
     let served: BTreeSet<String> = BOARD_OPS
         .iter()
-        .filter(|op| !TEST_ONLY.contains(op))
+        .filter(|op| !TEST_ONLY.contains(op) && !RUST_ONLY.contains(op))
         .chain(INTERNAL_HELPERS.iter())
         .map(|name| (*name).to_owned())
         .collect();
@@ -302,7 +306,7 @@ fn the_advertised_contact_is_a_send_the_board_accepts() {
     run_both(&steps);
     assert_eq!(
         answer(&steps, 5)["contact"],
-        json!("board.send(request, 'worker', body)")
+        json!(r#"{"op":"send","request":...,"recipient":"worker","body":...}"#)
     );
     assert_eq!(answer(&steps, 6)["status"], json!("accepted"));
     let inbox = answer(&steps, 7);

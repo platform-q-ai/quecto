@@ -81,7 +81,10 @@ fn counted_for_context(
 fn a_context_calls_the_board_through_composed_handles_built_once_per_file() {
     let first = tempfile::tempdir().unwrap();
     let second = tempfile::tempdir().unwrap();
-    let board = SwarmBoard::new(counted_for_context as SwarmBoardHandlesBuilder);
+    let board = SwarmBoard::new(
+        counted_for_context as SwarmBoardHandlesBuilder,
+        crate::composition::swarm::board_wire(),
+    );
     let parent = context(first.path(), "parent", board.clone());
     create(&parent);
     assert_eq!(parent.summary().unwrap()["goal"], "ship");
@@ -115,7 +118,10 @@ fn counted_for_bound(
 /// host that reads many boards drops the least recently called file's.
 #[test]
 fn a_board_keeps_the_handles_of_its_most_recently_called_files_only() {
-    let board = SwarmBoard::new(counted_for_bound as SwarmBoardHandlesBuilder);
+    let board = SwarmBoard::new(
+        counted_for_bound as SwarmBoardHandlesBuilder,
+        crate::composition::swarm::board_wire(),
+    );
     let files: Vec<_> = (0..=super::BUILT_FILES)
         .map(|_| tempfile::tempdir().unwrap())
         .collect();
@@ -170,7 +176,10 @@ fn a_hosted_store_reads_through_composed_handles() {
     ));
     let hosted = crate::infrastructure::tools::swarm_bridge::HostedStore::at(
         checkout.path().to_path_buf(),
-        SwarmBoard::new(counted_for_host as SwarmBoardHandlesBuilder),
+        SwarmBoard::new(
+            counted_for_host as SwarmBoardHandlesBuilder,
+            crate::composition::swarm::board_wire(),
+        ),
     );
     let run = hosted.hosted_run().unwrap().expect("a created run");
     assert_eq!(run.coordinator, "parent");
@@ -238,12 +247,19 @@ fn session_log(enabled: bool, _log: &AuditLog) -> Option<Arc<dyn BoardOpLog>> {
 fn a_session_log_is_recorded_in_only_while_the_event_log_is_on() {
     let base = tempfile::tempdir().unwrap();
     let log = AuditLog::open_sync(base.path(), "cli:board").unwrap();
-    let plain = SwarmBoard::new(build_swarm_board_handles);
+    let plain = SwarmBoard::new(
+        build_swarm_board_handles,
+        crate::composition::swarm::board_wire(),
+    );
     assert!(
         !plain.record_in_session(true, &log),
         "no board_op_log composed: nothing to record in"
     );
-    let board = SwarmBoard::with_session_log(build_swarm_board_handles, session_log);
+    let board = SwarmBoard::with_session_log(
+        build_swarm_board_handles,
+        crate::composition::swarm::board_wire(),
+        session_log,
+    );
     assert!(
         !board.record_in_session(false, &log),
         "the event log is off"

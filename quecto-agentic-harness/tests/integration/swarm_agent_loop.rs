@@ -96,6 +96,105 @@ async fn fake_provider_decomposes_resolves_blocker_and_verifies_swarm() {
     assert_eq!(provider.request_count(), 4);
 }
 
+/// #2279 review L3: a structured op whose argument text holds `NaN`,
+/// `Infinity` or `-Infinity` (which Python's `json.loads` reads) never
+/// reaches the swarm tool: the agent loop's `ToolCall::argument_shape`
+/// finds no JSON object in it and the member reads the loop's
+/// invalid-arguments answer, with nothing called on the board. A number
+/// that overflows (`1e400`) or a lone surrogate escape is JSON, so it
+/// reaches the tool, which refuses it before the board.
+#[tokio::test]
+async fn a_non_finite_argument_is_answered_by_the_loop_before_the_tool() {
+    let directory = tempfile::tempdir().unwrap();
+    let workspace = Arc::new(directory.path().to_path_buf());
+    std::fs::create_dir_all(workspace.join(".quecto")).unwrap();
+    let context = SwarmContext {
+        board: quecto::composition::swarm::swarm_board(),
+        lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),
+        checkout: workspace.as_ref().clone(),
+        member: "coordinator".into(),
+    };
+    let log = Arc::new(BoardCalls::default());
+    assert!(context.board.record_in(log.clone()));
+    let tool = SwarmTool::new(
+        workspace.clone(),
+        Arc::new(Sandbox::new(Some(workspace.as_ref().clone()))),
+        SwarmConfig::default(),
+    )
+    .with_context(Some(context));
+    let texts = [
+        r#"{"op": "claim", "task_id": NaN}"#,
+        r#"{"op": "claim", "task_id": Infinity}"#,
+        r#"{"op": "claim", "task_id": -Infinity}"#,
+    ];
+    let reaching = [
+        r#"{"op": "claim", "task_id": 1e400}"#,
+        r#"{"op": "send", "request": "r", "recipient": "w", "body": "\ud800"}"#,
+    ];
+    let mut calls = text_response("");
+    calls.content = None;
+    for (index, text) in texts.iter().chain(&reaching).enumerate() {
+        calls.tool_calls.push(ToolCall {
+            id: format!("swarm-{index}"),
+            name: "swarm".into(),
+            arguments: (*text).to_owned(),
+        });
+    }
+    let provider = Arc::new(MockProvider::new(vec![calls, text_response("done")]));
+    let mut registry = ToolRegistryImpl::new();
+    registry.register(Arc::new(tool));
+    let mut agent = AgentLoopImpl::new(test_config(provider.clone(), Box::new(registry)));
+    let mut messages = vec![Message::user("claim task 1")];
+    agent.process(&mut messages).await.unwrap();
+    let answers: Vec<&str> = messages
+        .iter()
+        .filter(|message| message.role == quecto::domain::message::Role::Tool)
+        .map(|message| message.content.as_str())
+        .collect();
+    assert_eq!(answers.len(), texts.len() + reaching.len(), "{answers:?}");
+    for (answer, text) in answers.iter().zip(texts) {
+        assert!(
+            answer.starts_with(
+                "the arguments for tool 'swarm' were not a JSON object, so it was not run"
+            ) && answer.ends_with(&format!("Received: {text}")),
+            "{answer}"
+        );
+    }
+    for answer in &answers[texts.len()..] {
+        assert!(
+            answer.starts_with(r#"tool error: swarm: "arguments: "#),
+            "{answer}"
+        );
+    }
+    let recorded: Vec<(String, quecto::domain::swarm::BoardOpOutcome)> = log
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|record| (record.op.clone(), record.outcome))
+        .collect();
+    let refused = quecto::domain::swarm::BoardOpOutcome::Refused {
+        kind: quecto::domain::swarm::RefusalKind::Invalid,
+        committed: false,
+    };
+    assert_eq!(
+        recorded,
+        [("claim".to_owned(), refused), ("send".to_owned(), refused)],
+        "only the two texts that reached the tool are recorded, refused"
+    );
+    assert_eq!(provider.request_count(), 2);
+}
+
+/// The board calls recorded, in memory.
+#[derive(Default)]
+struct BoardCalls(std::sync::Mutex<Vec<quecto::domain::swarm::BoardOpObservation>>);
+
+impl quecto::application::swarm::ports::BoardOpLog for BoardCalls {
+    fn record(&self, observation: quecto::domain::swarm::BoardOpObservation) {
+        self.0.lock().unwrap().push(observation);
+    }
+}
+
 #[derive(Debug)]
 struct MockProvider {
     responses: std::sync::Mutex<std::collections::VecDeque<LlmResponse>>,

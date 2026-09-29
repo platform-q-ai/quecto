@@ -13,7 +13,8 @@
 //! is the step's argument text as a JSON string, which the driver parses
 //! with `json.loads` (so Python reads the text the step wrote, not a
 //! re-serialization of it); one line out,
-//! `{"ok": result}`, `{"error": text}` for a `SwarmError`, or
+//! `{"ok": result, "text": json.dumps(result)}` (the result as Python
+//! writes it on the wire, #2279), `{"error": text}` for a `SwarmError`, or
 //! `{"exception": text}` for anything else. Driver-only aliases stand in for
 //! the Rust dispatcher's test names (`create_run` is `create` without its
 //! closing summary, `bootstrap_run` is `_bootstrap` without its join, and
@@ -148,6 +149,8 @@ for _line in sys.stdin:
     except Exception as error:
         _out = {'exception': type(error).__name__ + ': ' + str(error)}
     try:
+        if 'ok' in _out:
+            _out['text'] = json.dumps(_out['ok'])
         _line = json.dumps(_out)
     except Exception as error:
         _line = json.dumps({'exception': 'unwritable result: ' + type(error).__name__ + ': ' + str(error)})
@@ -241,6 +244,18 @@ impl PyBoard {
     /// One board call as `member` at `now`.
     /// `args` is JSON text, parsed on the Python side.
     pub fn call(&mut self, member: &str, method: &str, args: &str, now: f64) -> Outcome {
+        self.call_wire(member, method, args, now).0
+    }
+
+    /// [`Self::call`], with a result's text as Python's `json.dumps`
+    /// writes it (#2279): `None` for a refusal.
+    pub fn call_wire(
+        &mut self,
+        member: &str,
+        method: &str,
+        args: &str,
+        now: f64,
+    ) -> (Outcome, Option<String>) {
         let request = json!([member, method, args, now]).to_string();
         let stdin = self.stdin.as_mut().expect("the driver's stdin is open");
         writeln!(stdin, "{request}").expect("send a call to the Python driver");
@@ -256,7 +271,11 @@ impl PyBoard {
             }
         };
         let answer = python_answer(&line);
-        match (
+        let text = answer
+            .get("text")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let outcome = match (
             answer.get("ok"),
             answer.get("error"),
             answer.get("exception"),
@@ -265,7 +284,8 @@ impl PyBoard {
             (None, Some(Value::String(text)), None) => Outcome::Refused(text.clone()),
             (None, None, Some(Value::String(text))) => Outcome::Raised(text.clone()),
             _ => panic!("the driver answered an unknown shape: {line}"),
-        }
+        };
+        (outcome, text)
     }
 }
 

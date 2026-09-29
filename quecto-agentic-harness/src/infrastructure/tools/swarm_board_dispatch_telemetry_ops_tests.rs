@@ -15,6 +15,7 @@ use std::sync::Arc;
 fn every_method() -> Vec<Method> {
     let all = vec![
         Method::Status,
+        Method::EventCursor,
         Method::Snapshot,
         Method::Admit,
         Method::Activate,
@@ -73,6 +74,7 @@ fn every_method() -> Vec<Method> {
     for method in &all {
         match method {
             Method::Status
+            | Method::EventCursor
             | Method::Snapshot
             | Method::Admit
             | Method::Activate
@@ -193,7 +195,7 @@ fn acted_on(
         call(handles, "parent", "stop", json!(["blocked", "why"])).unwrap();
     };
     match method {
-        Method::Status | Method::Snapshot => (json!([]), None, None, None),
+        Method::Status | Method::EventCursor | Method::Snapshot => (json!([]), None, None, None),
         Method::Admit => (json!(["worker", "r1"]), None, None, None),
         Method::Activate => {
             admitted();

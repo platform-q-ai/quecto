@@ -17,26 +17,66 @@ pub(super) const VALID_OPS: &[&str] = &[
     "status",
     "output",
     "cancel",
+    // The structured board ops (#2279), `swarm_board_ops::BOARD_OPS`.
+    "task",
+    "tasks",
+    "file_owners",
+    "task_create",
+    "dependencies",
+    "claim",
+    "release",
+    "block",
+    "unblock",
+    "submit",
+    "reserve",
+    "release_files",
+    "send",
+    "withdraw",
+    "inbox",
+    "ack",
+    "evidence",
+    "amend",
+    "verify_task",
+    "revalidate_task",
+    "recover",
+    "revoke",
+    "complete",
+    "stop",
+    "usage_report",
 ];
+
+/// The harness op `usage` as a refusal allows it (#2279 review N9): not
+/// its board-op alias `usage_report`, which the running gate refuses.
+const USAGE: &str = "usage (op=usage; the board op usage_report needs a running run)";
 
 /// Why `op=run` is refused while the run is in `status` (anything but
 /// running; `None` when the status could not be read).
 pub(super) fn run_refused(status: Option<&str>) -> String {
+    op_refused("run", status)
+}
+
+/// Why `op` (`run`, or a structured board op, #2279, which keeps
+/// `op=run`'s running gate by owner decision) is refused while the run is
+/// in `status` (anything but running; `None` when the status could not be
+/// read).
+pub(crate) fn op_refused(op: &str, status: Option<&str>) -> String {
     match status {
-        Some("setup") => "no swarm run exists yet (status setup), so op=run is unavailable. \
-             Next: swarm {\"op\":\"create\",\"goal\":\"...\",\"constraints\":[],\"criteria\":\
-             [{\"id\":\"tests\",\"kind\":\"command\",\"description\":\"...\"}],\
-             \"member_limit\":3,\"deadline_in_seconds\":3600}. Allowed now: create, summary, \
-             events, usage, usage_budget, reconcile."
-            .to_string(),
-        Some("paused") => "the swarm run is paused, so op=run is unavailable. Allowed: \
-             summary, events, usage, reconcile; the coordinator may also usage_budget and \
+        Some("setup") => format!(
+            "no swarm run exists yet (status setup), so op={op} is unavailable. \
+             Next: swarm {{\"op\":\"create\",\"goal\":\"...\",\"constraints\":[],\"criteria\":\
+             [{{\"id\":\"tests\",\"kind\":\"command\",\"description\":\"...\"}}],\
+             \"member_limit\":3,\"deadline_in_seconds\":3600}}. Allowed now: create, summary, \
+             events, {USAGE}, usage_budget, reconcile."
+        ),
+        Some("paused") => format!(
+            "the swarm run is paused, so op={op} is unavailable. Allowed: \
+             summary, events, {USAGE}, reconcile; the coordinator may also usage_budget and \
              cancel_run; the supervisor outside the swarm resumes or closes it (agent_cmd \
              swarm_control)."
-            .to_string(),
+        ),
         Some(ended) => format!(
-            "the swarm run is {ended}, so op=run is unavailable. Allowed: summary, events, \
-             usage; report the outcome from the summary."
+            "the swarm run is {ended}, so op={op} is unavailable. Allowed: summary, events, \
+             {USAGE}; report the outcome from the summary."
         ),
         None => "the swarm run status could not be read; call op=summary.".to_string(),
     }
@@ -44,18 +84,24 @@ pub(super) fn run_refused(status: Option<&str>) -> String {
 
 /// Why `op=run` is refused once the running run's deadline has passed.
 pub(super) fn deadline_passed() -> String {
-    "the swarm run's deadline has passed (budget-exhausted), so op=run is unavailable. \
-     Allowed: summary, events, usage; the supervisor outside the swarm grants more time \
-     (agent_cmd swarm_control extend)."
-        .to_string()
+    op_deadline_passed("run")
+}
+
+/// Why `op` is refused once the running run's deadline has passed.
+pub(crate) fn op_deadline_passed(op: &str) -> String {
+    format!(
+        "the swarm run's deadline has passed (budget-exhausted), so op={op} is unavailable. \
+         Allowed: summary, events, {USAGE}; the supervisor outside the swarm grants more time \
+         (agent_cmd swarm_control extend)."
+    )
 }
 
 /// The refusal for an op the tool does not have.
 pub(super) fn unknown_op(op: &str) -> String {
     format!(
-        "unknown op {op}; valid ops: {}. To end a run, the coordinator calls \
-         board.stop(status, reason) or board.complete(revision) via op=run; op=cancel_run \
-         cancels it for the parent or user.",
+        "unknown op {op}; valid ops: {}. To end a run, the coordinator calls op=stop \
+         (status, reason) or op=complete (revision); op=cancel_run cancels it for the parent \
+         or user.",
         VALID_OPS.join(", ")
     )
 }

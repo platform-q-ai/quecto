@@ -80,13 +80,17 @@ fn a_page_reads_its_owners_liveness_in_one_grouped_scan() {
         (
             "active",
             Some(json!(250.0)),
-            Some(json!("board.send(request, 'worker', body)")),
+            Some(json!(
+                r#"{"op":"send","request":...,"recipient":"worker","body":...}"#
+            )),
             None,
         ),
         (
             "idle",
             Some(json!(350.0)),
-            Some(json!("board.send(request, 'quiet', body)")),
+            Some(json!(
+                r#"{"op":"send","request":...,"recipient":"quiet","body":...}"#
+            )),
             None,
         ),
         (

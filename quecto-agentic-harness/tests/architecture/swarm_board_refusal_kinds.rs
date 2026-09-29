@@ -630,7 +630,7 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "Calling",
     ),
     (
-        "src/infrastructure/tools/swarm_board_dispatch.rs:call",
+        "src/infrastructure/tools/swarm_board_dispatch.rs:call_as",
         "swarm board has no method {method}",
         "Calling",
     ),
