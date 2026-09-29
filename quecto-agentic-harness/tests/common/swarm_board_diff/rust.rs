@@ -57,6 +57,12 @@ impl BoardOpLog for RecordedOps {
 
     /// No summary this test checks is written.
     fn summarize(&self, _summary: quecto::domain::swarm::SwarmRunSummary) {}
+
+    fn dropped(&self, _records: u64) {}
+
+    fn take_unnoted(&self) -> u64 {
+        0
+    }
 }
 
 impl RecordedOps {

@@ -206,6 +206,12 @@ impl crate::application::swarm::ports::BoardOpLog for Summaries {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push(summary);
     }
+
+    fn dropped(&self, _records: u64) {}
+
+    fn take_unnoted(&self) -> u64 {
+        0
+    }
 }
 
 impl Summaries {

@@ -648,4 +648,16 @@ pub trait BoardOpLog: Send + Sync {
     /// record: synchronously, never panicking, a failed write the
     /// adapter's to report.
     fn summarize(&self, summary: SwarmRunSummary);
+
+    /// Notes that `records` were dropped before they reached this log
+    /// (#2313 review L4: held past their bound before the session's log
+    /// opened, or counted by the log this one replaced): written as the
+    /// log's drop note, as synchronously and safely as a record.
+    fn dropped(&self, records: u64);
+
+    /// The records this log dropped and has not noted yet, taken (the
+    /// count restarts): handed to the log that replaces it on a session
+    /// switch (#2313 review nit), so no drop is lost with the departing
+    /// log.
+    fn take_unnoted(&self) -> u64;
 }

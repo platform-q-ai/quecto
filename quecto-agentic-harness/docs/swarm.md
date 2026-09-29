@@ -953,13 +953,17 @@ jq -c 'select(.event == "swarm_run_summary" and .run_id == "<run id>")' ~/.quect
 
 The board's records are written to the current session's log: when the
 harness switches session, its board calls are recorded in the arriving
-session's log from then on, as the agent's own records are.
+session's log from then on, as the agent's own records are. Records the
+departing log dropped at its write gate and had not noted yet are noted in the
+arriving log's first `swarm_ops_dropped` line.
 
 A swarm member decides whether the event log is on before its admission, from
 the configuration its build then loads (the same layers and `QUECTO_*`
 overrides, without asking to trust an overlay). When it is on, the admission's
 own board calls (`_status`, `_bootstrap`, `_activate`) are measured and held,
-at most 64, and written first once the session's log opens; when it is off,
+at most 64, and written first once the session's log opens, followed by a
+`swarm_ops_dropped` line counting any held past the 64 (a board call made while
+they are written waits for none of them, and lands after them); when it is off,
 or the session opens no log, nothing is measured or written. A
 `--backend claude-code` member opens no event log of its own, so its
 admission's calls leave `tracing` records only.

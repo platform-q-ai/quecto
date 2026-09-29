@@ -150,6 +150,31 @@ impl BoardOpLog for EventLogBoardOps {
             Err(error) => self.warn(&error),
         }
     }
+
+    /// One `swarm_ops_dropped` line for `records` and the drops not noted
+    /// yet, now; held off at the gate, they wait for the next record.
+    fn dropped(&self, records: u64) {
+        let unnoted = self
+            .dropped
+            .swap(0, Ordering::AcqRel)
+            .saturating_add(records);
+        if unnoted == 0 {
+            return;
+        }
+        let note = AuditEvent::SwarmOpsDropped { dropped: unnoted };
+        match self.line.append(None, vec![note], self.gate_wait) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                self.count_dropped(unnoted);
+                self.warn(&error);
+            }
+            Err(error) => self.warn(&error),
+        }
+    }
+
+    fn take_unnoted(&self) -> u64 {
+        self.dropped.swap(0, Ordering::AcqRel)
+    }
 }
 
 #[cfg(test)]

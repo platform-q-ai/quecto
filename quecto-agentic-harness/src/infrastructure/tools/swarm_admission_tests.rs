@@ -33,6 +33,12 @@ impl BoardOpLog for SlowLog {
 
     /// No summary this test checks is written.
     fn summarize(&self, _summary: crate::domain::swarm::SwarmRunSummary) {}
+
+    fn dropped(&self, _records: u64) {}
+
+    fn take_unnoted(&self) -> u64 {
+        0
+    }
 }
 
 impl SlowLog {

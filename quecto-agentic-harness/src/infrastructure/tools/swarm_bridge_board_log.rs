@@ -5,10 +5,14 @@
 //! [`SessionLog`] is the one log every handle the board builds records in.
 //! It forwards each record to the session's event log it is bound to, and
 //! is rebound, not rebuilt, when the session switches, so the records
-//! follow the session. Bound only once the session's log is open, it holds
-//! what it is given before then (the admission's own calls, measured only
-//! when the event log was decided on before admission, owner decision T1),
-//! at most [`PENDING_RECORDS`], and writes them first when it is bound.
+//! follow the session; the drops the departing log had not noted yet are
+//! noted in the arriving one. Bound only once the session's log is open,
+//! it holds what it is given before then (the admission's own calls,
+//! measured only when the event log was decided on before admission, owner
+//! decision T1), at most [`PENDING_RECORDS`], and writes them first when it
+//! is bound, then a `swarm_ops_dropped` note of those past the bound. The
+//! held records are written outside the binding's lock (#2313 review L4):
+//! a record made meanwhile is queued behind them, never blocked on them.
 //!
 //! [`RunFold`] folds each record of one board file's run
 //! ([`RunSummaryFold`]) on its way to the session log, and writes the run's
@@ -18,9 +22,10 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
+use serde_json::Value;
+
 use crate::application::swarm::ports::BoardOpLog;
 use crate::domain::swarm::telemetry::board_run_id;
-use serde_json::Value;
 
 use crate::domain::swarm::{
     BoardOpObservation, MemberUsage, MessageTotals, RunSummaryFold, RunTotals, SwarmRunSummary,
@@ -40,8 +45,29 @@ enum Held {
     Summary(SwarmRunSummary),
 }
 
+impl Held {
+    fn write_to(self, log: &dyn BoardOpLog) {
+        match self {
+            Self::Op(observation) => log.record(observation),
+            Self::Summary(summary) => log.summarize(summary),
+        }
+    }
+}
+
 enum Binding {
-    Pending { held: Vec<Held>, dropped: u64 },
+    /// No log yet: the records are held, and those past the bound counted.
+    Pending {
+        held: Vec<Held>,
+        dropped: u64,
+    },
+    /// Bound to `log`, whose held records one caller is writing outside
+    /// the lock: a record made meanwhile is queued behind them (bounded as
+    /// held records are).
+    Flushing {
+        log: Arc<dyn BoardOpLog>,
+        queued: Vec<Held>,
+        dropped: u64,
+    },
     Bound(Arc<dyn BoardOpLog>),
 }
 
@@ -61,26 +87,96 @@ impl SessionLog {
         }
     }
 
-    /// Records in `log` from now on; the records held until now are
-    /// written to it first, in order, before any later record.
+    /// Records in `log` from now on. The records held until now are
+    /// written to it first, in order, before any later record, and outside
+    /// the lock, so a record made meanwhile is not blocked (#2313 review
+    /// L4); then a note of those dropped while held. A log it replaces
+    /// hands over the drops it had not noted yet.
     pub(super) fn bind(&self, log: Arc<dyn BoardOpLog>) {
-        let mut binding = self.held();
-        if let Binding::Pending { held, dropped } = &mut *binding {
-            if *dropped > 0 {
+        let (held, dropped, replaced) = {
+            let mut binding = self.held();
+            let previous = std::mem::replace(&mut *binding, Binding::Bound(log.clone()));
+            match previous {
+                Binding::Pending { held, dropped } => {
+                    // Bound at once when nothing was held; flushed first
+                    // otherwise.
+                    if !held.is_empty() || dropped > 0 {
+                        *binding = Binding::Flushing {
+                            log: log.clone(),
+                            queued: Vec::new(),
+                            dropped: 0,
+                        };
+                    }
+                    (held, dropped, None)
+                }
+                // Another caller is flushing: it writes what is queued to
+                // `log` from now on.
+                Binding::Flushing {
+                    log: departing,
+                    queued,
+                    dropped,
+                } => {
+                    *binding = Binding::Flushing {
+                        log: log.clone(),
+                        queued,
+                        dropped,
+                    };
+                    (Vec::new(), 0, Some(departing))
+                }
+                Binding::Bound(departing) => (Vec::new(), 0, Some(departing)),
+            }
+        };
+        if let Some(departing) = replaced {
+            let unnoted = departing.take_unnoted();
+            if unnoted > 0 {
+                log.dropped(unnoted);
+            }
+        }
+        if !held.is_empty() || dropped > 0 {
+            self.flush(log, held, dropped);
+        }
+    }
+
+    /// Writes `held` to `log`, then notes `dropped`, and again whatever was
+    /// queued meanwhile (to the log bound by then), until nothing is left
+    /// and the binding is plainly bound.
+    fn flush(&self, mut log: Arc<dyn BoardOpLog>, mut held: Vec<Held>, mut dropped: u64) {
+        loop {
+            if dropped > 0 {
                 tracing::warn!(
                     target: TELEMETRY_TARGET,
-                    dropped = *dropped,
+                    dropped,
                     "swarm board records made before the event log opened were dropped"
                 );
             }
-            for record in held.drain(..) {
-                match record {
-                    Held::Op(observation) => log.record(observation),
-                    Held::Summary(summary) => log.summarize(summary),
+            for record in held {
+                record.write_to(&*log);
+            }
+            if dropped > 0 {
+                log.dropped(dropped);
+            }
+            let mut binding = self.held();
+            match &mut *binding {
+                Binding::Flushing {
+                    log: bound,
+                    queued,
+                    dropped: queued_dropped,
+                } => {
+                    if queued.is_empty() && *queued_dropped == 0 {
+                        *binding = Binding::Bound(bound.clone());
+                        return;
+                    }
+                    log = bound.clone();
+                    held = std::mem::take(queued);
+                    dropped = std::mem::take(queued_dropped);
+                }
+                // Only the flushing caller leaves the flushing state.
+                Binding::Pending { .. } | Binding::Bound(_) => {
+                    debug_assert!(false, "a flush ends only its own flushing state");
+                    return;
                 }
             }
         }
-        *binding = Binding::Bound(log);
     }
 
     /// Writes `record` to the bound log (outside the lock), or holds it.
@@ -89,7 +185,12 @@ impl SessionLog {
             let mut binding = self.held();
             match &mut *binding {
                 Binding::Bound(log) => log.clone(),
-                Binding::Pending { held, dropped } => {
+                Binding::Pending { held, dropped }
+                | Binding::Flushing {
+                    queued: held,
+                    dropped,
+                    ..
+                } => {
                     match held.len() < PENDING_RECORDS {
                         true => held.push(record),
                         false => *dropped = dropped.saturating_add(1),
@@ -102,10 +203,7 @@ impl SessionLog {
                 }
             }
         };
-        match record {
-            Held::Op(observation) => log.record(observation),
-            Held::Summary(summary) => log.summarize(summary),
-        }
+        record.write_to(&*log);
     }
 
     /// The binding, also after a panic elsewhere left the lock poisoned:
@@ -122,6 +220,33 @@ impl BoardOpLog for SessionLog {
 
     fn summarize(&self, summary: SwarmRunSummary) {
         self.write(Held::Summary(summary));
+    }
+
+    /// Noted in the bound log, or counted with the held records' drops.
+    fn dropped(&self, records: u64) {
+        let log = {
+            let mut binding = self.held();
+            match &mut *binding {
+                Binding::Bound(log) => log.clone(),
+                Binding::Pending { dropped, .. } | Binding::Flushing { dropped, .. } => {
+                    *dropped = dropped.saturating_add(records);
+                    return;
+                }
+            }
+        };
+        log.dropped(records);
+    }
+
+    /// The bound log's unnoted drops, and the held records' drops.
+    fn take_unnoted(&self) -> u64 {
+        let mut binding = self.held();
+        match &mut *binding {
+            Binding::Bound(log) => log.take_unnoted(),
+            Binding::Pending { dropped, .. } => std::mem::take(dropped),
+            Binding::Flushing { log, dropped, .. } => {
+                std::mem::take(dropped).saturating_add(log.take_unnoted())
+            }
+        }
     }
 }
 
@@ -223,6 +348,14 @@ impl BoardOpLog for RunFold {
 
     fn summarize(&self, summary: SwarmRunSummary) {
         self.log.summarize(summary);
+    }
+
+    fn dropped(&self, records: u64) {
+        self.log.dropped(records);
+    }
+
+    fn take_unnoted(&self) -> u64 {
+        self.log.take_unnoted()
     }
 }
 

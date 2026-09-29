@@ -462,6 +462,12 @@ impl quecto::application::swarm::ports::BoardOpLog for BoardCalls {
 
     /// No summary this test checks is written.
     fn summarize(&self, _summary: quecto::domain::swarm::SwarmRunSummary) {}
+
+    fn dropped(&self, _records: u64) {}
+
+    fn take_unnoted(&self) -> u64 {
+        0
+    }
 }
 
 /// Answers request `n` with `STEPS[n]`'s tool call, built from the answers

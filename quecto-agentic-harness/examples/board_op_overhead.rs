@@ -49,6 +49,12 @@ impl BoardOpLog for Discarded {
     fn summarize(&self, summary: quecto::domain::swarm::SwarmRunSummary) {
         std::hint::black_box(summary);
     }
+
+    fn dropped(&self, _records: u64) {}
+
+    fn take_unnoted(&self) -> u64 {
+        0
+    }
 }
 
 /// How an arm records.
