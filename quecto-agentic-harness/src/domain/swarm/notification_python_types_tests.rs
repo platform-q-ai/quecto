@@ -296,6 +296,33 @@ fn a_null_coordinator_wakes_nobody_and_does_not_sort_beside_a_name() {
     );
 }
 
+/// A name added before the NULL coordinator: Python's set can then iterate
+/// `None` second and name `'NoneType' and 'str'` (seed-dependent). The board
+/// raises the same TypeError with its one fixed text; the error itself,
+/// not its operand order, is what matches Python.
+#[test]
+fn a_null_coordinator_after_a_name_raises_the_one_fixed_sort_error() {
+    let run = RunRecord {
+        coordinator: None,
+        ..run()
+    };
+    let members = live(&["parent", "worker"]);
+    let board = state(Vec::new(), &[1]);
+    let name_first = [
+        event(
+            "message_accepted",
+            json!({"message": 1, "recipient": "parent"}),
+        ),
+        event("evidence", json!({})),
+    ];
+    assert_eq!(
+        notification_targets(&run, "worker", &members, &name_first, &board)
+            .expect_err("Python raises TypeError whatever the set order")
+            .to_string(),
+        "'<' not supported between instances of 'str' and 'NoneType'"
+    );
+}
+
 /// With a NULL coordinator, `free - {None}` and `takers - {None}` remove
 /// nobody: every free member takes ready work, ownership events included.
 #[test]

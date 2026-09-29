@@ -324,10 +324,17 @@ fn python_type(value: &Value) -> &'static str {
 
 /// The TypeError Python's `sorted(targets)` raises when the target set mixes
 /// kinds that do not order against each other: numbers (`int`, `bool`,
-/// `float`), `None` and strings. With `None` in the set (hashed to a
-/// constant since CPython 3.12) Python compares `str < None` when a name is
-/// present, else `number < None`; without it, the stray number against a
-/// string, whose order Python's hash-seeded set iteration decides.
+/// `float`), `None` and strings. Which pair Python names depends on the
+/// set's iteration order, which its hash seed and insertion order decide:
+/// with `None` in the set (hashed to a constant since CPython 3.12) it
+/// usually iterates first and Python compares `str < None`, but a name
+/// inserted first can take its slot, and then Python compares `None < str`
+/// (34 of 200 seeds when a message to a name precedes the `None`). The
+/// board fixes one text per case: `str`/`NoneType` beside a name,
+/// `number`/`NoneType` beside a number, the stray number against a string
+/// without `None`. The error is certain; only its operand order can differ
+/// from a given Python process, and only for values the board never writes
+/// (a NULL coordinator or a non-string recipient in an edited file).
 fn sort_error(named: bool, strays: &[&'static str]) -> Option<String> {
     let numeric = strays
         .iter()
