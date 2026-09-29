@@ -23,7 +23,8 @@
 //!    wake hints), and any delivery warnings ride the answer. A read-only
 //!    op ([`READ_ONLY_OPS`]) reads neither.
 //! 4. The answer is written as Python's `json.dumps` writes it
-//!    ([`wire_text`]); a board refusal keeps its `swarm: "<text>"`.
+//!    ([`wire_text`]); a board refusal keeps its `swarm: "<text>"`, the
+//!    lifecycle's notes (when there are any) on the line after it.
 //!
 //! Every op leaves the dispatcher's `swarm_op` records (a refusal before
 //! the board is recorded as the op's own) and one `tracing` record on
@@ -544,15 +545,22 @@ async fn lifecycle(
 /// The board's answer, with the lifecycle's notes: added to an answer that
 /// is an object, else beside it as `{"result": answer, …}` (only when there
 /// are notes, so an answer is otherwise exactly the board method's). A
-/// refusal is answered as the board refused it.
+/// refusal is answered as the board refused it, the notes (when there are
+/// any) on the line after it (#2279 review L4: `op=run` keeps them
+/// whatever the outcome).
 fn answered(
     wire: &BoardWire,
     answer: Result<Value, DomainError>,
     notes: Map<String, Value>,
 ) -> Result<ToolResult, DomainError> {
-    let value = match answer {
-        Ok(value) => value,
-        Err(refusal) => return tool_err(refusal.to_string()),
+    let value = match (answer, notes.is_empty()) {
+        (Ok(value), _) => value,
+        (Err(refusal), true) => return tool_err(refusal.to_string()),
+        (Err(refusal), false) => {
+            let written = wire_text(wire, &Value::Object(notes))
+                .unwrap_or_else(|error| format!("the notes cannot be written: {error}"));
+            return tool_err(format!("{refusal}\n{written}"));
+        }
     };
     let value = match (value, notes.is_empty()) {
         (value, true) => value,
