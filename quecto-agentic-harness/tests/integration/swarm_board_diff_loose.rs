@@ -102,7 +102,10 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   detail, or a member's launcher, only an edit holds; a detail that is
 ///   not JSON text, or NULL, met by `_quarantine`, is refused as a store
 ///   failure where Python raises a `JSONDecodeError` or a `TypeError`; and
-///   an owner's latest event time the owner liveness measures from): see
+///   an owner's latest event time the owner liveness measures from, refused
+///   wherever an owned task makes the board read it, where Python raises
+///   only for an owned task on the page it answers and so answers a
+///   `summary` whose owned task is past its first 50): see
 ///   `swarm_board_diff_loose_loss.rs` and `swarm_board_diff_loose_reads.rs`,
 ///   which also pins `outside_edited_task_columns` for `summary`'s counts.
 /// - `outside_edited_contract` (#2273, listed case by case and pinned in

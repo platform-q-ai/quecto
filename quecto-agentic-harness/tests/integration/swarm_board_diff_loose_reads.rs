@@ -11,8 +11,12 @@
 //!   describes it, for `events`' cursor and `tasks`' offset.
 //! - `outside_edited_loss_records`, as `swarm_board_diff_loose_loss.rs`
 //!   describes it, for the owner liveness too: an owner's latest event
-//!   time that is not a number is refused naming the record, where Python
-//!   raises `TypeError`.
+//!   time that is not a number is refused naming the record wherever an
+//!   owned task makes the board read it. Python raises `TypeError` only
+//!   where it subtracts the time, for an owned task on the page it answers
+//!   (`task`, `tasks`, or `summary`'s first 50); its liveness watch reads
+//!   such an owner as `unknown`, so a `summary` whose owned task is 51st or
+//!   later answers, where the Rust board refuses (#2277 final review L3).
 use serde_json::json;
 
 use crate::swarm_board_diff_membership::at;
@@ -69,7 +73,9 @@ fn outside_edited_task_columns() {
 }
 
 /// An owner's latest event time an edit made text: Python subtracts it
-/// and raises; the Rust board refuses the record.
+/// and raises for an owned task on the page it answers, and answers a
+/// summary whose owned task is past its first 50; the Rust board refuses
+/// the record in both.
 #[test]
 fn outside_edited_loss_records() {
     let steps = joined([
