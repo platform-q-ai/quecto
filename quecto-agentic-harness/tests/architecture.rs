@@ -45,6 +45,10 @@ mod sessions_epic_close;
 mod sessions_epic_close_retirement;
 /// Epic #1929 close (#1940): process-effect allowlist, no-pid teardown,
 /// retired-name sweep, single owners and whole-crate layer baselines.
+/// No caller code on the supervisor's runtime except the termination
+/// protocol (#1935; #2286).
+#[path = "architecture/supervisor_runtime.rs"]
+mod supervisor_runtime;
 #[path = "architecture/teardown_authority.rs"]
 mod teardown_authority;
 #[path = "architecture/teardown_layers.rs"]
@@ -1400,6 +1404,23 @@ fn application_path_allowed(path: &str) -> bool {
             "dto",
             "AuthorityReport" | "AuthorityGroupReport" | "ResetReport"
             | "AuthorityAdminError",
+            ..,
+        ] => true,
+        // The claude process adapter (#2286) implements the external-agent
+        // capability's process ports in their own launch and exit
+        // vocabulary: the spec it is given, the credential it hands on,
+        // and the errors, exit and stderr bound it answers with.
+        [
+            "crate",
+            "application",
+            "external_agent",
+            "dto",
+            "ExternalAgentLaunchSpec"
+            | "CredentialEnv"
+            | "ExternalAgentLaunchError"
+            | "ExternalAgentInputError"
+            | "ExternalAgentExit"
+            | "EXTERNAL_AGENT_STDERR_TAIL_BYTES",
             ..,
         ] => true,
         ["crate", "application", ..] => false,
@@ -4862,6 +4883,9 @@ const SUBAGENT_PROCESS_MODULES: &[&str] = &[
     "src/composition/subagent_teardown.rs",
     "src/composition/subagent_lifecycle.rs",
     "src/composition/environments.rs",
+    // The claude member process adapter (#2286) spawns through the
+    // supervisor and never holds or signals its child.
+    "src/infrastructure/external_agents/claude_code/process.rs",
 ];
 
 /// A source file with every `#[cfg(test)]`-gated item removed (see
@@ -4977,6 +5001,9 @@ fn processes_dependency_allowed(file: &str, path: &str) -> bool {
         | ["crate", "application", "environments", "ports" | "dto", ..]
         | ["crate", "infrastructure", "processes", ..]
         | ["crate", "infrastructure", "tools", "subagent_registry", ..] => true,
+        // A lone `crate` is a `pub(crate)` visibility, not a dependency: the
+        // supervisor's termination observation is crate-private (#2286).
+        ["crate"] => true,
         ["crate", "application", "admission", "ports", ..]
         | ["crate", "infrastructure", "atomic_write", ..]
         | ["crate", "infrastructure", "tools", "path_utils", ..] => {
@@ -5011,6 +5038,7 @@ fn process_adapters_depend_only_inward() {
         "crate::application::subagents::ports::DirectChildRouting",
         "super::owned_child_supervisor::ProtocolOutcome",
         "tokio::sync::watch",
+        "crate",
     ] {
         assert!(
             processes_dependency_allowed("owned_child_supervisor.rs", dep),
@@ -5719,6 +5747,12 @@ fn external_agent_application_dependency_allowed(path: &str) -> bool {
             | "option" | "result" | "num" | "borrow" | "convert" | "default",
             ..,
         ] => true,
+        // Its errors implement `std::error::Error`, and name nothing else
+        // of `std::error` (#2286 review).
+        ["std", "error", "Error"] => true,
+        // The process ports (#2286): boxed futures, and the path values
+        // a launch spec carries (never a filesystem call).
+        ["std", "future", "Future"] | ["std", "pin", "Pin"] | ["std", "path", "PathBuf"] => true,
         // A name already in scope (prelude, local item or checked import)
         // and an associated item of one (`Self::…`, `MessageRole::User`).
         [single] => single.starts_with(char::is_alphabetic),
@@ -5751,6 +5785,10 @@ fn external_agent_application_depends_only_inward() {
         "serde_json::from_str",
         "tracing::warn",
         "libc::kill",
+        "std::path::Path::exists",
+        "std::future::ready",
+        "futures::Stream",
+        "std::error::request_ref",
     ] {
         assert!(
             !external_agent_application_dependency_allowed(dep),
@@ -5764,12 +5802,124 @@ fn external_agent_application_depends_only_inward() {
         "std::collections::VecDeque",
         "String",
         "Self::Idle",
+        "std::future::Future",
+        "std::pin::Pin",
+        "std::path::PathBuf",
+        "std::error::Error",
     ] {
         assert!(
             external_agent_application_dependency_allowed(dep),
             "external_agent guard must accept {dep}"
         );
     }
+}
+
+/// The ports the external-agent capability declares (#2286), and nothing
+/// else. Later slices of epic #2284 append theirs.
+const EXTERNAL_AGENT_PORTS: &[&str] = &["ExternalAgentLauncher", "ExternalAgentProcess"];
+
+#[test]
+fn external_agent_ports_are_capability_local_and_contracted() {
+    let ports_path = "src/application/external_agent/ports.rs";
+    let mut actual = declared_pub_traits(ports_path);
+    let mut expected: Vec<String> = EXTERNAL_AGENT_PORTS.iter().map(|p| p.to_string()).collect();
+    actual.sort();
+    expected.sort();
+    assert_eq!(
+        actual, expected,
+        "{ports_path} must declare exactly EXTERNAL_AGENT_PORTS"
+    );
+    let mut files = Vec::new();
+    collect_rs_files(Path::new("src"), &mut files);
+    for file in &files {
+        let (path, source) = file.split_once(":\n").expect("a file entry");
+        if path == ports_path {
+            continue;
+        }
+        for port in EXTERNAL_AGENT_PORTS {
+            assert!(
+                !source.contains(&format!("trait {port}")),
+                "{path} redeclares external-agent port {port}"
+            );
+        }
+    }
+    let contracts = active_contract_modules();
+    for port in EXTERNAL_AGENT_PORTS {
+        assert!(
+            contracts.contains(&to_snake_case(port)),
+            "{port} has no contract suite tests/contracts/{}.rs",
+            to_snake_case(port)
+        );
+    }
+    // The process ports' vocabulary is the capability's DTOs, not the
+    // ports' (or an adapter's) own types: each is declared exactly once,
+    // under `application/external_agent/dto/`.
+    for (name, declared_in) in external_agent_process_dto_declarations(&files) {
+        assert_eq!(
+            declared_in.len(),
+            1,
+            "{name} is declared exactly once: {declared_in:?}"
+        );
+        assert!(
+            declared_in[0].starts_with("src/application/external_agent/dto/"),
+            "{name} is an external-agent application DTO, not {}",
+            declared_in[0]
+        );
+    }
+}
+
+/// The types the external-agent process ports take and answer (#2286).
+const EXTERNAL_AGENT_PROCESS_DTOS: &[&str] = &[
+    "ExternalAgentLaunchSpec",
+    "CredentialEnv",
+    "ExternalAgentLaunchError",
+    "ExternalAgentInputError",
+    "ExternalAgentExit",
+];
+
+/// Where each of [`EXTERNAL_AGENT_PROCESS_DTOS`] is declared as a
+/// `struct`, `enum` or `type` (at any module depth), by syn.
+fn external_agent_process_dto_declarations(files: &[String]) -> Vec<(&'static str, Vec<String>)> {
+    struct Declared<'a> {
+        path: &'a str,
+        found: Vec<(String, String)>,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for Declared<'_> {
+        fn visit_item_struct(&mut self, item: &'ast syn::ItemStruct) {
+            self.found
+                .push((item.ident.to_string(), self.path.to_string()));
+        }
+        fn visit_item_enum(&mut self, item: &'ast syn::ItemEnum) {
+            self.found
+                .push((item.ident.to_string(), self.path.to_string()));
+        }
+        fn visit_item_type(&mut self, item: &'ast syn::ItemType) {
+            self.found
+                .push((item.ident.to_string(), self.path.to_string()));
+        }
+    }
+    let mut found = Vec::new();
+    for file in files {
+        let (path, source) = file.split_once(":\n").expect("a file entry");
+        let syntax = syn::parse_file(source).unwrap_or_else(|e| panic!("{path}: {e}"));
+        let mut visitor = Declared {
+            path,
+            found: Vec::new(),
+        };
+        syn::visit::Visit::visit_file(&mut visitor, &syntax);
+        found.extend(visitor.found);
+    }
+    EXTERNAL_AGENT_PROCESS_DTOS
+        .iter()
+        .map(|name| {
+            let declared_in = found
+                .iter()
+                .filter(|(ident, _)| ident == name)
+                .map(|(_, path)| path.clone())
+                .collect();
+            (*name, declared_in)
+        })
+        .collect()
 }
 
 /// The domain keeps only pure environment entities, transitions and

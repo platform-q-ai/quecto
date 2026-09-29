@@ -235,9 +235,17 @@ const PROCESS_EFFECT_PATTERNS: &[&str] = &[
 const PROCESS_EFFECT_ALLOWLIST: &[(&str, &[&str], &str)] = &[
     (
         "src/infrastructure/processes/owned_child_supervisor.rs",
-        &["libc::kill", "kill(", "libc::SIGKILL", "libc::SIGTERM"],
+        &[
+            "libc::kill",
+            "kill(",
+            "process_group(",
+            "libc::SIGKILL",
+            "libc::SIGTERM",
+        ],
         "slice B (#1935): the one owner of a directly launched, unreaped Child; \
-         TERM/KILL through its retained handle only",
+         TERM/KILL through its retained handle only, and the own process group \
+         a `ProcessGroup::Own` spawn is made to lead (#2286: moved here from \
+         spawn_container.rs, so no caller sets up a group itself)",
     ),
     (
         "src/infrastructure/processes/parent_death_signal.rs",
@@ -302,12 +310,6 @@ const PROCESS_EFFECT_ALLOWLIST: &[(&str, &[&str], &str)] = &[
         "src/infrastructure/tools/find_fd.rs",
         &["start_kill", "kill_on_drop"],
         "tool invocation containment: the find tool's own `fd` Child on a cap",
-    ),
-    (
-        "src/infrastructure/tools/spawn_container.rs",
-        &["process_group("],
-        "launch topology only: a detached container launch leads its own group \
-         so the supervisor's handle covers it; no signal here",
     ),
     (
         "src/infrastructure/tools/swarm_board_worker.rs",

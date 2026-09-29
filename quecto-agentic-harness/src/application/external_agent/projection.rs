@@ -59,6 +59,7 @@ pub struct Projector {
     guardrail_denial_count: usize,
     background_jobs: VecDeque<BackgroundJob>,
     unknown_events: usize,
+    skipped_lines: usize,
 }
 
 impl Projector {
@@ -128,6 +129,9 @@ impl Projector {
             ExternalAgentEvent::RateLimit(info) => self.record_rate_limit(info),
             ExternalAgentEvent::Result(result) => return Some(self.result(result)),
             ExternalAgentEvent::Unknown { .. } => self.unknown_events += 1,
+            // Only counted here: whether a skipped line ends the turn is
+            // the session's call (S3), which sees the event itself.
+            ExternalAgentEvent::LineSkipped(_) => self.skipped_lines += 1,
         }
         None
     }
@@ -411,6 +415,7 @@ impl Projector {
             guardrail_denials: self.guardrail_denial_count,
             admission_warnings: self.admission_warning_count,
             unknown_events: self.unknown_events,
+            skipped_lines: self.skipped_lines,
         }
     }
 }

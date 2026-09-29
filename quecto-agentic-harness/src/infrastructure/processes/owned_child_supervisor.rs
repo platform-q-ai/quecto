@@ -23,6 +23,13 @@
 //! runtime happened to be current at launch: a launcher that builds a
 //! runtime per call (tests, embedders) cannot orphan a reap, and a
 //! `tokio::process::Child` never exists outside this module.
+//!
+//! No caller code runs on the supervisor's runtime except the termination
+//! protocol (#1935): its one worker thread reaps every child and runs every
+//! termination, so the line pumps and the stderr tail run there as data
+//! the supervisor's own module tree builds, never as a caller's closure,
+//! future or trait object (#2286; the `supervisor_runtime` architecture
+//! test).
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -92,56 +99,9 @@ impl ChildExit {
     }
 }
 
-/// Result of the caller's protocol attempt, in the supervisor's words.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ProtocolOutcome {
-    /// The child acknowledged the shutdown; it is expected to exit by itself.
-    Acknowledged,
-    /// The child could not be reached, refused, or the attempt timed out.
-    Negative(String),
-}
-
-/// Bounded waits of one termination.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TerminationBudget {
-    /// How long an acknowledged child gets to exit before the fallback.
-    pub exit_after_ack: Duration,
-    /// How long after TERM before KILL.
-    pub term_grace: Duration,
-    /// How long after KILL before giving up on observing the exit.
-    pub kill_grace: Duration,
-}
-
-impl TerminationBudget {
-    pub const DEFAULT: Self = Self {
-        exit_after_ack: Duration::from_secs(10),
-        term_grace: Duration::from_secs(2),
-        kill_grace: Duration::from_secs(2),
-    };
-}
-
-impl Default for TerminationBudget {
-    fn default() -> Self {
-        Self::DEFAULT
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TerminationOutcome {
-    /// No unreaped handle is retained for this id: nothing was signalled.
-    NoRetainedHandle,
-    /// The child had already exited before any step was needed.
-    AlreadyExited(ChildExit),
-    /// The child exited on its own after acknowledging the protocol.
-    ExitedAfterProtocol(ChildExit),
-    /// The protocol outcome was negative (or the exit deadline passed) and
-    /// TERM produced the exit.
-    ExitedAfterTerm { negative: String, exit: ChildExit },
-    /// TERM did not suffice within its grace; KILL produced the exit.
-    ExitedAfterKill { negative: String, exit: ChildExit },
-    /// Even KILL did not yield an observed exit within the budget.
-    StillRunning { negative: String },
-}
+/// The protocol's outcome, the termination's bounds and its outcome.
+mod outcomes;
+pub use outcomes::{ProtocolOutcome, TerminationBudget, TerminationOutcome};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SentSignal {
@@ -191,8 +151,12 @@ pub struct OwnedChildSupervisor {
     /// Bounded ring of retired handles' signal records.
     retired: Mutex<std::collections::VecDeque<RetiredRecord>>,
     next: AtomicU64,
-    /// The supervisor's own runtime: every spawn and reap runs here.
+    /// The supervisor's own runtime: every spawn and reap runs here. Only
+    /// `Drop` reaches it, to shut it down.
     runtime: Mutex<Option<tokio::runtime::Runtime>>,
+    /// Private to this module tree: only its allowlisted helpers reach it,
+    /// and no caller code runs on the runtime except the termination
+    /// protocol (the `supervisor_runtime` architecture test).
     handle: tokio::runtime::Handle,
     /// Test seam: record instead of dispatching real signals.
     #[cfg(any(test, feature = "test-support"))]
@@ -269,6 +233,13 @@ impl OwnedChildSupervisor {
         mut command: tokio::process::Command,
         group: ProcessGroup,
     ) -> std::io::Result<SpawnedChild> {
+        // `Own` means the child leads a process group of its own
+        // (`pgid == pid`), which the fallback signals address as a whole;
+        // the supervisor makes it so rather than trusting each caller to.
+        #[cfg(unix)]
+        if group == ProcessGroup::Own {
+            command.process_group(0);
+        }
         let supervisor = Arc::clone(self);
         self.handle
             .spawn(async move {
@@ -298,6 +269,16 @@ impl OwnedChildSupervisor {
         stderr: tokio::process::ChildStderr,
     ) -> super::child_stderr_tail::StderrTail {
         super::child_stderr_tail::StderrTail::pump(&self.handle, stderr)
+    }
+
+    /// [`Self::retain_stderr_tail`], retaining the last `capacity` bytes:
+    /// a long-lived child's diagnostics (#2286).
+    pub fn retain_stderr_tail_within(
+        &self,
+        stderr: tokio::process::ChildStderr,
+        capacity: usize,
+    ) -> super::child_stderr_tail::StderrTail {
+        super::child_stderr_tail::StderrTail::pump_within(&self.handle, stderr, capacity)
     }
 
     /// Record signals instead of sending them (tests with fake pids).
@@ -498,12 +479,9 @@ impl OwnedChildSupervisor {
         self.lock().get(&id).map(|slot| slot.exit.subscribe())
     }
 
-    /// The exit the supervisor recorded for `id` once it reaped it — from
-    /// the live slot, or from the retired record — without waiting (#2260).
-    /// `None` while the child is unreaped, or for a handle never adopted
-    /// here or whose record has left the ring. The reap task records the
-    /// exit in the critical section that marks the slot reaped, so once
-    /// [`Self::retains`] is `false` for an adopted handle the exit is here.
+    /// The exit recorded for `id` once reaped (live slot or retired record),
+    /// without waiting (#2260); `None` while unreaped or unknown. It is set
+    /// with the reaped mark, so once [`Self::retains`] is `false` it is here.
     pub fn reaped_exit(&self, id: ChildHandleId) -> Option<ChildExit> {
         if let Some(slot) = self.lock().get(&id) {
             return match slot.reaped {
@@ -654,14 +632,49 @@ impl OwnedChildSupervisor {
         protocol: std::pin::Pin<Box<dyn Future<Output = ProtocolOutcome> + Send>>,
         budget: TerminationBudget,
     ) {
-        if !self.retains(id) {
-            return;
+        if self.retains(id) {
+            self.spawn_termination(id, protocol, budget, None);
         }
+    }
+
+    /// The one place a requested termination is spawned. Unobserved, it
+    /// runs under the supervisor's own `tracing` dispatch; observed, under
+    /// its requester's, where the supervisor itself logs the observation.
+    fn spawn_termination(
+        self: &Arc<Self>,
+        id: ChildHandleId,
+        protocol: std::pin::Pin<Box<dyn Future<Output = ProtocolOutcome> + Send>>,
+        budget: TerminationBudget,
+        observation: Option<tasks::TerminationObservation>,
+    ) {
+        use tracing::instrument::WithSubscriber;
+        let started = std::time::Instant::now();
+        let observed = observation.is_some();
         let supervisor = Arc::clone(self);
-        self.handle.spawn(async move {
+        let termination = async move {
             let outcome = supervisor.terminate(id, protocol, budget).await;
             tracing::info!(handle = ?id, ?outcome, "owned child termination finished");
-        });
+            if let Some(observation) = observation {
+                observation.log(&outcome, started.elapsed());
+            }
+        };
+        if observed {
+            self.handle.spawn(termination.with_current_subscriber());
+        } else {
+            self.handle.spawn(termination);
+        }
+    }
+
+    /// The private spawn helper of the line pumps: runs a [`PipeTask`],
+    /// which only `child_line_pipes` builds, under the caller's `tracing`
+    /// dispatch.
+    ///
+    /// [`PipeTask`]: super::child_line_pipes::PipeTask
+    fn spawn_pipe_task(&self, task: super::child_line_pipes::PipeTask) -> tokio::task::AbortHandle {
+        use tracing::instrument::WithSubscriber;
+        self.handle
+            .spawn(task.run().with_current_subscriber())
+            .abort_handle()
     }
 
     /// Send one signal kind at most once, only while the handle is unreaped,
@@ -726,6 +739,11 @@ fn send_signal(pid: u32, group: ProcessGroup, signal: SentSignal) {
         let _ = (pid, group, signal);
     }
 }
+
+/// The pumps and the observed termination: a child module, so they reach
+/// the runtime only through this file's private spawn helpers.
+mod tasks;
+pub(crate) use tasks::TerminationObservation;
 
 #[cfg(test)]
 #[path = "owned_child_supervisor_tests.rs"]
