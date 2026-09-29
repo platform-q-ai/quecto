@@ -8,7 +8,10 @@ use serde_json::{Value, json};
 
 use crate::swarm_board_diff_membership::{HOUR, at, snapshot};
 use crate::swarm_board_diff_runs::NOW;
-use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{Step, run_both, sql, step};
+use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
+use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
+    Step, run_both, run_rust, sql, step,
+};
 
 /// `WorkbenchBehavior.setUp`: `parent` creates `ship feature` with a
 /// command and a review criterion, and `worker` is admitted and live.
@@ -88,11 +91,13 @@ fn verified(offset: f64, id: i64, dependencies: Value, revision: &str) -> Vec<St
 /// evidence at another revision is refused.
 #[test]
 fn dependent_tasks_can_be_revalidated_at_final_revision() {
-    let mut steps = verified(3.0, 1, json!([]), "R1");
-    steps.extend(verified(4.0, 2, json!([1]), "R2"));
-    steps.extend([
+    let mut setup = verified(3.0, 1, json!([]), "R1");
+    setup.extend(verified(4.0, 2, json!([1]), "R2"));
+    setup.extend([
         evidence(5.0, "parent", "tests", "command", json!(true)),
         evidence(5.1, "parent", "review", "review", json!(true)),
+    ]);
+    let refused = [
         at(6.0, "parent", "complete", json!(["R2"])),
         at(
             7.0,
@@ -106,6 +111,8 @@ fn dependent_tasks_can_be_revalidated_at_final_revision() {
             "revalidate_task",
             json!([1, "R2", [{"artifact": "old", "revision": "R1"}]]),
         ),
+    ];
+    let granted = [
         at(
             9.0,
             "parent",
@@ -114,9 +121,24 @@ fn dependent_tasks_can_be_revalidated_at_final_revision() {
         ),
         at(10.0, "parent", "complete", json!({"revision": "R2"})),
         snapshot(11.0),
-        at(12.0, "parent", "complete", json!(["R2"])),
-    ]);
+    ];
+    let held = at(12.0, "parent", "complete", json!(["R2"]));
+    let steps: Vec<Step> = setup
+        .iter()
+        .chain(&refused)
+        .chain(&granted)
+        .chain([&held])
+        .cloned()
+        .collect();
     run_both(&with_worker(steps));
+    // Every step but the refused ones is granted, and the run is held.
+    let alone: Vec<Step> = setup.into_iter().chain(granted).chain([held]).collect();
+    assert_eq!(
+        run_rust(&with_worker(alone)),
+        Outcome::Refused(
+            "run is paused (succeeded: completed at R2); no new work permitted".to_owned()
+        )
+    );
 }
 
 /// `test_completion_holds_success_until_the_supervisor_closes_it` with a

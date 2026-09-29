@@ -5,6 +5,7 @@
 use crate::domain::error::DomainError;
 use crate::domain::swarm::{Member, MemberExit, MemberStatus, Snapshot};
 
+mod board_completion;
 mod board_control;
 mod board_membership;
 mod board_operation;

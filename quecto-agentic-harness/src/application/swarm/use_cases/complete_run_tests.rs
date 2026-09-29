@@ -111,11 +111,15 @@ fn success_records_the_revision_and_the_clock() {
     assert_eq!(run.outcome_reason.as_deref(), Some("completed at R1"));
 }
 
+/// A refusal's text, the change of the board that causes it, and the
+/// revision completed at.
+type Refusal = (&'static str, fn(&mut BoardState), Value);
+
 /// `test_completion_rejects_each_unsatisfied_requirement`, through the use
 /// case: each refusal leaves the run running and records nothing.
 #[test]
 fn completion_rejects_each_unsatisfied_requirement() {
-    let refusals: [(&str, fn(&mut BoardState), Value); 6] = [
+    let refusals: [Refusal; 6] = [
         ("completion revision required", |_| {}, json!(" ")),
         ("completion revision required", |_| {}, json!(2)),
         (
