@@ -397,7 +397,7 @@ async fn an_unexpected_argument_is_refused() {
 /// Inherited behaviour (epic P3): Python binds `claim(True)` as task 1 and
 /// claims it; the structured op does the same.
 #[tokio::test]
-async fn a_boolean_is_not_a_task_id() {
+async fn a_boolean_task_id_binds_as_python_binds_true() {
     let (_directory, context) = board();
     direct(&context, "task_create", json!(["r1", "t", ["pass"]])).unwrap();
     let claim = answered(&context, json!({"op": "claim", "task_id": true})).await;
