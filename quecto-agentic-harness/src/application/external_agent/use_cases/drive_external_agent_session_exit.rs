@@ -1,25 +1,64 @@
 //! An ended member's exit (#2304): waited for apart from the caller that
 //! ended it, through the spawner port, and recorded as the member's last
 //! lifecycle record. However that work ends — done, panicked, or dropped
-//! with or without having run — the end is marked recorded, so `close` and
-//! `finish` are released; and they wait at most [`EXIT_GRACE`] plus
+//! with or without having run — the end is recorded (as an unknown exit
+//! when the work did not get to observe one) and marked recorded, so
+//! `close` and `finish` are released; and they wait at most [`EXIT_GRACE`] plus
 //! [`END_RECORD_MARGIN`] even for work the spawner never runs.
 
 use std::sync::Arc;
 
 use super::{DriveExternalAgentSession, PendingExit};
 use crate::application::external_agent::dto::{
-    END_RECORD_MARGIN, EXIT_GRACE, ExternalAgentExit, SessionRecord,
+    AgentClockInstant, END_RECORD_MARGIN, EXIT_GRACE, ExternalAgentExit, SessionRecord,
 };
+use crate::application::external_agent::ports::{ExternalAgentClock, ExternalAgentTelemetry};
 use crate::application::external_agent::session_telemetry::wall_ms_since;
 
-/// Marks the member's end recorded when dropped: the exit's work owns it,
-/// so it is dropped however that work ends, even unpolled.
-struct EndRecordedOnDrop(Arc<tokio::sync::watch::Sender<bool>>);
+/// Records the member's end, then marks it recorded, when dropped: the
+/// exit's work owns it, so it is dropped however that work ends, even
+/// unpolled. Work that panics or is dropped before recording the end
+/// leaves it to this guard, which records it as an unknown exit (no exit
+/// observed: `clean: false`, no code, no signal) (#2304 review round 4).
+struct EndRecordedOnDrop {
+    recorded: Arc<tokio::sync::watch::Sender<bool>>,
+    /// What records the end, with the member's start; `None` once the
+    /// work has recorded it itself.
+    unrecorded: Option<UnrecordedEnd>,
+}
+
+/// An end still to record: the telemetry port, the clock and the
+/// member's start, for its wall time.
+struct UnrecordedEnd {
+    telemetry: Arc<dyn ExternalAgentTelemetry>,
+    clock: Arc<dyn ExternalAgentClock>,
+    started_at: Option<AgentClockInstant>,
+}
+
+impl UnrecordedEnd {
+    /// Record the member's end with the exit `exit` (`None`: none observed).
+    fn record(self, exit: Option<&ExternalAgentExit>) {
+        let wall_ms = wall_ms_since(self.started_at, self.clock.now());
+        self.telemetry.record(&ended_record(exit, wall_ms));
+    }
+}
+
+impl EndRecordedOnDrop {
+    /// Record the end with the exit the work observed; the guard then
+    /// records nothing more.
+    fn record(&mut self, exit: Option<&ExternalAgentExit>) {
+        if let Some(unrecorded) = self.unrecorded.take() {
+            unrecorded.record(exit);
+        }
+    }
+}
 
 impl Drop for EndRecordedOnDrop {
     fn drop(&mut self) {
-        self.0.send_replace(true);
+        // The telemetry port never panics (it counts what it cannot keep),
+        // so recording here is safe while a panic unwinds.
+        self.record(None);
+        self.recorded.send_replace(true);
     }
 }
 
@@ -42,10 +81,16 @@ impl DriveExternalAgentSession {
             "only an ended member's exit is recorded"
         );
         let clock = self.clock.clone();
-        let telemetry = self.telemetry.clone();
         // Moved into the work when it is made, not made in it: dropped
-        // with the work even when it never runs.
-        let recorded = EndRecordedOnDrop(self.end_recorded.clone());
+        // with the work even when it never runs, recording the end then.
+        let mut recorded = EndRecordedOnDrop {
+            recorded: self.end_recorded.clone(),
+            unrecorded: Some(UnrecordedEnd {
+                telemetry: self.telemetry.clone(),
+                clock: clock.clone(),
+                started_at,
+            }),
+        };
         self.spawner.spawn(Box::pin(async move {
             let exit = match process {
                 Some(process) => {
@@ -61,8 +106,7 @@ impl DriveExternalAgentSession {
                 }
                 None => None,
             };
-            let wall_ms = wall_ms_since(started_at, clock.now());
-            telemetry.record(&ended_record(exit.as_ref(), wall_ms));
+            recorded.record(exit.as_ref());
             drop(recorded);
         }));
     }
