@@ -16,14 +16,16 @@
 //!    with the store's error shape, never coerced (parent decision on
 //!    #2278/#2279). `NaN` and `±Infinity`, which are not JSON, never get
 //!    here: the agent loop answers such a call as invalid arguments.
-//! 2. `op=run`'s running gate (owner decision 2026-09-28, overruling the
-//!    epic's P4): unless the run is running and within its deadline, the
-//!    op is refused with the guidance `op=run` gives.
+//! 2. The running gate the removed `op=run` had (owner decision 2026-09-28,
+//!    overruling the epic's P4; `op=run` itself was removed in #2282):
+//!    unless the run is running and within its deadline, the op is refused
+//!    with the running gate's guidance.
 //! 3. A mutating op ([`MUTATING_OPS`]) reads the event cursor
-//!    (`_event_cursor`) before and after its call; when it moved, `op=run`'s
-//!    post-call lifecycle runs (settle when the run no longer runs, else
-//!    wake hints), and any delivery warnings ride the answer. A read-only
-//!    op ([`READ_ONLY_OPS`]) reads neither.
+//!    (`_event_cursor`) before and after its call; when it moved, the
+//!    post-call lifecycle (the one `op=run` ran until #2282) runs (settle
+//!    when the run no longer runs, else wake hints), and any delivery
+//!    warnings ride the answer. A read-only op ([`READ_ONLY_OPS`]) reads
+//!    neither.
 //! 4. The answer is written as Python's `json.dumps` writes it
 //!    ([`wire_text`]); a board refusal keeps its `swarm: "<text>"`, the
 //!    lifecycle's notes (when there are any) on the line after it.
@@ -466,8 +468,9 @@ async fn unreadable(
     refuse(context, op, RefusalKind::Store, started, error.to_string()).await
 }
 
-/// `op=run`'s running gate: the refusal's kind, the gate's name and the
-/// guidance, unless the run is running within its deadline.
+/// The running gate (`op=run`'s until #2282 removed it): the refusal's
+/// kind, the gate's name and the guidance, unless the run is running within
+/// its deadline.
 fn gated(op: &str, status: &Value) -> Option<(RefusalKind, &'static str, String)> {
     let guide = super::swarm::swarm_guidance::op_refused;
     match status["status"].as_str() {
@@ -500,7 +503,8 @@ async fn cursor(context: &SwarmContext) -> Result<Result<Value, DomainError>, Do
     blocking(move || ctx.call("_event_cursor", json!([]))).await
 }
 
-/// `op=run`'s post-call lifecycle when the cursor moved past `before`:
+/// The post-call lifecycle (`op=run`'s until #2282 removed it) when the
+/// cursor moved past `before`:
 /// what it did goes on `record`, its warnings or failure into `notes`.
 async fn lifecycle(
     context: &SwarmContext,
@@ -544,8 +548,8 @@ async fn lifecycle(
 /// is an object, else beside it as `{"result": answer, …}` (only when there
 /// are notes, so an answer is otherwise exactly the board method's). A
 /// refusal is answered as the board refused it, the notes (when there are
-/// any) on the line after it (#2279 review L4: `op=run` keeps them
-/// whatever the outcome).
+/// any) on the line after it (#2279 review L4: the notes are kept whatever
+/// the outcome, as the removed `op=run` kept them).
 fn answered(
     wire: &BoardWire,
     answer: Result<Value, DomainError>,

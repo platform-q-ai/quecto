@@ -87,7 +87,7 @@ impl Tool for SwarmTool {
             }
             let v = match parsed {
                 Ok(v) => v,
-                Err(e) => return tool_err(format!("invalid JSON arguments: {e}")),
+                Err(e) => return refuse_op(&context, Refused::InvalidJson(e), started).await,
             };
             match v.get("op") {
                 // The harness's own ops; every other valid op is a structured board
@@ -112,7 +112,11 @@ impl Tool for SwarmTool {
                     refuse_op(&context, Refused::Unknown(op), started).await
                 }
                 Some(_) => refuse_op(&context, Refused::NotAString, started).await,
-                None => refuse_op(&context, Refused::Missing, started).await,
+                // A call with `code` and no op was the implicit op=run.
+                None => {
+                    let implicit_run = v.get("code").is_some();
+                    refuse_op(&context, Refused::Missing { implicit_run }, started).await
+                }
             }
         })
     }
@@ -120,47 +124,77 @@ impl Tool for SwarmTool {
 
 /// Why a call names no valid op.
 enum Refused<'a> {
-    /// A string that is no op the tool has.
+    /// A string that is no op the tool has (an internal board method's
+    /// name included).
     Unknown(&'a str),
     /// An op that is present but not a string (#2282 review N1).
     NotAString,
-    /// No op at all (or arguments that are not an object).
-    Missing,
+    /// No op at all (or arguments that are not an object);
+    /// `implicit_run` when the call carries `code`, which once ran Python
+    /// as op=run.
+    Missing { implicit_run: bool },
+    /// Arguments that are not JSON.
+    InvalidJson(serde_json::Error),
 }
 
 /// The refusal of a call that names no valid op: one `tracing` record on
 /// the board's telemetry target carrying the refusal's kind and whether the
-/// op is a removed Python workbench op (#2282), never the member's text;
-/// the op's `swarm_op` record while the event log is on (a name that is no
-/// board method is recorded as `unknown`, refused as `calling`, by the
-/// caller's redacted ref); then the guidance the member reads.
+/// call is a removed Python workbench op (#2282), never the member's text;
+/// the call's `swarm_op` record while the event log is on, always as op
+/// `unknown` (never under a name the member chose, an internal board
+/// method's included), refused as `calling` (`invalid` for arguments that
+/// are not JSON), by the caller's redacted ref; then the guidance the
+/// member reads.
 async fn refuse_op(
     context: &super::swarm_bridge::SwarmContext,
     refused: Refused<'_>,
     started: std::time::Instant,
 ) -> Result<ToolResult, DomainError> {
-    let (refusal, message, op) = match refused {
-        Refused::Unknown(op) => ("unknown_op", swarm_guidance::unknown_op(op), op),
-        Refused::NotAString => ("op_not_a_string", swarm_guidance::op_not_a_string(), ""),
-        Refused::Missing => ("op_required", swarm_guidance::op_required(), ""),
+    let (refusal, removed_workbench_op, kind) = match &refused {
+        Refused::Unknown(op) => (
+            "unknown_op",
+            swarm_guidance::REMOVED_OPS.contains(op),
+            RefusalKind::Calling,
+        ),
+        Refused::NotAString => ("op_not_a_string", false, RefusalKind::Calling),
+        Refused::Missing { implicit_run } => ("op_required", *implicit_run, RefusalKind::Calling),
+        Refused::InvalidJson(_) => ("invalid_json", false, RefusalKind::Invalid),
     };
-    let removed_workbench_op = swarm_guidance::REMOVED_OPS.contains(&op);
     tracing::info!(
         target: super::swarm_board_telemetry::TELEMETRY_TARGET,
         refusal,
         removed_workbench_op,
         "swarm op refused"
     );
+    debug_assert!(
+        super::swarm_board_dispatch::signature(UNKNOWN_OP).is_none(),
+        "a refused call is recorded under no board method's name"
+    );
     let ctx = context.clone();
-    let method = op.to_owned();
     let elapsed = started.elapsed();
-    super::call_work::spawn_blocking_in_call(move || {
-        ctx.refused(&method, RefusalKind::Calling, elapsed)
-    })
-    .await
-    .map_err(|error| DomainError::Tool(error.to_string()))?;
-    ok_json(json!({"status":"error","message":message}), true)
+    super::call_work::spawn_blocking_in_call(move || ctx.refused(UNKNOWN_OP, kind, elapsed))
+        .await
+        .map_err(|error| DomainError::Tool(error.to_string()))?;
+    match refused {
+        Refused::Unknown(op) => ok_json(
+            json!({"status":"error","message":swarm_guidance::unknown_op(op)}),
+            true,
+        ),
+        Refused::NotAString => ok_json(
+            json!({"status":"error","message":swarm_guidance::op_not_a_string()}),
+            true,
+        ),
+        Refused::Missing { .. } => ok_json(
+            json!({"status":"error","message":swarm_guidance::op_required()}),
+            true,
+        ),
+        Refused::InvalidJson(error) => tool_err(format!("invalid JSON arguments: {error}")),
+    }
 }
+
+/// The name a refused call's `swarm_op` is recorded under: no board method
+/// has it, so the board records the call as op `unknown`.
+const UNKNOWN_OP: &str = "unknown";
 
 #[cfg(test)]
 #[path = "swarm_tests.rs"]

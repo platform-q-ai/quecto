@@ -129,9 +129,8 @@ async fn with_resume_wakes(context: &SwarmContext, mut receipt: Value) -> Value 
     receipt
 }
 
-/// The summary the harness judges a run's execution by, before and after
-/// `op=run` and after a structured op: the harness's own read, recorded as
-/// `host` (#2279 S15 final review).
+/// The summary the harness judges a run by after a structured op: the
+/// harness's own read, recorded as `host` (#2279 S15 final review).
 pub async fn execution_state(context: SwarmContext) -> Result<Value, DomainError> {
     super::call_work::spawn_blocking_in_call(move || context.host_summary())
         .await
