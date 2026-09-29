@@ -713,10 +713,10 @@ summed over the op's own transactions and only those: each op is measured on a
 repository built for it alone, never through state shared with another op.
 
 Every call also leaves a `tracing` record on target `quecto::swarm_board`
-(DEBUG for a read, unless the token budget warned or paused the run in it,
-and for the wake claims `_notifications` and `_accept_wake`, which run as
-reads after every board change; INFO otherwise), at WARN for a `contended` refusal or a
-busy wait over 250 ms; `RUST_LOG=quecto::swarm_board=debug` shows them live.
+(DEBUG for a read, including the wake claims `_notifications` and
+`_accept_wake`, which run as reads after every board change, unless the token
+budget warned or paused the run in it; INFO otherwise), at WARN for a
+`contended` refusal or a busy wait over 250 ms; `RUST_LOG=quecto::swarm_board=debug` shows them live.
 Because the owner decided the event log is off by default and nothing is
 measured while it is off (decision T1), the tracing record's waits are
 measured, and the slow-lock WARN can fire, only while the event log is on;

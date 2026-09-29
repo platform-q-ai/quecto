@@ -172,3 +172,64 @@ fn a_run_is_created_without_constraints_but_not_with_a_wrong_typed_value() {
         );
     }
 }
+
+/// The Rust board's `_notifications` answers (#2276), both the member list
+/// and the `{members, generation}` batch, decode as the wire members this
+/// adapter reads from the store.
+#[test]
+fn rust_board_notifications_decode_as_wire_members() {
+    use crate::application::swarm::dto::BoardLocation;
+    use crate::composition::swarm::build_swarm_board_handles;
+    use crate::infrastructure::tools::swarm_board_dispatch::call;
+    let dir = tempfile::tempdir().unwrap();
+    let handles = build_swarm_board_handles(
+        BoardLocation {
+            database: dir.path().join("swarm.sqlite"),
+            checkout: dir.path().to_path_buf(),
+        },
+        None,
+    );
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64();
+    let criteria = json!([{"id": "t", "kind": "command", "description": "d"}]);
+    for (member, method, args) in [
+        (
+            "parent",
+            "create_run",
+            json!(["g", [], criteria, 3, now + 3_600.0]),
+        ),
+        ("parent", "_admit", json!(["worker", "w"])),
+        ("parent", "_activate", json!(["worker", "w", 1, "t", null])),
+        ("worker", "send", json!(["one", "parent", "Please review"])),
+    ] {
+        call(&handles, member, method, args).unwrap();
+    }
+    let batch = call(&handles, "worker", "_notifications", json!([true])).unwrap();
+    let members: Vec<WireMember> = serde_json::from_value(batch["members"].clone()).unwrap();
+    let decoded: Vec<Member> = members
+        .into_iter()
+        .map(decode_member)
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(decoded.len(), 1, "{batch}");
+    assert_eq!(decoded[0].id, "parent");
+    assert!(batch["generation"].as_u64().is_some(), "{batch}");
+    call(
+        &handles,
+        "worker",
+        "send",
+        json!(["two", "parent", "Again"]),
+    )
+    .unwrap();
+    let list = call(&handles, "worker", "_notifications", json!([])).unwrap();
+    let members: Vec<WireMember> = serde_json::from_value(list.clone()).unwrap();
+    let decoded = members
+        .into_iter()
+        .map(decode_member)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(decoded.len(), 1, "{list}");
+    assert_eq!(decoded[0].id, "parent");
+}

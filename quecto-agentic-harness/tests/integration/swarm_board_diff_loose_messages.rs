@@ -28,16 +28,22 @@
 //! - `outside_edited_wake_records`: an event detail the wake ops read that
 //!   is not JSON text, or a `wake_cursors` row whose event is not an
 //!   integer (only a hand edit writes either), is refused as a store
-//!   failure, where Python raises (`JSONDecodeError`, `TypeError`). A
-//!   stored dependency list is read as `outside_edited_task_columns` reads
-//!   it, keeping its integer entries.
+//!   failure. Python raises for a detail (`JSONDecodeError`) and for a
+//!   TEXT or NULL cursor (`TypeError`), but compares and binds a REAL
+//!   cursor as it is: after `('parent', 2.5)`, `_accept_wake(4)` claims
+//!   past it and answers `true`, where Rust refuses reading it (`Invalid
+//!   column type Real`). A stored dependency list is read as
+//!   `outside_edited_task_columns` reads it, keeping its integer entries.
+//! - `arguments_beyond_a_serde_value`, for `_accept_wake` too (pinned in
+//!   `swarm_board_diff_loose.rs`): a generation above u64 is ahead of the
+//!   board in Python; Rust refuses the argument text.
 use serde_json::json;
 
 use crate::swarm_board_diff_loose::PERMITTED_DIVERGENCES;
 use crate::swarm_board_diff_membership::at;
 use crate::swarm_board_diff_messages::{inbox, joined, send};
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
-use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{run_rust, sql, try_run_both};
+use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{Step, run_rust, sql, try_run_both};
 use crate::swarm_board_diff_wakes::{accept, hints};
 
 /// The divergences this file pins also pinned in `src`: the name, the
@@ -180,20 +186,24 @@ fn outside_edited_messages() {
 /// the member `'5'` makes it deliverable), and `None` beside a name (a
 /// NULL coordinator woken by evidence): Python's `TypeError` names the
 /// two types in the order its set iterates, the Rust board in one order.
+/// The sender's claim (`_notifications`) and the receiver's
+/// (`_accept_wake`, judging the same events with the empty actor) meet it.
 #[test]
 fn wake_target_sort_error_order() {
-    let numbered = joined([
-        at(2.1, "parent", "_admit", json!(["5", "res-5"])),
-        at(
-            2.2,
-            "parent",
-            "_activate",
-            json!(["5", "res-5", 5, "f", null]),
-        ),
-        at(3.0, "worker", "send", json!(["n", 5, "to five"])),
-        send(4.0, "worker", "p", "parent", "to parent"),
-        hints(5.0, "worker"),
-    ]);
+    let numbered = |probe: Step| {
+        joined([
+            at(2.1, "parent", "_admit", json!(["5", "res-5"])),
+            at(
+                2.2,
+                "parent",
+                "_activate",
+                json!(["5", "res-5", 5, "f", null]),
+            ),
+            at(3.0, "worker", "send", json!(["n", 5, "to five"])),
+            send(4.0, "worker", "p", "parent", "to parent"),
+            probe,
+        ])
+    };
     let nobody = joined([
         send(3.0, "worker", "p", "parent", "to parent"),
         sql("UPDATE run SET coordinator=NULL"),
@@ -201,7 +211,8 @@ fn wake_target_sort_error_order() {
         hints(5.0, "worker"),
     ]);
     for (steps, rust) in [
-        (numbered, "'int' and 'str'"),
+        (numbered(hints(5.0, "worker")), "'int' and 'str'"),
+        (numbered(accept(5.0, "parent", json!(7))), "'int' and 'str'"),
         (nobody, "'str' and 'NoneType'"),
     ] {
         let last = steps.len() - 1;
@@ -220,23 +231,45 @@ fn wake_target_sort_error_order() {
 }
 
 /// An event detail that is not JSON, and a wake cursor that is text:
-/// Python raises, the Rust board refuses as a store failure.
+/// Python raises, the Rust board refuses as a store failure. A REAL wake
+/// cursor Python compares and binds as it is (`4 <= 2.5` is false, so it
+/// claims past it and answers), where the Rust board refuses reading it.
 #[test]
 fn outside_edited_wake_records() {
-    for (edit, probe, python) in [
+    let cursor = |value: &str| {
+        format!(
+            "CREATE TABLE wake_cursors (actor TEXT PRIMARY KEY, event INTEGER);
+             INSERT INTO wake_cursors VALUES('parent',{value})"
+        )
+    };
+    for (edit, probe, python, rust) in [
         (
-            "INSERT INTO events(actor,time,action,detail) VALUES('worker',0,'amended','x')",
+            "INSERT INTO events(actor,time,action,detail) VALUES('worker',0,'amended','x')"
+                .to_owned(),
             hints(5.0, "worker"),
             "Python raised JSONDecodeError",
+            "",
         ),
         (
-            "CREATE TABLE wake_cursors (actor TEXT PRIMARY KEY, event INTEGER);
-             INSERT INTO wake_cursors VALUES('parent','abc')",
+            cursor("'abc'"),
             accept(5.0, "parent", json!(4)),
             "Python raised TypeError",
+            "Invalid column type Text",
+        ),
+        (
+            cursor("NULL"),
+            accept(5.0, "parent", json!(4)),
+            "Python raised TypeError",
+            "Invalid column type Null",
+        ),
+        (
+            cursor("2.5"),
+            accept(5.0, "parent", json!(4)),
+            "python Ok(Bool(true))",
+            "Invalid column type Real",
         ),
     ] {
-        let steps = joined([send(3.0, "worker", "a", "parent", "one"), sql(edit), probe]);
+        let steps = joined([send(3.0, "worker", "a", "parent", "one"), sql(&edit), probe]);
         let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
         assert!(
             difference.starts_with("step 5: ") && difference.contains(python),
@@ -244,7 +277,8 @@ fn outside_edited_wake_records() {
         );
         let outcome = run_rust(&steps);
         assert!(
-            matches!(&outcome, Outcome::Refused(text) if text.starts_with(CONTENDED)),
+            matches!(&outcome, Outcome::Refused(text)
+                if text.starts_with(CONTENDED) && text.contains(rust)),
             "{edit}: {outcome:?}"
         );
     }

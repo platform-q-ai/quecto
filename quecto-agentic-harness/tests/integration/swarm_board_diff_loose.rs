@@ -28,12 +28,14 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   holding a lone surrogate escape, an integer outside i64 ∪ u64, or
 ///   nesting deeper than `SERDE_MAX_DEPTH`. Python binds or stores each of
 ///   them (or, for an integer beyond i64, raises `OverflowError`), except the
-///   usage methods' (#2274), which Python refuses with the board's own text
-///   where Rust refuses the argument text: a `_record_request` count above
-///   u64 (`invalid request usage input_tokens`), `instrumented_attempts`
-///   above u64 (`invalid request observation`), a count of `1e400` (`invalid
-///   request usage output_tokens`), and a `usage_budget` token limit above
-///   u64 or of `1e400` (the budget's argument refusal). S13/S14 must parse
+///   usage methods' (#2274) and `_accept_wake`'s (#2276), which Python
+///   refuses with the board's own text where Rust refuses the argument
+///   text: a `_record_request` count above u64 (`invalid request usage
+///   input_tokens`), `instrumented_attempts` above u64 (`invalid request
+///   observation`), a count of `1e400` (`invalid request usage
+///   output_tokens`), a `usage_budget` token limit above u64 or of `1e400`
+///   (the budget's argument refusal), and an `_accept_wake` generation above
+///   u64 (`wake generation is ahead of the board`). S13/S14 must parse
 ///   member input with `py_json`, as the harness does; a `PyJson` dispatcher
 ///   would end this divergence.
 /// - `integer_beyond_i64_is_refused`: an integer argument beyond i64 but
@@ -278,7 +280,8 @@ fn arguments_beyond_a_serde_value() {
             "{extra}"
         );
     }
-    // #2274: Python refuses these before its gate with the board's text.
+    // #2274: Python refuses these before its gate with the board's text;
+    // #2276: past it, a wake generation above u64 is ahead of the board.
     let budget = "token limit must be positive or None, strict_unknown must be boolean";
     let (beyond, infinite) = (
         "integer 18446744073709551616 is outside i64 and u64",
@@ -311,13 +314,20 @@ fn arguments_beyond_a_serde_value() {
             "integer 100000000000000000000 is outside i64 and u64",
         ),
         ("usage_budget", "[1e400]".to_owned(), budget, infinite),
+        (
+            "_accept_wake",
+            "[40000000000000000000000]".to_owned(),
+            "wake generation is ahead of the board",
+            "integer 40000000000000000000000 is outside i64 and u64",
+        ),
     ] {
-        let difference =
-            try_run_both(&[step_text("parent", method, &text, NOW)], |_, _, _| {}).unwrap_err();
+        let later = NOW + 1.0;
+        let steps = [create(5), step_text("parent", method, &text, later)];
+        let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
         assert_eq!(
             difference,
             format!(
-                "step 0: {method} as parent with {text} at {NOW}: results differ\n  \
+                "step 1: {method} as parent with {text} at {later}: results differ\n  \
                  python {:?}\n  \
                  rust   {:?}",
                 Outcome::Refused(python.to_owned()),

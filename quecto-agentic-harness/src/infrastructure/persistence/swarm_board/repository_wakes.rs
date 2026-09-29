@@ -6,9 +6,11 @@
 //!
 //! An event detail is loaded as Python's `json.loads` loads it; a detail
 //! that is not JSON text, or a wake cursor that is not an integer (only a
-//! hand edit writes either), is refused as a store failure where Python
-//! raises (the `outside_edited_wake_records` divergence). A notification
-//! cursor is bound back as it is stored, as Python binds `cursor[0]`.
+//! hand edit writes either), is refused as a store failure (the
+//! `outside_edited_wake_records` divergence). Python raises for such a
+//! detail and for a TEXT or NULL wake cursor, but compares and binds a
+//! REAL one as it is, and claims past it. A notification cursor is bound
+//! back as it is stored, as Python binds `cursor[0]`.
 use std::collections::BTreeSet;
 
 use rusqlite::types::Value as SqlValue;
@@ -138,6 +140,9 @@ impl BoardWakes for SqliteBoard<'_> {
         self.count("SELECT coalesce(max(id),0) FROM events")
     }
 
+    /// The caller's wake cursor: an integer, or refused as a store failure
+    /// (`Invalid column type`) where Python raises on TEXT or NULL and
+    /// uses a REAL as it is (`outside_edited_wake_records`).
     fn wake_cursor(&self, actor: &str) -> Result<Option<i64>, BoardError> {
         self.connection
             .query_row(
