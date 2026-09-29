@@ -13,7 +13,9 @@ use crate::application::external_agent::dto::{
     ExternalAgentLaunchError, ExternalAgentLaunchSpec, MessageRole, SessionPhase, SessionRecord,
     UserTurnId,
 };
-use crate::application::external_agent::ports::{ExternalAgentProcess, PortFuture, QueuedUserTurn};
+use crate::application::external_agent::ports::{
+    DetachedWork, ExternalAgentProcess, ExternalAgentSpawner, PortFuture, QueuedUserTurn,
+};
 use crate::domain::external_agent::stream::{
     AssistantContent, ExternalAgentEvent, InitEvent, InterruptReceipt, ResultEvent, SkippedLine,
     SkippedLineReason,
@@ -216,6 +218,19 @@ impl ExternalAgentTelemetry for Records {
     fn record(&self, record: &SessionRecord) {
         self.0.lock().unwrap().push(record.clone());
     }
+
+    fn finish(&self) -> PortFuture<'_, ()> {
+        Box::pin(async {})
+    }
+}
+
+/// Runs detached work as a tokio task of the test's runtime.
+struct TokioTasks;
+
+impl ExternalAgentSpawner for TokioTasks {
+    fn spawn(&self, work: DetachedWork) {
+        drop(tokio::spawn(work));
+    }
 }
 
 impl Records {
@@ -286,6 +301,7 @@ pub(super) fn rig_over(refuse: bool, settings: ExternalAgentSessionSettings) -> 
         launcher.clone(),
         records.clone(),
         Arc::new(TokioTime(tokio::time::Instant::now())),
+        Arc::new(TokioTasks),
         settings,
     ));
     Rig {
@@ -329,6 +345,14 @@ impl Rig {
         tokio::time::timeout(Duration::from_secs(600), self.session.next_step())
             .await
             .expect("a step is bounded")
+    }
+
+    /// Once the ended member's end is recorded, within [`BOUND`]: its
+    /// exit is recorded apart from the caller that ended it.
+    pub(super) async fn end_recorded(&self) {
+        tokio::time::timeout(BOUND, self.session.finish())
+            .await
+            .expect("the end is recorded within the bound");
     }
 
     /// Emit `event` and fold it.

@@ -76,6 +76,8 @@ async fn a_steer_taken_on_init_s_word_then_an_id_less_success_ends_the_member() 
     assert_eq!(rig.step().await, Some(SessionStep::Abandoned { turn: 1 }));
     assert_eq!(rig.phase(), SessionPhase::Ended);
     assert_eq!(rig.wire.sent(), ["one", "two"], "nothing more is written");
+    // Its exit is recorded apart from the caller that ended it.
+    rig.end_recorded().await;
     assert!(rig.wire.dropped());
     assert!(rig.records.all().contains(&SessionRecord::Abandoned {
         turn: 1,
@@ -199,6 +201,8 @@ async fn a_refused_interrupt_ends_the_member_at_once() {
     assert_eq!(rig.step().await, Some(SessionStep::Abandoned { turn: 2 }));
     assert!(began.elapsed() < INTERRUPT, "not after the grace");
     assert_eq!(rig.phase(), SessionPhase::Ended);
+    // Its exit is recorded apart from the caller that ended it.
+    rig.end_recorded().await;
     assert!(rig.wire.dropped());
 }
 

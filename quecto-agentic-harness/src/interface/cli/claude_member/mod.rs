@@ -62,14 +62,20 @@ const NO_ENDPOINT_YET: &str =
 /// Start the member and end it again: without its UDS server (#2288)
 /// nothing can reach it, so it is not left running. Returns the line that
 /// says why it is not running: its start's refusal, or that it was ended.
+/// Either way its records are kept before the process exits: dropping the
+/// telemetry would not wait for them.
 async fn start_and_end(handles: &ClaudeMemberHandles) -> String {
     match handles.session.start().await {
         Ok(()) => {
             let ended = handles.session.close().await;
             assert!(ended.is_ok(), "a started member can be ended: {ended:?}");
+            handles.session.finish().await;
             NO_ENDPOINT_YET.to_string()
         }
-        Err(refusal) => format!("agent: {refusal}\n"),
+        Err(refusal) => {
+            handles.session.finish().await;
+            format!("agent: {refusal}\n")
+        }
     }
 }
 

@@ -11,7 +11,7 @@ use super::claude_code::process::TELEMETRY_TARGET;
 use super::event_log::{MemberIdentity, audit_event};
 use crate::application::audit::ports::AuditSink;
 use crate::application::external_agent::dto::SessionRecord;
-use crate::application::external_agent::ports::ExternalAgentTelemetry;
+use crate::application::external_agent::ports::{ExternalAgentTelemetry, PortFuture};
 use crate::domain::audit::AuditEvent;
 use crate::domain::external_agent::telemetry::ExternalAgentLifecycle;
 
@@ -28,31 +28,41 @@ impl ExternalAgentTelemetry for TracingExternalAgentTelemetry {
             "external agent session"
         );
     }
+
+    fn finish(&self) -> PortFuture<'_, ()> {
+        // `tracing` keeps nothing back.
+        Box::pin(async {})
+    }
 }
 
 /// The most records waiting for the event log's writer; past it a record
 /// is dropped, and counted.
 pub const EVENT_LOG_QUEUE_CAPACITY: usize = 1024;
 
-/// How long the adapter's end waits for its writer to file what it holds:
-/// a log wedged on a stuck disk must not hold up the member's exit.
+/// How long [`EventLogExternalAgentTelemetry::finish_writer`] waits for its
+/// writer to file what it holds: a log wedged on a stuck disk must not hold
+/// up the member's exit.
 pub const EVENT_LOG_DRAIN_BOUND: Duration = Duration::from_secs(5);
 
 /// Logs a member session's records, and files each the event log keeps
 /// (#2304) through its [`AuditSink`] on a writer thread of its own:
 /// recording never blocks the session and never fails it. A record that
 /// cannot be queued (the queue is full) or written is counted, the first
-/// warned of, and the log's last record says how many were lost. Its end
-/// ([`Self::finish`], or dropping it) waits at most its drain bound for
-/// the writer to file what it holds, and tells a writer that panicked
-/// apart in any build.
+/// warned of, and the log's last record says how many were lost.
+///
+/// Its end is [`Self::finish_writer`] (the port's `finish`): awaited, never
+/// blocking a thread, it waits at most its drain bound for the writer to
+/// file what it holds, and tells a writer that panicked apart in any
+/// build. **Dropping the adapter never waits**: it closes the queue and
+/// leaves the writer to finish on its own thread, so what it still holds
+/// is lost if the process exits first. The member's runner finishes it
+/// before it exits.
 pub struct EventLogExternalAgentTelemetry {
     member: MemberIdentity,
-    queue: Option<std::sync::mpsc::SyncSender<(u32, AuditEvent)>>,
-    writer: Option<std::thread::JoinHandle<()>>,
-    /// Told when the writer has filed everything: its last record included.
-    /// (Behind a lock only to be `Sync`: [`Self::finish`] has it alone.)
-    drained: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+    queue: std::sync::Mutex<Option<std::sync::mpsc::SyncSender<(u32, AuditEvent)>>>,
+    /// Told when the writer has filed everything, its last record
+    /// included; dropped untold when it panics. Taken by the first finish.
+    drained: std::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
     drain_bound: Duration,
     health: Arc<Health>,
 }
@@ -127,14 +137,15 @@ impl EventLogExternalAgentTelemetry {
     /// cannot be started.
     pub fn new(sink: Arc<dyn AuditSink>, member: MemberIdentity) -> std::io::Result<Self> {
         let (queue, received) = std::sync::mpsc::sync_channel(EVENT_LOG_QUEUE_CAPACITY);
-        let (drained_tx, drained) = std::sync::mpsc::channel();
+        let (drained_tx, drained) = tokio::sync::oneshot::channel();
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
         let health = Arc::new(Health::default());
         let writer_health = health.clone();
         let member_ref = member.member_ref.clone();
-        let writer = std::thread::Builder::new()
+        // Detached: its end is told through `drained`, never joined.
+        let _writer = std::thread::Builder::new()
             .name("claude-member-event-log".into())
             .spawn(move || {
                 for (turn, event) in received {
@@ -154,9 +165,8 @@ impl EventLogExternalAgentTelemetry {
             })?;
         Ok(Self {
             member,
-            queue: Some(queue),
-            writer: Some(writer),
-            drained: std::sync::Mutex::new(drained),
+            queue: std::sync::Mutex::new(Some(queue)),
+            drained: std::sync::Mutex::new(Some(drained)),
             drain_bound: EVENT_LOG_DRAIN_BOUND,
             health,
         })
@@ -177,24 +187,24 @@ impl EventLogExternalAgentTelemetry {
     }
 
     /// Close the queue and wait, at most the drain bound, for the writer
-    /// to file what it holds and the log's last record. Once only: a
-    /// second call finds no writer.
-    pub fn finish(&mut self) -> WriterEnd {
-        drop(self.queue.take());
-        let Some(writer) = self.writer.take() else {
-            return WriterEnd::Drained;
-        };
+    /// to file what it holds and the log's last record. Awaited, it blocks
+    /// no thread: a runtime worker may run it. Once only: a later call
+    /// finds nothing to wait for and answers [`WriterEnd::Drained`].
+    pub async fn finish_writer(&self) -> WriterEnd {
+        drop(self.close_queue());
         let drained = self
             .drained
-            .get_mut()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let end = match drained.recv_timeout(self.drain_bound) {
-            // Told, or its sender dropped by a panic: the thread is ending.
-            Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => match writer.join() {
-                Ok(()) => WriterEnd::Drained,
-                Err(_) => WriterEnd::Panicked,
-            },
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => WriterEnd::TimedOut,
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        let Some(drained) = drained else {
+            return WriterEnd::Drained;
+        };
+        let end = match tokio::time::timeout(self.drain_bound, drained).await {
+            Ok(Ok(())) => WriterEnd::Drained,
+            // Its sender dropped untold: the writer panicked.
+            Ok(Err(_)) => WriterEnd::Panicked,
+            Err(_) => WriterEnd::TimedOut,
         };
         match end {
             WriterEnd::Drained => {}
@@ -210,6 +220,15 @@ impl EventLogExternalAgentTelemetry {
         }
         end
     }
+
+    /// Take the queue's sender: once it is dropped, the writer files what
+    /// it holds, then the log's last record, and ends.
+    fn close_queue(&self) -> Option<std::sync::mpsc::SyncSender<(u32, AuditEvent)>> {
+        self.queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+    }
 }
 
 impl ExternalAgentTelemetry for EventLogExternalAgentTelemetry {
@@ -219,7 +238,11 @@ impl ExternalAgentTelemetry for EventLogExternalAgentTelemetry {
             return;
         };
         tracing::debug!(target: TELEMETRY_TARGET, turn, event = ?event, "external agent event log");
-        let Some(queue) = &self.queue else {
+        let queue = self
+            .queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(queue) = queue.as_ref() else {
             self.health.dropped(&"the log was finished");
             return;
         };
@@ -231,11 +254,21 @@ impl ExternalAgentTelemetry for EventLogExternalAgentTelemetry {
             }
         }
     }
+
+    fn finish(&self) -> PortFuture<'_, ()> {
+        Box::pin(async move {
+            // How it ended is warned of by `finish_writer` itself.
+            let _ = self.finish_writer().await;
+        })
+    }
 }
 
 impl Drop for EventLogExternalAgentTelemetry {
+    /// Never waits (it may run on a runtime worker): the queue is closed
+    /// and the writer files what it holds on its own thread, best-effort.
+    /// Only [`Self::finish_writer`] makes the records safe.
     fn drop(&mut self) {
-        self.finish();
+        drop(self.close_queue());
     }
 }
 

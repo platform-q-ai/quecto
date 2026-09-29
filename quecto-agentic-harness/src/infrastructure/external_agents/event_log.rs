@@ -103,6 +103,23 @@ pub fn audit_event(record: &SessionRecord, member: &MemberIdentity) -> Option<(u
                 dropped_follow_ups: *dropped_follow_ups,
             },
         ),
+        SessionRecord::PromptRefused { refusal, bytes: _ } => lifecycle(
+            None,
+            ExternalAgentLifecycle::PromptRefused {
+                refusal: refusal.to_string(),
+            },
+        ),
+        SessionRecord::FollowUpFailed {
+            turn,
+            bytes: _,
+            refusal,
+        } => lifecycle(
+            Some(*turn),
+            ExternalAgentLifecycle::FollowUpFailed {
+                member_turn: *turn,
+                refusal: refusal.to_string(),
+            },
+        ),
         SessionRecord::Closed {
             turn,
             dropped_follow_ups,
@@ -131,14 +148,12 @@ pub fn audit_event(record: &SessionRecord, member: &MemberIdentity) -> Option<(u
         // call by `ToolFinished`, a skipped line by `StreamDiagnostic`; a
         // prompt's and a follow-up's admission by the turn they start.
         SessionRecord::PromptAccepted { .. }
-        | SessionRecord::PromptRefused { .. }
         | SessionRecord::ToolCalled { .. }
         | SessionRecord::LineSkipped { .. }
         | SessionRecord::TurnEnded { .. }
         | SessionRecord::TurnContinued { .. }
         | SessionRecord::ResultWithoutIds { .. }
-        | SessionRecord::FollowUpStarted { .. }
-        | SessionRecord::FollowUpFailed { .. } => None,
+        | SessionRecord::FollowUpStarted { .. } => None,
     }
 }
 

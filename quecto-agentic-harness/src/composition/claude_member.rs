@@ -20,6 +20,7 @@ use crate::infrastructure::external_agents::claude_code::environment::CREDENTIAL
 use crate::infrastructure::external_agents::claude_code::process::ClaudeCodeLauncher;
 use crate::infrastructure::external_agents::clock::TokioExternalAgentClock;
 use crate::infrastructure::external_agents::event_log::MemberIdentity;
+use crate::infrastructure::external_agents::spawner::TokioExternalAgentSpawner;
 use crate::infrastructure::external_agents::telemetry::{
     EventLogExternalAgentTelemetry, TracingExternalAgentTelemetry,
 };
@@ -64,6 +65,7 @@ pub(crate) fn build_over(
         launcher,
         telemetry,
         Arc::new(TokioExternalAgentClock::new()),
+        Arc::new(TokioExternalAgentSpawner),
         ExternalAgentSessionSettings {
             launch: launch_spec(settings, credential),
             skipped_line_grace: SKIPPED_LINE_GRACE,

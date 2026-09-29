@@ -46,8 +46,17 @@ fn interrupted(turn: u64) -> SessionRecord {
     }
 }
 
+/// `telemetry`'s end, awaited on a runtime of its own; then it is dropped.
+fn finished(telemetry: EventLogExternalAgentTelemetry) -> WriterEnd {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(telemetry.finish_writer())
+}
+
 #[test]
-fn each_record_the_log_keeps_is_filed_in_order_once_the_adapter_is_dropped() {
+fn each_record_the_log_keeps_is_filed_in_order_once_the_adapter_is_finished() {
     let sink = Arc::new(Sink::default());
     let telemetry = EventLogExternalAgentTelemetry::new(sink.clone(), member()).unwrap();
     telemetry.record(&SessionRecord::Started);
@@ -55,7 +64,7 @@ fn each_record_the_log_keeps_is_filed_in_order_once_the_adapter_is_dropped() {
     for turn in 1..=50 {
         telemetry.record(&interrupted(turn));
     }
-    drop(telemetry);
+    assert_eq!(finished(telemetry), WriterEnd::Drained);
     let written = sink.written.lock().unwrap();
     let turns: Vec<u32> = written.iter().map(|(turn, _)| *turn).collect();
     assert_eq!(turns, [0].into_iter().chain(1..=50).collect::<Vec<u32>>());
@@ -137,7 +146,7 @@ fn a_log_that_lost_records_ends_with_one_counting_what_it_dropped_and_failed() {
         telemetry.record(&interrupted(turn));
     }
     release.send(()).unwrap();
-    drop(telemetry);
+    assert_eq!(finished(telemetry), WriterEnd::Drained);
     let written = sink.written.lock().unwrap();
     assert_eq!(written.len(), EVENT_LOG_QUEUE_CAPACITY + 1);
     let (turn, last) = written.last().unwrap();
@@ -159,7 +168,7 @@ fn a_log_that_lost_nothing_writes_no_such_record() {
     let sink = Arc::new(Sink::default());
     let telemetry = EventLogExternalAgentTelemetry::new(sink.clone(), member()).unwrap();
     telemetry.record(&interrupted(1));
-    drop(telemetry);
+    assert_eq!(finished(telemetry), WriterEnd::Drained);
     assert_eq!(sink.written.lock().unwrap().len(), 1);
 }
 
@@ -182,15 +191,14 @@ impl AuditSink for StuckSink {
     }
 }
 
-/// `finish` on another thread, answered within `bound` or `None`.
+/// `finish_writer` on another thread, answered within `bound` or `None`.
 fn finish_within(
-    mut telemetry: EventLogExternalAgentTelemetry,
+    telemetry: EventLogExternalAgentTelemetry,
     bound: std::time::Duration,
 ) -> Option<WriterEnd> {
     let (sent, answer) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let end = telemetry.finish();
-        let _ = sent.send(end);
+        let _ = sent.send(finished(telemetry));
     });
     answer.recv_timeout(bound).ok()
 }
@@ -239,5 +247,36 @@ fn dropping_the_adapter_never_waits_for_a_wedged_writer() {
             .recv_timeout(std::time::Duration::from_millis(500))
             .is_ok(),
         "dropped at once"
+    );
+}
+
+/// #2304 review round 2 (L5): the end is awaited on the runtime that runs
+/// the member, a current-thread one included, blocking none of its
+/// threads: a wedged writer holds only the awaiting task, for its bound.
+#[tokio::test(flavor = "current_thread")]
+async fn finishing_on_a_runtime_blocks_none_of_its_threads() {
+    let telemetry =
+        EventLogExternalAgentTelemetry::new(Arc::new(StuckSink { panics: false }), member())
+            .unwrap()
+            .with_drain_bound(std::time::Duration::from_millis(200));
+    telemetry.record(&interrupted(1));
+    let ticks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let ticking = ticks.clone();
+    let ticker = tokio::spawn(async move {
+        loop {
+            ticking.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    });
+    assert_eq!(telemetry.finish_writer().await, WriterEnd::TimedOut);
+    ticker.abort();
+    assert!(
+        ticks.load(Ordering::SeqCst) > 5,
+        "the runtime ran on while the end was awaited"
+    );
+    assert_eq!(
+        telemetry.finish_writer().await,
+        WriterEnd::Drained,
+        "once only"
     );
 }
