@@ -323,12 +323,12 @@ pub trait BoardUsage {
     fn configure_usage_budget(&self, budget: &Value) -> Result<(), BoardError>;
     /// The row of `request_id`, when the ledger holds one.
     fn request_usage(&self, request_id: &str) -> Result<Option<StoredRequestUsage>, BoardError>;
-    /// `INSERT INTO request_usage VALUES(?,?,?,?,?,?,?,?,?,?)`, the record
-    /// stored with the board's `encode()`.
+    /// `INSERT INTO request_usage VALUES(?,?,?,?,?,?,?,?,?,?)`, the
+    /// payload stored as the text given.
     fn insert_request_usage(&self, usage: &NewRequestUsage) -> Result<(), BoardError>;
     /// The stored payload of `request_id`, which the caller has read in this
-    /// transaction, becomes `record` stored with the board's `encode()`.
-    fn update_request_usage(&self, request_id: &str, record: &Value) -> Result<(), BoardError>;
+    /// transaction, becomes `payload`, the record's `encode()` text.
+    fn update_request_usage(&self, request_id: &str, payload: &str) -> Result<(), BoardError>;
     /// `SELECT count(*) FROM request_usage`.
     fn request_usage_count(&self) -> Result<i64, BoardError>;
 }

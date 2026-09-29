@@ -38,7 +38,8 @@ impl BoardUsage for MemoryTransaction<'_> {
             .find(|row| row.request_id == request_id)
             .map(|row| StoredRequestUsage {
                 actor: Value::from(row.actor.as_str()),
-                payload: row.record.clone(),
+                payload: serde_json::from_str(&row.payload)
+                    .expect("the fake stores the encoder's JSON text"),
             }))
     }
 
@@ -59,7 +60,7 @@ impl BoardUsage for MemoryTransaction<'_> {
         Ok(())
     }
 
-    fn update_request_usage(&self, request_id: &str, record: &Value) -> Result<(), BoardError> {
+    fn update_request_usage(&self, request_id: &str, payload: &str) -> Result<(), BoardError> {
         self.note(format!("update_request_usage {request_id}"));
         let mut state = self.state.borrow_mut();
         let row = state
@@ -67,7 +68,7 @@ impl BoardUsage for MemoryTransaction<'_> {
             .iter_mut()
             .find(|row| row.request_id == request_id)
             .expect("the updated request was read first");
-        row.record = record.clone();
+        payload.clone_into(&mut row.payload);
         Ok(())
     }
 

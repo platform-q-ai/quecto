@@ -103,6 +103,7 @@ pub(super) fn atomic_on(
             let board = SqliteBoard {
                 connection: transaction,
                 tally,
+                usage_schema_created: std::cell::Cell::new(false),
             };
             let done = work(&board);
             // Only a metered op that never read the run row's id asks for
@@ -138,6 +139,10 @@ fn store_kind(failure: Option<StoreFailure>) -> RefusalKind {
 pub(super) struct SqliteBoard<'c> {
     pub(super) connection: &'c Connection,
     pub(super) tally: Option<&'c Tally>,
+    /// Whether this transaction has run `_usage_schema`'s statements: they
+    /// run once per transaction, as their `IF NOT EXISTS` makes every later
+    /// run a no-op inside it.
+    pub(super) usage_schema_created: std::cell::Cell<bool>,
 }
 
 impl BoardRuns for SqliteBoard<'_> {

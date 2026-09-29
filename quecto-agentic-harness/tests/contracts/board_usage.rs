@@ -225,10 +225,10 @@ fn the_budget_payload_is_stored_as_json_dumps_writes_it() {
         .unwrap();
 }
 
-/// A request row is inserted in the table's column order (the record
-/// stored with the board's `encode()`, the four reported counts NULL when
+/// A request row is inserted in the table's column order (the payload
+/// stored as the encoded text given, the four reported counts NULL when
 /// unreported), read back by its id as its actor and decoded payload, its
-/// payload replaced in place, and counted.
+/// payload replaced in place by the text given, and counted.
 #[test]
 fn a_request_row_round_trips_its_payload_bytes() {
     use quecto::application::swarm::dto::{NewRequestUsage, StoredRequestUsage};
@@ -242,7 +242,7 @@ fn a_request_row_round_trips_its_payload_bytes() {
             transaction.insert_request_usage(&NewRequestUsage {
                 request_id: "r1".to_owned(),
                 actor: "worker".to_owned(),
-                record: record.clone(),
+                payload: r#"{"duration_ms":1.5,"model":"m\u00e9","outcome":"succeeded","request_id":"r1","runtime":{"process_instance_id":"p"}}"#.to_owned(),
                 tokens: 80,
                 unknown: 0,
                 attempts: 2,
@@ -283,7 +283,7 @@ fn a_request_row_round_trips_its_payload_bytes() {
     );
     repository
         .atomic(false, &mut |transaction| {
-            transaction.update_request_usage("r1", &json!({"request_id": "r1", "b": 1, "a": 2}))
+            transaction.update_request_usage("r1", r#"{"a":2,"b":1,"request_id":"r1"}"#)
         })
         .unwrap();
     assert_eq!(

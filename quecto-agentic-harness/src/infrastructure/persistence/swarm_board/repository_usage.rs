@@ -1,8 +1,9 @@
 //! `BoardUsage` over the SQLite store (#2273, #2274): the usage report,
 //! the budget and the request ledger by Python's SQL
 //! (`swarm_repository.Transaction`), copied verbatim. The budget payload
-//! is written by plain `json.dumps` and a request record by the board's
-//! `encode()`, as Python writes them. The two tables are created lazily,
+//! is written by plain `json.dumps` and a request record as the text the
+//! use case encoded with the board's `encode()` (and bounded), as Python
+//! writes them. The two tables are created lazily,
 //! inside the transaction and in Python's order, so a board either
 //! implementation read lists them at the same `sqlite_master` positions;
 //! the aggregates' column aliases are the report's JSON keys, and
@@ -12,7 +13,7 @@ use rusqlite::{OptionalExtension, Row, params};
 use serde_json::{Value, json};
 
 use super::py_json::{self, PyJson};
-use super::repository::{SqliteBoard, cell_at, encoded, failed, fetched};
+use super::repository::{SqliteBoard, cell_at, failed, fetched};
 use super::repository_tasks::loaded;
 use crate::application::swarm::dto::{
     NewRequestUsage, RecentRequest, StoredRequestUsage, UsageReport, UsageRow,
@@ -121,7 +122,7 @@ impl BoardUsage for SqliteBoard<'_> {
                 params![
                     usage.request_id,
                     usage.actor,
-                    encoded(&usage.record)?,
+                    usage.payload,
                     count(usage.tokens)?,
                     count(usage.unknown)?,
                     count(usage.attempts)?,
@@ -136,13 +137,13 @@ impl BoardUsage for SqliteBoard<'_> {
         Ok(())
     }
 
-    fn update_request_usage(&self, request_id: &str, record: &Value) -> Result<(), BoardError> {
+    fn update_request_usage(&self, request_id: &str, payload: &str) -> Result<(), BoardError> {
         self.usage_schema()?;
         let changed = self
             .connection
             .execute(
                 "UPDATE request_usage SET payload=? WHERE request_id=?",
-                params![encoded(record)?, request_id],
+                params![payload, request_id],
             )
             .map_err(failed)?;
         debug_assert_eq!(changed, 1, "the request row read before it");
@@ -156,11 +157,17 @@ impl BoardUsage for SqliteBoard<'_> {
 }
 
 impl SqliteBoard<'_> {
-    /// `Transaction._usage_schema`.
+    /// `Transaction._usage_schema`, run once per transaction: its
+    /// `CREATE TABLE IF NOT EXISTS` statements change nothing after the
+    /// first run inside it.
     fn usage_schema(&self) -> Result<(), BoardError> {
+        if self.usage_schema_created.get() {
+            return Ok(());
+        }
         for statement in USAGE_SCHEMA {
             self.connection.execute(statement, []).map_err(failed)?;
         }
+        self.usage_schema_created.set(true);
         Ok(())
     }
 

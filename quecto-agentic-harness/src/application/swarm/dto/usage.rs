@@ -91,14 +91,15 @@ pub struct StoredRequestUsage {
     pub payload: Value,
 }
 
-/// One new `request_usage` row: the record (stored with the board's
-/// `encode()`), its measurement, and the four reported counts copied from
-/// the record, in the table's column order.
+/// One new `request_usage` row: the record's text as the board's
+/// `encode()` wrote it (the very bytes the size cap measured), its
+/// measurement, and the four reported counts copied from the record, in the
+/// table's column order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NewRequestUsage {
     pub request_id: String,
     pub actor: String,
-    pub record: Value,
+    pub payload: String,
     pub tokens: u64,
     pub unknown: u64,
     pub attempts: u64,

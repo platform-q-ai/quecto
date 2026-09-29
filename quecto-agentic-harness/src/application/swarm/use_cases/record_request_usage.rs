@@ -83,7 +83,7 @@ impl RecordRequestUsage {
                         match redelivery(previous, fields, same_actor) {
                             Redelivery::Same => RequestDelivery::Redelivered,
                             Redelivery::Replaced => {
-                                transaction.update_request_usage(request_id, &record)?;
+                                transaction.update_request_usage(request_id, &payload)?;
                                 RequestDelivery::Replaced
                             }
                             Redelivery::Different => {
@@ -98,7 +98,7 @@ impl RecordRequestUsage {
                         transaction.insert_request_usage(&NewRequestUsage {
                             request_id: request_id.clone(),
                             actor: actor.clone(),
-                            record: record.clone(),
+                            payload,
                             tokens,
                             unknown,
                             attempts,

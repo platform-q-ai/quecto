@@ -7,6 +7,7 @@ use crate::application::swarm::board_test_support::{
 use crate::application::swarm::dto::{
     BudgetEffect, NewRequestUsage, RecordRequestUsageRequest, RequestDelivery,
 };
+use crate::application::swarm::ports::BoardEncoding;
 use crate::domain::swarm::{BoardError, RunState};
 
 fn service(state: BoardState) -> (std::sync::Arc<MemoryBoard>, RecordRequestUsage) {
@@ -30,6 +31,12 @@ fn record(actor: &str, record: Value) -> RecordRequestUsageRequest {
         actor: actor.to_owned(),
         record,
     }
+}
+
+/// The text the board's encoder writes for `record`: what the use case
+/// bounds and stores.
+fn encoded(record: &Value) -> String {
+    CompactEncoding.encode(record).unwrap()
 }
 
 fn measured() -> Value {
@@ -68,7 +75,7 @@ fn a_new_record_is_inserted_with_its_measurement() {
         [NewRequestUsage {
             request_id: "r1".to_owned(),
             actor: "gone".to_owned(),
-            record: measured(),
+            payload: encoded(&measured()),
             tokens: 80,
             unknown: 0,
             attempts: 2,
@@ -114,7 +121,7 @@ fn a_redelivery_is_accepted_only_as_the_same_record() {
                     "executable_sha256": "abc"}});
     let digest = service.execute(record("worker", known.clone())).unwrap();
     assert_eq!(digest.delivery, RequestDelivery::Replaced);
-    assert_eq!(board.snapshot().request_usage[0].record, known);
+    assert_eq!(board.snapshot().request_usage[0].payload, encoded(&known));
     let mut other = known;
     other["runtime"]["executable_sha256"] = json!("different");
     assert_eq!(
