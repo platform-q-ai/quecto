@@ -5,6 +5,7 @@ use crate::application::swarm::board_test_support::{
     BoardState, MemoryBoard, SteppingClock, StoredFile, member_row, running_board, stored_task,
 };
 use crate::application::swarm::dto::{RecoverTaskRequest, Recovered};
+use crate::domain::swarm::{BoardError, RefusalKind};
 
 /// Task 1 blocked under the dead worker's claim, holding one reservation;
 /// task 2 claimed by the live `other`; task 3 ready.
@@ -44,44 +45,48 @@ fn recover(actor: &str, task_id: Value, release_files: Value) -> RecoverTaskRequ
 fn recovery_is_refused_in_pythons_order() {
     let board = MemoryBoard::with(board());
     let service = RecoverTask::new(board.clone(), SteppingClock::fixed(50.0));
-    for (actor, task_id, release_files, message) in [
+    for (actor, task_id, release_files, kind, message) in [
         (
             "other",
             json!(1),
             json!(true),
+            RefusalKind::NotCoordinator,
             "only the designated coordinator may do this",
         ),
         (
             "parent",
             json!(3),
             json!(true),
+            RefusalKind::WrongState,
             "only abandoned active work can be recovered",
         ),
         (
             "parent",
             json!(2),
             json!(true),
+            RefusalKind::WrongState,
             "recovery requires confirmed worker death; revoke(id, reason) reassigns a live owner",
         ),
         (
             "parent",
             json!(1),
             json!(false),
+            RefusalKind::WrongState,
             "reservations retained after an abrupt exit; recover(id, release_files=True) frees them, or revoke(id, reason)",
         ),
         (
             "parent",
             json!(1),
             json!(1),
+            RefusalKind::WrongState,
             "reservations retained after an abrupt exit; recover(id, release_files=True) frees them, or revoke(id, reason)",
         ),
     ] {
         assert_eq!(
             service
                 .execute(recover(actor, task_id, release_files))
-                .unwrap_err()
-                .0,
-            message
+                .unwrap_err(),
+            BoardError::new(kind, message)
         );
     }
     let state = board.snapshot();
@@ -100,6 +105,7 @@ fn recovery_reopens_the_task_and_frees_its_files() {
             .execute(recover("parent", json!("1"), json!(true)))
             .unwrap(),
         Recovered {
+            task_id: json!(1),
             reservations_released: 1
         }
     );

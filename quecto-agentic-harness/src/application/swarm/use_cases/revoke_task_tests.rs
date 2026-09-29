@@ -8,7 +8,7 @@ use crate::application::swarm::board_test_support::{
     running_board, stored_task,
 };
 use crate::application::swarm::dto::{Revocation, RevokeTaskRequest};
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, RefusalKind};
 
 /// Task 1 submitted by the live worker with a reservation; task 2 ready;
 /// task 3 completed; task 4 ready but waiting on task 2 (it reads
@@ -112,29 +112,32 @@ fn revocation_refuses_or_leaves_what_it_cannot_take() {
         assert_eq!(unowned.revocation, Revocation::Unowned);
         assert_eq!(unowned.task.get("id"), Some(&json!(task_id)));
     }
-    for (actor, task_id, reason, message) in [
+    for (actor, task_id, reason, kind, message) in [
         (
             "parent",
             json!(3),
             json!("late"),
+            RefusalKind::WrongState,
             "only claimed, blocked or submitted work can be revoked",
         ),
         (
             "parent",
             json!(1),
             json!(""),
+            RefusalKind::Invalid,
             "revocation reason must be nonempty and at most 8192 bytes",
         ),
         (
             "worker",
             json!(1),
             json!("mine"),
+            RefusalKind::NotCoordinator,
             "only the designated coordinator may do this",
         ),
     ] {
         assert_eq!(
             service.execute(revoke(actor, task_id, reason)).unwrap_err(),
-            BoardError::new(message)
+            BoardError::new(kind, message)
         );
     }
     let state = board.snapshot();

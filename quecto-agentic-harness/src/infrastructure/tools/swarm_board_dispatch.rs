@@ -206,6 +206,11 @@ pub const BOARD_OPS: &[&str] = &[
     "usage_budget",
     "_record_request",
     "_request_admission",
+    "reserve",
+    "release_files",
+    "file_owners",
+    "recover",
+    "revoke",
     #[cfg(any(test, feature = "test-support"))]
     "create_run",
     #[cfg(any(test, feature = "test-support"))]
@@ -490,11 +495,23 @@ fn serve(
         Method::RequestAdmission => {
             usage::request_admission(&serving(&*handles.read_request_admission, over), member)
         }
-        Method::Reserve => reservations::reserve(handles, member, arguments),
-        Method::ReleaseFiles => reservations::release_files(handles, member, arguments),
-        Method::FileOwners => reservations::file_owners(handles, member, arguments),
-        Method::Recover => reservations::recover(handles, member, arguments),
-        Method::Revoke => reservations::revoke(handles, member, arguments),
+        Method::Reserve => {
+            reservations::reserve(&serving(&*handles.reserve_files, over), member, arguments)
+        }
+        Method::ReleaseFiles => {
+            reservations::release_files(&serving(&*handles.release_files, over), member, arguments)
+        }
+        Method::FileOwners => reservations::file_owners(
+            &serving(&*handles.list_file_owners, over),
+            member,
+            arguments,
+        ),
+        Method::Recover => {
+            reservations::recover(&serving(&*handles.recover_task, over), member, arguments)
+        }
+        Method::Revoke => {
+            reservations::revoke(&serving(&*handles.revoke_task, over), member, arguments)
+        }
         #[cfg(any(test, feature = "test-support"))]
         Method::CreateRun => {
             test_only::create_run(&serving(&*handles.create_run, over), member, arguments)
@@ -619,10 +636,10 @@ mod control;
 #[path = "swarm_board_dispatch_completion.rs"]
 mod completion;
 
-#[path = "swarm_board_dispatch_usage.rs"]
-mod usage;
 #[path = "swarm_board_dispatch_reservations.rs"]
 mod reservations;
+#[path = "swarm_board_dispatch_usage.rs"]
+mod usage;
 
 #[cfg(test)]
 #[path = "swarm_board_dispatch_tests.rs"]

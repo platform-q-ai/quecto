@@ -4,7 +4,7 @@
 use std::os::unix::fs::symlink;
 
 use quecto::application::swarm::ports::CheckoutPaths;
-use quecto::domain::swarm::BoardError;
+use quecto::domain::swarm::{BoardError, RefusalKind};
 use quecto::infrastructure::workspace::checkout_paths::ResolvedCheckout;
 
 #[test]
@@ -26,6 +26,7 @@ fn paths_resolve_inside_the_checkout_or_are_refused() {
         assert_eq!(
             checkout.normalize(escape),
             Err(BoardError::new(
+                RefusalKind::Invalid,
                 "file must resolve inside the shared checkout"
             )),
             "{escape}"

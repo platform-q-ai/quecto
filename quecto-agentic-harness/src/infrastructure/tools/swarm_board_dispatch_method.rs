@@ -255,7 +255,12 @@ impl Method {
             | Self::RevalidateTask
             | Self::Amend
             | Self::Evidence
-            | Self::UsageBudget => None,
+            | Self::UsageBudget
+            | Self::Reserve
+            | Self::ReleaseFiles
+            | Self::FileOwners
+            | Self::Recover
+            | Self::Revoke => None,
             // Test-only halves the differential harness drives as the host;
             // the member-facing `create`, `_bootstrap` and `task` S12 serves
             // record the caller's own role.
@@ -302,7 +307,12 @@ impl Method {
             | Self::Evidence
             | Self::UsageBudget
             | Self::RecordRequest
-            | Self::RequestAdmission => true,
+            | Self::RequestAdmission
+            | Self::Reserve
+            | Self::ReleaseFiles
+            | Self::FileOwners
+            | Self::Recover
+            | Self::Revoke => true,
             // A member's own resume is refused before any gate (#2273), so
             // it never answers.
             Self::Resume => false,

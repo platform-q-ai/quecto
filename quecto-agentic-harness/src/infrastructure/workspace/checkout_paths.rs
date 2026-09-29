@@ -18,7 +18,7 @@ use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 
 use crate::application::swarm::ports::CheckoutPaths;
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, RefusalKind};
 
 /// The checkout at `root`, resolved on every call as Python resolves it.
 #[derive(Clone, Debug)]
@@ -34,7 +34,12 @@ impl ResolvedCheckout {
 
 impl CheckoutPaths for ResolvedCheckout {
     fn normalize(&self, path: &str) -> Result<String, BoardError> {
-        let escape = || BoardError::new("file must resolve inside the shared checkout");
+        let escape = || {
+            BoardError::new(
+                RefusalKind::Invalid,
+                "file must resolve inside the shared checkout",
+            )
+        };
         // `lstat` of a path holding NUL raises `ValueError` in Python, which
         // the board reports as an escape.
         if path.contains('\0') {

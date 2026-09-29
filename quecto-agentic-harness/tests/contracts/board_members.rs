@@ -605,13 +605,13 @@ fn a_member_status_is_read_alone() {
         let undecodable = status(json!("bad")).unwrap_err();
         assert!(
             undecodable
-                .0
+                .message()
                 .contains("Could not decode to UTF-8 column 'status'"),
             "{undecodable:?}"
         );
         let unbindable = status(json!([5])).unwrap_err();
         assert!(
-            unbindable.0.contains("Error binding parameter 1"),
+            unbindable.message().contains("Error binding parameter 1"),
             "{unbindable:?}"
         );
         Ok(())

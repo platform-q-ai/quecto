@@ -1504,7 +1504,7 @@ fn application_path_allowed(path: &str) -> bool {
             // Usage accounting and the inference admission (#2274).
             | "ConfigureUsageBudget"
             | "ReadRequestAdmission"
-            | "RecordRequestUsage",
+            | "RecordRequestUsage"
             // Reservations, recovery and revocation (#2275).
             | "ListFileOwners"
             | "RecoverTask"
@@ -1590,7 +1590,7 @@ fn application_path_allowed(path: &str) -> bool {
             | "NewRequestUsage"
             | "RecordRequestUsageRequest"
             | "RequestDelivery"
-            | "StoredRequestUsage",
+            | "StoredRequestUsage"
             // Reservations, recovery and revocation (#2275).
             | "FileRow"
             | "ListFileOwnersRequest"

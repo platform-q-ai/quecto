@@ -5,11 +5,13 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use super::OverRepository;
+
 use crate::application::swarm::board_operation::{detail, operation};
-use crate::application::swarm::board_tasks::owned;
+use crate::application::swarm::board_tasks::{owned, stored_id};
 use crate::application::swarm::dto::{NewReservation, Reservation, ReserveFilesRequest};
 use crate::application::swarm::ports::{BoardRepository, CheckoutPaths, Clock, IdSource};
-use crate::domain::swarm::{Access, BoardError, bounded};
+use crate::domain::swarm::{Access, BoardError, RefusalKind, bounded};
 
 /// The most paths one call reserves.
 const PATHS_PER_CALL: usize = 100;
@@ -66,18 +68,22 @@ impl ReserveFiles {
             actor,
             running,
             |transaction, _| {
-                owned(transaction, &request.task_id, &request.token, actor)?;
+                let task = owned(transaction, &request.task_id, &request.token, actor)?;
                 let wanted = i64::try_from(paths.len()).unwrap_or(i64::MAX);
                 if transaction.file_count()?.saturating_add(wanted) > BOARD_CAPACITY {
                     return Err(BoardError::new(
+                        RefusalKind::CapacityFull,
                         "file reservation board full (1000); release settled work",
                     ));
                 }
                 for path in &paths {
                     if transaction.file_reserved(path)? {
-                        return Err(BoardError::new(format!(
-                            "file already reserved: {path}; acquire the entire set or release and retry"
-                        )));
+                        return Err(BoardError::new(
+                            RefusalKind::ReservedByOther,
+                            format!(
+                                "file already reserved: {path}; acquire the entire set or release and retry"
+                            ),
+                        ));
                     }
                 }
                 let reservation = NewReservation {
@@ -98,6 +104,7 @@ impl ReserveFiles {
                     ]),
                 )?;
                 Ok(Reservation {
+                    task_id: stored_id(&task),
                     token: reservation.token,
                     paths: reservation.paths,
                 })
@@ -110,7 +117,12 @@ impl ReserveFiles {
     fn normalized(&self, paths: &Value) -> Result<BTreeSet<String>, BoardError> {
         let given = match paths {
             Value::Array(given) if (1..=PATHS_PER_CALL).contains(&given.len()) => given,
-            _ => return Err(BoardError::new("reserve 1 through 100 paths together")),
+            _ => {
+                return Err(BoardError::new(
+                    RefusalKind::Invalid,
+                    "reserve 1 through 100 paths together",
+                ));
+            }
         };
         let mut normalized = BTreeSet::new();
         for path in given {
@@ -124,6 +136,17 @@ impl ReserveFiles {
         }
         debug_assert!(!normalized.is_empty(), "at least one path was given");
         Ok(normalized)
+    }
+}
+
+impl OverRepository for ReserveFiles {
+    fn over(&self, repository: Arc<dyn BoardRepository>) -> Self {
+        Self {
+            repository,
+            clock: self.clock.clone(),
+            ids: self.ids.clone(),
+            checkout: self.checkout.clone(),
+        }
     }
 }
 

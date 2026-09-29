@@ -5,7 +5,7 @@ use crate::application::swarm::board_test_support::{
     BoardState, MemoryBoard, SteppingClock, StoredFile, member_row, running_board, stored_task,
 };
 use crate::application::swarm::dto::ReleaseFilesRequest;
-use crate::domain::swarm::{BoardError, RunState};
+use crate::domain::swarm::{BoardError, RefusalKind, RunState};
 
 fn file(path: &str, owner: &str, claim: &str, token: &str) -> StoredFile {
     StoredFile {
@@ -49,7 +49,7 @@ fn the_owner_releases_one_reservation_set() {
     let service = ReleaseFiles::new(board.clone(), SteppingClock::fixed(50.0));
     assert_eq!(
         service.execute(release("stale", json!("r1"))).unwrap_err(),
-        BoardError::new("stale or unowned claim")
+        BoardError::new(RefusalKind::StaleToken, "stale or unowned claim")
     );
     service
         .execute(release("stored-token", json!("r1")))

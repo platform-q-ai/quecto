@@ -12,6 +12,7 @@ use crate::application::swarm::ports::{Clock, IdSource};
 use crate::composition::swarm::{board_op_log, with_event_log};
 use crate::infrastructure::persistence::audit_log::AuditLog;
 use crate::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
+use crate::infrastructure::workspace::checkout_paths::ResolvedCheckout;
 
 struct Fixed;
 impl Clock for Fixed {
@@ -52,6 +53,7 @@ fn a_board_call_answers_while_another_writer_holds_the_log() {
         }),
         std::sync::Arc::new(Fixed),
         std::sync::Arc::new(Counter::default()),
+        std::sync::Arc::new(ResolvedCheckout::new(dir.path())),
         board_op_log(true, &log).expect("the event log is on"),
     );
     call(&handles, "parent", "bootstrap_run", json!([1, "s", null])).unwrap();

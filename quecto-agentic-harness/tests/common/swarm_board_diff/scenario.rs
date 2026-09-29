@@ -116,6 +116,7 @@ fn fs_step(args: &Value) -> Step {
         method: FS_STEP.to_owned(),
         args: args.to_string(),
         now: 0.0,
+        hold: None,
     }
 }
 
@@ -302,6 +303,7 @@ fn run_in(
             (
                 shape(&python_side.root, &step.args),
                 shape(&rust_side.root, &step.args),
+                false,
             )
         } else {
             let python_outcome = with_lock(&python_side.database, step.hold, || {

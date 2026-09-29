@@ -118,7 +118,7 @@ fn production_handles_normalise_paths_in_the_board_checkout() {
             json!([1, claim["token"], ["../out"]])
         )
         .unwrap_err()
-        .0,
+        .message(),
         "file must resolve inside the shared checkout"
     );
 }

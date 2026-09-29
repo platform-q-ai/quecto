@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use super::super::TELEMETRY_TARGET;
 use super::super::tests::{board, captured, running};
 use crate::composition::swarm::SwarmBoardHandles;
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, RefusalKind};
 use crate::infrastructure::tools::swarm_board_dispatch::call;
 
 /// The parent's claim of task 1: its token.
@@ -90,12 +90,13 @@ fn reservation_methods_bind_pythons_signatures() {
     ] {
         assert_eq!(
             call(&handles, "parent", method, args).unwrap_err(),
-            BoardError::new(message)
+            BoardError::new(RefusalKind::Calling, message)
         );
     }
     assert_eq!(
         call(&handles, "parent", "recover", json!([1])).unwrap_err(),
         BoardError::new(
+            RefusalKind::WrongState,
             "recovery requires confirmed worker death; revoke(id, reason) reassigns a live owner"
         )
     );

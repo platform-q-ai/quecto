@@ -9,7 +9,7 @@ use crate::application::swarm::board_test_support::{
     running_board, stored_task,
 };
 use crate::application::swarm::dto::{Reservation, ReserveFilesRequest};
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, RefusalKind};
 
 fn file(path: &str, task: i64) -> StoredFile {
     StoredFile {
@@ -70,6 +70,7 @@ fn the_owner_reserves_normalised_paths_in_sorted_order() {
     assert_eq!(
         reserved,
         Reservation {
+            task_id: json!(1),
             token: format!("{:032x}", 1),
             paths: paths.map(str::to_owned).to_vec(),
         }
@@ -133,7 +134,7 @@ fn paths_are_checked_before_the_gate() {
             service
                 .execute(reserve(json!(1), "stored-token", paths.clone()))
                 .unwrap_err(),
-            BoardError::new(message),
+            BoardError::new(RefusalKind::Invalid, message),
             "{paths}"
         );
     }
@@ -147,25 +148,30 @@ fn a_conflict_or_a_full_board_reserves_nothing() {
     let mut full = board();
     full.files
         .extend((0..997).map(|n| file(&format!("f{n:04}"), 2)));
-    for (state, token, paths, message) in [
+    for (state, token, paths, (kind, message)) in [
         (
             board(),
             "stale",
             json!(["a.rs"]),
-            "stale or unowned claim".to_owned(),
+            (RefusalKind::StaleToken, "stale or unowned claim"),
         ),
         (
             board(),
             "stored-token",
             json!(["a.rs", "taken.rs"]),
-            "file already reserved: taken.rs; acquire the entire set or release and retry"
-                .to_owned(),
+            (
+                RefusalKind::ReservedByOther,
+                "file already reserved: taken.rs; acquire the entire set or release and retry",
+            ),
         ),
         (
             full,
             "stored-token",
             json!(["a.rs", "b.rs"]),
-            "file reservation board full (1000); release settled work".to_owned(),
+            (
+                RefusalKind::CapacityFull,
+                "file reservation board full (1000); release settled work",
+            ),
         ),
     ] {
         let before = state.files.clone();
@@ -174,7 +180,7 @@ fn a_conflict_or_a_full_board_reserves_nothing() {
             service(&board)
                 .execute(reserve(json!(1), token, paths))
                 .unwrap_err(),
-            BoardError::new(message)
+            BoardError::new(kind, message)
         );
         let after = board.snapshot();
         assert_eq!(after.files, before);
@@ -218,6 +224,7 @@ fn multi_conflict_names_the_smallest_path() {
             ))
             .unwrap_err(),
         BoardError::new(
+            RefusalKind::ReservedByOther,
             "file already reserved: taken.rs; acquire the entire set or release and retry"
         )
     );

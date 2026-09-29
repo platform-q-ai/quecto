@@ -4,12 +4,14 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use super::OverRepository;
+
 use crate::application::swarm::board_operation::{detail, operation};
 use crate::application::swarm::board_recovery::reopen;
-use crate::application::swarm::board_tasks::{HELD_CLAIM, read_task};
+use crate::application::swarm::board_tasks::{HELD_CLAIM, read_task, stored_id};
 use crate::application::swarm::dto::{RecoverTaskRequest, Recovered};
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::{Access, BoardError};
+use crate::domain::swarm::{Access, BoardError, RefusalKind};
 
 /// Through the operation gate for the coordinator (a running run): the
 /// task must hold a claim (`claimed`, `blocked` or `submitted`), and its
@@ -52,6 +54,7 @@ impl RecoverTask {
                     .is_some_and(|status| HELD_CLAIM.contains(&status));
                 if !held {
                     return Err(BoardError::new(
+                        RefusalKind::WrongState,
                         "only abandoned active work can be recovered",
                     ));
                 }
@@ -61,6 +64,7 @@ impl RecoverTask {
                     .is_some_and(|row| row.status.as_deref() == Some("dead"));
                 if !dead {
                     return Err(BoardError::new(
+                        RefusalKind::WrongState,
                         "recovery requires confirmed worker death; revoke(id, reason) reassigns a live owner",
                     ));
                 }
@@ -69,6 +73,7 @@ impl RecoverTask {
                 let release = request.release_files == Value::Bool(true);
                 if retained != 0 && !release {
                     return Err(BoardError::new(
+                        RefusalKind::WrongState,
                         "reservations retained after an abrupt exit; recover(id, release_files=True) frees them, or revoke(id, reason)",
                     ));
                 }
@@ -83,10 +88,20 @@ impl RecoverTask {
                     ]),
                 )?;
                 Ok(Recovered {
+                    task_id: stored_id(&task),
                     reservations_released: retained,
                 })
             },
         )
+    }
+}
+
+impl OverRepository for RecoverTask {
+    fn over(&self, repository: Arc<dyn BoardRepository>) -> Self {
+        Self {
+            repository,
+            clock: self.clock.clone(),
+        }
     }
 }
 

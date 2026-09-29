@@ -16,8 +16,7 @@ pub use self::tasks::{StoredFile, StoredRequest, stored_task};
 use crate::application::swarm::dto::{
     AmendedContract, EvidenceEntry, LaunchIdentity, MemberClaimCounts, MemberRow, MemberStatusRow,
     NewMember, NewRequestUsage, NewRun, RunContract, RunOwnerRow, RunStatusRow, StoredContract,
-    TaskRow,
-    UsageReport,
+    TaskRow, UsageReport,
 };
 use crate::application::swarm::ports::{
     BoardEncoding, BoardEvents, BoardMembers, BoardRepository, BoardRuns, BoardWork, Clock,

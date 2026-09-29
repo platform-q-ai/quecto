@@ -12,7 +12,7 @@ use super::binding;
 use super::repository::{SqliteBoard, cell_at, failed, fetched, loose};
 use crate::application::swarm::dto::{FileRow, NewReservation};
 use crate::application::swarm::ports::{BoardFiles, BoardMessages};
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, RefusalKind};
 
 impl BoardFiles for SqliteBoard<'_> {
     fn delete_claim_files(&self, task: &Value, claim: &Value) -> Result<(), BoardError> {
@@ -163,7 +163,10 @@ impl SqliteBoard<'_> {
         let mut rows = statement.raw_query();
         match rows.next().map_err(failed)? {
             Some(row) => row.get(0).map_err(failed),
-            None => Err(BoardError::new("a count answered no row")),
+            None => Err(BoardError::new(
+                RefusalKind::Internal,
+                "a count answered no row",
+            )),
         }
     }
 }

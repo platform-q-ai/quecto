@@ -34,6 +34,7 @@ const REPOSITORY: &str = "Arc < dyn BoardRepository >";
 /// `over` carries across unchanged, none of which runs a transaction.
 const OTHER_PORTS: &[&str] = &[
     "Arc < dyn BoardEncoding >",
+    "Arc < dyn CheckoutPaths >",
     "Arc < dyn Clock + Send + Sync >",
     "Arc < dyn IdSource >",
 ];

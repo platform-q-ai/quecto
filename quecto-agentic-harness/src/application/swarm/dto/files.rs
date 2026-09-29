@@ -21,9 +21,11 @@ pub struct ReserveFilesRequest {
 }
 
 /// What `reserve` answered: the ownership token drawn for the set, and
-/// the normalised paths in sorted order.
+/// the normalised paths in sorted order; and the task's id as its row
+/// holds it (#2303), for the call's record.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Reservation {
+    pub task_id: Value,
     pub token: String,
     pub paths: Vec<String>,
 }
@@ -79,9 +81,11 @@ pub struct RecoverTaskRequest {
     pub release_files: Value,
 }
 
-/// What `recover` did: the reservations it released with the task.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// What `recover` did: the reservations it released with the task, and
+/// the task's id as its row holds it (#2303), for the call's record.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Recovered {
+    pub task_id: Value,
     pub reservations_released: i64,
 }
 

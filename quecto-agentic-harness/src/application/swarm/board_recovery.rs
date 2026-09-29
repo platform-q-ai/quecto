@@ -8,7 +8,7 @@ use super::dto::TaskUpdate;
 use super::ports::{
     BoardEncoding, BoardEvents, BoardFiles, BoardMembers, BoardMessages, BoardTasks, Clock,
 };
-use crate::domain::swarm::{BoardError, status_is_alive};
+use crate::domain::swarm::{BoardError, RefusalKind, status_is_alive};
 
 /// The most unread messages an inbox holds.
 const INBOX_CAPACITY: i64 = 100;
@@ -99,6 +99,7 @@ fn python_str(value: &Value, encoding: &dyn BoardEncoding) -> Result<String, Boa
         Value::Number(number) if number.is_f64() => encoding.encode(value),
         Value::Number(number) => Ok(number.to_string()),
         Value::Null | Value::Array(_) | Value::Object(_) => Err(BoardError::new(
+            RefusalKind::Internal,
             "a task id that finds a task is text or a number",
         )),
     }

@@ -5,7 +5,7 @@ use crate::application::swarm::board_test_support::{
     MemoryBoard, SteppingClock, StoredFile, member_row, running_board,
 };
 use crate::application::swarm::dto::ListFileOwnersRequest;
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, RefusalKind};
 
 fn page(actor: &str, offset: Value, limit: Value) -> ListFileOwnersRequest {
     ListFileOwnersRequest {
@@ -65,7 +65,10 @@ fn only_an_integer_page_is_read() {
             service
                 .execute(page("parent", offset.clone(), limit.clone()))
                 .unwrap_err(),
-            BoardError::new("file page requires nonnegative offset and limit 1 through 100"),
+            BoardError::new(
+                RefusalKind::Invalid,
+                "file page requires nonnegative offset and limit 1 through 100"
+            ),
             "{offset} {limit}"
         );
     }

@@ -2,10 +2,12 @@
 //! reservations.
 use std::sync::Arc;
 
+use super::OverRepository;
+
 use crate::application::swarm::board_operation::operation;
 use crate::application::swarm::dto::{FileRow, ListFileOwnersRequest};
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::{Access, BoardError};
+use crate::domain::swarm::{Access, BoardError, RefusalKind};
 
 /// The largest page.
 const PAGE_MAX: i64 = 100;
@@ -36,6 +38,7 @@ impl ListFileOwners {
             .filter(|limit| (1..=PAGE_MAX).contains(limit));
         let (Some(offset), Some(limit)) = (offset, limit) else {
             return Err(BoardError::new(
+                RefusalKind::Invalid,
                 "file page requires nonnegative offset and limit 1 through 100",
             ));
         };
@@ -50,6 +53,15 @@ impl ListFileOwners {
             reading,
             |transaction, _| transaction.file_page(offset, limit),
         )
+    }
+}
+
+impl OverRepository for ListFileOwners {
+    fn over(&self, repository: Arc<dyn BoardRepository>) -> Self {
+        Self {
+            repository,
+            clock: self.clock.clone(),
+        }
     }
 }
 

@@ -155,7 +155,7 @@ fn an_offset_beyond_sqlite_integers_is_refused() {
         })
         .unwrap_err();
     assert!(
-        refused.0.contains("Error binding parameter 2"),
+        refused.message().contains("Error binding parameter 2"),
         "{refused:?}"
     );
 }

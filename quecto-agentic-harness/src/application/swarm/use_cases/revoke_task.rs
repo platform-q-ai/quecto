@@ -4,13 +4,15 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use super::OverRepository;
+
 use crate::application::swarm::board_operation::{detail, operation, text};
 use crate::application::swarm::board_recovery::{Notice, notify_revoked, reopen};
 use crate::application::swarm::board_tasks::{HELD_CLAIM, read_task};
 use crate::application::swarm::dto::{Revocation, RevokeTaskRequest, Revoked};
 use crate::application::swarm::ports::{BoardEncoding, BoardRepository, Clock};
 use crate::domain::swarm::validation::TEXT_MAX_BYTES;
-use crate::domain::swarm::{Access, BoardError, bounded};
+use crate::domain::swarm::{Access, BoardError, RefusalKind, bounded};
 
 /// The reason is bounded before the operation gate for the coordinator (a
 /// running run). An unowned task that reads `ready` or `blocked` is
@@ -67,6 +69,7 @@ impl RevokeTask {
                 let held = status.is_some_and(|status| HELD_CLAIM.contains(&status));
                 if previous.is_null() || !held {
                     return Err(BoardError::new(
+                        RefusalKind::WrongState,
                         "only claimed, blocked or submitted work can be revoked",
                     ));
                 }
@@ -95,6 +98,16 @@ impl RevokeTask {
                 })
             },
         )
+    }
+}
+
+impl OverRepository for RevokeTask {
+    fn over(&self, repository: Arc<dyn BoardRepository>) -> Self {
+        Self {
+            repository,
+            clock: self.clock.clone(),
+            encoding: self.encoding.clone(),
+        }
     }
 }
 

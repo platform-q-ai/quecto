@@ -8,6 +8,7 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
+use crate::swarm_board_diff_loose_runs::create_text;
 use crate::swarm_board_diff_membership::{at, create};
 use crate::swarm_board_diff_runs::NOW;
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
@@ -207,15 +208,6 @@ fn unbindable_arguments_are_refused_as_python_refuses_them() {
             Outcome::Refused(format!("{CONTENDED}{expected}"))
         );
     }
-}
-
-/// `create_run`'s arguments as JSON text, a criterion's extra key `w`
-/// written as `extra`.
-pub(crate) fn create_text(extra: &str) -> String {
-    format!(
-        r#"["g", [], [{{"id": "c", "kind": "review", "description": "d", "w": {extra}}}], 5, {}]"#,
-        NOW + 3_600.0
-    )
 }
 
 /// Argument text is parsed by each side (#2270 round-3 review L1), and
@@ -533,8 +525,8 @@ fn outside_edited_columns() {
     assert!(refused_with(&outcome, CONTENDED), "{outcome:?}");
 }
 
-/// Each named divergence has its test in this file, and each test here
-/// that pins one is named.
+/// Each named divergence has its test in [`PIN_TABLE_FILES`], and each
+/// test there that pins one is named.
 #[test]
 fn every_permitted_divergence_is_pinned_by_name() {
     for name in PERMITTED_DIVERGENCES {
@@ -552,6 +544,12 @@ fn every_permitted_divergence_is_pinned_by_name() {
             "{name} has no pinning test"
         );
     }
+    for (name, test) in SECOND_PINS {
+        let held = PIN_TABLE_FILES
+            .iter()
+            .any(|file| file.contains(&format!("fn {test}()")));
+        assert!(held && PERMITTED_DIVERGENCES.contains(&name), "{test}");
+    }
     for (name, _, test) in EXTERNAL_PINS {
         assert!(
             PERMITTED_DIVERGENCES.contains(&name),
@@ -560,11 +558,19 @@ fn every_permitted_divergence_is_pinned_by_name() {
     }
 }
 
-/// This file and the sibling holding #2275's divergences and their pins.
-const PIN_TABLE_FILES: [&str; 2] = [
+/// The only files whose tests may expect a difference: this one, #2275's
+/// sibling, and the submission scenarios holding a [`SECOND_PINS`] test.
+const PIN_TABLE_FILES: [&str; 3] = [
     include_str!("swarm_board_diff_loose.rs"),
     include_str!("swarm_board_diff_loose_files.rs"),
+    include_str!("swarm_board_diff_submissions.rs"),
 ];
+
+/// A divergence pinned here pinned again, by a test of another name.
+const SECOND_PINS: [(&str, &str); 1] = [(
+    "outside_edited_evidence",
+    "edited_string_evidence_raises_in_python_and_is_refused_in_rust",
+)];
 
 /// Divergences pinned outside this suite: the name, the test file's
 /// source and the pinning test in it.

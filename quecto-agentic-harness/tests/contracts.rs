@@ -49,10 +49,10 @@ mod board_evidence;
 mod board_files;
 #[path = "contracts/board_members.rs"]
 mod board_members;
-#[path = "contracts/board_op_log.rs"]
-mod board_op_log;
 #[path = "contracts/board_messages.rs"]
 mod board_messages;
+#[path = "contracts/board_op_log.rs"]
+mod board_op_log;
 #[path = "contracts/board_repository.rs"]
 mod board_repository;
 #[path = "contracts/board_requests.rs"]

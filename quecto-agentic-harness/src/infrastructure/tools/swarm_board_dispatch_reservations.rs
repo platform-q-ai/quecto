@@ -4,13 +4,18 @@
 //! argument reaches the use case as the JSON value passed: Python binds a
 //! task id, a token or a reservation untyped and type-checks the rest at
 //! run time (`recover`'s `release_files` is compared by `is True`), so no
-//! type is refused here.
+//! type is refused here. A record names the task by the id its row holds
+//! (#2303), as the task methods' records do.
 use serde_json::{Map, Value};
 
-use super::{Parameter, Served, SwarmBoardHandles, done, required, take};
+use super::tasks::acted_on;
+use super::{Parameter, Served, required, take};
 use crate::application::swarm::dto::{
     ListFileOwnersRequest, RecoverTaskRequest, ReleaseFilesRequest, ReserveFilesRequest,
     Revocation, RevokeTaskRequest,
+};
+use crate::application::swarm::use_cases::{
+    ListFileOwners, RecoverTask, ReleaseFiles, ReserveFiles, RevokeTask,
 };
 use crate::domain::swarm::BoardError;
 
@@ -45,14 +50,25 @@ pub(super) const RECOVER: [Parameter; 2] = [
 /// `revoke(task_id, reason)`.
 pub(super) const REVOKE: [Parameter; 2] = [required("task_id"), required("reason")];
 
+/// `value` with `decision`, recording the task `task_id` (its row's id).
+fn on_task(value: Value, decision: &'static str, task_id: &Value) -> Served {
+    Served {
+        value,
+        decision,
+        task_id: acted_on(Some(task_id)),
+        message_id: None,
+        cursor_moved: None,
+    }
+}
+
 /// `{token, paths}`: the ownership token and the sorted paths.
 pub(super) fn reserve(
-    handles: &SwarmBoardHandles,
+    reserve_files: &ReserveFiles,
     actor: &str,
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
     let [task_id, token, paths] = take(arguments)?;
-    let reservation = handles.reserve_files.execute(ReserveFilesRequest {
+    let reservation = reserve_files.execute(ReserveFilesRequest {
         actor: actor.to_owned(),
         task_id,
         token,
@@ -61,35 +77,36 @@ pub(super) fn reserve(
     let mut answer = Map::new();
     answer.insert("token".to_owned(), Value::from(reservation.token));
     answer.insert("paths".to_owned(), Value::from(reservation.paths));
-    Ok(Served {
-        value: Value::Object(answer),
-        decision: "reserved",
-    })
+    Ok(on_task(
+        Value::Object(answer),
+        "reserved",
+        &reservation.task_id,
+    ))
 }
 
 pub(super) fn release_files(
-    handles: &SwarmBoardHandles,
+    release_files: &ReleaseFiles,
     actor: &str,
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
     let [task_id, token, reservation] = take(arguments)?;
-    handles.release_files.execute(ReleaseFilesRequest {
+    let task_id = release_files.execute(ReleaseFilesRequest {
         actor: actor.to_owned(),
         task_id,
         token,
         reservation,
     })?;
-    Ok(done("released"))
+    Ok(on_task(Value::Null, "released", &task_id))
 }
 
 /// The page of `files` rows, each as `dict(row)`.
 pub(super) fn file_owners(
-    handles: &SwarmBoardHandles,
+    list_file_owners: &ListFileOwners,
     actor: &str,
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
     let [offset, limit] = take(arguments)?;
-    let rows = handles.list_file_owners.execute(ListFileOwnersRequest {
+    let rows = list_file_owners.execute(ListFileOwnersRequest {
         actor: actor.to_owned(),
         offset,
         limit,
@@ -97,47 +114,50 @@ pub(super) fn file_owners(
     Ok(Served {
         value: Value::Array(rows.into_iter().map(|row| row.into_value()).collect()),
         decision: "read",
+        task_id: None,
+        message_id: None,
+        cursor_moved: None,
     })
 }
 
 pub(super) fn recover(
-    handles: &SwarmBoardHandles,
+    recover_task: &RecoverTask,
     actor: &str,
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
     let [task_id, release_files] = take(arguments)?;
-    let recovered = handles.recover_task.execute(RecoverTaskRequest {
+    let recovered = recover_task.execute(RecoverTaskRequest {
         actor: actor.to_owned(),
         task_id,
         release_files,
     })?;
-    Ok(done(if recovered.reservations_released > 0 {
+    let decision = if recovered.reservations_released > 0 {
         "recovered_releasing_files"
     } else {
         "recovered"
-    }))
+    };
+    Ok(on_task(Value::Null, decision, &recovered.task_id))
 }
 
 /// The task's dict as it now stands.
 pub(super) fn revoke(
-    handles: &SwarmBoardHandles,
+    revoke_task: &RevokeTask,
     actor: &str,
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
     let [task_id, reason] = take(arguments)?;
-    let revoked = handles.revoke_task.execute(RevokeTaskRequest {
+    let revoked = revoke_task.execute(RevokeTaskRequest {
         actor: actor.to_owned(),
         task_id,
         reason,
     })?;
-    Ok(Served {
-        value: revoked.task.into_value(),
-        decision: match revoked.revocation {
-            Revocation::Unowned => "unchanged",
-            Revocation::Revoked { notified: true } => "revoked_notified",
-            Revocation::Revoked { notified: false } => "revoked_unnotified",
-        },
-    })
+    let decision = match revoked.revocation {
+        Revocation::Unowned => "unchanged",
+        Revocation::Revoked { notified: true } => "revoked_notified",
+        Revocation::Revoked { notified: false } => "revoked_unnotified",
+    };
+    let stored = revoked.task.get("id").cloned().unwrap_or(Value::Null);
+    Ok(on_task(revoked.task.into_value(), decision, &stored))
 }
 
 #[cfg(test)]

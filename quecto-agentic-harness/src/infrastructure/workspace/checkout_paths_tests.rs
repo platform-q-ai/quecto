@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use super::ResolvedCheckout;
 use crate::application::swarm::ports::CheckoutPaths;
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, RefusalKind};
 
 const ESCAPE: &str = "file must resolve inside the shared checkout";
 
@@ -75,7 +75,11 @@ fn normalize_matches_python_resolve_for_missing_files() {
         let normalized = normalizer.normalize(&path);
         match expected {
             Ok(relative) => assert_eq!(normalized, Ok(relative.to_owned()), "{path:?}"),
-            Err(message) => assert_eq!(normalized, Err(BoardError::new(message)), "{path:?}"),
+            Err(message) => assert_eq!(
+                normalized,
+                Err(BoardError::new(RefusalKind::Invalid, message)),
+                "{path:?}"
+            ),
         }
     }
 }
@@ -107,7 +111,7 @@ fn a_path_resolving_to_a_name_that_is_not_utf8_is_refused() {
     for path in ["l/x", "l", "src/../l/x"] {
         assert_eq!(
             normalizer.normalize(path),
-            Err(BoardError::new(ESCAPE)),
+            Err(BoardError::new(RefusalKind::Invalid, ESCAPE)),
             "{path}"
         );
     }

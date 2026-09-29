@@ -11,7 +11,7 @@ use super::MemoryTransaction;
 use super::tasks::{StoredFile, affinity};
 use crate::application::swarm::dto::{FileRow, NewReservation};
 use crate::application::swarm::ports::{BoardFiles, BoardMessages, CheckoutPaths};
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, RefusalKind};
 
 /// One `messages` row.
 #[derive(Clone, Debug, PartialEq)]
@@ -177,7 +177,12 @@ pub struct LexicalCheckout {
 
 impl CheckoutPaths for LexicalCheckout {
     fn normalize(&self, path: &str) -> Result<String, BoardError> {
-        let escape = || BoardError::new("file must resolve inside the shared checkout");
+        let escape = || {
+            BoardError::new(
+                RefusalKind::Invalid,
+                "file must resolve inside the shared checkout",
+            )
+        };
         let mut parts: Vec<String> = Vec::new();
         for part in path.split('/') {
             match part {
