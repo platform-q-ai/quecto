@@ -88,6 +88,40 @@ fn outside_edited_loss_records() {
         run_rust(&steps),
         Outcome::Refused("the board's event time is not as the board writes it".to_owned())
     );
+    // The owned task beyond the summary's first page of 50 (#2277 final
+    // review L3): Python's liveness watch reads the owner as `unknown` and
+    // its page holds no owned task, so its summary answers; the Rust
+    // board's watch refuses the record.
+    let beyond = joined(
+        (1..=51)
+            .map(|index| {
+                at(
+                    3.0 + f64::from(index) / 100.0,
+                    "worker",
+                    "task_create",
+                    json!([
+                        format!("t{index}"),
+                        "implement behavior",
+                        ["tests pass"],
+                        []
+                    ]),
+                )
+            })
+            .chain([
+                at(4.0, "worker", "claim", json!([51])),
+                sql("UPDATE events SET time='soon' WHERE actor='worker'"),
+                at(5.0, "parent", "summary", json!([])),
+            ]),
+    );
+    let difference = try_run_both(&beyond, |_, _, _| {}).unwrap_err();
+    assert!(
+        difference.starts_with("step 56: summary as parent") && difference.contains("python Ok("),
+        "{difference}"
+    );
+    assert_eq!(
+        run_rust(&beyond),
+        Outcome::Refused("the board's event time is not as the board writes it".to_owned())
+    );
 }
 
 /// `events`' cursor and `tasks`' offset beyond i64 but within u64:
