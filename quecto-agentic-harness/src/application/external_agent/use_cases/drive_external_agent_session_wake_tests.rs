@@ -120,3 +120,25 @@ async fn close_releases_a_blocked_reader_at_once() {
     assert_eq!(closed.elapsed(), Duration::ZERO, "at once");
     assert_eq!(rig.phase(), SessionPhase::Ended);
 }
+
+// #2287 review round 4 (N3): a skipped line's grace runs from when the
+// line was read, not from when the reader got the write gate: a write
+// holding the gate (a prompt blocked on a full pipe) does not stretch it.
+#[tokio::test(start_paused = true)]
+async fn the_skipped_line_grace_runs_from_the_line_not_from_the_write_gate() {
+    let rig = named_started().await;
+    rig.session.prompt("one", None).await.unwrap();
+    let gate = rig.session.writes.lock().await;
+    let began = tokio::time::Instant::now();
+    rig.wire.emit(skipped(10));
+    let (folded, ()) = tokio::join!(rig.session.next_step(), async {
+        tokio::time::sleep(GRACE / 2).await;
+        drop(gate);
+    });
+    assert!(matches!(folded, Some(SessionStep::Folded(_))), "{folded:?}");
+    assert_eq!(
+        rig.paused_step().await,
+        Some(SessionStep::TurnLost { turn: 2 })
+    );
+    assert_eq!(began.elapsed(), GRACE, "from the line, not the gate");
+}

@@ -91,14 +91,7 @@ fn versioned(version: Option<&str>, capabilities: &[&str]) -> InitEvent {
 #[test]
 fn a_cli_names_turns_from_the_verified_version_on() {
     assert_eq!(NAMES_TURNS_SINCE, [2, 1, 280]);
-    for named in [
-        "2.1.280",
-        "2.1.281",
-        "2.2.0",
-        "3.0.0",
-        "2.1.280-beta.1",
-        "2.1.1000",
-    ] {
+    for named in ["2.1.280", "2.1.281", "2.2.0", "3.0.0", "2.1.1000"] {
         assert!(versioned(Some(named), &[]).names_turns(), "{named}");
     }
     for unknown in [
@@ -107,6 +100,25 @@ fn a_cli_names_turns_from_the_verified_version_on() {
         assert!(!versioned(Some(unknown), &[]).names_turns(), "{unknown}");
     }
     assert!(!versioned(None, &[]).names_turns());
+}
+
+// #2287 review round 4 (N1): only a plain `major.minor.patch` release is
+// read. A pre-release (`2.1.280-beta.1` precedes 2.1.280, which was the
+// version verified) or any other suffix is not known to name turns: it
+// fails safe, and steers wait for a result that names them.
+#[test]
+fn a_pre_release_or_suffixed_version_is_not_known_to_name_turns() {
+    for suffixed in [
+        "2.1.280-beta.1",
+        "2.1.281-rc.1",
+        "3.0.0-alpha",
+        "2.1.280+build.5",
+        "2.1.280.1",
+        "2.1.280 ",
+        "2.1.280x",
+    ] {
+        assert!(!versioned(Some(suffixed), &[]).names_turns(), "{suffixed}");
+    }
 }
 
 // #2287 review round 3 (L3): only a CLI advertising
