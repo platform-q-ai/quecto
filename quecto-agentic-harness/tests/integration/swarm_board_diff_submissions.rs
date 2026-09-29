@@ -6,6 +6,7 @@
 use serde_json::{Value, json};
 
 use crate::swarm_board_diff_membership::{at, create};
+use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
 use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
     Step, run_both, run_rust, sql, try_run_both,
 };
@@ -394,4 +395,55 @@ fn the_operation_gate_refuses_submissions_identically() {
         at(3_701.0, "worker", "unblock", json!([1, token(3), "r"])),
         raw(3_702.0, json!(1)),
     ]));
+}
+
+/// Every mutating task op needs a running run (`authorize(active=True)`,
+/// #2316 mutation report): on a paused run each is refused with Python's
+/// own text, and the board is left as it was. Each op is one the unpaused
+/// board grants, so only the run's status refuses it: task 1 is the
+/// worker's claim, task 2 is ready and task 3 is the worker's submission.
+#[test]
+fn every_mutating_task_op_is_refused_on_a_paused_run() {
+    let setup = scenario([
+        at(5.0, "worker", "task_create", json!(["two", "t", ["ok"]])),
+        at(6.0, "worker", "task_create", json!(["three", "t", ["ok"]])),
+        at(7.0, "worker", "claim", json!([3])),
+        at(
+            8.0,
+            "worker",
+            "submit",
+            json!([3, token(4), evidence("report", "R1")]),
+        ),
+    ]);
+    let ops = [
+        ("worker", "task_create", json!(["four", "t", ["ok"]])),
+        ("worker", "dependencies", json!([2, [1]])),
+        ("worker", "claim", json!([2])),
+        ("worker", "release", json!([1, token(3)])),
+        ("worker", "block", json!([1, token(3), "waiting"])),
+        ("worker", "unblock", json!([1, token(3), "resolved"])),
+        (
+            "worker",
+            "submit",
+            json!([1, token(3), evidence("a", "R1")]),
+        ),
+        ("parent", "verify_task", json!([3, token(4), "R1"])),
+    ];
+    let paused = sql("UPDATE run SET status='paused'");
+    let refusal = "run is paused; no new work permitted";
+    for (member, method, args) in ops {
+        let op = at(9.0, member, method, args);
+        let granted = [setup.clone(), vec![op.clone()]].concat();
+        assert!(
+            matches!(run_rust(&granted), Outcome::Ok(_)),
+            "{method} is granted on the running run"
+        );
+        let steps = [setup.clone(), vec![paused.clone(), op, raw(10.0, json!(1))]].concat();
+        run_both(&steps);
+        let outcome = run_rust(&steps[..steps.len() - 1]);
+        assert!(
+            matches!(&outcome, Outcome::Refused(text) if text == refusal),
+            "{method}: {outcome:?}"
+        );
+    }
 }
