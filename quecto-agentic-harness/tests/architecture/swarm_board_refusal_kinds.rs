@@ -271,9 +271,6 @@ struct Built {
 
 impl Built {
     fn function(&self) -> String {
-        if self.sites.len() < usize::MAX {
-            return "<item>".to_owned();
-        }
         let function = self.functions.last().map_or("<item>", String::as_str);
         match self.impls.last() {
             Some(owner) if self.functions.len() == 1 => format!("{owner}::{function}"),

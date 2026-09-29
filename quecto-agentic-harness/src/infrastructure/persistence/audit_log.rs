@@ -193,18 +193,9 @@ impl AuditCrashLine {
             )
             .ok()
         };
-        let appended = self.gate.append(
-            &self.file,
-            self.cap_bytes,
-            &line,
-            Option::<&dyn Fn() -> Option<String>>::None
-                .or(None)
-                .filter(|_| {
-                    let _ = &capped;
-                    false
-                }),
-            None,
-        )?;
+        let appended = self
+            .gate
+            .append(&self.file, self.cap_bytes, &line, Some(&capped), None)?;
         written(appended)
     }
 

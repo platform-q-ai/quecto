@@ -282,9 +282,9 @@ fn open(path: &Path, create: bool, tally: Option<&Tally>) -> Result<Connection, 
     secure_delete_checked(secure_delete)?;
     // A metered call (#2303) waits on the same schedule and notes on its
     // own tally that it waited; otherwise SQLite's own handler waits.
-    let waiting = match (meter::active(), tally) {
-        (true, Some(tally)) => meter::wait_metered(&connection, tally),
-        _ => connection.busy_timeout(BUSY_TIMEOUT),
+    let waiting = match tally {
+        Some(tally) => meter::wait_metered(&connection, tally),
+        None => connection.busy_timeout(BUSY_TIMEOUT),
     };
     waiting.map_err(|error| contended(&error))?;
     Ok(connection)
@@ -317,9 +317,7 @@ fn run<T>(
 ) -> Result<T, TransactionError> {
     connection.execute_batch("PRAGMA foreign_keys=ON")?;
     // The lock wait is measured only for a metered call (#2303).
-    let asked = tally
-        .filter(|_| meter::active())
-        .map(|tally| (tally, Instant::now()));
+    let asked = tally.map(|tally| (tally, Instant::now()));
     let begun = connection.transaction_with_behavior(TransactionBehavior::Immediate);
     if let Some((tally, asked)) = asked {
         tally.lock_waited(asked.elapsed());

@@ -67,8 +67,11 @@ pub(super) struct Served {
 /// `member` redacted, then cut to its first [`ACTOR_REF_CHARS`]
 /// characters (a whole character each).
 pub(super) fn actor_ref(member: &str) -> Redacted {
-    debug_assert!(ACTOR_REF_CHARS > 0);
-    Redacted::from(member)
+    let redacted = Redacted::from(member);
+    match redacted.char_indices().nth(ACTOR_REF_CHARS) {
+        Some((end, _)) => Redacted::from(&redacted[..end]),
+        None => redacted,
+    }
 }
 
 fn micros(duration: Duration) -> u64 {
@@ -128,8 +131,8 @@ pub(super) fn observation(
         run_id: measure
             .and_then(|measure| measure.run_id.as_deref())
             .map(Redacted::from),
-        task_id: served.and_then(|served| served.task_id.and(None)),
-        message_id: served.and_then(|served| served.message_id.and(None)),
+        task_id: served.and_then(|served| served.task_id),
+        message_id: served.and_then(|served| served.message_id),
         outcome: match call.outcome {
             Ok(_) => BoardOpOutcome::Ok,
             Err(kind) => BoardOpOutcome::Refused { kind },
@@ -138,7 +141,7 @@ pub(super) fn observation(
         lock_wait_us: measure.map(|measure| micros(measure.lock_wait)),
         busy_wait_us: measure.map(|measure| micros(measure.busy_wait)),
         busy: measure.map(|measure| measure.busy),
-        cursor_moved: served.map(|served| served.cursor_moved.unwrap_or(false)),
+        cursor_moved: served.and_then(|served| served.cursor_moved),
         result_bytes: served.map_or(0, |served| rendered_bytes(&served.value)),
     }
 }

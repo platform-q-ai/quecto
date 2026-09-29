@@ -192,15 +192,6 @@ unsafe extern "C" fn busy_callback(argument: *mut c_void, count: c_int) -> c_int
     c_int::from(retry.unwrap_or(false))
 }
 
-thread_local! {
-    static ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// Whether a call on this thread is being metered.
-pub(super) fn active() -> bool {
-    ACTIVE.with(std::cell::Cell::get)
-}
-
 /// `sqliteDefaultBusyCallback`'s delays and their running totals, in ms.
 const DELAYS_MS: [u64; 12] = [1, 2, 5, 10, 15, 20, 25, 25, 25, 50, 50, 100];
 const TOTALS_MS: [u64; 12] = [0, 1, 3, 8, 18, 33, 53, 78, 103, 128, 178, 228];

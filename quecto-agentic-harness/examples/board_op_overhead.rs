@@ -9,30 +9,66 @@
 //!     --example board_op_overhead [rounds] [calls-per-round]
 //! ```
 //!
-//! Each arm is the production builder over its own board file, created by
-//! the same `bootstrap_run`. After a warm-up, the arms run interleaved,
-//! `rounds` times `calls-per-round` calls each, alternating which goes
-//! first, and each call is timed alone. It prints, per op, each arm's p50,
-//! p95 and mean in microseconds, and the overhead of "on" over "off".
+//! Three arms, each the production graph over its own board file, created
+//! by the same `bootstrap_run`: `off` (no event log), `meter` (measured,
+//! the record discarded: what measuring alone costs) and `on` (measured
+//! and written to a real `AuditLog`). After a warm-up, the arms run
+//! interleaved, `rounds` times `calls-per-round` calls each, rotating which
+//! goes first, and each call is timed alone. It prints, per op, each arm's
+//! p50 and p95 in microseconds and their overhead over `off`.
 use std::path::Path;
 use std::time::Instant;
 
+use std::sync::Arc;
+
 use quecto::application::swarm::dto::BoardLocation;
-use quecto::composition::swarm::{SwarmBoardHandles, board_op_log, build_swarm_board_handles};
+use quecto::application::swarm::ports::BoardOpLog;
+use quecto::composition::swarm::{
+    SwarmBoardHandles, board_op_log, build_swarm_board_handles, with_event_log,
+};
+use quecto::domain::swarm::BoardOpObservation;
 use quecto::infrastructure::persistence::audit_log::AuditLog;
+use quecto::infrastructure::persistence::swarm_board::ids::Uuid4Ids;
+use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 use quecto::infrastructure::tools::swarm_board_dispatch::call;
+use quecto::infrastructure::tools::swarm_lifecycle::SystemClock;
 use serde_json::json;
 
 const WARM_UP: usize = 500;
 const OPS: [&str; 2] = ["_status", "_snapshot"];
 
-fn handles(dir: &Path, log: Option<&AuditLog>) -> SwarmBoardHandles {
+/// A log that discards every record: the `meter` arm's.
+struct Discarded;
+
+impl BoardOpLog for Discarded {
+    fn record(&self, observation: BoardOpObservation) {
+        std::hint::black_box(observation);
+    }
+}
+
+/// How an arm records.
+enum Arm<'a> {
+    Off,
+    Meter,
+    On(&'a AuditLog),
+}
+
+fn handles(dir: &Path, arm: &Arm<'_>) -> SwarmBoardHandles {
     let location = BoardLocation {
         database: dir.join("swarm.sqlite"),
         checkout: dir.to_path_buf(),
     };
-    let handles = build_swarm_board_handles(location, log.and_then(|log| board_op_log(true, log)));
-    assert_eq!(handles.telemetry.is_some(), log.is_some());
+    let handles = match arm {
+        Arm::Off => build_swarm_board_handles(location, None),
+        Arm::Meter => with_event_log(
+            SqliteBoardRepository::new(&location),
+            Arc::new(SystemClock),
+            Arc::new(Uuid4Ids),
+            Arc::new(Discarded),
+        ),
+        Arm::On(log) => build_swarm_board_handles(location, board_op_log(true, log)),
+    };
+    assert_eq!(handles.telemetry.is_some(), !matches!(arm, Arm::Off));
     call(&handles, "parent", "bootstrap_run", json!([1, "s", null])).expect("bootstrap");
     handles
 }
@@ -55,16 +91,13 @@ fn quantile(samples: &[f64], q: f64) -> f64 {
 struct Summary {
     p50: f64,
     p95: f64,
-    mean: f64,
 }
 
 fn summary(mut samples: Vec<f64>) -> Summary {
     samples.sort_by(f64::total_cmp);
-    let mean = samples.iter().sum::<f64>() / samples.len() as f64;
     Summary {
         p50: quantile(&samples, 0.50),
         p95: quantile(&samples, 0.95),
-        mean,
     }
 }
 
@@ -82,48 +115,47 @@ fn main() {
     let (rounds, per_round) = (argument(1, 10), argument(2, 300));
     let base = tempfile::tempdir().expect("a temp dir");
     let log = AuditLog::open_sync(base.path(), "cli:overhead").expect("the event log");
-    let (off_dir, on_dir) = (
-        tempfile::tempdir().expect("a temp dir"),
-        tempfile::tempdir().expect("a temp dir"),
-    );
+    let dirs: Vec<_> = (0..3)
+        .map(|_| tempfile::tempdir().expect("a temp dir"))
+        .collect();
     let arms = [
-        handles(off_dir.path(), None),
-        handles(on_dir.path(), Some(&log)),
+        handles(dirs[0].path(), &Arm::Off),
+        handles(dirs[1].path(), &Arm::Meter),
+        handles(dirs[2].path(), &Arm::On(&log)),
     ];
     println!(
         "release: {}, rounds: {rounds}, calls per round: {per_round}",
         !cfg!(debug_assertions)
     );
-    println!(
-        "| op | off p50 | on p50 | p50 overhead | off p95 | on p95 | p95 overhead | mean overhead |"
-    );
-    println!("|---|---|---|---|---|---|---|---|");
+    println!("| op | quantile | off | meter | on (real log) | meter overhead | on overhead |");
+    println!("|---|---|---|---|---|---|---|");
     for op in OPS {
         for arm in &arms {
             for _ in 0..WARM_UP {
                 timed(arm, op);
             }
         }
-        let mut samples = [Vec::new(), Vec::new()];
+        let mut samples = [Vec::new(), Vec::new(), Vec::new()];
         for round in 0..rounds {
-            let order = if round % 2 == 0 { [0, 1] } else { [1, 0] };
-            for arm in order {
+            for turn in 0..arms.len() {
+                let arm = (round + turn) % arms.len();
                 for _ in 0..per_round {
                     samples[arm].push(timed(&arms[arm], op));
                 }
             }
         }
-        let [off, on] = samples.map(summary);
-        println!(
-            "| `{op}` | {:.1} µs | {:.1} µs | {:+.1}% | {:.1} µs | {:.1} µs | {:+.1}% | {:+.1}% |",
-            off.p50,
-            on.p50,
-            percent(on.p50, off.p50),
-            off.p95,
-            on.p95,
-            percent(on.p95, off.p95),
-            percent(on.mean, off.mean),
-        );
+        let [off, meter, on] = samples.map(summary);
+        for (name, pick) in [("p50", 0), ("p95", 1)] {
+            let value = |summary: &Summary| [summary.p50, summary.p95][pick];
+            println!(
+                "| `{op}` | {name} | {:.1} µs | {:.1} µs | {:.1} µs | {:+.1}% | {:+.1}% |",
+                value(&off),
+                value(&meter),
+                value(&on),
+                percent(value(&meter), value(&off)),
+                percent(value(&on), value(&off)),
+            );
+        }
     }
     let written = std::fs::read_to_string(AuditLog::file_path(base.path(), "cli:overhead"))
         .expect("the event log was written")
