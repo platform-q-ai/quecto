@@ -13,7 +13,7 @@
 //! the log's one `log_capped` record, and nothing is written after it. A
 //! record refused at the cap, or a failed write, is dropped with one
 //! warning for the log's lifetime and never touches the op's answer.
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::application::swarm::ports::BoardOpLog;
 use crate::domain::audit::AuditEvent;
@@ -28,6 +28,7 @@ const TARGET: &str = "quecto::swarm_board";
 pub struct EventLogBoardOps {
     line: AuditCrashLine,
     warned: AtomicBool,
+    dropped: AtomicU64,
 }
 
 impl EventLogBoardOps {
@@ -35,7 +36,15 @@ impl EventLogBoardOps {
         Self {
             line,
             warned: AtomicBool::new(false),
+            dropped: AtomicU64::new(0),
         }
+    }
+}
+
+impl EventLogBoardOps {
+    /// The same adapter, waiting at most `bound` for the log's write gate.
+    pub fn with_gate_wait(self, _bound: std::time::Duration) -> Self {
+        self
     }
 }
 

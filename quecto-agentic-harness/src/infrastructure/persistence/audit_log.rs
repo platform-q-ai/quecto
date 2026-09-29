@@ -621,6 +621,23 @@ fn host_from(status: libc::c_int, buffer: &[u8]) -> Option<String> {
 }
 
 #[cfg(test)]
+impl AuditLog {
+    /// Test support: another holder takes this log's write gate on its own
+    /// thread and keeps it for `held`. Returns once the gate is taken.
+    pub(crate) fn hold_gate_for(&self, held: Duration) -> std::thread::JoinHandle<()> {
+        let gate = self.gate.held.clone();
+        let (taken, taken_rx) = std::sync::mpsc::channel();
+        let holder = std::thread::spawn(move || {
+            let _held = gate.lock().unwrap_or_else(PoisonError::into_inner);
+            let _ = taken.send(());
+            std::thread::sleep(held);
+        });
+        taken_rx.recv().expect("the holder takes the gate");
+        holder
+    }
+}
+
+#[cfg(test)]
 #[path = "audit_log_cov_tests.rs"]
 mod cov_tests;
 

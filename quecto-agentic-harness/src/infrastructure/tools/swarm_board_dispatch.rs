@@ -815,3 +815,7 @@ mod tests;
 #[cfg(test)]
 #[path = "swarm_board_dispatch_telemetry_tests.rs"]
 mod telemetry_tests;
+
+#[cfg(test)]
+#[path = "swarm_board_dispatch_stall_tests.rs"]
+mod stall_tests;
