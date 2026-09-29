@@ -148,6 +148,18 @@ impl BoardTasks for SqliteBoard<'_> {
     fn block_owned_tasks(&self, owner: &Value, blocker: &str) -> Result<(), BoardError> {
         self.block_owned(owner, blocker)
     }
+
+    fn task_ids(&self, offset: u64, limit: i64) -> Result<Vec<Value>, BoardError> {
+        self.ids_page(offset, limit)
+    }
+
+    fn task_states(&self) -> Result<Vec<crate::application::swarm::dto::CountedTask>, BoardError> {
+        self.states()
+    }
+
+    fn claim_owners(&self) -> Result<Vec<Value>, BoardError> {
+        self.owners_of_claims()
+    }
 }
 
 impl BoardRequests for SqliteBoard<'_> {

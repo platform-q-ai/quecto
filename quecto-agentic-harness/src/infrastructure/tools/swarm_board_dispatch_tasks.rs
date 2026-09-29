@@ -12,15 +12,12 @@
 use serde_json::Value;
 
 use super::{Parameter, Served, required, take};
-#[cfg(any(test, feature = "test-support"))]
-use crate::application::swarm::dto::ReadTaskRequest;
 use crate::application::swarm::dto::{
-    ClaimTaskRequest, CreateTaskRequest, ReleaseTaskRequest, SetTaskDependenciesRequest,
+    ClaimTaskRequest, CreateTaskRequest, ReadTaskRequest, ReleaseTaskRequest,
+    SetTaskDependenciesRequest,
 };
-#[cfg(any(test, feature = "test-support"))]
-use crate::application::swarm::use_cases::ReadTask;
 use crate::application::swarm::use_cases::{
-    ClaimTask, CreateTask, ReleaseTask, SetTaskDependencies,
+    ClaimTask, CreateTask, ReadTask, ReleaseTask, SetTaskDependencies,
 };
 use crate::domain::swarm::{BoardError, BoardOpDetail};
 
@@ -36,7 +33,7 @@ pub(super) const TASK_CREATE: [Parameter; 4] = [
 ];
 /// `dependencies(task_id, dependencies)`.
 pub(super) const DEPENDENCIES: [Parameter; 2] = [required("task_id"), required("dependencies")];
-/// `claim(task_id)`, and the test-only `task_raw(task_id)`.
+/// `claim(task_id)`, `task(task_id)`, and the test-only `task_raw(task_id)`.
 pub(super) const CLAIM: [Parameter; 1] = [required("task_id")];
 /// `release(task_id, token)`.
 pub(super) const RELEASE: [Parameter; 2] = [required("task_id"), required("token")];
@@ -67,6 +64,7 @@ pub(super) fn task_create(
         message_id: None,
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
+        refused: None,
     })
 }
 
@@ -88,6 +86,7 @@ pub(super) fn dependencies(
         message_id: None,
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
+        refused: None,
     })
 }
 
@@ -110,6 +109,7 @@ pub(super) fn claim(
         message_id: None,
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
+        refused: None,
     })
 }
 
@@ -131,13 +131,13 @@ pub(super) fn release(
         message_id: None,
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
+        refused: None,
     })
 }
 
-/// `Tasks._task(db, task_id)` inside a read-only operation: the task's
-/// dict without owner liveness.
-#[cfg(any(test, feature = "test-support"))]
-pub(super) fn task_raw(
+/// `task(task_id)`: the task's dict, with its owner's liveness for a
+/// held claim (#2277).
+pub(super) fn task(
     read_task: &ReadTask,
     actor: &str,
     arguments: Vec<Value>,
@@ -155,7 +155,30 @@ pub(super) fn task_raw(
         message_id: None,
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
+        refused: None,
     })
+}
+
+/// The owner-liveness keys `task` adds to a task's dict (#1969).
+#[cfg(any(test, feature = "test-support"))]
+const LIVENESS: [&str; 4] = ["owner_last_activity", "owner_state", "contact", "recovery"];
+
+/// The test-only `task_raw(task_id)`: `Tasks._task` as `task` reads it,
+/// without the owner's liveness (the differential harness's alias).
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn task_raw(
+    read_task: &ReadTask,
+    actor: &str,
+    arguments: Vec<Value>,
+) -> Result<Served, BoardError> {
+    let mut served = task(read_task, actor, arguments)?;
+    if let Value::Object(columns) = std::mem::take(&mut served.value) {
+        let raw = columns
+            .into_iter()
+            .filter(|(column, _)| !LIVENESS.contains(&column.as_str()));
+        served.value = Value::Object(raw.collect());
+    }
+    Ok(served)
 }
 
 /// The task an op acted on, for its records: the row's stored id when it

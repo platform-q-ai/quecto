@@ -12,6 +12,7 @@ pub mod dependencies;
 pub mod notification;
 pub mod owner;
 pub mod policy;
+mod python_unassigned;
 pub mod python_value;
 pub mod records;
 pub mod telemetry;
@@ -32,7 +33,7 @@ pub use policy::{
     require_budget, require_unsubmitted, resume_blockers, revalidation, run_already,
     run_already_held, status_is_alive, validate_extension,
 };
-pub use python_value::{python_equal, python_truthy};
+pub use python_value::{PythonLookup, python_equal, python_repr, python_truthy};
 pub use records::{
     Criterion, CriterionKind, EvidenceRow, MemberRecord, MemberState, RunRecord, RunState,
     TaskRecord, TaskState,

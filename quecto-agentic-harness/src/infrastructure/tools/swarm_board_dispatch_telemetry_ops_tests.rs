@@ -58,6 +58,13 @@ fn every_method() -> Vec<Method> {
         Method::Quarantine,
         Method::ConfirmedDead,
         Method::LoseCoordinator,
+        Method::Summary,
+        Method::Events,
+        Method::Task,
+        Method::Tasks,
+        Method::Create,
+        Method::Bootstrap,
+        Method::Join,
         Method::CreateRun,
         Method::BootstrapRun,
         Method::BootstrapJoin,
@@ -109,6 +116,13 @@ fn every_method() -> Vec<Method> {
             | Method::Quarantine
             | Method::ConfirmedDead
             | Method::LoseCoordinator
+            | Method::Summary
+            | Method::Events
+            | Method::Task
+            | Method::Tasks
+            | Method::Create
+            | Method::Bootstrap
+            | Method::Join
             | Method::CreateRun
             | Method::BootstrapRun
             | Method::BootstrapJoin
@@ -337,6 +351,17 @@ fn acted_on(
             (json!(["worker"]), None, None, None)
         }
         Method::LoseCoordinator => (json!([]), None, None, None),
+        // The read models (#2277): the task read records its task; the
+        // joins find the parent's own live row.
+        Method::Summary | Method::Events | Method::Tasks => (json!([]), None, None, None),
+        Method::Task => {
+            running(handles);
+            task(handles, "r1");
+            (json!([1]), Some(1), None, None)
+        }
+        Method::Create => (create_args(), None, None, None),
+        Method::Bootstrap => (json!([1, "s", null]), None, None, None),
+        Method::Join => (json!([null, 1, "s", null]), None, None, None),
         Method::CreateRun => (create_args(), None, None, None),
         Method::BootstrapRun => (json!([1, "s", null]), None, None, None),
         Method::BootstrapJoin => (json!([1, "s", null]), None, None, None),

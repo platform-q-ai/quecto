@@ -11,6 +11,7 @@ mod board_loss;
 mod board_membership;
 mod board_messages;
 mod board_operation;
+mod board_read_models;
 mod board_recovery;
 mod board_tasks;
 #[cfg(test)]

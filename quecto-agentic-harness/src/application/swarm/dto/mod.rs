@@ -12,6 +12,7 @@ pub mod measure;
 pub mod membership;
 pub mod messages;
 pub mod notifications;
+pub mod reads;
 pub mod run;
 pub mod submissions;
 pub mod tasks;
@@ -48,6 +49,11 @@ pub use messages::{
 pub use notifications::{
     AcceptWakeRequest, ClaimNotificationsRequest, NotificationBatch, NotificationCursor,
     WakeAccepted,
+};
+pub use reads::{
+    BootstrapMemberRequest, BootstrappedSummary, CountedTask, DictRow, EventPage, FullSummary,
+    JoinedSummary, LatestActivity, ListTasksRequest, ReadRunEventsRequest, ReadRunSummaryRequest,
+    RunSummary, SummaryCounts, SummaryScan, TaskPage,
 };
 pub use run::{
     BootstrapRunRequest, Bootstrapped, CreateBranch, CreateRunRequest, CreatedRun,

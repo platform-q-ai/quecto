@@ -15,7 +15,11 @@
 //! comparisons are only as exact as their inputs: an argument must be decoded
 //! by `py_json` (correctly rounded floats), not by `serde_json`, before it
 //! reaches them.
+use std::collections::HashMap;
+
 use serde_json::{Number, Value};
+
+use super::python_unassigned::UNASSIGNED;
 
 /// A number as Python holds it: `bool` and `int` are exact integers (the
 /// argument's range is i64 ∪ u64), `float` a double.
@@ -54,9 +58,13 @@ const BEYOND: f64 = 18_446_744_073_709_551_616.0;
 /// (2^63 against i64::MAX, say) is never saturated into one; within it
 /// the conversion to i128 is exact.
 fn integer_equals_float(integer: i128, float: f64) -> bool {
-    let integral = float.is_finite() && float.fract() == 0.0;
-    let within = (LOWEST..BEYOND).contains(&float);
-    integral && within && float as i128 == integer
+    integral_within(float) && float as i128 == integer
+}
+
+/// Whether `float` is integral and within `[-2^63, 2^64)`, so that the
+/// conversion to i128 is exact.
+fn integral_within(float: f64) -> bool {
+    float.is_finite() && float.fract() == 0.0 && (LOWEST..BEYOND).contains(&float)
 }
 
 fn numbers_equal(left: Numeric, right: Numeric) -> bool {
@@ -103,6 +111,89 @@ pub fn python_equal(left: &Value, right: &Value) -> bool {
     }
 }
 
+/// A value's key under Python's `==` and `hash`, for the values Python
+/// can hash: `None`, text, and a number, where the equal `bool`, `int` and
+/// `float` (`True == 1 == 1.0`, `0 == -0.0`) share one key, as their
+/// hashes do. A float no integer equals keys by its bits. A list or a
+/// dict (unhashable to Python) has no key.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum PythonKey<'a> {
+    None,
+    Integer(i128),
+    Float(u64),
+    Text(&'a str),
+}
+
+fn python_key(value: &Value) -> Option<PythonKey<'_>> {
+    match value {
+        Value::Null => Some(PythonKey::None),
+        Value::String(text) => Some(PythonKey::Text(text)),
+        Value::Bool(_) | Value::Number(_) => match numeric(value)? {
+            Numeric::Integer(integer) => Some(PythonKey::Integer(integer)),
+            // NaN equals nothing, itself included: no key finds it.
+            Numeric::Float(float) if float.is_nan() => None,
+            Numeric::Float(float) if integral_within(float) => {
+                // Exact: the range check bounds the conversion.
+                Some(PythonKey::Integer(float as i128))
+            }
+            Numeric::Float(float) => Some(PythonKey::Float(float.to_bits())),
+        },
+        Value::Array(_) | Value::Object(_) => None,
+    }
+}
+
+/// The first of some values equal to a key under Python's `==`, found as
+/// Python's dict finds it: by hash for a value with a [`PythonKey`], by
+/// `python_equal` among the values without one (lists, dicts). So
+/// `position` answers as a linear search with `python_equal` does, in
+/// constant time for a hashable key.
+pub struct PythonLookup<'a> {
+    values: Vec<&'a Value>,
+    keyed: HashMap<PythonKey<'a>, usize>,
+    unkeyed: Vec<usize>,
+}
+
+impl<'a> PythonLookup<'a> {
+    #[must_use]
+    pub fn new(values: impl IntoIterator<Item = &'a Value>) -> Self {
+        let values: Vec<&'a Value> = values.into_iter().collect();
+        let (mut keyed, mut unkeyed) = (HashMap::with_capacity(values.len()), Vec::new());
+        for (index, value) in values.iter().enumerate() {
+            match python_key(value) {
+                Some(key) => {
+                    keyed.entry(key).or_insert(index);
+                }
+                None => unkeyed.push(index),
+            }
+        }
+        Self {
+            values,
+            keyed,
+            unkeyed,
+        }
+    }
+
+    /// The index of the first value equal to `key` under Python's `==`.
+    /// A keyed value equals only values of the same key, and an unkeyed
+    /// one only unkeyed values, so each side is searched alone.
+    #[must_use]
+    pub fn position(&self, key: &Value) -> Option<usize> {
+        let found = match python_key(key) {
+            Some(hashed) => {
+                let keyed: &HashMap<PythonKey<'_>, usize> = &self.keyed;
+                keyed.get(&hashed).copied()
+            }
+            None => self
+                .unkeyed
+                .iter()
+                .copied()
+                .find(|&index| python_equal(self.values[index], key)),
+        };
+        debug_assert!(found.is_none_or(|index| python_equal(self.values[index], key)));
+        found
+    }
+}
+
 /// Python's `bool(value)`: `None`, `False`, a zero, and an empty text,
 /// list or dict are false; everything else is true.
 pub fn python_truthy(value: &Value) -> bool {
@@ -117,6 +208,108 @@ pub fn python_truthy(value: &Value) -> bool {
         Value::Array(items) => !items.is_empty(),
         Value::Object(fields) => !fields.is_empty(),
     }
+}
+
+/// Python's `repr()` of a `str` (#2277): quoted with `'`, or with `"`
+/// when the text holds a `'` and no `"`; a backslash, the quote, `\t`,
+/// `\n` and `\r` escaped; every other character Python does not print
+/// written as `\xhh`, `\uhhhh` or `\Uhhhhhhhh`. Printability follows
+/// Python 3.14's `str.isprintable` ([`not_printed`]): the code points it
+/// refuses whatever its Unicode version, and those Unicode 16.0, its
+/// version, has not assigned (#2277 review L2).
+pub fn python_repr(text: &str) -> String {
+    let quote = if text.contains('\'') && !text.contains('"') {
+        '"'
+    } else {
+        '\''
+    };
+    let mut written = String::with_capacity(text.len() + 2);
+    written.push(quote);
+    for character in text.chars() {
+        match character {
+            '\\' => written.push_str("\\\\"),
+            '\t' => written.push_str("\\t"),
+            '\n' => written.push_str("\\n"),
+            '\r' => written.push_str("\\r"),
+            c if c == quote => {
+                written.push('\\');
+                written.push(c);
+            }
+            c if not_printed(c) => {
+                let code = u32::from(c);
+                let escaped = match code {
+                    0..=0xff => format!("\\x{code:02x}"),
+                    0x100..=0xffff => format!("\\u{code:04x}"),
+                    _ => format!("\\U{code:08x}"),
+                };
+                written.push_str(&escaped);
+            }
+            c => written.push(c),
+        }
+    }
+    written.push(quote);
+    written
+}
+
+/// The code points Python 3.14's `str.isprintable` refuses: those that do
+/// not depend on its Unicode version, listed here (the controls (Cc), the
+/// separators other than the space (Zs, Zl, Zp), the format characters
+/// (Cf) and the private-use planes (Co), and the noncharacters of planes
+/// 15 and 16), and those Unicode 16.0 has not assigned ([`unassigned`]).
+/// Swept against Python's own answer for every code point by
+/// `not_printed_is_exactly_what_python_does_not_print`.
+fn not_printed(character: char) -> bool {
+    version_independent(character) || unassigned(character)
+}
+
+/// Whether Unicode 16.0 (Python 3.14's `unicodedata`) has not assigned
+/// `character`: a binary search of the generated [`UNASSIGNED`] ranges.
+fn unassigned(character: char) -> bool {
+    let point = u32::from(character);
+    debug_assert!(
+        UNASSIGNED.len() % 2 == 0,
+        "the table holds (first, last) pairs"
+    );
+    // The bounds are sorted (each range's first, then its last, below the
+    // next range's first). The first bound not below `point` is a range's
+    // last (an odd index) only when `point` is inside that range, or its
+    // first only when that first is `point`.
+    let at = UNASSIGNED.partition_point(|&bound| bound < point);
+    at % 2 == 1 || UNASSIGNED.get(at) == Some(&point)
+}
+
+/// The code points `str.isprintable` refuses in every Unicode version.
+fn version_independent(character: char) -> bool {
+    matches!(
+        u32::from(character),
+        0x00..=0x1f
+            | 0x7f..=0xa0
+            | 0xad
+            | 0x0600..=0x0605
+            | 0x061c
+            | 0x06dd
+            | 0x070f
+            | 0x0890..=0x0891
+            | 0x08e2
+            | 0x1680
+            | 0x180e
+            | 0x2000..=0x200f
+            | 0x2028..=0x202f
+            | 0x205f..=0x2064
+            | 0x2066..=0x206f
+            | 0x3000
+            | 0xe000..=0xf8ff
+            | 0xfeff
+            | 0xfff9..=0xfffb
+            | 0x110bd
+            | 0x110cd
+            | 0x13430..=0x1343f
+            | 0x1bca0..=0x1bca3
+            | 0x1d173..=0x1d17a
+            | 0xe0001
+            | 0xe0020..=0xe007f
+            | 0xf0000..=0x10ffff
+    )
 }
 
 #[cfg(test)]

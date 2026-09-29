@@ -11,11 +11,11 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use super::dto::{
-    AmendedContract, CallMeasure, CompletionState, FileRow, LaunchIdentity, MemberClaimCounts,
-    MemberRow, MemberStatusRow, MessageRow, NewEvidence, NewMember, NewMessage, NewRequestUsage,
-    NewReservation, NewRun, NewTask, NotificationCursor, PriorEvidence, RunContract, RunOwnerRow,
-    RunStatusRow, ScopeObservation, StoredContract, StoredRequestUsage, TaskRow, TaskUpdate,
-    UsageReport,
+    AmendedContract, CallMeasure, CompletionState, CountedTask, DictRow, FileRow, LatestActivity,
+    LaunchIdentity, MemberClaimCounts, MemberRow, MemberStatusRow, MessageRow, NewEvidence,
+    NewMember, NewMessage, NewRequestUsage, NewReservation, NewRun, NewTask, NotificationCursor,
+    PriorEvidence, RunContract, RunOwnerRow, RunStatusRow, ScopeObservation, StoredContract,
+    StoredRequestUsage, TaskRow, TaskUpdate, UsageReport,
 };
 use crate::domain::error::DomainError;
 use crate::domain::swarm::{
@@ -168,6 +168,10 @@ pub trait BoardRuns {
     fn propose_outcome(&self, outcome: &str, reason: &str) -> Result<(), BoardError>;
     /// The run holds no outcome and no reason (#2273).
     fn clear_outcome(&self) -> Result<(), BoardError>;
+    /// `SELECT * FROM run` as `dict(row)` (#2277), every column in table
+    /// order, with `constraints` and `criteria` loaded from their JSON, as
+    /// `summary` answers it; `None` when the store holds no run.
+    fn run_row(&self) -> Result<Option<DictRow>, BoardError>;
     /// `_end_by_loss` on a pause holding no outcome (#2277): `UPDATE run
     /// SET outcome='failed', outcome_reason=?`; the status stays paused.
     fn hold_failed(&self, reason: &str) -> Result<(), BoardError>;
@@ -250,6 +254,10 @@ pub trait BoardMembers {
     /// [`BoardMembers::lost_members`] runs. An event names `member` when
     /// its detail's `member` equals it by Python's `==`.
     fn lost_after_activation(&self, member: &Value) -> Result<bool, BoardError>;
+    /// `SELECT id,status FROM members WHERE id IN (…)` (#1969, #2277): the
+    /// status of each of `ids` that has a row (NULL, or a value that is not
+    /// text, is `None`), in store order.
+    fn member_statuses(&self, ids: &[&str]) -> Result<Vec<(String, Option<String>)>, BoardError>;
     /// The member's endpoint, bound as given; a member without a row is
     /// left as it is.
     fn set_socket(&self, id: &str, socket: &Value) -> Result<(), BoardError>;
@@ -272,6 +280,18 @@ pub trait BoardEvents {
     /// action='scope_observed' ORDER BY id` (#1961, #2277): every loss
     /// observation, in id order.
     fn scope_observations(&self) -> Result<Vec<ScopeObservation>, BoardError>;
+    /// `SELECT actor, max(time) latest FROM events WHERE actor IN (…) GROUP
+    /// BY actor` (#1969, #2277): the owner liveness's one grouped scan, the
+    /// latest time of each of `actors` that has an event.
+    fn latest_activity(&self, actors: &[&str]) -> Result<Vec<LatestActivity>, BoardError>;
+    /// `SELECT time FROM events WHERE id=?` (#2277): the event's time as
+    /// stored, `None` when no event has that id.
+    fn event_time(&self, id: i64) -> Result<Option<Value>, BoardError>;
+    /// `SELECT * FROM events WHERE id>? ORDER BY id LIMIT ?` (#2277), each
+    /// row as `dict(row)` with its detail the stored text. An `after`
+    /// beyond SQLite's integers is refused as the store refuses an integer
+    /// it cannot bind.
+    fn event_page(&self, after: u64, limit: i64) -> Result<Vec<DictRow>, BoardError>;
 }
 
 /// The `tasks` rows (#2272). A task id is the caller's value, bound as
@@ -305,6 +325,17 @@ pub trait BoardTasks {
     /// active task of a member whose death is confirmed, the owner bound
     /// as given.
     fn block_owned_tasks(&self, owner: &Value, blocker: &str) -> Result<(), BoardError>;
+    /// `SELECT id FROM tasks ORDER BY id LIMIT ? OFFSET ?` (#2277): the
+    /// ids of a page, as stored. An offset beyond SQLite's integers is
+    /// refused as the store refuses an integer it cannot bind.
+    fn task_ids(&self, offset: u64, limit: i64) -> Result<Vec<Value>, BoardError>;
+    /// `SELECT id,status,dependencies FROM tasks` (#2277), in store order,
+    /// the dependencies loaded from their JSON.
+    fn task_states(&self) -> Result<Vec<CountedTask>, BoardError>;
+    /// `SELECT id, owner, status FROM tasks WHERE owner IS NOT NULL AND
+    /// status IN ('claimed','blocked','submitted')` (#1969, #2277): the
+    /// owner of each held claim, one per task, in store order.
+    fn claim_owners(&self) -> Result<Vec<Value>, BoardError>;
 }
 
 /// The work a new request runs: its result, which the ledger stores.
@@ -514,6 +545,8 @@ pub trait BoardEvidence {
     ) -> Result<Option<PriorEvidence>, BoardError>;
     /// `INSERT OR REPLACE INTO evidence VALUES(?,?,?,?,?,?)`.
     fn record_evidence(&self, evidence: &NewEvidence) -> Result<(), BoardError>;
+    /// `SELECT * FROM evidence` (#2277), each row as `dict(row)`.
+    fn evidence_rows(&self) -> Result<Vec<DictRow>, BoardError>;
 }
 
 /// Every role over one transaction.

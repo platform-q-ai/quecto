@@ -4,7 +4,9 @@
 use serde_json::{Value, json};
 
 use super::MemoryTransaction;
-use crate::application::swarm::dto::{CompletionState, EvidenceEntry, NewEvidence, PriorEvidence};
+use crate::application::swarm::dto::{
+    CompletionState, DictRow, EvidenceEntry, NewEvidence, PriorEvidence,
+};
 use crate::application::swarm::ports::BoardEvidence;
 use crate::domain::swarm::BoardError;
 
@@ -69,6 +71,24 @@ impl BoardEvidence for MemoryTransaction<'_> {
                 kind: row.kind.clone(),
                 accepted: row.accepted.clone(),
             }))
+    }
+
+    fn evidence_rows(&self) -> Result<Vec<DictRow>, BoardError> {
+        let state = self.state.borrow();
+        Ok(state
+            .evidence
+            .iter()
+            .map(|(actor, entry)| DictRow {
+                columns: vec![
+                    ("criterion".to_owned(), entry.criterion.clone()),
+                    ("artifact".to_owned(), entry.artifact.clone()),
+                    ("revision".to_owned(), entry.revision.clone()),
+                    ("kind".to_owned(), entry.kind.clone()),
+                    ("actor".to_owned(), Value::from(actor.as_str())),
+                    ("accepted".to_owned(), entry.accepted.clone()),
+                ],
+            })
+            .collect())
     }
 
     fn record_evidence(&self, evidence: &NewEvidence) -> Result<(), BoardError> {

@@ -218,7 +218,9 @@ fn create_draws_run_id_before_reservation() {
             "event created".to_owned(),
         ]
     );
-    assert_eq!(board.transactions(), [true], "one creating transaction");
+    // One creating transaction, committed; then the creator's summary
+    // through the read-only gate's two (#2277).
+    assert_eq!(board.transactions(), [true, false, false]);
     let state = board.snapshot();
     let run = state.run.unwrap();
     assert_eq!(run.id, first);

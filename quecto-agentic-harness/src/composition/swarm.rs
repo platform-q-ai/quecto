@@ -17,14 +17,15 @@ use crate::application::swarm::ports::{
 };
 use crate::application::swarm::use_cases::{
     AcceptWake, AcknowledgeMessage, ActivateMember, AdmitMember, AmendRunContract, BlockTask,
-    BootstrapRun, ClaimNotifications, ClaimTask, CloseRun, CompleteRun, ConfigureUsageBudget,
-    ConfirmMemberDead, CreateRun, CreateTask, ExtendRunDeadline, JoinRun, ListFileOwners,
-    LoseCoordinator, PauseRun, QuarantineMember, ReadControlStatus, ReadInbox,
-    ReadRequestAdmission, ReadRunSnapshot, ReadRunStatus, ReadTask, ReadUsageReport,
-    RecordEvidence, RecordMemberLaunch, RecordRequestUsage, RecoverTask, RegisterMemberSocket,
-    ReleaseFiles, ReleaseTask, ReleaseUnlaunchedMember, ReserveFiles, ResumeRun,
-    ResumeRunExternally, RevalidateTask, RevokeTask, SendMessage, SetTaskDependencies, StopRun,
-    SubmitTask, UnblockTask, VerifyTask, WithdrawMessage,
+    BootstrapMember, BootstrapRun, ClaimNotifications, ClaimTask, CloseRun, CompleteRun,
+    ConfigureUsageBudget, ConfirmMemberDead, CreateRun, CreateTask, ExtendRunDeadline, JoinMember,
+    JoinRun, ListFileOwners, ListTasks, LoseCoordinator, PauseRun, QuarantineMember,
+    ReadControlStatus, ReadInbox, ReadRequestAdmission, ReadRunEvents, ReadRunSnapshot,
+    ReadRunStatus, ReadRunSummary, ReadTask, ReadUsageReport, RecordEvidence, RecordMemberLaunch,
+    RecordRequestUsage, RecoverTask, RegisterMemberSocket, ReleaseFiles, ReleaseTask,
+    ReleaseUnlaunchedMember, ReserveFiles, ResumeRun, ResumeRunExternally, RevalidateTask,
+    RevokeTask, SendMessage, SetTaskDependencies, StopRun, SubmitTask, UnblockTask, VerifyTask,
+    WithdrawMessage,
 };
 use crate::infrastructure::persistence::audit_log::AuditLog;
 use crate::infrastructure::persistence::board_op_log::EventLogBoardOps;
@@ -174,6 +175,19 @@ pub fn build_swarm_board_handles_with(
         quarantine_member: Arc::new(QuarantineMember::new(repository.clone(), clock.clone())),
         confirm_member_dead: Arc::new(ConfirmMemberDead::new(repository.clone(), clock.clone())),
         lose_coordinator: Arc::new(LoseCoordinator::new(repository.clone(), clock.clone())),
+        read_run_summary: Arc::new(ReadRunSummary::new(repository.clone(), clock.clone())),
+        read_run_events: Arc::new(ReadRunEvents::new(repository.clone(), clock.clone())),
+        list_tasks: Arc::new(ListTasks::new(repository.clone(), clock.clone())),
+        bootstrap_member: Arc::new(BootstrapMember::new(
+            repository.clone(),
+            clock.clone(),
+            ids.clone(),
+        )),
+        join_member: Arc::new(JoinMember::new(
+            repository.clone(),
+            clock.clone(),
+            ids.clone(),
+        )),
         configure_usage_budget: Arc::new(ConfigureUsageBudget::new(
             repository.clone(),
             clock.clone(),

@@ -20,6 +20,7 @@ fn observation() -> BoardOpObservation {
         message_id: None,
         outcome: BoardOpOutcome::Refused {
             kind: RefusalKind::NotMember,
+            committed: false,
         },
         duration_us: 5,
         lock_wait_us: Some(1),

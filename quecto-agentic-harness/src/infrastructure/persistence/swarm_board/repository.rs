@@ -32,8 +32,8 @@ use super::store::{
     BoardStore, CONTENDED, StoreFailure, TransactionError, Undecodable, contended, failure,
 };
 use crate::application::swarm::dto::{
-    AmendedContract, BoardLocation, MemberRow, NewRun, RunContract, RunOwnerRow, RunRoles,
-    RunStatusRow, ScopeObservation, StoredContract,
+    AmendedContract, BoardLocation, DictRow, LatestActivity, MemberRow, NewRun, RunContract,
+    RunOwnerRow, RunRoles, RunStatusRow, ScopeObservation, StoredContract,
 };
 use crate::application::swarm::ports::{BoardEvents, BoardRepository, BoardRuns, BoardWork};
 use crate::domain::swarm::{BoardError, RefusalKind, RunRecord, RunState};
@@ -264,6 +264,10 @@ impl BoardRuns for SqliteBoard<'_> {
         )
     }
 
+    fn run_row(&self) -> Result<Option<DictRow>, BoardError> {
+        self.run_dict()
+    }
+
     fn hold_failed(&self, reason: &str) -> Result<(), BoardError> {
         self.failed_hold(reason)
     }
@@ -310,6 +314,18 @@ impl BoardEvents for SqliteBoard<'_> {
         self.observations()
     }
 
+    fn latest_activity(&self, actors: &[&str]) -> Result<Vec<LatestActivity>, BoardError> {
+        self.latest_of(actors)
+    }
+
+    fn event_time(&self, id: i64) -> Result<Option<Value>, BoardError> {
+        self.time_of(id)
+    }
+
+    fn event_page(&self, after: u64, limit: i64) -> Result<Vec<DictRow>, BoardError> {
+        self.events_after(after, limit)
+    }
+
     fn control_generation(&self) -> Result<i64, BoardError> {
         self.count("SELECT coalesce(max(id),0) FROM events WHERE action IN ('paused','resumed')")
     }
@@ -319,7 +335,7 @@ impl SqliteBoard<'_> {
     /// Notes the run id and roles of a run row the op read, for telemetry
     /// only (#2303), for a metered call that has found them not yet: no
     /// statement of its own.
-    fn seen(&self, row: &Row<'_>) {
+    pub(super) fn seen(&self, row: &Row<'_>) {
         if let Some(tally) = self.tally.filter(|tally| tally.wants_run()) {
             run_noted(tally, row);
         }

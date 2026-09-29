@@ -95,7 +95,7 @@ pub struct JoinRunRequest {
 }
 
 /// Which of the join's branches ran. Python answers every branch with the
-/// coordinator's `summary()`, a read model S12 adds.
+/// coordinator's `summary()` (`JoinMember`, `BootstrapMember`, #2277).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Joined {
     /// A new identity: the coordinator admitted it, then activated it.
@@ -103,11 +103,20 @@ pub enum Joined {
     /// This process is already the member's live one: nothing was written.
     /// Python still answers `coordinator.summary()`, whose gate can refuse
     /// (a coordinator that is nobody, or dead), so the branch carries the
-    /// coordinator the join read for S12 to run that gate as, without
-    /// reading the run again. `None` is a run whose coordinator is NULL or
+    /// coordinator the join read, for the summary to run that gate as
+    /// without reading the run again. `None` is a run whose coordinator is NULL or
     /// not text, which Python's `Workbench` would act as.
     AlreadyLive { coordinator: Option<String> },
     /// A known identity under its own reservation: the coordinator
     /// activated it.
     Reactivated,
+}
+
+impl Joined {
+    /// Whether the branch, once it ran to its end, wrote to the board:
+    /// the admission and activation, or the activation.
+    #[must_use]
+    pub fn wrote(&self) -> bool {
+        matches!(self, Self::Admitted | Self::Reactivated)
+    }
 }

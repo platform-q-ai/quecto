@@ -8,7 +8,8 @@ use super::Level;
 #[cfg(any(test, feature = "test-support"))]
 use super::test_only;
 use super::{
-    completion, control, loss, members, messages, reservations, submissions, tasks, usage, wakes,
+    completion, control, loss, members, messages, reads, reservations, submissions, tasks, usage,
+    wakes,
 };
 use crate::domain::swarm::BoardRole;
 
@@ -59,6 +60,13 @@ pub(super) enum Method {
     Quarantine,
     ConfirmedDead,
     LoseCoordinator,
+    Summary,
+    Events,
+    Task,
+    Tasks,
+    Create,
+    Bootstrap,
+    Join,
     #[cfg(any(test, feature = "test-support"))]
     CreateRun,
     #[cfg(any(test, feature = "test-support"))]
@@ -130,6 +138,13 @@ impl Method {
             "_quarantine" => Some(Self::Quarantine),
             "_confirmed_dead" => Some(Self::ConfirmedDead),
             "_lose_coordinator" => Some(Self::LoseCoordinator),
+            "summary" => Some(Self::Summary),
+            "events" => Some(Self::Events),
+            "task" => Some(Self::Task),
+            "tasks" => Some(Self::Tasks),
+            "create" => Some(Self::Create),
+            "_bootstrap" => Some(Self::Bootstrap),
+            "_join" => Some(Self::Join),
             #[cfg(any(test, feature = "test-support"))]
             "create_run" => Some(Self::CreateRun),
             #[cfg(any(test, feature = "test-support"))]
@@ -188,6 +203,13 @@ impl Method {
             Self::Quarantine => "_quarantine",
             Self::ConfirmedDead => "_confirmed_dead",
             Self::LoseCoordinator => "_lose_coordinator",
+            Self::Summary => "summary",
+            Self::Events => "events",
+            Self::Task => "task",
+            Self::Tasks => "tasks",
+            Self::Create => "create",
+            Self::Bootstrap => "_bootstrap",
+            Self::Join => "_join",
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun => "create_run",
             #[cfg(any(test, feature = "test-support"))]
@@ -252,6 +274,11 @@ impl Method {
             // The harness's loss and death records (#2277) write the
             // board when they decide to; each is rare, so INFO.
             Self::Quarantine | Self::ConfirmedDead | Self::LoseCoordinator => Level::Mutation,
+            // The read models every member polls (the lifecycle watch
+            // loop), #2277; the summaries `create`, `_join` and
+            // `_bootstrap` answer with follow their writes.
+            Self::Summary | Self::Events | Self::Task | Self::Tasks => Level::Read,
+            Self::Create | Self::Bootstrap | Self::Join => Level::Mutation,
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun | Self::BootstrapRun | Self::BootstrapJoin => Level::Mutation,
             #[cfg(any(test, feature = "test-support"))]
@@ -283,6 +310,9 @@ impl Method {
             Self::Notifications | Self::AcceptWake => Some(BoardRole::Host),
             // The harness's loss and death records (#2277).
             Self::Quarantine | Self::ConfirmedDead | Self::LoseCoordinator => Some(BoardRole::Host),
+            // The harness's own join (#2277).
+            Self::Bootstrap | Self::Join => Some(BoardRole::Host),
+            Self::Summary | Self::Events | Self::Task | Self::Tasks | Self::Create => None,
             Self::TaskCreate
             | Self::Dependencies
             | Self::Claim
@@ -310,8 +340,8 @@ impl Method {
             | Self::Inbox
             | Self::Ack => None,
             // Test-only halves the differential harness drives as the host;
-            // the member-facing `create`, `_bootstrap` and `task` S12 serves
-            // record the caller's own role.
+            // the member-facing `create` and `task` record the caller's own
+            // role, and `_bootstrap` the host's (#2277).
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun | Self::BootstrapRun | Self::BootstrapJoin | Self::TaskRaw => {
                 Some(BoardRole::Host)
@@ -369,7 +399,14 @@ impl Method {
             | Self::AcceptWake
             | Self::Quarantine
             | Self::ConfirmedDead
-            | Self::LoseCoordinator => true,
+            | Self::LoseCoordinator
+            | Self::Summary
+            | Self::Events
+            | Self::Task
+            | Self::Tasks => true,
+            // `create` makes the caller the run's coordinator; the joins
+            // admit and activate it, or find its own live row.
+            Self::Create | Self::Bootstrap | Self::Join => true,
             // A member's own resume is refused before any gate (#2273), so
             // it never answers.
             Self::Resume => false,
@@ -449,12 +486,19 @@ impl Method {
             Self::AcceptWake => &wakes::ACCEPT_WAKE,
             Self::Quarantine => &loss::QUARANTINE,
             Self::ConfirmedDead => &loss::CONFIRMED_DEAD,
+            Self::Summary => &reads::SUMMARY,
+            Self::Events => &reads::EVENTS,
+            Self::Task => &tasks::CLAIM,
+            Self::Tasks => &reads::TASKS,
+            Self::Create => &reads::CREATE,
+            Self::Bootstrap => &reads::BOOTSTRAP,
+            Self::Join => &reads::JOIN,
             #[cfg(any(test, feature = "test-support"))]
-            Self::CreateRun => &test_only::CREATE,
+            Self::CreateRun => &reads::CREATE,
             #[cfg(any(test, feature = "test-support"))]
             Self::BootstrapRun => &test_only::BOOTSTRAP,
             #[cfg(any(test, feature = "test-support"))]
-            Self::BootstrapJoin => &test_only::JOIN,
+            Self::BootstrapJoin => &reads::BOOTSTRAP,
             #[cfg(any(test, feature = "test-support"))]
             Self::TaskRaw => &tasks::CLAIM,
         }

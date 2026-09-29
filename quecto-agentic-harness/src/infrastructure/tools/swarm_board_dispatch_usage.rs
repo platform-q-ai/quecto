@@ -59,6 +59,7 @@ pub(super) fn usage_budget(
         message_id: None,
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
+        refused: None,
     })
 }
 
@@ -84,6 +85,7 @@ pub(super) fn record_request(
         message_id: None,
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
+        refused: None,
     })
 }
 
@@ -112,6 +114,7 @@ pub(super) fn request_admission(
         message_id: None,
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
+        refused: None,
     })
 }
 

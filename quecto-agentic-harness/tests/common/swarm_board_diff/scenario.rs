@@ -110,6 +110,12 @@ pub fn symlink_bytes(link: &str, target: &[u8]) -> Step {
     fs_step(&serde_json::json!(["symlink-bytes", link, hex]))
 }
 
+/// Not a board call: both sides' board files are overwritten with bytes
+/// that are no SQLite database, and the step answers `null` on both.
+pub fn corrupt() -> Step {
+    fs_step(&serde_json::json!(["corrupt"]))
+}
+
 fn fs_step(args: &Value) -> Step {
     Step {
         member: String::new(),
@@ -124,6 +130,8 @@ fn fs_step(args: &Value) -> Step {
 fn shape(root: &Path, args: &str) -> Outcome {
     let args: Vec<String> = serde_json::from_str(args).expect("a filesystem step's arguments");
     match args.as_slice() {
+        [kind] if kind == "corrupt" => std::fs::write(root.join("swarm.sqlite"), b"corrupt")
+            .unwrap_or_else(|error| panic!("corrupt the board: {error}")),
         [kind, path] if kind == "mkdir" => std::fs::create_dir_all(root.join(path))
             .unwrap_or_else(|error| panic!("mkdir {path}: {error}")),
         [kind, link, target] if kind == "symlink" => {
@@ -256,9 +264,9 @@ pub fn run_rust(steps: &[Step]) -> Outcome {
     last
 }
 
-/// Runs `steps` on a Rust board alone and answers every step, refused or
-/// not: what the Rust board answered at each step of a scenario
-/// `run_both` has compared (so Python's answers too).
+/// Runs `steps` on a Rust board alone (each held as it says) and answers
+/// every step, refused or not: what the Rust board answered at each step
+/// of a scenario `run_both` has compared (so Python's answers too).
 pub fn rust_answers(steps: &[Step]) -> Vec<Outcome> {
     let dir = tempfile::tempdir().expect("a directory for the board");
     let side = Side::new(dir.path(), "rust");
@@ -271,10 +279,11 @@ pub fn rust_answers(steps: &[Step]) -> Vec<Outcome> {
             } else if step.method == FS_STEP {
                 shape(&side.root, &step.args)
             } else {
-                side.neutral(
+                let answer = with_lock(&side.database, step.hold, || {
                     rust.call_text(&step.member, &step.method, &step.args, step.now)
-                        .0,
-                )
+                        .0
+                });
+                side.neutral(answer)
             }
         })
         .collect()
@@ -357,6 +366,15 @@ fn run_in(
             ));
         }
         match (python_side.database.exists(), rust_side.database.exists()) {
+            (true, true) if !database(&python_side.database) || !database(&rust_side.database) => {
+                // A file that is no database (a `corrupt` step) is compared
+                // byte for byte.
+                if std::fs::read(&python_side.database).ok()
+                    != std::fs::read(&rust_side.database).ok()
+                {
+                    return Err(format!("{}: board files differ as bytes", context()));
+                }
+            }
             (true, true) => {
                 let difference = first_difference(
                     &logical_dump(&python_side.database),
@@ -376,6 +394,14 @@ fn run_in(
         }
     }
     Ok(())
+}
+
+/// Whether `path` holds a SQLite database (or is empty, which SQLite
+/// opens as one).
+fn database(path: &Path) -> bool {
+    std::fs::read(path)
+        .map(|bytes| bytes.is_empty() || bytes.starts_with(b"SQLite format 3\0"))
+        .unwrap_or(false)
 }
 
 /// The event log holds exactly one record for a dispatched call (none for

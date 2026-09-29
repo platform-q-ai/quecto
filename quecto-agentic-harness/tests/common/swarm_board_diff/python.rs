@@ -19,20 +19,22 @@
 //! closing summary, `bootstrap_run` is `_bootstrap` without its join, and
 //! `bootstrap_join` is that join, `join_process`, bound by `_bootstrap`'s
 //! signature and without the coordinator's closing summary, and
-//! `task_raw` is `Tasks._task` inside a read-only operation, before S12's
-//! owner liveness); they live here, never in the `.py` sources.
+//! `task_raw` is `Tasks._task` inside a read-only operation, without the
+//! owner liveness `task` adds); they live here, never in the `.py`
+//! sources.
 //!
 //! `create_run` stops where Python's real `create` commits: `create`'s
 //! transaction commits and only then does it call `summary()`, which can
 //! still raise, so a real `create` can answer a refusal for a run it has
-//! created. S12, which adds the summary, must keep that order and that
-//! outcome: committed, then refused.
+//! created. The Rust `create` keeps that order and that outcome (#2277):
+//! committed, then refused.
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
 use std::time::Duration;
 
+use quecto::infrastructure::persistence::swarm_board::py_json;
 use serde_json::{Value, json};
 
 use super::Outcome;
@@ -167,6 +169,36 @@ fn program() -> String {
     program
 }
 
+/// The methods of Python's `Workbench` defined in the board's own modules
+/// (`swarm.py`, `swarm_tasks.py`), public and underscore, dunders left
+/// out: `dir(Workbench)` filtered by callables whose `__module__` is one
+/// of them, sorted.
+pub fn workbench_methods() -> Vec<String> {
+    let mut program = String::from("import sys, types, json, time, uuid\n");
+    for (name, body) in SOURCES {
+        program.push_str(&format!(
+            "_m=types.ModuleType({name:?}); sys.modules[{name:?}]=_m; exec(compile({}, {name:?}, 'exec'), _m.__dict__)\n",
+            serde_json::to_string(body).expect("source serializes")
+        ));
+    }
+    program.push_str(
+        "import swarm\n\
+         _w = swarm.Workbench\n\
+         print(json.dumps(sorted(n for n in dir(_w) if not n.startswith('__') \
+         and callable(getattr(_w, n)) \
+         and getattr(getattr(_w, n), '__module__', None) in ('swarm', 'swarm_tasks'))))\n",
+    );
+    let output = Command::new("python3")
+        .arg("-I")
+        .arg("-c")
+        .arg(program)
+        .stderr(Stdio::inherit())
+        .output()
+        .expect("python3 is required for the differential harness");
+    assert!(output.status.success(), "the Workbench listing ran");
+    serde_json::from_slice(&output.stdout).expect("a JSON list of method names")
+}
+
 pub struct PyBoard {
     child: Child,
     stdin: Option<ChildStdin>,
@@ -223,8 +255,7 @@ impl PyBoard {
                 panic!("the Python driver exited before answering {request}")
             }
         };
-        let answer: Value = serde_json::from_str(&line)
-            .unwrap_or_else(|error| panic!("the driver answered {line:?}: {error}"));
+        let answer = python_answer(&line);
         match (
             answer.get("ok"),
             answer.get("error"),
@@ -236,6 +267,19 @@ impl PyBoard {
             _ => panic!("the driver answered an unknown shape: {line}"),
         }
     }
+}
+
+/// The driver's answer line, read as Python's `json.loads` reads it
+/// (#2277 review M1): `py_json`'s float parse is correctly rounded, so
+/// every float compares as the exact double Python answered, where
+/// `serde_json` without `float_roundtrip` can misread its last digit. A
+/// value no `serde_json::Value` holds (`NaN`, `Infinity`, an integer
+/// beyond u64, a lone surrogate) is no answer the harness compares, and
+/// panics.
+pub fn python_answer(line: &str) -> Value {
+    py_json::decode(line)
+        .and_then(|answer| answer.to_value())
+        .unwrap_or_else(|error| panic!("the driver answered {line:?}: {error}"))
 }
 
 impl Drop for PyBoard {

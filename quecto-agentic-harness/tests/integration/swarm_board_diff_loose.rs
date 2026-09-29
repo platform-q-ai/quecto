@@ -43,7 +43,8 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   member or reservation, #2271, a task id, #2272, a message id,
 ///   `withdraw`'s, `ack`'s or `send`'s `supersedes`, `send`'s `recipient`
 ///   or `inbox`'s `include_consumed`, #2276, `_quarantine`'s or
-///   `_confirmed_dead`'s member, #2277) makes Python's
+///   `_confirmed_dead`'s member, `events`' cursor or `tasks`' offset,
+///   #2277) makes Python's
 ///   `sqlite3` raise `OverflowError` when it is bound, which is not an
 ///   `sqlite3.Error`, so the store does not turn it into a refusal and the
 ///   call raises.
@@ -100,8 +101,13 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 /// - #2277's `outside_edited_loss_records` (a loss observation's time or
 ///   detail, or a member's launcher, only an edit holds; a detail that is
 ///   not JSON text, or NULL, met by `_quarantine`, is refused as a store
-///   failure where Python raises a `JSONDecodeError` or a `TypeError`):
-///   see `swarm_board_diff_loose_loss.rs`.
+///   failure where Python raises a `JSONDecodeError` or a `TypeError`; and
+///   an owner's latest event time the owner liveness measures from, refused
+///   wherever an owned task makes the board read it, where Python raises
+///   only for an owned task on the page it answers and so answers a
+///   `summary` whose owned task is past its first 50): see
+///   `swarm_board_diff_loose_loss.rs` and `swarm_board_diff_loose_reads.rs`,
+///   which also pins `outside_edited_task_columns` for `summary`'s counts.
 /// - `outside_edited_contract` (#2273, listed case by case and pinned in
 ///   `swarm_board_diff_loose_completion.rs`): a run contract, a criterion
 ///   or a task's evidence only a file edited outside the board holds
@@ -589,10 +595,11 @@ fn every_permitted_divergence_is_pinned_by_name() {
 /// The only files whose tests may expect a difference: this one, its
 /// task-column sibling, #2275's, #2276's and #2277's siblings, and the
 /// submission scenarios holding a [`SECOND_PINS`] test.
-const PIN_TABLE_FILES: [&str; 6] = [
+const PIN_TABLE_FILES: [&str; 7] = [
     include_str!("swarm_board_diff_loose.rs"),
     include_str!("swarm_board_diff_loose_files.rs"),
     include_str!("swarm_board_diff_loose_loss.rs"),
+    include_str!("swarm_board_diff_loose_reads.rs"),
     include_str!("swarm_board_diff_loose_messages.rs"),
     include_str!("swarm_board_diff_loose_tasks.rs"),
     include_str!("swarm_board_diff_submissions.rs"),

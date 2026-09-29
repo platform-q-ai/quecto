@@ -28,11 +28,12 @@ pub enum CreateBranch {
     OverSetup,
 }
 
-/// A created run. Python's `create` goes on to return the summary, a read
-/// model a later slice (S12) adds; this slice ports the transaction only.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// A created run, and the creator's summary read after it committed:
+/// Python's `create` answers that summary, or its refusal (#2307).
+#[derive(Clone, Debug, PartialEq)]
 pub struct CreatedRun {
     pub branch: CreateBranch,
+    pub summary: Result<super::RunSummary, crate::domain::swarm::BoardError>,
 }
 
 /// The first half of `Workbench._bootstrap(pid, started, socket)` as
@@ -55,7 +56,7 @@ pub struct Bootstrapped {
 }
 
 /// `swarm_repository.member_claim_counts` (#1969).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MemberClaimCounts {
     /// Live or reserved members, the coordinator excluded, holding no
     /// claimed, blocked or submitted task.

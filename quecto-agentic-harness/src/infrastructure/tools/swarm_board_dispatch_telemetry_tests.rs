@@ -236,7 +236,7 @@ fn refusal(log: &Recorded, answer: Result<Value, BoardError>) -> RefusalKind {
     let error = answer.expect_err("the board refuses");
     let recorded = only(log);
     log.clear();
-    let BoardOpOutcome::Refused { kind } = recorded.outcome else {
+    let BoardOpOutcome::Refused { kind, .. } = recorded.outcome else {
         panic!("a refusal records its kind: {recorded:?}");
     };
     assert_eq!(kind, error.kind(), "the record carries the error's kind");
@@ -608,3 +608,6 @@ fn a_swarm_op_line_holds_no_board_text() {
 
 #[path = "swarm_board_dispatch_telemetry_ops_tests.rs"]
 mod ops;
+
+#[path = "swarm_board_dispatch_telemetry_race_tests.rs"]
+mod race;

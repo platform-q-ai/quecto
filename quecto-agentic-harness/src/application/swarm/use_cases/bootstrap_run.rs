@@ -42,42 +42,55 @@ impl BootstrapRun {
     /// # Errors
     /// The store's refusal.
     pub fn execute(&self, request: BootstrapRunRequest) -> Result<Bootstrapped, BoardError> {
-        let member = request.member.as_str();
-        atomic(&*self.repository, true, |transaction| {
-            if transaction.run_exists()? {
-                return Ok(Bootstrapped { created: false });
-            }
-            transaction.insert_run(&NewRun {
-                id: self.ids.hex32(),
-                contract: RunContract {
-                    goal: String::new(),
-                    constraints: Value::Array(Vec::new()),
-                    criteria: Value::Array(Vec::new()),
-                    member_limit: PLACEHOLDER_MEMBER_LIMIT,
-                    deadline: 0.0,
-                },
-                coordinator: member.to_owned(),
-                integrator: member.to_owned(),
-                status: RunState::SETUP,
-            })?;
-            transaction.insert_member(&NewMember {
-                id: member.to_owned(),
-                reservation: self.ids.hex32(),
-                status: MemberState::LIVE,
-                pid: request.pid.clone(),
-                started: request.started.clone(),
-                socket: request.socket.clone(),
-                launcher: None,
-            })?;
-            transaction.event(
-                member,
-                self.clock.now_seconds(),
-                "container_setup",
-                &detail([("member", text(member))]),
-            )?;
-            Ok(Bootstrapped { created: true })
-        })
+        bootstrap(&*self.repository, &*self.clock, &*self.ids, &request)
     }
+}
+
+/// The placeholder's transaction over `repository`: whether it wrote one.
+///
+/// # Errors
+/// The store's refusal.
+pub(super) fn bootstrap(
+    repository: &dyn BoardRepository,
+    clock: &(dyn Clock + Send + Sync),
+    ids: &dyn IdSource,
+    request: &BootstrapRunRequest,
+) -> Result<Bootstrapped, BoardError> {
+    let member = request.member.as_str();
+    atomic(repository, true, |transaction| {
+        if transaction.run_exists()? {
+            return Ok(Bootstrapped { created: false });
+        }
+        transaction.insert_run(&NewRun {
+            id: ids.hex32(),
+            contract: RunContract {
+                goal: String::new(),
+                constraints: Value::Array(Vec::new()),
+                criteria: Value::Array(Vec::new()),
+                member_limit: PLACEHOLDER_MEMBER_LIMIT,
+                deadline: 0.0,
+            },
+            coordinator: member.to_owned(),
+            integrator: member.to_owned(),
+            status: RunState::SETUP,
+        })?;
+        transaction.insert_member(&NewMember {
+            id: member.to_owned(),
+            reservation: ids.hex32(),
+            status: MemberState::LIVE,
+            pid: request.pid.clone(),
+            started: request.started.clone(),
+            socket: request.socket.clone(),
+            launcher: None,
+        })?;
+        transaction.event(
+            member,
+            clock.now_seconds(),
+            "container_setup",
+            &detail([("member", text(member))]),
+        )?;
+        Ok(Bootstrapped { created: true })
+    })
 }
 
 impl OverRepository for BootstrapRun {

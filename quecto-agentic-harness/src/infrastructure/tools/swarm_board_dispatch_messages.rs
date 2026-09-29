@@ -47,6 +47,7 @@ fn on_message(value: Value, decision: &'static str, message_id: Option<&Value>) 
         message_id: message_id.and_then(Value::as_i64),
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
+        refused: None,
     }
 }
 
