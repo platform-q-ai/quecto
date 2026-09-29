@@ -37,6 +37,11 @@ pub(super) struct Wire {
     /// Closes this session while an interrupt is being written, before
     /// the write returns `Ok`: `close` racing `abort` (#2287 review 2).
     pub(super) close_on_interrupt: Mutex<Option<Weak<DriveExternalAgentSession>>>,
+    /// While set, a user turn waits to be queued: nothing is written.
+    pub(super) queue_held: tokio::sync::watch::Sender<bool>,
+    /// While set, a queued user turn waits for its write to be
+    /// acknowledged: it is in `sent`, and will be written.
+    pub(super) ack_held: tokio::sync::watch::Sender<bool>,
 }
 
 impl Wire {
@@ -47,6 +52,16 @@ impl Wire {
 
     pub(super) fn interrupts(&self) -> usize {
         self.interrupts.load(Ordering::SeqCst)
+    }
+
+    /// Hold (or release) the queueing of user turns.
+    pub(super) fn hold_queue(&self, held: bool) {
+        self.queue_held.send_replace(held);
+    }
+
+    /// Hold (or release) the acknowledgment of queued user turns.
+    pub(super) fn hold_ack(&self, held: bool) {
+        self.ack_held.send_replace(held);
     }
 
     pub(super) fn dropped(&self) -> bool {
@@ -66,6 +81,12 @@ impl Wire {
     }
 }
 
+/// Resolves once `hold` is not set.
+async fn released(hold: &tokio::sync::watch::Sender<bool>) {
+    // The sender lives in the wire: never an error.
+    let _ = hold.subscribe().wait_for(|held| !*held).await;
+}
+
 struct FakeProcess(Arc<Wire>);
 
 impl ExternalAgentProcess for FakeProcess {
@@ -74,14 +95,17 @@ impl ExternalAgentProcess for FakeProcess {
         text: &'a str,
     ) -> PortFuture<'a, Result<UserTurnId, ExternalAgentInputError>> {
         Box::pin(async move {
-            match self.0.closed.load(Ordering::SeqCst) {
-                true => Err(ExternalAgentInputError::Closed),
+            released(&self.0.queue_held).await;
+            let id = match self.0.closed.load(Ordering::SeqCst) {
+                true => return Err(ExternalAgentInputError::Closed),
                 false => {
                     let mut sent = self.0.sent.lock().unwrap();
                     sent.push(text.to_string());
-                    Ok(UserTurnId(format!("u{}", sent.len())))
+                    UserTurnId(format!("u{}", sent.len()))
                 }
-            }
+            };
+            released(&self.0.ack_held).await;
+            Ok(id)
         })
     }
 

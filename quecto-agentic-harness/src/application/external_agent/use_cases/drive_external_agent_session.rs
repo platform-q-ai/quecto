@@ -530,3 +530,7 @@ mod wake_tests;
 #[cfg(test)]
 #[path = "drive_external_agent_session_capability_tests.rs"]
 mod capability_tests;
+
+#[cfg(test)]
+#[path = "drive_external_agent_session_cancel_tests.rs"]
+mod cancel_tests;
