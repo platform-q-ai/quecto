@@ -670,28 +670,45 @@ fn board_errors_keep_the_swarm_quoted_prefix() {
     );
 }
 
-/// The host reads a board with no Python (#2278): no interpreter is
-/// started for it, before or after the read (the retired board worker
-/// kept one per board, alive between calls, its checkout in its program).
+/// The host reads a board with no Python (#2278): in a child process
+/// whose `PATH` is an empty directory, where no `python3` can be found
+/// (review M3), the read still succeeds.
 #[test]
 fn hosted_run_reads_without_python() {
+    const CHILD: &str = "QUECTO_TEST_2278_NO_PYTHON_CHILD";
+    if let Ok(checkout) = std::env::var(CHILD) {
+        // No interpreter can be found: the read is the Rust board's alone.
+        assert!(
+            std::process::Command::new("python3")
+                .arg("-c")
+                .arg("pass")
+                .status()
+                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
+            "python3 is not on this child's PATH"
+        );
+        let hosted = super::swarm_bridge::HostedStore::at(
+            checkout.into(),
+            crate::composition::swarm::swarm_board(),
+        );
+        let run = hosted.hosted_run().unwrap().expect("a created run");
+        assert_eq!(run.coordinator, "parent");
+        return;
+    }
     let directory = tempfile::tempdir().unwrap();
     create(&context(&directory), 1);
-    let hosted = super::swarm_bridge::HostedStore::at(
-        directory.path().to_path_buf(),
-        crate::composition::swarm::swarm_board(),
-    );
-    let run = hosted.hosted_run().unwrap().expect("a created run");
-    assert_eq!(run.coordinator, "parent");
-    let checkout = directory.path().to_string_lossy().into_owned();
-    let interpreters: Vec<String> = std::fs::read_dir("/proc")
-        .unwrap()
-        .filter_map(|entry| std::fs::read(entry.ok()?.path().join("cmdline")).ok())
-        .map(|cmdline| String::from_utf8_lossy(&cmdline).replace('\0', " "))
-        .filter(|cmdline| cmdline.contains("python3") && cmdline.contains(&checkout))
-        .collect();
+    let empty = tempfile::tempdir().unwrap();
+    let name = std::thread::current().name().unwrap().to_owned();
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", &name, "--nocapture", "--test-threads=1"])
+        .env(CHILD, directory.path())
+        .env("PATH", empty.path())
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        interpreters.is_empty(),
-        "no Python reads this board: {interpreters:?}"
+        output.status.success() && stdout.contains("1 passed"),
+        "{stdout}{}",
+        String::from_utf8_lossy(&output.stderr)
     );
 }
