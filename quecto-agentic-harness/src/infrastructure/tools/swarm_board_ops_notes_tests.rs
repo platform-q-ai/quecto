@@ -12,7 +12,7 @@ use super::{
     CountingLifecycle, Recorded, answered, board, board_with, deadline, direct, execute,
     rejecting_worker,
 };
-use crate::domain::swarm::{BoardOpOutcome, RefusalKind};
+use crate::domain::swarm::{BoardOpOutcome, BoardRole, RefusalKind};
 use crate::infrastructure::tools::swarm_bridge::SwarmContext;
 
 /// `dependencies` answers `None`; setting them on a ready task hands it to
@@ -150,4 +150,65 @@ fn a_refusal_without_notes_is_the_boards() {
     .unwrap();
     assert!(result.is_error);
     assert_eq!(result.content, r#"tool error: swarm: "unknown task""#);
+}
+
+/// Each record's op and role, taken from `log`.
+fn roles(log: &Recorded) -> Vec<(String, Option<BoardRole>)> {
+    log.take()
+        .into_iter()
+        .map(|record| (record.op, record.role))
+        .collect()
+}
+
+/// #2279 S15 final review: the board reads the post-call lifecycle makes
+/// (the summary it judges the run by, the settlement's snapshot and
+/// reconcile) are the harness's, recorded as `host`, never counted against
+/// the member whose op moved the cursor; the member's own op, and a
+/// `summary` the member asks for, keep the member's role.
+#[tokio::test]
+async fn the_lifecycle_s_board_reads_are_recorded_as_host() {
+    use BoardRole::{Coordinator, Host};
+    let (_directory, context) = board();
+    direct(&context, "task_create", json!(["r1", "t", ["pass"]])).unwrap();
+    let log = Arc::new(Recorded::default());
+    assert!(context.board.record_in(log.clone()));
+    answered(&context, json!({"op": "claim", "task_id": 1})).await;
+    let host = |op: &str| (op.to_owned(), Some(Host));
+    assert_eq!(
+        roles(&log),
+        [
+            host("_status"),
+            host("_event_cursor"),
+            ("claim".to_owned(), Some(Coordinator)),
+            host("_event_cursor"),
+            host("summary"),
+            host("_notifications"),
+        ]
+    );
+    answered(&context, json!({"op": "summary"})).await;
+    assert_eq!(roles(&log), [("summary".to_owned(), Some(Coordinator))]);
+    answered(
+        &context,
+        json!({"op": "stop", "status": "blocked", "reason": "needs a decision"}),
+    )
+    .await;
+    let stopped = roles(&log);
+    assert_eq!(
+        stopped[..4],
+        [
+            host("_status"),
+            host("_event_cursor"),
+            ("stop".to_owned(), Some(Coordinator)),
+            host("_event_cursor"),
+        ],
+        "{stopped:?}"
+    );
+    assert!(
+        stopped[4..].iter().all(|(_, role)| *role == Some(Host)),
+        "the lifecycle and the settlement read as host: {stopped:?}"
+    );
+    assert!(
+        stopped[4..].iter().any(|(op, _)| op == "summary"),
+        "{stopped:?}"
+    );
 }
