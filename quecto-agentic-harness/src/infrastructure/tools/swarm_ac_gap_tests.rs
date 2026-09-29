@@ -16,6 +16,7 @@ fn tool(dir: &std::path::Path) -> SwarmTool {
             max_output_bytes: 32,
             ..Default::default()
         },
+        crate::composition::swarm::swarm_board(),
     )
 }
 
@@ -94,6 +95,7 @@ async fn drop_terminates_background_job_process() {
             max_processes: None,
             ..Default::default()
         },
+        crate::composition::swarm::swarm_board(),
     );
     let started = lab.execute(r#"{"op":"run","code":"import os,pathlib,time; pathlib.Path('pid.txt').write_text(str(os.getpid())); time.sleep(30)","background":true}"#).await.unwrap();
     assert!(!started.is_error, "{}", started.content);
@@ -134,6 +136,7 @@ async fn memory_cpu_and_process_rlimits_are_enforced() {
             max_processes: None,
             ..Default::default()
         },
+        crate::composition::swarm::swarm_board(),
     );
     let mem = mem_lab
         .execute(r#"{"op":"run","code":"x=bytearray(512*1024*1024)","timeout_seconds":5}"#)
@@ -154,6 +157,7 @@ async fn memory_cpu_and_process_rlimits_are_enforced() {
             max_processes: None,
             ..Default::default()
         },
+        crate::composition::swarm::swarm_board(),
     );
     let cpu = cpu_lab
         .execute(r#"{"op":"run","code":"while True: pass","timeout_seconds":5}"#)

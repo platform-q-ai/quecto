@@ -39,7 +39,11 @@ fn use_case(registry: EnvironmentRegistry) -> Arc<KillEnvironment> {
         registry,
         Arc::new(SettleAll),
         Arc::new(super::super::environment_commands::ScriptEnvironmentCommands::default()),
-        Arc::new(super::super::environment_commands::HostedStoreObservation),
+        Arc::new(
+            super::super::environment_commands::HostedStoreObservation::new(
+                crate::composition::swarm::swarm_board(),
+            ),
+        ),
     ))
 }
 

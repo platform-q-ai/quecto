@@ -100,6 +100,7 @@ async fn a_workflow_enabled_agent_cannot_create_a_swarm() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(directory.path().join(".quecto")).unwrap();
     let context = SwarmContext {
+        board: crate::composition::swarm::swarm_board(),
         checkout: directory.path().to_path_buf(),
         member: "coordinator".into(),
         lifecycle: std::sync::Arc::new(crate::application::swarm::LifecycleService),

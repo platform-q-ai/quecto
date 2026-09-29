@@ -35,6 +35,7 @@ use crate::infrastructure::persistence::swarm_board::meter::SqliteBoardCallMeter
 use crate::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 pub use crate::infrastructure::tools::swarm_board_dispatch::SwarmBoardHandles;
 use crate::infrastructure::tools::swarm_board_dispatch::{ActorRefs, BoardTelemetry};
+pub use crate::infrastructure::tools::swarm_bridge::SwarmBoard;
 use crate::infrastructure::tools::swarm_lifecycle::SystemClock;
 use crate::infrastructure::workspace::checkout_paths::ResolvedCheckout;
 
@@ -52,6 +53,14 @@ pub fn build_swarm_board_handles(
         Some(event_log) => with_event_log(repository, clock, ids, checkout, event_log),
         None => build_swarm_board_handles_with(Arc::new(repository), clock, ids, checkout),
     }
+}
+
+/// The board a `SwarmContext` or `HostedStore` calls (#2278): the
+/// handles [`build_swarm_board_handles`] builds, once per board file, and
+/// the session's event log once it is given one
+/// ([`SwarmBoard::record_in`]).
+pub fn swarm_board() -> SwarmBoard {
+    SwarmBoard::with_session_log(build_swarm_board_handles, board_op_log)
 }
 
 /// Where the board records its `swarm_op`s: the session's event log, only

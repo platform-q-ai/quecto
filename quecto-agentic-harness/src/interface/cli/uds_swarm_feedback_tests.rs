@@ -85,6 +85,7 @@ async fn approval_exchange(busy: bool) {
     let workspace = Arc::new(env.tmp.path().to_path_buf());
     std::fs::create_dir_all(workspace.join(".quecto")).unwrap();
     let board = SwarmContext {
+        board: crate::composition::swarm::swarm_board(),
         checkout: workspace.as_ref().clone(),
         member: "coordinator".into(),
         lifecycle: Arc::new(crate::application::swarm::LifecycleService),

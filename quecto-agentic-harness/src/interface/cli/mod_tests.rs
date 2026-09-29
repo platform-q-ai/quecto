@@ -55,6 +55,7 @@ fn test_composition() -> CliComposition {
         container_status: crate::composition::standard_container::build_container_status,
         run_end_fleet: crate::composition::subagent_teardown::build_run_end_fleet,
         swarm_board: crate::composition::swarm::build_swarm_board_handles,
+        swarm_board_log: crate::composition::swarm::board_op_log,
         claude_member: crate::composition::claude_member::build_claude_member_handles,
     }
 }
@@ -103,6 +104,8 @@ fn a_real_runs_context_carries_every_composed_builder() {
         ("container_status", ctx.container_status.is_some()),
         ("run_end_fleet", ctx.run_end_fleet.is_some()),
         ("claude_member", ctx.claude_member.is_some()),
+        ("swarm_board", ctx.swarm_board.is_some()),
+        ("swarm_board_log", ctx.swarm_board_log.is_some()),
     ];
     let present: Vec<_> = composed
         .iter()

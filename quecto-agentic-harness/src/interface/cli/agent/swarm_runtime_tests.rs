@@ -43,6 +43,7 @@ fn bootstrapped(checkout: &std::path::Path) -> SwarmContext {
 
 fn member(checkout: &std::path::Path, name: &str) -> SwarmContext {
     SwarmContext {
+        board: crate::composition::swarm::swarm_board(),
         checkout: checkout.to_path_buf(),
         member: name.into(),
         lifecycle: std::sync::Arc::new(crate::application::swarm::LifecycleService),
@@ -144,7 +145,14 @@ fn startup_workflow_follows_swarm_participation_not_containerization() {
 fn admit_without_a_container_context_changes_nothing() {
     let mut flags = flags_with(&["--workflow"]);
     let mut stderr = String::new();
-    assert!(admit(&mut flags, &mut stderr), "{stderr}");
+    assert!(
+        admit(
+            &crate::interface::cli::CliContext::default(),
+            &mut flags,
+            &mut stderr
+        ),
+        "{stderr}"
+    );
     assert!(!flags.workflow_disabled && !flags.swarm_participation.participating());
 }
 
@@ -250,4 +258,64 @@ fn a_claude_code_member_is_decided_before_it_joins() {
         &mut flags_with(&[]),
         &mut String::new()
     ));
+}
+
+static ADMITTED_BUILDS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn counted(
+    location: crate::application::swarm::dto::BoardLocation,
+    log: Option<std::sync::Arc<dyn crate::application::swarm::ports::BoardOpLog>>,
+) -> crate::infrastructure::tools::swarm_board_dispatch::SwarmBoardHandles {
+    ADMITTED_BUILDS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    crate::composition::swarm::build_swarm_board_handles(location, log)
+}
+
+/// The board admission gives a member's context is built by the builder
+/// `CliContext` carries from composition (#2278): the admission's own
+/// reads reach the board through it.
+#[test]
+fn admission_reaches_the_board_through_the_contexts_builder() {
+    let checkout = tempfile::tempdir().unwrap();
+    bootstrapped(checkout.path());
+    let ctx = crate::interface::cli::CliContext {
+        swarm_board: Some(counted),
+        swarm_board_log: Some(crate::composition::swarm::board_op_log),
+        ..Default::default()
+    };
+    let board = super::board(&ctx).expect("a composed board");
+    let worker = SwarmContext {
+        board,
+        ..member(checkout.path(), "worker")
+    };
+    let mut flags = flags_with(&[]);
+    let mut stderr = String::new();
+    let _ = admit_with(Some(worker), false, &mut flags, &mut stderr);
+    assert!(
+        ADMITTED_BUILDS.load(std::sync::atomic::Ordering::SeqCst) >= 1,
+        "the admission's reads went through the composed builder"
+    );
+    assert!(
+        super::board(&crate::interface::cli::CliContext::default()).is_none(),
+        "no builder, no board"
+    );
+}
+
+/// A process launched under the container contract with no composed board
+/// is refused; outside the contract nothing is needed (#2278).
+#[test]
+fn a_contracted_process_needs_a_composed_board() {
+    let board = crate::composition::swarm::swarm_board;
+    assert!(matches!(
+        super::board_admission(Some(board()), true),
+        Ok(Some(_))
+    ));
+    assert!(matches!(
+        super::board_admission(Some(board()), false),
+        Ok(Some(_))
+    ));
+    assert!(matches!(super::board_admission(None, false), Ok(None)));
+    assert_eq!(
+        super::board_admission(None, true).unwrap_err(),
+        super::SWARM_BOARD_NOT_COMPOSED
+    );
 }

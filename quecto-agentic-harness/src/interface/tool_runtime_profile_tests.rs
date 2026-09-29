@@ -191,6 +191,7 @@ fn trial_isolated_runtime_build_does_not_enroll_in_full_ambient_swarm() {
     use crate::domain::swarm::ProcessIdentity;
     let tmp = tempfile::tempdir().unwrap();
     let context = crate::infrastructure::tools::swarm_bridge::SwarmContext {
+        board: crate::composition::swarm::swarm_board(),
         checkout: tmp.path().into(),
         member: "coordinator".into(),
         lifecycle: std::sync::Arc::new(crate::application::swarm::LifecycleService),
@@ -307,6 +308,7 @@ fn container_runtime_workflow_follows_swarm_participation() {
     let ordinary = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(ordinary.path().join(".quecto")).unwrap();
     let context = crate::infrastructure::tools::swarm_bridge::SwarmContext {
+        board: crate::composition::swarm::swarm_board(),
         checkout: ordinary.path().to_path_buf(),
         member: "ordinary".into(),
         lifecycle: std::sync::Arc::new(crate::application::swarm::LifecycleService),

@@ -53,6 +53,9 @@ mod supervisor_runtime;
 /// harness self-test or expects the difference (#2270 round-2 review L3).
 #[path = "architecture/swarm_board_diff_hooks.rs"]
 mod swarm_board_diff_hooks;
+/// The board's graph is composed only in `composition/swarm.rs` (#2278).
+#[path = "architecture/swarm_board_graph.rs"]
+mod swarm_board_graph;
 /// The board dispatcher names only application and domain paths (#2303).
 #[path = "architecture/swarm_board_ports.rs"]
 mod swarm_board_ports;

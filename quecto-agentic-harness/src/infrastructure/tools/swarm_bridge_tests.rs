@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 fn context(directory: &tempfile::TempDir) -> SwarmContext {
     SwarmContext {
+        board: crate::composition::swarm::swarm_board(),
         lifecycle: std::sync::Arc::new(crate::application::swarm::LifecycleService),
         checkout: directory.path().to_path_buf(),
         member: "parent".into(),
@@ -178,6 +179,7 @@ async fn cancelling_run_stops_background_python_and_preserves_progress() {
         workspace.clone(),
         Arc::new(Sandbox::new(Some(workspace.as_ref().clone()))),
         SwarmConfig::default(),
+        crate::composition::swarm::swarm_board(),
     );
     let started = tool
         .execute(r#"{"op":"run","code":"import time; time.sleep(30)","background":true}"#)
@@ -301,11 +303,13 @@ async fn failed_run_cancels_coordinator_detached_jobs() {
         workspace.clone(),
         Arc::new(Sandbox::new(Some(workspace.as_ref().clone()))),
         SwarmConfig::default(),
+        crate::composition::swarm::swarm_board(),
     );
     use crate::application::swarm::ports::CoordinationPort;
     let socket = directory.path().join("accept.sock");
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
     let coordinator = SwarmContext {
+        board: crate::composition::swarm::swarm_board(),
         lifecycle: std::sync::Arc::new(crate::application::swarm::LifecycleService),
         checkout: directory.path().to_path_buf(),
         member: "coordinator".into(),
@@ -349,8 +353,10 @@ async fn terminal_cancellation_closes_queued_and_future_background_launches() {
         workspace.clone(),
         Arc::new(Sandbox::new(Some(workspace.as_ref().clone()))),
         SwarmConfig::default(),
+        crate::composition::swarm::swarm_board(),
     );
     let context = SwarmContext {
+        board: crate::composition::swarm::swarm_board(),
         checkout: directory.path().to_path_buf(),
         member: "coordinator".into(),
         lifecycle: Arc::new(crate::application::swarm::LifecycleService),
@@ -606,8 +612,10 @@ async fn resumed_swarm_can_start_python_jobs_after_suspension() {
         workspace.clone(),
         Arc::new(Sandbox::new(Some(workspace.as_ref().clone()))),
         SwarmConfig::default(),
+        crate::composition::swarm::swarm_board(),
     );
     let context = SwarmContext {
+        board: crate::composition::swarm::swarm_board(),
         checkout: directory.path().to_path_buf(),
         member: "coordinator".into(),
         lifecycle: Arc::new(crate::application::swarm::LifecycleService),
@@ -647,3 +655,43 @@ async fn paused_summary_delta_is_read_only_and_stays_compact() {
 mod admission_tests;
 #[path = "swarm_bridge_loss_tests.rs"]
 mod loss_tests;
+
+/// A board refusal reaches the tool boundary as it always has (#2278):
+/// `swarm: ` and the refusal's text as a JSON string, quotes included.
+#[test]
+fn board_errors_keep_the_swarm_quoted_prefix() {
+    let directory = tempfile::tempdir().unwrap();
+    let context = context(&directory);
+    create(&context, 1);
+    let refused = context.call("claim", json!([999])).unwrap_err();
+    assert!(
+        matches!(&refused, crate::domain::error::DomainError::Tool(text) if text == "swarm: \"unknown task\""),
+        "{refused:?}"
+    );
+}
+
+/// The host reads a board with no Python (#2278): no interpreter is
+/// started for it, before or after the read (the retired board worker
+/// kept one per board, alive between calls, its checkout in its program).
+#[test]
+fn hosted_run_reads_without_python() {
+    let directory = tempfile::tempdir().unwrap();
+    create(&context(&directory), 1);
+    let hosted = super::swarm_bridge::HostedStore::at(
+        directory.path().to_path_buf(),
+        crate::composition::swarm::swarm_board(),
+    );
+    let run = hosted.hosted_run().unwrap().expect("a created run");
+    assert_eq!(run.coordinator, "parent");
+    let checkout = directory.path().to_string_lossy().into_owned();
+    let interpreters: Vec<String> = std::fs::read_dir("/proc")
+        .unwrap()
+        .filter_map(|entry| std::fs::read(entry.ok()?.path().join("cmdline")).ok())
+        .map(|cmdline| String::from_utf8_lossy(&cmdline).replace('\0', " "))
+        .filter(|cmdline| cmdline.contains("python3") && cmdline.contains(&checkout))
+        .collect();
+    assert!(
+        interpreters.is_empty(),
+        "no Python reads this board: {interpreters:?}"
+    );
+}

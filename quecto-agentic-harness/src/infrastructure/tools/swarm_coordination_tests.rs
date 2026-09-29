@@ -121,6 +121,7 @@ fn an_omitted_or_null_constraints_list_is_empty_and_a_given_one_is_passed_as_giv
 fn store_member(checkout: &std::path::Path) -> SwarmContext {
     std::fs::create_dir_all(checkout.join(".quecto")).unwrap();
     let context = SwarmContext {
+        board: crate::composition::swarm::swarm_board(),
         checkout: checkout.to_path_buf(),
         member: "coordinator".into(),
         lifecycle: std::sync::Arc::new(crate::application::swarm::LifecycleService),

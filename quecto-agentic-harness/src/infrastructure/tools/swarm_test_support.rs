@@ -6,8 +6,16 @@ use super::{
 use crate::infrastructure::security::sandbox::Sandbox;
 use std::{path::PathBuf, sync::Arc};
 
-pub fn tool(workspace: Arc<PathBuf>, sandbox: Arc<Sandbox>, config: SwarmConfig) -> SwarmTool {
+/// The tool over a fake container whose board is `board` (composition's,
+/// `composition::swarm::swarm_board`, #2278).
+pub fn tool(
+    workspace: Arc<PathBuf>,
+    sandbox: Arc<Sandbox>,
+    config: SwarmConfig,
+    board: super::swarm_bridge::SwarmBoard,
+) -> SwarmTool {
     let context = SwarmContext {
+        board,
         lifecycle: std::sync::Arc::new(crate::application::ports::SwarmTestLifecycle),
         checkout: workspace.as_ref().clone(),
         member: "coordinator".into(),

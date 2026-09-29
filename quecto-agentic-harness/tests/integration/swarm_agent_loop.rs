@@ -26,6 +26,7 @@ async fn fake_provider_decomposes_resolves_blocker_and_verifies_swarm() {
     let directory = tempfile::tempdir().unwrap();
     let workspace = Arc::new(directory.path().to_path_buf());
     let context = SwarmContext {
+        board: quecto::composition::swarm::swarm_board(),
         lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),
         checkout: workspace.as_ref().clone(),
         member: "coordinator".into(),
@@ -68,6 +69,7 @@ async fn fake_provider_decomposes_resolves_blocker_and_verifies_swarm() {
         .unwrap();
     assert!(result.response.contains("Verified completion"));
     let context = SwarmContext {
+        board: quecto::composition::swarm::swarm_board(),
         lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),
         checkout: workspace.as_ref().clone(),
         member: "coordinator".into(),

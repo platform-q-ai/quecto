@@ -10,8 +10,10 @@ async fn stale_pause_settlement_preserves_resumed_python_job() {
             Some(workspace.as_ref().clone()),
         )),
         super::super::swarm::SwarmConfig::default(),
+        crate::composition::swarm::swarm_board(),
     );
     let context = SwarmContext {
+        board: crate::composition::swarm::swarm_board(),
         checkout: directory.path().to_path_buf(),
         member: "coordinator".into(),
         lifecycle: std::sync::Arc::new(crate::application::swarm::LifecycleService),

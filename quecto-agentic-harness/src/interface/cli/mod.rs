@@ -344,6 +344,14 @@ pub struct CliContext {
     /// Composition's claude-code member builder (#2287); an agent run with
     /// `--backend claude-code` refuses to start without it.
     pub claude_member: Option<claude_member::ClaudeMemberHandlesBuilder>,
+    /// Composition's coordination-board handles builder (#2270, #2278):
+    /// an agent run gives every `SwarmContext` one board built through
+    /// it. A process launched as a swarm member refuses to start without
+    /// it, since the interface never constructs the board.
+    pub swarm_board: Option<swarm_board_handles::SwarmBoardHandlesBuilder>,
+    /// Composition's `board_op_log` (#2303): the session's event log the
+    /// board records its `swarm_op`s in, while the event log is on.
+    pub swarm_board_log: Option<swarm_board_handles::SwarmBoardOpLogBuilder>,
     /// Output reaches the real terminal (`run`, not `run_with_output`): a
     /// one-shot run writes its answer out before it settles its children.
     pub live_output: bool,
@@ -428,10 +436,11 @@ pub struct CliComposition {
     pub container_init: ContainerInitBuilder,
     pub container_status: ContainerStatusBuilder,
     pub run_end_fleet: run_end_fleet::RunEndFleetBuilder,
-    /// Composition's coordination-board handles builder (#2270). `run`
-    /// does not carry it onto `CliContext` yet: nothing would read it until
-    /// S13 (#2278) threads it through `CliContext` into `SwarmContext`.
+    /// Composition's coordination-board handles builder (#2270), which
+    /// `run` carries onto `CliContext` for `SwarmContext` (#2278).
     pub swarm_board: swarm_board_handles::SwarmBoardHandlesBuilder,
+    /// Composition's `board_op_log` (#2303, #2278).
+    pub swarm_board_log: swarm_board_handles::SwarmBoardOpLogBuilder,
     pub claude_member: claude_member::ClaudeMemberHandlesBuilder,
 }
 

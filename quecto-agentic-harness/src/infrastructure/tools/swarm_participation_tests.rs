@@ -6,6 +6,7 @@ use serde_json::json;
 
 fn context(directory: &tempfile::TempDir) -> SwarmContext {
     SwarmContext {
+        board: crate::composition::swarm::swarm_board(),
         checkout: directory.path().to_path_buf(),
         member: "coordinator".into(),
         lifecycle: std::sync::Arc::new(crate::application::swarm::LifecycleService),

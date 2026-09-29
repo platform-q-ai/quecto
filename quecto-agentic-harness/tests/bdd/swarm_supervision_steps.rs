@@ -68,6 +68,7 @@ async fn exercise(workspace: std::path::PathBuf) -> serde_json::Value {
         std::fs::read_to_string(report["data"]["rawExport"]["path"].as_str().unwrap()).unwrap();
     let stats = runtime.command(json!({"type":"get_session_stats"})).await;
     let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+        board: quecto::composition::swarm::swarm_board(),
         checkout: workspace.clone(),
         member: "coordinator".into(),
         lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),
@@ -163,6 +164,7 @@ async fn exercise_resume(workspace: std::path::PathBuf) -> serde_json::Value {
     runtime.wait_report("RECOVERED").await;
     let restored = runtime.command(json!({"type":"get_state"})).await;
     let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+        board: quecto::composition::swarm::swarm_board(),
         checkout: workspace.clone(),
         member: "coordinator".into(),
         lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),

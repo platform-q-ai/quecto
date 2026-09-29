@@ -30,6 +30,7 @@ fn write_kill_script(dir: &std::path::Path, log: &std::path::Path) -> std::path:
 
 fn store_context(checkout: &std::path::Path) -> SwarmContext {
     SwarmContext {
+        board: crate::composition::swarm::swarm_board(),
         lifecycle: Arc::new(crate::application::swarm::LifecycleService),
         checkout: checkout.to_path_buf(),
         member: "coordinator".into(),
@@ -393,7 +394,10 @@ async fn run_control_receipt_decodes_the_lost_coordinator_blocker() {
     let dir = tempfile::tempdir().unwrap();
     let checkout = dir.path().join("checkout");
     let context = create_running_swarm(&checkout);
-    let store = crate::infrastructure::tools::swarm_bridge::HostedStore::at(checkout.clone());
+    let store = crate::infrastructure::tools::swarm_bridge::HostedStore::at(
+        checkout.clone(),
+        crate::composition::swarm::swarm_board(),
+    );
     let hosted = store.hosted_run().unwrap().unwrap();
     assert_eq!((hosted.status, hosted.outcome), (RunStatus::Running, None));
     // The observation names the run (#2033 round 4): the store's own id,
@@ -517,7 +521,10 @@ async fn expired_deadline_is_observed_before_the_loss_is_recorded() {
         .status()
         .unwrap();
     assert!(status.success());
-    let store = crate::infrastructure::tools::swarm_bridge::HostedStore::at(checkout.clone());
+    let store = crate::infrastructure::tools::swarm_bridge::HostedStore::at(
+        checkout.clone(),
+        crate::composition::swarm::swarm_board(),
+    );
     assert_eq!(
         store.hosted_run().unwrap().unwrap().status,
         crate::domain::swarm::RunStatus::Running,

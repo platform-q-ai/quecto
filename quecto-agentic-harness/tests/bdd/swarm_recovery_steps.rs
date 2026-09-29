@@ -42,6 +42,7 @@ fn recovery_script(turn: &Turn) -> Reply {
 
 fn context(workspace: &Path, member: &str) -> SwarmContext {
     SwarmContext {
+        board: quecto::composition::swarm::swarm_board(),
         checkout: workspace.to_path_buf(),
         member: member.into(),
         lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),

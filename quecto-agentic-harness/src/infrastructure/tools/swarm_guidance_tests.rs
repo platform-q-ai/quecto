@@ -95,6 +95,7 @@ async fn op_run_before_create_points_the_founder_at_op_create() {
     let workspace = std::sync::Arc::new(directory.path().to_path_buf());
     std::fs::create_dir_all(workspace.join(".quecto")).unwrap();
     let context = crate::infrastructure::tools::swarm_bridge::SwarmContext {
+        board: crate::composition::swarm::swarm_board(),
         lifecycle: std::sync::Arc::new(crate::application::ports::SwarmTestLifecycle),
         checkout: workspace.as_ref().clone(),
         member: "coordinator".into(),

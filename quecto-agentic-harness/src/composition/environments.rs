@@ -36,6 +36,13 @@ use crate::infrastructure::tools::environment_commands::{
 };
 pub use crate::interface::cli::container_handles::ContainerInventoryHandles;
 
+/// The host's reads of the boards its environments hold (#1924), through
+/// composition's board handles (#2278). The host keeps no session event
+/// log here, so its board calls leave `tracing` records only.
+fn hosted_store_observation() -> HostedStoreObservation {
+    HostedStoreObservation::new(super::swarm::swarm_board())
+}
+
 /// The final-member use case over the production script adapters, for one
 /// entry's environment registry. The cleanup jobs already run on a blocking
 /// worker, so the scripts run inline.
@@ -43,7 +50,7 @@ pub fn build_member_finalizer(environments: EnvironmentRegistry) -> FinalizeEnvi
     FinalizeEnvironmentMember::new(
         environments,
         Arc::new(ScriptEnvironmentCommands::inline()),
-        Arc::new(HostedStoreObservation),
+        Arc::new(hosted_store_observation()),
     )
 }
 
@@ -60,7 +67,7 @@ pub fn build_environment_control(
             environments,
             member_shutdown,
             Arc::new(ScriptEnvironmentCommands::default()),
-            Arc::new(HostedStoreObservation),
+            Arc::new(hosted_store_observation()),
         )),
     }
 }
@@ -140,7 +147,7 @@ pub fn build_restore_registry(base_dir: &Path) -> RestoreRegistry {
     RestoreRegistry::new(
         build_environment_registry_store(base_dir),
         build_environment_process(),
-        Arc::new(HostedStoreObservation),
+        Arc::new(hosted_store_observation()),
     )
 }
 
@@ -238,14 +245,14 @@ pub fn build_container_inventory(
             registry.clone(),
             Arc::new(NoReachableMembers),
             Arc::new(ScriptEnvironmentCommands::default()),
-            Arc::new(HostedStoreObservation),
+            Arc::new(hosted_store_observation()),
         )),
         gc: Arc::new(GcOrphanedEnvironments::new(
             registry,
             build_container_config_lookup(base_dir, Some(selection.clone())),
             build_container_runtime_inventory(),
             build_environment_process(),
-            Arc::new(HostedStoreObservation),
+            Arc::new(hosted_store_observation()),
         )),
         restore,
     }

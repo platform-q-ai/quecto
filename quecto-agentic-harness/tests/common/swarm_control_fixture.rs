@@ -3,6 +3,7 @@ use quecto::infrastructure::tools::swarm_bridge::SwarmContext;
 pub fn context() -> (tempfile::TempDir, SwarmContext) {
     let directory = tempfile::tempdir().unwrap();
     let context = SwarmContext {
+        board: quecto::composition::swarm::swarm_board(),
         checkout: directory.path().to_path_buf(),
         member: "coordinator".into(),
         lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),

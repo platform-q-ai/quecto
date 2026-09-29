@@ -43,6 +43,7 @@ fn repository() -> tempfile::TempDir {
 
 fn context(checkout: &Path) -> SwarmContext {
     SwarmContext {
+        board: crate::composition::swarm::swarm_board(),
         checkout: checkout.to_path_buf(),
         member: "coordinator".into(),
         lifecycle: std::sync::Arc::new(crate::application::swarm::LifecycleService),
@@ -247,7 +248,10 @@ fn the_host_never_reads_a_work_tree_board_in_a_git_checkout() {
     let elsewhere = tempfile::tempdir().unwrap();
     let (board, _) = created_run(elsewhere.path());
     std::fs::copy(board.database(), repo.path().join(".quecto/swarm.sqlite")).unwrap();
-    let hosted = super::super::swarm_bridge::HostedStore::at(repo.path().to_path_buf());
+    let hosted = super::super::swarm_bridge::HostedStore::at(
+        repo.path().to_path_buf(),
+        crate::composition::swarm::swarm_board(),
+    );
     let displaced = hosted.hosted_run().unwrap_err().to_string();
     assert!(
         displaced.contains("is not where the checkout's layout now places it"),
@@ -275,7 +279,10 @@ fn the_host_refuses_a_store_linked_outside_its_checkout() {
         repo.path().join(".git/quecto"),
     )
     .unwrap();
-    let hosted = super::super::swarm_bridge::HostedStore::at(repo.path().to_path_buf());
+    let hosted = super::super::swarm_bridge::HostedStore::at(
+        repo.path().to_path_buf(),
+        crate::composition::swarm::swarm_board(),
+    );
     let error = hosted.hosted_run().unwrap_err().to_string();
     assert!(error.contains("is outside its checkout"), "{error}");
 }
@@ -304,7 +311,10 @@ fn a_missing_store_names_its_path() {
 #[test]
 fn the_host_finds_no_run_where_there_is_no_store_file() {
     let repo = repository();
-    let hosted = super::super::swarm_bridge::HostedStore::at(repo.path().to_path_buf());
+    let hosted = super::super::swarm_bridge::HostedStore::at(
+        repo.path().to_path_buf(),
+        crate::composition::swarm::swarm_board(),
+    );
     assert!(hosted.hosted_run().unwrap().is_none());
     std::fs::create_dir_all(repo.path().join(".git/quecto/swarm.sqlite")).unwrap();
     let error = hosted.hosted_run().unwrap_err().to_string();
@@ -318,7 +328,10 @@ fn the_host_finds_no_run_where_there_is_no_store_file() {
 fn the_host_follows_the_layout_on_every_read() {
     let plain = tempfile::tempdir().unwrap();
     let (_, first) = created_run(plain.path());
-    let hosted = super::super::swarm_bridge::HostedStore::at(plain.path().to_path_buf());
+    let hosted = super::super::swarm_bridge::HostedStore::at(
+        plain.path().to_path_buf(),
+        crate::composition::swarm::swarm_board(),
+    );
     let run = hosted.hosted_run().unwrap().expect("the first board");
     assert_eq!(serde_json::Value::from(run.id).to_string(), first);
     git(plain.path(), &["init", "-q"]);
@@ -359,6 +372,7 @@ async fn all_swarm_state_survives_every_git_command_agents_run() {
             Some(repo.path().to_path_buf()),
         )),
         super::super::swarm::SwarmConfig::default(),
+        crate::composition::swarm::swarm_board(),
     );
     use crate::application::tools::ports::Tool;
     let result = tool
@@ -415,6 +429,7 @@ fn git_checkout_tool(
             retention,
             ..Default::default()
         },
+        crate::composition::swarm::swarm_board(),
     )
 }
 
@@ -577,13 +592,15 @@ fn a_live_swarm_whose_layout_changed_is_never_taken_for_a_plain_container() {
         std::fs::create_dir_all(&workspace).unwrap();
         let (_coordinator, _) = created_run(&workspace);
         let record = sandbox_record(&workspace);
-        let before = HostedStoreObservation.inspect_hosted_run(&record);
+        let before = HostedStoreObservation::new(crate::composition::swarm::swarm_board())
+            .inspect_hosted_run(&record);
         assert!(
             matches!(before, SwarmRunObservation::Run(ref run) if run.created()),
             "{before:?}"
         );
         git(&workspace, &["init", "-q"]);
-        let after = HostedStoreObservation.inspect_hosted_run(&record);
+        let after = HostedStoreObservation::new(crate::composition::swarm::swarm_board())
+            .inspect_hosted_run(&record);
         assert!(
             matches!(after, SwarmRunObservation::Unreadable(_)),
             "{mode:?}: {after:?}"
@@ -596,7 +613,9 @@ fn a_live_swarm_whose_layout_changed_is_never_taken_for_a_plain_container() {
         let finalize = FinalizeEnvironmentMember::new(
             registry.clone(),
             scripts.clone(),
-            std::sync::Arc::new(HostedStoreObservation),
+            std::sync::Arc::new(HostedStoreObservation::new(
+                crate::composition::swarm::swarm_board(),
+            )),
         );
         futures::executor::block_on(finalize.finalize_member("C1", "coord", None, mode));
         assert!(
@@ -662,7 +681,10 @@ fn a_current_placeholder_board_never_hides_a_displaced_one() {
             ..
         }
     ));
-    let hosted = super::super::swarm_bridge::HostedStore::at(plain.path().to_path_buf());
+    let hosted = super::super::swarm_bridge::HostedStore::at(
+        plain.path().to_path_buf(),
+        crate::composition::swarm::swarm_board(),
+    );
     let error = hosted.hosted_run().unwrap_err().to_string();
     assert!(
         error.contains("holds no created run, but another board exists"),
@@ -673,7 +695,10 @@ fn a_current_placeholder_board_never_hides_a_displaced_one() {
     let repo = repository();
     std::fs::write(repo.path().join(".quecto/swarm.sqlite"), "stale").unwrap();
     let (_, id) = created_run(repo.path());
-    let hosted = super::super::swarm_bridge::HostedStore::at(repo.path().to_path_buf());
+    let hosted = super::super::swarm_bridge::HostedStore::at(
+        repo.path().to_path_buf(),
+        crate::composition::swarm::swarm_board(),
+    );
     let run = hosted.hosted_run().unwrap().expect("the created run");
     assert_eq!(serde_json::Value::from(run.id).to_string(), id);
 }

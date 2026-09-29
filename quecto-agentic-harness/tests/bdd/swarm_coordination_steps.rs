@@ -144,6 +144,7 @@ async fn reject_workflow(world: &mut QuectoWorld) {
     let tool = quecto::infrastructure::tools::spawn::SpawnTool::new(vec![])
         .with_swarm_context(Some(
             quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+                board: quecto::composition::swarm::swarm_board(),
                 checkout: std::env::temp_dir(),
                 member: "coordinator".into(),
                 lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),
@@ -201,6 +202,7 @@ fn workflow_agent_creates(world: &mut QuectoWorld) {
     let directory = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(directory.path().join(".quecto")).unwrap();
     let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+        board: quecto::composition::swarm::swarm_board(),
         checkout: directory.path().to_path_buf(),
         member: "coordinator".into(),
         lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),
@@ -241,6 +243,7 @@ fn rejected_wake(world: &mut QuectoWorld) {
     run(world, json!({"op":"summary"}));
     let workspace = world.swarm_workspace.clone().unwrap();
     let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+        board: quecto::composition::swarm::swarm_board(),
         checkout: workspace.clone(),
         member: "coordinator".into(),
         lifecycle: std::sync::Arc::new(quecto::application::ports::SwarmTestLifecycle),
@@ -305,6 +308,7 @@ fn rejected_wake(world: &mut QuectoWorld) {
 #[then("the rejected wake still leaves the message in the recipient inbox")]
 fn durable_rejected_wake(world: &mut QuectoWorld) {
     let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+        board: quecto::composition::swarm::swarm_board(),
         checkout: world.swarm_workspace.clone().unwrap(),
         member: "worker".into(),
         lifecycle: std::sync::Arc::new(quecto::application::ports::SwarmTestLifecycle),
@@ -380,6 +384,7 @@ fn permit_subprocesses(world: &mut QuectoWorld) {
             max_processes: None,
             ..Default::default()
         },
+        quecto::composition::swarm::swarm_board(),
     );
     world.swarm_tool = Some(crate::DebugSwarm(std::sync::Arc::new(tool)));
 }
@@ -451,6 +456,7 @@ fn idle_peer(world: &mut QuectoWorld) {
     run(world, json!({"op":"summary"}));
     let checkout = world.swarm_workspace.clone().unwrap();
     let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+        board: quecto::composition::swarm::swarm_board(),
         checkout: checkout.clone(),
         member: "coordinator".into(),
         lifecycle: std::sync::Arc::new(quecto::application::ports::SwarmTestLifecycle),
@@ -545,6 +551,7 @@ fn supervisor_context(
     world: &QuectoWorld,
 ) -> quecto::infrastructure::tools::swarm_bridge::SwarmContext {
     quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+        board: quecto::composition::swarm::swarm_board(),
         checkout: world.swarm_workspace.clone().unwrap(),
         member: "coordinator".into(),
         lifecycle: std::sync::Arc::new(quecto::application::ports::SwarmTestLifecycle),

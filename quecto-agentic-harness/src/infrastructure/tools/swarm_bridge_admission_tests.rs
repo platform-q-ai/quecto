@@ -71,8 +71,10 @@ async fn a_resumed_coordinator_runs_python_again_after_ending_the_run() {
         workspace.clone(),
         Arc::new(Sandbox::new(Some(workspace.as_ref().clone()))),
         SwarmConfig::default(),
+        crate::composition::swarm::swarm_board(),
     );
     let context = SwarmContext {
+        board: crate::composition::swarm::swarm_board(),
         checkout: directory.path().to_path_buf(),
         member: "coordinator".into(),
         lifecycle: Arc::new(crate::application::swarm::LifecycleService),

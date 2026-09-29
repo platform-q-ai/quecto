@@ -17,7 +17,9 @@ use quecto::infrastructure::tools::environment_commands::HostedStoreObservation;
 use quecto::infrastructure::tools::swarm_bridge::SwarmContext;
 
 fn port() -> Arc<dyn HostedSwarmRunInspection> {
-    Arc::new(HostedStoreObservation)
+    Arc::new(HostedStoreObservation::new(
+        quecto::composition::swarm::swarm_board(),
+    ))
 }
 
 fn record(workspace: &std::path::Path) -> EnvironmentRecord {
@@ -46,6 +48,7 @@ fn record(workspace: &std::path::Path) -> EnvironmentRecord {
 fn create_run(checkout: &std::path::Path) -> SwarmContext {
     std::fs::create_dir_all(checkout.join(".quecto")).unwrap();
     let context = SwarmContext {
+        board: quecto::composition::swarm::swarm_board(),
         checkout: checkout.to_path_buf(),
         member: "coordinator".into(),
         lifecycle: Arc::new(quecto::application::swarm::LifecycleService),
@@ -150,9 +153,12 @@ fn an_ended_run_is_read_as_ended_and_the_read_changes_nothing() {
         port.inspect_hosted_run_at(&state_dir),
         SwarmRunObservation::Run(run) if !run.ended()
     ));
-    let receipt = quecto::infrastructure::tools::swarm_bridge::HostedStore::at(checkout.clone())
-        .record_lost_coordinator(&context.member)
-        .unwrap();
+    let receipt = quecto::infrastructure::tools::swarm_bridge::HostedStore::at(
+        checkout.clone(),
+        quecto::composition::swarm::swarm_board(),
+    )
+    .record_lost_coordinator(&context.member)
+    .unwrap();
     assert!(receipt.lost);
     let SwarmRunObservation::Run(ended) = port.inspect_hosted_run_at(&state_dir) else {
         panic!("the ended run is still read");

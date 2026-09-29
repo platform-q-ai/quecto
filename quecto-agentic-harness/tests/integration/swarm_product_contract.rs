@@ -13,6 +13,7 @@ fn fixture() -> (tempfile::TempDir, Arc<std::path::PathBuf>, SwarmTool) {
     );
     std::fs::create_dir_all(workspace.as_ref()).unwrap();
     let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+        board: quecto::composition::swarm::swarm_board(),
         checkout: workspace.as_ref().clone(),
         member: "coordinator".into(),
         lifecycle: Arc::new(quecto::application::swarm::LifecycleService),
@@ -158,9 +159,10 @@ async fn completed_run_keeps_summary_and_normal_artifact_export_serviceable() {
 
 #[test]
 fn isolated_context_is_detected_when_container_contract_is_supplied() {
-    let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext::discover(Arc::new(
-        quecto::application::swarm::LifecycleService,
-    ));
+    let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext::discover(
+        Arc::new(quecto::application::swarm::LifecycleService),
+        quecto::composition::swarm::swarm_board(),
+    );
     if std::env::var("QUECTO_SWARM_CONTAINER").as_deref() == Ok("isolated-pid-v1") {
         assert!(
             context.is_some(),

@@ -113,7 +113,11 @@ fn control(reg: &EnvironmentRegistry, commands: Arc<Commands>) -> EnvironmentCon
             reg.clone(),
             Arc::new(NoMembers(AtomicUsize::new(0))),
             commands,
-            Arc::new(crate::infrastructure::tools::environment_commands::HostedStoreObservation),
+            Arc::new(
+                crate::infrastructure::tools::environment_commands::HostedStoreObservation::new(
+                    crate::composition::swarm::swarm_board(),
+                ),
+            ),
         )),
     }
 }
