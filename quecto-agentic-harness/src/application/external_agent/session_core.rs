@@ -19,12 +19,19 @@
 //! followed by another result for it). Until claude has named them (an
 //! older CLI) a result answers everything written, so no steer is taken:
 //! its own result could not be told from the running turn's. claude's
-//! `system/init`, which opens its first turn, says it sooner: a CLI at or
-//! past the version verified to name them names them from its first
-//! result on. Nor is a steer taken from a CLI whose interrupt does not
-//! withdraw the user turns queued behind the running turn
-//! (`interrupt_cancel_queued_v1`): one still queued at an abort would
-//! survive it and run as a turn nobody bounds.
+//! `system/init`, which opens its first turn, says sooner that steers may
+//! be taken: a CLI at or past the version verified to name them. That is
+//! a version's word, not claude's: it admits steers only, and how a
+//! result is read is still learnt from one that names its turns (see
+//! [`SessionCore::unnamed_result`] for a steer taken on that word). Nor
+//! is a steer taken from a CLI whose interrupt does not withdraw the user
+//! turns queued behind the running turn (`interrupt_cancel_queued_v1`):
+//! one still queued at an abort would survive it and run as a turn nobody
+//! bounds.
+//!
+//! claude's state can become unknown on what it says: the member is then
+//! ended ([`Folded::abandon`]) rather than written into while it may be
+//! busy, or left waiting for a result that may never come.
 //!
 //! Invariants, asserted: at most one turn is in flight (a turn begins only
 //! from `Idle`), turn ordinals strictly increase, a turn ends only when
@@ -42,7 +49,9 @@ use super::dto::{
     TurnOutcome, USER_TURNS_PER_TURN_CAPACITY, UserTurnId,
 };
 use super::projection::Projector;
-use crate::domain::external_agent::stream::{AssistantContent, ExternalAgentEvent};
+use crate::domain::external_agent::stream::{
+    AssistantContent, ExternalAgentEvent, InterruptReceipt,
+};
 use crate::domain::external_agent::turn::{FailureKind, TurnEnd};
 
 #[derive(Debug, Default)]
@@ -59,11 +68,14 @@ pub(crate) struct SessionCore {
     owed: BTreeSet<UserTurnId>,
     /// User turns written into the running turn: its prompt and steers.
     in_turn: usize,
-    /// Whether the agent names the turns its results consumed: learnt from
-    /// its init's version, or from the first result that does. Until then
-    /// (an older CLI) a result is taken to answer everything written.
-    /// Never unlearnt.
+    /// Whether the agent names the turns its results consumed: learnt
+    /// only from a result that does. Until then a result is taken to
+    /// answer everything written. Never unlearnt.
     names_turns: bool,
+    /// Whether the agent's init says, by its version, that it names them:
+    /// steers are admitted on that word before a result has. It decides
+    /// nothing about how a result is read. Never unlearnt.
+    steerable: bool,
     /// Whether the agent's interrupt withdraws the queued user turns:
     /// learnt from its init's capabilities. Never unlearnt.
     cancels_queued: bool,
@@ -115,6 +127,10 @@ pub(crate) struct Folded {
     pub(crate) records: Vec<SessionRecord>,
     pub(crate) step: ProjectionStep,
     pub(crate) follow_up: Option<(u64, String)>,
+    /// claude's state became unknown in turn `turn` (it may be busy, or
+    /// owe nothing more): the member is to be ended, as when an
+    /// interrupted turn never answers. Nothing is written first.
+    pub(crate) abandon: Option<u64>,
 }
 
 impl SessionCore {
@@ -159,7 +175,7 @@ impl SessionCore {
             }
             (SessionPhase::Busy { turn }, Some(StreamingBehavior::Steer)) => {
                 match (
-                    self.names_turns,
+                    self.names_turns || self.steerable,
                     self.cancels_queued,
                     self.in_turn < USER_TURNS_PER_TURN_CAPACITY,
                 ) {
@@ -269,7 +285,7 @@ impl SessionCore {
         self.skipped_last = None;
         match event {
             ExternalAgentEvent::Init(init) => {
-                self.names_turns |= init.names_turns();
+                self.steerable |= init.names_turns();
                 self.cancels_queued |= init.cancels_queued();
             }
             ExternalAgentEvent::AssistantBlock {
@@ -289,7 +305,7 @@ impl SessionCore {
             ExternalAgentEvent::Result(result) => {
                 match (result.user_turn_ids.as_slice(), self.names_turns) {
                     ([], true) => self.id_less_result(turn, result.is_error, &mut folded),
-                    ([], false) => self.owed.clear(),
+                    ([], false) => self.unnamed_result(turn, result.is_error, &mut folded),
                     (ids, _) => {
                         self.names_turns = true;
                         for id in ids {
@@ -310,8 +326,13 @@ impl SessionCore {
         let mut step = self.projector.apply(event);
         // A result while idle (one no turn of ours owes) is folded into the
         // projection but ends no turn of the session's.
-        if let Some(turn) = turn {
-            self.settle_turn(turn, event, &mut step, &mut folded);
+        match (turn, folded.abandon) {
+            (Some(turn), None) => self.settle_turn(turn, event, &mut step, &mut folded),
+            // An abandoned turn is not settled: the member ends instead,
+            // nothing (no follow-up) is written, and its result reports
+            // no end of the turn (the member's end is reported).
+            (Some(_), Some(_)) => step.turn_end = None,
+            (None, _) => {}
         }
         folded.step = step;
         folded
@@ -340,6 +361,35 @@ impl SessionCore {
         folded
             .records
             .push(SessionRecord::ResultWithoutIds { turn, ended });
+    }
+
+    /// A result naming no user turn, before claude has named any: it
+    /// answers everything written, and the running turn ends. With no
+    /// tools claude runs no turn of its own (#2291), so a CLI whose init
+    /// claimed to name turns and whose result names none simply does not
+    /// name them; this is that result.
+    ///
+    /// One case is not safe to read so: a steer was taken on init's word
+    /// and the result succeeded. Whether it answered the steer is unknown
+    /// (a CLI that names no turns was never verified to fold a steer into
+    /// the running turn's result), and were it a turn of claude's own the
+    /// member's turns would still be running. Ending the turn could write
+    /// the next prompt into a busy claude; holding it could wait forever
+    /// for a result already given. So the member is abandoned: nothing
+    /// more is written, and no reader waits. A failed result ends the turn
+    /// as it does once claude names turns (see [`Self::id_less_result`]).
+    fn unnamed_result(&mut self, turn: Option<u64>, is_error: Option<bool>, folded: &mut Folded) {
+        let steered = self.in_turn > 1;
+        let succeeded = matches!(is_error, Some(false));
+        match (turn, steered, succeeded) {
+            (Some(turn), true, true) => {
+                folded
+                    .records
+                    .push(SessionRecord::ResultWithoutIds { turn, ended: false });
+                folded.abandon = Some(turn);
+            }
+            (Some(_), true, false) | (Some(_), false, _) | (None, _, _) => self.owed.clear(),
+        }
     }
 
     /// After a result or an interrupt's answer: the running turn ends once
@@ -371,6 +421,18 @@ impl SessionCore {
                 step.turn_end = self.held.take();
                 self.end_with(turn, step, folded);
             }
+            // A refused interrupt: claude will not stop a turn that still
+            // owes a result, which then runs unbounded. Its state is
+            // unknown, so the member ends now rather than at the deadline.
+            // Answers carry no request id: a late refusal of an earlier
+            // interrupt would end the member too, the safe direction.
+            // An accepted one leaves the owed results to come.
+            (
+                ExternalAgentEvent::InterruptAnswered(InterruptReceipt {
+                    accepted: false, ..
+                }),
+                false,
+            ) if interrupting => folded.abandon = Some(turn),
             _ => {}
         }
     }

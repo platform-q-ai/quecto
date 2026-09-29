@@ -20,9 +20,10 @@
 //!   answers at once; a running turn is interrupted. The member lives on.
 //! - An interrupted turn keeps the session busy, writing nothing, until
 //!   every result it owes has come or been withdrawn; if that takes longer
-//!   than [`ExternalAgentSessionSettings::interrupt_grace`], or the
-//!   interrupt cannot be written, claude's state is unknown and the member
-//!   is ended.
+//!   than [`ExternalAgentSessionSettings::interrupt_grace`], the interrupt
+//!   cannot be written, or claude refuses it while a result is owed,
+//!   claude's state is unknown and the member is ended. So it is when a
+//!   steer was taken on init's word and an id-less success follows.
 //! - `close` ends the member: its turn, its follow-ups and its process. A
 //!   reader or a writer waiting on it is released. It takes no write gate
 //!   (a write blocked on a full pipe must not hold it up), so every
@@ -264,10 +265,18 @@ impl DriveExternalAgentSession {
             };
             match (read, wait) {
                 (Some(Some(event)), _) => {
-                    let _writes = self.writes.lock().await;
+                    // A skipped line's grace runs from when it was read: a
+                    // write holding the gate does not stretch it.
                     let grace_end = self.deadline_after(self.settings.skipped_line_grace);
+                    let _writes = self.writes.lock().await;
                     let folded = self.core().fold(&event, grace_end);
                     self.settle(folded.records, folded.follow_up).await;
+                    // claude's state became unknown: the member ends, and
+                    // the reader is told next.
+                    if let Some(turn) = folded.abandon {
+                        let abandoned = self.abandon(turn);
+                        self.core().surface(abandoned);
+                    }
                     return Some(SessionStep::Folded(folded.step));
                 }
                 (Some(None), _) => return self.output_ended(process).await,
