@@ -3,7 +3,6 @@
 //! the stream's unreadable lines and unknown events, and each turn as it
 //! ended. Pure: [`super::session_core::SessionCore`] holds one and folds
 //! every event through it; time is the session clock's.
-#![allow(dead_code, unused_imports)] // red-phase stub (#2304)
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -40,8 +39,8 @@ pub(crate) struct SessionTelemetry {
     diagnostics: BTreeMap<(&'static str, String), u64>,
     claude_session_id: Option<String>,
     model: Option<String>,
-    /// A `system/init` has been seen since the process started.
-    initialized: bool,
+    /// The process started and its first `system/init` has not come yet.
+    awaiting_init: bool,
     started_at: Option<AgentClockInstant>,
 }
 
@@ -49,13 +48,12 @@ impl SessionTelemetry {
     /// A process started at `now`: its first init is recorded.
     pub(crate) fn process_started(&mut self, now: AgentClockInstant) {
         self.started_at = Some(now);
-        self.initialized = false;
+        self.awaiting_init = true;
     }
 
     /// Milliseconds since the process started, if it did.
     pub(crate) fn wall_ms(&self, now: AgentClockInstant) -> Option<u64> {
-        let _ = (now, self.started_at);
-        None
+        self.started_at.map(|start| now.0.saturating_sub(start.0))
     }
 
     /// Measure one event of running turn `turn`, read at `now`.
@@ -66,15 +64,52 @@ impl SessionTelemetry {
         now: AgentClockInstant,
         records: &mut Vec<SessionRecord>,
     ) {
-        let _ = (event, turn, now, records);
+        match event {
+            ExternalAgentEvent::Init(init) => {
+                self.claude_session_id = init.session_id.as_deref().map(recorded_name);
+                self.model = init.model.as_deref().map(recorded_name);
+                if std::mem::take(&mut self.awaiting_init) {
+                    records.push(SessionRecord::Initialized {
+                        cli_version: init.cli_version.as_deref().map(recorded_name),
+                        claude_session_id: self.claude_session_id.clone(),
+                        model: self.model.clone(),
+                    });
+                }
+            }
+            ExternalAgentEvent::AssistantBlock {
+                block: AssistantContent::ToolUse { id, name, input },
+                ..
+            } => self.called(turn, (id, name, input), now, records),
+            ExternalAgentEvent::ToolResult(result) => self.answered(result, now, records),
+            ExternalAgentEvent::Unknown { kind } => {
+                self.diagnose("unknown_event", kind, None, turn, records);
+            }
+            ExternalAgentEvent::LineSkipped(line) => {
+                let reason = match line.reason {
+                    SkippedLineReason::OverCap => "over_cap",
+                    SkippedLineReason::NotUtf8 => "not_utf8",
+                };
+                self.diagnose("skipped_line", reason, Some(line.bytes), turn, records);
+            }
+            // Nothing the log keeps: see `stream_telemetry`. A turn's end
+            // is measured when the session ends it (`turn_ended`).
+            ExternalAgentEvent::ThinkingTokens { .. }
+            | ExternalAgentEvent::AssistantBlock { .. }
+            | ExternalAgentEvent::AssistantError { .. }
+            | ExternalAgentEvent::UserText { .. }
+            | ExternalAgentEvent::TaskStarted(_)
+            | ExternalAgentEvent::TaskNotification(_)
+            | ExternalAgentEvent::BackgroundTasksChanged { .. }
+            | ExternalAgentEvent::RateLimit(_)
+            | ExternalAgentEvent::Result(_)
+            | ExternalAgentEvent::InterruptAnswered(_) => {}
+        }
     }
 
     fn called(
         &mut self,
         turn: Option<u64>,
-        id: &str,
-        name: &str,
-        input: &serde_json::Value,
+        (id, name, input): (&str, &str, &serde_json::Value),
         now: AgentClockInstant,
         records: &mut Vec<SessionRecord>,
     ) {
@@ -115,7 +150,7 @@ impl SessionTelemetry {
                     .iter()
                     .position(|pending| pending.record.tool_use_id == id)
             }
-            None => (!self.pending.is_empty()).then_some(0),
+            None => self.pending.front().map(|_| 0),
         };
         let Some(pending) = position.and_then(|at| self.pending.remove(at)) else {
             return;
@@ -174,7 +209,33 @@ impl SessionTelemetry {
         now: AgentClockInstant,
         records: &mut Vec<SessionRecord>,
     ) {
-        let _ = (turn, outcome, exited, now, records);
+        while let Some(pending) = self.pending.pop_front() {
+            records.push(finished(pending, "unanswered", 0, now));
+        }
+        let (turn_end, reason_kind) = match (outcome, exited) {
+            (Some(outcome), _) => end_kind(&outcome.end),
+            (None, true) => ("exited", None),
+            (None, false) => ("aborted", None),
+        };
+        let tokens = outcome.map(|o| o.usage.tokens).unwrap_or_default();
+        records.push(SessionRecord::TurnReported(Box::new(ExternalAgentTurn {
+            member_turn: turn,
+            turn_end: turn_end.to_string(),
+            reason_kind,
+            claude_session_id: self.claude_session_id.clone(),
+            model: self.model.clone(),
+            is_error: outcome.and_then(|o| o.is_error),
+            num_turns: outcome.and_then(|o| o.num_turns),
+            duration_ms: outcome.and_then(|o| o.duration_ms),
+            duration_api_ms: outcome.and_then(|o| o.duration_api_ms),
+            input_tokens: tokens.input,
+            output_tokens: tokens.output,
+            cache_read_tokens: tokens.cache_read,
+            cache_write_tokens: tokens.cache_write,
+            list_price_cost_micro_usd: outcome.map_or(0, |o| o.usage.cost_micro_usd),
+            list_price_total_micro_usd: outcome.map_or(0, |o| o.usage.total_cost_micro_usd),
+            task_id: None,
+        })));
     }
 }
 

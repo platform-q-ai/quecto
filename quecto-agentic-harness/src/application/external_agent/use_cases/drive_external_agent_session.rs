@@ -59,7 +59,6 @@
 //!   ends its turn. Only a write that provably failed is rolled back.
 //!
 //! [`FOLLOW_UP_QUEUE_CAPACITY`]: crate::application::external_agent::dto::FOLLOW_UP_QUEUE_CAPACITY
-#![allow(dead_code, unused_imports)] // red-phase stub (#2304)
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -475,7 +474,11 @@ impl DriveExternalAgentSession {
                 cost_micro_usd: 0,
             });
         }
-        let (exit_code, signal): (Option<i32>, Option<i32>) = (None, None);
+        let (exit_code, signal) = match exit {
+            ExternalAgentExit::Code(code) => (Some(code), None),
+            ExternalAgentExit::Signal(signal) => (None, Some(signal)),
+            ExternalAgentExit::Unobservable(_) => (None, None),
+        };
         self.record(SessionRecord::Ended {
             clean: exit.is_clean(),
             exit_code,

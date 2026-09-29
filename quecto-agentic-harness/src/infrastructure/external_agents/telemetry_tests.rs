@@ -85,7 +85,7 @@ async fn a_failing_log_never_fails_the_member_and_is_counted() {
     .expect("every failure is counted");
     assert_eq!(failures, 3);
     assert!(
-        telemetry.health.warned.load(Ordering::Relaxed),
-        "warned (once)"
+        !telemetry.health.warning_due.load(Ordering::Relaxed),
+        "warned, and not again"
     );
 }

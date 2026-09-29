@@ -2,15 +2,14 @@
 //! structured `tracing` event under [`TELEMETRY_TARGET`], beside the
 //! process adapter's own (#2286); with the event log on, each the log keeps
 //! is filed there too (#2304).
-#![allow(dead_code, unused_imports)] // red-phase stub (#2304)
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use super::claude_code::process::TELEMETRY_TARGET;
+use super::event_log::{MemberIdentity, audit_event};
 use crate::application::audit::ports::AuditSink;
 use crate::application::external_agent::dto::SessionRecord;
-use crate::application::external_agent::event_log::{MemberIdentity, audit_event};
 use crate::application::external_agent::ports::ExternalAgentTelemetry;
 use crate::domain::audit::AuditEvent;
 
@@ -45,16 +44,26 @@ pub struct EventLogExternalAgentTelemetry {
     health: Arc<Health>,
 }
 
-#[derive(Debug, Default)]
+/// How the writer fares: failures counted, the first one warned of.
+#[derive(Debug)]
 struct Health {
-    warned: AtomicBool,
+    warning_due: AtomicBool,
     failures: AtomicU64,
+}
+
+impl Default for Health {
+    fn default() -> Self {
+        Self {
+            warning_due: AtomicBool::new(true),
+            failures: AtomicU64::new(0),
+        }
+    }
 }
 
 impl Health {
     fn failed(&self, error: &dyn std::fmt::Display) {
         self.failures.fetch_add(1, Ordering::Relaxed);
-        if !self.warned.swap(true, Ordering::Relaxed) {
+        if self.warning_due.swap(false, Ordering::Relaxed) {
             tracing::warn!(
                 target: TELEMETRY_TARGET,
                 %error,
@@ -100,6 +109,20 @@ impl EventLogExternalAgentTelemetry {
 impl ExternalAgentTelemetry for EventLogExternalAgentTelemetry {
     fn record(&self, record: &SessionRecord) {
         TracingExternalAgentTelemetry.record(record);
+        let Some((turn, event)) = audit_event(record, &self.member) else {
+            return;
+        };
+        tracing::debug!(target: TELEMETRY_TARGET, turn, event = ?event, "external agent event log");
+        let Some(queue) = &self.queue else {
+            return;
+        };
+        match queue.try_send((turn, event)) {
+            Ok(()) => {}
+            Err(std::sync::mpsc::TrySendError::Full(_)) => self.health.failed(&"queue full"),
+            Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+                self.health.failed(&"writer ended");
+            }
+        }
     }
 }
 
