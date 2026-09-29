@@ -9,9 +9,10 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
+pub use self::tasks::{StoredFile, StoredRequest, stored_task};
 use crate::application::swarm::dto::{
     LaunchIdentity, MemberClaimCounts, MemberRow, NewMember, NewRun, RunContract, RunOwnerRow,
-    RunStatusRow,
+    RunStatusRow, TaskRow,
 };
 use crate::application::swarm::ports::{
     BoardEncoding, BoardEvents, BoardMembers, BoardRepository, BoardRuns, BoardWork, Clock,
@@ -40,6 +41,9 @@ pub struct BoardState {
     pub run: Option<StoredRun>,
     pub members: Vec<MemberRow>,
     pub events: Vec<RecordedEvent>,
+    pub tasks: Vec<TaskRow>,
+    pub requests: Vec<StoredRequest>,
+    pub files: Vec<StoredFile>,
 }
 
 /// A journal shared by the board and the id source, so a test reads the
@@ -457,6 +461,9 @@ fn count(members: &[MemberRow], wanted: impl Fn(&str) -> bool) -> i64 {
     .unwrap()
 }
 
+#[path = "board_test_support_tasks.rs"]
+mod tasks;
+
 /// Readings in order, then the last one forever.
 pub struct SteppingClock {
     readings: Mutex<VecDeque<f64>>,
@@ -578,7 +585,7 @@ pub fn running_board(deadline: f64) -> BoardState {
             },
         }),
         members: vec![member_row("parent", "live")],
-        events: Vec::new(),
+        ..BoardState::default()
     }
 }
 

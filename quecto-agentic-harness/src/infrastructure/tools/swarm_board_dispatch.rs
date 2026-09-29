@@ -22,7 +22,10 @@
 //! transactional halves of `create` and `_bootstrap`, and `_bootstrap`'s
 //! join, which the differential harness drives) exist only in `test` and
 //! `test-support` builds: a production build parses none of them and
-//! refuses each as an unknown method.
+//! refuses each as an unknown method. The task and claim methods
+//! `task_create`, `dependencies`, `claim` and `release` (#2272) are served
+//! by [`tasks`], with the test-only `task_raw` (`Tasks._task` inside a
+//! read-only operation, before S12 adds owner liveness to `task`).
 //!
 //! What S12 must keep when it adds the summaries Python answers with:
 //!
@@ -64,8 +67,9 @@ use crate::application::swarm::dto::{
     BootstrapRunRequest, CreateBranch, CreateRunRequest, JoinRunRequest, Joined,
 };
 use crate::application::swarm::use_cases::{
-    ActivateMember, AdmitMember, BootstrapRun, CreateRun, JoinRun, ReadRunSnapshot, ReadRunStatus,
-    RecordMemberLaunch, RegisterMemberSocket, ReleaseUnlaunchedMember,
+    ActivateMember, AdmitMember, BootstrapRun, ClaimTask, CreateRun, CreateTask, JoinRun,
+    ReadRunSnapshot, ReadRunStatus, ReadTask, RecordMemberLaunch, RegisterMemberSocket,
+    ReleaseTask, ReleaseUnlaunchedMember, SetTaskDependencies,
 };
 use crate::domain::redaction::Redacted;
 use crate::domain::swarm::BoardError;
@@ -90,6 +94,13 @@ pub struct SwarmBoardHandles {
     /// Served only in test builds as `bootstrap_join` until S12 adds the
     /// summary `_bootstrap` answers with.
     pub join_run: Arc<JoinRun>,
+    pub create_task: Arc<CreateTask>,
+    pub set_task_dependencies: Arc<SetTaskDependencies>,
+    pub claim_task: Arc<ClaimTask>,
+    pub release_task: Arc<ReleaseTask>,
+    /// Served only in test builds as `task_raw` until S12 adds the owner
+    /// liveness `task` answers with.
+    pub read_task: Arc<ReadTask>,
 }
 
 impl std::fmt::Debug for SwarmBoardHandles {
@@ -110,12 +121,18 @@ enum Method {
     RecordLaunch,
     ReleaseUnlaunched,
     Socket,
+    TaskCreate,
+    Dependencies,
+    Claim,
+    Release,
     #[cfg(any(test, feature = "test-support"))]
     CreateRun,
     #[cfg(any(test, feature = "test-support"))]
     BootstrapRun,
     #[cfg(any(test, feature = "test-support"))]
     BootstrapJoin,
+    #[cfg(any(test, feature = "test-support"))]
+    TaskRaw,
 }
 
 /// The telemetry level of a call (#2270 round-3 review N3): a method that
@@ -168,12 +185,18 @@ impl Method {
             "_record_launch" => Some(Self::RecordLaunch),
             "_release_unlaunched" => Some(Self::ReleaseUnlaunched),
             "_socket" => Some(Self::Socket),
+            "task_create" => Some(Self::TaskCreate),
+            "dependencies" => Some(Self::Dependencies),
+            "claim" => Some(Self::Claim),
+            "release" => Some(Self::Release),
             #[cfg(any(test, feature = "test-support"))]
             "create_run" => Some(Self::CreateRun),
             #[cfg(any(test, feature = "test-support"))]
             "bootstrap_run" => Some(Self::BootstrapRun),
             #[cfg(any(test, feature = "test-support"))]
             "bootstrap_join" => Some(Self::BootstrapJoin),
+            #[cfg(any(test, feature = "test-support"))]
+            "task_raw" => Some(Self::TaskRaw),
             _ => None,
         }
     }
@@ -187,12 +210,18 @@ impl Method {
             Self::RecordLaunch => "_record_launch",
             Self::ReleaseUnlaunched => "_release_unlaunched",
             Self::Socket => "_socket",
+            Self::TaskCreate => "task_create",
+            Self::Dependencies => "dependencies",
+            Self::Claim => "claim",
+            Self::Release => "release",
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun => "create_run",
             #[cfg(any(test, feature = "test-support"))]
             Self::BootstrapRun => "bootstrap_run",
             #[cfg(any(test, feature = "test-support"))]
             Self::BootstrapJoin => "bootstrap_join",
+            #[cfg(any(test, feature = "test-support"))]
+            Self::TaskRaw => "task_raw",
         }
     }
 
@@ -204,9 +233,15 @@ impl Method {
             | Self::Activate
             | Self::RecordLaunch
             | Self::ReleaseUnlaunched
-            | Self::Socket => Level::Mutation,
+            | Self::Socket
+            | Self::TaskCreate
+            | Self::Dependencies
+            | Self::Claim
+            | Self::Release => Level::Mutation,
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun | Self::BootstrapRun | Self::BootstrapJoin => Level::Mutation,
+            #[cfg(any(test, feature = "test-support"))]
+            Self::TaskRaw => Level::Read,
         }
     }
 
@@ -219,12 +254,18 @@ impl Method {
             Self::RecordLaunch => &RECORD_LAUNCH,
             Self::ReleaseUnlaunched => &RELEASE_UNLAUNCHED,
             Self::Socket => &SOCKET,
+            Self::TaskCreate => &tasks::TASK_CREATE,
+            Self::Dependencies => &tasks::DEPENDENCIES,
+            Self::Claim => &tasks::CLAIM,
+            Self::Release => &tasks::RELEASE,
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun => &test_only::CREATE,
             #[cfg(any(test, feature = "test-support"))]
             Self::BootstrapRun => &test_only::BOOTSTRAP,
             #[cfg(any(test, feature = "test-support"))]
             Self::BootstrapJoin => &test_only::JOIN,
+            #[cfg(any(test, feature = "test-support"))]
+            Self::TaskRaw => &tasks::CLAIM,
         }
     }
 }
@@ -396,12 +437,18 @@ fn serve(
         Method::RecordLaunch => record_launch(handles, member, arguments),
         Method::ReleaseUnlaunched => release_unlaunched(handles, member, arguments),
         Method::Socket => socket(handles, member, arguments),
+        Method::TaskCreate => tasks::task_create(handles, member, arguments),
+        Method::Dependencies => tasks::dependencies(handles, member, arguments),
+        Method::Claim => tasks::claim(handles, member, arguments),
+        Method::Release => tasks::release(handles, member, arguments),
         #[cfg(any(test, feature = "test-support"))]
         Method::CreateRun => test_only::create_run(handles, member, arguments),
         #[cfg(any(test, feature = "test-support"))]
         Method::BootstrapRun => test_only::bootstrap_run(handles, member, arguments),
         #[cfg(any(test, feature = "test-support"))]
         Method::BootstrapJoin => test_only::bootstrap_join(handles, member, arguments),
+        #[cfg(any(test, feature = "test-support"))]
+        Method::TaskRaw => tasks::task_raw(handles, member, arguments),
     }
 }
 
@@ -661,6 +708,9 @@ fn float(value: f64) -> Result<Value, BoardError> {
         .map(Value::Number)
         .ok_or_else(|| BoardError::new(format!("the board holds a non-finite number: {value}")))
 }
+
+#[path = "swarm_board_dispatch_tasks.rs"]
+mod tasks;
 
 #[cfg(test)]
 #[path = "swarm_board_dispatch_tests.rs"]

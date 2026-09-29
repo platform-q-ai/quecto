@@ -26,7 +26,7 @@ impl IdSource for Counter {
     }
 }
 
-fn board(now: f64) -> (tempfile::TempDir, SwarmBoardHandles) {
+pub(super) fn board(now: f64) -> (tempfile::TempDir, SwarmBoardHandles) {
     let dir = tempfile::TempDir::new().unwrap();
     let location = BoardLocation {
         database: dir.path().join("swarm.sqlite"),
@@ -267,7 +267,7 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedLog {
 /// records than `records` is that race, never an answer: the scenario
 /// reruns on a fresh board (at most five times) after the interest cache is
 /// rebuilt, and the last capture is returned for the caller to judge.
-fn captured(records: usize, scenario: impl Fn(&SwarmBoardHandles)) -> String {
+pub(super) fn captured(records: usize, scenario: impl Fn(&SwarmBoardHandles)) -> String {
     let mut log = String::new();
     for _ in 0..5 {
         let (_dir, handles) = board(1_000.0);
@@ -375,7 +375,7 @@ fn a_secret_shaped_member_id_is_redacted_in_telemetry() {
 }
 
 /// A running run of three coordinated by `parent` (#2271).
-fn running(handles: &SwarmBoardHandles) {
+pub(super) fn running(handles: &SwarmBoardHandles) {
     call(handles, "parent", "create_run", create_args()).unwrap();
 }
 

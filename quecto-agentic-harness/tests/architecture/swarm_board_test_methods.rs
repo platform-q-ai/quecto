@@ -12,14 +12,15 @@ const DISPATCH: &str = "src/infrastructure/tools/swarm_board_dispatch.rs";
 
 /// Method names only a test or `test-support` build serves, by the
 /// `Method` variant each parses to.
-const TEST_ONLY: [(&str, &str); 3] = [
+const TEST_ONLY: [(&str, &str); 4] = [
     ("create_run", "CreateRun"),
     ("bootstrap_run", "BootstrapRun"),
     ("bootstrap_join", "BootstrapJoin"),
+    ("task_raw", "TaskRaw"),
 ];
 
 /// Method names every build serves.
-const SERVED: [(&str, &str); 7] = [
+const SERVED: [(&str, &str); 11] = [
     ("_status", "Status"),
     ("_snapshot", "Snapshot"),
     ("_admit", "Admit"),
@@ -27,6 +28,10 @@ const SERVED: [(&str, &str); 7] = [
     ("_record_launch", "RecordLaunch"),
     ("_release_unlaunched", "ReleaseUnlaunched"),
     ("_socket", "Socket"),
+    ("task_create", "TaskCreate"),
+    ("dependencies", "Dependencies"),
+    ("claim", "Claim"),
+    ("release", "Release"),
 ];
 
 /// Each `Method` variant and whether it is test-gated.

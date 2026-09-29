@@ -6,6 +6,7 @@
 pub mod location;
 pub mod membership;
 pub mod run;
+pub mod tasks;
 
 pub use location::BoardLocation;
 pub use membership::{
@@ -17,4 +18,8 @@ pub use run::{
     BootstrapRunRequest, Bootstrapped, CreateBranch, CreateRunRequest, CreatedRun,
     MemberClaimCounts, MemberRow, NewMember, NewRun, RunContract, RunOwnerRow, RunSnapshotView,
     RunStatusRow, RunStatusView,
+};
+pub use tasks::{
+    ClaimTaskRequest, CreateTaskRequest, CreatedTask, NewTask, ReadTaskRequest, ReleaseTaskRequest,
+    SetTaskDependenciesRequest, TaskRow, TaskUpdate,
 };
