@@ -393,3 +393,153 @@ async fn test_callback_bind_failure_on_occupied_port() {
         .unwrap_err();
     assert!(err.to_string().contains("failed to bind"));
 }
+
+// --- Callback listener request framing (PR #2309) ---
+//
+// The listener frames the request line, which may arrive in pieces or be
+// larger than one socket read, and reads the rest of the head before it ends
+// a login. More connection handling is covered in
+// oauth_callback_listener_tests.rs.
+
+/// Connect, send each piece as its own write with a pause between them, then
+/// half-close only when `half_close` is set, and return whatever the listener
+/// answered. I/O errors are folded into the returned text so a test fails on
+/// its assertion, naming the error, rather than on an unwrap.
+async fn send_pieces(addr: &str, pieces: &[&[u8]], half_close: bool) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut stream = None;
+    for _ in 0..200 {
+        match tokio::net::TcpStream::connect(addr).await {
+            Ok(s) => {
+                stream = Some(s);
+                break;
+            }
+            Err(_) => tokio::time::sleep(std::time::Duration::from_millis(10)).await,
+        }
+    }
+    let mut stream = stream.expect("listener never became connectable");
+    for (index, piece) in pieces.iter().enumerate() {
+        if index > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        if let Err(error) = stream.write_all(piece).await {
+            return format!("write error: {error}");
+        }
+    }
+    if half_close {
+        if let Err(error) = stream.shutdown().await {
+            return format!("shutdown error: {error}");
+        }
+    }
+    let mut buf = Vec::new();
+    let read = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        stream.read_to_end(&mut buf),
+    )
+    .await;
+    match read {
+        Ok(Ok(_)) => String::from_utf8_lossy(&buf).into_owned(),
+        Ok(Err(error)) => format!(
+            "read error: {error}; partial: {:?}",
+            String::from_utf8_lossy(&buf)
+        ),
+        Err(_) => "read timed out: the listener never answered".to_string(),
+    }
+}
+
+#[tokio::test]
+async fn test_callback_request_split_across_writes_is_read_whole() {
+    let (addr, handle) = spawn_listener("s", 5);
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let resp = send_pieces(
+        &addr,
+        &[b"GET ", b"/callback?code=test HTTP/1.1\r\nHost: x\r\n\r\n"],
+        false,
+    )
+    .await;
+    assert!(
+        resp.starts_with("HTTP/1.1 400") && resp.ends_with("State mismatch"),
+        "missing state must get 400, got: {resp:?}"
+    );
+    let resp = send_pieces(
+        &addr,
+        &[
+            b"GET ",
+            b"/callback?code=ok&state=s HTTP/1.1\r\n",
+            b"Host: x\r\n\r\n",
+        ],
+        false,
+    )
+    .await;
+    assert!(resp.starts_with("HTTP/1.1 200 OK"), "got: {resp:?}");
+    assert_eq!(handle.await.unwrap().unwrap(), "ok");
+}
+
+#[tokio::test]
+async fn test_callback_request_head_larger_than_one_read_is_accepted() {
+    let (addr, handle) = spawn_listener("s", 5);
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    // The request line alone is longer than 4096 bytes, and a padding header
+    // takes the head past 8 KiB, still under the 16 KiB cap.
+    let code = "c".repeat(5000);
+    let request = format!(
+        "GET /callback?code={code}&state=s HTTP/1.1\r\nHost: x\r\nX-Pad: {}\r\n\r\n",
+        "p".repeat(4000)
+    );
+    assert!(request.len() > 8192 && request.len() < 16 * 1024);
+    let resp = send_pieces(&addr, &[request.as_bytes()], false).await;
+    assert!(resp.starts_with("HTTP/1.1 200 OK"), "got: {resp:?}");
+    assert_eq!(handle.await.unwrap().unwrap(), code);
+}
+
+#[tokio::test]
+async fn test_callback_request_line_over_the_cap_gets_414_without_hanging() {
+    let (addr, handle) = spawn_listener("s", 30);
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let start = std::time::Instant::now();
+    let request = format!(
+        "GET /callback?code={}&state=s HTTP/1.1\r\nHost: x\r\n\r\n",
+        "c".repeat(20 * 1024)
+    );
+    let resp = send_pieces(&addr, &[request.as_bytes()], false).await;
+    assert!(
+        resp.starts_with("HTTP/1.1 414 "),
+        "an over-long request line must get 414, got: {resp:?}"
+    );
+    assert!(start.elapsed() < std::time::Duration::from_secs(5));
+    // The listener keeps serving after the rejection.
+    let resp = send_pieces(
+        &addr,
+        &[b"GET /callback?code=ok&state=s HTTP/1.1\r\n\r\n"],
+        false,
+    )
+    .await;
+    assert!(resp.starts_with("HTTP/1.1 200 OK"), "got: {resp:?}");
+    assert_eq!(handle.await.unwrap().unwrap(), "ok");
+}
+
+#[tokio::test]
+async fn test_callback_request_ending_before_its_head_ends_is_a_bad_request() {
+    let (addr, handle) = spawn_listener("s", 5);
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    // A valid request line, but the client closes before the blank line that
+    // ends the headers: the request is incomplete and must not be accepted.
+    let resp = send_pieces(
+        &addr,
+        &[b"GET /callback?code=early&state=s HTTP/1.1\r\n"],
+        true,
+    )
+    .await;
+    assert!(
+        resp.starts_with("HTTP/1.1 400") && resp.ends_with("Incomplete request"),
+        "got: {resp:?}"
+    );
+    let resp = send_pieces(
+        &addr,
+        &[b"GET /callback?code=ok&state=s HTTP/1.1\r\n\r\n"],
+        false,
+    )
+    .await;
+    assert!(resp.starts_with("HTTP/1.1 200 OK"), "got: {resp:?}");
+    assert_eq!(handle.await.unwrap().unwrap(), "ok");
+}
