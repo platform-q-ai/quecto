@@ -136,11 +136,18 @@ pub(crate) fn with_owner_liveness(
         let activity = last.map_or(Value::Null, |last| since_activity(now, last));
         task.set("owner_last_activity", activity);
         task.set("owner_state", Value::from(state.as_str()));
-        if state.addressable() {
-            task.set("contact", Value::from(contact(owner)));
-        } else {
-            task.set("contact", Value::Null);
-            task.set("recovery", Value::from(owner_recovery(state)));
+        // An owner that is not text names no member ([`owner_views`]), so
+        // only a text owner is ever addressable (#2279 review L6).
+        debug_assert!(
+            !state.addressable() || owner.is_string(),
+            "only a text owner is addressable"
+        );
+        match owner.as_str().filter(|_| state.addressable()) {
+            Some(name) => task.set("contact", Value::from(contact(name))),
+            None => {
+                task.set("contact", Value::Null);
+                task.set("recovery", Value::from(owner_recovery(state)));
+            }
         }
     }
     Ok(count(held.len()))
@@ -162,11 +169,11 @@ struct Watch {
 }
 
 /// The structured `send` that reaches `owner` (#2279), as a member writes
-/// it: the owner's id as `json.dumps` writes a text, or (only on a board
-/// edited outside it) as the stored value's own JSON, as Python's `repr()`
-/// writes an integer.
-fn contact(owner: &Value) -> String {
-    let recipient = owner.as_str().map_or_else(|| owner.to_string(), json_text);
+/// it: the owner's id as `json.dumps` writes a text. Only a text owner is
+/// addressable; one that is not text (a board edited outside it) reads
+/// `unknown` (the `outside_edited_task_columns` divergence).
+fn contact(owner: &str) -> String {
+    let recipient = json_text(owner);
     format!(r#"{{"op":"send","request":...,"recipient":{recipient},"body":...}}"#)
 }
 

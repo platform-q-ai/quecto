@@ -103,6 +103,12 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   For a completed dependency with invalid JSON in `acceptance`, Python's
 ///   `claim` loads the dependency's full `_task` and raises `JSONDecodeError`;
 ///   Rust reads only its status and claims the dependent task (pinned below).
+///   A task owner that is not text (only tables rebuilt without column
+///   types hold one) names no member to the Rust board, whose owner
+///   liveness reads only text ids: it reads `unknown`, with no `contact`
+///   and `revoke`'s recovery, where Python finds the member and its events
+///   by that value and names it in the contact as its `repr()` (`1e+16`,
+///   #2279 review L6; pinned in `swarm_board_diff_loose_reads.rs`).
 /// - `outside_edited_evidence` (#2272, pinned with
 ///   `outside_edited_task_columns` in `swarm_board_diff_loose_tasks.rs`): stored evidence that is not a list
 ///   of objects each carrying `revision` (only an edit holds it) meets
