@@ -53,6 +53,13 @@ struct Built {
     handles: Arc<SwarmBoardHandles>,
 }
 
+/// The most board files whose handles a board keeps (#2278 final review
+/// nit): a context calls one file, and a host reads the few its
+/// environments hold; a board called for more drops the least recently
+/// called file's handles.
+#[cfg(test)]
+pub(super) const BUILT_FILES: usize = 1;
+
 impl std::fmt::Debug for SwarmBoard {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter

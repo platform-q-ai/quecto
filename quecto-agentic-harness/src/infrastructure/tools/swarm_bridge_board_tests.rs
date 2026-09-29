@@ -96,8 +96,57 @@ fn a_context_calls_the_board_through_composed_handles_built_once_per_file() {
     assert_eq!(parent.summary().unwrap()["goal"], "ship");
     assert_eq!(
         CONTEXT_BUILDS.load(Ordering::SeqCst),
-        3,
-        "the board keeps the last file's handles"
+        2,
+        "the board keeps each file's handles, not only the last file's"
+    );
+}
+
+static BOUNDED_BUILDS: AtomicUsize = AtomicUsize::new(0);
+
+fn counted_for_bound(
+    location: BoardLocation,
+    log: Option<Arc<dyn BoardOpLog>>,
+) -> crate::infrastructure::tools::swarm_board_dispatch::SwarmBoardHandles {
+    BOUNDED_BUILDS.fetch_add(1, Ordering::SeqCst);
+    build_swarm_board_handles(location, log)
+}
+
+/// The board keeps the handles of at most [`super::BUILT_FILES`] files: a
+/// host that reads many boards drops the least recently called file's.
+#[test]
+fn a_board_keeps_the_handles_of_its_most_recently_called_files_only() {
+    let board = SwarmBoard::new(counted_for_bound as SwarmBoardHandlesBuilder);
+    let files: Vec<_> = (0..=super::BUILT_FILES)
+        .map(|_| tempfile::tempdir().unwrap())
+        .collect();
+    let contexts: Vec<_> = files
+        .iter()
+        .map(|file| context(file.path(), "parent", board.clone()))
+        .collect();
+    for context in &contexts[..super::BUILT_FILES] {
+        create(context);
+    }
+    assert_eq!(BOUNDED_BUILDS.load(Ordering::SeqCst), super::BUILT_FILES);
+    // The first file is the most recently called again; the second is now
+    // the least recently called.
+    assert_eq!(contexts[0].summary().unwrap()["goal"], "ship");
+    assert_eq!(BOUNDED_BUILDS.load(Ordering::SeqCst), super::BUILT_FILES);
+    create(&contexts[super::BUILT_FILES]);
+    assert_eq!(
+        BOUNDED_BUILDS.load(Ordering::SeqCst),
+        super::BUILT_FILES + 1
+    );
+    assert_eq!(contexts[0].summary().unwrap()["goal"], "ship");
+    assert_eq!(
+        BOUNDED_BUILDS.load(Ordering::SeqCst),
+        super::BUILT_FILES + 1,
+        "the recently called first file kept its handles"
+    );
+    assert_eq!(contexts[1].summary().unwrap()["goal"], "ship");
+    assert_eq!(
+        BOUNDED_BUILDS.load(Ordering::SeqCst),
+        super::BUILT_FILES + 2,
+        "the least recently called file's handles were dropped"
     );
 }
 
