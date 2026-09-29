@@ -5,7 +5,8 @@ use crate::application::swarm::board_test_support::{
     BoardState, CompactEncoding, MemoryBoard, SteppingClock, member_row, running_board, stored_task,
 };
 use crate::application::swarm::dto::CreateTaskRequest;
-use crate::domain::swarm::BoardError;
+use crate::application::swarm::use_cases::OverRepository;
+use crate::domain::swarm::{BoardError, RefusalKind};
 
 const ACCEPTANCE: &str =
     "task acceptance criteria required: use a nonempty list[str], e.g. ['tests pass']";
@@ -54,7 +55,10 @@ fn request_retries_are_idempotent_but_payload_conflicts_fail() {
         service
             .execute(create("r1", "different", json!([])))
             .unwrap_err(),
-        BoardError::new("request id reused with different payload")
+        BoardError::new(
+            RefusalKind::RequestIdReused,
+            "request id reused with different payload"
+        )
     );
     let state = board.snapshot();
     assert_eq!(state.tasks.len(), 1);
@@ -101,14 +105,20 @@ fn arguments_are_checked_in_pythons_order() {
     stranger.actor = "stranger".to_owned();
     assert_eq!(
         service.execute(stranger.clone()).unwrap_err(),
-        BoardError::new("title must be nonempty and at most 1024 bytes")
+        BoardError::new(
+            RefusalKind::Invalid,
+            "title must be nonempty and at most 1024 bytes"
+        )
     );
     let long = "a".repeat(1025);
     assert_eq!(
         service
             .execute(create("r1", &long, json!(null)))
             .unwrap_err(),
-        BoardError::new("title must be nonempty and at most 1024 bytes")
+        BoardError::new(
+            RefusalKind::Invalid,
+            "title must be nonempty and at most 1024 bytes"
+        )
     );
     for invalid in [
         json!("tests pass"),
@@ -121,7 +131,7 @@ fn arguments_are_checked_in_pythons_order() {
         request.acceptance = invalid.clone();
         assert_eq!(
             service.execute(request).unwrap_err(),
-            BoardError::new(ACCEPTANCE),
+            BoardError::new(RefusalKind::Invalid, ACCEPTANCE),
             "{invalid}"
         );
     }
@@ -129,20 +139,29 @@ fn arguments_are_checked_in_pythons_order() {
     request.acceptance = json!(["é".repeat(1366)]);
     assert_eq!(
         service.execute(request).unwrap_err(),
-        BoardError::new("acceptance must be nonempty and at most 8192 bytes"),
+        BoardError::new(
+            RefusalKind::Invalid,
+            "acceptance must be nonempty and at most 8192 bytes"
+        ),
         "the encoded list is bounded: é is six bytes escaped"
     );
     stranger.title = json!("work");
     assert_eq!(
         service.execute(stranger).unwrap_err(),
-        BoardError::new("invoking member is unknown or death confirmed")
+        BoardError::new(
+            RefusalKind::NotMember,
+            "invoking member is unknown or death confirmed"
+        )
     );
     for request_id in [json!(5), json!(""), json!("r".repeat(129))] {
         let mut request = create("r1", "work", json!(null));
         request.request = request_id.clone();
         assert_eq!(
             service.execute(request).unwrap_err(),
-            BoardError::new("request id must be nonempty and at most 128 bytes"),
+            BoardError::new(
+                RefusalKind::Invalid,
+                "request id must be nonempty and at most 128 bytes"
+            ),
             "{request_id}"
         );
     }
@@ -162,7 +181,10 @@ fn a_full_board_and_invalid_dependencies_create_nothing() {
         service(&full)
             .execute(create("r1", "work", json!(null)))
             .unwrap_err(),
-        BoardError::new("task board full (1000); settle existing work")
+        BoardError::new(
+            RefusalKind::CapacityFull,
+            "task board full (1000); settle existing work"
+        )
     );
     assert_eq!(full.journal(), Vec::<String>::new(), "nothing inserted");
 
@@ -177,7 +199,7 @@ fn a_full_board_and_invalid_dependencies_create_nothing() {
             service
                 .execute(create("r1", "work", dependencies.clone()))
                 .unwrap_err(),
-            BoardError::new(refusal),
+            BoardError::new(RefusalKind::Invalid, refusal),
             "{dependencies}"
         );
     }
@@ -204,4 +226,20 @@ fn a_dependent_task_is_created_blocked() {
     assert_eq!(dependent.task["blocker"], json!("unmet dependencies"));
     assert_eq!(dependent.task["dependencies"], json!([1]));
     assert_eq!(board.snapshot().tasks[1].text("status"), Some("ready"));
+}
+
+/// Served over another repository (#2303 reconcile), the task is created
+/// on that board alone, encoded as composed.
+#[test]
+fn over_creates_on_the_given_board() {
+    let composed_over = MemoryBoard::with(board());
+    let other = MemoryBoard::with(board());
+    let created = service(&composed_over)
+        .over(other.clone())
+        .execute(create("r1", "work", json!(null)))
+        .unwrap();
+    assert_eq!(created.task["id"], json!(1));
+    assert_eq!(other.snapshot().tasks.len(), 1);
+    assert!(composed_over.transactions().is_empty());
+    assert!(composed_over.snapshot().tasks.is_empty());
 }

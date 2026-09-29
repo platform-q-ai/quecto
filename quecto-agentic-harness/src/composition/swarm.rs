@@ -60,8 +60,6 @@ pub fn build_swarm_board_handles_with(
     clock: Arc<dyn Clock + Send + Sync>,
     ids: Arc<dyn IdSource>,
 ) -> SwarmBoardHandles {
-    let admit_member = Arc::new(AdmitMember::new(repository.clone(), clock.clone()));
-    let activate_member = Arc::new(ActivateMember::new(repository.clone(), clock.clone()));
     SwarmBoardHandles {
         create_run: Arc::new(CreateRun::new(
             repository.clone(),
@@ -101,14 +99,9 @@ pub fn build_swarm_board_handles_with(
         )),
         release_task: Arc::new(ReleaseTask::new(repository.clone(), clock.clone())),
         read_task: Arc::new(ReadTask::new(repository.clone(), clock.clone())),
-        join_run: Arc::new(JoinRun::new(
-            repository,
-            ids,
-            admit_member.clone(),
-            activate_member.clone(),
-        )),
-        admit_member,
-        activate_member,
+        admit_member: Arc::new(AdmitMember::new(repository.clone(), clock.clone())),
+        activate_member: Arc::new(ActivateMember::new(repository.clone(), clock.clone())),
+        join_run: Arc::new(JoinRun::new(repository, clock, ids)),
         telemetry: None,
     }
 }

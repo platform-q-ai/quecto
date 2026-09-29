@@ -5,7 +5,10 @@ use crate::application::swarm::board_test_support::{
     MemoryBoard, SteppingClock, member_row, running_board, stored_member,
 };
 use crate::application::swarm::dto::{AdmissionDecision, AdmitMemberRequest};
-use crate::domain::swarm::{BoardError, MemberRecord, MemberState, RunState, admission};
+use crate::application::swarm::use_cases::OverRepository;
+use crate::domain::swarm::{
+    BoardError, MemberRecord, MemberState, RefusalKind, RunState, admission,
+};
 
 fn admit(actor: &str, member: Value, reservation: &str) -> AdmitMemberRequest {
     AdmitMemberRequest {
@@ -35,10 +38,13 @@ fn admission_retries_and_capacity_use_same_atomic_port() {
     let refused = service
         .execute(admit("parent", json!("third"), "token3"))
         .unwrap_err();
-    assert!(refused.0.contains("reuse"), "{refused}");
+    assert!(refused.message().contains("reuse"), "{refused}");
     assert_eq!(
         refused,
-        BoardError::new("swarm limit 2, current usage 2; reuse the existing pool")
+        BoardError::new(
+            RefusalKind::MemberLimit,
+            "swarm limit 2, current usage 2; reuse the existing pool"
+        )
     );
     let state = board.snapshot();
     assert_eq!(state.members.len(), 2);
@@ -54,7 +60,7 @@ fn admission_retries_and_capacity_use_same_atomic_port() {
         reservation: first.row.text("reservation").map(str::to_owned),
     };
     let refused = admission(&run, Some(&prior), &json!("token"), 2, 100.0).unwrap_err();
-    assert!(refused.0.contains("no new admission"), "{refused}");
+    assert!(refused.message().contains("no new admission"), "{refused}");
 }
 
 /// The reserving actor is the member's launcher (#1961), the actor of the
@@ -114,7 +120,10 @@ fn a_member_name_is_bounded_before_the_board_is_opened() {
             service
                 .execute(admit("parent", member.clone(), "r"))
                 .unwrap_err(),
-            BoardError::new("member must be nonempty and at most 128 bytes"),
+            BoardError::new(
+                RefusalKind::Invalid,
+                "member must be nonempty and at most 128 bytes"
+            ),
             "{member}"
         );
     }
@@ -140,7 +149,7 @@ fn admission_refusals_keep_pythons_text() {
         service
             .execute(admit("parent", json!("w"), "r"))
             .unwrap_err(),
-        BoardError::new("run is paused; no new admission")
+        BoardError::new(RefusalKind::NotRunning, "run is paused; no new admission")
     );
 
     let mut state = running_board(100.0);
@@ -152,13 +161,19 @@ fn admission_refusals_keep_pythons_text() {
     let service = AdmitMember::new(board, SteppingClock::fixed(50.0));
     assert_eq!(
         service.execute(admit("gone", json!("w"), "r")).unwrap_err(),
-        BoardError::new("invoking member is unknown or death confirmed")
+        BoardError::new(
+            RefusalKind::NotMember,
+            "invoking member is unknown or death confirmed"
+        )
     );
     assert_eq!(
         service
             .execute(admit("parent", json!("gone"), "gone-reservation"))
             .unwrap_err(),
-        BoardError::new("member identity already used; choose a stable new identity"),
+        BoardError::new(
+            RefusalKind::IdentityTaken,
+            "member identity already used; choose a stable new identity"
+        ),
         "a dead member's own reservation is no retry"
     );
 }
@@ -173,7 +188,10 @@ fn an_expired_run_commits_its_end_then_refuses_admission() {
         service
             .execute(admit("parent", json!("w"), "r"))
             .unwrap_err(),
-        BoardError::new("run is paused; no new admission")
+        BoardError::new(
+            RefusalKind::BudgetExhausted,
+            "run is paused; no new admission"
+        )
     );
     let actions: Vec<String> = board
         .snapshot()
@@ -182,4 +200,20 @@ fn an_expired_run_commits_its_end_then_refuses_admission() {
         .map(|event| event.action)
         .collect();
     assert_eq!(actions, ["stop", "paused"]);
+}
+
+/// Served over another repository (#2303 reconcile), admission writes to
+/// that board alone, on the clock it was composed with.
+#[test]
+fn over_admits_on_the_given_board() {
+    let composed_over = MemoryBoard::with(running_board(100.0));
+    let other = MemoryBoard::with(running_board(100.0));
+    let admitted = AdmitMember::new(composed_over.clone(), SteppingClock::fixed(50.0))
+        .over(other.clone())
+        .execute(admit("parent", json!("worker"), "token"))
+        .unwrap();
+    assert_eq!(admitted.decision, AdmissionDecision::Reserved);
+    assert_eq!(other.snapshot().members.len(), 2);
+    assert!(composed_over.transactions().is_empty());
+    assert_eq!(composed_over.snapshot().members.len(), 1);
 }

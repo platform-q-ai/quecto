@@ -25,7 +25,7 @@ use rusqlite::{Connection, ffi};
 
 use super::repository::{SqliteBoardRepository, atomic_on};
 use super::store::{BUSY_TIMEOUT, BoardStore};
-use crate::application::swarm::dto::CallMeasure;
+use crate::application::swarm::dto::{CallMeasure, RunRoles};
 use crate::application::swarm::ports::{BoardCallMeter, BoardRepository, BoardWork, MeteredCall};
 use crate::domain::swarm::BoardError;
 use crate::domain::swarm::telemetry::board_run_id;
@@ -103,21 +103,33 @@ impl Tally {
     }
 
     /// Whether no run id has been found yet: only then does a transaction
-    /// read it.
+    /// that never read the run row read it (and the roles with it).
     pub(super) fn wants_run_id(&self) -> bool {
         self.held().run_id.is_none()
     }
 
-    /// A transaction found the run `id` (or none): kept when no run id was
-    /// found before, and only when it is one the board generates
+    /// Whether no run id, or no run roles, have been found yet: only then
+    /// is a run row the op read noted, which costs no statement.
+    pub(super) fn wants_run(&self) -> bool {
+        let measure = self.held();
+        measure.run_id.is_none() || measure.run_roles.is_none()
+    }
+
+    /// A transaction found the run `id` (or none) and its `roles` (`None`
+    /// when the row it read does not hold them). The id is kept when no
+    /// run id was found before, and only when it is one the board generates
     /// ([`board_run_id`], #2303 round-4 review L3); an id edited from
-    /// outside is never recorded.
-    pub(super) fn run_seen(&self, id: Option<&str>) {
+    /// outside is never recorded. The roles are kept when none were found
+    /// before (#2303 reconcile), whatever the id.
+    pub(super) fn run_seen(&self, id: Option<&str>, roles: Option<RunRoles>) {
+        let mut measure = self.held();
         if let Some(id) = id.filter(|id| board_run_id(id)) {
-            let mut measure = self.held();
             if measure.run_id.is_none() {
                 measure.run_id = Some(id.to_owned());
             }
+        }
+        if measure.run_roles.is_none() {
+            measure.run_roles = roles;
         }
     }
 

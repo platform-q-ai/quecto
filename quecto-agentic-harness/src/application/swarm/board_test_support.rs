@@ -301,6 +301,7 @@ impl BoardMembers for MemoryTransaction<'_> {
         let mut state = self.state.borrow_mut();
         if state.members.iter().any(|row| row.text("id") == Some(id)) {
             return Err(BoardError::new(
+                RefusalKind::Store,
                 "coordination store unavailable or contended: UNIQUE constraint failed: members.id",
             ));
         }

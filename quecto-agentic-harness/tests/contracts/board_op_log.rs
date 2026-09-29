@@ -12,7 +12,7 @@ fn observation() -> BoardOpObservation {
     BoardOpObservation {
         op: "_snapshot".into(),
         actor_ref: Redacted::from("worker-1"),
-        role: BoardRole::Host,
+        role: Some(BoardRole::Host),
         run_id: None,
         task_id: None,
         message_id: None,

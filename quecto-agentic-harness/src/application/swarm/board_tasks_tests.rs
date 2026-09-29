@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use super::{owned, read_task};
 use crate::application::swarm::board_operation::atomic;
 use crate::application::swarm::board_test_support::{MemoryBoard, running_board, stored_task};
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, RefusalKind};
 
 fn board(tasks: Vec<crate::application::swarm::dto::TaskRow>) -> std::sync::Arc<MemoryBoard> {
     let mut state = running_board(100.0);
@@ -42,7 +42,10 @@ fn only_a_ready_task_with_an_incomplete_dependency_reads_blocked() {
             status(4)?,
             (Some("submitted".to_owned()), Some(Value::Null))
         );
-        assert_eq!(status(5), Err(BoardError::new("unknown task")));
+        assert_eq!(
+            status(5),
+            Err(BoardError::new(RefusalKind::NotFound, "unknown task"))
+        );
         Ok(())
     })
     .unwrap();
@@ -61,7 +64,10 @@ fn owned_requires_the_token_the_owner_and_a_held_claim() {
         stored_task(4, "ready", json!([]), None),
     ]);
     atomic(&*board, false, |transaction| {
-        let stale = Err(BoardError::new("stale or unowned claim"));
+        let stale = Err(BoardError::new(
+            RefusalKind::StaleToken,
+            "stale or unowned claim",
+        ));
         let check = |id: i64, token: Value, member: &str| {
             owned(transaction, &json!(id), &token, member).map(|task| task.get("id").cloned())
         };

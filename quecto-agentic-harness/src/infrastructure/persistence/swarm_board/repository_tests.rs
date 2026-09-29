@@ -328,3 +328,59 @@ fn an_unbindable_member_value_names_pythons_parameter() {
             .map(|column| parameter_of(PYTHON_BOOTSTRAP_MEMBER_INSERT, column))
     );
 }
+
+/// A request's refusal keeps its kind through the ledger (#2303 reconcile
+/// with #2272): the action's own refusal (a full task board) is returned
+/// with the kind it was raised under, and the ledger's own refusals carry
+/// theirs, never a catch-all.
+#[test]
+fn a_retried_request_keeps_its_refusal_kind() {
+    use crate::domain::swarm::RefusalKind;
+
+    let (_dir, repository) = repository();
+    within(&repository, true, |_| Ok(())).unwrap();
+    let full = within(&repository, false, |transaction| {
+        transaction
+            .retry("worker", "r1", &json!({"title": "t"}), &mut || {
+                Err(BoardError::new(
+                    RefusalKind::CapacityFull,
+                    "task board full (1000); settle existing work",
+                ))
+            })
+            .map(drop)
+    })
+    .unwrap_err();
+    assert_eq!(
+        (full.kind(), full.message()),
+        (
+            RefusalKind::CapacityFull,
+            "task board full (1000); settle existing work"
+        )
+    );
+    within(&repository, false, |transaction| {
+        transaction
+            .retry("worker", "r2", &json!({"title": "t"}), &mut || Ok(json!(1)))
+            .map(drop)
+    })
+    .unwrap();
+    let reused = within(&repository, false, |transaction| {
+        transaction
+            .retry("worker", "r2", &json!({"title": "u"}), &mut || Ok(json!(2)))
+            .map(drop)
+    })
+    .unwrap_err();
+    assert_eq!(
+        (reused.kind(), reused.message()),
+        (
+            RefusalKind::RequestIdReused,
+            "request id reused with different payload"
+        )
+    );
+    let blank = within(&repository, false, |transaction| {
+        transaction
+            .retry("worker", " ", &json!({}), &mut || Ok(json!(3)))
+            .map(drop)
+    })
+    .unwrap_err();
+    assert_eq!(blank.kind(), RefusalKind::Invalid, "{blank}");
+}

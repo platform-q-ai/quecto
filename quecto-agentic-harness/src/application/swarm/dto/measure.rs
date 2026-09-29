@@ -21,4 +21,15 @@ pub struct CallMeasure {
     pub busy: bool,
     /// The run id the call's first transaction to find one found.
     pub run_id: Option<String>,
+    /// The run's coordinator and integrator, as the first run row the call
+    /// read holds them (#2303 reconcile): only to name a member-facing
+    /// op's caller role, never a field of its record.
+    pub run_roles: Option<RunRoles>,
+}
+
+/// Who holds a run's two named roles, as its row holds them.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RunRoles {
+    pub coordinator: Option<String>,
+    pub integrator: Option<String>,
 }

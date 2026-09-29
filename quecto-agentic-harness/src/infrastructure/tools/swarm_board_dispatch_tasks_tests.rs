@@ -2,7 +2,7 @@ use serde_json::{Value, json};
 
 use super::super::TELEMETRY_TARGET;
 use super::super::tests::{board, captured, running};
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, RefusalKind};
 use crate::infrastructure::tools::swarm_board_dispatch::{SwarmBoardHandles, call};
 
 /// A running run of three coordinated by `parent`, with `worker` live.
@@ -102,11 +102,14 @@ fn task_methods_render_pythons_shape() {
     );
     assert_eq!(
         call(&handles, "worker", "task_create", json!(["r3", "t"])).unwrap_err(),
-        BoardError::new("task_create: missing required argument acceptance")
+        BoardError::new(
+            RefusalKind::Calling,
+            "task_create: missing required argument acceptance"
+        )
     );
     assert_eq!(
         call(&handles, "worker", "claim", json!([1, 2])).unwrap_err(),
-        BoardError::new("claim: takes 1 arguments, 2 given")
+        BoardError::new(RefusalKind::Calling, "claim: takes 1 arguments, 2 given")
     );
 }
 

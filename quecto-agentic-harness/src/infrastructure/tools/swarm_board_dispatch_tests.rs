@@ -425,7 +425,10 @@ fn membership_methods_render_pythons_shape() {
     );
     assert_eq!(
         call(&handles, "late", "bootstrap_join", json!([10, "t", null])).unwrap_err(),
-        BoardError::new("swarm limit 3, current usage 3; reuse the existing pool")
+        BoardError::new(
+            RefusalKind::MemberLimit,
+            "swarm limit 3, current usage 3; reuse the existing pool"
+        )
     );
 }
 
@@ -449,7 +452,7 @@ fn membership_arguments_reach_the_board_as_given() {
             json!(["w", null, 7, "t"])
         )
         .unwrap_err(),
-        BoardError::new("stale launch reservation")
+        BoardError::new(RefusalKind::StaleToken, "stale launch reservation")
     );
     for (args, answer) in [
         (json!(["w", "5", "7", "t", null]), Ok(Value::Null)),
@@ -457,12 +460,16 @@ fn membership_arguments_reach_the_board_as_given() {
         (
             json!(["w", "5", true, "t", null]),
             Err(BoardError::new(
+                RefusalKind::LaunchConflict,
                 "member already active in a different process",
             )),
         ),
         (
             json!(["w", 5, 7, "t", null]),
-            Err(BoardError::new("unknown or stale launch reservation")),
+            Err(BoardError::new(
+                RefusalKind::StaleToken,
+                "unknown or stale launch reservation",
+            )),
         ),
     ] {
         assert_eq!(
@@ -486,13 +493,17 @@ fn membership_arguments_reach_the_board_as_given() {
         )
         .unwrap_err(),
         BoardError::new(
+            RefusalKind::Invalid,
             "coordination store unavailable or contended: \
              Error binding parameter 1: type 'list' is not supported"
         )
     );
     assert_eq!(
         call(&handles, "parent", "_release_unlaunched", json!([5])).unwrap_err(),
-        BoardError::new("only an unlaunched reservation may be released")
+        BoardError::new(
+            RefusalKind::WrongState,
+            "only an unlaunched reservation may be released"
+        )
     );
     let snapshot = call(&handles, "parent", "_snapshot", json!([])).unwrap();
     let worker = &snapshot["members"][1];
@@ -503,11 +514,17 @@ fn membership_arguments_reach_the_board_as_given() {
     );
     assert_eq!(
         call(&handles, "parent", "_socket", json!([])).unwrap_err(),
-        BoardError::new("_socket: missing required argument socket")
+        BoardError::new(
+            RefusalKind::Calling,
+            "_socket: missing required argument socket"
+        )
     );
     assert_eq!(
         call(&handles, "parent", "_admit", json!([5, "r"])).unwrap_err(),
-        BoardError::new("member must be nonempty and at most 128 bytes")
+        BoardError::new(
+            RefusalKind::Invalid,
+            "member must be nonempty and at most 128 bytes"
+        )
     );
 }
 

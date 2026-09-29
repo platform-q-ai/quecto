@@ -18,8 +18,8 @@ fn graph() -> Vec<(i64, Value)> {
 }
 
 fn check(task_id: Value, dependencies: Value) -> Result<(), String> {
-    let list = dependency_list(&dependencies).map_err(|refusal| refusal.0)?;
-    validate_dependencies(&task_id, list, &graph()).map_err(|refusal| refusal.0)
+    let list = dependency_list(&dependencies).map_err(|refusal| refusal.message().to_owned())?;
+    validate_dependencies(&task_id, list, &graph()).map_err(|refusal| refusal.message().to_owned())
 }
 
 #[test]
@@ -89,7 +89,7 @@ fn nodes_without_a_list_have_no_children() {
     assert_eq!(
         validate_dependencies(&json!(1), &[json!(1)], &graph)
             .unwrap_err()
-            .0,
+            .message(),
         INVALID
     );
 }

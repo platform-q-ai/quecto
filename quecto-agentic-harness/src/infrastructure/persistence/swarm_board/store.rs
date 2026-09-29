@@ -41,6 +41,7 @@ use rusqlite::{Connection, ErrorCode, OpenFlags, Transaction, TransactionBehavio
 
 use super::meter::{self, Tally};
 use super::schema::{ADDED_COLUMNS, schema_statements};
+use crate::domain::swarm::BoardError;
 
 /// Python's `sqlite3.connect(..., timeout=0.5)`.
 pub const BUSY_TIMEOUT: Duration = Duration::from_millis(500);
@@ -59,25 +60,23 @@ pub struct StoreRefusal(pub String);
 
 /// How a transaction's body fails: with a board refusal, returned
 /// unchanged, or with a SQLite error, returned as the contended message.
+/// A board refusal carries its [`RefusalKind`](crate::domain::swarm::RefusalKind)
+/// (#2303): the store returns only its text, and a repository that
+/// raised it (or the ledger, which raises its own) keeps the kind.
 #[derive(Debug, thiserror::Error)]
 pub enum TransactionError {
     /// A board refusal (`SwarmError`), returned unchanged.
     #[error("{0}")]
-    Board(String),
+    Board(BoardError),
     /// A SQLite error (`sqlite3.Error`).
     #[error(transparent)]
     Sqlite(#[from] rusqlite::Error),
 }
 
 impl TransactionError {
-    /// A board refusal with `message`.
-    pub fn board(message: impl Into<String>) -> Self {
-        Self::Board(message.into())
-    }
-
     fn into_refusal(self) -> StoreRefusal {
         match self {
-            Self::Board(message) => StoreRefusal(message),
+            Self::Board(refusal) => StoreRefusal(refusal.message().to_owned()),
             Self::Sqlite(error) => contended(&error),
         }
     }

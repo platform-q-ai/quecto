@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use super::{ActorRefs, BOARD_OPS, BoardTelemetry, Method, SwarmBoardHandles, call};
+use super::{ActorRefs, BOARD_OPS, BoardTelemetry, SwarmBoardHandles, call};
 use crate::application::swarm::dto::{BoardLocation, CallMeasure};
 use crate::application::swarm::ports::{
     BoardCallMeter, BoardOpLog, BoardRepository, Clock, IdSource, MeteredCall,
@@ -183,57 +183,6 @@ fn every_board_op_emits_exactly_one_swarm_op() {
     }
 }
 
-/// Every `Method` the dispatcher has. The `match` is exhaustive, so a new
-/// method does not compile until it is listed here too, and then
-/// [`BOARD_OPS`] must name it for the test below to pass.
-fn every_method() -> Vec<Method> {
-    let all = vec![
-        Method::Status,
-        Method::Snapshot,
-        Method::CreateRun,
-        Method::BootstrapRun,
-    ];
-    for method in &all {
-        match method {
-            Method::Status | Method::Snapshot | Method::CreateRun | Method::BootstrapRun => {}
-        }
-    }
-    all
-}
-
-/// What an answered call of `method` acted on, as its record must say:
-/// `(args, task_id, message_id, cursor_moved)`. The `match` is exhaustive,
-/// so a new method does not compile until its record's fields are stated
-/// here (#2303 review M2).
-fn acted_on(method: Method) -> (Value, Option<i64>, Option<i64>, Option<bool>) {
-    match method {
-        Method::Status | Method::Snapshot => (json!([]), None, None, None),
-        Method::CreateRun => (create_args(), None, None, None),
-        Method::BootstrapRun => (json!([1, "s", null]), None, None, None),
-    }
-}
-
-/// Every method, answered, records the task, the message and the cursor
-/// move its own arm reports, per op.
-#[test]
-fn every_answered_op_records_what_it_acted_on() {
-    for method in every_method() {
-        let log = Arc::new(Recorded::default());
-        let (_dir, handles) = logged(&log);
-        call(&handles, "parent", "bootstrap_run", json!([1, "s", null])).unwrap();
-        log.clear();
-        let (args, task_id, message_id, cursor_moved) = acted_on(method);
-        call(&handles, "parent", method.name(), args).unwrap();
-        let recorded = only(&log);
-        assert_eq!(recorded.op, method.name());
-        assert_eq!(
-            (recorded.task_id, recorded.message_id, recorded.cursor_moved),
-            (task_id, message_id, cursor_moved),
-            "{recorded:?}"
-        );
-    }
-}
-
 /// A caller's member id is recorded bounded (#2303 review L3): its first
 /// 128 characters, cut on a character boundary.
 #[test]
@@ -276,19 +225,6 @@ fn only_an_accepted_members_ref_is_kept() {
     assert_eq!(actors(), 1, "no refused or membership-free caller is kept");
     call(&handles, "parent", "_snapshot", json!([])).unwrap();
     assert_eq!(actors(), 1);
-}
-
-#[test]
-fn board_ops_names_every_method_once() {
-    let names: Vec<&str> = every_method().into_iter().map(Method::name).collect();
-    let mut listed = BOARD_OPS.to_vec();
-    listed.sort_unstable();
-    let mut expected = names.clone();
-    expected.sort_unstable();
-    assert_eq!(listed, expected, "BOARD_OPS lists every method, once");
-    for name in names {
-        assert!(Method::parse(name).is_some(), "{name} parses");
-    }
 }
 
 fn refusal(log: &Recorded, answer: Result<Value, BoardError>) -> RefusalKind {
@@ -352,7 +288,7 @@ fn an_answered_op_records_its_run_role_size_and_measure() {
     let recorded = only(&log);
     assert_eq!(recorded.op, "_status");
     assert_eq!(recorded.outcome, BoardOpOutcome::Ok);
-    assert_eq!(recorded.role, BoardRole::Host);
+    assert_eq!(recorded.role, Some(BoardRole::Host));
     assert_eq!(recorded.actor_ref.as_str(), "parent");
     assert_eq!(
         recorded.run_id.as_deref(),
@@ -646,3 +582,6 @@ fn a_swarm_op_line_holds_no_board_text() {
         assert!(!text.contains(leaked), "{leaked} in {text}");
     }
 }
+
+#[path = "swarm_board_dispatch_telemetry_ops_tests.rs"]
+mod ops;

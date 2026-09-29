@@ -42,10 +42,12 @@
 //!   nobody, or dead). `Joined::AlreadyLive` carries the coordinator the
 //!   join read, so S12 runs that gate as it without reading the run again.
 //!
-//! `JoinRun` composes `AdmitMember` and `ActivateMember` by a deliberate
-//! decision (#2271 round-1 review L3): Python's `join_process` calls those
-//! two `Workbench` methods, so the use case sequences them, and the
-//! dispatcher still calls one use case per method.
+//! `JoinRun` runs `AdmitMember`'s and `ActivateMember`'s work by a
+//! deliberate decision (#2271 round-1 review L3): Python's `join_process`
+//! calls those two `Workbench` methods, so the use case sequences them (as
+//! shared functions over its own repository, so a metered call measures
+//! all of it, #2303), and the dispatcher still calls one use case per
+//! method.
 //!
 //! Each call leaves one `tracing` record on [`TELEMETRY_TARGET`] (DEBUG
 //! for a read-only method, INFO otherwise, WARN for a contended refusal or,
@@ -73,16 +75,8 @@ use std::time::Instant;
 
 use serde_json::{Map, Value};
 
-use crate::application::swarm::dto::{
-    ActivateMemberRequest, AdmissionDecision, AdmitMemberRequest, LaunchIdentity, MemberRow,
-    RecordMemberLaunchRequest, RegisterMemberSocketRequest, ReleaseUnlaunchedMemberRequest,
-    RunSnapshotView, RunStatusView,
-};
+use crate::application::swarm::dto::{MemberRow, RunSnapshotView, RunStatusView};
 use crate::application::swarm::ports::{BoardCallMeter, BoardOpLog, BoardRepository};
-#[cfg(any(test, feature = "test-support"))]
-use crate::application::swarm::dto::{
-    BootstrapRunRequest, CreateBranch, CreateRunRequest, JoinRunRequest, Joined,
-};
 use crate::application::swarm::use_cases::{
     ActivateMember, AdmitMember, BootstrapRun, ClaimTask, CreateRun, CreateTask, JoinRun,
     OverRepository, ReadRunSnapshot, ReadRunStatus, ReadTask, RecordMemberLaunch,
@@ -145,10 +139,23 @@ impl std::fmt::Debug for SwarmBoardHandles {
 pub const BOARD_OPS: &[&str] = &[
     "_status",
     "_snapshot",
+    "_admit",
+    "_activate",
+    "_record_launch",
+    "_release_unlaunched",
+    "_socket",
+    "task_create",
+    "dependencies",
+    "claim",
+    "release",
     #[cfg(any(test, feature = "test-support"))]
     "create_run",
     #[cfg(any(test, feature = "test-support"))]
     "bootstrap_run",
+    #[cfg(any(test, feature = "test-support"))]
+    "bootstrap_join",
+    #[cfg(any(test, feature = "test-support"))]
+    "task_raw",
 ];
 
 /// The board methods this dispatcher serves.
@@ -188,23 +195,6 @@ const fn required(name: &'static str) -> Parameter {
         default: None,
     }
 }
-
-const ADMIT: [Parameter; 2] = [required("member"), required("reservation")];
-const ACTIVATE: [Parameter; 5] = [
-    required("member"),
-    required("reservation"),
-    required("pid"),
-    required("started"),
-    required("socket"),
-];
-const RECORD_LAUNCH: [Parameter; 4] = [
-    required("member"),
-    required("reservation"),
-    required("pid"),
-    required("started"),
-];
-const RELEASE_UNLAUNCHED: [Parameter; 1] = [required("member")];
-const SOCKET: [Parameter; 1] = [required("socket")];
 
 impl Method {
     fn parse(name: &str) -> Option<Self> {
@@ -276,16 +266,27 @@ impl Method {
         }
     }
 
-    /// Who calls it (#2303): every method served so far is the harness's
-    /// own.
-    fn role(self) -> BoardRole {
+    /// Who calls it (#2303): [`BoardRole::Host`] for the harness's own
+    /// ops; `None` for a member-facing op, whose role is the caller's in
+    /// the run, as the call's own measure read it
+    /// ([`run_role`](crate::domain::swarm::telemetry::run_role)).
+    fn role(self) -> Option<BoardRole> {
         match self {
-            Self::Status | Self::Snapshot => BoardRole::Host,
+            Self::Status
+            | Self::Snapshot
+            | Self::Admit
+            | Self::Activate
+            | Self::RecordLaunch
+            | Self::ReleaseUnlaunched
+            | Self::Socket => Some(BoardRole::Host),
+            Self::TaskCreate | Self::Dependencies | Self::Claim | Self::Release => None,
             // Test-only halves the differential harness drives as the host;
-            // the member-facing `create` a later slice serves records the
-            // caller's own role.
+            // the member-facing `create`, `_bootstrap` and `task` S12 serves
+            // record the caller's own role.
             #[cfg(any(test, feature = "test-support"))]
-            Self::CreateRun | Self::BootstrapRun => BoardRole::Host,
+            Self::CreateRun | Self::BootstrapRun | Self::BootstrapJoin | Self::TaskRaw => {
+                Some(BoardRole::Host)
+            }
         }
     }
 
@@ -296,9 +297,23 @@ impl Method {
     fn answers_members_only(self) -> bool {
         match self {
             Self::Status => false,
-            Self::Snapshot => true,
+            // Through the operation gate, which refuses a caller that is
+            // no member of the run (or whose death was confirmed).
+            Self::Snapshot
+            | Self::Admit
+            | Self::Activate
+            | Self::RecordLaunch
+            | Self::ReleaseUnlaunched
+            | Self::Socket
+            | Self::TaskCreate
+            | Self::Dependencies
+            | Self::Claim
+            | Self::Release => true,
+            // `create_run` and `bootstrap_run` make the caller the run's
+            // coordinator; `bootstrap_join` admits and activates it, or
+            // finds its own live row; `task_raw` passes the gate.
             #[cfg(any(test, feature = "test-support"))]
-            Self::CreateRun | Self::BootstrapRun => true,
+            Self::CreateRun | Self::BootstrapRun | Self::BootstrapJoin | Self::TaskRaw => true,
         }
     }
 
@@ -306,11 +321,11 @@ impl Method {
     fn parameters(self) -> &'static [Parameter] {
         match self {
             Self::Status | Self::Snapshot => &[],
-            Self::Admit => &ADMIT,
-            Self::Activate => &ACTIVATE,
-            Self::RecordLaunch => &RECORD_LAUNCH,
-            Self::ReleaseUnlaunched => &RELEASE_UNLAUNCHED,
-            Self::Socket => &SOCKET,
+            Self::Admit => &members::ADMIT,
+            Self::Activate => &members::ACTIVATE,
+            Self::RecordLaunch => &members::RECORD_LAUNCH,
+            Self::ReleaseUnlaunched => &members::RELEASE_UNLAUNCHED,
+            Self::Socket => &members::SOCKET,
             Self::TaskCreate => &tasks::TASK_CREATE,
             Self::Dependencies => &tasks::DEPENDENCIES,
             Self::Claim => &tasks::CLAIM,
@@ -372,7 +387,7 @@ pub fn call(
     let finished = Finished {
         op: known.map_or("unknown", Method::name),
         level: known.map_or(Level::Mutation, Method::level),
-        role: known.map_or(BoardRole::Host, Method::role),
+        role: known.map_or(Some(BoardRole::Host), Method::role),
         member,
         outcome: answer
             .as_ref()
@@ -507,15 +522,37 @@ fn serve(
             message_id: None,
             cursor_moved: None,
         }),
-        Method::Admit => admit(handles, member, arguments),
-        Method::Activate => activate(handles, member, arguments),
-        Method::RecordLaunch => record_launch(handles, member, arguments),
-        Method::ReleaseUnlaunched => release_unlaunched(handles, member, arguments),
-        Method::Socket => socket(handles, member, arguments),
-        Method::TaskCreate => tasks::task_create(handles, member, arguments),
-        Method::Dependencies => tasks::dependencies(handles, member, arguments),
-        Method::Claim => tasks::claim(handles, member, arguments),
-        Method::Release => tasks::release(handles, member, arguments),
+        Method::Admit => members::admit(&serving(&*handles.admit_member, over), member, arguments),
+        Method::Activate => {
+            members::activate(&serving(&*handles.activate_member, over), member, arguments)
+        }
+        Method::RecordLaunch => members::record_launch(
+            &serving(&*handles.record_member_launch, over),
+            member,
+            arguments,
+        ),
+        Method::ReleaseUnlaunched => members::release_unlaunched(
+            &serving(&*handles.release_unlaunched_member, over),
+            member,
+            arguments,
+        ),
+        Method::Socket => members::socket(
+            &serving(&*handles.register_member_socket, over),
+            member,
+            arguments,
+        ),
+        Method::TaskCreate => {
+            tasks::task_create(&serving(&*handles.create_task, over), member, arguments)
+        }
+        Method::Dependencies => tasks::dependencies(
+            &serving(&*handles.set_task_dependencies, over),
+            member,
+            arguments,
+        ),
+        Method::Claim => tasks::claim(&serving(&*handles.claim_task, over), member, arguments),
+        Method::Release => {
+            tasks::release(&serving(&*handles.release_task, over), member, arguments)
+        }
         #[cfg(any(test, feature = "test-support"))]
         Method::CreateRun => {
             test_only::create_run(&serving(&*handles.create_run, over), member, arguments)
@@ -525,222 +562,34 @@ fn serve(
             test_only::bootstrap_run(&serving(&*handles.bootstrap_run, over), member, arguments)
         }
         #[cfg(any(test, feature = "test-support"))]
-        Method::BootstrapJoin => test_only::bootstrap_join(handles, member, arguments),
+        Method::BootstrapJoin => {
+            test_only::bootstrap_join(&serving(&*handles.join_run, over), member, arguments)
+        }
         #[cfg(any(test, feature = "test-support"))]
-        Method::TaskRaw => tasks::task_raw(handles, member, arguments),
+        Method::TaskRaw => tasks::task_raw(&serving(&*handles.read_task, over), member, arguments),
     }
 }
 
-/// `_admit(member, reservation)`: the member's row, as `dict(row)`. The
-/// member stays the JSON value passed, which the board bounds.
-fn admit(
-    handles: &SwarmBoardHandles,
-    actor: &str,
-    arguments: Vec<Value>,
-) -> Result<Served, BoardError> {
-    let [member, reservation] = take(arguments)?;
-    let admitted = handles.admit_member.execute(AdmitMemberRequest {
-        actor: actor.to_owned(),
-        member,
-        reservation,
-    })?;
-    Ok(Served {
-        value: member_row(admitted.row),
-        decision: match admitted.decision {
-            AdmissionDecision::Reserved => "reserved",
-            AdmissionDecision::Retry => "retry",
-        },
-    })
-}
-
-fn activate(
-    handles: &SwarmBoardHandles,
-    actor: &str,
-    arguments: Vec<Value>,
-) -> Result<Served, BoardError> {
-    let [member, reservation, pid, started, socket] = take(arguments)?;
-    handles.activate_member.execute(ActivateMemberRequest {
-        actor: actor.to_owned(),
-        member,
-        reservation,
-        launch: LaunchIdentity { pid, started },
-        socket,
-    })?;
-    Ok(done("activated"))
-}
-
-fn record_launch(
-    handles: &SwarmBoardHandles,
-    actor: &str,
-    arguments: Vec<Value>,
-) -> Result<Served, BoardError> {
-    let [member, reservation, pid, started] = take(arguments)?;
-    handles
-        .record_member_launch
-        .execute(RecordMemberLaunchRequest {
-            actor: actor.to_owned(),
-            member,
-            reservation,
-            launch: LaunchIdentity { pid, started },
-        })?;
-    Ok(done("recorded"))
-}
-
-fn release_unlaunched(
-    handles: &SwarmBoardHandles,
-    actor: &str,
-    arguments: Vec<Value>,
-) -> Result<Served, BoardError> {
-    let [member] = take(arguments)?;
-    handles
-        .release_unlaunched_member
-        .execute(ReleaseUnlaunchedMemberRequest {
-            actor: actor.to_owned(),
-            member,
-        })?;
-    Ok(done("released"))
-}
-
-fn socket(
-    handles: &SwarmBoardHandles,
-    actor: &str,
-    arguments: Vec<Value>,
-) -> Result<Served, BoardError> {
-    let [socket] = take(arguments)?;
-    handles
-        .register_member_socket
-        .execute(RegisterMemberSocketRequest {
-            actor: actor.to_owned(),
-            socket,
-        })?;
-    Ok(done("registered"))
-}
-
-/// A method that returns `None`, and the decision it took.
+/// A method that returns `None` and acted on no task or message (and has
+/// no cursor to move), and the decision it took.
 fn done(decision: &'static str) -> Served {
     Served {
         value: Value::Null,
         decision,
+        task_id: None,
+        message_id: None,
+        cursor_moved: None,
     }
 }
 
 /// The bound arguments as an array of the signature's length.
 fn take<const N: usize>(arguments: Vec<Value>) -> Result<[Value; N], BoardError> {
-    arguments
-        .try_into()
-        .map_err(|_| {
-            BoardError::new(
-                RefusalKind::Internal,
-                "swarm board bound the wrong number of arguments",
-            )
-        })
-}
-
-/// The test-only methods: their signatures and their serving.
-#[cfg(any(test, feature = "test-support"))]
-mod test_only {
-    use serde_json::Value;
-
-    use super::{
-        BootstrapRun, BootstrapRunRequest, CreateBranch, CreateRun, CreateRunRequest,
-        JoinRunRequest, Joined, LaunchIdentity, Parameter, Served, SwarmBoardHandles, done,
-        required, take,
-    };
-    use crate::domain::swarm::{BoardError, RefusalKind};
-
-    pub(super) const CREATE: [Parameter; 5] = [
-        required("goal"),
-        required("constraints"),
-        required("criteria"),
-        required("member_limit"),
-        required("deadline"),
-    ];
-    pub(super) const BOOTSTRAP: [Parameter; 3] =
-        [required("pid"), required("started"), required("socket")];
-    /// `_bootstrap(pid, started, socket, reservation=None)`'s signature.
-    pub(super) const JOIN: [Parameter; 4] = [
-        required("pid"),
-        required("started"),
-        required("socket"),
-        Parameter {
-            name: "reservation",
-            default: Some(|| Value::Null),
-        },
-    ];
-
-    pub(super) fn create_run(
-        create_run: &CreateRun,
-        member: &str,
-        arguments: Vec<Value>,
-    ) -> Result<Served, BoardError> {
-        let [goal, constraints, criteria, member_limit, deadline] = take(arguments)?;
-        let created = create_run.execute(CreateRunRequest {
-            member: member.to_owned(),
-            goal,
-            constraints,
-            criteria,
-            member_limit,
-            deadline,
-        })?;
-        Ok(Served {
-            value: Value::Null,
-            decision: match created.branch {
-                CreateBranch::Fresh => "fresh",
-                CreateBranch::OverSetup => "over_setup",
-            },
-            task_id: None,
-            message_id: None,
-            cursor_moved: None,
-        })
-    }
-
-    /// The three values reach the store as the member passed them: Python
-    /// binds them untyped (epic P3), so a type is never refused here.
-    pub(super) fn bootstrap_run(
-        bootstrap_run: &BootstrapRun,
-        member: &str,
-        arguments: Vec<Value>,
-    ) -> Result<Served, BoardError> {
-        let [pid, started, socket] = take(arguments)?;
-        let bootstrapped = bootstrap_run.execute(BootstrapRunRequest {
-            member: member.to_owned(),
-            pid,
-            started,
-            socket,
-        })?;
-        Ok(Served {
-            value: Value::Null,
-            decision: if bootstrapped.created {
-                "created"
-            } else {
-                "existing"
-            },
-            task_id: None,
-            message_id: None,
-            cursor_moved: None,
-        })
-    }
-
-    /// `join_process` for the calling member: `null`, as the driver alias
-    /// answers until S12 adds the summary.
-    pub(super) fn bootstrap_join(
-        handles: &SwarmBoardHandles,
-        member: &str,
-        arguments: Vec<Value>,
-    ) -> Result<Served, BoardError> {
-        let [pid, started, socket, reservation] = take(arguments)?;
-        let joined = handles.join_run.execute(JoinRunRequest {
-            member: member.to_owned(),
-            reservation,
-            launch: LaunchIdentity { pid, started },
-            socket,
-        })?;
-        Ok(done(match joined {
-            Joined::Admitted => "admitted",
-            Joined::AlreadyLive { .. } => "already_live",
-            Joined::Reactivated => "reactivated",
-        }))
-    }
+    arguments.try_into().map_err(|_| {
+        BoardError::new(
+            RefusalKind::Internal,
+            "swarm board bound the wrong number of arguments",
+        )
+    })
 }
 
 /// `_status`'s dict: the counts, then the run's fields as stored.
@@ -805,8 +654,16 @@ fn float(value: f64) -> Result<Value, BoardError> {
         })
 }
 
+#[path = "swarm_board_dispatch_members.rs"]
+mod members;
+
 #[path = "swarm_board_dispatch_tasks.rs"]
 mod tasks;
+
+/// The test-only methods: their signatures and their serving.
+#[cfg(any(test, feature = "test-support"))]
+#[path = "swarm_board_dispatch_test_only.rs"]
+mod test_only;
 
 #[cfg(test)]
 #[path = "swarm_board_dispatch_tests.rs"]

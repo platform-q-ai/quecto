@@ -8,8 +8,11 @@
 //! every other field is one of the [`OTHER_PORTS`] allowlist: a nested use
 //! case, a second repository, or a repository behind any other type fails.
 //!
-//! A slice that composes use cases (S6's `JoinRun`) must extend `over` to
-//! reach the nested ones, and this rule with it.
+//! A use case that runs another's work (S6's `JoinRun`, which runs
+//! `_admit`'s and `_activate`'s) calls that work's shared function over its
+//! own repository (`admit_member::admit`, `activate_member::activate`),
+//! never a nested use case, so `over` meters every transaction of the call
+//! and no use case is allowlisted here.
 use std::collections::BTreeSet;
 use std::path::Path;
 

@@ -13,7 +13,7 @@ fn observation() -> BoardOpObservation {
     BoardOpObservation {
         op: "_status".into(),
         actor_ref: Redacted::from("parent"),
-        role: BoardRole::Host,
+        role: Some(BoardRole::Host),
         run_id: None,
         task_id: None,
         message_id: None,

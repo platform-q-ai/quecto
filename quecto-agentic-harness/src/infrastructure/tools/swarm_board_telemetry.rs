@@ -15,6 +15,7 @@ use serde_json::Value;
 
 use crate::application::swarm::dto::CallMeasure;
 use crate::domain::redaction::Redacted;
+use crate::domain::swarm::telemetry::run_role;
 use crate::domain::swarm::validation::MEMBER_ID_MAX_BYTES;
 use crate::domain::swarm::{BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind};
 
@@ -45,7 +46,9 @@ pub(super) enum Level {
 pub(super) struct Finished<'a> {
     pub op: &'static str,
     pub level: Level,
-    pub role: BoardRole,
+    /// `None` for a member-facing op: the caller's role is read from the
+    /// run its measure found.
+    pub role: Option<BoardRole>,
     pub member: &'a str,
     /// The decision taken, or the refusal's kind.
     pub outcome: Result<&'static str, RefusalKind>,
@@ -201,7 +204,14 @@ pub(super) fn observation(
     BoardOpObservation {
         op: call.op.to_owned(),
         actor_ref: actor,
-        role: call.role,
+        role: call.role.or_else(|| {
+            let roles = measure.and_then(|measure| measure.run_roles.as_ref())?;
+            Some(run_role(
+                call.member,
+                roles.coordinator.as_deref(),
+                roles.integrator.as_deref(),
+            ))
+        }),
         run_id: measure.and_then(|measure| measure.run_id.clone()),
         task_id: served.and_then(|served| served.task_id),
         message_id: served.and_then(|served| served.message_id),

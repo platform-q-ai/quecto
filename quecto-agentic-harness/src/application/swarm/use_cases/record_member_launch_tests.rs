@@ -5,7 +5,8 @@ use crate::application::swarm::board_test_support::{
     BoardState, MemoryBoard, SteppingClock, member_row, running_board, stored_member,
 };
 use crate::application::swarm::dto::{LaunchIdentity, RecordMemberLaunchRequest};
-use crate::domain::swarm::BoardError;
+use crate::application::swarm::use_cases::OverRepository;
+use crate::domain::swarm::{BoardError, RefusalKind};
 
 fn record(member: &str, reservation: &str, pid: i64, started: &str) -> RecordMemberLaunchRequest {
     RecordMemberLaunchRequest {
@@ -58,7 +59,7 @@ fn a_launch_is_recorded_once_and_its_retry_is_accepted() {
 fn a_stale_reservation_or_another_process_is_refused() {
     let service =
         |state| RecordMemberLaunch::new(MemoryBoard::with(state), SteppingClock::fixed(50.0));
-    let stale = BoardError::new("stale launch reservation");
+    let stale = BoardError::new(RefusalKind::StaleToken, "stale launch reservation");
     for (state, member, reservation) in [
         (
             with_worker("reserved", json!(null), json!(null)),
@@ -89,7 +90,7 @@ fn a_stale_reservation_or_another_process_is_refused() {
             service(with_worker("live", json!(7), json!("Mon")))
                 .execute(record("worker", "worker-reservation", pid, started))
                 .unwrap_err(),
-            BoardError::new("conflicting launch identity")
+            BoardError::new(RefusalKind::LaunchConflict, "conflicting launch identity")
         );
     }
     // A pid stored as the equal float is the same process.
@@ -114,8 +115,22 @@ fn an_unknown_member_status_records_no_launch() {
             service
                 .execute(record("worker", "worker-reservation", 7, "Mon"))
                 .unwrap_err(),
-            BoardError::new("stale launch reservation"),
+            BoardError::new(RefusalKind::StaleToken, "stale launch reservation"),
             "{status}"
         );
     }
+}
+
+/// Served over another repository (#2303 reconcile), the launch is recorded
+/// on that board alone.
+#[test]
+fn over_records_on_the_given_board() {
+    let composed_over = MemoryBoard::with(BoardState::default());
+    let other = MemoryBoard::with(with_worker("reserved", json!(null), json!(null)));
+    RecordMemberLaunch::new(composed_over.clone(), SteppingClock::fixed(50.0))
+        .over(other.clone())
+        .execute(record("worker", "worker-reservation", 7, "Mon"))
+        .unwrap();
+    assert_eq!(other.snapshot().members[1].get("pid"), Some(&json!(7)));
+    assert!(composed_over.transactions().is_empty());
 }

@@ -148,7 +148,11 @@ pub struct BoardOpObservation {
     /// caller chose, bounded by the board, and redacted when it is shaped
     /// like a credential.
     pub actor_ref: Redacted,
-    pub role: BoardRole,
+    /// The harness's own op is [`BoardRole::Host`]; a member-facing op
+    /// records the caller's role in the run ([`run_role`]), or `None`
+    /// (written `null`) when the op read no run: it was refused first, or
+    /// the board holds none. Never a role guessed.
+    pub role: Option<BoardRole>,
     /// The run the op found, when it found one and its id is one the
     /// board generates ([`board_run_id`]); any other id (a board edited
     /// from outside) is `None`, so it is never caller text and is not
@@ -181,6 +185,18 @@ pub struct BoardOpObservation {
     /// always the size of Python's `json.dumps` text (whose separators
     /// carry spaces).
     pub result_bytes: u64,
+}
+
+/// The role `member` holds in a run whose coordinator and integrator are
+/// the ones given (#2303 reconcile): the coordinator first (Python's
+/// `create` makes it the integrator too), then the integrator, and any
+/// other caller a worker.
+pub fn run_role(member: &str, coordinator: Option<&str>, integrator: Option<&str>) -> BoardRole {
+    match (coordinator == Some(member), integrator == Some(member)) {
+        (true, _) => BoardRole::Coordinator,
+        (false, true) => BoardRole::Integrator,
+        (false, false) => BoardRole::Worker,
+    }
 }
 
 /// Whether `id` is a run id the boards generate (#2303 round-4 review

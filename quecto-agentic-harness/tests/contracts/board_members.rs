@@ -430,10 +430,13 @@ fn membership_values_bind_as_pythons_sqlite3_binds_them() {
     })
     .unwrap();
     let list = |position: usize| {
-        BoardError::new(format!(
-            "coordination store unavailable or contended: \
+        BoardError::new(
+            RefusalKind::Invalid,
+            format!(
+                "coordination store unavailable or contended: \
              Error binding parameter {position}: type 'list' is not supported"
-        ))
+            ),
+        )
     };
     let launch = |pid: Value, started: Value| LaunchIdentity { pid, started };
     for (position, refused) in [
@@ -516,9 +519,12 @@ fn a_reused_reservation_or_identity_is_a_store_refusal() {
         .unwrap_err();
         assert_eq!(
             refused,
-            BoardError::new(format!(
-                "coordination store unavailable or contended: UNIQUE constraint failed: {column}"
-            ))
+            BoardError::new(
+                RefusalKind::Store,
+                format!(
+                    "coordination store unavailable or contended: UNIQUE constraint failed: {column}"
+                )
+            )
         );
     }
 }

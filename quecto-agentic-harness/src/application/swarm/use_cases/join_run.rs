@@ -2,18 +2,24 @@
 //! harness joining its container's run. (Python returns the coordinator's
 //! `summary()`, a read model S12 adds.)
 //!
-//! A deliberate composition (#2271 round-1 review L3): `JoinRun` sequences
-//! the `AdmitMember` and `ActivateMember` use cases because Python's
-//! `join_process` calls exactly those two `Workbench` methods, `_admit` and
-//! `_activate`, as the coordinator, each in its own transaction. Composing
-//! them keeps their gates, refusals and commits (an admission that commits
-//! before its activation is refused) identical to Python's by
-//! construction, rather than restating them in a third transaction.
+//! A deliberate composition (#2271 round-1 review L3): `JoinRun` runs the
+//! work of the `AdmitMember` and `ActivateMember` use cases because
+//! Python's `join_process` calls exactly those two `Workbench` methods,
+//! `_admit` and `_activate`, as the coordinator, each in its own
+//! transaction. Running the same functions keeps their gates, refusals and
+//! commits (an admission that commits before its activation is refused)
+//! identical to Python's by construction, rather than restating them in a
+//! third transaction. It runs them over its own repository (#2303
+//! reconcile), not through nested use cases: a board use case holds one
+//! repository, so serving it `over` a metered call's repository measures
+//! all three transactions.
 use std::sync::Arc;
 
 use serde_json::Value;
 
-use super::{ActivateMember, AdmitMember};
+use super::OverRepository;
+use super::activate_member::activate;
+use super::admit_member::admit;
 use crate::application::swarm::board_membership::{
     MEMBER_MAX_BYTES, holds_reservation, live, same_process,
 };
@@ -21,8 +27,8 @@ use crate::application::swarm::board_operation::atomic;
 use crate::application::swarm::dto::{
     ActivateMemberRequest, AdmitMemberRequest, JoinRunRequest, Joined,
 };
-use crate::application::swarm::ports::{BoardRepository, IdSource};
-use crate::domain::swarm::{BoardError, bounded, python_truthy};
+use crate::application::swarm::ports::{BoardRepository, Clock, IdSource};
+use crate::domain::swarm::{BoardError, RefusalKind, bounded, python_truthy};
 
 /// Reads the run's coordinator and the member's row in one plain
 /// transaction, then acts **as the coordinator** (the events' actor and the
@@ -34,23 +40,20 @@ use crate::domain::swarm::{BoardError, bounded, python_truthy};
 /// coordinator activates it.
 pub struct JoinRun {
     repository: Arc<dyn BoardRepository>,
+    clock: Arc<dyn Clock + Send + Sync>,
     ids: Arc<dyn IdSource>,
-    admit: Arc<AdmitMember>,
-    activate: Arc<ActivateMember>,
 }
 
 impl JoinRun {
     pub fn new(
         repository: Arc<dyn BoardRepository>,
+        clock: Arc<dyn Clock + Send + Sync>,
         ids: Arc<dyn IdSource>,
-        admit: Arc<AdmitMember>,
-        activate: Arc<ActivateMember>,
     ) -> Self {
         Self {
             repository,
+            clock,
             ids,
-            admit,
-            activate,
         }
     }
 
@@ -62,7 +65,10 @@ impl JoinRun {
         let member = Value::from(request.member.as_str());
         let (coordinator, existing) = atomic(&*self.repository, false, |transaction| {
             let Some(coordinator) = transaction.run_coordinator()? else {
-                return Err(BoardError::new("coordination run missing"));
+                return Err(BoardError::new(
+                    RefusalKind::RunMissing,
+                    "coordination run missing",
+                ));
             };
             Ok((coordinator, transaction.member_row(&member, None)?))
         })?;
@@ -74,6 +80,7 @@ impl JoinRun {
             Some(row) if holds_reservation(row, &request.reservation) => Joined::Reactivated,
             Some(_) => {
                 return Err(BoardError::new(
+                    RefusalKind::LaunchConflict,
                     "launch reservation does not match invoking process",
                 ));
             }
@@ -94,24 +101,43 @@ impl JoinRun {
                 bounded(&member, "member", MEMBER_MAX_BYTES)?;
             }
             return Err(BoardError::new(
+                RefusalKind::NotMember,
                 "invoking member is unknown or death confirmed",
             ));
         };
         if let Some(reservation) = &admitting {
-            self.admit.execute(AdmitMemberRequest {
-                actor: coordinator.clone(),
-                member: member.clone(),
-                reservation: reservation.clone(),
-            })?;
+            admit(
+                &*self.repository,
+                &*self.clock,
+                AdmitMemberRequest {
+                    actor: coordinator.clone(),
+                    member: member.clone(),
+                    reservation: reservation.clone(),
+                },
+            )?;
         }
-        self.activate.execute(ActivateMemberRequest {
-            actor: coordinator,
-            member,
-            reservation: admitting.unwrap_or(request.reservation),
-            launch: request.launch,
-            socket: request.socket,
-        })?;
+        activate(
+            &*self.repository,
+            &*self.clock,
+            ActivateMemberRequest {
+                actor: coordinator,
+                member,
+                reservation: admitting.unwrap_or(request.reservation),
+                launch: request.launch,
+                socket: request.socket,
+            },
+        )?;
         Ok(joined)
+    }
+}
+
+impl OverRepository for JoinRun {
+    fn over(&self, repository: Arc<dyn BoardRepository>) -> Self {
+        Self {
+            repository,
+            clock: self.clock.clone(),
+            ids: self.ids.clone(),
+        }
     }
 }
 

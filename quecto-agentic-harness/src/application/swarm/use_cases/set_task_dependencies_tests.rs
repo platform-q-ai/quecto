@@ -5,7 +5,8 @@ use crate::application::swarm::board_test_support::{
     BoardState, MemoryBoard, SteppingClock, member_row, running_board, stored_task,
 };
 use crate::application::swarm::dto::SetTaskDependenciesRequest;
-use crate::domain::swarm::BoardError;
+use crate::application::swarm::use_cases::OverRepository;
+use crate::domain::swarm::{BoardError, RefusalKind};
 
 /// Tasks 1 (completed), 2 (ready, on 1), 3 (claimed by the worker).
 fn board() -> BoardState {
@@ -17,6 +18,18 @@ fn board() -> BoardState {
         stored_task(3, "claimed", json!([]), Some("worker")),
     ];
     state
+}
+
+/// Each refusal's kind (#2303).
+fn kind(refusal: &str) -> RefusalKind {
+    match refusal {
+        "unknown task" => RefusalKind::NotFound,
+        "dependencies may change only before claiming" => RefusalKind::WrongState,
+        "invalid, missing or self dependencies" | "dependencies must be a bounded list" => {
+            RefusalKind::Invalid
+        }
+        other => panic!("no kind listed for {other:?}"),
+    }
 }
 
 fn set(task_id: Value, dependencies: Value) -> SetTaskDependenciesRequest {
@@ -63,7 +76,7 @@ fn dependencies_reject_missing_self_and_cycles() {
             service
                 .execute(set(task_id.clone(), dependencies.clone()))
                 .unwrap_err(),
-            BoardError::new(refusal),
+            BoardError::new(kind(refusal), refusal),
             "{task_id} -> {dependencies}"
         );
     }
@@ -89,11 +102,27 @@ fn a_blocked_unclaimed_task_may_change_and_cycles_are_refused() {
     let service = SetTaskDependencies::new(board.clone(), SteppingClock::fixed(50.0));
     assert_eq!(
         service.execute(set(json!(1), json!([4]))).unwrap_err(),
-        BoardError::new("cyclic dependencies")
+        BoardError::new(RefusalKind::DependencyCycle, "cyclic dependencies")
     );
     service.execute(set(json!(4), json!([1]))).unwrap();
     assert_eq!(
         board.snapshot().tasks[3].get("dependencies"),
         Some(&json!([1]))
     );
+}
+
+/// Served over another repository (#2303 reconcile), the change is made on
+/// that board alone, and answers the id the task's row holds, not the one
+/// the caller gave (`"2"` binds to task 2).
+#[test]
+fn over_changes_the_given_board_and_answers_the_stored_id() {
+    let composed_over = MemoryBoard::with(board());
+    let other = MemoryBoard::with(board());
+    let task = SetTaskDependencies::new(composed_over.clone(), SteppingClock::fixed(50.0))
+        .over(other.clone())
+        .execute(set(json!("2"), json!([])))
+        .unwrap();
+    assert_eq!(task, json!(2));
+    assert_eq!(other.snapshot().events.len(), 1);
+    assert!(composed_over.transactions().is_empty());
 }

@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use rusqlite::Connection;
 
 use super::{SqliteBoardCallMeter, Tally, busy_delay, unwait_metered, wait_metered};
-use crate::application::swarm::dto::{BoardLocation, CallMeasure};
+use crate::application::swarm::dto::{BoardLocation, CallMeasure, RunRoles};
 use crate::application::swarm::ports::{BoardCallMeter, BoardRepository, MeteredCall};
 use crate::domain::swarm::BoardError;
 use crate::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
@@ -303,4 +303,33 @@ fn the_busy_schedule_is_sqlites_default_under_the_timeout() {
         delays.iter().sum::<u64>(),
         u64::try_from(BUSY_TIMEOUT.as_millis()).unwrap()
     );
+}
+
+/// A metered call keeps the run's coordinator and integrator as the first
+/// run row it read holds them (#2303 reconcile), whatever the run's id:
+/// they name only the caller's role in the record, never a field of it.
+/// A board with no run has none.
+#[test]
+fn the_run_roles_are_kept_for_the_callers_role() {
+    let (dir, _store, _plain, meter) = created();
+    let call = meter.open();
+    transact(&*call).unwrap();
+    assert_eq!(measured(&*call).run_roles, None, "the store holds no run");
+    for id in [
+        "0123456789abcdef0123456789abcdef",
+        "an id edited from outside",
+    ] {
+        run_with_id(&dir, id);
+        let call = meter.open();
+        transact(&*call).unwrap();
+        transact(&*call).unwrap();
+        assert_eq!(
+            measured(&*call).run_roles,
+            Some(RunRoles {
+                coordinator: Some("parent".to_owned()),
+                integrator: Some("parent".to_owned()),
+            }),
+            "{id:?}"
+        );
+    }
 }

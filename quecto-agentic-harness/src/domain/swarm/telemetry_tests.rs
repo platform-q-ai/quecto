@@ -90,11 +90,11 @@ fn every_domain_refusal_carries_its_kind() {
         ),
         (kind(validate_extension(&json!(0))), RefusalKind::Invalid),
         (
-            kind(admission(&run(RunState::PAUSED), None, Some("r"), 0, 0.0)),
+            kind(admission(&run(RunState::PAUSED), None, &json!("r"), 0, 0.0)),
             RefusalKind::NotRunning,
         ),
         (
-            kind(admission(&running, None, Some("r"), 1, 0.0)),
+            kind(admission(&running, None, &json!("r"), 1, 0.0)),
             RefusalKind::MemberLimit,
         ),
         (
@@ -107,7 +107,7 @@ fn every_domain_refusal_carries_its_kind() {
                     reservation: Some("old".into()),
                     ..member("worker")
                 }),
-                Some("new"),
+                &json!("new"),
                 1,
                 0.0,
             )),
@@ -161,7 +161,7 @@ fn observation(outcome: BoardOpOutcome) -> BoardOpObservation {
     BoardOpObservation {
         op: "_snapshot".into(),
         actor_ref: "worker-1".into(),
-        role: BoardRole::Host,
+        role: Some(BoardRole::Host),
         run_id: Some("0123456789abcdef0123456789abcdef".into()),
         task_id: None,
         message_id: None,
@@ -268,14 +268,14 @@ fn a_budget_exhausted_run_refuses_as_budget_exhausted() {
     let blocked = authorize(Some(&paused("blocked")), "parent", Some(&parent), ACTIVE).unwrap_err();
     assert_eq!(blocked.kind(), RefusalKind::NotRunning);
 
-    let refused = admission(&paused("budget-exhausted"), None, Some("r"), 0, 0.0).unwrap_err();
+    let refused = admission(&paused("budget-exhausted"), None, &json!("r"), 0, 0.0).unwrap_err();
     assert_eq!(refused.kind(), RefusalKind::BudgetExhausted);
     assert_eq!(refused.message(), "run is paused; no new admission");
     // Still running, but past its deadline.
-    let expired = admission(&run(RunState::RUNNING), None, Some("r"), 0, 200.0).unwrap_err();
+    let expired = admission(&run(RunState::RUNNING), None, &json!("r"), 0, 200.0).unwrap_err();
     assert_eq!(expired.kind(), RefusalKind::BudgetExhausted);
     assert_eq!(expired.message(), "run is running; no new admission");
-    let blocked = admission(&paused("blocked"), None, Some("r"), 0, 0.0).unwrap_err();
+    let blocked = admission(&paused("blocked"), None, &json!("r"), 0, 0.0).unwrap_err();
     assert_eq!(blocked.kind(), RefusalKind::NotRunning);
 }
 
@@ -337,4 +337,24 @@ fn only_a_generated_run_id_is_a_board_run_id() {
     ] {
         assert!(!board_run_id(edited), "{edited:?}");
     }
+}
+
+/// A member-facing op's role is the caller's in the run (#2303 reconcile):
+/// the coordinator, then the integrator, and any other member a worker.
+#[test]
+fn a_callers_run_role_is_read_from_the_run() {
+    use super::run_role;
+    assert_eq!(
+        run_role("parent", Some("parent"), Some("parent")),
+        BoardRole::Coordinator
+    );
+    assert_eq!(
+        run_role("merger", Some("parent"), Some("merger")),
+        BoardRole::Integrator
+    );
+    assert_eq!(
+        run_role("worker", Some("parent"), Some("merger")),
+        BoardRole::Worker
+    );
+    assert_eq!(run_role("worker", None, None), BoardRole::Worker);
 }

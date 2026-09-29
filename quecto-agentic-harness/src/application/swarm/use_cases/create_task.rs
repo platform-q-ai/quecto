@@ -3,13 +3,14 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use super::OverRepository;
 use crate::application::swarm::board_operation::{detail, operation};
 use crate::application::swarm::board_tasks::read_task;
 use crate::application::swarm::dto::{CreateTaskRequest, CreatedTask, NewTask};
 use crate::application::swarm::ports::{BoardEncoding, BoardRepository, BoardTransaction, Clock};
 use crate::domain::swarm::validation::{TEXT_MAX_BYTES, has_content};
 use crate::domain::swarm::{
-    Access, BoardError, bounded, bounded_text, dependency_list, python_truthy,
+    Access, BoardError, RefusalKind, bounded, bounded_text, dependency_list, python_truthy,
     validate_dependencies,
 };
 
@@ -110,9 +111,10 @@ impl CreateTask {
     ) -> Result<Value, BoardError> {
         let held = transaction.task_count()?;
         if held >= TASK_BOARD_CAPACITY {
-            return Err(BoardError::new(format!(
-                "task board full ({TASK_BOARD_CAPACITY}); settle existing work"
-            )));
+            return Err(BoardError::new(
+                RefusalKind::CapacityFull,
+                format!("task board full ({TASK_BOARD_CAPACITY}); settle existing work"),
+            ));
         }
         let inserted = transaction.insert_task(task)?;
         let id = Value::from(inserted);
@@ -142,8 +144,19 @@ fn acceptance(value: &Value) -> Result<(), BoardError> {
     match value {
         Value::Array(entries) if !entries.is_empty() && entries.iter().all(criterion) => Ok(()),
         _ => Err(BoardError::new(
+            RefusalKind::Invalid,
             "task acceptance criteria required: use a nonempty list[str], e.g. ['tests pass']",
         )),
+    }
+}
+
+impl OverRepository for CreateTask {
+    fn over(&self, repository: Arc<dyn BoardRepository>) -> Self {
+        Self {
+            repository,
+            clock: self.clock.clone(),
+            encoding: self.encoding.clone(),
+        }
     }
 }
 

@@ -187,7 +187,10 @@ pub fn run_rust(steps: &[Step]) -> Outcome {
         last = if step.method == SQL_STEP {
             edit(&side.database, &step.args)
         } else {
-            side.neutral(rust.call_text(&step.member, &step.method, &step.args, step.now))
+            side.neutral(
+                rust.call_text(&step.member, &step.method, &step.args, step.now)
+                    .0,
+            )
         };
     }
     last

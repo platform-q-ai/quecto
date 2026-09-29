@@ -5,8 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
-use super::BoardError;
 use super::records::{MemberRecord, MemberState, RunRecord, RunState, TaskState};
+use super::{BoardError, RefusalKind};
 
 /// Events after which ready work may be waiting for a taker (#2127).
 pub const READY_WORK_ACTIONS: [&str; 11] = [
@@ -146,8 +146,8 @@ pub fn notification_targets(
             targets.extend(takers);
         }
     }
-    if let Some(error) = sort_error(!targets.is_empty(), &strays) {
-        return Err(BoardError::new(error));
+    if let Some(unorderable) = sort_error(!targets.is_empty(), &strays) {
+        return Err(BoardError::new(RefusalKind::Store, unorderable));
     }
     let woken: Vec<MemberRecord> = targets
         .iter()
@@ -293,9 +293,10 @@ fn unhashable(value: &Value, lookup: Lookup) -> BoardError {
         Lookup::SetElement => "a set element",
         Lookup::DictKey => "a dict key",
     };
-    BoardError::new(format!(
-        "cannot use '{kind}' as {role} (unhashable type: '{kind}')"
-    ))
+    BoardError::new(
+        RefusalKind::Store,
+        format!("cannot use '{kind}' as {role} (unhashable type: '{kind}')"),
+    )
 }
 
 /// The integer a float equals, when it is whole and within `i64`.

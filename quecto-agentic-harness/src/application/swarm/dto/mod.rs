@@ -10,7 +10,7 @@ pub mod run;
 pub mod tasks;
 
 pub use location::BoardLocation;
-pub use measure::CallMeasure;
+pub use measure::{CallMeasure, RunRoles};
 pub use membership::{
     ActivateMemberRequest, AdmissionDecision, AdmitMemberRequest, AdmittedMember, JoinRunRequest,
     Joined, LaunchIdentity, RecordMemberLaunchRequest, RegisterMemberSocketRequest,

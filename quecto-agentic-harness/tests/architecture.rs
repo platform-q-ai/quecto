@@ -1521,8 +1521,10 @@ fn application_path_allowed(path: &str) -> bool {
             | "SetTaskDependenciesRequest"
             | "TaskRow"
             | "TaskUpdate"
-            // The measure the store's meter hands back (#2303).
-            | "CallMeasure",
+            // The measure the store's meter hands back (#2303), and the
+            // run roles it keeps for a member-facing op's caller role.
+            | "CallMeasure"
+            | "RunRoles",
         ] => true,
         ["crate", "application", ..] => false,
         // Every other crate path must start at a layer infrastructure

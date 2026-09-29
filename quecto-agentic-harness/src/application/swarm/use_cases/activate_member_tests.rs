@@ -5,7 +5,8 @@ use crate::application::swarm::board_test_support::{
     BoardState, MemoryBoard, SteppingClock, member_row, running_board, stored_member,
 };
 use crate::application::swarm::dto::{ActivateMemberRequest, LaunchIdentity};
-use crate::domain::swarm::{BoardError, RunState};
+use crate::application::swarm::use_cases::OverRepository;
+use crate::domain::swarm::{BoardError, RefusalKind, RunState};
 
 fn launch(pid: i64, started: &str) -> LaunchIdentity {
     LaunchIdentity {
@@ -82,7 +83,10 @@ fn launch_identity_and_reservation_are_checked() {
             service(live())
                 .execute(activate("worker", Some("worker-reservation"), pid, started))
                 .unwrap_err(),
-            BoardError::new("member already active in a different process")
+            BoardError::new(
+                RefusalKind::LaunchConflict,
+                "member already active in a different process"
+            )
         );
     }
     // A reserved member whose launch was recorded under another pid is
@@ -94,7 +98,10 @@ fn launch_identity_and_reservation_are_checked() {
     service(with_worker("live", json!(null), json!(null)))
         .execute(activate("worker", Some("worker-reservation"), 1, "s"))
         .unwrap();
-    let stale = BoardError::new("unknown or stale launch reservation");
+    let stale = BoardError::new(
+        RefusalKind::StaleToken,
+        "unknown or stale launch reservation",
+    );
     for (state, member, reservation) in [
         (live(), "worker", Some("other")),
         (live(), "worker", None),
@@ -132,7 +139,10 @@ fn a_stored_pid_compares_as_python_compares_it() {
         service(json!("1"))
             .execute(activate("worker", Some("worker-reservation"), 1, "s"))
             .unwrap_err(),
-        BoardError::new("member already active in a different process")
+        BoardError::new(
+            RefusalKind::LaunchConflict,
+            "member already active in a different process"
+        )
     );
 }
 
@@ -154,7 +164,10 @@ fn a_null_reservation_matches_only_an_absent_one() {
         service
             .execute(activate("worker", Some("x"), 1, "s"))
             .unwrap_err(),
-        BoardError::new("unknown or stale launch reservation")
+        BoardError::new(
+            RefusalKind::StaleToken,
+            "unknown or stale launch reservation"
+        )
     );
 }
 
@@ -166,7 +179,7 @@ fn a_stopped_or_expired_run_refuses_activation() {
     if let Some(run) = paused.run.as_mut() {
         run.record.status = Some(RunState::PAUSED);
     }
-    let refused = BoardError::new("run stopped before activation");
+    let refused = BoardError::new(RefusalKind::NotRunning, "run stopped before activation");
     let service = ActivateMember::new(MemoryBoard::with(paused), SteppingClock::fixed(50.0));
     assert_eq!(
         service
@@ -212,8 +225,25 @@ fn an_unknown_member_status_is_not_activated() {
             service
                 .execute(activate("worker", Some("worker-reservation"), 1, "s"))
                 .unwrap_err(),
-            BoardError::new("unknown or stale launch reservation"),
+            BoardError::new(
+                RefusalKind::StaleToken,
+                "unknown or stale launch reservation"
+            ),
             "{status}"
         );
     }
+}
+
+/// Served over another repository (#2303 reconcile), activation writes to
+/// that board alone.
+#[test]
+fn over_activates_on_the_given_board() {
+    let composed_over = MemoryBoard::with(BoardState::default());
+    let other = MemoryBoard::with(with_worker("reserved", json!(null), json!(null)));
+    ActivateMember::new(composed_over.clone(), SteppingClock::fixed(50.0))
+        .over(other.clone())
+        .execute(activate("worker", Some("worker-reservation"), 4242, "Mon"))
+        .unwrap();
+    assert_eq!(other.snapshot().members[1].text("status"), Some("live"));
+    assert!(composed_over.transactions().is_empty());
 }

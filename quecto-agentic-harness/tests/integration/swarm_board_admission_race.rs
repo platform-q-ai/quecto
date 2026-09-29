@@ -16,7 +16,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use quecto::application::swarm::dto::BoardLocation;
 use quecto::application::swarm::ports::BoardRepository;
 use quecto::composition::swarm::build_swarm_board_handles;
-use quecto::domain::swarm::BoardError;
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 use quecto::infrastructure::tools::swarm_board_dispatch::call;
 use serde_json::json;
@@ -84,7 +83,7 @@ fn concurrent_rust_admissions_never_exceed_the_limit() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs_f64();
-    let parent = build_swarm_board_handles(location.clone());
+    let parent = build_swarm_board_handles(location.clone(), None);
     call(
         &parent,
         "parent",
@@ -102,7 +101,7 @@ fn concurrent_rust_admissions_never_exceed_the_limit() {
             let locked_out = locked_out.clone();
             std::thread::spawn(move || {
                 // Each thread is its own harness: its own handles and store.
-                let handles = build_swarm_board_handles(location);
+                let handles = build_swarm_board_handles(location, None);
                 start.wait();
                 let began = Instant::now();
                 let mut retries = Retries::default();
@@ -114,7 +113,7 @@ fn concurrent_rust_admissions_never_exceed_the_limit() {
                         json!([format!("child-{index}"), format!("reserve-{index}")]),
                     );
                     match answer {
-                        Err(BoardError(text)) if text == LOCKED => {
+                        Err(refusal) if refusal.message() == LOCKED => {
                             retries.locked(&locked_out, began, &format!("child-{index}"));
                         }
                         definitive => return (definitive, retries.0),
@@ -140,7 +139,9 @@ fn concurrent_rust_admissions_never_exceed_the_limit() {
     assert_eq!(admitted, 3, "4 minus the coordinator: {answers:?}");
     assert_eq!(refused.len(), 5, "{answers:?}");
     assert!(
-        refused.iter().all(|refusal| refusal.0 == LIMIT_REACHED),
+        refused
+            .iter()
+            .all(|refusal| refusal.message() == LIMIT_REACHED),
         "{answers:?}"
     );
     let repository = SqliteBoardRepository::new(&location);
@@ -179,7 +180,7 @@ fn concurrent_python_and_rust_admissions_never_exceed_the_limit() {
             .unwrap()
             .as_secs_f64()
     };
-    let parent = build_swarm_board_handles(location.clone());
+    let parent = build_swarm_board_handles(location.clone(), None);
     call(
         &parent,
         "parent",
@@ -223,7 +224,7 @@ fn concurrent_python_and_rust_admissions_never_exceed_the_limit() {
             let start = start.clone();
             let locked_out = locked_out.clone();
             std::thread::spawn(move || {
-                let handles = build_swarm_board_handles(location);
+                let handles = build_swarm_board_handles(location, None);
                 start.wait();
                 let began = Instant::now();
                 let mut retries = Retries::default();
@@ -235,11 +236,11 @@ fn concurrent_python_and_rust_admissions_never_exceed_the_limit() {
                         json!([format!("rs-{index}"), format!("reserve-rs-{index}")]),
                     );
                     match answer {
-                        Err(BoardError(text)) if text == LOCKED => {
+                        Err(refusal) if refusal.message() == LOCKED => {
                             retries.locked(&locked_out, began, &format!("rs-{index}"));
                         }
                         Ok(_) => return (Ok(()), retries.0),
-                        Err(BoardError(text)) => return (Err(text), retries.0),
+                        Err(refusal) => return (Err(refusal.message().to_owned()), retries.0),
                     }
                 }
             })

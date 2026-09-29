@@ -15,7 +15,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use quecto::application::swarm::dto::BoardLocation;
 use quecto::composition::swarm::{SwarmBoardHandles, build_swarm_board_handles};
-use quecto::domain::swarm::BoardError;
 use quecto::infrastructure::tools::swarm_board_dispatch::call;
 use serde_json::{Value, json};
 use serial_test::serial;
@@ -41,7 +40,7 @@ fn board(dir: &std::path::Path) -> BoardLocation {
         database: dir.join("swarm.sqlite"),
         checkout: dir.to_path_buf(),
     };
-    let parent = build_swarm_board_handles(location.clone());
+    let parent = build_swarm_board_handles(location.clone(), None);
     let limit = i64::try_from(MEMBERS).unwrap() + 1;
     call(
         &parent,
@@ -114,7 +113,7 @@ fn contend(
 }
 
 fn rust_claim(handles: &SwarmBoardHandles, member: &str) -> Result<Value, String> {
-    call(handles, member, "claim", json!([1])).map_err(|BoardError(text)| text)
+    call(handles, member, "claim", json!([1])).map_err(|refusal| refusal.message().to_owned())
 }
 
 fn judge(answers: &[(Result<Value, String>, usize)], location: &BoardLocation) {
@@ -161,7 +160,7 @@ fn concurrent_claims_of_one_task_have_exactly_one_winner() {
             let start = start.clone();
             let locked_out = locked_out.clone();
             std::thread::spawn(move || {
-                let handles = build_swarm_board_handles(location);
+                let handles = build_swarm_board_handles(location, None);
                 let member = format!("member-{index}");
                 start.wait();
                 contend(&member, &locked_out, || rust_claim(&handles, &member))
@@ -206,7 +205,7 @@ fn concurrent_python_and_rust_claims_have_exactly_one_winner() {
                         }
                     })
                 } else {
-                    let handles = build_swarm_board_handles(location);
+                    let handles = build_swarm_board_handles(location, None);
                     start.wait();
                     contend(&member, &locked_out, || rust_claim(&handles, &member))
                 }

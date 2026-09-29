@@ -2,7 +2,7 @@
 //! decision and the validation of one request's usage record.
 use serde_json::Value;
 
-use super::BoardError;
+use super::{BoardError, RefusalKind};
 
 /// A run's token budget.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -85,7 +85,7 @@ pub fn usage_budget_decision(budget: &UsageBudget, totals: &UsageTotals) -> Usag
 /// float -0.0, refused here as Python refuses a JSON `-0.0`.
 /// TODO(#2270): S5 wires that codec in; until then `-0` counts are refused.
 pub fn request_measurement(record: &Value) -> Result<(u64, u64, u64), BoardError> {
-    let observation = || BoardError::new("invalid request observation");
+    let observation = || BoardError::new(RefusalKind::Invalid, "invalid request observation");
     let fields = match record.as_object() {
         Some(fields) if identified(fields.get("request_id")) => fields,
         _ => return Err(observation()),
@@ -94,10 +94,12 @@ pub fn request_measurement(record: &Value) -> Result<(u64, u64, u64), BoardError
     for (slot, field) in counts.iter_mut().zip(MEASURED_FIELDS) {
         *slot = match fields.get(field) {
             None | Some(Value::Null) => None,
-            Some(value) => Some(
-                count(value)
-                    .ok_or_else(|| BoardError::new(format!("invalid request usage {field}")))?,
-            ),
+            Some(value) => Some(count(value).ok_or_else(|| {
+                BoardError::new(
+                    RefusalKind::Invalid,
+                    format!("invalid request usage {field}"),
+                )
+            })?),
         };
     }
     let attempts = fields.get("instrumented_attempts").and_then(count);

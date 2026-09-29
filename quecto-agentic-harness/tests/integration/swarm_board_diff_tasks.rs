@@ -405,7 +405,7 @@ fn both(
     let args = args.to_string();
     let now = NOW + offset;
     (
-        rust.call_text(member, method, &args, now),
+        rust.call_text(member, method, &args, now).0,
         python.call(member, method, &args, now),
     )
 }
@@ -420,15 +420,19 @@ fn ledger_results_replay_across_implementations() {
     let rust = RustBoard::open(&database, dir.path());
     let mut python = PyBoard::start(&database, dir.path(), dir.path());
     for step in staffed(5) {
-        let outcome = rust.call_text(&step.member, &step.method, &step.args, step.now);
+        let outcome = rust
+            .call_text(&step.member, &step.method, &step.args, step.now)
+            .0;
         assert!(matches!(outcome, Outcome::Ok(_)), "{step:?}: {outcome:?}");
     }
-    let created = rust.call_text(
-        "worker",
-        "task_create",
-        r#"["rust", "by rust", ["é"], [] ]"#,
-        NOW + 3.0,
-    );
+    let created = rust
+        .call_text(
+            "worker",
+            "task_create",
+            r#"["rust", "by rust", ["é"], [] ]"#,
+            NOW + 3.0,
+        )
+        .0;
     let Outcome::Ok(created) = created else {
         panic!("{created:?}")
     };

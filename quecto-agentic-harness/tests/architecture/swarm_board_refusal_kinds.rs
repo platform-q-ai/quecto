@@ -42,6 +42,46 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "RunMissing",
     ),
     (
+        "src/application/swarm/board_tasks.rs:owned",
+        "stale or unowned claim",
+        "StaleToken",
+    ),
+    (
+        "src/application/swarm/board_tasks.rs:read_task",
+        "unknown task",
+        "NotFound",
+    ),
+    (
+        "src/application/swarm/use_cases/activate_member.rs:activate",
+        "member already active in a different process",
+        "LaunchConflict",
+    ),
+    (
+        "src/application/swarm/use_cases/activate_member.rs:activate",
+        "run stopped before activation",
+        "NotRunning",
+    ),
+    (
+        "src/application/swarm/use_cases/activate_member.rs:activate",
+        "unknown or stale launch reservation",
+        "StaleToken",
+    ),
+    (
+        "src/application/swarm/use_cases/admit_member.rs:admit",
+        "coordination store lost the member it admitted",
+        "Internal",
+    ),
+    (
+        "src/application/swarm/use_cases/claim_task.rs:ClaimTask::execute",
+        "task is not ready to claim",
+        "WrongState",
+    ),
+    (
+        "src/application/swarm/use_cases/claim_task.rs:ClaimTask::execute",
+        "unmet dependencies",
+        "WrongState",
+    ),
+    (
         "src/application/swarm/use_cases/create_run.rs:CreateRun::deadline",
         "deadline must be in the next seven days",
         "Invalid",
@@ -65,6 +105,76 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "src/application/swarm/use_cases/create_run.rs:take_over_setup",
         "only the setup coordinator can create this run; existing runs cannot be reset",
         "RunExists",
+    ),
+    (
+        "src/application/swarm/use_cases/create_task.rs:CreateTask::create",
+        "task board full ({TASK_BOARD_CAPACITY}); settle existing work",
+        "CapacityFull",
+    ),
+    (
+        "src/application/swarm/use_cases/create_task.rs:acceptance",
+        "task acceptance criteria required: use a nonempty list[str], e.g. ['tests pass']",
+        "Invalid",
+    ),
+    (
+        "src/application/swarm/use_cases/join_run.rs:JoinRun::execute",
+        "coordination run missing",
+        "RunMissing",
+    ),
+    (
+        "src/application/swarm/use_cases/join_run.rs:JoinRun::execute",
+        "invoking member is unknown or death confirmed",
+        "NotMember",
+    ),
+    (
+        "src/application/swarm/use_cases/join_run.rs:JoinRun::execute",
+        "launch reservation does not match invoking process",
+        "LaunchConflict",
+    ),
+    (
+        "src/application/swarm/use_cases/record_member_launch.rs:RecordMemberLaunch::execute",
+        "conflicting launch identity",
+        "LaunchConflict",
+    ),
+    (
+        "src/application/swarm/use_cases/record_member_launch.rs:RecordMemberLaunch::execute",
+        "stale launch reservation",
+        "StaleToken",
+    ),
+    (
+        "src/application/swarm/use_cases/release_unlaunched_member.rs:ReleaseUnlaunchedMember::execute",
+        "only an unlaunched reservation may be released",
+        "WrongState",
+    ),
+    (
+        "src/application/swarm/use_cases/set_task_dependencies.rs:SetTaskDependencies::execute",
+        "dependencies may change only before claiming",
+        "WrongState",
+    ),
+    (
+        "src/domain/swarm/dependencies.rs:acyclic",
+        "cyclic dependencies",
+        "DependencyCycle",
+    ),
+    (
+        "src/domain/swarm/dependencies.rs:dependency_list",
+        "dependencies must be a bounded list",
+        "Invalid",
+    ),
+    (
+        "src/domain/swarm/dependencies.rs:validate_dependencies",
+        "invalid, missing or self dependencies",
+        "Invalid",
+    ),
+    (
+        "src/domain/swarm/notification.rs:notification_targets",
+        "expr: unorderable",
+        "Store",
+    ),
+    (
+        "src/domain/swarm/notification.rs:unhashable",
+        "cannot use '{kind}' as {role} (unhashable type: '{kind}')",
+        "Store",
     ),
     (
         "src/domain/swarm/policy.rs:admission",
@@ -157,6 +267,16 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "Invalid",
     ),
     (
+        "src/domain/swarm/usage.rs:request_measurement",
+        "invalid request observation",
+        "Invalid",
+    ),
+    (
+        "src/domain/swarm/usage.rs:request_measurement",
+        "invalid request usage {field}",
+        "Invalid",
+    ),
+    (
         "src/domain/swarm/validation.rs:criteria",
         "duplicate criterion id",
         "Invalid",
@@ -182,6 +302,46 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "Invalid",
     ),
     (
+        "src/infrastructure/persistence/swarm_board/ledger.rs:Stored::loads",
+        "expr: undecodable . to_string ()",
+        "Store",
+    ),
+    (
+        "src/infrastructure/persistence/swarm_board/ledger.rs:Stored::loads",
+        "the JSON object must be str, bytes or bytearray, not {kind}",
+        "Store",
+    ),
+    (
+        "src/infrastructure/persistence/swarm_board/ledger.rs:Stored::read",
+        "{CONTENDED}: {}",
+        "Store",
+    ),
+    (
+        "src/infrastructure/persistence/swarm_board/ledger.rs:bounded_request",
+        "request id must be nonempty and at most {REQUEST_ID_MAX_BYTES} bytes",
+        "Invalid",
+    ),
+    (
+        "src/infrastructure/persistence/swarm_board/ledger.rs:encoded",
+        "expr: error . to_string ()",
+        "Invalid",
+    ),
+    (
+        "src/infrastructure/persistence/swarm_board/ledger.rs:replayed",
+        "request id reused with different payload",
+        "RequestIdReused",
+    ),
+    (
+        "src/infrastructure/persistence/swarm_board/ledger.rs:retry",
+        "coordination request ledger full ({REQUEST_LEDGER_CAPACITY})",
+        "CapacityFull",
+    ),
+    (
+        "src/infrastructure/persistence/swarm_board/ledger.rs:utf8_json",
+        "the stored result is not UTF-8 JSON",
+        "Store",
+    ),
+    (
         "src/infrastructure/persistence/swarm_board/repository.rs:SqliteBoard::event",
         "expr: error . to_string ()",
         "Invalid",
@@ -197,11 +357,6 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "Invalid",
     ),
     (
-        "src/infrastructure/persistence/swarm_board/repository.rs:event_refused",
-        "expr: message",
-        "Invalid",
-    ),
-    (
         "src/infrastructure/persistence/swarm_board/repository.rs:failed",
         "expr: contended (& error) . 0",
         "expr: kind",
@@ -210,6 +365,21 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "src/infrastructure/persistence/swarm_board/repository.rs:loose",
         "{CONTENDED}: Error binding parameter {position}: {error}",
         "Invalid",
+    ),
+    (
+        "src/infrastructure/persistence/swarm_board/repository_tasks.rs:SqliteBoard::retry",
+        "expr: error . to_string ()",
+        "Invalid",
+    ),
+    (
+        "src/infrastructure/persistence/swarm_board/repository_tasks.rs:SqliteBoard::retry",
+        "expr: error . to_string ()",
+        "Invalid",
+    ),
+    (
+        "src/infrastructure/persistence/swarm_board/repository_tasks.rs:SqliteBoard::retry",
+        "expr: stored . to_string ()",
+        "Store",
     ),
     (
         "src/infrastructure/tools/swarm_board_dispatch.rs:bind",
