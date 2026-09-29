@@ -4,11 +4,13 @@
 //! a member's JSON arguments and renders the responses in Python's shape.
 
 pub mod location;
+pub mod measure;
 pub mod membership;
 pub mod run;
 pub mod tasks;
 
 pub use location::BoardLocation;
+pub use measure::CallMeasure;
 pub use membership::{
     ActivateMemberRequest, AdmissionDecision, AdmitMemberRequest, AdmittedMember, JoinRunRequest,
     Joined, LaunchIdentity, RecordMemberLaunchRequest, RegisterMemberSocketRequest,

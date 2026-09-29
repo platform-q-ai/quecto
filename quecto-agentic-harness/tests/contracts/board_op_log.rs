@@ -1,7 +1,7 @@
 //! `BoardOpLog` on the event-log adapter (#2303): a record is appended
 //! synchronously from a plain thread (no async runtime), as one `swarm_op`
 //! line filed under no turn; a record the log cannot take is dropped
-//! without a panic.
+//! without a panic, the first such record capping the log.
 use quecto::application::swarm::ports::BoardOpLog;
 use quecto::domain::redaction::Redacted;
 use quecto::domain::swarm::{BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind};
@@ -23,7 +23,7 @@ fn observation() -> BoardOpObservation {
         lock_wait_us: Some(1),
         busy_wait_us: Some(0),
         busy: Some(false),
-        cursor_moved: false,
+        cursor_moved: None,
         result_bytes: 0,
     }
 }
@@ -63,5 +63,8 @@ fn a_record_the_log_cannot_take_is_dropped_quietly() {
     ops.record(observation());
     ops.record(observation());
     let text = std::fs::read_to_string(AuditLog::file_path(base.path(), "cli:full")).unwrap();
-    assert!(text.is_empty(), "{text}");
+    // The first record that does not fit caps the log; nothing follows.
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 1, "{text}");
+    assert!(lines[0].contains(r#""event":"log_capped""#), "{text}");
 }

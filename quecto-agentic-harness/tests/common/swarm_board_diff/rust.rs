@@ -61,6 +61,13 @@ impl RecordedOps {
     }
 }
 
+fn location(database: &Path, checkout: &Path) -> BoardLocation {
+    BoardLocation {
+        database: database.to_path_buf(),
+        checkout: checkout.to_path_buf(),
+    }
+}
+
 pub struct RustBoard {
     handles: SwarmBoardHandles,
     clock: Arc<StepClock>,
@@ -69,21 +76,20 @@ pub struct RustBoard {
 impl RustBoard {
     /// The board with the event log on, recording in `log`.
     pub fn open_recorded(database: &Path, checkout: &Path, log: Arc<RecordedOps>) -> Self {
-        let board = Self::open(database, checkout);
-        Self {
-            handles: with_event_log(board.handles, log),
-            clock: board.clock,
-        }
+        let clock = Arc::new(StepClock::default());
+        let handles = with_event_log(
+            SqliteBoardRepository::new(&location(database, checkout)),
+            clock.clone(),
+            Arc::new(CounterIds::default()),
+            log,
+        );
+        Self { handles, clock }
     }
 
     pub fn open(database: &Path, checkout: &Path) -> Self {
         let clock = Arc::new(StepClock::default());
-        let location = BoardLocation {
-            database: database.to_path_buf(),
-            checkout: checkout.to_path_buf(),
-        };
         let handles = build_swarm_board_handles_with(
-            Arc::new(SqliteBoardRepository::new(&location)),
+            Arc::new(SqliteBoardRepository::new(&location(database, checkout))),
             clock.clone(),
             Arc::new(CounterIds::default()),
         );

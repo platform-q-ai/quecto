@@ -654,8 +654,11 @@ get no default of their own). With it off nothing is measured or written: the
 store takes no timings and keeps SQLite's own busy timeout. The board file
 itself is unchanged: its `events` table stays the audit history it always was,
 and telemetry lives only in the event log. A record is appended on the board
-call's own thread, synchronously, and a record the log cannot take (a full log,
-a failed write) is dropped with one warning; it never changes the op's answer.
+call's own thread, synchronously, under the log's write gate, so it never
+interleaves with another record; a record the log cannot take (a full log, a
+failed write) is dropped with one warning, and never changes the op's answer.
+The first record that does not fit, from whichever writer, is replaced by the
+log's one `log_capped` record, and nothing is written after it.
 A record carries ids, kinds, durations and sizes only, never a task title,
 body, evidence, reason, path or other board text:
 
@@ -663,21 +666,22 @@ body, evidence, reason, path or other board text:
 |---|---|
 | `turn` | Always `null`: a board op is not filed under an agent turn (the board is called without one) |
 | `op` | The board method (`unknown` for a name that is none) |
-| `actor_ref` | The caller's member id: the id the caller chose for itself on the board (`members.id`), bounded by the board, and redacted if it looks like a credential |
+| `actor_ref` | The caller's member id: the id the caller chose for itself on the board (`members.id`), redacted if it looks like a credential, and cut to its first 128 characters (a refused call can name any id) |
 | `role` | `coordinator`, `worker`, `integrator`, or `host` for the harness's own ops |
 | `run_id` | The run the op found, when it found one |
-| `task_id`, `message_id` | The task or message the op acted on, when it has one |
+| `task_id`, `message_id` | The task or message the op acted on; left out when it acted on none |
 | `outcome` | `ok` or `refused` |
-| `kind` | For a refusal, its stable kind: `run_missing`, `not_coordinator`, `not_member`, `not_running`, `budget_exhausted` (the deadline has passed, or the run is paused or ended as `budget-exhausted`), `member_limit`, `identity_taken`, `run_exists`, `completion_unmet`, `stale_revision`, `immutable`, `wrong_state`, `not_owner`, `stale_token`, `reserved_by_other`, `dependency_cycle`, `invalid`, `calling` (no such method, or arguments that do not bind), `contended` (the write lock stayed busy past 500 ms), `store_missing`, `store` (any other store failure) or `internal` |
+| `kind` | For a refusal, its stable kind: `run_missing`, `not_coordinator`, `not_member`, `not_running`, `budget_exhausted` (the deadline has passed, or the run is paused or ended as `budget-exhausted`), `member_limit`, `identity_taken`, `run_exists`, `completion_unmet`, `stale_revision`, `immutable`, `wrong_state`, `not_owner`, `stale_token`, `reserved_by_other`, `dependency_cycle`, `invalid`, `calling` (no such method, or arguments that do not bind), `contended` (the database stayed busy or locked past 500 ms: the write lock at `BEGIN`, a reader holding off the commit, or `SQLITE_LOCKED`), `store_missing`, `store` (any other store failure) or `internal` |
 | `duration_us` | The whole op, in microseconds |
 | `lock_wait_us` | From `BEGIN IMMEDIATE` issued to acquired (or given up), summed over the op's transactions; `null` when the op began no transaction, so nothing was measured |
 | `busy_wait_us` | The time the store's busy handler slept for the op, whichever statement found the database busy (`BEGIN`, a read or the commit); `null` when nothing was measured |
 | `busy` | Whether the busy handler fired at all: another connection held a lock the op needed (the write lock, or, at commit, a reader); `null` when nothing was measured |
-| `cursor_moved` | Whether the op moved the caller's message cursor |
-| `result_bytes` | The size of the JSON the op answered (0 for a refusal) |
+| `cursor_moved` | Whether the op moved the caller's message cursor; `null` for an op that has no cursor to move, and for a refusal |
+| `result_bytes` | The size of the JSON the op answered, as its compact serialization (`serde_json`'s, which is not the size of Python's `json.dumps` text with its spaced separators); 0 for a refusal |
 
-A zero is always a measure, never a stand-in for "not measured". An op that
-runs another board op inside it counts the inner op's waits in its own.
+A zero is always a measure, never a stand-in for "not measured". The waits are
+summed over the op's own transactions and only those: each op is measured on a
+repository built for it alone, never through state shared with another op.
 
 Every call also leaves a `tracing` record on target `quecto::swarm_board`
 (DEBUG for a read, INFO otherwise), at WARN for a `contended` refusal or a

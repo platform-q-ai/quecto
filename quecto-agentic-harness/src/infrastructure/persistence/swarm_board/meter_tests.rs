@@ -1,6 +1,8 @@
 //! #2303: the lock a board transaction waits for is measured where it is
-//! taken, only while a call is metered, and waiting behaves exactly as
-//! SQLite's own 500 ms busy timeout does.
+//! taken, only on the metered call's own repository, and waiting behaves
+//! exactly as SQLite's own 500 ms busy timeout does. Nothing is ambient: a
+//! call's measure is its own repository's, whatever else runs on the same
+//! thread.
 //!
 //! The lock tests do not race a timer against the call (#2303 review L5):
 //! the holder takes the lock before the call starts and keeps it until it
@@ -12,15 +14,40 @@ use std::time::{Duration, Instant};
 
 use rusqlite::Connection;
 
-use super::{SqliteBoardCallMeter, active, busy_delay, metered};
-use crate::application::swarm::ports::{BoardCallMeter, CallMeasure};
+use super::{SqliteBoardCallMeter, busy_delay};
+use crate::application::swarm::dto::{BoardLocation, CallMeasure};
+use crate::application::swarm::ports::{BoardCallMeter, BoardRepository, MeteredCall};
+use crate::domain::swarm::BoardError;
+use crate::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 use crate::infrastructure::persistence::swarm_board::store::{BUSY_TIMEOUT, BoardStore};
 
-fn created() -> (tempfile::TempDir, BoardStore) {
+/// A created board, its plain (unmetered) repository and a meter over it.
+fn created() -> (
+    tempfile::TempDir,
+    BoardStore,
+    SqliteBoardRepository,
+    SqliteBoardCallMeter,
+) {
     let dir = tempfile::TempDir::new().unwrap();
-    let store = BoardStore::new(dir.path().join("swarm.sqlite"));
+    let location = BoardLocation {
+        database: dir.path().join("swarm.sqlite"),
+        checkout: dir.path().to_path_buf(),
+    };
+    let store = BoardStore::new(&location.database);
     store.transaction(true, |_| Ok(())).unwrap();
-    (dir, store)
+    let repository = SqliteBoardRepository::new(&location);
+    let meter = SqliteBoardCallMeter::new(repository.clone());
+    (dir, store, repository, meter)
+}
+
+/// One empty transaction on `call`'s own repository.
+fn transact(call: &dyn MeteredCall) -> Result<(), BoardError> {
+    call.repository().atomic(false, &mut |_| Ok(()))
+}
+
+/// The call's measure, which a call that began a transaction has.
+fn measured(call: &dyn MeteredCall) -> CallMeasure {
+    call.measure().expect("a transaction began")
 }
 
 /// A second connection holding `BEGIN IMMEDIATE` on a board file until
@@ -79,13 +106,15 @@ impl Drop for Holder {
 /// call waits it out, busy, for no longer than the timeout.
 #[test]
 fn a_held_lock_is_measured_as_a_busy_wait() {
-    let (_dir, store) = created();
+    let (_dir, store, _plain, meter) = created();
     let mut holder = Holder::take(&store);
     let releaser = holder.release_after(Duration::from_millis(150));
-    let (outcome, measure) = metered(|| store.transaction(false, |_| Ok(())));
+    let call = meter.open();
+    let outcome = transact(&*call);
     releaser.join().unwrap();
     holder.release();
     outcome.unwrap();
+    let measure = measured(&*call);
     assert!(measure.busy, "{measure:?}");
     assert_eq!(measure.transactions, 1, "{measure:?}");
     // The handler slept at least its first delay, inside `BEGIN`.
@@ -94,22 +123,67 @@ fn a_held_lock_is_measured_as_a_busy_wait() {
     assert!(measure.lock_wait < BUSY_TIMEOUT, "{measure:?}");
 }
 
+/// A call's waits add up over its own transactions, and only its own: a
+/// transaction on the plain repository, or on another call's, is not
+/// counted, even on the same thread and in between.
 #[test]
-fn a_free_lock_is_not_busy_and_the_waits_of_a_call_add_up() {
-    let (_dir, store) = created();
-    assert!(!active(), "no call is metered outside `metered`");
-    let (inside, measure) = metered(|| {
-        store.transaction(false, |_| Ok(())).unwrap();
-        store.transaction(false, |_| Ok(())).unwrap();
-        active()
-    });
-    assert!(inside, "a call is metered inside `metered`");
-    assert!(!active(), "the scope ends with the call");
+fn a_call_measures_only_its_own_transactions() {
+    let (_dir, _store, plain, meter) = created();
+    let (first, second) = (meter.open(), meter.open());
+    assert_eq!(first.measure(), None, "nothing measured yet");
+    transact(&*first).unwrap();
+    plain.atomic(false, &mut |_| Ok(())).unwrap();
+    transact(&*second).unwrap();
+    transact(&*first).unwrap();
+    let measure = measured(&*first);
     assert!(!measure.busy, "{measure:?}");
     assert_eq!(measure.transactions, 2, "{measure:?}");
     assert_eq!(measure.busy_wait, Duration::ZERO, "{measure:?}");
     assert!(measure.lock_wait < Duration::from_secs(2), "{measure:?}");
-    assert_eq!(measure.run_id, None, "the store alone reads no run");
+    assert_eq!(measure.run_id, None, "the store holds no run");
+    assert_eq!(measured(&*second).transactions, 1);
+    assert_eq!(meter.open().measure(), None, "a new call starts afresh");
+}
+
+/// Two calls on two threads at once: each measures its own transactions.
+#[test]
+fn calls_on_two_threads_measure_apart() {
+    let (_dir, _store, _plain, meter) = created();
+    let counts: Vec<u32> = thread::scope(|scope| {
+        let runs: Vec<_> = [3_u32, 5]
+            .into_iter()
+            .map(|runs| {
+                let call = meter.open();
+                scope.spawn(move || {
+                    for _ in 0..runs {
+                        transact(&*call).unwrap();
+                    }
+                    measured(&*call).transactions
+                })
+            })
+            .collect();
+        runs.into_iter().map(|run| run.join().unwrap()).collect()
+    });
+    assert_eq!(counts, [3, 5]);
+}
+
+/// A panic inside a metered transaction leaves no state behind: the call
+/// still reads what it measured, and the next call starts afresh.
+#[test]
+fn a_panic_inside_a_call_leaves_nothing_behind() {
+    let (_dir, _store, _plain, meter) = created();
+    let call = meter.open();
+    let repository = call.repository();
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _never = repository.atomic(false, &mut |_| panic!("the work panics"));
+    }));
+    assert!(panicked.is_err());
+    assert_eq!(measured(&*call).transactions, 1, "the lock was taken");
+    transact(&*call).unwrap();
+    assert_eq!(measured(&*call).transactions, 2);
+    let next = meter.open();
+    transact(&*next).unwrap();
+    assert_eq!(measured(&*next).transactions, 1);
 }
 
 /// A lock held for the whole call is refused with the text an unmetered
@@ -117,18 +191,20 @@ fn a_free_lock_is_not_busy_and_the_waits_of_a_call_add_up() {
 /// whole timeout.
 #[test]
 fn a_metered_transaction_gives_up_as_sqlites_busy_timeout_does() {
-    let (_dir, store) = created();
+    let (_dir, store, plain, meter) = created();
     let holder = Holder::take(&store);
     let started = Instant::now();
-    let (outcome, measure) = metered(|| store.transaction(false, |_| Ok(())));
+    let call = meter.open();
+    let outcome = transact(&*call);
     let waited = started.elapsed();
-    let plain = store.transaction(false, |_| Ok(()));
+    let unmetered = plain.atomic(false, &mut |_| Ok(()));
     holder.release();
-    assert_eq!(outcome, plain, "the same refusal, metered or not");
+    assert_eq!(outcome, unmetered, "the same refusal, metered or not");
     assert_eq!(
-        outcome.unwrap_err().0,
+        outcome.unwrap_err().message(),
         "coordination store unavailable or contended: database is locked"
     );
+    let measure = measured(&*call);
     assert!(measure.busy, "{measure:?}");
     assert!(measure.busy_wait >= BUSY_TIMEOUT, "{measure:?}");
     assert!(measure.lock_wait >= measure.busy_wait, "{measure:?}");
@@ -155,18 +231,16 @@ fn the_busy_schedule_is_sqlites_default_under_the_timeout() {
     );
 }
 
-/// Metering scopes nest: an inner call's measure is its own, and it is
-/// added to the outer call's, which sat through it (#2303 review H2).
+/// Measures nest: an inner measure is its own, and it is added to the
+/// outer one, which sat through it (#2303 review H2).
 #[test]
-fn a_nested_scope_is_its_own_and_adds_to_the_outer() {
-    let (_dir, store) = created();
-    let (inner, outer) = metered(|| {
-        store.transaction(false, |_| Ok(())).unwrap();
-        let (_, inner) = metered(|| store.transaction(false, |_| Ok(())).unwrap());
-        assert!(active(), "the outer scope is restored");
-        inner
-    });
-    assert!(!active());
+fn a_nested_measure_is_its_own_and_adds_to_the_outer() {
+    let (_dir, _store, _plain, meter) = created();
+    let outer = meter.open();
+    transact(&*outer).unwrap();
+    let inner = outer.nested();
+    transact(&*inner).unwrap();
+    let (inner, outer) = (measured(&*inner), measured(&*outer));
     assert_eq!(inner.transactions, 1, "{inner:?}");
     assert_eq!(
         outer.transactions, 2,
@@ -176,34 +250,17 @@ fn a_nested_scope_is_its_own_and_adds_to_the_outer() {
     assert!(inner.lock_wait > Duration::ZERO, "{inner:?}");
 }
 
-/// The inner scope's busy wait reaches the outer one, and its busy flag.
+/// The inner measure's busy wait reaches the outer one, and its busy flag.
 #[test]
 fn a_nested_busy_wait_is_the_outer_calls_too() {
-    let (_dir, store) = created();
+    let (_dir, store, _plain, meter) = created();
     let holder = Holder::take(&store);
-    let (inner, outer) = metered(|| {
-        let (_, inner) = metered(|| store.transaction(false, |_| Ok(())).unwrap_err());
-        inner
-    });
+    let outer = meter.open();
+    let inner = outer.nested();
+    transact(&*inner).unwrap_err();
     holder.release();
+    let (inner, outer) = (measured(&*inner), measured(&*outer));
     assert!(inner.busy && outer.busy, "{outer:?}");
     assert_eq!(outer.busy_wait, inner.busy_wait);
     assert_eq!(outer.lock_wait, inner.lock_wait);
-}
-
-/// The port: `work` runs exactly once; a call that began no transaction
-/// has no measure (nothing was measured), one that did has its own.
-#[test]
-fn the_port_measures_only_a_call_that_began_a_transaction() {
-    let (_dir, store) = created();
-    let meter = SqliteBoardCallMeter;
-    let mut runs = 0;
-    assert_eq!(meter.metered(&mut || runs += 1), None);
-    assert_eq!(runs, 1, "the work runs exactly once");
-    let measure = meter
-        .metered(&mut || store.transaction(false, |_| Ok(())).unwrap())
-        .expect("a transaction was measured");
-    assert_eq!(measure.transactions, 1, "{measure:?}");
-    assert!(!active());
-    assert_ne!(measure, CallMeasure::default());
 }

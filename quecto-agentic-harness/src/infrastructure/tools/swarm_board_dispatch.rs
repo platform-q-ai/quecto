@@ -10,7 +10,10 @@
 //!
 //! The dispatcher holds composed handles only ([`SwarmBoardHandles`], built
 //! by `composition::swarm`): it never constructs a use case or an adapter,
-//! and never sequences two use cases. It serves `_status` and `_snapshot`
+//! and never sequences two use cases. While the event log is on, each call
+//! is served by handles composition builds for that call alone
+//! ([`BoardTelemetry::compose`]) over the call's own metered repository.
+//! It serves `_status` and `_snapshot`
 //! (#2270) and the harness's membership methods `_admit`, `_activate`,
 //! `_record_launch`, `_release_unlaunched` and `_socket` (#2271); later
 //! slices add methods, and S13 wires it into `SwarmContext`. Every
@@ -49,9 +52,10 @@
 //! while the event log is on, a busy wait over 250 ms) and, when the event
 //! log is switched on ([`SwarmBoardHandles::telemetry`], #2303), one
 //! `swarm_op` record in it, with the lock wait, busy wait and busy flag
-//! the store measured for this call only. The dispatcher reaches both
-//! through application ports ([`BoardCallMeter`], [`BoardOpLog`]) that
-//! composition injects: it names no adapter. Both records carry the
+//! the store measured for this call only: the call's own
+//! [`MeteredCall`], never state shared with another call. The dispatcher
+//! reaches both through application ports ([`BoardCallMeter`],
+//! [`BoardOpLog`]) that composition injects: it names no adapter. Both records carry the
 //! method, the member id, the outcome (a refusal's [`RefusalKind`]), the
 //! decision taken and the duration: ids, kinds, durations and sizes only,
 //! never argument text (`swarm_board_telemetry`). The member id is the
@@ -71,7 +75,7 @@ use crate::application::swarm::dto::{
     RecordMemberLaunchRequest, RegisterMemberSocketRequest, ReleaseUnlaunchedMemberRequest,
     RunSnapshotView, RunStatusView,
 };
-use crate::application::swarm::ports::{BoardCallMeter, BoardOpLog};
+use crate::application::swarm::ports::{BoardCallMeter, BoardOpLog, BoardRepository};
 #[cfg(any(test, feature = "test-support"))]
 use crate::application::swarm::dto::{
     BootstrapRunRequest, CreateBranch, CreateRunRequest, JoinRunRequest, Joined,
@@ -84,7 +88,7 @@ use crate::application::swarm::use_cases::{
 use crate::domain::swarm::{BoardError, BoardRole, RefusalKind};
 
 pub use super::swarm_board_telemetry::TELEMETRY_TARGET;
-use super::swarm_board_telemetry::{Finished, Level, observation, trace};
+use super::swarm_board_telemetry::{Finished, Level, Served, observation, trace};
 
 /// One handle per board use case, composed once per board file. The
 /// `create_run` and `bootstrap_run` handles are served only in test builds
@@ -116,14 +120,20 @@ pub struct SwarmBoardHandles {
     pub telemetry: Option<BoardTelemetry>,
 }
 
-/// The event log a board call records in, and the meter that measures it
-/// (#2303): both or neither, so a record is never written with waits that
+/// The event log a board call records in, the meter that measures it and
+/// the composition that serves it over its own metered repository
+/// (#2303): all or none, so a record is never written with waits that
 /// were not measured.
 #[derive(Clone)]
 pub struct BoardTelemetry {
     pub log: Arc<dyn BoardOpLog>,
     pub meter: Arc<dyn BoardCallMeter>,
+    pub compose: BoardComposer,
 }
+
+/// Composition's board graph over a given repository: the handles one
+/// metered call is served by, their `telemetry` `None`.
+pub type BoardComposer = Arc<dyn Fn(Arc<dyn BoardRepository>) -> SwarmBoardHandles + Send + Sync>;
 
 impl std::fmt::Debug for SwarmBoardHandles {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -273,6 +283,9 @@ impl Method {
     fn role(self) -> BoardRole {
         match self {
             Self::Status | Self::Snapshot => BoardRole::Host,
+            // Test-only halves the differential harness drives as the host;
+            // the member-facing `create` a later slice serves records the
+            // caller's own role.
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun | Self::BootstrapRun => BoardRole::Host,
         }
@@ -303,12 +316,6 @@ impl Method {
     }
 }
 
-/// What a served call decided, for its telemetry record.
-struct Served {
-    value: Value,
-    decision: &'static str,
-}
-
 /// Invokes `method` as `member` with `args`: one use case, its result in
 /// Python's JSON shape. The call leaves one `tracing` record and, when the
 /// event log is on, one `swarm_op` record, measured only then (#2303).
@@ -332,7 +339,7 @@ pub fn call(
 ) -> Result<Value, BoardError> {
     let started = Instant::now();
     let known = Method::parse(method);
-    let answer_once = || match known {
+    let answer_with = |handles: &SwarmBoardHandles| match known {
         Some(known) => bind(known, known.parameters(), args)
             .and_then(|arguments| serve(handles, member, known, arguments)),
         None => Err(BoardError::new(
@@ -342,25 +349,18 @@ pub fn call(
     };
     let (answer, measure) = match &handles.telemetry {
         Some(telemetry) => {
-            let mut answer = None;
-            let mut pending = Some(answer_once);
-            // Run at most once, whatever the meter does: a second run
-            // finds nothing pending and leaves the first answer.
-            let measure = telemetry.meter.metered(&mut || {
-                if let Some(work) = pending.take() {
-                    answer = Some(work());
-                }
-            });
-            debug_assert!(answer.is_some(), "the meter runs the call exactly once");
-            let answer = answer.unwrap_or_else(|| {
-                Err(BoardError::new(
-                    RefusalKind::Internal,
-                    "swarm board meter did not run the call",
-                ))
-            });
-            (answer, measure)
+            // This call's own measure, and handles over its own metered
+            // repository: nothing is shared with another call.
+            let metered = telemetry.meter.open();
+            let own = (telemetry.compose)(metered.repository());
+            debug_assert!(
+                own.telemetry.is_none(),
+                "a call's own handles record nothing"
+            );
+            let answer = answer_with(&own);
+            (answer, metered.measure())
         }
-        None => (answer_once(), None),
+        None => (answer_with(handles), None),
     };
     let finished = Finished {
         op: known.map_or("unknown", Method::name),
@@ -375,10 +375,11 @@ pub fn call(
     };
     trace(&finished, measure.as_ref());
     if let Some(telemetry) = &handles.telemetry {
-        let value = answer.as_ref().ok().map(|served| &served.value);
-        telemetry
-            .log
-            .record(observation(&finished, value, measure.as_ref()));
+        telemetry.log.record(observation(
+            &finished,
+            answer.as_ref().ok(),
+            measure.as_ref(),
+        ));
     }
     answer.map(|served| served.value)
 }
@@ -451,10 +452,16 @@ fn serve(
         Method::Status => Ok(Served {
             value: status(handles.read_run_status.execute()?),
             decision: "read",
+            task_id: None,
+            message_id: None,
+            cursor_moved: None,
         }),
         Method::Snapshot => Ok(Served {
             value: snapshot(handles.read_run_snapshot.execute(member)?)?,
             decision: "read",
+            task_id: None,
+            message_id: None,
+            cursor_moved: None,
         }),
         Method::Admit => admit(handles, member, arguments),
         Method::Activate => activate(handles, member, arguments),
@@ -632,6 +639,9 @@ mod test_only {
                 CreateBranch::Fresh => "fresh",
                 CreateBranch::OverSetup => "over_setup",
             },
+            task_id: None,
+            message_id: None,
+            cursor_moved: None,
         })
     }
 
@@ -656,6 +666,9 @@ mod test_only {
             } else {
                 "existing"
             },
+            task_id: None,
+            message_id: None,
+            cursor_moved: None,
         })
     }
 

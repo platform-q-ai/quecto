@@ -22,7 +22,7 @@ fn observation() -> BoardOpObservation {
         lock_wait_us: None,
         busy_wait_us: None,
         busy: None,
-        cursor_moved: false,
+        cursor_moved: None,
         result_bytes: 2,
     }
 }
@@ -56,5 +56,7 @@ fn a_record_past_the_cap_is_dropped_with_one_warning() {
     assert!(ops.warned.load(Ordering::Acquire), "the drop was reported");
     ops.record(observation());
     let text = std::fs::read_to_string(AuditLog::file_path(base.path(), "cli:full")).unwrap();
-    assert_eq!(text, "", "nothing past the cap");
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 1, "only the log's own cap record: {text}");
+    assert!(lines[0].contains(r#""event":"log_capped""#), "{text}");
 }

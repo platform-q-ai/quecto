@@ -170,7 +170,7 @@ fn observation(outcome: BoardOpOutcome) -> BoardOpObservation {
         lock_wait_us: Some(400),
         busy_wait_us: Some(250),
         busy: Some(true),
-        cursor_moved: false,
+        cursor_moved: Some(false),
         result_bytes: 42,
     }
 }
@@ -211,17 +211,18 @@ fn a_swarm_op_record_is_flat_and_round_trips() {
 }
 
 /// Nothing measured is written as `null`, never as a zero that reads as
-/// a real measure.
+/// a real measure; nor is a cursor an op has none of written as unmoved.
 #[test]
 fn an_unmeasured_op_writes_null_waits() {
     let line = serde_json::to_value(AuditEvent::SwarmOp(BoardOpObservation {
         lock_wait_us: None,
         busy_wait_us: None,
         busy: None,
+        cursor_moved: None,
         ..observation(BoardOpOutcome::Ok)
     }))
     .unwrap();
-    for field in ["lock_wait_us", "busy_wait_us", "busy"] {
+    for field in ["lock_wait_us", "busy_wait_us", "busy", "cursor_moved"] {
         assert_eq!(line.get(field), Some(&Value::Null), "{field}: {line}");
     }
 }

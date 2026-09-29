@@ -651,7 +651,7 @@ fn a_line_reserved_but_not_yet_written_leaves_the_crash_line_no_room() {
         .with_cap(4096);
     let crash_line = log.crash_line().unwrap();
     // As the async writer does, just before its write lands.
-    assert!(reserve(&log.reserved, 4000, 4096));
+    assert!(reserve(&log.gate.reserved, 4000, 4096));
     let path = AuditLog::file_path(base.path(), "cli:reserved");
     assert_eq!(
         std::fs::metadata(&path).unwrap().len(),

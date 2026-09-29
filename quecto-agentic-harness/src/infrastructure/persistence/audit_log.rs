@@ -5,8 +5,9 @@
 
 use std::path::{Path, PathBuf};
 
-use tokio::io::AsyncWriteExt;
-use tokio::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, Instant};
 
 use crate::application::audit::ports::AuditSink;
 use crate::domain::audit::{AuditEnvelope, AuditEvent};
@@ -19,79 +20,197 @@ pub const DEFAULT_CAP_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Append-only audit log handle for a single session.
 ///
-/// Uses a raw `tokio::fs::File` (no `BufWriter`) because every `emit()` call
-/// flushes immediately for crash durability — buffering would be negated.
+/// Every line is one `write` on an `O_APPEND` file, made under the log's
+/// write gate ([`WriteGate`]): the async writer (from the blocking pool),
+/// the board's `swarm_op` appender and the panic hook's crash line all
+/// take it, so no two lines interleave however long they are, and no line
+/// follows the `log_capped` record (#2303 round-2 review L1, L2). No
+/// buffering: every line is on disk when its write returns.
 pub struct AuditLog {
-    writer: Mutex<Writer>,
+    file: Arc<std::fs::File>,
+    gate: WriteGate,
     session_key: String,
     parent: Option<String>,
     cap_bytes: u64,
     /// A second handle on the same append-mode file, for the one line a
     /// dying process writes from its panic hook (#2192).
-    crash_file: Option<std::sync::Arc<std::fs::File>>,
-    /// Set once the log is capped — before its `log_capped` record is
-    /// written — and shared with the crash line, which writes nothing once
-    /// it is set (#2192 review: nothing follows `log_capped`).
-    stopped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    crash_file: Option<Arc<std::fs::File>>,
+}
+
+/// What every writer of one log shares (#2192, #2303): the gate each line
+/// is written under, whether the log is capped, and the bytes of the file
+/// taken so far.
+#[derive(Debug, Clone, Default)]
+struct WriteGate {
+    /// Held around each line's check, reservation and write.
+    held: Arc<Mutex<()>>,
+    /// Set once the log is capped, before its `log_capped` record is
+    /// written: nothing is written once it is set.
+    stopped: Arc<AtomicBool>,
     /// The bytes of the file taken so far — what it held when opened, and
-    /// every line reserved since — shared with the crash line (#2192
-    /// review): each writer reserves its line's bytes here, atomically and
-    /// before it writes, so the two together never pass the cap. No lock:
-    /// the panic hook reserves too.
-    reserved: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// every line written since, the `log_capped` record included.
+    reserved: Arc<AtomicU64>,
+}
+
+/// How long the panic hook waits for the write gate before giving up on
+/// its line: a writer holds it only for one `write`, and a hook must never
+/// hang a dying process.
+const CRASH_GATE_WAIT: Duration = Duration::from_secs(1);
+
+/// What became of a line offered to the log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Appended {
+    /// Written.
+    Written,
+    /// It did not fit: the log's one `log_capped` record was written in its
+    /// place, and the log is stopped.
+    Capped,
+    /// Not written: the log was already stopped, or the line did not fit
+    /// and the writer does not cap the log.
+    Refused,
+}
+
+impl WriteGate {
+    fn new(stopped: bool, written: u64) -> Self {
+        Self {
+            held: Arc::default(),
+            stopped: Arc::new(AtomicBool::new(stopped)),
+            reserved: Arc::new(AtomicU64::new(written)),
+        }
+    }
+
+    /// The gate, waited for without bound, or for at most `bound`.
+    fn hold(&self, bound: Option<Duration>) -> std::io::Result<MutexGuard<'_, ()>> {
+        let Some(bound) = bound else {
+            return Ok(self.held.lock().unwrap_or_else(PoisonError::into_inner));
+        };
+        let started = Instant::now();
+        loop {
+            match self.held.try_lock() {
+                Ok(held) => return Ok(held),
+                Err(std::sync::TryLockError::Poisoned(held)) => return Ok(held.into_inner()),
+                Err(std::sync::TryLockError::WouldBlock) if started.elapsed() < bound => {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::WouldBlock,
+                        "the event log stayed busy",
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Appends `line` to `file` under the gate, within `cap` bytes: nothing
+    /// once the log is stopped; the line when its bytes fit; otherwise, for
+    /// a writer that caps the log (`capped` gives its `log_capped` record),
+    /// that record in the line's place — the one record past the cap,
+    /// counted all the same — and the log stops, the flag set before the
+    /// record is written. A line's bytes stay reserved if its write fails
+    /// (part of it may have landed).
+    fn append(
+        &self,
+        file: &std::fs::File,
+        cap: u64,
+        line: &str,
+        capped: Option<&dyn Fn() -> Option<String>>,
+        bound: Option<Duration>,
+    ) -> std::io::Result<Appended> {
+        use std::io::Write;
+        let _held = self.hold(bound)?;
+        if self.stopped.load(Ordering::Acquire) {
+            return Ok(Appended::Refused);
+        }
+        if reserve(&self.reserved, line.len() as u64, cap) {
+            return (&*file)
+                .write_all(line.as_bytes())
+                .map(|()| Appended::Written);
+        }
+        let Some(record) = capped.and_then(|capped| capped()) else {
+            return Ok(Appended::Refused);
+        };
+        self.stopped.store(true, Ordering::Release);
+        self.reserved
+            .fetch_add(record.len() as u64, Ordering::AcqRel);
+        (&*file)
+            .write_all(record.as_bytes())
+            .map(|()| Appended::Capped)
+    }
 }
 
 /// Where a panic hook writes the `error` event of a fatal panic (#2192),
 /// and a board op its `swarm_op` (#2303, [`AuditCrashLine::append`]): the
-/// session's log, through its own append-mode handle, synchronously.
-/// One `write` of one line: on an `O_APPEND` file it lands whole after any
-/// line already written. The async writer also writes each line with one
-/// `write`, but a regular file does not promise that a concurrent write is
-/// not interleaved with one in progress, whatever its size (a line with a
-/// long message and location is several KiB), so a line being written at
-/// that instant may be split. The line is written only while the log is
+/// session's log, through its own append-mode handle, synchronously, one
+/// `write` of one line under the log's write gate, so it never interleaves
+/// with another writer's line. The line is written only while the log is
 /// not yet capped and its bytes can be reserved within the cap, from the
-/// budget the async writer reserves from too: the cap is exact.
+/// budget every writer reserves from: the cap is exact.
 #[derive(Debug, Clone)]
 pub struct AuditCrashLine {
-    file: std::sync::Arc<std::fs::File>,
+    file: Arc<std::fs::File>,
     session_key: String,
     parent: Option<String>,
     cap_bytes: u64,
-    stopped: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    reserved: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    gate: WriteGate,
 }
 
 impl AuditCrashLine {
     /// Append `event`, filed under `turn`, as one line, when the log is not
-    /// capped and its bytes can be reserved under the cap. Never panics and
-    /// takes no lock; a failure (or a full or capped log) is an error — the
-    /// crash record still says why.
+    /// capped and its bytes can be reserved under the cap. Never panics,
+    /// and waits for the write gate at most [`CRASH_GATE_WAIT`]: a panic
+    /// hook never hangs. A failure (or a full or capped log) is an error —
+    /// the crash record still says why. A line that does not fit leaves the
+    /// log as it was: a dying process does not cap it.
     pub fn write(&self, turn: u32, event: AuditEvent) -> std::io::Result<()> {
-        self.append(Some(turn), event)
+        let line = self.line(Some(turn), event)?;
+        let appended = self.gate.append(
+            &self.file,
+            self.cap_bytes,
+            &line,
+            None,
+            Some(CRASH_GATE_WAIT),
+        )?;
+        written(appended)
     }
 
-    /// [`Self::write`] for a record filed under no turn (`turn` `None`,
-    /// written `null`): a board op's `swarm_op` (#2303), appended from the
-    /// board call's own thread, synchronously, with no runtime and no lock.
-    /// It shares the log's cap budget as a crash line does, and a line
-    /// that does not fit is refused, not written.
+    /// Append `event` filed under no turn (`turn` `None`, written `null`):
+    /// a board op's `swarm_op` (#2303), from the board call's own thread,
+    /// synchronously, with no runtime. It shares the log's cap budget and
+    /// write gate with every writer; a record that does not fit is refused,
+    /// not written, and when it is the first line that does not fit, the
+    /// log's one `log_capped` record is written in its place and the log
+    /// stops, as the async writer stops it.
     pub fn append(&self, turn: Option<u32>, event: AuditEvent) -> std::io::Result<()> {
-        use std::io::Write;
-        use std::sync::atomic::Ordering;
-        let line = envelope_line(&self.session_key, self.parent.as_ref(), turn, event)
-            .map_err(|e| std::io::Error::other(e.to_string()))?;
-        let admitted = match self.stopped.load(Ordering::Acquire) {
-            false => reserve(&self.reserved, line.len() as u64, self.cap_bytes),
-            true => false,
+        let line = self.line(turn, event)?;
+        let capped = || {
+            let cap_bytes = self.cap_bytes;
+            envelope_line(
+                &self.session_key,
+                self.parent.as_ref(),
+                turn,
+                AuditEvent::LogCapped { cap_bytes },
+            )
+            .ok()
         };
-        match admitted {
-            true => (&*self.file).write_all(line.as_bytes()),
-            false => Err(std::io::Error::new(
-                std::io::ErrorKind::StorageFull,
-                "the event log is at its cap",
-            )),
-        }
+        let appended = self.gate.append(
+            &self.file,
+            self.cap_bytes,
+            &line,
+            Option::<&dyn Fn() -> Option<String>>::None
+                .or(None)
+                .filter(|_| {
+                    let _ = &capped;
+                    false
+                }),
+            None,
+        )?;
+        written(appended)
+    }
+
+    fn line(&self, turn: Option<u32>, event: AuditEvent) -> std::io::Result<String> {
+        envelope_line(&self.session_key, self.parent.as_ref(), turn, event)
+            .map_err(|e| std::io::Error::other(e.to_string()))
     }
 
     /// The session this line's log is filed under.
@@ -109,16 +228,20 @@ impl AuditCrashLine {
     }
 }
 
-/// The open file, and whether it is capped.
-struct Writer {
-    file: tokio::fs::File,
-    capped: bool,
+/// A line that was written is `Ok`; one that was not is `StorageFull`.
+fn written(appended: Appended) -> std::io::Result<()> {
+    match appended {
+        Appended::Written => Ok(()),
+        Appended::Capped | Appended::Refused => Err(std::io::Error::new(
+            std::io::ErrorKind::StorageFull,
+            "the event log is at its cap",
+        )),
+    }
 }
 
 /// Reserve `len` bytes of the budget `reserved` holds under `cap`: taken
 /// whole, atomically, or (it would pass the cap) not at all.
-fn reserve(reserved: &std::sync::atomic::AtomicU64, len: u64, cap: u64) -> bool {
-    use std::sync::atomic::Ordering;
+fn reserve(reserved: &AtomicU64, len: u64, cap: u64) -> bool {
     reserved
         .fetch_update(Ordering::AcqRel, Ordering::Acquire, |held| {
             held.checked_add(len).filter(|taken| *taken <= cap)
@@ -184,25 +307,20 @@ impl AuditLog {
             ))
         })?;
         tighten(&std_file, 0o600, &shown);
-        let crash_file = std_file.try_clone().ok().map(std::sync::Arc::new);
+        let crash_file = std_file.try_clone().ok().map(Arc::new);
         let written = std_file
             .metadata()
             .map_err(|e| DomainError::Session(format!("failed to read audit log: {e}")))?
             .len();
-        let stopped = ends_capped(&std_file, written);
-        let capped = stopped || written >= DEFAULT_CAP_BYTES;
+        let capped = ends_capped(&std_file, written) || written >= DEFAULT_CAP_BYTES;
 
         Ok(Self {
-            writer: Mutex::new(Writer {
-                file: tokio::fs::File::from_std(std_file),
-                capped,
-            }),
+            file: Arc::new(std_file),
+            gate: WriteGate::new(capped, written),
             session_key: session_key.to_string(),
             parent: None,
             cap_bytes: DEFAULT_CAP_BYTES,
             crash_file,
-            stopped: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(capped)),
-            reserved: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(written)),
         })
     }
 
@@ -217,86 +335,71 @@ impl AuditLog {
     pub fn with_cap(mut self, cap_bytes: u64) -> Self {
         assert!(cap_bytes > 0, "an audit log holds something");
         self.cap_bytes = cap_bytes;
-        let held = self.reserved.load(std::sync::atomic::Ordering::Acquire);
-        let writer = self.writer.get_mut();
-        writer.capped = writer.capped || held >= cap_bytes;
-        self.stopped
-            .store(writer.capped, std::sync::atomic::Ordering::Release);
+        let held = self.gate.reserved.load(Ordering::Acquire);
+        if held >= cap_bytes {
+            self.gate.stopped.store(true, Ordering::Release);
+        }
         self
     }
 
-    fn line(&self, turn: u32, event: AuditEvent) -> Result<String, DomainError> {
-        envelope_line(&self.session_key, self.parent.as_ref(), Some(turn), event)
+    /// The appender every writer of this log shares, over `file`.
+    fn appender(&self, file: Arc<std::fs::File>) -> AuditCrashLine {
+        AuditCrashLine {
+            file,
+            session_key: self.session_key.clone(),
+            parent: self.parent.clone(),
+            cap_bytes: self.cap_bytes,
+            gate: self.gate.clone(),
+        }
     }
 
     /// The handle a panic hook writes this log's last line through (#2192);
     /// `None` when the file could not be opened a second time.
     pub fn crash_line(&self) -> Option<AuditCrashLine> {
-        self.crash_file.as_ref().map(|file| AuditCrashLine {
-            file: file.clone(),
-            session_key: self.session_key.clone(),
-            parent: self.parent.clone(),
-            cap_bytes: self.cap_bytes,
-            stopped: self.stopped.clone(),
-            reserved: self.reserved.clone(),
-        })
+        self.crash_file
+            .as_ref()
+            .map(|file| self.appender(file.clone()))
     }
 
     /// Emit a single audit event.
     ///
-    /// Serialises with envelope fields, writes one JSONL line, and flushes.
-    /// The flush is critical — the log must survive crashes. A line that
-    /// would take the file past its cap is not written: one `log_capped`
-    /// record is, and nothing after it. A line's bytes are reserved from
-    /// the budget the crash line shares before it is written, and stay
-    /// reserved if the write fails (part of it may have landed).
+    /// Serialises it with its envelope and writes one JSONL line, from the
+    /// blocking pool, under the log's write gate: one `write` on the
+    /// `O_APPEND` file, which no other writer's line can interleave with
+    /// whatever its length (the gate, not the size of the line, keeps it
+    /// whole). There is no buffer to flush: the line is on disk when the
+    /// write returns, so a crash never loses it. A line that would take the
+    /// file past its cap is not written: one `log_capped` record is, and
+    /// nothing after it, whichever writer reached the cap first.
     pub async fn emit(&self, turn: u32, event: AuditEvent) -> Result<(), DomainError> {
-        let line = self.line(turn, event)?;
-        // Write directly — no BufWriter since we need every line flushed for
-        // crash durability. On Linux, append-mode writes of < PIPE_BUF (4096)
-        // bytes are atomic, and a typical JSONL line is 200-500 bytes.
-        //
-        // `flush` after `write_all` is required even without BufWriter:
-        // tokio::fs::File wraps std::fs::File on a blocking thread pool and
-        // may hold a pending write across `await` points. Without the flush,
-        // a drop of the File (or a process crash) can lose the last line —
-        // exactly the case the contract test caught.
-        let mut writer = self.writer.lock().await;
-        let fits = match writer.capped {
-            false => reserve(&self.reserved, line.len() as u64, self.cap_bytes),
-            true => return Ok(()),
-        };
-        let line = match fits {
-            true => line,
-            false => {
-                writer.capped = true;
-                // Before the record: a crash line after it would follow it.
-                self.stopped
-                    .store(true, std::sync::atomic::Ordering::Release);
-                let capped = self.line(
-                    turn,
-                    AuditEvent::LogCapped {
-                        cap_bytes: self.cap_bytes,
-                    },
-                )?;
-                // The one record past the cap, counted all the same.
-                self.reserved
-                    .fetch_add(capped.len() as u64, std::sync::atomic::Ordering::AcqRel);
-                capped
-            }
-        };
-        writer
-            .file
-            .write_all(line.as_bytes())
-            .await
-            .map_err(|e| DomainError::Session(format!("audit log write failed: {e}")))?;
-        writer
-            .file
-            .flush()
-            .await
-            .map_err(|e| DomainError::Session(format!("audit log flush failed: {e}")))?;
-
-        Ok(())
+        let appender = self.appender(self.file.clone());
+        let line = appender
+            .line(Some(turn), event)
+            .map_err(|e| DomainError::Other(e.to_string()))?;
+        let appended = tokio::task::spawn_blocking(move || {
+            let capped = || {
+                let cap_bytes = appender.cap_bytes;
+                envelope_line(
+                    &appender.session_key,
+                    appender.parent.as_ref(),
+                    Some(turn),
+                    AuditEvent::LogCapped { cap_bytes },
+                )
+                .ok()
+            };
+            appender.gate.append(
+                &appender.file,
+                appender.cap_bytes,
+                &line,
+                Some(&capped),
+                None,
+            )
+        })
+        .await
+        .map_err(|e| DomainError::Session(format!("audit log write failed: {e}")))?;
+        appended
+            .map(|_appended| ())
+            .map_err(|e| DomainError::Session(format!("audit log write failed: {e}")))
     }
 
     /// Return the path to the audit log file for a given session key.
@@ -523,3 +626,7 @@ mod cov_tests;
 #[cfg(test)]
 #[path = "audit_log_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "audit_log_gate_tests.rs"]
+mod gate_tests;

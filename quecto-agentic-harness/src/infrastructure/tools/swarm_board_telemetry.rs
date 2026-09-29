@@ -3,13 +3,15 @@
 //! `swarm_op` record in it through the application's `BoardOpLog` port,
 //! written synchronously on the call's own thread (never through an async
 //! runtime). Both carry ids, kinds, durations and sizes only, never
-//! argument or board text; the caller's member id is [`Redacted`]. What
-//! was not measured is `None` (`null`), never a zero.
+//! argument or board text; the caller's member id is [`Redacted`] and
+//! bounded to [`ACTOR_REF_CHARS`] characters, since a call can name any
+//! member id, admitted or not. What was not measured, or does not apply,
+//! is `None` (`null`), never a zero or a `false`.
 use std::time::Duration;
 
 use serde_json::Value;
 
-use crate::application::swarm::ports::CallMeasure;
+use crate::application::swarm::dto::CallMeasure;
 use crate::domain::redaction::Redacted;
 use crate::domain::swarm::{BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind};
 
@@ -20,6 +22,11 @@ pub const TELEMETRY_TARGET: &str = "quecto::swarm_board";
 /// the event log is on (owner decision T1), so the warning is raised only
 /// then.
 const SLOW_LOCK: Duration = Duration::from_millis(250);
+
+/// The most characters of a caller's member id a record keeps (#2303
+/// review L3): the id is the caller's own text, bounded by the board only
+/// once the member is admitted, and a refused call can name any.
+pub const ACTOR_REF_CHARS: usize = 128;
 
 /// The telemetry level of a call (#2270 round-3 review N3): a method that
 /// only reads the board records at DEBUG; anything else (a mutation, or a
@@ -42,6 +49,28 @@ pub(super) struct Finished<'a> {
     pub elapsed: Duration,
 }
 
+/// What a served call decided, and what it acted on, for its records.
+/// Every arm of the dispatcher fills every field, so none is left to a
+/// default: a field that does not apply to the method is `None`.
+pub(super) struct Served {
+    pub value: Value,
+    pub decision: &'static str,
+    /// The task the op acted on, when it acted on one.
+    pub task_id: Option<i64>,
+    /// The message the op acted on, when it acted on one.
+    pub message_id: Option<i64>,
+    /// Whether the op moved the caller's message cursor; `None` for an op
+    /// that has no cursor to move.
+    pub cursor_moved: Option<bool>,
+}
+
+/// `member` redacted, then cut to its first [`ACTOR_REF_CHARS`]
+/// characters (a whole character each).
+pub(super) fn actor_ref(member: &str) -> Redacted {
+    debug_assert!(ACTOR_REF_CHARS > 0);
+    Redacted::from(member)
+}
+
 fn micros(duration: Duration) -> u64 {
     u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
 }
@@ -51,7 +80,7 @@ pub(super) fn trace(call: &Finished<'_>, measure: Option<&CallMeasure>) {
     let (op, duration_us) = (call.op, micros(call.elapsed));
     // Redacted only when the record is written: a field's value is
     // evaluated only for an enabled callsite.
-    let member = || Redacted::from(call.member);
+    let member = || actor_ref(call.member);
     let (outcome, decision, kind) = match call.outcome {
         Ok(decision) => ("ok", decision, "none"),
         Err(kind) => ("refused", "none", kind.as_str()),
@@ -79,12 +108,13 @@ pub(super) fn trace(call: &Finished<'_>, measure: Option<&CallMeasure>) {
     }
 }
 
-/// The call's `swarm_op` record. `answer` is what it answered, sized as
-/// the JSON it renders to; `measure` is `None` when the call began no
-/// transaction, and its waits are then `null`.
+/// The call's `swarm_op` record. `served` is what it answered and acted
+/// on (`None` for a refusal), the answer sized as the compact JSON it
+/// renders to; `measure` is `None` when the call began no transaction, and
+/// its waits are then `null`.
 pub(super) fn observation(
     call: &Finished<'_>,
-    answer: Option<&Value>,
+    served: Option<&Served>,
     measure: Option<&CallMeasure>,
 ) -> BoardOpObservation {
     debug_assert!(
@@ -93,13 +123,13 @@ pub(super) fn observation(
     );
     BoardOpObservation {
         op: call.op.to_owned(),
-        actor_ref: Redacted::from(call.member),
+        actor_ref: actor_ref(call.member),
         role: call.role,
         run_id: measure
             .and_then(|measure| measure.run_id.as_deref())
             .map(Redacted::from),
-        task_id: None,
-        message_id: None,
+        task_id: served.and_then(|served| served.task_id.and(None)),
+        message_id: served.and_then(|served| served.message_id.and(None)),
         outcome: match call.outcome {
             Ok(_) => BoardOpOutcome::Ok,
             Err(kind) => BoardOpOutcome::Refused { kind },
@@ -108,12 +138,13 @@ pub(super) fn observation(
         lock_wait_us: measure.map(|measure| micros(measure.lock_wait)),
         busy_wait_us: measure.map(|measure| micros(measure.busy_wait)),
         busy: measure.map(|measure| measure.busy),
-        cursor_moved: false,
-        result_bytes: answer.map_or(0, rendered_bytes),
+        cursor_moved: served.map(|served| served.cursor_moved.unwrap_or(false)),
+        result_bytes: served.map_or(0, |served| rendered_bytes(&served.value)),
     }
 }
 
-/// The bytes of `value`'s JSON, counted without building it.
+/// The bytes of `value`'s compact JSON (`serde_json`'s, not Python's
+/// `json.dumps` with its spaced separators), counted without building it.
 fn rendered_bytes(value: &Value) -> u64 {
     struct Count(u64);
     impl std::io::Write for Count {

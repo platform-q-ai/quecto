@@ -150,3 +150,11 @@ harness = false
 # this target silently, and `--test bdd` is refused with a message naming
 # the feature.
 required-features = ["test-support"]
+
+# The board op telemetry overhead probe (#2303): opt-in and re-runnable,
+# never part of a test run. `cargo run --release --features test-support
+# --example board_op_overhead` prints p50/p95 per op with the event log off
+# and on.
+[[example]]
+name = "board_op_overhead"
+required-features = ["test-support"]

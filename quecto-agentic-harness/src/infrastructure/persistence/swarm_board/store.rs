@@ -38,7 +38,7 @@ use std::time::{Duration, Instant};
 use rusqlite::limits::Limit;
 use rusqlite::{Connection, ErrorCode, OpenFlags, Transaction, TransactionBehavior, ffi};
 
-use super::meter;
+use super::meter::{self, Tally};
 use super::schema::{ADDED_COLUMNS, schema_statements};
 
 /// Python's `sqlite3.connect(..., timeout=0.5)`.
@@ -125,13 +125,25 @@ impl BoardStore {
         create: bool,
         body: impl FnOnce(&Transaction<'_>) -> Result<T, TransactionError>,
     ) -> Result<T, (StoreRefusal, Option<StoreFailure>)> {
+        self.measured(create, None, body)
+    }
+
+    /// [`Self::attempt`], measured on `tally` when there is one (#2303):
+    /// its lock wait, and its busy handler's firing and sleep. Without one
+    /// no timing is taken and SQLite's own busy timeout waits.
+    pub(super) fn measured<T>(
+        &self,
+        create: bool,
+        tally: Option<&Tally>,
+        body: impl FnOnce(&Transaction<'_>) -> Result<T, TransactionError>,
+    ) -> Result<T, (StoreRefusal, Option<StoreFailure>)> {
         let failed = |refusal| (refusal, Some(StoreFailure::Failed));
         let path = absolutised(&self.path, std::env::current_dir).map_err(failed)?;
         // Opened only to create it, or where it is; anything else is a store
         // deleted from under its run (#2145), and mode=rw never recreates it.
         if create || path.exists() {
-            let mut connection = open(&path, create).map_err(failed)?;
-            let outcome = run(&mut connection, create, body);
+            let mut connection = open(&path, create, tally).map_err(failed)?;
+            let outcome = run(&mut connection, create, tally, body);
             debug_assert!(
                 connection.is_autocommit(),
                 "a board transaction is committed or rolled back before its connection closes"
@@ -251,7 +263,7 @@ const OPEN_FLAGS: OpenFlags = OpenFlags::SQLITE_OPEN_URI.union(OpenFlags::SQLITE
 const CREATE_FLAGS: OpenFlags = OPEN_FLAGS.union(OpenFlags::SQLITE_OPEN_CREATE);
 
 /// `sqlite3.connect(path.as_uri() + '?mode=rw[c]', uri=True, timeout=0.5)`.
-fn open(path: &Path, create: bool) -> Result<Connection, StoreRefusal> {
+fn open(path: &Path, create: bool, tally: Option<&Tally>) -> Result<Connection, StoreRefusal> {
     let (mode, flags) = if create {
         ("rwc", CREATE_FLAGS)
     } else {
@@ -268,11 +280,11 @@ fn open(path: &Path, create: bool) -> Result<Connection, StoreRefusal> {
         .pragma_query_value(None, "secure_delete", |row| row.get::<_, i64>(0))
         .map_err(|error| contended(&error))?;
     secure_delete_checked(secure_delete)?;
-    // A metered call (#2303) waits on the same schedule and notes that it
-    // waited; otherwise SQLite's own handler waits.
-    let waiting = match meter::active() {
-        true => connection.busy_handler(Some(meter::metered_busy)),
-        false => connection.busy_timeout(BUSY_TIMEOUT),
+    // A metered call (#2303) waits on the same schedule and notes on its
+    // own tally that it waited; otherwise SQLite's own handler waits.
+    let waiting = match (meter::active(), tally) {
+        (true, Some(tally)) => meter::wait_metered(&connection, tally),
+        _ => connection.busy_timeout(BUSY_TIMEOUT),
     };
     waiting.map_err(|error| contended(&error))?;
     Ok(connection)
@@ -300,14 +312,17 @@ fn opening_message(error: &rusqlite::Error, uri: &str) -> String {
 fn run<T>(
     connection: &mut Connection,
     create: bool,
+    tally: Option<&Tally>,
     body: impl FnOnce(&Transaction<'_>) -> Result<T, TransactionError>,
 ) -> Result<T, TransactionError> {
     connection.execute_batch("PRAGMA foreign_keys=ON")?;
     // The lock wait is measured only for a metered call (#2303).
-    let asked = meter::active().then(Instant::now);
+    let asked = tally
+        .filter(|_| meter::active())
+        .map(|tally| (tally, Instant::now()));
     let begun = connection.transaction_with_behavior(TransactionBehavior::Immediate);
-    if let Some(asked) = asked {
-        meter::lock_waited(asked.elapsed());
+    if let Some((tally, asked)) = asked {
+        tally.lock_waited(asked.elapsed());
     }
     let transaction = begun?;
     let value = match prepared(&transaction, create).and_then(|()| {

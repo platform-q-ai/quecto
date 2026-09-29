@@ -22,8 +22,8 @@ use crate::infrastructure::persistence::swarm_board::encoding::PyJsonEncoding;
 use crate::infrastructure::persistence::swarm_board::ids::Uuid4Ids;
 use crate::infrastructure::persistence::swarm_board::meter::SqliteBoardCallMeter;
 use crate::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
-use crate::infrastructure::tools::swarm_board_dispatch::BoardTelemetry;
 pub use crate::infrastructure::tools::swarm_board_dispatch::SwarmBoardHandles;
+use crate::infrastructure::tools::swarm_board_dispatch::{BoardComposer, BoardTelemetry};
 use crate::infrastructure::tools::swarm_lifecycle::SystemClock;
 
 /// The board handles over the SQLite file at `location`, recording each
@@ -33,14 +33,11 @@ pub fn build_swarm_board_handles(
     location: BoardLocation,
     event_log: Option<Arc<dyn BoardOpLog>>,
 ) -> SwarmBoardHandles {
-    let handles = build_swarm_board_handles_with(
-        Arc::new(SqliteBoardRepository::new(&location)),
-        Arc::new(SystemClock),
-        Arc::new(Uuid4Ids),
-    );
+    let repository = SqliteBoardRepository::new(&location);
+    let (clock, ids) = (Arc::new(SystemClock), Arc::new(Uuid4Ids));
     match event_log {
-        Some(event_log) => with_event_log(handles, event_log),
-        None => handles,
+        Some(event_log) => with_event_log(repository, clock, ids, event_log),
+        None => build_swarm_board_handles_with(Arc::new(repository), clock, ids),
     }
 }
 
@@ -116,18 +113,31 @@ pub fn build_swarm_board_handles_with(
     }
 }
 
-/// `handles` recording a `swarm_op` per call in `event_log` (#2303),
-/// measured by the SQLite store's meter. The caller passes the log only
-/// when `telemetry.event_log.enabled` is on (owner decision T1): without it
+/// The board handles over `repository`'s file, recording a `swarm_op` per
+/// call in `event_log` (#2303). The caller passes the log only when
+/// `telemetry.event_log.enabled` is on (owner decision T1): without it
 /// nothing is measured or written.
+///
+/// Each call is served by the same graph composed for it alone over a
+/// metered instance of the repository ([`SqliteBoardCallMeter`]) that
+/// carries that call's own measure: no call's measure is shared, and none
+/// passes through ambient state. The handles' own use cases (unmetered)
+/// serve nothing while the log is on.
 pub fn with_event_log(
-    handles: SwarmBoardHandles,
+    repository: SqliteBoardRepository,
+    clock: Arc<dyn Clock + Send + Sync>,
+    ids: Arc<dyn IdSource>,
     event_log: Arc<dyn BoardOpLog>,
 ) -> SwarmBoardHandles {
+    let compose: BoardComposer = Arc::new(move |repository| {
+        build_swarm_board_handles_with(repository, clock.clone(), ids.clone())
+    });
+    let handles = compose(Arc::new(repository.clone()));
     SwarmBoardHandles {
         telemetry: Some(BoardTelemetry {
             log: event_log,
-            meter: Arc::new(SqliteBoardCallMeter),
+            meter: Arc::new(SqliteBoardCallMeter::new(repository)),
+            compose,
         }),
         ..handles
     }

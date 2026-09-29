@@ -4,15 +4,15 @@
 //!
 //! A board call runs synchronously on its own thread (a blocking thread
 //! under a runtime, or a plain thread), so its record is appended there:
-//! one `write` of one line on the log's `O_APPEND` handle, no async
-//! runtime, no lock, no panic. The line shares the log's cap budget with
-//! the async writer, so the cap stays exact; a line refused at the cap, or
-//! a failed write, is dropped with one warning for the log's lifetime and
-//! never touches the op's answer. The async writer takes no lock this
-//! handle waits on, so a `swarm_op` line and an agent record written at
-//! the same instant are two `write`s on one append-mode file: each lands
-//! whole on a local file system, though POSIX does not promise that for a
-//! regular file (as for the crash line).
+//! one `write` of one line on the log's `O_APPEND` handle, under the
+//! log's write gate, with no async runtime and no panic. Every writer of
+//! the log takes that gate for its one write, so a `swarm_op` line never
+//! interleaves with an agent record however long either is. The line
+//! shares the log's cap budget with every writer, so the cap stays exact:
+//! the first line that does not fit, from whichever writer, is replaced by
+//! the log's one `log_capped` record, and nothing is written after it. A
+//! record refused at the cap, or a failed write, is dropped with one
+//! warning for the log's lifetime and never touches the op's answer.
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::application::swarm::ports::BoardOpLog;

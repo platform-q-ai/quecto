@@ -8,10 +8,10 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use super::{BOARD_OPS, BoardTelemetry, Method, SwarmBoardHandles, call};
-use crate::application::swarm::dto::BoardLocation;
+use super::{BOARD_OPS, BoardComposer, BoardTelemetry, Method, SwarmBoardHandles, call};
+use crate::application::swarm::dto::{BoardLocation, CallMeasure};
 use crate::application::swarm::ports::{
-    BoardCallMeter, BoardOpLog, BoardRepository, CallMeasure, Clock, IdSource,
+    BoardCallMeter, BoardOpLog, BoardRepository, Clock, IdSource, MeteredCall,
 };
 use crate::composition::swarm::{board_op_log, build_swarm_board_handles_with, with_event_log};
 use crate::domain::swarm::{
@@ -57,16 +57,61 @@ impl Recorded {
     }
 }
 
-/// A meter that measures nothing and counts how often it was asked.
-#[derive(Default)]
-struct Unmeasured(Mutex<u32>);
+/// A meter that measures nothing, over a plain repository, and counts
+/// how many calls it opened.
+struct Unmeasured {
+    repository: Arc<dyn BoardRepository>,
+    opened: Mutex<u32>,
+}
+
+impl Unmeasured {
+    fn over(repository: Arc<dyn BoardRepository>) -> Arc<Self> {
+        Arc::new(Self {
+            repository,
+            opened: Mutex::new(0),
+        })
+    }
+
+    fn opened(&self) -> u32 {
+        *self.opened.lock().unwrap()
+    }
+}
 
 impl BoardCallMeter for Unmeasured {
-    fn metered(&self, work: &mut dyn FnMut()) -> Option<CallMeasure> {
-        *self.0.lock().unwrap() += 1;
-        work();
+    fn open(&self) -> Box<dyn MeteredCall> {
+        *self.opened.lock().unwrap() += 1;
+        Box::new(NothingMeasured(self.repository.clone()))
+    }
+}
+
+struct NothingMeasured(Arc<dyn BoardRepository>);
+
+impl MeteredCall for NothingMeasured {
+    fn repository(&self) -> Arc<dyn BoardRepository> {
+        self.0.clone()
+    }
+
+    fn nested(&self) -> Box<dyn MeteredCall> {
+        Box::new(Self(self.0.clone()))
+    }
+
+    fn measure(&self) -> Option<CallMeasure> {
         None
     }
+}
+
+/// The test graph over a given repository, as composition builds it.
+fn composer() -> BoardComposer {
+    Arc::new(plain)
+}
+
+/// Telemetry recording in `log`, measured by `meter`.
+fn telemetry(log: &Arc<Recorded>, meter: &Arc<Unmeasured>) -> Option<BoardTelemetry> {
+    Some(BoardTelemetry {
+        log: log.clone(),
+        meter: meter.clone(),
+        compose: composer(),
+    })
 }
 
 fn location(dir: &tempfile::TempDir) -> BoardLocation {
@@ -84,12 +129,22 @@ fn plain(repository: Arc<dyn BoardRepository>) -> SwarmBoardHandles {
     )
 }
 
+/// The handles over the board file in `dir`, recording in `log`, as
+/// composition builds them with the event log on.
+fn recorded(dir: &tempfile::TempDir, log: Arc<dyn BoardOpLog>) -> SwarmBoardHandles {
+    with_event_log(
+        SqliteBoardRepository::new(&location(dir)),
+        Arc::new(Fixed(1_000.0)),
+        Arc::new(Counter::default()),
+        log,
+    )
+}
+
 /// A board file under a fresh directory and its handles, recording in
 /// `log`.
 fn logged(log: &Arc<Recorded>) -> (tempfile::TempDir, SwarmBoardHandles) {
     let dir = tempfile::TempDir::new().unwrap();
-    let repository = Arc::new(SqliteBoardRepository::new(&location(&dir)));
-    let handles = with_event_log(plain(repository), log.clone());
+    let handles = recorded(&dir, log.clone());
     (dir, handles)
 }
 
@@ -149,6 +204,55 @@ fn every_method() -> Vec<Method> {
     all
 }
 
+/// What an answered call of `method` acted on, as its record must say:
+/// `(args, task_id, message_id, cursor_moved)`. The `match` is exhaustive,
+/// so a new method does not compile until its record's fields are stated
+/// here (#2303 review M2).
+fn acted_on(method: Method) -> (Value, Option<i64>, Option<i64>, Option<bool>) {
+    match method {
+        Method::Status | Method::Snapshot => (json!([]), None, None, None),
+        Method::CreateRun => (create_args(), None, None, None),
+        Method::BootstrapRun => (json!([1, "s", null]), None, None, None),
+    }
+}
+
+/// Every method, answered, records the task, the message and the cursor
+/// move its own arm reports, per op.
+#[test]
+fn every_answered_op_records_what_it_acted_on() {
+    for method in every_method() {
+        let log = Arc::new(Recorded::default());
+        let (_dir, handles) = logged(&log);
+        call(&handles, "parent", "bootstrap_run", json!([1, "s", null])).unwrap();
+        log.clear();
+        let (args, task_id, message_id, cursor_moved) = acted_on(method);
+        call(&handles, "parent", method.name(), args).unwrap();
+        let recorded = only(&log);
+        assert_eq!(recorded.op, method.name());
+        assert_eq!(
+            (recorded.task_id, recorded.message_id, recorded.cursor_moved),
+            (task_id, message_id, cursor_moved),
+            "{recorded:?}"
+        );
+    }
+}
+
+/// A caller's member id is recorded bounded (#2303 review L3): its first
+/// 128 characters, cut on a character boundary.
+#[test]
+fn a_long_actor_id_is_recorded_bounded() {
+    let log = Arc::new(Recorded::default());
+    let (_dir, handles) = logged(&log);
+    let actor = format!("{}{}", "a".repeat(127), "é".repeat(200));
+    let _refused = call(&handles, &actor, "_status", json!([]));
+    let recorded = only(&log);
+    assert_eq!(recorded.actor_ref.chars().count(), 128, "{recorded:?}");
+    assert_eq!(recorded.actor_ref.as_str(), format!("{}é", "a".repeat(127)));
+    log.clear();
+    let _refused = call(&handles, "short", "_status", json!([]));
+    assert_eq!(only(&log).actor_ref.as_str(), "short");
+}
+
 #[test]
 fn board_ops_names_every_method_once() {
     let names: Vec<&str> = every_method().into_iter().map(Method::name).collect();
@@ -171,6 +275,11 @@ fn refusal(log: &Recorded, answer: Result<Value, BoardError>) -> RefusalKind {
     };
     assert_eq!(kind, error.kind(), "the record carries the error's kind");
     assert_eq!(recorded.result_bytes, 0);
+    assert_eq!(
+        (recorded.task_id, recorded.message_id, recorded.cursor_moved),
+        (None, None, None),
+        "a refusal acted on nothing"
+    );
     kind
 }
 
@@ -231,10 +340,8 @@ fn an_answered_op_records_its_run_role_size_and_measure() {
     );
     assert_eq!(recorded.busy, Some(false), "{recorded:?}");
     assert_eq!(recorded.busy_wait_us, Some(0), "{recorded:?}");
-    assert!(!recorded.cursor_moved);
     let lock_wait = recorded.lock_wait_us.expect("a transaction was measured");
     assert!(recorded.duration_us >= lock_wait, "{recorded:?}");
-    assert_eq!((recorded.task_id, recorded.message_id), (None, None));
 }
 
 /// What was not measured is `null`, never a zero that reads as real
@@ -257,20 +364,19 @@ fn an_unmeasured_op_records_null_waits() {
         "no transaction began"
     );
     log.clear();
-    let meter = Arc::new(Unmeasured::default());
     let dir = tempfile::TempDir::new().unwrap();
+    let repository: Arc<dyn BoardRepository> =
+        Arc::new(SqliteBoardRepository::new(&location(&dir)));
+    let meter = Unmeasured::over(repository.clone());
     let handles = SwarmBoardHandles {
-        telemetry: Some(BoardTelemetry {
-            log: log.clone(),
-            meter: meter.clone(),
-        }),
-        ..plain(Arc::new(SqliteBoardRepository::new(&location(&dir))))
+        telemetry: telemetry(&log, &meter),
+        ..plain(repository)
     };
     call(&handles, "parent", "bootstrap_run", json!([1, "s", null])).unwrap();
     let recorded = only(&log);
     assert_eq!(recorded.outcome, BoardOpOutcome::Ok);
     assert_eq!((recorded.lock_wait_us, recorded.busy), (None, None));
-    assert_eq!(*meter.0.lock().unwrap(), 1, "one measure per call");
+    assert_eq!(meter.opened(), 1, "one measure per call");
 }
 
 /// A second connection holding `BEGIN IMMEDIATE` on the board until told
@@ -341,22 +447,21 @@ fn a_lock_held_past_the_timeout_is_a_contended_refusal() {
 #[test]
 fn with_the_event_log_off_nothing_is_measured_or_written() {
     let dir = tempfile::TempDir::new().unwrap();
-    let handles = plain(Arc::new(SqliteBoardRepository::new(&location(&dir))));
+    let repository: Arc<dyn BoardRepository> =
+        Arc::new(SqliteBoardRepository::new(&location(&dir)));
+    let handles = plain(repository.clone());
     assert!(handles.telemetry.is_none(), "off unless switched on");
     call(&handles, "parent", "bootstrap_run", json!([1, "s", null])).unwrap();
     call(&handles, "parent", "_status", json!([])).unwrap();
     let log = Arc::new(Recorded::default());
-    let meter = Arc::new(Unmeasured::default());
+    let meter = Unmeasured::over(repository);
     let on = SwarmBoardHandles {
-        telemetry: Some(BoardTelemetry {
-            log: log.clone(),
-            meter: meter.clone(),
-        }),
+        telemetry: telemetry(&log, &meter),
         ..handles.clone()
     };
     call(&on, "parent", "_snapshot", json!([])).unwrap();
     call(&handles, "parent", "_snapshot", json!([])).unwrap();
-    assert_eq!(*meter.0.lock().unwrap(), 1, "only the call with it on");
+    assert_eq!(meter.opened(), 1, "only the call with it on");
     assert_eq!(log.ops().len(), 1);
 }
 
@@ -366,10 +471,9 @@ fn with_the_event_log_off_nothing_is_measured_or_written() {
 fn telemetry_leaves_the_board_file_unchanged() {
     let run = |log: Option<Arc<Recorded>>| {
         let dir = tempfile::TempDir::new().unwrap();
-        let repository = Arc::new(SqliteBoardRepository::new(&location(&dir)));
         let handles = match &log {
-            Some(log) => with_event_log(plain(repository), log.clone()),
-            None => plain(repository),
+            Some(log) => recorded(&dir, log.clone()),
+            None => plain(Arc::new(SqliteBoardRepository::new(&location(&dir)))),
         };
         call(&handles, "parent", "bootstrap_run", json!([1, "s", null])).unwrap();
         call(&handles, "parent", "create_run", create_args()).unwrap();
@@ -395,8 +499,7 @@ fn real(base: &tempfile::TempDir, dir: &tempfile::TempDir, cap: u64) -> SwarmBoa
         .unwrap()
         .with_cap(cap);
     let event_log = board_op_log(true, &log).expect("the event log is on");
-    let repository = Arc::new(SqliteBoardRepository::new(&location(dir)));
-    with_event_log(plain(repository), event_log)
+    recorded(dir, event_log)
 }
 
 fn lines(base: &tempfile::TempDir) -> (String, Vec<Value>) {
@@ -448,7 +551,9 @@ fn a_record_the_log_cannot_take_leaves_the_answer_unchanged() {
         answer,
         call(&unlogged, "parent", "_status", json!([])).unwrap()
     );
-    assert_eq!(lines(&base).1.len(), 0, "nothing past the cap");
+    let (text, lines) = lines(&base);
+    assert_eq!(lines.len(), 1, "only the log's own cap record: {text}");
+    assert_eq!(lines[0]["event"], "log_capped", "{text}");
 }
 
 /// The string fields a `swarm_op` line may hold: the envelope's and the
