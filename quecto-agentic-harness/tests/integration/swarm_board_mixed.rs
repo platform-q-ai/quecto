@@ -463,6 +463,85 @@ fn interleaved_python_and_rust_writers_on_one_file_match_a_single_writer() {
     );
 }
 
+/// A claim token Rust draws is the one Python's writers then use (#2278
+/// review L4): on a file Python created, Rust claims (drawing the token
+/// from a counter at Python's count, so it draws the id a Python claim
+/// would), and Python blocks, unblocks and submits against that token. The
+/// outcomes and the file are the Python-only run's, ids included.
+#[test]
+fn a_claim_rust_draws_serves_python_writers_as_a_python_claim_would() {
+    use Side::{Python, Rust};
+    let dir = tempfile::tempdir().expect("a directory for the boards");
+    let (_, single_file, mut single) = created(dir.path(), "single");
+    let (mixed_checkout, mixed_file, mut python) = created(dir.path(), "mixed");
+    let steps = vec![
+        mix(Python, "parent", "_admit", json!(["worker", "res-w"])),
+        mix(
+            Python,
+            "parent",
+            "_activate",
+            json!(["worker", "res-w", 11, "t", null]),
+        ),
+        mix(
+            Python,
+            "parent",
+            "task_create",
+            json!(["r1", "first", ["tests pass"]]),
+        ),
+        mix(Rust, "worker", "claim", json!([1])),
+        mix(Python, "worker", "block", json!([1, "{token}", "waiting"])),
+        mix(Python, "worker", "unblock", json!([1, "{token}", "ready"])),
+        mix(
+            Python,
+            "worker",
+            "evidence",
+            json!(["tests", "report", "R1", "command", true]),
+        ),
+        mix(
+            Python,
+            "worker",
+            "submit",
+            json!([1, "{token}", [{"artifact": "report", "revision": "R1"}]]),
+        ),
+        mix(Python, "parent", "task", json!([1])),
+    ];
+    let mut token = String::new();
+    for (index, Mix(side, member, method, args)) in steps.into_iter().enumerate() {
+        let now = NOW + 1.0 + index as f64;
+        let args = with_token(&args, &token);
+        let expected = single.call(member, method, &args, now);
+        let answered = match side {
+            Side::Python => python.call(member, method, &args, now),
+            Side::Rust => {
+                // Python drew every id so far; the single writer's claim
+                // is its next: Rust's counter starts where Python's is.
+                let drawn = claimed_token(&expected)
+                    .and_then(|token| u64::from_str_radix(&token, 16).ok())
+                    .expect("the claim drew a counter id");
+                RustBoard::open_after(&mixed_file, &mixed_checkout, drawn - 1).call(
+                    member,
+                    method,
+                    &serde_json::from_str(&args).unwrap(),
+                    now,
+                )
+            }
+        };
+        assert_eq!(answered, expected, "step {index} {method} on {side:?}");
+        assert!(
+            matches!(answered, Outcome::Ok(_)),
+            "step {index} {method}: {answered:?}"
+        );
+        if method == "claim" {
+            token = claimed_token(&answered).expect("the claim answered a token");
+        }
+    }
+    assert_eq!(
+        first_difference(&logical_dump(&single_file), &logical_dump(&mixed_file)),
+        None,
+        "Rust's claim token, used by Python, leaves the single writer's file"
+    );
+}
+
 /// Retries `call` while the store answers the contended refusal, within a
 /// bound: 25 appends against 7 other writers each wait at most the 500 ms
 /// busy timeout per attempt.

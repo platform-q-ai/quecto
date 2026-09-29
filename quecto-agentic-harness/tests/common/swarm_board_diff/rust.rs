@@ -90,11 +90,18 @@ impl RustBoard {
     }
 
     pub fn open(database: &Path, checkout: &Path) -> Self {
+        Self::open_after(database, checkout, 0)
+    }
+
+    /// The board whose counter has already drawn `drawn` ids: its next id
+    /// is `format(drawn + 1, '032x')`, the one a Python writer that drew
+    /// `drawn` would draw next.
+    pub fn open_after(database: &Path, checkout: &Path, drawn: u64) -> Self {
         let clock = Arc::new(StepClock::default());
         let handles = build_swarm_board_handles_with(
             Arc::new(SqliteBoardRepository::new(&location(database, checkout))),
             clock.clone(),
-            Arc::new(CounterIds::default()),
+            Arc::new(CounterIds(Mutex::new(drawn))),
             Arc::new(ResolvedCheckout::new(checkout)),
         );
         Self { handles, clock }
