@@ -25,6 +25,9 @@ pub struct ClaudeMemberSettings {
     pub parent: Option<String>,
     /// `--config`, when given: it may switch the event log on (#2304).
     pub config_path: Option<PathBuf>,
+    /// The key its event log is filed under, or `None` when it keeps none
+    /// (`--no-session`, `-s -`): every unnamed member has its own.
+    pub log_key: Option<String>,
 }
 
 #[derive(Clone)]

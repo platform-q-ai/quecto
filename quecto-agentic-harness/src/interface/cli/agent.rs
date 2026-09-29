@@ -18,6 +18,7 @@ mod agent_deadline;
 mod build_result;
 mod event_log;
 pub(crate) use build_result::AgentBuildResult;
+pub(crate) use event_log::member_log_key;
 mod flag_parse;
 mod startup_effort;
 mod startup_prompt;

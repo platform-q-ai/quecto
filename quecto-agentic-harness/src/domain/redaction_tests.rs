@@ -7,8 +7,11 @@ fn scrubs_named_and_prefixed_secrets() {
         "Authorization: [REDACTED]"
     );
     assert_eq!(redact_secrets("sk-livedeadbeef0001"), "[REDACTED]");
-    assert_eq!(redact_secrets("token=hunter2"), "[REDACTED]");
-    assert_eq!(redact_secrets("--api-key=topsecret"), "--[REDACTED]");
+    assert_eq!(redact_secrets("token=hunter2"), "token=[REDACTED]");
+    assert_eq!(
+        redact_secrets("--api-key=topsecret"),
+        "--api-key=[REDACTED]"
+    );
 }
 
 #[test]
@@ -147,14 +150,20 @@ fn real_key_shapes_are_redacted_at_every_word_start() {
 
 /// #2241: a named span keeps matching inside an identifier: an environment
 /// name such as `GITHUB_TOKEN=` or `DB_PASSWORD:` is a secret label however
-/// it is prefixed.
+/// it is prefixed. The label is kept (#2304 review round 3).
 #[test]
 fn a_named_secret_label_inside_an_identifier_is_still_redacted() {
-    assert_eq!(redact_secrets("GITHUB_TOKEN=abc123"), "GITHUB_[REDACTED]");
-    assert_eq!(redact_secrets("DB_PASSWORD: hunter2"), "DB_[REDACTED]");
+    assert_eq!(
+        redact_secrets("GITHUB_TOKEN=abc123"),
+        "GITHUB_TOKEN=[REDACTED]"
+    );
+    assert_eq!(
+        redact_secrets("DB_PASSWORD: hunter2"),
+        "DB_PASSWORD: [REDACTED]"
+    );
     assert_eq!(
         redact_secrets("OPENAI_API_KEY=whatever"),
-        "OPENAI_[REDACTED]"
+        "OPENAI_API_KEY=[REDACTED]"
     );
     assert_eq!(
         redact_secrets("Authorization: Bearer abc.def"),
