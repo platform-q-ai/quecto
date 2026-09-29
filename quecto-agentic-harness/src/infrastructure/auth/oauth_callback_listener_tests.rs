@@ -327,6 +327,33 @@ async fn a_trickling_stray_is_cut_off_at_its_total_budget_not_per_read() {
 }
 
 #[tokio::test]
+async fn a_head_whose_terminator_lands_past_the_cap_after_a_short_first_read_is_431() {
+    // The swarm review's case: a 47-byte first read shifts every later read,
+    // so the read that brings the blank line crosses the 262,144-byte cap.
+    let (addr, handle) = start(Duration::from_secs(10), CallbackLimits::PRODUCTION).await;
+    let line = "GET /callback?code=ok&state=s HTTP/1.1\r\n";
+    let pad = "p".repeat(262_154 - line.len() - "X: \r\n\r\n".len());
+    let head = format!("{line}X: {pad}\r\n\r\n").into_bytes();
+    assert_eq!(head.len(), 262_154);
+    let mut stream = TcpStream::connect(addr).await.unwrap();
+    stream.write_all(&head[..47]).await.unwrap();
+    stream.flush().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    // The listener may answer and close before the last bytes are sent.
+    let _ = stream.write_all(&head[47..]).await;
+    let mut buf = Vec::new();
+    let read = tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut buf)).await;
+    let resp = String::from_utf8_lossy(&buf).into_owned();
+    assert!(
+        matches!(read, Ok(Ok(_))) && resp.starts_with("HTTP/1.1 431 "),
+        "got: {read:?} {resp:?}"
+    );
+    let resp = exchange(addr, VALID).await;
+    assert!(resp.starts_with("HTTP/1.1 200 OK"), "got: {resp:?}");
+    assert_eq!(handle.await.unwrap().unwrap(), "ok");
+}
+
+#[tokio::test]
 async fn an_empty_expected_state_is_an_error_not_a_panic() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);

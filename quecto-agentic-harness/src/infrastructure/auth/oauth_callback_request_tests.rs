@@ -228,6 +228,124 @@ async fn rest_of_head_past_the_head_cap_is_refused() {
     );
 }
 
+/// A stream whose reads return the scripted sizes, in order, then as much as
+/// the caller's buffer takes: the tests decide where each read ends, which a
+/// socket never promises. Writes are accepted and discarded.
+struct ScriptedReads {
+    data: Vec<u8>,
+    sizes: std::collections::VecDeque<usize>,
+}
+
+impl ScriptedReads {
+    fn new(data: Vec<u8>, sizes: &[usize]) -> Self {
+        Self {
+            data,
+            sizes: sizes.iter().copied().collect(),
+        }
+    }
+}
+
+impl tokio::io::AsyncRead for ScriptedReads {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let scripted = self.sizes.pop_front().unwrap_or(usize::MAX);
+        let n = scripted.min(buf.remaining()).min(self.data.len());
+        let rest = self.data.split_off(n);
+        buf.put_slice(&self.data);
+        self.data = rest;
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
+impl tokio::io::AsyncWrite for ScriptedReads {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::task::Poll::Ready(Ok(buf.len()))
+    }
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
+/// A valid callback head of exactly `len` bytes: its final LF is byte `len`.
+fn callback_head_of(len: usize) -> Vec<u8> {
+    let line = "GET /callback?code=ok&state=s HTTP/1.1\r\n";
+    let frame = line.len() + "X: ".len() + "\r\n\r\n".len();
+    assert!(len > frame, "a head of {len} bytes cannot hold the line");
+    let head = format!("{line}X: {}\r\n\r\n", "p".repeat(len - frame));
+    assert_eq!(head.len(), len);
+    head.into_bytes()
+}
+
+/// Frame a head read in the scripted sizes; also return how many head bytes
+/// the connection read.
+async fn scripted_head(head: Vec<u8>, sizes: &[usize]) -> (Framed<()>, usize) {
+    let stream = ScriptedReads::new(head, sizes);
+    let mut connection = CallbackConnection::new(stream, &CallbackLimits::PRODUCTION, later(5));
+    let framed = match connection.request_line().await {
+        Framed::Ready(_) => connection.rest_of_head().await,
+        Framed::Refused(response) => Framed::Refused(response),
+        Framed::LoginTimedOut => Framed::LoginTimedOut,
+    };
+    (framed, connection.head_read)
+}
+
+/// Read splits that move where the cap falls within a read: a short first
+/// read (47 bytes, the swarm review's case), reads of one byte and of a
+/// chunk less one, and whole chunks.
+const SPLITS: [&[usize]; 4] = [&[47], &[1, 46, 4095], &[4096], &[40, 7, 1, 1]];
+
+#[tokio::test]
+async fn a_short_first_read_cannot_carry_a_terminator_past_the_head_cap() {
+    let cap = CallbackLimits::PRODUCTION.head_bytes;
+    assert_eq!(cap, 262_144);
+    let (framed, head_read) = scripted_head(callback_head_of(262_154), &[47]).await;
+    assert_eq!(framed, Framed::Refused(HEAD_TOO_LARGE_RESPONSE));
+    assert!(
+        head_read <= cap,
+        "read {head_read} head bytes past a cap of {cap}"
+    );
+}
+
+#[tokio::test]
+async fn a_head_ending_exactly_at_the_cap_is_accepted_whatever_the_reads() {
+    let cap = CallbackLimits::PRODUCTION.head_bytes;
+    for sizes in SPLITS {
+        let (framed, head_read) = scripted_head(callback_head_of(cap), sizes).await;
+        assert_eq!(framed, Framed::Ready(()), "reads {sizes:?}");
+        assert_eq!(head_read, cap, "reads {sizes:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_head_ending_one_byte_past_the_cap_is_refused_whatever_the_reads() {
+    let cap = CallbackLimits::PRODUCTION.head_bytes;
+    for sizes in SPLITS {
+        let (framed, head_read) = scripted_head(callback_head_of(cap + 1), sizes).await;
+        assert_eq!(
+            framed,
+            Framed::Refused(HEAD_TOO_LARGE_RESPONSE),
+            "reads {sizes:?}"
+        );
+        assert!(head_read <= cap, "reads {sizes:?}: read {head_read}");
+    }
+}
+
 #[tokio::test]
 async fn rest_of_head_cut_off_or_stalled_is_incomplete() {
     let input = b"GET / HTTP/1.1\r\nHost: x\r\n";
