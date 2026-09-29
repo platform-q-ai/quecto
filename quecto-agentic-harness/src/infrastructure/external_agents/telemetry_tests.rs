@@ -7,6 +7,7 @@ use std::sync::Mutex;
 
 use super::*;
 use crate::domain::error::DomainError;
+use crate::domain::external_agent::telemetry::ExternalAgentLifecycle;
 
 #[derive(Default)]
 struct Sink {
@@ -87,5 +88,135 @@ async fn a_failing_log_never_fails_the_member_and_is_counted() {
     assert!(
         !telemetry.health.warning_due.load(Ordering::Relaxed),
         "warned, and not again"
+    );
+}
+
+/// A sink whose first write waits for `release`, then fails; every later
+/// write succeeds.
+struct GatedSink {
+    written: Mutex<Vec<(u32, AuditEvent)>>,
+    entered: Mutex<Option<std::sync::mpsc::Sender<()>>>,
+    release: Mutex<std::sync::mpsc::Receiver<()>>,
+    first: std::sync::atomic::AtomicBool,
+}
+
+impl AuditSink for GatedSink {
+    fn emit(
+        &self,
+        turn: u32,
+        event: AuditEvent,
+    ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
+        Box::pin(async move {
+            if self.first.swap(false, Ordering::SeqCst) {
+                if let Some(entered) = self.entered.lock().unwrap().take() {
+                    entered.send(()).unwrap();
+                }
+                self.release.lock().unwrap().recv().unwrap();
+                return Err(DomainError::Session("disk full".into()));
+            }
+            self.written.lock().unwrap().push((turn, event));
+            Ok(())
+        })
+    }
+}
+
+#[test]
+fn a_log_that_lost_records_ends_with_one_counting_what_it_dropped_and_failed() {
+    let (entered, writer_entered) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel();
+    let sink = Arc::new(GatedSink {
+        written: Mutex::default(),
+        entered: Mutex::new(Some(entered)),
+        release: Mutex::new(released),
+        first: std::sync::atomic::AtomicBool::new(true),
+    });
+    let telemetry = EventLogExternalAgentTelemetry::new(sink.clone(), member()).unwrap();
+    // The writer holds the first record: the queue fills behind it.
+    telemetry.record(&interrupted(1));
+    writer_entered.recv().unwrap();
+    for turn in 2..(2 + EVENT_LOG_QUEUE_CAPACITY as u64 + 3) {
+        telemetry.record(&interrupted(turn));
+    }
+    release.send(()).unwrap();
+    drop(telemetry);
+    let written = sink.written.lock().unwrap();
+    assert_eq!(written.len(), EVENT_LOG_QUEUE_CAPACITY + 1);
+    let (turn, last) = written.last().unwrap();
+    assert_eq!(*turn, 0);
+    assert_eq!(
+        last,
+        &AuditEvent::ExternalAgentLifecycle {
+            member_ref: "C2".into(),
+            record: ExternalAgentLifecycle::LogIncomplete {
+                dropped: 3,
+                failed: 1,
+            },
+        }
+    );
+}
+
+#[test]
+fn a_log_that_lost_nothing_writes_no_such_record() {
+    let sink = Arc::new(Sink::default());
+    let telemetry = EventLogExternalAgentTelemetry::new(sink.clone(), member()).unwrap();
+    telemetry.record(&interrupted(1));
+    drop(telemetry);
+    assert_eq!(sink.written.lock().unwrap().len(), 1);
+}
+
+/// A sink whose write never ends, or panics.
+struct StuckSink {
+    panics: bool,
+}
+
+impl AuditSink for StuckSink {
+    fn emit(
+        &self,
+        _turn: u32,
+        _event: AuditEvent,
+    ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
+        let panics = self.panics;
+        Box::pin(async move {
+            assert!(!panics, "the sink panics");
+            std::future::pending().await
+        })
+    }
+}
+
+/// `finish` on another thread, answered within `bound` or `None`.
+fn finish_within(
+    mut telemetry: EventLogExternalAgentTelemetry,
+    bound: std::time::Duration,
+) -> Option<WriterEnd> {
+    let (sent, answer) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let end = telemetry.finish();
+        let _ = sent.send(end);
+    });
+    answer.recv_timeout(bound).ok()
+}
+
+#[test]
+fn a_wedged_writer_holds_the_adapter_s_end_no_longer_than_its_bound() {
+    let telemetry =
+        EventLogExternalAgentTelemetry::new(Arc::new(StuckSink { panics: false }), member())
+            .unwrap()
+            .with_drain_bound(std::time::Duration::from_millis(100));
+    telemetry.record(&interrupted(1));
+    assert_eq!(
+        finish_within(telemetry, std::time::Duration::from_secs(5)),
+        Some(WriterEnd::TimedOut)
+    );
+}
+
+#[test]
+fn a_writer_that_panicked_is_told_apart_in_any_build() {
+    let telemetry =
+        EventLogExternalAgentTelemetry::new(Arc::new(StuckSink { panics: true }), member())
+            .unwrap();
+    telemetry.record(&interrupted(1));
+    assert_eq!(
+        finish_within(telemetry, std::time::Duration::from_secs(5)),
+        Some(WriterEnd::Panicked)
     );
 }

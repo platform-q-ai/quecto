@@ -21,7 +21,7 @@ pub struct TurnUsage {
 }
 
 /// A cumulative total lower than the one before, inside one process.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CostDrop {
     pub previous_micro_usd: u64,
     pub reported_micro_usd: u64,

@@ -9,17 +9,16 @@ use crate::domain::external_agent::stream::{
     SkippedLine, SkippedLineReason, TaskNotification, TaskStarted, ToolResultEvent,
 };
 
-/// Every event type of the vocabulary and what the log does with it. The
-/// mapping itself is exhaustive (a new type does not compile unplaced);
-/// this pins each placement.
-#[test]
-fn every_stream_event_type_maps_to_a_telemetry_outcome() {
+/// Every event type of the vocabulary and what the log does with it: also
+/// fed through the session (`session_telemetry_tests`), which must record
+/// what this says.
+pub(crate) fn every_event_type() -> Vec<(ExternalAgentEvent, StreamTelemetry)> {
     use StreamTelemetry::{Ignored, Recorded};
     let block = |block| ExternalAgentEvent::AssistantBlock {
         message_id: "m".into(),
         block,
     };
-    let table = [
+    vec![
         (
             ExternalAgentEvent::Init(InitEvent::default()),
             Recorded("external_agent_lifecycle"),
@@ -124,8 +123,14 @@ fn every_stream_event_type_maps_to_a_telemetry_outcome() {
             }),
             Recorded("external_agent_stream_diagnostic"),
         ),
-    ];
-    for (event, expected) in table {
+    ]
+}
+
+/// The mapping itself is exhaustive (a new type does not compile
+/// unplaced); this pins each placement.
+#[test]
+fn every_stream_event_type_maps_to_a_telemetry_outcome() {
+    for (event, expected) in every_event_type() {
         assert_eq!(stream_telemetry(&event), expected, "{event:?}");
     }
 }
@@ -215,6 +220,10 @@ fn every_external_agent_event_round_trips_through_the_log() {
                 list_price_cost_micro_usd: 5,
                 list_price_total_micro_usd: 6,
                 task_id: Some("T-9".into()),
+                cost_drop: Some(crate::domain::external_agent::usage::CostDrop {
+                    previous_micro_usd: 9,
+                    reported_micro_usd: 0,
+                }),
             }),
         },
         AuditEvent::ExternalAgentTool {
@@ -259,4 +268,56 @@ fn every_external_agent_event_round_trips_through_the_log() {
         let back: AuditEvent = serde_json::from_value(json).unwrap();
         assert_eq!(back, event);
     }
+}
+
+#[test]
+fn a_board_call_is_summarised_by_its_ids_and_recipient_never_its_token() {
+    let send = serde_json::json!({"to": "coordinator", "text": "the message's words"});
+    assert_eq!(
+        tool_summary("mcp__board__board_send", &send).as_deref(),
+        Some("coordinator")
+    );
+    let ack = serde_json::json!({"id": 1});
+    assert_eq!(
+        tool_summary("mcp__quecto__board_ack", &ack).as_deref(),
+        Some("1")
+    );
+    let submit = serde_json::json!({"task_id": "T1", "token": "06f61158", "evidence": "words"});
+    let summary = tool_summary("mcp__board__board_submit", &submit).unwrap();
+    assert_eq!(summary.as_str(), "T1");
+    assert!(!summary.contains("06f61158"), "{summary}");
+}
+
+#[test]
+fn an_error_s_reason_kind_is_its_leading_words_up_to_a_status_bounded_and_allowlisted() {
+    let kind = |errors: &[&str]| {
+        error_reason_kind(&errors.iter().map(|e| e.to_string()).collect::<Vec<_>>())
+    };
+    assert_eq!(
+        kind(&["API Error: 529 Overloaded"]).as_deref(),
+        Some("api_error_529")
+    );
+    assert_eq!(
+        kind(&["Not logged in · Please run /login", "second"]).as_deref(),
+        Some("not_logged_in")
+    );
+    assert_eq!(
+        kind(&["Reached maximum budget ($0.5)"]).as_deref(),
+        Some("reached_maximum_budget")
+    );
+    assert_eq!(
+        kind(&["\u{1b}[31mfailed sk-ant-api03-SECRETSECRETSECRET"]).as_deref(),
+        Some("31mfailed_redacted"),
+        "redacted first; only ASCII letters, digits and `_` survive"
+    );
+    let long = kind(&["abcdefghijklmnopqrst abcdefghijklmnopqrst x"]).unwrap();
+    assert_eq!(long, "abcdefghijklmnopqrst_abcdefghijk");
+    assert_eq!(long.len(), ERROR_REASON_BYTES);
+    assert_eq!(
+        kind(&[&"Q".repeat(40)]),
+        None,
+        "a word that long is an id or a key, not a word"
+    );
+    assert_eq!(kind(&[]), None);
+    assert_eq!(kind(&[" ·· !"]), None, "no word, no reason");
 }

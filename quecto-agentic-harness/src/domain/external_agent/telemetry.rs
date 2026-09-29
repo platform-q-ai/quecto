@@ -12,6 +12,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::stream::{AssistantContent, ExternalAgentEvent};
+use super::usage::CostDrop;
 use crate::domain::redaction::{Redacted, redact_url_userinfo};
 
 /// The most of a tool call's summary a record keeps, in bytes.
@@ -61,6 +62,10 @@ pub struct ExternalAgentTurn {
     /// The board task the member held when the turn started.
     #[serde(default)]
     pub task_id: Option<String>,
+    /// The process's cumulative cost went down during this turn (the CLI
+    /// reports 0 after some errors): nothing was charged for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_drop: Option<CostDrop>,
 }
 
 /// One tool call, once answered (or once its turn ended without an answer).
@@ -128,6 +133,10 @@ pub enum ExternalAgentLifecycle {
         /// From the start, on the session's clock.
         wall_ms: Option<u64>,
     },
+    /// The event log itself lost records: `dropped` never reached its
+    /// writer (its queue was full), `failed` could not be written. The
+    /// log's last record, written only when it lost any.
+    LogIncomplete { dropped: u64, failed: u64 },
 }
 
 /// Something the stream said that the vocabulary could not read: counted,
@@ -203,6 +212,17 @@ pub fn recorded_name(name: &str) -> String {
     recorded
 }
 
+/// The most of a reason taken from a result's `errors[]` a record keeps,
+/// in bytes.
+pub const ERROR_REASON_BYTES: usize = 32;
+
+/// A turn's reason kind from its result's `errors[]`, when nothing more
+/// precise names one: see the rule in the body.
+pub fn error_reason_kind(errors: &[String]) -> Option<String> {
+    let _ = errors;
+    None
+}
+
 /// The MCP servers a member's board tools come from: quecto's, and the
 /// spike's `board` (#2264).
 const BOARD_TOOL_PREFIXES: &[&str] = &["mcp__quecto__", "mcp__board__"];
@@ -259,4 +279,4 @@ pub fn tool_summary(tool: &str, input: &serde_json::Value) -> Option<Redacted> {
 
 #[cfg(test)]
 #[path = "telemetry_tests.rs"]
-mod tests;
+pub(crate) mod tests;

@@ -296,3 +296,168 @@ async fn the_end_of_the_process_records_its_exit_and_wall_time_and_the_cut_turn(
         })
     );
 }
+
+/// The records after the last `tool_called`: what ending the member
+/// recorded of the call left open.
+fn after_the_call(rig: &Rig) -> Vec<SessionRecord> {
+    let all = rig.records.all();
+    let at = all
+        .iter()
+        .rposition(|record| matches!(record, SessionRecord::ToolCalled { .. }))
+        .expect("a call was made");
+    all[at + 1..].to_vec()
+}
+
+fn ended_once(records: &[SessionRecord]) -> SessionRecord {
+    let ended: Vec<&SessionRecord> = records
+        .iter()
+        .filter(|record| matches!(record, SessionRecord::Ended { .. }))
+        .collect();
+    let [ended] = ended.as_slice() else {
+        panic!("one end is recorded: {records:?}")
+    };
+    (*ended).clone()
+}
+
+/// #2304 review H1: `close` is how the runner ends a member, so the turn
+/// it cuts, the call it leaves open and the process's end are recorded.
+#[tokio::test(start_paused = true)]
+async fn closing_mid_turn_records_the_open_call_the_cut_turn_and_the_end() {
+    let rig = started().await;
+    rig.session.prompt("one", None).await.unwrap();
+    rig.feed(tool_use(
+        "t1",
+        "Bash",
+        serde_json::json!({"command": "sleep 9"}),
+    ))
+    .await;
+    tokio::time::advance(Duration::from_millis(400)).await;
+    rig.session.close().await.unwrap();
+    let after = after_the_call(&rig);
+    let kinds: Vec<&str> = after.iter().map(SessionRecord::kind).collect();
+    assert_eq!(
+        kinds,
+        ["tool_finished", "turn_reported", "closed", "ended"],
+        "{after:?}"
+    );
+    let [tool] = tools(&rig).try_into().expect("one call");
+    assert_eq!(
+        (
+            tool.tool_use_id.as_str(),
+            tool.outcome.as_str(),
+            tool.duration_ms
+        ),
+        ("t1", "unanswered", 400)
+    );
+    let [turn] = turns(&rig).try_into().expect("the cut turn");
+    assert_eq!((turn.member_turn, turn.turn_end.as_str()), (1, "closed"));
+    assert_eq!(
+        ended_once(&after),
+        SessionRecord::Ended {
+            clean: true,
+            exit_code: Some(0),
+            signal: None,
+            wall_ms: Some(400),
+        }
+    );
+    assert!(rig.wire.dropped(), "the process is let go once it ended");
+}
+
+/// Closing an idle member records its end too.
+#[tokio::test]
+async fn closing_an_idle_member_records_the_end() {
+    let rig = started().await;
+    rig.session.close().await.unwrap();
+    assert_eq!(rig.records.kinds(), ["started", "closed", "ended"]);
+    assert!(turns(&rig).is_empty(), "no turn ran");
+}
+
+/// #2304 review H1: an abandoned member (its interrupt could not be
+/// written) records the turn it cut, the call left open and its end.
+#[tokio::test(start_paused = true)]
+async fn abandoning_mid_turn_records_the_open_call_the_cut_turn_and_the_end() {
+    let rig = started().await;
+    rig.session.prompt("one", None).await.unwrap();
+    rig.feed(tool_use(
+        "t1",
+        "Bash",
+        serde_json::json!({"command": "sleep 9"}),
+    ))
+    .await;
+    tokio::time::advance(Duration::from_millis(700)).await;
+    rig.wire
+        .refuse_interrupts
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let outcome = rig.session.abort().await.unwrap();
+    assert!(outcome.member_ended, "an unwritable interrupt ends it");
+    let after = after_the_call(&rig);
+    let kinds: Vec<&str> = after.iter().map(SessionRecord::kind).collect();
+    assert_eq!(
+        kinds,
+        [
+            "tool_finished",
+            "turn_reported",
+            "abandoned",
+            "ended",
+            "aborted"
+        ],
+        "{after:?}"
+    );
+    let [tool] = tools(&rig).try_into().expect("one call");
+    assert_eq!(
+        (tool.outcome.as_str(), tool.duration_ms),
+        ("unanswered", 700)
+    );
+    let [turn] = turns(&rig).try_into().expect("the cut turn");
+    assert_eq!((turn.member_turn, turn.turn_end.as_str()), (1, "abandoned"));
+    assert_eq!(
+        ended_once(&after),
+        SessionRecord::Ended {
+            clean: true,
+            exit_code: Some(0),
+            signal: None,
+            wall_ms: Some(700),
+        }
+    );
+}
+
+/// #2304 review L3: a failed result naming no `terminal_reason` takes its
+/// reason kind from its `errors[]`, bounded.
+#[tokio::test]
+async fn a_failure_without_a_terminal_reason_is_named_by_its_errors() {
+    let rig = started().await;
+    rig.session.prompt("one", None).await.unwrap();
+    rig.feed(ExternalAgentEvent::Result(ResultEvent {
+        is_error: Some(true),
+        errors: vec!["API Error: 529 Overloaded".into()],
+        ..ResultEvent::default()
+    }))
+    .await;
+    let [turn] = turns(&rig).try_into().expect("one turn");
+    assert_eq!(
+        (turn.turn_end.as_str(), turn.reason_kind.as_deref()),
+        ("failed", Some("api_error_529"))
+    );
+}
+
+/// #2304 review L4: a cumulative cost that went down is carried on the
+/// turn it was reported in.
+#[tokio::test]
+async fn a_cumulative_cost_that_dropped_is_on_the_turn_record() {
+    let rig = started().await;
+    rig.session.prompt("one", None).await.unwrap();
+    rig.feed(costed(0.03, 1, 1)).await;
+    rig.session.prompt("two", None).await.unwrap();
+    rig.feed(costed(0.0, 1, 1)).await;
+    let drops: Vec<_> = turns(&rig).into_iter().map(|t| t.cost_drop).collect();
+    assert_eq!(
+        drops,
+        [
+            None,
+            Some(crate::domain::external_agent::usage::CostDrop {
+                previous_micro_usd: 30_000,
+                reported_micro_usd: 0,
+            }),
+        ]
+    );
+}
