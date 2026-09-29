@@ -420,7 +420,8 @@ pub struct HostedStoreObservation {
 }
 
 impl HostedStoreObservation {
-    /// The observation over `board` (composition's `swarm::swarm_board`).
+    /// The observation over `board`: composition's, the process's board
+    /// when admission bound one (#2278 review M1).
     pub fn new(board: SwarmBoard) -> Self {
         Self { board }
     }

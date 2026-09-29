@@ -5,8 +5,9 @@
 //! injects it, with [`board_op_log`], through `CliComposition`, and
 //! `CliContext` carries both to the agent's admission, which gives every
 //! `SwarmContext` of the process one [`SwarmBoard`] (#2278);
-//! `composition::environments` gives the host's `HostedStore` reads
-//! [`swarm_board`]. `build_swarm_board_handles_with` composes the same
+//! `composition::environments` gives the host's `HostedStore` reads the
+//! process's board when admission bound one (so they are recorded in the
+//! session's event log too), else one [`swarm_board`] of their own. `build_swarm_board_handles_with` composes the same
 //! graph over injected ports, for the differential harness's
 //! deterministic clock and ids. The file reservations (#2275) normalise
 //! paths in the board's checkout, through `CheckoutPaths` bound to
