@@ -228,19 +228,80 @@ fn the_wall_time_runs_from_the_first_record_to_the_summary() {
     assert_eq!(fold.summary(100).wall_time_us, 0, "never negative");
 }
 
-/// A long run keeps at most [`SAMPLES_PER_OP`] samples of an op: its
-/// counts stay exact, and the records past the bound are counted.
+/// A long run keeps at most [`SAMPLES_PER_OP`] samples of an op, drawn
+/// uniformly over all its records (#2313 review L2): its counts and its
+/// max stay exact, the records not held are counted, and a record late in
+/// the run is as likely to be held as an early one. Every record here
+/// took a distinct time, so what was kept shows in the percentiles.
 #[test]
-fn an_op_keeps_a_bounded_number_of_samples_and_counts_the_rest() {
+fn an_op_keeps_a_uniform_bounded_sample_and_an_exact_max() {
     let mut fold = RunSummaryFold::new(RUN, 0);
-    let extra = 3_u64;
-    for _ in 0..(SAMPLES_PER_OP as u64 + extra) {
-        fold.observe(&record("summary", Some("read"), 7));
+    let total = 2 * SAMPLES_PER_OP as u64;
+    for duration in 1..=total {
+        fold.observe(&record("summary", Some("read"), duration));
     }
     let summary = fold.summary(1);
-    assert_eq!(summary.ops["summary"].ok, SAMPLES_PER_OP as u64 + extra);
-    assert_eq!(summary.ops["summary"].unsampled, extra);
-    assert_eq!(summary.ops["summary"].duration_us.max, Some(7));
+    let op = &summary.ops["summary"];
+    assert_eq!(op.ok, total);
+    assert_eq!(op.unsampled, total - SAMPLES_PER_OP as u64);
+    assert_eq!(op.duration_us.max, Some(total), "the max is exact");
+    assert_eq!(op.lock_wait_us.max, Some(total / 2), "every measure's is");
+    let p50 = op.duration_us.p50.unwrap();
+    let p95 = op.duration_us.p95.unwrap();
+    // The first records alone would give p50 near total/4 and p95 near
+    // total/2; a uniform sample of every record gives total/2 and 0.95
+    // total, within a few percent.
+    let near = |value: u64, expected: u64| value.abs_diff(expected) * 20 < total;
+    assert!(near(p50, total / 2), "p50 {p50} of {total}");
+    assert!(near(p95, total * 95 / 100), "p95 {p95} of {total}");
+}
+
+/// The same records give the same summary: the sample is drawn from a
+/// seed the run's id fixes, never from the clock.
+#[test]
+fn the_sample_is_deterministic_for_a_run() {
+    let fold = || {
+        let mut fold = RunSummaryFold::new(RUN, 0);
+        for duration in 1..=(3 * SAMPLES_PER_OP as u64) {
+            fold.observe(&record("claim", Some("claimed"), duration));
+        }
+        fold.summary(1)
+    };
+    assert_eq!(fold(), fold());
+}
+
+/// Records of an op past [`SUMMARY_OPS`] distinct ops are counted in
+/// `unlisted_ops` and in `records`, and in no op's entry.
+#[test]
+fn records_of_ops_past_the_bound_are_counted_unlisted() {
+    let records: Vec<_> = (0..SUMMARY_OPS + 2)
+        .map(|n| record(&format!("op{n}"), Some("read"), 1))
+        .collect();
+    let summary = folded(&records);
+    assert_eq!(summary.ops.len(), SUMMARY_OPS);
+    assert_eq!(summary.unlisted_ops, 2);
+    assert_eq!(summary.records, SUMMARY_OPS as u64 + 2);
+    let again = folded(&[records.clone(), records].concat());
+    assert_eq!(again.unlisted_ops, 4, "an unlisted op stays unlisted");
+}
+
+/// Requests of members past [`REQUEST_MEMBERS`] are counted in
+/// `unlisted_requests`, and still under `ops._record_request`.
+#[test]
+fn requests_of_members_past_the_bound_are_counted_unlisted() {
+    let records: Vec<_> = (0..REQUEST_MEMBERS + 3)
+        .map(|n| BoardOpObservation {
+            actor_ref: format!("member{n}").as_str().into(),
+            ..record("_record_request", Some("recorded"), 1)
+        })
+        .collect();
+    let summary = folded(&records);
+    assert_eq!(summary.request_usage.len(), REQUEST_MEMBERS);
+    assert_eq!(summary.unlisted_requests, 3);
+    assert_eq!(
+        summary.ops["_record_request"].ok,
+        REQUEST_MEMBERS as u64 + 3
+    );
 }
 
 /// The record is `swarm_run_summary`, holding counts, kinds, durations and
