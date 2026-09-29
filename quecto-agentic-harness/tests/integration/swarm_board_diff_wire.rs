@@ -42,3 +42,78 @@ fn board_answers_are_python_s_wire_text() {
         at(11.0, "parent", "task", json!([2])),
     ]);
 }
+
+/// #2279 final review: a structured op with two fields its method does not
+/// take is refused naming the first the member wrote, as Python's call
+/// with those keywords raises naming the first (`board.tasks(x=1, y=2)`).
+#[test]
+fn an_op_with_two_unexpected_fields_names_the_first_as_python_does() {
+    use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
+    use crate::swarm_board_diff_runs::swarm_board_diff::python::PyBoard;
+    use quecto::application::tools::ports::Tool;
+    let dir = tempfile::tempdir().unwrap();
+    let python_root = dir.path().join("python");
+    std::fs::create_dir_all(&python_root).unwrap();
+    let mut python = PyBoard::start(&python_root.join("swarm.sqlite"), &python_root, dir.path());
+    let Outcome::Raised(raised) = python.call("parent", "tasks", r#"{"x": 1, "y": 2}"#, NOW) else {
+        panic!("Python raises on the unexpected keywords");
+    };
+    let named = raised
+        .split("unexpected keyword argument '")
+        .nth(1)
+        .and_then(|rest| rest.split('\'').next())
+        .unwrap_or_else(|| panic!("{raised}"))
+        .to_owned();
+    assert_eq!(named, "x", "{raised}");
+
+    let checkout = dir.path().join("rust");
+    std::fs::create_dir_all(checkout.join(".quecto")).unwrap();
+    let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+        board: quecto::composition::swarm::swarm_board(),
+        lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),
+        checkout: checkout.clone(),
+        member: "coordinator".into(),
+    };
+    let deadline = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 600;
+    let pid = std::process::id();
+    context
+        .create_run(
+            &json!({"goal": "ship", "constraints": [],
+                "criteria": [{"id": "tests", "kind": "command", "description": "pass"}],
+                "member_limit": 1, "deadline": deadline}),
+            &quecto::domain::swarm::ProcessIdentity {
+                pid,
+                started: quecto::infrastructure::tools::swarm_bridge::process_start(pid).unwrap(),
+            },
+            None,
+        )
+        .unwrap();
+    let workspace = std::sync::Arc::new(checkout.clone());
+    let tool = quecto::infrastructure::tools::swarm::SwarmTool::new(
+        workspace,
+        std::sync::Arc::new(quecto::infrastructure::security::sandbox::Sandbox::new(
+            Some(checkout),
+        )),
+        quecto::infrastructure::tools::swarm::SwarmConfig::default(),
+    )
+    .with_context(Some(context));
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let result = runtime
+        .block_on(tool.execute(r#"{"op": "tasks", "x": 1, "y": 2}"#))
+        .unwrap();
+    assert!(result.is_error, "{}", result.content);
+    assert!(
+        result
+            .content
+            .contains(&format!("tasks: unexpected argument {named}")),
+        "Python named {named}: {}",
+        result.content
+    );
+}
