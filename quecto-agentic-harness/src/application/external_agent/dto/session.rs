@@ -70,6 +70,13 @@ pub const SKIPPED_LINE_GRACE: Duration = Duration::from_secs(60);
 /// own answer does not extend it.
 pub const INTERRUPT_GRACE: Duration = Duration::from_secs(30);
 
+/// How long a member ended by `close` or abandoned waits, its input
+/// closed, for its process to exit so its end is recorded with its status
+/// (#2304). Past it the process is let go (its supervisor terminates it)
+/// and the end is recorded unobserved. It holds up the session's end, never
+/// a turn.
+pub const EXIT_GRACE: Duration = Duration::from_secs(5);
+
 /// What a member session is started with.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExternalAgentSessionSettings {

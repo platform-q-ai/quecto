@@ -372,5 +372,10 @@ async fn close_ends_the_member() {
     assert!(rig.wire.dropped());
     assert_eq!(rig.phase(), SessionPhase::Ended);
     assert_eq!(rig.session.close().await, Err(SessionRefusal::Ended));
-    assert_eq!(rig.records.kinds().last(), Some(&"closed"));
+    let kinds = rig.records.kinds();
+    assert_eq!(
+        kinds[kinds.len() - 3..],
+        ["turn_reported", "closed", "ended"],
+        "the cut turn, the close, then the process's end (#2304)"
+    );
 }

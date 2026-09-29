@@ -554,6 +554,26 @@ impl SessionCore {
         self.surfaced.pop_front()
     }
 
+    /// The member ends as `cut` says (`Exited`, `Closed` or `Abandoned`)
+    /// at `now`: its running turn, if any, is recorded cut off, and every
+    /// call still open unanswered. Returns what [`Self::end`] does.
+    pub(crate) fn end_cut(
+        &mut self,
+        cut: TurnCut<'_>,
+        now: AgentClockInstant,
+        records: &mut Vec<SessionRecord>,
+    ) -> (Option<u64>, usize) {
+        assert!(
+            matches!(cut, TurnCut::Exited | TurnCut::Closed | TurnCut::Abandoned),
+            "a member ends cut off, never settled: {cut:?}"
+        );
+        match self.running_turn() {
+            Some(turn) => self.telemetry.turn_ended(turn, cut, now, records),
+            None => self.telemetry.calls_cut(now, records),
+        }
+        self.end()
+    }
+
     /// The member ends: its running turn, if any, and its follow-ups with
     /// it. Returns the turn and how many follow-ups were dropped.
     pub(crate) fn end(&mut self) -> (Option<u64>, usize) {
