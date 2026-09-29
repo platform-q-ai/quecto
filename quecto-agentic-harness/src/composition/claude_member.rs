@@ -14,7 +14,6 @@ use crate::application::external_agent::dto::{
 use crate::application::external_agent::ports::ExternalAgentTelemetry;
 use crate::application::external_agent::use_cases::DriveExternalAgentSession;
 use crate::domain::external_agent::telemetry::{is_recorded_name, recorded_name};
-use crate::domain::session_identity::SessionIdentity;
 use crate::infrastructure::config::telemetry::{enabled_in, globally_enabled};
 use crate::infrastructure::external_agents::claude_code::environment::CREDENTIAL_VARIABLES;
 use crate::infrastructure::external_agents::claude_code::process::ClaudeCodeLauncher;
@@ -80,8 +79,9 @@ pub(crate) fn build_over(
 /// The session's telemetry: `tracing` always, and the member's event log
 /// when `telemetry.event_log` is on (#2304, owner decision T1: off unless
 /// configured), in the owner's global config or the `--config` given: the
-/// member loads no repository overlay. A log that cannot be opened is a
-/// warning: the member runs unrecorded.
+/// member loads no repository overlay. A member without a log key
+/// (`--no-session`) keeps none. A log that cannot be opened is a warning:
+/// the member runs unrecorded.
 fn telemetry_for(
     settings: &ClaudeMemberSettings,
     parent_environment: &[(OsString, OsString)],
@@ -89,16 +89,17 @@ fn telemetry_for(
 ) -> Arc<dyn ExternalAgentTelemetry> {
     let enabled = globally_enabled(&settings.base_dir)
         || settings.config_path.as_deref().is_some_and(enabled_in);
-    match enabled {
-        true => event_log_telemetry(settings, parent_environment, credential),
-        false => Arc::new(TracingExternalAgentTelemetry),
+    match (enabled, settings.log_key.as_deref()) {
+        (true, Some(key)) => event_log_telemetry(settings, key, parent_environment, credential),
+        (true, None) | (false, _) => Arc::new(TracingExternalAgentTelemetry),
     }
 }
 
-/// The session's telemetry into the member's event log, or `tracing` alone
-/// when the log cannot be opened.
+/// The session's telemetry into the member's event log, filed under `key`,
+/// or `tracing` alone when the log cannot be opened.
 fn event_log_telemetry(
     settings: &ClaudeMemberSettings,
+    key: &str,
     parent_environment: &[(OsString, OsString)],
     credential: &CredentialEnv,
 ) -> Arc<dyn ExternalAgentTelemetry> {
@@ -106,11 +107,7 @@ fn event_log_telemetry(
         member_ref: member_ref(parent_environment, &settings.member),
         credential_mode: credential_mode(credential),
     };
-    let key = SessionIdentity::named_cli(&settings.member).map_or_else(
-        |_| settings.member.clone(),
-        |id| id.runtime_key().to_string(),
-    );
-    let opened = AuditLog::open_sync(&settings.base_dir, &key)
+    let opened = AuditLog::open_sync(&settings.base_dir, key)
         .map_err(|error| error.to_string())
         .and_then(|log| {
             let log = log.with_parent(settings.parent.clone());

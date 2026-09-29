@@ -68,14 +68,15 @@
 //!   ends its turn. Only a write that provably failed is rolled back.
 //!
 //! [`FOLLOW_UP_QUEUE_CAPACITY`]: crate::application::external_agent::dto::FOLLOW_UP_QUEUE_CAPACITY
+//! [`EXIT_GRACE`]: crate::application::external_agent::dto::EXIT_GRACE
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::application::external_agent::dto::{
-    AbortOutcome, AgentClockInstant, EXIT_GRACE, ExecutionState, ExternalAgentExit,
-    ExternalAgentSessionSettings, FinalReport, ProjectedMessage, PromptAccepted, SessionPhase,
-    SessionRecord, SessionRefusal, SessionStep, SessionView, StreamingBehavior,
+    AbortOutcome, AgentClockInstant, ExecutionState, ExternalAgentSessionSettings, FinalReport,
+    ProjectedMessage, PromptAccepted, SessionPhase, SessionRecord, SessionRefusal, SessionStep,
+    SessionView, StreamingBehavior,
 };
 use crate::application::external_agent::ports::{
     ExternalAgentClock, ExternalAgentLauncher, ExternalAgentProcess, ExternalAgentSpawner,
@@ -85,7 +86,7 @@ use crate::application::external_agent::session_core::{
     AbortDecision, Admission, SessionCore, Wait,
 };
 use crate::domain::external_agent::stream::ExternalAgentEvent;
-use crate::application::external_agent::session_telemetry::{TurnCut, wall_ms_since};
+use crate::application::external_agent::session_telemetry::TurnCut;
 
 type Process = Arc<dyn ExternalAgentProcess>;
 
@@ -267,8 +268,12 @@ impl DriveExternalAgentSession {
     /// End the member: its turn, its follow-ups and its agent's process.
     /// The turn it cuts and the calls left open are recorded, then the
     /// process's end, once it exits (at most [`EXIT_GRACE`] later), which
-    /// this waits for. A caller that gives up waiting loses nothing: the
-    /// end is recorded all the same.
+    /// this waits for, never past [`END_RECORD_MARGIN`] more. A caller
+    /// that gives up waiting loses nothing: the end is recorded all the
+    /// same.
+    ///
+    /// [`EXIT_GRACE`]: crate::application::external_agent::dto::EXIT_GRACE
+    /// [`END_RECORD_MARGIN`]: crate::application::external_agent::dto::END_RECORD_MARGIN
     pub async fn close(&self) -> Result<AbortOutcome, SessionRefusal> {
         let now = self.clock.now();
         let mut cut = Vec::new();
@@ -380,7 +385,7 @@ impl DriveExternalAgentSession {
     }
 
     /// The runner's last call, once the member has ended (#2304): wait
-    /// for its end to be recorded, then have its telemetry keep what was
+    /// for its end to be recorded (as `close` does, bounded), then have its telemetry keep what was
     /// recorded, for at most the telemetry's own bound. A record made
     /// afterwards (a late refusal) may be lost.
     pub async fn finish(&self) {
@@ -542,50 +547,6 @@ impl DriveExternalAgentSession {
             process,
             started_at,
         })
-    }
-
-    /// Record an ended member's exit, apart from the caller (through the
-    /// spawner port): its input is closed and its process waited for, at
-    /// most [`EXIT_GRACE`], then let go and its end recorded. Called with
-    /// no write gate held, after every other record of the end.
-    fn record_exit(&self, exit: Option<PendingExit>) {
-        let Some(PendingExit {
-            process,
-            started_at,
-        }) = exit
-        else {
-            return;
-        };
-        assert!(
-            self.core().ended(),
-            "only an ended member's exit is recorded"
-        );
-        let clock = self.clock.clone();
-        let telemetry = self.telemetry.clone();
-        let end_recorded = self.end_recorded.clone();
-        self.spawner.spawn(Box::pin(async move {
-            let exit = match process {
-                Some(process) => {
-                    process.close_input().await;
-                    tokio::select! {
-                        biased;
-                        exit = process.exited_discarding_output() => Some(exit),
-                        () = clock.sleep(EXIT_GRACE) => None,
-                    }
-                }
-                None => None,
-            };
-            let wall_ms = wall_ms_since(started_at, clock.now());
-            telemetry.record(&ended_record(exit.as_ref(), wall_ms));
-            end_recorded.send_replace(true);
-        }));
-    }
-
-    /// Resolves once the member's end is recorded (or it never started).
-    async fn until_end_recorded(&self) {
-        let mut recorded = self.end_recorded.subscribe();
-        // The sender lives as long as `self`: an error cannot happen here.
-        let _ = recorded.wait_for(|recorded| *recorded).await;
     }
 
     async fn output_ended(&self, process: Process) -> Option<SessionStep> {
@@ -808,21 +769,9 @@ impl Drop for Unqueued<'_> {
     }
 }
 
-/// The member's end: its process's exit (`None`: not observed within
-/// [`EXIT_GRACE`]) and its wall time.
-fn ended_record(exit: Option<&ExternalAgentExit>, wall_ms: Option<u64>) -> SessionRecord {
-    let (exit_code, signal) = match exit {
-        Some(ExternalAgentExit::Code(code)) => (Some(*code), None),
-        Some(ExternalAgentExit::Signal(signal)) => (None, Some(*signal)),
-        Some(ExternalAgentExit::Unobservable(_)) | None => (None, None),
-    };
-    SessionRecord::Ended {
-        clean: exit.is_some_and(ExternalAgentExit::is_clean),
-        exit_code,
-        signal,
-        wall_ms,
-    }
-}
+#[path = "drive_external_agent_session_exit.rs"]
+mod exit;
+use self::exit::ended_record;
 
 #[cfg(test)]
 #[path = "drive_external_agent_session_rig_tests.rs"]

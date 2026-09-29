@@ -71,17 +71,18 @@ impl std::fmt::Display for Redacted {
     }
 }
 
-/// Credential-shaped patterns scrubbed to `[REDACTED]`.
-///
-/// Covers both named spans (`<api_key|token|password|secret|access_token>=
-/// <value>`, a quoted value to its closing quote) and tokens that have
+/// Credential-shaped tokens scrubbed to `[REDACTED]`: those with
 /// recognisable prefixes (`Bearer <tok>`, `sk-` incl.
 /// `sk-proj-`/`sk-ant-`/`sk-or-`, AWS `AKIA`, GitHub `gh[pousr]_`, Slack
-/// `xox[baprs]-`, Google `AIza`, GitLab `glpat-`), and then the
-/// command-line shapes of [`COMMAND_LINE_SHAPES`]. This is best-effort:
-/// tokens with no distinguishing shape (bare passwords passed positionally,
-/// opaque JWTs) can still slip through, so callers must not treat output as
-/// guaranteed clean.
+/// `xox[baprs]-`, Google `AIza`, GitLab `glpat-`). They are tried after
+/// the named spans of [`NAMED_LABEL`] and before the command-line shapes
+/// of [`COMMAND_LINE_SHAPES`]. This is best-effort: tokens with no
+/// distinguishing shape (bare passwords passed positionally, opaque JWTs)
+/// can still slip through, so callers must not treat output as guaranteed
+/// clean.
+///
+/// `Bearer`'s token is a run of anything but spaces and quotes: the quote
+/// closing a header (`-H "Authorization: Bearer …"`) is kept.
 ///
 /// `sk-` is held to one extra rule (#2241): it starts a word, so
 /// `task-runner01`, `disk-usage` or `risk-assessment` is text, never
@@ -108,20 +109,17 @@ impl std::fmt::Display for Redacted {
 ///
 /// Every other prefixed shape matches wherever it appears, as it always
 /// has: no false positive of theirs was ever shown, and a missed key costs
-/// more than an over-redacted word. A named span keeps matching inside an
-/// identifier: `GITHUB_TOKEN=` and `DB_PASSWORD:` are secret labels
-/// however they are prefixed.
+/// more than an over-redacted word.
 static PATTERNS: LazyLock<regex::Regex> = LazyLock::new(|| {
     regex::Regex::new(concat!(
-        r"(?i)(?:bearer\s+\S+",
+        r#"(?i)(?:bearer\s+[^\s"']+"#,
         r"|(?P<lead>(?-i:^|[^A-Za-z]",
         r"|(?:\x1b|\\e|\\x1[bB]|\\033|\\u001[bB]|\^\[)\[[0-9;?]*[A-Za-z]",
         r"|\\[abefnrtv]|\\x[0-9A-Fa-f]{2}|\\u[0-9A-Fa-f]{4}|\\U[0-9A-Fa-f]{8}",
         r"|%(?:25)*[0-9A-Fa-f]{2}|=[0-9A-Fa-f]{2}|`[0befnrtv]))",
         r"sk-[A-Za-z0-9_-]{8,}",
         r"|AKIA[0-9A-Z]{12,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}",
-        r"|AIza[A-Za-z0-9_-]{20,}|glpat-[A-Za-z0-9_-]{20,}",
-        r#"|(?:api[_-]?key|token|password|secret|access[_-]?token)\s*[=:]\s*(?:"[^"]*"?|'[^']*'?|\S+))"#,
+        r"|AIza[A-Za-z0-9_-]{20,}|glpat-[A-Za-z0-9_-]{20,})",
     ))
     .expect("static redaction regex is valid")
 });
@@ -187,6 +185,88 @@ fn is_ansi_csi(text: &str) -> bool {
     })
 }
 
+/// A secret's label (#2304 review round 3): a secret's name, a quote
+/// closing it (a JSON or dict key's, `"password":`), then `=` or `:`. The
+/// name matches inside an identifier (`GITHUB_TOKEN=`, `DB_PASSWORD:`,
+/// `PGPASSWORD=`), which is kept whole, as the label is: only its value is
+/// redacted ([`named_value`]).
+static NAMED_LABEL: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(
+        r#"(?i)(?:api[_-]?key|token|password|secret|access[_-]?token)(?P<closed>["']?)\s*[=:]\s*"#,
+    )
+    .expect("static named-label regex is valid")
+});
+
+/// Redact the value after every [`NAMED_LABEL`] in `input`, keeping the
+/// label. A label with no value ([`named_value`]) is left as it is, and
+/// the search for the next goes on right after it.
+fn redact_named(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut copied = 0;
+    let mut from = 0;
+    while let Some(label) = NAMED_LABEL.captures_at(input, from) {
+        let whole = label.get(0).expect("a match has its whole span");
+        let enclosing = match label["closed"].is_empty() {
+            true => enclosing_quote(&input[..whole.start()]),
+            false => None,
+        };
+        from = whole.end();
+        let Some(value) = named_value(&input[whole.end()..], enclosing) else {
+            continue;
+        };
+        let (start, end) = (whole.end() + value.start, whole.end() + value.end);
+        assert!(
+            copied <= start && start < end && end <= input.len(),
+            "a redacted value lies ahead of what is copied"
+        );
+        out.push_str(&input[copied..start]);
+        out.push_str("[REDACTED]");
+        copied = end;
+        from = end;
+    }
+    out.push_str(&input[copied..]);
+    out
+}
+
+/// The quote a label sits inside, when the name (its identifier
+/// included) is glued to one: `'password:'`, `"DB_PASSWORD=`.
+fn enclosing_quote(before: &str) -> Option<char> {
+    before
+        .trim_end_matches(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        .chars()
+        .next_back()
+        .filter(|c| matches!(c, '"' | '\''))
+}
+
+/// The byte range, in `rest` (the text after a label), of the value to
+/// redact, or `None` when there is none:
+///
+/// - inside an `enclosing` quote, the run up to that quote (or the line's
+///   end): empty, the label is a search pattern (`grep 'password:' f`);
+/// - after an opening quote, the run up to its closing quote (or the
+///   text's end), when it starts with neither a space nor that quote: a
+///   quote followed by a space or closed at once closes a search pattern
+///   (`grep "token=" src/`), and the quotes are kept;
+/// - else the bare word that follows.
+fn named_value(rest: &str, enclosing: Option<char>) -> Option<std::ops::Range<usize>> {
+    let end_of = |text: &str, stop: &dyn Fn(char) -> bool| text.find(stop).unwrap_or(text.len());
+    let range = match (enclosing, rest.chars().next()) {
+        (Some(quote), _) => 0..end_of(rest, &|c| c == quote || c == '\n'),
+        (None, Some(quote @ ('"' | '\''))) => {
+            let inner = &rest[1..];
+            match inner.chars().next() {
+                Some(first) if !first.is_whitespace() && first != quote => {
+                    1..1 + end_of(inner, &|c| c == quote)
+                }
+                Some(_) | None => return None,
+            }
+        }
+        (None, Some(_)) => 0..end_of(rest, &char::is_whitespace),
+        (None, None) => return None,
+    };
+    (!range.is_empty()).then_some(range)
+}
+
 /// A credential in a command line's shape (#2304 review): the flag or the
 /// name it follows (`keep`) is kept, the credential (`value`) redacted.
 /// Each is tried after [`PATTERNS`], in order, over the whole text.
@@ -195,12 +275,12 @@ fn is_ansi_csi(text: &str) -> bool {
 /// quote, spaces included (to the text's end when it never closes), and
 /// its quotes are kept around `[REDACTED]`. The shapes:
 ///
-/// - `-u`/`--user user:pass` (also `--user=…`, glued `-uuser:pass`), and
-///   httpie's `-a`/`--auth`, only after an HTTP client in the same command
-///   (`curl`, `wget`, `http`, `https`, `httpie`, `xh`, a path before it
-///   allowed) and only a `user:password` (`curl -u alice` prompts): for
-///   every other tool `-u user:group` names a user (a container's `run
-///   -u app:app`, `sudo -u`);
+/// - `-u`/`--user user:pass` (also `--user=…`, glued `-uuser:pass`) only
+///   after an HTTP client in the same command (`curl`, `wget`, `http`,
+///   `https`, `httpie`, `xh`, a path before it allowed), and httpie's and
+///   xh's `-a`/`--auth` (curl's `-a` is `--append`), each only a
+///   `user:password` (`curl -u alice` prompts): for every other tool `-u
+///   user:group` names a user (a container's `run -u app:app`, `sudo -u`);
 /// - `Authorization: Basic …` (and `Proxy-Authorization`), any case;
 /// - `--password X`, `--password=X`, `--passwd …`, `-pass …` (openssl's
 ///   `-pass pass:…`): a flag that is exactly one of these (`--passes=3` is
@@ -213,6 +293,10 @@ fn is_ansi_csi(text: &str) -> bool {
 ///   `psql -p 5432`), a flag (`git log -p`, `cp -p`) or a mode (`mkdir
 ///   -p`), so none of those is touched;
 /// - `sshpass -p <password>`, spaced or glued;
+/// - `-p <password>` after any tool's `login` subcommand (a registry
+///   login, `registry login` included), spaced or glued: there `-p` is the
+///   password everywhere it is taken (`--password-stdin` is no password);
+/// - `redis-cli`'s `-a <password>` and `--pass <password>`;
 /// - an upper-case environment name ending in `_PASS`, `_PASSWD`, `_PWD`
 ///   or `_CREDENTIAL(S)`, assigned any value (`export DB_PASS=…`);
 /// - one ending in `_KEY`, `_KEY_ID` or `_AUTH`, only when its value looks
@@ -230,11 +314,16 @@ fn is_ansi_csi(text: &str) -> bool {
 /// flag or `Authorization: Basic` whatever it is, and a `curl -u` value of
 /// digits.
 ///
+/// A tool's arguments ([`TOOL_ARGUMENTS`]) never span a line: the next
+/// line is another command.
+///
 /// Every pattern is a `regex` one: matching is linear in the text.
-static COMMAND_LINE_SHAPES: LazyLock<[CommandLineShape; 8]> = LazyLock::new(|| {
+static COMMAND_LINE_SHAPES: LazyLock<[CommandLineShape; 11]> = LazyLock::new(|| {
     let shape = |pattern: &str, is_credential: fn(&str, &str) -> bool| CommandLineShape {
         pattern: regex::Regex::new(
             &pattern
+                .replace("ARGS", TOOL_ARGUMENTS)
+                .replace("TOOL", TOOL_START)
                 .replace("ASSIGNED", ASSIGNED_VALUE)
                 .replace("VALUE", VALUE),
         )
@@ -244,7 +333,11 @@ static COMMAND_LINE_SHAPES: LazyLock<[CommandLineShape; 8]> = LazyLock::new(|| {
     let any = |_: &str, _: &str| true;
     [
         shape(
-            r"(?P<keep>(?:^|[\s;&|(/])(?:curl|wget|https?|httpie|xh)(?:\s+[^\s;&|]+)*?\s+(?:-u\s*|--user(?:\s+|=)|-a\s*|--auth(?:\s+|=)))VALUE",
+            r"(?P<keep>TOOL(?:curl|wget|https?|httpie|xh)ARGS(?:-u[ \t]*|--user(?:[ \t]+|=)))VALUE",
+            is_user_password,
+        ),
+        shape(
+            r"(?P<keep>TOOL(?:https?|httpie|xh)ARGS(?:-a[ \t]*|--auth(?:[ \t]+|=)))VALUE",
             is_user_password,
         ),
         shape(r"(?i)(?P<keep>authorization\s*:\s*basic\s+)VALUE", any),
@@ -253,11 +346,19 @@ static COMMAND_LINE_SHAPES: LazyLock<[CommandLineShape; 8]> = LazyLock::new(|| {
             any,
         ),
         shape(
-            r"(?P<keep>(?:^|[\s;&|(/])(?:mysql|mysqldump|mysqladmin|mysqlimport|mysqlshow|mysqlcheck|mysqlsh|mariadb|mariadb-dump)(?:\s+[^\s;&|]+)*?\s+-p)VALUE",
+            r"(?P<keep>TOOL(?:mysql|mysqldump|mysqladmin|mysqlimport|mysqlshow|mysqlcheck|mysqlsh|mariadb|mariadb-dump)ARGS-p)VALUE",
             any,
         ),
         shape(
-            r"(?P<keep>(?:^|[\s;&|(/])sshpass\s+(?:-[A-Za-z]\S*\s+)*?-p\s*)VALUE",
+            r"(?P<keep>TOOLsshpass(?:[ \t]+-[A-Za-z]\S*)*?[ \t]+-p[ \t]*)VALUE",
+            any,
+        ),
+        shape(
+            r"(?P<keep>TOOL[A-Za-z][\w.-]*[ \t]+loginARGS-p[ \t]*)VALUE",
+            any,
+        ),
+        shape(
+            r"(?P<keep>TOOLredis-cliARGS(?:-a[ \t]*|--pass(?:[ \t]+|=)))VALUE",
             any,
         ),
         shape(
@@ -274,6 +375,15 @@ static COMMAND_LINE_SHAPES: LazyLock<[CommandLineShape; 8]> = LazyLock::new(|| {
         ),
     ]
 });
+
+/// Where a tool's name starts: the text's start, or after a space, a
+/// command separator, a subshell's `(` or a path's `/`.
+const TOOL_START: &str = r"(?:^|[\s;&|(/])";
+
+/// A tool's arguments up to the flag a shape names: any words, on the
+/// tool's own line and in its own command (never past `;`, `&` or `|`),
+/// then the spaces before the flag.
+const TOOL_ARGUMENTS: &str = r"(?:[ \t]+[^\s;&|]+)*?[ \t]+";
 
 /// A shape's value: a double- or single-quoted run (its closing quote
 /// optional, for a text cut inside it), or a bare word.
@@ -354,12 +464,12 @@ fn looks_aws_secret(value: &str) -> bool {
 
 /// Replace known secret shapes in `input` with `[REDACTED]`.
 ///
-/// Non-secret tokens are preserved so the redacted string stays useful: an
-/// `sk-` key's `lead` is written back in front of it, and a command-line
-/// credential's flag or name ([`COMMAND_LINE_SHAPES`]).
+/// Non-secret tokens are preserved so the redacted string stays useful: a
+/// named secret's label ([`NAMED_LABEL`]), an `sk-` key's `lead`, and a
+/// command-line credential's flag or name ([`COMMAND_LINE_SHAPES`]).
 pub(crate) fn redact_secrets(input: &str) -> String {
     let named = PATTERNS
-        .replace_all(input, |caps: &regex::Captures<'_>| {
+        .replace_all(&redact_named(input), |caps: &regex::Captures<'_>| {
             let lead = caps.name("lead").map_or("", |lead| lead.as_str());
             debug_assert!(
                 is_key_lead(lead),
@@ -409,9 +519,9 @@ mod redacted_cov_tests {
     #[test]
     fn redacted_from_string_and_display_scrub_secret() {
         let redacted = Redacted::from(String::from("prefix token=hunter2 suffix"));
-        assert_eq!(redacted.as_str(), "prefix [REDACTED] suffix");
-        assert_eq!(redacted.to_string(), "prefix [REDACTED] suffix");
-        assert_eq!(&*redacted, "prefix [REDACTED] suffix");
+        assert_eq!(redacted.as_str(), "prefix token=[REDACTED] suffix");
+        assert_eq!(redacted.to_string(), "prefix token=[REDACTED] suffix");
+        assert_eq!(&*redacted, "prefix token=[REDACTED] suffix");
     }
 }
 #[cfg(test)]
