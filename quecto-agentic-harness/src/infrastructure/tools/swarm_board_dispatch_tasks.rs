@@ -22,7 +22,7 @@ use crate::application::swarm::use_cases::ReadTask;
 use crate::application::swarm::use_cases::{
     ClaimTask, CreateTask, ReleaseTask, SetTaskDependencies,
 };
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, BoardOpDetail};
 
 /// `task_create(request, title, acceptance, dependencies=None)`.
 pub(super) const TASK_CREATE: [Parameter; 4] = [
@@ -66,6 +66,7 @@ pub(super) fn task_create(
         task_id,
         message_id: None,
         cursor_moved: None,
+        detail: BoardOpDetail::NONE,
     })
 }
 
@@ -86,6 +87,7 @@ pub(super) fn dependencies(
         task_id: acted_on(Some(&task)),
         message_id: None,
         cursor_moved: None,
+        detail: BoardOpDetail::NONE,
     })
 }
 
@@ -107,6 +109,7 @@ pub(super) fn claim(
         task_id,
         message_id: None,
         cursor_moved: None,
+        detail: BoardOpDetail::NONE,
     })
 }
 
@@ -127,6 +130,7 @@ pub(super) fn release(
         task_id: acted_on(Some(&task)),
         message_id: None,
         cursor_moved: None,
+        detail: BoardOpDetail::NONE,
     })
 }
 
@@ -150,6 +154,7 @@ pub(super) fn task_raw(
         task_id,
         message_id: None,
         cursor_moved: None,
+        detail: BoardOpDetail::NONE,
     })
 }
 

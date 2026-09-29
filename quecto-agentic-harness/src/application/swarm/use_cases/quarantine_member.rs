@@ -7,7 +7,7 @@ use crate::application::swarm::board_loss::{
     LOST_HARNESS, SCOPE_UNKNOWN, end_by_loss, grace_elapsed, lost,
 };
 use crate::application::swarm::board_operation::{detail, operation, text};
-use crate::application::swarm::dto::{Quarantine, QuarantineMemberRequest};
+use crate::application::swarm::dto::{Quarantine, QuarantineMemberRequest, Quarantined};
 use crate::application::swarm::ports::{BoardRepository, Clock};
 use crate::domain::swarm::{Access, BoardError};
 
@@ -34,7 +34,7 @@ impl QuarantineMember {
     /// # Errors
     /// An authorisation refusal, an edited loss observation, or the
     /// store's (a member it cannot bind included).
-    pub fn execute(&self, request: QuarantineMemberRequest) -> Result<Quarantine, BoardError> {
+    pub fn execute(&self, request: QuarantineMemberRequest) -> Result<Quarantined, BoardError> {
         let actor = request.actor.as_str();
         let member = &request.member;
         let clock = &*self.clock;
@@ -44,18 +44,22 @@ impl QuarantineMember {
             actor,
             Access::default(),
             |transaction, run| {
+                let decided = |decision| Quarantined {
+                    decision,
+                    run_status: run.status.clone(),
+                };
                 if lost(transaction, member)? {
-                    return Ok(Quarantine::AlreadyLost);
+                    return Ok(decided(Quarantine::AlreadyLost));
                 }
                 // `_lost` found the member's row, so its launcher column
                 // is read; a NULL launcher (or none that is text) is none.
                 if let Some(launcher) = transaction.member_launcher(member)?.flatten() {
                     let authorised = actor == launcher || lost(transaction, &text(&launcher))?;
                     if !authorised {
-                        return Ok(Quarantine::NotLauncher);
+                        return Ok(decided(Quarantine::NotLauncher));
                     }
                     if !grace_elapsed(transaction, clock, actor, member)? {
-                        return Ok(Quarantine::GracePending);
+                        return Ok(decided(Quarantine::GracePending));
                     }
                 }
                 transaction.event(
@@ -64,8 +68,8 @@ impl QuarantineMember {
                     "scope_unknown",
                     &detail([("member", member.clone()), ("reason", text(SCOPE_UNKNOWN))]),
                 )?;
-                end_by_loss(transaction, clock, actor, run, LOST_HARNESS)?;
-                Ok(Quarantine::Recorded)
+                let ended_by_loss = end_by_loss(transaction, clock, actor, run, LOST_HARNESS)?;
+                Ok(decided(Quarantine::Recorded { ended_by_loss }))
             },
         )
     }

@@ -102,7 +102,7 @@ use crate::application::swarm::use_cases::{
     ResumeRunExternally, RevalidateTask, RevokeTask, SendMessage, SetTaskDependencies, StopRun,
     SubmitTask, UnblockTask, VerifyTask, WithdrawMessage,
 };
-use crate::domain::swarm::{BoardError, BoardRole, RefusalKind};
+use crate::domain::swarm::{BoardError, BoardOpDetail, BoardRole, RefusalKind};
 
 use self::method::{Method, Parameter, required};
 pub use super::swarm_board_telemetry::{ActorRefs, TELEMETRY_TARGET};
@@ -421,6 +421,7 @@ fn serve(
             task_id: None,
             message_id: None,
             cursor_moved: None,
+            detail: BoardOpDetail::NONE,
         }),
         Method::Snapshot => Ok(Served {
             value: snapshot(serving(&*handles.read_run_snapshot, over).execute(member)?)?,
@@ -428,6 +429,7 @@ fn serve(
             task_id: None,
             message_id: None,
             cursor_moved: None,
+            detail: BoardOpDetail::NONE,
         }),
         Method::Admit => members::admit(&serving(&*handles.admit_member, over), member, arguments),
         Method::Activate => {
@@ -595,6 +597,7 @@ fn done(decision: &'static str) -> Served {
         task_id: None,
         message_id: None,
         cursor_moved: None,
+        detail: BoardOpDetail::NONE,
     }
 }
 

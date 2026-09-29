@@ -194,8 +194,9 @@ pub struct BoardOpObservation {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decision: Option<String>,
     /// What the decision found and did, as counts and kinds only (#2277
-    /// review M1); left out when nothing applies.
-    #[serde(default, skip_serializing_if = "BoardOpDetail::is_empty")]
+    /// review M1), flat beside the other fields; each is left out when it
+    /// does not apply.
+    #[serde(flatten)]
     pub detail: BoardOpDetail,
 }
 
@@ -273,11 +274,6 @@ impl BoardOpDetail {
         reservations_retained: None,
         ended_by_loss: None,
     };
-
-    /// Whether no field applies.
-    pub fn is_empty(&self) -> bool {
-        *self == Self::NONE
-    }
 }
 
 /// The role `member` holds in a run whose coordinator and integrator are

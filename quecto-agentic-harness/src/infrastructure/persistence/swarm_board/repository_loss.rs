@@ -8,7 +8,9 @@
 //!
 //! An observation's detail is loaded as Python's `json.loads` loads it (a
 //! detail that is not JSON text is refused as a store failure where
-//! Python raises), and its time is read as stored ([`cell_at`]): a BLOB,
+//! Python raises; one that is JSON but not an object names no member,
+//! where Python's `.get` raises), and its time is read as stored
+//! ([`cell_at`]): a BLOB,
 //! which only an edit writes, is refused as a store failure where Python
 //! passes over an observation of another member (the
 //! `outside_edited_loss_records` divergence).

@@ -387,13 +387,19 @@ impl Method {
     /// `budget-exhausted`, `warned` writes the warning), so a read that
     /// changes the run is visible at INFO. Only the usage methods decide
     /// `paused` or `warned` as the budget's; another method's decision of
-    /// the same name (`pause`'s `paused`) keeps its own level.
+    /// the same name (`pause`'s `paused`) keeps its own level. It is
+    /// lowered to [`Level::Read`] for a quarantine still inside its grace.
     pub(super) fn served_level(self, decision: &str) -> Level {
         match (self, decision) {
             (
                 Self::UsageBudget | Self::RecordRequest | Self::RequestAdmission,
                 "paused" | "warned",
             ) => Level::Mutation,
+            // #2277 review N6: a reconcile retries a quarantine until its
+            // grace ends, so one still inside the grace (which writes at
+            // most the observer's first observation) is DEBUG; every other
+            // decision keeps the method's INFO.
+            (Self::Quarantine, "grace_pending") => Level::Read,
             _ => self.level(),
         }
     }

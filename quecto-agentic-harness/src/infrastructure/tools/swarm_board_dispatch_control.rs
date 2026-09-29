@@ -16,7 +16,7 @@ use crate::application::swarm::use_cases::{
     CloseRun, ExtendRunDeadline, PauseRun, ReadControlStatus, ReadUsageReport, ResumeRun,
     ResumeRunExternally, StopRun,
 };
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, BoardOpDetail};
 
 /// `pause(reason)`.
 pub(super) const PAUSE: [Parameter; 1] = [required("reason")];
@@ -37,6 +37,7 @@ fn answered(answer: ControlAnswer, applied: &'static str) -> Served {
         task_id: None,
         message_id: None,
         cursor_moved: None,
+        detail: BoardOpDetail::NONE,
     }
 }
 
@@ -108,6 +109,7 @@ pub(super) fn control_status(
         task_id: None,
         message_id: None,
         cursor_moved: None,
+        detail: BoardOpDetail::NONE,
     })
 }
 
@@ -121,6 +123,7 @@ pub(super) fn usage_report(
         task_id: None,
         message_id: None,
         cursor_moved: None,
+        detail: BoardOpDetail::NONE,
     })
 }
 

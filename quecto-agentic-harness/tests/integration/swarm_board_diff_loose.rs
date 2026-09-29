@@ -9,12 +9,12 @@ use std::path::Path;
 use serde_json::{Value, json};
 
 use crate::swarm_board_diff_loose_runs::create_text;
-use crate::swarm_board_diff_membership::{at, create};
+use crate::swarm_board_diff_membership::create;
 use crate::swarm_board_diff_runs::NOW;
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
 use crate::swarm_board_diff_runs::swarm_board_diff::rust::RustBoard;
 use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
-    Step, run_both, run_rust, sql, step, step_text, try_run_both,
+    Step, run_both, sql, step, step_text, try_run_both,
 };
 
 /// Every way the Rust board may differ from the Python board on the

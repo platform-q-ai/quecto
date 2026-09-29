@@ -7,7 +7,7 @@ use serde_json::Value;
 use super::OverRepository;
 use crate::application::swarm::board_loss::{ABRUPT_BLOCKER, ORDERLY_BLOCKER, end_by_loss};
 use crate::application::swarm::board_operation::{detail, operation, text};
-use crate::application::swarm::dto::{ConfirmMemberDeadRequest, DeathConfirmation};
+use crate::application::swarm::dto::{ConfirmMemberDeadRequest, DeathConfirmation, DeathConfirmed};
 use crate::application::swarm::ports::{BoardRepository, Clock};
 use crate::domain::swarm::{
     Access, BoardError, MemberExit, RefusalKind, python_equal, status_is_alive,
@@ -37,10 +37,7 @@ impl ConfirmMemberDead {
     /// # Errors
     /// `exit kind must be orderly or abrupt`, an authorisation refusal, or
     /// the store's (a member it cannot bind included).
-    pub fn execute(
-        &self,
-        request: ConfirmMemberDeadRequest,
-    ) -> Result<DeathConfirmation, BoardError> {
+    pub fn execute(&self, request: ConfirmMemberDeadRequest) -> Result<DeathConfirmed, BoardError> {
         let exit = exit_kind(&request.exit)?;
         let actor = request.actor.as_str();
         let member = &request.member;
@@ -51,11 +48,16 @@ impl ConfirmMemberDead {
             actor,
             Access::default(),
             |transaction, run| {
+                let decided = |decision| DeathConfirmed {
+                    decision,
+                    exit,
+                    run_status: run.status.clone(),
+                };
                 let alive = transaction
                     .member_status(member)?
                     .is_some_and(|row| status_is_alive(row.status.as_deref()));
                 if !alive {
-                    return Ok(DeathConfirmation::AlreadyDead);
+                    return Ok(decided(DeathConfirmation::AlreadyDead));
                 }
                 transaction.mark_member_dead(member)?;
                 let blocker = match exit {
@@ -80,16 +82,19 @@ impl ConfirmMemberDead {
                 transaction.event(actor, clock.now_seconds(), "death_confirmed", &recorded)?;
                 let named = run.coordinator.as_deref().map_or(Value::Null, text);
                 let coordinator = python_equal(member, &named);
-                if coordinator {
-                    end_by_loss(
+                let ended_by_loss = coordinator
+                    && end_by_loss(
                         transaction,
                         clock,
                         actor,
                         run,
                         "coordinator death confirmed",
                     )?;
-                }
-                Ok(DeathConfirmation::Confirmed { coordinator })
+                Ok(decided(DeathConfirmation::Confirmed {
+                    coordinator,
+                    reservations_retained: u64::try_from(retained).unwrap_or(0),
+                    ended_by_loss,
+                }))
             },
         )
     }

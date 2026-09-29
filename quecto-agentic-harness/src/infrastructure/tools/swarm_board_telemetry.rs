@@ -15,7 +15,7 @@ use serde_json::Value;
 
 use crate::application::swarm::dto::CallMeasure;
 use crate::domain::redaction::Redacted;
-use crate::domain::swarm::telemetry::run_role;
+use crate::domain::swarm::telemetry::{decision_kind, run_role};
 use crate::domain::swarm::validation::MEMBER_ID_MAX_BYTES;
 use crate::domain::swarm::{
     BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind,
@@ -70,6 +70,9 @@ pub(super) struct Served {
     /// Whether the op moved the caller's message cursor; `None` for an op
     /// that has no cursor to move.
     pub cursor_moved: Option<bool>,
+    /// What the decision found and did, as counts and kinds (#2277 review
+    /// M1); [`BoardOpDetail::NONE`] for an op whose decision carries none.
+    pub detail: BoardOpDetail,
 }
 
 /// `member` redacted, then cut to its first [`ACTOR_REF_CHARS`]
@@ -202,6 +205,15 @@ pub(super) fn observation(
             .is_none_or(|measure| measure.lock_wait <= call.elapsed),
         "a call's lock wait is part of its duration"
     );
+    debug_assert!(
+        served.is_none_or(|served| decision_kind(served.decision)),
+        "a decision is a kind, never text"
+    );
+    debug_assert_eq!(
+        served.is_some(),
+        call.outcome.is_ok(),
+        "only an answered call served anything"
+    );
     let measure = measure.as_ref();
     BoardOpObservation {
         op: call.op.to_owned(),
@@ -227,8 +239,8 @@ pub(super) fn observation(
         busy: measure.map(|measure| measure.busy),
         cursor_moved: served.and_then(|served| served.cursor_moved),
         result_bytes: served.map_or(0, |served| rendered_bytes(&served.value)),
-        decision: None,
-        detail: BoardOpDetail::NONE,
+        decision: served.map(|served| served.decision.to_owned()),
+        detail: served.map_or(BoardOpDetail::NONE, |served| served.detail.clone()),
     }
 }
 

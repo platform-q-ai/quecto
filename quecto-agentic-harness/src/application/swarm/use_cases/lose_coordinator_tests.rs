@@ -29,6 +29,7 @@ fn a_running_run_is_lost_as_a_failed_pause() {
         .execute(lose())
         .unwrap();
     assert!(loss.lost);
+    assert_eq!(loss.found, Some(RunState::RUNNING), "found before the loss");
     assert_eq!(
         (
             loss.run.id.as_deref(),

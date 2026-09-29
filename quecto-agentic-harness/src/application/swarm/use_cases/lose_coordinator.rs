@@ -59,6 +59,7 @@ impl LoseCoordinator {
                 Ok(CoordinatorLoss {
                     run: row,
                     lost: losable,
+                    found: run.status.clone(),
                 })
             },
         )

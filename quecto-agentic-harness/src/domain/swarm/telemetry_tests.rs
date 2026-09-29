@@ -406,9 +406,9 @@ fn a_callers_run_role_is_read_from_the_run() {
     assert_eq!(run_role("worker", None, None), BoardRole::Worker);
 }
 
-/// A served op's decision and detail (#2277 review M1) sit beside the
-/// other fields, left out when they do not apply, and read back as
-/// written; a record without them (an older writer's) reads as none.
+/// A served op's decision and detail (#2277 review M1) sit flat beside
+/// the other fields, each left out when it does not apply, and read back
+/// as written; a record without them (an older writer's) reads as none.
 #[test]
 fn a_decision_and_its_detail_are_recorded_as_kinds_and_counts() {
     let recorded = AuditEvent::SwarmOp(BoardOpObservation {
@@ -424,20 +424,33 @@ fn a_decision_and_its_detail_are_recorded_as_kinds_and_counts() {
     let line = serde_json::to_value(&recorded).unwrap();
     assert_eq!(line["decision"], "coordinator_confirmed");
     assert_eq!(
-        line["detail"],
-        json!({
-            "run_status": "budget_exhausted",
-            "exit": "abrupt",
-            "reservations_retained": 2,
-            "ended_by_loss": true,
-        })
+        (
+            &line["run_status"],
+            &line["exit"],
+            &line["reservations_retained"],
+            &line["ended_by_loss"]
+        ),
+        (
+            &json!("budget_exhausted"),
+            &json!("abrupt"),
+            &json!(2),
+            &json!(true)
+        )
     );
     assert_eq!(
         serde_json::from_value::<AuditEvent>(line).unwrap(),
         recorded
     );
     let bare = serde_json::to_value(AuditEvent::SwarmOp(observation(BoardOpOutcome::Ok))).unwrap();
-    assert_eq!((bare.get("decision"), bare.get("detail")), (None, None));
+    for field in [
+        "decision",
+        "run_status",
+        "exit",
+        "reservations_retained",
+        "ended_by_loss",
+    ] {
+        assert_eq!(bare.get(field), None, "{field}: {bare}");
+    }
     let AuditEvent::SwarmOp(read) = serde_json::from_value(bare).unwrap() else {
         panic!("a swarm_op record");
     };

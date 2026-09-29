@@ -4,7 +4,7 @@ use super::QuarantineMember;
 use crate::application::swarm::board_test_support::{
     BoardState, MemoryBoard, SteppingClock, member_row, recorded, running_board, stored_member,
 };
-use crate::application::swarm::dto::{Quarantine, QuarantineMemberRequest};
+use crate::application::swarm::dto::{Quarantine, QuarantineMemberRequest, Quarantined};
 use crate::application::swarm::use_cases::OverRepository;
 use crate::domain::swarm::{BoardError, RefusalKind, RunState};
 
@@ -45,22 +45,37 @@ fn only_the_launcher_records_and_only_after_the_grace() {
     let board = MemoryBoard::with(board());
     let at = |now: f64| QuarantineMember::new(board.clone(), SteppingClock::fixed(now));
     assert_eq!(
-        at(10.0).execute(quarantine("other", "worker")).unwrap(),
+        at(10.0)
+            .execute(quarantine("other", "worker"))
+            .unwrap()
+            .decision,
         Quarantine::NotLauncher
     );
     assert!(actions(&board).is_empty());
     assert_eq!(
-        at(10.0).execute(quarantine("parent", "worker")).unwrap(),
+        at(10.0)
+            .execute(quarantine("parent", "worker"))
+            .unwrap()
+            .decision,
         Quarantine::GracePending
     );
     assert_eq!(
-        at(19.9).execute(quarantine("parent", "worker")).unwrap(),
+        at(19.9)
+            .execute(quarantine("parent", "worker"))
+            .unwrap()
+            .decision,
         Quarantine::GracePending
     );
     assert_eq!(actions(&board), ["scope_observed"], "one per observer");
     assert_eq!(
         at(20.0).execute(quarantine("parent", "worker")).unwrap(),
-        Quarantine::Recorded
+        Quarantined {
+            decision: Quarantine::Recorded {
+                ended_by_loss: true
+            },
+            run_status: Some(RunState::RUNNING),
+        },
+        "the run was found running, and the loss ended it"
     );
     assert_eq!(
         actions(&board),
@@ -79,10 +94,14 @@ fn only_the_launcher_records_and_only_after_the_grace() {
         (run.status, run.outcome.as_deref()),
         (Some(RunState::PAUSED), Some("failed"))
     );
-    // Recorded once: a later observation leaves the member as it is.
+    // Recorded once: a later observation leaves the member as it is, and
+    // finds the run paused.
     assert_eq!(
         at(30.0).execute(quarantine("parent", "worker")).unwrap(),
-        Quarantine::AlreadyLost
+        Quarantined {
+            decision: Quarantine::AlreadyLost,
+            run_status: Some(RunState::PAUSED),
+        }
     );
     assert_eq!(actions(&board).len(), 4);
 }
@@ -97,19 +116,30 @@ fn a_lost_launcher_or_none_lets_any_member_record() {
     let board = MemoryBoard::with(state);
     let at = |now: f64| QuarantineMember::new(board.clone(), SteppingClock::fixed(now));
     assert_eq!(
-        at(10.0).execute(quarantine("other", "nested")).unwrap(),
+        at(10.0)
+            .execute(quarantine("other", "nested"))
+            .unwrap()
+            .decision,
         Quarantine::GracePending
     );
     assert_eq!(
-        at(20.0).execute(quarantine("other", "nested")).unwrap(),
-        Quarantine::Recorded
+        at(20.0)
+            .execute(quarantine("other", "nested"))
+            .unwrap()
+            .decision,
+        Quarantine::Recorded {
+            ended_by_loss: true
+        }
     );
     let launcherless = MemoryBoard::with(board_with_worker());
     assert_eq!(
         QuarantineMember::new(launcherless.clone(), SteppingClock::fixed(5.0))
             .execute(quarantine("worker", "parent"))
-            .unwrap(),
-        Quarantine::Recorded
+            .unwrap()
+            .decision,
+        Quarantine::Recorded {
+            ended_by_loss: true
+        }
     );
     assert_eq!(actions(&launcherless), ["scope_unknown", "stop", "paused"]);
 }
@@ -135,7 +165,10 @@ fn an_already_lost_member_writes_nothing() {
     let service = QuarantineMember::new(board.clone(), SteppingClock::fixed(5.0));
     for member in ["gone", "stranger", "other"] {
         assert_eq!(
-            service.execute(quarantine("parent", member)).unwrap(),
+            service
+                .execute(quarantine("parent", member))
+                .unwrap()
+                .decision,
             Quarantine::AlreadyLost,
             "{member}"
         );
@@ -156,7 +189,10 @@ fn an_unknown_member_status_is_already_lost() {
     let service = QuarantineMember::new(board.clone(), SteppingClock::fixed(5.0));
     for member in ["zombie", "null"] {
         assert_eq!(
-            service.execute(quarantine("parent", member)).unwrap(),
+            service
+                .execute(quarantine("parent", member))
+                .unwrap()
+                .decision,
             Quarantine::AlreadyLost
         );
     }

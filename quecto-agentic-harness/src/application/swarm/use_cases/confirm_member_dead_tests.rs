@@ -4,9 +4,9 @@ use super::ConfirmMemberDead;
 use crate::application::swarm::board_test_support::{
     BoardState, MemoryBoard, SteppingClock, StoredFile, member_row, running_board, stored_task,
 };
-use crate::application::swarm::dto::{ConfirmMemberDeadRequest, DeathConfirmation};
+use crate::application::swarm::dto::{ConfirmMemberDeadRequest, DeathConfirmation, DeathConfirmed};
 use crate::application::swarm::use_cases::OverRepository;
-use crate::domain::swarm::{BoardError, RefusalKind, RunState};
+use crate::domain::swarm::{BoardError, MemberExit, RefusalKind, RunState};
 
 /// `worker` owns tasks 1 (claimed), 2 (completed) and a reservation of
 /// task 1; `other` owns task 3.
@@ -61,8 +61,13 @@ fn an_orderly_exit_blocks_the_work_and_releases_the_reservations() {
     assert_eq!(
         service
             .execute(dead("parent", "worker", json!("orderly")))
-            .unwrap(),
-        DeathConfirmation::Confirmed { coordinator: false }
+            .unwrap()
+            .decision,
+        DeathConfirmation::Confirmed {
+            coordinator: false,
+            reservations_retained: 0,
+            ended_by_loss: false,
+        }
     );
     let state = board.snapshot();
     assert_eq!(state.members[1].text("status"), Some("dead"));
@@ -84,7 +89,8 @@ fn an_orderly_exit_blocks_the_work_and_releases_the_reservations() {
     assert_eq!(
         service
             .execute(dead("parent", "worker", json!("abrupt")))
-            .unwrap(),
+            .unwrap()
+            .decision,
         DeathConfirmation::AlreadyDead
     );
     assert_eq!(board.snapshot().events.len(), 1);
@@ -94,9 +100,20 @@ fn an_orderly_exit_blocks_the_work_and_releases_the_reservations() {
 #[test]
 fn an_abrupt_exit_retains_the_reservations_and_says_so() {
     let board = MemoryBoard::with(board());
-    ConfirmMemberDead::new(board.clone(), SteppingClock::fixed(5.0))
-        .execute(dead("parent", "worker", json!("abrupt")))
-        .unwrap();
+    assert_eq!(
+        ConfirmMemberDead::new(board.clone(), SteppingClock::fixed(5.0))
+            .execute(dead("parent", "worker", json!("abrupt")))
+            .unwrap(),
+        DeathConfirmed {
+            decision: DeathConfirmation::Confirmed {
+                coordinator: false,
+                reservations_retained: 1,
+                ended_by_loss: false,
+            },
+            exit: MemberExit::Abrupt,
+            run_status: Some(RunState::RUNNING),
+        }
+    );
     let state = board.snapshot();
     assert_eq!(state.files.len(), 2);
     assert_eq!(
@@ -142,7 +159,15 @@ fn the_coordinators_death_ends_the_run() {
         ConfirmMemberDead::new(board.clone(), SteppingClock::fixed(5.0))
             .execute(dead("worker", "parent", json!("orderly")))
             .unwrap(),
-        DeathConfirmation::Confirmed { coordinator: true }
+        DeathConfirmed {
+            decision: DeathConfirmation::Confirmed {
+                coordinator: true,
+                reservations_retained: 0,
+                ended_by_loss: true,
+            },
+            exit: MemberExit::Orderly,
+            run_status: Some(RunState::RUNNING),
+        }
     );
     let state = board.snapshot();
     let run = state.run.unwrap().record;
@@ -181,7 +206,8 @@ fn an_unknown_member_status_is_already_dead() {
         assert_eq!(
             service
                 .execute(dead("parent", member, json!("orderly")))
-                .unwrap(),
+                .unwrap()
+                .decision,
             DeathConfirmation::AlreadyDead,
             "{member}"
         );

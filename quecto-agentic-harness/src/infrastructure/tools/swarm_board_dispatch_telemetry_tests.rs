@@ -526,8 +526,9 @@ fn a_record_the_log_cannot_take_leaves_the_answer_unchanged() {
 }
 
 /// The string fields a `swarm_op` line may hold: the envelope's and the
-/// record's ids and kinds. Anything else would be board text.
-const STRING_FIELDS: [&str; 11] = [
+/// record's ids and kinds (#2277: the decision, the run status found and
+/// the exit kind). Anything else would be board text.
+const STRING_FIELDS: [&str; 14] = [
     "ts",
     "host",
     "session",
@@ -539,6 +540,9 @@ const STRING_FIELDS: [&str; 11] = [
     "run_id",
     "outcome",
     "kind",
+    "decision",
+    "run_status",
+    "exit",
 ];
 
 /// Written to a real event log, a `swarm_op` line holds no board text:
@@ -564,11 +568,23 @@ fn a_swarm_op_line_holds_no_board_text() {
     call(&handles, actor, "create_run", args.clone()).unwrap();
     call(&handles, actor, "create_run", args).unwrap_err();
     call(&handles, actor, "_snapshot", json!([])).unwrap();
+    // A decision's detail (#2277) holds kinds, not the member it names.
+    call(
+        &handles,
+        actor,
+        "_confirmed_dead",
+        json!([format!("member {secret}"), "abrupt"]),
+    )
+    .unwrap();
     let (text, lines) = lines(&base);
-    assert_eq!(lines.len(), 4, "{text}");
+    assert_eq!(lines.len(), 5, "{text}");
     assert!(
         lines.iter().any(|line| line.get("kind").is_some()),
         "a refusal's kind is checked too: {text}"
+    );
+    assert!(
+        lines.iter().any(|line| line.get("exit").is_some()),
+        "a decision's detail is checked too: {text}"
     );
     for line in &lines {
         assert_eq!(line["event"], "swarm_op", "{line}");
@@ -583,7 +599,9 @@ fn a_swarm_op_line_holds_no_board_text() {
             assert!(!value.is_object() && !value.is_array(), "{key}: {line}");
         }
     }
-    for leaked in [secret, actor, "sk-ant", "title", "body", "evidence"] {
+    for leaked in [
+        secret, actor, "sk-ant", "title", "body", "evidence", "member",
+    ] {
         assert!(!text.contains(leaked), "{leaked} in {text}");
     }
 }

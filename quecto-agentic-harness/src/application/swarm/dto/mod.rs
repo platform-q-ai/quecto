@@ -32,8 +32,8 @@ pub use files::{
 };
 pub use location::BoardLocation;
 pub use loss::{
-    ConfirmMemberDeadRequest, CoordinatorLoss, DeathConfirmation, LoseCoordinatorRequest,
-    Quarantine, QuarantineMemberRequest, ScopeObservation,
+    ConfirmMemberDeadRequest, CoordinatorLoss, DeathConfirmation, DeathConfirmed,
+    LoseCoordinatorRequest, Quarantine, QuarantineMemberRequest, Quarantined, ScopeObservation,
 };
 pub use measure::{CallMeasure, RunRoles};
 pub use membership::{

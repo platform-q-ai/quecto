@@ -13,7 +13,7 @@ use crate::application::swarm::dto::{
 use crate::application::swarm::use_cases::{
     ActivateMember, AdmitMember, RecordMemberLaunch, RegisterMemberSocket, ReleaseUnlaunchedMember,
 };
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, BoardOpDetail};
 
 pub(super) const ADMIT: [Parameter; 2] = [required("member"), required("reservation")];
 pub(super) const ACTIVATE: [Parameter; 5] = [
@@ -54,6 +54,7 @@ pub(super) fn admit(
         task_id: None,
         message_id: None,
         cursor_moved: None,
+        detail: BoardOpDetail::NONE,
     })
 }
 

@@ -10,12 +10,22 @@
 use serde_json::Value;
 
 use super::RunStatusRow;
+use crate::domain::swarm::{MemberExit, RunState};
 
 /// `Workbench._quarantine(member)` as `actor`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QuarantineMemberRequest {
     pub actor: String,
     pub member: Value,
+}
+
+/// What `_quarantine` decided, and the run status it found before it
+/// wrote anything (telemetry, #2277 review M1; Python answers `None`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Quarantined {
+    pub decision: Quarantine,
+    /// The run row's status as the operation gate read it.
+    pub run_status: Option<RunState>,
 }
 
 /// What `_quarantine` decided (telemetry; Python answers `None`).
@@ -30,8 +40,10 @@ pub enum Quarantine {
     /// An authorised observation inside the grace: at most the caller's
     /// first `scope_observed` is written.
     GracePending,
-    /// The loss is recorded (`scope_unknown`) and ends the run by loss.
-    Recorded,
+    /// The loss is recorded (`scope_unknown`) and ends the run by loss:
+    /// `ended_by_loss` when that changed the run (a run that holds an
+    /// outcome, or has ended, is left as it is).
+    Recorded { ended_by_loss: bool },
 }
 
 /// `Workbench._confirmed_dead(member, exit='orderly')` as `actor`. `exit`
@@ -43,6 +55,17 @@ pub struct ConfirmMemberDeadRequest {
     pub exit: Value,
 }
 
+/// What `_confirmed_dead` decided, with the exit kind it was given and
+/// the run status it found before it wrote anything (telemetry, #2277
+/// review M1; Python answers `None`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeathConfirmed {
+    pub decision: DeathConfirmation,
+    pub exit: MemberExit,
+    /// The run row's status as the operation gate read it.
+    pub run_status: Option<RunState>,
+}
+
 /// What `_confirmed_dead` decided (telemetry; Python answers `None`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeathConfirmation {
@@ -50,8 +73,14 @@ pub enum DeathConfirmation {
     AlreadyDead,
     /// The member is dead now and its active work blocked; `coordinator`
     /// when it was the run's coordinator, whose death ends the run by
-    /// loss.
-    Confirmed { coordinator: bool },
+    /// loss (`ended_by_loss` when that changed the run).
+    /// `reservations_retained` is the member's reservations left held: an
+    /// abrupt exit's, or 0 once an orderly exit released them.
+    Confirmed {
+        coordinator: bool,
+        reservations_retained: u64,
+        ended_by_loss: bool,
+    },
 }
 
 /// `Workbench._lose_coordinator()` as `actor`.
@@ -66,6 +95,9 @@ pub struct LoseCoordinatorRequest {
 pub struct CoordinatorLoss {
     pub run: RunStatusRow,
     pub lost: bool,
+    /// The run row's status as the operation gate read it, before the op
+    /// wrote anything (telemetry, #2277 review M1).
+    pub found: Option<RunState>,
 }
 
 /// One `scope_observed` event as `_grace_elapsed` reads it: its actor (the

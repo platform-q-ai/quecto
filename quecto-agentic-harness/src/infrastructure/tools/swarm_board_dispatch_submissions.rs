@@ -14,7 +14,7 @@ use crate::application::swarm::dto::{
     VerifyTaskRequest,
 };
 use crate::application::swarm::use_cases::{BlockTask, SubmitTask, UnblockTask, VerifyTask};
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, BoardOpDetail};
 
 /// `block(task_id, token, reason)` and `unblock(task_id, token, reason)`.
 pub(super) const BLOCK: [Parameter; 3] =
@@ -39,6 +39,7 @@ fn answered(change: TaskChange, applied: &'static str) -> Served {
         task_id: acted_on(Some(&change.task_id)),
         message_id: None,
         cursor_moved: None,
+        detail: BoardOpDetail::NONE,
     }
 }
 
