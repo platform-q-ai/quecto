@@ -5,11 +5,15 @@
 //! member's event log.
 
 use super::PromptAccepted;
+use crate::domain::external_agent::telemetry::{
+    ExternalAgentStreamDiagnostic, ExternalAgentTool, ExternalAgentTurn,
+};
 
 /// The most of a tool's name a [`SessionRecord::ToolCalled`] keeps, in
 /// bytes; it keeps only ASCII letters, digits and `_ - . :`, each other
 /// character becoming `?`.
-pub const TOOL_NAME_RECORD_BYTES: usize = 64;
+pub const TOOL_NAME_RECORD_BYTES: usize =
+    crate::domain::external_agent::telemetry::RECORDED_NAME_BYTES;
 
 /// One decision or effect of a member session.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,8 +82,27 @@ pub enum SessionRecord {
         turn: Option<u64>,
         dropped_follow_ups: usize,
     },
-    /// The agent's output ended; `clean` when it exited with status 0.
-    Ended { clean: bool },
+    /// The agent's output ended; `clean` when it exited with status 0,
+    /// `wall_ms` after its start (#2304).
+    Ended {
+        clean: bool,
+        exit_code: Option<i32>,
+        signal: Option<i32>,
+        wall_ms: Option<u64>,
+    },
+    /// A turn ended, as the event log keeps it (#2304): recorded just
+    /// before its [`Self::TurnEnded`].
+    TurnReported(Box<ExternalAgentTurn>),
+    /// A tool call was answered, or its turn ended first (#2304).
+    ToolFinished(Box<ExternalAgentTool>),
+    /// A process's first `system/init` (#2304).
+    Initialized {
+        cli_version: Option<String>,
+        claude_session_id: Option<String>,
+        model: Option<String>,
+    },
+    /// The stream said something the vocabulary could not read (#2304).
+    StreamDiagnostic(ExternalAgentStreamDiagnostic),
 }
 
 impl SessionRecord {
@@ -102,6 +125,10 @@ impl SessionRecord {
             Self::Closed { .. } => "closed",
             Self::Aborted { .. } => "aborted",
             Self::Ended { .. } => "ended",
+            Self::TurnReported(_) => "turn_reported",
+            Self::ToolFinished(_) => "tool_finished",
+            Self::Initialized { .. } => "initialized",
+            Self::StreamDiagnostic(_) => "stream_diagnostic",
         }
     }
 }

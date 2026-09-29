@@ -6,7 +6,9 @@
 //! that drives them.
 
 pub mod dto;
+pub mod event_log;
 pub mod ports;
 pub mod projection;
 mod session_core;
+mod session_telemetry;
 pub mod use_cases;

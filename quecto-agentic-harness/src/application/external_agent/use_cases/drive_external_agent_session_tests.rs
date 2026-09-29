@@ -272,8 +272,23 @@ async fn every_decision_and_effect_is_recorded_without_its_text() {
     rig.feed(completed(secret)).await;
     rig.session.abort().await.unwrap();
     let bytes = secret.len();
+    // The event log's own records (#2304) are pinned by the telemetry
+    // tests; here only where they fall.
+    let (logged, decided): (Vec<SessionRecord>, Vec<SessionRecord>) =
+        rig.records.all().into_iter().partition(|record| {
+            matches!(
+                record,
+                SessionRecord::StreamDiagnostic(_)
+                    | SessionRecord::ToolFinished(_)
+                    | SessionRecord::TurnReported(_)
+            )
+        });
     assert_eq!(
-        rig.records.all(),
+        logged.iter().map(SessionRecord::kind).collect::<Vec<_>>(),
+        ["stream_diagnostic", "tool_finished", "turn_reported"]
+    );
+    assert_eq!(
+        decided,
         [
             SessionRecord::Started,
             SessionRecord::PromptAccepted {
@@ -332,7 +347,13 @@ async fn a_refused_start_and_an_exit_are_recorded() {
     rig.step().await;
     assert_eq!(
         rig.records.kinds(),
-        ["started", "prompt_accepted", "turn_ended", "ended"]
+        [
+            "started",
+            "prompt_accepted",
+            "turn_reported",
+            "turn_ended",
+            "ended"
+        ]
     );
     assert!(rig.records.all().contains(&SessionRecord::TurnEnded {
         turn: 1,

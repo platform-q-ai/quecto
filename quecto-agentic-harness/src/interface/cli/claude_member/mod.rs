@@ -33,6 +33,8 @@ pub(crate) fn run(ctx: &CliContext, flags: &AgentFlags, stderr: &mut String) -> 
             .clone()
             .unwrap_or_else(|| std::path::PathBuf::from(".")),
         base_dir: ctx.base_dir(),
+        parent: flags.parent_id.clone(),
+        config_path: ctx.config_path.clone(),
     });
     let handles = match built {
         Ok(handles) => handles,

@@ -71,6 +71,7 @@ pub(super) fn result(line: &Object) -> ResultEvent {
             .collect(),
         num_turns: count(line, "num_turns").and_then(|n| u32::try_from(n).ok()),
         duration_ms: count(line, "duration_ms"),
+        duration_api_ms: None,
         user_turn_ids: user_turn_ids(line),
     }
 }
