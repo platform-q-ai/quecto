@@ -497,3 +497,50 @@ fn notification_batch_carries_atomic_board_generation() {
     );
     assert_eq!(answer(&steps, 6)["members"], json!([]));
 }
+
+/// #2277 review M1: four owners claim at non-round times, and the
+/// summary at `NOW + 200` answers each owner's quiet time as a float
+/// whose shortest repr needs sixteen significant digits (Python's
+/// `93.65000009536743`). Both answers are compared exactly: Python's is
+/// read with `py_json`, whose float parse rounds correctly, where
+/// `serde_json` without `float_roundtrip` misreads such a float by an
+/// ulp and reports a difference the boards do not have.
+#[test]
+fn owner_liveness_floats_compare_exactly() {
+    let mut steps = joined([]);
+    for (index, owner) in ["w2", "w3", "w4"].into_iter().enumerate() {
+        let offset = 3.0 + 0.1 * index as f64;
+        let reservation = format!("res-{owner}");
+        steps.push(at(offset, "parent", "_admit", json!([owner, reservation])));
+        steps.push(at(
+            offset + 0.05,
+            "parent",
+            "_activate",
+            json!([owner, reservation, 20 + index, "o", null]),
+        ));
+    }
+    let claims = [
+        ("worker", 106.35),
+        ("w2", 105.9),
+        ("w3", 97.123_456_789),
+        ("w4", 101.7),
+    ];
+    for (index, (owner, offset)) in claims.into_iter().enumerate() {
+        steps.push(task(4.0 + index as f64, "worker", &format!("task-{index}")));
+        steps.push(at(offset, owner, "claim", json!([index + 1])));
+    }
+    steps.push(full(200.0, "parent"));
+    run_both(&steps);
+    let summary = answer(&steps, steps.len() - 1);
+    let quiet: Vec<f64> = summary["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|found| found["owner_last_activity"].as_f64().unwrap())
+        .collect();
+    assert_eq!(quiet.len(), 4, "{summary}");
+    assert!(
+        quiet.iter().any(|seconds| seconds.to_string().len() >= 17),
+        "a quiet time needs every digit: {quiet:?}"
+    );
+}
