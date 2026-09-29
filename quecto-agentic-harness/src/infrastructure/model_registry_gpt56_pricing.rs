@@ -12,6 +12,7 @@ pub(super) fn gpt_5_6_cost(id: &str) -> Option<ModelCost> {
     let (input, output) = match id {
         "gpt-6-astra" => (10.0, 50.0),
         "gpt-6-sol" => (2.0, 10.0),
+        "gpt-6.1-sol" => (2.0, 10.0),
         "gpt-6-luna" => (0.1, 0.5),
         "gpt-5.6-sol" => (5.0, 30.0),
         "gpt-5.6-terra" => (2.5, 15.0),
@@ -21,7 +22,13 @@ pub(super) fn gpt_5_6_cost(id: &str) -> Option<ModelCost> {
     Some(ModelCost {
         input,
         output,
-        cache_read: input * 0.10,
+        // GPT-6.1 Sol publishes $0.10/1M cached input (5% of $2.00);
+        // older tiers retain the existing 10% cache-read policy.
+        cache_read: if id == "gpt-6.1-sol" {
+            0.10
+        } else {
+            input * 0.10
+        },
         cache_write: input * 1.25,
     })
 }
