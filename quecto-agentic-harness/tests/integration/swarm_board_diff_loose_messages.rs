@@ -33,7 +33,14 @@
 //!   cursor as it is: after `('parent', 2.5)`, `_accept_wake(4)` claims
 //!   past it and answers `true`, where Rust refuses reading it (`Invalid
 //!   column type Real`). A stored dependency list is read as
-//!   `outside_edited_task_columns` reads it, keeping its integer entries.
+//!   `outside_edited_task_columns` reads it, keeping its integer entries:
+//!   a ready task whose dependencies are `'"9"'` wakes nobody in Python,
+//!   and the free member and the coordinator in Rust. A live member whose
+//!   id is NULL is no member the Rust policy can name, so it is never
+//!   woken: after `task_create`, Python's `sorted(targets)` raises
+//!   `TypeError` (`None` beside a name, in either operand order) in
+//!   `_notifications()` and `_accept_wake`, where Rust answers the named
+//!   members (`[parent]`, and `true`).
 //! - `arguments_beyond_a_serde_value`, for `_accept_wake` too (pinned in
 //!   `swarm_board_diff_loose.rs`): a generation above u64 is ahead of the
 //!   board in Python; Rust refuses the argument text.
@@ -282,4 +289,75 @@ fn outside_edited_wake_records() {
             "{edit}: {outcome:?}"
         );
     }
+    // `n` live and free (events 4 and 5), hand-edited, then task 1 created
+    // (event 6) and the probe at step 7.
+    let task = |offset: f64| {
+        at(
+            offset,
+            "worker",
+            "task_create",
+            json!(["t", "implement behavior", ["tests pass"], []]),
+        )
+    };
+    let edited = |edit: &str, probe: Step| {
+        joined([
+            at(3.0, "parent", "_admit", json!(["n", "res-n"])),
+            at(
+                3.1,
+                "parent",
+                "_activate",
+                json!(["n", "res-n", 12, "n", null]),
+            ),
+            sql(edit),
+            task(4.0),
+            probe,
+        ])
+    };
+    let nameless = "UPDATE members SET id=NULL WHERE id='n'";
+    let differs = |steps: &[Step], python: &[&str]| {
+        let difference = try_run_both(steps, |_, _, _| {}).unwrap_err();
+        assert!(
+            difference.starts_with("step 7: ") && python.iter().all(|t| difference.contains(t)),
+            "{difference}"
+        );
+    };
+    let none_beside_a_name = [
+        "Python raised TypeError: '<' not supported between instances of '",
+        "'NoneType'",
+        "'str'",
+    ];
+    let steps = edited(nameless, hints(5.0, "worker"));
+    differs(&steps, &none_beside_a_name);
+    assert_eq!(woken_ids(&run_rust(&steps)), ["parent"]);
+    let steps = edited(nameless, accept(5.0, "parent", json!(6)));
+    differs(&steps, &none_beside_a_name);
+    assert_eq!(run_rust(&steps), Outcome::Ok(json!(true)));
+    // A ready task whose dependencies read `'"9"'`: Python wakes nobody,
+    // Rust (reading them as `outside_edited_task_columns` does, as none)
+    // the free member and the coordinator.
+    let steps = joined([
+        at(3.0, "parent", "_admit", json!(["n", "res-n"])),
+        at(
+            3.1,
+            "parent",
+            "_activate",
+            json!(["n", "res-n", 12, "n", null]),
+        ),
+        task(4.0),
+        sql(r#"UPDATE tasks SET dependencies='"9"' WHERE id=1"#),
+        hints(5.0, "worker"),
+    ]);
+    differs(&steps, &["python Ok(Array [])"]);
+    assert_eq!(woken_ids(&run_rust(&steps)), ["n", "parent"]);
+}
+
+/// The ids of the members a `_notifications()` answer names.
+fn woken_ids(outcome: &Outcome) -> Vec<&str> {
+    let Outcome::Ok(serde_json::Value::Array(members)) = outcome else {
+        panic!("not a member list: {outcome:?}");
+    };
+    members
+        .iter()
+        .map(|member| member["id"].as_str().expect("a named member"))
+        .collect()
 }

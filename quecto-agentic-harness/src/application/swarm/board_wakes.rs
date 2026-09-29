@@ -16,8 +16,11 @@ pub(crate) fn running(run: &RunRecord) -> bool {
 
 /// The member a `members` row is to the policy: its text id, status and
 /// reservation. A row whose id is not text (only a hand edit writes one)
-/// is no member the policy can name, as Python's `live[identity]` never
-/// finds it by a name.
+/// is no member the policy can name, so it is never a target. Python does
+/// find such a row: a free member with a NULL id is one of its targets, and
+/// `sorted(targets)` then raises `TypeError` beside a named one, where the
+/// Rust board answers the named ones (the `outside_edited_wake_records`
+/// divergence, pinned in `tests/integration/swarm_board_diff_loose_messages.rs`).
 fn record(row: &MemberRow) -> Option<MemberRecord> {
     Some(MemberRecord {
         id: row.text("id")?.to_owned(),
