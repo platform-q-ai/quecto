@@ -84,7 +84,8 @@ impl BoardTasks for SqliteBoard<'_> {
     }
 
     fn insert_task(&self, task: &NewTask) -> Result<i64, BoardError> {
-        self.connection
+        let inserted = self
+            .connection
             .execute(
                 "INSERT INTO tasks(title,acceptance,dependencies,status,evidence) VALUES(?,?,?,'ready','[]')",
                 params![
@@ -94,18 +95,19 @@ impl BoardTasks for SqliteBoard<'_> {
                 ],
             )
             .map_err(failed)?;
+        debug_assert_eq!(inserted, 1, "one VALUES row inserts one task");
         Ok(self.connection.last_insert_rowid())
     }
 
     fn set_task_dependencies(&self, id: &Value, dependencies: &Value) -> Result<(), BoardError> {
-        self.run(
+        self.run_on_task(
             "UPDATE tasks SET dependencies=? WHERE id=?",
             &[encoded(dependencies)?, loose(2, id)?],
         )
     }
 
     fn update_task_claim(&self, id: &Value, owner: &str, token: &str) -> Result<(), BoardError> {
-        self.run(
+        self.run_on_task(
             "UPDATE tasks SET status='claimed',owner=?,token=? WHERE id=?",
             &[
                 SqlValue::Text(owner.to_owned()),
@@ -117,7 +119,7 @@ impl BoardTasks for SqliteBoard<'_> {
 
     fn update_task_status(&self, id: &Value, update: &TaskUpdate) -> Result<(), BoardError> {
         match update {
-            TaskUpdate::Release => self.run(
+            TaskUpdate::Release => self.run_on_task(
                 "UPDATE tasks SET status='ready',owner=NULL,token=NULL,blocker=NULL WHERE id=?",
                 &[loose(1, id)?],
             ),
@@ -148,20 +150,32 @@ impl BoardRequests for SqliteBoard<'_> {
 
 impl BoardFiles for SqliteBoard<'_> {
     fn delete_claim_files(&self, task: &Value, claim: &Value) -> Result<(), BoardError> {
+        // Any number of reservations, none included.
         self.run(
             "DELETE FROM files WHERE task=? AND claim=?",
             &[loose(1, task)?, loose(2, claim)?],
         )
+        .map(|_| ())
     }
 }
 
 impl SqliteBoard<'_> {
-    /// One statement with its parameters already bound as Python binds them.
-    fn run(&self, sql: &str, parameters: &[SqlValue]) -> Result<(), BoardError> {
+    /// One statement with its parameters already bound as Python binds
+    /// them: the number of rows it changed.
+    fn run(&self, sql: &str, parameters: &[SqlValue]) -> Result<usize, BoardError> {
         binding::bound_statement(self.connection, sql, parameters)
             .and_then(|mut statement| statement.raw_execute())
-            .map(|_| ())
             .map_err(failed)
+    }
+
+    /// An `UPDATE` of the one task whose id the use case has just read in
+    /// this transaction: the id is the table's primary key, so it changes
+    /// that row alone.
+    fn run_on_task(&self, sql: &str, parameters: &[SqlValue]) -> Result<(), BoardError> {
+        debug_assert!(sql.starts_with("UPDATE tasks SET "), "a task update: {sql}");
+        let changed = self.run(sql, parameters)?;
+        debug_assert_eq!(changed, 1, "{sql} changes the one task read before it");
+        Ok(())
     }
 }
 

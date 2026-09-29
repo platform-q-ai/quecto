@@ -46,10 +46,7 @@ pub fn validate_dependencies(
     graph: &[(i64, Value)],
 ) -> Result<(), BoardError> {
     debug_assert!(dependencies.len() <= DEPENDENCIES_MAX, "a bounded list");
-    let ids: HashSet<Node> = graph
-        .iter()
-        .map(|(id, _)| Node::Integer(i128::from(*id)))
-        .collect();
+    let ids: HashSet<Node> = graph.iter().map(|(id, _)| Node::Integer(*id)).collect();
     let valid = |dependency: &Value| {
         integer(dependency)
             && ids.contains(&Node::of(dependency))
@@ -60,7 +57,7 @@ pub fn validate_dependencies(
         // replaces its edges.
         let mut edges: HashMap<Node, &[Value]> = graph
             .iter()
-            .map(|(id, stored)| (Node::Integer(i128::from(*id)), children(stored)))
+            .map(|(id, stored)| (Node::Integer(*id), children(stored)))
             .collect();
         edges.insert(Node::of(task_id), dependencies);
         acyclic(Node::of(task_id), &edges)
@@ -108,7 +105,7 @@ fn children(stored: &Value) -> &[Value] {
 /// value is keyed by its JSON text.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Node {
-    Integer(i128),
+    Integer(i64),
     Text(String),
     Other(String),
 }
@@ -116,15 +113,14 @@ enum Node {
 impl Node {
     fn of(value: &Value) -> Self {
         match value {
-            Value::Bool(flag) => Self::Integer(i128::from(*flag)),
-            Value::Number(number) => match (number.as_i64(), number.as_u64(), number.as_f64()) {
-                (Some(integer), _, _) => Self::Integer(i128::from(integer)),
-                (None, Some(integer), _) => Self::Integer(i128::from(integer)),
-                (None, None, Some(float)) => {
-                    integral(float).map_or_else(|| Self::Other(value.to_string()), Self::Integer)
-                }
-                (None, None, None) => Self::Other(value.to_string()),
-            },
+            Value::Bool(flag) => Self::Integer(i64::from(*flag)),
+            // An integer beyond i64 names no task and is no task id the
+            // board can bind, so it keys a node of its own by its JSON text
+            // (as does a float no i64 equals); either way it has no edges.
+            Value::Number(number) => number
+                .as_i64()
+                .or_else(|| number.as_f64().and_then(integral))
+                .map_or_else(|| Self::Other(value.to_string()), Self::Integer),
             Value::String(text) => Self::Text(text.clone()),
             Value::Null | Value::Array(_) | Value::Object(_) => Self::Other(value.to_string()),
         }
@@ -132,10 +128,10 @@ impl Node {
 }
 
 /// The integer an integral float equals, within the range a task id holds.
-fn integral(float: f64) -> Option<i128> {
+fn integral(float: f64) -> Option<i64> {
     const BOUND: f64 = 9_223_372_036_854_775_808.0;
     let exact = float.is_finite() && float.fract() == 0.0 && (-BOUND..BOUND).contains(&float);
-    exact.then_some(float as i128)
+    exact.then_some(float as i64)
 }
 
 #[cfg(test)]

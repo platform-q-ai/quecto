@@ -238,10 +238,13 @@ pub trait BoardTasks {
     fn task_count(&self) -> Result<i64, BoardError>;
     /// A new `ready` task with no evidence; its id.
     fn insert_task(&self, task: &NewTask) -> Result<i64, BoardError>;
-    /// The task's dependencies, stored with the board's `encode()`.
+    /// The task's dependencies, stored with the board's `encode()`. This and
+    /// each task update after it change the one task `id` finds, which the
+    /// caller has read in this transaction (the adapter asserts it).
     fn set_task_dependencies(&self, id: &Value, dependencies: &Value) -> Result<(), BoardError>;
     /// The task is `claimed` by `owner` under `token`.
     fn update_task_claim(&self, id: &Value, owner: &str, token: &str) -> Result<(), BoardError>;
+    /// The task's status changes as `update` says.
     fn update_task_status(&self, id: &Value, update: &TaskUpdate) -> Result<(), BoardError>;
 }
 

@@ -114,7 +114,9 @@ impl CreateTask {
                 "task board full ({TASK_BOARD_CAPACITY}); settle existing work"
             )));
         }
-        let id = Value::from(transaction.insert_task(task)?);
+        let inserted = transaction.insert_task(task)?;
+        debug_assert!(inserted > 0, "a task id is a positive rowid: {inserted}");
+        let id = Value::from(inserted);
         let dependencies = dependency_list(&task.dependencies)?;
         validate_dependencies(&id, dependencies, &transaction.all_task_dependencies()?)?;
         transaction.event(
@@ -123,7 +125,15 @@ impl CreateTask {
             "task_created",
             &detail([("task", id.clone())]),
         )?;
-        read_task(transaction, &id).map(|task| task.into_value())
+        let created = read_task(transaction, &id)?;
+        debug_assert!(
+            created.get("id") == Some(&id)
+                && created
+                    .text("status")
+                    .is_some_and(|status| ["ready", "blocked"].contains(&status)),
+            "the new task reads back under its id, ready or blocked by its dependencies"
+        );
+        Ok(created.into_value())
     }
 }
 

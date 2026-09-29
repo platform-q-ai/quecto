@@ -66,6 +66,13 @@ impl ClaimTask {
                     _ => return Err(BoardError::new("task is not ready to claim")),
                 }
                 let token = self.ids.hex32();
+                debug_assert!(
+                    token.len() == 32
+                        && token
+                            .bytes()
+                            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')),
+                    "a claim token is uuid4().hex, 32 lowercase hex digits: {token}"
+                );
                 transaction.update_task_claim(&request.task_id, actor, &token)?;
                 transaction.event(
                     actor,
@@ -73,10 +80,17 @@ impl ClaimTask {
                     "claimed",
                     &detail([
                         ("task", request.task_id.clone()),
-                        ("token", Value::from(token)),
+                        ("token", Value::from(token.as_str())),
                     ]),
                 )?;
-                read_task(transaction, &request.task_id)
+                let claimed = read_task(transaction, &request.task_id)?;
+                debug_assert!(
+                    claimed.text("status") == Some("claimed")
+                        && claimed.text("owner") == Some(actor)
+                        && claimed.text("token") == Some(token.as_str()),
+                    "the task reads claimed by {actor} under the drawn token"
+                );
+                Ok(claimed)
             },
         )
     }
