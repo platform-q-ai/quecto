@@ -4,8 +4,8 @@ use std::time::{Duration, Instant};
 use rusqlite::Connection;
 
 use super::{
-    BoardStore, CREATE_FLAGS, OPEN_FLAGS, StoreRefusal, TransactionError, absolutised, file_uri,
-    opening_message, secure_delete_checked, sqlite_message, variable_limit_checked,
+    BoardStore, CREATE_FLAGS, OPEN_FLAGS, StoreRefusal, TransactionError, Undecodable, absolutised,
+    file_uri, opening_message, secure_delete_checked, sqlite_message, variable_limit_checked,
 };
 use crate::infrastructure::persistence::swarm_board::binding::bound_statement;
 use crate::infrastructure::persistence::swarm_board::ledger::event;
@@ -392,6 +392,35 @@ fn sqlite_errors_read_as_python_str_of_the_sqlite3_error() {
         Some("no such access mode: rx".into()),
     );
     assert_eq!(opening_message(&other, uri), "no such access mode: rx");
+}
+
+#[test]
+fn only_an_undecodable_conversion_failure_reads_as_pythons_decode_error() {
+    let undecodable = rusqlite::Error::FromSqlConversionFailure(
+        0,
+        rusqlite::types::Type::Text,
+        Box::new(Undecodable::new("title", b"a\xffb")),
+    );
+    assert_eq!(
+        sqlite_message(&undecodable),
+        "Could not decode to UTF-8 column 'title' with text 'a\u{FFFD}b'",
+        "a non-UTF-8 TEXT value: Python's decode error alone"
+    );
+    let other_cause = rusqlite::Error::FromSqlConversionFailure(
+        2,
+        rusqlite::types::Type::Integer,
+        Box::new(std::fmt::Error),
+    );
+    assert_eq!(
+        sqlite_message(&other_cause),
+        other_cause.to_string(),
+        "any other conversion failure: rusqlite's own text"
+    );
+    assert_ne!(
+        sqlite_message(&other_cause),
+        std::fmt::Error.to_string(),
+        "not the bare cause"
+    );
 }
 
 /// The body's SQL error as the transaction reports it, for a statement

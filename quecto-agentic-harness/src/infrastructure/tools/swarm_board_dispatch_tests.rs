@@ -111,6 +111,14 @@ fn arguments_bind_positionally_by_name_and_by_default() {
     }
 }
 
+/// The handles hold use cases, not data: their `Debug` names the type and
+/// nothing else.
+#[test]
+fn handles_debug_names_the_type_only() {
+    let (_dir, handles) = board(1_000.0);
+    assert_eq!(format!("{handles:?}"), "SwarmBoardHandles { .. }");
+}
+
 #[test]
 fn an_unknown_method_is_refused() {
     let (_dir, handles) = board(1_000.0);
