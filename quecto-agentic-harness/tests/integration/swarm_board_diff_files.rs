@@ -628,3 +628,26 @@ fn reserving_recovering_and_revoking_are_refused_on_a_paused_run() {
         owners(11.0),
     ]));
 }
+
+/// The revocation message names the task id as Python's `str()` writes it
+/// (#2321 mutation report): an integer in decimal, and a float that finds
+/// the task as `repr` writes it, `1.0`, or `1e+16` for the task a hand
+/// edit numbered 10**16.
+#[test]
+fn the_revocation_message_names_the_task_id_as_python_writes_it() {
+    run_both(&claimed([
+        at(5.0, "parent", "revoke", json!([1.0, "a float"])),
+        at(6.0, "worker", "claim", json!([1])),
+        at(7.0, "parent", "revoke", json!([1, "an integer"])),
+        at(8.0, "worker", "claim", json!([1])),
+        sql("UPDATE tasks SET id=10000000000000000 WHERE id=1"),
+        at(9.0, "parent", "revoke", json!([1e16, "a large float"])),
+        at(10.0, "worker", "claim", json!([1e16])),
+        at(
+            11.0,
+            "parent",
+            "revoke",
+            json!([10_000_000_000_000_000_i64, "its integer"]),
+        ),
+    ]));
+}
