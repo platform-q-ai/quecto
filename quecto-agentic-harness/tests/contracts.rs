@@ -55,6 +55,8 @@ mod board_members;
 mod board_messages;
 #[path = "contracts/board_op_log.rs"]
 mod board_op_log;
+#[path = "contracts/board_reads.rs"]
+mod board_reads;
 #[path = "contracts/board_repository.rs"]
 mod board_repository;
 #[path = "contracts/board_requests.rs"]

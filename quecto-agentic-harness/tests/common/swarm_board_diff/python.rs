@@ -167,6 +167,36 @@ fn program() -> String {
     program
 }
 
+/// The methods of Python's `Workbench` defined in the board's own modules
+/// (`swarm.py`, `swarm_tasks.py`), public and underscore, dunders left
+/// out: `dir(Workbench)` filtered by callables whose `__module__` is one
+/// of them, sorted.
+pub fn workbench_methods() -> Vec<String> {
+    let mut program = String::from("import sys, types, json, time, uuid\n");
+    for (name, body) in SOURCES {
+        program.push_str(&format!(
+            "_m=types.ModuleType({name:?}); sys.modules[{name:?}]=_m; exec(compile({}, {name:?}, 'exec'), _m.__dict__)\n",
+            serde_json::to_string(body).expect("source serializes")
+        ));
+    }
+    program.push_str(
+        "import swarm\n\
+         _w = swarm.Workbench\n\
+         print(json.dumps(sorted(n for n in dir(_w) if not n.startswith('__') \
+         and callable(getattr(_w, n)) \
+         and getattr(getattr(_w, n), '__module__', None) in ('swarm', 'swarm_tasks'))))\n",
+    );
+    let output = Command::new("python3")
+        .arg("-I")
+        .arg("-c")
+        .arg(program)
+        .stderr(Stdio::inherit())
+        .output()
+        .expect("python3 is required for the differential harness");
+    assert!(output.status.success(), "the Workbench listing ran");
+    serde_json::from_slice(&output.stdout).expect("a JSON list of method names")
+}
+
 pub struct PyBoard {
     child: Child,
     stdin: Option<ChildStdin>,

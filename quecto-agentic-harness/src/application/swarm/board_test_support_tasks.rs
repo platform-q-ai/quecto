@@ -5,7 +5,7 @@
 use serde_json::{Value, json};
 
 use super::MemoryTransaction;
-use crate::application::swarm::dto::{NewTask, TaskRow, TaskUpdate};
+use crate::application::swarm::dto::{NewTask, TaskRow, TaskState, TaskUpdate};
 use crate::application::swarm::ports::{BoardRequests, BoardTasks, RequestAction};
 use crate::domain::swarm::{BoardError, RefusalKind};
 
@@ -174,6 +174,49 @@ impl BoardTasks for MemoryTransaction<'_> {
             }
         });
         Ok(())
+    }
+
+    fn task_ids(&self, offset: u64, limit: i64) -> Result<Vec<Value>, BoardError> {
+        let state = self.state.borrow();
+        let mut ids: Vec<Value> = state
+            .tasks
+            .iter()
+            .filter_map(|row| row.get("id").cloned())
+            .collect();
+        ids.sort_by_key(Value::as_i64);
+        let skip = usize::try_from(offset).unwrap_or(usize::MAX);
+        let take = usize::try_from(limit).unwrap_or(0);
+        Ok(ids.into_iter().skip(skip).take(take).collect())
+    }
+
+    fn task_states(&self) -> Result<Vec<TaskState>, BoardError> {
+        let state = self.state.borrow();
+        let column = |row: &TaskRow, name: &str| row.get(name).cloned().unwrap_or(Value::Null);
+        Ok(state
+            .tasks
+            .iter()
+            .map(|row| TaskState {
+                id: column(row, "id"),
+                status: column(row, "status"),
+                dependencies: column(row, "dependencies"),
+            })
+            .collect())
+    }
+
+    fn claim_owners(&self) -> Result<Vec<Value>, BoardError> {
+        let state = self.state.borrow();
+        let held = |row: &&TaskRow| {
+            matches!(
+                row.text("status"),
+                Some("claimed" | "blocked" | "submitted")
+            ) && row.get("owner").is_some_and(|owner| !owner.is_null())
+        };
+        Ok(state
+            .tasks
+            .iter()
+            .filter(held)
+            .filter_map(|row| row.get("owner").cloned())
+            .collect())
     }
 
     fn block_owned_tasks(&self, owner: &Value, blocker: &str) -> Result<(), BoardError> {

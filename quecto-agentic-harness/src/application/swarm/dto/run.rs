@@ -55,7 +55,7 @@ pub struct Bootstrapped {
 }
 
 /// `swarm_repository.member_claim_counts` (#1969).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MemberClaimCounts {
     /// Live or reserved members, the coordinator excluded, holding no
     /// claimed, blocked or submitted task.

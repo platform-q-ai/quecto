@@ -192,6 +192,10 @@ impl BoardMembers for SqliteBoard<'_> {
     fn lost_after_activation(&self, member: &Value) -> Result<bool, BoardError> {
         self.lost_since_activation(member)
     }
+
+    fn member_statuses(&self, ids: &[&str]) -> Result<Vec<(String, Option<String>)>, BoardError> {
+        self.statuses_of(ids)
+    }
 }
 
 /// One parameter of a membership statement: text the board itself

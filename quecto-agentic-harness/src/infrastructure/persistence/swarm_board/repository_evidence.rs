@@ -25,6 +25,10 @@ use crate::application::swarm::ports::BoardEvidence;
 use crate::domain::swarm::{BoardError, RefusalKind};
 
 impl BoardEvidence for SqliteBoard<'_> {
+    fn evidence_rows(&self) -> Result<Vec<crate::application::swarm::dto::DictRow>, BoardError> {
+        self.evidence_dicts()
+    }
+
     fn completion_state(&self) -> Result<CompletionState, BoardError> {
         let criteria = run_criteria(self)?
             .ok_or_else(|| BoardError::new(RefusalKind::RunMissing, "coordination run missing"))?;

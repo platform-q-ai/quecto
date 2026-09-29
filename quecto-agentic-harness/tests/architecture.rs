@@ -1277,6 +1277,13 @@ const SWARM_BOARD_USE_CASES: &[&str] = &[
     "ConfirmMemberDead",
     "LoseCoordinator",
     "QuarantineMember",
+    // The read models and the summaries `create`, `_join` and
+    // `_bootstrap` answer with (#2277).
+    "BootstrapMember",
+    "JoinMember",
+    "ListTasks",
+    "ReadRunEvents",
+    "ReadRunSummary",
 ];
 
 /// The board DTOs infrastructure may name (#2270, epic #2265; each later
@@ -1389,6 +1396,18 @@ const SWARM_BOARD_DTOS: &[&str] = &[
     "Quarantine",
     "QuarantineMemberRequest",
     "ScopeObservation",
+    // The read models (#2277).
+    "BootstrapMemberRequest",
+    "DictRow",
+    "EventPage",
+    "FullSummary",
+    "LatestActivity",
+    "ListTasksRequest",
+    "ReadRunEventsRequest",
+    "ReadRunSummaryRequest",
+    "RunSummary",
+    "SummaryCounts",
+    "TaskState",
 ];
 
 fn application_path_allowed(path: &str) -> bool {

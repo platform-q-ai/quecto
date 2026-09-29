@@ -21,7 +21,7 @@ const TEST_ONLY: [(&str, &str); 4] = [
 ];
 
 /// Method names every build serves.
-const SERVED: [(&str, &str); 44] = [
+const SERVED: [(&str, &str); 51] = [
     ("_status", "Status"),
     ("_snapshot", "Snapshot"),
     ("_admit", "Admit"),
@@ -66,6 +66,13 @@ const SERVED: [(&str, &str); 44] = [
     ("_quarantine", "Quarantine"),
     ("_confirmed_dead", "ConfirmedDead"),
     ("_lose_coordinator", "LoseCoordinator"),
+    ("summary", "Summary"),
+    ("events", "Events"),
+    ("task", "Task"),
+    ("tasks", "Tasks"),
+    ("create", "Create"),
+    ("_bootstrap", "Bootstrap"),
+    ("_join", "Join"),
 ];
 
 /// Each `Method` variant and whether it is test-gated.

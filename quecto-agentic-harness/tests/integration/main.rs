@@ -59,6 +59,8 @@ mod swarm_board_diff_loss_checks;
 mod swarm_board_diff_membership;
 mod swarm_board_diff_membership_loose;
 mod swarm_board_diff_messages;
+mod swarm_board_diff_reads;
+mod swarm_board_diff_reads_calls;
 mod swarm_board_diff_runs;
 mod swarm_board_diff_submissions;
 mod swarm_board_diff_tasks;

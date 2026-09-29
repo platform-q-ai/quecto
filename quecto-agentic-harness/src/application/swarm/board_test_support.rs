@@ -12,16 +12,16 @@ use serde_json::Value;
 pub use self::control::{paused, recorded, usage};
 pub use self::evidence::accepted;
 pub use self::files::LexicalCheckout;
+pub use self::ids::{CompactEncoding, CounterIds};
 pub use self::messages::StoredMessage;
 pub use self::tasks::{StoredFile, StoredRequest, stored_task};
 use crate::application::swarm::dto::{
-    AmendedContract, EvidenceEntry, LaunchIdentity, MemberClaimCounts, MemberRow, MemberStatusRow,
-    NewMember, NewRequestUsage, NewRun, RunContract, RunOwnerRow, RunStatusRow, ScopeObservation,
-    StoredContract, TaskRow, UsageReport,
+    AmendedContract, DictRow, EvidenceEntry, LatestActivity, LaunchIdentity, MemberClaimCounts,
+    MemberRow, MemberStatusRow, NewMember, NewRequestUsage, NewRun, RunContract, RunOwnerRow,
+    RunStatusRow, ScopeObservation, StoredContract, TaskRow, UsageReport,
 };
 use crate::application::swarm::ports::{
-    BoardEncoding, BoardEvents, BoardMembers, BoardRepository, BoardRuns, BoardWork, Clock,
-    IdSource,
+    BoardEvents, BoardMembers, BoardRepository, BoardRuns, BoardWork, Clock,
 };
 use crate::domain::swarm::{
     BoardError, MemberRecord, MemberState, RefusalKind, RunRecord, RunState,
@@ -219,6 +219,10 @@ impl BoardRuns for MemoryTransaction<'_> {
             run.outcome_reason = None;
         });
         Ok(())
+    }
+
+    fn run_row(&self) -> Result<Option<DictRow>, BoardError> {
+        Ok(reads::run_row(&self.state.borrow()))
     }
 
     fn hold_failed(&self, reason: &str) -> Result<(), BoardError> {
@@ -470,6 +474,10 @@ impl BoardMembers for MemoryTransaction<'_> {
             member,
         ))
     }
+
+    fn member_statuses(&self, ids: &[&str]) -> Result<Vec<(String, Option<String>)>, BoardError> {
+        Ok(reads::member_statuses(&self.state.borrow().members, ids))
+    }
 }
 
 /// A member id in a note: its text, or its JSON.
@@ -523,6 +531,19 @@ impl BoardEvents for MemoryTransaction<'_> {
 
     fn scope_observations(&self) -> Result<Vec<ScopeObservation>, BoardError> {
         Ok(loss::scope_observations(&self.state.borrow().events))
+    }
+
+    fn latest_activity(&self, actors: &[&str]) -> Result<Vec<LatestActivity>, BoardError> {
+        self.note(format!("latest_activity {actors:?}"));
+        Ok(reads::latest_activity(&self.state.borrow().events, actors))
+    }
+
+    fn event_time(&self, id: i64) -> Result<Option<Value>, BoardError> {
+        Ok(reads::event_time(&self.state.borrow().events, id))
+    }
+
+    fn event_page(&self, after: u64, limit: i64) -> Result<Vec<DictRow>, BoardError> {
+        Ok(reads::event_page(&self.state.borrow().events, after, limit))
     }
 
     fn control_generation(&self) -> Result<i64, BoardError> {
@@ -603,6 +624,12 @@ mod wakes;
 #[path = "board_test_support_loss.rs"]
 mod loss;
 
+#[path = "board_test_support_ids.rs"]
+mod ids;
+
+#[path = "board_test_support_reads.rs"]
+mod reads;
+
 /// Readings in order, then the last one forever.
 pub struct SteppingClock {
     readings: Mutex<VecDeque<f64>>,
@@ -630,75 +657,6 @@ impl Clock for SteppingClock {
             *last = next;
         }
         *last
-    }
-}
-
-/// `format(n, '032x')` for n = 1, 2, …, each draw journalled.
-pub struct CounterIds {
-    next: Mutex<u64>,
-    journal: Journal,
-}
-
-impl CounterIds {
-    pub fn journalling(journal: &Journal) -> Arc<Self> {
-        Arc::new(Self {
-            next: Mutex::new(1),
-            journal: journal.clone(),
-        })
-    }
-}
-
-impl IdSource for CounterIds {
-    fn hex32(&self) -> String {
-        let mut next = self.next.lock().unwrap();
-        let id = format!("{:032x}", *next);
-        *next += 1;
-        self.journal.lock().unwrap().push(format!("draw {id}"));
-        id
-    }
-}
-
-/// Stands in for the board codec: sorted keys, compact separators and
-/// `ensure_ascii` escaping, as the real encoder writes them, so a size
-/// bound counts the bytes the board stores (`é` is six). Floats keep
-/// serde's text (`1e16`, where Python writes `1e+16`): the use cases only
-/// measure the encoding, and no test here bounds a float-heavy value.
-pub struct CompactEncoding;
-
-impl BoardEncoding for CompactEncoding {
-    fn encode(&self, value: &Value) -> Result<String, BoardError> {
-        let compact = serde_json::to_string(&sorted(value)).unwrap();
-        // Outside strings the text is ASCII; inside, each non-ASCII
-        // character becomes its UTF-16 escapes (`\u` and four hex digits).
-        let mut escaped = String::with_capacity(compact.len());
-        for character in compact.chars() {
-            if character.is_ascii() {
-                escaped.push(character);
-            } else {
-                let mut units = [0_u16; 2];
-                for unit in character.encode_utf16(&mut units) {
-                    escaped.push_str(&format!("\\u{unit:04x}"));
-                }
-            }
-        }
-        Ok(escaped)
-    }
-}
-
-/// `value` with every object's keys in code-point order.
-fn sorted(value: &Value) -> Value {
-    match value {
-        Value::Array(items) => Value::Array(items.iter().map(sorted).collect()),
-        Value::Object(entries) => {
-            let mut keys: Vec<&String> = entries.keys().collect();
-            keys.sort();
-            Value::Object(
-                keys.into_iter()
-                    .map(|key| (key.clone(), sorted(&entries[key])))
-                    .collect(),
-            )
-        }
-        other => other.clone(),
     }
 }
 

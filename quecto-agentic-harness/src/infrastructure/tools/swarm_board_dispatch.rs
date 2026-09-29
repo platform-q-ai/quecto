@@ -723,3 +723,7 @@ mod stall_tests;
 #[cfg(test)]
 #[path = "swarm_board_dispatch_loss_tests.rs"]
 mod loss_tests;
+
+#[cfg(test)]
+#[path = "swarm_board_dispatch_reads_tests.rs"]
+mod reads_tests;

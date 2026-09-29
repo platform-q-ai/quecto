@@ -32,8 +32,8 @@ use super::store::{
     BoardStore, CONTENDED, StoreFailure, TransactionError, Undecodable, contended, failure,
 };
 use crate::application::swarm::dto::{
-    AmendedContract, BoardLocation, MemberRow, NewRun, RunContract, RunOwnerRow, RunRoles,
-    RunStatusRow, ScopeObservation, StoredContract,
+    AmendedContract, BoardLocation, DictRow, LatestActivity, MemberRow, NewRun, RunContract,
+    RunOwnerRow, RunRoles, RunStatusRow, ScopeObservation, StoredContract,
 };
 use crate::application::swarm::ports::{BoardEvents, BoardRepository, BoardRuns, BoardWork};
 use crate::domain::swarm::{BoardError, RefusalKind, RunRecord, RunState};
@@ -264,6 +264,10 @@ impl BoardRuns for SqliteBoard<'_> {
         )
     }
 
+    fn run_row(&self) -> Result<Option<DictRow>, BoardError> {
+        self.run_dict()
+    }
+
     fn hold_failed(&self, reason: &str) -> Result<(), BoardError> {
         self.failed_hold(reason)
     }
@@ -308,6 +312,18 @@ impl BoardEvents for SqliteBoard<'_> {
 
     fn scope_observations(&self) -> Result<Vec<ScopeObservation>, BoardError> {
         self.observations()
+    }
+
+    fn latest_activity(&self, actors: &[&str]) -> Result<Vec<LatestActivity>, BoardError> {
+        self.latest_of(actors)
+    }
+
+    fn event_time(&self, id: i64) -> Result<Option<Value>, BoardError> {
+        self.time_of(id)
+    }
+
+    fn event_page(&self, after: u64, limit: i64) -> Result<Vec<DictRow>, BoardError> {
+        self.events_after(after, limit)
     }
 
     fn control_generation(&self) -> Result<i64, BoardError> {

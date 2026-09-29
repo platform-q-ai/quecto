@@ -6,7 +6,7 @@ use super::{LOSS_GRACE, end_by_loss, grace_elapsed, lost};
 use crate::application::swarm::board_test_support::{
     MemoryBoard, RecordedEvent, SteppingClock, member_row, paused, recorded, running_board,
 };
-use crate::application::swarm::dto::ScopeObservation;
+use crate::application::swarm::dto::{DictRow, LatestActivity, ScopeObservation};
 use crate::application::swarm::ports::{BoardEvents, BoardRepository};
 use crate::domain::swarm::{BoardError, RefusalKind, RunRecord, RunState};
 
@@ -37,6 +37,18 @@ impl BoardEvents for Observations {
 
     fn scope_observations(&self) -> Result<Vec<ScopeObservation>, BoardError> {
         Ok(self.stored.clone())
+    }
+
+    fn latest_activity(&self, _actors: &[&str]) -> Result<Vec<LatestActivity>, BoardError> {
+        unreachable!("the grace reads no activity")
+    }
+
+    fn event_time(&self, _id: i64) -> Result<Option<Value>, BoardError> {
+        unreachable!("the grace reads no event time")
+    }
+
+    fn event_page(&self, _after: u64, _limit: i64) -> Result<Vec<DictRow>, BoardError> {
+        unreachable!("the grace reads no event page")
     }
 }
 

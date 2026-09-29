@@ -21,6 +21,7 @@ mod repository_evidence;
 mod repository_loss;
 mod repository_members;
 mod repository_messages;
+mod repository_reads;
 mod repository_reservations;
 mod repository_tasks;
 mod repository_usage;
