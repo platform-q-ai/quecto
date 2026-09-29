@@ -13,6 +13,7 @@ pub mod binding;
 pub mod encoding;
 pub mod ids;
 pub mod ledger;
+pub mod meter;
 pub mod py_json;
 pub mod repository;
 mod repository_members;

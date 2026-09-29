@@ -53,6 +53,9 @@ mod supervisor_runtime;
 /// harness self-test or expects the difference (#2270 round-2 review L3).
 #[path = "architecture/swarm_board_diff_hooks.rs"]
 mod swarm_board_diff_hooks;
+/// Every board refusal is built with its kind (#2303).
+#[path = "architecture/swarm_board_refusal_kinds.rs"]
+mod swarm_board_refusal_kinds;
 /// The board dispatcher serves its test-only methods in test builds only
 /// (#2270 review M2).
 #[path = "architecture/swarm_board_test_methods.rs"]

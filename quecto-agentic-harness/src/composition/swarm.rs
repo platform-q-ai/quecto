@@ -7,6 +7,7 @@
 //! ports, for the differential harness's deterministic clock and ids.
 use std::sync::Arc;
 
+use crate::application::audit::ports::AuditSink;
 use crate::application::swarm::dto::BoardLocation;
 use crate::application::swarm::ports::{BoardRepository, Clock, IdSource};
 use crate::application::swarm::use_cases::{
@@ -84,6 +85,20 @@ pub fn build_swarm_board_handles_with(
         )),
         admit_member,
         activate_member,
+        event_log: None,
+    }
+}
+
+/// `handles` recording a `swarm_op` per call in `event_log` (#2303). The
+/// caller passes the log only when `telemetry.event_log.enabled` is on
+/// (owner decision T1): without it nothing is measured or written.
+pub fn with_event_log(
+    handles: SwarmBoardHandles,
+    event_log: Arc<dyn AuditSink>,
+) -> SwarmBoardHandles {
+    SwarmBoardHandles {
+        event_log: Some(event_log),
+        ..handles
     }
 }
 

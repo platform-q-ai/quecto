@@ -14,6 +14,7 @@ pub mod owner;
 pub mod policy;
 pub mod python_value;
 pub mod records;
+pub mod telemetry;
 pub mod usage;
 pub mod validation;
 
@@ -36,6 +37,7 @@ pub use records::{
     Criterion, CriterionKind, EvidenceRow, MemberRecord, MemberState, RunRecord, RunState,
     TaskRecord, TaskState,
 };
+pub use telemetry::{BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind};
 pub use usage::{
     UsageBudget, UsageDecision, UsageTotals, request_measurement, usage_budget_decision,
 };
@@ -48,6 +50,11 @@ pub struct BoardError(pub String);
 impl BoardError {
     pub fn new(message: impl Into<String>) -> Self {
         Self(message.into())
+    }
+
+    /// The refusal's kind (#2303). RED STUB.
+    pub fn kind(&self) -> RefusalKind {
+        RefusalKind::Internal
     }
 }
 

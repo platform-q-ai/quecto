@@ -57,6 +57,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value};
 
+use crate::application::audit::ports::AuditSink;
 use crate::application::swarm::dto::{
     ActivateMemberRequest, AdmissionDecision, AdmitMemberRequest, LaunchIdentity, MemberRow,
     RecordMemberLaunchRequest, RegisterMemberSocketRequest, ReleaseUnlaunchedMemberRequest,
@@ -101,6 +102,9 @@ pub struct SwarmBoardHandles {
     /// Served only in test builds as `task_raw` until S12 adds the owner
     /// liveness `task` answers with.
     pub read_task: Arc<ReadTask>,
+    /// The event log every call records a `swarm_op` in (#2303), only
+    /// when it is switched on (`telemetry.event_log.enabled`).
+    pub event_log: Option<Arc<dyn AuditSink>>,
 }
 
 impl std::fmt::Debug for SwarmBoardHandles {
@@ -110,6 +114,16 @@ impl std::fmt::Debug for SwarmBoardHandles {
             .finish_non_exhaustive()
     }
 }
+
+/// Every board method this dispatcher serves, by name (#2303).
+pub const BOARD_OPS: &[&str] = &[
+    "_status",
+    "_snapshot",
+    #[cfg(any(test, feature = "test-support"))]
+    "create_run",
+    #[cfg(any(test, feature = "test-support"))]
+    "bootstrap_run",
+];
 
 /// The board methods this dispatcher serves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -715,3 +729,7 @@ mod tasks;
 #[cfg(test)]
 #[path = "swarm_board_dispatch_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "swarm_board_dispatch_telemetry_tests.rs"]
+mod telemetry_tests;

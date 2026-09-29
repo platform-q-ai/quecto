@@ -50,6 +50,8 @@ pub enum AuditEvent {
     },
     /// The log reached its size cap: nothing more is written (#2150).
     LogCapped { cap_bytes: u64 },
+    /// One swarm board op (#2303): ids, kinds, durations and sizes only.
+    SwarmOp(super::swarm::BoardOpObservation),
     LlmTurnStart {
         input_tokens_estimate: usize,
         message_count: usize,
