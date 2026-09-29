@@ -8,6 +8,7 @@ use crate::domain::swarm::{Member, MemberExit, MemberStatus, Snapshot};
 mod board_completion;
 mod board_control;
 mod board_membership;
+mod board_messages;
 mod board_operation;
 mod board_recovery;
 mod board_tasks;

@@ -12,9 +12,9 @@ use serde_json::Value;
 
 use super::dto::{
     AmendedContract, CallMeasure, CompletionState, FileRow, LaunchIdentity, MemberClaimCounts,
-    MemberRow, MemberStatusRow, NewEvidence, NewMember, NewRequestUsage, NewReservation, NewRun,
-    NewTask, PriorEvidence, RunContract, RunOwnerRow, RunStatusRow, StoredContract,
-    StoredRequestUsage, TaskRow, TaskUpdate, UsageReport,
+    MemberRow, MemberStatusRow, MessageRow, NewEvidence, NewMember, NewMessage, NewRequestUsage,
+    NewReservation, NewRun, NewTask, PriorEvidence, RunContract, RunOwnerRow, RunStatusRow,
+    StoredContract, StoredRequestUsage, TaskRow, TaskUpdate, UsageReport,
 };
 use crate::domain::error::DomainError;
 use crate::domain::swarm::{
@@ -335,8 +335,11 @@ pub trait BoardFiles {
     fn file_page(&self, offset: u64, limit: i64) -> Result<Vec<FileRow>, BoardError>;
 }
 
-/// The `messages` rows revocation writes (#2275; S11 extends it). A
-/// recipient is the value the board read, bound as Python binds it.
+/// The `messages` rows (#2275, #2276): those revocation writes, and the
+/// durable messages `send`, `withdraw`, `inbox` and `ack` read and write.
+/// A recipient, a message id or the inbox flag is the caller's (or the
+/// board's) value, bound as Python binds it; a value it cannot bind is
+/// refused naming its parameter.
 pub trait BoardMessages {
     /// `SELECT count(*) FROM messages WHERE recipient=? AND
     /// status='accepted'`: the recipient's unread messages.
@@ -348,6 +351,32 @@ pub trait BoardMessages {
         recipient: &Value,
         body: &str,
     ) -> Result<i64, BoardError>;
+    /// `SELECT * FROM messages WHERE id=?` as `dict(row)`.
+    fn message(&self, id: &Value) -> Result<Option<MessageRow>, BoardError>;
+    /// `SELECT * FROM messages WHERE id=? AND recipient=?` as `dict(row)`:
+    /// the message when it is addressed to `recipient`.
+    fn addressed_message(
+        &self,
+        id: &Value,
+        recipient: &str,
+    ) -> Result<Option<MessageRow>, BoardError>;
+    /// `UPDATE messages SET status=? WHERE id=?`, for a message the caller
+    /// has read in this transaction.
+    fn set_message_status(&self, id: &Value, status: &str) -> Result<(), BoardError>;
+    /// `send`'s `INSERT INTO messages(sender,recipient,body,status,
+    /// revision,supersedes) VALUES(?,?,?,'accepted',?,?)`: its id.
+    fn send_message(&self, message: &NewMessage) -> Result<i64, BoardError>;
+    /// `UPDATE messages SET superseded_by=? WHERE id=?`: the message `id`
+    /// the caller has just retired is superseded by `successor`.
+    fn set_superseded_by(&self, id: &Value, successor: i64) -> Result<(), BoardError>;
+    /// `SELECT * FROM messages WHERE recipient=? AND (status='accepted' OR
+    /// ?) ORDER BY id LIMIT 100`, each row as `dict(row)`: the flag is
+    /// bound as given, so SQLite's truth of it decides.
+    fn inbox(
+        &self,
+        recipient: &str,
+        include_consumed: &Value,
+    ) -> Result<Vec<MessageRow>, BoardError>;
 }
 
 /// The shared checkout a board's file reservations name (#2275).

@@ -1,7 +1,6 @@
-//! `BoardFiles` and `BoardMessages` over the SQLite store (#2272, #2275):
-//! the file reservations and the messages revocation writes, by Python's
-//! SQL (`swarm_tasks.py`). A task id, a claim token, an ownership token or
-//! a recipient is the caller's (or the board's) value, bound as Python's
+//! `BoardFiles` over the SQLite store (#2272, #2275): the file
+//! reservations, by Python's SQL (`swarm_tasks.py`). A task id, a claim
+//! token or an ownership token is the caller's value, bound as Python's
 //! `sqlite3` binds it ([`loose`]) and numbered by its position in Python's
 //! statement, so the column affinity finds and stores rows as Python's
 //! board does, and a value Python cannot bind is refused with its text.
@@ -11,7 +10,7 @@ use serde_json::Value;
 use super::binding;
 use super::repository::{SqliteBoard, cell_at, failed, fetched, loose};
 use crate::application::swarm::dto::{FileRow, NewReservation};
-use crate::application::swarm::ports::{BoardFiles, BoardMessages};
+use crate::application::swarm::ports::BoardFiles;
 use crate::domain::swarm::{BoardError, RefusalKind};
 
 impl BoardFiles for SqliteBoard<'_> {
@@ -126,37 +125,14 @@ impl BoardFiles for SqliteBoard<'_> {
     }
 }
 
-impl BoardMessages for SqliteBoard<'_> {
-    fn inbox_count(&self, recipient: &Value) -> Result<i64, BoardError> {
-        self.bound_count(
-            "SELECT count(*) FROM messages WHERE recipient=? AND status='accepted'",
-            &[loose(1, recipient)?],
-        )
-    }
-
-    fn insert_message(
-        &self,
-        sender: &str,
-        recipient: &Value,
-        body: &str,
-    ) -> Result<i64, BoardError> {
-        let inserted = self.run(
-            "INSERT INTO messages(sender,recipient,body,status) VALUES(?,?,?,'accepted')",
-            &[
-                SqlValue::Text(sender.to_owned()),
-                loose(2, recipient)?,
-                SqlValue::Text(body.to_owned()),
-            ],
-        )?;
-        debug_assert_eq!(inserted, 1, "one VALUES row inserts one message");
-        Ok(self.connection.last_insert_rowid())
-    }
-}
-
 impl SqliteBoard<'_> {
     /// A `count(*)` with its parameters already bound as Python binds
     /// them.
-    fn bound_count(&self, sql: &str, parameters: &[SqlValue]) -> Result<i64, BoardError> {
+    pub(super) fn bound_count(
+        &self,
+        sql: &str,
+        parameters: &[SqlValue],
+    ) -> Result<i64, BoardError> {
         debug_assert!(sql.starts_with("SELECT count(*) "), "a count: {sql}");
         let mut statement =
             binding::bound_statement(self.connection, sql, parameters).map_err(failed)?;

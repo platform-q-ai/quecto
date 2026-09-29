@@ -1,5 +1,5 @@
 //! Test support (compiled only under `cfg(test)`): the in-memory board's
-//! file reservations (#2272, #2275) and messages (#2275), and a lexical
+//! file reservations (#2272, #2275), and a lexical
 //! stand-in for the checkout. A task id matches by the rough INTEGER
 //! affinity of `board_test_support_tasks`; the SQLite adapter's contract
 //! tests pin the real binding.
@@ -10,18 +10,8 @@ use serde_json::Value;
 use super::MemoryTransaction;
 use super::tasks::{StoredFile, affinity};
 use crate::application::swarm::dto::{FileRow, NewReservation};
-use crate::application::swarm::ports::{BoardFiles, BoardMessages, CheckoutPaths};
+use crate::application::swarm::ports::{BoardFiles, CheckoutPaths};
 use crate::domain::swarm::{BoardError, RefusalKind};
-
-/// One `messages` row.
-#[derive(Clone, Debug, PartialEq)]
-pub struct StoredMessage {
-    pub id: i64,
-    pub sender: String,
-    pub recipient: Value,
-    pub body: String,
-    pub status: String,
-}
 
 fn text_of(value: &Value) -> Option<String> {
     match value {
@@ -133,36 +123,6 @@ impl BoardFiles for MemoryTransaction<'_> {
                 ],
             })
             .collect())
-    }
-}
-
-impl BoardMessages for MemoryTransaction<'_> {
-    fn inbox_count(&self, recipient: &Value) -> Result<i64, BoardError> {
-        let messages = &self.state.borrow().messages;
-        let count = messages
-            .iter()
-            .filter(|message| &message.recipient == recipient && message.status == "accepted")
-            .count();
-        Ok(i64::try_from(count).unwrap())
-    }
-
-    fn insert_message(
-        &self,
-        sender: &str,
-        recipient: &Value,
-        body: &str,
-    ) -> Result<i64, BoardError> {
-        self.note(format!("insert_message {recipient}"));
-        let mut state = self.state.borrow_mut();
-        let id = state.messages.last().map_or(1, |message| message.id + 1);
-        state.messages.push(StoredMessage {
-            id,
-            sender: sender.to_owned(),
-            recipient: recipient.clone(),
-            body: body.to_owned(),
-            status: "accepted".to_owned(),
-        });
-        Ok(id)
     }
 }
 

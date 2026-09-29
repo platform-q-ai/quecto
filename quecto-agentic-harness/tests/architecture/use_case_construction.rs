@@ -33,6 +33,7 @@ use super::teardown_authority::{production_code, production_files, walk};
 /// Every use case and ports bundle declared under an application
 /// `use_cases` folder.
 const USE_CASES: &[&str] = &[
+    "AcknowledgeMessage",
     "ActivateMember",
     "AdmitMember",
     "AmendRunContract",
@@ -85,6 +86,7 @@ const USE_CASES: &[&str] = &[
     "ReadConfiguration",
     "ReadControlStatus",
     "ReadHistory",
+    "ReadInbox",
     "ReadRequestAdmission",
     "ReadRunSnapshot",
     "ReadRunStatus",
@@ -117,6 +119,7 @@ const USE_CASES: &[&str] = &[
     "SearchSessionMetadata",
     "SelectConfig",
     "SelectContainerConfig",
+    "SendMessage",
     "SetTaskDependencies",
     "SettleDelegatedChild",
     "SettleDelegatedChildPorts",
@@ -132,6 +135,7 @@ const USE_CASES: &[&str] = &[
     "UninstallAuthorityService",
     "VerifyTask",
     "WebFetchUseCase",
+    "WithdrawMessage",
 ];
 
 /// Request/response records declared beside the pre-#1929 find and

@@ -11,7 +11,8 @@ use serde_json::Value;
 
 pub use self::control::{paused, recorded, usage};
 pub use self::evidence::accepted;
-pub use self::files::{LexicalCheckout, StoredMessage};
+pub use self::files::LexicalCheckout;
+pub use self::messages::StoredMessage;
 pub use self::tasks::{StoredFile, StoredRequest, stored_task};
 use crate::application::swarm::dto::{
     AmendedContract, EvidenceEntry, LaunchIdentity, MemberClaimCounts, MemberRow, MemberStatusRow,
@@ -565,6 +566,9 @@ mod evidence;
 
 #[path = "board_test_support_files.rs"]
 mod files;
+
+#[path = "board_test_support_messages.rs"]
+mod messages;
 
 /// Readings in order, then the last one forever.
 pub struct SteppingClock {

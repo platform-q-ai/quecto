@@ -657,12 +657,12 @@ fn the_hook_checker_permits_only_the_pin_tables_own_tests() {
         ),
         (
             PIN_TABLE,
-            "#[test] fn unknown_member_status_is_not_alive() { try_run_both(&steps, |_, _, _| {}).unwrap_err(); }",
+            "#[test] fn outside_edited_contract() { try_run_both(&steps, |_, _, _| {}).unwrap_err(); }",
         ),
         // Nor does the external test pinning it.
         (
             PIN_TABLE,
-            "#[test] fn a_null_member_status_is_not_alive() { try_run_both(&steps, |_, _, _| {}).unwrap_err(); }",
+            "#[test] fn a_pause_start_that_is_not_a_float_diverges() { try_run_both(&steps, |_, _, _| {}).unwrap_err(); }",
         ),
         // The reviewer's bypass: a helper, not a test, discarding the Err.
         (

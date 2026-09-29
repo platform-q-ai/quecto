@@ -21,53 +21,52 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 /// methods this slice serves. Each name is a test in [`PIN_TABLE_FILES`].
 ///
 /// - `arguments_beyond_a_serde_value` (#2270 round-3 review L1): the
-///   dispatcher takes a `serde_json::Value`, so argument text is parsed
-///   with `py_json::decode` (`json.loads`) and converted, and a value no
-///   `Value` holds is refused before any board call: a non-finite float
-///   (`NaN`, `Infinity`, or a literal such as `1e400` that overflows), a
-///   string holding a lone surrogate escape, an integer outside
-///   i64 ∪ u64, or nesting deeper than `SERDE_MAX_DEPTH`. Python binds or
-///   stores each of them (or, for an integer beyond i64, raises
-///   `OverflowError`), except the usage methods' (#2274), which Python
-///   refuses with the
-///   board's own text where Rust refuses the argument text: a
-///   `_record_request` count above u64 (`invalid request usage
-///   input_tokens`), `instrumented_attempts` above u64 (`invalid request
-///   observation`), a count of `1e400` (`invalid request usage
-///   output_tokens`), and a `usage_budget` token limit above u64 or of
-///   `1e400` (the budget's argument refusal). S13/S14 must parse member
-///   input with `py_json`, as the harness does; a `PyJson` dispatcher would
-///   end this divergence.
+///   dispatcher takes a `serde_json::Value`, so argument text is parsed with
+///   `py_json::decode` (`json.loads`) and converted, and a value no `Value`
+///   holds is refused before any board call: a non-finite float (`NaN`,
+///   `Infinity`, or a literal such as `1e400` that overflows), a string
+///   holding a lone surrogate escape, an integer outside i64 ∪ u64, or
+///   nesting deeper than `SERDE_MAX_DEPTH`. Python binds or stores each of
+///   them (or, for an integer beyond i64, raises `OverflowError`), except the
+///   usage methods' (#2274), which Python refuses with the board's own text
+///   where Rust refuses the argument text: a `_record_request` count above
+///   u64 (`invalid request usage input_tokens`), `instrumented_attempts`
+///   above u64 (`invalid request observation`), a count of `1e400` (`invalid
+///   request usage output_tokens`), and a `usage_budget` token limit above
+///   u64 or of `1e400` (the budget's argument refusal). S13/S14 must parse
+///   member input with `py_json`, as the harness does; a `PyJson` dispatcher
+///   would end this divergence.
 /// - `integer_beyond_i64_is_refused`: an integer argument beyond i64 but
 ///   within u64 (a `pid`, `started` or `socket`, a membership method's
-///   member or reservation, #2271, or a task id, #2272) makes Python's
-///   `sqlite3` raise `OverflowError` when it is bound, which is not an `sqlite3.Error`,
-///   so the store does not turn it into a refusal and the call raises.
+///   member or reservation, #2271, a task id, #2272, a message id,
+///   `withdraw`'s, `ack`'s or `send`'s `supersedes`, `send`'s `recipient`
+///   or `inbox`'s `include_consumed`, #2276) makes Python's
+///   `sqlite3` raise `OverflowError` when it is bound, which is not an
+///   `sqlite3.Error`, so the store does not turn it into a refusal and the
+///   call raises.
 ///   The Rust board refuses it as a store failure naming Python's
 ///   parameter position. (Compared before it is bound, such an integer
 ///   answers as Python's: it equals no stored value but an equal REAL.)
-/// - `outside_edited_columns`: a `run` column `_snapshot` reads as a
-///   number (`deadline`, `member_limit`) holding anything but the number
-///   the board writes (NULL, text, a REAL `member_limit`), or a BLOB in
-///   any column `_snapshot` or `_status` reads, or a number in a text
-///   column they read (`status`, `coordinator`, `id` in a table rebuilt
-///   without column types), is refused as a store failure; Python answers
-///   with the value (or, for a BLOB, fails to write its JSON). Everything
-///   else a file edited outside the board may
-///   hold is read as Python reads it
+/// - `outside_edited_columns`: a `run` column `_snapshot` reads as a number
+///   (`deadline`, `member_limit`) holding anything but the number the board
+///   writes (NULL, text, a REAL `member_limit`), or a BLOB in any column
+///   `_snapshot` or `_status` reads, or a number in a text column they read
+///   (`status`, `coordinator`, `id` in a table rebuilt without column types),
+///   is refused as a store failure; Python answers with the value (or, for a
+///   BLOB, fails to write its JSON). Everything else a file edited outside
+///   the board may hold is read as Python reads it
 ///   (`outside_edited_text_reads_as_python_reads_it` and the tests before
 ///   it): text that is not UTF-8 in any column of a row Python fetches is
-///   refused with Python's `Could not decode to UTF-8` text; `create`
-///   fetches the whole run row and takes a status or coordinator that is
-///   not text (a BLOB, or a number without TEXT affinity) as not the setup
-///   placeholder;
-///   `_bootstrap` reads no column; the join (#2271) reads the
-///   coordinator column alone and takes one that is not text (a BLOB, or
-///   a number without TEXT affinity) as nobody, where Python acts as that
-///   value: the gate refuses both unless a member row's id is that same
-///   value, when Python joins and Rust refuses (pinned below; matching it
-///   would thread a non-text actor through every use case, a cost out of
-///   proportion to a board no harness writes); a NULL run or member status, a NULL
+///   refused with Python's `Could not decode to UTF-8` text; `create` fetches
+///   the whole run row and takes a status or coordinator that is not text (a
+///   BLOB, or a number without TEXT affinity) as not the setup placeholder;
+///   `_bootstrap` reads no column; the join (#2271) reads the coordinator
+///   column alone and takes one that is not text (a BLOB, or a number without
+///   TEXT affinity) as nobody, where Python acts as that value: the gate
+///   refuses both unless a member row's id is that same value, when Python
+///   joins and Rust refuses (pinned below; matching it would thread a
+///   non-text actor through every use case, a cost out of proportion to a
+///   board no harness writes); a NULL run or member status, a NULL
 ///   coordinator, a NULL member id, added member columns and loosely typed
 ///   pids are read as they are stored.
 /// - `outside_edited_task_columns` (#2272), values only a file edited
@@ -92,6 +91,8 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 /// - `outside_edited_evidence` (#2272): stored evidence that is not a list
 ///   of objects each carrying `revision` (only an edit holds it) meets
 ///   `verify_task` as a refusal, where Python raises or iterates the value.
+/// - `outside_edited_messages` (#2276): a BLOB in a `messages` column, as
+///   `swarm_board_diff_loose_messages.rs` describes and pins it.
 /// - `outside_edited_contract` (#2273, listed case by case and pinned in
 ///   `swarm_board_diff_loose_completion.rs`): a run contract, a criterion
 ///   or a task's evidence only a file edited outside the board holds
@@ -100,39 +101,39 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   Python raises or goes on.
 /// - `outside_edited_control_records` (#2273, pinned in
 ///   `swarm_board_diff_loose_runs.rs` and `extend_run_deadline_tests`): a
-///   pause record whose `started` is not a number (a boolean included), or
-///   a usage budget that is not an object or whose limit is not a count,
-///   is refused naming the record, and so are usage totals that are not
-///   counts (a REAL or negative sum), but only where a paused run's
-///   budget with a non-null token limit is checked for a resume
-///   (elsewhere they pass through as Python passes them), where Python
-///   raises or computes with them; an
-///   integer `started` is read as its float, so an extension from it
+///   pause record whose `started` is not a number (a boolean included), or a
+///   usage budget that is not an object or whose limit is not a count, is
+///   refused naming the record, and so are usage totals that are not counts
+///   (a REAL or negative sum), but only where a paused run's budget with a
+///   non-null token limit is checked for a resume (elsewhere they pass
+///   through as Python passes them), where Python raises or computes with
+///   them; an integer `started` is read as its float, so an extension from it
 ///   records a float deadline where Python records the integer; and a loss
-///   event whose detail is not an object, or whose `member` is not text
-///   (an unhashable list or object included), names no member, where
-///   Python raises. So is (#2274) a stored request record that is not an
-///   object, met by its redelivery, a budget without `warned`, met by the
-///   budget's warning, and a budget without `token_limit` or
-///   `strict_unknown`, met by `usage_budget`'s idempotence check. The
-///   redelivery check's reads of a stored actor that is a BLOB, or a
-///   stored payload of `'x'` or NULL, fail as the store's, where Python
-///   refuses the BLOB as another actor's (`request observation ID reused
-///   with different data`) or raises a `JSONDecodeError` or a `TypeError`.
+///   event whose detail is not an object, or whose `member` is not text (an
+///   unhashable list or object included), names no member, where Python
+///   raises. So is (#2274) a stored request record that is not an object, met
+///   by its redelivery, a budget without `warned`, met by the budget's
+///   warning, and a budget without `token_limit` or `strict_unknown`, met by
+///   `usage_budget`'s idempotence check. The redelivery check's reads of a
+///   stored actor that is a BLOB, or a stored payload of `'x'` or NULL, fail
+///   as the store's, where Python refuses the BLOB as another actor's
+///   (`request observation ID reused with different data`) or raises a
+///   `JSONDecodeError` or a `TypeError`.
 /// - `real_to_text_digits` (#2269 review M1, pinned by
 ///   `swarm_board::binding_tests`): a float meeting a TEXT column is
 ///   written with the bundled SQLite's digits, which some hosts' libraries
 ///   (and so Python there) write with fewer.
 /// - `unknown_member_status_is_not_alive` (owner decision in #2295, pinned
-///   by `domain::swarm::policy_tests` and `policy_null_status_tests`): Python's `authorize` and
-///   `admission` refuse only a member whose status is `'dead'`, so an
-///   unknown or NULL status counts as alive there; Rust accepts only
-///   `live` or `reserved` (an affirmative guard), so such a member may
-///   read but not mutate, and is not an idempotent admission retry. The
-///   membership methods (#2271) keep it: `_activate` and `_record_launch`
-///   take such a member's reservation as stale, where Python goes on
-///   (pinned by `activate_member_tests` and `record_member_launch_tests`).
-pub const PERMITTED_DIVERGENCES: [&str; 11] = [
+///   in `swarm_board_diff_loose_messages.rs`, whose `SLICE_PINS` lists its
+///   `src` pins): Python's `authorize` and `admission` refuse only a member
+///   whose status is `'dead'`, so an unknown or NULL status counts as alive
+///   there; Rust accepts only `live` or `reserved` (an affirmative guard),
+///   so such a member may read but not mutate, and is not an idempotent
+///   admission retry. The membership methods (#2271) keep it: `_activate`
+///   and `_record_launch` take such a member's reservation as stale, where
+///   Python goes on; and so does `send` (#2276), refusing such a recipient
+///   as out of the swarm, where Python sends to it.
+pub const PERMITTED_DIVERGENCES: [&str; 12] = [
     "arguments_beyond_a_serde_value",
     "integer_beyond_i64_is_refused",
     "multi_conflict_names_the_smallest_path",
@@ -141,6 +142,7 @@ pub const PERMITTED_DIVERGENCES: [&str; 11] = [
     "outside_edited_contract",
     "outside_edited_control_records",
     "outside_edited_evidence",
+    "outside_edited_messages",
     "outside_edited_task_columns",
     "real_to_text_digits",
     "unknown_member_status_is_not_alive",
@@ -559,10 +561,11 @@ fn every_permitted_divergence_is_pinned_by_name() {
 }
 
 /// The only files whose tests may expect a difference: this one, #2275's
-/// sibling, and the submission scenarios holding a [`SECOND_PINS`] test.
-const PIN_TABLE_FILES: [&str; 3] = [
+/// and #2276's siblings, and the submission scenarios holding a [`SECOND_PINS`] test.
+const PIN_TABLE_FILES: [&str; 4] = [
     include_str!("swarm_board_diff_loose.rs"),
     include_str!("swarm_board_diff_loose_files.rs"),
+    include_str!("swarm_board_diff_loose_messages.rs"),
     include_str!("swarm_board_diff_submissions.rs"),
 ];
 
@@ -574,7 +577,7 @@ const SECOND_PINS: [(&str, &str); 1] = [(
 
 /// Divergences pinned outside this suite: the name, the test file's
 /// source and the pinning test in it.
-const EXTERNAL_PINS: [(&str, &str, &str); 8] = [
+const EXTERNAL_PINS: [(&str, &str, &str); 4] = [
     (
         "outside_edited_contract",
         include_str!("swarm_board_diff_loose_completion.rs"),
@@ -594,26 +597,6 @@ const EXTERNAL_PINS: [(&str, &str, &str); 8] = [
         "real_to_text_digits",
         include_str!("../../src/infrastructure/persistence/swarm_board/binding_tests.rs"),
         "a_float_reaching_text_affinity_reads_as_the_bundled_sqlite_writes_it",
-    ),
-    (
-        "unknown_member_status_is_not_alive",
-        include_str!("../../src/domain/swarm/policy_tests.rs"),
-        "unknown_statuses_found_in_a_file_are_refused_affirmatively",
-    ),
-    (
-        "unknown_member_status_is_not_alive",
-        include_str!("../../src/domain/swarm/policy_null_status_tests.rs"),
-        "a_null_member_status_is_not_alive",
-    ),
-    (
-        "unknown_member_status_is_not_alive",
-        include_str!("../../src/application/swarm/use_cases/activate_member_tests.rs"),
-        "an_unknown_member_status_is_not_activated",
-    ),
-    (
-        "unknown_member_status_is_not_alive",
-        include_str!("../../src/application/swarm/use_cases/record_member_launch_tests.rs"),
-        "an_unknown_member_status_records_no_launch",
     ),
 ];
 

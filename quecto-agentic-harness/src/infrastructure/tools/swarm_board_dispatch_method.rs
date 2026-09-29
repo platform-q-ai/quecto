@@ -7,7 +7,7 @@ use serde_json::Value;
 use super::Level;
 #[cfg(any(test, feature = "test-support"))]
 use super::test_only;
-use super::{completion, control, members, reservations, submissions, tasks, usage};
+use super::{completion, control, members, messages, reservations, submissions, tasks, usage};
 use crate::domain::swarm::BoardRole;
 
 /// The board methods this dispatcher serves.
@@ -48,6 +48,10 @@ pub(super) enum Method {
     FileOwners,
     Recover,
     Revoke,
+    Send,
+    Withdraw,
+    Inbox,
+    Ack,
     #[cfg(any(test, feature = "test-support"))]
     CreateRun,
     #[cfg(any(test, feature = "test-support"))]
@@ -110,6 +114,10 @@ impl Method {
             "file_owners" => Some(Self::FileOwners),
             "recover" => Some(Self::Recover),
             "revoke" => Some(Self::Revoke),
+            "send" => Some(Self::Send),
+            "withdraw" => Some(Self::Withdraw),
+            "inbox" => Some(Self::Inbox),
+            "ack" => Some(Self::Ack),
             #[cfg(any(test, feature = "test-support"))]
             "create_run" => Some(Self::CreateRun),
             #[cfg(any(test, feature = "test-support"))]
@@ -159,6 +167,10 @@ impl Method {
             Self::FileOwners => "file_owners",
             Self::Recover => "recover",
             Self::Revoke => "revoke",
+            Self::Send => "send",
+            Self::Withdraw => "withdraw",
+            Self::Inbox => "inbox",
+            Self::Ack => "ack",
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun => "create_run",
             #[cfg(any(test, feature = "test-support"))]
@@ -182,7 +194,8 @@ impl Method {
             | Self::ControlStatus
             | Self::UsageReport
             | Self::RequestAdmission
-            | Self::FileOwners => Level::Read,
+            | Self::FileOwners
+            | Self::Inbox => Level::Read,
             Self::Admit
             | Self::Activate
             | Self::RecordLaunch
@@ -211,7 +224,10 @@ impl Method {
             | Self::Reserve
             | Self::ReleaseFiles
             | Self::Recover
-            | Self::Revoke => Level::Mutation,
+            | Self::Revoke
+            | Self::Send
+            | Self::Withdraw
+            | Self::Ack => Level::Mutation,
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun | Self::BootstrapRun | Self::BootstrapJoin => Level::Mutation,
             #[cfg(any(test, feature = "test-support"))]
@@ -260,7 +276,11 @@ impl Method {
             | Self::ReleaseFiles
             | Self::FileOwners
             | Self::Recover
-            | Self::Revoke => None,
+            | Self::Revoke
+            | Self::Send
+            | Self::Withdraw
+            | Self::Inbox
+            | Self::Ack => None,
             // Test-only halves the differential harness drives as the host;
             // the member-facing `create`, `_bootstrap` and `task` S12 serves
             // record the caller's own role.
@@ -312,7 +332,11 @@ impl Method {
             | Self::ReleaseFiles
             | Self::FileOwners
             | Self::Recover
-            | Self::Revoke => true,
+            | Self::Revoke
+            | Self::Send
+            | Self::Withdraw
+            | Self::Inbox
+            | Self::Ack => true,
             // A member's own resume is refused before any gate (#2273), so
             // it never answers.
             Self::Resume => false,
@@ -378,6 +402,9 @@ impl Method {
             Self::FileOwners => &reservations::FILE_OWNERS,
             Self::Recover => &reservations::RECOVER,
             Self::Revoke => &reservations::REVOKE,
+            Self::Send => &messages::SEND,
+            Self::Withdraw | Self::Ack => &messages::MESSAGE_ID,
+            Self::Inbox => &messages::INBOX,
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun => &test_only::CREATE,
             #[cfg(any(test, feature = "test-support"))]

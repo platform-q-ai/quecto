@@ -16,13 +16,14 @@ use crate::application::swarm::ports::{
     BoardOpLog, BoardRepository, CheckoutPaths, Clock, IdSource,
 };
 use crate::application::swarm::use_cases::{
-    ActivateMember, AdmitMember, AmendRunContract, BlockTask, BootstrapRun, ClaimTask, CloseRun,
-    CompleteRun, ConfigureUsageBudget, CreateRun, CreateTask, ExtendRunDeadline, JoinRun,
-    ListFileOwners, PauseRun, ReadControlStatus, ReadRequestAdmission, ReadRunSnapshot,
-    ReadRunStatus, ReadTask, ReadUsageReport, RecordEvidence, RecordMemberLaunch,
-    RecordRequestUsage, RecoverTask, RegisterMemberSocket, ReleaseFiles, ReleaseTask,
-    ReleaseUnlaunchedMember, ReserveFiles, ResumeRun, ResumeRunExternally, RevalidateTask,
-    RevokeTask, SetTaskDependencies, StopRun, SubmitTask, UnblockTask, VerifyTask,
+    AcknowledgeMessage, ActivateMember, AdmitMember, AmendRunContract, BlockTask, BootstrapRun,
+    ClaimTask, CloseRun, CompleteRun, ConfigureUsageBudget, CreateRun, CreateTask,
+    ExtendRunDeadline, JoinRun, ListFileOwners, PauseRun, ReadControlStatus, ReadInbox,
+    ReadRequestAdmission, ReadRunSnapshot, ReadRunStatus, ReadTask, ReadUsageReport,
+    RecordEvidence, RecordMemberLaunch, RecordRequestUsage, RecoverTask, RegisterMemberSocket,
+    ReleaseFiles, ReleaseTask, ReleaseUnlaunchedMember, ReserveFiles, ResumeRun,
+    ResumeRunExternally, RevalidateTask, RevokeTask, SendMessage, SetTaskDependencies, StopRun,
+    SubmitTask, UnblockTask, VerifyTask, WithdrawMessage,
 };
 use crate::infrastructure::persistence::audit_log::AuditLog;
 use crate::infrastructure::persistence::board_op_log::EventLogBoardOps;
@@ -155,6 +156,18 @@ pub fn build_swarm_board_handles_with(
             clock.clone(),
             Arc::new(PyJsonEncoding),
         )),
+        send_message: Arc::new(SendMessage::new(
+            repository.clone(),
+            clock.clone(),
+            Arc::new(PyJsonEncoding),
+        )),
+        withdraw_message: Arc::new(WithdrawMessage::new(
+            repository.clone(),
+            clock.clone(),
+            Arc::new(PyJsonEncoding),
+        )),
+        read_inbox: Arc::new(ReadInbox::new(repository.clone(), clock.clone())),
+        acknowledge_message: Arc::new(AcknowledgeMessage::new(repository.clone(), clock.clone())),
         configure_usage_budget: Arc::new(ConfigureUsageBudget::new(
             repository.clone(),
             clock.clone(),

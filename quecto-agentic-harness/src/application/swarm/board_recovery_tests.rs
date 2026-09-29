@@ -34,6 +34,7 @@ fn message(id: i64) -> StoredMessage {
         recipient: json!("worker"),
         body: "noise".to_owned(),
         status: "accepted".to_owned(),
+        ..StoredMessage::default()
     }
 }
 

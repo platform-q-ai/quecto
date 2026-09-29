@@ -700,8 +700,7 @@ fn every_board_refusal_site_is_in_the_table_with_one_kind() {
         two_kinds.is_empty(),
         "a refusal text raised under two kinds: {two_kinds:?}"
     );
-    let mut table: Vec<(String, String, String)> = REFUSALS
-        .iter()
+    let mut table: Vec<(String, String, String)> = refusals()
         .map(|(site, text, kind)| ((*site).to_owned(), (*text).to_owned(), (*kind).to_owned()))
         .collect();
     table.sort();
@@ -717,7 +716,18 @@ fn every_board_refusal_site_is_in_the_table_with_one_kind() {
     );
 }
 
+/// Every row of the site table: [`REFUSALS`] and the rows kept beside it
+/// ([`messages::MESSAGE_REFUSALS`], #2276).
+pub(super) fn refusals() -> impl Iterator<Item = &'static (&'static str, &'static str, &'static str)>
+{
+    REFUSALS.iter().chain(messages::MESSAGE_REFUSALS)
+}
+
 /// The scan of a source's construction sites and its own tests, beside
 /// the table (#2273: the table's file stays within 750 lines).
 #[path = "swarm_board_refusal_kinds_scan.rs"]
 mod scan;
+
+/// The durable messages' rows of the table (#2276), beside it.
+#[path = "swarm_board_refusal_kinds_messages.rs"]
+mod messages;
