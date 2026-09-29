@@ -48,6 +48,10 @@ fn every_method() -> Vec<Method> {
         Method::FileOwners,
         Method::Recover,
         Method::Revoke,
+        Method::Send,
+        Method::Withdraw,
+        Method::Inbox,
+        Method::Ack,
         Method::CreateRun,
         Method::BootstrapRun,
         Method::BootstrapJoin,
@@ -90,6 +94,10 @@ fn every_method() -> Vec<Method> {
             | Method::FileOwners
             | Method::Recover
             | Method::Revoke
+            | Method::Send
+            | Method::Withdraw
+            | Method::Inbox
+            | Method::Ack
             | Method::CreateRun
             | Method::BootstrapRun
             | Method::BootstrapJoin
@@ -291,6 +299,16 @@ fn acted_on(
             claimed(handles);
             (json!([true, "reassign"]), Some(1), None, None)
         }
+        Method::Send => {
+            running(handles);
+            (json!(["m", "parent", "hi"]), None, Some(1), None)
+        }
+        Method::Withdraw | Method::Ack => {
+            running(handles);
+            call(handles, "parent", "send", json!(["m", "parent", "hi"])).unwrap();
+            (json!([1]), None, Some(1), None)
+        }
+        Method::Inbox => (json!([true]), None, None, None),
         Method::CreateRun => (create_args(), None, None, None),
         Method::BootstrapRun => (json!([1, "s", null]), None, None, None),
         Method::BootstrapJoin => (json!([1, "s", null]), None, None, None),
@@ -512,6 +530,45 @@ fn reservations_record_the_callers_run_role() {
     log.clear();
     call(&handles, "parent", "revoke", json!([1, "why"])).unwrap();
     assert_eq!(only(&log).role, Some(BoardRole::Coordinator), "revoke");
+}
+
+/// A message op records the caller's role in the run (#2276): the worker's
+/// send and inbox, the coordinator's acknowledgment.
+#[test]
+fn messages_record_the_callers_run_role() {
+    let log = Arc::new(Recorded::default());
+    let (_dir, handles) = logged(&log);
+    call(&handles, "parent", "bootstrap_run", json!([1, "s", null])).unwrap();
+    running(&handles);
+    call(&handles, "parent", "_admit", json!(["worker", "r1"])).unwrap();
+    call(
+        &handles,
+        "parent",
+        "_activate",
+        json!(["worker", "r1", 7, "s", "/w.sock"]),
+    )
+    .unwrap();
+    for (member, method, args, role) in [
+        (
+            "worker",
+            "send",
+            json!(["m", "parent", "hi"]),
+            BoardRole::Worker,
+        ),
+        ("worker", "withdraw", json!([1]), BoardRole::Worker),
+        ("worker", "inbox", json!([]), BoardRole::Worker),
+        (
+            "worker",
+            "send",
+            json!(["n", "parent", "hi"]),
+            BoardRole::Worker,
+        ),
+        ("parent", "ack", json!([2]), BoardRole::Coordinator),
+    ] {
+        log.clear();
+        call(&handles, member, method, args).unwrap();
+        assert_eq!(only(&log).role, Some(role), "{member} {method}");
+    }
 }
 
 /// `member`'s death confirmed on the board file at `database`, as the

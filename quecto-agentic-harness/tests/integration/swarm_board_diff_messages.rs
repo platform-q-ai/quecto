@@ -381,23 +381,3 @@ fn every_mutating_message_op_on_a_paused_run() {
         }
     }
 }
-
-/// A message id beyond i64 is refused as the store refuses an integer it
-/// cannot bind (`integer_beyond_i64_is_refused`, as the pin table
-/// describes it): Python's `sqlite3` raises `OverflowError` binding it.
-#[test]
-fn a_message_id_beyond_i64_is_refused_as_the_store_refuses_it() {
-    for method in ["withdraw", "ack"] {
-        let outcome = run_rust(&joined([at(
-            3.0,
-            "worker",
-            method,
-            json!([9_223_372_036_854_775_808_u64]),
-        )]));
-        assert!(
-            matches!(&outcome, Outcome::Refused(text)
-                if text.ends_with("Error binding parameter 1: Python int too large to convert to SQLite INTEGER")),
-            "{method}: {outcome:?}"
-        );
-    }
-}

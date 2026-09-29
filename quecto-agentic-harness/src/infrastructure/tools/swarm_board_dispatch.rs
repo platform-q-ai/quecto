@@ -37,7 +37,8 @@
 //! usage methods `usage_budget`, `_record_request` and
 //! `_request_admission` (#2274) by [`usage`]; and the file reservations
 //! `reserve`, `release_files` and `file_owners`, with the coordinator's
-//! `recover` and `revoke` (#2275), by [`reservations`].
+//! `recover` and `revoke` (#2275), by [`reservations`]; and the durable
+//! messages `send`, `withdraw`, `inbox` and `ack` (#2276) by [`messages`].
 //!
 //! What S12 must keep when it adds the summaries Python answers with:
 //!
@@ -88,13 +89,14 @@ use serde_json::{Map, Value};
 use crate::application::swarm::dto::{MemberRow, RunSnapshotView, RunStatusView};
 use crate::application::swarm::ports::{BoardCallMeter, BoardOpLog, BoardRepository};
 use crate::application::swarm::use_cases::{
-    ActivateMember, AdmitMember, AmendRunContract, BlockTask, BootstrapRun, ClaimTask, CloseRun,
-    CompleteRun, ConfigureUsageBudget, CreateRun, CreateTask, ExtendRunDeadline, JoinRun,
-    ListFileOwners, OverRepository, PauseRun, ReadControlStatus, ReadRequestAdmission,
-    ReadRunSnapshot, ReadRunStatus, ReadTask, ReadUsageReport, RecordEvidence, RecordMemberLaunch,
-    RecordRequestUsage, RecoverTask, RegisterMemberSocket, ReleaseFiles, ReleaseTask,
-    ReleaseUnlaunchedMember, ReserveFiles, ResumeRun, ResumeRunExternally, RevalidateTask,
-    RevokeTask, SetTaskDependencies, StopRun, SubmitTask, UnblockTask, VerifyTask,
+    AcknowledgeMessage, ActivateMember, AdmitMember, AmendRunContract, BlockTask, BootstrapRun,
+    ClaimTask, CloseRun, CompleteRun, ConfigureUsageBudget, CreateRun, CreateTask,
+    ExtendRunDeadline, JoinRun, ListFileOwners, OverRepository, PauseRun, ReadControlStatus,
+    ReadInbox, ReadRequestAdmission, ReadRunSnapshot, ReadRunStatus, ReadTask, ReadUsageReport,
+    RecordEvidence, RecordMemberLaunch, RecordRequestUsage, RecoverTask, RegisterMemberSocket,
+    ReleaseFiles, ReleaseTask, ReleaseUnlaunchedMember, ReserveFiles, ResumeRun,
+    ResumeRunExternally, RevalidateTask, RevokeTask, SendMessage, SetTaskDependencies, StopRun,
+    SubmitTask, UnblockTask, VerifyTask, WithdrawMessage,
 };
 use crate::domain::swarm::{BoardError, BoardRole, RefusalKind};
 
@@ -150,6 +152,10 @@ pub struct SwarmBoardHandles {
     pub list_file_owners: Arc<ListFileOwners>,
     pub recover_task: Arc<RecoverTask>,
     pub revoke_task: Arc<RevokeTask>,
+    pub send_message: Arc<SendMessage>,
+    pub withdraw_message: Arc<WithdrawMessage>,
+    pub read_inbox: Arc<ReadInbox>,
+    pub acknowledge_message: Arc<AcknowledgeMessage>,
     /// Each call's `swarm_op` record and its measure (#2303), only when
     /// the event log is switched on (`telemetry.event_log.enabled`, owner
     /// decision T1): `None` measures and writes nothing.
@@ -211,6 +217,10 @@ pub const BOARD_OPS: &[&str] = &[
     "file_owners",
     "recover",
     "revoke",
+    "send",
+    "withdraw",
+    "inbox",
+    "ack",
     #[cfg(any(test, feature = "test-support"))]
     "create_run",
     #[cfg(any(test, feature = "test-support"))]
@@ -512,6 +522,18 @@ fn serve(
         Method::Revoke => {
             reservations::revoke(&serving(&*handles.revoke_task, over), member, arguments)
         }
+        Method::Send => messages::send(&serving(&*handles.send_message, over), member, arguments),
+        Method::Withdraw => messages::withdraw(
+            &serving(&*handles.withdraw_message, over),
+            member,
+            arguments,
+        ),
+        Method::Inbox => messages::inbox(&serving(&*handles.read_inbox, over), member, arguments),
+        Method::Ack => messages::ack(
+            &serving(&*handles.acknowledge_message, over),
+            member,
+            arguments,
+        ),
         #[cfg(any(test, feature = "test-support"))]
         Method::CreateRun => {
             test_only::create_run(&serving(&*handles.create_run, over), member, arguments)

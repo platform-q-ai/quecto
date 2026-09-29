@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use crate::application::swarm::ports::BoardRepository;
 
+mod acknowledge_message;
 mod activate_member;
 mod admit_member;
 mod amend_run_contract;
@@ -27,6 +28,7 @@ mod join_run;
 mod list_file_owners;
 mod pause_run;
 mod read_control_status;
+mod read_inbox;
 mod read_request_admission;
 mod read_run_snapshot;
 mod read_run_status;
@@ -45,12 +47,15 @@ mod resume_run;
 mod resume_run_externally;
 mod revalidate_task;
 mod revoke_task;
+mod send_message;
 mod set_task_dependencies;
 mod stop_run;
 mod submit_task;
 mod unblock_task;
 mod verify_task;
+mod withdraw_message;
 
+pub use acknowledge_message::AcknowledgeMessage;
 pub use activate_member::ActivateMember;
 pub use admit_member::AdmitMember;
 pub use amend_run_contract::AmendRunContract;
@@ -67,6 +72,7 @@ pub use join_run::JoinRun;
 pub use list_file_owners::ListFileOwners;
 pub use pause_run::PauseRun;
 pub use read_control_status::ReadControlStatus;
+pub use read_inbox::ReadInbox;
 pub use read_request_admission::ReadRequestAdmission;
 pub use read_run_snapshot::ReadRunSnapshot;
 pub use read_run_status::ReadRunStatus;
@@ -85,11 +91,13 @@ pub use resume_run::ResumeRun;
 pub use resume_run_externally::ResumeRunExternally;
 pub use revalidate_task::RevalidateTask;
 pub use revoke_task::RevokeTask;
+pub use send_message::SendMessage;
 pub use set_task_dependencies::SetTaskDependencies;
 pub use stop_run::StopRun;
 pub use submit_task::SubmitTask;
 pub use unblock_task::UnblockTask;
 pub use verify_task::VerifyTask;
+pub use withdraw_message::WithdrawMessage;
 
 /// A board use case served over another repository (#2303): the same use
 /// case, with every other port as composition bound it. A seam between

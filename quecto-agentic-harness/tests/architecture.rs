@@ -1265,6 +1265,11 @@ const SWARM_BOARD_USE_CASES: &[&str] = &[
     "ReleaseFiles",
     "ReserveFiles",
     "RevokeTask",
+    // Durable messages (#2276).
+    "AcknowledgeMessage",
+    "ReadInbox",
+    "SendMessage",
+    "WithdrawMessage",
 ];
 
 /// The board DTOs infrastructure may name (#2270, epic #2265; each later
@@ -1357,6 +1362,12 @@ const SWARM_BOARD_DTOS: &[&str] = &[
     "Revocation",
     "RevokeTaskRequest",
     "Revoked",
+    // Durable messages (#2276).
+    "MessageIdRequest",
+    "MessageRow",
+    "NewMessage",
+    "ReadInboxRequest",
+    "SendMessageRequest",
 ];
 
 fn application_path_allowed(path: &str) -> bool {

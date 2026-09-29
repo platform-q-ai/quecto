@@ -16,7 +16,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use quecto::domain::swarm::RefusalKind;
 
-use super::swarm_board_refusal_kinds::REFUSALS;
+use super::swarm_board_refusal_kinds::refusals;
 
 /// The Python board's sources: the helpers the board runs from, and the
 /// policy and use cases they import.
@@ -525,7 +525,7 @@ fn the_rust_board_raises_a_python_text_with_its_kind() {
         "two Python refusal texts share a template"
     );
     let mut compared = 0;
-    for (site, text, variant) in REFUSALS {
+    for (site, text, variant) in refusals() {
         let Some(kinds) = python.get(&blanked(text)) else {
             continue;
         };

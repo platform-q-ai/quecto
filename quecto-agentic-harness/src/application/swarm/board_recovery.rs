@@ -3,15 +3,13 @@
 //! and not a port.
 use serde_json::Value;
 
+use super::board_messages::INBOX_CAPACITY;
 use super::board_operation::detail;
 use super::dto::TaskUpdate;
 use super::ports::{
     BoardEncoding, BoardEvents, BoardFiles, BoardMembers, BoardMessages, BoardTasks, Clock,
 };
 use crate::domain::swarm::{BoardError, RefusalKind, status_is_alive};
-
-/// The most unread messages an inbox holds.
-const INBOX_CAPACITY: i64 = 100;
 
 /// The revocation a previous owner is told of.
 pub(crate) struct Notice<'a> {
