@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use super::super::{attach_to, decided_with};
+use super::super::{SessionLogTarget, attach_to, decided_with};
 use crate::application::configuration::ports::OverlayTrustStore;
 use crate::infrastructure::config::persistence::PersistentOverlayTrustStore;
 use crate::infrastructure::persistence::audit_log::AuditLog;
@@ -95,7 +95,16 @@ fn env(pairs: &[(&str, &str)]) -> HashMap<String, String> {
 /// agent starts, and the decision is off too.
 #[test]
 fn the_switch_decided_before_admission_is_the_builds() {
-    let cases: [(&str, bool, Option<bool>, &[(&str, &str)], Option<bool>); 6] = [
+    // (case, the global config switches the log on, an overlay switching
+    // it on is present and trusted, the QUECTO_* overrides, the build's).
+    type Case<'a> = (
+        &'a str,
+        bool,
+        Option<bool>,
+        &'a [(&'a str, &'a str)],
+        Option<bool>,
+    );
+    let cases: [Case<'_>; 6] = [
         ("off", false, None, &[], Some(false)),
         ("a trusted overlay", false, Some(true), &[], Some(true)),
         ("an untrusted overlay", false, Some(false), &[], Some(false)),
@@ -168,15 +177,12 @@ fn the_admissions_calls_are_in_the_file_once_the_log_is_attached() {
     .unwrap_or_else(|| panic!("{stderr}"));
     assert!(build.event_log);
     let mut agent = build.agent;
-    attach_to(
-        Some(&board),
-        &mut agent,
-        base.path(),
-        &flags,
-        "cli:admitted",
-        build.event_log,
-        &mut stderr,
-    );
+    let target = SessionLogTarget {
+        base_dir: base.path(),
+        session_key: "cli:admitted",
+        event_log: build.event_log,
+    };
+    attach_to(Some(&board), &mut agent, &target, &flags, &mut stderr);
     let text = std::fs::read_to_string(AuditLog::file_path(base.path(), "cli:admitted")).unwrap();
     let ops: Vec<serde_json::Value> = text
         .lines()

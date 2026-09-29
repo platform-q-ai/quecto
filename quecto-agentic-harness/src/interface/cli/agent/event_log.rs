@@ -120,15 +120,12 @@ pub(super) fn attach(
 ) {
     use crate::infrastructure::persistence::crash_record::{CrashTarget, prepare};
     let board = crate::infrastructure::tools::swarm_bridge::process_board();
-    let crash_line = attach_to(
-        board,
-        agent,
+    let target = SessionLogTarget {
         base_dir,
-        flags,
         session_key,
         event_log,
-        stderr,
-    );
+    };
+    let crash_line = attach_to(board, agent, &target, flags, stderr);
     let keeps_record = match (ephemeral(flags), session_key.is_empty()) {
         (false, false) => Some(session_key.to_string()),
         (true, _) | (false, true) => None,
@@ -140,6 +137,14 @@ pub(super) fn attach(
     });
 }
 
+/// Where a session's audit log is kept: under `base_dir`, for the session
+/// `session_key`, with the event log on or off.
+pub(super) struct SessionLogTarget<'a> {
+    pub(super) base_dir: &'a Path,
+    pub(super) session_key: &'a str,
+    pub(super) event_log: bool,
+}
+
 /// [`attach`]'s log, without the crash record: gives `agent` its audit log
 /// when it keeps one, and records `board`'s calls there while the event log
 /// is on (what it held since admission first); answers the log's crash
@@ -147,13 +152,16 @@ pub(super) fn attach(
 pub(super) fn attach_to(
     board: Option<&crate::infrastructure::tools::swarm_bridge::SwarmBoard>,
     agent: &mut AgentLoopImpl,
-    base_dir: &Path,
+    target: &SessionLogTarget<'_>,
     flags: &super::AgentFlags,
-    session_key: &str,
-    event_log: bool,
     stderr: &mut String,
 ) -> Option<crate::infrastructure::persistence::audit_log::AuditCrashLine> {
     use crate::infrastructure::persistence::audit_log::AuditLog;
+    let SessionLogTarget {
+        base_dir,
+        session_key,
+        event_log,
+    } = *target;
     match log_key(flags.workflow, ephemeral(flags), session_key, event_log) {
         Some(key) => match AuditLog::open_sync(base_dir, &key) {
             Ok(log) => {
