@@ -19,8 +19,9 @@ use serde_json::{Value, json};
 
 use crate::swarm_board_diff_membership::{at, create};
 use crate::swarm_board_diff_runs::NOW;
+use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
 use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
-    Step, mkdir, run_both, sql, step, symlink,
+    Step, mkdir, run_both, run_rust, sql, step, symlink,
 };
 
 /// The `n`th id the harness draws, as the counter writes it.
@@ -568,5 +569,62 @@ fn reservation_arguments_are_checked_as_python_checks_them() {
         at(8.6, "parent", "revoke", json!(["1", "text id"])),
         at(8.7, "parent", "revoke", json!([9, "unknown"])),
         at(8.8, "parent", "recover", json!([9])),
+    ]));
+}
+
+/// Reserving, recovering and revoking need a running run
+/// (`authorize(active=True)`, the #2316 paused-run table's sibling; the
+/// #2321 mutation report's survivors): on a paused run each is refused
+/// with Python's own text, and the board is left as it was. Each op is one
+/// the unpaused board grants, so only the run's status refuses it: the
+/// worker reserves under its claim of task 1, and the parent recovers it
+/// from the dead worker or revokes it from the live one. Releasing and
+/// paging reservations need no running run (`active=False` and a read), so
+/// the paused board grants both.
+#[test]
+fn reserving_recovering_and_revoking_are_refused_on_a_paused_run() {
+    let reserved = || at(5.0, "worker", "reserve", json!([1, token(3), ["a.rs"]]));
+    let ops = [
+        (
+            claimed([]),
+            at(9.0, "worker", "reserve", json!([1, token(3), ["b.rs"]])),
+        ),
+        (
+            claimed([reserved(), dead("worker")]),
+            at(9.0, "parent", "recover", json!([1, true])),
+        ),
+        (
+            claimed([reserved()]),
+            at(9.0, "parent", "revoke", json!([1, "reassign"])),
+        ),
+    ];
+    let paused = sql("UPDATE run SET status='paused'");
+    let refusal = "run is paused; no new work permitted";
+    for (setup, op) in ops {
+        let method = op.method.clone();
+        let granted = [setup.clone(), vec![op.clone()]].concat();
+        assert!(
+            matches!(run_rust(&granted), Outcome::Ok(_)),
+            "{method} is granted on the running run"
+        );
+        let steps = [setup, vec![paused.clone(), op, owners(10.0), raw(11.0)]].concat();
+        run_both(&steps);
+        let outcome = run_rust(&steps[..steps.len() - 2]);
+        assert!(
+            matches!(&outcome, Outcome::Refused(text) if text == refusal),
+            "{method}: {outcome:?}"
+        );
+    }
+    run_both(&claimed([
+        reserved(),
+        paused,
+        owners(9.0),
+        at(
+            10.0,
+            "worker",
+            "release_files",
+            json!([1, token(3), token(4)]),
+        ),
+        owners(11.0),
     ]));
 }
