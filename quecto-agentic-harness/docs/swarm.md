@@ -757,7 +757,7 @@ body, evidence, reason, path or other board text:
 | `turn` | Always `null`: a board op is not filed under an agent turn (the board is called without one) |
 | `op` | The board method (`unknown` for a name that is none) |
 | `actor_ref` | The caller's member id: the id the caller chose for itself on the board (`members.id`), redacted if it looks like a credential, and cut to its first 128 characters (a refused call can name any id) |
-| `role` | `host` for the harness's own ops; for a member-facing op (`task_create`, `claim`, ...), the caller's role in the run as the op read it: `coordinator`, `integrator`, or `worker` for any other caller; `null` when the op read no run (refused before it, or the board holds none) |
+| `role` | `host` for the harness's own ops, including the `summary` the harness reads for itself to judge a run after an op or when it settles one; for a member's own `summary` or `reconcile`, and for a member-facing op (`task_create`, `claim`, ...), the caller's role in the run as the op read it: `coordinator`, `integrator`, or `worker` for any other caller; `null` when the op read no run (refused before it, or the board holds none) |
 | `run_id` | The run the op found, when it found one and its id is one the board generates (32 lowercase hex digits); `null` otherwise, so an id edited into the board from outside is never recorded |
 | `task_id`, `message_id` | The task or message the op acted on, by the id its row holds (a task id given as `"2"` is task 2); left out when it acted on none, or its row's id is not an integer |
 | `outcome` | `ok` or `refused` |
@@ -834,9 +834,12 @@ op's own record (with its `task_id` or `message_id` and, for a refusal, its
 `kind`), plus one per harness-internal call it made, each with role `host`:
 `_status` for the running gate and, for a mutating op, `_event_cursor`
 before and after, then whatever the post-call lifecycle ran (`_notifications`,
-`_accept_wake`, or the settlement's calls). The lifecycle's own `summary`
-reads, the post-call one and the settlement's, are harness-internal calls
-too, so they are recorded with role `host` alongside the others. An op refused before it reached
+`_accept_wake`, or the settlement's calls). The `summary` the harness reads
+for itself, the post-call lifecycle's and a settlement's closing one, is a
+harness-internal call too: it is made as the harness (`CallOrigin::Harness`,
+through `call_as`), so it is recorded with role `host` alongside the others
+and never counted against the member. A member's own `op=summary` and
+`op=reconcile` keep the member's role. An op refused before it reached
 the board is still recorded as the op's own `swarm_op`, with no run read
 (`role` and `run_id` `null`):
 
