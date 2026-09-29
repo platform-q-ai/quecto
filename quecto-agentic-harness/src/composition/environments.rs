@@ -40,6 +40,13 @@ pub use crate::interface::cli::container_handles::ContainerInventoryHandles;
 /// composition's board handles (#2278). The host keeps no session event
 /// log here, so its board calls leave `tracing` records only.
 fn hosted_store_observation() -> HostedStoreObservation {
+    hosted_store_observation_over(None)
+}
+
+/// The observation over the process's board, when one is bound.
+fn hosted_store_observation_over(
+    _process: Option<&crate::infrastructure::tools::swarm_bridge::SwarmBoard>,
+) -> HostedStoreObservation {
     HostedStoreObservation::new(super::swarm::swarm_board())
 }
 

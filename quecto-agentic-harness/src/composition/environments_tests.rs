@@ -90,3 +90,71 @@ fn a_sessions_own_kill_in_flight_is_warned_about() {
         "{warnings}"
     );
 }
+
+/// The event log, in memory.
+#[derive(Default)]
+struct RecordedOps(Mutex<Vec<String>>);
+
+impl crate::application::swarm::ports::BoardOpLog for RecordedOps {
+    fn record(&self, observation: crate::domain::swarm::BoardOpObservation) {
+        self.0.lock().unwrap().push(observation.op);
+    }
+}
+
+/// #2278 review M1: the host's board calls are recorded in the session's
+/// event log. The observation calls the process's board (the one the
+/// session's log is bound to) when admission bound one, so a host-side
+/// loss record leaves one `_lose_coordinator` swarm_op.
+#[test]
+fn a_host_side_loss_is_recorded_in_the_process_boards_event_log() {
+    use crate::application::environments::ports::HostedSwarmRunObservation;
+    use crate::infrastructure::tools::swarm_bridge::{SwarmContext, process_start};
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = dir.path().join("workspace");
+    std::fs::create_dir_all(workspace.join(".quecto")).unwrap();
+    let coordinator = SwarmContext {
+        checkout: workspace.clone(),
+        member: "coordinator".into(),
+        lifecycle: Arc::new(crate::application::swarm::LifecycleService),
+        board: super::super::swarm::swarm_board(),
+    };
+    let identity = crate::domain::swarm::ProcessIdentity {
+        pid: std::process::id(),
+        started: process_start(std::process::id()).unwrap(),
+    };
+    let deadline = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 300;
+    coordinator
+        .create_run(
+            &serde_json::json!({"goal": "g", "constraints": [],
+                "criteria": [{"id": "t", "kind": "command", "description": "pass"}],
+                "member_limit": 3, "deadline": deadline}),
+            &identity,
+            None,
+        )
+        .unwrap();
+    let record = EnvironmentRecord {
+        workspace_path: workspace.clone(),
+        metadata: serde_json::json!({"checkout": workspace.display().to_string()}),
+        status: EnvironmentStatus::Running,
+        ..killing_record_of("cli:me")
+    };
+    let process_board = super::super::swarm::swarm_board();
+    let recorded = Arc::new(RecordedOps::default());
+    assert!(process_board.record_in(recorded.clone()));
+    let observation = super::hosted_store_observation_over(Some(&process_board));
+    let hosted = crate::domain::environment_retention::HostedSwarmRun {
+        id: String::new(),
+        status: crate::domain::swarm::RunStatus::Running,
+        outcome: None,
+        coordinator: "coordinator".into(),
+        deadline: deadline as f64,
+    };
+    let loss = futures::executor::block_on(observation.record_lost_coordinator(&record, &hosted))
+        .expect("the loss is recorded");
+    assert!(loss.lost, "{loss:?}");
+    assert_eq!(*recorded.0.lock().unwrap(), ["_lose_coordinator"]);
+}
