@@ -184,8 +184,13 @@ fn the_admissions_calls_are_in_the_file_once_the_log_is_attached() {
         .filter(|line| line["event"] == "swarm_op")
         .collect();
     let names: Vec<&str> = ops.iter().filter_map(|op| op["op"].as_str()).collect();
-    assert!(names.contains(&"_bootstrap"), "{names:?}");
-    assert_eq!(names[0], "_status", "the admission's first call: {names:?}");
+    // The creator's admission: no store yet (so no `_status` read), then
+    // its bootstrap, which creates the store and joins it.
+    assert_eq!(
+        names.first(),
+        Some(&"_bootstrap"),
+        "the admission's call, first: {names:?}"
+    );
     assert!(
         ops.iter().all(|op| op["lock_wait_us"].is_u64()),
         "measured while held: {text}"

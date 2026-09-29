@@ -58,22 +58,27 @@ pub(super) fn decided_before_admission(
     ctx: &crate::interface::cli::CliContext,
     flags: &super::AgentFlags,
 ) -> bool {
+    let env_overrides = crate::interface::cli::config_loading::quecto_env_overrides();
+    decided_with(ctx, flags, &env_overrides)
+}
+
+/// [`decided_before_admission`] over `env_overrides`, through the loader
+/// the build itself uses (`loaded_config::load`, #2313 review L5). A
+/// configuration that does not load is off, even where the global config
+/// switches the log on: the build refuses to start then, and no log opens.
+pub(super) fn decided_with(
+    ctx: &crate::interface::cli::CliContext,
+    flags: &super::AgentFlags,
+    env_overrides: &std::collections::HashMap<String, String>,
+) -> bool {
     let base_dir = ctx.base_dir();
-    let config_on = match (flags.configuration, ctx.config_selection()) {
-        (Some(build), Ok(selection)) => {
-            crate::interface::cli::config_loading::load_selected_config(
-                build,
-                &base_dir,
-                &selection,
-                false,
-                &crate::interface::cli::config_loading::quecto_env_overrides(),
-                flags.admission_context.is_some(),
-            )
-            .is_ok_and(|loaded| loaded.config.telemetry.event_log.enabled)
-        }
-        (None, _) | (_, Err(_)) => false,
-    };
-    switched_on(config_on, &base_dir)
+    let loaded = ctx.config_selection().ok().and_then(|selection| {
+        super::loaded_config::load(&base_dir, &selection, flags, false, env_overrides).ok()
+    });
+    match loaded {
+        Some(loaded) => switched_on(loaded.config.telemetry.event_log.enabled, &base_dir),
+        None => false,
+    }
 }
 
 /// The session switched to `session_key` (#2192): the crash target
@@ -113,10 +118,43 @@ pub(super) fn attach(
     event_log: bool,
     stderr: &mut String,
 ) {
-    use crate::infrastructure::persistence::audit_log::AuditLog;
     use crate::infrastructure::persistence::crash_record::{CrashTarget, prepare};
     let board = crate::infrastructure::tools::swarm_bridge::process_board();
-    let crash_line = match log_key(flags.workflow, ephemeral(flags), session_key, event_log) {
+    let crash_line = attach_to(
+        board,
+        agent,
+        base_dir,
+        flags,
+        session_key,
+        event_log,
+        stderr,
+    );
+    let keeps_record = match (ephemeral(flags), session_key.is_empty()) {
+        (false, false) => Some(session_key.to_string()),
+        (true, _) | (false, true) => None,
+    };
+    prepare(CrashTarget {
+        base_dir: Some(base_dir.to_path_buf()),
+        session_key: keeps_record,
+        event_log: crash_line,
+    });
+}
+
+/// [`attach`]'s log, without the crash record: gives `agent` its audit log
+/// when it keeps one, and records `board`'s calls there while the event log
+/// is on (what it held since admission first); answers the log's crash
+/// line.
+pub(super) fn attach_to(
+    board: Option<&crate::infrastructure::tools::swarm_bridge::SwarmBoard>,
+    agent: &mut AgentLoopImpl,
+    base_dir: &Path,
+    flags: &super::AgentFlags,
+    session_key: &str,
+    event_log: bool,
+    stderr: &mut String,
+) -> Option<crate::infrastructure::persistence::audit_log::AuditCrashLine> {
+    use crate::infrastructure::persistence::audit_log::AuditLog;
+    match log_key(flags.workflow, ephemeral(flags), session_key, event_log) {
         Some(key) => match AuditLog::open_sync(base_dir, &key) {
             Ok(log) => {
                 let log = log.with_parent(flags.parent_id.clone());
@@ -145,16 +183,7 @@ pub(super) fn attach(
             }
             None
         }
-    };
-    let keeps_record = match (ephemeral(flags), session_key.is_empty()) {
-        (false, false) => Some(session_key.to_string()),
-        (true, _) | (false, true) => None,
-    };
-    prepare(CrashTarget {
-        base_dir: Some(base_dir.to_path_buf()),
-        session_key: keeps_record,
-        event_log: crash_line,
-    });
+    }
 }
 
 #[cfg(test)]
