@@ -544,3 +544,29 @@ fn owner_liveness_floats_compare_exactly() {
         "a quiet time needs every digit: {quiet:?}"
     );
 }
+
+/// #2277 review L2: a member id holding code points Unicode 16.0 has not
+/// assigned (U+0378, and U+E0080 beyond the basic plane) reaches its
+/// task's `contact` escaped as Python 3.14's `repr()` escapes it.
+#[test]
+fn an_unassigned_code_point_in_an_owner_id_is_escaped_as_python_does() {
+    let owner = "w\u{0378}\u{e0080}";
+    let steps = joined([
+        at(3.0, "parent", "_admit", json!([owner, "res-u"])),
+        at(
+            3.1,
+            "parent",
+            "_activate",
+            json!([owner, "res-u", 5, "u", null]),
+        ),
+        task(4.0, owner, "unassigned"),
+        at(5.0, owner, "claim", json!([1])),
+        view(6.0, "parent", 1),
+        page(6.5, "parent", json!([])),
+    ]);
+    run_both(&steps);
+    assert_eq!(
+        answer(&steps, 7)["contact"],
+        json!(r"board.send(request, 'w͸\U000e0080', body)")
+    );
+}
