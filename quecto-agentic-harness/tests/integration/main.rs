@@ -54,6 +54,8 @@ mod swarm_board_diff_membership_loose;
 mod swarm_board_diff_runs;
 mod swarm_board_diff_submissions;
 mod swarm_board_diff_tasks;
+mod swarm_board_diff_usage;
+mod swarm_board_mixed;
 mod swarm_board_py_json;
 mod swarm_board_store;
 mod swarm_coordination;

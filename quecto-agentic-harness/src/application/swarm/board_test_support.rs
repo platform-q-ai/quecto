@@ -14,7 +14,8 @@ pub use self::evidence::accepted;
 pub use self::tasks::{StoredFile, StoredRequest, stored_task};
 use crate::application::swarm::dto::{
     AmendedContract, EvidenceEntry, LaunchIdentity, MemberClaimCounts, MemberRow, NewMember,
-    NewRun, RunContract, RunOwnerRow, RunStatusRow, StoredContract, TaskRow, UsageReport,
+    NewRequestUsage, NewRun, RunContract, RunOwnerRow, RunStatusRow, StoredContract, TaskRow,
+    UsageReport,
 };
 use crate::application::swarm::ports::{
     BoardEncoding, BoardEvents, BoardMembers, BoardRepository, BoardRuns, BoardWork, Clock,
@@ -49,7 +50,11 @@ pub struct BoardState {
     pub requests: Vec<StoredRequest>,
     pub files: Vec<StoredFile>,
     /// What `usage_report` answers; `None` for a board without usage.
+    /// A request inserted adds to its totals; a budget written replaces
+    /// its budget.
     pub usage: Option<UsageReport>,
+    /// The `request_usage` rows written, in order.
+    pub request_usage: Vec<NewRequestUsage>,
     /// The `evidence` rows, each with the actor that recorded it.
     pub evidence: Vec<(String, EvidenceEntry)>,
 }

@@ -1,5 +1,5 @@
 //! Differential scenarios for hand edits of the `run` row and the control
-//! records (#2270, #2273; epic #2265 P3): what a file edited outside the
+//! records (#2270, #2273, #2274; epic #2265 P3): what a file edited outside the
 //! board leaves, read back through the served methods. Each must match;
 //! where the Rust board deliberately differs, the divergence is named in
 //! `swarm_board_diff_loose::PERMITTED_DIVERGENCES` and pinned here (listed
@@ -125,6 +125,41 @@ fn outside_edited_control_records() {
         };
         assert_eq!(receipt["resume_blockers"], json!([]), "{detail}: {receipt}");
     }
+    // #2274: a stored request that is not an object meets its redelivery,
+    // and a budget without `warned` meets the warning, where Python raises
+    // a `TypeError` or a `KeyError`.
+    let record = json!([{"request_id": "r", "instrumented_attempts": 1, "outcome": "failed"}]);
+    let redelivered = |edit: &str| {
+        run_rust(&[
+            create(5),
+            at(1.0, "parent", "_record_request", record.clone()),
+            sql(edit),
+            at(2.0, "parent", "_record_request", record.clone()),
+        ])
+    };
+    assert_eq!(
+        redelivered("UPDATE request_usage SET payload='[]'"),
+        refused("request usage")
+    );
+    assert_eq!(
+        redelivered(r#"UPDATE request_usage SET payload='"r"'"#),
+        refused("request usage")
+    );
+    assert_eq!(
+        run_rust(&[
+            create(5),
+            sql(
+                r#"INSERT INTO usage_budget VALUES(1, '{"token_limit": 1, "strict_unknown": false}')"#
+            ),
+            at(
+                1.0,
+                "parent",
+                "_record_request",
+                json!([{"request_id": "r", "instrumented_attempts": 1, "outcome": "succeeded", "context_input_tokens": 1, "output_tokens": 1}])
+            ),
+        ]),
+        refused("usage budget")
+    );
 }
 
 /// Usage totals that are not counts (a REAL or a negative sum) are refused

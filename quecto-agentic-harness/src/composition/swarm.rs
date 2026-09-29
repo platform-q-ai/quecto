@@ -13,10 +13,11 @@ use crate::application::swarm::dto::BoardLocation;
 use crate::application::swarm::ports::{BoardOpLog, BoardRepository, Clock, IdSource};
 use crate::application::swarm::use_cases::{
     ActivateMember, AdmitMember, AmendRunContract, BlockTask, BootstrapRun, ClaimTask, CloseRun,
-    CompleteRun, CreateRun, CreateTask, ExtendRunDeadline, JoinRun, PauseRun, ReadControlStatus,
-    ReadRunSnapshot, ReadRunStatus, ReadTask, ReadUsageReport, RecordEvidence, RecordMemberLaunch,
-    RegisterMemberSocket, ReleaseTask, ReleaseUnlaunchedMember, ResumeRun, ResumeRunExternally,
-    RevalidateTask, SetTaskDependencies, StopRun, SubmitTask, UnblockTask, VerifyTask,
+    CompleteRun, ConfigureUsageBudget, CreateRun, CreateTask, ExtendRunDeadline, JoinRun, PauseRun,
+    ReadControlStatus, ReadRequestAdmission, ReadRunSnapshot, ReadRunStatus, ReadTask,
+    ReadUsageReport, RecordEvidence, RecordMemberLaunch, RecordRequestUsage, RegisterMemberSocket,
+    ReleaseTask, ReleaseUnlaunchedMember, ResumeRun, ResumeRunExternally, RevalidateTask,
+    SetTaskDependencies, StopRun, SubmitTask, UnblockTask, VerifyTask,
 };
 use crate::infrastructure::persistence::audit_log::AuditLog;
 use crate::infrastructure::persistence::board_op_log::EventLogBoardOps;
@@ -132,6 +133,19 @@ pub fn build_swarm_board_handles_with(
             Arc::new(PyJsonEncoding),
         )),
         record_evidence: Arc::new(RecordEvidence::new(repository.clone(), clock.clone())),
+        configure_usage_budget: Arc::new(ConfigureUsageBudget::new(
+            repository.clone(),
+            clock.clone(),
+        )),
+        record_request_usage: Arc::new(RecordRequestUsage::new(
+            repository.clone(),
+            clock.clone(),
+            Arc::new(PyJsonEncoding),
+        )),
+        read_request_admission: Arc::new(ReadRequestAdmission::new(
+            repository.clone(),
+            clock.clone(),
+        )),
         admit_member: Arc::new(AdmitMember::new(repository.clone(), clock.clone())),
         activate_member: Arc::new(ActivateMember::new(repository.clone(), clock.clone())),
         join_run: Arc::new(JoinRun::new(repository, clock, ids)),

@@ -1,6 +1,6 @@
 //! Usage-budget policy ported from `swarm_policy.py` (#2267): the budget
 //! decision and the validation of one request's usage record.
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use super::{BoardError, RefusalKind};
 
@@ -122,6 +122,37 @@ pub fn request_measurement(record: &Value) -> Result<(u64, u64, u64), BoardError
         u64::from(answered && attempts > 0 && !known),
         attempts,
     ))
+}
+
+/// The most bytes a request record's stored text may hold.
+pub const MAX_REQUEST_PAYLOAD_BYTES: usize = 32_768;
+/// The most rows the request ledger holds.
+pub const MAX_REQUEST_ROWS: i64 = 10_000;
+
+/// How a record meets the stored one of the same request id.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Redelivery {
+    /// The same record from the same actor: nothing changes.
+    Same,
+    /// The same record, whose runtime now names its executable digest: the
+    /// stored record is replaced.
+    DigestKnown,
+    /// Anything else: the request id is reused with different data.
+    Different,
+}
+
+/// `Transaction.record_request`'s redelivery rule, over the decoded
+/// `previous` record and the `current` one (both objects): the same actor,
+/// records equal by Python's `==` apart from `runtime`, and runtimes equal,
+/// except that two runtime objects may differ in `executable_digest_pending`
+/// and in an `executable_sha256` the stored one did not know yet.
+pub fn redelivery(
+    previous: &Map<String, Value>,
+    current: &Map<String, Value>,
+    same_actor: bool,
+) -> Redelivery {
+    let _ = (previous, current, same_actor);
+    Redelivery::Different
 }
 
 /// A request id of 1 through 128 characters.

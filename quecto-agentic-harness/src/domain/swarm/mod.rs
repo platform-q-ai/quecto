@@ -39,7 +39,8 @@ pub use records::{
 };
 pub use telemetry::{BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind};
 pub use usage::{
-    UsageBudget, UsageDecision, UsageTotals, request_measurement, usage_budget_decision,
+    MAX_REQUEST_PAYLOAD_BYTES, MAX_REQUEST_ROWS, Redelivery, UsageBudget, UsageDecision,
+    UsageTotals, redelivery, request_measurement, usage_budget_decision,
 };
 pub use validation::{
     bounded, bounded_text, completion_revision, criteria, edited_criteria, stored_criteria,

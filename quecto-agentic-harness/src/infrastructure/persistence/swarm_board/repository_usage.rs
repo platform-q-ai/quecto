@@ -6,11 +6,13 @@
 //! the report's JSON keys, and `count(cache_read_tokens)` counts the
 //! measured requests alone, so the SQL computes them, never Rust.
 use rusqlite::{OptionalExtension, Row};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use super::repository::{SqliteBoard, cell_at, failed, fetched};
 use super::repository_tasks::loaded;
-use crate::application::swarm::dto::{RecentRequest, UsageReport, UsageRow};
+use crate::application::swarm::dto::{
+    NewRequestUsage, RecentRequest, StoredRequestUsage, UsageReport, UsageRow,
+};
 use crate::application::swarm::ports::BoardUsage;
 use crate::domain::swarm::BoardError;
 
@@ -72,6 +74,30 @@ impl BoardUsage for SqliteBoard<'_> {
             members,
             recent_requests,
         })
+    }
+
+    fn usage_budget(&self) -> Result<Value, BoardError> {
+        Err(BoardError::new("pending #2274"))
+    }
+
+    fn configure_usage_budget(&self, _budget: &Value) -> Result<(), BoardError> {
+        Err(BoardError::new("pending #2274"))
+    }
+
+    fn request_usage(&self, _request_id: &str) -> Result<Option<StoredRequestUsage>, BoardError> {
+        Err(BoardError::new("pending #2274"))
+    }
+
+    fn insert_request_usage(&self, _usage: &NewRequestUsage) -> Result<(), BoardError> {
+        Err(BoardError::new("pending #2274"))
+    }
+
+    fn update_request_usage(&self, _request_id: &str, _record: &Value) -> Result<(), BoardError> {
+        Err(BoardError::new("pending #2274"))
+    }
+
+    fn request_usage_count(&self) -> Result<i64, BoardError> {
+        Err(BoardError::new("pending #2274"))
     }
 }
 

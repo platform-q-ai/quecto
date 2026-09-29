@@ -102,7 +102,9 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   records a float deadline where Python records the integer; and a loss
 ///   event whose detail is not an object, or whose `member` is not text
 ///   (an unhashable list or object included), names no member, where
-///   Python raises.
+///   Python raises. So is (#2274) a stored
+///   request record that is not an object, met by its redelivery, and a
+///   budget without `warned`, met by the budget's warning.
 /// - `real_to_text_digits` (#2269 review M1, pinned by
 ///   `swarm_board::binding_tests`): a float meeting a TEXT column is
 ///   written with the bundled SQLite's digits, which some hosts' libraries
