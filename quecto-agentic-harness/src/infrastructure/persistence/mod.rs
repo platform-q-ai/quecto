@@ -10,6 +10,7 @@ pub mod session_ownership;
 pub mod session_record_read;
 pub mod session_snapshot_sources;
 pub mod session_store;
+pub mod swarm_board;
 
 pub mod session_home_catalogue;
 

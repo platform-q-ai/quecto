@@ -42,6 +42,7 @@ mod issue_1193_completion;
 mod legacy_session_startup;
 mod repl_production;
 mod swarm_agent_loop;
+mod swarm_board_py_json;
 mod swarm_coordination;
 mod swarm_product_contract;
 mod uds_event_reader;
