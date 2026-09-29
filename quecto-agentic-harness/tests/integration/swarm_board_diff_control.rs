@@ -331,6 +331,29 @@ fn a_lost_coordinator_blocks_the_resume() {
     ]));
 }
 
+/// A loss is a `scope_unknown` id above the latest `activated` one, where
+/// a member with no activation counts as activated at id 0 (#2318
+/// mutation report): a loss event a hand edit stored at id 0 or below is
+/// no loss, and one above it is.
+#[test]
+fn a_loss_event_at_id_zero_or_below_is_no_loss() {
+    let event = |id: i64| {
+        sql(&format!(
+            r#"INSERT INTO events(id,actor,time,action,detail) VALUES({id},'supervisor',{NOW},'scope_unknown','{{"member": "parent"}}')"#
+        ))
+    };
+    run_both(&with_worker([
+        at(3.0, "parent", "pause", json!(["hold"])),
+        sql("DELETE FROM events WHERE action='activated'"),
+        event(0),
+        control(4.0, "parent", "_control_status"),
+        event(-1),
+        control(5.0, "parent", "_control_status"),
+        event(1_000),
+        control(6.0, "parent", "_control_status"),
+    ]));
+}
+
 /// Loosely typed reasons and statuses, and members that are not the
 /// coordinator, are refused as Python refuses them.
 #[test]

@@ -75,3 +75,19 @@ fn a_bad_reason_or_an_ended_run_is_refused() {
         (RunTransition::Unchanged, Some("blocked"))
     );
 }
+
+/// Python reads the clock for `started` and again, inside `store.event`,
+/// for the event's time (#2318 review nit): the gate's expiry check reads
+/// it first, so the pause starts at the second reading and is recorded at
+/// the third.
+#[test]
+fn the_pause_is_recorded_at_a_later_reading_than_it_started() {
+    let board = MemoryBoard::with(running_board(100.0));
+    let service = PauseRun::new(board.clone(), SteppingClock::new(&[50.0, 51.0, 52.0]));
+    service.execute(pause("parent", json!("hold"))).unwrap();
+    let events = board.snapshot().events;
+    assert_eq!(
+        (&events[0].detail, events[0].time),
+        (&json!({"reason": "hold", "started": 51.0}), 52.0)
+    );
+}

@@ -73,3 +73,44 @@ fn extensions_are_bounded_and_capped_at_seven_days_ahead() {
         BoardError::new("run is cancelled; nothing to extend")
     );
 }
+
+/// Python reads the clock for the seven-day horizon and again, inside
+/// `store.event`, for the event's time (#2318 review nit), after the
+/// gate's expiry check.
+#[test]
+fn the_extension_is_recorded_at_the_reading_after_its_horizon() {
+    let board = MemoryBoard::with(running_board(100.0));
+    let service = ExtendRunDeadline::new(board.clone(), SteppingClock::new(&[50.0, 51.0, 52.0]));
+    service.execute(extend(json!(60))).unwrap();
+    let extended = board.snapshot().events.last().unwrap().clone();
+    assert_eq!(
+        (&extended.detail, extended.time),
+        (&json!({"seconds": 60, "deadline": 160.0}), 52.0)
+    );
+}
+
+/// `outside_edited_control_records` (#2318 review): a pause start only a
+/// file edited outside the board holds, one that is not a float, diverges.
+/// Python's `max(deadline, started)` keeps an integer start later than the
+/// deadline, so its `extended` event records an integer deadline where
+/// this records the float; and Python counts a boolean start as 0 or 1
+/// where this refuses it naming the record.
+#[test]
+fn a_pause_start_that_is_not_a_float_diverges() {
+    let started = |value: Value| {
+        let mut state = paused(running_board(100.0), 0.0, None);
+        state.events[0].detail = json!({"reason": "hold", "started": value});
+        let board = MemoryBoard::with(state);
+        let service = ExtendRunDeadline::new(board.clone(), SteppingClock::fixed(50.0));
+        (board, service.execute(extend(json!(60))))
+    };
+    let (board, answer) = started(json!(130));
+    answer.unwrap();
+    let extended = board.snapshot().events.last().unwrap().detail.to_string();
+    assert_eq!(extended, r#"{"seconds":60,"deadline":190.0}"#);
+    let (_, answer) = started(json!(true));
+    assert_eq!(
+        answer.unwrap_err(),
+        BoardError::new("the board's pause record is not as the board writes it")
+    );
+}

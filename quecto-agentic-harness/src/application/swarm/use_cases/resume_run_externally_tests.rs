@@ -84,3 +84,21 @@ fn only_a_paused_run_resumes_and_an_instant_pause_is_zero_seconds() {
         BoardError::new("only a paused run may resume")
     );
 }
+
+/// Python reads the clock for the paused interval, again in
+/// `_resume_blockers`, and again inside `store.event` for the event's time
+/// (#2318 review nit), after the gate's expiry check.
+#[test]
+fn the_resume_is_recorded_at_the_reading_after_its_blockers() {
+    let board = MemoryBoard::with(paused(running_board(100.0), 40.0, None));
+    let service =
+        ResumeRunExternally::new(board.clone(), SteppingClock::new(&[60.0, 70.0, 71.0, 72.0]));
+    service.execute("parent").unwrap();
+    let state = board.snapshot();
+    assert_eq!(state.run.unwrap().record.deadline, 130.0);
+    let resumed = state.events.last().unwrap();
+    assert_eq!(
+        (&resumed.detail, resumed.time),
+        (&json!({"paused_seconds": 30.0, "outcome": null}), 72.0)
+    );
+}

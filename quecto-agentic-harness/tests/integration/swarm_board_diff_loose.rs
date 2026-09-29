@@ -84,9 +84,16 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   of objects each carrying `revision` (only an edit holds it) meets
 ///   `verify_task` as a refusal, where Python raises or iterates the value.
 /// - `outside_edited_control_records` (#2273, pinned in
-///   `swarm_board_diff_loose_runs.rs`): a pause record, a usage budget or
-///   a loss event the board never writes is refused naming the record, or
-///   names no member, where Python raises.
+///   `swarm_board_diff_loose_runs.rs` and `extend_run_deadline_tests`): a
+///   pause record whose `started` is not a number (a boolean included), a
+///   usage budget that is not an object or whose limit is not a count, or
+///   usage totals that are not counts (a REAL or negative sum) are refused
+///   naming the record, where Python raises or computes with them; an
+///   integer `started` is read as its float, so an extension from it
+///   records a float deadline where Python records the integer; and a loss
+///   event whose detail is not an object, or whose `member` is not text
+///   (an unhashable list or object included), names no member, where
+///   Python raises.
 /// - `real_to_text_digits` (#2269 review M1, pinned by
 ///   `swarm_board::binding_tests`): a float meeting a TEXT column is
 ///   written with the bundled SQLite's digits, which some hosts' libraries
@@ -577,11 +584,16 @@ fn every_permitted_divergence_is_pinned_by_name() {
 
 /// Divergences pinned outside this suite: the name, the test file's
 /// source and the pinning test in it.
-const EXTERNAL_PINS: [(&str, &str, &str); 6] = [
+const EXTERNAL_PINS: [(&str, &str, &str); 7] = [
     (
         "outside_edited_control_records",
         include_str!("swarm_board_diff_loose_runs.rs"),
         "outside_edited_control_records",
+    ),
+    (
+        "outside_edited_control_records",
+        include_str!("../../src/application/swarm/use_cases/extend_run_deadline_tests.rs"),
+        "a_pause_start_that_is_not_a_float_diverges",
     ),
     (
         "real_to_text_digits",

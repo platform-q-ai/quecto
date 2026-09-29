@@ -45,11 +45,18 @@ fn status_after_the_run_row_is_deleted_is_identical() {
 
 /// `outside_edited_control_records` (#2273), records only a file edited
 /// outside the board holds: a pause record whose `started` is not a
-/// number, or a budget payload that is not an object (or whose token
-/// limit is not a count), is refused naming the record, where Python
-/// raises a `TypeError` (or, for a list payload, answers a budget of the
-/// totals alone); an event detail that is not an object names no member
-/// in the loss scan, where Python raises an `AttributeError`.
+/// number (a boolean included, which Python counts as 0 or 1), a budget
+/// payload that is not an object (or whose token limit is not a count),
+/// or usage totals that are not counts (a REAL or a negative sum) are
+/// refused naming the record, where Python raises a `TypeError` (or, for
+/// a list payload, answers a budget of the totals alone; for a boolean
+/// start or uncounted totals, answers as it computes). An integer
+/// `started` is read as its float, so an extension from it records a
+/// float deadline where Python's records the integer (pinned by
+/// `extend_run_deadline_tests`). An event detail that is not an object,
+/// or whose `member` is not text (a list or an object Python cannot hash),
+/// names no member in the loss scan, where Python raises an
+/// `AttributeError` or a `TypeError`.
 #[test]
 fn outside_edited_control_records() {
     let paused = |edit: &str| {
@@ -80,11 +87,48 @@ fn outside_edited_control_records() {
         ),
         refused("usage budget")
     );
-    let unnamed = paused(
-        r#"INSERT INTO events(actor,time,action,detail) VALUES('x',1.0,'scope_unknown','["parent"]')"#,
+    assert_eq!(
+        paused(r#"UPDATE events SET detail='{"started": true}' WHERE action='paused'"#),
+        refused("pause record")
     );
-    let Outcome::Ok(receipt) = unnamed else {
-        panic!("{unnamed:?}");
+    assert_eq!(
+        paused(concat!(
+            r#"INSERT INTO usage_budget VALUES(1, '{"token_limit": 100, "strict_unknown": false}');"#,
+            "INSERT INTO request_usage(request_id, actor, payload, tokens) VALUES('r', 'parent', '{}', 1.5);",
+        )),
+        refused("usage totals record")
+    );
+    assert_eq!(
+        paused(concat!(
+            r#"INSERT INTO usage_budget VALUES(1, '{"token_limit": 100, "strict_unknown": false}');"#,
+            "INSERT INTO request_usage(request_id, actor, payload, tokens) VALUES('r', 'parent', '{}', -3);",
+        )),
+        refused("usage totals record")
+    );
+    let extended = run_rust(&[
+        create(5),
+        at(1.0, "parent", "pause", json!(["hold"])),
+        sql(&format!(
+            r#"UPDATE events SET detail='{{"started": {}}}' WHERE action='paused'"#,
+            NOW as i64 + 3_700
+        )),
+        at(2.0, "parent", "_extend_deadline", json!([60])),
+    ]);
+    let Outcome::Ok(receipt) = extended else {
+        panic!("{extended:?}");
     };
-    assert_eq!(receipt["resume_blockers"], json!([]), "{receipt}");
+    assert_eq!(receipt["status"], json!("paused"), "{receipt}");
+    for detail in [
+        r#"'["parent"]'"#,
+        r#"'{"member": ["parent"]}'"#,
+        r#"'{"member": {"id": "parent"}}'"#,
+    ] {
+        let unnamed = paused(&format!(
+            "INSERT INTO events(actor,time,action,detail) VALUES('x',1.0,'scope_unknown',{detail})"
+        ));
+        let Outcome::Ok(receipt) = unnamed else {
+            panic!("{detail}: {unnamed:?}");
+        };
+        assert_eq!(receipt["resume_blockers"], json!([]), "{detail}: {receipt}");
+    }
 }

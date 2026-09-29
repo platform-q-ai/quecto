@@ -83,7 +83,11 @@ fn a_paused_runs_blockers_name_the_loss_the_deadline_and_the_budget() {
 
 /// A paused run whose pause was never recorded is refused with Python's
 /// text; records only a file edited outside the board holds are refused
-/// naming the record (`outside_edited_control_records`).
+/// naming the record (`outside_edited_control_records`): a pause start
+/// that is not a number (a boolean included, which Python counts as 0 or
+/// 1), a budget that is not an object or whose limit is not a count, and
+/// usage totals that are not counts (a REAL or a negative sum, which
+/// Python compares with the limit as they are).
 #[test]
 fn missing_and_edited_control_records_are_refused() {
     let mut unrecorded = paused(running_board(40.0), 50.0, None);
@@ -102,10 +106,30 @@ fn missing_and_edited_control_records_are_refused() {
         0,
         0,
     ));
+    let mut true_start = paused(running_board(40.0), 50.0, None);
+    true_start.events[0].detail = json!({"started": true});
+    let uncounted = |total: Value| {
+        let mut state = paused(running_board(40.0), 50.0, None);
+        let mut report = usage(
+            json!({"token_limit": 100, "strict_unknown": false, "warned": false}),
+            0,
+            0,
+        );
+        for (column, value) in &mut report.totals.columns {
+            if column == "observed_tokens" {
+                *value = total.clone();
+            }
+        }
+        state.usage = Some(report);
+        state
+    };
     for (state, record) in [
         (text_start, "pause record"),
+        (true_start, "pause record"),
         (list_budget, "usage budget"),
         (text_limit, "usage budget"),
+        (uncounted(json!(1.5)), "usage totals record"),
+        (uncounted(json!(-3)), "usage totals record"),
     ] {
         assert_eq!(
             read(state, 60.0).unwrap_err(),
