@@ -543,40 +543,57 @@ fn a_claim_rust_draws_serves_python_writers_as_a_python_claim_would() {
 }
 
 /// Retries `call` while the store answers the contended refusal, within a
-/// bound: 25 appends against 7 other writers each wait at most the 500 ms
-/// busy timeout per attempt.
-fn until_uncontended(mut call: impl FnMut() -> Outcome) -> Outcome {
+/// bound, counting each retry in `retries`: 25 appends against 7 other
+/// writers each wait at most the 500 ms busy timeout per attempt.
+fn until_uncontended(
+    retries: &std::sync::atomic::AtomicUsize,
+    mut call: impl FnMut() -> Outcome,
+) -> Outcome {
     const CONTENDED: &str = "coordination store unavailable or contended: database is locked";
     for _ in 0..400 {
         match call() {
-            Outcome::Refused(text) if text == CONTENDED => continue,
+            Outcome::Refused(text) if text == CONTENDED => {
+                retries.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
             answered => return answered,
         }
     }
     panic!("still contended after 400 attempts")
 }
 
+/// Eight writers, half Python and half Rust, append to one file at once
+/// (review L5): they start together, while the test holds the file's write
+/// lock past both sides' 500 ms busy timeout, so the writers are refused
+/// as contended and retry. Nothing is lost or duplicated:
+/// 200 distinct tasks and 200 distinct request ids.
 #[test]
 fn python_and_rust_contend_without_corrupting_the_board() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Barrier};
+    const WRITERS: usize = 8;
     let board = Mixed::running();
     let checkout = board.database.parent().unwrap().to_path_buf();
     let database = board.database.clone();
-    let workers: Vec<std::thread::JoinHandle<()>> = (0..8)
+    let start = Arc::new(Barrier::new(WRITERS + 1));
+    let retries = Arc::new(AtomicUsize::new(0));
+    let workers: Vec<std::thread::JoinHandle<()>> = (0..WRITERS)
         .map(|writer| {
             let (database, checkout) = (database.clone(), checkout.clone());
+            let (start, retries) = (start.clone(), retries.clone());
             std::thread::spawn(move || {
                 let scratch = tempfile::tempdir().expect("a directory for the driver");
                 let mut python =
                     (writer % 2 == 0).then(|| PyBoard::start(&database, &checkout, scratch.path()));
                 let rust = RustBoard::open(&database, &checkout);
+                start.wait();
                 for task in 0..25 {
                     let args = json!([
                         format!("w{writer}-{task}"),
-                        format!("task {task}"),
+                        format!("writer {writer} task {task}"),
                         ["done"]
                     ]);
                     let now = NOW + 10.0 + f64::from(task);
-                    let answered = until_uncontended(|| match python.as_mut() {
+                    let answered = until_uncontended(&retries, || match python.as_mut() {
                         Some(python) => {
                             python.call("parent", "task_create", &args.to_string(), now)
                         }
@@ -590,14 +607,35 @@ fn python_and_rust_contend_without_corrupting_the_board() {
             })
         })
         .collect();
+    // Every writer's first append meets the lock held past its timeout.
+    let holder = Connection::open(&database).expect("open the shared board");
+    holder
+        .execute_batch("BEGIN IMMEDIATE")
+        .expect("take the write lock");
+    start.wait();
+    std::thread::sleep(std::time::Duration::from_millis(1_200));
+    holder
+        .execute_batch("COMMIT")
+        .expect("release the write lock");
     for worker in workers {
         worker.join().expect("a writer finished");
     }
+    assert!(
+        retries.load(Ordering::SeqCst) >= 1,
+        "the writers met the held lock, were refused as contended and retried: {} retries",
+        retries.load(Ordering::SeqCst)
+    );
     let count = |sql: &str| board.stored_text(sql);
     assert_eq!(count("SELECT CAST(count(*) AS TEXT) FROM tasks"), "200");
     assert_eq!(
-        count("SELECT CAST(count(DISTINCT id) AS TEXT) FROM tasks"),
-        "200"
+        count("SELECT CAST(count(DISTINCT title) AS TEXT) FROM tasks"),
+        "200",
+        "every append is its own task"
+    );
+    assert_eq!(
+        count("SELECT CAST(count(DISTINCT request) AS TEXT) FROM requests WHERE request LIKE 'w%'"),
+        "200",
+        "every append's request id recorded once"
     );
     assert_eq!(board.events("task_created"), "200");
     assert_eq!(count("PRAGMA integrity_check"), "ok");
