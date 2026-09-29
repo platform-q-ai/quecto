@@ -201,12 +201,12 @@ async fn embedded_swarm_manual_teaches_types_limits_and_terminal_reporting() {
         .unwrap();
     assert!(!result.is_error, "{}", result.content);
     for required in [
-        "list[str]",
-        "RLIMIT_NPROC",
+        "nonempty list of strings",
+        "\"op\":\"claim\"",
         "bash",
         "accepted",
         "op=summary",
-        "workspace-relative",
+        "coordination store missing at <path>",
     ] {
         assert!(result.content.contains(required), "manual lacks {required}");
     }

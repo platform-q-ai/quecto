@@ -1,11 +1,11 @@
-# Swarm workbench
+# Swarm coordination
 
-`swarm` replaces `python_lab`. It is a compiled native tool using the existing
-isolated Python execution, output artifacts, resource limits and cancellation
-machinery. There is one tool surface. Existing `tools.python_lab` limits remain
-accepted as a configuration alias for `tools.swarm`; serialization uses the new
-name. Update tool policy names and saved prompts to `swarm`. Supplying both
-configuration keys is an error rather than silently choosing one.
+`swarm` is a compiled native tool: members coordinate through structured board
+ops (`{"op":"claim","task_id":3}`), each served in-process by the Rust board
+over the run's SQLite file (ADR-0030). Members use the `bash` tool for Git,
+builds, tests and any other computation. `tools.swarm` (with its old alias
+`tools.python_lab`) still configures the legacy Python execution op, which
+issue #2282 removes; members are not taught it and should not use it.
 
 ## Start from the TUI or master agent
 
@@ -31,8 +31,7 @@ service. Workers are then spawned by the coordinator with `container`
 omitted (a local spawn inside the shared container). **Only the official
 isolated-PID Docker/Podman adapter (`scripts/container-runtime/docker`) can
 host a swarm**; the host-local reference scripts (`scripts/container-runtime/*.sh`)
-cannot, and neither can the host. Use an image with the current harness and
-Python 3. See [container configuration](../../docs/container-runtimes.md)
+cannot, and neither can the host. Use an image with the current harness. See [container configuration](../../docs/container-runtimes.md)
 and [subagent control](subagents.md). Agents can load `docs {"name":"swarm"}`
 without the documentation files being present in the container checkout.
 
@@ -42,7 +41,7 @@ without the documentation files being present in the container checkout.
 |---|---|
 | Agent/container status | Existing TUI agent views or `agent_cmd` inventory/state commands |
 | Goal, criteria, task progress, blockers and evidence | Ask the coordinator to call `swarm {"op":"summary"}` and report the result |
-| Detailed live task/file pages | Coordinator uses `board.tasks()` / `board.file_owners()` while the run is running |
+| Detailed live task/file pages | Coordinator uses `swarm {"op":"tasks"}` / `swarm {"op":"file_owners"}` (`offset`, `limit`) while the run is running |
 | Coordinator report | Master reads `agent_cmd.get_messages` using the coordinator's returned agent UUID |
 | Final result | A run that ended is `paused` holding `summary.outcome` (`succeeded`, `blocked`, `failed`, `budget-exhausted`) and `summary.outcome_reason`; read the final revision and criterion evidence, then resume or close it with `swarm_control` |
 | Evidence files | Ask the coordinator to export them using ordinary file/Bash tools before environment teardown |
@@ -52,14 +51,13 @@ endpoints, and no swarm dashboard/config panel in this change. Existing UDS agen
 supervision carries prompts and reports; it does not expose the durable board as
 a structured event feed. That public interface is follow-on work.
 
-On a wake hint, inspect summary first. After a terminal outcome, `op=summary`
-remains readable but `op=run` is closed: do not request inbox reads or acknowledgments
-through Python. Keep the coordinator available for final reporting and export.
-Returned execution artifact paths are workspace-relative inside the container;
-join them to `artifact_base`, preserve them through the normal environment file
-transport, and do not assume they are host paths. Record the tested commit and
-binary build identity with important reports. Container deletion and execution
-artifact pruning can remove evidence; board persistence is not an export.
+On a wake hint, inspect summary first. Once the run is no longer running,
+`op=summary`, `op=events` and `op=usage` remain readable but every board op is
+refused, `inbox` and `ack` included: do not request inbox reads or
+acknowledgments then. Keep the coordinator available for final reporting and
+export. Record the tested commit and binary build identity with important
+reports. Container deletion can remove evidence; board persistence is not an
+export.
 
 ## Container and membership
 
@@ -99,13 +97,13 @@ entrypoints, or spawning descendants does not establish a new run budget.
 Nested container launches are rejected: no agent inside an isolated-PID
 (swarm-capable) container, swarm member or not, may start another container;
 it spawns local sub-agents. An existing run cannot be reset through
-the helper API. This bounds harness-managed agents, not arbitrary subprocesses
+the board ops. This bounds harness-managed agents, not arbitrary subprocesses
 or direct provider API calls. Provider inference admission is separate (#1679).
 
 Launch reservations precede process launch. Only reservations for processes that
 never started are released automatically. Launched processes are identified by
 PID and kernel start time, avoiding recycled-PID mistakes. `op=reconcile` detects
-harness death, but a dead harness does **not** prove that its Bash/Python execution
+harness death, but a dead harness does **not** prove that its Bash execution
 groups stopped: those children can survive and be reparented. Therefore a running
 run pauses holding `failed` (a paused run keeps its pause clock and any verdict
 the coordinator had already proposed), membership and file ownership stay
@@ -129,7 +127,7 @@ harness that spawned a member owns its process, and when that process exits
 (on its own, or because the coordinator ended it with `agent_cmd kill`, or a
 launch was rolled back after the child exited) the exit is authoritative for
 the member's harness. The member is confirmed dead, its active tasks block for
-`recover(task_id)`, and the run keeps running. What happens to its file
+`recover`, and the run keeps running. What happens to its file
 reservations depends on how it ended, because reservations are cooperative and
 Bash tool children run in their own process groups: an **orderly** end (an exit
 code, a protocol shutdown, a delegated kill, or a fallback signal this harness
@@ -141,19 +139,98 @@ the OOM killer, an operator — or an unobservable exit) may leave an orphaned
 retained, the tasks read `worker death confirmed (abrupt exit; reservations
 retained); coordinator recovery required`, and the `death_confirmed` event
 carries `reservations_retained` and the reason. The coordinator decides:
-`revoke(task_id, reason)` frees them and records why, or
-`recover(task_id, release_files=True)` frees them explicitly; a plain `recover`
+`revoke` (`task_id`, `reason`) frees them and records why, or
+`recover` with `"release_files":true` frees them explicitly; a plain `recover`
 refuses while they are retained. Only a harness death nobody observed this way
 (a socket loss, a vanished pid of a member this harness did not launch) is the
 conservative quarantine above; a socket loss alone never confirms a death.
 Neither idle time nor a worker's completion message frees a slot.
 
-## Packaged API
+## Board ops
 
-Each `op=run` starts a fresh `python3 -I` process. The harness loads compiled-in
-helper sources directly and binds the invoking member; neither `PYTHONPATH` nor
-an importable file in the checkout controls the helper. Python variables do not
-persist. The SQLite board does.
+The board is Rust, in the harness process (ADR-0030): its policy is
+`src/domain/swarm/`, its use cases `src/application/swarm/use_cases/`, and its
+store the rusqlite adapter in `src/infrastructure/persistence/swarm_board/`,
+over the same SQLite file, schema, pragmas, rollback journal and
+`BEGIN IMMEDIATE` transactions the Python board used, so boards it created
+keep working. No interpreter or worker process serves it: each call opens a
+connection, runs its transactions and answers.
+
+Members reach it through the `swarm` tool's structured ops. Each op is the
+former Python `board.<method>` of the same name, with the same arguments (as
+named JSON fields, with the same defaults) and the same JSON result: only the
+calling syntax changed, `{"op":"claim","task_id":3}`. `swarm_board_ops.rs`
+(`BOARD_OPS`) is the one table of them; the tool schema and the dispatcher's
+argument binding are rendered from and held to it.
+
+| Op | Fields (JSON types; defaults) | Result | Who |
+|---|---|---|---|
+| `task` | `task_id` integer | task, with owner liveness | any member |
+| `tasks` | `offset` integer (0), `limit` integer 1–100 (50) | list of tasks | any member |
+| `file_owners` | `offset` integer (0), `limit` integer 1–100 (50) | list of file reservations | any member |
+| `task_create` | `request` string, `title` string, `acceptance` nonempty list of strings, `dependencies` list of task ids (`null`) | task (replayed on a retry) | any member |
+| `dependencies` | `task_id` integer, `dependencies` list of task ids | `null` | any member |
+| `claim` | `task_id` integer | task with its claim `token` | any member |
+| `release` | `task_id` integer, `token` string | `null` | the owner |
+| `block` | `task_id` integer, `token` string, `reason` string | `null` | the owner |
+| `unblock` | `task_id` integer, `token` string, `reason` string | `null` | the owner |
+| `submit` | `task_id` integer, `token` string, `evidence` list of `{artifact, revision}` | `null` | the owner |
+| `reserve` | `task_id` integer, `token` string, `paths` list of strings | `{token, paths}` | the owner |
+| `release_files` | `task_id` integer, `token` string, `reservation` string | `null` | the owner |
+| `send` | `request` string, `recipient` member id, `body` string, `revision` string (`null`), `supersedes` message id (`null`) | `{id, status}` | any member |
+| `withdraw` | `message_id` integer | `null` | the sender |
+| `inbox` | `include_consumed` boolean (`false`) | list of messages | any member |
+| `ack` | `message_id` integer | `null` | the recipient |
+| `evidence` | `criterion` string, `artifact` string, `revision` string, `kind` `command` or `review`, `passed` boolean | `null` | any member (a worker's is a proposal) |
+| `amend` | `goal` string, `constraints` list of strings, `criteria` list of `{id, kind, description}`, `reason` string | `null` | coordinator |
+| `verify_task` | `task_id` integer, `token` string, `revision` string | `null` | coordinator |
+| `revalidate_task` | `task_id` integer, `revision` string, `evidence` list of `{artifact, revision}` | `null` | coordinator |
+| `recover` | `task_id` integer, `release_files` boolean (`false`) | `null` | coordinator |
+| `revoke` | `task_id` integer, `reason` string | task | coordinator |
+| `complete` | `revision` string | `null` | coordinator |
+| `stop` | `status` string, `reason` string | control receipt | coordinator |
+| `usage_report` | none | usage report (as `op=usage`) | any member |
+
+Where a board method already had a harness op, the harness op is it:
+`summary` (`since`), `events` (`after`, `limit`), `pause` (`reason`),
+`resume` (refused for every member), `usage_budget` (`token_limit`,
+`strict_unknown`) and `usage`. `create` stays the harness op (it creates,
+activates and supervises the run, and takes `deadline_in_seconds`); the
+board's own `create` is not exposed. `reconcile` and `cancel_run` are
+harness ops too.
+
+How an op is served:
+
+1. **Member input.** The call's text is read as Python's `json.loads` reads
+   it (`-0` is the integer 0, a repeated key keeps its last value). A value
+   the board's JSON value cannot hold exactly is refused before the board,
+   never coerced: an integer outside i64 and u64 (`18446744073709551616`), a
+   number with no finite value (`NaN`, `Infinity`, `1e400`) and a string
+   holding a lone surrogate (`"\ud800"`). The refusal is
+   `swarm: "arguments: not representable as a serde_json value: <why>"`, and
+   its `swarm_op` record has kind `invalid`. These are inputs Python took (or
+   read) but the board refuses; the differential suite lists them as
+   permitted divergences.
+2. **Binding.** Fields bind by name, as the Python signature binds them: a
+   missing required field (`claim: missing required argument task_id`) and a
+   field the op does not take (`claim: unexpected argument id`) are refused
+   as calling errors (kind `calling`). Loosely typed values the Python board
+   accepted, such as a string task id SQLite's affinity matches, behave as
+   they did.
+3. **The running gate.** A board op is refused unless the run is `running`
+   and within its deadline (owner decision, 2026-09-28: the gate the Python
+   `run` op had), with guidance naming what is allowed now (`summary`,
+   `events`, `usage`). This covers reads, `inbox`, `ack` and `withdraw` too.
+4. **The call and its lifecycle.** A mutating op reads the board's event
+   cursor before and after its call. When the cursor moved, the harness sends
+   the wake hints, or settles the run when it no longer runs. A hint that
+   failed rides the answer as `notification_warnings`, and a failure of this
+   step as `coordination_error` (beside a non-object answer as `result`). The
+   read-only ops (`task`, `tasks`, `file_owners`, `inbox`, `usage_report`)
+   skip this step.
+5. **The answer** is written as Python's `json.dumps` writes it (insertion
+   order, `", "` and `": "` separators, `ensure_ascii`, float `repr`). A board
+   refusal keeps the board's exact text, as `swarm: "<message>"`.
 
 The board lives in the checkout's own git directory: `.git/quecto/swarm.sqlite`,
 or a linked worktree's git directory. Git's work-tree commands never touch it
@@ -165,39 +242,35 @@ has found its board it keeps that path: a layout changed mid-run (`git init`, a
 git directory created or removed) never moves a live board. A board deleted
 from under a run cannot be recreated: every call then fails with
 `coordination store missing at <path>`, and a member joining later is refused.
-Execution artifacts live beside the board (`.git/quecto/swarm/`, or
-`.quecto/swarm/` without a git directory), out of git's reach too: a live run's
-evidence survives `git clean -fdx`.
 
-```python
-from swarm import board
+A worked sequence, one call per line:
 
-summary = board.summary()
-task = board.task_create("implement-v1", "Implement the behavior", ["Acceptance tests pass"], [])
-claim = board.claim(task["id"])
-files = board.reserve(task["id"], claim["token"], ["src/feature.rs", "tests/feature.rs"])
-# Use existing tools to implement and test. Store large output as artifacts.
-board.submit(task["id"], claim["token"], [
-    {"artifact": "evidence/acceptance.log", "revision": "the-exact-commit-or-artifact-digest"}
-])
+```json
+{"op":"summary"}
+{"op":"task_create","request":"implement-v1","title":"Implement the behavior","acceptance":["Acceptance tests pass"],"dependencies":[]}
+{"op":"claim","task_id":1}
+{"op":"reserve","task_id":1,"token":"<claim token>","paths":["src/feature.rs","tests/feature.rs"]}
+{"op":"submit","task_id":1,"token":"<claim token>","evidence":[{"artifact":"evidence/acceptance.log","revision":"the-exact-commit-or-artifact-digest"}]}
 ```
 
-`task(id)` reads a task. `tasks(offset=0, limit=50)` and
-`file_owners(offset=0, limit=50)` page the board (maximum page size 100). `dependencies(id, ids)` edits dependencies before
-claiming; missing, self and cyclic dependencies fail. Ready tasks are claimed
-atomically. Unmet dependencies and explicit `block(id, token, reason)` remain
-visible as blockers. `release(id, token)` returns owned work and files to the
-board. A fresh claim has a new token; stale tokens cannot submit, release or
+Between `reserve` and `submit`, implement and test with the existing tools,
+and store large output as artifacts.
+
+`task` reads a task. `tasks` and `file_owners` page the board (`offset`,
+`limit`; maximum page size 100). `dependencies` edits a task's dependencies
+before it is claimed; missing, self and cyclic dependencies fail. Ready tasks
+are claimed atomically. Unmet dependencies and an explicit `block` remain
+visible as blockers. `release` returns owned work and files to the board. A fresh claim has a new token; stale tokens cannot submit, release or
 complete reassigned work. `task_create` and `send` use request IDs for retry
 idempotency; reusing an ID with a different payload is an error. Identical
 submission and verification retries do not repeat their transitions.
 
 File sets are reserved all at once or not at all. Paths resolve inside the shared
 checkout, including symlink aliases and not-yet-created files.
-`release_files(task_id, claim_token, reservation_token)` cannot remove a newer
-owner's reservation. Only the coordinator may `recover(task_id)`, once the
-owner's death is confirmed by the harness that launched it (above), and only
-the coordinator may `revoke(task_id, reason)`: it takes a claim back from an
+`release_files` (`task_id`, the claim `token`, the `reservation` token)
+cannot remove a newer owner's reservation. Only the coordinator may `recover`
+a task, once the owner's death is confirmed by the harness that launched it
+(above), and only the coordinator may `revoke` one (`task_id`, `reason`): it takes a claim back from an
 owner that will not finish, alive or not, on a claimed, blocked or submitted
 task. The task returns to `ready` with no owner, token, blocker or evidence,
 its file reservations go, a `revoked` event records the reason and previous
@@ -206,7 +279,7 @@ later learns its claim is gone (its next owned call fails with `stale or
 unowned claim`). Revoking an unowned task is a no-op returning the task. There
 are no expiring ownership leases.
 
-A claimed, blocked or submitted task row (`task(id)`, `tasks()`, the summary's
+A claimed, blocked or submitted task row (`task`, `tasks`, the summary's
 first 50 tasks) also says how its owner is doing, read side only (#1969).
 `owner_last_activity` is the number of seconds since the owner's most recent
 board event by the store clock. `owner_state` is the store's affirmative view
@@ -216,7 +289,7 @@ launched it confirmed its exit; `lost` when its harness loss was recorded
 was admitted but never launched; `active` or `idle` only for a live launched
 member, `idle` meaning it has written no board event for 300 seconds; and
 `unknown` for anything else. An `active` or `idle` owner is named as a `send`
-recipient in `contact` (`board.send(request, '<owner id>', body)`); for every
+recipient in `contact` (`{"op":"send","request":...,"recipient":"<owner id>","body":...}`); for every
 other owner `contact` is null and `recovery` says how the coordinator moves the
 work (`recover(task) or revoke(task, reason)` for a dead owner; resume the run,
 then `revoke`, for a lost one). Board activity is the only liveness the store
@@ -227,41 +300,43 @@ automatically. A provider suspension is a harness fact the board cannot see;
 that. Unowned tasks carry none of these fields. The summary's `counts` add
 `members_without_claim` (live or reserved members other than the coordinator
 holding no active claim) and `members_dead`. Because an owner turns idle by
-the clock alone, with no event to move the cursor, `summary(since=cursor)`
+the clock alone, with no event to move the cursor, `{"op":"summary","since":<cursor>}`
 returns a full summary rather than `unchanged` while an owner is idle who was
 not at the time of the cursor's event, and both responses carry
 `next_liveness_check_at`, the store-clock instant the earliest active owner
 would turn idle (null when none would), so a caller knows when to look again.
 
-These are **cooperative reservations**, not mandatory locks: Bash and arbitrary
-Python can bypass them. The container is the external containment boundary,
-not a security boundary between same-user workers. Do not construct a different
-`Workbench`, call underscore lifecycle methods, edit SQLite, or bypass file
+These are **cooperative reservations**, not mandatory locks: Bash can bypass
+them. The container is the external containment boundary, not a security
+boundary between same-user workers. Do not edit SQLite or bypass file
 ownership. Only the designated integrator changes branches, commits, or integrates
 changes in the shared checkout. Concurrent Git merge automation is not provided.
 
 ## Messages and waking
 
-Use stable member IDs from `summary()["members"]`:
+Use stable member IDs from the summary's `members`:
 
-```python
-board.send("schema-question-v1", recipient_id, "Blocked: which schema version should I use?")
-for message in board.inbox():
-    print(message)
-    board.ack(message["id"])
+```json
+{"op":"send","request":"schema-question-v1","recipient":"<member id>","body":"Blocked: which schema version should I use?"}
+{"op":"inbox"}
+{"op":"ack","message_id":7}
 ```
+
+Read each message the inbox answers, then acknowledge it by its `id`.
 
 Any member may message any other member directly; nothing routes through the
 coordinator. A question about a task you depend on belongs with that task's
 owner, which its row names as `contact`. Messages are `accepted` when durable
-and `consumed` when acknowledged. Neither means work completed. `inbox(include_consumed=True)` also reads consumed history.
-A message may carry the `revision` it is about, and `send(..., supersedes=id)`
-retires your own earlier unread message to the same recipient in the same
-transaction; `withdraw(id)` retires one without a replacement. Retired messages
+and `consumed` when acknowledged. Neither means work completed. `{"op":"inbox","include_consumed":true}` also reads consumed history.
+A message may carry the `revision` it is about, and `send` with `supersedes`
+(a message id) retires your own earlier unread message to the same recipient
+in the same transaction; `withdraw` (`message_id`) retires one without a
+replacement. Retired messages
 leave the inbox and produce no further wake, but stay in the audit as
-`superseded` (with `superseded_by`) or `withdrawn` (#1837). Sending needs a
-running run; `withdraw`, like `ack`, is bookkeeping and also works while the run
-is paused. These are vocabulary the members may use; nothing requires them.
+`superseded` (with `superseded_by`) or `withdrawn` (#1837). The board itself
+lets `withdraw` and `ack`, as bookkeeping, through while the run is paused,
+but the tool's running gate refuses every board op then (above), so through
+`swarm` they too need a running run. These are vocabulary the members may use; nothing requires them.
 Messages are at most 8192 UTF-8 bytes; each inbox admits at most 100 unconsumed
 messages. Unknown/dead recipients and full inboxes fail explicitly. The board
 bounds tasks to 1000 and request-ledger entries to 10000 per run. Store large data
@@ -280,22 +355,23 @@ Workers submit evidence references. Once submitted, those references are immutab
 under the claim token (identical retries are harmless). To revise rejected evidence,
 release and reclaim the task, then submit with the new token so an earlier review
 cannot verify the replacement. A submitted task cannot be changed to blocked. Only the coordinator can verify submitted
-tasks with `verify_task(id, claim_token, revision)`, accept evidence using
-`evidence(criterion, artifact, revision, kind, passed)`, and `complete(revision)`.
+tasks with `verify_task` (`task_id`, the claim `token`, `revision`), accept
+evidence using `evidence` (`criterion`, `artifact`, `revision`, `kind`,
+`passed`), and `complete` (`revision`).
 A worker's `evidence` call records an unaccepted submission. A coordinator must
 actually inspect command results and obtain the required independent/human
-review before accepting them; the helper does not execute tests or act as an
+review before accepting them; the board does not execute tests or act as an
 independent reviewer. `command` and `review` evidence are distinguished.
 
 Completion requires accepted evidence for every original criterion at the
 specified revision, completed tasks with matching evidence revisions, and no
 remaining file reservations. When later dependent work advances the checkout,
 the coordinator reruns the earlier task's checks, then calls
-`revalidate_task(id, final_revision, fresh_evidence)`. This requires a completed
+`revalidate_task` with the final `revision` and fresh `evidence`. This requires a completed
 task and nonempty artifact evidence matching that revision; it records both old
 and new evidence in the audit. Workers cannot revalidate. Existing evidence is
 never silently relabeled. Submitted tasks, idle agents and an empty queue do
-not prove success. `amend(goal, constraints, criteria, reason)` is coordinator-only,
+not prove success. `amend` (`goal`, `constraints`, `criteria`, `reason`) is coordinator-only,
 records the reason and complete before/after goal, constraints and criteria, and
 invalidates prior overall evidence. The creation event preserves the original
 contract. Existing audit events from older versions are not retroactively reconstructed.
@@ -304,19 +380,17 @@ contract. Existing audit events from older versions are not retroactively recons
 blockers and evidence. History is opt-in through `op=events` (`after`, `limit` 1–100); `since=event_cursor` suppresses unchanged summary payloads. Total counts include
 entries beyond the first page. File reservations are bounded to 1000 per run. The full
 audit remains in SQLite. Every end of a run is a resumable pause that only the
-supervisor outside the swarm lifts (#1729): `stop(status, reason)` with
-`blocked`, `failed` or `budget-exhausted`, `complete(revision)` (`succeeded`),
+supervisor outside the swarm lifts (#1729): `stop` with `status`
+`blocked`, `failed` or `budget-exhausted`, `complete` (`succeeded`),
 an observed-token budget and the wall-clock deadline all move the run to
 `paused` holding that outcome and reason (`summary.outcome`,
 `summary.outcome_reason`, the control receipt's `outcome`). Nothing is killed:
 members stay live with their claims, reservations, inboxes and evidence; their
 execution and inference suspend as for any pause, while the coordinator keeps
-reporting (native `summary`, `events`, `usage`; its own finished interpreter is
-cancelled). The supervisor then either resumes the same run (`swarm_control
+reporting (native `summary`, `events`, `usage`). The supervisor then either resumes the same run (`swarm_control
 resume`, which extends the deadline by the paused time, clears the outcome and
 wakes every member) or closes it (`swarm_control close`), which makes the held
-outcome terminal and settles: local Python is cancelled everywhere, and each
-member is ended by the harness that launched it (#2121), which records the
+outcome terminal and settles: each member is ended by the harness that launched it (#2121), which records the
 end as deliberate first, so a close posts no "exited unexpectedly" notes. The
 coordinator also ends members whose launcher is gone. Any other member only
 stops its own work and waits. If the coordinator's harness is gone, each
@@ -336,17 +410,9 @@ or `usage_budget`); the refusal names what to grant. Members, including the
 coordinator's `swarm {"op":"resume"}`, cannot resume or close a run. Only
 `cancelled` (`op=cancel_run`, the parent cancellation operation) is terminal at
 once. Put final report data on the board before calling `complete` or `stop`:
-the interpreter that proposes the outcome is cancelled as soon as the watcher
-observes it, and the execution registry admits nothing but native reads until
-the supervisor resumes the run (it closes for good only on close or cancel). Each Python invocation owns
-its ordinary process group until cleanup: even if Python returns first, remaining
-ordinary children are terminated before its result is published. On Linux, the
-interpreter is reaped only after group cleanup, preventing PID reuse during
-termination. Timeout and dropped-invocation cleanup follow the same rule.
-With operator-configured subprocess permissions, wait/join children whose work
-must finish. Background mode makes the invocation asynchronous; it does not let
-children outlive the invocation. This does not add containment for intentional
-process-group/session escapes.
+once the run holds its outcome, every board op is refused and only the native
+reads (`summary`, `events`, `usage`) answer until the supervisor resumes the
+run (it closes for good only on close or cancel).
 Reconciliation preserves readable partial progress and retains uncertain ownership. Keep the coordinator available to report to the parent.
 
 A swarm container lives as long as its swarm, and no longer (#1924, #2070).
@@ -416,68 +482,62 @@ the surviving store is not wired yet; a join into the retained environment is
 admitted for inspection but does not revive it.
 
 The required run budget is wall-clock time. A harness timer supervises the deadline
-even when agents are idle, and Python execution timeouts cannot exceed the remaining
-run time (one-second timeout granularity). There is no turn cap. An optional observed-token budget can durably pause admission; it does not cancel already billed usage or guarantee a provider-side spending cap.
-The helper holds no SQLite transaction across model/tool execution or lifecycle
+even when agents are idle. There is no turn cap. An optional observed-token budget can durably pause admission; it does not cancel already billed usage or guarantee a provider-side spending cap.
+The board holds no SQLite transaction across model/tool execution or lifecycle
 notifications. SQLite uses short immediate transactions and a bounded contention
 timeout, on a suitable **local filesystem** only. Corrupt, missing or locked state
 fails explicitly; it never creates a replacement board or bypasses admission.
 
-Execution artifacts remain under `<board directory>/swarm/<execution_id>/` (e.g.
-`.git/quecto/swarm/<execution_id>/`) with the existing
-32-finished-directory retention limit per tool instance. Execution IDs carry an
-opaque owner prefix; pruning only touches that registry’s directories and excludes
-its live executions. Other members’ output and directories from previous tool
-instances are retained until explicitly exported/cleaned or the environment is
-discarded. The sibling `.quecto/swarm.sqlite` database is never
-pruned with those artifacts. Container destruction remains destructive unless the
-user preserves its storage; cross-container recovery is not provided.
+Container destruction remains destructive unless the user preserves its
+storage; cross-container recovery is not provided.
 
 ## Architecture boundaries
 
-The packaged Python domain (`src/domain/swarm_policy.py`) owns authorization,
-deadline, admission, completion, and revalidation decisions without I/O.
-Application use cases (`src/application/swarm_use_cases.py`) depend on an atomic
-coordination repository and injected clock. SQLite implements that port; admission
-checks and reservation writes share the same immediate transaction. SQL-facing
-workbench/task adapters retain dispatch and the existing task implementation.
-The board is moving to Rust (#2265): `src/domain/swarm/policy.rs`,
-`records.rs` and `validation.rs` port that policy with identical decisions and
-error text; `notification.rs`, `owner.rs` and `usage.rs` port the
-wake-notification, owner-liveness and usage-budget decisions (#2267). The
-Python board stays the one in use until the harness switches over.
+The board is one bounded context in Rust (ADR-0030), with dependencies pointing
+inward:
 
-The Rust domain (`src/domain/swarm/mod.rs`) holds the typed membership, process
-identity and outcome vocabulary; the coordination, run-control, process control
-and clock ports are the swarm capability's (`src/application/swarm/ports.rs`),
-and `src/application/swarm/mod.rs` owns reconciliation and settlement sequencing. Infrastructure handles Python wire decoding, Linux
-identity checks, UDS commands, cancellation registries and timer scheduling. Pure
-policy/fake-port tests supplement the real SQLite and process integration tests.
+- **Domain** (`src/domain/swarm/`): the value records, `BoardError` with its
+  stable `RefusalKind`, and the pure policy (`policy.rs`, `validation.rs`,
+  `dependencies.rs`, `notification.rs`, `owner.rs`, `usage.rs`,
+  `telemetry.rs`): authorization, deadline, admission, completion,
+  revalidation, wake-notification, owner-liveness and usage-budget decisions,
+  without I/O. `mod.rs` also holds the membership, process identity and
+  outcome vocabulary.
+- **Application** (`src/application/swarm/`): the capability's role-segregated
+  ports (`ports.rs`: the board repository and its transaction's role ports,
+  the id source, checkout paths, and the run-control, process control and
+  clock ports), one use case per board method (`use_cases/`), their
+  request/response types (`dto/`), the shared `board_*.rs` helpers, and
+  reconciliation and settlement sequencing (`mod.rs`).
+- **Infrastructure**: the rusqlite store and the SQL implementation of the
+  ports (`persistence/swarm_board/`: the verbatim schema, pragmas,
+  `BEGIN IMMEDIATE` transactions and the Python-compatible JSON codec), the
+  checkout-path adapter (`workspace/checkout_paths.rs`), and the tool
+  adapters (`tools/swarm_board_dispatch.rs`, the method-name dispatch;
+  `tools/swarm_board_ops.rs`, the structured ops; `tools/swarm_bridge.rs`,
+  the harness's own calls). Linux identity checks, UDS commands and timer
+  scheduling stay infrastructure too.
+- **Composition** (`src/composition/swarm.rs`) is the only place the board's
+  use cases and adapters are built; the interface only holds and passes the
+  handles.
 
-## Python execution policy and agent guidance
+Pure policy and fake-port tests supplement the real SQLite tests and the
+differential suite, which runs every operation sequence against the Python
+board and the Rust one and compares results, stored rows and errors until the
+Python board is deleted (#2283).
 
-The default `tools.swarm.max_processes` remains `1`, applied as `RLIMIT_NPROC`
-to the Python execution process. Child launches such as `subprocess.run` can
-therefore fail with `EAGAIN` even when the container has free capacity. This is
-an execution-policy restriction; it is not a one-agent membership limit or a
-measurement of container exhaustion. Privileged processes may be exempt from
-this OS limit. A matching default-limit error includes an actionable diagnostic.
-Use the existing Bash tool for Git, checks and other external commands under its
-configured policy; Python remains suitable for in-process computation and board
-coordination. Agent code must not raise or bypass the configured limit.
+## Agent guidance
 
 `docs {"name":"swarm"}` serves a compiled-in manual from any working directory,
-including a container without the product source checkout. It documents typed
-arguments, examples, bounds, common errors, evidence proposals versus acceptance,
-and terminal inspection/export. Task acceptance is a nonempty `list[str]`;
-message bodies are strings. Worker `evidence` calls are proposals (`accepted=0`),
-not coordinator acceptance.
-
-All returned artifact references share a `workspace-relative` namespace with an
-explicit `artifact_base` naming the container execution workspace. Resolve status,
-output and spill paths against that base, not against the first `.quecto`
-component of a surrounding container-environment path. Host consumers need the
-container's normal artifact transport, not reinterpretation as a host path.
+including a container without the product source checkout. It is the members'
+API reference: one runnable example per board op, with exactly the op's
+fields and values of the schema's types, plus bounds, the member-input rule,
+common errors, evidence proposals versus acceptance, and terminal
+inspection/export. Task acceptance is a nonempty list of strings; message
+bodies are strings. Worker `evidence` calls are proposals (`accepted=0`), not
+coordinator acceptance. Members use the Bash tool for Git, checks, computation
+and other external commands under its configured policy; they must not raise
+or bypass configured limits.
 
 Wake hints are selected from the invoking member's actionable events and coalesced
 using a durable per-actor cursor. Reading the board, acknowledging messages and
@@ -501,8 +561,9 @@ its claim: its release hands the task on. The cursor advances atomically before 
 notification, so a failed hint is reported but not endlessly retried; the durable
 board/inbox remains authoritative. Terminal runs generate no new actionable hints.
 Already queued hints instruct the recipient to inspect `op=summary` first and,
-if terminal, avoid Python inbox/ack calls while remaining available for parent
-requests and artifact export.
+once the run no longer runs, not to call `inbox` or `ack` (the running gate
+refuses them) while remaining available for parent requests and artifact
+export.
 
 ## Workflow exclusion and awaiting approval
 
@@ -523,11 +584,12 @@ a bound spec) is not torn down, so create the run before spawning members. A
 host-local master may still use a workflow to supervise the swarm.
 
 For a clarification or approval, keep the run **running**, mark the affected task
-with `board.block(task_id, claim_token, reason)`, report the exact question to the
-master and yield the turn. Do not sleep/poll. `board.stop('blocked', ...)` ends
+with `{"op":"block","task_id":<id>,"token":"<claim token>","reason":"<question>"}`,
+report the exact question to the master and yield the turn. Do not sleep/poll.
+`{"op":"stop","status":"blocked","reason":"..."}` ends
 the run: it becomes a pause holding `blocked` that only the master can resume or
 close, so use it when the whole run cannot proceed without the master, not to wait
-for one task. A blocked **task** retains its claim; use `unblock(id, token, reason)` after the answer arrives. For a whole-run wait the coordinator may `pause`; only the master resumes (the deadline is extended by the paused interval).
+for one task. A blocked **task** retains its claim; use `unblock` (`task_id`, `token`, `reason`) after the answer arrives. For a whole-run wait the coordinator may `pause`; only the master resumes (the deadline is extended by the paused interval).
 
 The master sends the answer with `agent_cmd` `prompt` when idle, or `steer` when
 it must interrupt a busy coordinator. A queued `follow_up` waits for the current
@@ -629,8 +691,8 @@ handled below the model) and, only if a member is still stuck, steer it. When a
 member holds a claim it will not finish, the coordinator has three tools and
 no prescribed order: an explicit `agent_cmd` `steer` or `follow_up` re-arms a
 member suspended by a provider failure (#1712); `agent_cmd` `set_model` moves
-it off a failing provider; `board.revoke(task_id, reason)` reassigns its work
-so another member can claim it. `recover(task_id)` applies once the member's
+it off a failing provider; `{"op":"revoke","task_id":<id>,"reason":"..."}` reassigns its work
+so another member can claim it. `recover` applies once the member's
 death is confirmed (its harness exited under the coordinator's own
 observation, for instance after `agent_cmd kill`). A run paused because a
 strict budget saw an answered request without usage re-pauses on the next
@@ -732,3 +794,78 @@ Because the owner decided the event log is off by default and nothing is
 measured while it is off (decision T1), the tracing record's waits are
 measured, and the slow-lock WARN can fire, only while the event log is on;
 the `contended` WARN fires either way.
+
+### Switching it on
+
+The event log is off by default and is switched on by configuration only
+(owner decision T1): set `"telemetry": {"event_log": {"enabled": true}}` in
+the global config (`<base_dir>/config.json`, `~/.quecto/config.json` by
+default). The global switch covers every agent on the machine, including
+swarm members in containers, which start with their own `--config` but read
+the global switch too. A repository overlay (`<checkout>/.quecto/config.json`)
+may switch it on, never off. There is no swarm-specific switch and no
+swarm-specific default. The switch is read when an agent starts: members
+already running keep the setting they started with.
+
+### Structured ops
+
+A structured op a member sends (`{"op":"claim","task_id":3}`) is served
+through the same dispatcher, so it leaves the `swarm_op` records above: the
+op's own record (with its `task_id` or `message_id` and, for a refusal, its
+`kind`), plus one per harness-internal call it made, each with role `host`:
+`_status` for the running gate and, for a mutating op, `_event_cursor`
+before and after, then whatever the post-call lifecycle ran (`_notifications`,
+`_accept_wake`, or the settlement's calls). An op refused before it reached
+the board is still recorded as the op's own `swarm_op`, with no run read
+(`role` and `run_id` `null`):
+
+| Refused at | `kind` |
+|---|---|
+| Member input (a value the board's JSON value cannot hold, text that is no JSON object) | `invalid` |
+| The running gate, when the run is not `running` | `not_running` |
+| The running gate, when the running run's deadline has passed | `budget_exhausted` |
+| The running gate, when the run's status could not be read | `store` |
+
+Each structured op also leaves one `tracing` event, `swarm structured op`,
+on target `quecto::swarm_board` (DEBUG for the read-only ops `task`, `tasks`,
+`file_owners`, `inbox` and `usage_report`; INFO for the others), whether or
+not the event log is on. It carries no argument text:
+
+| Field | Meaning |
+|---|---|
+| `op` | The structured op |
+| `gate` | `open` (the op reached the board), `arguments` (member input refused), `not_running`, `deadline` or `unreadable` (the running gate refused it) |
+| `outcome` | `ok`, `refused` (the member got an error answer) or `failed` (the tool itself failed) |
+| `cursor_moved` | For a mutating op that reached the board, whether the event cursor moved (`Some(true)` or `Some(false)`); `None` otherwise |
+| `lifecycle` | What the post-call step did: `none` (not run), `unchanged`, `notified`, `settled` or `failed` |
+| `warnings` | How many wake hints could not be delivered |
+| `result_bytes` | The size of the answer text the member received |
+| `duration_us` | The whole op, in microseconds |
+
+### Finding a run's records
+
+Every agent writes its own event log, `<base_dir>/audit/<session>.jsonl`, one
+JSON record per line. A container member's `~/.quecto` is the host's
+(identity-mounted), so the logs of every member of a swarm land in the host's
+`~/.quecto/audit/`, one file per member session. Each record carries the
+agent's `session`, its process id and its `host`: for a container member the
+container's name (`quecto-<environment>` with the bundled container scripts),
+which tells one swarm's members from another's.
+
+The board's run id is the full summary's `id` (`swarm {"op":"summary"}`, or
+the `run` table's `id`). Select a run's board ops by it:
+
+```sh
+jq -c 'select(.event == "swarm_op" and .run_id == "<run id>")' ~/.quecto/audit/*.jsonl
+```
+
+Records whose op read no run (`"run_id": null`: an op refused at the gate, or
+before the board held a run) belong to the run of the container named in
+their `host`, at their time. Each line is written compactly
+(`"event":"swarm_op"`), so a plain `grep '"event":"swarm_op"'` finds them
+too. `swarm_ops_dropped` lines in the same file count records dropped at the
+write gate. Board text never appears in these records: to see what a task or
+message said, read the board itself (`op=events`, or the SQLite file read-only).
+
+A command that reads them back as a report (`quecto swarm report`, #2305) is
+planned and not yet available.
