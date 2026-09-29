@@ -89,15 +89,15 @@ pub(crate) fn notify_revoked(
 }
 
 /// Python's `str()` of a task id that found a task: text as it is, a
-/// boolean as `True` or `False`, an integer in decimal, and a float as
-/// `repr` writes it (the board codec's float text is `repr`'s).
+/// boolean as `True` or `False`, and a number as the board codec writes
+/// it, which is Python's `str()` of it: an integer in decimal (`json.dumps`
+/// of an int), a float as `repr` writes it (`1.0`, `1e+16`, `1e-05`).
 fn python_str(value: &Value, encoding: &dyn BoardEncoding) -> Result<String, BoardError> {
     match value {
         Value::String(text) => Ok(text.clone()),
         Value::Bool(true) => Ok("True".to_owned()),
         Value::Bool(false) => Ok("False".to_owned()),
-        Value::Number(number) if number.is_f64() => encoding.encode(value),
-        Value::Number(number) => Ok(number.to_string()),
+        Value::Number(_) => encoding.encode(value),
         Value::Null | Value::Array(_) | Value::Object(_) => Err(BoardError::new(
             RefusalKind::Internal,
             "a task id that finds a task is text or a number",
