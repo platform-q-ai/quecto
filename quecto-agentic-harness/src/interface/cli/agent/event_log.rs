@@ -71,6 +71,11 @@ pub(super) fn attach(
             Ok(log) => {
                 let log = log.with_parent(flags.parent_id.clone());
                 let crash_line = log.crash_line();
+                // The board calls this process makes are recorded in the
+                // same log, while the event log is on (#2278, #2303).
+                if let Some(board) = crate::infrastructure::tools::swarm_bridge::process_board() {
+                    board.record_in_session(event_log, &log);
+                }
                 agent.set_audit_log(Some(Arc::new(log) as Arc<dyn AuditSink>));
                 crash_line
             }

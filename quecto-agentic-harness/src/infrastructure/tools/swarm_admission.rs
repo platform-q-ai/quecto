@@ -47,13 +47,18 @@ impl LaunchReservation {
     /// the run keeps going. `exit` says whether the member ended orderly
     /// (it answered the protocol, or this harness's fallback signal reached
     /// its whole group) or was already gone before it was asked.
-    pub fn rolled_back(&mut self, exit: MemberExit) -> Result<(), DomainError> {
-        self.context.confirm_dead(&self.member, exit)?;
+    ///
+    /// The confirmation is made here, before the first await point, and
+    /// finishes before this returns (#2278 final review L1): a rollback
+    /// cancelled mid-way never leaves it running beside the drop's release
+    /// of the same member, which follows it.
+    pub async fn rolled_back(&mut self, exit: MemberExit) -> Result<(), DomainError> {
+        super::call_work::block_here(|| self.context.confirm_dead(&self.member, exit))?;
         self.launched = true;
         Ok(())
     }
 
-    pub fn launched(&mut self, pid: u32) -> Result<(), DomainError> {
+    pub async fn launched(&mut self, pid: u32) -> Result<(), DomainError> {
         // Once spawn succeeds an ambiguous error must retain capacity. Startup
         // joins this exact reservation; reconciliation observes kernel death.
         self.launched = true;
@@ -62,24 +67,48 @@ impl LaunchReservation {
                 "cannot establish swarm child process identity; reservation retained".into(),
             )
         })?;
-        self.context.record_launch(
-            &self.member,
-            &self.token,
-            &ProcessIdentity {
-                pid,
-                started: start,
-            },
-        )?;
-        Ok(())
+        let (context, member, token) = (
+            self.context.clone(),
+            self.member.clone(),
+            self.token.clone(),
+        );
+        off_the_workers(move || {
+            context.record_launch(
+                &member,
+                &token,
+                &ProcessIdentity {
+                    pid,
+                    started: start,
+                },
+            )
+        })
+        .await
     }
+}
+
+/// A reservation's board call, off the async workers (#2278 review L6).
+async fn off_the_workers(
+    job: impl FnOnce() -> Result<(), DomainError> + Send + 'static,
+) -> Result<(), DomainError> {
+    super::call_work::off_the_workers(job)
+        .await
+        .map_err(|error| DomainError::Tool(format!("swarm reservation update: {error}")))?
 }
 
 impl Drop for LaunchReservation {
     fn drop(&mut self) {
-        if !self.launched {
-            if let Err(error) = self.context.confirm_unlaunched(&self.member) {
-                tracing::error!(%error, "swarm failed-launch reservation retained");
-            }
+        match self.launched {
+            true => {}
+            // Released before the drop returns (#2278 final review L1).
+            false => super::swarm_lifecycle::run_off_the_workers(|| {
+                if let Err(error) = self.context.confirm_unlaunched(&self.member) {
+                    tracing::error!(%error, "swarm failed-launch reservation retained");
+                }
+            }),
         }
     }
 }
+
+#[cfg(test)]
+#[path = "swarm_admission_tests.rs"]
+mod tests;

@@ -23,6 +23,6 @@ async fn real_control_is_idempotent_and_orders_durable_generations() {
             .generation,
         resumed.generation
     );
-    context.cancel_run().unwrap();
+    quecto::infrastructure::tools::call_work::off_the_runtime(|| context.cancel_run()).unwrap();
     assert!(context.apply(RunControlAction::Resume).await.is_err());
 }

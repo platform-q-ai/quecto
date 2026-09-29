@@ -2,13 +2,16 @@
 //! use cases are constructed. `build_swarm_board_handles` binds the SQLite
 //! repository of one board file, the wall clock and random ids, and the
 //! event log's `swarm_op` records when it is given one (#2303); `main`
-//! injects it through `CliComposition.swarm_board`, and S13 carries it on
-//! `CliContext` and threads it to `SwarmContext` and `HostedStore`, passing
-//! [`board_op_log`] of the session's log. `build_swarm_board_handles_with`
-//! composes the same graph over injected ports, for the differential
-//! harness's deterministic clock and ids. The file reservations (#2275)
-//! normalise paths in the board's checkout, through `CheckoutPaths` bound
-//! to `BoardLocation::checkout`.
+//! injects it, with [`board_op_log`], through `CliComposition`, and
+//! `CliContext` carries both to the agent's admission, which gives every
+//! `SwarmContext` of the process one [`SwarmBoard`] (#2278);
+//! `composition::environments` gives the host's `HostedStore` reads the
+//! process's board when admission bound one (so they are recorded in the
+//! session's event log too), else one [`swarm_board`] of their own. `build_swarm_board_handles_with` composes the same
+//! graph over injected ports, for the differential harness's
+//! deterministic clock and ids. The file reservations (#2275) normalise
+//! paths in the board's checkout, through `CheckoutPaths` bound to
+//! `BoardLocation::checkout`.
 use std::sync::Arc;
 
 use crate::application::swarm::dto::BoardLocation;
@@ -35,6 +38,7 @@ use crate::infrastructure::persistence::swarm_board::meter::SqliteBoardCallMeter
 use crate::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 pub use crate::infrastructure::tools::swarm_board_dispatch::SwarmBoardHandles;
 use crate::infrastructure::tools::swarm_board_dispatch::{ActorRefs, BoardTelemetry};
+pub use crate::infrastructure::tools::swarm_bridge::SwarmBoard;
 use crate::infrastructure::tools::swarm_lifecycle::SystemClock;
 use crate::infrastructure::workspace::checkout_paths::ResolvedCheckout;
 
@@ -52,6 +56,15 @@ pub fn build_swarm_board_handles(
         Some(event_log) => with_event_log(repository, clock, ids, checkout, event_log),
         None => build_swarm_board_handles_with(Arc::new(repository), clock, ids, checkout),
     }
+}
+
+/// The board a `SwarmContext` or `HostedStore` calls (#2278): the
+/// handles [`build_swarm_board_handles`] builds, once per board file (kept
+/// for the files it called most recently), and the session's event log
+/// once it is given one
+/// ([`SwarmBoard::record_in`]).
+pub fn swarm_board() -> SwarmBoard {
+    SwarmBoard::with_session_log(build_swarm_board_handles, board_op_log)
 }
 
 /// Where the board records its `swarm_op`s: the session's event log, only

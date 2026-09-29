@@ -95,16 +95,18 @@ async fn op_run_before_create_points_the_founder_at_op_create() {
     let workspace = std::sync::Arc::new(directory.path().to_path_buf());
     std::fs::create_dir_all(workspace.join(".quecto")).unwrap();
     let context = crate::infrastructure::tools::swarm_bridge::SwarmContext {
+        board: crate::composition::swarm::swarm_board(),
         lifecycle: std::sync::Arc::new(crate::application::ports::SwarmTestLifecycle),
         checkout: workspace.as_ref().clone(),
         member: "coordinator".into(),
     };
-    context
-        .call(
+    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        context.call(
             "_bootstrap",
             serde_json::json!([1, "start", "/tmp/unused.sock"]),
         )
-        .unwrap();
+    })
+    .unwrap();
     let tool = super::super::SwarmTool::new(
         workspace.clone(),
         std::sync::Arc::new(crate::infrastructure::security::sandbox::Sandbox::new(

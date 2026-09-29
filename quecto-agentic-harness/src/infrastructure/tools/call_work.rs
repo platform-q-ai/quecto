@@ -57,7 +57,7 @@ where
     F: FnOnce() -> T + Send + 'static,
     T: Send + 'static,
 {
-    join_carried(tokio::task::spawn_blocking(carry(job)))
+    join_carried(tokio::task::spawn_blocking(carry(blocking(job))))
 }
 
 /// As [`spawn_blocking_in_call`], on a given runtime's blocking pool.
@@ -66,7 +66,91 @@ where
     F: FnOnce() -> T + Send + 'static,
     T: Send + 'static,
 {
-    join_carried(runtime.spawn_blocking(carry(job)))
+    join_carried(runtime.spawn_blocking(carry(blocking(job))))
+}
+
+thread_local! {
+    /// Set while this thread runs a call's work on the blocking pool.
+    static ON_BLOCKING_WORK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// `job`, marked as blocking work on the thread that runs it (#2278): a
+/// runtime's worker threads and its blocking threads share one name, so
+/// the mark is what tells them apart. For work a caller hands the blocking
+/// pool itself, outside any call (a reaper's, a drop's); a call's own work
+/// is [`spawn_blocking_in_call`], which marks it too.
+pub fn blocking<T>(job: impl FnOnce() -> T) -> impl FnOnce() -> T {
+    move || {
+        let _mark = BlockingMark(ON_BLOCKING_WORK.with(|mark| mark.replace(true)));
+        job()
+    }
+}
+
+/// Restores the thread's mark when the job ends, a panic included.
+struct BlockingMark(bool);
+
+impl Drop for BlockingMark {
+    fn drop(&mut self) {
+        ON_BLOCKING_WORK.with(|mark| mark.set(self.0));
+    }
+}
+
+/// Whether this thread may block: it is outside any async runtime, or it
+/// runs a call's work on the blocking pool ([`spawn_blocking_in_call`]).
+/// An async worker must never make a call that blocks (a board call waits
+/// up to its store's busy timeout).
+pub fn may_block() -> bool {
+    tokio::runtime::Handle::try_current().is_err() || ON_BLOCKING_WORK.with(std::cell::Cell::get)
+}
+
+/// Runs `job` on a thread of its own, outside any runtime, and waits for
+/// it (a panic in it resumes here): a test's blocking setup or check made
+/// inside an async test, where a board call on the async worker would trip
+/// its debug assertion (#2278 review L6).
+#[cfg(any(test, feature = "test-support"))]
+pub fn off_the_runtime<T: Send>(job: impl FnOnce() -> T + Send) -> T {
+    std::thread::scope(|scope| {
+        scope
+            .spawn(job)
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    })
+}
+
+/// Runs `job`, which blocks (a board call waits up to its store's busy
+/// timeout), on this thread, and returns once it has finished (#2278
+/// final review L1, L2): for a caller that must not return before the
+/// work is done and cannot await it (a drop, a synchronous port method).
+/// Here when this thread may block ([`may_block`]); on a multi-thread
+/// runtime's worker through `block_in_place`, which first hands the
+/// worker's other tasks to another thread; on a current-thread runtime,
+/// which has no other thread to hand them to, here, as blocking work.
+pub fn block_here<T>(job: impl FnOnce() -> T) -> T {
+    use tokio::runtime::{Handle, RuntimeFlavor};
+    match (
+        may_block(),
+        Handle::try_current().map(|h| h.runtime_flavor()),
+    ) {
+        (true, _) | (false, Err(_)) => job(),
+        (false, Ok(RuntimeFlavor::MultiThread)) => tokio::task::block_in_place(blocking(job)),
+        (false, Ok(RuntimeFlavor::CurrentThread | _)) => blocking(job)(),
+    }
+}
+
+/// Runs `job`, which blocks (a board call waits up to its store's busy
+/// timeout), off the async workers (#2278 review L6): here when this
+/// thread may block ([`may_block`]: outside any runtime, or already on the
+/// blocking pool), else as the calling tool call's work on the blocking
+/// pool. The `JoinError` of a job cancelled with its runtime.
+pub async fn off_the_workers<T, F>(job: F) -> Result<T, tokio::task::JoinError>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    match may_block() {
+        true => Ok(job()),
+        false => spawn_blocking_in_call(job).await,
+    }
 }
 
 /// Start a thread whose job is the calling tool call's own work: it runs in

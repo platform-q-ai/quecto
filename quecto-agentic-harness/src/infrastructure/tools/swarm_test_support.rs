@@ -6,8 +6,16 @@ use super::{
 use crate::infrastructure::security::sandbox::Sandbox;
 use std::{path::PathBuf, sync::Arc};
 
-pub fn tool(workspace: Arc<PathBuf>, sandbox: Arc<Sandbox>, config: SwarmConfig) -> SwarmTool {
+/// The tool over a fake container whose board is `board` (composition's,
+/// `composition::swarm::swarm_board`, #2278).
+pub fn tool(
+    workspace: Arc<PathBuf>,
+    sandbox: Arc<Sandbox>,
+    config: SwarmConfig,
+    board: super::swarm_bridge::SwarmBoard,
+) -> SwarmTool {
     let context = SwarmContext {
+        board,
         lifecycle: std::sync::Arc::new(crate::application::ports::SwarmTestLifecycle),
         checkout: workspace.as_ref().clone(),
         member: "coordinator".into(),
@@ -19,7 +27,11 @@ pub fn tool(workspace: Arc<PathBuf>, sandbox: Arc<Sandbox>, config: SwarmConfig)
             .unwrap()
             .as_secs()
             + 300;
-        context.call("create", serde_json::json!(["test execution", [], [{"id":"tests","kind":"command","description":"pass"}], 10, deadline])).unwrap();
+        // Test setup: the board call made off any async worker (#2278).
+        super::call_work::off_the_runtime(|| {
+            context.call("create", serde_json::json!(["test execution", [], [{"id":"tests","kind":"command","description":"pass"}], 10, deadline]))
+        })
+        .unwrap();
     }
     SwarmTool::new(workspace, sandbox, config).with_context(Some(context))
 }

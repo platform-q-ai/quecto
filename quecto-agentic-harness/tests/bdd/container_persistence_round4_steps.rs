@@ -33,6 +33,7 @@ fn environment_id_of(world: &QuectoWorld, env_ref: &str) -> String {
 fn create_running_swarm(checkout: &std::path::Path) -> String {
     std::fs::create_dir_all(checkout.join(".quecto")).unwrap();
     let context = SwarmContext {
+        board: quecto::composition::swarm::swarm_board(),
         checkout: checkout.to_path_buf(),
         member: "coordinator".into(),
         lifecycle: Arc::new(quecto::application::swarm::LifecycleService),
@@ -59,11 +60,14 @@ fn create_running_swarm(checkout: &std::path::Path) -> String {
 }
 
 fn hosted_run_id(checkout: &std::path::Path) -> String {
-    HostedStore::at(checkout.to_path_buf())
-        .hosted_run()
-        .expect("the store is readable")
-        .expect("a run was created")
-        .id
+    HostedStore::at(
+        checkout.to_path_buf(),
+        quecto::composition::swarm::swarm_board(),
+    )
+    .hosted_run()
+    .expect("the store is readable")
+    .expect("a run was created")
+    .id
 }
 
 fn checkout_of(world: &QuectoWorld, env_ref: &str) -> PathBuf {
@@ -114,10 +118,13 @@ fn then_listing_entry_unfinished(world: &mut QuectoWorld, env_ref: String) {
 
 #[then(expr = "the swarm store of {string} should still hold its unfinished run")]
 fn then_store_still_unfinished(world: &mut QuectoWorld, env_ref: String) {
-    let run = HostedStore::at(checkout_of(world, &env_ref))
-        .hosted_run()
-        .expect("the store is readable")
-        .expect("the run is still there");
+    let run = HostedStore::at(
+        checkout_of(world, &env_ref),
+        quecto::composition::swarm::swarm_board(),
+    )
+    .hosted_run()
+    .expect("the store is readable")
+    .expect("the run is still there");
     assert!(run.created() && !run.ended(), "{run:?}");
 }
 

@@ -48,6 +48,7 @@ async fn a_nested_container_refusal_follows_the_launchers_swarm_participation() 
         let tool = tool
             .with_swarm_context(Some(
                 crate::infrastructure::tools::swarm_bridge::SwarmContext {
+                    board: crate::composition::swarm::swarm_board(),
                     checkout: std::env::temp_dir(),
                     member: "member-1".into(),
                     lifecycle: Arc::new(crate::application::swarm::LifecycleService),

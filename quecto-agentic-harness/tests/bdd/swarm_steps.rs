@@ -46,6 +46,7 @@ pub(crate) fn tool(world: &mut QuectoWorld) -> Arc<SwarmTool> {
             Arc::new(ws),
             sandbox,
             SwarmConfig::default(),
+            quecto::composition::swarm::swarm_board(),
         );
         tool.set_session_key("bdd-python-lab".into());
         world.swarm_tool = Some(DebugSwarm(Arc::new(tool)));

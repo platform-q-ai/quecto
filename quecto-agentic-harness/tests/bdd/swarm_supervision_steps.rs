@@ -68,13 +68,14 @@ async fn exercise(workspace: std::path::PathBuf) -> serde_json::Value {
         std::fs::read_to_string(report["data"]["rawExport"]["path"].as_str().unwrap()).unwrap();
     let stats = runtime.command(json!({"type":"get_session_stats"})).await;
     let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+        board: quecto::composition::swarm::swarm_board(),
         checkout: workspace.clone(),
         member: "coordinator".into(),
         lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),
     };
-    context.cancel_run().unwrap();
+    quecto::infrastructure::tools::call_work::off_the_runtime(|| context.cancel_run()).unwrap();
     let terminal = runtime.command(json!({"type":"get_report"})).await;
-    let evidence = json!({"paused":paused["data"]["status"],"approval":receipt["status"],"budget":budget["data"]["status"],"raw_has_approval":raw.contains("Approved schema v2"),"report":terminal["data"]["report"]["content"],"requests":stats["data"]["requestDiagnostics"]["logical_requests"],"usage":context.usage_report().unwrap()});
+    let evidence = json!({"paused":paused["data"]["status"],"approval":receipt["status"],"budget":budget["data"]["status"],"raw_has_approval":raw.contains("Approved schema v2"),"report":terminal["data"]["report"]["content"],"requests":stats["data"]["requestDiagnostics"]["logical_requests"],"usage":quecto::infrastructure::tools::call_work::off_the_runtime(|| context.usage_report()).unwrap()});
     runtime.finish().await;
     evidence
 }
@@ -163,11 +164,12 @@ async fn exercise_resume(workspace: std::path::PathBuf) -> serde_json::Value {
     runtime.wait_report("RECOVERED").await;
     let restored = runtime.command(json!({"type":"get_state"})).await;
     let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+        board: quecto::composition::swarm::swarm_board(),
         checkout: workspace.clone(),
         member: "coordinator".into(),
         lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),
     };
-    context.cancel_run().unwrap();
+    quecto::infrastructure::tools::call_work::off_the_runtime(|| context.cancel_run()).unwrap();
     let evidence = json!({
         "suspended": suspended["data"]["automaticTurnsSuspended"],
         "paused": paused["data"]["status"],

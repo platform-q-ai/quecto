@@ -661,6 +661,7 @@ fn host_swarm_run(world: &mut QuectoWorld, ended_holding: Option<String>) {
         workspace,
         sandbox,
         quecto::infrastructure::tools::swarm::SwarmConfig::default(),
+        quecto::composition::swarm::swarm_board(),
     );
     if let Some(outcome) = ended_holding {
         use quecto::application::tools::ports::Tool;
@@ -701,6 +702,7 @@ fn hosted_swarm_context(
     world: &QuectoWorld,
 ) -> quecto::infrastructure::tools::swarm_bridge::SwarmContext {
     quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+        board: quecto::composition::swarm::swarm_board(),
         checkout: world
             .swarm_workspace
             .clone()

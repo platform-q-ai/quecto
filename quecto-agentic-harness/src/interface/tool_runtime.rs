@@ -700,8 +700,13 @@ pub(crate) fn load_workflow_spec(
     serde_json::from_slice(&bytes).map_err(|e| e.to_string())
 }
 
+/// This process's swarm context: its container contract, over the board
+/// admission bound for it (#2278). `None` outside a swarm container, and
+/// before (or without) a bound board.
 pub(crate) fn swarm_context() -> Option<crate::infrastructure::tools::swarm_bridge::SwarmContext> {
-    crate::infrastructure::tools::swarm_bridge::SwarmContext::discover(std::sync::Arc::new(
-        crate::application::swarm::LifecycleService,
-    ))
+    let board = crate::infrastructure::tools::swarm_bridge::process_board()?;
+    crate::infrastructure::tools::swarm_bridge::SwarmContext::discover(
+        std::sync::Arc::new(crate::application::swarm::LifecycleService),
+        board.clone(),
+    )
 }

@@ -11,7 +11,7 @@
 //! through — the base directory's `environments.json`, and the CLI's
 //! `container ls|kill|gc` run over the same restore.
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::application::configuration::dto::ConfigSelection;
 use crate::application::environments::dto::{OvertakenAudience, RestoreMode, RestoredRegistry};
@@ -34,7 +34,28 @@ pub use crate::infrastructure::tools::agent_cmd_containers::EnvironmentControl;
 use crate::infrastructure::tools::environment_commands::{
     HostedStoreObservation, ScriptEnvironmentCommands,
 };
+use crate::infrastructure::tools::swarm_bridge::SwarmBoard;
 pub use crate::interface::cli::container_handles::ContainerInventoryHandles;
+
+/// The host's reads of the boards its environments hold (#1924), through
+/// composition's board handles (#2278): the process's board when the
+/// agent's admission bound one, so the calls are recorded in the session's
+/// event log once it is open and on (#2278 review M1); else one board for
+/// the whole process (a `quecto container` command, which keeps no event
+/// log: its calls leave `tracing` records only).
+fn hosted_store_observation() -> HostedStoreObservation {
+    hosted_store_observation_over(crate::infrastructure::tools::swarm_bridge::process_board())
+}
+
+/// The observation over `process`, the board admission bound, when there
+/// is one; else over the process's one host board.
+fn hosted_store_observation_over(process: Option<&SwarmBoard>) -> HostedStoreObservation {
+    static HOST_BOARD: OnceLock<SwarmBoard> = OnceLock::new();
+    HostedStoreObservation::new(match process {
+        Some(board) => board.clone(),
+        None => HOST_BOARD.get_or_init(super::swarm::swarm_board).clone(),
+    })
+}
 
 /// The final-member use case over the production script adapters, for one
 /// entry's environment registry. The cleanup jobs already run on a blocking
@@ -43,7 +64,7 @@ pub fn build_member_finalizer(environments: EnvironmentRegistry) -> FinalizeEnvi
     FinalizeEnvironmentMember::new(
         environments,
         Arc::new(ScriptEnvironmentCommands::inline()),
-        Arc::new(HostedStoreObservation),
+        Arc::new(hosted_store_observation()),
     )
 }
 
@@ -60,7 +81,7 @@ pub fn build_environment_control(
             environments,
             member_shutdown,
             Arc::new(ScriptEnvironmentCommands::default()),
-            Arc::new(HostedStoreObservation),
+            Arc::new(hosted_store_observation()),
         )),
     }
 }
@@ -140,7 +161,7 @@ pub fn build_restore_registry(base_dir: &Path) -> RestoreRegistry {
     RestoreRegistry::new(
         build_environment_registry_store(base_dir),
         build_environment_process(),
-        Arc::new(HostedStoreObservation),
+        Arc::new(hosted_store_observation()),
     )
 }
 
@@ -238,14 +259,14 @@ pub fn build_container_inventory(
             registry.clone(),
             Arc::new(NoReachableMembers),
             Arc::new(ScriptEnvironmentCommands::default()),
-            Arc::new(HostedStoreObservation),
+            Arc::new(hosted_store_observation()),
         )),
         gc: Arc::new(GcOrphanedEnvironments::new(
             registry,
             build_container_config_lookup(base_dir, Some(selection.clone())),
             build_container_runtime_inventory(),
             build_environment_process(),
-            Arc::new(HostedStoreObservation),
+            Arc::new(hosted_store_observation()),
         )),
         restore,
     }

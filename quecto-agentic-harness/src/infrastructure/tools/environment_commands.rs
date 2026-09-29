@@ -16,6 +16,7 @@ use crate::infrastructure::processes::containers::script_stderr::{
     ScriptStdout, run_sync_capturing_stderr_tail,
 };
 use crate::infrastructure::processes::containers::standard::integrity::refuse_altered_script;
+use crate::infrastructure::tools::swarm_bridge::SwarmBoard;
 
 /// The retained script argv run against the environment's runtime id.
 /// By default every invocation is offloaded to a blocking worker when a
@@ -342,9 +343,15 @@ fn contained_below(
     }
 }
 
-fn hosted_store(record: &EnvironmentRecord) -> Option<super::swarm_bridge::HostedStore> {
+fn hosted_store(
+    record: &EnvironmentRecord,
+    board: &SwarmBoard,
+) -> Option<super::swarm_bridge::HostedStore> {
     match hosted_checkout(record) {
-        HostedCheckout::At(checkout) => Some(super::swarm_bridge::HostedStore::at(checkout)),
+        HostedCheckout::At(checkout) => Some(super::swarm_bridge::HostedStore::at(
+            checkout,
+            board.clone(),
+        )),
         HostedCheckout::NoBoard | HostedCheckout::NotOnHost | HostedCheckout::Unknown(_) => None,
     }
 }
@@ -369,9 +376,15 @@ fn unrecorded_checkout(state_dir: &std::path::Path) -> HostedCheckout {
 
 /// One synchronous read of the store at `checkout`, for the environment
 /// named `subject` in the log.
-fn read_hosted_run(checkout: HostedCheckout, subject: &str) -> SwarmRunObservation {
+fn read_hosted_run(
+    checkout: HostedCheckout,
+    subject: &str,
+    board: &SwarmBoard,
+) -> SwarmRunObservation {
     let store = match checkout {
-        HostedCheckout::At(checkout) => super::swarm_bridge::HostedStore::at(checkout),
+        HostedCheckout::At(checkout) => {
+            super::swarm_bridge::HostedStore::at(checkout, board.clone())
+        }
         HostedCheckout::NoBoard => return SwarmRunObservation::NoStore,
         HostedCheckout::NotOnHost => return SwarmRunObservation::NoStoreUnverified,
         HostedCheckout::Unknown(error) => {
@@ -400,15 +413,31 @@ fn read_hosted_run(checkout: HostedCheckout, subject: &str) -> SwarmRunObservati
 /// The coordination store an environment hosts, read by path from the
 /// supervising session (#1924) — asynchronously for the finalizer, and
 /// synchronously for the restore and the collector (round 4 M1, #2033).
-#[derive(Debug, Default, Clone, Copy)]
-pub struct HostedStoreObservation;
+/// The store is reached through composition's board handles (#2278).
+#[derive(Debug, Clone)]
+pub struct HostedStoreObservation {
+    board: SwarmBoard,
+}
+
+impl HostedStoreObservation {
+    /// The observation over `board`: composition's, the process's board
+    /// when admission bound one (#2278 review M1).
+    pub fn new(board: SwarmBoard) -> Self {
+        Self { board }
+    }
+}
 
 impl HostedSwarmRunObservation for HostedStoreObservation {
     fn observe_hosted_swarm_run<'a>(
         &'a self,
         record: &'a EnvironmentRecord,
     ) -> PortFuture<'a, SwarmRunObservation> {
-        Box::pin(async move { self.inspect_hosted_run(record) })
+        let (observation, record) = (self.clone(), record.clone());
+        Box::pin(async move {
+            off_the_workers(move || observation.inspect_hosted_run(&record))
+                .await
+                .unwrap_or_else(SwarmRunObservation::Unreadable)
+        })
     }
 
     fn record_lost_coordinator<'a>(
@@ -416,25 +445,40 @@ impl HostedSwarmRunObservation for HostedStoreObservation {
         record: &'a EnvironmentRecord,
         hosted: &'a HostedSwarmRun,
     ) -> PortFuture<'a, Result<CoordinatorLoss, String>> {
+        let store = hosted_store(record, &self.board);
+        let coordinator = hosted.coordinator.clone();
         Box::pin(async move {
-            let store = hosted_store(record)
-                .ok_or_else(|| "environment advertises no checkout".to_string())?;
-            store
-                .record_lost_coordinator(&hosted.coordinator)
-                .map_err(|error| error.to_string())
+            let store = store.ok_or_else(|| "environment advertises no checkout".to_string())?;
+            off_the_workers(move || {
+                store
+                    .record_lost_coordinator(&coordinator)
+                    .map_err(|error| error.to_string())
+            })
+            .await?
         })
     }
 }
 
+/// Runs `job`, whose board calls block, off the async workers (#2278
+/// review L6); a job cancelled with its runtime answers why.
+async fn off_the_workers<T: Send + 'static>(
+    job: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, String> {
+    super::call_work::off_the_workers(job)
+        .await
+        .map_err(|error| format!("hosted swarm run read did not finish: {error}"))
+}
+
 impl HostedSwarmRunInspection for HostedStoreObservation {
     fn inspect_hosted_run(&self, record: &EnvironmentRecord) -> SwarmRunObservation {
-        read_hosted_run(hosted_checkout(record), &record.environment_id)
+        read_hosted_run(hosted_checkout(record), &record.environment_id, &self.board)
     }
 
     fn inspect_hosted_run_at(&self, state_dir: &std::path::Path) -> SwarmRunObservation {
         read_hosted_run(
             unrecorded_checkout(state_dir),
             &state_dir.display().to_string(),
+            &self.board,
         )
     }
 }

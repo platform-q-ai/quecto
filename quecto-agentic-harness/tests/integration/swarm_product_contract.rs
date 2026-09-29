@@ -13,6 +13,7 @@ fn fixture() -> (tempfile::TempDir, Arc<std::path::PathBuf>, SwarmTool) {
     );
     std::fs::create_dir_all(workspace.as_ref()).unwrap();
     let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+        board: quecto::composition::swarm::swarm_board(),
         checkout: workspace.as_ref().clone(),
         member: "coordinator".into(),
         lifecycle: Arc::new(quecto::application::swarm::LifecycleService),
@@ -23,8 +24,8 @@ fn fixture() -> (tempfile::TempDir, Arc<std::path::PathBuf>, SwarmTool) {
         .unwrap()
         .as_secs()
         + 300;
-    context.create_run(&json!({"goal":"product contract","constraints":[],"criteria":[{"id":"tests","kind":"command","description":"pass"}],"member_limit":1,"deadline":deadline}),
-        &quecto::domain::swarm::ProcessIdentity { pid: std::process::id(), started: quecto::infrastructure::tools::swarm_bridge::process_start(std::process::id()).unwrap() }, None).unwrap();
+    quecto::infrastructure::tools::call_work::off_the_runtime(|| context.create_run(&json!({"goal":"product contract","constraints":[],"criteria":[{"id":"tests","kind":"command","description":"pass"}],"member_limit":1,"deadline":deadline}),
+        &quecto::domain::swarm::ProcessIdentity { pid: std::process::id(), started: quecto::infrastructure::tools::swarm_bridge::process_start(std::process::id()).unwrap() }, None)).unwrap();
     let tool = SwarmTool::new(
         workspace.clone(),
         Arc::new(Sandbox::new(Some(workspace.as_ref().clone()))),
@@ -158,9 +159,10 @@ async fn completed_run_keeps_summary_and_normal_artifact_export_serviceable() {
 
 #[test]
 fn isolated_context_is_detected_when_container_contract_is_supplied() {
-    let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext::discover(Arc::new(
-        quecto::application::swarm::LifecycleService,
-    ));
+    let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext::discover(
+        Arc::new(quecto::application::swarm::LifecycleService),
+        quecto::composition::swarm::swarm_board(),
+    );
     if std::env::var("QUECTO_SWARM_CONTAINER").as_deref() == Ok("isolated-pid-v1") {
         assert!(
             context.is_some(),

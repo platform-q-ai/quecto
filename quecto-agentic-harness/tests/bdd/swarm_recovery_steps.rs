@@ -42,6 +42,7 @@ fn recovery_script(turn: &Turn) -> Reply {
 
 fn context(workspace: &Path, member: &str) -> SwarmContext {
     SwarmContext {
+        board: quecto::composition::swarm::swarm_board(),
         checkout: workspace.to_path_buf(),
         member: member.into(),
         lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),
@@ -78,6 +79,23 @@ async fn python(workspace: &Path, member: &str, code: &str) -> Result<String, St
         .to_owned())
 }
 
+/// Consecutive contended reads a board poll sits out, and the pause after
+/// each: the settlement watch's `SNAPSHOT_ATTEMPTS` and its one-second
+/// pause (`swarm_lifecycle.rs`).
+const CONTENDED_READS: u32 = 10;
+const CONTENDED_READ_PAUSE: Duration = Duration::from_secs(1);
+
+/// The store's refusal of a transaction that stayed busy past its 500 ms
+/// timeout (#2278): its text exactly, as the tool boundary carries it.
+/// Nothing else is contention.
+fn contended_read(error: &quecto::domain::error::DomainError) -> bool {
+    matches!(
+        error,
+        quecto::domain::error::DomainError::Tool(text)
+            if text == r#"swarm: "coordination store unavailable or contended: database is locked""#
+    )
+}
+
 async fn wait_summary(
     runtime: &fixture::Runtime,
     workspace: &Path,
@@ -86,8 +104,25 @@ async fn wait_summary(
 ) -> Value {
     let context = context(workspace, "coordinator");
     let until = tokio::time::Instant::now() + Duration::from_secs(30);
+    let mut contended = 0;
     loop {
-        let summary = context.summary().unwrap();
+        // A poll of the board reads it as production's settlement watch
+        // does (`swarm_lifecycle::watch_until_ended`): a read the store
+        // refused as contended past its busy timeout is sat out and retried
+        // a second later, up to ten in a row; any other refusal fails.
+        let summary =
+            match quecto::infrastructure::tools::call_work::off_the_runtime(|| context.summary()) {
+                Ok(summary) => {
+                    contended = 0;
+                    summary
+                }
+                Err(error) if contended_read(&error) && contended < CONTENDED_READS => {
+                    contended += 1;
+                    tokio::time::sleep(CONTENDED_READ_PAUSE).await;
+                    continue;
+                }
+                Err(error) => panic!("board unreadable while waiting until {what}: {error:?}"),
+            };
         if accept(&summary) {
             return summary;
         }
@@ -205,7 +240,10 @@ async fn control_status(runtime: &fixture::Runtime) -> Value {
 }
 
 fn events(workspace: &Path) -> Vec<Value> {
-    context(workspace, "coordinator").events(0, 100).unwrap()["events"]
+    quecto::infrastructure::tools::call_work::off_the_runtime(|| {
+        context(workspace, "coordinator").events(0, 100)
+    })
+    .unwrap()["events"]
         .as_array()
         .cloned()
         .unwrap_or_default()
@@ -260,6 +298,17 @@ async fn kill_claiming_member(world: &mut QuectoWorld) {
     spawn_exercise(world, |workspace| Box::pin(exercise_kill(workspace))).await;
 }
 
+/// The pause between the racing member's reconcile passes. A real member
+/// reconciles on its tool calls and its 500 ms supervisor tick; this one
+/// stays far busier (well over a hundred passes a second) but leaves the
+/// store's write lock free between passes, as the Python board worker's
+/// round trip once did (~110 passes a second). Back to back, the in-process
+/// board (#2278) re-takes the lock within microseconds of committing, some
+/// 500 passes a second: every other caller's busy handler then finds it
+/// held at each retry and gives up after its 500 ms timeout, the
+/// coordinator's reaper included.
+const RACING_RECONCILE_PAUSE: Duration = Duration::from_millis(5);
+
 async fn exercise_kill(workspace: PathBuf) -> Value {
     let runtime = fixture::Runtime::start_scripted(&workspace, recovery_script).await;
     runtime
@@ -301,6 +350,7 @@ async fn exercise_kill(workspace: PathBuf) -> Value {
             while racing.load(std::sync::atomic::Ordering::SeqCst) {
                 quecto::infrastructure::tools::swarm_lifecycle::reconcile(&context).unwrap();
                 passes.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                std::thread::sleep(RACING_RECONCILE_PAUSE);
             }
         })
     };
@@ -355,7 +405,10 @@ async fn exercise_kill(workspace: PathBuf) -> Value {
         "other_reconcile_passes": other_passes.load(std::sync::atomic::Ordering::SeqCst),
         "reclaimed_by": reclaimed,
     });
-    context(&workspace, "coordinator").cancel_run().unwrap();
+    quecto::infrastructure::tools::call_work::off_the_runtime(|| {
+        context(&workspace, "coordinator").cancel_run()
+    })
+    .unwrap();
     runtime.finish().await;
     evidence
 }
@@ -428,7 +481,10 @@ async fn exercise_loss(workspace: PathBuf) -> Value {
     // first pass only starts the grace (its reaper would normally confirm a
     // death first); a pass past the grace records the loss.
     reconcile(&runtime, "Reconcile the board").await;
-    let observed = context(&workspace, "coordinator").summary().unwrap();
+    let observed = quecto::infrastructure::tools::call_work::off_the_runtime(|| {
+        context(&workspace, "coordinator").summary()
+    })
+    .unwrap();
     tokio::time::sleep(Duration::from_secs(11)).await;
     reconcile(&runtime, "Reconcile the board once more").await;
     let paused = wait_summary(&runtime, &workspace, "paused by the loss", |s| {
@@ -443,7 +499,10 @@ async fn exercise_loss(workspace: PathBuf) -> Value {
     // The same vanished pid is observed again after the resume: the
     // coordinator's reconcile (a tool call and its answer) runs to the end.
     reconcile(&runtime, "Reconcile the board again").await;
-    let after = context(&workspace, "coordinator").summary().unwrap();
+    let after = quecto::infrastructure::tools::call_work::off_the_runtime(|| {
+        context(&workspace, "coordinator").summary()
+    })
+    .unwrap();
     let status = control_status(&runtime).await;
     let recover = python(
         &workspace,
@@ -485,7 +544,10 @@ async fn exercise_loss(workspace: PathBuf) -> Value {
         "revoked": count(&events, "revoked"),
         "reclaimed_by": reclaimed,
     });
-    context(&workspace, "coordinator").cancel_run().unwrap();
+    quecto::infrastructure::tools::call_work::off_the_runtime(|| {
+        context(&workspace, "coordinator").cancel_run()
+    })
+    .unwrap();
     runtime.finish().await;
     evidence
 }

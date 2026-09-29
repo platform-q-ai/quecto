@@ -1,16 +1,25 @@
-//! Trusted packaged Python loading and the SQLite lifecycle adapter.
-//! No helper source is imported from the shared checkout or user site packages.
+//! The coordination board's callers inside a container and on the host:
+//! [`SwarmContext`] and [`HostedStore`] reach the board through
+//! [`SwarmBoard`], the Rust dispatcher over composition's handles (#2278).
+//! Trusted packaged Python loading remains for `op=run` member programs
+//! only (until #2282); no helper source is imported from the shared
+//! checkout or user site packages.
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
+use crate::application::swarm::dto::BoardLocation;
 use crate::domain::error::DomainError;
+
+pub use self::board::{SwarmBoard, SwarmBoardHandlesBuilder, SwarmBoardOpLogBuilder};
 
 #[derive(Clone, Debug)]
 pub struct SwarmContext {
     pub checkout: PathBuf,
     pub member: String,
     pub lifecycle: std::sync::Arc<dyn crate::application::swarm::ports::SwarmLifecycle>,
+    /// The board this context calls: composition's handles (#2278).
+    pub board: SwarmBoard,
 }
 
 impl SwarmContext {
@@ -18,23 +27,29 @@ impl SwarmContext {
     /// reference scripts deliberately do not set this contract.
     pub fn discover(
         lifecycle: std::sync::Arc<dyn crate::application::swarm::ports::SwarmLifecycle>,
+        board: SwarmBoard,
     ) -> Option<Self> {
-        let checkout = std::env::var_os("QUECTO_SWARM_CHECKOUT")?;
-        let protocol = std::env::var("QUECTO_SWARM_CONTAINER").ok()?;
-        if protocol != "isolated-pid-v1" {
-            return None;
-        }
-        let host_namespace = std::env::var("QUECTO_SWARM_HOST_PID_NS").ok()?;
-        if !isolated_pid_namespace(&host_namespace) {
-            return None;
-        }
+        let checkout = Self::contracted_checkout()?;
         let member = std::env::var("QUECTO_SWARM_MEMBER")
             .unwrap_or_else(|_| format!("member-{}", std::process::id()));
         Some(Self {
-            checkout: checkout.into(),
+            checkout,
             member,
             lifecycle,
+            board,
         })
+    }
+
+    /// The checkout of the container contract this process was launched
+    /// under, when it was: [`Self::discover`] finds a context exactly then.
+    pub fn contracted_checkout() -> Option<PathBuf> {
+        let checkout = std::env::var_os("QUECTO_SWARM_CHECKOUT")?;
+        let protocol = std::env::var("QUECTO_SWARM_CONTAINER").ok()?;
+        let host_namespace = std::env::var("QUECTO_SWARM_HOST_PID_NS").ok()?;
+        match protocol == "isolated-pid-v1" && isolated_pid_namespace(&host_namespace) {
+            true => Some(checkout.into()),
+            false => None,
+        }
     }
 
     pub fn database(&self) -> PathBuf {
@@ -46,7 +61,15 @@ impl SwarmContext {
     }
 
     fn rpc(&self, method: &str, args: Value) -> Result<Value, DomainError> {
-        store_rpc(&self.database(), &self.checkout, &self.member, method, args)
+        self.board.call(self.location(), &self.member, method, args)
+    }
+
+    /// The board file this context calls, in its checkout.
+    fn location(&self) -> BoardLocation {
+        BoardLocation {
+            database: self.database(),
+            checkout: self.checkout.clone(),
+        }
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -163,29 +186,6 @@ fn bootstrap_source(database: &Path, checkout: &Path, member: &str) -> String {
     source
 }
 
-/// One board call against the store at `checkout`, acting as `member`, over
-/// the persistent interpreter for that pair (see `swarm_board_worker`).
-/// Shared by in-swarm contexts and the supervising session's host-side
-/// handle (#1924).
-fn store_rpc(
-    database: &Path,
-    checkout: &Path,
-    member: &str,
-    method: &str,
-    args: Value,
-) -> Result<Value, DomainError> {
-    super::swarm_board_worker::call(
-        &super::swarm_board_worker::Board {
-            checkout,
-            database,
-            member,
-        },
-        &bootstrap_source(database, checkout, member),
-        method,
-        args,
-    )
-}
-
 /// Host-side handle on a container's coordination store for the supervising
 /// session (#1924): the store lives in the identity-mounted checkout, so the
 /// session that launched the container reads it by path once the members'
@@ -194,11 +194,14 @@ fn store_rpc(
 #[derive(Clone, Debug)]
 pub struct HostedStore {
     checkout: PathBuf,
+    board: SwarmBoard,
 }
 
 impl HostedStore {
-    pub fn at(checkout: PathBuf) -> Self {
-        Self { checkout }
+    /// The store of the container checked out at `checkout`, reached
+    /// through `board` (composition's handles, #2278).
+    pub fn at(checkout: PathBuf, board: SwarmBoard) -> Self {
+        Self { checkout, board }
     }
 
     /// The run the store holds, or `None` when no store exists there. The
@@ -212,13 +215,9 @@ impl HostedStore {
             Found::Store { displaced } => displaced,
             Found::Nothing => return Ok(None),
         };
-        let status = store_rpc(
-            &self.database(),
-            &self.checkout,
-            "supervisor",
-            "_status",
-            json!([]),
-        )?;
+        let status = self
+            .board
+            .call(self.location(), "supervisor", "_status", json!([]))?;
         let run = decode_hosted_run(&status)?;
         // The current board holds no created run, but another place holds
         // a board a member may still be running on (#2206 round 3): the
@@ -251,13 +250,9 @@ impl HostedStore {
                 )));
             }
         }
-        let value = store_rpc(
-            &self.database(),
-            &self.checkout,
-            coordinator,
-            "_lose_coordinator",
-            json!([]),
-        )?;
+        let value =
+            self.board
+                .call(self.location(), coordinator, "_lose_coordinator", json!([]))?;
         Ok(crate::domain::environment_retention::CoordinatorLoss {
             run: decode_hosted_run(&value)?,
             lost: value["lost"]
@@ -280,6 +275,14 @@ impl HostedStore {
     /// The board the host reads: where the checkout's layout places it.
     fn database(&self) -> PathBuf {
         store_database(&self.checkout)
+    }
+
+    /// The board file the host calls, in the container's checkout.
+    fn location(&self) -> BoardLocation {
+        BoardLocation {
+            database: self.database(),
+            checkout: self.checkout.clone(),
+        }
     }
 
     /// The host opens the store only where it really is inside the checkout:
@@ -394,6 +397,23 @@ pub fn process_confirmed_dead(pid: u32, start: &str) -> bool {
 }
 
 static PROCESS_SOCKET: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// The board this process's `SwarmContext`s call (#2278): composition's,
+/// bound once by the agent's admission, beside the process socket. A
+/// context is discovered from this process's container contract, so its
+/// board is this process's too.
+static PROCESS_BOARD: std::sync::OnceLock<SwarmBoard> = std::sync::OnceLock::new();
+
+/// Binds `board` as this process's board; the first binding stays.
+/// Returns the board bound.
+pub fn bind_process_board(board: SwarmBoard) -> &'static SwarmBoard {
+    PROCESS_BOARD.get_or_init(|| board)
+}
+
+/// The board bound for this process, if admission bound one.
+pub fn process_board() -> Option<&'static SwarmBoard> {
+    PROCESS_BOARD.get()
+}
 
 pub fn set_process_socket(socket: PathBuf) {
     let _ = PROCESS_SOCKET.set(socket);
@@ -516,6 +536,8 @@ mod context_tests {
     }
 }
 
+#[path = "swarm_bridge_board.rs"]
+mod board;
 #[path = "swarm_coordination.rs"]
 mod coordination;
 #[cfg(test)]

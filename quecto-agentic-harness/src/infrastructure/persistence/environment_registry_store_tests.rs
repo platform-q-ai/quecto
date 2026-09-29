@@ -191,7 +191,11 @@ fn a_joiners_write_on_a_restored_record_never_reverts_the_creators_status() {
     let restore = RestoreRegistry::new(
         store.clone(),
         Arc::new(AlwaysRunning),
-        Arc::new(crate::infrastructure::tools::environment_commands::HostedStoreObservation),
+        Arc::new(
+            crate::infrastructure::tools::environment_commands::HostedStoreObservation::new(
+                crate::composition::swarm::swarm_board(),
+            ),
+        ),
     );
     // The creator's session: its own record, one member.
     let creator = restore.unseeded("creator");

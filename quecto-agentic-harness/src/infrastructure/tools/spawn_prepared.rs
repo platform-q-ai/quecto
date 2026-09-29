@@ -263,7 +263,7 @@ impl PreparedChild {
                 }
             };
             if let (Some(exit), Some(reservation)) = (exit, &mut self.swarm_reservation) {
-                if let Err(error) = reservation.rolled_back(exit) {
+                if let Err(error) = reservation.rolled_back(exit).await {
                     tracing::error!(%error, "swarm launch rollback requires reconciliation");
                 }
             }

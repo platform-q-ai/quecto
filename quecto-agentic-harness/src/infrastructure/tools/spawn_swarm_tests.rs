@@ -4,6 +4,7 @@ use super::*;
 fn swarm_tool(participating: bool) -> SpawnTool {
     SpawnTool::new(vec![])
         .with_swarm_context(Some(super::super::swarm_bridge::SwarmContext {
+            board: crate::composition::swarm::swarm_board(),
             checkout: std::env::temp_dir(),
             member: "worker".into(),
             lifecycle: Arc::new(crate::application::swarm::LifecycleService),

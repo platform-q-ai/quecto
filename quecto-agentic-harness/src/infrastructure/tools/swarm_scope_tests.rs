@@ -29,6 +29,7 @@ async fn settled_descendants(background: bool, success: bool) {
     let workspace = Arc::new(tmp.path().to_path_buf());
     std::fs::create_dir_all(workspace.join(".quecto")).unwrap();
     let context = SwarmContext {
+        board: crate::composition::swarm::swarm_board(),
         checkout: workspace.as_ref().clone(),
         member: "coordinator".into(),
         lifecycle: Arc::new(crate::application::swarm::LifecycleService),
@@ -38,7 +39,7 @@ async fn settled_descendants(background: bool, success: bool) {
         .unwrap()
         .as_secs()
         + 120;
-    context.call("create", json!(["settled checkout",[],[{"id":"tests","kind":"command","description":"pass"}],1,deadline])).unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| context.call("create", json!(["settled checkout",[],[{"id":"tests","kind":"command","description":"pass"}],1,deadline]))).unwrap();
     let tool = SwarmTool::new(
         workspace.clone(),
         Arc::new(Sandbox::new(Some(workspace.as_ref().clone()))),
@@ -89,7 +90,7 @@ async fn settled_descendants(background: bool, success: bool) {
         );
     }
     assert_eq!(
-        context.summary().unwrap()["status"],
+        crate::infrastructure::tools::call_work::off_the_runtime(|| context.summary()).unwrap()["status"],
         if success { "paused" } else { "cancelled" },
         "completion ends the run as a resumable pause (#1729)"
     );
@@ -158,6 +159,7 @@ async fn interrupted_descendants(drop_invocation: bool) {
             max_processes: None,
             ..Default::default()
         },
+        crate::composition::swarm::swarm_board(),
     );
     let child = "import pathlib,time,os; pathlib.Path('child-ready.tmp').write_text(str(os.getpid())); os.replace('child-ready.tmp','child-ready'); time.sleep(10)";
     let code = format!(

@@ -246,14 +246,20 @@ impl crate::application::providers::ports::RequestAccounting for SwarmContext {
     {
         let context = self.clone();
         let observation = observation.clone();
+        // On the blocking pool as blocking work (a board call), but not the
+        // call's carried work: a panic in it is this record's durable error,
+        // which the agent loop logs and drops, never a panic resumed in the
+        // loop (#2278 final review L3).
         Box::pin(async move {
-            tokio::task::spawn_blocking(move || {
-                let mut value = serde_json::to_value(observation).map_err(invalid)?;
-                value["runtime"] =
-                    serde_json::to_value(crate::infrastructure::runtime_identity::current())
-                        .map_err(invalid)?;
-                context.rpc("_record_request", json!([value])).map(|_| ())
-            })
+            tokio::task::spawn_blocking(crate::infrastructure::tools::call_work::blocking(
+                move || {
+                    let mut value = serde_json::to_value(observation).map_err(invalid)?;
+                    value["runtime"] =
+                        serde_json::to_value(crate::infrastructure::runtime_identity::current())
+                            .map_err(invalid)?;
+                    context.rpc("_record_request", json!([value])).map(|_| ())
+                },
+            ))
             .await
             .map_err(invalid)?
         })

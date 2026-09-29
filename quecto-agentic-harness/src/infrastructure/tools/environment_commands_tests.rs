@@ -291,7 +291,9 @@ fn a_stopped_ref_is_removed_only_on_the_runtimes_own_word() {
             registry.clone(),
             std::sync::Arc::new(NoMembers),
             std::sync::Arc::new(super::ScriptEnvironmentCommands::default()),
-            std::sync::Arc::new(super::HostedStoreObservation),
+            std::sync::Arc::new(super::HostedStoreObservation::new(
+                crate::composition::swarm::swarm_board(),
+            )),
         );
 
         let outcome = rt.block_on(kill.kill_container(&EnvironmentTarget::Ref("C7".into())));

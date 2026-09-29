@@ -15,6 +15,7 @@ use std::sync::Arc;
 fn create_running_swarm(checkout: &std::path::Path) -> String {
     std::fs::create_dir_all(checkout.join(".quecto")).unwrap();
     let context = SwarmContext {
+        board: crate::composition::swarm::swarm_board(),
         lifecycle: Arc::new(crate::application::swarm::LifecycleService),
         checkout: checkout.to_path_buf(),
         member: "coordinator".into(),
@@ -30,11 +31,14 @@ fn create_running_swarm(checkout: &std::path::Path) -> String {
             serde_json::json!(["ship", [], [{"id":"tests","kind":"command","description":"pass"}], 3, deadline]),
         )
         .unwrap();
-    crate::infrastructure::tools::swarm_bridge::HostedStore::at(checkout.to_path_buf())
-        .hosted_run()
-        .unwrap()
-        .unwrap()
-        .id
+    crate::infrastructure::tools::swarm_bridge::HostedStore::at(
+        checkout.to_path_buf(),
+        crate::composition::swarm::swarm_board(),
+    )
+    .hosted_run()
+    .unwrap()
+    .unwrap()
+    .id
 }
 
 #[test]

@@ -16,6 +16,7 @@ fn tool(dir: &std::path::Path) -> SwarmTool {
             max_output_bytes: 32,
             ..Default::default()
         },
+        crate::composition::swarm::swarm_board(),
     )
 }
 
@@ -275,6 +276,7 @@ async fn configured_resource_limit_success_reports_resource_metadata() {
             max_cpu_seconds: Some(5),
             ..Default::default()
         },
+        crate::composition::swarm::swarm_board(),
     );
     let result = lab
         .execute(r#"{"op":"run","code":"print('limited')"}"#)
@@ -354,6 +356,7 @@ async fn inherit_environment_can_be_enabled() {
             default_max_output_bytes: 32,
             ..Default::default()
         },
+        crate::composition::swarm::swarm_board(),
     );
     let result = lab
         .execute(r#"{"op":"run","code":"import os; print('PATH' in os.environ)"}"#)
@@ -653,6 +656,7 @@ async fn preview_larger_than_one_read_is_returned_whole() {
             max_output_bytes: 8_000_000,
             ..Default::default()
         },
+        crate::composition::swarm::swarm_board(),
     );
     let result = lab
         .execute(r#"{"op":"run","code":"import sys; sys.stdout.write('x' * 3000000)"}"#)

@@ -33,6 +33,7 @@ fn tool_retaining(dir: &std::path::Path, retention: Retention) -> SwarmTool {
             retention,
             ..Default::default()
         },
+        crate::composition::swarm::swarm_board(),
     )
 }
 
@@ -230,6 +231,7 @@ async fn concurrent_background_jobs_are_capped_until_cancelled() {
             default_timeout_seconds: 5,
             ..Default::default()
         },
+        crate::composition::swarm::swarm_board(),
     );
     let first = lab
         .execute(r#"{"op":"run","code":"import time; time.sleep(5)","background":true}"#)
@@ -510,6 +512,7 @@ async fn another_member_cannot_prune_a_live_foreground_result() {
     let tmp = tempfile::tempdir().unwrap();
     let fast = tool_retaining(tmp.path(), TEST_RETENTION);
     let worker = super::swarm_bridge::SwarmContext {
+        board: crate::composition::swarm::swarm_board(),
         checkout: tmp.path().to_path_buf(),
         member: "worker".into(),
         lifecycle: Arc::new(crate::application::ports::SwarmTestLifecycle),
@@ -518,15 +521,17 @@ async fn another_member_cannot_prune_a_live_foreground_result() {
         member: "coordinator".into(),
         ..worker.clone()
     };
-    parent
-        .call("_admit", serde_json::json!(["worker", "reservation"]))
-        .unwrap();
-    parent
-        .call(
+    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        parent.call("_admit", serde_json::json!(["worker", "reservation"]))
+    })
+    .unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        parent.call(
             "_activate",
             serde_json::json!(["worker", "reservation", 123, "start", null]),
         )
-        .unwrap();
+    })
+    .unwrap();
     let slow = SwarmTool::new(
         Arc::new(tmp.path().to_path_buf()),
         Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()))),
@@ -562,6 +567,7 @@ async fn foreground_registration_preserves_background_job_capacity() {
             max_concurrent_jobs: 1,
             ..Default::default()
         },
+        crate::composition::swarm::swarm_board(),
     ));
     let foreground = {
         let lab = lab.clone();

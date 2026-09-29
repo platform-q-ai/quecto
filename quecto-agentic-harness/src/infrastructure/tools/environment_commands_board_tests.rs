@@ -95,7 +95,9 @@ fn end(
     let finalize = FinalizeEnvironmentMember::new(
         registry.clone(),
         scripts.clone(),
-        Arc::new(HostedStoreObservation),
+        Arc::new(HostedStoreObservation::new(
+            crate::composition::swarm::swarm_board(),
+        )),
     );
     futures::executor::block_on(finalize.finalize_member("C1", "child", None, mode));
     let ran = scripts.0.lock().unwrap().clone();
@@ -103,7 +105,8 @@ fn end(
 }
 
 fn assert_kept(record: EnvironmentRecord, case: &str) {
-    let observed = HostedStoreObservation.inspect_hosted_run(&record);
+    let observed = HostedStoreObservation::new(crate::composition::swarm::swarm_board())
+        .inspect_hosted_run(&record);
     assert!(
         matches!(observed, SwarmRunObservation::Unreadable(_)),
         "{case}: {observed:?}"
@@ -126,7 +129,8 @@ fn a_resolving_checkout_with_no_board_anywhere_is_plain_and_ends_for_good() {
     for checkout in [Some(workspace.as_path()), None] {
         let record = record(&workspace, checkout);
         assert_eq!(
-            HostedStoreObservation.inspect_hosted_run(&record),
+            HostedStoreObservation::new(crate::composition::swarm::swarm_board())
+                .inspect_hosted_run(&record),
             SwarmRunObservation::NoStore
         );
         let (ran, status) = owner_end(record);
@@ -157,7 +161,8 @@ fn an_unadvertised_workspace_absent_from_the_host_is_unverified_never_plain() {
     let dir = tempfile::tempdir().unwrap();
     let record = record(&dir.path().join("in-container-only"), None);
     assert_eq!(
-        HostedStoreObservation.inspect_hosted_run(&record),
+        HostedStoreObservation::new(crate::composition::swarm::swarm_board())
+            .inspect_hosted_run(&record),
         SwarmRunObservation::NoStoreUnverified
     );
     let (ran, status) = end(record.clone(), MemberFinalizeMode::OwnerEnd);
@@ -244,7 +249,8 @@ fn a_resolving_worktree_pointer_with_no_board_is_plain() {
     .unwrap();
     let record = record(&workspace, Some(&workspace));
     assert_eq!(
-        HostedStoreObservation.inspect_hosted_run(&record),
+        HostedStoreObservation::new(crate::composition::swarm::swarm_board())
+            .inspect_hosted_run(&record),
         SwarmRunObservation::NoStore
     );
     let (ran, status) = owner_end(record);

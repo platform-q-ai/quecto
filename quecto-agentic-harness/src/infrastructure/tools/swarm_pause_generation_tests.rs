@@ -10,21 +10,25 @@ async fn stale_pause_settlement_preserves_resumed_python_job() {
             Some(workspace.as_ref().clone()),
         )),
         super::super::swarm::SwarmConfig::default(),
+        crate::composition::swarm::swarm_board(),
     );
     let context = SwarmContext {
+        board: crate::composition::swarm::swarm_board(),
         checkout: directory.path().to_path_buf(),
         member: "coordinator".into(),
         lifecycle: std::sync::Arc::new(crate::application::swarm::LifecycleService),
     };
-    context.pause("old pause").unwrap();
-    let old = context.snapshot().unwrap();
-    context.resume_external().unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| context.pause("old pause"))
+        .unwrap();
+    let old =
+        crate::infrastructure::tools::call_work::off_the_runtime(|| context.snapshot()).unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| context.resume_external()).unwrap();
     let started = tool.execute(r#"{"op":"run","code":"import time; time.sleep(0.1); print('resumed')","background":true}"#).await.unwrap();
     let started: Value = serde_json::from_str(&started.content).unwrap();
     crate::application::swarm::settle(
         &old,
         &context.member,
-        &RuntimeProcesses(&context),
+        &RuntimeProcesses(&context, local_suspend()),
         &super::LinuxProcesses,
     )
     .await
@@ -55,7 +59,7 @@ async fn stale_pause_settlement_preserves_resumed_python_job() {
 async fn runtime_never_signals_a_member_by_pid_when_it_is_neither_reachable_nor_owned() {
     use std::os::unix::process::CommandExt;
     let (_directory, context) = crate::swarm_control_fixture::context();
-    let processes = RuntimeProcesses(&context);
+    let processes = RuntimeProcesses(&context, local_suspend());
     let mut child = std::process::Command::new("/bin/sleep")
         .arg("30")
         .process_group(0)

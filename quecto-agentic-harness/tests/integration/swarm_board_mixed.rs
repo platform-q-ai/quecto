@@ -274,3 +274,369 @@ fn a_budget_either_side_configured_is_the_same_budget() {
     assert_eq!(board.budget_payload(), budget_text(200, true, true));
     assert_eq!(board.report(9.0)["budget"]["warned"], json!(true));
 }
+
+// ─── S13 (#2278): the harness's Rust board beside Python writers ─────────
+
+use crate::swarm_board_diff_runs::swarm_board_diff::dump::{Dump, first_difference, logical_dump};
+
+/// Which implementation a step of a mixed sequence runs on.
+#[derive(Clone, Copy, Debug)]
+enum Side {
+    Python,
+    Rust,
+}
+
+/// One step: the side that serves it in the mixed run, the member, the
+/// method and its arguments as JSON text. Every step that draws an id
+/// (a run id, a reservation, a claim or file token) runs on Python, so
+/// the mixed run draws the same ids, in the same order, as the
+/// Python-only run.
+struct Mix(Side, &'static str, &'static str, String);
+
+fn mix(side: Side, member: &'static str, method: &'static str, args: Value) -> Mix {
+    Mix(side, member, method, args.to_string())
+}
+
+/// `{token}` in a step's arguments is the token the claim answered.
+fn with_token(args: &str, token: &str) -> String {
+    args.replace("{token}", token)
+}
+
+/// An alternating sequence over every method group: membership, tasks and
+/// claims, submissions, reservations, messages, evidence, usage, reads and
+/// control.
+fn alternating() -> Vec<Mix> {
+    use Side::{Python, Rust};
+    vec![
+        mix(Rust, "parent", "_admit", json!(["worker", "res-w"])),
+        mix(
+            Python,
+            "parent",
+            "_activate",
+            json!(["worker", "res-w", 11, "t", null]),
+        ),
+        mix(
+            Rust,
+            "parent",
+            "task_create",
+            json!(["r1", "first", ["tests pass"]]),
+        ),
+        mix(
+            Python,
+            "parent",
+            "task_create",
+            json!(["r2", "second", ["docs"], [1]]),
+        ),
+        mix(Rust, "parent", "dependencies", json!([2, [1]])),
+        mix(Python, "worker", "claim", json!([1])),
+        mix(Rust, "worker", "task", json!([1])),
+        mix(
+            Rust,
+            "worker",
+            "block",
+            json!([1, "{token}", "waiting on review"]),
+        ),
+        mix(
+            Python,
+            "worker",
+            "unblock",
+            json!([1, "{token}", "reviewed"]),
+        ),
+        mix(
+            Python,
+            "worker",
+            "reserve",
+            json!([1, "{token}", ["src/lib.rs"]]),
+        ),
+        mix(Rust, "worker", "file_owners", json!([])),
+        mix(
+            Rust,
+            "worker",
+            "send",
+            json!(["m1", "parent", "ready for review"]),
+        ),
+        mix(Python, "parent", "inbox", json!([])),
+        mix(Rust, "parent", "ack", json!([1])),
+        mix(
+            Python,
+            "worker",
+            "send",
+            json!(["m2", "parent", "second note"]),
+        ),
+        mix(Rust, "worker", "withdraw", json!([2])),
+        mix(
+            Rust,
+            "worker",
+            "evidence",
+            json!(["tests", "report", "R1", "command", true]),
+        ),
+        mix(
+            Python,
+            "worker",
+            "submit",
+            json!([1, "{token}", [{"artifact": "report", "revision": "R1"}]]),
+        ),
+        mix(Rust, "parent", "verify_task", json!([1, "{token}", "R1"])),
+        mix(Python, "parent", "usage_budget", json!([1000, false])),
+        mix(
+            Rust,
+            "worker",
+            "_record_request",
+            json!([{"request_id": "q1", "instrumented_attempts": 1, "outcome": "succeeded", "context_input_tokens": 40, "output_tokens": 5}]),
+        ),
+        mix(Python, "parent", "usage_report", json!([])),
+        mix(Rust, "parent", "summary", json!([null])),
+        mix(Python, "parent", "events", json!([0, 50])),
+        mix(Rust, "parent", "pause", json!(["hold for review"])),
+        mix(Python, "parent", "_control_status", json!([])),
+        mix(Rust, "parent", "_resume_external", json!([])),
+        mix(
+            Python,
+            "parent",
+            "amend",
+            json!(["mixed writers", ["keep the schema"], [{"id": "t", "kind": "command", "description": "test"}], "narrowed"]),
+        ),
+        mix(Rust, "parent", "tasks", json!([])),
+        mix(Rust, "parent", "stop", json!(["cancelled", "done"])),
+    ]
+}
+
+/// The claim token a claim answered.
+fn claimed_token(outcome: &Outcome) -> Option<String> {
+    match outcome {
+        Outcome::Ok(task) => task["token"].as_str().map(str::to_owned),
+        _ => None,
+    }
+}
+
+/// A fresh board file in `dir`, created by Python as `Mixed::running` does
+/// (with `worker` not yet admitted).
+fn created(dir: &Path, name: &str) -> (PathBuf, PathBuf, PyBoard) {
+    let checkout = dir.join(name);
+    std::fs::create_dir_all(&checkout).expect("create the board directory");
+    let database = checkout.join("swarm.sqlite");
+    let mut python = PyBoard::start(&database, &checkout, &checkout);
+    let create = json!({
+        "goal": "mixed writers",
+        "constraints": [],
+        "criteria": [{"id": "tests", "kind": "command", "description": "test"}],
+        "member_limit": 5,
+        "deadline": NOW + 3_600.0,
+    });
+    let outcome = python.call("parent", "create_run", &create.to_string(), NOW);
+    assert!(matches!(outcome, Outcome::Ok(_)), "create_run: {outcome:?}");
+    (checkout, database, python)
+}
+
+#[test]
+fn interleaved_python_and_rust_writers_on_one_file_match_a_single_writer() {
+    let dir = tempfile::tempdir().expect("a directory for the boards");
+    let (_, single_file, mut single) = created(dir.path(), "single");
+    let (mixed_checkout, mixed_file, mut python) = created(dir.path(), "mixed");
+    let rust = RustBoard::open(&mixed_file, &mixed_checkout);
+    let (mut single_token, mut mixed_token) = (String::new(), String::new());
+    let mut served = 0;
+    for (index, Mix(side, member, method, args)) in alternating().into_iter().enumerate() {
+        let now = NOW + 1.0 + index as f64;
+        let expected = single.call(member, method, &with_token(&args, &single_token), now);
+        let args = with_token(&args, &mixed_token);
+        let answered = match side {
+            Side::Python => python.call(member, method, &args, now),
+            Side::Rust => rust.call(member, method, &serde_json::from_str(&args).unwrap(), now),
+        };
+        assert_eq!(answered, expected, "step {index} {method} on {side:?}");
+        if method == "claim" {
+            single_token = claimed_token(&expected).expect("the claim answered a token");
+            mixed_token = claimed_token(&answered).expect("the claim answered a token");
+        }
+        served += usize::from(matches!(answered, Outcome::Ok(_)));
+    }
+    assert!(
+        served >= 25,
+        "the sequence exercised the board: {served} served"
+    );
+    let (single, mixed): (Dump, Dump) = (logical_dump(&single_file), logical_dump(&mixed_file));
+    assert_eq!(
+        first_difference(&single, &mixed),
+        None,
+        "the mixed file is the single writer's file"
+    );
+}
+
+/// A claim token Rust draws is the one Python's writers then use (#2278
+/// review L4): on a file Python created, Rust claims (drawing the token
+/// from a counter at Python's count, so it draws the id a Python claim
+/// would), and Python blocks, unblocks and submits against that token. The
+/// outcomes and the file are the Python-only run's, ids included.
+#[test]
+fn a_claim_rust_draws_serves_python_writers_as_a_python_claim_would() {
+    use Side::{Python, Rust};
+    let dir = tempfile::tempdir().expect("a directory for the boards");
+    let (_, single_file, mut single) = created(dir.path(), "single");
+    let (mixed_checkout, mixed_file, mut python) = created(dir.path(), "mixed");
+    let steps = vec![
+        mix(Python, "parent", "_admit", json!(["worker", "res-w"])),
+        mix(
+            Python,
+            "parent",
+            "_activate",
+            json!(["worker", "res-w", 11, "t", null]),
+        ),
+        mix(
+            Python,
+            "parent",
+            "task_create",
+            json!(["r1", "first", ["tests pass"]]),
+        ),
+        mix(Rust, "worker", "claim", json!([1])),
+        mix(Python, "worker", "block", json!([1, "{token}", "waiting"])),
+        mix(Python, "worker", "unblock", json!([1, "{token}", "ready"])),
+        mix(
+            Python,
+            "worker",
+            "evidence",
+            json!(["tests", "report", "R1", "command", true]),
+        ),
+        mix(
+            Python,
+            "worker",
+            "submit",
+            json!([1, "{token}", [{"artifact": "report", "revision": "R1"}]]),
+        ),
+        mix(Python, "parent", "task", json!([1])),
+    ];
+    let mut token = String::new();
+    for (index, Mix(side, member, method, args)) in steps.into_iter().enumerate() {
+        let now = NOW + 1.0 + index as f64;
+        let args = with_token(&args, &token);
+        let expected = single.call(member, method, &args, now);
+        let answered = match side {
+            Side::Python => python.call(member, method, &args, now),
+            Side::Rust => {
+                // Python drew every id so far; the single writer's claim
+                // is its next: Rust's counter starts where Python's is.
+                let drawn = claimed_token(&expected)
+                    .and_then(|token| u64::from_str_radix(&token, 16).ok())
+                    .expect("the claim drew a counter id");
+                RustBoard::open_after(&mixed_file, &mixed_checkout, drawn - 1).call(
+                    member,
+                    method,
+                    &serde_json::from_str(&args).unwrap(),
+                    now,
+                )
+            }
+        };
+        assert_eq!(answered, expected, "step {index} {method} on {side:?}");
+        assert!(
+            matches!(answered, Outcome::Ok(_)),
+            "step {index} {method}: {answered:?}"
+        );
+        if method == "claim" {
+            token = claimed_token(&answered).expect("the claim answered a token");
+        }
+    }
+    assert_eq!(
+        first_difference(&logical_dump(&single_file), &logical_dump(&mixed_file)),
+        None,
+        "Rust's claim token, used by Python, leaves the single writer's file"
+    );
+}
+
+/// Retries `call` while the store answers the contended refusal, within a
+/// bound, counting each retry in `retries`: 25 appends against 7 other
+/// writers each wait at most the 500 ms busy timeout per attempt.
+fn until_uncontended(
+    retries: &std::sync::atomic::AtomicUsize,
+    mut call: impl FnMut() -> Outcome,
+) -> Outcome {
+    const CONTENDED: &str = "coordination store unavailable or contended: database is locked";
+    for _ in 0..400 {
+        match call() {
+            Outcome::Refused(text) if text == CONTENDED => {
+                retries.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+            answered => return answered,
+        }
+    }
+    panic!("still contended after 400 attempts")
+}
+
+/// Eight writers, half Python and half Rust, append to one file at once
+/// (review L5): they start together, while the test holds the file's write
+/// lock past both sides' 500 ms busy timeout, so the writers are refused
+/// as contended and retry. Nothing is lost or duplicated:
+/// 200 distinct tasks and 200 distinct request ids.
+#[test]
+fn python_and_rust_contend_without_corrupting_the_board() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Barrier};
+    const WRITERS: usize = 8;
+    let board = Mixed::running();
+    let checkout = board.database.parent().unwrap().to_path_buf();
+    let database = board.database.clone();
+    let start = Arc::new(Barrier::new(WRITERS + 1));
+    let retries = Arc::new(AtomicUsize::new(0));
+    let workers: Vec<std::thread::JoinHandle<()>> = (0..WRITERS)
+        .map(|writer| {
+            let (database, checkout) = (database.clone(), checkout.clone());
+            let (start, retries) = (start.clone(), retries.clone());
+            std::thread::spawn(move || {
+                let scratch = tempfile::tempdir().expect("a directory for the driver");
+                let mut python =
+                    (writer % 2 == 0).then(|| PyBoard::start(&database, &checkout, scratch.path()));
+                let rust = RustBoard::open(&database, &checkout);
+                start.wait();
+                for task in 0..25 {
+                    let args = json!([
+                        format!("w{writer}-{task}"),
+                        format!("writer {writer} task {task}"),
+                        ["done"]
+                    ]);
+                    let now = NOW + 10.0 + f64::from(task);
+                    let answered = until_uncontended(&retries, || match python.as_mut() {
+                        Some(python) => {
+                            python.call("parent", "task_create", &args.to_string(), now)
+                        }
+                        None => rust.call("parent", "task_create", &args, now),
+                    });
+                    assert!(
+                        matches!(answered, Outcome::Ok(_)),
+                        "writer {writer}: {answered:?}"
+                    );
+                }
+            })
+        })
+        .collect();
+    // Every writer's first append meets the lock held past its timeout.
+    let holder = Connection::open(&database).expect("open the shared board");
+    holder
+        .execute_batch("BEGIN IMMEDIATE")
+        .expect("take the write lock");
+    start.wait();
+    std::thread::sleep(std::time::Duration::from_millis(1_200));
+    holder
+        .execute_batch("COMMIT")
+        .expect("release the write lock");
+    for worker in workers {
+        worker.join().expect("a writer finished");
+    }
+    assert!(
+        retries.load(Ordering::SeqCst) >= 1,
+        "the writers met the held lock, were refused as contended and retried: {} retries",
+        retries.load(Ordering::SeqCst)
+    );
+    let count = |sql: &str| board.stored_text(sql);
+    assert_eq!(count("SELECT CAST(count(*) AS TEXT) FROM tasks"), "200");
+    assert_eq!(
+        count("SELECT CAST(count(DISTINCT title) AS TEXT) FROM tasks"),
+        "200",
+        "every append is its own task"
+    );
+    assert_eq!(
+        count("SELECT CAST(count(DISTINCT request) AS TEXT) FROM requests WHERE request LIKE 'w%'"),
+        "200",
+        "every append's request id recorded once"
+    );
+    assert_eq!(board.events("task_created"), "200");
+    assert_eq!(count("PRAGMA integrity_check"), "ok");
+}

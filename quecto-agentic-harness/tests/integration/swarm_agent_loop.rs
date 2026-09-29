@@ -26,6 +26,7 @@ async fn fake_provider_decomposes_resolves_blocker_and_verifies_swarm() {
     let directory = tempfile::tempdir().unwrap();
     let workspace = Arc::new(directory.path().to_path_buf());
     let context = SwarmContext {
+        board: quecto::composition::swarm::swarm_board(),
         lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),
         checkout: workspace.as_ref().clone(),
         member: "coordinator".into(),
@@ -36,8 +37,8 @@ async fn fake_provider_decomposes_resolves_blocker_and_verifies_swarm() {
         .unwrap()
         .as_secs()
         + 60;
-    context.create_run(&serde_json::json!({"goal":"ship","constraints":[],"criteria":[{"id":"tests","kind":"command","description":"pass"}],"member_limit":1,"deadline":deadline}),
-        &quecto::domain::swarm::ProcessIdentity { pid: std::process::id(), started: quecto::infrastructure::tools::swarm_bridge::process_start(std::process::id()).unwrap() }, None).unwrap();
+    quecto::infrastructure::tools::call_work::off_the_runtime(|| context.create_run(&serde_json::json!({"goal":"ship","constraints":[],"criteria":[{"id":"tests","kind":"command","description":"pass"}],"member_limit":1,"deadline":deadline}),
+        &quecto::domain::swarm::ProcessIdentity { pid: std::process::id(), started: quecto::infrastructure::tools::swarm_bridge::process_start(std::process::id()).unwrap() }, None)).unwrap();
     let tool = SwarmTool::new(
         workspace.clone(),
         Arc::new(Sandbox::new(Some(workspace.as_ref().clone()))),
@@ -68,18 +69,21 @@ async fn fake_provider_decomposes_resolves_blocker_and_verifies_swarm() {
         .unwrap();
     assert!(result.response.contains("Verified completion"));
     let context = SwarmContext {
+        board: quecto::composition::swarm::swarm_board(),
         lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),
         checkout: workspace.as_ref().clone(),
         member: "coordinator".into(),
     };
-    let summary = context.summary().unwrap();
+    let summary =
+        quecto::infrastructure::tools::call_work::off_the_runtime(|| context.summary()).unwrap();
     assert_eq!(
         (summary["status"].as_str(), summary["outcome"].as_str()),
         (Some("paused"), Some("succeeded"))
     );
     assert_eq!(summary["counts"]["completed"], 2);
     assert!(
-        context.events(0, 100).unwrap()["events"]
+        quecto::infrastructure::tools::call_work::off_the_runtime(|| context.events(0, 100))
+            .unwrap()["events"]
             .as_array()
             .unwrap()
             .iter()

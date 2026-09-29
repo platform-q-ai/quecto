@@ -7,6 +7,7 @@ fn packaged_adapter_enforces_reservations_and_retains_unconfirmed_execution_scop
     let root = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(root.path().join(".quecto")).unwrap();
     let context = SwarmContext {
+        board: quecto::composition::swarm::swarm_board(),
         checkout: root.path().to_path_buf(),
         member: "parent".into(),
         lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),

@@ -85,6 +85,7 @@ async fn approval_exchange(busy: bool) {
     let workspace = Arc::new(env.tmp.path().to_path_buf());
     std::fs::create_dir_all(workspace.join(".quecto")).unwrap();
     let board = SwarmContext {
+        board: crate::composition::swarm::swarm_board(),
         checkout: workspace.as_ref().clone(),
         member: "coordinator".into(),
         lifecycle: Arc::new(crate::application::swarm::LifecycleService),
@@ -94,7 +95,7 @@ async fn approval_exchange(busy: bool) {
         .unwrap()
         .as_secs()
         + 120;
-    board.create_run(&serde_json::json!({"goal":"wishlist","constraints":[],"criteria":[{"id":"tests","kind":"command","description":"pass"}],"member_limit":1,"deadline":deadline}), &crate::domain::swarm::ProcessIdentity { pid:std::process::id(), started:crate::infrastructure::tools::swarm_bridge::process_start(std::process::id()).unwrap() },None).unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| board.create_run(&serde_json::json!({"goal":"wishlist","constraints":[],"criteria":[{"id":"tests","kind":"command","description":"pass"}],"member_limit":1,"deadline":deadline}), &crate::domain::swarm::ProcessIdentity { pid:std::process::id(), started:crate::infrastructure::tools::swarm_bridge::process_start(std::process::id()).unwrap() },None)).unwrap();
     let tool = SwarmTool::new(
         workspace.clone(),
         Arc::new(crate::infrastructure::security::sandbox::Sandbox::new(
@@ -190,7 +191,10 @@ async fn approval_exchange(busy: bool) {
         std::fs::read_to_string(workspace.join("approved.txt")).unwrap(),
         "schema v2"
     );
-    assert_eq!(board.summary().unwrap()["status"], "running");
+    assert_eq!(
+        crate::infrastructure::tools::call_work::off_the_runtime(|| board.summary()).unwrap()["status"],
+        "running"
+    );
     accept.abort();
 }
 

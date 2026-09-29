@@ -16,7 +16,8 @@
 //! repository is the call's. It serves `_status` and `_snapshot`
 //! (#2270) and the harness's membership methods `_admit`, `_activate`,
 //! `_record_launch`, `_release_unlaunched` and `_socket` (#2271); later
-//! slices add methods, and S13 wires it into `SwarmContext`. Every
+//! slices add methods, and `SwarmContext` and `HostedStore` call it
+//! through `swarm_bridge::SwarmBoard` (#2278). Every
 //! membership argument (member, reservation, pid, start time, socket)
 //! reaches the use case as the JSON value passed (#2271 round-1 review
 //! M1): Python binds each untyped, so the store binds it as Python's

@@ -4,14 +4,56 @@ use crate::application::swarm::ports::CoordinationPort;
 use crate::domain::external_agent::backend::MemberBackend;
 use crate::infrastructure::tools::swarm_bridge::SwarmContext;
 use crate::infrastructure::tools::{swarm_bridge, swarm_lifecycle};
+use crate::interface::cli::CliContext;
 
-pub(super) fn admit(flags: &mut AgentFlags, stderr: &mut String) -> bool {
-    admit_with(
-        crate::interface::tool_runtime::swarm_context(),
-        swarm_lifecycle::is_creator(),
-        flags,
-        stderr,
-    )
+/// Admit this process: a swarm member's board is composition's (#2278),
+/// bound as the process's board before its context is discovered, and a
+/// process launched under the container contract without one is refused.
+pub(super) fn admit(ctx: &CliContext, flags: &mut AgentFlags, stderr: &mut String) -> bool {
+    let contracted = SwarmContext::contracted_checkout().is_some();
+    let context = match board_admission(board(ctx), contracted) {
+        Ok(Some(board)) => {
+            swarm_bridge::bind_process_board(board);
+            crate::interface::tool_runtime::swarm_context()
+        }
+        Ok(None) => None,
+        Err(refusal) => {
+            stderr.push_str(refusal);
+            return false;
+        }
+    };
+    admit_with(context, swarm_lifecycle::is_creator(), flags, stderr)
+}
+
+/// The board a process is admitted with: composition's, when composed; a
+/// process launched under the container contract (`contracted`) without
+/// one is refused, since the interface never constructs the board.
+pub(super) fn board_admission(
+    board: Option<swarm_bridge::SwarmBoard>,
+    contracted: bool,
+) -> Result<Option<swarm_bridge::SwarmBoard>, &'static str> {
+    match (board, contracted) {
+        (Some(board), _) => Ok(Some(board)),
+        (None, false) => Ok(None),
+        (None, true) => Err(SWARM_BOARD_NOT_COMPOSED),
+    }
+}
+
+/// The refusal for a swarm member whose run composed no board (#2278).
+pub(super) const SWARM_BOARD_NOT_COMPOSED: &str = "agent: swarm board capability not composed\n";
+
+/// The board composition's builders carried on `ctx` make (#2278): it
+/// records in the session's event log when `ctx` also carries
+/// composition's `board_op_log`.
+pub(super) fn board(ctx: &CliContext) -> Option<swarm_bridge::SwarmBoard> {
+    match (ctx.swarm_board, ctx.swarm_board_log) {
+        (Some(build), Some(session_log)) => Some(swarm_bridge::SwarmBoard::with_session_log(
+            build,
+            session_log,
+        )),
+        (Some(build), None) => Some(swarm_bridge::SwarmBoard::new(build)),
+        (None, _) => None,
+    }
 }
 
 /// Workflow eligibility follows swarm participation, not containerization

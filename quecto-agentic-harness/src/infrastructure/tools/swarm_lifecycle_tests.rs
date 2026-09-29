@@ -85,20 +85,23 @@ async fn a_resume_wakes_every_live_member_even_though_nothing_targets_them() {
     let (directory, context) = crate::swarm_control_fixture::context();
     let socket = directory.path().join("worker.sock");
     let (sink, stop) = wake_sink(&socket);
-    context
-        .call("_admit", serde_json::json!(["worker", "r"]))
-        .unwrap();
-    context
-        .call(
+    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        context.call("_admit", serde_json::json!(["worker", "r"]))
+    })
+    .unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        context.call(
             "_activate",
             serde_json::json!(["worker", "r", 123, "identity", socket]),
         )
+    })
+    .unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| context.pause("member failed"))
         .unwrap();
-    context.pause("member failed").unwrap();
     let receipt = context.apply(RunControlAction::Resume).await.unwrap();
     assert_eq!(receipt.status, crate::domain::swarm::RunStatus::Running);
     assert!(receipt.wake_warnings.is_empty(), "{receipt:?}");
-    context.pause("again").unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| context.pause("again")).unwrap();
     // The coordinator's own `swarm resume` op is refused (#1729); only the
     // supervisor's control port resumes, and it wakes everyone.
     let refused =
@@ -117,7 +120,8 @@ async fn a_resume_wakes_every_live_member_even_though_nothing_targets_them() {
     assert_eq!(generations, [receipt.generation, second.generation]);
     // A member that cannot be reached is reported, not fatal.
     std::fs::remove_file(&socket).unwrap();
-    context.pause("and again").unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| context.pause("and again"))
+        .unwrap();
     let receipt = context.apply(RunControlAction::Resume).await.unwrap();
     assert_eq!(receipt.status, crate::domain::swarm::RunStatus::Running);
     assert_eq!(receipt.wake_warnings.len(), 1, "{receipt:?}");
@@ -149,4 +153,42 @@ fn a_member_that_cannot_end_itself_stops_trying_after_a_bounded_number_of_attemp
         assert!(!budget.self_end_exhausted());
     }
     assert!(budget.self_end_exhausted());
+}
+
+/// Settling a paused run from the swarm tool on an async worker suspends
+/// this process's local inference before the settlement returns (#2329
+/// final review), on either runtime flavor: the turn is suspended by the
+/// time the tool call answers.
+async fn settling_a_pause_suspends_local_inference_before_it_returns() {
+    let (_directory, context) = crate::swarm_control_fixture::context();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| context.pause("inspect")).unwrap();
+    let suspended = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let recorded = suspended.clone();
+    let suspend: LocalSuspend = std::sync::Arc::new(move |status, generation| {
+        // A suspension that takes a while: it verifies the run on the board.
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        recorded
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((status, generation));
+    });
+    super::settle_suspending(context, Some(suspend))
+        .await
+        .unwrap();
+    let suspended = suspended
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    assert_eq!(suspended.len(), 1, "{suspended:?}");
+    assert_eq!(suspended[0].0, RunStatus::Paused);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_settled_pause_has_suspended_local_inference_on_a_multi_thread_worker() {
+    settling_a_pause_suspends_local_inference_before_it_returns().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_settled_pause_has_suspended_local_inference_on_a_current_thread_runtime() {
+    settling_a_pause_suspends_local_inference_before_it_returns().await;
 }

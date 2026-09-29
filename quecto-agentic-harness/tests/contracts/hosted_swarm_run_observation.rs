@@ -16,7 +16,9 @@ use quecto::infrastructure::tools::environment_commands::HostedStoreObservation;
 use quecto::infrastructure::tools::swarm_bridge::SwarmContext;
 
 fn port() -> Arc<dyn HostedSwarmRunObservation + Send + Sync> {
-    Arc::new(HostedStoreObservation)
+    Arc::new(HostedStoreObservation::new(
+        quecto::composition::swarm::swarm_board(),
+    ))
 }
 
 fn record(checkout: &std::path::Path, advertise: bool) -> EnvironmentRecord {
@@ -49,6 +51,7 @@ fn record(checkout: &std::path::Path, advertise: bool) -> EnvironmentRecord {
 fn store(checkout: &std::path::Path) -> SwarmContext {
     std::fs::create_dir_all(checkout.join(".quecto")).unwrap();
     SwarmContext {
+        board: quecto::composition::swarm::swarm_board(),
         checkout: checkout.to_path_buf(),
         member: "coordinator".into(),
         lifecycle: Arc::new(quecto::application::swarm::LifecycleService),
@@ -61,8 +64,9 @@ fn create_run(context: &SwarmContext) {
         .unwrap()
         .as_secs()
         + 600;
-    context
-        .create_run(
+    // Setup off any async worker: a board call blocks (#2278).
+    quecto::infrastructure::tools::call_work::off_the_runtime(|| {
+        context.create_run(
             &serde_json::json!({"goal":"ship", "constraints":[], "criteria":[{"id":"tests","kind":"command","description":"pass"}], "member_limit":3, "deadline":deadline}),
             &quecto::domain::swarm::ProcessIdentity {
                 pid: std::process::id(),
@@ -73,7 +77,8 @@ fn create_run(context: &SwarmContext) {
             },
             None,
         )
-        .unwrap();
+    })
+    .unwrap();
 }
 
 #[tokio::test]
