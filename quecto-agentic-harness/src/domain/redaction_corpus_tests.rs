@@ -199,6 +199,17 @@ pub(super) const CORPUS: &[(&str, &str)] = &[
     (r#"{"password": ""}"#, r#"{"password": ""}"#),
     (r#"{"password": " "}"#, r#"{"password": " "}"#),
     (r#"rg '"token":' fixtures/"#, r#"rg '"token":' fixtures/"#),
+    // A bare command-line value ends where the shell's word does, and a
+    // value inside its label's quote skips an escaped quote.
+    (
+        "x; docker login -p pw; ssh -p 22 h",
+        "x; docker login -p [REDACTED]; ssh -p 22 h",
+    ),
+    ("echo $(mysql -phunter2)", "echo $(mysql -p[REDACTED])"),
+    (
+        r#"curl -d "token=abc\"def" x"#,
+        r#"curl -d "token=[REDACTED]" x"#,
+    ),
     // Shapes redacted before, still redacted.
     (
         "export GITHUB_TOKEN=ghp_0123456789abcdef0123456789abcdef0123",
