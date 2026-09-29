@@ -2,6 +2,7 @@
 
 pub mod catalogue_conformance;
 pub mod repo_docs;
+pub mod swarm_board_diff;
 pub mod teardown_fixture;
 
 use std::fs;

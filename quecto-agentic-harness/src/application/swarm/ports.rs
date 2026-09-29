@@ -1,13 +1,21 @@
-//! Capability-local ports of the swarm lifecycle capability (#1940, #1960).
+//! Capability-local ports of the swarm capability: the lifecycle ports
+//! (#1940, #1960) and the coordination board's (#2270).
 //!
 //! Wire names, positional arguments and persistence schemas are adapter
-//! details; every signature here names only domain types.
+//! details; every signature here names only domain types and the
+//! capability's own DTOs.
 use std::future::Future;
 use std::pin::Pin;
 
+use serde_json::Value;
+
+use super::dto::{
+    MemberClaimCounts, MemberRow, NewMember, NewRun, RunContract, RunOwnerRow, RunStatusRow,
+};
 use crate::domain::error::DomainError;
 use crate::domain::swarm::{
-    Member, MemberExit, ProcessIdentity, RunControlAction, RunControlReceipt, RunStatus, Snapshot,
+    BoardError, Member, MemberExit, MemberRecord, ProcessIdentity, RunControlAction,
+    RunControlReceipt, RunRecord, RunStatus, Snapshot,
 };
 
 pub type PortFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -118,4 +126,90 @@ pub trait SwarmRunControl: Send + Sync {
         &self,
         action: RunControlAction,
     ) -> PortFuture<'_, Result<RunControlReceipt, DomainError>>;
+}
+
+// ─── The coordination board (epic #2265, #2270) ─────────────────────────────
+//
+// Segregated by role (ADR-0019): a use case bounds only the roles it uses,
+// and later slices add roles instead of growing one transaction trait. Every
+// role method runs inside the one transaction its `BoardRepository::atomic`
+// opened; a store failure is a `BoardError` carrying the board's text
+// (`coordination store unavailable or contended: …`).
+
+/// The `run` row.
+pub trait BoardRuns {
+    /// The run, when the store holds one.
+    fn run(&self) -> Result<Option<RunRecord>, BoardError>;
+    /// Whether the store holds a run (`_bootstrap`'s `SELECT 1 FROM run`):
+    /// no column of it is read.
+    fn run_exists(&self) -> Result<bool, BoardError>;
+    /// The two columns `create` reads of an existing run (status and
+    /// coordinator), as stored, when the store holds one: only those, so a
+    /// column it does not read is never decoded.
+    fn run_owner(&self) -> Result<Option<RunOwnerRow>, BoardError>;
+    /// The columns `_status` reads, as stored, when the store holds a run:
+    /// only those, so a column it does not read is never decoded.
+    fn run_status(&self) -> Result<Option<RunStatusRow>, BoardError>;
+    fn insert_run(&self, run: &NewRun) -> Result<(), BoardError>;
+    /// `create` over the setup placeholder: the new contract, and the run
+    /// is running.
+    fn update_run_contract(&self, contract: &RunContract) -> Result<(), BoardError>;
+    /// The run pauses holding `outcome` for the supervisor (#1729).
+    fn propose_outcome(&self, outcome: &str, reason: &str) -> Result<(), BoardError>;
+}
+
+/// The `members` rows.
+pub trait BoardMembers {
+    fn member(&self, id: &str) -> Result<Option<MemberRecord>, BoardError>;
+    /// Every member row, in store order.
+    fn members(&self) -> Result<Vec<MemberRow>, BoardError>;
+    /// Members whose status is `live` or `reserved`.
+    fn usage(&self) -> Result<i64, BoardError>;
+    /// Members whose status is not `dead` (SQL `status!='dead'`: a NULL
+    /// status is not counted), as `create` counts them.
+    fn not_dead(&self) -> Result<i64, BoardError>;
+    /// `member_claim_counts(coordinator)` (#1969).
+    fn claim_counts(&self, coordinator: Option<&str>) -> Result<MemberClaimCounts, BoardError>;
+    fn insert_member(&self, member: &NewMember) -> Result<(), BoardError>;
+}
+
+/// The `events` log.
+pub trait BoardEvents {
+    /// `Store.event`: one row by `actor` at `time` with the encoded detail.
+    fn event(&self, actor: &str, time: f64, action: &str, detail: &Value)
+    -> Result<(), BoardError>;
+    /// The id of the latest `paused` or `resumed` event, `0` for none.
+    fn control_generation(&self) -> Result<i64, BoardError>;
+}
+
+/// Every role over one transaction.
+pub trait BoardTransaction: BoardRuns + BoardMembers + BoardEvents {}
+
+impl<T: BoardRuns + BoardMembers + BoardEvents + ?Sized> BoardTransaction for T {}
+
+/// The work one board transaction runs.
+pub type BoardWork<'w> = dyn FnMut(&dyn BoardTransaction) -> Result<(), BoardError> + 'w;
+
+/// The board's transaction boundary (`Store.transaction(create)`): `work`
+/// runs once inside one transaction, which commits when it succeeds and
+/// rolls back when it fails.
+pub trait BoardRepository: Send + Sync {
+    /// # Errors
+    /// `work`'s refusal, unchanged, after rolling back; the store's own
+    /// refusal (a missing board, contention).
+    fn atomic(&self, create: bool, work: &mut BoardWork<'_>) -> Result<(), BoardError>;
+}
+
+/// `uuid.uuid4().hex`: 32 lowercase hex digits, a fresh value per draw.
+pub trait IdSource: Send + Sync {
+    fn hex32(&self) -> String;
+}
+
+/// The board's `encode(value)`: `json.dumps` with sorted keys, compact
+/// separators and `ensure_ascii`. The board bounds a JSON argument by the
+/// text it would store before storing it.
+pub trait BoardEncoding: Send + Sync {
+    /// # Errors
+    /// A value nested too deep to encode (Python raises `RecursionError`).
+    fn encode(&self, value: &Value) -> Result<String, BoardError>;
 }

@@ -57,6 +57,7 @@ pub use uds_shutdown::test_support::deliver_termination_signal;
 
 pub mod retention_handles;
 pub mod run_end_fleet;
+pub mod swarm_board_handles;
 mod uds_admission_warnings;
 pub mod uds_discovery_handles;
 #[cfg(test)]
@@ -423,6 +424,10 @@ pub struct CliComposition {
     pub container_init: ContainerInitBuilder,
     pub container_status: ContainerStatusBuilder,
     pub run_end_fleet: run_end_fleet::RunEndFleetBuilder,
+    /// Composition's coordination-board handles builder (#2270). `run`
+    /// does not carry it onto `CliContext` yet: nothing would read it until
+    /// S13 (#2278) threads it through `CliContext` into `SwarmContext`.
+    pub swarm_board: swarm_board_handles::SwarmBoardHandlesBuilder,
 }
 
 /// Run the CLI with the given args and the required outer-owned builders,

@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::Value;
 
 use super::BoardError;
-use super::records::{MemberRecord, RunRecord, TaskState};
+use super::records::{MemberRecord, MemberState, RunRecord, RunState, TaskState};
 
 /// Events after which ready work may be waiting for a taker (#2127).
 pub const READY_WORK_ACTIONS: [&str; 11] = [
@@ -77,8 +77,10 @@ pub fn notification_targets(
     events: &[NotificationEvent],
     state: &NotificationState,
 ) -> Result<Vec<MemberRecord>, BoardError> {
-    match run.status.as_str() {
-        "running" => {}
+    // A NULL status (a row edited outside the board) is not running, as
+    // Python's `None != 'running'`.
+    match run.status.as_ref().map(RunState::as_str) {
+        Some("running") => {}
         _ => return Ok(Vec::new()),
     }
     // Python's dict comprehensions: a later duplicate id wins.
@@ -121,12 +123,12 @@ pub fn notification_targets(
             }
             "amended" => targets.extend(live.keys().map(|id| (*id).to_owned())),
             "evidence" | "death_confirmed" => {
-                targets.insert(run.coordinator.clone());
+                wake_coordinator(run, &mut targets, &mut strays);
             }
             "submitted" | "blocked" => {
                 let task = detail_id(event, "task", Lookup::DictKey)?.and_then(|id| tasks.get(&id));
                 if task.is_some_and(|task| task.status.as_str() == action) {
-                    targets.insert(run.coordinator.clone());
+                    wake_coordinator(run, &mut targets, &mut strays);
                 }
             }
             _ => {}
@@ -134,8 +136,12 @@ pub fn notification_targets(
         if ready && READY_WORK_ACTIONS.contains(&action) {
             let event_actor = event.actor.as_deref().unwrap_or(actor);
             let mut takers = ready_work_takers(run, event_actor, &everyone, &tasks);
-            if OWNERSHIP_ACTIONS.contains(&action) {
-                takers.remove(&run.coordinator);
+            // Python's `takers - {None}` removes nobody.
+            if let (true, Some(coordinator)) = (
+                OWNERSHIP_ACTIONS.contains(&action),
+                run.coordinator.as_ref(),
+            ) {
+                takers.remove(coordinator);
             }
             targets.extend(takers);
         }
@@ -180,7 +186,12 @@ pub fn ready_work_takers(
         .filter(|identity| !holding.contains(identity.as_str()))
         .cloned()
         .collect();
-    if free.iter().any(|identity| *identity != run.coordinator) {
+    // Python's `free - {None}` is `free`: with no coordinator, anyone free
+    // is a taker.
+    if free
+        .iter()
+        .any(|identity| run.coordinator.as_deref() != Some(identity.as_str()))
+    {
         return free;
     }
     let working = owners(tasks, &WORKING_STATUSES);
@@ -190,8 +201,28 @@ pub fn ready_work_takers(
         .collect()
 }
 
+/// Python's `m['status'] == 'live'`: a NULL status is not live.
 fn is_live(member: &MemberRecord) -> bool {
-    member.status.as_str() == "live"
+    matches!(
+        member.status.as_ref().map(MemberState::as_str),
+        Some("live")
+    )
+}
+
+/// Python's `targets.add(run['coordinator'])`. A NULL coordinator (a row
+/// edited outside the board) adds `None`, which wakes nobody but, beside a
+/// named target, makes `sorted(targets)` raise: it is recorded as a stray.
+fn wake_coordinator(
+    run: &RunRecord,
+    targets: &mut BTreeSet<String>,
+    strays: &mut Vec<&'static str>,
+) {
+    match &run.coordinator {
+        Some(coordinator) => {
+            targets.insert(coordinator.clone());
+        }
+        None => strays.push(python_type(&Value::Null)),
+    }
 }
 
 /// A ready task whose every dependency the board holds as completed.
@@ -293,10 +324,17 @@ fn python_type(value: &Value) -> &'static str {
 
 /// The TypeError Python's `sorted(targets)` raises when the target set mixes
 /// kinds that do not order against each other: numbers (`int`, `bool`,
-/// `float`), `None` and strings. With `None` in the set (hashed to a
-/// constant since CPython 3.12) Python compares `str < None` when a name is
-/// present, else `number < None`; without it, the stray number against a
-/// string, whose order Python's hash-seeded set iteration decides.
+/// `float`), `None` and strings. Which pair Python names depends on the
+/// set's iteration order, which its hash seed and insertion order decide:
+/// with `None` in the set (hashed to a constant since CPython 3.12) it
+/// usually iterates first and Python compares `str < None`, but a name
+/// inserted first can take its slot, and then Python compares `None < str`
+/// (34 of 200 seeds when a message to a name precedes the `None`). The
+/// board fixes one text per case: `str`/`NoneType` beside a name,
+/// `number`/`NoneType` beside a number, the stray number against a string
+/// without `None`. The error is certain; only its operand order can differ
+/// from a given Python process, and only for values the board never writes
+/// (a NULL coordinator or a non-string recipient in an edited file).
 fn sort_error(named: bool, strays: &[&'static str]) -> Option<String> {
     let numeric = strays
         .iter()

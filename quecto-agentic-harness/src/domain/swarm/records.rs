@@ -62,8 +62,13 @@ status_text! {
 /// The `run` row, as far as policy reads it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RunRecord {
-    pub status: RunState,
-    pub coordinator: String,
+    /// `None` only for a row edited outside the board, which Python reads
+    /// as `None` too: it is no known status, so every decision that needs
+    /// one refuses, and refusals name it `None` as Python's f-strings do.
+    pub status: Option<RunState>,
+    /// `None` only for a row edited outside the board, which Python reads
+    /// as `None` too: it is nobody's to coordinate.
+    pub coordinator: Option<String>,
     /// Unix seconds (`run.deadline REAL`).
     pub deadline: f64,
     /// 1 through 25, including the coordinator.
@@ -77,7 +82,9 @@ pub struct RunRecord {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MemberRecord {
     pub id: String,
-    pub status: MemberState,
+    /// `None` only for a row edited outside the board; it is neither alive
+    /// nor dead.
+    pub status: Option<MemberState>,
     pub reservation: Option<String>,
 }
 

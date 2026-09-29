@@ -37,6 +37,18 @@ mod audit_sink;
 mod authority_admin;
 #[path = "contracts/authority_service_manager.rs"]
 mod authority_service_manager;
+#[path = "contracts/board_encoding.rs"]
+mod board_encoding;
+#[path = "contracts/board_events.rs"]
+mod board_events;
+#[path = "contracts/board_members.rs"]
+mod board_members;
+#[path = "contracts/board_repository.rs"]
+mod board_repository;
+#[path = "contracts/board_runs.rs"]
+mod board_runs;
+#[path = "contracts/board_transaction.rs"]
+mod board_transaction;
 #[path = "common/catalogue_conformance.rs"]
 mod catalogue_conformance;
 #[path = "contracts/catalogue_consumers.rs"]
@@ -109,6 +121,8 @@ mod historical_roster_source;
 mod hosted_swarm_run_inspection;
 #[path = "contracts/hosted_swarm_run_observation.rs"]
 mod hosted_swarm_run_observation;
+#[path = "contracts/id_source.rs"]
+mod id_source;
 #[path = "contracts/llm_provider.rs"]
 mod llm_provider;
 #[path = "contracts/loaded_catalogue_inputs.rs"]

@@ -235,3 +235,114 @@ fn an_unhashable_detail_value_fails_as_python_3_14_lookups_do() {
         "cannot use 'list' as a dict key (unhashable type: 'list')"
     );
 }
+
+/// A run row edited outside the board to a NULL status (#2270) is not
+/// running, as Python's `None != 'running'`: it wakes nobody.
+#[test]
+fn a_null_run_status_wakes_nobody() {
+    let run = RunRecord {
+        status: None,
+        ..run()
+    };
+    let members = live(&["parent", "worker"]);
+    let events = [event("amended", json!({}))];
+    assert_eq!(
+        woken(&run, "worker", &members, &events, &state(Vec::new(), &[])),
+        NOBODY
+    );
+}
+
+/// A member row with a NULL status (#2270) is not live, as Python's
+/// `m['status'] == 'live'`: it is never woken.
+#[test]
+fn a_null_member_status_is_never_woken() {
+    let mut members = live(&["parent", "worker"]);
+    members.push(MemberRecord {
+        id: "odd".into(),
+        status: None,
+        reservation: None,
+    });
+    let events = [event("amended", json!({}))];
+    assert_eq!(
+        woken(&run(), "worker", &members, &events, &state(Vec::new(), &[])),
+        ["parent"]
+    );
+}
+
+/// A NULL coordinator (#2270) adds Python's `None` to the targets: alone it
+/// wakes nobody; beside a named target, `sorted(targets)` raises.
+#[test]
+fn a_null_coordinator_wakes_nobody_and_does_not_sort_beside_a_name() {
+    let run = RunRecord {
+        coordinator: None,
+        ..run()
+    };
+    let members = live(&["parent", "worker"]);
+    let evidence = [event("evidence", json!({}))];
+    let board = state(Vec::new(), &[1]);
+    assert_eq!(woken(&run, "worker", &members, &evidence, &board), NOBODY);
+    let named = [
+        event("evidence", json!({})),
+        event(
+            "message_accepted",
+            json!({"message": 1, "recipient": "parent"}),
+        ),
+    ];
+    assert_eq!(
+        notification_targets(&run, "worker", &members, &named, &board)
+            .expect_err("Python raises TypeError")
+            .to_string(),
+        "'<' not supported between instances of 'str' and 'NoneType'"
+    );
+}
+
+/// A name added before the NULL coordinator: Python's set can then iterate
+/// `None` second and name `'NoneType' and 'str'` (seed-dependent). The board
+/// raises the same TypeError with its one fixed text; the error itself,
+/// not its operand order, is what matches Python.
+#[test]
+fn a_null_coordinator_after_a_name_raises_the_one_fixed_sort_error() {
+    let run = RunRecord {
+        coordinator: None,
+        ..run()
+    };
+    let members = live(&["parent", "worker"]);
+    let board = state(Vec::new(), &[1]);
+    let name_first = [
+        event(
+            "message_accepted",
+            json!({"message": 1, "recipient": "parent"}),
+        ),
+        event("evidence", json!({})),
+    ];
+    assert_eq!(
+        notification_targets(&run, "worker", &members, &name_first, &board)
+            .expect_err("Python raises TypeError whatever the set order")
+            .to_string(),
+        "'<' not supported between instances of 'str' and 'NoneType'"
+    );
+}
+
+/// With a NULL coordinator, `free - {None}` and `takers - {None}` remove
+/// nobody: every free member takes ready work, ownership events included.
+#[test]
+fn a_null_coordinator_is_no_exception_among_ready_work_takers() {
+    let run = RunRecord {
+        coordinator: None,
+        ..run()
+    };
+    let mut members = live(&["parent", "w"]);
+    members.push(MemberRecord {
+        id: "x".into(),
+        status: None,
+        reservation: None,
+    });
+    let board = state(vec![task(1, TaskState::READY, &[], None)], &[]);
+    let created = [event("task_created", json!({"task": 1}))];
+    assert_eq!(woken(&run, "parent", &members, &created, &board), ["w"]);
+    let claimed = [event("claimed", json!({"task": 1}))];
+    assert_eq!(
+        woken(&run, "x", &members, &claimed, &board),
+        ["parent", "w"]
+    );
+}

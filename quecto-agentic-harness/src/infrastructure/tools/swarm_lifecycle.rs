@@ -403,7 +403,9 @@ fn watch_until_ended(context: &SwarmContext, runtime: &tokio::runtime::Runtime) 
     }
 }
 
-struct SystemClock;
+/// The wall clock: Unix seconds, as Python's `time.time()`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SystemClock;
 impl crate::application::swarm::ports::Clock for SystemClock {
     fn now_seconds(&self) -> f64 {
         std::time::SystemTime::now()
