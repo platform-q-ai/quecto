@@ -1,7 +1,14 @@
 //! The run summary (#2313, epic #2265): one `swarm_run_summary` record per
-//! run, a pure aggregate of the `swarm_op` records ([`BoardOpObservation`])
-//! the harness wrote for that run. The coordinator's harness writes it once,
-//! when the run settles (it ended, or was cancelled).
+//! run, written once by the coordinator's harness when the run settles (it
+//! ended, or was cancelled). It holds two scopes (#2313 review M1):
+//!
+//! - the process's own: a pure aggregate of the `swarm_op` records
+//!   ([`BoardOpObservation`]) this harness wrote for the run. Each member
+//!   is a process with a board of its own, so these are the coordinator's
+//!   calls only; `quecto swarm report` (#2305) folds every member's records
+//!   of a run offline with the same [`RunSummaryFold`];
+//! - the run's ([`RunTotals`]): the board's totals for every member, read
+//!   from the board file at settle.
 //!
 //! Like the records it folds, it holds ids, kinds, durations and sizes only:
 //! op names are the dispatcher's own, decisions are read only to count
@@ -14,6 +21,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::Snapshot;
+use super::run_totals::RunTotals;
 use super::telemetry::{BoardOpObservation, BoardOpOutcome, RefusalKind, board_run_id};
 use crate::domain::redaction::Redacted;
 
@@ -64,7 +72,8 @@ pub struct OpSummary {
     pub unsampled: u64,
 }
 
-/// The tasks the run's answered ops changed, by what they did.
+/// The tasks this process's answered ops of the run changed, by what
+/// they did (the run's own totals are [`RunTotals::tasks`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskCounts {
     pub created: u64,
@@ -76,7 +85,8 @@ pub struct TaskCounts {
     pub accepted: u64,
 }
 
-/// The messages the run's answered ops changed, by what they did.
+/// The messages this process's answered ops of the run changed, by what
+/// they did (the run's own totals are [`RunTotals::messages`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MessageCounts {
     pub sent: u64,
@@ -94,12 +104,24 @@ pub struct RequestUsage {
     pub refused: u64,
 }
 
-/// The `swarm_run_summary` record: the run's `swarm_op` records, folded.
+/// Whose calls a summary's counts are (#2313 review M1): only this
+/// process's own, the board calls of the harness that wrote it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SummaryScope {
+    Process,
+}
+
+/// The `swarm_run_summary` record: this process's `swarm_op` records of
+/// the run, folded, and the run's own totals from the board.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SwarmRunSummary {
     /// The run's id, as the board generated it (32 lowercase hex digits).
     pub run_id: String,
-    /// Every `swarm_op` record of the run that was folded.
+    /// Whose calls the counts below are: [`SummaryScope::Process`], the
+    /// writing harness's own. The run's totals are [`Self::run`].
+    pub scope: SummaryScope,
+    /// Every `swarm_op` record of the run this process folded.
     pub records: u64,
     /// Each op's records, by the op's name.
     pub ops: BTreeMap<String, OpSummary>,
@@ -107,16 +129,25 @@ pub struct SwarmRunSummary {
     pub busy: u64,
     pub tasks: TaskCounts,
     pub messages: MessageCounts,
-    /// From the start of the run's first record to the summary.
-    pub wall_time_us: u64,
-    /// Each member's recorded requests, in the order first seen.
+    /// This process's own span (#2313 review L3): from the start of the
+    /// first record of the run it folded to the summary. The run's wall
+    /// time, from its creation, is [`RunTotals::wall_time_us`].
+    pub process_span_us: u64,
+    /// Each member's requests this process recorded (`_record_request`),
+    /// in the order first seen.
     pub request_usage: Vec<RequestUsage>,
     /// Records of an op past [`SUMMARY_OPS`]; left out when none.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub unlisted_ops: u64,
-    /// Requests of a member past [`REQUEST_MEMBERS`]; left out when none.
+    /// Requests of a member past [`REQUEST_MEMBERS`], in no
+    /// `request_usage` entry (still counted under the op's own entry,
+    /// `ops._record_request`); left out when none.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub unlisted_requests: u64,
+    /// The run's own totals, every member's work, as the board holds them
+    /// at settle (#2313 review M1); `None` (written `null`) when the board
+    /// could not be read then.
+    pub run: Option<RunTotals>,
 }
 
 fn is_zero(count: &u64) -> bool {
@@ -343,8 +374,9 @@ impl RunSummaryFold {
     }
 
     /// The summary of the records folded so far, taken at `at_us` (the
-    /// clock [`Self::new`] was given).
-    pub fn summary(&self, at_us: u64) -> SwarmRunSummary {
+    /// clock [`Self::new`] was given), with the run's totals the board
+    /// held then (`run`, `None` when it could not be read).
+    pub fn summary(&self, at_us: u64, run: Option<RunTotals>) -> SwarmRunSummary {
         let ops: BTreeMap<String, OpSummary> = self
             .ops
             .iter()
@@ -363,15 +395,17 @@ impl RunSummaryFold {
         );
         SwarmRunSummary {
             run_id: self.run_id.clone(),
+            scope: SummaryScope::Process,
             records: self.records,
             ops,
             busy,
             tasks: self.tasks,
             messages: self.messages,
-            wall_time_us: at_us.saturating_sub(self.started_at_us),
+            process_span_us: at_us.saturating_sub(self.started_at_us),
             request_usage: self.requests.clone(),
             unlisted_ops: self.unlisted_ops,
             unlisted_requests: self.unlisted_requests,
+            run,
         }
     }
 }

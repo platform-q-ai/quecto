@@ -52,8 +52,8 @@ pub use notifications::{
 };
 pub use reads::{
     BootstrapMemberRequest, BootstrappedSummary, CountedTask, DictRow, EventPage, FullSummary,
-    JoinedSummary, LatestActivity, ListTasksRequest, ReadRunEventsRequest, ReadRunSummaryRequest,
-    RunSummary, SummaryCounts, SummaryScan, TaskPage,
+    JoinedSummary, LatestActivity, ListTasksRequest, MessageTally, ReadRunEventsRequest,
+    ReadRunSummaryRequest, RunSummary, RunTotalsView, SummaryCounts, SummaryScan, TaskPage,
 };
 pub use run::{
     BootstrapRunRequest, Bootstrapped, CreateBranch, CreateRunRequest, CreatedRun,

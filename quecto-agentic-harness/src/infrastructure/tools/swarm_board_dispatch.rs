@@ -77,11 +77,11 @@ use crate::application::swarm::use_cases::{
     ConfigureUsageBudget, ConfirmMemberDead, CreateRun, CreateTask, ExtendRunDeadline, JoinMember,
     JoinRun, ListFileOwners, ListTasks, LoseCoordinator, OverRepository, PauseRun,
     QuarantineMember, ReadControlStatus, ReadEventCursor, ReadInbox, ReadRequestAdmission,
-    ReadRunEvents, ReadRunSnapshot, ReadRunStatus, ReadRunSummary, ReadTask, ReadUsageReport,
-    RecordEvidence, RecordMemberLaunch, RecordRequestUsage, RecoverTask, RegisterMemberSocket,
-    ReleaseFiles, ReleaseTask, ReleaseUnlaunchedMember, ReserveFiles, ResumeRun,
-    ResumeRunExternally, RevalidateTask, RevokeTask, SendMessage, SetTaskDependencies, StopRun,
-    SubmitTask, UnblockTask, VerifyTask, WithdrawMessage,
+    ReadRunEvents, ReadRunSnapshot, ReadRunStatus, ReadRunSummary, ReadRunTotals, ReadTask,
+    ReadUsageReport, RecordEvidence, RecordMemberLaunch, RecordRequestUsage, RecoverTask,
+    RegisterMemberSocket, ReleaseFiles, ReleaseTask, ReleaseUnlaunchedMember, ReserveFiles,
+    ResumeRun, ResumeRunExternally, RevalidateTask, RevokeTask, SendMessage, SetTaskDependencies,
+    StopRun, SubmitTask, UnblockTask, VerifyTask, WithdrawMessage,
 };
 use crate::domain::swarm::{BoardError, BoardOpDetail, RefusalKind};
 
@@ -101,6 +101,9 @@ pub struct SwarmBoardHandles {
     /// after read.
     pub read_event_cursor: Arc<ReadEventCursor>,
     pub read_run_snapshot: Arc<ReadRunSnapshot>,
+    /// `_run_totals` (#2313 review M1): Rust-only, the run's totals the
+    /// coordinator's harness reads at settle.
+    pub read_run_totals: Arc<ReadRunTotals>,
     pub admit_member: Arc<AdmitMember>,
     pub activate_member: Arc<ActivateMember>,
     pub record_member_launch: Arc<RecordMemberLaunch>,
@@ -196,6 +199,7 @@ impl std::fmt::Debug for SwarmBoardHandles {
 pub const BOARD_OPS: &[&str] = &[
     "_status",
     "_event_cursor",
+    "_run_totals",
     "_snapshot",
     "_admit",
     "_activate",
@@ -339,11 +343,13 @@ pub fn call_as(
     // A member: answered by an op that checks membership, or authorised by
     // the operation gate before the op refused it (#2313 review M2).
     let authorized = measure.as_ref().is_some_and(|measure| measure.authorized);
-    let caller = match (&answer, known.map(Method::answers_members_only), authorized) {
-        (Ok(_), Some(true), _) | (_, Some(_), true) => Caller::Member,
-        (Ok(_), Some(false) | None, false) | (Err(_), _, false) | (_, None, true) => {
-            Caller::Unproven
-        }
+    let caller = match (
+        answer.is_ok(),
+        known.map(Method::answers_members_only),
+        authorized,
+    ) {
+        (true, Some(true), _) | (_, Some(_), true) => Caller::Member,
+        (_, None, _) | (false, Some(_), false) | (true, Some(false), false) => Caller::Unproven,
     };
     let served = answer.as_ref().ok().or(committed.as_ref());
     records::record(handles, &finished, caller, served, measure);
@@ -447,33 +453,10 @@ fn serve(
     );
     let over = over.as_ref();
     match method {
-        Method::Status => Ok(Served {
-            value: status(serving(&*handles.read_run_status, over).execute()?),
-            decision: "read",
-            task_id: None,
-            message_id: None,
-            cursor_moved: None,
-            detail: BoardOpDetail::NONE,
-            refused: None,
-        }),
-        Method::EventCursor => Ok(Served {
-            value: Value::from(serving(&*handles.read_event_cursor, over).execute()?),
-            decision: "read",
-            task_id: None,
-            message_id: None,
-            cursor_moved: None,
-            detail: BoardOpDetail::NONE,
-            refused: None,
-        }),
-        Method::Snapshot => Ok(Served {
-            value: snapshot(serving(&*handles.read_run_snapshot, over).execute(member)?)?,
-            decision: "read",
-            task_id: None,
-            message_id: None,
-            cursor_moved: None,
-            detail: BoardOpDetail::NONE,
-            refused: None,
-        }),
+        Method::Status => host::run_status(&serving(&*handles.read_run_status, over)),
+        Method::EventCursor => host::event_cursor(&serving(&*handles.read_event_cursor, over)),
+        Method::Snapshot => host::run_snapshot(&serving(&*handles.read_run_snapshot, over), member),
+        Method::RunTotals => host::run_totals(&serving(&*handles.read_run_totals, over), member),
         Method::Admit => members::admit(&serving(&*handles.admit_member, over), member, arguments),
         Method::Activate => {
             members::activate(&serving(&*handles.activate_member, over), member, arguments)
@@ -681,6 +664,9 @@ pub use records::{CallOrigin, refused, signature};
 #[path = "swarm_board_dispatch_render.rs"]
 mod render;
 use render::{float, member_row, object, snapshot, status};
+
+#[path = "swarm_board_dispatch_host.rs"]
+mod host;
 
 #[path = "swarm_board_dispatch_members.rs"]
 mod members;

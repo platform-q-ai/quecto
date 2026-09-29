@@ -81,6 +81,7 @@ pub(super) fn decided(method: Method) -> (Option<&'static str>, BoardOpDetail) {
         Method::Status
         | Method::EventCursor
         | Method::Snapshot
+        | Method::RunTotals
         | Method::Admit
         | Method::Activate
         | Method::RecordLaunch

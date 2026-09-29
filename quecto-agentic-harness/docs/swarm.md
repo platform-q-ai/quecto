@@ -901,25 +901,47 @@ planned and not yet available.
 
 When a run settles (it ended, or was cancelled), the coordinator's harness
 writes one `swarm_run_summary` record to its event log, once per run, and only
-while the event log is on. It folds the `swarm_op` records this harness wrote
-for that run, so its counts are those records':
+while the event log is on. It holds two scopes.
+
+The process's own counts (`scope: "process"`). Each member is a process with a
+board of its own, so the coordinator's harness sees only its own board calls: a
+worker's `claim` or `send` is in the worker's log, not here. These fields fold
+the `swarm_op` records this harness wrote for the run, so they equal those
+records:
 
 | Field | Meaning |
 |---|---|
 | `run_id` | The run, as the board generated its id |
-| `records` | The run's `swarm_op` records folded |
+| `scope` | Always `process`: the fields below, up to `run`, are this harness's own calls |
+| `records` | The run's `swarm_op` records this process folded |
 | `ops` | Per op: `ok` (answered), `refused` (by `kind`, left out when none), the nearest-rank `p50` and `p95` and the exact `max` of `duration_us`, `lock_wait_us` and `busy_wait_us` (a record that did not measure a wait is left out of its percentiles and counted in that wait's `unmeasured`), `busy` (records whose busy handler fired), and `unsampled` (the percentiles are taken from a uniform sample of at most 4096 of an op's records, drawn over the whole run; the records not held are counted here, and left out when none) |
 | `busy` | Records whose busy handler fired, over every op |
-| `tasks` | Tasks `created`, `claimed`, `released`, `blocked`, `submitted` and `accepted` (verified), by the decisions of the answered ops |
-| `messages` | Messages `sent`, `acked` (consumed) and `withdrawn`, likewise |
-| `wall_time_us` | From the start of the run's first record to the summary |
-| `request_usage` | Per member (`actor_ref`, redacted as in `swarm_op`), the provider requests the harness `recorded` on the board (`_record_request`) and those `refused` |
-| `unlisted_ops`, `unlisted_requests` | Records past the summary's bounds (128 ops, 64 members), counted in `records` but in no entry; left out when none |
+| `tasks` | Tasks `created`, `claimed`, `released`, `blocked`, `submitted` and `accepted` (verified) by this process's answered ops, by their decisions |
+| `messages` | Messages `sent`, `acked` (consumed) and `withdrawn` by this process's ops, likewise |
+| `process_span_us` | This process's own span: from the start of the first record of the run it folded to the summary (not the run's wall time, which is `run.wall_time_us`) |
+| `request_usage` | Per member (`actor_ref`, redacted as in `swarm_op`), the provider requests this harness `recorded` on the board (`_record_request`) and those `refused` |
+| `unlisted_ops` | Records of ops past the summary's bound of 128 ops, counted in `records` but in no `ops` entry; left out when none |
+| `unlisted_requests` | Requests of members past the bound of 64, in no `request_usage` entry (they are still counted under `ops._record_request`); left out when none |
+
+The run's own totals (`run`), every member's work, read from the board file at
+settle by one host read (`_run_totals`, recorded as a `swarm_op` with role
+`host`); `null` when that read failed (a warning is logged):
+
+| Field | Meaning |
+|---|---|
+| `run.tasks` | The run's tasks: `total`, and by state `ready`, `claimed`, `blocked` (a `ready` task waiting on a dependency counts here, as `summary` counts it), `submitted` and `completed` |
+| `run.messages` | Every message `sent`, and those `acked` (consumed by their recipient) or `withdrawn` |
+| `run.usage` | Per member (`actor_ref`, redacted), the board's request ledger: `requests`, `tokens` (the tokens the budget counted), `unknown_usage_requests`, `attempts`, and the reported `input_tokens`, `output_tokens`, `cache_read_tokens` and `cache_write_tokens`; at most 64 members |
+| `run.unlisted_usage` | Members past the 64, in no `usage` entry; left out when none |
+| `run.wall_time_us` | The run's wall time: from its `created` event to the read at settle, on the board's clock; `null` when the board holds no creation time |
+
+The fold across every member's records (their latencies and refusals) is left
+to `quecto swarm report` (#2305), which can fold each member's `swarm_op` lines
+of a run offline.
 
 It carries counts, kinds, durations and ids only, never board text, and leaves
-one `tracing` record (`swarm run summary`, INFO) on `quecto::swarm_board`. A
-harness only sees its own calls, so a member's calls are in the member's own
-log, not in the coordinator's summary. Select a run's summary as its records
+one `tracing` record (`swarm run summary`, INFO) on `quecto::swarm_board`.
+Select a run's summary as its records
 are selected:
 
 ```sh

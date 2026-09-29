@@ -330,6 +330,30 @@ impl BoardEvents for SqliteBoard<'_> {
     fn control_generation(&self) -> Result<i64, BoardError> {
         self.count("SELECT coalesce(max(id),0) FROM events WHERE action IN ('paused','resumed')")
     }
+
+    /// A time the board did not write (text, NULL) is no creation time.
+    fn created_at(&self) -> Result<Option<f64>, BoardError> {
+        let time = self
+            .connection
+            .query_row(
+                "SELECT time FROM events WHERE action='created' ORDER BY id DESC LIMIT 1",
+                [],
+                |row| row.get::<_, rusqlite::types::Value>(0),
+            )
+            .optional()
+            .map_err(failed)?;
+        Ok(match time {
+            Some(rusqlite::types::Value::Real(time)) => Some(time),
+            // An integer time is exact in f64 far past any clock reading.
+            Some(rusqlite::types::Value::Integer(time)) => Some(time as f64),
+            Some(
+                rusqlite::types::Value::Null
+                | rusqlite::types::Value::Text(_)
+                | rusqlite::types::Value::Blob(_),
+            )
+            | None => None,
+        })
+    }
 }
 
 impl SqliteBoard<'_> {

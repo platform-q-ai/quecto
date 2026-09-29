@@ -12,10 +12,10 @@ use serde_json::Value;
 
 use super::dto::{
     AmendedContract, CallMeasure, CompletionState, CountedTask, DictRow, FileRow, LatestActivity,
-    LaunchIdentity, MemberClaimCounts, MemberRow, MemberStatusRow, MessageRow, NewEvidence,
-    NewMember, NewMessage, NewRequestUsage, NewReservation, NewRun, NewTask, NotificationCursor,
-    PriorEvidence, RunContract, RunOwnerRow, RunStatusRow, ScopeObservation, StoredContract,
-    StoredRequestUsage, TaskRow, TaskUpdate, UsageReport,
+    LaunchIdentity, MemberClaimCounts, MemberRow, MemberStatusRow, MessageRow, MessageTally,
+    NewEvidence, NewMember, NewMessage, NewRequestUsage, NewReservation, NewRun, NewTask,
+    NotificationCursor, PriorEvidence, RunContract, RunOwnerRow, RunStatusRow, ScopeObservation,
+    StoredContract, StoredRequestUsage, TaskRow, TaskUpdate, UsageReport,
 };
 use crate::domain::error::DomainError;
 use crate::domain::swarm::{
@@ -293,6 +293,10 @@ pub trait BoardEvents {
     /// beyond SQLite's integers is refused as the store refuses an integer
     /// it cannot bind.
     fn event_page(&self, after: u64, limit: i64) -> Result<Vec<DictRow>, BoardError>;
+    /// `SELECT time FROM events WHERE action='created' ORDER BY id DESC
+    /// LIMIT 1` (#2313 review M1): when the run was created, `None` when no
+    /// `created` event holds a number.
+    fn created_at(&self) -> Result<Option<f64>, BoardError>;
 }
 
 /// The `tasks` rows (#2272). A task id is the caller's value, bound as
@@ -427,6 +431,9 @@ pub trait BoardMessages {
     /// `UPDATE messages SET status=? WHERE id=?`, for a message the caller
     /// has read in this transaction.
     fn set_message_status(&self, id: &Value, status: &str) -> Result<(), BoardError>;
+    /// The messages by what became of them (#2313 review M1): `count(*)`,
+    /// and the rows whose status is `consumed` or `withdrawn`.
+    fn message_tally(&self) -> Result<MessageTally, BoardError>;
     /// `send`'s `INSERT INTO messages(sender,recipient,body,status,
     /// revision,supersedes) VALUES(?,?,?,'accepted',?,?)`: its id.
     fn send_message(&self, message: &NewMessage) -> Result<i64, BoardError>;

@@ -176,7 +176,7 @@ impl SwarmContext {
     /// log is on. Whether it wrote it.
     pub(crate) fn summarize_settled(&self, snapshot: &crate::domain::swarm::Snapshot) -> bool {
         match snapshot.summarized_by(&self.member) {
-            true => self.board.summarize_run(&self.location()),
+            true => self.board.summarize_run(&self.location(), &self.member),
             false => false,
         }
     }

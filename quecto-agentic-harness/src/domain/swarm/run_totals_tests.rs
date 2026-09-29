@@ -52,7 +52,11 @@ fn the_usage_is_bounded_and_the_rest_counted() {
     );
     assert_eq!(totals.usage.len(), REQUEST_MEMBERS);
     assert_eq!(totals.unlisted_usage, 2);
-    assert_eq!(totals.usage[0].actor_ref.as_str(), "m0", "the board's order");
+    assert_eq!(
+        totals.usage[0].actor_ref.as_str(),
+        "m0",
+        "the board's order"
+    );
 }
 
 /// The section is counts and redacted refs only, and reads back as it

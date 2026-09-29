@@ -549,6 +549,16 @@ impl BoardEvents for MemoryTransaction<'_> {
         Ok(reads::event_page(&self.state.borrow().events, after, limit))
     }
 
+    fn created_at(&self) -> Result<Option<f64>, BoardError> {
+        let state = self.state.borrow();
+        let created = state
+            .events
+            .iter()
+            .rev()
+            .find(|event| event.action == "created");
+        Ok(created.map(|event| event.time))
+    }
+
     fn control_generation(&self) -> Result<i64, BoardError> {
         let state = self.state.borrow();
         let latest = state

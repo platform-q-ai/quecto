@@ -139,7 +139,7 @@ fn a_run_summary_is_one_line_under_no_turn() {
             run_id: Some(run.into()),
             ..observation()
         });
-        fold.summary(10)
+        fold.summary(10, None)
     };
     let base = tempfile::tempdir().unwrap();
     let log = AuditLog::open_sync(base.path(), "cli:summary").unwrap();

@@ -179,15 +179,41 @@ impl SwarmBoard {
     }
 
     /// Writes the summary of the run on the file at `location` (#2313),
-    /// once, from the records this board folded for it: `false` when the
-    /// board records nothing, folded no run there, or wrote it already.
-    pub(super) fn summarize_run(&self, location: &BoardLocation) -> bool {
+    /// once: this process's records the board folded for it, and the run's
+    /// own totals `member`'s harness reads from the board now
+    /// (`_run_totals`, recorded as the harness's own, #2313 review M1).
+    /// `false` when the board records nothing, folded no run there, or
+    /// wrote it already. A totals read that fails leaves the run-wide
+    /// section `null`, with a warning, and the process's counts are still
+    /// written.
+    pub(super) fn summarize_run(&self, location: &BoardLocation, member: &str) -> bool {
         let runs = self
             .built()
             .iter()
             .find(|file| file.location == *location)
             .and_then(|file| file.runs.clone());
-        runs.is_some_and(|runs| runs.summarize_run())
+        let Some(runs) = runs.filter(|runs| runs.open()) else {
+            return false;
+        };
+        let totals = self.call_as(
+            location.clone(),
+            member,
+            "_run_totals",
+            Value::Array(Vec::new()),
+            CallOrigin::Harness,
+        );
+        let totals = match totals {
+            Ok(totals) => Some(totals),
+            Err(error) => {
+                tracing::warn!(
+                    target: TELEMETRY_TARGET,
+                    %error,
+                    "swarm run totals were not read for the run summary"
+                );
+                None
+            }
+        };
+        runs.summarize_run(totals.as_ref())
     }
 
     fn recording_lock(&self) -> MutexGuard<'_, Option<Arc<SessionLog>>> {

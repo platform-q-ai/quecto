@@ -12,14 +12,22 @@
 //!
 //! [`RunFold`] folds each record of one board file's run
 //! ([`RunSummaryFold`]) on its way to the session log, and writes the run's
-//! summary once, when the coordinator's harness settles the run.
+//! summary once, when the coordinator's harness settles the run: this
+//! process's counts, and the run's own totals read from the board then
+//! ([`run_totals`], #2313 review M1).
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
 use crate::application::swarm::ports::BoardOpLog;
 use crate::domain::swarm::telemetry::board_run_id;
-use crate::domain::swarm::{BoardOpObservation, RunSummaryFold, SwarmRunSummary};
+use serde_json::Value;
+
+use crate::domain::swarm::{
+    BoardOpObservation, MemberUsage, MessageTotals, RunSummaryFold, RunTotals, SwarmRunSummary,
+    TaskStates,
+};
 use crate::infrastructure::tools::swarm_board_dispatch::TELEMETRY_TARGET;
+use crate::infrastructure::tools::swarm_board_telemetry::actor_ref;
 
 /// The most records a session log holds before it is bound: the
 /// admission's few calls, with room to spare. Past it a record is dropped
@@ -171,15 +179,24 @@ impl RunFold {
         }
     }
 
-    /// Writes the summary of the run folded, once: `false` when there is
-    /// no run folded, or its summary was already written.
-    pub(super) fn summarize_run(&self) -> bool {
+    /// Whether a run is folded whose summary is not written yet.
+    pub(super) fn open(&self) -> bool {
+        self.folding().as_ref().is_some_and(|folding| folding.open)
+    }
+
+    /// Writes the summary of the run folded, once, with the run's totals
+    /// `_run_totals` answered (`totals`: its run-wide section only when
+    /// they are the folded run's): `false` when there is no run folded, or
+    /// its summary was already written.
+    pub(super) fn summarize_run(&self, totals: Option<&Value>) -> bool {
         let summary = {
             let mut run = self.folding();
             match run.as_mut() {
                 Some(folding) if folding.open => {
                     folding.open = false;
-                    folding.fold.summary(self.now_us())
+                    let totals =
+                        totals.and_then(|totals| run_totals(totals, folding.fold.run_id()));
+                    folding.fold.summary(self.now_us(), totals)
                 }
                 Some(_) | None => return false,
             }
@@ -189,7 +206,8 @@ impl RunFold {
             run_id = summary.run_id.as_str(),
             records = summary.records,
             busy = summary.busy,
-            wall_time_us = summary.wall_time_us,
+            process_span_us = summary.process_span_us,
+            run_totals = summary.run.is_some(),
             "swarm run summary"
         );
         self.log.summarize(summary);
@@ -206,4 +224,55 @@ impl BoardOpLog for RunFold {
     fn summarize(&self, summary: SwarmRunSummary) {
         self.log.summarize(summary);
     }
+}
+
+/// The run-wide section from `_run_totals`'s answer, when it is of
+/// `run_id` (the file may hold a newer run by now): counts, and each
+/// member as its redacted `actor_ref` (#2313 review M1). A count the board
+/// does not hold as a non-negative integer is `0`.
+pub(super) fn run_totals(answer: &Value, run_id: &str) -> Option<RunTotals> {
+    if answer.get("run_id").and_then(Value::as_str) != Some(run_id) {
+        return None;
+    }
+    let count = |value: &Value, key: &str| value.get(key).and_then(Value::as_u64).unwrap_or(0);
+    let tasks = answer.get("tasks")?;
+    let messages = answer.get("messages")?;
+    let usage = answer
+        .get("usage")
+        .and_then(Value::as_array)?
+        .iter()
+        .map(|row| MemberUsage {
+            actor_ref: match row.get("member") {
+                Some(Value::String(member)) => actor_ref(member),
+                Some(other) => actor_ref(&other.to_string()),
+                None => actor_ref("null"),
+            },
+            requests: count(row, "requests"),
+            tokens: count(row, "observed_tokens"),
+            unknown_usage_requests: count(row, "unknown_usage_requests"),
+            attempts: count(row, "attempts"),
+            input_tokens: count(row, "reported_input_tokens"),
+            output_tokens: count(row, "reported_output_tokens"),
+            cache_read_tokens: count(row, "reported_cache_read_tokens"),
+            cache_write_tokens: count(row, "reported_cache_write_tokens"),
+        })
+        .collect();
+    Some(RunTotals::new(
+        TaskStates {
+            total: count(tasks, "total"),
+            ready: count(tasks, "ready"),
+            claimed: count(tasks, "claimed"),
+            blocked: count(tasks, "blocked"),
+            submitted: count(tasks, "submitted"),
+            completed: count(tasks, "completed"),
+        },
+        MessageTotals {
+            sent: count(messages, "sent"),
+            acked: count(messages, "acked"),
+            withdrawn: count(messages, "withdrawn"),
+        },
+        usage,
+        answer.get("created_at").and_then(Value::as_f64),
+        answer.get("read_at").and_then(Value::as_f64)?,
+    ))
 }

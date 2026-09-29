@@ -9,6 +9,7 @@ use std::sync::Arc;
 use serde_json::json;
 
 use super::{Recorded, context, create};
+use crate::application::swarm::ports::CoordinationPort;
 use crate::domain::swarm::{
     BoardOpObservation, BoardOpOutcome, MessageTotals, RefusalKind, SummaryScope, TaskStates,
 };

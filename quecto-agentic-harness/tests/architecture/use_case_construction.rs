@@ -101,6 +101,7 @@ const USE_CASES: &[&str] = &[
     "ReadRunSnapshot",
     "ReadRunStatus",
     "ReadRunSummary",
+    "ReadRunTotals",
     "ReadTask",
     "ReadUsageReport",
     "RecordEvidence",
