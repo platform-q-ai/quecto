@@ -72,9 +72,10 @@ fn budget_spent(run: &RunRecord) -> bool {
 /// when it is spent (or, for `expired`, its deadline has passed), else
 /// the run's state.
 fn not_running(spent: bool) -> RefusalKind {
-    // Red stub (#2303): the run's state only.
-    let _ = spent;
-    RefusalKind::NotRunning
+    match spent {
+        true => RefusalKind::BudgetExhausted,
+        false => RefusalKind::NotRunning,
+    }
 }
 
 /// Whether `actor`, whose row is `member`, may perform an operation needing

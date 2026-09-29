@@ -49,8 +49,9 @@ fn micros(duration: Duration) -> u64 {
 /// The call's `tracing` record, with its waits when they were measured.
 pub(super) fn trace(call: &Finished<'_>, measure: Option<&CallMeasure>) {
     let (op, duration_us) = (call.op, micros(call.elapsed));
-    let member = Redacted::from(call.member);
-    let member = member.as_str();
+    // Redacted only when the record is written: a field's value is
+    // evaluated only for an enabled callsite.
+    let member = || Redacted::from(call.member);
     let (outcome, decision, kind) = match call.outcome {
         Ok(decision) => ("ok", decision, "none"),
         Err(kind) => ("refused", "none", kind.as_str()),
@@ -64,15 +65,15 @@ pub(super) fn trace(call: &Finished<'_>, measure: Option<&CallMeasure>) {
         call.level,
     ) {
         (true, _) => tracing::warn!(
-            target: TELEMETRY_TARGET, op, member, outcome, decision, kind, duration_us,
+            target: TELEMETRY_TARGET, op, member = member().as_str(), outcome, decision, kind, duration_us,
             ?lock_wait_us, ?busy_wait_us, ?busy, "swarm board call"
         ),
         (false, Level::Read) => tracing::debug!(
-            target: TELEMETRY_TARGET, op, member, outcome, decision, kind, duration_us,
+            target: TELEMETRY_TARGET, op, member = member().as_str(), outcome, decision, kind, duration_us,
             ?lock_wait_us, ?busy_wait_us, ?busy, "swarm board call"
         ),
         (false, Level::Mutation) => tracing::info!(
-            target: TELEMETRY_TARGET, op, member, outcome, decision, kind, duration_us,
+            target: TELEMETRY_TARGET, op, member = member().as_str(), outcome, decision, kind, duration_us,
             ?lock_wait_us, ?busy_wait_us, ?busy, "swarm board call"
         ),
     }

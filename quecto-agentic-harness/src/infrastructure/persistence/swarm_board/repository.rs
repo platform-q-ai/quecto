@@ -83,6 +83,7 @@ impl BoardRepository for SqliteBoardRepository {
                     connection: transaction,
                 };
                 let done = work(&board);
+                // Only an op that never read the run row asks for its id.
                 if meter::wants_run_id() {
                     meter::run_seen(board.run_id());
                 }
@@ -118,7 +119,10 @@ pub(super) struct SqliteBoard<'c> {
 impl BoardRuns for SqliteBoard<'_> {
     fn run(&self) -> Result<Option<RunRecord>, BoardError> {
         self.connection
-            .query_row("SELECT * FROM run", [], run_record)
+            .query_row("SELECT * FROM run", [], |row| {
+                seen(row);
+                run_record(row)
+            })
             .optional()
             .map_err(failed)
     }
@@ -134,6 +138,7 @@ impl BoardRuns for SqliteBoard<'_> {
     fn run_owner(&self) -> Result<Option<RunOwnerRow>, BoardError> {
         self.connection
             .query_row("SELECT * FROM run", [], |row| {
+                seen(row);
                 fetched(row)?;
                 Ok(RunOwnerRow {
                     status: text(row, "status")?,
@@ -150,6 +155,7 @@ impl BoardRuns for SqliteBoard<'_> {
                 "SELECT id, status, deadline, coordinator, outcome FROM run",
                 [],
                 |row| {
+                    seen(row);
                     fetched(row)?;
                     Ok(RunStatusRow {
                         id: row.get("id")?,
@@ -241,10 +247,19 @@ impl BoardEvents for SqliteBoard<'_> {
     }
 }
 
+/// Notes the run id of a run row the op read, for telemetry only
+/// (#2303), while metered and not yet found: no statement of its own. A
+/// value that is not text is none.
+fn seen(row: &Row<'_>) {
+    if meter::wants_run_id() {
+        meter::run_seen(row.get::<_, Option<String>>("id").ok().flatten());
+    }
+}
+
 impl SqliteBoard<'_> {
     /// The run's id, for telemetry only (#2303): read only while metered
-    /// and not yet found,
-    /// and `None` for no run or any value that is not text.
+    /// and not yet found (an op that never read the run row), and `None`
+    /// for no run or any value that is not text.
     fn run_id(&self) -> Option<String> {
         self.connection
             .query_row("SELECT id FROM run", [], |row| {

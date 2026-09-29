@@ -32,9 +32,8 @@ pub struct SqliteBoardCallMeter;
 
 impl BoardCallMeter for SqliteBoardCallMeter {
     fn metered(&self, work: &mut dyn FnMut()) -> Option<CallMeasure> {
-        // Red stub (#2303): measures nothing.
-        let ((), _measure) = metered(work);
-        None
+        let ((), measure) = metered(work);
+        (measure.transactions > 0).then_some(measure)
     }
 }
 
@@ -58,7 +57,7 @@ impl Drop for Scope {
 
 /// `outer` with `inner`'s measure added to it.
 fn fold(mut outer: CallMeasure, inner: Option<&CallMeasure>) -> CallMeasure {
-    if let Some(inner) = inner.filter(|_| false) {
+    if let Some(inner) = inner {
         outer.transactions = outer.transactions.saturating_add(inner.transactions);
         outer.lock_wait += inner.lock_wait;
         outer.busy_wait += inner.busy_wait;
@@ -130,7 +129,7 @@ pub(super) fn metered_busy(count: i32) -> bool {
             let slept = Instant::now();
             std::thread::sleep(delay);
             let slept = slept.elapsed();
-            let _ = slept;
+            update(|measure| measure.busy_wait += slept);
             true
         }
         None => false,

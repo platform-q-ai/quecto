@@ -42,11 +42,7 @@ impl EventLogBoardOps {
 impl BoardOpLog for EventLogBoardOps {
     /// Filed under no turn: the board call knows none.
     fn record(&self, observation: BoardOpObservation) {
-        // Red stub (#2303): writes nothing.
-        let written: std::io::Result<()> = {
-            let _ = (&self.line, AuditEvent::SwarmOp(observation));
-            Ok(())
-        };
+        let written = self.line.append(None, AuditEvent::SwarmOp(observation));
         if let Err(error) = written {
             if !self.warned.swap(true, Ordering::AcqRel) {
                 tracing::warn!(
