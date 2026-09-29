@@ -241,10 +241,11 @@ async fn approval_exchange(busy: bool) {
         std::fs::read_to_string(workspace.join("approved.txt")).unwrap(),
         "schema v2"
     );
-    assert_eq!(
-        crate::infrastructure::tools::call_work::off_the_runtime(|| board.summary()).unwrap()["status"],
-        "running"
-    );
+    let summary =
+        crate::infrastructure::tools::call_work::off_the_runtime(|| board.summary()).unwrap();
+    assert_eq!(summary["status"], "running", "{summary}");
+    // The approval was applied on the board: the blocked task is submitted.
+    assert_eq!(summary["tasks"][0]["status"], "submitted", "{summary}");
     accept.abort();
 }
 
