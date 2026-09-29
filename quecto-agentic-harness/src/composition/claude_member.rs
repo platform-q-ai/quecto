@@ -13,7 +13,7 @@ use crate::application::external_agent::dto::{
 };
 use crate::application::external_agent::ports::ExternalAgentTelemetry;
 use crate::application::external_agent::use_cases::DriveExternalAgentSession;
-use crate::domain::external_agent::telemetry::recorded_name;
+use crate::domain::external_agent::telemetry::{is_recorded_name, recorded_name};
 use crate::domain::session_identity::SessionIdentity;
 use crate::infrastructure::config::telemetry::{enabled_in, globally_enabled};
 use crate::infrastructure::external_agents::claude_code::environment::CREDENTIAL_VARIABLES;
@@ -77,8 +77,9 @@ pub(crate) fn build_over(
 
 /// The session's telemetry: `tracing` always, and the member's event log
 /// when `telemetry.event_log` is on (#2304, owner decision T1: off unless
-/// configured), in the owner's global config or the `--config` given. A
-/// log that cannot be opened is a warning: the member runs unrecorded.
+/// configured), in the owner's global config or the `--config` given: the
+/// member loads no repository overlay. A log that cannot be opened is a
+/// warning: the member runs unrecorded.
 fn telemetry_for(
     settings: &ClaudeMemberSettings,
     parent_environment: &[(OsString, OsString)],
@@ -123,28 +124,39 @@ fn event_log_telemetry(
     }
 }
 
-/// The member's ref on the board: the swarm's `QUECTO_SWARM_MEMBER`, else
-/// its session name.
+/// The member's ref on the board: the swarm's `QUECTO_SWARM_MEMBER` when
+/// it is a name a record keeps as it is ([`is_recorded_name`]), else its
+/// session name.
 fn member_ref(parent_environment: &[(OsString, OsString)], member: &str) -> String {
     parent_environment
         .iter()
         .rev()
         .find(|(name, _)| name == SWARM_MEMBER_VARIABLE)
         .and_then(|(_, value)| value.to_str())
-        .filter(|value| !value.is_empty())
-        .map_or_else(|| recorded_name(member), recorded_name)
+        .filter(|value| is_recorded_name(value))
+        .map_or_else(|| recorded_name(member), str::to_string)
 }
 
 /// The variable a swarm names its member by.
 const SWARM_MEMBER_VARIABLE: &str = "QUECTO_SWARM_MEMBER";
 
+/// The mode each credential variable runs a member under.
+const CREDENTIAL_MODES: &[(&str, &str)] = &[
+    ("CLAUDE_CODE_OAUTH_TOKEN", "oauth_token"),
+    ("ANTHROPIC_API_KEY", "api_key"),
+];
+
 /// The mode of the credential a member runs under: never its value.
+/// [`credential_from`] names only [`CREDENTIAL_VARIABLES`], each of which
+/// has a mode.
 fn credential_mode(credential: &CredentialEnv) -> &'static str {
-    match (credential.name.as_str(), credential.value.is_empty()) {
-        (_, true) => "none",
-        ("CLAUDE_CODE_OAUTH_TOKEN", false) => "oauth_token",
-        ("ANTHROPIC_API_KEY", false) => "api_key",
-        (_, false) => "other",
+    let (_, mode) = CREDENTIAL_MODES
+        .iter()
+        .find(|(name, _)| *name == credential.name)
+        .expect("every credential variable has a mode");
+    match credential.value.len() {
+        0 => "none",
+        _ => mode,
     }
 }
 

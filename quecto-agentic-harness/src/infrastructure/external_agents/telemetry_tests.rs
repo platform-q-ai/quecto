@@ -7,7 +7,6 @@ use std::sync::Mutex;
 
 use super::*;
 use crate::domain::error::DomainError;
-use crate::domain::external_agent::telemetry::ExternalAgentLifecycle;
 
 #[derive(Default)]
 struct Sink {

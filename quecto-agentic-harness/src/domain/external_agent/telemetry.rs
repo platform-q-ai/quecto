@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use super::stream::{AssistantContent, ExternalAgentEvent};
 use super::usage::CostDrop;
-use crate::domain::redaction::{Redacted, redact_url_userinfo};
+use crate::domain::redaction::{Redacted, redact_secrets, redact_url_userinfo};
 
 /// The most of a tool call's summary a record keeps, in bytes.
 pub const TOOL_SUMMARY_BYTES: usize = 256;
@@ -26,10 +26,13 @@ pub const RECORDED_NAME_BYTES: usize = 64;
 pub struct ExternalAgentTurn {
     /// The member's turn (the envelope's `turn` is it, saturated).
     pub member_turn: u64,
-    /// `completed`, `failed`, `aborted`, `budget_exceeded` or `exited`.
+    /// `completed`, `failed`, `aborted`, `budget_exceeded`, `exited` (its
+    /// process's output ended first), `closed` or `abandoned` (the member
+    /// was closed, or ended as its state became unknown, while it ran).
     pub turn_end: String,
     /// Why a turn that did not complete ended: its `terminal_reason`, an
-    /// `api_<status>`, or the assistant's error kind.
+    /// `api_<status>`, the assistant's error kind, or a kind taken from its
+    /// first error ([`error_reason_kind`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason_kind: Option<String>,
     #[serde(default)]
@@ -196,6 +199,15 @@ pub fn stream_telemetry(event: &ExternalAgentEvent) -> StreamTelemetry {
     }
 }
 
+/// Whether `name` is kept by a record as it is: 1 to
+/// [`RECORDED_NAME_BYTES`] bytes of ASCII letters, digits and `_ - . :`.
+pub fn is_recorded_name(name: &str) -> bool {
+    (1..=RECORDED_NAME_BYTES).contains(&name.len())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | ':'))
+}
+
 /// A name or an id from the stream as a record keeps it: at most
 /// [`RECORDED_NAME_BYTES`], ASCII letters, digits and `_ - . :` only, every
 /// other character becoming `?`.
@@ -216,19 +228,51 @@ pub fn recorded_name(name: &str) -> String {
 /// in bytes.
 pub const ERROR_REASON_BYTES: usize = 32;
 
-/// A turn's reason kind from its result's `errors[]`, when nothing more
-/// precise names one: see the rule in the body.
+/// The most words of an error a reason kind is taken from.
+const ERROR_REASON_WORDS: usize = 3;
+
+/// The longest word an error's reason kind is taken from: a longer run of
+/// letters and digits is an id or a key, not a word.
+const ERROR_WORD_BYTES: usize = 24;
+
+/// A turn's reason kind from its result's first error, for a turn whose
+/// result names no `terminal_reason`: the error is redacted, then its
+/// leading words (runs of ASCII letters and digits, lowercased) are joined
+/// by `_`, up to and including the first all-digit word (a status), at
+/// most [`ERROR_REASON_WORDS`] of them, stopping before a word longer than
+/// [`ERROR_WORD_BYTES`], and cut to [`ERROR_REASON_BYTES`]. So `API Error:
+/// 529 Overloaded` is `api_error_529`. `None` when no word leads it.
 pub fn error_reason_kind(errors: &[String]) -> Option<String> {
-    let _ = errors;
-    None
+    let redacted = redact_secrets(errors.first()?);
+    let mut words: Vec<String> = Vec::new();
+    for word in redacted.split(|c: char| !c.is_ascii_alphanumeric()) {
+        match word.len() {
+            0 => continue,
+            1..=ERROR_WORD_BYTES => words.push(word.to_ascii_lowercase()),
+            _ => break,
+        }
+        let status = word.bytes().all(|byte| byte.is_ascii_digit());
+        if status || words.len() == ERROR_REASON_WORDS {
+            break;
+        }
+    }
+    let mut kind = words.join("_");
+    kind.truncate(ERROR_REASON_BYTES);
+    assert!(kind.len() <= ERROR_REASON_BYTES && kind.is_ascii());
+    match kind.len() {
+        0 => None,
+        _ => Some(kind),
+    }
 }
 
 /// The MCP servers a member's board tools come from: quecto's, and the
-/// spike's `board` (#2264).
+/// spike's `board` (#2264). `mcp__board__` is the spike's prefix only: drop
+/// it once #2289 gives members quecto's own board server.
 const BOARD_TOOL_PREFIXES: &[&str] = &["mcp__quecto__", "mcp__board__"];
 
 /// The input fields a tool's summary is taken from, by tool: the command,
-/// the path, or a board tool's ids. Any other tool has none.
+/// the path, or a board tool's ids and recipient (never its claim
+/// `token`, nor a message's text). Any other tool has none.
 fn summary_fields(tool: &str) -> &'static [&'static str] {
     match tool {
         "Bash" => &["command"],
@@ -238,7 +282,7 @@ fn summary_fields(tool: &str) -> &'static [&'static str] {
                 .iter()
                 .any(|prefix| board.starts_with(prefix)) =>
         {
-            &["task_id", "member", "message_id"]
+            &["task_id", "id", "member", "to", "message_id"]
         }
         _ => &[],
     }

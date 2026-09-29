@@ -76,7 +76,8 @@ impl std::fmt::Display for Redacted {
 /// Covers both named spans (`<api_key|token|password|secret|access_token>=
 /// <value>`) and tokens that have recognisable prefixes (`Bearer <tok>`,
 /// `sk-` incl. `sk-proj-`/`sk-ant-`/`sk-or-`, AWS `AKIA`, GitHub
-/// `gh[pousr]_`, Slack `xox[baprs]-`, Google `AIza`). This is best-effort:
+/// `gh[pousr]_`, Slack `xox[baprs]-`, Google `AIza`, GitLab `glpat-`), and
+/// then the command-line shapes of [`COMMAND_LINE_SHAPES`]. This is best-effort:
 /// tokens with no distinguishing shape (bare passwords passed positionally,
 /// opaque JWTs) can still slip through, so callers must not treat output as
 /// guaranteed clean.
@@ -118,7 +119,7 @@ static PATTERNS: LazyLock<regex::Regex> = LazyLock::new(|| {
         r"|%(?:25)*[0-9A-Fa-f]{2}|=[0-9A-Fa-f]{2}|`[0befnrtv]))",
         r"sk-[A-Za-z0-9_-]{8,}",
         r"|AKIA[0-9A-Z]{12,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}",
-        r"|AIza[A-Za-z0-9_-]{20,}",
+        r"|AIza[A-Za-z0-9_-]{20,}|glpat-[A-Za-z0-9_-]{20,}",
         r"|(?:api[_-]?key|token|password|secret|access[_-]?token)\s*[=:]\s*\S+)",
     ))
     .expect("static redaction regex is valid")
@@ -185,12 +186,94 @@ fn is_ansi_csi(text: &str) -> bool {
     })
 }
 
+/// A credential in a command line's shape (#2304 review): the flag or the
+/// name it follows (`keep`) is kept, the credential (`secret`) redacted.
+/// Each is tried after [`PATTERNS`], in order, over the whole text:
+///
+/// - `curl -u user:pass`, `--user user:pass`, `--user=…`, `-uuser:pass`:
+///   only a `user:password` (a `-u` naming a user alone, as `ps -u root`
+///   or `sort -u`, is no credential), and never a `uid:gid` of digits
+///   (`-u 1000:1000`);
+/// - `Authorization: Basic …` (and `Proxy-Authorization`), any case;
+/// - `--password X`, `--password=X`, `--passwd …`, `-pass …` (openssl's
+///   `-pass pass:…`): a flag that is exactly one of these (`--passes=3` is
+///   not);
+/// - `-p<password>` glued to its flag, only after one of the mysql-family
+///   clients, in the same command (`mysql`, `mysqldump`, `mysqladmin`,
+///   `mysqlimport`, `mysqlshow`, `mysqlcheck`, `mysqlsh`, `mariadb`,
+///   `mariadb-dump`): for them `-p pw` with a space prompts and names a
+///   database, and for every other tool `-p` is a port (`ssh -p 2222`,
+///   `psql -p 5432`), a flag (`git log -p`, `cp -p`) or a mode (`mkdir
+///   -p`), so none of those is touched;
+/// - `sshpass -p <password>`, spaced or glued;
+/// - an upper-case environment name ending in `_KEY`, `_KEY_ID`, `_PASS`,
+///   `_PASSWD`, `_PWD`, `_CREDENTIAL(S)` or `_AUTH`, assigned (`export
+///   STRIPE_KEY=…`, `AWS_ACCESS_KEY_ID=…`); `*_TOKEN=`, `*_SECRET=`,
+///   `*_PASSWORD=` and `*_API_KEY=` are [`PATTERNS`]' own;
+/// - `aws_secret_access_key`, any case, then its value after `=`, `:` or
+///   a space (`aws configure set aws_secret_access_key …`).
+static COMMAND_LINE_SHAPES: LazyLock<[CommandLineShape; 7]> = LazyLock::new(|| {
+    let shape = |pattern: &str, is_credential: fn(&str) -> bool| CommandLineShape {
+        pattern: regex::Regex::new(&pattern.replace("SECRET", r#"(?P<secret>[^\s"']+)"#))
+            .expect("static command-line regex is valid"),
+        is_credential,
+    };
+    let any = |_: &str| true;
+    [
+        shape(
+            r#"(?P<keep>(?:^|[\s;&|(])(?:-u\s*|--user(?:\s+|=))["']?)(?P<secret>[^\s:"']+:[^\s"']+)"#,
+            is_user_password,
+        ),
+        shape(r"(?i)(?P<keep>authorization\s*:\s*basic\s+)SECRET", any),
+        shape(
+            r"(?P<keep>(?:^|\s)(?:--password|--passwd|-pass)(?:\s+|=))SECRET",
+            any,
+        ),
+        shape(
+            r"(?P<keep>(?:^|[\s;&|(])(?:mysql|mysqldump|mysqladmin|mysqlimport|mysqlshow|mysqlcheck|mysqlsh|mariadb|mariadb-dump)(?:\s+[^\s;&|]+)*?\s+-p)SECRET",
+            any,
+        ),
+        shape(
+            r"(?P<keep>(?:^|[\s;&|(])sshpass\s+(?:-[A-Za-z]\S*\s+)*?-p\s*)SECRET",
+            any,
+        ),
+        shape(
+            r"(?P<keep>\b[A-Z][A-Z0-9_]*_(?:KEY|KEY_ID|PASS|PASSWD|PWD|CREDENTIALS?|AUTH)\s*=\s*)SECRET",
+            any,
+        ),
+        shape(
+            r"(?i)(?P<keep>aws_secret_access_key(?:\s*[=:]\s*|\s+))SECRET",
+            any,
+        ),
+    ]
+});
+
+/// One of [`COMMAND_LINE_SHAPES`]: its pattern, with a `keep` and a
+/// `secret` group, and whether a `secret` it matched is a credential.
+struct CommandLineShape {
+    pattern: regex::Regex,
+    is_credential: fn(&str) -> bool,
+}
+
+/// Whether a `-u`/`--user` value is a credential: `user:password`, not a
+/// `uid:gid`.
+fn is_user_password(value: &str) -> bool {
+    value.split_once(':').is_some_and(|(user, password)| {
+        let uid_gid = user
+            .chars()
+            .chain(password.chars())
+            .all(|c| c.is_ascii_digit());
+        !uid_gid
+    })
+}
+
 /// Replace known secret shapes in `input` with `[REDACTED]`.
 ///
 /// Non-secret tokens are preserved so the redacted string stays useful: an
-/// `sk-` key's `lead` is written back in front of it.
+/// `sk-` key's `lead` is written back in front of it, and a command-line
+/// credential's flag or name ([`COMMAND_LINE_SHAPES`]).
 pub(crate) fn redact_secrets(input: &str) -> String {
-    PATTERNS
+    let named = PATTERNS
         .replace_all(input, |caps: &regex::Captures<'_>| {
             let lead = caps.name("lead").map_or("", |lead| lead.as_str());
             debug_assert!(
@@ -199,7 +282,18 @@ pub(crate) fn redact_secrets(input: &str) -> String {
             );
             format!("{lead}[REDACTED]")
         })
-        .into_owned()
+        .into_owned();
+    COMMAND_LINE_SHAPES.iter().fold(named, |text, shape| {
+        shape
+            .pattern
+            .replace_all(&text, |caps: &regex::Captures<'_>| {
+                match (shape.is_credential)(&caps["secret"]) {
+                    true => format!("{}[REDACTED]", &caps["keep"]),
+                    false => caps[0].to_string(),
+                }
+            })
+            .into_owned()
+    })
 }
 
 /// The userinfo of a URL (`scheme://user:token@host/…`), in whatever text

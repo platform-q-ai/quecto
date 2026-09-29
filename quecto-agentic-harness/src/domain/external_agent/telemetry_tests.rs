@@ -250,6 +250,13 @@ fn every_external_agent_event_round_trips_through_the_log() {
                 wall_ms: Some(100),
             },
         },
+        AuditEvent::ExternalAgentLifecycle {
+            member_ref: "C3".into(),
+            record: ExternalAgentLifecycle::LogIncomplete {
+                dropped: 2,
+                failed: 1,
+            },
+        },
         AuditEvent::ExternalAgentStreamDiagnostic {
             member_ref: "C3".into(),
             record: ExternalAgentStreamDiagnostic {

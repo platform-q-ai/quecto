@@ -28,6 +28,10 @@
 //!   reader or a writer waiting on it is released. It takes no write gate
 //!   (a write blocked on a full pipe must not hold it up), so every
 //!   decision taken after an await allows for the member having ended.
+//! - However the member ends (its output ends, `close`, an abandon), the
+//!   turn it cuts and the tool calls left open are recorded, then its
+//!   process's end (#2304): at once when its output ended, else once the
+//!   process exits after its input is closed, or [`EXIT_GRACE`] passes.
 //!
 //! Two bounds are heuristics, not claude's word:
 //! - The lost-turn timer: a skipped line followed by
@@ -52,7 +56,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::application::external_agent::dto::{
-    AbortOutcome, AgentClockInstant, ExecutionState, ExternalAgentExit,
+    AbortOutcome, AgentClockInstant, EXIT_GRACE, ExecutionState, ExternalAgentExit,
     ExternalAgentSessionSettings, FinalReport, ProjectedMessage, PromptAccepted, SessionPhase,
     SessionRecord, SessionRefusal, SessionStep, SessionView, StreamingBehavior,
 };
@@ -211,22 +215,30 @@ impl DriveExternalAgentSession {
     }
 
     /// End the member: its turn, its follow-ups and its agent's process.
+    /// The turn it cuts and the calls left open are recorded, then the
+    /// process's end, once it exits (at most [`EXIT_GRACE`] later).
     pub async fn close(&self) -> Result<AbortOutcome, SessionRefusal> {
+        let now = self.clock.now();
+        let mut cut = Vec::new();
         let (turn, dropped_follow_ups) = {
             let mut core = self.core();
             match core.phase {
                 SessionPhase::Idle
                 | SessionPhase::Busy { .. }
-                | SessionPhase::Interrupting { .. } => core.end(),
+                | SessionPhase::Interrupting { .. } => core.end_cut(TurnCut::Closed, now, &mut cut),
                 SessionPhase::NotStarted => return Err(SessionRefusal::NotStarted),
                 SessionPhase::Ended => return Err(SessionRefusal::Ended),
             }
         };
-        self.release_process();
+        let process = self.release_process();
+        for record in cut {
+            self.record(record);
+        }
         self.record(SessionRecord::Closed {
             turn,
             dropped_follow_ups,
         });
+        self.record_exit(process).await;
         Ok(AbortOutcome {
             turn,
             dropped_follow_ups,
@@ -277,7 +289,7 @@ impl DriveExternalAgentSession {
                     // claude's state became unknown: the member ends, and
                     // the reader is told next.
                     if let Some(turn) = folded.abandon {
-                        let abandoned = self.abandon(turn);
+                        let abandoned = self.abandon(turn).await;
                         self.core().surface(abandoned);
                     }
                     return Some(SessionStep::Folded(folded.step));
@@ -366,25 +378,31 @@ impl DriveExternalAgentSession {
         let deadline = self.deadline_after(self.settings.interrupt_grace);
         // `close` may have ended the member while the interrupt was being
         // written: then there is nothing to wait for, or to abandon.
-        let mut core = self.core();
-        match (written, core.ended()) {
-            (_, true) => Interrupt::MemberEnded,
-            (Ok(()), false) => {
-                let waiting = core.interrupting(turn, deadline);
-                assert!(waiting, "a member that has not ended waits");
-                drop(core);
+        let interrupt = {
+            let mut core = self.core();
+            match (written, core.ended()) {
+                (_, true) => Interrupt::MemberEnded,
+                (Ok(()), false) => {
+                    let waiting = core.interrupting(turn, deadline);
+                    assert!(waiting, "a member that has not ended waits");
+                    Interrupt::Written
+                }
+                (Err(_), false) => Interrupt::Abandoned,
+            }
+        };
+        match interrupt {
+            Interrupt::Written => {
                 // A reader waiting on the turn's events waits for the
                 // deadline instead.
                 self.wait_changed.send_modify(|n| *n = n.wrapping_add(1));
                 self.record(SessionRecord::Interrupted { turn, cause });
-                Interrupt::Written
             }
-            (Err(_), false) => {
-                drop(core);
-                self.abandon(turn);
-                Interrupt::Abandoned
+            Interrupt::Abandoned => {
+                self.abandon(turn).await;
             }
+            Interrupt::MemberEnded => {}
         }
+        interrupt
     }
 
     fn deadline_after(&self, grace: Duration) -> AgentClockInstant {
@@ -397,19 +415,54 @@ impl DriveExternalAgentSession {
     async fn abandon_if_overdue(&self) -> Option<SessionStep> {
         let _writes = self.writes.lock().await;
         let turn = self.core().interrupt_overdue(self.clock.now())?;
-        Some(self.abandon(turn))
+        Some(self.abandon(turn).await)
     }
 
     /// Interrupted turn `turn` never answered, or could not be
-    /// interrupted: claude's state is unknown, so the member is ended.
-    fn abandon(&self, turn: u64) -> SessionStep {
-        let (_, dropped_follow_ups) = self.core().end();
-        self.release_process();
-        self.record(SessionRecord::Abandoned {
-            turn,
-            dropped_follow_ups,
-        });
+    /// interrupted: claude's state is unknown, so the member is ended. The
+    /// turn it cuts and the calls left open are recorded, then the
+    /// process's end, once it exits (at most [`EXIT_GRACE`] later). A
+    /// member `close` ended meanwhile is recorded by `close`.
+    async fn abandon(&self, turn: u64) -> SessionStep {
+        let now = self.clock.now();
+        let mut cut = Vec::new();
+        let ended = {
+            let mut core = self.core();
+            match core.ended() {
+                false => Some(core.end_cut(TurnCut::Abandoned, now, &mut cut).1),
+                true => None,
+            }
+        };
+        if let Some(dropped_follow_ups) = ended {
+            let process = self.release_process();
+            for record in cut {
+                self.record(record);
+            }
+            self.record(SessionRecord::Abandoned {
+                turn,
+                dropped_follow_ups,
+            });
+            self.record_exit(process).await;
+        }
         SessionStep::Abandoned { turn }
+    }
+
+    /// Close the ended member's input and wait, at most [`EXIT_GRACE`], for
+    /// its process to exit; then let it go and record its end.
+    async fn record_exit(&self, process: Option<Process>) {
+        let exit = match process {
+            Some(process) => {
+                process.close_input().await;
+                tokio::select! {
+                    biased;
+                    exit = process.exited_discarding_output() => Some(exit),
+                    () = self.clock.sleep(EXIT_GRACE) => None,
+                }
+            }
+            None => None,
+        };
+        let wall_ms = self.core().telemetry.wall_ms(self.clock.now());
+        self.record(ended_record(exit.as_ref(), wall_ms));
     }
 
     async fn output_ended(&self, process: Process) -> Option<SessionStep> {
@@ -423,14 +476,15 @@ impl DriveExternalAgentSession {
         let mut reported = Vec::new();
         let (turn, wall_ms) = {
             let mut core = self.core();
-            if let Some(turn) = core.running_turn() {
-                core.telemetry
-                    .turn_ended(turn, TurnCut::Exited, now, &mut reported);
+            // `close` or an abandon ended the member meanwhile, and
+            // records its end.
+            if core.ended() {
+                return None;
             }
             let wall_ms = core.telemetry.wall_ms(now);
-            (core.end().0, wall_ms)
+            (core.end_cut(TurnCut::Exited, now, &mut reported).0, wall_ms)
         };
-        self.release_process();
+        drop(self.release_process());
         for record in reported {
             self.record(record);
         }
@@ -442,26 +496,16 @@ impl DriveExternalAgentSession {
                 cost_micro_usd: 0,
             });
         }
-        let (exit_code, signal) = match exit {
-            ExternalAgentExit::Code(code) => (Some(code), None),
-            ExternalAgentExit::Signal(signal) => (None, Some(signal)),
-            ExternalAgentExit::Unobservable(_) => (None, None),
-        };
-        self.record(SessionRecord::Ended {
-            clean: exit.is_clean(),
-            exit_code,
-            signal,
-            wall_ms,
-        });
+        self.record(ended_record(Some(&exit), wall_ms));
         Some(SessionStep::Ended { turn, exit })
     }
 
-    /// Drop the process and release every waiter: the last handle to go
-    /// ends it.
-    fn release_process(&self) {
+    /// Take the process from the session and release every waiter: the
+    /// last handle to go ends it.
+    fn release_process(&self) -> Option<Process> {
         let process = self.slot().take();
         self.ended.send_replace(true);
-        drop(process);
+        process
     }
 
     /// Record what a fold decided and start the follow-up it dequeued. A
@@ -528,6 +572,22 @@ impl DriveExternalAgentSession {
         self.process
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+/// The member's end: its process's exit (`None`: not observed within
+/// [`EXIT_GRACE`]) and its wall time.
+fn ended_record(exit: Option<&ExternalAgentExit>, wall_ms: Option<u64>) -> SessionRecord {
+    let (exit_code, signal) = match exit {
+        Some(ExternalAgentExit::Code(code)) => (Some(*code), None),
+        Some(ExternalAgentExit::Signal(signal)) => (None, Some(*signal)),
+        Some(ExternalAgentExit::Unobservable(_)) | None => (None, None),
+    };
+    SessionRecord::Ended {
+        clean: exit.is_some_and(ExternalAgentExit::is_clean),
+        exit_code,
+        signal,
+        wall_ms,
     }
 }
 

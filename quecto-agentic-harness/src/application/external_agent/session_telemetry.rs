@@ -12,7 +12,7 @@ use crate::domain::external_agent::stream::{
 };
 use crate::domain::external_agent::telemetry::{
     ExternalAgentStreamDiagnostic, ExternalAgentTool, ExternalAgentTurn, board_task_id,
-    recorded_name, tool_summary,
+    error_reason_kind, recorded_name, tool_summary,
 };
 use crate::domain::external_agent::turn::{FailureKind, TurnEnd};
 
@@ -34,6 +34,23 @@ pub(crate) enum TurnCut<'a> {
     Settled(Option<&'a TurnOutcome>),
     /// Its process's output ended first: `exited`.
     Exited,
+    /// The member was closed while it ran: `closed`.
+    Closed,
+    /// The member was ended while it ran, its state unknown: `abandoned`.
+    Abandoned,
+}
+
+impl TurnCut<'_> {
+    /// The turn's end kind and reason kind, as its record keeps them.
+    fn kinds(self) -> (&'static str, Option<String>) {
+        match self {
+            TurnCut::Settled(Some(outcome)) => end_kind(&outcome.end),
+            TurnCut::Settled(None) => ("aborted", None),
+            TurnCut::Exited => ("exited", None),
+            TurnCut::Closed => ("closed", None),
+            TurnCut::Abandoned => ("abandoned", None),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -55,8 +72,13 @@ pub(crate) struct SessionTelemetry {
 }
 
 impl SessionTelemetry {
-    /// A process started at `now`: its first init is recorded.
+    /// A process started at `now`: its first init is recorded, and
+    /// nothing of the last one's is carried over (its open calls, its
+    /// session id, its model). The diagnostic counts are the session's.
     pub(crate) fn process_started(&mut self, now: AgentClockInstant) {
+        self.pending.clear();
+        self.claude_session_id = None;
+        self.model = None;
         self.started_at = Some(now);
         self.awaiting_init = true;
     }
@@ -101,17 +123,21 @@ impl SessionTelemetry {
                 };
                 self.diagnose("skipped_line", reason, Some(line.bytes), turn, records);
             }
-            // Nothing the log keeps: see `stream_telemetry`. A turn's end
-            // is measured when the session ends it (`turn_ended`).
+            // They feed `external_agent_turn` (the table's word), through
+            // the projection's outcome, when the session ends the turn
+            // (`turn_ended`): the assistant's error kind names why it
+            // failed.
+            ExternalAgentEvent::AssistantError { .. } | ExternalAgentEvent::Result(_) => {}
+            // Ignored, as `stream_telemetry` says; the session's tests
+            // feed every event of its table through `fold` to hold the two
+            // together.
             ExternalAgentEvent::ThinkingTokens { .. }
             | ExternalAgentEvent::AssistantBlock { .. }
-            | ExternalAgentEvent::AssistantError { .. }
             | ExternalAgentEvent::UserText { .. }
             | ExternalAgentEvent::TaskStarted(_)
             | ExternalAgentEvent::TaskNotification(_)
             | ExternalAgentEvent::BackgroundTasksChanged { .. }
             | ExternalAgentEvent::RateLimit(_)
-            | ExternalAgentEvent::Result(_)
             | ExternalAgentEvent::InterruptAnswered(_) => {}
         }
     }
@@ -208,6 +234,15 @@ impl SessionTelemetry {
         }
     }
 
+    /// Every call still open is recorded unanswered: its turn, or the
+    /// member, ended first.
+    pub(crate) fn calls_cut(&mut self, now: AgentClockInstant, records: &mut Vec<SessionRecord>) {
+        while let Some(pending) = self.pending.pop_front() {
+            records.push(finished(pending, "unanswered", 0, now));
+        }
+        assert!(self.pending.is_empty());
+    }
+
     /// Turn `turn` ended as `cut` says: its calls still open are recorded
     /// unanswered, then the turn.
     pub(crate) fn turn_ended(
@@ -217,18 +252,12 @@ impl SessionTelemetry {
         now: AgentClockInstant,
         records: &mut Vec<SessionRecord>,
     ) {
-        while let Some(pending) = self.pending.pop_front() {
-            records.push(finished(pending, "unanswered", 0, now));
-        }
+        self.calls_cut(now, records);
         let outcome = match cut {
             TurnCut::Settled(outcome) => outcome,
-            TurnCut::Exited => None,
+            TurnCut::Exited | TurnCut::Closed | TurnCut::Abandoned => None,
         };
-        let (turn_end, reason_kind) = match cut {
-            TurnCut::Settled(Some(outcome)) => end_kind(&outcome.end),
-            TurnCut::Settled(None) => ("aborted", None),
-            TurnCut::Exited => ("exited", None),
-        };
+        let (turn_end, reason_kind) = cut.kinds();
         let tokens = outcome.map(|o| o.usage.tokens).unwrap_or_default();
         records.push(SessionRecord::TurnReported(Box::new(ExternalAgentTurn {
             member_turn: turn,
@@ -247,7 +276,7 @@ impl SessionTelemetry {
             list_price_cost_micro_usd: outcome.map_or(0, |o| o.usage.cost_micro_usd),
             list_price_total_micro_usd: outcome.map_or(0, |o| o.usage.total_cost_micro_usd),
             task_id: None,
-            cost_drop: None,
+            cost_drop: outcome.and_then(|o| o.usage.cost_drop),
         })));
     }
 }
@@ -279,7 +308,8 @@ fn end_kind(end: &TurnEnd) -> (&'static str, Option<String>) {
                 .api_error_status
                 .map(|status| format!("api_{status}"))
         })
-        .or_else(|| failure.assistant_error.as_deref().map(recorded_name));
+        .or_else(|| failure.assistant_error.as_deref().map(recorded_name))
+        .or_else(|| error_reason_kind(&failure.errors));
     let kind = match (failure.kind, failure.terminal_reason.as_deref()) {
         (FailureKind::Aborted, _) => "aborted",
         (FailureKind::Error, Some(BUDGET_EXHAUSTED)) => "budget_exceeded",
