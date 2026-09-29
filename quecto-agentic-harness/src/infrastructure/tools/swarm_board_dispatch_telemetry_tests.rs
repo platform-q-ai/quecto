@@ -663,3 +663,6 @@ mod ops;
 
 #[path = "swarm_board_dispatch_telemetry_race_tests.rs"]
 mod race;
+
+#[path = "swarm_board_dispatch_telemetry_role_tests.rs"]
+mod role;
