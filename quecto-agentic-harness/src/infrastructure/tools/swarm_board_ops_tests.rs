@@ -100,6 +100,9 @@ impl crate::application::swarm::ports::BoardOpLog for Recorded {
     fn record(&self, observation: BoardOpObservation) {
         self.0.lock().unwrap().push(observation);
     }
+
+    /// No summary this test checks is written.
+    fn summarize(&self, _summary: crate::domain::swarm::SwarmRunSummary) {}
 }
 
 impl Recorded {

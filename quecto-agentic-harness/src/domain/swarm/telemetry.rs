@@ -158,9 +158,10 @@ pub struct BoardOpObservation {
     /// like a credential.
     pub actor_ref: Redacted,
     /// The harness's own op is [`BoardRole::Host`]; a member-facing op
-    /// records the caller's role in the run ([`run_role`]), or `None`
-    /// (written `null`) when the op read no run: it was refused first, or
-    /// the board holds none. Never a role guessed.
+    /// the board answered as a member's records the caller's role in the
+    /// run ([`run_role`]), or `None` (written `null`) when the op read no
+    /// run, or was refused (the caller is then proven no member, #2313).
+    /// Never a role guessed.
     pub role: Option<BoardRole>,
     /// The run the op found, when it found one and its id is one the
     /// board generates ([`board_run_id`]); any other id (a board edited
@@ -313,12 +314,22 @@ impl BoardOpDetail {
 /// The role `member` holds in a run whose coordinator and integrator are
 /// the ones given (#2303 reconcile): the coordinator first (Python's
 /// `create` makes it the integrator too), then the integrator, and any
-/// other caller a worker.
-pub fn run_role(member: &str, coordinator: Option<&str>, integrator: Option<&str>) -> BoardRole {
+/// other member a worker. `None` unless the board accepted the caller as
+/// a member of the run (`member_of_run`, #2313): a stranger, or a member
+/// whose death was confirmed, holds no role, and is never guessed one.
+pub fn run_role(
+    member: &str,
+    coordinator: Option<&str>,
+    integrator: Option<&str>,
+    member_of_run: bool,
+) -> Option<BoardRole> {
+    // RED stub (#2313): any caller but the coordinator and integrator is
+    // a worker, member or not.
+    let _ = member_of_run;
     match (coordinator == Some(member), integrator == Some(member)) {
-        (true, _) => BoardRole::Coordinator,
-        (false, true) => BoardRole::Integrator,
-        (false, false) => BoardRole::Worker,
+        (true, _) => Some(BoardRole::Coordinator),
+        (false, true) => Some(BoardRole::Integrator),
+        (false, false) => Some(BoardRole::Worker),
     }
 }
 

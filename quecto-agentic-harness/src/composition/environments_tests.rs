@@ -99,6 +99,9 @@ impl crate::application::swarm::ports::BoardOpLog for RecordedOps {
     fn record(&self, observation: crate::domain::swarm::BoardOpObservation) {
         self.0.lock().unwrap().push(observation.op);
     }
+
+    /// No summary this test checks is written.
+    fn summarize(&self, _summary: crate::domain::swarm::SwarmRunSummary) {}
 }
 
 /// #2278 review M1: the host's board calls are recorded in the session's

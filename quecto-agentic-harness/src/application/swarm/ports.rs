@@ -21,7 +21,7 @@ use crate::domain::error::DomainError;
 use crate::domain::swarm::{
     BoardError, BoardOpObservation, Member, MemberExit, MemberRecord, NotificationEvent,
     NotificationState, ProcessIdentity, RunControlAction, RunControlReceipt, RunRecord, RunState,
-    RunStatus, Snapshot,
+    RunStatus, Snapshot, SwarmRunSummary,
 };
 
 pub type PortFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -631,4 +631,9 @@ pub trait BoardOpLog: Send + Sync {
     /// never blocking on one, never panicking. A failed write is the
     /// adapter's to report and never changes the op's answer.
     fn record(&self, observation: BoardOpObservation);
+
+    /// Appends a run's `summary` (#2313), as [`Self::record`] appends a
+    /// record: synchronously, never panicking, a failed write the
+    /// adapter's to report.
+    fn summarize(&self, summary: SwarmRunSummary);
 }

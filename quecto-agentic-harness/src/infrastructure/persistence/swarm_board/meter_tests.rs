@@ -333,3 +333,25 @@ fn the_run_roles_are_kept_for_the_callers_role() {
         );
     }
 }
+
+/// #2313 (#2303 reconcile review nit): a call whose only run row read is
+/// `run_status`'s, which names no integrator, still keeps the run's
+/// roles, so a member-facing op reading only it records its caller's role.
+#[test]
+fn a_call_that_read_only_the_run_status_keeps_the_run_roles() {
+    let (dir, _store, _plain, meter) = created();
+    let generated = "0123456789abcdef0123456789abcdef";
+    run_with_id(&dir, generated);
+    let call = meter.open();
+    call.atomic(false, &mut |board| board.run_status().map(|_| ()))
+        .unwrap();
+    let measure = measured(&*call);
+    assert_eq!(measure.run_id.as_deref(), Some(generated));
+    assert_eq!(
+        measure.run_roles,
+        Some(RunRoles {
+            coordinator: Some("parent".to_owned()),
+            integrator: Some("parent".to_owned()),
+        })
+    );
+}

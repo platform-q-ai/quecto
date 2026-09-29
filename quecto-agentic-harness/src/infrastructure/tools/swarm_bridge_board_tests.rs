@@ -22,6 +22,9 @@ impl BoardOpLog for Recorded {
     fn record(&self, observation: BoardOpObservation) {
         self.0.lock().unwrap().push(observation);
     }
+
+    /// No summary this test checks is written.
+    fn summarize(&self, _summary: crate::domain::swarm::SwarmRunSummary) {}
 }
 
 impl Recorded {
@@ -218,18 +221,6 @@ fn a_board_with_a_log_records_one_swarm_op_per_call_and_no_argument_text() {
     let text = recorded.text();
     assert!(!text.contains("sk-ant"), "no argument text: {text}");
     assert!(!text.contains("title"), "no argument text: {text}");
-}
-
-#[test]
-fn a_board_records_in_its_first_log_only() {
-    let checkout = tempfile::tempdir().unwrap();
-    let board = crate::composition::swarm::swarm_board();
-    let (first, second) = (Arc::new(Recorded::default()), Arc::new(Recorded::default()));
-    assert!(board.record_in(first.clone()));
-    assert!(!board.record_in(second.clone()), "the first log stays");
-    create(&context(checkout.path(), "parent", board));
-    assert_eq!(first.ops(), ["create"]);
-    assert!(second.ops().is_empty());
 }
 
 static SESSION_LOG: std::sync::OnceLock<Arc<Recorded>> = std::sync::OnceLock::new();

@@ -30,6 +30,9 @@ impl BoardOpLog for SlowLog {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push(observation.op);
     }
+
+    /// No summary this test checks is written.
+    fn summarize(&self, _summary: crate::domain::swarm::SwarmRunSummary) {}
 }
 
 impl SlowLog {

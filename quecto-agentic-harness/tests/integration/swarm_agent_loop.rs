@@ -459,6 +459,9 @@ impl quecto::application::swarm::ports::BoardOpLog for BoardCalls {
     fn record(&self, observation: quecto::domain::swarm::BoardOpObservation) {
         self.0.lock().unwrap().push(observation);
     }
+
+    /// No summary this test checks is written.
+    fn summarize(&self, _summary: quecto::domain::swarm::SwarmRunSummary) {}
 }
 
 /// Answers request `n` with `STEPS[n]`'s tool call, built from the answers

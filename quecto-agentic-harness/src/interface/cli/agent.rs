@@ -525,8 +525,7 @@ pub(crate) fn build_agent_from_config(
         environment_control,
         workflow_state,
         workspace,
-        event_log: config.telemetry.event_log.enabled
-            || crate::infrastructure::config::telemetry::globally_enabled(base_dir),
+        event_log: event_log::switched_on(config.telemetry.event_log.enabled, base_dir),
     })
 }
 mod agent_tool_registry;

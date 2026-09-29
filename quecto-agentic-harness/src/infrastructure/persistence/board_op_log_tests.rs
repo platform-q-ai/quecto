@@ -126,3 +126,38 @@ fn drops_accumulate_into_one_note() {
     assert_eq!(lines[0]["dropped"], 3);
     assert_eq!(lines[1]["event"], "swarm_op");
 }
+
+/// #2313: a run's summary is one `swarm_run_summary` line under no turn,
+/// from a plain thread; past the cap it is dropped with the one warning.
+#[test]
+fn a_run_summary_is_one_line_under_no_turn() {
+    use crate::domain::swarm::RunSummaryFold;
+    let run = "0123456789abcdef0123456789abcdef";
+    let summary = || {
+        let mut fold = RunSummaryFold::new(run, 0);
+        fold.observe(&BoardOpObservation {
+            run_id: Some(run.into()),
+            ..observation()
+        });
+        fold.summary(10)
+    };
+    let base = tempfile::tempdir().unwrap();
+    let log = AuditLog::open_sync(base.path(), "cli:summary").unwrap();
+    let ops = EventLogBoardOps::new(log.crash_line().unwrap());
+    let written = summary();
+    std::thread::spawn(move || ops.summarize(written))
+        .join()
+        .expect("no runtime is needed and nothing panics");
+    let lines = parsed(base.path(), "cli:summary");
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert_eq!(lines[0]["event"], "swarm_run_summary");
+    assert_eq!(lines[0]["run_id"], run);
+    assert_eq!(lines[0]["records"], 1);
+    assert_eq!(lines[0]["turn"], serde_json::Value::Null);
+    let full = AuditLog::open_sync(base.path(), "cli:full")
+        .unwrap()
+        .with_cap(64);
+    let ops = EventLogBoardOps::new(full.crash_line().unwrap());
+    ops.summarize(summary());
+    assert!(ops.warned.load(Ordering::Acquire), "the drop was reported");
+}

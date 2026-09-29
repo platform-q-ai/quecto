@@ -13,6 +13,10 @@ pub(super) fn admit(ctx: &CliContext, flags: &mut AgentFlags, stderr: &mut Strin
     let contracted = SwarmContext::contracted_checkout().is_some();
     let context = match board_admission(board(ctx), contracted) {
         Ok(Some(board)) => {
+            let backend = flags.backend.unwrap_or_default();
+            board.record_from_admission(records_admission(contracted, backend, || {
+                super::event_log::decided_before_admission(ctx, flags)
+            }));
             swarm_bridge::bind_process_board(board);
             crate::interface::tool_runtime::swarm_context()
         }
@@ -23,6 +27,21 @@ pub(super) fn admit(ctx: &CliContext, flags: &mut AgentFlags, stderr: &mut Strin
         }
     };
     admit_with(context, swarm_lifecycle::is_creator(), flags, stderr)
+}
+
+/// Whether the admission's own board calls are measured and recorded
+/// (#2313): a member launched under the container contract (only its
+/// admission calls the board) whose event log is on, as `decided` reads it
+/// before admission, and only for the quecto backend: a `--backend
+/// claude-code` member opens no event log of its own (E2).
+pub(super) fn records_admission(
+    contracted: bool,
+    backend: MemberBackend,
+    decided: impl FnOnce() -> bool,
+) -> bool {
+    // RED stub (#2313): the admission's calls are not recorded.
+    let _ = (contracted, backend, decided);
+    false
 }
 
 /// The board a process is admitted with: composition's, when composed; a

@@ -57,6 +57,9 @@ pub enum AuditEvent {
     /// waits for it (#2303). Written just before the next `swarm_op`, in
     /// the same write.
     SwarmOpsDropped { dropped: u64 },
+    /// A swarm run's `swarm_op` records, folded (#2313): written once by
+    /// the coordinator's harness when the run settles.
+    SwarmRunSummary(super::swarm::SwarmRunSummary),
     LlmTurnStart {
         input_tokens_estimate: usize,
         message_count: usize,

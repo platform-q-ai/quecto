@@ -34,7 +34,7 @@ use std::time::Duration;
 
 use crate::application::swarm::ports::BoardOpLog;
 use crate::domain::audit::AuditEvent;
-use crate::domain::swarm::BoardOpObservation;
+use crate::domain::swarm::{BoardOpObservation, SwarmRunSummary};
 use crate::infrastructure::persistence::audit_log::AuditCrashLine;
 
 /// The tracing target of the one warning a failed record raises.
@@ -117,6 +117,14 @@ impl BoardOpLog for EventLogBoardOps {
             // unnoted rather than be counted twice.
             Err(error) => self.warn(&error),
         }
+    }
+
+    /// Filed under no turn, as a record is (#2313). A summary the gate
+    /// held off, the cap refused or a write failed is dropped with the
+    /// log's one warning: it is written once, and never retried.
+    fn summarize(&self, summary: SwarmRunSummary) {
+        // RED stub (#2313): nothing is written.
+        let _ = summary;
     }
 }
 

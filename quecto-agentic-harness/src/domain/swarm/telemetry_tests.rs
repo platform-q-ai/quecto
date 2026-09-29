@@ -393,18 +393,41 @@ fn only_a_generated_run_id_is_a_board_run_id() {
 fn a_callers_run_role_is_read_from_the_run() {
     use super::run_role;
     assert_eq!(
-        run_role("parent", Some("parent"), Some("parent")),
-        BoardRole::Coordinator
+        run_role("parent", Some("parent"), Some("parent"), true),
+        Some(BoardRole::Coordinator)
     );
     assert_eq!(
-        run_role("merger", Some("parent"), Some("merger")),
-        BoardRole::Integrator
+        run_role("merger", Some("parent"), Some("merger"), true),
+        Some(BoardRole::Integrator)
     );
     assert_eq!(
-        run_role("worker", Some("parent"), Some("merger")),
-        BoardRole::Worker
+        run_role("worker", Some("parent"), Some("merger"), true),
+        Some(BoardRole::Worker)
     );
-    assert_eq!(run_role("worker", None, None), BoardRole::Worker);
+    assert_eq!(
+        run_role("worker", None, None, true),
+        Some(BoardRole::Worker)
+    );
+}
+
+/// #2313: a caller the board did not accept as a member of the run (a
+/// stranger, or a member whose death was confirmed) holds no role, not
+/// `worker`, whoever the run names.
+#[test]
+fn a_caller_that_is_no_member_holds_no_run_role() {
+    use super::run_role;
+    for (member, coordinator, integrator) in [
+        ("stranger", Some("parent"), Some("merger")),
+        ("parent", Some("parent"), Some("parent")),
+        ("merger", Some("parent"), Some("merger")),
+        ("worker", None, None),
+    ] {
+        assert_eq!(
+            run_role(member, coordinator, integrator, false),
+            None,
+            "{member}"
+        );
+    }
 }
 
 /// A served op's decision and detail (#2277 review M1) sit flat beside

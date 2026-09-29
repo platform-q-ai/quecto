@@ -10,7 +10,11 @@ use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::sessions::ports::session_runtime::TurnAccountingReset;
 use crate::application::sessions::ports::{SessionKeyPropagation, SessionSwitchRuntime};
 use crate::domain::session_identity::SessionIdentity;
+use std::sync::Arc;
+
+use crate::application::audit::ports::AuditSink;
 use crate::infrastructure::persistence::crash_record;
+use crate::infrastructure::tools::swarm_bridge;
 use crate::interface::shared::WorkflowStateHandle;
 
 pub struct LoopSessionSwitchRuntime<'a> {
@@ -56,8 +60,13 @@ impl SessionKeyPropagation for LoopSessionSwitchRuntime<'_> {
             self.session.session_changed();
         }
         self.agent.set_session_key(identity.clone());
+        let followed = crash_record::follow(identity.persisted_key());
+        // The board's records follow the session too (#2313).
+        if let (Some(log), Some(board)) = (&followed, swarm_bridge::process_board()) {
+            board.follow_session(log);
+        }
         self.agent
-            .follow_audit_log(crash_record::follow(identity.persisted_key()));
+            .follow_audit_log(followed.map(|log| Arc::new(log) as Arc<dyn AuditSink>));
     }
 }
 

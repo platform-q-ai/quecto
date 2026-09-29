@@ -15,6 +15,7 @@ pub mod owner;
 pub mod policy;
 pub mod python_value;
 pub mod records;
+pub mod run_summary;
 pub mod telemetry;
 pub mod usage;
 pub mod validation;
@@ -39,6 +40,7 @@ pub use records::{
     Criterion, CriterionKind, EvidenceRow, MemberRecord, MemberState, RunRecord, RunState,
     TaskRecord, TaskState,
 };
+pub use run_summary::{RunSummaryFold, SwarmRunSummary};
 pub use telemetry::{
     BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind, RunStatusKind,
 };

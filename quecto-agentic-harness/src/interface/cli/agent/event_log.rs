@@ -42,6 +42,27 @@ pub(super) fn one_shot_key(session_name: Option<&str>) -> String {
         .unwrap_or_default()
 }
 
+/// Whether the event log is on (#2150): the loaded configuration
+/// switches it on (`config_on`), or the owner's global config does.
+pub(super) fn switched_on(config_on: bool, base_dir: &Path) -> bool {
+    config_on || crate::infrastructure::config::telemetry::globally_enabled(base_dir)
+}
+
+/// The event-log switch decided before admission (#2313), so the
+/// admission's own board calls are measured and recorded exactly when the
+/// log is on: from the configuration the agent's build loads, over the same
+/// layers and `QUECTO_*` overrides, without asking to trust an overlay (an
+/// overlay not trusted yet is not applied, so this is never on where the
+/// build's decision is off). A configuration that does not load is off.
+pub(super) fn decided_before_admission(
+    ctx: &crate::interface::cli::CliContext,
+    flags: &super::AgentFlags,
+) -> bool {
+    // RED stub (#2313): the switch is not read before admission.
+    let _ = (ctx, flags);
+    false
+}
+
 /// A key for a session without one: unique to this process and start.
 fn unkeyed() -> String {
     let started = std::time::SystemTime::now()
@@ -66,6 +87,7 @@ pub(super) fn attach(
 ) {
     use crate::infrastructure::persistence::audit_log::AuditLog;
     use crate::infrastructure::persistence::crash_record::{CrashTarget, prepare};
+    let board = crate::infrastructure::tools::swarm_bridge::process_board();
     let crash_line = match log_key(flags.workflow, ephemeral(flags), session_key, event_log) {
         Some(key) => match AuditLog::open_sync(base_dir, &key) {
             Ok(log) => {
@@ -73,7 +95,7 @@ pub(super) fn attach(
                 let crash_line = log.crash_line();
                 // The board calls this process makes are recorded in the
                 // same log, while the event log is on (#2278, #2303).
-                if let Some(board) = crate::infrastructure::tools::swarm_bridge::process_board() {
+                if let Some(board) = board {
                     board.record_in_session(event_log, &log);
                 }
                 agent.set_audit_log(Some(Arc::new(log) as Arc<dyn AuditSink>));
@@ -81,10 +103,20 @@ pub(super) fn attach(
             }
             Err(e) => {
                 stderr.push_str(&format!("WARNING: failed to open audit log: {e}\n"));
+                if let Some(board) = board {
+                    board.stop_recording();
+                }
                 None
             }
         },
-        None => None,
+        // No log: the board records nothing, not even what it held since
+        // admission (#2313).
+        None => {
+            if let Some(board) = board {
+                board.stop_recording();
+            }
+            None
+        }
     };
     let keeps_record = match (ephemeral(flags), session_key.is_empty()) {
         (false, false) => Some(session_key.to_string()),
