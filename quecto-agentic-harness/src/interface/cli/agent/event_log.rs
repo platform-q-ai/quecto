@@ -46,8 +46,16 @@ pub(super) fn one_shot_key(session_name: Option<&str>) -> String {
 /// round 3): none for a member asked to leave nothing behind, its
 /// session's key when it is named, else a key of its own.
 pub(crate) fn member_log_key(flags: &super::AgentFlags) -> Option<String> {
-    let _ = flags;
-    todo!("#2304 review round 3")
+    match (ephemeral(flags), flags.session_name.as_deref()) {
+        (true, _) => None,
+        (false, Some(name)) => Some(
+            crate::domain::session_identity::SessionIdentity::named_cli(name).map_or_else(
+                |_| name.to_owned(),
+                |identity| identity.runtime_key().to_owned(),
+            ),
+        ),
+        (false, None) => Some(unkeyed()),
+    }
 }
 
 /// A key for a session without one: unique to this process and start.
