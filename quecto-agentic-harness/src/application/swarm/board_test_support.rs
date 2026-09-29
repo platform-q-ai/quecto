@@ -14,8 +14,9 @@ pub use self::evidence::accepted;
 pub use self::files::{LexicalCheckout, StoredMessage};
 pub use self::tasks::{StoredFile, StoredRequest, stored_task};
 use crate::application::swarm::dto::{
-    AmendedContract, EvidenceEntry, LaunchIdentity, MemberClaimCounts, MemberRow, NewMember,
-    NewRequestUsage, NewRun, RunContract, RunOwnerRow, RunStatusRow, StoredContract, TaskRow,
+    AmendedContract, EvidenceEntry, LaunchIdentity, MemberClaimCounts, MemberRow, MemberStatusRow,
+    NewMember, NewRequestUsage, NewRun, RunContract, RunOwnerRow, RunStatusRow, StoredContract,
+    TaskRow,
     UsageReport,
 };
 use crate::application::swarm::ports::{
@@ -368,6 +369,12 @@ impl BoardMembers for MemoryTransaction<'_> {
                     })
             })
             .cloned())
+    }
+
+    fn member_status(&self, id: &Value) -> Result<Option<MemberStatusRow>, BoardError> {
+        Ok(self.member_row(id, None)?.map(|row| MemberStatusRow {
+            status: row.text("status").map(str::to_owned),
+        }))
     }
 
     fn reserve_member(

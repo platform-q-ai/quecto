@@ -6,11 +6,21 @@ use crate::application::swarm::board_test_support::{
     BoardState, CompactEncoding, MemoryBoard, StoredFile, StoredMessage, member_row, running_board,
     stored_task,
 };
+use crate::application::swarm::ports::Clock;
+
+/// A clock that always reads 7.
+struct FixedClock;
+
+impl Clock for FixedClock {
+    fn now_seconds(&self) -> f64 {
+        7.0
+    }
+}
 
 fn notice<'a>(previous: &'a Value, task_id: &'a Value) -> Notice<'a> {
     Notice {
         actor: "parent",
-        now: 7.0,
+        clock: &FixedClock,
         previous,
         task_id,
         reason: "silent",

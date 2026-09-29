@@ -12,9 +12,9 @@ use serde_json::Value;
 
 use super::dto::{
     AmendedContract, CallMeasure, CompletionState, FileRow, LaunchIdentity, MemberClaimCounts,
-    MemberRow, NewEvidence, NewMember, NewRequestUsage, NewReservation, NewRun, NewTask,
-    PriorEvidence, RunContract, RunOwnerRow, RunStatusRow, StoredContract, StoredRequestUsage,
-    TaskRow, TaskUpdate, UsageReport,
+    MemberRow, MemberStatusRow, NewEvidence, NewMember, NewRequestUsage, NewReservation, NewRun,
+    NewTask, PriorEvidence, RunContract, RunOwnerRow, RunStatusRow, StoredContract,
+    StoredRequestUsage, TaskRow, TaskUpdate, UsageReport,
 };
 use crate::domain::error::DomainError;
 use crate::domain::swarm::{
@@ -208,6 +208,11 @@ pub trait BoardMembers {
         id: &Value,
         reservation: Option<&Value>,
     ) -> Result<Option<MemberRow>, BoardError>;
+    /// `SELECT status FROM members WHERE id=?` (#2275): only the status,
+    /// so no other column of the row is read or refused. The id is bound
+    /// as [`BoardMembers::member_row`] binds it; `None` when no row
+    /// matches.
+    fn member_status(&self, id: &Value) -> Result<Option<MemberStatusRow>, BoardError>;
     /// `Transaction.reserve_member`: a `reserved` row with no process yet,
     /// launched by `launcher` (#1961), the reservation bound as given.
     fn reserve_member(

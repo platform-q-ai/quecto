@@ -12,9 +12,11 @@ use serde_json::Value;
 use super::binding;
 use super::repository::{
     ACTIVE_CLAIM, PYTHON_PID_PARAMETER, PYTHON_SOCKET_PARAMETER, PYTHON_STARTED_PARAMETER,
-    SqliteBoard, failed, fetched, loose, member_row as row_dict,
+    SqliteBoard, failed, fetched, loose, member_row as row_dict, text,
 };
-use crate::application::swarm::dto::{LaunchIdentity, MemberClaimCounts, MemberRow, NewMember};
+use crate::application::swarm::dto::{
+    LaunchIdentity, MemberClaimCounts, MemberRow, MemberStatusRow, NewMember,
+};
 use crate::application::swarm::ports::BoardMembers;
 use crate::domain::swarm::{BoardError, MemberRecord, MemberState};
 
@@ -106,6 +108,23 @@ impl BoardMembers for SqliteBoard<'_> {
                 &[Bound::Loose(id), Bound::Loose(reservation)],
             ),
         }
+    }
+
+    fn member_status(&self, id: &Value) -> Result<Option<MemberStatusRow>, BoardError> {
+        let parameters = bound(&[Bound::Loose(id)])?;
+        let mut statement = binding::bound_statement(
+            self.connection,
+            "SELECT status FROM members WHERE id=?",
+            &parameters,
+        )
+        .map_err(failed)?;
+        let mut rows = statement.raw_query();
+        rows.next()
+            .and_then(|row| {
+                row.map(|row| text(row, "status").map(|status| MemberStatusRow { status }))
+                    .transpose()
+            })
+            .map_err(failed)
     }
 
     fn reserve_member(

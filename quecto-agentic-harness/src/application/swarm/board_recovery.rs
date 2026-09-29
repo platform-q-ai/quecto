@@ -6,7 +6,7 @@ use serde_json::Value;
 use super::board_operation::detail;
 use super::dto::TaskUpdate;
 use super::ports::{
-    BoardEncoding, BoardEvents, BoardFiles, BoardMembers, BoardMessages, BoardTasks,
+    BoardEncoding, BoardEvents, BoardFiles, BoardMembers, BoardMessages, BoardTasks, Clock,
 };
 use crate::domain::swarm::{BoardError, status_is_alive};
 
@@ -17,7 +17,9 @@ const INBOX_CAPACITY: i64 = 100;
 pub(crate) struct Notice<'a> {
     /// The coordinator revoking, who sends the message.
     pub(crate) actor: &'a str,
-    pub(crate) now: f64,
+    /// Read when the `message_accepted` event is written, as Python's
+    /// `store.event` reads `self.clock()` for each event.
+    pub(crate) clock: &'a dyn Clock,
     /// The task's owner before the revocation, as stored.
     pub(crate) previous: &'a Value,
     /// The task id as the caller gave it.
@@ -45,7 +47,10 @@ pub(crate) fn reopen(
 /// unread messages, gets one accepted message naming the task and the
 /// reason, recorded as `message_accepted{message,recipient,revision}`
 /// with no revision; any other owner gets nothing, and the revocation
-/// stands. Whether the message was written.
+/// stands. Only the owner's status is read (Python's `SELECT status FROM
+/// members WHERE id=?`), so what the board never writes in another column
+/// of its row does not stop the revocation. Whether the message was
+/// written.
 ///
 /// # Errors
 /// The store's, or a task id the board cannot write as Python's `str()`.
@@ -55,8 +60,8 @@ pub(crate) fn notify_revoked(
     notice: &Notice<'_>,
 ) -> Result<bool, BoardError> {
     let reachable = transaction
-        .member_row(notice.previous, None)?
-        .is_some_and(|row| status_is_alive(row.text("status")));
+        .member_status(notice.previous)?
+        .is_some_and(|row| status_is_alive(row.status.as_deref()));
     if !reachable {
         return Ok(false);
     }
@@ -72,7 +77,7 @@ pub(crate) fn notify_revoked(
     debug_assert!(message > 0, "a message id is a positive rowid");
     transaction.event(
         notice.actor,
-        notice.now,
+        notice.clock.now_seconds(),
         "message_accepted",
         &detail([
             ("message", Value::from(message)),

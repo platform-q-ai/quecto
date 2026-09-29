@@ -564,15 +564,16 @@ fn lost_members_are_those_quarantined_after_their_latest_activation() {
 /// #2275 (PR #2321 review): `member_status` is Python's `SELECT status
 /// FROM members WHERE id=?`. Only the status is read, so another column
 /// holding what the board never writes (text that is not UTF-8) does not
-/// refuse it. The status is its text, or none for NULL, a number or
-/// bytes; a missing row (or a NULL id) is none; the id binds as Python's
-/// `sqlite3` binds it; a status that is not UTF-8 is Python's refusal.
+/// refuse it. The status is its text, or none for NULL or bytes (TEXT
+/// affinity keeps no number); a missing row (or a NULL id) is none; the
+/// id binds as Python's `sqlite3` binds it; a status that is not UTF-8 is
+/// Python's refusal.
 #[test]
 fn a_member_status_is_read_alone() {
     let dir = tempfile::tempdir().unwrap();
     let repository = repository_in(&dir);
     within(&repository, true, |transaction| {
-        for id in ["5", "live", "blob", "null", "number", "bad"] {
+        for id in ["5", "live", "blob", "null", "bad"] {
             transaction.reserve_member(id, &json!(format!("{id}-r")), "parent")?;
         }
         Ok(())
@@ -585,7 +586,6 @@ fn a_member_status_is_read_alone() {
              UPDATE members SET status='live' WHERE id='live';
              UPDATE members SET status=CAST('live' AS BLOB) WHERE id='blob';
              UPDATE members SET status=NULL WHERE id='null';
-             UPDATE members SET status=3 WHERE id='number';
              UPDATE members SET status=CAST(X'FF' AS TEXT) WHERE id='bad';",
         )
         .unwrap();
@@ -597,7 +597,7 @@ fn a_member_status_is_read_alone() {
         };
         assert_eq!(status(json!(5))?, Some(Some("reserved".to_owned())));
         assert_eq!(status(json!("live"))?, Some(Some("live".to_owned())));
-        for id in ["blob", "null", "number"] {
+        for id in ["blob", "null"] {
             assert_eq!(status(json!(id))?, Some(None), "{id}");
         }
         assert_eq!(status(json!("stranger"))?, None);

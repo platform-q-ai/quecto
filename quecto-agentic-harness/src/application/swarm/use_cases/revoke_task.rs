@@ -71,10 +71,9 @@ impl RevokeTask {
                     ));
                 }
                 reopen(transaction, &request.task_id)?;
-                let now = self.clock.now_seconds();
                 transaction.event(
                     actor,
-                    now,
+                    self.clock.now_seconds(),
                     "revoked",
                     &detail([
                         ("task", request.task_id.clone()),
@@ -84,7 +83,7 @@ impl RevokeTask {
                 )?;
                 let notice = Notice {
                     actor,
-                    now,
+                    clock: &*self.clock,
                     previous: &previous,
                     task_id: &request.task_id,
                     reason,

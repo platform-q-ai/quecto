@@ -137,6 +137,15 @@ impl MemberRow {
     }
 }
 
+/// A member's `status` alone, as `SELECT status FROM members WHERE id=?`
+/// reads it (#2275): the row exists, and `status` is its text, or `None`
+/// for NULL or a value that is not text (a number or bytes, which Python
+/// never finds equal to a status name).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemberStatusRow {
+    pub status: Option<String>,
+}
+
 /// `Workbench._snapshot()`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RunSnapshotView {
