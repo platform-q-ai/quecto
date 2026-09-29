@@ -22,6 +22,11 @@ pub(super) const VALID_OPS: &[&str] = &[
 /// Why `op=run` is refused while the run is in `status` (anything but
 /// running; `None` when the status could not be read).
 pub(super) fn run_refused(status: Option<&str>) -> String {
+    op_refused("run", status)
+}
+
+/// RED STUB: the op is not named yet.
+pub(super) fn op_refused(_op: &str, status: Option<&str>) -> String {
     match status {
         Some("setup") => "no swarm run exists yet (status setup), so op=run is unavailable. \
              Next: swarm {\"op\":\"create\",\"goal\":\"...\",\"constraints\":[],\"criteria\":\
@@ -44,6 +49,11 @@ pub(super) fn run_refused(status: Option<&str>) -> String {
 
 /// Why `op=run` is refused once the running run's deadline has passed.
 pub(super) fn deadline_passed() -> String {
+    op_deadline_passed("run")
+}
+
+/// RED STUB: the op is not named yet.
+pub(super) fn op_deadline_passed(_op: &str) -> String {
     "the swarm run's deadline has passed (budget-exhausted), so op=run is unavailable. \
      Allowed: summary, events, usage; the supervisor outside the swarm grants more time \
      (agent_cmd swarm_control extend)."

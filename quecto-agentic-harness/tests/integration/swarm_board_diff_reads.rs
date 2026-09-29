@@ -219,7 +219,7 @@ fn a_claimed_task_names_its_active_owner_and_how_to_reach_it() {
     );
     assert_eq!(
         found["contact"],
-        json!("board.send(request, 'worker', body)")
+        json!(r#"{"op":"send","request":...,"recipient":"worker","body":...}"#)
     );
     assert!(found.get("recovery").is_none());
     assert_eq!(answer(&steps, 6)[0]["contact"], found["contact"]);
@@ -263,7 +263,7 @@ fn a_quiet_owner_reads_as_idle_after_the_documented_threshold() {
         );
         assert_eq!(
             found["contact"],
-            json!("board.send(request, 'worker', body)")
+            json!(r#"{"op":"send","request":...,"recipient":"worker","body":...}"#)
         );
     }
     assert_eq!(
@@ -545,13 +545,13 @@ fn owner_liveness_floats_compare_exactly() {
     );
 }
 
-/// #2277 review L2: a member id holding code points Unicode has not
-/// assigned (U+0378, and U+E0080 beyond the basic plane) reaches its
-/// task's `contact` escaped as Python's `repr()` escapes it. Neither is
-/// assigned in Unicode 15.1 or 16.0, so the scenario holds under CI's
-/// Python 3.13 as under 3.14, whose Unicode 16.0 table the board uses.
+/// #2279 (was #2277 review L2): a member id holding code points Unicode
+/// has not assigned (U+0378, and U+E0080 beyond the basic plane) reaches
+/// its task's `contact` as `json.dumps` writes it, which escapes every
+/// character beyond ASCII whatever Python's Unicode version, a
+/// supplementary one as its surrogate pair.
 #[test]
-fn an_unassigned_code_point_in_an_owner_id_is_escaped_as_python_does() {
+fn an_unassigned_code_point_in_an_owner_id_is_escaped_as_json_dumps_does() {
     let owner = "w\u{0378}\u{e0080}";
     let steps = joined([
         at(3.0, "parent", "_admit", json!([owner, "res-u"])),
@@ -569,6 +569,6 @@ fn an_unassigned_code_point_in_an_owner_id_is_escaped_as_python_does() {
     run_both(&steps);
     assert_eq!(
         answer(&steps, 7)["contact"],
-        json!(r"board.send(request, 'w\u0378\U000e0080', body)")
+        json!(r#"{"op":"send","request":...,"recipient":"w\u0378\udb40\udc80","body":...}"#)
     );
 }

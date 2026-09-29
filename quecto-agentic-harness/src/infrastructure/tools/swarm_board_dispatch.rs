@@ -332,6 +332,14 @@ pub fn call(
     answer.map(|served| served.value)
 }
 
+/// The Python signature `method` binds by, each parameter's name and its
+/// default (`None` for a required one); `None` for a name the dispatcher
+/// does not serve. RED STUB.
+pub fn signature(method: &str) -> Option<Vec<(&'static str, Option<Value>)>> {
+    let _ = method;
+    None
+}
+
 /// Binds `args` to `parameters` as Python binds a call: positionally from
 /// an array, by name from an object, then each unbound parameter's default.
 fn bind(method: Method, parameters: &[Parameter], args: Value) -> Result<Vec<Value>, BoardError> {

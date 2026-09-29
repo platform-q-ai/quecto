@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use super::{PythonLookup, not_printed, python_equal, python_repr, python_truthy};
+use super::{PythonLookup, json_text, not_printed, python_equal, python_repr, python_truthy};
 
 #[test]
 fn none_equals_only_none() {
@@ -214,5 +214,29 @@ fn a_lookup_agrees_with_a_linear_search_under_python_equality() {
             );
         }
         values.reverse();
+    }
+}
+
+/// #2279: `json.dumps(text)` (`ensure_ascii`): quoted with `"`, the quote,
+/// the backslash and the controls escaped (`\n`, `\t` and the other short
+/// forms, else `\u00XX`), and every character beyond ASCII written as
+/// `\uhhhh`, a supplementary one as its surrogate pair; U+0378
+/// (unassigned) is escaped like any other.
+#[test]
+fn a_text_is_written_as_json_dumps_writes_it() {
+    for (text, written) in [
+        ("worker", r#""worker""#),
+        ("", r#""""#),
+        ("it's \"q\"", r#""it's \"q\"""#),
+        ("a\\b/c", r#""a\\b/c""#),
+        (
+            "\n\r\t\u{8}\u{c}\u{1}\u{1f}\u{7f}",
+            r#""\n\r\t\b\f\u0001\u001f\u007f""#,
+        ),
+        ("w\u{378}", r#""w\u0378""#),
+        ("\u{e9}\u{2028}", r#""\u00e9\u2028""#),
+        ("\u{1f600}", r#""\ud83d\ude00""#),
+    ] {
+        assert_eq!(json_text(text), written, "{text:?}");
     }
 }

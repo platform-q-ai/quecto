@@ -78,6 +78,7 @@ pub mod swarm;
 mod swarm_ac_gap_tests;
 mod swarm_admission;
 pub mod swarm_board_dispatch;
+pub mod swarm_board_ops;
 mod swarm_board_telemetry;
 pub mod swarm_bridge;
 mod swarm_config;

@@ -312,6 +312,11 @@ fn version_independent(character: char) -> bool {
     )
 }
 
+/// RED STUB.
+pub fn json_text(text: &str) -> String {
+    python_repr(text)
+}
+
 #[cfg(test)]
 #[path = "python_value_tests.rs"]
 mod tests;

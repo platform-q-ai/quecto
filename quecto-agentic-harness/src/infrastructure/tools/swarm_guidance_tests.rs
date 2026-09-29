@@ -46,7 +46,74 @@ fn an_unknown_op_lists_the_valid_ones_and_how_to_end_a_run() {
     for op in VALID_OPS {
         assert!(message.contains(op), "{op}: {message}");
     }
-    assert!(message.contains("board.stop"), "{message}");
+    assert!(
+        message
+            .contains("the coordinator calls op=stop (status, reason) or op=complete (revision)"),
+        "{message}"
+    );
+    assert!(!message.contains("board."), "no Python call: {message}");
+}
+
+/// #2279: every structured board op is a valid op, beside the harness's
+/// own.
+#[test]
+fn the_valid_ops_are_the_harness_ops_and_the_board_ops() {
+    let mut expected: Vec<&str> = [
+        "create",
+        "summary",
+        "reconcile",
+        "cancel_run",
+        "pause",
+        "resume",
+        "events",
+        "usage",
+        "usage_budget",
+        "run",
+        "status",
+        "output",
+        "cancel",
+    ]
+    .into_iter()
+    .chain(
+        crate::infrastructure::tools::swarm_board_ops::BOARD_OPS
+            .iter()
+            .map(|spec| spec.name),
+    )
+    .collect();
+    assert_eq!(expected.len(), 13 + 25, "the harness's ops and the table's");
+    let mut ops = VALID_OPS.to_vec();
+    expected.sort_unstable();
+    ops.sort_unstable();
+    assert_eq!(ops, expected);
+}
+
+/// #2279: a structured op refused by the running gate names itself, and
+/// what is allowed instead.
+#[test]
+fn a_gated_board_op_names_itself_and_what_is_allowed() {
+    let paused = op_refused("claim", Some("paused"));
+    assert!(
+        paused.starts_with("the swarm run is paused, so op=claim is unavailable. Allowed:"),
+        "{paused}"
+    );
+    let setup = op_refused("inbox", Some("setup"));
+    assert!(
+        setup.contains("(status setup), so op=inbox is unavailable"),
+        "{setup}"
+    );
+    assert!(setup.contains(r#""op":"create""#), "{setup}");
+    let ended = op_refused("tasks", Some("succeeded"));
+    assert!(
+        ended.contains("the swarm run is succeeded, so op=tasks is unavailable"),
+        "{ended}"
+    );
+    assert_eq!(
+        op_refused("run", Some("paused")),
+        run_refused(Some("paused"))
+    );
+    let late = op_deadline_passed("send");
+    assert!(late.contains("so op=send is unavailable"), "{late}");
+    assert_eq!(op_deadline_passed("run"), deadline_passed());
 }
 
 #[test]

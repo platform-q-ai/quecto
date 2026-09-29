@@ -302,7 +302,7 @@ fn the_advertised_contact_is_a_send_the_board_accepts() {
     run_both(&steps);
     assert_eq!(
         answer(&steps, 5)["contact"],
-        json!("board.send(request, 'worker', body)")
+        json!(r#"{"op":"send","request":...,"recipient":"worker","body":...}"#)
     );
     assert_eq!(answer(&steps, 6)["status"], json!("accepted"));
     let inbox = answer(&steps, 7);

@@ -35,9 +35,13 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   observation`), a count of `1e400` (`invalid request usage
 ///   output_tokens`), a `usage_budget` token limit above u64 or of `1e400`
 ///   (the budget's argument refusal), and an `_accept_wake` generation above
-///   u64 (`wake generation is ahead of the board`). S13/S14 must parse
-///   member input with `py_json`, as the harness does; a `PyJson` dispatcher
-///   would end this divergence.
+///   u64 (`wake generation is ahead of the board`). The structured `swarm`
+///   ops (#2279) read a member's text with `swarm_board_ops::
+///   member_arguments`, which the harness's Rust side calls, so this pin is
+///   the tool's refusal too (parent decision on #2279: integers beyond i64
+///   and u64, non-finite numbers and lone surrogates are refused, not
+///   coerced; `-0` is the integer 0); a `PyJson` dispatcher would end this
+///   divergence.
 /// - `integer_beyond_i64_is_refused`: an integer argument beyond i64 but
 ///   within u64 (a `pid`, `started` or `socket`, a membership method's
 ///   member or reservation, #2271, a task id, #2272, a message id,
