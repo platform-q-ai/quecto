@@ -81,7 +81,7 @@ pub(super) fn admit_and_activate(workspace: &Path, member: &str, pid: u32, start
 pub(super) async fn op(workspace: &Path, member: &str, request: Value) -> Result<Value, String> {
     use quecto::application::tools::ports::Tool;
     let tool = quecto::infrastructure::tools::swarm::SwarmTool::new()
-    .with_context(Some(context(workspace, member)));
+        .with_context(Some(context(workspace, member)));
     let result = tool
         .execute(&request.to_string())
         .await

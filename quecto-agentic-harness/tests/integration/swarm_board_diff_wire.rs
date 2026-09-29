@@ -92,8 +92,7 @@ fn an_op_with_two_unexpected_fields_names_the_first_as_python_does() {
             None,
         )
         .unwrap();
-    let tool = quecto::infrastructure::tools::swarm::SwarmTool::new()
-    .with_context(Some(context));
+    let tool = quecto::infrastructure::tools::swarm::SwarmTool::new().with_context(Some(context));
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

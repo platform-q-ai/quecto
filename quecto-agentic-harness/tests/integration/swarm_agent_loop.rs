@@ -192,8 +192,7 @@ async fn a_non_finite_argument_is_answered_by_the_loop_before_the_tool() {
     };
     let log = Arc::new(BoardCalls::default());
     assert!(context.board.record_in(log.clone()));
-    let tool = SwarmTool::new()
-    .with_context(Some(context));
+    let tool = SwarmTool::new().with_context(Some(context));
     let texts = [
         r#"{"op": "claim", "task_id": NaN}"#,
         r#"{"op": "claim", "task_id": Infinity}"#,

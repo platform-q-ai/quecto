@@ -68,8 +68,7 @@ fn fixed_handles(location: BoardLocation, _log: Option<Arc<dyn BoardOpLog>>) -> 
 async fn board_op(context: &SwarmContext, request: Value) {
     use quecto::application::tools::ports::Tool;
     use quecto::infrastructure::tools::swarm::SwarmTool;
-    let tool = SwarmTool::new()
-    .with_context(Some(context.clone()));
+    let tool = SwarmTool::new().with_context(Some(context.clone()));
     let result = tool
         .execute(&request.to_string())
         .await
