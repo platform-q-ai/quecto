@@ -4,22 +4,114 @@ use quecto::application::agent_turn::ports::AgentLoop;
 use quecto::domain::message::{LlmResponse, Message, ToolCall};
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::{
+    filesystem::WriteTool,
     registry::ToolRegistryImpl,
     swarm::{SwarmConfig, SwarmTool},
     swarm_bridge::SwarmContext,
 };
 use std::sync::Arc;
 
-fn action(id: usize, source: &str) -> LlmResponse {
-    let mut response = text_response("");
-    response.content = None;
-    response.tool_calls.push(ToolCall {
-        id: format!("swarm-{id}"),
-        name: "swarm".into(),
-        arguments: serde_json::json!({"op":"run","code":source}).to_string(),
-    });
-    response
+/// One step of the fake coordinator: a tool call built from the answers
+/// of the swarm ops made so far (a claim's token feeds its submit).
+type Step = fn(&[serde_json::Value]) -> (&'static str, serde_json::Value);
+
+fn swarm(request: serde_json::Value) -> (&'static str, serde_json::Value) {
+    ("swarm", request)
 }
+
+/// The answer of the `index`th swarm op (0-based).
+fn answer(answers: &[serde_json::Value], index: usize) -> &serde_json::Value {
+    &answers[index]
+}
+
+/// The coordinator's work, one board method per `swarm` call (#2281): it
+/// defines verification, decomposes, blocks on a question, resolves it,
+/// and verifies both tasks before completing. `write` stands in for the
+/// program's file writes.
+const STEPS: &[Step] = &[
+    |_| {
+        swarm(
+            serde_json::json!({"op":"amend","goal":"ship feature","constraints":[],
+            "criteria":[{"id":"tests","kind":"command","description":"acceptance passes"},
+                {"id":"review","kind":"review","description":"independent review"}],
+            "reason":"define verification"}),
+        )
+    },
+    |_| {
+        swarm(
+            serde_json::json!({"op":"task_create","request":"build","title":"implement",
+            "acceptance":["acceptance passes"],"dependencies":[]}),
+        )
+    },
+    |a| {
+        swarm(
+            serde_json::json!({"op":"task_create","request":"review-task","title":"review",
+            "acceptance":["independent review"],"dependencies":[answer(a, 1)["id"]]}),
+        )
+    },
+    |a| swarm(serde_json::json!({"op":"claim","task_id":answer(a, 1)["id"]})),
+    |a| {
+        swarm(
+            serde_json::json!({"op":"block","task_id":answer(a, 1)["id"],
+            "token":answer(a, 3)["token"],"reason":"need schema"}),
+        )
+    },
+    |_| swarm(serde_json::json!({"op":"task","task_id":1})),
+    |_| {
+        swarm(
+            serde_json::json!({"op":"send","request":"schema","recipient":"coordinator",
+            "body":"schema approved"}),
+        )
+    },
+    |_| swarm(serde_json::json!({"op":"inbox"})),
+    |a| swarm(serde_json::json!({"op":"ack","message_id":answer(a, 7)[0]["id"]})),
+    |_| {
+        (
+            "write",
+            serde_json::json!({"path":"acceptance.log","content":"PASS revision abc"}),
+        )
+    },
+    |a| {
+        swarm(
+            serde_json::json!({"op":"submit","task_id":1,"token":answer(a, 5)["token"],
+            "evidence":[{"artifact":"acceptance.log","revision":"abc"}]}),
+        )
+    },
+    |a| {
+        swarm(serde_json::json!({"op":"verify_task","task_id":1,
+            "token":answer(a, 5)["token"],"revision":"abc"}))
+    },
+    |_| swarm(serde_json::json!({"op":"claim","task_id":2})),
+    |_| {
+        (
+            "write",
+            serde_json::json!({"path":"review.md","content":"Reviewed revision abc: approved"}),
+        )
+    },
+    |a| {
+        swarm(
+            serde_json::json!({"op":"submit","task_id":2,"token":answer(a, 12)["token"],
+            "evidence":[{"artifact":"review.md","revision":"abc"}]}),
+        )
+    },
+    |a| {
+        swarm(serde_json::json!({"op":"verify_task","task_id":2,
+            "token":answer(a, 12)["token"],"revision":"abc"}))
+    },
+    |_| {
+        swarm(
+            serde_json::json!({"op":"evidence","criterion":"tests","artifact":"acceptance.log",
+            "revision":"abc","kind":"command","passed":true}),
+        )
+    },
+    |_| {
+        swarm(
+            serde_json::json!({"op":"evidence","criterion":"review","artifact":"review.md",
+            "revision":"abc","kind":"review","passed":true}),
+        )
+    },
+    |_| swarm(serde_json::json!({"op":"complete","revision":"abc"})),
+];
 
 #[tokio::test]
 async fn fake_provider_decomposes_resolves_blocker_and_verifies_swarm() {
@@ -45,23 +137,13 @@ async fn fake_provider_decomposes_resolves_blocker_and_verifies_swarm() {
         SwarmConfig::default(),
     )
     .with_context(Some(context));
-    let provider = Arc::new(MockProvider::new(vec![
-        action(
-            1,
-            "from swarm import board\nboard.amend('ship feature',[],[{'id':'tests','kind':'command','description':'acceptance passes'},{'id':'review','kind':'review','description':'independent review'}],'define verification')\na=board.task_create('build','implement',['acceptance passes'],[])\nboard.task_create('review-task','review',['independent review'],[a['id']])\nc=board.claim(a['id']); board.block(a['id'],c['token'],'need schema')",
-        ),
-        action(
-            2,
-            "from swarm import board\nt=board.task(1)\nboard.send('schema','coordinator','schema approved')\nboard.ack(board.inbox()[0]['id'])\nopen('acceptance.log','w').write('PASS revision abc')\nboard.submit(1,t['token'],[{'artifact':'acceptance.log','revision':'abc'}])\nboard.verify_task(1,t['token'],'abc')",
-        ),
-        action(
-            3,
-            "from swarm import board\nc=board.claim(2)\nopen('review.md','w').write('Reviewed revision abc: approved')\nboard.submit(2,c['token'],[{'artifact':'review.md','revision':'abc'}])\nboard.verify_task(2,c['token'],'abc')\nboard.evidence('tests','acceptance.log','abc','command',True)\nboard.evidence('review','review.md','abc','review',True)\nboard.complete('abc')",
-        ),
-        text_response("Verified completion at abc"),
-    ]));
+    let provider = Arc::new(MockProvider::new(STEPS));
     let mut registry = ToolRegistryImpl::new();
     registry.register(Arc::new(tool));
+    registry.register(Arc::new(WriteTool::new(
+        workspace.clone(),
+        Arc::new(Sandbox::new(Some(workspace.as_ref().clone()))),
+    )));
     let mut agent = AgentLoopImpl::new(test_config(provider.clone(), Box::new(registry)));
     let result = agent
         .process(&mut vec![Message::user("Complete the bounded swarm")])
@@ -93,7 +175,9 @@ async fn fake_provider_decomposes_resolves_blocker_and_verifies_swarm() {
         std::fs::read_to_string(directory.path().join("acceptance.log")).unwrap(),
         "PASS revision abc"
     );
-    assert_eq!(provider.request_count(), 4);
+    // One request per call and the final answer; every call answered.
+    assert_eq!(provider.request_count(), STEPS.len() + 1);
+    assert_eq!(provider.refusals(), Vec::<String>::new());
 }
 
 /// #2279 review L3: a structured op whose argument text holds `NaN`,
@@ -140,7 +224,7 @@ async fn a_non_finite_argument_is_answered_by_the_loop_before_the_tool() {
             arguments: (*text).to_owned(),
         });
     }
-    let provider = Arc::new(MockProvider::new(vec![calls, text_response("done")]));
+    let provider = Arc::new(MockProvider::queued(vec![calls, text_response("done")]));
     let mut registry = ToolRegistryImpl::new();
     registry.register(Arc::new(tool));
     let mut agent = AgentLoopImpl::new(test_config(provider.clone(), Box::new(registry)));
@@ -195,21 +279,44 @@ impl quecto::application::swarm::ports::BoardOpLog for BoardCalls {
     }
 }
 
-#[derive(Debug)]
+/// Answers request `n` with `STEPS[n]`'s tool call, built from the answers
+/// the conversation carries, and the last request with the final text; or,
+/// when built `queued`, with its fixed responses in order.
 struct MockProvider {
+    steps: &'static [Step],
     responses: std::sync::Mutex<std::collections::VecDeque<LlmResponse>>,
     requests: std::sync::atomic::AtomicUsize,
+    refusals: std::sync::Mutex<Vec<String>>,
+}
+
+impl std::fmt::Debug for MockProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MockProvider").finish_non_exhaustive()
+    }
 }
 
 impl MockProvider {
-    fn new(responses: Vec<LlmResponse>) -> Self {
+    fn new(steps: &'static [Step]) -> Self {
+        Self {
+            steps,
+            responses: std::sync::Mutex::new(std::collections::VecDeque::new()),
+            requests: std::sync::atomic::AtomicUsize::new(0),
+            refusals: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+    /// A provider answering with `responses` in order (#2279 review L3).
+    fn queued(responses: Vec<LlmResponse>) -> Self {
         Self {
             responses: std::sync::Mutex::new(responses.into()),
-            requests: std::sync::atomic::AtomicUsize::new(0),
+            ..Self::new(&[])
         }
     }
     fn request_count(&self) -> usize {
         self.requests.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    /// The tool answers that were errors, in order.
+    fn refusals(&self) -> Vec<String> {
+        self.refusals.lock().unwrap().clone()
     }
 }
 
@@ -219,7 +326,7 @@ impl quecto::application::providers::ports::LlmProvider for MockProvider {
     }
     fn chat(
         &self,
-        _: quecto::application::providers::ports::ChatRequest<'_>,
+        request: quecto::application::providers::ports::ChatRequest<'_>,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
@@ -228,14 +335,38 @@ impl quecto::application::providers::ports::LlmProvider for MockProvider {
                 + '_,
         >,
     > {
-        self.requests
+        let index = self
+            .requests
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let response = self
-            .responses
-            .lock()
-            .unwrap()
-            .pop_front()
-            .expect("unexpected provider request");
+        if let Some(response) = self.responses.lock().unwrap().pop_front() {
+            return Box::pin(async move { Ok(response) });
+        }
+        let results: Vec<&Message> = request
+            .messages
+            .iter()
+            .filter(|message| message.role == quecto::domain::message::Role::Tool)
+            .collect();
+        if let Some(last) = results.last().filter(|last| last.is_error) {
+            self.refusals.lock().unwrap().push(last.content.clone());
+        }
+        let answers: Vec<serde_json::Value> = results
+            .iter()
+            .map(|message| serde_json::from_str(&message.content).unwrap_or_default())
+            .collect();
+        let response = match self.steps.get(index) {
+            Some(step) => {
+                let (name, arguments) = step(&answers);
+                let mut response = text_response("");
+                response.content = None;
+                response.tool_calls.push(ToolCall {
+                    id: format!("swarm-{index}"),
+                    name: name.into(),
+                    arguments: arguments.to_string(),
+                });
+                response
+            }
+            None => text_response("Verified completion at abc"),
+        };
         Box::pin(async move { Ok(response) })
     }
 }

@@ -2,43 +2,70 @@ use super::{QuectoWorld, result, result_json, run};
 use cucumber::{given, then, when};
 use serde_json::json;
 
+/// #2279/#2281: a structured op through the coordinator's tool, which must
+/// answer; its answer.
+fn op(world: &mut QuectoWorld, request: serde_json::Value) -> serde_json::Value {
+    run(world, request.clone());
+    assert!(
+        !result(world).is_error,
+        "{request}: {}",
+        result(world).content
+    );
+    result_json(world)
+}
+
+/// A task `title` with `acceptance` (and `dependencies`) the coordinator
+/// creates through `task_create`; its id.
+fn create(
+    world: &mut QuectoWorld,
+    title: &str,
+    dependencies: serde_json::Value,
+) -> serde_json::Value {
+    let task = op(
+        world,
+        json!({"op":"task_create","request":title,"title":title,"acceptance":["pass"],
+            "dependencies":dependencies}),
+    );
+    task["id"].clone()
+}
+
+/// The coordinator's claim of task `id` through `claim`; its token.
+fn claim(world: &mut QuectoWorld, id: &serde_json::Value) -> serde_json::Value {
+    op(world, json!({"op":"claim","task_id":id}))["token"].clone()
+}
+
 #[when("a swarm member creates an acceptance task")]
 fn create_task(world: &mut QuectoWorld) {
-    run(
+    let task = op(
         world,
-        json!({"op":"run","code":"from swarm import board; print(board.task_create('acceptance', 'implement behavior', ['tests pass'], []))"}),
+        json!({"op":"task_create","request":"acceptance","title":"implement behavior",
+            "acceptance":["tests pass"],"dependencies":[]}),
     );
-    assert!(!result(world).is_error, "{}", result(world).content);
+    assert_eq!(task["id"], 1, "{task}");
 }
 
 #[then("a later swarm execution sees the acceptance task")]
 fn durable_task(world: &mut QuectoWorld) {
-    run(
-        world,
-        json!({"op":"run","code":"from swarm import board; print(board.task(1)['title'])"}),
-    );
-    assert!(!result(world).is_error, "{}", result(world).content);
-    assert_eq!(
-        result_json(world)["stdout"].as_str().unwrap().trim(),
-        "implement behavior"
-    );
+    let task = op(world, json!({"op":"task","task_id":1}));
+    assert_eq!(task["title"], "implement behavior", "{task}");
 }
 
 #[when("a swarm member claims work with an unmet dependency")]
 fn dependency(world: &mut QuectoWorld) {
-    run(
-        world,
-        json!({"op":"run","code":"from swarm import board; a=board.task_create('a','first',['pass'],[]); b=board.task_create('b','second',['pass'],[a['id']]); board.claim(b['id'])"}),
-    );
+    let first = create(world, "first", json!([]));
+    let second = create(world, "second", json!([first]));
+    run(world, json!({"op":"claim","task_id":second}));
 }
 
 #[when("a swarm member submits its work")]
 fn submit(world: &mut QuectoWorld) {
-    run(
+    let id = create(world, "first", json!([]));
+    let token = claim(world, &id);
+    op(
         world,
-        json!({"op":"run","code":"from swarm import board; a=board.task_create('a','first',['pass'],[]); c=board.claim(a['id']); board.submit(a['id'],c['token'],[{'artifact':'tests.log','revision':'abc'}])"}),
+        json!({"op":"submit","task_id":id,"token":token,
+            "evidence":[{"artifact":"tests.log","revision":"abc"}]}),
     );
-    assert!(!result(world).is_error, "{}", result(world).content);
     run(world, json!({"op":"summary"}));
 }
 
@@ -49,10 +76,7 @@ fn task_status(world: &mut QuectoWorld, status: String) {
 
 #[when("the swarm coordinator attempts completion without evidence")]
 fn false_completion(world: &mut QuectoWorld) {
-    run(
-        world,
-        json!({"op":"run","code":"from swarm import board; board.complete('abc')"}),
-    );
+    run(world, json!({"op":"complete","revision":"abc"}));
 }
 
 #[when("the swarm parent cancels the run")]
@@ -73,11 +97,21 @@ fn partial_summary(world: &mut QuectoWorld) {
 
 #[when("swarm members contend for an overlapping file set")]
 fn overlap(world: &mut QuectoWorld) {
+    let (a, b) = (
+        create(world, "first", json!([])),
+        create(world, "second", json!([])),
+    );
+    let (x, y) = (claim(world, &a), claim(world, &b));
+    op(
+        world,
+        json!({"op":"reserve","task_id":a,"token":x,"paths":["a.rs"]}),
+    );
+    // The overlapping set is refused whole (the program caught the refusal).
     run(
         world,
-        json!({"op":"run","code":"from swarm import board, SwarmError\na=board.task_create('a','first',['pass'],[])\nb=board.task_create('b','second',['pass'],[])\nx=board.claim(a['id']); y=board.claim(b['id'])\nboard.reserve(a['id'],x['token'],['a.rs'])\ntry:\n board.reserve(b['id'],y['token'],['free.rs','./a.rs'])\nexcept SwarmError:\n pass"}),
+        json!({"op":"reserve","task_id":b,"token":y,"paths":["free.rs","./a.rs"]}),
     );
-    assert!(!result(world).is_error, "{}", result(world).content);
+    assert!(result(world).is_error, "{}", result(world).content);
     run(world, json!({"op":"summary"}));
 }
 
@@ -92,21 +126,45 @@ fn ownership(world: &mut QuectoWorld) {
 
 #[when("the coordinator completes dependent tasks at different revisions")]
 fn dependent_revisions(world: &mut QuectoWorld) {
-    run(
+    fn verified(
+        world: &mut QuectoWorld,
+        title: &str,
+        dependencies: serde_json::Value,
+        revision: &str,
+    ) -> serde_json::Value {
+        let id = create(world, title, dependencies);
+        let token = claim(world, &id);
+        let evidence = json!([{"artifact":format!("{title}.log"),"revision":revision}]);
+        op(
+            world,
+            json!({"op":"submit","task_id":id,"token":token,"evidence":evidence}),
+        );
+        op(
+            world,
+            json!({"op":"verify_task","task_id":id,"token":token,"revision":revision}),
+        );
+        id
+    }
+    let first = verified(world, "a", json!([]), "R1");
+    verified(world, "b", json!([first]), "R2");
+    op(
         world,
-        json!({"code":"from swarm import board\na=board.task_create('a','first',['pass'])\nx=board.claim(a['id'])\nboard.submit(a['id'],x['token'],[{'artifact':'a.log','revision':'R1'}])\nboard.verify_task(a['id'],x['token'],'R1')\nb=board.task_create('b','second',['pass'],[a['id']])\ny=board.claim(b['id'])\nboard.submit(b['id'],y['token'],[{'artifact':'b.log','revision':'R2'}])\nboard.verify_task(b['id'],y['token'],'R2')\nboard.evidence('tests','final.log','R2','command',True)\nboard.complete('R2')"}),
+        json!({"op":"evidence","criterion":"tests","artifact":"final.log","revision":"R2",
+            "kind":"command","passed":true}),
     );
+    run(world, json!({"op":"complete","revision":"R2"}));
     assert!(result(world).is_error);
     assert!(result(world).content.contains("stale revision"));
 }
 
 #[when("revalidates earlier work with fresh final revision evidence")]
 fn revalidate_revision(world: &mut QuectoWorld) {
-    run(
+    op(
         world,
-        json!({"code":"from swarm import board\nboard.revalidate_task(1,'R2',[{'artifact':'a-rerun.log','revision':'R2'}])\nboard.complete('R2')"}),
+        json!({"op":"revalidate_task","task_id":1,"revision":"R2",
+            "evidence":[{"artifact":"a-rerun.log","revision":"R2"}]}),
     );
-    assert!(!result(world).is_error, "{}", result(world).content);
+    op(world, json!({"op":"complete","revision":"R2"}));
     run(world, json!({"op":"summary"}));
 }
 
@@ -114,27 +172,33 @@ fn revalidate_revision(world: &mut QuectoWorld) {
 fn acceptance_type(world: &mut QuectoWorld) {
     run(
         world,
-        json!({"op":"run","code":"from swarm import board; board.task_create('invalid','work','tests pass')"}),
+        json!({"op":"task_create","request":"invalid","title":"work","acceptance":"tests pass"}),
     );
 }
 
 #[when("a swarm task awaits master approval")]
 fn await_approval(world: &mut QuectoWorld) {
-    run(
+    let task = op(
         world,
-        json!({"op":"run","code":"from swarm import board; t=board.task_create('approval','wishlist',['approved schema']); c=board.claim(t['id']); board.block(t['id'],c['token'],'awaiting master approval')"}),
+        json!({"op":"task_create","request":"approval","title":"wishlist",
+            "acceptance":["approved schema"]}),
     );
-    assert!(!result(world).is_error, "{}", result(world).content);
+    let token = claim(world, &task["id"]);
+    op(
+        world,
+        json!({"op":"block","task_id":task["id"],"token":token,"reason":"awaiting master approval"}),
+    );
     run(world, json!({"op":"summary"}));
 }
 
 #[when("the approved swarm task is completed")]
 fn apply_approval(world: &mut QuectoWorld) {
-    run(
+    let task = op(world, json!({"op":"task","task_id":1}));
+    op(
         world,
-        json!({"op":"run","code":"from swarm import board; t=board.task(1); board.submit(1,t['token'],[{'artifact':'approved-tests.log','revision':'approved-revision'}])"}),
+        json!({"op":"submit","task_id":1,"token":task["token"],
+            "evidence":[{"artifact":"approved-tests.log","revision":"approved-revision"}]}),
     );
-    assert!(!result(world).is_error, "{}", result(world).content);
     run(world, json!({"op":"summary"}));
 }
 
@@ -268,9 +332,9 @@ fn rejected_wake(world: &mut QuectoWorld) {
         .unwrap();
     listener.set_nonblocking(true).unwrap();
     let recipient = std::thread::spawn(move || {
-        // The hint is sent by a Python invocation started below; its startup
-        // under a fully loaded coverage run (24 shards) exceeds a few seconds,
-        // so the bound is generous while a missing hint still fails.
+        // The hint is sent after the `send` op below; under a fully loaded
+        // coverage run (24 shards) that takes seconds, so the bound is
+        // generous while a missing hint still fails.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         let mut stream = loop {
             match listener.accept() {
@@ -300,7 +364,7 @@ fn rejected_wake(world: &mut QuectoWorld) {
     });
     run(
         world,
-        json!({"op":"run","code":"from swarm import board; board.send('approval','worker','Approved: schema v2')"}),
+        json!({"op":"send","request":"approval","recipient":"worker","body":"Approved: schema v2"}),
     );
     recipient.join().unwrap();
 }
@@ -323,30 +387,34 @@ fn durable_rejected_wake(world: &mut QuectoWorld) {
         quecto::infrastructure::tools::swarm::SwarmConfig::default(),
     )
     .with_context(Some(context));
-    let result = super::runtime().block_on(tool.execute(r#"{"op":"run","code":"from swarm import board; import json; print(json.dumps(board.inbox()))"}"#)).unwrap();
+    let result = super::runtime()
+        .block_on(tool.execute(r#"{"op":"inbox"}"#))
+        .unwrap();
     assert!(!result.is_error, "{}", result.content);
-    let output: serde_json::Value = serde_json::from_str(&result.content).unwrap();
-    let messages: serde_json::Value =
-        serde_json::from_str(output["stdout"].as_str().unwrap()).unwrap();
+    let messages: serde_json::Value = serde_json::from_str(&result.content).unwrap();
     assert_eq!(messages[0]["body"], "Approved: schema v2");
     assert_eq!(messages[0]["status"], "accepted");
 }
 
 #[when("the member replaces submitted evidence under the same claim")]
 fn replace_submission(world: &mut QuectoWorld) {
+    let task = op(world, json!({"op":"task","task_id":1}));
     run(
         world,
-        json!({"op":"run", "code":"from swarm import board; t=board.task(1); board.submit(t['id'],t['token'],[{'artifact':'unreviewed.log','revision':'abc'}])"}),
+        json!({"op":"submit","task_id":task["id"],"token":task["token"],
+            "evidence":[{"artifact":"unreviewed.log","revision":"abc"}]}),
     );
 }
 
 #[when("the swarm coordinator changes only the done criteria")]
 fn amend_criteria(world: &mut QuectoWorld) {
-    run(
+    let summary = op(world, json!({"op":"summary"}));
+    op(
         world,
-        json!({"op":"run", "code":"from swarm import board; s=board.summary(); board.amend(s['goal'],s['constraints'],[{'id':'changed','kind':'review','description':'new requirement'}],'approved change')"}),
+        json!({"op":"amend","goal":summary["goal"],"constraints":summary["constraints"],
+            "criteria":[{"id":"changed","kind":"review","description":"new requirement"}],
+            "reason":"approved change"}),
     );
-    assert!(!result(world).is_error, "{}", result(world).content);
     run(world, json!({"op":"summary"}));
 }
 
@@ -482,13 +550,22 @@ fn idle_peer(world: &mut QuectoWorld) {
 
 #[when("the coordinator creates and immediately claims a task")]
 fn immediately_claim(world: &mut QuectoWorld) {
-    run(
+    let task = op(
         world,
-        json!({"op":"run", "code":"from swarm import board; t=board.task_create('claim-now','work',['pass']); board.claim(t['id'])"}),
+        json!({"op":"task_create","request":"claim-now","title":"work","acceptance":["pass"]}),
     );
+    // #2281: a ready task wakes the idle peer after its own op (S14 wakes
+    // after each mutating op; one `op=run` program created and claimed
+    // before any wake); only the claim is the subject below.
+    assert_eq!(
+        task["notification_warnings"],
+        json!(["wake hint failed for idle-peer; durable board is authoritative"]),
+        "{task}"
+    );
+    run(world, json!({"op":"claim","task_id":task["id"]}));
 }
 
-#[then("no swarm wake delivery is attempted")]
+#[then("the claim attempts no swarm wake delivery")]
 fn no_idle_wake(world: &mut QuectoWorld) {
     assert!(!result(world).is_error, "{}", result(world).content);
     assert!(
@@ -500,17 +577,40 @@ fn no_idle_wake(world: &mut QuectoWorld) {
 
 #[when("an owned blocked swarm task is unblocked")]
 fn unblock_owned_task(world: &mut QuectoWorld) {
-    run(
+    let task = op(
         world,
-        json!({"op":"run","code":"from swarm import board; import json; t=board.task_create('approval-resume','work',['pass']); c=board.claim(t['id']); board.reserve(t['id'],c['token'],['owned.rs']); board.block(t['id'],c['token'],'approval'); board.unblock(t['id'],c['token'],'approved'); resumed=board.task(t['id']); print(json.dumps({'before':c['token'],'after':resumed['token'],'status':resumed['status'],'files':board.summary()['files']}))"}),
+        json!({"op":"task_create","request":"approval-resume","title":"work","acceptance":["pass"]}),
     );
+    let id = task["id"].clone();
+    let token = claim(world, &id);
+    op(
+        world,
+        json!({"op":"reserve","task_id":id,"token":token,"paths":["owned.rs"]}),
+    );
+    op(
+        world,
+        json!({"op":"block","task_id":id,"token":token,"reason":"approval"}),
+    );
+    op(
+        world,
+        json!({"op":"unblock","task_id":id,"token":token,"reason":"approved"}),
+    );
+    let resumed = op(world, json!({"op":"task","task_id":id}));
+    let files = op(world, json!({"op":"summary"}))["files"].clone();
+    let view =
+        json!({"before":token,"after":resumed["token"],"status":resumed["status"],"files":files});
+    world.swarm_result = Some(quecto::domain::tool::ToolResult {
+        content: view.to_string(),
+        is_error: false,
+        image_blocks: vec![],
+        delivery_metadata: None,
+    });
 }
 
 #[then("the resumed swarm task retains its claim and reserved file")]
 fn unblocked_ownership(world: &mut QuectoWorld) {
     assert!(!result(world).is_error, "{}", result(world).content);
-    let value: serde_json::Value =
-        serde_json::from_str(result_json(world)["stdout"].as_str().unwrap()).unwrap();
+    let value = result_json(world);
     assert_eq!(value["before"], value["after"]);
     assert_eq!(value["status"], "claimed");
     assert_eq!(value["files"][0]["path"], "owned.rs");
@@ -593,21 +693,23 @@ fn supervise(world: &mut QuectoWorld, action: quecto::domain::swarm::RunControlA
 
 #[when(expr = "the coordinator stops the run as {string}")]
 fn coordinator_stops(world: &mut QuectoWorld, status: String) {
-    run(
+    let id = create(world, "first", json!([]));
+    claim(world, &id);
+    op(
         world,
-        json!({"op":"run","code":format!("from swarm import board; a=board.task_create('a','first',['pass'],[]); board.claim(a['id']); board.stop('{status}','needs the master')")}),
+        json!({"op":"stop","status":status,"reason":"needs the master"}),
     );
-    assert!(!result(world).is_error, "{}", result(world).content);
     run(world, json!({"op":"summary"}));
 }
 
 #[when("the coordinator completes the run with accepted evidence")]
 fn coordinator_completes(world: &mut QuectoWorld) {
-    run(
+    op(
         world,
-        json!({"op":"run","code":"from swarm import board; board.evidence('tests','proof','R1','command',True); board.complete('R1')"}),
+        json!({"op":"evidence","criterion":"tests","artifact":"proof","revision":"R1",
+            "kind":"command","passed":true}),
     );
-    assert!(!result(world).is_error, "{}", result(world).content);
+    op(world, json!({"op":"complete","revision":"R1"}));
     run(world, json!({"op":"summary"}));
 }
 
@@ -679,56 +781,62 @@ fn supervisor_extends(world: &mut QuectoWorld, seconds: u64) {
 fn no_new_work(world: &mut QuectoWorld) {
     run(
         world,
-        json!({"op":"run","code":"from swarm import board; board.task_create('late','work',['pass'],[])"}),
+        json!({"op":"task_create","request":"late","title":"work","acceptance":["pass"],
+            "dependencies":[]}),
     );
     assert!(result(world).is_error, "{}", result(world).content);
 }
 
-#[then("the coordinator can run Python on the board again")]
-fn python_again(world: &mut QuectoWorld) {
-    run(
+#[then("the coordinator can act on the board again")]
+fn acts_again(world: &mut QuectoWorld) {
+    let task = op(
         world,
-        json!({"op":"run","code":"from swarm import board; print(board.summary()['status'])"}),
+        json!({"op":"task_create","request":"again","title":"work","acceptance":["pass"]}),
     );
-    assert!(!result(world).is_error, "{}", result(world).content);
-    assert_eq!(
-        result_json(world)["stdout"].as_str().unwrap().trim(),
-        "running"
-    );
+    assert_eq!(task["status"], "ready", "{task}");
+    assert_eq!(op(world, json!({"op":"summary"}))["status"], "running");
 }
 
 // ── #1837: messages carry a revision and can be superseded ──────────────
 
 #[when("a swarm member sends a message and then supersedes it with a newer revision")]
 fn supersede_message(world: &mut QuectoWorld) {
-    run(
+    let first = op(
         world,
-        json!({"op":"run","code":"from swarm import board; first=board.send('r1','coordinator','review head one',revision='abc1'); second=board.send('r2','coordinator','review head two',revision='abc2',supersedes=first['id']); print(board.inbox())"}),
+        json!({"op":"send","request":"r1","recipient":"coordinator","body":"review head one",
+            "revision":"abc1"}),
     );
+    op(
+        world,
+        json!({"op":"send","request":"r2","recipient":"coordinator","body":"review head two",
+            "revision":"abc2","supersedes":first["id"]}),
+    );
+    run(world, json!({"op":"inbox"}));
     assert!(!result(world).is_error, "{}", result(world).content);
 }
 
 #[then("the recipient inbox holds only the newer message with its revision")]
 fn inbox_holds_newer(world: &mut QuectoWorld) {
-    let stdout = result_json(world)["stdout"].as_str().unwrap().to_string();
-    assert!(stdout.contains("'revision': 'abc2'"), "{stdout}");
-    assert!(!stdout.contains("'revision': 'abc1'"), "{stdout}");
-    assert!(stdout.contains("'supersedes': 1,"), "{stdout}");
-    assert_eq!(
-        stdout.matches("'id': ").count(),
-        1,
-        "exactly one unread message: {stdout}"
+    let inbox = result_json(world);
+    let messages = inbox.as_array().unwrap();
+    assert_eq!(messages.len(), 1, "exactly one unread message: {inbox}");
+    assert_eq!(messages[0]["revision"], "abc2", "{inbox}");
+    assert_eq!(messages[0]["supersedes"], 1, "{inbox}");
+    assert!(
+        messages.iter().all(|message| message["revision"] != "abc1"),
+        "{inbox}"
     );
 }
 
 #[then("the superseded message remains in the audit")]
 fn superseded_in_audit(world: &mut QuectoWorld) {
-    run(
-        world,
-        json!({"op":"run","code":"from swarm import board; print([(m['id'], m['status'], m['superseded_by']) for m in board.inbox(include_consumed=True)])"}),
-    );
-    assert!(!result(world).is_error, "{}", result(world).content);
-    let stdout = result_json(world)["stdout"].as_str().unwrap().to_string();
-    assert!(stdout.contains("(1, 'superseded', 2)"), "{stdout}");
-    assert!(stdout.contains("(2, 'accepted', None)"), "{stdout}");
+    let inbox = op(world, json!({"op":"inbox","include_consumed":true}));
+    let rows: Vec<serde_json::Value> = inbox
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| json!([m["id"], m["status"], m["superseded_by"]]))
+        .collect();
+    assert!(rows.contains(&json!([1, "superseded", 2])), "{inbox}");
+    assert!(rows.contains(&json!([2, "accepted", null])), "{inbox}");
 }

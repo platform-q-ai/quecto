@@ -155,7 +155,7 @@ fn the_tool_description_names_op_create_and_a_relative_deadline() {
 }
 
 #[tokio::test]
-async fn op_run_before_create_points_the_founder_at_op_create() {
+async fn a_board_op_before_create_points_the_founder_at_op_create() {
     // End to end through the tool: a bootstrapped, not yet created run.
     use crate::application::tools::ports::Tool;
     let directory = tempfile::tempdir().unwrap();
@@ -183,7 +183,7 @@ async fn op_run_before_create_points_the_founder_at_op_create() {
     )
     .with_context(Some(context));
     let result = tool
-        .execute(r#"{"op":"run","code":"print('hello')"}"#)
+        .execute(r#"{"op":"task_create","request":"r1","title":"t","acceptance":["pass"]}"#)
         .await
         .unwrap();
     assert!(result.is_error);

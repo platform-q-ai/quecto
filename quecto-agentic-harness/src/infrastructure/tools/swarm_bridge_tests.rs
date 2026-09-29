@@ -342,7 +342,7 @@ async fn failed_run_cancels_coordinator_detached_jobs() {
     .await
     .unwrap();
     let stop = tool
-        .execute(r#"{"code":"from swarm import board; board.stop('failed','review regression')"}"#)
+        .execute(r#"{"op":"stop","status":"failed","reason":"review regression"}"#)
         .await
         .unwrap();
     assert!(!stop.is_error, "{}", stop.content);
@@ -542,18 +542,34 @@ async fn foreground_terminal_watcher(outcome: &str) {
         crate::infrastructure::tools::call_work::off_the_runtime(|| context.snapshot()).unwrap(),
         super::swarm_bridge::Participation::none(),
     );
-    let terminal = if outcome == "succeeded" {
-        "board.evidence('tests','proof','R1','command',True); board.complete('R1')"
-    } else {
-        "board.stop('cancelled','operator request')"
-    };
-    let code = format!(
-        "from swarm import board; import time; {terminal}; time.sleep(2); open('late-write','w').write('escaped')"
-    );
-    let result = tool
-        .execute(&json!({"op":"run", "code":code, "timeout_seconds":10}).to_string())
+    // #2281: the foreground interpreter runs while the board call its
+    // program made ends the run, now made beside it; the watcher settles it.
+    let code = "import pathlib, time; pathlib.Path('interpreter-ready').touch(); time.sleep(2); open('late-write','w').write('escaped')";
+    let foreground = tool.execute(&json!({"code":code, "timeout_seconds":10}).to_string());
+    let terminal = async {
+        while !workspace.join("interpreter-ready").exists() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let (ctx, outcome) = (context.clone(), outcome.to_owned());
+        tokio::task::spawn_blocking(move || match outcome.as_str() {
+            "succeeded" => {
+                ctx.call("evidence", json!(["tests", "proof", "R1", "command", true]))
+                    .unwrap();
+                ctx.call("complete", json!(["R1"])).unwrap()
+            }
+            _ => ctx
+                .call("stop", json!(["cancelled", "operator request"]))
+                .unwrap(),
+        })
         .await
-        .unwrap();
+        .unwrap()
+    };
+    let (result, _) = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        tokio::join!(foreground, terminal)
+    })
+    .await
+    .expect("the foreground interpreter returns");
+    let result = result.unwrap();
     assert!(
         !workspace.join("late-write").exists(),
         "foreground interpreter survived terminal settlement"

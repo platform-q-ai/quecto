@@ -11,7 +11,22 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const WORKER_TASK: &str = "WORKER: claim the work";
-const WORKER_CLAIM: &str = "from swarm import board\nt=board.task_create('w','work',['pass'],[])\nc=board.claim(t['id'])\nboard.reserve(t['id'],c['token'],['src/a.rs'])\nprint('CLAIMED')";
+
+/// The worker's claim as structured ops, one board method per call: the
+/// next op after `answers` (the ops answered so far), or `None` once the
+/// task is created, claimed and its file reserved.
+fn worker_claim_op(answers: &[Value]) -> Option<Value> {
+    match answers {
+        [] => Some(
+            json!({"op":"task_create","request":"w","title":"work","acceptance":["pass"],"dependencies":[]}),
+        ),
+        [task] => Some(json!({"op":"claim","task_id":task["id"]})),
+        [task, claim] => Some(
+            json!({"op":"reserve","task_id":task["id"],"token":claim["token"],"paths":["src/a.rs"]}),
+        ),
+        _ => None,
+    }
+}
 
 /// One fake provider for the coordinator and the member it launches: the
 /// coordinator spawns, kills or reconciles on request; the member claims
@@ -25,10 +40,10 @@ fn recovery_script(turn: &Turn) -> Reply {
             call("spawn", json!({"agent_id":"worker","task":WORKER_TASK}))
         }
         (u, true) if u.contains("Launch the worker") => Reply::Text("LAUNCHED"),
-        (u, false) if u.contains(WORKER_TASK) => {
-            call("swarm", json!({"op":"run","code":WORKER_CLAIM}))
-        }
-        (u, true) if u.contains(WORKER_TASK) => Reply::Text("CLAIMED"),
+        (u, _) if u.contains(WORKER_TASK) => match worker_claim_op(&turn.tool_results) {
+            Some(op) => call("swarm", op),
+            None => Reply::Text("CLAIMED"),
+        },
         (u, false) if u.contains("Kill the worker") => {
             call("agent_cmd", json!({"agent_id":"worker","command":"kill"}))
         }
@@ -49,8 +64,9 @@ fn context(workspace: &Path, member: &str) -> SwarmContext {
     }
 }
 
-/// Run board Python as `member` through the real swarm tool; the stdout.
-async fn python(workspace: &Path, member: &str, code: &str) -> Result<String, String> {
+/// One structured board op as `member` through the real swarm tool (#2281):
+/// its answer, or the refusal's text.
+async fn op(workspace: &Path, member: &str, request: Value) -> Result<Value, String> {
     use quecto::application::tools::ports::Tool;
     let root = std::sync::Arc::new(workspace.to_path_buf());
     let tool = quecto::infrastructure::tools::swarm::SwarmTool::new(
@@ -62,21 +78,62 @@ async fn python(workspace: &Path, member: &str, code: &str) -> Result<String, St
     )
     .with_context(Some(context(workspace, member)));
     let result = tool
-        .execute(&json!({"op":"run","code":code}).to_string())
+        .execute(&request.to_string())
         .await
         .map_err(|e| e.to_string())?;
     if result.is_error {
         return Err(result.content);
     }
-    let output: Value = serde_json::from_str(&result.content).map_err(|e| e.to_string())?;
-    if output["exit_code"] != 0 {
-        return Err(output.to_string());
+    serde_json::from_str(&result.content).map_err(|e| format!("{e}: {}", result.content))
+}
+
+/// `member` creates a task, claims it and reserves `src/a.rs`, one op per
+/// board method; the claim's token.
+async fn worker_claim(workspace: &Path, member: &str) -> Value {
+    let mut answers = Vec::new();
+    while let Some(request) = worker_claim_op(&answers) {
+        let answer = op(workspace, member, request.clone())
+            .await
+            .unwrap_or_else(|refusal| panic!("{member} {request}: {refusal}"));
+        answers.push(answer);
     }
-    Ok(output["stdout"]
-        .as_str()
-        .unwrap_or_default()
-        .trim()
-        .to_owned())
+    answers[1]["token"].clone()
+}
+
+/// A harness-only board method (`_admit`, `_activate`) as `member`, through
+/// the dispatcher over composition's handles: the call `SwarmContext` makes.
+fn board_call(workspace: &Path, member: &str, method: &str, args: Value) -> Value {
+    let location = quecto::application::swarm::dto::BoardLocation {
+        database: quecto::infrastructure::tools::swarm_bridge::store_database(workspace),
+        checkout: workspace.to_path_buf(),
+    };
+    let handles = quecto::composition::swarm::build_swarm_board_handles(location, None);
+    quecto::infrastructure::tools::swarm_board_dispatch::call(&handles, member, method, args)
+        .unwrap_or_else(|refusal| panic!("{method} as {member}: {}", refusal.message()))
+}
+
+/// The coordinator admits and activates `member` as a live harness: this
+/// process, by pid and start time, at `/tmp/<member>.sock`.
+fn admit_and_activate(workspace: &Path, member: &str, pid: u32, started: &str) {
+    let reservation = format!("reservation-{member}");
+    board_call(
+        workspace,
+        "coordinator",
+        "_admit",
+        json!([member, reservation]),
+    );
+    board_call(
+        workspace,
+        "coordinator",
+        "_activate",
+        json!([
+            member,
+            reservation,
+            pid,
+            started,
+            format!("/tmp/{member}.sock")
+        ]),
+    );
 }
 
 /// Consecutive contended reads a board poll sits out, and the pause after
@@ -163,11 +220,7 @@ fn launched_member(summary: &Value) -> Option<Value> {
 async fn admit_other(workspace: &Path) {
     let started =
         quecto::infrastructure::tools::swarm_bridge::process_start(std::process::id()).unwrap();
-    let code = format!(
-        "from swarm import board\nboard._admit('other','reservation-other')\nboard._activate('other','reservation-other',{},{started:?},'/tmp/other.sock')",
-        std::process::id()
-    );
-    python(workspace, "coordinator", &code).await.unwrap();
+    admit_and_activate(workspace, "other", std::process::id(), &started);
 }
 
 /// The longest a reconcile turn may take before the harness is declared
@@ -376,20 +429,17 @@ async fn exercise_kill(workspace: PathBuf) -> Value {
     reconciler.join().unwrap();
     let status = control_status(&runtime).await;
     let after = events(&workspace);
-    python(
+    op(
         &workspace,
         "coordinator",
-        "from swarm import board\nboard.recover(1)",
+        json!({"op":"recover","task_id":1}),
     )
     .await
     .unwrap();
-    let reclaimed = python(
-        &workspace,
-        "other",
-        "from swarm import board\nprint(board.claim(1)['owner'])",
-    )
-    .await
-    .unwrap();
+    let reclaimed = op(&workspace, "other", json!({"op":"claim","task_id":1}))
+        .await
+        .unwrap()["owner"]
+        .clone();
     let evidence = json!({
         "worker": worker["id"],
         "run_status": dead["status"],
@@ -466,14 +516,8 @@ async fn exercise_loss(workspace: PathBuf) -> Value {
         .unwrap();
     let pid = ghost.id();
     let started = quecto::infrastructure::tools::swarm_bridge::process_start(pid).unwrap();
-    python(
-        &workspace,
-        "coordinator",
-        &format!("from swarm import board\nboard._admit('ghost','reservation-ghost')\nboard._activate('ghost','reservation-ghost',{pid},{started:?},'/tmp/ghost.sock')"),
-    )
-    .await
-    .unwrap();
-    python(&workspace, "ghost", WORKER_CLAIM).await.unwrap();
+    admit_and_activate(&workspace, "ghost", pid, &started);
+    worker_claim(&workspace, "ghost").await;
     // Its harness vanishes without anyone observing the exit.
     ghost.kill().unwrap();
     ghost.wait().unwrap();
@@ -504,29 +548,26 @@ async fn exercise_loss(workspace: PathBuf) -> Value {
     })
     .unwrap();
     let status = control_status(&runtime).await;
-    let recover = python(
+    let recover = op(
         &workspace,
         "coordinator",
-        "from swarm import board\nboard.recover(1)",
+        json!({"op":"recover","task_id":1}),
     )
     .await
     .err()
     .unwrap_or_default();
-    python(
+    op(
         &workspace,
         "coordinator",
-        "from swarm import board\nboard.revoke(1, 'ghost harness lost; reassigning')",
+        json!({"op":"revoke","task_id":1,"reason":"ghost harness lost; reassigning"}),
     )
     .await
     .unwrap();
     admit_other(&workspace).await;
-    let reclaimed = python(
-        &workspace,
-        "other",
-        "from swarm import board\nprint(board.claim(1)['owner'])",
-    )
-    .await
-    .unwrap();
+    let reclaimed = op(&workspace, "other", json!({"op":"claim","task_id":1}))
+        .await
+        .unwrap()["owner"]
+        .clone();
     let events = events(&workspace);
     let evidence = json!({
         "observed_only": observed["status"],
@@ -586,57 +627,64 @@ fn no_repause(world: &mut QuectoWorld) {
 
 /// The world's own swarm tool acts as the coordinator; other members act
 /// through their own tool instance on the same store.
-fn python_as(world: &mut QuectoWorld, member: &str, code: &str) -> Result<String, String> {
+fn op_as(world: &mut QuectoWorld, member: &str, request: Value) -> Result<Value, String> {
     let workspace = world.swarm_workspace.clone().unwrap();
-    super::runtime().block_on(python(&workspace, member, code))
+    super::runtime().block_on(op(&workspace, member, request))
 }
 
-#[when("a suspended member holds a claimed task with a reserved file")]
-fn suspended_member_claims(world: &mut QuectoWorld) {
+/// A structured op through the world's (the coordinator's) tool, which
+/// must answer; the result stays the world's.
+fn world_op(world: &mut QuectoWorld, request: Value) -> Value {
+    super::run(world, request.clone());
+    assert!(
+        !super::result(world).is_error,
+        "{request}: {}",
+        super::result(world).content
+    );
+    result_json(world)
+}
+
+/// #2281: the harness-only `_admit` and `_activate`, as the coordinator's
+/// harness calls them, for a member that is this process's own harness.
+#[when(regex = r#"^a member "(\w+)" is admitted and activated by the coordinator$"#)]
+fn member_admitted_and_activated(world: &mut QuectoWorld, member: String) {
     // The world's tool creates the store as the coordinator on first use.
     super::run(world, json!({"op":"summary"}));
     let started =
         quecto::infrastructure::tools::swarm_bridge::process_start(std::process::id()).unwrap();
-    python_as(
-        world,
-        "coordinator",
-        &format!(
-            "from swarm import board\nboard._admit('worker','reservation-worker')\nboard._activate('worker','reservation-worker',{},{started:?},'/tmp/worker.sock')",
-            std::process::id()
-        ),
-    )
-    .unwrap();
-    let token = python_as(
-        world,
-        "worker",
-        "from swarm import board\nt=board.task_create('w','work',['pass'],[])\nc=board.claim(t['id'])\nboard.reserve(t['id'],c['token'],['src/a.rs'])\nprint(c['token'])",
-    )
-    .unwrap();
-    world.swarm_claim_token = Some(token);
+    let workspace = world.swarm_workspace.clone().unwrap();
+    admit_and_activate(&workspace, &member, std::process::id(), &started);
+    let summary = world_op(world, json!({"op":"summary"}));
+    assert_eq!(
+        self::member(&summary, &member)["status"],
+        "live",
+        "{summary}"
+    );
+}
+
+#[when(regex = r#"^the suspended member "(\w+)" holds a claimed task with a reserved file$"#)]
+fn suspended_member_claims(world: &mut QuectoWorld, member: String) {
+    let workspace = world.swarm_workspace.clone().unwrap();
+    let token = super::runtime().block_on(worker_claim(&workspace, &member));
+    world.swarm_claim_token = Some(token.as_str().unwrap().to_owned());
 }
 
 #[when(expr = "the coordinator revokes that claim as {string}")]
 fn coordinator_revokes(world: &mut QuectoWorld, reason: String) {
-    super::run(
-        world,
-        json!({"op":"run","code":format!("from swarm import board\nimport json\nprint(json.dumps(board.revoke(1, {reason:?})))")}),
-    );
-    assert!(
-        !super::result(world).is_error,
-        "{}",
-        super::result(world).content
-    );
+    world_op(world, json!({"op":"revoke","task_id":1,"reason":reason}));
 }
 
 #[when("a member other than the coordinator tries to revoke that claim")]
 fn member_revokes(world: &mut QuectoWorld) {
-    let outcome = python_as(
+    let outcome = op_as(
         world,
         "worker",
-        "from swarm import board\nboard.revoke(1, 'not mine to take')",
+        json!({"op":"revoke","task_id":1,"reason":"not mine to take"}),
     );
     world.swarm_result = Some(quecto::domain::tool::ToolResult {
-        content: outcome.clone().unwrap_or_else(|error| error),
+        content: outcome
+            .clone()
+            .map_or_else(|error| error, |answer| answer.to_string()),
         is_error: outcome.is_err(),
         image_blocks: vec![],
         delivery_metadata: None,
@@ -645,7 +693,7 @@ fn member_revokes(world: &mut QuectoWorld) {
 
 #[then("the revoked task is ready without owner, reservation or evidence")]
 fn revoked_task_ready(world: &mut QuectoWorld) {
-    let task: Value = serde_json::from_str(result_json(world)["stdout"].as_str().unwrap()).unwrap();
+    let task = result_json(world);
     assert_eq!(task["status"], "ready", "{task}");
     assert_eq!(task["owner"], Value::Null, "{task}");
     assert_eq!(task["token"], Value::Null, "{task}");
@@ -673,13 +721,8 @@ fn revocation_audited(world: &mut QuectoWorld) {
 
 #[then("the previous owner is told its claim was revoked")]
 fn previous_owner_told(world: &mut QuectoWorld) {
-    let inbox = python_as(
-        world,
-        "worker",
-        "from swarm import board\nimport json\nprint(json.dumps(board.inbox()))",
-    )
-    .unwrap();
-    let inbox: Vec<Value> = serde_json::from_str(&inbox).unwrap();
+    let inbox = op_as(world, "worker", json!({"op":"inbox"})).unwrap();
+    let inbox: Vec<Value> = serde_json::from_value(inbox).unwrap();
     assert_eq!(inbox.len(), 1, "{inbox:?}");
     assert_eq!(inbox[0]["sender"], "coordinator");
     let body = inbox[0]["body"].as_str().unwrap();
@@ -691,20 +734,18 @@ fn previous_owner_told(world: &mut QuectoWorld) {
 fn other_member_completes(world: &mut QuectoWorld) {
     let workspace = world.swarm_workspace.clone().unwrap();
     super::runtime().block_on(admit_other(&workspace));
-    python_as(
+    let claim = op_as(world, "other", json!({"op":"claim","task_id":1})).unwrap();
+    op_as(
         world,
         "other",
-        "from swarm import board\nc=board.claim(1)\nboard.submit(1,c['token'],[{'artifact':'tests.log','revision':'r2'}])",
+        json!({"op":"submit","task_id":1,"token":claim["token"],
+            "evidence":[{"artifact":"tests.log","revision":"r2"}]}),
     )
     .unwrap();
-    super::run(
+    let task = world_op(world, json!({"op":"task","task_id":1}));
+    world_op(
         world,
-        json!({"op":"run","code":"from swarm import board\nboard.verify_task(1, board.task(1)['token'], 'r2')"}),
-    );
-    assert!(
-        !super::result(world).is_error,
-        "{}",
-        super::result(world).content
+        json!({"op":"verify_task","task_id":1,"token":task["token"],"revision":"r2"}),
     );
     super::run(world, json!({"op":"summary"}));
 }
@@ -712,12 +753,11 @@ fn other_member_completes(world: &mut QuectoWorld) {
 #[then("the revoked owner's stale token can no longer act on the task")]
 fn stale_token_refused(world: &mut QuectoWorld) {
     let token = world.swarm_claim_token.clone().unwrap();
-    let outcome = python_as(
+    let outcome = op_as(
         world,
         "worker",
-        &format!(
-            "from swarm import board\nboard.submit(1, {token:?}, [{{'artifact':'late.log','revision':'r1'}}])"
-        ),
+        json!({"op":"submit","task_id":1,"token":token,
+            "evidence":[{"artifact":"late.log","revision":"r1"}]}),
     );
     let error = outcome.expect_err("a revoked token must not submit");
     assert!(error.contains("stale or unowned claim"), "{error}");
@@ -753,17 +793,11 @@ fn owner_silent(world: &mut QuectoWorld, seconds: u64) {
     expr = "the task row reads the owner as idle for at least {int} seconds with a send contact"
 )]
 fn owner_idle_on_task_row(world: &mut QuectoWorld, seconds: u64) {
-    super::run(
-        world,
-        json!({"op":"run","code":"from swarm import board\nimport json\ns=board.summary()\nprint(json.dumps({'task':board.task(1),'page':board.tasks()[0],'summary':s['tasks'][0],'counts':s['counts']}))"}),
-    );
-    assert!(
-        !super::result(world).is_error,
-        "{}",
-        super::result(world).content
-    );
-    let views: Value =
-        serde_json::from_str(result_json(world)["stdout"].as_str().unwrap()).unwrap();
+    let summary = world_op(world, json!({"op":"summary"}));
+    let task = world_op(world, json!({"op":"task","task_id":1}));
+    let page = world_op(world, json!({"op":"tasks"}))[0].clone();
+    let views =
+        json!({"task":task,"page":page,"summary":summary["tasks"][0],"counts":summary["counts"]});
     for view in ["task", "page", "summary"] {
         let row = &views[view];
         assert_eq!(row["owner"], "worker", "{row}");

@@ -61,6 +61,10 @@ pub type ContentScript = fn(&Turn) -> Reply;
 pub struct Turn {
     pub user: String,
     pub after_tool: bool,
+    /// The answers of the tool calls made since the latest user message, in
+    /// order, each read as JSON (`Null` when it is not), so a script can
+    /// chain structured ops (#2281: a claim's token into its reserve).
+    pub tool_results: Vec<Value>,
 }
 
 impl Turn {
@@ -72,8 +76,40 @@ impl Turn {
         Self {
             user: latest_user_text(input),
             after_tool,
+            tool_results: tool_results_since_user(input),
         }
     }
+}
+
+/// The text of a chat message's content (string or text parts).
+fn content_text(content: &Value) -> String {
+    match content {
+        Value::String(text) => text.clone(),
+        Value::Array(parts) => parts
+            .iter()
+            .filter_map(|part| part["text"].as_str())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    }
+}
+
+/// The `tool` messages after the latest `user` message, each read as JSON.
+fn tool_results_since_user(input: &Value) -> Vec<Value> {
+    let Some(messages) = input["messages"].as_array() else {
+        return Vec::new();
+    };
+    let since = messages
+        .iter()
+        .rposition(|message| message["role"] == "user")
+        .map_or(0, |index| index + 1);
+    messages[since..]
+        .iter()
+        .filter(|message| message["role"] == "tool")
+        .map(|message| {
+            serde_json::from_str(&content_text(&message["content"])).unwrap_or(Value::Null)
+        })
+        .collect()
 }
 
 /// The text of the latest `user` message in a chat request (string or
@@ -86,15 +122,7 @@ fn latest_user_text(input: &Value) -> String {
         .iter()
         .rev()
         .find(|message| message["role"] == "user")
-        .map(|message| match &message["content"] {
-            Value::String(text) => text.clone(),
-            Value::Array(parts) => parts
-                .iter()
-                .filter_map(|part| part["text"].as_str())
-                .collect::<Vec<_>>()
-                .join("\n"),
-            _ => String::new(),
-        })
+        .map(|message| content_text(&message["content"]))
         .unwrap_or_default()
 }
 

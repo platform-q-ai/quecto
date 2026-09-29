@@ -7,7 +7,7 @@ Feature: Container swarm coordination
   Background:
     Given a swarm workspace
 
-  Scenario: Goal and tasks survive fresh Python executions
+  Scenario: Goal and tasks survive across members' calls
     When a swarm member creates an acceptance task
     Then a later swarm execution sees the acceptance task
 
@@ -101,7 +101,7 @@ Feature: Container swarm coordination
   Scenario: Claimed work does not wake an idle peer
     Given an idle swarm peer with an unavailable endpoint
     When the coordinator creates and immediately claims a task
-    Then no swarm wake delivery is attempted
+    Then the claim attempts no swarm wake delivery
 
   Scenario: Resolved approval keeps the original claim and reservations
     When an owned blocked swarm task is unblocked
@@ -124,7 +124,7 @@ Feature: Container swarm coordination
     Then the swarm result should contain "outside the swarm"
     When the supervisor outside the swarm resumes the run
     Then the swarm run status is "running"
-    And the coordinator can run Python on the board again
+    And the coordinator can act on the board again
 
   Scenario: Completion holds success until the supervisor closes it
     When the coordinator completes the run with accepted evidence
@@ -164,7 +164,8 @@ Feature: Container swarm coordination
     Then the board lives in the checkout's git directory and survives git stash and git clean
 
   Scenario: The coordinator revokes a claim its suspended owner will not finish
-    When a suspended member holds a claimed task with a reserved file
+    When a member "worker" is admitted and activated by the coordinator
+    And the suspended member "worker" holds a claimed task with a reserved file
     And the coordinator revokes that claim as "member suspended by provider"
     Then the revoked task is ready without owner, reservation or evidence
     And the revocation is audited with its reason and previous owner
@@ -174,13 +175,15 @@ Feature: Container swarm coordination
     And the revoked owner's stale token can no longer act on the task
 
   Scenario: Only the coordinator can revoke a claim
-    When a suspended member holds a claimed task with a reserved file
+    When a member "worker" is admitted and activated by the coordinator
+    And the suspended member "worker" holds a claimed task with a reserved file
     And a member other than the coordinator tries to revoke that claim
     Then the swarm result should be an error
     And the swarm result should contain "only the designated coordinator"
 
   Scenario: A task row shows its quiet owner's liveness and names it as a send recipient
-    When a suspended member holds a claimed task with a reserved file
+    When a member "worker" is admitted and activated by the coordinator
+    And the suspended member "worker" holds a claimed task with a reserved file
     And that owner has been silent on the board for 400 seconds
     Then the task row reads the owner as idle for at least 400 seconds with a send contact
     And the swarm tool description says any member may message a task's owner

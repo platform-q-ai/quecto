@@ -134,17 +134,20 @@ async fn default_python_restricts_subprocesses_but_bash_routes_commands() {
 async fn completed_run_keeps_summary_and_normal_artifact_export_serviceable() {
     let (_root, workspace, tool) = fixture();
     std::fs::write(workspace.join("report.txt"), "final-evidence").unwrap();
-    execute(&tool, json!({"op":"run","code":"from swarm import board; board.evidence('tests','report.txt','R1','command',True); board.complete('R1')"})).await;
+    execute(
+        &tool,
+        json!({"op":"evidence","criterion":"tests","artifact":"report.txt","revision":"R1",
+            "kind":"command","passed":true}),
+    )
+    .await;
+    execute(&tool, json!({"op":"complete","revision":"R1"})).await;
     let summary = execute(&tool, json!({"op":"summary"})).await;
     assert_eq!(
         (summary["status"].as_str(), summary["outcome"].as_str()),
         (Some("paused"), Some("succeeded"))
     );
-    let rejected = tool
-        .execute(r#"{"op":"run","code":"from swarm import board; board.inbox()"}"#)
-        .await
-        .unwrap();
-    assert!(rejected.is_error);
+    let rejected = tool.execute(r#"{"op":"inbox"}"#).await.unwrap();
+    assert!(rejected.is_error, "{}", rejected.content);
     let bash = quecto::infrastructure::tools::bash::ExecTool::new(
         workspace.clone(),
         Arc::new(Sandbox::new(Some(workspace.as_ref().clone()))),
