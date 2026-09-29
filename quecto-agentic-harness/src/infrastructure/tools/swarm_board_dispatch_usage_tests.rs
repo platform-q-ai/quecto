@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 
 use super::super::TELEMETRY_TARGET;
-use super::super::tests::{board, captured, running};
+use super::super::tests::{board, captured, captured_on, running};
 use crate::domain::swarm::BoardError;
 use crate::infrastructure::tools::swarm_board_dispatch::call;
 
@@ -142,4 +142,59 @@ fn usage_calls_record_their_decisions_without_argument_text() {
     assert!(!log.contains(secret), "{log}");
     assert!(!log.contains("sk-ant"), "{log}");
     assert!(!log.contains("see "), "argument text never logged: {log}");
+}
+
+/// The admission read records at DEBUG, but one whose budget warns or
+/// pauses the run (a budget another writer set, here written straight into
+/// the file) records at INFO, so every budget pause is visible at the
+/// default level; a redelivery that rewrites the record is `replaced`.
+#[test]
+fn an_admission_read_that_warns_or_pauses_records_at_info() {
+    let known = json!({"request_id": "k", "instrumented_attempts": 1, "outcome": "succeeded",
+        "context_input_tokens": 45, "output_tokens": 5,
+        "runtime": {"process_instance_id": "p", "executable_sha256": "abc"}});
+    let log = captured_on(6, |handles, database| {
+        running(handles);
+        call(handles, "parent", "_record_request", json!([known.clone()])).unwrap();
+        call(handles, "parent", "_record_request", json!([known.clone()])).unwrap();
+        let budget = |limit: u64| {
+            let written = rusqlite::Connection::open(database)
+                .unwrap()
+                .execute(
+                    "UPDATE usage_budget SET payload=? WHERE id=1",
+                    [format!(
+                        r#"{{"token_limit": {limit}, "strict_unknown": false, "warned": false}}"#
+                    )],
+                )
+                .unwrap();
+            assert_eq!(written, 1, "the budget row");
+        };
+        call(handles, "parent", "usage_budget", json!([1_000, false])).unwrap();
+        budget(60);
+        call(handles, "parent", "_request_admission", json!([])).unwrap();
+        budget(40);
+        call(handles, "parent", "_request_admission", json!([])).unwrap();
+    });
+    let records: Vec<&str> = log
+        .lines()
+        .filter(|line| line.contains(TELEMETRY_TARGET))
+        .skip(1)
+        .collect();
+    let expected = [
+        (" INFO ", "_record_request", "recorded"),
+        (" INFO ", "_record_request", "replaced"),
+        (" INFO ", "usage_budget", "configured"),
+        (" INFO ", "_request_admission", "warned"),
+        (" INFO ", "_request_admission", "paused"),
+    ];
+    assert_eq!(records.len(), expected.len(), "{log}");
+    for (record, (level, op, decision)) in records.iter().zip(expected) {
+        for field in [
+            level.to_owned(),
+            format!("op=\"{op}\""),
+            format!("decision=\"{decision}\""),
+        ] {
+            assert!(record.contains(&field), "{field} missing from {record}");
+        }
+    }
 }

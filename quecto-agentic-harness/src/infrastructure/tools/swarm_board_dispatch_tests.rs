@@ -277,9 +277,19 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedLog {
 /// reruns on a fresh board (at most five times) after the interest cache is
 /// rebuilt, and the last capture is returned for the caller to judge.
 pub(super) fn captured(records: usize, scenario: impl Fn(&SwarmBoardHandles)) -> String {
+    captured_on(records, |handles, _| scenario(handles))
+}
+
+/// [`captured`], the scenario also given the board file (for an edit made
+/// outside the Rust board, as another writer's).
+pub(super) fn captured_on(
+    records: usize,
+    scenario: impl Fn(&SwarmBoardHandles, &std::path::Path),
+) -> String {
     let mut log = String::new();
     for _ in 0..5 {
-        let (_dir, handles) = board(1_000.0);
+        let (dir, handles) = board(1_000.0);
+        let database = dir.path().join("swarm.sqlite");
         let logs = CapturedLog::default();
         let sink = logs.0.clone();
         let subscriber = tracing_subscriber::fmt()
@@ -289,7 +299,7 @@ pub(super) fn captured(records: usize, scenario: impl Fn(&SwarmBoardHandles)) ->
             .finish();
         tracing::subscriber::with_default(subscriber, || {
             tracing::callsite::rebuild_interest_cache();
-            scenario(&handles);
+            scenario(&handles, &database);
         });
         log = sink.lock().unwrap().clone();
         if log.matches(TELEMETRY_TARGET).count() >= records {
