@@ -6,15 +6,13 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use sha2::{Digest, Sha256};
-
 use super::dto::{AgentClockInstant, SessionRecord, TurnOutcome};
 use crate::domain::external_agent::stream::{
     AssistantContent, ExternalAgentEvent, SkippedLineReason, ToolResultEvent,
 };
 use crate::domain::external_agent::telemetry::{
-    ExternalAgentStreamDiagnostic, ExternalAgentTool, ExternalAgentTurn, board_task_id,
-    error_reason_kind, fingerprint, is_recorded_name, recorded_id, recorded_text,
+    CallKey, ExternalAgentStreamDiagnostic, ExternalAgentTool, ExternalAgentTurn, board_task_id,
+    call_key, error_reason_kind, fingerprint, is_recorded_name, recorded_id, recorded_text,
 };
 use crate::domain::external_agent::turn::{FailureKind, TurnEnd};
 
@@ -63,13 +61,6 @@ struct PendingTool {
     key: CallKey,
     record: ExternalAgentTool,
     called_at: AgentClockInstant,
-}
-
-/// A tool call's id as calls and results are paired on it.
-type CallKey = [u8; 32];
-
-fn call_key(id: &str) -> CallKey {
-    Sha256::digest(id.as_bytes()).into()
 }
 
 /// The session's measurements.

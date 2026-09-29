@@ -282,6 +282,15 @@ pub fn fingerprint(text: &str) -> String {
     print
 }
 
+/// A tool call's id as its call and result are paired on it: the SHA-256
+/// digest of the whole id, a fixed 32 bytes however long the id.
+pub type CallKey = [u8; 32];
+
+/// The [`CallKey`] of tool call id `id`.
+pub fn call_key(id: &str) -> CallKey {
+    Sha256::digest(id.as_bytes()).into()
+}
+
 /// At most `bytes` of `text`, cut on a character boundary.
 fn char_prefix(text: &str, bytes: usize) -> &str {
     let mut cut = bytes.min(text.len());
