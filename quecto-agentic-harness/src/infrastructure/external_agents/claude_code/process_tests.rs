@@ -3,16 +3,16 @@ use std::time::Duration;
 
 use serde_json::json;
 
-use super::test_rig::{
-    BOUND, FALLBACK_BOUND, RESULT_LINE, Rig, events_to_turn_end, finish, recorded_at_start,
-    until_retired,
-};
+use super::test_rig::{BOUND, RESULT_LINE, Rig, events_to_turn_end, finish};
+#[cfg(target_os = "linux")]
+use super::test_rig::{FALLBACK_BOUND, recorded_at_start, until_retired};
 use super::{claude_arguments, resolve_on_path};
 use crate::application::external_agent::dto::{
     CredentialEnv, ExternalAgentExit, ExternalAgentLaunchError, ExternalAgentLaunchSpec,
 };
 use crate::application::external_agent::ports::ExternalAgentLauncher;
 use crate::domain::external_agent::stream::ExternalAgentEvent;
+#[cfg(target_os = "linux")]
 use crate::infrastructure::processes::owned_child_supervisor::SentSignal;
 
 #[tokio::test]

@@ -88,7 +88,7 @@ fn mirrored_constants_match_the_harness_sources() {
         Duration::from_secs(secs_after(&routing, "pub const PROTOCOL_ACK_TIMEOUT")),
         HARNESS_PROTOCOL_ACK_TIMEOUT
     );
-    let supervisor = harness_source("infrastructure/processes/owned_child_supervisor.rs");
+    let supervisor = harness_source("infrastructure/processes/owned_child_supervisor/outcomes.rs");
     let default_block = &supervisor[supervisor.find("pub const DEFAULT: Self").unwrap()..];
     assert_eq!(
         Duration::from_secs(secs_after(default_block, "exit_after_ack:")),
