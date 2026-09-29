@@ -9,6 +9,7 @@ pub(super) mod swarm_guidance;
 
 use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
+use crate::domain::swarm::RefusalKind;
 use crate::domain::tool::{ToolDefinition, ToolResult};
 
 /// The container-only coordination tool: the harness's own run ops
@@ -77,6 +78,7 @@ impl Tool for SwarmTool {
             .and_then(|context| super::swarm_board_ops::requested(arguments, context.wire()));
         let parsed: Result<serde_json::Value, _> = serde_json::from_str(arguments);
         Box::pin(async move {
+            let started = std::time::Instant::now();
             let Some(context) = context else {
                 return tool_err("swarm is container-only: use spawn with a registered isolated container, then create a bounded run inside it".into());
             };
@@ -87,10 +89,12 @@ impl Tool for SwarmTool {
                 Ok(v) => v,
                 Err(e) => return tool_err(format!("invalid JSON arguments: {e}")),
             };
-            match v.get("op").and_then(|x| x.as_str()) {
+            match v.get("op") {
                 // The harness's own ops; every other valid op is a structured board
                 // op, answered above.
-                Some(op) if super::swarm_board_ops::HARNESS_OPS.contains(&op) => {
+                Some(serde_json::Value::String(op))
+                    if super::swarm_board_ops::HARNESS_OPS.contains(&op.as_str()) =>
+                {
                     match super::swarm_control::control_with_workflow(
                         context,
                         op,
@@ -104,28 +108,57 @@ impl Tool for SwarmTool {
                         Err(error) => tool_err(error.to_string()),
                     }
                 }
-                refused => refuse_op(refused),
+                Some(serde_json::Value::String(op)) => {
+                    refuse_op(&context, Refused::Unknown(op), started).await
+                }
+                Some(_) => refuse_op(&context, Refused::NotAString, started).await,
+                None => refuse_op(&context, Refused::Missing, started).await,
             }
         })
     }
 }
 
+/// Why a call names no valid op.
+enum Refused<'a> {
+    /// A string that is no op the tool has.
+    Unknown(&'a str),
+    /// An op that is present but not a string (#2282 review N1).
+    NotAString,
+    /// No op at all (or arguments that are not an object).
+    Missing,
+}
+
 /// The refusal of a call that names no valid op: one `tracing` record on
 /// the board's telemetry target carrying the refusal's kind and whether the
 /// op is a removed Python workbench op (#2282), never the member's text;
-/// then the guidance the member reads.
-fn refuse_op(op: Option<&str>) -> Result<ToolResult, DomainError> {
-    let (refusal, message) = match op {
-        Some(op) => ("unknown_op", swarm_guidance::unknown_op(op)),
-        None => ("op_required", swarm_guidance::op_required()),
+/// the op's `swarm_op` record while the event log is on (a name that is no
+/// board method is recorded as `unknown`, refused as `calling`, by the
+/// caller's redacted ref); then the guidance the member reads.
+async fn refuse_op(
+    context: &super::swarm_bridge::SwarmContext,
+    refused: Refused<'_>,
+    started: std::time::Instant,
+) -> Result<ToolResult, DomainError> {
+    let (refusal, message, op) = match refused {
+        Refused::Unknown(op) => ("unknown_op", swarm_guidance::unknown_op(op), op),
+        Refused::NotAString => ("op_not_a_string", swarm_guidance::op_not_a_string(), ""),
+        Refused::Missing => ("op_required", swarm_guidance::op_required(), ""),
     };
-    let removed_workbench_op = op.is_some_and(|op| swarm_guidance::REMOVED_OPS.contains(&op));
+    let removed_workbench_op = swarm_guidance::REMOVED_OPS.contains(&op);
     tracing::info!(
         target: super::swarm_board_telemetry::TELEMETRY_TARGET,
         refusal,
         removed_workbench_op,
         "swarm op refused"
     );
+    let ctx = context.clone();
+    let method = op.to_owned();
+    let elapsed = started.elapsed();
+    super::call_work::spawn_blocking_in_call(move || {
+        ctx.refused(&method, RefusalKind::Calling, elapsed)
+    })
+    .await
+    .map_err(|error| DomainError::Tool(error.to_string()))?;
     ok_json(json!({"status":"error","message":message}), true)
 }
 

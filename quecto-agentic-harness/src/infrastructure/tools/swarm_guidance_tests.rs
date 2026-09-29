@@ -239,11 +239,7 @@ async fn a_call_without_an_op_is_refused_with_the_valid_ops() {
     use crate::application::tools::ports::Tool;
     let directory = tempfile::tempdir().unwrap();
     let tool = running_tool(&directory);
-    for request in [
-        r#"{"code":"open('ran','w').write('x')"}"#,
-        r#"{"op":3}"#,
-        "{}",
-    ] {
+    for request in [r#"{"code":"open('ran','w').write('x')"}"#, "{}"] {
         let result = tool.execute(request).await.unwrap();
         assert!(result.is_error, "{request}: {}", result.content);
         assert!(
@@ -254,6 +250,65 @@ async fn a_call_without_an_op_is_refused_with_the_valid_ops() {
             result.content
         );
         assert!(!directory.path().join("ran").exists(), "{request} ran code");
+    }
+}
+
+/// #2282 review N1: an op that is present but not a string (a number,
+/// `null`) is not a missing op: the refusal says the op must be a string
+/// naming a valid op, and lists them.
+#[tokio::test]
+async fn an_op_that_is_not_a_string_is_refused_as_such() {
+    use crate::application::tools::ports::Tool;
+    let directory = tempfile::tempdir().unwrap();
+    let tool = running_tool(&directory);
+    for request in [
+        r#"{"op":3,"code":"open('ran','w').write('x')"}"#,
+        r#"{"op":null}"#,
+        r#"{"op":["claim"]}"#,
+    ] {
+        let result = tool.execute(request).await.unwrap();
+        assert!(result.is_error, "{request}: {}", result.content);
+        assert!(
+            result
+                .content
+                .contains("op must be a string naming one of: create, "),
+            "{request}: {}",
+            result.content
+        );
+        assert!(
+            !result.content.contains("op is required"),
+            "{request}: {}",
+            result.content
+        );
+        assert!(!directory.path().join("ran").exists(), "{request} ran code");
+    }
+}
+
+/// #2282 review L3: arguments that are not JSON are refused as such, and
+/// nothing runs.
+#[tokio::test]
+async fn arguments_that_are_not_json_are_refused() {
+    use crate::application::tools::ports::Tool;
+    let directory = tempfile::tempdir().unwrap();
+    let tool = running_tool(&directory);
+    let result = tool.execute("not-json").await.unwrap();
+    assert!(result.is_error, "{}", result.content);
+    assert!(
+        result.content.contains("invalid JSON arguments"),
+        "{}",
+        result.content
+    );
+}
+
+#[test]
+fn an_op_not_a_string_lists_every_valid_op() {
+    let message = op_not_a_string();
+    assert!(
+        message.starts_with("op must be a string naming one of: "),
+        "{message}"
+    );
+    for op in VALID_OPS {
+        assert!(message.contains(op), "{op}: {message}");
     }
 }
 

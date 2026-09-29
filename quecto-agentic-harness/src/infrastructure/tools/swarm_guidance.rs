@@ -91,6 +91,15 @@ pub(super) fn op_required() -> String {
     format!("op is required; valid ops: {}.", VALID_OPS.join(", "))
 }
 
+/// The refusal for a call whose op is present but not a string (a number,
+/// `null`, a list): not a missing op (#2282 review N1).
+pub(super) fn op_not_a_string() -> String {
+    format!(
+        "op must be a string naming one of: {}.",
+        VALID_OPS.join(", ")
+    )
+}
+
 /// The refusal for an op the tool does not have, the removed Python
 /// workbench ops (`run`, `status`, `output`, `cancel`, #2282) included.
 pub(super) fn unknown_op(op: &str) -> String {
