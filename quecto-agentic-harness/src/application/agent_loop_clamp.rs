@@ -152,4 +152,12 @@ impl AgentLoopImpl {
     pub fn effective_max_context_tokens(&self) -> usize {
         self.context_manager.effective_max_context_tokens()
     }
+
+    /// The handle through which the composition lowers this loop's pruning
+    /// ceiling after construction (#2342): a swarm member's, once its
+    /// process joins a swarm. The effective budget is the lowest of the
+    /// configured budget, the model's window and this cap.
+    pub fn context_ceiling_cap(&self) -> crate::application::context::ContextCeilingCap {
+        self.context_manager.ceiling_cap()
+    }
 }

@@ -87,6 +87,8 @@ impl AgentLoopImpl {
                     budget_unmet: plan.over_budget,
                     messages_collapsed: plan.messages_collapsed,
                     ladder_stubbed: plan.ladder_stubbed,
+                    snapshots_superseded: plan.snapshots_superseded,
+                    ceiling_tokens: 0,
                 },
             )
             .await;
@@ -116,3 +118,8 @@ mod ctx_mgmt_tests;
 #[cfg(test)]
 #[path = "agent_loop_calibration_tests.rs"]
 mod calibration_tests;
+
+// #2342: a scripted coordinator's request tokens, before and after.
+#[cfg(test)]
+#[path = "agent_loop_snapshot_tests.rs"]
+mod snapshot_tests;

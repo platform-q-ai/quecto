@@ -177,3 +177,59 @@ fn swarm_ops(base: &std::path::Path) -> Vec<serde_json::Value> {
         .filter(|line| line["event"] == "swarm_op")
         .collect()
 }
+
+/// #2342: a full `summary` answer is a whole snapshot of the board, which a
+/// newer one supersedes; nothing else the tool answers is.
+#[test]
+fn only_a_full_summary_answer_is_a_snapshot() {
+    let tool = SwarmTool::new();
+    let full = serde_json::to_string_pretty(&serde_json::json!({
+        "run": {"status": "running"},
+        "members": [{"id": "C1"}],
+        "tasks": [],
+        "files": [],
+        "event_cursor": 12,
+    }))
+    .unwrap();
+    let summary = r#"{"op":"summary"}"#;
+    assert_eq!(
+        tool.snapshot_key(summary, &full),
+        Some(super::SUMMARY_SNAPSHOT)
+    );
+    assert_eq!(
+        tool.snapshot_key(r#"{"op":"summary","since":12}"#, &full),
+        Some(super::SUMMARY_SNAPSHOT),
+        "a cursor read that answered the whole summary"
+    );
+    // The fast path's answer carries no board state: it supersedes nothing.
+    let unchanged =
+        r#"{"unchanged":true,"event_cursor":12,"status":"running","next_liveness_check_at":null}"#;
+    assert_eq!(
+        tool.snapshot_key(r#"{"op":"summary","since":12}"#, unchanged),
+        None
+    );
+    // An inbox answer can hold the only copy of a message: never a snapshot.
+    assert_eq!(tool.snapshot_key(r#"{"op":"inbox"}"#, &full), None);
+    assert_eq!(
+        tool.snapshot_key(
+            r#"{"op":"tasks"}"#,
+            r#"{"members":[],"tasks":[],"event_cursor":1}"#
+        ),
+        None
+    );
+    for (arguments, content) in [
+        ("not json", full.as_str()),
+        (r#"{"op":7}"#, full.as_str()),
+        (r#"["summary"]"#, full.as_str()),
+        (summary, "not json"),
+        (summary, r#"{"members":"C1","tasks":[],"event_cursor":1}"#),
+        (summary, r#"{"members":[],"tasks":[]}"#),
+        (summary, "[]"),
+    ] {
+        assert_eq!(
+            tool.snapshot_key(arguments, content),
+            None,
+            "{arguments} / {content}"
+        );
+    }
+}

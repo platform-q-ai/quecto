@@ -17,6 +17,10 @@
 #[path = "context_pruning_messages.rs"]
 pub mod messages;
 
+// #2342: superseded snapshots (a newer full swarm summary supersedes older).
+#[path = "context_pruning_snapshots.rs"]
+pub mod snapshots;
+
 use crate::application::sessions::use_cases::ListRetainedContext;
 use crate::domain::message::{Message, Role};
 

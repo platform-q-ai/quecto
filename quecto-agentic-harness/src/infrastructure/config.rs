@@ -91,6 +91,10 @@ pub struct AgentDefaults {
     pub context_collapse_after_tool_calls: u32,
     #[serde(default = "default_max_context_tokens")]
     pub max_context_tokens: usize,
+    /// The pruning ceiling once this process takes part in a swarm (#2342):
+    /// the lower of it and `max_context_tokens` applies from then on.
+    #[serde(default = "default_swarm_max_context_tokens")]
+    pub swarm_max_context_tokens: usize,
     /// How many most-recent turns the spilling ceiling tail-pins (#1045).
     #[serde(default = "default_pin_recent_turns")]
     pub pin_recent_turns: u32,
@@ -128,6 +132,7 @@ impl Default for AgentDefaults {
             max_session_messages: default_max_session_messages(),
             context_collapse_after_tool_calls: default_context_collapse_after_tool_calls(),
             max_context_tokens: default_max_context_tokens(),
+            swarm_max_context_tokens: default_swarm_max_context_tokens(),
             pin_recent_turns: default_pin_recent_turns(),
             context_collapse_after_messages: default_context_collapse_after_messages(),
             effort: None,
@@ -336,6 +341,9 @@ fn default_max_context_tokens() -> usize {
     // `default_context_collapse_after_tool_calls`) and the hard-drop
     // window dropping oldest non-pinned messages once we breach it.
     200_000
+}
+fn default_swarm_max_context_tokens() -> usize {
+    usize::MAX
 }
 fn default_max_results() -> u32 {
     5
@@ -702,6 +710,9 @@ mod container_slice2_tests;
 #[cfg(test)]
 #[path = "config_cov_tests.rs"]
 mod cov_tests;
+#[cfg(test)]
+#[path = "config_swarm_context_tests.rs"]
+mod swarm_context_tests;
 #[cfg(test)]
 #[path = "config_tests.rs"]
 mod tests;

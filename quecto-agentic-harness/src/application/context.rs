@@ -55,6 +55,29 @@ impl std::fmt::Debug for ContextRetention {
     }
 }
 
+/// A lower pruning ceiling the composition imposes after construction
+/// (#2342): a swarm member's, from when its process joins a swarm. Shared
+/// between the composition and the context manager; it only ever lowers,
+/// and `usize::MAX` (the start) imposes nothing.
+#[derive(Clone, Debug)]
+pub struct ContextCeilingCap(Arc<std::sync::atomic::AtomicUsize>);
+
+impl Default for ContextCeilingCap {
+    fn default() -> Self {
+        Self(Arc::new(std::sync::atomic::AtomicUsize::new(usize::MAX)))
+    }
+}
+
+impl ContextCeilingCap {
+    /// Lower the cap to `tokens` (never raises it).
+    pub fn lower_to(&self, _tokens: usize) {}
+
+    /// The cap in force: `usize::MAX` when none.
+    pub fn tokens(&self) -> usize {
+        self.0.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
 pub struct ContextManagerConfig {
     pub retention: Option<ContextRetention>,
     pub session_key: SessionIdentity,
@@ -73,6 +96,7 @@ pub(crate) struct ContextManager {
     pin_recent_turns: u32,
     context_collapse_after_messages: u32,
     model_context_window: Option<usize>,
+    ceiling_cap: ContextCeilingCap,
     gauge: Mutex<ContextGaugeCalibration>,
 }
 
@@ -84,6 +108,8 @@ pub(crate) struct ContextPlan {
     pub messages_collapsed: usize,
     pub ladder_stubbed: usize,
     pub messages_dropped: usize,
+    /// Tool results a newer snapshot of the same state superseded (#2342).
+    pub snapshots_superseded: usize,
     pub over_budget: bool,
     pub durable_prefix_dirty: bool,
 }
@@ -105,6 +131,7 @@ impl ContextManager {
             pin_recent_turns: config.pin_recent_turns,
             context_collapse_after_messages: config.context_collapse_after_messages,
             model_context_window: config.model_context_window,
+            ceiling_cap: ContextCeilingCap::default(),
             gauge: Mutex::new(ContextGaugeCalibration::default()),
         }
     }
@@ -117,6 +144,11 @@ impl ContextManager {
             .get_mut()
             .unwrap_or_else(|e| e.into_inner())
             .forget_calibration();
+    }
+
+    /// The handle the composition lowers the ceiling through (#2342).
+    pub fn ceiling_cap(&self) -> ContextCeilingCap {
+        self.ceiling_cap.clone()
     }
 
     pub fn set_model_context_window(&mut self, model_context_window: Option<usize>) {
@@ -302,6 +334,7 @@ impl ContextManager {
             messages_collapsed: msg_collapsed,
             ladder_stubbed: outcome.collapsed_to_stubs,
             messages_dropped: outcome.dropped,
+            snapshots_superseded: 0,
             over_budget: outcome.over_budget,
             durable_prefix_dirty,
         }

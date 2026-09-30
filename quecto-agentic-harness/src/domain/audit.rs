@@ -111,6 +111,16 @@ pub enum AuditEvent {
         /// it, read as 0.
         #[serde(default)]
         ladder_stubbed: usize,
+        /// Tool results a newer snapshot of the same state (a newer full
+        /// swarm `summary`) superseded this prune, turned into recall stubs
+        /// (#2342); absent from logs written before it, read as 0.
+        #[serde(default)]
+        snapshots_superseded: usize,
+        /// The pruning ceiling in force, in tokens: the lowest of the
+        /// configured budget, the model's window and a swarm member's cap
+        /// (#2342); absent from logs written before it, read as 0.
+        #[serde(default)]
+        ceiling_tokens: usize,
     },
     #[cfg(any(test, feature = "test-support"))]
     SubagentSpawned {

@@ -199,6 +199,14 @@ impl ToolExecutor for MockRegistry {
             .iter()
             .any(|overlapping| overlapping == name)
     }
+
+    fn snapshot_key(&self, name: &str, arguments: &str, content: &str) -> Option<&'static str> {
+        let tool = self
+            .tools
+            .iter()
+            .find(|tool| tool.definition().name == name)?;
+        tool.snapshot_key(arguments, content)
+    }
 }
 
 pub(super) struct MockTool {

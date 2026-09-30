@@ -12,6 +12,10 @@ use crate::domain::error::DomainError;
 use crate::domain::swarm::RefusalKind;
 use crate::domain::tool::{ToolDefinition, ToolResult};
 
+/// The snapshot key of a full `summary` answer (#2342): a newer one
+/// supersedes it in the member's conversation.
+pub const SUMMARY_SNAPSHOT: &str = "swarm.summary";
+
 /// The container-only coordination tool: the harness's own run ops
 /// (`create`, `summary`, `cancel_run`, …) and the structured board ops
 /// (#2279). It spawns and signals nothing: the board runs in-process

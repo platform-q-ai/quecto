@@ -96,3 +96,44 @@ fn build_agent_from_config_threads_context_knobs_into_the_loop() {
         "a non-default context_collapse_after_messages must reach the loop (#1046)"
     );
 }
+
+/// #2342: once its process joins a swarm, a member prunes at the swarm
+/// ceiling (`swarm_max_context_tokens`), the lower of it and its budget;
+/// before that, and in a process that never joins, the budget alone.
+#[test]
+fn joining_a_swarm_lowers_the_members_pruning_ceiling() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("config.json"),
+        r#"{"providers":{"openai":{"api_key":"sk-test"}},"agents":{"defaults":{"max_context_tokens":150000,"swarm_max_context_tokens":40000}}}"#,
+    )
+    .unwrap();
+    let cfg = tmp.path().join("config.json");
+    let build = |participation: crate::infrastructure::tools::swarm_bridge::Participation| {
+        let mut flags = flags_for_wiring_test();
+        flags.model_override = None;
+        flags.swarm_participation = participation;
+        let mut stderr = String::new();
+        build_agent_from_config(
+            tmp.path(),
+            &selection_for_test(&cfg, false),
+            &flags,
+            &mut stderr,
+            None,
+        )
+        .expect("agent build should succeed")
+    };
+
+    let participation = crate::infrastructure::tools::swarm_bridge::Participation::shared();
+    let member = build(participation.clone());
+    assert_eq!(member.agent.effective_max_context_tokens(), 150_000);
+    participation.set(true);
+    assert_eq!(
+        member.agent.effective_max_context_tokens(),
+        40_000,
+        "a swarm member's ceiling applies from the moment it joins"
+    );
+
+    let loner = build(crate::infrastructure::tools::swarm_bridge::Participation::none());
+    assert_eq!(loner.agent.effective_max_context_tokens(), 150_000);
+}
