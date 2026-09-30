@@ -651,9 +651,13 @@ a swarm its pruning budget is capped at `agents.defaults.swarm_max_context_token
 (default 48000, or `QUECTO_SWARM_MAX_CONTEXT_TOKENS`; it never disengages,
 and setting it at or above `max_context_tokens` switches it off), and each
 full `summary` answer supersedes the member's older
-ones, which collapse to recall stubs while the newest stays in full. Each prune
-that does either is visible in the event log's `context_pruned` record
-(`snapshots_superseded`, `ceiling_tokens`); the moment the cap engages is a
+ones, which collapse to recall stubs while the newest stays in full. A large
+tool result (a long bash output, a `docs` or `web_fetch` read) collapses to its
+recall stub once the member has seen it for 3 turns (#2348). Each prune
+that does any of these is visible in the event log's `context_pruned` record
+(`snapshots_superseded`, `large_results_collapsed`, `ceiling_tokens`), and each
+turn's `llm_turn_end` records the cached share of its input
+(`cached_input_tokens`); the moment the cap engages is a
 `quecto::swarm_board` tracing event. See
 [Sessions](sessions.md#context-management) for the dials.
 

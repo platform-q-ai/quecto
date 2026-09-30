@@ -177,3 +177,37 @@ impl<'writer> tracing_subscriber::fmt::MakeWriter<'writer> for CapturedLog {
         self.clone()
     }
 }
+
+/// #2348: the size-aware collapse's dials reach the built loop.
+#[test]
+fn build_agent_from_config_threads_the_size_aware_collapse_into_the_loop() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("config.json"),
+        r#"{"providers":{"fireworks":{"api_key":"k"}},"agents":{"defaults":{"context_collapse_large_result_tokens":4000,"context_collapse_large_result_after_turns":5}}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{"fireworks":{"api":"openai-completions","baseUrl":"https://e.example/v1","apiKey":"k","models":[{"id":"small-window","contextWindow":100000}]}}}"#,
+    )
+    .unwrap();
+    let flags = flags_for_wiring_test();
+    let mut stderr = String::new();
+    let cfg = tmp.path().join("config.json");
+    let result = build_agent_from_config(
+        tmp.path(),
+        &selection_for_test(&cfg, false),
+        &flags,
+        &mut stderr,
+        None,
+    )
+    .expect("agent build should succeed");
+    assert_eq!(
+        result.agent.large_result_collapse(),
+        crate::domain::large_result_collapse::LargeResultCollapse {
+            over_tokens: 4_000,
+            after_turns: 5,
+        }
+    );
+}

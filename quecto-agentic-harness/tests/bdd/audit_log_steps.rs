@@ -407,8 +407,7 @@ fn when_agent_processes_failing_turn(world: &mut QuectoWorld) {
         ),
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
-        large_result_collapse:
-            quecto::application::context_pruning::large_results::LargeResultCollapse::DISABLED,
+        large_result_collapse: quecto::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     });

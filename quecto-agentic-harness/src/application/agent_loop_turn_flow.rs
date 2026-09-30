@@ -331,7 +331,12 @@ impl AgentLoopImpl {
                     output_tokens: output_toks,
                     stop_reason: stop,
                     duration_ms,
-                    cached_input_tokens: None,
+                    // #2348: the share the provider's prompt cache served.
+                    cached_input_tokens: response
+                        .usage
+                        .as_ref()
+                        .and_then(|u| u.cache_read_tokens)
+                        .map(|n| n as usize),
                 },
             )
             .await;

@@ -426,8 +426,7 @@ pub struct QuectoWorld {
     /// #2342: a swarm member's ceiling for the member agent, if it joined.
     pub member_ceiling: Option<usize>,
     /// #2348: the member agent's size-aware collapse, if one is set.
-    pub member_large_results:
-        Option<quecto::application::context_pruning::large_results::LargeResultCollapse>,
+    pub member_large_results: Option<quecto::domain::large_result_collapse::LargeResultCollapse>,
     /// #2342: what the swarm member agent's run left behind.
     pub member_run: Option<pruning_snapshot_steps::MemberRun>,
     /// Session workspace path (for session scenarios)

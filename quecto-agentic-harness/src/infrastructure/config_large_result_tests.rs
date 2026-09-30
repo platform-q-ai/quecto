@@ -1,7 +1,7 @@
 //! #2348: the size-aware collapse's dials.
 
 use super::Config;
-use crate::application::context_pruning::large_results::LargeResultCollapse;
+use crate::domain::large_result_collapse::LargeResultCollapse;
 
 #[test]
 fn the_size_aware_collapse_defaults_to_2k_tokens_seen_for_3_turns() {

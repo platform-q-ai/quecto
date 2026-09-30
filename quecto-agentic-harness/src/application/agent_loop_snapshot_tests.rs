@@ -20,7 +20,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
-use crate::application::context_pruning::large_results::LargeResultCollapse;
+use crate::domain::large_result_collapse::LargeResultCollapse;
 
 const SUMMARY_KEY: &str = "swarm.summary";
 const TURNS: u32 = 100;
@@ -479,8 +479,7 @@ async fn a_failed_call_is_never_a_snapshot() {
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: 50,
-        large_result_collapse:
-            crate::application::context_pruning::large_results::LargeResultCollapse::DISABLED,
+        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Child,
     });

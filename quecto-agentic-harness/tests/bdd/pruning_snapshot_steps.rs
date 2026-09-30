@@ -6,9 +6,9 @@
 use super::*;
 use quecto::application::agent_loop::AgentLoopConfig;
 use quecto::application::audit::ports::AuditSink;
-use quecto::application::context_pruning::large_results::LargeResultCollapse;
 use quecto::application::sessions::ports::{ContextSpillStore, SpillIndexList};
 use quecto::domain::audit::AuditEvent;
+use quecto::domain::large_result_collapse::LargeResultCollapse;
 use quecto::domain::session::{SpillEntry, SpillIndex};
 use quecto::domain::session_identity::{SessionIdentity, SpillId};
 

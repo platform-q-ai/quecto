@@ -729,7 +729,8 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/interface/cli/retention_handles.rs", 33),
     ("src/infrastructure/tools/recall.rs", 152),
     // #2212: the gauge moved to its own module (336 → 332); #2342: the
-    // spill writers and the swarm cap moved to their own modules (→ 310).
+    // spill writers and the swarm cap moved to their own modules (→ 310);
+    // #2348: the plan moved to its own module (the size-aware rule fits).
     ("src/application/context.rs", 310),
     // #2342: new modules (the swarm member's cap; the spill writers).
     ("src/application/context_ceiling_cap.rs", 30),
@@ -752,6 +753,10 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // #2342: new modules (the count dials' batch; superseded snapshots).
     ("src/application/context_pruning_count_dial.rs", 41),
     ("src/application/context_pruning_snapshots.rs", 88),
+    // #2348: new modules (the size-aware collapse; the plan, split from
+    // `context.rs` so it stays within its ceiling).
+    ("src/application/context_pruning_large_results.rs", 71),
+    ("src/application/context_plan.rs", 28),
     ("src/application/agent_loop_spill.rs", 56),
     // #2212: the gauge wrappers moved to their own module (749 → 703).
     ("src/application/agent_loop.rs", 703),

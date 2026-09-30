@@ -158,17 +158,14 @@ pub(super) fn make_test_agent(base_dir: &std::path::Path) -> AgentLoopImpl {
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
-        large_result_collapse:
-            crate::application::context_pruning::large_results::LargeResultCollapse::DISABLED,
+        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1)
 }
 
-// ===================================================================
-// run_agent_session() integration tests (via run_with_output)
-//
+// === run_agent_session() integration tests (via run_with_output) ===
 // These tests write a config.json with a fake API key so that the
 // code path through build_agent_from_config -> run_agent_session is
 // exercised.  The LLM call will fail (no real server), but the
@@ -582,8 +579,7 @@ fn test_run_with_deadline_completes_before_timeout() {
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
-        large_result_collapse:
-            crate::application::context_pruning::large_results::LargeResultCollapse::DISABLED,
+        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })

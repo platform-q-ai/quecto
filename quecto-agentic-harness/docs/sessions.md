@@ -634,8 +634,8 @@ switch.
    collapse, `context_collapse_after_messages`, turned into recall stubs),
    `ladder_stubbed` (messages the ceiling ladder's first rung collapsed to
    recall stubs), `messages_dropped`, `tool_results_collapsed`, and
-   `tokens_before` / `tokens_after`, `snapshots_superseded` (see
-   below) and `ceiling_tokens` (the effective budget in force, in provider
+   `tokens_before` / `tokens_after`, `snapshots_superseded` and
+   `large_results_collapsed` (see below) and `ceiling_tokens` (the effective budget in force, in provider
    tokens: the unit of `max_context_tokens`, before the ladder converts it
    to estimate units at the observed scale); logs written before a count
    existed read it as 0. The second rung removes whole exchanges only: an
@@ -654,6 +654,28 @@ switch.
    (two summaries in one parallel batch) is superseded only once it has.
    Only bundled tools can mark one. The mark is not persisted: a resumed
    session supersedes nothing it loaded.
+6. **Large results** (#2348): a count dial is blind to size, so a tool
+   result over `context_collapse_large_result_tokens` (default `2000`
+   estimated tokens) collapses to its recall stub once the model has seen
+   it for `context_collapse_large_result_after_turns` (default `3`) turns
+   — three model responses have followed it — whatever the count dials
+   say. It runs after superseded snapshots and before the dials, which
+   then count only what is still in full. A result the model has not
+   seen, one never spilled, the newest snapshot of a state and one whose
+   stub would be no smaller all stay in full. Only the result's content
+   becomes a stub: every call keeps its result. Each prune that collapses
+   one counts it in `context_pruned.large_results_collapsed`.
+   In the owner's swarm sessions (#2342) one 17k-token bash output was
+   31% of a coordinator's input and one 6k-token `docs` read 24% of
+   another's; simulated on those sessions at the shipped tool dial of 50,
+   the rule cuts their input by 25%, 17% and 33%, and the `docs` read's
+   share falls to 2.5%. 2000 marks the top 3-6% of their results; 1000
+   saved more (37-40%) but stubs the 1-2k reads a worker edits against
+   and doubles the prefix rewrites. Env:
+   `QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_TOKENS`,
+   `QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_AFTER_TURNS` (`0` is refused: an
+   unseen result is never stubbed). Set the size to
+   `18446744073709551615` to switch the rule off.
 
 The effective budget is the smaller of `max_context_tokens` and the active
 model's context window when the model registry declares one. Once the
@@ -757,7 +779,9 @@ Session behavior is configured in `config.json` under `agents.defaults`:
 |-------|---------|-------------|
 | `max_context_tokens` | `200000` | Application-level token budget before context pruning (clamped down to the model's declared context window when known) |
 | `swarm_max_context_tokens` | `48000` | The budget once the process takes part in a swarm: the lower of it and `max_context_tokens` applies from then on, and never disengages. Env: `QUECTO_SWARM_MAX_CONTEXT_TOKENS`. `0` is refused; set it at or above `max_context_tokens` to switch it off |
-| `context_collapse_after_tool_calls` | `50` | Collapse the oldest tool outputs once the session exceeds N tool calls. Set to `4294967295` (`u32::MAX`) to disable |
+| `context_collapse_after_tool_calls` | `50` | Collapse the oldest tool outputs once the session exceeds N tool calls. Set to `4294967295` (`u32::MAX`) to disable. 50 stays the default beside the size-aware rule (#2348): on the owner's swarm sessions a dial of 100 sends 0-8% more input, and 25 saves another 3-21% but rewrites the cached prefix about 1.5 times as often; revisit it with `llm_turn_end.cached_input_tokens` |
+| `context_collapse_large_result_tokens` | `2000` | A tool result over this many estimated tokens collapses to its recall stub once seen for `context_collapse_large_result_after_turns` turns. Env: `QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_TOKENS`. `18446744073709551615` switches it off |
+| `context_collapse_large_result_after_turns` | `3` | How many model responses see a large result in full first. Env: `QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_AFTER_TURNS`. `0` is refused |
 | `context_collapse_after_messages` | `50` | Collapse the oldest conversation (user/assistant) messages to recall stubs once the session exceeds N live messages. Set to `4294967295` (`u32::MAX`) to disable |
 | `pin_recent_turns` | `2` | How many most-recent turns the context ceiling never demotes or drops |
 

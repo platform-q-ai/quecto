@@ -5,8 +5,8 @@
 //! ceiling on in both runs: the saving is the rule's alone.
 
 use super::snapshot_tests::{AFTER, LARGE_HEAD, SECRET, Setup, run_scripted};
-use crate::application::context_pruning::large_results::LargeResultCollapse;
 use crate::domain::audit::AuditEvent;
+use crate::domain::large_result_collapse::LargeResultCollapse;
 
 /// The shipped default: over 2k estimated tokens, seen for 3 turns.
 const SHIPPED: LargeResultCollapse = LargeResultCollapse {

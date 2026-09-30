@@ -2,28 +2,66 @@
 //! overrides and load-time validation (split from `config.rs`, line cap).
 
 use super::{AgentDefaults, ConfigError};
-use crate::application::context_pruning::large_results::LargeResultCollapse;
+use crate::domain::large_result_collapse::LargeResultCollapse;
 use std::collections::HashMap;
 
+/// A tool result over this many estimated tokens is "large". Chosen from
+/// the owner's three swarm sessions (#2348): 2k marks the top 3-6% of
+/// results (5, 5 and 2 of 108, 78 and 50) yet carries most of what is
+/// re-sent: at the shipped tool dial of 50 the rule saves 25%, 17% and
+/// 33% of their simulated input. 1k would save 37-40% but stubs the
+/// 1-2k reads a worker edits against and doubles the prefix rewrites
+/// (21 against 12 for the run 2 coordinator); 4k saves only 10-33%.
 pub(super) fn default_tokens() -> usize {
-    usize::MAX
+    2_000
 }
 
+/// How many model responses see a large result in full before it is
+/// stubbed. At 3 the model has read it and acted on it twice more; 2 and 5
+/// differ from 3 by about one point on the same sessions.
 pub(super) fn default_after_turns() -> u32 {
-    u32::MAX
+    3
 }
 
 impl AgentDefaults {
     /// The size-aware collapse these defaults configure (#2348).
     pub fn large_result_collapse(&self) -> LargeResultCollapse {
-        LargeResultCollapse::DISABLED
+        LargeResultCollapse {
+            over_tokens: self.context_collapse_large_result_tokens,
+            after_turns: self.context_collapse_large_result_after_turns,
+        }
     }
 }
 
 /// `QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_TOKENS` and
-/// `QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_AFTER_TURNS`.
-pub(super) fn apply_env_overrides(_defaults: &mut AgentDefaults, _env: &HashMap<String, String>) {}
+/// `QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_AFTER_TURNS`; a value that is no
+/// count is ignored, as the other numeric overrides ignore it.
+pub(super) fn apply_env_overrides(defaults: &mut AgentDefaults, env: &HashMap<String, String>) {
+    if let Some(n) = env
+        .get("QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_TOKENS")
+        .and_then(|v| v.parse::<usize>().ok())
+    {
+        defaults.context_collapse_large_result_tokens = n;
+    }
+    if let Some(n) = env
+        .get("QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_AFTER_TURNS")
+        .and_then(|v| v.parse::<u32>().ok())
+    {
+        defaults.context_collapse_large_result_after_turns = n;
+    }
+}
 
-pub(super) fn validate(_defaults: &AgentDefaults) -> Result<(), ConfigError> {
-    Ok(())
+/// 0 turns would stub a result the model has not seen (#2213): refused.
+/// The rule is switched off with a size no result reaches instead.
+pub(super) fn validate(defaults: &AgentDefaults) -> Result<(), ConfigError> {
+    match defaults.context_collapse_large_result_after_turns {
+        1.. => Ok(()),
+        0 => Err(ConfigError::ContextBudget(
+            "context_collapse_large_result_after_turns must be at least 1: a result \
+             the model has not seen is never collapsed; set \
+             context_collapse_large_result_tokens to 18446744073709551615 to switch \
+             the rule off"
+                .to_string(),
+        )),
+    }
 }

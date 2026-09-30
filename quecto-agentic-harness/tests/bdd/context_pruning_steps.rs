@@ -1534,8 +1534,7 @@ fn complete_text_only_prompt(world: &mut QuectoWorld, reply: &str) {
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
-        large_result_collapse:
-            quecto::application::context_pruning::large_results::LargeResultCollapse::DISABLED,
+        large_result_collapse: quecto::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     });
@@ -1996,8 +1995,7 @@ fn when_agent_completes_over_budget_prompt(world: &mut QuectoWorld) {
         audit_log: Some(sink.clone() as Arc<dyn quecto::application::audit::ports::AuditSink>),
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
-        large_result_collapse:
-            quecto::application::context_pruning::large_results::LargeResultCollapse::DISABLED,
+        large_result_collapse: quecto::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     });
@@ -2065,8 +2063,7 @@ fn when_agent_derives_effective_budget(world: &mut QuectoWorld) {
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
-        large_result_collapse:
-            quecto::application::context_pruning::large_results::LargeResultCollapse::DISABLED,
+        large_result_collapse: quecto::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: world.context_model_window.expect("window declared"),
         tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     });
@@ -2136,8 +2133,7 @@ fn run_prompt_through_loop(
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
-        large_result_collapse:
-            quecto::application::context_pruning::large_results::LargeResultCollapse::DISABLED,
+        large_result_collapse: quecto::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     });

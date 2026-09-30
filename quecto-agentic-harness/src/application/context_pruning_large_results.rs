@@ -6,31 +6,64 @@
 // to pile up. Pure policy over the message list: no retention handle, no
 // store.
 
-use crate::domain::message::Message;
+use super::snapshots::newest_snapshots;
+use super::{collapse_message, collapse_stub, estimate_message_tokens, estimate_tokens};
+use crate::domain::large_result_collapse::LargeResultCollapse;
+use crate::domain::message::{Message, Role};
 
-/// The size-aware collapse dial (#2348): a tool result estimated over
-/// `over_tokens` collapses to its recall stub once `after_turns` model
-/// responses have followed it (each one answered a request that carried
-/// it in full). `after_turns` is at least 1: an unseen result is never
-/// stubbed (#2213).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LargeResultCollapse {
-    pub over_tokens: usize,
-    pub after_turns: u32,
+/// Collapse every tool result over the dial's size that the model has
+/// seen for its turns to its recall stub. Only a live result that was
+/// spilled (its stub is recallable) and is not the newest snapshot of its
+/// state (#2342) qualifies, and only when its stub is cheaper. Removes no
+/// message, so every call keeps its result (#2349). Returns how many it
+/// collapsed; a pass that finds nothing new rewrites no prompt prefix.
+pub fn collapse_large_results(messages: &mut [Message], dial: LargeResultCollapse) -> usize {
+    if dial.over_tokens == usize::MAX {
+        return 0;
+    }
+    // A result is seen once per model response after it (#2213).
+    let after_turns = dial.after_turns.max(1) as usize;
+    let newest = newest_snapshots(messages);
+    let mut responses_after = messages
+        .iter()
+        .filter(|m| m.role == Role::Assistant)
+        .count();
+    let mut collapsed = 0;
+    for (msg, &newest) in messages.iter_mut().zip(&newest) {
+        let seen = responses_after >= after_turns;
+        match msg.role {
+            Role::Assistant => responses_after -= 1,
+            Role::Tool
+                if seen
+                    && !newest
+                    && !msg.is_collapsed
+                    && msg.spill_id.is_some()
+                    && large(msg, dial.over_tokens) =>
+            {
+                collapse_message(msg);
+                debug_assert!(msg.is_collapsed, "a large seen result is now a stub");
+                collapsed += 1;
+            }
+            _ => {}
+        }
+    }
+    debug_assert_eq!(responses_after, 0, "every response was counted down");
+    collapsed
 }
 
-impl LargeResultCollapse {
-    /// The rule switched off: no result is ever over `usize::MAX` tokens.
-    pub const DISABLED: Self = Self {
-        over_tokens: usize::MAX,
-        after_turns: u32::MAX,
-    };
-}
-
-/// Collapse every spilled, seen tool result over the dial's size that the
-/// model has seen for its turns. Returns how many it collapsed.
-pub fn collapse_large_results(_messages: &mut [Message], _dial: LargeResultCollapse) -> usize {
-    0
+/// Whether `msg` is over `over_tokens` and its stub would be cheaper.
+fn large(msg: &Message, over_tokens: usize) -> bool {
+    let tokens = estimate_message_tokens(msg);
+    if tokens <= over_tokens {
+        return false;
+    }
+    let stub = collapse_stub(
+        msg.tool_name.as_deref().unwrap_or("tool"),
+        msg.input_preview.as_deref().unwrap_or(""),
+        tokens,
+        msg.spill_id.as_deref().unwrap_or("unknown"),
+    );
+    estimate_tokens(&stub) < tokens
 }
 
 #[cfg(test)]

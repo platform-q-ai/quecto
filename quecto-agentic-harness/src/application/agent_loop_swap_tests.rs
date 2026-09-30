@@ -24,8 +24,7 @@ fn test_swap_registry_replaces_tool_registry() {
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
-        large_result_collapse:
-            crate::application::context_pruning::large_results::LargeResultCollapse::DISABLED,
+        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
@@ -68,8 +67,7 @@ fn test_swap_registry_info_reflects_new_count() {
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
-        large_result_collapse:
-            crate::application::context_pruning::large_results::LargeResultCollapse::DISABLED,
+        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
@@ -168,8 +166,7 @@ fn bare_agent() -> AgentLoopImpl {
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
-        large_result_collapse:
-            crate::application::context_pruning::large_results::LargeResultCollapse::DISABLED,
+        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })

@@ -120,8 +120,7 @@ async fn test_spill_preserves_message_content_after_spill() {
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
-        large_result_collapse:
-            crate::application::context_pruning::large_results::LargeResultCollapse::DISABLED,
+        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
@@ -169,8 +168,7 @@ fn tight_budget_agent(
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
-        large_result_collapse:
-            crate::application::context_pruning::large_results::LargeResultCollapse::DISABLED,
+        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
@@ -372,8 +370,7 @@ async fn failed_tool_spill_leaves_no_spill_id_and_blocks_collapse() {
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
-        large_result_collapse:
-            crate::application::context_pruning::large_results::LargeResultCollapse::DISABLED,
+        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
@@ -436,8 +433,7 @@ async fn ephemeral_session_spills_both_tool_output_and_conversation_messages() {
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
-        large_result_collapse:
-            crate::application::context_pruning::large_results::LargeResultCollapse::DISABLED,
+        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });

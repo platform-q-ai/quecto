@@ -29,9 +29,9 @@
 //!   and physical drops.
 
 use crate::application::context_pruning;
-use crate::application::context_pruning::large_results::LargeResultCollapse;
 use crate::application::sessions::use_cases::{ListRetainedContext, RetainContext};
 use crate::domain::context_calibration::EstimateScale;
+use crate::domain::large_result_collapse::LargeResultCollapse;
 use crate::domain::message::Message;
 use crate::domain::session_identity::SessionIdentity;
 use std::sync::{Arc, Mutex};
@@ -142,6 +142,10 @@ impl ContextManager {
     #[cfg(test)]
     pub fn context_knob_snapshot(&self) -> (u32, u32) {
         (self.pin_recent_turns, self.context_collapse_after_messages)
+    }
+    #[cfg(test)]
+    pub fn large_result_collapse(&self) -> LargeResultCollapse {
+        self.large_result_collapse
     }
 
     /// The configured budget clamped to the model's window, without a swarm

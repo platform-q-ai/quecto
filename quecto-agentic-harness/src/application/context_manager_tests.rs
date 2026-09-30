@@ -88,8 +88,7 @@ fn config_for(max_context_tokens: usize) -> ContextManagerConfig {
         max_context_tokens,
         pin_recent_turns: 2,
         context_collapse_after_messages: context_pruning::COLLAPSE_DISABLED,
-        large_result_collapse:
-            crate::application::context_pruning::large_results::LargeResultCollapse::DISABLED,
+        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
     }
 }
@@ -483,8 +482,7 @@ async fn the_count_based_collapse_is_counted_apart_from_the_ladder() {
         max_context_tokens: 190_000,
         pin_recent_turns: 1,
         context_collapse_after_messages: 1,
-        large_result_collapse:
-            crate::application::context_pruning::large_results::LargeResultCollapse::DISABLED,
+        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
     });
     let mut messages = vec![
@@ -599,7 +597,7 @@ fn the_window_budget_ignores_the_swarm_cap() {
 
 #[tokio::test]
 async fn a_plan_collapses_a_large_seen_result_and_latches_the_prefix_dirty() {
-    use crate::application::context_pruning::large_results::LargeResultCollapse;
+    use crate::domain::large_result_collapse::LargeResultCollapse;
     use crate::domain::message::ToolCall;
     let manager = ContextManager::new(ContextManagerConfig {
         large_result_collapse: LargeResultCollapse {
@@ -632,7 +630,11 @@ async fn a_plan_collapses_a_large_seen_result_and_latches_the_prefix_dirty() {
 
     assert_eq!(plan.large_results_collapsed, 1);
     assert_eq!(plan.tool_results_collapsed, 0, "not the count dial's");
-    assert!(messages[2].is_collapsed);
+    let result = messages
+        .iter()
+        .find(|m| m.tool_call_id.as_deref() == Some("call-1"))
+        .unwrap();
+    assert!(result.is_collapsed, "{}", result.content);
     assert!(
         plan.durable_prefix_dirty,
         "an in-place rewrite is persisted"

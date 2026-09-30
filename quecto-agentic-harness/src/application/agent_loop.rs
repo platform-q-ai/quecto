@@ -98,8 +98,7 @@ pub struct AgentLoopConfig {
     pub context_collapse_after_messages: u32,
     /// #2348: the size-aware collapse (`LargeResultCollapse::DISABLED`
     /// switches it off). Constructor field for the same reason.
-    pub large_result_collapse:
-        crate::application::context_pruning::large_results::LargeResultCollapse,
+    pub large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse,
     /// #1044: active model context window (`None` unknown); bounds pruning budget.
     pub model_context_window: Option<usize>,
     pub tool_profile_context: ToolProfileContext,
@@ -259,6 +258,13 @@ impl AgentLoopImpl {
     #[cfg(test)]
     pub fn context_knob_snapshot(&self) -> (u32, u32) {
         self.context_manager.context_knob_snapshot()
+    }
+    /// The size-aware collapse the loop was built with (#2348), test-gated.
+    #[cfg(test)]
+    pub fn large_result_collapse(
+        &self,
+    ) -> crate::domain::large_result_collapse::LargeResultCollapse {
+        self.context_manager.large_result_collapse()
     }
     /// Fire a progress event to the registered callback, if any. Takes a closure
     /// so the event is only constructed when a callback is registered; on the

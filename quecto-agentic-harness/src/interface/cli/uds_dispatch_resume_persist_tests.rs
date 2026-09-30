@@ -1,9 +1,6 @@
 //! Resume/prompt persistence dispatch regression tests split from
 //! `uds_dispatch_cov_tests.rs` to keep coverage files below the line-count gate.
 
-use std::pin::Pin;
-use std::sync::{Arc, Mutex};
-
 use super::fixture_tests::{Fixture, persist_current_session, persisted_watermark};
 use super::{dispatch_command, handle_resume_session};
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
@@ -11,6 +8,8 @@ use crate::application::context_pruning::build_manifest_text;
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::application::sessions::ports::SessionStore;
 use crate::domain::session_identity::SessionIdentity;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 
 fn id(key: impl Into<String>) -> SessionIdentity {
     SessionIdentity::from_persisted_key(key)
@@ -570,8 +569,7 @@ async fn multi_turn_jsonl_start_index_chain_contiguous_with_tools_and_manifest()
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
-        large_result_collapse:
-            crate::application::context_pruning::large_results::LargeResultCollapse::DISABLED,
+        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     }));
