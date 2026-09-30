@@ -196,9 +196,10 @@ fn a_summary_waits_for_the_gate_longer_than_a_record() {
     );
 }
 
-/// #2313 review L1: a summary the gate still holds off past its bound is
-/// dropped and counted as a record is, so the next record written notes
-/// it in `swarm_ops_dropped`.
+/// #2313 review L1 and final review: a summary the gate still holds off
+/// past its bound is dropped and counted apart from the records, so the
+/// next record written notes it as `swarm_run_summary_dropped`, not as a
+/// dropped `swarm_op`.
 #[test]
 fn a_summary_dropped_at_the_gate_is_counted_and_noted() {
     let base = tempfile::tempdir().unwrap();
@@ -207,13 +208,15 @@ fn a_summary_dropped_at_the_gate_is_counted_and_noted() {
         .with_summary_wait(std::time::Duration::from_millis(20));
     let holder = log.hold_gate_for(std::time::Duration::from_millis(500));
     ops.summarize(a_summary());
-    assert_eq!(ops.dropped.load(Ordering::Acquire), 1, "counted");
+    assert_eq!(ops.dropped.load(Ordering::Acquire), 0, "no record dropped");
+    assert_eq!(ops.summaries_dropped.load(Ordering::Acquire), 1, "counted");
     assert!(ops.warned.load(Ordering::Acquire), "the drop was reported");
     holder.join().unwrap();
     ops.record(observation());
     let lines = parsed(base.path(), "cli:gone");
     assert_eq!(lines.len(), 2, "{lines:?}");
-    assert_eq!(lines[0]["event"], "swarm_ops_dropped");
+    assert_eq!(lines[0]["event"], "swarm_run_summary_dropped");
     assert_eq!(lines[0]["dropped"], 1);
     assert_eq!(lines[1]["event"], "swarm_op");
+    assert_eq!(ops.summaries_dropped.load(Ordering::Acquire), 0, "noted");
 }
