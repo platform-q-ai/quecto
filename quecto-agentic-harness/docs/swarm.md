@@ -663,6 +663,14 @@ turn's `llm_turn_end` records the cached share of its input
 `quecto::swarm_board` tracing event. See
 [Sessions](sessions.md#context-management) for the dials.
 
+Every member request also carries the `swarm` tool definition, so its
+description (#2348) holds only the op grammar and what every member needs:
+3.5 KB, about 1.4k estimated tokens with the schema (2.5k before). The
+coordinator's prose (verification, recovery, awaiting approval, supervisor
+controls) is in the [agent manual](docs-tool-embeds/swarm.md), which the
+description tells a coordinator to read before `op=create`. A test pins the
+description at 3,584 bytes; the budget only shrinks.
+
 Each attempted logical request records available provider input/output/cache
 usage, unavailable values as null, retry and OAuth-refresh counters, outcome,
 duration, context estimate, and a hash of the logical system/tool prefix. The
