@@ -290,3 +290,23 @@ async fn a_board_invalid_records_a_schema_mismatch_that_need_not_be_its_cause() 
         }
     );
 }
+
+/// #2346 final review: a value nested too deep for the board's value type
+/// names its field, at the boundary too.
+#[tokio::test]
+async fn a_value_nested_too_deep_records_its_field() {
+    let (_directory, context, log) = logged();
+    let text = format!(
+        r#"{{"op":"claim","task_id":{}1{}}}"#,
+        "[".repeat(128),
+        "]".repeat(128)
+    );
+    let record = refusal(&context, &log, "claim", &text, RefusalKind::Invalid).await;
+    assert_eq!(
+        *record.arguments,
+        ArgumentFaults {
+            unreadable_args: names(&["task_id"]),
+            ..ArgumentFaults::NONE
+        }
+    );
+}

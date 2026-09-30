@@ -365,3 +365,28 @@ fn unreadable_fields_are_the_keys_a_value_cannot_hold() {
         assert_eq!(unreadable_fields(text), None, "{text}");
     }
 }
+
+/// #2346 final review: a field's value is checked at its real depth,
+/// inside the object: the object is one level, so a value nested 128
+/// levels makes the text 129 deep, which a `Value` cannot hold, and names
+/// its field; 127 levels is readable.
+#[test]
+fn an_unreadable_field_is_checked_at_its_real_depth() {
+    let nested = |levels: usize| {
+        format!(
+            r#"{{"op":"claim","task_id":{}1{}}}"#,
+            "[".repeat(levels),
+            "]".repeat(levels)
+        )
+    };
+    assert!(decode_value(&nested(127)).is_ok());
+    assert_eq!(unreadable_fields(&nested(127)), Some(vec![]));
+    for levels in [128, 129] {
+        assert!(decode_value(&nested(levels)).is_err(), "{levels}");
+        assert_eq!(
+            unreadable_fields(&nested(levels)),
+            Some(vec!["task_id".into()]),
+            "{levels}"
+        );
+    }
+}
