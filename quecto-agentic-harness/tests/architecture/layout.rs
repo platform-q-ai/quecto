@@ -1,52 +1,41 @@
 //! Filename-based, immediate-child layout ratchets for #2358.
 //! Include mod.rs and cfg(test) support names; exclude only *_tests.rs.
-
 use std::collections::BTreeSet;
 use std::io;
 use std::path::Path;
-
-#[derive(Debug)]
-struct FlatBudget<'a> {
-    path: &'a str,
-    // Original RED seam name retained: this is an exact baseline, not a ceiling.
-    maximum: usize,
-}
-
-#[derive(Debug)]
-struct MigratedCapability<'a> {
+// Explicit source-policy pair: relative path and exact expected count.
+struct Budget<'a>(&'a str, usize);
+struct Capability<'a> {
     path: &'a str,
     allowed_roles: &'a [&'a str],
 }
-
 #[derive(PartialEq, Eq)]
 enum Violation {
-    FlatBudgetExceeded {
+    BudgetMismatch {
         path: String,
         actual: usize,
-        maximum: usize,
+        expected: usize,
     },
-    UnexpectedMigratedEntry {
-        path: String,
-    },
-    InspectionFailed {
+    StrayEntry(String),
+    Inspection {
         path: String,
         reason: String,
     },
-    UnlistedPlacement {
-        path: String,
-    },
+    UndeclaredRole(String),
+    EmptyRole(String),
+    StalePlacement(String),
+    UnlistedPlacement(String),
 }
-
 impl std::fmt::Debug for Violation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::FlatBudgetExceeded {
+            Self::BudgetMismatch {
                 path,
                 actual,
-                maximum,
+                expected,
             } => {
-                write!(f, "{path}: actual {actual}, expected {maximum}; ")?;
-                if actual < maximum {
+                write!(f, "{path}: actual {actual}, expected {expected}; ")?;
+                if actual < expected {
                     write!(f, "lower {path} to {actual} in BUDGETS in this PR. {WIKI}")
                 } else {
                     write!(
@@ -55,22 +44,36 @@ impl std::fmt::Debug for Violation {
                     )
                 }
             }
-            Self::UnexpectedMigratedEntry { path } => write!(
+            Self::StrayEntry(path) => write!(
                 f,
-                "{path}: migrated shape violation; keep mod.rs and mod_tests.rs at the capability root, move implementation into this capability's declared role directories; for a present empty role, add an immediate regular .rs file to the role or remove the unused role directory. {WIKI}"
+                "{path}: migrated shape violation; move {path} into a declared role directory; keep only mod.rs and mod_tests.rs at the capability root. {WIKI}"
             ),
-            Self::UnlistedPlacement { path } => write!(
+            Self::UndeclaredRole(path) => {
+                let (capability, name) = path.rsplit_once('/').expect("role has capability parent");
+                write!(
+                    f,
+                    "{path}: undeclared role directory; add {name} to {capability} allowed_roles in MIGRATED or remove the directory. {WIKI}"
+                )
+            }
+            Self::EmptyRole(path) => write!(
+                f,
+                "{path}: empty role; put a .rs file anywhere beneath {path} or remove the unused role directory. {WIKI}"
+            ),
+            Self::StalePlacement(path) => write!(
+                f,
+                "{path}: stale transitional placement; remove {path} from PLACEMENTS when its directory has been retired. {WIKI}"
+            ),
+            Self::UnlistedPlacement(path) => write!(
                 f,
                 "{path}: unlisted immediate capability directory; add a placement row with this capability's wiki section and classify it as target, transitional, or testing, or move the directory into a listed placement. {WIKI}"
             ),
-            Self::InspectionFailed { path, reason } => write!(
+            Self::Inspection { path, reason } => write!(
                 f,
-                "{path}: inspection failed ({reason}); restore a readable real directory/file tree; descendant symlinks are not inspected. {WIKI}"
+                "{path}: inspection failed ({reason}); restore {path} as a readable real directory/file tree; descendant symlinks are not inspected. {WIKI}"
             ),
         }
     }
 }
-
 const LAYERS: &[&str] = &[
     "domain",
     "application",
@@ -81,866 +84,265 @@ const LAYERS: &[&str] = &[
 const WIKI: &str =
     "https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture";
 #[rustfmt::skip] // One readable source-policy row per path.
-const BUDGETS: &[FlatBudget<'_>] = &[
-    FlatBudget { path: "domain", maximum: 71 },
-    FlatBudget { path: "application", maximum: 45 },
-    FlatBudget { path: "interface", maximum: 6 },
-    FlatBudget { path: "infrastructure", maximum: 28 },
-    FlatBudget { path: "composition", maximum: 24 },
-    FlatBudget { path: "interface/cli", maximum: 106 },
-    FlatBudget { path: "infrastructure/tools", maximum: 122 },
-    FlatBudget { path: "infrastructure/persistence", maximum: 36 },
-    FlatBudget { path: "application/swarm", maximum: 23 },
-    FlatBudget { path: "domain/swarm", maximum: 15 },
+const BUDGETS: &[Budget<'_>] = &[
+    Budget("domain", 71),
+    Budget("application", 45),
+    Budget("interface", 6),
+    Budget("infrastructure", 28),
+    Budget("composition", 24),
+    Budget("interface/cli", 106),
+    Budget("infrastructure/tools", 122),
+    Budget("infrastructure/persistence", 36),
+    Budget("application/swarm", 23),
+    Budget("domain/swarm", 15),
 ];
 // L0 moves nothing: future slices explicitly opt capabilities into strict shape.
-const MIGRATED: &[MigratedCapability<'_>] = &[];
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+const MIGRATED: &[Capability<'_>] = &[];
+#[derive(PartialEq, Eq)]
 enum Classification {
     Target,
     Transitional,
     Testing,
 }
-#[derive(Debug, Clone)]
 struct Placement<'a> {
     layer: &'a str,
     name: &'a str,
-    citation: String,
+    _citation: &'a str,
     classification: Classification,
 }
-
-fn placements() -> Vec<Placement<'static>> {
-    let targets = [
-        (
-            "domain",
-            "conversation admission environments catalogue tool_policy sessions agents audit inference commander identity shared external_agent swarm workflow",
-        ),
-        (
-            "application",
-            "admission agent_turn audit catalogue configuration environments extensions external_agent provider_runtime providers search sessions subagents swarm tools workflow agent_commander shared",
-        ),
-        ("interface", "cli repl tools uds"),
-        (
-            "infrastructure",
-            "admission auth config extensions external_agents http persistence processes providers search security tools workspace judgment observability time",
-        ),
-        ("composition", "bootstrap runtime logging shutdown"),
-    ];
-    let mut rows = Vec::new();
-    for (layer, names) in targets {
-        for name in names.split_whitespace() {
-            rows.push(Placement {
-                layer,
-                name,
-                citation: format!("{WIKI}#{layer}"),
-                classification: Classification::Target,
-            });
-        }
-    }
-    for (layer, name, classification) in [
-        (
-            "domain",
-            "environment_registry",
-            Classification::Transitional,
-        ),
-        ("application", "agent_loop", Classification::Transitional),
-        ("infrastructure", "test_support", Classification::Testing),
-    ] {
-        rows.push(Placement {
-            layer,
-            name,
-            citation: format!("{WIKI}#capability-coverage-and-naming"),
-            classification,
-        });
-    }
-    rows
+// Compile-time expansion: explicit names and wiki ownership, never runtime name generation.
+macro_rules! placement_table {
+    ($(($layer:literal, $citation:literal, $kind:ident) => [$($name:literal),*];)*) => {
+        const PLACEMENTS: &[Placement<'static>] = &[$($(Placement {
+            layer: $layer, name: $name, _citation: $citation,
+            classification: Classification::$kind,
+        },)*)*];
+    };
 }
-
-#[derive(Debug, Clone, Copy)]
+placement_table! {
+    ("domain", "https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture#domain", Target) => ["conversation", "admission", "environments", "catalogue", "tool_policy", "sessions", "agents", "audit", "inference", "commander", "identity", "shared", "external_agent", "swarm", "workflow"];
+    ("application", "https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture#application", Target) => ["admission", "agent_turn", "audit", "catalogue", "configuration", "environments", "extensions", "external_agent", "provider_runtime", "providers", "search", "sessions", "subagents", "swarm", "tools", "workflow", "agent_commander", "shared"];
+    ("interface", "https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture#interface", Target) => ["cli", "repl", "tools", "uds"];
+    ("infrastructure", "https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture#infrastructure", Target) => ["admission", "auth", "config", "extensions", "external_agents", "http", "persistence", "processes", "providers", "search", "security", "tools", "workspace", "judgment", "observability", "time"];
+    ("composition", "https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture#composition", Target) => ["bootstrap", "runtime", "logging", "shutdown"];
+    ("domain", "https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture#capability-coverage-and-naming", Transitional) => ["environment_registry"];
+    ("application", "https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture#capability-coverage-and-naming", Transitional) => ["agent_loop"];
+    ("infrastructure", "https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture#capability-coverage-and-naming", Testing) => ["test_support"];
+}
 enum Kind {
     File,
     Directory,
 }
-#[derive(Debug)]
-struct Entry {
-    name: String,
-    kind: Kind,
+struct Entry(String, Kind);
+fn invalid(message: impl Into<String>) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message.into())
 }
-
-fn scan(path: &Path) -> io::Result<Vec<Entry>> {
-    let metadata = std::fs::symlink_metadata(path)?;
-    if metadata.file_type().is_dir() {
-        let mut entries = Vec::new();
-        for entry in std::fs::read_dir(path)? {
-            let entry = entry?;
-            let name = entry.file_name().into_string().map_err(|name| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("non-UTF8 entry {name:?}"),
-                )
-            })?;
-            let file_type = entry.file_type().map_err(|error| {
-                io::Error::new(error.kind(), format!("{}: {error}", entry.path().display()))
-            })?;
-            let kind = match (file_type.is_file(), file_type.is_dir()) {
-                (true, false) => Kind::File,
-                (false, true) => Kind::Directory,
-                _ => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!(
-                            "{}: expected regular file or directory",
-                            entry.path().display()
-                        ),
-                    ));
-                }
-            };
-            entries.push(Entry { name, kind });
-        }
-        entries.sort_by(|a, b| a.name.cmp(&b.name));
-        Ok(entries)
+fn real_directory(path: &Path) -> io::Result<()> {
+    if std::fs::symlink_metadata(path)?.is_dir() {
+        Ok(())
     } else {
-        Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "expected directory (symlinks are not allowed)",
-        ))
+        Err(invalid(format!("{}: not a real directory", path.display())))
     }
 }
-
-// The caller root is canonicalized once; only relative descendants are checked.
-fn checked_directory(root: &Path, relative: &str) -> io::Result<std::path::PathBuf> {
-    let mut current = root.to_path_buf();
-    for component in Path::new(relative).components() {
-        current.push(component.as_os_str());
-        if std::fs::symlink_metadata(&current)?.file_type().is_dir() {
-            continue;
-        }
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("{}: expected real directory", current.display()),
-        ));
-    }
-    Ok(current)
+fn scan(path: &Path) -> io::Result<Vec<Entry>> {
+    real_directory(path)?;
+    std::fs::read_dir(path)?
+        .map(|entry| {
+            let entry = entry?;
+            let name = entry
+                .file_name()
+                .into_string()
+                .map_err(|_| invalid("non-UTF-8 entry name"))?;
+            let metadata = std::fs::symlink_metadata(entry.path())?;
+            let kind = if metadata.is_file() {
+                std::fs::File::open(entry.path())
+                    .map_err(|error| io::Error::new(error.kind(), format!("{name}: {error}")))?;
+                Kind::File
+            } else if metadata.is_dir() {
+                Kind::Directory
+            } else {
+                return Err(invalid(format!("{name}: symlink or non-regular entry")));
+            };
+            Ok(Entry(name, kind))
+        })
+        .collect()
 }
-
-fn canonical_root(root: &Path) -> Result<std::path::PathBuf, Vec<Violation>> {
-    std::fs::canonicalize(root).map_err(|error| {
-        vec![Violation::InspectionFailed {
-            path: root.display().to_string(),
-            reason: error.to_string(),
-        }]
-    })
-}
-
 fn regular_rust(entry: &Entry) -> bool {
-    matches!(entry.kind, Kind::File) && entry.name.ends_with(".rs")
+    matches!(entry.1, Kind::File) && entry.0.ends_with(".rs")
 }
-
-fn inspect(
-    root: &Path,
-    relative: &str,
-    scanner: &impl Fn(&Path) -> io::Result<Vec<Entry>>,
-    failures: &mut Vec<Violation>,
-) -> Option<Vec<Entry>> {
-    match checked_directory(root, relative).and_then(|path| scanner(&path)) {
-        Ok(entries) => Some(entries),
-        Err(error) => {
-            failures.push(Violation::InspectionFailed {
-                path: relative.into(),
-                reason: error.to_string(),
-            });
-            None
+// Canonicalize only the caller root; check descendants without following links.
+fn checked_directory(root: &Path, relative: &str) -> io::Result<std::path::PathBuf> {
+    let mut path = root.to_path_buf();
+    for component in Path::new(relative).components() {
+        path.push(component);
+        real_directory(&path)?;
+    }
+    Ok(path)
+}
+fn canonical_root(root: &Path) -> io::Result<std::path::PathBuf> {
+    let root = std::fs::canonicalize(root)?;
+    real_directory(&root)?;
+    Ok(root)
+}
+struct Inspector<'a, F> {
+    root: &'a Path,
+    scanner: &'a F,
+    failures: Vec<Violation>,
+}
+impl<F: Fn(&Path) -> io::Result<Vec<Entry>>> Inspector<'_, F> {
+    fn inspect(&mut self, relative: &str) -> Option<Vec<Entry>> {
+        checked_directory(self.root, relative)
+            .and_then(|path| (self.scanner)(&path))
+            .map_err(|error| {
+                self.failures.push(Violation::Inspection {
+                    path: relative.into(),
+                    reason: error.to_string(),
+                })
+            })
+            .ok()
+    }
+    // Visit all descendants, including those after a Rust file: any inspection error fails closed.
+    fn role_has_rust(&mut self, relative: &str) -> Option<bool> {
+        let entries = self.inspect(relative)?;
+        let mut populated = false;
+        let mut complete = true;
+        for entry in entries {
+            match entry.1 {
+                Kind::File => populated |= regular_rust(&entry),
+                Kind::Directory => match self.role_has_rust(&format!("{relative}/{}", entry.0)) {
+                    Some(found) => populated |= found,
+                    None => complete = false,
+                },
+            }
+        }
+        complete.then_some(populated)
+    }
+    fn layout(&mut self, budgets: &[Budget<'_>], migrated: &[Capability<'_>]) {
+        for budget in budgets {
+            if let Some(entries) = self.inspect(budget.0) {
+                let actual = entries
+                    .iter()
+                    .filter(|entry| match entry.0.strip_suffix("_tests.rs") {
+                        Some(_) => false,
+                        None => regular_rust(entry),
+                    })
+                    .count();
+                if actual == budget.1 {
+                    continue;
+                }
+                self.failures.push(Violation::BudgetMismatch {
+                    path: budget.0.into(),
+                    actual,
+                    expected: budget.1,
+                });
+            }
+        }
+        for capability in migrated {
+            if let Some(entries) = self.inspect(capability.path) {
+                for entry in entries {
+                    let path = format!("{}/{}", capability.path, entry.0);
+                    match entry.1 {
+                        Kind::File if matches!(entry.0.as_str(), "mod.rs" | "mod_tests.rs") => {}
+                        Kind::Directory if capability.allowed_roles.contains(&entry.0.as_str()) => {
+                            if let Some(false) = self.role_has_rust(&path) {
+                                self.failures.push(Violation::EmptyRole(path));
+                            }
+                        }
+                        Kind::Directory => self.failures.push(Violation::UndeclaredRole(path)),
+                        _ => self.failures.push(Violation::StrayEntry(path)),
+                    }
+                }
+            }
+        }
+    }
+    fn placements(&mut self, rows: &[Placement<'_>]) {
+        let paths: BTreeSet<_> = rows.iter().map(|row| (row.layer, row.name)).collect();
+        for layer in LAYERS {
+            if let Some(entries) = self.inspect(layer) {
+                for row in rows.iter().filter(|row| {
+                    row.layer == *layer && row.classification == Classification::Transitional
+                }) {
+                    if entries
+                        .iter()
+                        .any(|entry| entry.0 == row.name && matches!(entry.1, Kind::Directory))
+                    {
+                        continue;
+                    }
+                    self.failures
+                        .push(Violation::StalePlacement(format!("{layer}/{}", row.name)));
+                }
+                for entry in entries {
+                    if matches!(entry.1, Kind::Directory) {
+                        let path = format!("{layer}/{}", entry.0);
+                        if paths.contains(&(*layer, entry.0.as_str())) {
+                            continue;
+                        }
+                        self.failures.push(Violation::UnlistedPlacement(path));
+                    }
+                }
+            }
         }
     }
 }
-
-fn validate(
-    root: &Path,
-    budgets: &[FlatBudget<'_>],
-    migrated: &[MigratedCapability<'_>],
-) -> Vec<Violation> {
-    validate_with(root, budgets, migrated, &scan)
+fn validate(root: &Path, budgets: &[Budget<'_>], migrated: &[Capability<'_>]) -> Vec<Violation> {
+    validate_all(root, budgets, migrated, None, &scan)
 }
-
-fn validate_with(
-    root: &Path,
-    budgets: &[FlatBudget<'_>],
-    migrated: &[MigratedCapability<'_>],
-    scanner: &impl Fn(&Path) -> io::Result<Vec<Entry>>,
-) -> Vec<Violation> {
-    validate_all(root, budgets, migrated, None, scanner)
-}
-
 // One canonicalization boundary for a complete inspection, including placements.
 fn validate_all(
     root: &Path,
-    budgets: &[FlatBudget<'_>],
-    migrated: &[MigratedCapability<'_>],
+    budgets: &[Budget<'_>],
+    migrated: &[Capability<'_>],
     rows: Option<&[Placement<'_>]>,
     scanner: &impl Fn(&Path) -> io::Result<Vec<Entry>>,
 ) -> Vec<Violation> {
     let root = match canonical_root(root) {
         Ok(root) => root,
-        Err(failures) => return failures,
+        Err(error) => {
+            return vec![Violation::Inspection {
+                path: root.display().to_string(),
+                reason: error.to_string(),
+            }];
+        }
     };
-    let mut failures = inspect_layout(&root, budgets, migrated, scanner);
+    let mut inspector = Inspector {
+        root: &root,
+        scanner,
+        failures: Vec::new(),
+    };
+    inspector.layout(budgets, migrated);
     if let Some(rows) = rows {
-        failures.extend(inspect_placements(&root, rows, scanner));
+        inspector.placements(rows);
     }
-    failures
+    let mut reported = BTreeSet::new();
+    inspector.failures.retain(|failure| match failure {
+        Violation::Inspection { path, .. } => reported.insert(path.clone()),
+        _ => true,
+    });
+    inspector.failures
 }
-
-fn inspect_layout(
-    root: &Path,
-    budgets: &[FlatBudget<'_>],
-    migrated: &[MigratedCapability<'_>],
-    scanner: &impl Fn(&Path) -> io::Result<Vec<Entry>>,
-) -> Vec<Violation> {
-    let mut failures = Vec::new();
-    for budget in budgets {
-        if let Some(entries) = inspect(root, budget.path, scanner, &mut failures) {
-            let actual = entries
-                .iter()
-                .filter(|entry| match entry.name.strip_suffix("_tests.rs") {
-                    Some(_) => false,
-                    None => regular_rust(entry),
-                })
-                .count();
-            if actual == budget.maximum {
-                continue;
-            }
-            failures.push(Violation::FlatBudgetExceeded {
-                path: budget.path.into(),
-                actual,
-                maximum: budget.maximum,
-            });
-        }
-    }
-    for capability in migrated {
-        if let Some(entries) = inspect(root, capability.path, scanner, &mut failures) {
-            for entry in entries {
-                let path = format!("{}/{}", capability.path, entry.name);
-                match entry.kind {
-                    Kind::File if matches!(entry.name.as_str(), "mod.rs" | "mod_tests.rs") => {}
-                    Kind::Directory if capability.allowed_roles.contains(&entry.name.as_str()) => {
-                        if let Some(children) = inspect(root, &path, scanner, &mut failures) {
-                            if children.iter().any(regular_rust) {
-                                continue;
-                            }
-                            failures.push(Violation::UnexpectedMigratedEntry { path });
-                        }
-                    }
-                    _ => failures.push(Violation::UnexpectedMigratedEntry { path }),
-                }
-            }
-        }
-    }
-    failures
-}
-
-fn validate_placements(root: &Path, rows: &[Placement<'_>]) -> Vec<Violation> {
+fn placements(root: &Path, rows: &[Placement<'_>]) -> Vec<Violation> {
     validate_all(root, &[], &[], Some(rows), &scan)
 }
-
-fn inspect_placements(
-    root: &Path,
-    rows: &[Placement<'_>],
-    scanner: &impl Fn(&Path) -> io::Result<Vec<Entry>>,
-) -> Vec<Violation> {
-    let mut failures = Vec::new();
-    let paths: BTreeSet<_> = rows
-        .iter()
-        .map(|row| {
-            // Citation/classification describe ownership, not a self-policy schema.
-            let _ = (&row.citation, row.classification);
-            format!("{}/{}", row.layer, row.name)
-        })
-        .collect();
-    for layer in LAYERS {
-        if let Some(entries) = inspect(root, layer, scanner, &mut failures) {
-            for entry in entries {
-                if matches!(entry.kind, Kind::Directory) {
-                    let path = format!("{layer}/{}", entry.name);
-                    if paths.contains(&path) {
-                        continue;
-                    }
-                    failures.push(Violation::UnlistedPlacement { path });
-                }
-            }
-        }
-    }
-    failures
-}
-
 #[test]
 fn source_tree_layout_obeys_checked_in_policy() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let rows = placements();
-    let keys: Vec<_> = BUDGETS
+    let rows = PLACEMENTS;
+    let keys: BTreeSet<_> = BUDGETS
         .iter()
-        .map(|row| ("budget", row.path.to_owned()))
-        .chain(MIGRATED.iter().map(|row| ("migrated", row.path.to_owned())))
-        .chain(
-            rows.iter()
-                .map(|row| ("placement", format!("{}/{}", row.layer, row.name))),
-        )
+        .map(|row| ("budget", "", row.0))
+        .chain(MIGRATED.iter().map(|row| ("migrated", "", row.path)))
+        .chain(rows.iter().map(|row| ("placement", row.layer, row.name)))
         .collect();
     assert_eq!(
-        keys.iter().collect::<BTreeSet<_>>().len(),
         keys.len(),
+        BUDGETS.len() + MIGRATED.len() + rows.len(),
         "duplicate source-policy row"
     );
-    let failures = validate_all(&root, BUDGETS, MIGRATED, Some(&rows), &scan);
+    let failures = validate_all(&root, BUDGETS, MIGRATED, Some(rows), &scan);
     assert!(
         failures.is_empty(),
         "layout policy violations: {failures:#?}"
     );
 }
-
-#[test]
-fn adding_flat_file_exceeds_ratchet() {
-    let tree = tempfile::tempdir().expect("create isolated layout fixture");
-    let domain = tree.path().join("domain");
-    std::fs::create_dir(&domain).expect("create domain layer");
-    std::fs::write(domain.join("mod.rs"), "").expect("write counted module root");
-    let budgets = [FlatBudget {
-        path: "domain",
-        maximum: 1,
-    }];
-    assert_eq!(validate(tree.path(), &budgets, &[]), Vec::new());
-
-    std::fs::write(domain.join("extra.rs"), "").expect("add flat production file");
-    assert_eq!(
-        validate(tree.path(), &budgets, &[]),
-        vec![Violation::FlatBudgetExceeded {
-            path: "domain".into(),
-            actual: 2,
-            maximum: 1,
-        }],
-        "adding an immediate flat .rs file must exceed the unchanged budget"
-    );
-}
-
-#[test]
-fn stray_file_in_migrated_capability_fails_shape() {
-    let tree = tempfile::tempdir().expect("create isolated layout fixture");
-    let capability = tree.path().join("application/sessions");
-    std::fs::create_dir_all(&capability).expect("create migrated capability");
-    std::fs::write(capability.join("mod.rs"), "").expect("write permitted module root");
-    for role in ["use_cases", "ports", "dto"] {
-        std::fs::create_dir(capability.join(role)).expect("create permitted role");
-        std::fs::write(capability.join(role).join("fixture.rs"), "")
-            .expect("populate permitted role");
-    }
-    let migrated = [MigratedCapability {
-        path: "application/sessions",
-        allowed_roles: &["use_cases", "ports", "dto"],
-    }];
-    assert_eq!(validate(tree.path(), &[], &migrated), Vec::new());
-
-    std::fs::write(capability.join("stray.rs"), "").expect("add stray direct file");
-    assert_eq!(
-        validate(tree.path(), &[], &migrated),
-        vec![Violation::UnexpectedMigratedEntry {
-            path: "application/sessions/stray.rs".into(),
-        }],
-        "a migrated root permits only explicit role directories and mod.rs"
-    );
-}
-
-// Small fixture helpers keep the filesystem scenarios visible without repeated setup.
-fn fixture(directories: &[&str], files: &[&str]) -> tempfile::TempDir {
-    let root = tempfile::tempdir().unwrap();
-    for directory in directories {
-        std::fs::create_dir_all(root.path().join(directory)).unwrap();
-    }
-    for file in files {
-        let path = root.path().join(file);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, "").unwrap();
-    }
-    root
-}
-
-fn budget(path: &str, maximum: usize) -> FlatBudget<'_> {
-    FlatBudget { path, maximum }
-}
-
-fn capability<'a>(path: &'a str, allowed_roles: &'a [&'a str]) -> MigratedCapability<'a> {
-    MigratedCapability {
-        path,
-        allowed_roles,
-    }
-}
-
-fn mismatch(path: &str, actual: usize, maximum: usize) -> Violation {
-    Violation::FlatBudgetExceeded {
-        path: path.into(),
-        actual,
-        maximum,
-    }
-}
-
-fn unexpected(path: impl Into<String>) -> Violation {
-    Violation::UnexpectedMigratedEntry { path: path.into() }
-}
-
-fn flat(root: &Path, path: &str, expected: usize) -> Vec<Violation> {
-    validate(root, &[budget(path, expected)], &[])
-}
-
-fn shape(root: &Path, path: &str, roles: &[&str]) -> Vec<Violation> {
-    validate(root, &[], &[capability(path, roles)])
-}
-
-#[test]
-fn budget_counts_only_immediate_rust_files_and_excludes_only_test_suffix() {
-    let root = fixture(
-        &["domain/nested.rs"],
-        &[
-            "domain/mod.rs",
-            "domain/cfg_test_support.rs",
-            "domain/one.rs",
-            "domain/one_tests.rs",
-            "domain/_tests.rs",
-            "domain/README.md",
-            "domain/nested.rs/deep.rs",
-        ],
-    );
-    for expected in [2, 3, 4] {
-        let failures = flat(root.path(), "domain", expected);
-        let wanted = if expected == 3 {
-            vec![]
-        } else {
-            vec![mismatch("domain", 3, expected)]
-        };
-        assert_eq!(failures, wanted, "exact baseline {expected}");
-    }
-}
-
-#[test]
-fn migrated_roots_allow_only_mod_and_declared_role_directories() {
-    let root = fixture(
-        &[],
-        &[
-            "application/sessions/mod.rs",
-            "application/sessions/mod_tests.rs",
-            "application/sessions/use_cases/test_support.rs",
-        ],
-    );
-    let path = root.path().join("application/sessions");
-    let policy = [capability("application/sessions", &["use_cases"])];
-    assert!(validate(root.path(), &[], &policy).is_empty());
-    for name in ["flat_tests.rs", "support.rs", "README.md", "ports"] {
-        std::fs::write(path.join(name), "").unwrap();
-    }
-    std::fs::create_dir(path.join("handles")).unwrap();
-    std::fs::create_dir(path.join("helpers")).unwrap();
-    let failures = validate(root.path(), &[], &policy);
-    assert_eq!(failures.len(), 6, "{failures:?}");
-    assert!(
-        failures
-            .iter()
-            .all(|failure| matches!(failure, Violation::UnexpectedMigratedEntry { .. }))
-    );
-}
-
-#[test]
-fn migrated_roles_are_capability_specific_and_sparse() {
-    for (path, role) in [
-        ("domain/sessions", "events"),
-        ("application/sessions", "ports"),
-        ("interface/cli", "presenters"),
-        ("infrastructure/providers", "anthropic"),
-    ] {
-        let root = fixture(&[], &[&format!("{path}/{role}/one.rs")]);
-        let directory = root.path().join(path);
-        let roles = [role];
-        let migrated = [capability(path, &roles)];
-        assert!(validate(root.path(), &[], &migrated).is_empty());
-        std::fs::create_dir(directory.join("handles")).unwrap();
-        assert_eq!(
-            validate(root.path(), &[], &migrated),
-            vec![unexpected(format!("{path}/handles"))]
-        );
-    }
-    let root = fixture(&["composition/bootstrap"], &[]);
-    assert!(shape(root.path(), "composition/bootstrap", &[]).is_empty());
-}
-
-#[test]
-fn inspection_failures_and_restored_directory() {
-    let root = tempfile::tempdir().unwrap();
-    let budget = [budget("domain", 0)];
-    assert!(matches!(
-        validate(root.path(), &budget, &[]).as_slice(),
-        [Violation::InspectionFailed { .. }]
-    ));
-    std::fs::write(root.path().join("domain"), "").unwrap();
-    assert!(matches!(
-        validate(root.path(), &budget, &[]).as_slice(),
-        [Violation::InspectionFailed { .. }]
-    ));
-    std::fs::remove_file(root.path().join("domain")).unwrap();
-    std::fs::create_dir(root.path().join("domain")).unwrap();
-    assert!(validate(root.path(), &budget, &[]).is_empty());
-    let failures = validate_with(root.path(), &budget, &[], &|_| {
-        Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "entry metadata denied",
-        ))
-    });
-    assert!(
-        matches!(failures.as_slice(), [Violation::InspectionFailed { reason, .. }] if reason.contains("entry metadata denied"))
-    );
-}
-
-#[test]
-fn placement_policy_covers_future_targets_but_rejects_unknown_directories() {
-    for (known, unknown) in [
-        ("application/sessions", "application/helpers"),
-        ("domain/sessions", "domain/unknown"),
-    ] {
-        let root = fixture(LAYERS, &[]);
-        let rows = placements();
-        assert!(validate_placements(root.path(), &rows).is_empty());
-        std::fs::create_dir(root.path().join(known)).unwrap();
-        std::fs::write(root.path().join("application/legacy.rs"), "").unwrap();
-        assert!(validate_placements(root.path(), &rows).is_empty());
-        std::fs::create_dir(root.path().join(unknown)).unwrap();
-        assert_eq!(
-            validate_placements(root.path(), &rows),
-            vec![Violation::UnlistedPlacement {
-                path: unknown.into()
-            }]
-        );
-    }
-}
-
-#[cfg(unix)]
-#[test]
-fn filesystem_special_entries_and_non_utf8_names_fail_closed() {
-    use std::os::unix::{ffi::OsStringExt, fs::symlink};
-    let root = fixture(&["domain"], &["target.rs"]);
-    symlink(
-        root.path().join("target.rs"),
-        root.path().join("domain/link.rs"),
-    )
-    .unwrap();
-    assert!(scan(&root.path().join("domain")).is_err());
-    std::fs::remove_file(root.path().join("domain/link.rs")).unwrap();
-    let socket_path = root.path().join("domain/socket");
-    let socket = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
-    assert!(scan(&root.path().join("domain")).is_err());
-    drop(socket);
-    std::fs::remove_file(socket_path).unwrap();
-    std::fs::write(
-        root.path()
-            .join("domain")
-            .join(std::ffi::OsString::from_vec(vec![0xff])),
-        "",
-    )
-    .unwrap();
-    assert!(scan(&root.path().join("domain")).is_err());
-    symlink(root.path().join("domain"), root.path().join("application")).unwrap();
-    assert!(scan(&root.path().join("application")).is_err());
-}
-
-#[test]
-fn migrated_entry_types_are_checked() {
-    let root = fixture(&["domain/sessions/mod.rs"], &["domain/sessions/events"]);
-    let failures = validate(
-        root.path(),
-        &[],
-        &[capability("domain/sessions", &["events"])],
-    );
-    assert_eq!(failures.len(), 2, "{failures:?}");
-    assert!(
-        failures
-            .iter()
-            .all(|failure| matches!(failure, Violation::UnexpectedMigratedEntry { .. }))
-    );
-}
-
-#[cfg(unix)]
-#[test]
-fn ancestor_symlinks_cannot_escape_the_inspected_root() {
-    use std::os::unix::fs::symlink;
-    let root = tempfile::tempdir().unwrap();
-    let outside = tempfile::tempdir().unwrap();
-    std::fs::create_dir(outside.path().join("swarm")).unwrap();
-    symlink(outside.path(), root.path().join("domain")).unwrap();
-    assert!(matches!(
-        flat(root.path(), "domain/swarm", 0).as_slice(),
-        [Violation::InspectionFailed { .. }]
-    ));
-    assert!(matches!(
-        shape(root.path(), "domain/swarm", &[]).as_slice(),
-        [Violation::InspectionFailed { .. }]
-    ));
-    symlink(outside.path(), root.path().join("linked_root")).unwrap();
-    std::fs::create_dir(outside.path().join("domain")).unwrap();
-    assert!(flat(&root.path().join("linked_root"), "domain", 0).is_empty());
-}
-
-#[test]
-fn missing_or_file_substituted_migrated_and_layer_roots_fail() {
-    let root = tempfile::tempdir().unwrap();
-    let policy = [capability("domain/sessions", &[])];
-    assert!(matches!(
-        validate(root.path(), &[], &policy).as_slice(),
-        [Violation::InspectionFailed { .. }]
-    ));
-    std::fs::create_dir(root.path().join("domain")).unwrap();
-    std::fs::write(root.path().join("domain/sessions"), "").unwrap();
-    assert!(matches!(
-        validate(root.path(), &[], &policy).as_slice(),
-        [Violation::InspectionFailed { .. }]
-    ));
-    let failures = validate_placements(root.path(), &placements());
-    assert_eq!(failures.len(), 4, "{failures:?}");
-    assert!(
-        failures
-            .iter()
-            .all(|failure| matches!(failure, Violation::InspectionFailed { .. }))
-    );
-    std::fs::write(root.path().join("application"), "").unwrap();
-    assert_eq!(validate_placements(root.path(), &placements()).len(), 4);
-}
-
-#[test]
-fn amendment_exact_decrease_fails() {
-    let root = fixture(&[], &["domain/mod.rs"]);
-    assert_eq!(flat(root.path(), "domain", 2).len(), 1);
-}
-
-#[test]
-fn amendment_empty_role_fails_but_one_rust_file_passes() {
-    for files in [
-        &[][..],
-        &["README.md"][..],
-        &["nested/deep.rs"][..],
-        &["one.rs"][..],
-        &["tests_tests.rs"][..],
-    ] {
-        let paths: Vec<_> = files
-            .iter()
-            .map(|name| format!("domain/sessions/entities/{name}"))
-            .collect();
-        let names: Vec<_> = paths.iter().map(String::as_str).collect();
-        let root = fixture(&["domain/sessions/entities"], &names);
-        let failures = validate(
-            root.path(),
-            &[],
-            &[capability("domain/sessions", &["entities"])],
-        );
-        if files
-            .iter()
-            .any(|name| matches!(*name, "one.rs" | "tests_tests.rs"))
-        {
-            assert!(failures.is_empty(), "{files:?}");
-        } else {
-            assert_eq!(
-                failures,
-                vec![unexpected("domain/sessions/entities")],
-                "{files:?}"
-            );
-        }
-    }
-}
-
-#[test]
-fn amendment_count_neutral_rename_and_replacement_pass() {
-    let root = tempfile::tempdir().unwrap();
-    std::fs::create_dir(root.path().join("domain")).unwrap();
-    std::fs::write(root.path().join("domain/old.rs"), "old").unwrap();
-    let budgets = [budget("domain", 1)];
-    assert!(validate(root.path(), &budgets, &[]).is_empty());
-    std::fs::rename(
-        root.path().join("domain/old.rs"),
-        root.path().join("domain/new.rs"),
-    )
-    .unwrap();
-    assert!(validate(root.path(), &budgets, &[]).is_empty());
-    std::fs::write(root.path().join("domain/new.rs"), "replacement").unwrap();
-    assert!(validate(root.path(), &budgets, &[]).is_empty());
-}
-
-#[cfg(unix)]
-#[test]
-fn amendment_role_symlink_and_read_failure_fail_closed() {
-    let root = fixture(&["domain/sessions/entities"], &["outside.rs"]);
-    let role = root.path().join("domain/sessions/entities");
-    std::os::unix::fs::symlink(root.path().join("outside.rs"), role.join("linked.rs")).unwrap();
-    let migrated = [capability("domain/sessions", &["entities"])];
-    assert!(matches!(validate(root.path(), &[], &migrated).as_slice(),
-        [Violation::InspectionFailed { path, reason }] if path == "domain/sessions/entities" && reason.contains("linked.rs")));
-    let failures = validate_with(root.path(), &[], &migrated, &|path| {
-        if path.ends_with("entities") {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "role read denied",
-            ));
-        }
-        scan(path)
-    });
-    assert!(
-        matches!(failures.as_slice(), [Violation::InspectionFailed { path, reason }] if path == "domain/sessions/entities" && reason.contains("role read denied"))
-    );
-}
-
-#[test]
-fn amendment_diagnostics_name_concrete_adjustments() {
-    for (failure, fragments) in [
-        (
-            mismatch("domain", 2, 1),
-            &["BUDGETS", "capability", WIKI][..],
-        ),
-        (
-            mismatch("domain", 1, 2),
-            &["actual 1, expected 2", "lower domain to 1 in BUDGETS"][..],
-        ),
-        (
-            Violation::UnlistedPlacement {
-                path: "domain/widgets".into(),
-            },
-            &["add a placement row with this capability's wiki section"][..],
-        ),
-        (
-            unexpected("domain/sessions/entities"),
-            &["add an immediate regular .rs file to the role"][..],
-        ),
-    ] {
-        let message = format!("{failure:?}");
-        for fragment in fragments {
-            assert!(message.contains(fragment), "{message}");
-        }
-    }
-}
-
-#[cfg(unix)]
-#[test]
-fn unified_inspection_accepts_caller_symlink_for_layout_and_placements() {
-    let root = tempfile::tempdir().unwrap();
-    for layer in LAYERS {
-        std::fs::create_dir_all(root.path().join("real").join(layer)).unwrap();
-    }
-    std::fs::create_dir(root.path().join("real/domain/sessions")).unwrap();
-    std::os::unix::fs::symlink(root.path().join("real"), root.path().join("alias")).unwrap();
-    assert!(flat(&root.path().join("alias"), "domain", 0).is_empty());
-    assert!(
-        validate_all(
-            &root.path().join("alias"),
-            &[budget("domain", 0)],
-            &[],
-            Some(&placements()),
-            &scan
-        )
-        .is_empty()
-    );
-}
-
-#[test]
-fn descendant_production_rust_populates_migrated_role() {
-    let root = fixture(&[], &["domain/sessions/entities/nested/deep.rs"]);
-    assert!(shape(root.path(), "domain/sessions", &["entities"]).is_empty());
-}
-
-#[cfg(unix)]
-#[test]
-fn descendant_symlink_fails_even_with_immediate_rust() {
-    let root = fixture(&["domain/sessions/entities/nested"], &["domain/sessions/entities/one.rs", "outside.rs"]);
-    std::os::unix::fs::symlink(root.path().join("outside.rs"), root.path().join("domain/sessions/entities/nested/link.rs")).unwrap();
-    let failures = shape(root.path(), "domain/sessions", &["entities"]);
-    assert!(matches!(failures.as_slice(), [Violation::InspectionFailed { reason, .. }] if reason.contains("link.rs")), "{failures:?}");
-}
-
-#[cfg(unix)]
-#[test]
-fn unreadable_regular_file_fails_real_nonroot_inspection() {
-    use std::os::unix::fs::PermissionsExt;
-    let root = fixture(&[], &["domain/sessions/entities/one.rs"]);
-    let file = root.path().join("domain/sessions/entities/one.rs");
-    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0)).unwrap();
-    let denied = std::fs::File::open(&file).unwrap_err();
-    assert_eq!(denied.kind(), io::ErrorKind::PermissionDenied, "run this fixture as effective nonroot");
-    let failures = shape(root.path(), "domain/sessions", &["entities"]);
-    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
-    assert!(matches!(failures.as_slice(), [Violation::InspectionFailed { reason, .. }] if reason.contains("one.rs")), "{failures:?}");
-}
-
-#[test]
-fn descendant_test_only_rust_populates_migrated_role() {
-    let root = fixture(&[], &["domain/sessions/entities/nested/only_tests.rs"]);
-    assert!(shape(root.path(), "domain/sessions", &["entities"]).is_empty());
-}
-
-fn assert_shape_repair(directory: &str, file: Option<&str>, required: &str) {
-    let files: Vec<_> = file.into_iter().collect();
-    let root = fixture(&[directory], &files);
-    let failures = shape(root.path(), "domain/sessions", &["entities"]);
-    assert_eq!(failures.len(), 1, "{failures:?}");
-    let message = format!("{:?}", failures[0]);
-    assert!(message.contains(required), "{message}");
-    assert!(message.contains(WIKI));
-}
-
-#[test]
-fn stray_file_diagnostic_prescribes_move() {
-    assert_shape_repair("domain/sessions", Some("domain/sessions/stray.rs"), "move domain/sessions/stray.rs into a declared role directory");
-}
-
-#[test]
-fn undeclared_role_diagnostic_prescribes_allowlist_adjustment() {
-    assert_shape_repair("domain/sessions/handles", None, "add handles to domain/sessions allowed_roles in MIGRATED");
-}
-
-#[test]
-fn empty_role_diagnostic_prescribes_descendant_or_removal() {
-    assert_shape_repair("domain/sessions/entities", None, "put a .rs file anywhere beneath domain/sessions/entities or remove the unused role directory");
-}
-
-#[test]
-fn missing_budget_prescribes_restore_path() {
-    let root = fixture(LAYERS, &[]);
-    let failures = flat(root.path(), "domain/missing", 0);
-    assert!(matches!(failures.as_slice(), [Violation::InspectionFailed { .. }]));
-    let message = format!("{failures:?}");
-    assert!(message.contains("restore domain/missing"), "{message}");
-    assert!(message.contains(WIKI));
- }
-
-#[test]
-fn stale_transitional_placement_prescribes_row_removal() {
-    let root = fixture(LAYERS, &[]);
-    let rows = [Placement { layer: "domain", name: "removed", citation: format!("{WIKI}#removed"), classification: Classification::Transitional }];
-    let failures = validate_placements(root.path(), &rows);
-    assert_eq!(failures.len(), 1, "{failures:?}");
-    let message = format!("{failures:?}");
-    assert!(message.contains("remove domain/removed from PLACEMENTS"), "{message}");
-    assert!(message.contains(WIKI));
-}
-
-#[test]
-fn broken_layer_root_is_reported_once_for_budget_and_placement() {
-    for substituted in [false, true] {
-        let root = fixture(&["application", "interface", "infrastructure", "composition"], &[]);
-        if substituted { std::fs::write(root.path().join("domain"), "").unwrap(); }
-        let failures = validate_all(root.path(), &[budget("domain", 0)], &[], Some(&[]), &scan);
-        assert!(matches!(failures.as_slice(), [Violation::InspectionFailed { path, .. }] if path == "domain"), "{failures:?}");
-    }
-}
-
-#[test]
-fn relative_root_is_canonicalized_before_scanner_port() {
-    let cwd = std::env::current_dir().unwrap();
-    let relative = tempfile::tempdir_in(&cwd).unwrap();
-    std::fs::create_dir(relative.path().join("domain")).unwrap();
-    let relative_path = relative.path().strip_prefix(&cwd).unwrap();
-    let failures = validate_all(relative_path, &[budget("domain", 0)], &[], None, &|path| {
-        assert!(path.is_absolute(), "canonical root boundary must pass absolute paths to scanner");
-        scan(path)
-    });
-    assert!(failures.is_empty(), "{failures:?}");
-}
+#[path = "layout/fixtures.rs"]
+mod fixtures;
