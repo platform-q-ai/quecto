@@ -375,3 +375,17 @@ fn the_swarm_description_keeps_the_coordinators_verify_rule() {
         assert!(description.contains(rule), "missing {rule:?}");
     }
 }
+
+/// #2348 final review: worker rules live on the docs page too, so the
+/// description sends every member there and keeps the most important.
+#[test]
+fn the_swarm_description_sends_members_to_the_docs_page() {
+    let description = include_str!("swarm_helpers/tool_description.txt");
+    for rule in [
+        "members before their first board op",
+        "large content in artifacts",
+        "never edit the store",
+    ] {
+        assert!(description.contains(rule), "missing {rule:?}");
+    }
+}
