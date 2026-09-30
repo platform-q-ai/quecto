@@ -26,6 +26,7 @@ fn observation() -> BoardOpObservation {
         lock_wait_us: Some(1),
         busy_wait_us: Some(0),
         busy: Some(false),
+        commit_us: Some(1),
         cursor_moved: None,
         result_bytes: 0,
         decision: None,

@@ -168,6 +168,7 @@ fn observation(outcome: BoardOpOutcome) -> BoardOpObservation {
         lock_wait_us: Some(400),
         busy_wait_us: Some(250),
         busy: Some(true),
+        commit_us: Some(300),
         cursor_moved: Some(false),
         result_bytes: 42,
         decision: None,
@@ -199,6 +200,7 @@ fn a_swarm_op_record_is_flat_and_round_trips() {
             "lock_wait_us": 400,
             "busy_wait_us": 250,
             "busy": true,
+            "commit_us": 300,
             "cursor_moved": false,
             "result_bytes": 42,
         })
@@ -220,11 +222,18 @@ fn an_unmeasured_op_writes_null_waits() {
         lock_wait_us: None,
         busy_wait_us: None,
         busy: None,
+        commit_us: None,
         cursor_moved: None,
         ..observation(BoardOpOutcome::Ok)
     }))
     .unwrap();
-    for field in ["lock_wait_us", "busy_wait_us", "busy", "cursor_moved"] {
+    for field in [
+        "lock_wait_us",
+        "busy_wait_us",
+        "busy",
+        "commit_us",
+        "cursor_moved",
+    ] {
         assert_eq!(line.get(field), Some(&Value::Null), "{field}: {line}");
     }
 }

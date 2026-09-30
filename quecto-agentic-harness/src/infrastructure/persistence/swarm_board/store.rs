@@ -412,8 +412,14 @@ fn run<T>(
             return Err(error);
         }
     };
-    // A failed COMMIT drops the transaction, which rolls it back.
-    transaction.commit()?;
+    // A failed COMMIT drops the transaction, which rolls it back. Its time
+    // is measured only for a metered call (#2340).
+    let committing = tally.map(|tally| (tally, Instant::now()));
+    let committed = transaction.commit();
+    if let Some((tally, committing)) = committing {
+        tally.committed(committing.elapsed());
+    }
+    committed?;
     Ok(value)
 }
 

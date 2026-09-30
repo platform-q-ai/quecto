@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use super::{paused_for, receipt};
 use crate::application::swarm::board_operation::atomic;
 use crate::application::swarm::board_test_support::{
-    BoardState, MemoryBoard, SteppingClock, paused, recorded, running_board, usage,
+    BoardState, MemoryBoard, SteppingClock, UsageReads, paused, recorded, running_board, usage,
 };
 use crate::application::swarm::dto::ControlReceipt;
 use crate::domain::swarm::{BoardError, RefusalKind};
@@ -149,4 +149,35 @@ fn the_paused_interval_is_the_integer_zero_unless_positive() {
     assert_eq!(paused_for(10.0, 10.0), (0.0, json!(0)));
     assert_eq!(paused_for(10.0, 12.5), (0.0, json!(0)));
     assert_eq!(paused_for(12.5, 10.0), (2.5, json!(2.5)));
+}
+
+/// #2340: the receipt reads the ledger once, for the budget's standing,
+/// and never the whole usage report; a paused run's blockers decide on
+/// that same standing.
+#[test]
+fn the_receipt_reads_the_usage_standing_once_and_never_the_whole_report() {
+    let running = {
+        let mut state = running_board(100.0);
+        state.usage = limited(100, 30);
+        state
+    };
+    let exhausted = {
+        let mut state = paused(running_board(400.0), 50.0, None);
+        state.usage = limited(10, 10);
+        state
+    };
+    for (state, blockers) in [(running, 0), (exhausted, 1)] {
+        let board = MemoryBoard::with(state);
+        let clock = SteppingClock::fixed(60.0);
+        let receipt = atomic(&*board, false, |transaction| receipt(transaction, &*clock)).unwrap();
+        assert_eq!(receipt.resume_blockers.len(), blockers, "{receipt:?}");
+        assert_eq!(
+            board.snapshot().usage_reads,
+            UsageReads {
+                whole_reports: 0,
+                standings: 1,
+            },
+            "{receipt:?}"
+        );
+    }
 }

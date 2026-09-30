@@ -3,19 +3,46 @@
 //! The SQLite adapter's contract tests pin the real SQL.
 use serde_json::{Value, json};
 
-use super::{BoardState, MemoryTransaction, RecordedEvent};
-use crate::application::swarm::dto::{NewRequestUsage, StoredRequestUsage, UsageReport, UsageRow};
+use super::{BoardState, MemoryTransaction};
+use crate::application::swarm::dto::{
+    NewRequestUsage, StoredRequestUsage, UsageReport, UsageRow, UsageStanding,
+};
 use crate::application::swarm::ports::BoardUsage;
 use crate::domain::swarm::{BoardError, RunState};
 
+/// One recorded `events` row.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RecordedEvent {
+    pub actor: String,
+    pub time: f64,
+    pub action: String,
+    pub detail: Value,
+}
+
+/// The ledger reads a board served (#2340): each `usage_report` reads the
+/// whole ledger (both aggregates and the latest observations), each
+/// `usage_standing` one aggregate.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct UsageReads {
+    pub whole_reports: usize,
+    pub standings: usize,
+}
+
 impl BoardUsage for MemoryTransaction<'_> {
     fn usage_report(&self) -> Result<UsageReport, BoardError> {
-        Ok(self
-            .state
-            .borrow()
-            .usage
-            .clone()
-            .unwrap_or_else(default_usage))
+        self.state.borrow_mut().usage_reads.whole_reports += 1;
+        Ok(self.stored_usage())
+    }
+
+    fn usage_standing(&self) -> Result<UsageStanding, BoardError> {
+        self.state.borrow_mut().usage_reads.standings += 1;
+        let report = self.stored_usage();
+        let total = |key: &str| report.totals.get(key).cloned().unwrap_or(Value::Null);
+        Ok(UsageStanding {
+            observed_tokens: total("observed_tokens"),
+            unknown_usage_requests: total("unknown_usage_requests"),
+            budget: report.budget,
+        })
     }
 
     fn member_usage(&self) -> Result<Vec<UsageRow>, BoardError> {
@@ -28,7 +55,7 @@ impl BoardUsage for MemoryTransaction<'_> {
     }
 
     fn usage_budget(&self) -> Result<Value, BoardError> {
-        self.usage_report().map(|report| report.budget)
+        Ok(self.stored_usage().budget)
     }
 
     fn configure_usage_budget(&self, budget: &Value) -> Result<(), BoardError> {
@@ -88,6 +115,17 @@ impl BoardUsage for MemoryTransaction<'_> {
             .as_ref()
             .and_then(|report| report.totals.get("requests").and_then(Value::as_i64));
         Ok(listed.unwrap_or(0))
+    }
+}
+
+impl MemoryTransaction<'_> {
+    /// The report as stored, read without counting a read.
+    fn stored_usage(&self) -> UsageReport {
+        self.state
+            .borrow()
+            .usage
+            .clone()
+            .unwrap_or_else(default_usage)
     }
 }
 

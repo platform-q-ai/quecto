@@ -25,6 +25,7 @@ fn record(op: &str, decision: Option<&str>, duration_us: u64) -> BoardOpObservat
         lock_wait_us: Some(duration_us / 2),
         busy_wait_us: Some(0),
         busy: Some(false),
+        commit_us: Some(duration_us / 4),
         cursor_moved: None,
         result_bytes: 0,
         decision: decision.map(str::to_owned),
@@ -43,6 +44,7 @@ fn refused(op: &str, kind: RefusalKind) -> BoardOpObservation {
         lock_wait_us: None,
         busy_wait_us: None,
         busy: None,
+        commit_us: None,
         ..record(op, None, 10)
     }
 }
@@ -109,6 +111,38 @@ fn the_percentiles_leave_out_what_was_not_measured() {
     );
     assert_eq!(claim.busy_wait_us.unmeasured, 1);
     assert_eq!(claim.busy_wait_us.max, Some(0));
+}
+
+/// #2340: an op's commit times are summarised as its waits are: the
+/// nearest-rank p50 and p95 and the max of the records that measured
+/// one, the others counted as unmeasured; a zero (no `COMMIT` ran) is a
+/// measure, not a gap.
+#[test]
+fn commit_times_are_summarised_as_the_waits_are() {
+    let mut records: Vec<_> = (1..=20)
+        .map(|n| record("claim", Some("claimed"), n * 100))
+        .collect();
+    records.push(refused("claim", RefusalKind::WrongState));
+    records.push(BoardOpObservation {
+        commit_us: Some(0),
+        ..refused("claim", RefusalKind::WrongState)
+    });
+    let summary = folded(&records);
+    assert_eq!(
+        summary.ops["claim"].commit_us,
+        Percentiles {
+            p50: Some(250),
+            p95: Some(475),
+            max: Some(500),
+            unmeasured: 1,
+        }
+    );
+    let line = serde_json::to_value(&summary.ops["claim"]).unwrap();
+    assert_eq!(
+        line["commit_us"],
+        serde_json::json!({"p50": 250, "p95": 475, "max": 500, "unmeasured": 1}),
+        "{line}"
+    );
 }
 
 /// An op none of whose records measured a wait has no percentile of it,
@@ -248,6 +282,7 @@ fn an_op_keeps_a_uniform_bounded_sample_and_an_exact_max() {
     assert_eq!(op.unsampled, total - SAMPLES_PER_OP as u64);
     assert_eq!(op.duration_us.max, Some(total), "the max is exact");
     assert_eq!(op.lock_wait_us.max, Some(total / 2), "every measure's is");
+    assert_eq!(op.commit_us.max, Some(total / 4), "the commit time's too");
     let p50 = op.duration_us.p50.unwrap();
     let p95 = op.duration_us.p95.unwrap();
     // The first records alone would give p50 near total/4 and p95 near

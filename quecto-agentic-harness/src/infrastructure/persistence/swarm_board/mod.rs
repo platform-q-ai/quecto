@@ -28,3 +28,6 @@ mod repository_usage;
 mod repository_wakes;
 pub mod schema;
 pub mod store;
+mod usage_sums;
+#[cfg(test)]
+pub(crate) use usage_sums::LedgerWork;

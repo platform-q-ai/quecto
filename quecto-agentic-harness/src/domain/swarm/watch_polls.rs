@@ -15,8 +15,8 @@
 //! been open for [`POLL_RECORD_PERIOD_US`], or when it is flushed (the
 //! watch ends, the run is summarised, recording stops, the handles holding
 //! it are dropped, the harness exits). Its measures are its slowest
-//! tick's: `duration_us`, `lock_wait_us`, `busy_wait_us` and
-//! `result_bytes` are each the maximum over the ticks it holds, and `busy`
+//! tick's: `duration_us`, `lock_wait_us`, `busy_wait_us`, `commit_us`
+//! and `result_bytes` are each the maximum over the ticks it holds, and `busy`
 //! is `false` (a busy tick is never absorbed). It carries what every
 //! record carries, ids, kinds, durations and sizes, and no text.
 use super::telemetry::{BoardOpObservation, BoardOpOutcome};
@@ -133,6 +133,7 @@ fn merge(aggregate: &mut BoardOpObservation, poll: &BoardOpObservation) {
     aggregate.duration_us = aggregate.duration_us.max(poll.duration_us);
     aggregate.lock_wait_us = slower(aggregate.lock_wait_us, poll.lock_wait_us);
     aggregate.busy_wait_us = slower(aggregate.busy_wait_us, poll.busy_wait_us);
+    aggregate.commit_us = slower(aggregate.commit_us, poll.commit_us);
     aggregate.result_bytes = aggregate.result_bytes.max(poll.result_bytes);
 }
 

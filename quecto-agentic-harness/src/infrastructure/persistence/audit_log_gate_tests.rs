@@ -27,6 +27,7 @@ fn swarm_op() -> AuditEvent {
         lock_wait_us: None,
         busy_wait_us: None,
         busy: None,
+        commit_us: None,
         cursor_moved: None,
         result_bytes: 2,
         decision: None,

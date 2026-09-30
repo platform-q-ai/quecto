@@ -6,9 +6,9 @@ use serde_json::Value;
 
 use super::OverRepository;
 
-use crate::application::swarm::board_control::{edited, receipt};
+use crate::application::swarm::board_control::{edited, receipt_from};
 use crate::application::swarm::board_operation::operation;
-use crate::application::swarm::board_usage::apply_usage_budget;
+use crate::application::swarm::board_usage::budget_applied;
 use crate::application::swarm::dto::{
     NewRequestUsage, RecordRequestUsageRequest, RecordedRequest, RequestDelivery,
 };
@@ -25,7 +25,9 @@ use crate::domain::swarm::{
 /// the runtime's digest possibly now known, which replaces the stored
 /// record) or refused; a new one is inserted while the ledger holds fewer
 /// than 10,000 rows. The budget then applies, and the answer is the
-/// control receipt.
+/// control receipt. The ledger is read by index but for one aggregate
+/// (the budget's standing, which the receipt reuses), so a request costs
+/// no whole-ledger report however long the run (#2340).
 pub struct RecordRequestUsage {
     repository: Arc<dyn BoardRepository>,
     clock: Arc<dyn Clock + Send + Sync>,
@@ -123,11 +125,14 @@ impl RecordRequestUsage {
                         ));
                     }
                 };
-                let effect = apply_usage_budget(transaction, &*self.clock, &actor)?;
+                // One aggregate over the ledger per recorded request
+                // (#2340): the receipt reports the totals the budget
+                // decided on, which nothing since has changed.
+                let (effect, standing) = budget_applied(transaction, &*self.clock, &actor)?;
                 Ok(RecordedRequest {
                     delivery,
                     effect,
-                    receipt: receipt(transaction, &*self.clock)?,
+                    receipt: receipt_from(transaction, &*self.clock, standing)?,
                 })
             },
         )

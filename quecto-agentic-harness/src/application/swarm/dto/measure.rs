@@ -19,6 +19,10 @@ pub struct CallMeasure {
     pub busy_wait: Duration,
     /// Whether the busy handler fired at all.
     pub busy: bool,
+    /// The time the call's `COMMIT`s took (#2340), summed over its
+    /// transactions, a failed one included: a committed write's journal
+    /// and database `fsync`s.
+    pub commit: Duration,
     /// The run id the call's first transaction to find one found.
     pub run_id: Option<String>,
     /// The run's coordinator and integrator, as the first run row the call

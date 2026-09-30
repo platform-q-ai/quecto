@@ -202,6 +202,7 @@ pub(super) fn trace(call: &Finished<'_>, measure: Option<&CallMeasure>, actor: O
     let lock_wait_us = measure.map(|measure| micros(measure.lock_wait));
     let busy_wait_us = measure.map(|measure| micros(measure.busy_wait));
     let busy = measure.map(|measure| measure.busy);
+    let commit_us = measure.map(|measure| micros(measure.commit));
     let slow = measure.is_some_and(|measure| measure.busy_wait > SLOW_LOCK);
     match (
         call.outcome == Err(RefusalKind::Contended) || slow,
@@ -209,15 +210,15 @@ pub(super) fn trace(call: &Finished<'_>, measure: Option<&CallMeasure>, actor: O
     ) {
         (true, _) => tracing::warn!(
             target: TELEMETRY_TARGET, op, member = member().as_str(), outcome, decision, kind, duration_us,
-            ?lock_wait_us, ?busy_wait_us, ?busy, "swarm board call"
+            ?lock_wait_us, ?busy_wait_us, ?busy, ?commit_us, "swarm board call"
         ),
         (false, Level::Read) => tracing::debug!(
             target: TELEMETRY_TARGET, op, member = member().as_str(), outcome, decision, kind, duration_us,
-            ?lock_wait_us, ?busy_wait_us, ?busy, "swarm board call"
+            ?lock_wait_us, ?busy_wait_us, ?busy, ?commit_us, "swarm board call"
         ),
         (false, Level::Mutation) => tracing::info!(
             target: TELEMETRY_TARGET, op, member = member().as_str(), outcome, decision, kind, duration_us,
-            ?lock_wait_us, ?busy_wait_us, ?busy, "swarm board call"
+            ?lock_wait_us, ?busy_wait_us, ?busy, ?commit_us, "swarm board call"
         ),
     }
 }
@@ -244,6 +245,12 @@ pub(super) fn observation(
             .as_ref()
             .is_none_or(|measure| measure.lock_wait <= call.elapsed),
         "a call's lock wait is part of its duration"
+    );
+    debug_assert!(
+        measure
+            .as_ref()
+            .is_none_or(|measure| measure.lock_wait + measure.commit <= call.elapsed),
+        "a call's lock wait and commits are parts of its duration"
     );
     debug_assert!(
         served.is_none_or(|served| decision_kind(served.decision)),
@@ -284,6 +291,7 @@ pub(super) fn observation(
         lock_wait_us: measure.map(|measure| micros(measure.lock_wait)),
         busy_wait_us: measure.map(|measure| micros(measure.busy_wait)),
         busy: measure.map(|measure| measure.busy),
+        commit_us: measure.map(|measure| micros(measure.commit)),
         cursor_moved: served.and_then(|served| served.cursor_moved),
         result_bytes: match (call.outcome, served) {
             (Ok(_), Some(served)) => rendered_bytes(&served.value),

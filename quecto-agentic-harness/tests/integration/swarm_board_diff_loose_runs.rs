@@ -12,7 +12,7 @@ use crate::swarm_board_diff_messages::joined;
 use crate::swarm_board_diff_runs::NOW;
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
 use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
-    run_both, run_rust, sql, step, step_text,
+    run_both, run_python, run_rust, sql, step, step_text,
 };
 
 /// `create_run`'s arguments as JSON text, a criterion's extra key `w`
@@ -127,9 +127,10 @@ fn outside_edited_text_reads_as_python_reads_it() {
 /// number (a boolean included, which Python counts as 0 or 1), or a
 /// budget payload that is not an object (or whose token limit is not a
 /// count), is refused naming the record; usage totals that are not counts
-/// (a REAL or a negative sum) are refused so only when a paused run's
-/// budget, with a non-null token limit, is checked for a resume (elsewhere
-/// they pass through, as `uncounted_usage_totals_pass_through_elsewhere`
+/// (a REAL or a negative sum) are refused so only where the budget decides
+/// under a non-null token limit: a paused run's resume check, and a
+/// running run's `_record_request` and `_request_admission` (a receipt and
+/// the report carry them, as `uncounted_usage_totals_pass_through_elsewhere`
 /// pins). Python raises a `TypeError` (or, for a list payload, answers a
 /// budget of the totals alone; for a boolean start or uncounted totals,
 /// answers as it computes). An integer
@@ -144,7 +145,10 @@ fn outside_edited_text_reads_as_python_reads_it() {
 /// check, where Python raises a `KeyError`; a stored request whose actor is
 /// a BLOB, or whose payload is `'x'` or NULL, meets its redelivery as a
 /// store failure, where Python refuses the BLOB as another actor's or
-/// raises a `JSONDecodeError` or a `TypeError`.
+/// raises a `JSONDecodeError` or a `TypeError`. And (#2340) a ledger row
+/// whose payload is not JSON, or whose actor is not UTF-8, is not read by
+/// a receipt or the budget, which answer where Python's `usage_report`
+/// raises or refuses.
 #[test]
 fn outside_edited_control_records() {
     let paused = |edit: &str| {
@@ -335,6 +339,51 @@ fn outside_edited_control_records() {
         ]),
         refused("usage budget")
     );
+    unread_ledger_rows_and_totals(&refused);
+    // #2340: the process keeps the ledger's sums between transactions, so
+    // an edit to a row already summed (its counts, or an earlier row
+    // deleted) is not seen by the board that summed it, where Python sums
+    // on every read; its last row deleted, or a row added after it (by the
+    // board or an edit), is seen by both.
+    let counted = |request_id: &str| {
+        json!([{"request_id": request_id, "instrumented_attempts": 1, "outcome": "succeeded",
+            "context_input_tokens": 2, "output_tokens": 1}])
+    };
+    for (edit, rusts, pythons) in [
+        (
+            "UPDATE request_usage SET tokens=100 WHERE request_id='r'",
+            6,
+            103,
+        ),
+        ("DELETE FROM request_usage WHERE request_id='r'", 6, 3),
+        ("DELETE FROM request_usage", 0, 0),
+        (
+            "INSERT INTO request_usage VALUES('e','parent','{}',4,0,1,NULL,NULL,NULL,NULL)",
+            10,
+            10,
+        ),
+    ] {
+        let steps = [
+            create(5),
+            at(1.0, "parent", "_record_request", counted("r")),
+            at(1.5, "parent", "_record_request", counted("s")),
+            sql(edit),
+            at(2.0, "parent", "_control_status", json!([])),
+        ];
+        for (side, answer, observed) in [
+            ("rust", run_rust(&steps), rusts),
+            ("python", run_python(&steps), pythons),
+        ] {
+            let Outcome::Ok(receipt) = answer else {
+                panic!("{edit}: {side}: {answer:?}");
+            };
+            assert_eq!(
+                receipt["budget"]["observed_tokens"],
+                json!(observed),
+                "{edit}: {side}"
+            );
+        }
+    }
     // A budget without `token_limit`, or without `strict_unknown` where the
     // limit is the one asked for, meets `usage_budget`'s idempotence check,
     // where Python raises a `KeyError`.
@@ -387,5 +436,135 @@ fn uncounted_usage_totals_pass_through_elsewhere() {
             at(4.0, "parent", "pause", json!(["hold"])),
             at(5.0, "parent", "_control_status", json!([])),
         ]);
+    }
+}
+
+/// #2340: ledger rows only an edit writes that Python's `usage_report`
+/// cannot read, and what Python answers a call reading it: it raises a
+/// `JSONDecodeError` for the payload, and refuses the actor as the store's
+/// failure (the Rust report refuses both).
+/// What Python answers a call: built on demand, as `Outcome` owns text.
+type PythonAnswer = fn() -> Outcome;
+
+const UNREADABLE_LEDGER_ROWS: [(&str, PythonAnswer); 2] = [
+    (
+        "INSERT INTO request_usage VALUES('e','parent','x',1,0,1,NULL,NULL,NULL,NULL)",
+        || Outcome::Raised("JSONDecodeError: Expecting value: line 1 column 1 (char 0)".to_owned()),
+    ),
+    (
+        "INSERT INTO request_usage VALUES('e',CAST(x'ff' AS TEXT),'{}',1,0,1,NULL,NULL,NULL,NULL)",
+        || {
+            Outcome::Refused(
+                "coordination store unavailable or contended: Could not decode to UTF-8 column 'member' with text '\u{fffd}'"
+                    .to_owned(),
+            )
+        },
+    ),
+];
+
+/// `outside_edited_control_records`, the ledger's part (#2340): what the
+/// receipt, `_record_request` and `_request_admission` read of the usage
+/// report is the budget and its two totals (the board's standing), where
+/// Python's read the whole report. Each case asserts both boards' answers.
+fn unread_ledger_rows_and_totals(refused: &dyn Fn(&str) -> Outcome) {
+    let record = json!([{"request_id": "r", "instrumented_attempts": 1, "outcome": "failed"}]);
+    let calls = [
+        ("_control_status", json!([])),
+        ("_record_request", record),
+        ("_request_admission", json!([])),
+    ];
+    // A ledger row whose payload is not JSON, or whose actor is not UTF-8:
+    // Python's report fails on it (the payload among the ten latest); the
+    // standing does not read it, so the Rust board answers. The report
+    // itself fails on both, on either board.
+    for (edit, pythons) in UNREADABLE_LEDGER_ROWS {
+        for (method, args) in calls.iter().cloned().chain([("usage_report", json!([]))]) {
+            let steps = [
+                create(5),
+                at(0.5, "parent", "usage_report", json!([])),
+                sql(edit),
+                at(1.0, "parent", method, args),
+            ];
+            let (rust, python) = (run_rust(&steps), run_python(&steps));
+            assert_eq!(python, pythons(), "{edit}: {method}");
+            match method {
+                "usage_report" => {
+                    assert!(matches!(rust, Outcome::Refused(_)), "{edit}: {rust:?}");
+                }
+                _ => assert_answered(method, &rust, (1, None), edit),
+            }
+        }
+    }
+    // Another of the report's sums overflowing (two rows of i64::MAX
+    // attempts), with or without a limit: Python raises SQLite's `integer
+    // overflow` as the store's refusal; the standing sums no attempts, so
+    // the Rust board answers, and `_record_request` records its row.
+    let overflowing = "INSERT INTO request_usage VALUES('e1','parent','{}',0,0,9223372036854775807,NULL,NULL,NULL,NULL); INSERT INTO request_usage VALUES('e2','parent','{}',0,0,9223372036854775807,NULL,NULL,NULL,NULL)";
+    for budget in [json!([null]), json!([1_000, false])] {
+        for (method, args) in calls.iter().cloned() {
+            let steps = [
+                create(5),
+                at(0.5, "parent", "usage_budget", budget.clone()),
+                sql(overflowing),
+                at(1.0, "parent", method, args),
+            ];
+            assert_eq!(
+                run_python(&steps),
+                Outcome::Refused(
+                    "coordination store unavailable or contended: integer overflow".to_owned()
+                ),
+                "{budget}: {method}"
+            );
+            let unknown = u64::from(method == "_record_request");
+            assert_answered(method, &run_rust(&steps), (0, Some(unknown)), "overflow");
+        }
+    }
+    // A REAL token total on a running run under a limit: the budget's
+    // decision refuses it naming the record (`_record_request`,
+    // `_request_admission`), where Python compares 10.5 with the limit and
+    // answers; the receipt alone carries it on both boards.
+    let real = "INSERT INTO request_usage(request_id, actor, payload, tokens) VALUES('e','parent','{}',10.5)";
+    for (method, args) in calls {
+        let steps = [
+            create(5),
+            at(0.5, "parent", "usage_budget", json!([1_000, false])),
+            sql(real),
+            at(1.0, "parent", method, args),
+        ];
+        let (rust, python) = (run_rust(&steps), run_python(&steps));
+        assert!(matches!(python, Outcome::Ok(_)), "{method}: {python:?}");
+        match method {
+            "_control_status" => assert_eq!(rust, python, "{method}"),
+            _ => assert_eq!(rust, refused("usage totals record"), "{method}"),
+        }
+        if let (Outcome::Ok(answer), "_record_request") = (&python, method) {
+            assert_eq!(answer["budget"]["observed_tokens"], json!(10.5));
+        }
+    }
+}
+
+/// The Rust board answered `method`: a receipt whose observed tokens (and
+/// unknown requests, when given) are `totals`, or the admission read of
+/// the running run.
+fn assert_answered(method: &str, rust: &Outcome, totals: (u64, Option<u64>), case: &str) {
+    let Outcome::Ok(answer) = rust else {
+        panic!("{case}: {method}: {rust:?}");
+    };
+    match method {
+        "_request_admission" => assert_eq!(answer["status"], json!("running"), "{case}"),
+        _ => {
+            assert_eq!(
+                answer["budget"]["observed_tokens"],
+                json!(totals.0),
+                "{case}: {method}"
+            );
+            if let Some(unknown) = totals.1 {
+                assert_eq!(
+                    answer["budget"]["unknown_usage_requests"],
+                    json!(unknown),
+                    "{case}: {method}"
+                );
+            }
+        }
     }
 }

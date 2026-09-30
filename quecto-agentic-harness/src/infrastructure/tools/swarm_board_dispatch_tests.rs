@@ -29,18 +29,55 @@ impl IdSource for Counter {
 }
 
 pub(super) fn board(now: f64) -> (tempfile::TempDir, SwarmBoardHandles) {
+    let (dir, handles, _) = board_and_repository(now);
+    (dir, handles)
+}
+
+/// [`board`], with a clone of its repository, which shares what the
+/// repository keeps between calls (#2340: the ledger sums and their work).
+pub(super) fn board_and_repository(
+    now: f64,
+) -> (tempfile::TempDir, SwarmBoardHandles, SqliteBoardRepository) {
     let dir = tempfile::TempDir::new().unwrap();
     let location = BoardLocation {
         database: dir.path().join("swarm.sqlite"),
         checkout: dir.path().to_path_buf(),
     };
+    let repository = SqliteBoardRepository::new(&location);
     let handles = build_swarm_board_handles_with(
-        Arc::new(SqliteBoardRepository::new(&location)),
+        Arc::new(repository.clone()),
         Arc::new(Fixed(now)),
         Arc::new(Counter::default()),
         Arc::new(ResolvedCheckout::new(&location.checkout)),
     );
-    (dir, handles)
+    (dir, handles, repository)
+}
+
+/// [`board_and_repository`] with the event log on (records discarded), so
+/// its calls run through the metered repository (#2340).
+pub(super) fn metered_board_and_repository(
+    now: f64,
+) -> (tempfile::TempDir, SwarmBoardHandles, SqliteBoardRepository) {
+    struct Discarded;
+    impl crate::application::swarm::ports::BoardOpLog for Discarded {
+        fn record(&self, _: crate::domain::swarm::BoardOpObservation) {}
+        fn summarize(&self, _: crate::domain::swarm::SwarmRunSummary) {}
+    }
+    let dir = tempfile::TempDir::new().unwrap();
+    let location = BoardLocation {
+        database: dir.path().join("swarm.sqlite"),
+        checkout: dir.path().to_path_buf(),
+    };
+    let repository = SqliteBoardRepository::new(&location);
+    let handles = crate::composition::swarm::with_event_log(
+        repository.clone(),
+        Arc::new(Fixed(now)),
+        Arc::new(Counter::default()),
+        Arc::new(ResolvedCheckout::new(&location.checkout)),
+        Arc::new(Discarded),
+    );
+    assert!(handles.telemetry.is_some(), "the calls are metered");
+    (dir, handles, repository)
 }
 
 fn create_args() -> Value {

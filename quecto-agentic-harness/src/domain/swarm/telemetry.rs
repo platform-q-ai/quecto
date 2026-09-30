@@ -191,6 +191,16 @@ pub struct BoardOpObservation {
     /// Whether the store's busy handler fired at least once; `None` when
     /// nothing was measured.
     pub busy: Option<bool>,
+    /// The time the op's `COMMIT`s took, summed over its transactions
+    /// (#2340): a committed write's journal and database `fsync`s, which
+    /// are most of a writing op's time on a disk-backed board. The whole
+    /// `COMMIT` is timed, so a busy handler's sleep while a reader holds
+    /// off the commit is in it too (and in `busy_wait_us`). `Some(0)` when
+    /// the op's transactions all ended before a `COMMIT` (rolled back);
+    /// `None` (written `null`) when nothing was measured. A record written
+    /// before the field existed reads as `None`.
+    #[serde(default)]
+    pub commit_us: Option<u64>,
     /// Whether the op moved the caller's cursor (#2276: the notification
     /// or wake cursor); `None` (written `null`) for an op that has no
     /// cursor to move, or a refusal.

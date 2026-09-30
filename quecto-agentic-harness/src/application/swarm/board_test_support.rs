@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
-pub use self::control::{paused, recorded, usage};
+pub use self::control::{RecordedEvent, UsageReads, paused, recorded, usage};
 pub use self::evidence::accepted;
 pub use self::files::LexicalCheckout;
 pub use self::ids::{CompactEncoding, CounterIds};
@@ -26,15 +26,6 @@ use crate::application::swarm::ports::{
 use crate::domain::swarm::{
     BoardError, MemberRecord, MemberState, RefusalKind, RunRecord, RunState,
 };
-
-/// One recorded `events` row.
-#[derive(Clone, Debug, PartialEq)]
-pub struct RecordedEvent {
-    pub actor: String,
-    pub time: f64,
-    pub action: String,
-    pub detail: Value,
-}
 
 #[derive(Clone, Debug)]
 pub struct StoredRun {
@@ -57,6 +48,8 @@ pub struct BoardState {
     pub usage: Option<UsageReport>,
     /// The `request_usage` rows written, in order.
     pub request_usage: Vec<NewRequestUsage>,
+    /// How often the ledger was read, and how (#2340).
+    pub usage_reads: UsageReads,
     /// The `evidence` rows, each with the actor that recorded it.
     pub evidence: Vec<(String, EvidenceEntry)>,
     pub messages: Vec<StoredMessage>,

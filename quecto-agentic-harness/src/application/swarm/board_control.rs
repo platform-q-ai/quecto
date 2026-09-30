@@ -9,13 +9,20 @@
 //! refused naming the record, where Python raises a `TypeError` or a
 //! `KeyError`, or computes with the value as it is: the
 //! `outside_edited_control_records` divergence. Usage totals that are not
-//! counts (a REAL or a negative sum) are refused so only where a paused
-//! run's budget, with a token limit that is not null, is checked for a
-//! resume; everywhere else (the receipt's budget, the usage report) they
-//! pass through as Python passes them.
+//! counts (a REAL or a negative sum) are refused so only where the budget
+//! decides under a token limit that is not null (a paused run's resume
+//! check, and a running run's recorded request and admission read, where
+//! Python compares them with the limit); everywhere else (the receipt's
+//! budget, the usage report) they pass through as Python passes them.
+//!
+//! The receipt and the budget decision read the usage standing (#2340),
+//! the budget and the two totals, where Python reads the whole usage
+//! report: a ledger row only an edit makes unreadable (a payload that is
+//! not JSON among the ten latest, an actor that is not UTF-8) refuses
+//! Python's receipt and not this one, part of the same divergence.
 use serde_json::Value;
 
-use super::dto::{ControlReceipt, UsageReport};
+use super::dto::{ControlReceipt, UsageStanding};
 use super::ports::{BoardEvents, BoardMembers, BoardRuns, BoardUsage, Clock};
 use crate::domain::swarm::{
     BoardError, RefusalKind, RunRecord, UsageBudget, UsageDecision, UsageTotals, python_truthy,
@@ -46,6 +53,8 @@ fn paused(run: &RunRecord) -> bool {
 
 /// `Coordination._receipt(tx)`: the control generation, the usage report
 /// and the run as `control_receipt` reads them, then the resume blockers.
+/// Of the report it reads only the budget and the two totals the receipt
+/// carries (#2340), once, and the blockers decide on the same.
 ///
 /// # Errors
 /// An edited budget or pause record, or the store's refusal.
@@ -54,25 +63,55 @@ pub(crate) fn receipt(
     clock: &dyn Clock,
 ) -> Result<ControlReceipt, BoardError> {
     let generation = transaction.control_generation()?;
-    let report = transaction.usage_report()?;
+    let standing = transaction.usage_standing()?;
+    assembled(transaction, clock, generation, standing)
+}
+
+/// [`receipt`] on a `standing` the caller read in this transaction and
+/// has not changed since but for the budget it read again (#2340): a
+/// recorded request's budget decision has just read the totals, which
+/// nothing it writes changes.
+///
+/// # Errors
+/// As [`receipt`].
+pub(crate) fn receipt_from(
+    transaction: &(impl BoardRuns + BoardMembers + BoardEvents + BoardUsage + ?Sized),
+    clock: &dyn Clock,
+    standing: UsageStanding,
+) -> Result<ControlReceipt, BoardError> {
+    let generation = transaction.control_generation()?;
+    assembled(transaction, clock, generation, standing)
+}
+
+/// The receipt of `generation` and `standing`, in Python's order: the run,
+/// the budget merged with the totals, then the resume blockers.
+fn assembled(
+    transaction: &(impl BoardRuns + BoardMembers + BoardUsage + ?Sized),
+    clock: &dyn Clock,
+    generation: i64,
+    standing: UsageStanding,
+) -> Result<ControlReceipt, BoardError> {
     let run = current(transaction)?;
-    let Value::Object(mut budget) = report.budget else {
+    let Value::Object(stored) = &standing.budget else {
         return Err(edited("usage budget"));
     };
-    for key in ["observed_tokens", "unknown_usage_requests"] {
-        let total = report
-            .totals
-            .get(key)
-            .ok_or_else(|| edited("usage totals record"))?;
-        budget.insert(key.to_owned(), total.clone());
-    }
+    let mut budget = stored.clone();
+    budget.insert(
+        "observed_tokens".to_owned(),
+        standing.observed_tokens.clone(),
+    );
+    budget.insert(
+        "unknown_usage_requests".to_owned(),
+        standing.unknown_usage_requests.clone(),
+    );
+    let resume_blockers = blockers_from(transaction, clock, &run, &standing)?;
     Ok(ControlReceipt {
         status: run.status.as_ref().map(|status| status.as_str().to_owned()),
-        outcome: run.outcome.clone(),
-        reason: run.outcome_reason.clone(),
+        outcome: run.outcome,
+        reason: run.outcome_reason,
         generation,
         budget,
-        resume_blockers: blockers(transaction, clock)?,
+        resume_blockers,
     })
 }
 
@@ -90,11 +129,25 @@ pub(crate) fn blockers(
     if !paused(&run) {
         return Ok(Vec::new());
     }
+    let standing = transaction.usage_standing()?;
+    blockers_from(transaction, clock, &run, &standing)
+}
+
+/// [`blockers`] of `run` on a `standing` read in this transaction.
+fn blockers_from(
+    transaction: &(impl BoardRuns + BoardMembers + ?Sized),
+    clock: &dyn Clock,
+    run: &RunRecord,
+    standing: &UsageStanding,
+) -> Result<Vec<String>, BoardError> {
+    if !paused(run) {
+        return Ok(Vec::new());
+    }
     let now = clock.now_seconds();
     let (elapsed, _) = paused_for(now, pause_started(transaction)?);
     let deadline = run.deadline + elapsed;
-    let decision = budget_decision(&transaction.usage_report()?)?;
-    let lost = lost_coordinator(transaction, &run)?;
+    let decision = budget_decision(standing)?;
+    let lost = lost_coordinator(transaction, run)?;
     Ok(resume_blockers(
         deadline,
         now,
@@ -151,8 +204,8 @@ fn lost_coordinator(
 
 /// `usage_budget_decision(report['budget'], report['totals'])`: no limit
 /// allows before anything else is read, as Python's does.
-pub(crate) fn budget_decision(report: &UsageReport) -> Result<UsageDecision, BoardError> {
-    let Value::Object(budget) = &report.budget else {
+pub(crate) fn budget_decision(standing: &UsageStanding) -> Result<UsageDecision, BoardError> {
+    let Value::Object(budget) = &standing.budget else {
         return Err(edited("usage budget"));
     };
     let token_limit = match budget.get("token_limit") {
@@ -163,13 +216,7 @@ pub(crate) fn budget_decision(report: &UsageReport) -> Result<UsageDecision, Boa
     let strict_unknown = budget
         .get("strict_unknown")
         .ok_or_else(|| edited("usage budget"))?;
-    let count = |key: &str| {
-        report
-            .totals
-            .get(key)
-            .and_then(Value::as_u64)
-            .ok_or_else(|| edited("usage totals record"))
-    };
+    let count = |total: &Value| total.as_u64().ok_or_else(|| edited("usage totals record"));
     Ok(usage_budget_decision(
         &UsageBudget {
             token_limit: Some(token_limit),
@@ -177,8 +224,8 @@ pub(crate) fn budget_decision(report: &UsageReport) -> Result<UsageDecision, Boa
             warned: false,
         },
         &UsageTotals {
-            observed_tokens: count("observed_tokens")?,
-            unknown_usage_requests: count("unknown_usage_requests")?,
+            observed_tokens: count(&standing.observed_tokens)?,
+            unknown_usage_requests: count(&standing.unknown_usage_requests)?,
         },
     ))
 }

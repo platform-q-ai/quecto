@@ -1354,6 +1354,8 @@ const SWARM_BOARD_DTOS: &[&str] = &[
     "StopRunRequest",
     "UsageReport",
     "UsageRow",
+    // The budget and totals the budget and the receipt read (#2340).
+    "UsageStanding",
     // Completion, revalidation, amendment and evidence (#2273).
     "AmendRunContractRequest",
     "AmendedContract",

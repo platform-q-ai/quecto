@@ -26,6 +26,7 @@ use rusqlite::{Connection, ffi};
 
 use super::repository::{SqliteBoardRepository, atomic_on, read_on};
 use super::store::{BUSY_TIMEOUT, BoardStore};
+use super::usage_sums::KeptSums;
 use crate::application::swarm::dto::{CallMeasure, RunRoles};
 use crate::application::swarm::ports::{BoardCallMeter, BoardRepository, BoardWork, MeteredCall};
 use crate::domain::swarm::BoardError;
@@ -36,14 +37,15 @@ use crate::domain::swarm::telemetry::board_run_id;
 #[derive(Clone, Debug)]
 pub struct SqliteBoardCallMeter {
     store: BoardStore,
+    sums: KeptSums,
 }
 
 impl SqliteBoardCallMeter {
-    /// Meters calls on the board file `repository` opens.
+    /// Meters calls on the board file `repository` opens, sharing the
+    /// ledger sums it keeps (#2340).
     pub fn new(repository: SqliteBoardRepository) -> Self {
-        Self {
-            store: repository.into_store(),
-        }
+        let (store, sums) = repository.into_parts();
+        Self { store, sums }
     }
 }
 
@@ -51,6 +53,7 @@ impl BoardCallMeter for SqliteBoardCallMeter {
     fn open(&self) -> Arc<dyn MeteredCall> {
         Arc::new(SqliteMeteredCall {
             store: self.store.clone(),
+            sums: self.sums.clone(),
             tally: Tally::new(),
         })
     }
@@ -60,19 +63,20 @@ impl BoardCallMeter for SqliteBoardCallMeter {
 #[derive(Debug)]
 struct SqliteMeteredCall {
     store: BoardStore,
+    sums: KeptSums,
     tally: Tally,
 }
 
 impl BoardRepository for SqliteMeteredCall {
     fn atomic(&self, create: bool, work: &mut BoardWork<'_>) -> Result<(), BoardError> {
-        atomic_on(&self.store, Some(&self.tally), create, work)
+        atomic_on(&self.store, &self.sums, Some(&self.tally), create, work)
     }
 
     /// A read (#2338), measured as any transaction is: its `BEGIN
     /// DEFERRED` takes no lock, so its lock wait is only the statement's
     /// own, and the busy handler fires only if a writer is committing.
     fn read(&self, work: &mut BoardWork<'_>) -> Result<(), BoardError> {
-        read_on(&self.store, Some(&self.tally), work)
+        read_on(&self.store, &self.sums, Some(&self.tally), work)
     }
 }
 
@@ -116,6 +120,12 @@ impl Tally {
         let mut measure = self.held();
         measure.transactions = measure.transactions.saturating_add(1);
         measure.lock_wait = measure.lock_wait.saturating_add(wait);
+    }
+
+    /// A transaction's `COMMIT` took `took` (#2340).
+    pub(super) fn committed(&self, took: Duration) {
+        let mut measure = self.held();
+        measure.commit = measure.commit.saturating_add(took);
     }
 
     /// Whether no run id, or (for a call whose role is not fixed) no run

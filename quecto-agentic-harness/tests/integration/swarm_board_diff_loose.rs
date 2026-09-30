@@ -136,16 +136,35 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   pause record whose `started` is not a number (a boolean included), or a
 ///   usage budget that is not an object or whose limit is not a count, is
 ///   refused naming the record, and so are usage totals that are not counts
-///   (a REAL or negative sum), but only where a paused run's budget with a
-///   non-null token limit is checked for a resume (elsewhere they pass
-///   through as Python passes them), where Python raises or computes with
-///   them; an integer `started` is read as its float, so an extension from it
+///   (a REAL or negative sum) wherever the budget decides under a non-null
+///   token limit: a paused run's resume check, and a running run's
+///   `_record_request` and `_request_admission` (a REAL total of 10.5
+///   under a limit of 1000, which Python compares and answers); a receipt
+///   and the usage report carry them as Python does. Python raises or
+///   computes with them; an integer `started` is read as its float, so an extension from it
 ///   records a float deadline where Python records the integer; and a loss
 ///   event whose detail is not an object, or whose `member` is a list or an
 ///   object (unhashable to Python), names no member, where Python raises (a
 ///   numeric `member` is compared by Python's `==`, as Python compares it),
 ///   whether a resume's blockers or `_quarantine`'s loss scan (#2277) meets
 ///   it.
+///   The receipt and the budget (#2340) read only the budget and the two
+///   totals, so a ledger row whose payload is not JSON or whose actor is
+///   not UTF-8 text is not read by a control receipt, `_record_request`
+///   or `_request_admission`, which answer, where Python's `usage_report`
+///   (read by each) raises a `JSONDecodeError` for such a payload among
+///   the ten latest, and refuses such an actor with `Could not decode to
+///   UTF-8`; `usage_report` itself still refuses both. So is another of
+///   the report's sums that overflows i64 (two rows of i64::MAX
+///   `attempts`): Python's control receipt, `_record_request` and
+///   `_request_admission` are refused with SQLite's `integer overflow`, where
+///   the Rust board answers (and `_record_request` records its row). And
+///   a process keeps
+///   the ledger's row count and those two totals between transactions
+///   (`swarm_board::usage_sums`), so an edit to a row it already summed
+///   (its counts changed, it or an earlier row deleted) is not seen by
+///   that process's receipts, budget or ledger bound, where Python, which
+///   sums on every read, sees it.
 ///   So is (#2274) a stored request record that is not an object, met
 ///   by its redelivery, a budget without `warned`, met by the budget's
 ///   warning, and a budget without `token_limit` or `strict_unknown`, met by

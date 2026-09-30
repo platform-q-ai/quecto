@@ -372,6 +372,24 @@ fn a_caller_refused_as_no_member_records_no_run_role() {
     assert_eq!(dead.role, None, "{dead:?}");
 }
 
+/// #2340: an op records the time its commits took, within its duration
+/// and beside its lock wait: for a written request, the journal and
+/// database `fsync`s that are most of its cost on a disk-backed board.
+#[test]
+fn a_written_op_records_its_commit_time() {
+    let log = Arc::new(Recorded::default());
+    let (_dir, handles) = logged(&log);
+    call(&handles, "parent", "bootstrap_run", json!([1, "s", null])).unwrap();
+    log.clear();
+    let record = json!({"request_id": "r1", "instrumented_attempts": 1, "outcome": "failed"});
+    call(&handles, "parent", "_record_request", json!([record])).unwrap();
+    let recorded = only(&log);
+    assert_eq!(recorded.op, "_record_request");
+    let commit = recorded.commit_us.expect("the commits were measured");
+    let lock_wait = recorded.lock_wait_us.expect("a transaction was measured");
+    assert!(recorded.duration_us >= commit + lock_wait, "{recorded:?}");
+}
+
 /// What was not measured is `null`, never a zero that reads as real
 /// (#2303 review H2): a call that began no transaction, or a meter that
 /// measured nothing.
@@ -386,9 +404,10 @@ fn an_unmeasured_op_records_null_waits() {
             recorded.lock_wait_us,
             recorded.busy_wait_us,
             recorded.busy,
+            recorded.commit_us,
             recorded.run_id
         ),
-        (None, None, None, None),
+        (None, None, None, None, None),
         "no transaction began"
     );
     log.clear();
@@ -403,7 +422,10 @@ fn an_unmeasured_op_records_null_waits() {
     call(&handles, "parent", "bootstrap_run", json!([1, "s", null])).unwrap();
     let recorded = only(&log);
     assert_eq!(recorded.outcome, BoardOpOutcome::Ok);
-    assert_eq!((recorded.lock_wait_us, recorded.busy), (None, None));
+    assert_eq!(
+        (recorded.lock_wait_us, recorded.busy, recorded.commit_us),
+        (None, None, None)
+    );
     assert_eq!(meter.opened(), 1, "one measure per call");
 }
 

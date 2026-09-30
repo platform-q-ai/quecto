@@ -92,6 +92,21 @@ pub struct RecentRequest {
     pub observation: Value,
 }
 
+/// What the token budget decides on and the control receipt reports
+/// (#2340): the stored budget and the two totals `usage_report` computes
+/// for them, by the same SQL expressions, without the per-member
+/// aggregates or the latest observations the rest of the report reads.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UsageStanding {
+    /// As [`UsageReport::budget`].
+    pub budget: Value,
+    /// `coalesce(sum(tokens),0)`, as stored (a REAL or negative sum only
+    /// a file edited outside the board holds passes through).
+    pub observed_tokens: Value,
+    /// `coalesce(sum(unknown),0)`, as stored.
+    pub unknown_usage_requests: Value,
+}
+
 /// `Transaction.usage_report()`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UsageReport {

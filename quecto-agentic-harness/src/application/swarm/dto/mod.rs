@@ -25,7 +25,7 @@ pub use completion::{
 };
 pub use control::{
     ControlAnswer, ControlReceipt, ExtendRunDeadlineRequest, PauseRunRequest, RecentRequest,
-    RunTransition, StopRunRequest, UsageReport, UsageRow,
+    RunTransition, StopRunRequest, UsageReport, UsageRow, UsageStanding,
 };
 pub use files::{
     FileRow, ListFileOwnersRequest, NewReservation, RecoverTaskRequest, Recovered,

@@ -9,14 +9,22 @@
 //! the aggregates' column aliases are the report's JSON keys, and
 //! `count(cache_read_tokens)` counts the measured requests alone, so the
 //! SQL computes them, never Rust.
+//!
+//! The exception is what every recorded request and control receipt
+//! reads (#2340): the ledger's row count and the budget's two totals come
+//! from the sums the process keeps between transactions
+//! ([`usage_sums`](super::usage_sums)), extended by the rows since, so
+//! they cost the same however long the run; the SQL sums them only when a
+//! row holds a value only an edit writes.
 use rusqlite::{OptionalExtension, Row, params};
 use serde_json::{Value, json};
 
 use super::py_json::{self, PyJson};
 use super::repository::{SqliteBoard, cell_at, failed, fetched};
 use super::repository_tasks::loaded;
+use super::usage_sums::{self, UsageSums};
 use crate::application::swarm::dto::{
-    NewRequestUsage, RecentRequest, StoredRequestUsage, UsageReport, UsageRow,
+    NewRequestUsage, RecentRequest, StoredRequestUsage, UsageReport, UsageRow, UsageStanding,
 };
 use crate::application::swarm::ports::BoardUsage;
 use crate::domain::swarm::{BoardError, RefusalKind};
@@ -30,8 +38,15 @@ const USAGE_SCHEMA: [&str; 2] = [
 /// `usage_report`'s `aggregates`.
 const AGGREGATES: &str = "count(*) requests, coalesce(sum(tokens),0) observed_tokens, coalesce(sum(unknown),0) unknown_usage_requests, coalesce(sum(attempts),0) attempts, coalesce(sum(input_tokens),0) reported_input_tokens, coalesce(sum(output_tokens),0) reported_output_tokens, coalesce(sum(cache_read_tokens),0) reported_cache_read_tokens, coalesce(sum(cache_write_tokens),0) reported_cache_write_tokens, count(cache_read_tokens) cache_read_known_requests, count(cache_write_tokens) cache_write_known_requests";
 
+/// The two totals of [`AGGREGATES`] the budget and the receipt read
+/// (#2340), by the same expressions, so each is the report's value and
+/// type; `repository_usage_tests.rs` pins that they are its own.
+const STANDING: &str =
+    "coalesce(sum(tokens),0) observed_tokens, coalesce(sum(unknown),0) unknown_usage_requests";
+
 impl BoardUsage for SqliteBoard<'_> {
     fn usage_report(&self) -> Result<UsageReport, BoardError> {
+        self.kept_sums.noted_whole_ledger_read();
         self.usage_schema()?;
         let budget = self.stored_budget()?;
         let totals = self
@@ -79,6 +94,35 @@ impl BoardUsage for SqliteBoard<'_> {
                 "SELECT actor member, {AGGREGATES} FROM request_usage GROUP BY actor ORDER BY actor"
             )),
         }
+    }
+
+    fn usage_standing(&self) -> Result<UsageStanding, BoardError> {
+        self.usage_schema()?;
+        let budget = self.stored_budget()?;
+        let (observed_tokens, unknown_usage_requests) = match self.ledger_sums()? {
+            Some(sums) => (
+                Value::from(sums.observed_tokens),
+                Value::from(sums.unknown_usage_requests),
+            ),
+            None => {
+                self.kept_sums.noted_whole_ledger_read();
+                self.connection
+                    .query_row(
+                        &format!("SELECT {STANDING} FROM request_usage"),
+                        [],
+                        |row| {
+                            fetched(row)?;
+                            Ok((cell_at(row, 0)?, cell_at(row, 1)?))
+                        },
+                    )
+                    .map_err(failed)?
+            }
+        };
+        Ok(UsageStanding {
+            budget,
+            observed_tokens,
+            unknown_usage_requests,
+        })
     }
 
     fn usage_budget(&self) -> Result<Value, BoardError> {
@@ -166,11 +210,31 @@ impl BoardUsage for SqliteBoard<'_> {
 
     fn request_usage_count(&self) -> Result<i64, BoardError> {
         self.usage_schema()?;
-        self.count("SELECT count(*) FROM request_usage")
+        match self.ledger_sums()? {
+            Some(sums) => Ok(sums.rows),
+            None => {
+                self.kept_sums.noted_whole_ledger_read();
+                self.count("SELECT count(*) FROM request_usage")
+            }
+        }
     }
 }
 
 impl SqliteBoard<'_> {
+    /// The ledger's sums now (#2340, [`usage_sums`](super::usage_sums)):
+    /// this transaction's own, else the process's kept ones, extended by
+    /// the rows after them; `None` when the SQL must sum instead.
+    fn ledger_sums(&self) -> Result<Option<UsageSums>, BoardError> {
+        let known = self
+            .staged_sums
+            .borrow_mut()
+            .take()
+            .or_else(|| self.kept_sums.kept());
+        let sums = usage_sums::summed(self.connection, self.kept_sums, known).map_err(failed)?;
+        self.staged_sums.replace(sums.clone());
+        Ok(sums)
+    }
+
     /// `Transaction._usage_schema`, run once per transaction: its
     /// `CREATE TABLE IF NOT EXISTS` statements change nothing after the
     /// first run inside it.
@@ -224,3 +288,7 @@ fn usage_row(row: &Row<'_>) -> rusqlite::Result<UsageRow> {
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(UsageRow { columns })
 }
+
+#[cfg(test)]
+#[path = "repository_usage_tests.rs"]
+mod tests;

@@ -16,7 +16,7 @@ use super::dto::{
     MessageTally, NewEvidence, NewMember, NewMessage, NewRequestUsage, NewReservation, NewRun,
     NewTask, NotificationCursor, PriorEvidence, RunContract, RunOwnerRow, RunStatusRow,
     ScopeObservation, StoredContract, StoredRequestUsage, TaskRow, TaskUpdate, UsageReport,
-    UsageRow,
+    UsageRow, UsageStanding,
 };
 use crate::domain::error::DomainError;
 use crate::domain::swarm::{
@@ -523,6 +523,12 @@ pub trait BoardUsage {
     /// per-member aggregates, reading no request payload and creating no
     /// table; none when the board holds no `request_usage` table yet.
     fn member_usage(&self) -> Result<Vec<UsageRow>, BoardError>;
+    /// The budget and the two totals of [`Self::usage_report`] (#2340),
+    /// read as it reads them (the tables created when absent, the default
+    /// budget without a row) but with one aggregate over the ledger and
+    /// nothing else: what the budget decision and the control receipt
+    /// need, on every recorded request.
+    fn usage_standing(&self) -> Result<UsageStanding, BoardError>;
     /// `usage_report()['budget']`: the stored budget payload as
     /// `json.loads` reads it, or the default budget when there is no row.
     fn usage_budget(&self) -> Result<Value, BoardError>;
