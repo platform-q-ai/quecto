@@ -175,8 +175,8 @@ fn real_offline_compilation_preserves_generated_metadata_not_entry_auth() {
     fs::create_dir(&tools).unwrap();
     // Resolve actual tool binaries without inheriting authentication into builds.
     for name in ["cargo", "rustc"] {
-        let found = Command::new("rustup")
-            .args(["which", name])
+        let found = Command::new("timeout")
+            .args(["--signal=KILL", "5s", "rustup", "which", name])
             .output()
             .unwrap();
         assert!(found.status.success(), "real Rust toolchain required");
