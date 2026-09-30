@@ -256,6 +256,201 @@ async fn a_non_finite_argument_is_answered_by_the_loop_before_the_tool() {
     assert_eq!(provider.request_count(), 2);
 }
 
+/// A running swarm with `coordinator` as its only member, over a fresh
+/// board that records every call in the returned log.
+fn recorded_run(directory: &tempfile::TempDir) -> (SwarmContext, Arc<BoardCalls>) {
+    std::fs::create_dir_all(directory.path().join(".quecto")).unwrap();
+    let context = SwarmContext {
+        board: quecto::composition::swarm::swarm_board(),
+        lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),
+        checkout: directory.path().to_path_buf(),
+        member: "coordinator".into(),
+    };
+    let log = Arc::new(BoardCalls::default());
+    assert!(context.board.record_in(log.clone()));
+    let deadline = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 60;
+    let process = quecto::domain::swarm::ProcessIdentity {
+        pid: std::process::id(),
+        started: quecto::infrastructure::tools::swarm_bridge::process_start(std::process::id())
+            .unwrap(),
+    };
+    quecto::infrastructure::tools::call_work::off_the_runtime(|| {
+        context.create_run(
+            &serde_json::json!({"goal":"ship","constraints":[],
+                "criteria":[{"id":"tests","kind":"command","description":"pass"}],
+                "member_limit":1,"deadline":deadline}),
+            &process,
+            None,
+        )
+    })
+    .unwrap();
+    (context, log)
+}
+
+/// The admission reads and request records the board logged, in order, as
+/// `(op, decision)`.
+fn admission_trail(log: &BoardCalls) -> Vec<(String, Option<String>)> {
+    log.0
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|record| matches!(record.op.as_str(), "_request_admission" | "_record_request"))
+        .map(|record| (record.op.clone(), record.decision.clone()))
+        .collect()
+}
+
+/// How [`gate_trail`] sends its requests: streaming (as members do) or
+/// not, and with a transient failure of the first request's first send.
+#[derive(Clone, Copy, Debug)]
+struct Sending {
+    streaming: bool,
+    first_send_fails: bool,
+}
+
+/// Runs a member's agent loop, wired by the CLI's own
+/// `wire_agent`, over a real board: three requests asking for two tool
+/// calls, then one, then none. Answers the board's admission and usage
+/// trail. Without streaming, retries are `RetryingProvider`'s, as the CLI
+/// composes it; with streaming, the loop re-initiates the stream itself.
+async fn gate_trail(sending: Sending) -> Vec<(String, Option<String>)> {
+    let directory = tempfile::tempdir().unwrap();
+    let (context, log) = recorded_run(&directory);
+    let tool = SwarmTool::new().with_context(Some(context.clone()));
+    let call = |id: &str, op: &str| ToolCall {
+        id: id.into(),
+        name: "swarm".into(),
+        arguments: serde_json::json!({ "op": op }).to_string(),
+    };
+    let mut two_calls = text_response("");
+    two_calls.content = None;
+    two_calls.tool_calls = vec![call("a", "summary"), call("b", "inbox")];
+    let mut one_call = text_response("");
+    one_call.content = None;
+    one_call.tool_calls = vec![call("c", "tasks")];
+    let provider = Arc::new(MockProvider::queued(vec![
+        two_calls,
+        one_call,
+        text_response("done"),
+    ]));
+    if sending.first_send_fails {
+        provider.fail_next("HTTP 503 Service Unavailable");
+    }
+    let mut registry = ToolRegistryImpl::new();
+    registry.register(Arc::new(tool));
+    let mut config = test_config(provider.clone(), Box::new(registry));
+    config.streaming = sending.streaming;
+    if !sending.streaming {
+        config.provider = Arc::new(
+            quecto::infrastructure::providers::retry::RetryingProvider::new(
+                provider.clone(),
+                quecto::infrastructure::providers::retry::RetryConfig::no_delay(3),
+            ),
+        );
+    }
+    let mut agent =
+        quecto::interface::cli::wire_swarm_agent(AgentLoopImpl::new(config), Some(context));
+    let result = agent
+        .process(&mut vec![Message::user("read the run")])
+        .await
+        .unwrap();
+    assert_eq!(result.response, "done", "{sending:?}");
+    let sends = 3 + usize::from(sending.first_send_fails);
+    assert_eq!(provider.request_count(), sends, "{sending:?}");
+    admission_trail(&log)
+}
+
+/// The trail of three requests (two tool calls, one, none), each first
+/// send's model gate followed by `retries` retry gates for the first.
+fn expected_trail(retries: usize) -> Vec<(String, Option<String>)> {
+    let admission = |decision: &str| ("_request_admission".to_owned(), Some(decision.to_owned()));
+    let recorded = ("_record_request".to_owned(), Some("recorded".to_owned()));
+    let mut trail = vec![admission("model_gate")];
+    trail.extend(std::iter::repeat_n(admission("retry_gate"), retries));
+    trail.extend([
+        recorded.clone(),
+        admission("tool_gate"),
+        admission("tool_gate"),
+        admission("model_gate"),
+        recorded.clone(),
+        admission("tool_gate"),
+        admission("model_gate"),
+        recorded,
+    ]);
+    trail
+}
+
+/// #2339: through the real agent loop, wired as the CLI wires a member,
+/// each model request reads the board's admission once before its first
+/// send (`model_gate`) and records its usage once after, so here, with no
+/// redelivery, `_record_request` and the model gate are 1:1. The other
+/// reads are the tool gate, one before each tool call, needed because the
+/// reply that asked for the tool took its own time (and its usage may just
+/// have spent the budget); each is recorded as `tool_gate`, so the log
+/// tells them apart. The real runs' ~2 reads per request were this 1 + ~1
+/// tool call. Streaming (as members run) or not, the trail is the same.
+#[tokio::test]
+async fn each_model_request_is_admitted_once_and_each_tool_call_once() {
+    for streaming in [false, true] {
+        let trail = gate_trail(Sending {
+            streaming,
+            first_send_fails: false,
+        })
+        .await;
+        assert_eq!(trail, expected_trail(0), "streaming: {streaming}");
+    }
+}
+
+/// #2339 review L2: a first send that fails transiently is sent again
+/// after a `retry_gate` read, never a second `model_gate`: by the stream's
+/// re-initiation when streaming, by `RetryingProvider` when not.
+#[tokio::test]
+async fn a_resent_request_reads_the_retry_gate_not_a_second_model_gate() {
+    for streaming in [false, true] {
+        let trail = gate_trail(Sending {
+            streaming,
+            first_send_fails: true,
+        })
+        .await;
+        assert_eq!(trail, expected_trail(1), "streaming: {streaming}");
+    }
+}
+
+/// #2339: a member's admission records which gate read it: the first send
+/// of a model request, a reattempt of it, or a tool call.
+#[tokio::test]
+async fn each_admission_gate_is_recorded_as_its_own_decision() {
+    use quecto::application::providers::ports::RequestAdmission;
+    use quecto::application::tools::ports::ToolExecutionAdmission;
+    use quecto::domain::provider::RequestAttempt;
+    let directory = tempfile::tempdir().unwrap();
+    let (context, log) = recorded_run(&directory);
+    RequestAdmission::check(&context, RequestAttempt::First)
+        .await
+        .unwrap();
+    RequestAdmission::check(&context, RequestAttempt::Reattempt)
+        .await
+        .unwrap();
+    ToolExecutionAdmission::check(&context, "swarm", r#"{"op":"summary"}"#)
+        .await
+        .unwrap();
+    let decisions: Vec<Option<String>> = admission_trail(&log)
+        .into_iter()
+        .map(|(_, decision)| decision)
+        .collect();
+    assert_eq!(
+        decisions,
+        [
+            Some("model_gate".to_owned()),
+            Some("retry_gate".to_owned()),
+            Some("tool_gate".to_owned()),
+        ]
+    );
+}
+
 /// The board calls recorded, in memory.
 #[derive(Default)]
 struct BoardCalls(std::sync::Mutex<Vec<quecto::domain::swarm::BoardOpObservation>>);
@@ -272,6 +467,7 @@ impl quecto::application::swarm::ports::BoardOpLog for BoardCalls {
 struct MockProvider {
     steps: &'static [Step],
     responses: std::sync::Mutex<std::collections::VecDeque<LlmResponse>>,
+    failures: std::sync::Mutex<Vec<String>>,
     requests: std::sync::atomic::AtomicUsize,
     refusals: std::sync::Mutex<Vec<String>>,
 }
@@ -287,6 +483,7 @@ impl MockProvider {
         Self {
             steps,
             responses: std::sync::Mutex::new(std::collections::VecDeque::new()),
+            failures: std::sync::Mutex::new(Vec::new()),
             requests: std::sync::atomic::AtomicUsize::new(0),
             refusals: std::sync::Mutex::new(Vec::new()),
         }
@@ -297,6 +494,10 @@ impl MockProvider {
             responses: std::sync::Mutex::new(responses.into()),
             ..Self::new(&[])
         }
+    }
+    /// Fails the next request with `error` before answering the rest.
+    fn fail_next(&self, error: &str) {
+        self.failures.lock().unwrap().push(error.to_owned());
     }
     fn request_count(&self) -> usize {
         self.requests.load(std::sync::atomic::Ordering::SeqCst)
@@ -325,6 +526,11 @@ impl quecto::application::providers::ports::LlmProvider for MockProvider {
         let index = self
             .requests
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if let Some(error) = self.failures.lock().unwrap().pop() {
+            return Box::pin(
+                async move { Err(quecto::domain::error::DomainError::Provider(error)) },
+            );
+        }
         if let Some(response) = self.responses.lock().unwrap().pop_front() {
             return Box::pin(async move { Ok(response) });
         }

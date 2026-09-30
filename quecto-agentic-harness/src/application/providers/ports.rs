@@ -12,7 +12,8 @@ use std::sync::Arc;
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message};
 use crate::domain::provider::{
-    CancelFlag, EffortLevel, RequestMetadata, StreamEvent, ThinkingLevel, ToolChoice,
+    CancelFlag, EffortLevel, RequestAttempt, RequestMetadata, StreamEvent, ThinkingLevel,
+    ToolChoice,
 };
 use crate::domain::request_observation::{RequestObservation, RequestTrace};
 use crate::domain::tool::ToolDefinition;
@@ -137,10 +138,15 @@ pub trait LlmProvider: Send + Sync + std::fmt::Debug {
     }
 }
 
-/// Admission policy evaluated before each model request. Implementations may
-/// consult durable execution state without exposing its storage to the agent.
+/// Admission policy evaluated before each send of a model request: once for
+/// its first send, and again before every reattempt (#2339). Implementations
+/// may consult durable execution state without exposing its storage to the
+/// agent, and record `attempt` so the two checks are told apart.
 pub trait RequestAdmission: std::fmt::Debug + Send + Sync {
-    fn check(&self) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>>;
+    fn check(
+        &self,
+        attempt: RequestAttempt,
+    ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>>;
 }
 
 /// Port: durable accounting of one completed request observation, recorded

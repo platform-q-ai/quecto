@@ -26,25 +26,8 @@
 //! transactional halves of `create` and `_bootstrap`, and `_bootstrap`'s
 //! join, which the differential harness drives) exist only in `test` and
 //! `test-support` builds: a production build parses none of them and
-//! refuses each as an unknown method. The task and claim methods
-//! `task_create`, `dependencies`, `claim` and `release` (#2272) are served
-//! by [`tasks`], with `task` and the test-only `task_raw` (`task` without
-//! the owner liveness #2277 adds); `block`,
-//! `unblock`, `submit` and `verify_task` by [`submissions`]; the run
-//! control methods `pause`, `resume`, `stop`, `_resume_external`,
-//! `_close`, `_extend_deadline`, `_control_status` and `usage_report`
-//! (#2273) by [`control`]; `complete`, `revalidate_task`, `amend` and the
-//! criterion `evidence` success needs (#2273) by [`completion`]; the
-//! usage methods `usage_budget`, `_record_request` and
-//! `_request_admission` (#2274) by [`usage`]; and the file reservations
-//! `reserve`, `release_files` and `file_owners`, with the coordinator's
-//! `recover` and `revoke` (#2275), by [`reservations`]; and the durable
-//! messages `send`, `withdraw`, `inbox` and `ack` (#2276) by [`messages`],
-//! the wake notifications `_notifications` and `_accept_wake` by [`wakes`],
-//! the loss and death records `_quarantine`, `_confirmed_dead` and
-//! `_lose_coordinator` (#2277) by [`loss`], and the read models `summary`,
-//! `events` and `tasks`, with the summaries `create`, `_join` and
-//! `_bootstrap` answer with (#2277), by [`reads`].
+//! refuses each as an unknown method. Which module serves each other
+//! method is listed on [`method`].
 //!
 //! The summaries keep Python's order: `create` commits and then reads the
 //! creator's summary, which can still refuse (a created run answered with
@@ -573,9 +556,11 @@ fn serve(
             member,
             arguments,
         ),
-        Method::RequestAdmission => {
-            usage::request_admission(&serving(&*handles.read_request_admission, over), member)
-        }
+        Method::RequestAdmission => usage::request_admission(
+            &serving(&*handles.read_request_admission, over),
+            member,
+            arguments,
+        ),
         Method::Reserve => {
             reservations::reserve(&serving(&*handles.reserve_files, over), member, arguments)
         }

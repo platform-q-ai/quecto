@@ -165,7 +165,7 @@ impl AgentLoopImpl {
     ) -> Result<LlmResponse, StreamProviderError> {
         if let Some(admission) = &self.request_admission {
             admission
-                .check()
+                .check(crate::domain::provider::RequestAttempt::First)
                 .await
                 .map_err(StreamProviderError::before_output)?;
         }
@@ -186,11 +186,12 @@ impl AgentLoopImpl {
         let mut capped = crate::domain::provider_error::CappedFailures::default();
         for attempt in 1..=MAX_PROVIDER_ATTEMPTS {
             // The logical request was admitted above; only re-initiations
-            // re-check, so streaming never pays a second first-attempt check.
+            // re-check, as reattempts (#2339), so streaming never pays a
+            // second first-attempt check.
             if attempt > 1 {
                 if let Some(admission) = &self.request_admission {
                     admission
-                        .check()
+                        .check(crate::domain::provider::RequestAttempt::Reattempt)
                         .await
                         .map_err(StreamProviderError::before_output)?;
                 }

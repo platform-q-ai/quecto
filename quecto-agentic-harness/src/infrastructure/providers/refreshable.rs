@@ -320,7 +320,11 @@ impl RefreshableProvider {
                         // 401 + refresh when it resumes.
                         *self.inner.write().await = new_inner.clone();
                         if let Some(admission) = &owned.admission {
-                            admission.check().await?;
+                            // The resend is a reattempt of a request the loop
+                            // already admitted (#2339).
+                            admission
+                                .check(crate::domain::provider::RequestAttempt::Reattempt)
+                                .await?;
                         }
                         if let Some(trace) = &owned.trace {
                             trace.oauth_retry();

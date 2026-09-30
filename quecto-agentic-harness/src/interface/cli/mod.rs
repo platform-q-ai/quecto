@@ -717,3 +717,7 @@ mod leading_config_dispatch_tests;
 mod mod_tests;
 
 mod swarm_composition;
+/// A swarm member's execution ports on its agent loop, for the tests that
+/// drive the real loop through the CLI's own wiring (#2339 review L1).
+#[cfg(any(test, feature = "test-support"))]
+pub use swarm_composition::wire_agent as wire_swarm_agent;

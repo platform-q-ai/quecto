@@ -66,8 +66,13 @@ fn usage_methods_bind_pythons_signatures() {
         ),
         (
             "_request_admission",
-            json!([1]),
-            "_request_admission: takes 0 arguments, 1 given",
+            json!(["model", 1]),
+            "_request_admission: takes 1 arguments, 2 given",
+        ),
+        (
+            "_request_admission",
+            json!({"gates": "tool"}),
+            "_request_admission: unexpected argument gates",
         ),
     ] {
         assert_eq!(
@@ -119,11 +124,11 @@ fn usage_calls_record_their_decisions_without_argument_text() {
     let expected = [
         (" INFO ", "usage_budget", "ok", "configured"),
         (" INFO ", "usage_budget", "ok", "unchanged"),
-        ("DEBUG ", "_request_admission", "ok", "read"),
+        ("DEBUG ", "_request_admission", "ok", "model_gate"),
         (" INFO ", "_record_request", "ok", "recorded"),
         (" INFO ", "_record_request", "ok", "redelivered"),
         (" INFO ", "usage_budget", "ok", "paused"),
-        ("DEBUG ", "_request_admission", "ok", "read"),
+        ("DEBUG ", "_request_admission", "ok", "model_gate"),
         (" INFO ", "_record_request", "refused", "none"),
     ];
     assert_eq!(records.len(), expected.len(), "{log}");
@@ -215,6 +220,112 @@ fn only_a_usage_method_is_raised_by_the_budgets_decision() {
             assert_eq!(method.served_level(decision), Level::Read, "{method:?}");
         }
     }
-    assert_eq!(Method::RequestAdmission.served_level("read"), Level::Read);
+    for gate in ["model_gate", "retry_gate", "tool_gate"] {
+        assert_eq!(Method::RequestAdmission.served_level(gate), Level::Read);
+    }
     assert_eq!(Method::Pause.served_level("paused"), Level::Mutation);
+}
+
+/// #2339: the admission read takes the gate that reads it, `model` (the
+/// default, so a call without one is the first send of a model request),
+/// `retry` or `tool`, and records it as the decision (`model_gate`,
+/// `retry_gate`, `tool_gate`) with the same answer; any other gate is
+/// refused as invalid, and its text never reaches the log.
+#[test]
+fn the_admission_read_records_the_gate_that_read_it() {
+    let secret = "sk-ant-api03-GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG";
+    let log = captured(10, |handles| {
+        running(handles);
+        let answer = call(handles, "parent", "_request_admission", json!([])).unwrap();
+        for args in [
+            json!(["model"]),
+            json!(["retry"]),
+            json!(["tool"]),
+            json!({"gate": "tool"}),
+        ] {
+            assert_eq!(
+                call(handles, "parent", "_request_admission", args.clone()).unwrap(),
+                answer,
+                "{args}"
+            );
+        }
+        for gate in [json!(secret), json!(null), json!(1), json!("Tool")] {
+            assert_eq!(
+                call(handles, "parent", "_request_admission", json!([gate])).unwrap_err(),
+                BoardError::new(
+                    RefusalKind::Invalid,
+                    "_request_admission: gate must be one of model, retry, tool"
+                ),
+            );
+        }
+    });
+    let decisions: Vec<&str> = log
+        .lines()
+        .filter(|line| line.contains(TELEMETRY_TARGET) && line.contains("_request_admission"))
+        .map(|line| {
+            ["model_gate", "retry_gate", "tool_gate", "none"]
+                .into_iter()
+                .find(|decision| line.contains(&format!("decision=\"{decision}\"")))
+                .unwrap_or("?")
+        })
+        .collect();
+    assert_eq!(
+        decisions,
+        [
+            "model_gate",
+            "model_gate",
+            "retry_gate",
+            "tool_gate",
+            "tool_gate",
+            "none",
+            "none",
+            "none",
+            "none"
+        ],
+        "{log}"
+    );
+    assert!(!log.contains(secret), "{log}");
+    assert!(!log.contains("sk-ant"), "{log}");
+}
+
+/// #2339 review N4: a retry or tool gate's read in which the budget warns
+/// or pauses the run records the budget's `warned` or `paused` at INFO in
+/// place of the gate, as the model gate's does.
+#[test]
+fn a_retry_or_tool_gate_read_that_warns_or_pauses_records_the_budget() {
+    let known = json!({"request_id": "k", "instrumented_attempts": 1, "outcome": "succeeded",
+        "context_input_tokens": 45, "output_tokens": 5,
+        "runtime": {"process_instance_id": "p", "executable_sha256": "abc"}});
+    let log = captured_on(5, |handles, database| {
+        running(handles);
+        call(handles, "parent", "_record_request", json!([known.clone()])).unwrap();
+        call(handles, "parent", "usage_budget", json!([1_000, false])).unwrap();
+        let budget = |limit: u64| {
+            let written = rusqlite::Connection::open(database)
+                .unwrap()
+                .execute(
+                    "UPDATE usage_budget SET payload=? WHERE id=1",
+                    [format!(
+                        r#"{{"token_limit": {limit}, "strict_unknown": false, "warned": false}}"#
+                    )],
+                )
+                .unwrap();
+            assert_eq!(written, 1, "the budget row");
+        };
+        budget(60);
+        call(handles, "parent", "_request_admission", json!(["retry"])).unwrap();
+        budget(40);
+        call(handles, "parent", "_request_admission", json!(["tool"])).unwrap();
+    });
+    let records: Vec<&str> = log
+        .lines()
+        .filter(|line| line.contains(TELEMETRY_TARGET) && line.contains("_request_admission"))
+        .collect();
+    let expected = [(" INFO ", "warned"), (" INFO ", "paused")];
+    assert_eq!(records.len(), expected.len(), "{log}");
+    for (record, (level, decision)) in records.iter().zip(expected) {
+        for field in [level.to_owned(), format!("decision=\"{decision}\"")] {
+            assert!(record.contains(&field), "{field} missing from {record}");
+        }
+    }
 }

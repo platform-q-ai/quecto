@@ -13,7 +13,10 @@ async fn terminal_reports_are_admitted_only_for_the_retained_coordinator() {
         })
         .unwrap();
         assert!(
-            parent.check().await.is_ok(),
+            parent
+                .check(crate::domain::provider::RequestAttempt::First)
+                .await
+                .is_ok(),
             "coordinator report unavailable for {status}"
         );
         let worker = SwarmContext {
@@ -21,7 +24,10 @@ async fn terminal_reports_are_admitted_only_for_the_retained_coordinator() {
             ..parent.clone()
         };
         assert!(
-            worker.check().await.is_err(),
+            worker
+                .check(crate::domain::provider::RequestAttempt::First)
+                .await
+                .is_err(),
             "terminal worker admitted for {status}"
         );
     }

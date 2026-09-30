@@ -3,7 +3,9 @@ use crate::application::agent_loop::AgentLoopImpl;
 use crate::infrastructure::tools::swarm_bridge::SwarmContext;
 use std::sync::Arc;
 
-pub(super) fn wire_agent(agent: AgentLoopImpl, context: Option<SwarmContext>) -> AgentLoopImpl {
+/// A member's tool gate, request usage record and model gates, all over
+/// its `SwarmContext`; none without one (#2339).
+pub fn wire_agent(agent: AgentLoopImpl, context: Option<SwarmContext>) -> AgentLoopImpl {
     let context = context.map(Arc::new);
     agent
         .with_tool_admission(context.clone().map(|value| {

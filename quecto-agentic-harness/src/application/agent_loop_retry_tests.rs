@@ -327,6 +327,7 @@ struct PausedAdmission;
 impl crate::application::providers::ports::RequestAdmission for PausedAdmission {
     fn check(
         &self,
+        _attempt: crate::domain::provider::RequestAttempt,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), DomainError>> + Send + '_>>
     {
         Box::pin(async { Err(DomainError::Tool("swarm paused".into())) })
@@ -569,4 +570,91 @@ async fn a_malformed_request_error_before_output_is_recovered() {
         .unwrap();
     assert_eq!(provider.request_count(), 2);
     assert_eq!(result.response, "repaired");
+}
+
+/// Records the attempt of each admission check, admitting every one (#2339).
+#[derive(Debug, Default)]
+struct RecordingAdmission(std::sync::Mutex<Vec<crate::domain::provider::RequestAttempt>>);
+impl crate::application::providers::ports::RequestAdmission for RecordingAdmission {
+    fn check(
+        &self,
+        attempt: crate::domain::provider::RequestAttempt,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), DomainError>> + Send + '_>>
+    {
+        self.0.lock().unwrap().push(attempt);
+        Box::pin(async { Ok(()) })
+    }
+}
+
+/// #2339: the loop admits a request's first send once, and checks the
+/// stream re-initiation after a transient failure as a reattempt, so the
+/// admission records the two apart.
+#[tokio::test]
+async fn a_stream_reinitiation_is_admitted_as_a_reattempt() {
+    use crate::domain::provider::{RequestAttempt, StreamEvent};
+    let provider = Arc::new(MockStreamingProvider::new(vec![
+        vec![StreamEvent::Error(
+            "HTTP 503 from Codex: connection refused".to_string(),
+        )],
+        vec![StreamEvent::Done(text_response("stream recovered"))],
+    ]));
+    let admission = Arc::new(RecordingAdmission::default());
+    let mut agent =
+        streaming_agent(provider.clone()).with_request_admission(Some(admission.clone()));
+    let result = agent
+        .process(&mut vec![Message::user("hello")])
+        .await
+        .unwrap();
+    assert_eq!(result.response, "stream recovered");
+    assert_eq!(provider.request_count(), 2);
+    assert_eq!(
+        *admission.0.lock().unwrap(),
+        [RequestAttempt::First, RequestAttempt::Reattempt]
+    );
+}
+
+/// #2339: a request answered at its first send is admitted exactly once,
+/// streaming or not.
+#[tokio::test]
+async fn a_request_answered_first_time_is_admitted_once() {
+    use crate::domain::provider::{RequestAttempt, StreamEvent};
+    let provider = Arc::new(MockStreamingProvider::new(vec![vec![StreamEvent::Done(
+        text_response("first time"),
+    )]]));
+    let admission = Arc::new(RecordingAdmission::default());
+    let mut agent =
+        streaming_agent(provider.clone()).with_request_admission(Some(admission.clone()));
+    agent
+        .process(&mut vec![Message::user("hello")])
+        .await
+        .unwrap();
+    assert_eq!(*admission.0.lock().unwrap(), [RequestAttempt::First]);
+    let provider = Arc::new(MockProvider::new(vec![text_response("first time")]));
+    let admission = Arc::new(RecordingAdmission::default());
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider: provider.clone(),
+        tool_registry: Box::new(MockRegistry::default()),
+        model: "test".into(),
+        max_tokens: 1024,
+        temperature: 0.0,
+        retention: None,
+        session_key: "admitted-once".into(),
+        context_collapse_after_tool_calls: context_pruning::COLLAPSE_DISABLED,
+        max_context_tokens: 100_000,
+        progress_callback: None,
+        streaming: false,
+        effort: None,
+        audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+    })
+    .with_request_admission(Some(admission.clone()));
+    agent
+        .process(&mut vec![Message::user("hello")])
+        .await
+        .unwrap();
+    assert_eq!(provider.request_count(), 1);
+    assert_eq!(*admission.0.lock().unwrap(), [RequestAttempt::First]);
 }

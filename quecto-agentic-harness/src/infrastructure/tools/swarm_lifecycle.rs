@@ -449,13 +449,19 @@ impl crate::application::swarm::ports::Clock for SystemClock {
     }
 }
 
+/// The model gates (#2339): a request's first send reads the admission as
+/// `model`, each reattempt as `retry`.
 impl crate::application::providers::ports::RequestAdmission for SwarmContext {
-    fn check(&self) -> PortFuture<'_, Result<(), DomainError>> {
+    fn check(
+        &self,
+        attempt: crate::domain::provider::RequestAttempt,
+    ) -> PortFuture<'_, Result<(), DomainError>> {
         let context = self.clone();
         let actor = self.member.clone();
+        let gate = crate::domain::swarm::AdmissionGate::for_attempt(attempt);
         Box::pin(async move {
             let snapshot =
-                super::call_work::spawn_blocking_in_call(move || context.inference_snapshot())
+                super::call_work::spawn_blocking_in_call(move || context.inference_snapshot(gate))
                     .await
                     .map_err(|error| DomainError::Tool(error.to_string()))??;
             if snapshot.admits_inference(&actor) {
@@ -527,6 +533,9 @@ impl crate::application::swarm::ports::SwarmRunControl for SwarmContext {
     }
 }
 
+/// The tool gate (#2339): each tool call reads the admission afresh, as
+/// `tool`, because the reply that asked for it (and each earlier call)
+/// took its own time, and the reply's usage may just have spent the budget.
 impl crate::application::tools::ports::ToolExecutionAdmission for SwarmContext {
     fn check<'a>(
         &'a self,
@@ -535,10 +544,11 @@ impl crate::application::tools::ports::ToolExecutionAdmission for SwarmContext {
     ) -> PortFuture<'a, Result<(), DomainError>> {
         let context = self.clone();
         Box::pin(async move {
-            let snapshot =
-                super::call_work::spawn_blocking_in_call(move || context.inference_snapshot())
-                    .await
-                    .map_err(|error| DomainError::Tool(error.to_string()))??;
+            let snapshot = super::call_work::spawn_blocking_in_call(move || {
+                context.inference_snapshot(crate::domain::swarm::AdmissionGate::Tool)
+            })
+            .await
+            .map_err(|error| DomainError::Tool(error.to_string()))??;
             use crate::domain::swarm::RunStatus;
             // A reporting coordinator (terminal run, or a run it ended and
             // that now waits for the supervisor, #1729) keeps native reads.

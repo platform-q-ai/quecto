@@ -120,8 +120,13 @@ impl CoordinationPort for SwarmContext {
     }
 }
 impl SwarmContext {
-    pub fn inference_snapshot(&self) -> Result<Snapshot, DomainError> {
-        decode(self.rpc("_request_admission", json!([]))?)
+    /// The run as `gate` admits from it (#2339): the board records the
+    /// read as that gate's decision.
+    pub fn inference_snapshot(
+        &self,
+        gate: crate::domain::swarm::AdmissionGate,
+    ) -> Result<Snapshot, DomainError> {
+        decode(self.rpc("_request_admission", json!([gate.as_str()]))?)
     }
 
     pub(crate) fn decode_control_receipt(
