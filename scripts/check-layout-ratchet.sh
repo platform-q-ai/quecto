@@ -14,46 +14,61 @@ else
     echo "usage: $0 [<base>]" >&2
     exit 2
 fi
-python3 - "$BASE" <<'PY'
-import pathlib
-import re
-import subprocess
-import sys
 
-path = "quecto-agentic-harness/tests/architecture/layout.rs"
-base = sys.argv[1]
+TABLE=quecto-agentic-harness/tests/architecture/layout.rs
+SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/layout-ratchet.XXXXXX")"
+trap 'rm -rf "$SCRATCH"' EXIT
 
-def budgets(source):
-    table = re.search(r"const BUDGETS\s*:[^=]+?=\s*&\[(.*?)\];", source, re.S)
-    if table is None:
-        raise ValueError(f"{path}: BUDGETS table missing; restore the budget table")
-    row = re.compile(r'FlatBudget\s*\{\s*path:\s*"([^"]+)"\s*,\s*(?:maximum|expected):\s*(\d+)\s*,?\s*\}\s*,?', re.S)
-    body = re.sub(r"//[^\n]*", "", table[1])
-    if row.sub("", body).strip() == "":
-        return dict((name, int(count)) for name, count in row.findall(body))
-    raise ValueError(f"{path}: cannot read BUDGETS; keep literal path/expected rows")
+# Read literal policy rows, not a second authoritative budget table. The old
+# column spelling remains readable across the exact-count transition.
+budgets() {
+    perl -0777 -e '
+        use strict; use warnings;
+        my $source = <>;
+        $source =~ /const BUDGETS\s*:[^=]+?=\s*&\[(.*?)\];/s
+            or die "$ARGV: BUDGETS missing; restore the budget table\n";
+        my $body = $1;
+        $body =~ s{//[^\n]*}{}g;
+        while ($body =~ s/^\s*FlatBudget\s*\{\s*path:\s*"([^"]+)"\s*,\s*(?:maximum|expected):\s*(\d+)\s*,?\s*\}\s*,?//s) {
+            print "$1\t", 0 + $2, "\n";
+        }
+        $body =~ /^\s*$/s
+            or die "BUDGETS: cannot read literal path/count rows; restore the table syntax\n";
+    ' "$1"
+}
 
-try:
-    head = budgets(pathlib.Path(path).read_text())
-    entries = subprocess.run(["git", "ls-tree", "--name-only", base, "--", path],
-                             check=True, capture_output=True, text=True, timeout=10)
-    if entries.stdout in ("", path + "\n"):
-        present = entries.stdout == path + "\n"
-    else:
-        raise ValueError(f"{path}: unexpected git ls-tree output; inspect the base tree")
-    if present:
-        previous = subprocess.run(["git", "show", f"{base}:{path}"], check=True, capture_output=True, text=True, timeout=10)
-        old = budgets(previous.stdout)
-        failures = []
-        for name, count in head.items():
-            if name in old and count <= old[name]:
-                continue
-            failures.append(f"{path}: {name} budget {count} is new or raised; remove the row or lower it to the merge-base budget")
-        if failures:
-            print("\n".join(failures), file=sys.stderr)
-            sys.exit(1)
-    print(f"layout ratchet: budgets only shrink against {base}")
-except (OSError, ValueError, subprocess.SubprocessError) as error:
-    print(f"layout ratchet: {error}", file=sys.stderr)
-    sys.exit(1)
-PY
+budgets "$TABLE" >"$SCRATCH/head"
+printf '%s\n' "$TABLE" >"$SCRATCH/expected-entry"
+if timeout -s KILL 10 git ls-tree --name-only "$BASE" -- "$TABLE" >"$SCRATCH/entries"; then
+    if [[ "$(wc -c <"$SCRATCH/entries")" -eq 0 ]]; then
+        echo "layout ratchet: no table at base $BASE; initial introduction allowed"
+        exit 0
+    elif cmp -s "$SCRATCH/entries" "$SCRATCH/expected-entry"; then
+        timeout -s KILL 10 git show "$BASE:$TABLE" >"$SCRATCH/base-source"
+        budgets "$SCRATCH/base-source" >"$SCRATCH/base"
+    else
+        echo "layout ratchet: $TABLE: unexpected git ls-tree output; inspect the base tree" >&2
+        exit 1
+    fi
+else
+    echo "layout ratchet: $TABLE: git ls-tree failed; repair Git access to base $BASE" >&2
+    exit 1
+fi
+
+declare -A OLD=()
+while IFS=$'\t' read -r path count; do
+    OLD["$path"]="$count"
+done <"$SCRATCH/base"
+FAILED=0
+while IFS=$'\t' read -r path count; do
+    if [[ -v "OLD[$path]" ]] && (( count <= OLD["$path"] )); then
+        continue
+    fi
+    echo "layout ratchet: $TABLE: $path budget $count is new or raised; remove the row or lower it to the merge-base budget" >&2
+    FAILED=1
+done <"$SCRATCH/head"
+if (( FAILED == 0 )); then
+    echo "layout ratchet: budgets only shrink against $BASE"
+else
+    exit 1
+fi
