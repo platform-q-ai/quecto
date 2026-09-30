@@ -348,3 +348,20 @@ fn dumps_value_writes_as_json_dumps() {
         r#"{"z": 1e+16, "a": [0.1, "\u00e9"], "n": null}"#
     );
 }
+
+/// #2341: the keys whose values a `Value` cannot hold, in the object's
+/// order; a key that is no Rust string as `""`; `None` for no object.
+#[test]
+fn unreadable_fields_are_the_keys_a_value_cannot_hold() {
+    assert_eq!(
+        unreadable_fields(
+            r#"{"a": 1e400, "b": 1, "c": [18446744073709551616], "d": "\ud800", "\udc00": 2}"#
+        ),
+        Some(vec!["a".into(), "c".into(), "d".into(), String::new()])
+    );
+    assert_eq!(unreadable_fields(r#"{"a": NaN}"#), Some(vec!["a".into()]));
+    assert_eq!(unreadable_fields(r#"{"a": 1}"#), Some(vec![]));
+    for text in ["[1e400]", "{", "1"] {
+        assert_eq!(unreadable_fields(text), None, "{text}");
+    }
+}

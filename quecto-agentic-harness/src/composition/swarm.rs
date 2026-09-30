@@ -90,6 +90,7 @@ pub fn board_wire() -> BoardWire {
         read: |text| py_json::decode_value(text).map_err(|error| error.to_string()),
         op: |text| py_json::object_text(text, "op"),
         write: |value| py_json::dumps_value(value).map_err(|error| error.to_string()),
+        unreadable: py_json::unreadable_fields,
     }
 }
 

@@ -84,7 +84,7 @@ async fn a_missing_argument_records_its_schema_name() {
     ] {
         let record = refusal(&context, &log, op, text, RefusalKind::Calling).await;
         assert_eq!(
-            record.arguments,
+            *record.arguments,
             ArgumentFaults {
                 missing_args: names(missing),
                 ..ArgumentFaults::NONE
@@ -102,7 +102,7 @@ async fn unexpected_arguments_are_counted_and_only_schema_fields_named() {
     let text = r#"{"op":"claim","task_id":1,"owner":"me","title":"t","body":"b","goal":"g"}"#;
     let record = refusal(&context, &log, "claim", text, RefusalKind::Calling).await;
     assert_eq!(
-        record.arguments,
+        *record.arguments,
         ArgumentFaults {
             unexpected_args: Some(UnexpectedArgs {
                 count: 4,
@@ -114,7 +114,7 @@ async fn unexpected_arguments_are_counted_and_only_schema_fields_named() {
     let text = r#"{"op":"release","task_id":1,"tok":"x"}"#;
     let record = refusal(&context, &log, "release", text, RefusalKind::Calling).await;
     assert_eq!(
-        record.arguments,
+        *record.arguments,
         ArgumentFaults {
             missing_args: names(&["token"]),
             unexpected_args: Some(UnexpectedArgs {
@@ -151,7 +151,7 @@ async fn a_mis_typed_known_field_records_its_expected_type() {
     ] {
         let record = refusal(&context, &log, op, text, RefusalKind::Invalid).await;
         assert_eq!(
-            record.arguments,
+            *record.arguments,
             ArgumentFaults {
                 wrong_type_args: vec![expected],
                 ..ArgumentFaults::NONE
@@ -171,10 +171,10 @@ async fn a_refusal_the_binding_did_not_raise_records_no_fault() {
     let (_directory, context, log) = logged();
     let text = r#"{"op":"task_create","request":"r2","title":"t","acceptance":[]}"#;
     let record = refusal(&context, &log, "task_create", text, RefusalKind::Invalid).await;
-    assert_eq!(record.arguments, ArgumentFaults::NONE);
+    assert_eq!(*record.arguments, ArgumentFaults::NONE);
     let text = r#"{"op":"claim","task_id":"99"}"#;
     let record = refusal(&context, &log, "claim", text, RefusalKind::NotFound).await;
-    assert_eq!(record.arguments, ArgumentFaults::NONE);
+    assert_eq!(*record.arguments, ArgumentFaults::NONE);
 }
 
 /// Member input the board cannot hold (a huge integer, a number that
@@ -205,7 +205,7 @@ async fn unreadable_member_input_records_its_field_or_arguments() {
     ] {
         let record = refusal(&context, &log, op, &text, RefusalKind::Invalid).await;
         assert_eq!(
-            record.arguments,
+            *record.arguments,
             ArgumentFaults {
                 unreadable_args: names(&[unreadable]),
                 ..ArgumentFaults::NONE
@@ -268,6 +268,6 @@ fn a_positional_call_records_its_missing_and_extra_values() {
         direct(&context, "release", args.clone()).unwrap_err();
         let records = log.take();
         assert_eq!(records.len(), 1, "{records:?}");
-        assert_eq!(records[0].arguments, expected, "{args}");
+        assert_eq!(*records[0].arguments, expected, "{args}");
     }
 }

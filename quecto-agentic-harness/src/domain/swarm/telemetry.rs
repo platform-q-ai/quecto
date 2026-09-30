@@ -214,9 +214,10 @@ pub struct BoardOpObservation {
     pub detail: BoardOpDetail,
     /// Which arguments a refusal raised while binding them found wrong
     /// (#2341), flat beside the other fields: schema names only, each
-    /// field left out when it has none.
+    /// field left out when it has none. Boxed: most records have none, and
+    /// every audit event is as large as its largest.
     #[serde(flatten)]
-    pub arguments: ArgumentFaults,
+    pub arguments: Box<ArgumentFaults>,
 }
 
 /// Whether `decision` is shaped as a decision kind: nonempty lowercase

@@ -30,7 +30,7 @@ fn observation() -> BoardOpObservation {
         result_bytes: 0,
         decision: None,
         detail: BoardOpDetail::NONE,
-        arguments: ArgumentFaults::NONE,
+        arguments: Box::new(ArgumentFaults::NONE),
     }
 }
 

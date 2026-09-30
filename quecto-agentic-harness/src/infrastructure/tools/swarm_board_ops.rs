@@ -31,7 +31,8 @@
 //!    lifecycle's notes (when there are any) on the line after it.
 //!
 //! Every op leaves the dispatcher's `swarm_op` records (a refusal before
-//! the board is recorded as the op's own) and one `tracing` record on
+//! the board is recorded as the op's own, with the schema fields its text
+//! could not hold, #2341) and one `tracing` record on
 //! [`TELEMETRY_TARGET`]: the op, the gate, whether the cursor moved, what
 //! the lifecycle did, the warnings counted and the answer's size, never
 //! argument text.
@@ -39,12 +40,12 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value, json};
 
-use super::swarm_board_dispatch::{BoardWire, TELEMETRY_TARGET};
+use super::swarm_board_dispatch::{BoardWire, TELEMETRY_TARGET, unreadable_arguments};
 use super::swarm_bridge::SwarmContext;
 use super::swarm_control::AfterExecution;
 use super::swarm_output::tool_err;
 use crate::domain::error::DomainError;
-use crate::domain::swarm::RefusalKind;
+use crate::domain::swarm::{ArgumentFaults, RefusalKind};
 use crate::domain::tool::ToolResult;
 
 /// One argument of a board op: its name, its JSON schema (as JSON text),
@@ -329,7 +330,9 @@ pub fn wire_text(wire: &BoardWire, value: &Value) -> Result<String, String> {
 /// and the codec its answer is written with.
 pub(super) struct BoardOpRequest {
     spec: &'static OpSpec,
-    arguments: Result<Map<String, Value>, String>,
+    /// The arguments, or why the text was refused and which fields it
+    /// could not hold (#2341).
+    arguments: Result<Map<String, Value>, (String, ArgumentFaults)>,
     wire: BoardWire,
 }
 
@@ -348,6 +351,8 @@ pub(super) fn requested(text: &str, wire: BoardWire) -> Option<BoardOpRequest> {
         }
         _ => Err("arguments: not a JSON object".to_owned()),
     });
+    let arguments =
+        arguments.map_err(|refusal| (refusal, unreadable_arguments((wire.unreadable)(text))));
     Some(BoardOpRequest {
         spec,
         arguments,
@@ -398,18 +403,17 @@ async fn blocking<T: Send + 'static>(
         .map_err(|error| DomainError::Tool(error.to_string()))
 }
 
-/// Records `op` as refused with `kind` before the board, then answers
-/// `text`.
+/// Records `op` as refused with `kind` before the board, with what it
+/// found wrong in the arguments (#2341), then answers `text`.
 async fn refuse(
     context: &SwarmContext,
-    op: &'static str,
-    kind: RefusalKind,
+    (op, kind, faults): (&'static str, RefusalKind, ArgumentFaults),
     started: Instant,
     text: String,
 ) -> Result<ToolResult, DomainError> {
     let ctx = context.clone();
     let elapsed = started.elapsed();
-    blocking(move || ctx.refused(op, kind, elapsed)).await?;
+    blocking(move || ctx.refused(op, kind, faults, elapsed)).await?;
     tool_err(text)
 }
 
@@ -422,11 +426,12 @@ async fn serve(
     let op = request.spec.name;
     let arguments = match request.arguments {
         Ok(arguments) => arguments,
-        Err(refusal) => {
+        Err((refusal, faults)) => {
             record.gate = "arguments";
             // Shaped as every board refusal reaches the member.
             let text = DomainError::Tool(format!("swarm: {}", Value::String(refusal))).to_string();
-            return refuse(context, op, RefusalKind::Invalid, started, text).await;
+            let kind = RefusalKind::Invalid;
+            return refuse(context, (op, kind, faults), started, text).await;
         }
     };
     let ctx = context.clone();
@@ -436,7 +441,7 @@ async fn serve(
     };
     if let Some((kind, gate, text)) = gated(op, &status) {
         record.gate = gate;
-        return refuse(context, op, kind, started, text).await;
+        return refuse(context, (op, kind, ArgumentFaults::NONE), started, text).await;
     }
     let before = match record.read_only {
         true => None,
@@ -465,7 +470,8 @@ async fn unreadable(
     error: &DomainError,
 ) -> Result<ToolResult, DomainError> {
     record.gate = "unreadable";
-    refuse(context, op, RefusalKind::Store, started, error.to_string()).await
+    let refusal = (op, RefusalKind::Store, ArgumentFaults::NONE);
+    refuse(context, refusal, started, error.to_string()).await
 }
 
 /// The running gate (`op=run`'s until #2282 removed it): the refusal's

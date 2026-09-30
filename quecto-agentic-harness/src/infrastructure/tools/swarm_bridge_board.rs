@@ -21,7 +21,7 @@ use serde_json::Value;
 use crate::application::swarm::dto::BoardLocation;
 use crate::application::swarm::ports::{BoardOpLog, SessionOpLog};
 use crate::domain::error::DomainError;
-use crate::domain::swarm::RefusalKind;
+use crate::domain::swarm::{ArgumentFaults, RefusalKind};
 use crate::infrastructure::persistence::audit_log::AuditLog;
 use crate::infrastructure::tools::swarm_board_dispatch::{
     self, BoardWire, CallOrigin, SwarmBoardHandles, TELEMETRY_TARGET,
@@ -293,17 +293,18 @@ impl SwarmBoard {
 
     /// Records `method`, called by `member` on the file at `location`, as
     /// refused with `kind` before it reached the board (#2279: a structured
-    /// op's argument text or its running gate), `elapsed` after it began.
+    /// op's argument text or its running gate), with what it found wrong in
+    /// the arguments (#2341), `elapsed` after it began.
     pub(super) fn refused(
         &self,
         location: BoardLocation,
         member: &str,
         method: &str,
-        kind: RefusalKind,
+        (kind, arguments): (RefusalKind, ArgumentFaults),
         elapsed: Duration,
     ) {
         let handles = self.handles(location);
-        swarm_board_dispatch::refused(&handles, member, method, kind, elapsed);
+        swarm_board_dispatch::refused(&handles, member, method, kind, arguments, elapsed);
     }
 
     /// How structured ops read and write member text (#2279):

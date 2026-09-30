@@ -31,7 +31,7 @@ fn swarm_op() -> AuditEvent {
         result_bytes: 2,
         decision: None,
         detail: BoardOpDetail::NONE,
-        arguments: ArgumentFaults::NONE,
+        arguments: Box::new(ArgumentFaults::NONE),
     })
 }
 
