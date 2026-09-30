@@ -2,6 +2,27 @@
 //! telemetry level and role, whether its answer proves the caller a
 //! member, and its Python signature. Serving and argument binding stay in
 //! the parent dispatch adapter.
+//!
+//! The dispatcher serves each method by its module. The task and claim
+//! methods `task_create`, `dependencies`, `claim` and `release` (#2272) are served
+//! by [`tasks`], with `task` and the test-only `task_raw` (`task` without
+//! the owner liveness #2277 adds); `block`,
+//! `unblock`, `submit` and `verify_task` by [`submissions`]; the run
+//! control methods `pause`, `resume`, `stop`, `_resume_external`,
+//! `_close`, `_extend_deadline`, `_control_status` and `usage_report`
+//! (#2273) by [`control`]; `complete`, `revalidate_task`, `amend` and the
+//! criterion `evidence` success needs (#2273) by [`completion`]; the
+//! usage methods `usage_budget`, `_record_request` and
+//! `_request_admission` (#2274, its gate #2339) by [`usage`]; and the file
+//! reservations `reserve`, `release_files` and `file_owners`, with the
+//! coordinator's `recover` and `revoke` (#2275), by [`reservations`]; and
+//! the durable
+//! messages `send`, `withdraw`, `inbox` and `ack` (#2276) by [`messages`],
+//! the wake notifications `_notifications` and `_accept_wake` by [`wakes`],
+//! the loss and death records `_quarantine`, `_confirmed_dead` and
+//! `_lose_coordinator` (#2277) by [`loss`], and the read models `summary`,
+//! `events` and `tasks`, with the summaries `create`, `_join` and
+//! `_bootstrap` answer with (#2277), by [`reads`].
 use serde_json::Value;
 
 use super::Level;

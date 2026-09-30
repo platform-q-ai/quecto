@@ -29,7 +29,11 @@ pub(super) const USAGE_BUDGET: [Parameter; 2] = [
 pub(super) const RECORD_REQUEST: [Parameter; 1] = [required("record")];
 /// `_request_admission(gate="model")` (#2339): the gate that reads the
 /// admission, which the decision records; Python's method took none, and a
-/// call without one is the model gate, so Python's calls answer alike.
+/// call without one is the model gate, so Python's calls answer alike. The
+/// `gate` argument is a Rust addition for the harness only, as
+/// `_event_cursor` is: `_request_admission` is a host method no member can
+/// call, so no board input reaches it and it has no `PERMITTED_DIVERGENCES`
+/// row.
 pub(super) const REQUEST_ADMISSION: [Parameter; 1] = [Parameter {
     name: "gate",
     default: Some(|| Value::String(AdmissionGate::Model.as_str().to_owned())),

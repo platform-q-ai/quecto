@@ -143,10 +143,6 @@ pub struct RequestMetadata {
     pub user_id: Option<String>,
 }
 
-#[cfg(test)]
-#[path = "provider_tests.rs"]
-mod tests;
-
 /// Which send of one logical model request an admission check gates
 /// (#2339): the agent loop admits the request's [`First`](Self::First)
 /// send once, and every later send (a transient-failure retry, a stream
@@ -160,3 +156,7 @@ pub enum RequestAttempt {
     First,
     Reattempt,
 }
+
+#[cfg(test)]
+#[path = "provider_tests.rs"]
+mod tests;

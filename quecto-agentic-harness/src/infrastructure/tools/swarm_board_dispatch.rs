@@ -10,39 +10,24 @@
 //!
 //! The dispatcher holds composed handles only ([`SwarmBoardHandles`], built
 //! by `composition::swarm`): it never constructs a use case or an adapter,
-//! and never sequences two use cases. While the event log is on, each call is
-//! served by the composed use case [`OverRepository::over`] the call's own
-//! metered repository: the graph is composed once, and only the repository is
-//! the call's. It serves `_status` and `_snapshot` (#2270) and the harness's
-//! membership methods `_admit`, `_activate`, `_record_launch`,
-//! `_release_unlaunched` and `_socket` (#2271); later slices add methods, and
-//! `SwarmContext` and `HostedStore` call it through
-//! `swarm_bridge::SwarmBoard` (#2278). Every membership argument (member,
-//! reservation, pid, start time, socket) reaches the use case as the JSON
-//! value passed (#2271 round-1 review M1): Python binds each untyped, so the
-//! store binds it as Python's `sqlite3` does and the board compares it by
-//! Python's `==`; no type is refused here. `create_run`, `bootstrap_run` and
-//! `bootstrap_join` (the transactional halves of `create` and `_bootstrap`,
-//! and `_bootstrap`'s join, which the differential harness drives) exist only
-//! in `test` and `test-support` builds: a production build parses none of
-//! them and refuses each as an unknown method. The task and claim methods
-//! `task_create`, `dependencies`, `claim` and `release` (#2272) are served by
-//! [`tasks`], with `task` and the test-only `task_raw` (`task` without the
-//! owner liveness #2277 adds); `block`, `unblock`, `submit` and `verify_task`
-//! by [`submissions`]; the run control methods `pause`, `resume`, `stop`,
-//! `_resume_external`, `_close`, `_extend_deadline`, `_control_status` and
-//! `usage_report` (#2273) by [`control`]; `complete`, `revalidate_task`,
-//! `amend` and the criterion `evidence` success needs (#2273) by
-//! [`completion`]; the usage methods `usage_budget`, `_record_request` and
-//! `_request_admission` (#2274, its gate #2339) by [`usage`]; and the file
-//! reservations `reserve`, `release_files` and `file_owners`, with the
-//! coordinator's `recover` and `revoke` (#2275), by [`reservations`]; and the
-//! durable messages `send`, `withdraw`, `inbox` and `ack` (#2276) by
-//! [`messages`], the wake notifications `_notifications` and `_accept_wake`
-//! by [`wakes`], the loss and death records `_quarantine`, `_confirmed_dead`
-//! and `_lose_coordinator` (#2277) by [`loss`], and the read models
-//! `summary`, `events` and `tasks`, with the summaries `create`, `_join` and
-//! `_bootstrap` answer with (#2277), by [`reads`].
+//! and never sequences two use cases. While the event log is on, each call
+//! is served by the composed use case [`OverRepository::over`] the call's
+//! own metered repository: the graph is composed once, and only the
+//! repository is the call's. It serves `_status` and `_snapshot`
+//! (#2270) and the harness's membership methods `_admit`, `_activate`,
+//! `_record_launch`, `_release_unlaunched` and `_socket` (#2271); later
+//! slices add methods, and `SwarmContext` and `HostedStore` call it
+//! through `swarm_bridge::SwarmBoard` (#2278). Every
+//! membership argument (member, reservation, pid, start time, socket)
+//! reaches the use case as the JSON value passed (#2271 round-1 review
+//! M1): Python binds each untyped, so the store binds it as Python's
+//! `sqlite3` does and the board compares it by Python's `==`; no type is
+//! refused here. `create_run`, `bootstrap_run` and `bootstrap_join` (the
+//! transactional halves of `create` and `_bootstrap`, and `_bootstrap`'s
+//! join, which the differential harness drives) exist only in `test` and
+//! `test-support` builds: a production build parses none of them and
+//! refuses each as an unknown method. Which module serves each other
+//! method is listed on [`method`].
 //!
 //! The summaries keep Python's order: `create` commits and then reads the
 //! creator's summary, which can still refuse (a created run answered with

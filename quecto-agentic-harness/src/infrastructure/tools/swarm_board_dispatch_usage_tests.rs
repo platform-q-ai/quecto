@@ -287,3 +287,45 @@ fn the_admission_read_records_the_gate_that_read_it() {
     assert!(!log.contains(secret), "{log}");
     assert!(!log.contains("sk-ant"), "{log}");
 }
+
+/// #2339 review N4: a retry or tool gate's read in which the budget warns
+/// or pauses the run records the budget's `warned` or `paused` at INFO in
+/// place of the gate, as the model gate's does.
+#[test]
+fn a_retry_or_tool_gate_read_that_warns_or_pauses_records_the_budget() {
+    let known = json!({"request_id": "k", "instrumented_attempts": 1, "outcome": "succeeded",
+        "context_input_tokens": 45, "output_tokens": 5,
+        "runtime": {"process_instance_id": "p", "executable_sha256": "abc"}});
+    let log = captured_on(5, |handles, database| {
+        running(handles);
+        call(handles, "parent", "_record_request", json!([known.clone()])).unwrap();
+        call(handles, "parent", "usage_budget", json!([1_000, false])).unwrap();
+        let budget = |limit: u64| {
+            let written = rusqlite::Connection::open(database)
+                .unwrap()
+                .execute(
+                    "UPDATE usage_budget SET payload=? WHERE id=1",
+                    [format!(
+                        r#"{{"token_limit": {limit}, "strict_unknown": false, "warned": false}}"#
+                    )],
+                )
+                .unwrap();
+            assert_eq!(written, 1, "the budget row");
+        };
+        budget(60);
+        call(handles, "parent", "_request_admission", json!(["retry"])).unwrap();
+        budget(40);
+        call(handles, "parent", "_request_admission", json!(["tool"])).unwrap();
+    });
+    let records: Vec<&str> = log
+        .lines()
+        .filter(|line| line.contains(TELEMETRY_TARGET) && line.contains("_request_admission"))
+        .collect();
+    let expected = [(" INFO ", "warned"), (" INFO ", "paused")];
+    assert_eq!(records.len(), expected.len(), "{log}");
+    for (record, (level, decision)) in records.iter().zip(expected) {
+        for field in [level.to_owned(), format!("decision=\"{decision}\"")] {
+            assert!(record.contains(&field), "{field} missing from {record}");
+        }
+    }
+}

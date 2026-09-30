@@ -3,9 +3,10 @@
 //! needed and each recorded as its own decision, so the event log counts
 //! them apart:
 //!
-//! - [`Model`](AdmissionGate::Model): once before each model request's
-//!   first send. It is 1:1 with the request's usage record
-//!   (`_record_request`).
+//! - [`Model`](AdmissionGate::Model): once per model request, before its
+//!   first send. Each request also records its usage once
+//!   (`_record_request`), which may add redeliveries of a record the
+//!   store was too busy to take, with no gate read of their own.
 //! - [`Retry`](AdmissionGate::Retry): before each reattempt of a request
 //!   (a transient-failure retry, a stream re-initiation, a resend after an
 //!   OAuth refresh), because the run may have been paused, stopped or run
@@ -18,6 +19,8 @@
 //!
 //! A member therefore reads its admission about `1 + t` times per model
 //! request, `t` being the request's tool calls (plus one per reattempt).
+//! A read at any gate in which the token budget warns or pauses the run
+//! records the budget's `warned` or `paused` in place of the gate.
 use super::super::provider::RequestAttempt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

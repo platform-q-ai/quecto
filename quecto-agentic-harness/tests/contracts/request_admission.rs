@@ -7,6 +7,8 @@ async fn real_admission_tracks_pause_resume_and_terminal_actor() {
     quecto::infrastructure::tools::call_work::off_the_runtime(|| context.pause("approval"))
         .unwrap();
     assert!(context.check(RequestAttempt::First).await.is_err());
+    // #2339 review L3: the pause refuses every attempt, a reattempt too.
+    assert!(context.check(RequestAttempt::Reattempt).await.is_err());
     assert!(
         quecto::infrastructure::tools::call_work::off_the_runtime(|| context.resume()).is_err(),
         "members cannot resume (#1729)"
