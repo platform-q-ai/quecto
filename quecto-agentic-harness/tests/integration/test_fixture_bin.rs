@@ -98,3 +98,39 @@ fn a_silent_endpoint_fails_the_admission_peer_within_its_bound() {
         assert!(started.elapsed() < Duration::from_secs(8), "{mode}");
     }
 }
+
+/// The signal-logging pid 2 of the in-container proof (#1925/#1940), with
+/// no container: it takes the signals sent to it (masked, so they neither
+/// kill nor stop it) and logs each with its sender, runs its command with
+/// the signals unblocked, exits with the command's status (128 + a
+/// signal's), and ends its log with the count, in the Python wrapper's
+/// shapes (`argv=[...]` and `sender_cmdline='...'` as Python's repr,
+/// `status=<code>`, negative for a signal).
+#[test]
+fn the_pid2_wrapper_logs_the_signals_it_takes_and_exits_as_its_command() {
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("pid2.log");
+    let run = |script: &str| {
+        let output = Command::new(FIXTURE)
+            .args(["pid2-signal-log", "sh", "-c", script])
+            .env("PID2_SIGNAL_LOG", &log)
+            .stdin(Stdio::null())
+            .output()
+            .expect("the wrapper runs");
+        (output.status.code(), std::fs::read_to_string(&log).unwrap())
+    };
+    let (code, text) = run("kill -TERM $PPID; kill -HUP $PPID; sleep 0.3; exit 3");
+    assert_eq!(code, Some(3), "{text}");
+    assert!(text.contains("argv=['sh', '-c', 'kill -TERM"), "{text}");
+    assert!(text.contains("SIGNAL signo=15 si_pid="), "{text}");
+    assert!(text.contains("SIGNAL signo=1 si_pid="), "{text}");
+    assert!(text.contains("sender_cmdline='sh -c kill -TERM"), "{text}");
+    assert!(text.contains(" child exited status=3\n"), "{text}");
+    assert!(text.trim_end().ends_with(" SIGNALS_TO_PID2 2"), "{text}");
+    // The command runs with the signals unblocked: its own SIGTERM ends it.
+    std::fs::remove_file(&log).unwrap();
+    let (code, text) = run("kill -TERM $$; sleep 5; exit 0");
+    assert_eq!(code, Some(143), "{text}");
+    assert!(text.contains(" child exited status=-15\n"), "{text}");
+    assert!(text.trim_end().ends_with(" SIGNALS_TO_PID2 0"), "{text}");
+}

@@ -158,6 +158,17 @@ fn files_under(dir: &str, found: &mut Vec<String>) {
 
 /// Every file of the workspace, relative to its root, sorted.
 fn harness_files() -> Vec<String> {
+    files_of(Path::new(WORKSPACE))
+}
+
+/// The files of the tree at `root`, relative to it, sorted. (#2344 final
+/// review red phase: every file on disk.)
+fn files_of(root: &Path) -> Vec<String> {
+    assert_eq!(
+        root,
+        Path::new(WORKSPACE),
+        "the red phase walks the workspace"
+    );
     let mut files = Vec::new();
     files_under("", &mut files);
     files.sort();
@@ -373,4 +384,31 @@ fn the_python_scan_covers_the_whole_workspace() {
             "the scan misses {expected}"
         );
     }
+}
+
+/// #2344 final review: the scan reads what git tracks or would track (in a
+/// checkout), never a file git ignores, such as an agent's worktree under
+/// an ignored folder.
+#[test]
+fn the_python_scan_lists_what_git_lists() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+    let git = |args: &[&str]| {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(repo)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?}");
+    };
+    git(&["init", "-q"]);
+    std::fs::write(repo.join(".gitignore"), "ignored/\n").unwrap();
+    std::fs::write(repo.join("tracked.rs"), "").unwrap();
+    std::fs::create_dir_all(repo.join("ignored")).unwrap();
+    std::fs::write(repo.join("ignored/x.py"), "").unwrap();
+    git(&["add", ".gitignore", "tracked.rs"]);
+    std::fs::write(repo.join("new.sh"), "").unwrap();
+    assert_eq!(files_of(repo), [".gitignore", "new.sh", "tracked.rs"]);
 }

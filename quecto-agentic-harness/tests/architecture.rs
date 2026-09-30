@@ -26,6 +26,8 @@ use std::fs;
 use std::path::Path;
 
 /// Hook scripts resolve git paths so they work in linked worktrees (#2119).
+#[path = "architecture/golden_manifest_check.rs"]
+mod golden_manifest_check;
 #[path = "architecture/hook_scripts_worktree.rs"]
 mod hook_scripts_worktree;
 /// Release builds unwind and every binary installs its panic hook (#2192).
