@@ -591,9 +591,13 @@ fn multi_thread_runtime_destruction_reaps_fd() {
 async fn two_live_calls_keep_children_workspaces_and_arguments_isolated() {
     for shared in [true, false] {
         // The pattern is the second-to-last argument, the root the last.
+        // The pid it records is the process the test samples, and it
+        // waits for its release without forking: blocked opening and
+        // reading a FIFO, never polling through child `sleep`s (a shell that
+        // vforks them, dash, shows `D` while one starts).
         let script = "prev=\nlast=\nfor a in \"$@\"; do prev=$last; last=$a; done\n\
-                      printf '%s\\0' \"$@\" > \"$prev.args\"\nprintf %s $$ > \"$prev.pid\"\n\
-                      while [ ! -e \"$prev.release\" ]; do sleep 0.01; done\n\
+                      printf '%s\\0' \"$@\" > \"$prev.args\"\nmkfifo \"$prev.release\"\n\
+                      printf %s $$ > \"$prev.pid\"\nread -r _ < \"$prev.release\" || :\n\
                       printf '%s/%s\\0' \"$last\" \"$prev\"";
         let (first_dir, first) = fixture(script);
         let (second_dir, second) = fixture(script);
@@ -628,9 +632,15 @@ async fn two_live_calls_keep_children_workspaces_and_arguments_isolated() {
         .expect("cancelled invocation must be reaped");
         assert!(Path::new(&format!("/proc/{second_pid}")).exists());
         let status = std::fs::read_to_string(format!("/proc/{second_pid}/status")).unwrap();
-        assert!(status.lines().any(|line| {
-            line.starts_with("State:") && (line.contains("sleeping") || line.contains("running"))
-        }));
+        let state = status
+            .lines()
+            .find(|line| line.starts_with("State:"))
+            .unwrap_or_default();
+        assert!(
+            state.contains("sleeping") || state.contains("running"),
+            "the second call's fd is untouched: {state:?}, {}",
+            process_tree(second_pid)
+        );
         let args = recorded_argv(&second_root.join("second.args"));
         assert_eq!(args[6], "8", "one past the limit");
         assert_eq!(args[args.len() - 2], "second");
@@ -650,6 +660,35 @@ async fn two_live_calls_keep_children_workspaces_and_arguments_isolated() {
             Ok(false)
         ));
     }
+}
+
+/// `pid`'s parent, process group and session, then its parent's, up to
+/// this test process: for a state assertion's failure report.
+fn process_tree(pid: u32) -> String {
+    let mut links = Vec::new();
+    let mut current = pid;
+    for _ in 0..8 {
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{current}/stat")) else {
+            links.push(format!("{current}: gone"));
+            break;
+        };
+        let (name, fields) = stat.rsplit_once(") ").unwrap_or(("?", ""));
+        let fields: Vec<&str> = fields.split_whitespace().collect();
+        let field = |index: usize| fields.get(index).copied().unwrap_or("?");
+        links.push(format!(
+            "{current} {}) state {} ppid {} pgid {} sid {}",
+            name,
+            field(0),
+            field(1),
+            field(2),
+            field(3)
+        ));
+        match field(1).parse::<u32>() {
+            Ok(parent) if parent > 1 && current != std::process::id() => current = parent,
+            _ => break,
+        }
+    }
+    links.join(" <- ")
 }
 
 async fn named_ready_pid(root: &Path, name: &str) -> u32 {
