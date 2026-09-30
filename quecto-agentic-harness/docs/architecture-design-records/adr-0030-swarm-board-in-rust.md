@@ -166,13 +166,14 @@ upgrade.
 - `_event_cursor`, a pure read.
 - `_snapshot` and `_watch`, whenever their operation gate has nothing to
   write (`board_operation::read_operation`): the gate's authorisation, the
-  cursor and the snapshot are read in one read transaction. Only a running
-  run whose deadline has come must be ended by the gate first; then the
-  read transaction ends having written nothing, and the op runs as before,
-  in its two `IMMEDIATE` transactions. It does so too when the read
-  transaction fails as a store failure (a board an older writer created,
-  lacking a column only the full transaction adds, which that transaction
-  adds). Its answers and refusals are the same either way.
+  cursor and the snapshot are read in one read transaction. The read ends
+  having written nothing, and the op runs as before, in its two `IMMEDIATE`
+  transactions, when: the board lacks any column a write transaction adds
+  (`ensure_columns`; the read counts them first, one `pragma_table_info`
+  query, so an older writer's board gains them as Python's board gives
+  them, and the answer and the board match Python's); a running run's
+  deadline has come (the gate must record the expiry); or the read fails as
+  a store failure. Its answers and refusals are the same either way.
 
 Why this is safe:
 
@@ -200,12 +201,19 @@ Why this is safe:
   lock to the write lock, which is where two deferred transactions can
   deadlock (each holding shared, each wanting reserved). A `_snapshot` or
   `_watch` that finds the gate must write ends its read first, then begins
-  `IMMEDIATE`: it never upgrades. Every other transaction that may write still begins
-  `IMMEDIATE`.
+  `IMMEDIATE`: it never upgrades. Every other transaction that may write
+  still begins `IMMEDIATE`.
 - **Python parity** no longer applies to this concurrency detail: the
   Python board is test-only and is deleted at S18, and `_event_cursor` and
-  `_watch` are Rust-only methods the differential suite never compares;
-  `_snapshot` answers, refuses and writes as Python's did.
+  `_watch` are Rust-only methods the differential suite never compares.
+  `_snapshot` answers, refuses and writes as Python's did, with one
+  exception, which is this amendment's point: while another connection
+  holds the write lock, Python's `_snapshot` waits for it and, held past
+  the busy timeout, refuses `database is locked`, where Rust's answers at
+  once and its record is not busy. The differential harness refuses a held
+  step of `_snapshot`, `_watch` or `_event_cursor` (`UNLOCKED_READS`)
+  rather than compare it, and `a_snapshot_does_not_wait_for_a_writers_lock`
+  pins the Rust behaviour.
 
 ## Consequences
 

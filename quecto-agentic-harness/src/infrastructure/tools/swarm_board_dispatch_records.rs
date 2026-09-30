@@ -30,9 +30,8 @@ use crate::domain::swarm::{BoardOpObservation, BoardRole, RefusalKind};
 pub enum CallOrigin {
     Member,
     Harness,
-    /// The harness's run watch (#2338): its `_event_cursor` polls and its
-    /// `_snapshot`s, recorded as `host`; unchanged polls are aggregated
-    /// ([`WatchPolls`]).
+    /// The harness's run watch (#2338): its `_watch` ticks, recorded as
+    /// `host`; `unchanged` ticks are aggregated ([`WatchPolls`]).
     Watch,
 }
 
@@ -178,10 +177,10 @@ pub(super) fn recorded_role(origin: CallOrigin, known: Option<Method>) -> Option
 /// board accepted it as a member).
 ///
 /// A call the run watch made (`origin` [`CallOrigin::Watch`], #2338) goes
-/// through its tally: an `_event_cursor` poll is held while it finds the
-/// cursor unchanged (and leaves no `tracing` record of its own: the
-/// aggregate it joins leaves one), and anything else the watch records is
-/// written after the polls held before it.
+/// through its tally: an `unchanged` `_watch` tick is held (and leaves no
+/// `tracing` record of its own: the aggregate it joins leaves one), and a
+/// tick that answered the snapshot is written after the ticks held before
+/// it.
 pub(super) fn record(
     handles: &SwarmBoardHandles,
     origin: CallOrigin,

@@ -441,7 +441,7 @@ fn a_snapshot_of_a_board_without_a_message_column_adds_it() {
 /// #2338 final review: the harness refuses a held step of a method the
 /// Rust board reads without the write lock, rather than compare it.
 #[test]
-fn a_held_unlocked_read_is_refused_by_the_harness() {
+fn harness_self_test_refuses_a_held_unlocked_read() {
     use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{Hold, held, try_run_both};
     for method in ["_snapshot", "_watch"] {
         let refused = try_run_both(

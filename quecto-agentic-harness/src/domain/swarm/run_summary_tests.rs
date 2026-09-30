@@ -398,17 +398,17 @@ fn an_aggregate_of_unchanged_polls_counts_every_poll_it_holds() {
             polls: Some(118),
             ..BoardOpDetail::NONE
         },
-        ..record("_event_cursor", Some("unchanged"), 40)
+        ..record("_watch", Some("unchanged"), 40)
     };
     let summary = folded(&[
-        record("_event_cursor", Some("read"), 10),
+        record("_watch", Some("snapshot"), 10),
         aggregate,
-        record("_event_cursor", Some("read"), 20),
+        record("_watch", Some("snapshot"), 20),
         record("_snapshot", Some("read"), 30),
     ]);
     assert_eq!(summary.records, 4, "the lines folded");
     assert_eq!(summary.calls, 121, "every board call the lines account for");
-    let polls = &summary.ops["_event_cursor"];
+    let polls = &summary.ops["_watch"];
     assert_eq!(polls.ok, 120, "each poll counted, recorded or aggregated");
     assert_eq!(polls.duration_us.max, Some(40));
     assert_eq!(polls.duration_us.unmeasured, 0);

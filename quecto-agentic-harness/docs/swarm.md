@@ -862,9 +862,11 @@ cursor, so the board answers the snapshot whatever its cursor, when:
 
 An idle member so reads about one snapshot a minute instead of 120, and a
 tick after a change is one call and one record. `_watch` answers and
-refuses through `_snapshot`'s gate: a board an older writer created,
-lacking a column only a full transaction adds, is read through the
-IMMEDIATE transactions, which add it.
+refuses through `_snapshot`'s gate. Both read the board in their read
+transaction only when it holds every column a write transaction adds; a
+board an older writer created, lacking one (`members.launcher`,
+`messages.superseded_by`, ...), is read through the IMMEDIATE transactions,
+which add it first, so the answer and the board are Python's.
 
 The watch's `unchanged` ticks are not one record each: consecutive ones of
 one run are folded into one `_watch` record with decision `unchanged` and
@@ -878,10 +880,11 @@ ends, before the run's summary is taken (no later tick is written until the
 summary is), when recording stops, when the board's handles for the file are
 replaced (a session switch) or dropped, and when the agent command ends,
 however it ends: a normal return, the orderly shutdown SIGTERM or SIGINT
-starts, or a panic unwinding through it. Only an exit nothing can intercept
-loses what the watch held, at most one aggregate (60 s of ticks): SIGKILL,
-the OOM killer, or a panic outside a tool call, which the harness's panic
-hook aborts on. The aggregate leaves one `tracing` record (`swarm board
+starts, or a panic unwinding through it. Only an exit that skips the
+command's own return loses what the watch held, at most one aggregate (60 s
+of ticks): SIGKILL, the OOM killer, a panic outside a tool call (which the
+harness's panic hook aborts on), and the forced exit a second SIGTERM or
+SIGINT makes more than 45 s into the shutdown (`process::exit`). The aggregate leaves one `tracing` record (`swarm board
 watch polls`, DEBUG, with `polls`) on `quecto::swarm_board`; a tick it holds
 leaves none. With the event log off, nothing is aggregated and every tick
 leaves its own DEBUG `tracing` record, as every read does.

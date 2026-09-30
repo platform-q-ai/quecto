@@ -446,6 +446,32 @@ fn ensure_columns(connection: &Connection) -> Result<(), TransactionError> {
     Ok(())
 }
 
+/// Whether the board holds every one of [`ADDED_COLUMNS`] (#2338 final
+/// review): one count over `pragma_table_info`, so a read transaction,
+/// which adds none, answers only from a board `ensure_columns` would leave
+/// as it is.
+pub(super) fn columns_current(connection: &Connection) -> rusqlite::Result<bool> {
+    let (mut arms, mut expected) = (Vec::new(), 0_i64);
+    for (table, columns) in ADDED_COLUMNS {
+        let names: Vec<String> = columns
+            .iter()
+            .map(|(name, _)| format!("'{name}'"))
+            .collect();
+        expected += i64::try_from(names.len()).unwrap_or(i64::MAX);
+        arms.push(format!(
+            "SELECT count(*) AS present FROM pragma_table_info('{table}') WHERE name IN ({})",
+            names.join(",")
+        ));
+    }
+    let sql = format!(
+        "SELECT coalesce(sum(present),0) FROM ({})",
+        arms.join(" UNION ALL ")
+    );
+    let present: i64 = connection.query_row(&sql, [], |row| row.get(0))?;
+    debug_assert!(present <= expected, "a column counted twice");
+    Ok(present == expected)
+}
+
 fn column_names(connection: &Connection, table: &str) -> rusqlite::Result<Vec<String>> {
     let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
     let names = statement.query_map([], |row| row.get::<_, String>(1))?;

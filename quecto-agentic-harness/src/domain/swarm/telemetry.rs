@@ -304,7 +304,7 @@ pub struct BoardOpDetail {
     /// For `_bootstrap`: whether it wrote the container's placeholder run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub placeholder_created: Option<bool>,
-    /// For the run watch's `_event_cursor` (#2338): the unchanged polls an
+    /// For the run watch's `_watch` (#2338): the `unchanged` ticks an
     /// aggregate record holds (`decision` `unchanged`), each a board call
     /// the record accounts for; left out of a record of one call.
     #[serde(default, skip_serializing_if = "Option::is_none")]

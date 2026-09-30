@@ -127,11 +127,13 @@ pub(crate) fn operation<T>(
 
 /// [`operation`] for a read-only op whose `work` only reads (#2338): the
 /// gate and the work in one read transaction ([`read`]), which takes no
-/// write lock, whenever the gate has nothing to write. Only a run whose
-/// deadline has come must be ended by the gate first; then, and when the
-/// read transaction could not read the board as it is (a board created
-/// by an older writer, lacking a column only the full transaction adds),
-/// the op runs as [`operation`] runs it. Either way it authorises the
+/// write lock, whenever the gate has nothing to write. The full operation
+/// runs instead, as [`operation`] runs it, when the read finds that the
+/// board lacks a column a write transaction adds (an older writer's board:
+/// the full transaction adds it first, as Python's board does, so the
+/// answer and the board are Python's; final review), when the run's
+/// deadline has come (the gate must record the expiry), and when the read
+/// transaction fails as a store failure. Either way it authorises the
 /// caller as [`operation`] does, so it answers and refuses alike.
 ///
 /// # Errors
@@ -147,6 +149,10 @@ pub(crate) fn read_operation<T>(
         ..Access::default()
     };
     let read_first = read(repository, |transaction| {
+        if !transaction.columns_current()? {
+            // The full transaction adds the columns first.
+            return Ok(None);
+        }
         let run = transaction.run()?;
         let member = transaction.member(actor)?;
         authorize(run.as_ref(), actor, member.as_ref(), reading)?;

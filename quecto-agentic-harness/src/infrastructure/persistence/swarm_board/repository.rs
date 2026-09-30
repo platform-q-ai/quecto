@@ -176,7 +176,7 @@ pub(super) struct SqliteBoard<'c> {
 
 impl BoardRuns for SqliteBoard<'_> {
     fn columns_current(&self) -> Result<bool, BoardError> {
-        Ok(true)
+        super::store::columns_current(self.connection).map_err(failed)
     }
 
     fn run(&self) -> Result<Option<RunRecord>, BoardError> {

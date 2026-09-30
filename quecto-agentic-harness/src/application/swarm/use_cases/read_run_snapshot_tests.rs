@@ -141,7 +141,7 @@ fn a_board_missing_an_added_column_is_answered_through_the_full_gate() {
         let status = match watch {
             false => use_case.execute("parent").unwrap().status,
             true => use_case
-                .watch("parent", Some(0))
+                .watch("parent", None)
                 .unwrap()
                 .snapshot
                 .and_then(|view| view.status),

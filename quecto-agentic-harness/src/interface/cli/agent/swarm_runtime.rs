@@ -197,8 +197,9 @@ mod tests;
 /// Writes the swarm run watch's held ticks when the agent command ends
 /// (#2338 review round 1): a normal return, a signal's orderly shutdown
 /// (SIGTERM or SIGINT: the dispatch loop returns through here), or a
-/// panic unwinding through it. Only an exit nothing can intercept loses
-/// them: SIGKILL, the OOM killer, or a panic the harness's hook aborts on.
+/// panic unwinding through it. Only an exit that skips this return loses
+/// them: SIGKILL, the OOM killer, a panic the harness's hook aborts on, or
+/// the forced exit of a second signal past the shutdown's 45 s budget.
 pub(super) struct WatchTicksOnExit(
     Option<&'static crate::infrastructure::tools::swarm_bridge::SwarmBoard>,
 );
