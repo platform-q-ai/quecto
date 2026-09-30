@@ -162,8 +162,10 @@ pub struct BoardOpObservation {
     /// operation gate authorised the caller as a member (#2313 review M2),
     /// records the caller's role in the run ([`run_role`]); `None`
     /// (written `null`) when the op read no run, or the caller was refused
-    /// before or by the gate (no member, not the coordinator, no run).
-    /// Never a role guessed.
+    /// before or by the gate (no member, not the coordinator, no run). A
+    /// member whose death was confirmed passes the gate for a read, so its
+    /// reads record its role and only its mutations `None`. Never a role
+    /// guessed.
     pub role: Option<BoardRole>,
     /// The run the op found, when it found one and its id is one the
     /// board generates ([`board_run_id`]); any other id (a board edited
@@ -317,8 +319,10 @@ impl BoardOpDetail {
 /// the ones given (#2303 reconcile): the coordinator first (Python's
 /// `create` makes it the integrator too), then the integrator, and any
 /// other member a worker. `None` unless the board accepted the caller as
-/// a member of the run (`member_of_run`, #2313): a stranger, or a member
-/// whose death was confirmed, holds no role, and is never guessed one.
+/// a member of the run (`member_of_run`, #2313): a stranger holds no role,
+/// and is never guessed one. A member whose death was confirmed is still
+/// accepted for a read-only op (the gate admits it), so its reads record
+/// the role it holds; its mutations, refused by the gate, record none.
 pub fn run_role(
     member: &str,
     coordinator: Option<&str>,

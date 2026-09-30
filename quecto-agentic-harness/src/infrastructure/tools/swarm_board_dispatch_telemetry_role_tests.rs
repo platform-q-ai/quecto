@@ -139,3 +139,26 @@ fn a_committed_refusal_after_the_gate_records_the_role() {
         "{committed:?}"
     );
 }
+
+/// #2313 final review: a member whose death was confirmed still passes
+/// the gate for a read (read-only access admits it), so its reads record
+/// the role it holds in the run, `worker`; its mutations are refused by
+/// the gate itself and record no role.
+#[test]
+fn a_dead_members_reads_record_its_role_and_its_mutations_none() {
+    let log = Arc::new(Recorded::default());
+    let (dir, handles) = logged(&log);
+    running(&handles);
+    rusqlite::Connection::open(dir.path().join("swarm.sqlite"))
+        .unwrap()
+        .execute("UPDATE members SET status='dead' WHERE id='worker'", [])
+        .unwrap();
+    log.clear();
+    call(&handles, "worker", "summary", json!([null])).unwrap();
+    let read = only(&log);
+    assert_eq!(read.role, Some(BoardRole::Worker), "{read:?}");
+    let task = json!(["t2", "t", ["tests pass"]]);
+    let refused = refused(&log, &handles, "worker", "task_create", task);
+    assert_eq!(kind(&refused), RefusalKind::NotMember, "{refused:?}");
+    assert_eq!(refused.role, None, "{refused:?}");
+}
