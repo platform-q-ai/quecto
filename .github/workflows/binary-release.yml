@@ -185,12 +185,6 @@ jobs:
           - asset_key: linux-arm64
             os: ubuntu-24.04-arm
             rust_target: aarch64-unknown-linux-gnu
-          - asset_key: macos-intel
-            os: macos-13
-            rust_target: x86_64-apple-darwin
-          - asset_key: macos-apple-silicon
-            os: macos-14
-            rust_target: aarch64-apple-darwin
     steps:
       - name: Check out exact release commit
         uses: actions/checkout@v4
@@ -313,7 +307,7 @@ jobs:
 
           shopt -s nullglob
           archives=(dist-download/*.tar.gz)
-          [[ "${#archives[@]}" -eq 4 ]] || fail "expected 4 target archives, found ${#archives[@]}"
+          [[ "${#archives[@]}" -eq 2 ]] || fail "expected 2 target archives, found ${#archives[@]}"
 
           cd dist-download
           sha256sum *.tar.gz > SHA256SUMS.txt
@@ -330,12 +324,10 @@ jobs:
 
           - Linux x86_64: quecto-${tag}-linux-x86_64.tar.gz
           - Linux ARM64: quecto-${tag}-linux-arm64.tar.gz
-          - macOS Intel: quecto-${tag}-macos-intel.tar.gz
-          - macOS Apple Silicon: quecto-${tag}-macos-apple-silicon.tar.gz
 
-          Verify downloads with SHA256SUMS.txt before installing. Windows
-          binaries are not produced; Windows users should use the Linux x86_64
-          bundle inside WSL2.
+          Verify downloads with SHA256SUMS.txt before installing. macOS and
+          Windows binaries are not produced for now; build from source on
+          macOS, and use the Linux x86_64 bundle inside WSL2 on Windows.
           EOF
 
           if gh release view "${tag}" >/dev/null 2>&1; then
