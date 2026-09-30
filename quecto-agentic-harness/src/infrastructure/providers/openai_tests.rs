@@ -409,3 +409,44 @@ fn orphaned_calls_and_results_are_never_sent() {
     assert_eq!(result_ids, ["paired"], "{body}");
     assert_eq!(sent.len(), 4, "the orphaned result is left out: {body}");
 }
+
+/// #2349 final review: an assistant message all of whose calls are orphaned
+/// and that has no text is left out entirely (an empty assistant turn), as
+/// the Responses route does; one with text keeps its text, without calls.
+#[test]
+fn an_assistant_message_left_with_nothing_is_not_sent() {
+    use crate::domain::message::ToolCall;
+    let call = |id: &str| ToolCall {
+        id: id.to_string(),
+        name: "bash".to_string(),
+        arguments: "{}".to_string(),
+    };
+    let messages = vec![
+        Message::user("go"),
+        Message::assistant("", vec![call("orphan-a")]),
+        Message::assistant("I looked", vec![call("orphan-b")]),
+        Message::user("next"),
+    ];
+    let request = ChatRequest {
+        trace: None,
+        admission: None,
+        messages: &messages,
+        tools: &[],
+        model: "gpt-test",
+        max_tokens: 256,
+        temperature: 0.2,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: None,
+    };
+    let body = OpenAiProvider::build_chat_completions_body_for_test("openai", &request);
+    let sent = body["messages"].as_array().unwrap();
+    let assistants: Vec<&serde_json::Value> =
+        sent.iter().filter(|m| m["role"] == "assistant").collect();
+    assert_eq!(assistants.len(), 1, "{body}");
+    assert_eq!(assistants[0]["content"], "I looked");
+    assert!(assistants[0].get("tool_calls").is_none(), "{body}");
+}

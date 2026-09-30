@@ -193,3 +193,34 @@ fn the_ceiling_ladder_never_stubs_the_newest_snapshot() {
     );
     assert!(outcome.collapsed_to_stubs > 0, "the others were stubbed");
 }
+
+/// #2349 final review: two summaries in one parallel batch the model has
+/// not seen yet: neither is stubbed (#2213: no pass stubs an unseen
+/// result). Once the model has answered, the older one is superseded.
+#[test]
+fn a_snapshot_the_model_has_not_seen_is_never_superseded() {
+    let mut caller = call(1);
+    caller.tool_calls.push(ToolCall {
+        id: "call-1b".to_string(),
+        name: "swarm".to_string(),
+        arguments: r#"{"op":"summary"}"#.to_string(),
+    });
+    let mut second = result(1, &full_summary(2), Some(SUMMARY));
+    second.tool_call_id = Some("call-1b".to_string());
+    second.spill_id = Some("turn1:swarm:1".to_string());
+    let mut messages = vec![
+        Message::system("system"),
+        Message::user("go"),
+        caller,
+        result(1, &full_summary(1), Some(SUMMARY)),
+        second,
+    ];
+
+    assert_eq!(collapse_superseded_snapshots(&mut messages), 0);
+    assert!(tool_results(&messages).iter().all(|m| !m.is_collapsed));
+
+    messages.push(Message::assistant("seen both", vec![]));
+    assert_eq!(collapse_superseded_snapshots(&mut messages), 1);
+    let results = tool_results(&messages);
+    assert!(results[0].is_collapsed && !results[1].is_collapsed);
+}
