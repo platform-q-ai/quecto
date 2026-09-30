@@ -302,8 +302,9 @@ fn inspect_layout(
         if let Some(entries) = inspect(root, budget.path, scanner, &mut failures) {
             let actual = entries
                 .iter()
-                .filter(|entry| {
-                    regular_rust(entry) && entry.name.strip_suffix("_tests.rs").is_none()
+                .filter(|entry| match entry.name.strip_suffix("_tests.rs") {
+                    Some(_) => false,
+                    None => regular_rust(entry),
                 })
                 .count();
             if actual == budget.maximum {
