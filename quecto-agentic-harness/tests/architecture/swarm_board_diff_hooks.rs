@@ -54,6 +54,12 @@ const HARNESS_FILE: &str = "tests/common/swarm_board_diff/scenario.rs";
 /// `PIN_TABLE_FILES`, and that pin's test.
 const EVIDENCE_PIN_FILE: &str = "tests/integration/swarm_board_diff_submissions.rs";
 const EVIDENCE_PIN_TEST: &str = "edited_string_evidence_raises_in_python_and_is_refused_in_rust";
+/// The golden self-test outside the `harness_self_test_` prefix (its
+/// name is #2283's): `(file, function)`.
+const GOLDEN_SELF_TEST: (&str, &str) = (
+    "tests/integration/swarm_board_diff_runs.rs",
+    "golden_replay_detects_a_changed_rust_result",
+);
 /// The methods that check a harness call's `Err`.
 const EXPECTING_DIFFERENCE: [&str; 2] = ["unwrap_err", "expect_err"];
 /// A test file that is neither.
@@ -740,4 +746,47 @@ fn the_pin_tables_are_the_files_pin_table_files_lists() {
     let source = std::fs::read_to_string(EVIDENCE_PIN_FILE).expect("the second pin's file");
     assert!(source.contains(&format!("#[test]\nfn {EVIDENCE_PIN_TEST}()")));
     assert!(pinned_tests().contains(&EVIDENCE_PIN_TEST.to_owned()));
+}
+
+/// #2283 review M2: the fixture writers and the fixture-taking replay
+/// (`write_fixture`, `record_rust`, `try_run_golden_in`) are the golden
+/// self-tests' alone: anywhere else they could write a fixture, or compare
+/// with one of a test's own making and so bypass the pin table.
+#[test]
+fn the_hook_checker_confines_fixture_writers_to_the_self_tests() {
+    for call in [
+        "record_rust(&steps);",
+        "golden.write_fixture(dir, \"s\", &steps);",
+        "Golden::write_fixture(&golden, dir, \"s\", &steps);",
+        "let _ = try_run_golden_in(dir, \"s\", &steps);",
+        "try_run_golden_in(dir, \"s\", &steps).unwrap_err();",
+    ] {
+        let ordinary = format!("#[test]\nfn a_scenario() {{ {call} }}");
+        let found = violations(ELSEWHERE, &ordinary);
+        assert_eq!(found.len(), 1, "{call}: {found:?}");
+        assert!(
+            found[0].contains("a golden fixture writer"),
+            "{call}: {found:?}"
+        );
+        // Not in a pin either.
+        let pinned = ordinary.replace("a_scenario", "outside_edited_columns");
+        let found = violations(PIN_TABLE, &pinned);
+        assert_eq!(found.len(), 1, "{call}: {found:?}");
+        // A harness self-test, or the golden self-test in its file, may.
+        let self_test = ordinary.replace("a_scenario", "harness_self_test_writes");
+        assert_eq!(violations(ELSEWHERE, &self_test), Vec::<String>::new());
+        let golden = ordinary.replace("a_scenario", GOLDEN_SELF_TEST.1);
+        assert_eq!(
+            violations(GOLDEN_SELF_TEST.0, &golden),
+            Vec::<String>::new()
+        );
+        assert_eq!(violations(ELSEWHERE, &golden).len(), 1, "{call}");
+    }
+    // A writer used as a value, or renamed on import, hides its calls.
+    for hidden in [
+        "fn a_scenario() { apply(record_rust); }",
+        "use scenario::record_rust as r;",
+    ] {
+        assert_eq!(violations(ELSEWHERE, hidden).len(), 1, "{hidden}");
+    }
 }

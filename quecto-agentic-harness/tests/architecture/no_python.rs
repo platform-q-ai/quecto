@@ -317,3 +317,55 @@ fn the_python_scan_catches_every_interpreter_spelling() {
     let feature = format!("Feature: x\n  Scenario: y\n    {step}\n");
     assert_eq!(python_texts("tests/features/a.feature", &feature), [step]);
 }
+
+/// #2283 review L1: the scan splits a text at every character a word of a
+/// command cannot hold, so a redirection, a brace list or an escape cannot
+/// hide the interpreter's name.
+#[test]
+fn the_python_scan_splits_at_every_shell_delimiter() {
+    let word = "python3";
+    for caught in [
+        format!("cat x >{word}"),
+        format!("{word}<<EOF"),
+        format!("{word}<input"),
+        format!("{{{word},sh}} -c x"),
+        format!("\\{word} -c x"),
+        format!("env X=1 {word}"),
+        format!("[{word}]"),
+    ] {
+        assert!(
+            !python_programs_in_text(&caught).is_empty(),
+            "the scan misses {caught}"
+        );
+    }
+}
+
+/// #2283 review L1: doc comments are read too (a doctest or an example in
+/// one can start an interpreter).
+#[test]
+fn the_python_scan_reads_doc_comments() {
+    let word = "python3";
+    let source = format!("/// Run `{word} -c x` first.\nfn f() {{}}\n");
+    assert_eq!(python_texts("src/a.rs", &source).len(), 1);
+}
+
+/// #2283 review L1/L2: the scan covers the whole workspace: every crate's
+/// sources, tests and examples, and the repository's scripts.
+#[test]
+fn the_python_scan_covers_the_whole_workspace() {
+    let files = harness_files();
+    let scanned = scanned(&files);
+    for expected in [
+        "quecto-tui/src/shell/child_watch_tests.rs",
+        "quecto-tui/tests/bdd/tui_owner_signals_steps.rs",
+        "quecto-agentic-harness/examples/board_op_overhead.rs",
+        "scripts/run-bdd-shards.sh",
+        "scripts/check-pr-review-threads-resolved.sh",
+        ".github/workflows/ci.yml",
+    ] {
+        assert!(
+            scanned.iter().any(|path| path.as_str() == expected),
+            "the scan misses {expected}"
+        );
+    }
+}

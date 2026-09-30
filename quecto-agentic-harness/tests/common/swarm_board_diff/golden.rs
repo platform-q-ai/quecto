@@ -39,6 +39,19 @@ pub const GOLDEN_DIR: &str = concat!(
     "/tests/fixtures/swarm_board/golden"
 );
 
+/// The checked-in manifest: fixture (relative to [`GOLDEN_DIR`]) → its
+/// SHA-256. (#2283 red phase: not yet checked in.)
+pub fn manifest() -> std::collections::BTreeMap<String, String> {
+    let text = std::fs::read_to_string(Path::new(GOLDEN_DIR).join("MANIFEST"))
+        .expect("the golden MANIFEST is checked in");
+    text.lines()
+        .map(|line| {
+            let (digest, path) = line.split_once("  ").expect("`<sha256>  <path>` lines");
+            (path.to_owned(), digest.to_owned())
+        })
+        .collect()
+}
+
 /// The longest final dump (as compact JSON text) a fixture holds in full.
 pub const FULL_DUMP_LIMIT: usize = 32 * 1024;
 
@@ -146,7 +159,7 @@ pub fn steps_json(steps: &[Step]) -> Value {
     )
 }
 
-fn sha256(bytes: &[u8]) -> String {
+pub fn sha256(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
         .map(|byte| format!("{byte:02x}"))
@@ -390,7 +403,7 @@ impl Golden {
 
     /// Writes the fixture for `steps` under `dir`, atomically (a scenario
     /// run twice writes the same text).
-    pub fn save(&self, dir: &Path, scenario: &str, steps: &[Step]) {
+    pub fn write_fixture(&self, dir: &Path, scenario: &str, steps: &[Step]) {
         let path = fixture_path(dir, scenario, steps);
         let parent = path.parent().expect("a fixture has a folder");
         std::fs::create_dir_all(parent)

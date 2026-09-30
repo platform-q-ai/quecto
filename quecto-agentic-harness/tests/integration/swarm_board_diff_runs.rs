@@ -246,7 +246,7 @@ fn golden_replay_detects_a_changed_rust_result() {
         step("parent", "_snapshot", json!([]), NOW + 2.0),
     ];
     let dir = tempfile::tempdir().unwrap();
-    record_rust(&steps).save(dir.path(), "self_test", &steps);
+    record_rust(&steps).write_fixture(dir.path(), "self_test", &steps);
     assert_eq!(try_run_golden_in(dir.path(), "self_test", &steps), Ok(()));
     let path = fixture_path(dir.path(), "self_test", &steps);
     let recorded = std::fs::read_to_string(&path).unwrap();
@@ -287,6 +287,33 @@ fn golden_replay_detects_a_changed_rust_result() {
     assert!(
         difference.starts_with("step 2: _snapshot") && difference.contains("tampered"),
         "{difference}"
+    );
+}
+
+/// #2283 review L6: a fixture's final dump is its last step's digest: a
+/// fixture whose full dump was changed but whose digests were not is
+/// refused on load, before any replay could pass against it.
+#[test]
+fn harness_self_test_a_final_dump_must_be_its_last_digest() {
+    use swarm_board_diff::golden::fixture_path;
+    use swarm_board_diff::scenario::{record_rust, try_run_golden_in};
+    let steps = [
+        step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
+        step("parent", "_snapshot", json!([]), NOW + 1.0),
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    record_rust(&steps).write_fixture(dir.path(), "self_test", &steps);
+    let path = fixture_path(dir.path(), "self_test", &steps);
+    let mut golden: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let text = golden["dump"]
+        .to_string()
+        .replacen("container_setup", "tampered", 1);
+    golden["dump"] = serde_json::from_str(&text).unwrap();
+    std::fs::write(&path, golden.to_string()).unwrap();
+    let refused = try_run_golden_in(dir.path(), "self_test", &steps).unwrap_err();
+    assert!(
+        refused.contains("the final dump is not the last step's digest"),
+        "{refused}"
     );
 }
 
