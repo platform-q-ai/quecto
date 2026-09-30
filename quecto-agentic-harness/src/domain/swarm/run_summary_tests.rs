@@ -29,6 +29,7 @@ fn record(op: &str, decision: Option<&str>, duration_us: u64) -> BoardOpObservat
         result_bytes: 0,
         decision: decision.map(str::to_owned),
         detail: BoardOpDetail::NONE,
+        arguments: Box::new(crate::domain::swarm::ArgumentFaults::NONE),
     }
 }
 

@@ -33,6 +33,7 @@ fn named(op: &str) -> BoardOpObservation {
         result_bytes: 0,
         decision: None,
         detail: BoardOpDetail::NONE,
+        arguments: Box::new(crate::domain::swarm::ArgumentFaults::NONE),
     }
 }
 
