@@ -2,6 +2,7 @@
 # Budget rows may only shrink against the merge base (#2358 amendment 9).
 # Usage: scripts/check-layout-ratchet.sh [<base>]
 set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
 if [[ $# -le 1 ]]; then
     if [[ $# -eq 1 ]]; then
         BASE="$(git rev-parse --verify "$1^{commit}")"
@@ -25,7 +26,9 @@ budgets() {
     perl -0777 -e '
         use strict; use warnings;
         my $source = <>;
-        $source =~ /const BUDGETS\s*:[^=]+?=\s*&\[(.*?)\];/s
+        my @definitions = $source =~ /\bconst\s+BUDGETS\b/g;
+        @definitions == 1 or die "BUDGETS: expected exactly one definition, including comments; remove ambiguity\n";
+        $source =~ /const\s+BUDGETS\s*:[^=]+?=\s*&\[(.*?)\];/s
             or die "$ARGV: BUDGETS missing; restore the budget table\n";
         my $body = $1;
         $body =~ s{//[^\n]*}{}g;
@@ -37,7 +40,7 @@ budgets() {
     ' "$1"
 }
 
-budgets "$TABLE" >"$SCRATCH/head"
+if budgets "$TABLE" >"$SCRATCH/head"; then :; else exit 1; fi
 printf '%s\n' "$TABLE" >"$SCRATCH/expected-entry"
 if timeout -s KILL 10 git ls-tree --name-only "$BASE" -- "$TABLE" >"$SCRATCH/entries"; then
     if [[ "$(wc -c <"$SCRATCH/entries")" -eq 0 ]]; then
@@ -45,7 +48,7 @@ if timeout -s KILL 10 git ls-tree --name-only "$BASE" -- "$TABLE" >"$SCRATCH/ent
         exit 0
     elif cmp -s "$SCRATCH/entries" "$SCRATCH/expected-entry"; then
         timeout -s KILL 10 git show "$BASE:$TABLE" >"$SCRATCH/base-source"
-        budgets "$SCRATCH/base-source" >"$SCRATCH/base"
+        if budgets "$SCRATCH/base-source" >"$SCRATCH/base"; then :; else exit 1; fi
     else
         echo "layout ratchet: $TABLE: unexpected git ls-tree output; inspect the base tree" >&2
         exit 1
@@ -62,11 +65,18 @@ done <"$SCRATCH/base"
 FAILED=0
 while IFS=$'\t' read -r path count; do
     if [[ -v "OLD[$path]" ]] && (( count <= OLD["$path"] )); then
+        unset 'OLD[$path]'
         continue
     fi
     echo "layout ratchet: $TABLE: $path budget $count is new or raised; remove the row or lower it to the merge-base budget" >&2
     FAILED=1
 done <"$SCRATCH/head"
+for path in "${!OLD[@]}"; do
+    if [[ -d "quecto-agentic-harness/src/$path" || -e "quecto-agentic-harness/src/$path" || -L "quecto-agentic-harness/src/$path" ]]; then
+        echo "layout ratchet: $TABLE: $path still exists; restore its budget row or retire the directory" >&2
+        FAILED=1
+    fi
+done
 if (( FAILED == 0 )); then
     echo "layout ratchet: budgets only shrink against $BASE"
 else
