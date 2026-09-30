@@ -655,7 +655,7 @@ async fn launch_uds_agent_uses_uuid_not_display_label_for_socket_and_session_pat
     write_executable(
         &child,
         format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{args}.tmp' && mv '{args}.tmp' '{args}'\nsleep 2\n",
+            "#!/bin/sh\nprintf '%s\\0' \"$@\" > '{args}.tmp' && mv '{args}.tmp' '{args}'\nsleep 2\n",
             args = args_file.display()
         ),
     );
@@ -671,7 +671,7 @@ async fn launch_uds_agent_uses_uuid_not_display_label_for_socket_and_session_pat
                 Err(error) => panic!("the child never recorded its argv: {error}"),
             }
         };
-        let args: Vec<String> = args.lines().map(str::to_owned).collect();
+        let args: Vec<String> = args.split_terminator('\0').map(str::to_owned).collect();
         let socket = &args[args.iter().position(|arg| arg == "--socket").unwrap() + 1];
         let _stale = std::fs::remove_file(socket);
         let listener = std::os::unix::net::UnixListener::bind(socket).expect("bind the socket");

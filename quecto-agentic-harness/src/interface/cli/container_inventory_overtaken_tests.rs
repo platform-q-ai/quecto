@@ -22,18 +22,18 @@ fn racing_registry() -> (tempfile::TempDir, CliContext) {
     let workspace = dir.path().join("state/env-one/workspace");
     std::fs::create_dir_all(&workspace).unwrap();
     let store = FileEnvironmentRegistryStore::for_base_dir(&base);
-    // The other process's retention, as the file it leaves: written once
-    // the registry holds C1 running (below), and copied over the registry
-    // by the first inspect alone.
+    // The other process's retention, as the file it leaves (written once
+    // the registry holds C1 running, below): copied over the registry by an
+    // inspect that finds C1 still running, as the other process retains
+    // only a running record. C1 is the registry's one environment, so its
+    // status is the file's one `status` (asserted below).
     let overtaken = dir.path().join("overtaken.json");
-    let once = dir.path().join("overtaken.done");
     let inspect = script(
         dir.path(),
         "inspect.sh",
         &format!(
-            r#"[ -e '{once}' ] || {{ cp '{overtaken}' '{registry}' && : > '{once}'; }}
+            r#"if grep -Eq '"status": ?"running"' '{registry}'; then cp '{overtaken}' '{registry}'; fi
 printf '{{"status":"exited","metadata":{{}}}}'"#,
-            once = once.display(),
             overtaken = overtaken.display(),
             registry = store.path().display()
         ),
@@ -66,6 +66,8 @@ printf '{{"status":"exited","metadata":{{}}}}'"#,
         document["environments"]["C1"]["status"], "running",
         "{document}"
     );
+    let environments = document["environments"].as_object().map(|all| all.len());
+    assert_eq!(environments, Some(1), "C1 alone: {document}");
     let record = &mut document["environments"]["C1"];
     record["status"] = serde_json::json!("retained");
     record["metadata"] = serde_json::json!({"retained": "kept by its owner"});

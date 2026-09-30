@@ -33,13 +33,14 @@ pub(super) const SLEEPER: &str = "printf %s $$ > pid\nexec sleep 60";
 /// The streams a fake fd closes before it sleeps: none, stdout, both.
 const CLOSED_STREAMS: [&str; 3] = ["", "exec 1>&-", "exec 1>&- 2>&-"];
 
-/// The lines of the file at `path`: a fake fd's recorded argv.
-fn lines(path: &Path) -> Vec<String> {
-    std::fs::read_to_string(path)
-        .unwrap()
-        .lines()
-        .map(str::to_owned)
-        .collect()
+/// A fake fd's recorded argv: each argument NUL-terminated, so an
+/// argument may hold any other byte, a newline included.
+fn recorded_argv(path: &Path) -> Vec<String> {
+    let text = std::fs::read_to_string(path).unwrap();
+    let body = text
+        .strip_suffix('\0')
+        .expect("every argument is NUL-terminated");
+    body.split('\0').map(str::to_owned).collect()
 }
 
 /// A fake fd running the POSIX shell `script` in a fresh directory.
@@ -160,11 +161,11 @@ fn normalization_preserves_components_and_complete_lines() {
 
 #[tokio::test]
 async fn argv_cwd_and_glob_are_literal() {
-    let (dir, effect) = fixture("printf '%s\\n' \"$@\" > argv\nprintf %s \"$(pwd -P)\" > cwd");
+    let (dir, effect) = fixture("printf '%s\\0' \"$@\" > argv\nprintf %s \"$(pwd -P)\" > cwd");
     let mut req = request("./src/*.rs");
     req.limit = 7;
     effect.find(req).await.unwrap();
-    let args = lines(&dir.path().join("argv"));
+    let args = recorded_argv(&dir.path().join("argv"));
     assert_eq!(
         &args[..18],
         [
@@ -591,7 +592,7 @@ async fn two_live_calls_keep_children_workspaces_and_arguments_isolated() {
     for shared in [true, false] {
         // The pattern is the second-to-last argument, the root the last.
         let script = "prev=\nlast=\nfor a in \"$@\"; do prev=$last; last=$a; done\n\
-                      printf '%s\\n' \"$@\" > \"$prev.args\"\nprintf %s $$ > \"$prev.pid\"\n\
+                      printf '%s\\0' \"$@\" > \"$prev.args\"\nprintf %s $$ > \"$prev.pid\"\n\
                       while [ ! -e \"$prev.release\" ]; do sleep 0.01; done\n\
                       printf '%s/%s\\0' \"$last\" \"$prev\"";
         let (first_dir, first) = fixture(script);
@@ -630,7 +631,7 @@ async fn two_live_calls_keep_children_workspaces_and_arguments_isolated() {
         assert!(status.lines().any(|line| {
             line.starts_with("State:") && (line.contains("sleeping") || line.contains("running"))
         }));
-        let args = lines(&second_root.join("second.args"));
+        let args = recorded_argv(&second_root.join("second.args"));
         assert_eq!(args[6], "8", "one past the limit");
         assert_eq!(args[args.len() - 2], "second");
         assert_eq!(
