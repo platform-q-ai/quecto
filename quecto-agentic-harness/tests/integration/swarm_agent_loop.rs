@@ -462,11 +462,13 @@ impl quecto::application::swarm::ports::BoardOpLog for BoardCalls {
 
     /// No summary this test checks is written.
     fn summarize(&self, _summary: quecto::domain::swarm::SwarmRunSummary) {}
+}
 
-    fn dropped(&self, _records: u64) {}
+impl quecto::application::swarm::ports::SessionOpLog for BoardCalls {
+    fn dropped(&self, _drops: quecto::application::swarm::dto::DroppedRecords) {}
 
-    fn take_unnoted(&self) -> u64 {
-        0
+    fn take_unnoted(&self) -> quecto::application::swarm::dto::DroppedRecords {
+        quecto::application::swarm::dto::DroppedRecords::default()
     }
 }
 

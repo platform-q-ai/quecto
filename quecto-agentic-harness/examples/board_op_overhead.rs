@@ -49,12 +49,6 @@ impl BoardOpLog for Discarded {
     fn summarize(&self, summary: quecto::domain::swarm::SwarmRunSummary) {
         std::hint::black_box(summary);
     }
-
-    fn dropped(&self, _records: u64) {}
-
-    fn take_unnoted(&self) -> u64 {
-        0
-    }
 }
 
 /// How an arm records.
@@ -78,7 +72,11 @@ fn handles(dir: &Path, arm: &Arm<'_>) -> SwarmBoardHandles {
             Arc::new(ResolvedCheckout::new(dir)),
             Arc::new(Discarded),
         ),
-        Arm::On(log) => build_swarm_board_handles(location, board_op_log(true, log)),
+        Arm::On(log) => build_swarm_board_handles(
+            location,
+            board_op_log(true, log)
+                .map(|log| log as Arc<dyn quecto::application::swarm::ports::BoardOpLog>),
+        ),
     };
     assert_eq!(handles.telemetry.is_some(), !matches!(arm, Arm::Off));
     call(&handles, "parent", "bootstrap_run", json!([1, "s", null])).expect("bootstrap");

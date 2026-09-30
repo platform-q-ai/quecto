@@ -54,11 +54,13 @@ impl BoardOpLog for Slow {
     }
 
     fn summarize(&self, _summary: SwarmRunSummary) {}
+}
 
-    fn dropped(&self, _records: u64) {}
+impl crate::application::swarm::ports::SessionOpLog for Slow {
+    fn dropped(&self, _drops: crate::application::swarm::dto::DroppedRecords) {}
 
-    fn take_unnoted(&self) -> u64 {
-        0
+    fn take_unnoted(&self) -> crate::application::swarm::dto::DroppedRecords {
+        crate::application::swarm::dto::DroppedRecords::default()
     }
 }
 

@@ -891,7 +891,7 @@ before the board held a run) belong to the run of the container named in
 their `host`, at their time. Each line is written compactly
 (`"event":"swarm_op"`), so a plain `grep '"event":"swarm_op"'` finds them
 too. `swarm_ops_dropped` lines in the same file count records dropped at the
-write gate. Board text never appears in these records: to see what a task or
+write gate, and `swarm_run_summary_dropped` lines the run summaries dropped. Board text never appears in these records: to see what a task or
 message said, read the board itself (`op=events`, or the SQLite file read-only).
 
 A command that reads them back as a report (`quecto swarm report`, #2305) is
@@ -943,7 +943,10 @@ It carries counts, kinds, durations and ids only, never board text, and leaves
 one `tracing` record (`swarm run summary`, INFO) on `quecto::swarm_board`. Being
 written once, off every board call's path, it waits up to 2 s for the log's
 write gate (a `swarm_op` record waits 50 ms); held off past that, it is dropped
-and counted in the next `swarm_ops_dropped` note, as a record is.
+and counted apart from the records, in a
+`{"event":"swarm_run_summary_dropped","dropped":N}` line written before the next
+record (a summary held past the 64 before the session's log opened is counted
+there too).
 Select a run's summary as its records
 are selected:
 
@@ -966,7 +969,8 @@ the configuration its build then loads (the same layers and `QUECTO_*`
 overrides, without asking to trust an overlay). When it is on, the admission's
 own board calls (`_status`, `_bootstrap`, `_activate`) are measured and held,
 at most 64, and written first once the session's log opens, followed by a
-`swarm_ops_dropped` line counting any held past the 64 (a board call made while
+`swarm_ops_dropped` line counting any records held past the 64, and a
+`swarm_run_summary_dropped` line for any run summary (a board call made while
 they are written waits for none of them, and lands after them); when it is off,
 or the session opens no log, nothing is measured or written. A
 `--backend claude-code` member opens no event log of its own, so its

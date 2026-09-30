@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use crate::application::swarm::dto::BoardLocation;
 use crate::application::swarm::ports::{
-    BoardOpLog, BoardRepository, CheckoutPaths, Clock, IdSource,
+    BoardOpLog, BoardRepository, CheckoutPaths, Clock, IdSource, SessionOpLog,
 };
 use crate::application::swarm::use_cases::{
     AcceptWake, AcknowledgeMessage, ActivateMember, AdmitMember, AmendRunContract, BlockTask,
@@ -72,11 +72,11 @@ pub fn swarm_board() -> SwarmBoard {
 /// when `event_log_enabled` (`telemetry.event_log.enabled`, owner decision
 /// T1), and only when the log has a synchronous line to append through.
 /// `None` otherwise: nothing is measured or written.
-pub fn board_op_log(event_log_enabled: bool, log: &AuditLog) -> Option<Arc<dyn BoardOpLog>> {
+pub fn board_op_log(event_log_enabled: bool, log: &AuditLog) -> Option<Arc<dyn SessionOpLog>> {
     match event_log_enabled {
         true => log
             .crash_line()
-            .map(|line| Arc::new(EventLogBoardOps::new(line)) as Arc<dyn BoardOpLog>),
+            .map(|line| Arc::new(EventLogBoardOps::new(line)) as Arc<dyn SessionOpLog>),
         false => None,
     }
 }

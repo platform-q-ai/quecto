@@ -11,11 +11,12 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use super::dto::{
-    AmendedContract, CallMeasure, CompletionState, CountedTask, DictRow, FileRow, LatestActivity,
-    LaunchIdentity, MemberClaimCounts, MemberRow, MemberStatusRow, MessageRow, MessageTally,
-    NewEvidence, NewMember, NewMessage, NewRequestUsage, NewReservation, NewRun, NewTask,
-    NotificationCursor, PriorEvidence, RunContract, RunOwnerRow, RunStatusRow, ScopeObservation,
-    StoredContract, StoredRequestUsage, TaskRow, TaskUpdate, UsageReport, UsageRow,
+    AmendedContract, CallMeasure, CompletionState, CountedTask, DictRow, DroppedRecords, FileRow,
+    LatestActivity, LaunchIdentity, MemberClaimCounts, MemberRow, MemberStatusRow, MessageRow,
+    MessageTally, NewEvidence, NewMember, NewMessage, NewRequestUsage, NewReservation, NewRun,
+    NewTask, NotificationCursor, PriorEvidence, RunContract, RunOwnerRow, RunStatusRow,
+    ScopeObservation, StoredContract, StoredRequestUsage, TaskRow, TaskUpdate, UsageReport,
+    UsageRow,
 };
 use crate::domain::error::DomainError;
 use crate::domain::swarm::{
@@ -656,16 +657,21 @@ pub trait BoardOpLog: Send + Sync {
     /// record: synchronously, never panicking, a failed write the
     /// adapter's to report.
     fn summarize(&self, summary: SwarmRunSummary);
+}
 
-    /// Notes that `records` were dropped before they reached this log
-    /// (#2313 review L4: held past their bound before the session's log
-    /// opened, or counted by the log this one replaced): written as the
-    /// log's drop note, as synchronously and safely as a record.
-    fn dropped(&self, records: u64);
+/// Port: a session's event log a board records in (#2313): a
+/// [`BoardOpLog`] that also notes the records dropped before they reached
+/// it, and hands over, when a session switch replaces it, the drops it
+/// counted but has not noted yet.
+pub trait SessionOpLog: BoardOpLog {
+    /// Notes `drops` (#2313 review L4: held past their bound before the
+    /// session's log opened, or counted by the log this one replaced):
+    /// written as the log's drop notes, as synchronously and safely as a
+    /// record.
+    fn dropped(&self, drops: DroppedRecords);
 
-    /// The records this log dropped and has not noted yet, taken (the
-    /// count restarts): handed to the log that replaces it on a session
-    /// switch (#2313 review nit), so no drop is lost with the departing
-    /// log.
-    fn take_unnoted(&self) -> u64;
+    /// The drops this log counted and has not noted yet, taken (the counts
+    /// restart): handed to the log that replaces it on a session switch
+    /// (#2313 review nit), so no drop is lost with the departing log.
+    fn take_unnoted(&self) -> DroppedRecords;
 }

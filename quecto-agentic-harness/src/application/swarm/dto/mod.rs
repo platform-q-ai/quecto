@@ -36,7 +36,7 @@ pub use loss::{
     ConfirmMemberDeadRequest, CoordinatorLoss, DeathConfirmation, DeathConfirmed,
     LoseCoordinatorRequest, Quarantine, QuarantineMemberRequest, Quarantined, ScopeObservation,
 };
-pub use measure::{CallMeasure, RunRoles};
+pub use measure::{CallMeasure, DroppedRecords, RunRoles};
 pub use membership::{
     ActivateMemberRequest, AdmissionDecision, AdmitMemberRequest, AdmittedMember, JoinRunRequest,
     Joined, LaunchIdentity, RecordMemberLaunchRequest, RegisterMemberSocketRequest,

@@ -1322,6 +1322,7 @@ const SWARM_BOARD_DTOS: &[&str] = &[
     // The run's totals at settle (#2313).
     "RunTotalsView",
     "MessageTally",
+    "DroppedRecords",
     // Tasks and claims (#2272).
     "ClaimTaskRequest",
     "CreateTaskRequest",

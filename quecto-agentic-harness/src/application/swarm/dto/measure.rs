@@ -38,3 +38,26 @@ pub struct RunRoles {
     pub coordinator: Option<String>,
     pub integrator: Option<String>,
 }
+
+/// Board records dropped before they were written (#2313 final review):
+/// `swarm_op` records and run summaries, counted apart.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DroppedRecords {
+    pub ops: u64,
+    pub summaries: u64,
+}
+
+impl DroppedRecords {
+    /// Whether anything was dropped.
+    pub fn any(self) -> bool {
+        self.ops > 0 || self.summaries > 0
+    }
+
+    /// Both counts, added, saturating.
+    pub fn plus(self, other: Self) -> Self {
+        Self {
+            ops: self.ops.saturating_add(other.ops),
+            summaries: self.summaries.saturating_add(other.summaries),
+        }
+    }
+}

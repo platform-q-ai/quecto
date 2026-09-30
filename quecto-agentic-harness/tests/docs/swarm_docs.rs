@@ -106,6 +106,7 @@ fn the_swarm_doc_explains_the_board_telemetry() {
         "`lifecycle`",
         "`warnings`",
         "`swarm_ops_dropped`",
+        "`swarm_run_summary_dropped`",
         "DEBUG",
         "INFO",
     ] {

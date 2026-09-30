@@ -19,7 +19,7 @@ use std::time::Duration;
 use serde_json::Value;
 
 use crate::application::swarm::dto::BoardLocation;
-use crate::application::swarm::ports::BoardOpLog;
+use crate::application::swarm::ports::{BoardOpLog, SessionOpLog};
 use crate::domain::error::DomainError;
 use crate::domain::swarm::RefusalKind;
 use crate::infrastructure::persistence::audit_log::AuditLog;
@@ -36,7 +36,7 @@ pub type SwarmBoardHandlesBuilder =
 /// The event log a session's board calls are recorded in, from its audit
 /// log: composition's `board_op_log`, `None` unless the event log is on
 /// (`telemetry.event_log.enabled`, owner decision T1, #2303).
-pub type SwarmBoardOpLogBuilder = fn(bool, &AuditLog) -> Option<Arc<dyn BoardOpLog>>;
+pub type SwarmBoardOpLogBuilder = fn(bool, &AuditLog) -> Option<Arc<dyn SessionOpLog>>;
 
 /// The board handles of every context that shares it: clones share the
 /// built handles and the event log.
@@ -159,7 +159,7 @@ impl SwarmBoard {
     /// Records every later call in `log`, the current session's event log
     /// (#2313: a later session's replaces an earlier one's); what the board
     /// held until now is written there first.
-    pub fn record_in(&self, log: Arc<dyn BoardOpLog>) -> bool {
+    pub fn record_in(&self, log: Arc<dyn SessionOpLog>) -> bool {
         self.recording_or_pending().bind(log);
         true
     }

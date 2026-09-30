@@ -25,11 +25,13 @@ impl BoardOpLog for Recorded {
 
     /// No summary this test checks is written.
     fn summarize(&self, _summary: crate::domain::swarm::SwarmRunSummary) {}
+}
 
-    fn dropped(&self, _records: u64) {}
+impl crate::application::swarm::ports::SessionOpLog for Recorded {
+    fn dropped(&self, _drops: crate::application::swarm::dto::DroppedRecords) {}
 
-    fn take_unnoted(&self) -> u64 {
-        0
+    fn take_unnoted(&self) -> crate::application::swarm::dto::DroppedRecords {
+        crate::application::swarm::dto::DroppedRecords::default()
     }
 }
 
@@ -233,7 +235,10 @@ static SESSION_LOG: std::sync::OnceLock<Arc<Recorded>> = std::sync::OnceLock::ne
 
 /// A `board_op_log` that answers the in-memory log while the event log
 /// is on.
-fn session_log(enabled: bool, _log: &AuditLog) -> Option<Arc<dyn BoardOpLog>> {
+fn session_log(
+    enabled: bool,
+    _log: &AuditLog,
+) -> Option<Arc<dyn crate::application::swarm::ports::SessionOpLog>> {
     match enabled {
         true => Some(SESSION_LOG.get_or_init(Arc::default).clone()),
         false => None,

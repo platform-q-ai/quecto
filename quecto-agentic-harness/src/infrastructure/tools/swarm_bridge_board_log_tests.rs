@@ -32,14 +32,15 @@ impl BoardOpLog for Recorded {
     fn summarize(&self, summary: SwarmRunSummary) {
         self.summaries.lock().unwrap().push(summary);
     }
+}
 
-    fn dropped(&self, records: u64) {
-        self.drops.lock().unwrap().push(records);
+impl crate::application::swarm::ports::SessionOpLog for Recorded {
+    fn dropped(&self, drops: crate::application::swarm::dto::DroppedRecords) {
+        self.drops.lock().unwrap().push(drops.ops);
     }
 
-    /// Nothing is ever dropped here, so nothing is left unnoted.
-    fn take_unnoted(&self) -> u64 {
-        0
+    fn take_unnoted(&self) -> crate::application::swarm::dto::DroppedRecords {
+        crate::application::swarm::dto::DroppedRecords::default()
     }
 }
 
