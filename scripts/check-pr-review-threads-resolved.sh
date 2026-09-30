@@ -59,38 +59,29 @@ RESPONSE="$(gh api graphql \
   -f name="$NAME" \
   -F number="$PR_NUMBER")"
 
-UNRESOLVED="$(printf '%s' "$RESPONSE" | python3 -c '
-import json, sys
-data = json.load(sys.stdin)
-pr = (data.get("data") or {}).get("repository") or {}
-pr = pr.get("pullRequest")
-if pr is None:
-    print("ERROR: pull request not found or GraphQL returned no data", file=sys.stderr)
-    if data.get("errors"):
-        print(json.dumps(data["errors"], indent=2), file=sys.stderr)
-    sys.exit(2)
-threads = ((pr.get("reviewThreads") or {}).get("nodes")) or []
-page = (pr.get("reviewThreads") or {}).get("pageInfo") or {}
-if page.get("hasNextPage"):
-    print("ERROR: PR has more than 100 review threads; extend pagination", file=sys.stderr)
-    sys.exit(2)
-open_threads = [t for t in threads if not t.get("isResolved")]
-if not open_threads:
-    print(f"OK: all {len(threads)} review thread(s) resolved")
-    sys.exit(0)
-print(f"FAIL: {len(open_threads)} unresolved review thread(s) (of {len(threads)} total):")
-for t in open_threads:
-    path = t.get("path") or "(no path)"
-    nodes = ((t.get("comments") or {}).get("nodes")) or []
-    author = "?"
-    snippet = ""
-    if nodes:
-        author = ((nodes[0].get("author") or {}).get("login")) or "?"
-        body = (nodes[0].get("body") or "").strip().splitlines()
-        snippet = body[0][:120] if body else ""
-    outdated = " [outdated]" if t.get("isOutdated") else ""
-    print(f"  - {path}{outdated} (@{author}): {snippet}")
-sys.exit(1)
-')"
-
-printf '%s\n' "$UNRESOLVED"
+# The report is jq's (#2283: no Python anywhere in the workspace).
+PR_JSON="$(printf '%s' "$RESPONSE" | jq -c '.data.repository.pullRequest // empty')"
+if [[ -z "$PR_JSON" ]]; then
+  echo "ERROR: pull request not found or GraphQL returned no data" >&2
+  printf '%s' "$RESPONSE" | jq '.errors // empty' >&2
+  exit 2
+fi
+if [[ "$(jq -r '.reviewThreads.pageInfo.hasNextPage // false' <<<"$PR_JSON")" == "true" ]]; then
+  echo "ERROR: PR has more than 100 review threads; extend pagination" >&2
+  exit 2
+fi
+TOTAL="$(jq '.reviewThreads.nodes // [] | length' <<<"$PR_JSON")"
+OPEN="$(jq '[.reviewThreads.nodes // [] | .[] | select(.isResolved | not)] | length' <<<"$PR_JSON")"
+if [[ "$OPEN" == "0" ]]; then
+  echo "OK: all ${TOTAL} review thread(s) resolved"
+  exit 0
+fi
+echo "FAIL: ${OPEN} unresolved review thread(s) (of ${TOTAL} total):"
+jq -r '
+  .reviewThreads.nodes // [] | .[] | select(.isResolved | not)
+  | ((.comments.nodes // [])[0]) as $first
+  | "  - \(.path // "(no path)")\(if .isOutdated then " [outdated]" else "" end)"
+    + " (@\($first.author.login // "?")): "
+    + (($first.body // "") | gsub("\r"; "") | gsub("^\\s+|\\s+$"; "") | split("\n")[0] // "" | .[0:120])
+' <<<"$PR_JSON"
+exit 1

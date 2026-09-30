@@ -1,0 +1,87 @@
+{
+"steps": [
+ ["parent","create_run","{\"goal\":\"admit members\",\"constraints\":[],\"criteria\":[{\"id\":\"t\",\"kind\":\"command\",\"description\":\"test\"}],\"member_limit\":5,\"deadline\":1700003600.25}","1700000000.25",null],
+ ["parent","_admit","[\"worker\",\"res-w\"]","1700000001.25",null],
+ ["parent","_activate","[\"worker\",\"res-w\",11,\"t\",null]","1700000002.25",null],
+ ["parent","usage_budget","[4000,false]","1700000003.25",null],
+ ["worker","_record_request","[{\"request_id\":\"observed-1\",\"started_unix_ms\":1000,\"finished_unix_ms\":1750,\"attempt_diagnostics\":[{\"attempt_number\":1,\"started_unix_ms\":0,\"finished_unix_ms\":0,\"elapsed_ms\":12,\"wire_status\":429,\"headers\":[],\"stop_reason\":null,\"terminal_event\":null,\"error_code\":null,\"incomplete_reason\":null,\"event_count\":0,\"generated_text\":false,\"generated_tool_call\":false,\"generated_thinking\":false,\"first_token_ms\":7,\"output_bytes\":0,\"oversized_lines\":0,\"parse_errors\":0,\"unknown_events\":0,\"termination\":\"Dropped\"}],\"model\":\"claude-test\",\"provider\":\"anthropic\",\"outcome\":\"failed\",\"error_class\":\"rate_limit\",\"input_tokens\":1200,\"context_input_tokens\":1500,\"output_tokens\":300,\"cache_read_tokens\":0,\"cache_write_tokens\":null,\"estimated_cost_micro_usd\":4500,\"estimated_context_tokens\":1480,\"instrumented_attempts\":2,\"oauth_retries\":1,\"duration_ms\":750,\"first_token_ms\":null,\"harness_prefix_sha256\":\"abababababababababababababababababababababababababababababababab\",\"harness_prefix_bytes\":4096,\"harness_prefix_unchanged\":true,\"runtime\":{\"process_instance_id\":\"0d7de168-9413-4e8a-8a92-87285baaa850\",\"executable_digest_pending\":true,\"package_version\":\"0.107.189\",\"build_source_revision\":\"8b90db2ba\",\"build_dirty\":false,\"executable_sha256\":null}}]","1700000004.25",null],
+ ["worker","_record_request","[{\"request_id\":\"observed-1\",\"started_unix_ms\":1000,\"finished_unix_ms\":1750,\"attempt_diagnostics\":[{\"attempt_number\":1,\"started_unix_ms\":0,\"finished_unix_ms\":0,\"elapsed_ms\":12,\"wire_status\":429,\"headers\":[],\"stop_reason\":null,\"terminal_event\":null,\"error_code\":null,\"incomplete_reason\":null,\"event_count\":0,\"generated_text\":false,\"generated_tool_call\":false,\"generated_thinking\":false,\"first_token_ms\":7,\"output_bytes\":0,\"oversized_lines\":0,\"parse_errors\":0,\"unknown_events\":0,\"termination\":\"Dropped\"}],\"model\":\"claude-test\",\"provider\":\"anthropic\",\"outcome\":\"failed\",\"error_class\":\"rate_limit\",\"input_tokens\":1200,\"context_input_tokens\":1500,\"output_tokens\":300,\"cache_read_tokens\":0,\"cache_write_tokens\":null,\"estimated_cost_micro_usd\":4500,\"estimated_context_tokens\":1480,\"instrumented_attempts\":2,\"oauth_retries\":1,\"duration_ms\":750,\"first_token_ms\":null,\"harness_prefix_sha256\":\"abababababababababababababababababababababababababababababababab\",\"harness_prefix_bytes\":4096,\"harness_prefix_unchanged\":true,\"runtime\":{\"process_instance_id\":\"0d7de168-9413-4e8a-8a92-87285baaa850\",\"executable_digest_pending\":true,\"package_version\":\"0.107.189\",\"build_source_revision\":\"8b90db2ba\",\"build_dirty\":false,\"executable_sha256\":null}}]","1700000005.25",null],
+ ["parent","usage_report","[]","1700000006.25",null],
+ ["worker","_request_admission","[]","1700000007.25",null]
+],
+"answers": [
+ {"ok":"null"},
+ {"ok":"{\"id\": \"worker\", \"reservation\": \"res-w\", \"status\": \"reserved\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": \"parent\"}"},
+ {"ok":"null"},
+ {"ok":"{\"budget\": {\"token_limit\": 4000, \"strict_unknown\": false, \"warned\": false}, \"totals\": {\"requests\": 0, \"observed_tokens\": 0, \"unknown_usage_requests\": 0, \"attempts\": 0, \"reported_input_tokens\": 0, \"reported_output_tokens\": 0, \"reported_cache_read_tokens\": 0, \"reported_cache_write_tokens\": 0, \"cache_read_known_requests\": 0, \"cache_write_known_requests\": 0}, \"members\": [], \"recent_requests\": []}"},
+ {"ok":"{\"status\": \"running\", \"outcome\": null, \"reason\": null, \"generation\": 0, \"budget\": {\"token_limit\": 4000, \"strict_unknown\": false, \"warned\": false, \"observed_tokens\": 1800, \"unknown_usage_requests\": 0}, \"resume_blockers\": []}"},
+ {"ok":"{\"status\": \"running\", \"outcome\": null, \"reason\": null, \"generation\": 0, \"budget\": {\"token_limit\": 4000, \"strict_unknown\": false, \"warned\": false, \"observed_tokens\": 1800, \"unknown_usage_requests\": 0}, \"resume_blockers\": []}"},
+ {"ok":"{\"budget\": {\"token_limit\": 4000, \"strict_unknown\": false, \"warned\": false}, \"totals\": {\"requests\": 1, \"observed_tokens\": 1800, \"unknown_usage_requests\": 0, \"attempts\": 2, \"reported_input_tokens\": 1200, \"reported_output_tokens\": 300, \"reported_cache_read_tokens\": 0, \"reported_cache_write_tokens\": 0, \"cache_read_known_requests\": 1, \"cache_write_known_requests\": 0}, \"members\": [{\"member\": \"worker\", \"requests\": 1, \"observed_tokens\": 1800, \"unknown_usage_requests\": 0, \"attempts\": 2, \"reported_input_tokens\": 1200, \"reported_output_tokens\": 300, \"reported_cache_read_tokens\": 0, \"reported_cache_write_tokens\": 0, \"cache_read_known_requests\": 1, \"cache_write_known_requests\": 0}], \"recent_requests\": [{\"member\": \"worker\", \"observation\": {\"attempt_diagnostics\": [{\"attempt_number\": 1, \"elapsed_ms\": 12, \"error_code\": null, \"event_count\": 0, \"finished_unix_ms\": 0, \"first_token_ms\": 7, \"generated_text\": false, \"generated_thinking\": false, \"generated_tool_call\": false, \"headers\": [], \"incomplete_reason\": null, \"output_bytes\": 0, \"oversized_lines\": 0, \"parse_errors\": 0, \"started_unix_ms\": 0, \"stop_reason\": null, \"terminal_event\": null, \"termination\": \"Dropped\", \"unknown_events\": 0, \"wire_status\": 429}], \"cache_read_tokens\": 0, \"cache_write_tokens\": null, \"context_input_tokens\": 1500, \"duration_ms\": 750, \"error_class\": \"rate_limit\", \"estimated_context_tokens\": 1480, \"estimated_cost_micro_usd\": 4500, \"finished_unix_ms\": 1750, \"first_token_ms\": null, \"harness_prefix_bytes\": 4096, \"harness_prefix_sha256\": \"abababababababababababababababababababababababababababababababab\", \"harness_prefix_unchanged\": true, \"input_tokens\": 1200, \"instrumented_attempts\": 2, \"model\": \"claude-test\", \"oauth_retries\": 1, \"outcome\": \"failed\", \"output_tokens\": 300, \"provider\": \"anthropic\", \"request_id\": \"observed-1\", \"runtime\": {\"build_dirty\": false, \"build_source_revision\": \"8b90db2ba\", \"executable_digest_pending\": true, \"executable_sha256\": null, \"package_version\": \"0.107.189\", \"process_instance_id\": \"0d7de168-9413-4e8a-8a92-87285baaa850\"}, \"started_unix_ms\": 1000}}]}"},
+ {"ok":"{\"status\": \"running\", \"coordinator\": \"parent\", \"deadline\": 1700003600.25, \"members\": [{\"id\": \"parent\", \"reservation\": \"00000000000000000000000000000002\", \"status\": \"live\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": null}, {\"id\": \"worker\", \"reservation\": \"res-w\", \"status\": \"live\", \"pid\": 11, \"started\": \"t\", \"socket\": null, \"launcher\": \"parent\"}], \"outcome\": null, \"control_generation\": 0}"}
+],
+"files": [
+ "dump:8a1edc28e20b24098878218a87e13a9c2e0a8ae19f105d22653bae5ad3c791e8",
+ "dump:a681b117d1bc7ad75289571f4d83d61c1a2a8b988c3efaa7dccc551760bfde8b",
+ "dump:abe5002c4f6809ac57ea8a82d784b6771b62c568c42c2fd81ee05077a0dc2383",
+ "dump:de7ce24a46ecf27fe972502541dae8f0a6b6de5938455e6233a1d52b6907c51b",
+ "dump:8710913cc54dcb92308c56fb24c0266f12be37b24c4434e2c9cf4b945612d464",
+ "dump:8710913cc54dcb92308c56fb24c0266f12be37b24c4434e2c9cf4b945612d464",
+ "dump:8710913cc54dcb92308c56fb24c0266f12be37b24c4434e2c9cf4b945612d464",
+ "dump:8710913cc54dcb92308c56fb24c0266f12be37b24c4434e2c9cf4b945612d464"
+],
+"dump": [
+  ["sqlite_master", [
+   [["text",{"text":"table"}],["text",{"text":"run"}],["text",{"text":"run"}],["text",{"text":"CREATE TABLE run (id TEXT PRIMARY KEY, goal TEXT, constraints TEXT, criteria TEXT,\n coordinator TEXT, integrator TEXT, member_limit INTEGER, deadline REAL, status TEXT, outcome TEXT, outcome_reason TEXT)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_run_1"}],["text",{"text":"run"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"members"}],["text",{"text":"members"}],["text",{"text":"CREATE TABLE members (id TEXT PRIMARY KEY, reservation TEXT UNIQUE, status TEXT,\n pid INTEGER, started TEXT, socket TEXT, launcher TEXT)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_members_1"}],["text",{"text":"members"}],["null",null]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_members_2"}],["text",{"text":"members"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"tasks"}],["text",{"text":"tasks"}],["text",{"text":"CREATE TABLE tasks (id INTEGER PRIMARY KEY, title TEXT, acceptance TEXT, dependencies TEXT,\n status TEXT, owner TEXT, token TEXT, evidence TEXT, blocker TEXT)"}]],
+   [["text",{"text":"table"}],["text",{"text":"files"}],["text",{"text":"files"}],["text",{"text":"CREATE TABLE files (path TEXT PRIMARY KEY, task INTEGER, owner TEXT, claim TEXT, token TEXT)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_files_1"}],["text",{"text":"files"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"messages"}],["text",{"text":"messages"}],["text",{"text":"CREATE TABLE messages (id INTEGER PRIMARY KEY, sender TEXT, recipient TEXT, body TEXT, status TEXT, revision TEXT, supersedes INTEGER, superseded_by INTEGER)"}]],
+   [["text",{"text":"table"}],["text",{"text":"evidence"}],["text",{"text":"evidence"}],["text",{"text":"CREATE TABLE evidence (criterion TEXT, artifact TEXT, revision TEXT, kind TEXT,\n actor TEXT, accepted INTEGER, PRIMARY KEY(criterion, actor))"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_evidence_1"}],["text",{"text":"evidence"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"requests"}],["text",{"text":"requests"}],["text",{"text":"CREATE TABLE requests (actor TEXT, request TEXT, payload TEXT, result TEXT,\n PRIMARY KEY(actor, request))"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_requests_1"}],["text",{"text":"requests"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"events"}],["text",{"text":"events"}],["text",{"text":"CREATE TABLE events (id INTEGER PRIMARY KEY, actor TEXT, time REAL, action TEXT, detail TEXT)"}]],
+   [["text",{"text":"index"}],["text",{"text":"events_by_actor"}],["text",{"text":"events"}],["text",{"text":"CREATE INDEX events_by_actor ON events(actor,id)"}]],
+   [["text",{"text":"table"}],["text",{"text":"notification_cursors"}],["text",{"text":"notification_cursors"}],["text",{"text":"CREATE TABLE notification_cursors (actor TEXT PRIMARY KEY, event INTEGER)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_notification_cursors_1"}],["text",{"text":"notification_cursors"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"request_usage"}],["text",{"text":"request_usage"}],["text",{"text":"CREATE TABLE request_usage (request_id TEXT PRIMARY KEY, actor TEXT, payload TEXT, tokens INTEGER, unknown INTEGER, attempts INTEGER, input_tokens INTEGER, output_tokens INTEGER, cache_read_tokens INTEGER, cache_write_tokens INTEGER)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_request_usage_1"}],["text",{"text":"request_usage"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"usage_budget"}],["text",{"text":"usage_budget"}],["text",{"text":"CREATE TABLE usage_budget (id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT)"}]]
+  ]],
+  ["events", [
+   [["integer",{"integer":1}],["text",{"text":"parent"}],["real",{"real":"1700000000.25"}],["text",{"text":"created"}],["text",{"text":"{\"contract\":{\"constraints\":[],\"criteria\":[{\"description\":\"test\",\"id\":\"t\",\"kind\":\"command\"}],\"goal\":\"admit members\"},\"deadline\":1700003600.25,\"goal\":\"admit members\"}"}]],
+   [["integer",{"integer":2}],["text",{"text":"parent"}],["real",{"real":"1700000001.25"}],["text",{"text":"reserved"}],["text",{"text":"{\"member\":\"worker\"}"}]],
+   [["integer",{"integer":3}],["text",{"text":"parent"}],["real",{"real":"1700000002.25"}],["text",{"text":"activated"}],["text",{"text":"{\"member\":\"worker\",\"pid\":11}"}]],
+   [["integer",{"integer":4}],["text",{"text":"parent"}],["real",{"real":"1700000003.25"}],["text",{"text":"usage-budget"}],["text",{"text":"{\"strict_unknown\":false,\"token_limit\":4000}"}]]
+  ]],
+  ["evidence", []],
+  ["files", []],
+  ["members", [
+   [["text",{"text":"parent"}],["text",{"text":"00000000000000000000000000000002"}],["text",{"text":"live"}],["null",null],["null",null],["null",null],["null",null]],
+   [["text",{"text":"worker"}],["text",{"text":"res-w"}],["text",{"text":"live"}],["integer",{"integer":11}],["text",{"text":"t"}],["null",null],["text",{"text":"parent"}]]
+  ]],
+  ["messages", []],
+  ["notification_cursors", []],
+  ["request_usage", [
+   [["text",{"text":"observed-1"}],["text",{"text":"worker"}],["text",{"text":"{\"attempt_diagnostics\":[{\"attempt_number\":1,\"elapsed_ms\":12,\"error_code\":null,\"event_count\":0,\"finished_unix_ms\":0,\"first_token_ms\":7,\"generated_text\":false,\"generated_thinking\":false,\"generated_tool_call\":false,\"headers\":[],\"incomplete_reason\":null,\"output_bytes\":0,\"oversized_lines\":0,\"parse_errors\":0,\"started_unix_ms\":0,\"stop_reason\":null,\"terminal_event\":null,\"termination\":\"Dropped\",\"unknown_events\":0,\"wire_status\":429}],\"cache_read_tokens\":0,\"cache_write_tokens\":null,\"context_input_tokens\":1500,\"duration_ms\":750,\"error_class\":\"rate_limit\",\"estimated_context_tokens\":1480,\"estimated_cost_micro_usd\":4500,\"finished_unix_ms\":1750,\"first_token_ms\":null,\"harness_prefix_bytes\":4096,\"harness_prefix_sha256\":\"abababababababababababababababababababababababababababababababab\",\"harness_prefix_unchanged\":true,\"input_tokens\":1200,\"instrumented_attempts\":2,\"model\":\"claude-test\",\"oauth_retries\":1,\"outcome\":\"failed\",\"output_tokens\":300,\"provider\":\"anthropic\",\"request_id\":\"observed-1\",\"runtime\":{\"build_dirty\":false,\"build_source_revision\":\"8b90db2ba\",\"executable_digest_pending\":true,\"executable_sha256\":null,\"package_version\":\"0.107.189\",\"process_instance_id\":\"0d7de168-9413-4e8a-8a92-87285baaa850\"},\"started_unix_ms\":1000}"}],["integer",{"integer":1800}],["integer",{"integer":0}],["integer",{"integer":2}],["integer",{"integer":1200}],["integer",{"integer":300}],["integer",{"integer":0}],["null",null]]
+  ]],
+  ["requests", []],
+  ["run", [
+   [["text",{"text":"00000000000000000000000000000001"}],["text",{"text":"admit members"}],["text",{"text":"[]"}],["text",{"text":"[{\"description\":\"test\",\"id\":\"t\",\"kind\":\"command\"}]"}],["text",{"text":"parent"}],["text",{"text":"parent"}],["integer",{"integer":5}],["real",{"real":"1700003600.25"}],["text",{"text":"running"}],["null",null],["null",null]]
+  ]],
+  ["tasks", []],
+  ["usage_budget", [
+   [["integer",{"integer":1}],["text",{"text":"{\"token_limit\": 4000, \"strict_unknown\": false, \"warned\": false}"}]]
+  ]],
+  ["PRAGMA journal_mode", [
+   [["text",{"text":"delete"}]]
+  ]],
+  ["PRAGMA user_version", [
+   [["integer",{"integer":0}]]
+  ]]
+ ]
+}

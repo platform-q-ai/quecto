@@ -1,0 +1,111 @@
+{
+"steps": [
+ ["parent","create_run","{\"goal\":\"admit members\",\"constraints\":[],\"criteria\":[{\"id\":\"t\",\"kind\":\"command\",\"description\":\"test\"}],\"member_limit\":5,\"deadline\":1700003600.25}","1700000000.25",null],
+ ["parent","_admit","[\"worker\",\"res-w\"]","1700000001.25",null],
+ ["parent","_activate","[\"worker\",\"res-w\",11,\"t\",null]","1700000002.25",null],
+ ["parent","_notifications","[]","1700000003.25",null],
+ ["worker","_notifications","[]","1700000004.25",null],
+ ["worker","send","[\"question\",\"parent\",\"Review my result\"]","1700000005.25",null],
+ ["worker","_notifications","[]","1700000006.25",null],
+ ["worker","_notifications","[]","1700000007.25",null],
+ ["parent","ack","[1]","1700000008.25",null],
+ ["parent","_notifications","[]","1700000009.25",null],
+ ["worker","send","[\"late-question\",\"parent\",\"Late result\"]","1700000010.25",null],
+ ["parent","stop","[\"blocked\",\"report partial progress\"]","1700000011.25",null],
+ ["worker","_notifications","[]","1700000012.25",null]
+],
+"answers": [
+ {"ok":"null"},
+ {"ok":"{\"id\": \"worker\", \"reservation\": \"res-w\", \"status\": \"reserved\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": \"parent\"}"},
+ {"ok":"null"},
+ {"ok":"[]"},
+ {"ok":"[]"},
+ {"ok":"{\"id\": 1, \"status\": \"accepted\"}"},
+ {"ok":"[{\"id\": \"parent\", \"reservation\": \"00000000000000000000000000000002\", \"status\": \"live\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": null}]"},
+ {"ok":"[]"},
+ {"ok":"null"},
+ {"ok":"[]"},
+ {"ok":"{\"id\": 2, \"status\": \"accepted\"}"},
+ {"ok":"{\"status\": \"paused\", \"outcome\": \"blocked\", \"reason\": \"report partial progress\", \"generation\": 8, \"budget\": {\"token_limit\": null, \"strict_unknown\": false, \"warned\": false, \"observed_tokens\": 0, \"unknown_usage_requests\": 0}, \"resume_blockers\": []}"},
+ {"ok":"[]"}
+],
+"files": [
+ "dump:8a1edc28e20b24098878218a87e13a9c2e0a8ae19f105d22653bae5ad3c791e8",
+ "dump:a681b117d1bc7ad75289571f4d83d61c1a2a8b988c3efaa7dccc551760bfde8b",
+ "dump:abe5002c4f6809ac57ea8a82d784b6771b62c568c42c2fd81ee05077a0dc2383",
+ "dump:4daa9987daae52915b703808f2967236b88414295a20de5d1df48e4d7ff5e2be",
+ "dump:4e019e71f01feeb3a9f31673fadeb3fdca8aa322f14e6b1371bc3014a94eaa7b",
+ "dump:436673da46316dca1f3d35a9c425856bdbf1da1f4c0fa0cd30290386c5cf4b8e",
+ "dump:3f4bee2c25a247d4b5a9c036e8d4ff7ff633b528c09ae720cc8c149d497d9740",
+ "dump:3f4bee2c25a247d4b5a9c036e8d4ff7ff633b528c09ae720cc8c149d497d9740",
+ "dump:d3ff9e9e8ab6ce03fada5eb315aa0c8cbab6b196c5a98e05e175d3972090a6e1",
+ "dump:5d4dc49d0e130074961eb0a94aa6fc914e4671d1de0c783299c593208b4e813a",
+ "dump:8cd03062d472b71edaf8789cec68f9e7c6aadd8809f199b4c4884f219c2b0f48",
+ "dump:3d78913566b8b2a49dfafaec2fcfd7bc3e928d5f9671f39e182c1441a819817b",
+ "dump:7b3c9e2325fa8f33164e29efaca80eb9561666e3b64702ce621041ae99e084c1"
+],
+"dump": [
+  ["sqlite_master", [
+   [["text",{"text":"table"}],["text",{"text":"run"}],["text",{"text":"run"}],["text",{"text":"CREATE TABLE run (id TEXT PRIMARY KEY, goal TEXT, constraints TEXT, criteria TEXT,\n coordinator TEXT, integrator TEXT, member_limit INTEGER, deadline REAL, status TEXT, outcome TEXT, outcome_reason TEXT)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_run_1"}],["text",{"text":"run"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"members"}],["text",{"text":"members"}],["text",{"text":"CREATE TABLE members (id TEXT PRIMARY KEY, reservation TEXT UNIQUE, status TEXT,\n pid INTEGER, started TEXT, socket TEXT, launcher TEXT)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_members_1"}],["text",{"text":"members"}],["null",null]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_members_2"}],["text",{"text":"members"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"tasks"}],["text",{"text":"tasks"}],["text",{"text":"CREATE TABLE tasks (id INTEGER PRIMARY KEY, title TEXT, acceptance TEXT, dependencies TEXT,\n status TEXT, owner TEXT, token TEXT, evidence TEXT, blocker TEXT)"}]],
+   [["text",{"text":"table"}],["text",{"text":"files"}],["text",{"text":"files"}],["text",{"text":"CREATE TABLE files (path TEXT PRIMARY KEY, task INTEGER, owner TEXT, claim TEXT, token TEXT)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_files_1"}],["text",{"text":"files"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"messages"}],["text",{"text":"messages"}],["text",{"text":"CREATE TABLE messages (id INTEGER PRIMARY KEY, sender TEXT, recipient TEXT, body TEXT, status TEXT, revision TEXT, supersedes INTEGER, superseded_by INTEGER)"}]],
+   [["text",{"text":"table"}],["text",{"text":"evidence"}],["text",{"text":"evidence"}],["text",{"text":"CREATE TABLE evidence (criterion TEXT, artifact TEXT, revision TEXT, kind TEXT,\n actor TEXT, accepted INTEGER, PRIMARY KEY(criterion, actor))"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_evidence_1"}],["text",{"text":"evidence"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"requests"}],["text",{"text":"requests"}],["text",{"text":"CREATE TABLE requests (actor TEXT, request TEXT, payload TEXT, result TEXT,\n PRIMARY KEY(actor, request))"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_requests_1"}],["text",{"text":"requests"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"events"}],["text",{"text":"events"}],["text",{"text":"CREATE TABLE events (id INTEGER PRIMARY KEY, actor TEXT, time REAL, action TEXT, detail TEXT)"}]],
+   [["text",{"text":"index"}],["text",{"text":"events_by_actor"}],["text",{"text":"events"}],["text",{"text":"CREATE INDEX events_by_actor ON events(actor,id)"}]],
+   [["text",{"text":"table"}],["text",{"text":"notification_cursors"}],["text",{"text":"notification_cursors"}],["text",{"text":"CREATE TABLE notification_cursors (actor TEXT PRIMARY KEY, event INTEGER)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_notification_cursors_1"}],["text",{"text":"notification_cursors"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"request_usage"}],["text",{"text":"request_usage"}],["text",{"text":"CREATE TABLE request_usage (request_id TEXT PRIMARY KEY, actor TEXT, payload TEXT, tokens INTEGER, unknown INTEGER, attempts INTEGER, input_tokens INTEGER, output_tokens INTEGER, cache_read_tokens INTEGER, cache_write_tokens INTEGER)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_request_usage_1"}],["text",{"text":"request_usage"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"usage_budget"}],["text",{"text":"usage_budget"}],["text",{"text":"CREATE TABLE usage_budget (id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT)"}]]
+  ]],
+  ["events", [
+   [["integer",{"integer":1}],["text",{"text":"parent"}],["real",{"real":"1700000000.25"}],["text",{"text":"created"}],["text",{"text":"{\"contract\":{\"constraints\":[],\"criteria\":[{\"description\":\"test\",\"id\":\"t\",\"kind\":\"command\"}],\"goal\":\"admit members\"},\"deadline\":1700003600.25,\"goal\":\"admit members\"}"}]],
+   [["integer",{"integer":2}],["text",{"text":"parent"}],["real",{"real":"1700000001.25"}],["text",{"text":"reserved"}],["text",{"text":"{\"member\":\"worker\"}"}]],
+   [["integer",{"integer":3}],["text",{"text":"parent"}],["real",{"real":"1700000002.25"}],["text",{"text":"activated"}],["text",{"text":"{\"member\":\"worker\",\"pid\":11}"}]],
+   [["integer",{"integer":4}],["text",{"text":"worker"}],["real",{"real":"1700000005.25"}],["text",{"text":"message_accepted"}],["text",{"text":"{\"message\":1,\"recipient\":\"parent\",\"revision\":null}"}]],
+   [["integer",{"integer":5}],["text",{"text":"parent"}],["real",{"real":"1700000008.25"}],["text",{"text":"message_consumed"}],["text",{"text":"{\"message\":1}"}]],
+   [["integer",{"integer":6}],["text",{"text":"worker"}],["real",{"real":"1700000010.25"}],["text",{"text":"message_accepted"}],["text",{"text":"{\"message\":2,\"recipient\":\"parent\",\"revision\":null}"}]],
+   [["integer",{"integer":7}],["text",{"text":"parent"}],["real",{"real":"1700000011.25"}],["text",{"text":"stop"}],["text",{"text":"{\"reason\":\"report partial progress\",\"status\":\"blocked\"}"}]],
+   [["integer",{"integer":8}],["text",{"text":"parent"}],["real",{"real":"1700000011.25"}],["text",{"text":"paused"}],["text",{"text":"{\"outcome\":\"blocked\",\"reason\":\"report partial progress\",\"started\":1700000011.25}"}]]
+  ]],
+  ["evidence", []],
+  ["files", []],
+  ["members", [
+   [["text",{"text":"parent"}],["text",{"text":"00000000000000000000000000000002"}],["text",{"text":"live"}],["null",null],["null",null],["null",null],["null",null]],
+   [["text",{"text":"worker"}],["text",{"text":"res-w"}],["text",{"text":"live"}],["integer",{"integer":11}],["text",{"text":"t"}],["null",null],["text",{"text":"parent"}]]
+  ]],
+  ["messages", [
+   [["integer",{"integer":1}],["text",{"text":"worker"}],["text",{"text":"parent"}],["text",{"text":"Review my result"}],["text",{"text":"consumed"}],["null",null],["null",null],["null",null]],
+   [["integer",{"integer":2}],["text",{"text":"worker"}],["text",{"text":"parent"}],["text",{"text":"Late result"}],["text",{"text":"accepted"}],["null",null],["null",null],["null",null]]
+  ]],
+  ["notification_cursors", [
+   [["text",{"text":"parent"}],["integer",{"integer":5}]],
+   [["text",{"text":"worker"}],["integer",{"integer":8}]]
+  ]],
+  ["request_usage", []],
+  ["requests", [
+   [["text",{"text":"worker"}],["text",{"text":"question"}],["text",{"text":"[\"send\",\"parent\",\"Review my result\"]"}],["text",{"text":"{\"id\":1,\"status\":\"accepted\"}"}]],
+   [["text",{"text":"worker"}],["text",{"text":"late-question"}],["text",{"text":"[\"send\",\"parent\",\"Late result\"]"}],["text",{"text":"{\"id\":2,\"status\":\"accepted\"}"}]]
+  ]],
+  ["run", [
+   [["text",{"text":"00000000000000000000000000000001"}],["text",{"text":"admit members"}],["text",{"text":"[]"}],["text",{"text":"[{\"description\":\"test\",\"id\":\"t\",\"kind\":\"command\"}]"}],["text",{"text":"parent"}],["text",{"text":"parent"}],["integer",{"integer":5}],["real",{"real":"1700003600.25"}],["text",{"text":"paused"}],["text",{"text":"blocked"}],["text",{"text":"report partial progress"}]]
+  ]],
+  ["tasks", []],
+  ["usage_budget", []],
+  ["PRAGMA journal_mode", [
+   [["text",{"text":"delete"}]]
+  ]],
+  ["PRAGMA user_version", [
+   [["integer",{"integer":0}]]
+  ]]
+ ]
+}

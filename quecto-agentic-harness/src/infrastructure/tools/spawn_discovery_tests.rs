@@ -315,7 +315,7 @@ fn the_spawn_and_swarm_descriptions_stay_within_the_budget() {
         spawn_len + ROSTER_LINE_MAX_CHARS * 4 <= DESCRIPTION_BUDGET_BYTES,
         "spawn description is {spawn_len} bytes"
     );
-    let swarm_len = include_str!("swarm_helpers/tool_description.txt").len();
+    let swarm_len = include_str!("swarm_assets/tool_description.txt").len();
     assert!(
         swarm_len <= SWARM_DESCRIPTION_BUDGET_BYTES,
         "swarm description is {swarm_len} bytes"
@@ -330,7 +330,7 @@ const SWARM_DESCRIPTION_BUDGET_BYTES: usize = 3_584;
 
 #[test]
 fn the_swarm_descriptions_coordinator_prose_is_in_the_docs_page() {
-    let description = include_str!("swarm_helpers/tool_description.txt");
+    let description = include_str!("swarm_assets/tool_description.txt");
     let docs = crate::infrastructure::tools::docs::lookup_doc("swarm").unwrap();
     assert!(
         description.contains(r#"docs {"name":"swarm"}: coordinators read it before op=create"#),
@@ -366,7 +366,7 @@ fn the_swarm_descriptions_coordinator_prose_is_in_the_docs_page() {
 /// run, a recorded loss pauses it.
 #[test]
 fn the_swarm_description_keeps_the_coordinators_verify_rule() {
-    let description = include_str!("swarm_helpers/tool_description.txt");
+    let description = include_str!("swarm_assets/tool_description.txt");
     for rule in [
         "verify artifacts and independent review before accepting evidence or complete",
         "revoke/recover need a running run",
@@ -380,7 +380,7 @@ fn the_swarm_description_keeps_the_coordinators_verify_rule() {
 /// description sends every member there and keeps the most important.
 #[test]
 fn the_swarm_description_sends_members_to_the_docs_page() {
-    let description = include_str!("swarm_helpers/tool_description.txt");
+    let description = include_str!("swarm_assets/tool_description.txt");
     for rule in [
         "members before their first board op",
         "large content in artifacts",

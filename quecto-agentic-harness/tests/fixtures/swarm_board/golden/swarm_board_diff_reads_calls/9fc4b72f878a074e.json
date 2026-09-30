@@ -1,0 +1,64 @@
+{
+"steps": [
+ ["parent","create","{\"goal\":\"read models\",\"constraints\":[\"c\"],\"criteria\":[{\"id\":\"t\",\"kind\":\"command\",\"description\":\"test\"}],\"member_limit\":5,\"deadline\":1700003600.25}","1700000000.25",null],
+ ["parent","_request_admission","[]","1700000001.25",null],
+ ["parent","_request_admission","{}","1700000002.25",null]
+],
+"answers": [
+ {"ok":"{\"id\": \"00000000000000000000000000000001\", \"goal\": \"read models\", \"constraints\": [\"c\"], \"criteria\": [{\"description\": \"test\", \"id\": \"t\", \"kind\": \"command\"}], \"coordinator\": \"parent\", \"integrator\": \"parent\", \"member_limit\": 5, \"deadline\": 1700003600.25, \"status\": \"running\", \"outcome\": null, \"outcome_reason\": null, \"next_liveness_check_at\": null, \"members\": [{\"id\": \"parent\", \"reservation\": \"00000000000000000000000000000002\", \"status\": \"live\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": null}], \"usage\": 1, \"task_count\": 0, \"tasks\": [], \"file_count\": 0, \"files\": [], \"evidence\": [], \"control_generation\": 0, \"event_cursor\": 1, \"counts\": {\"ready\": 0, \"claimed\": 0, \"blocked\": 0, \"submitted\": 0, \"completed\": 0, \"members_without_claim\": 0, \"members_dead\": 0}}"},
+ {"ok":"{\"status\": \"running\", \"coordinator\": \"parent\", \"deadline\": 1700003600.25, \"members\": [{\"id\": \"parent\", \"reservation\": \"00000000000000000000000000000002\", \"status\": \"live\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": null}], \"outcome\": null, \"control_generation\": 0}"},
+ {"ok":"{\"status\": \"running\", \"coordinator\": \"parent\", \"deadline\": 1700003600.25, \"members\": [{\"id\": \"parent\", \"reservation\": \"00000000000000000000000000000002\", \"status\": \"live\", \"pid\": null, \"started\": null, \"socket\": null, \"launcher\": null}], \"outcome\": null, \"control_generation\": 0}"}
+],
+"files": [
+ "dump:289abecb879af7a53c08e4d5943b96bc65c3f879a93e77d782c46d6a32e00e3d",
+ "dump:253e764d3a79f2ddf93a78017f16c0a22d1379b569a37ab76809803475c7e1f9",
+ "dump:253e764d3a79f2ddf93a78017f16c0a22d1379b569a37ab76809803475c7e1f9"
+],
+"dump": [
+  ["sqlite_master", [
+   [["text",{"text":"table"}],["text",{"text":"run"}],["text",{"text":"run"}],["text",{"text":"CREATE TABLE run (id TEXT PRIMARY KEY, goal TEXT, constraints TEXT, criteria TEXT,\n coordinator TEXT, integrator TEXT, member_limit INTEGER, deadline REAL, status TEXT, outcome TEXT, outcome_reason TEXT)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_run_1"}],["text",{"text":"run"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"members"}],["text",{"text":"members"}],["text",{"text":"CREATE TABLE members (id TEXT PRIMARY KEY, reservation TEXT UNIQUE, status TEXT,\n pid INTEGER, started TEXT, socket TEXT, launcher TEXT)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_members_1"}],["text",{"text":"members"}],["null",null]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_members_2"}],["text",{"text":"members"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"tasks"}],["text",{"text":"tasks"}],["text",{"text":"CREATE TABLE tasks (id INTEGER PRIMARY KEY, title TEXT, acceptance TEXT, dependencies TEXT,\n status TEXT, owner TEXT, token TEXT, evidence TEXT, blocker TEXT)"}]],
+   [["text",{"text":"table"}],["text",{"text":"files"}],["text",{"text":"files"}],["text",{"text":"CREATE TABLE files (path TEXT PRIMARY KEY, task INTEGER, owner TEXT, claim TEXT, token TEXT)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_files_1"}],["text",{"text":"files"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"messages"}],["text",{"text":"messages"}],["text",{"text":"CREATE TABLE messages (id INTEGER PRIMARY KEY, sender TEXT, recipient TEXT, body TEXT, status TEXT, revision TEXT, supersedes INTEGER, superseded_by INTEGER)"}]],
+   [["text",{"text":"table"}],["text",{"text":"evidence"}],["text",{"text":"evidence"}],["text",{"text":"CREATE TABLE evidence (criterion TEXT, artifact TEXT, revision TEXT, kind TEXT,\n actor TEXT, accepted INTEGER, PRIMARY KEY(criterion, actor))"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_evidence_1"}],["text",{"text":"evidence"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"requests"}],["text",{"text":"requests"}],["text",{"text":"CREATE TABLE requests (actor TEXT, request TEXT, payload TEXT, result TEXT,\n PRIMARY KEY(actor, request))"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_requests_1"}],["text",{"text":"requests"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"events"}],["text",{"text":"events"}],["text",{"text":"CREATE TABLE events (id INTEGER PRIMARY KEY, actor TEXT, time REAL, action TEXT, detail TEXT)"}]],
+   [["text",{"text":"index"}],["text",{"text":"events_by_actor"}],["text",{"text":"events"}],["text",{"text":"CREATE INDEX events_by_actor ON events(actor,id)"}]],
+   [["text",{"text":"table"}],["text",{"text":"notification_cursors"}],["text",{"text":"notification_cursors"}],["text",{"text":"CREATE TABLE notification_cursors (actor TEXT PRIMARY KEY, event INTEGER)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_notification_cursors_1"}],["text",{"text":"notification_cursors"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"request_usage"}],["text",{"text":"request_usage"}],["text",{"text":"CREATE TABLE request_usage (request_id TEXT PRIMARY KEY, actor TEXT, payload TEXT, tokens INTEGER, unknown INTEGER, attempts INTEGER, input_tokens INTEGER, output_tokens INTEGER, cache_read_tokens INTEGER, cache_write_tokens INTEGER)"}]],
+   [["text",{"text":"index"}],["text",{"text":"sqlite_autoindex_request_usage_1"}],["text",{"text":"request_usage"}],["null",null]],
+   [["text",{"text":"table"}],["text",{"text":"usage_budget"}],["text",{"text":"usage_budget"}],["text",{"text":"CREATE TABLE usage_budget (id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT)"}]]
+  ]],
+  ["events", [
+   [["integer",{"integer":1}],["text",{"text":"parent"}],["real",{"real":"1700000000.25"}],["text",{"text":"created"}],["text",{"text":"{\"contract\":{\"constraints\":[\"c\"],\"criteria\":[{\"description\":\"test\",\"id\":\"t\",\"kind\":\"command\"}],\"goal\":\"read models\"},\"deadline\":1700003600.25,\"goal\":\"read models\"}"}]]
+  ]],
+  ["evidence", []],
+  ["files", []],
+  ["members", [
+   [["text",{"text":"parent"}],["text",{"text":"00000000000000000000000000000002"}],["text",{"text":"live"}],["null",null],["null",null],["null",null],["null",null]]
+  ]],
+  ["messages", []],
+  ["notification_cursors", []],
+  ["request_usage", []],
+  ["requests", []],
+  ["run", [
+   [["text",{"text":"00000000000000000000000000000001"}],["text",{"text":"read models"}],["text",{"text":"[\"c\"]"}],["text",{"text":"[{\"description\":\"test\",\"id\":\"t\",\"kind\":\"command\"}]"}],["text",{"text":"parent"}],["text",{"text":"parent"}],["integer",{"integer":5}],["real",{"real":"1700003600.25"}],["text",{"text":"running"}],["null",null],["null",null]]
+  ]],
+  ["tasks", []],
+  ["usage_budget", []],
+  ["PRAGMA journal_mode", [
+   [["text",{"text":"delete"}]]
+  ]],
+  ["PRAGMA user_version", [
+   [["integer",{"integer":0}]]
+  ]]
+ ]
+}

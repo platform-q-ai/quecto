@@ -1,8 +1,8 @@
-//! The board's idempotency ledger and event log (#2269): `Store.retry` and
-//! `Store.event` from `swarm_helpers/swarm_store.py`, run inside a
-//! [`BoardStore`](super::store::BoardStore) transaction. Stored JSON is
-//! written with the Python-compatible codec, so a Python and a Rust client
-//! replay each other's requests.
+//! The board's idempotency ledger and event log (#2269): the Python
+//! board's `Store.retry` and `Store.event` (`swarm_store.py`, deleted in
+//! #2283), run inside a [`BoardStore`](super::store::BoardStore)
+//! transaction. Stored JSON is written with the Python-compatible codec,
+//! so a request a legacy Python-written board holds replays.
 
 use rusqlite::{Connection, types::ValueRef};
 

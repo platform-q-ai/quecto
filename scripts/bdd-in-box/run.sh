@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # In-container zero-signal proof (#1925 method, recorded by #1940): run the
 # harness's full BDD suite inside `quecto-box:local` as the child of a
-# signal-logging pid 2 (scripts/bdd-in-box/pid2_signal_log.py). Pid 2 is
+# signal-logging pid 2 (`quecto-test-fixture pid2-signal-log`, built in the
+# container first; a Python script until #2283). Pid 2 is
 # where a swarm coordinator's harness sits; any registry, fixture or
 # descendant pid the suite ever signalled would land there.
 #
@@ -28,16 +29,16 @@ podman run --rm --init --name quecto-bdd-in-box \
   -v "$src:/src" \
   -v "$vol:/tmp/target" \
   -v "$scratch/home:/home/dev" \
-  -v "$here/pid2_signal_log.py:/pid2_signal_log.py:ro" \
   -e CARGO_TARGET_DIR=/tmp/target \
   -e HOME=/home/dev \
   -e TMPDIR=/home/dev/tmp \
   -e PID2_SIGNAL_LOG=/home/dev/pid2-signals.log \
   -e RUST_LOG=warn \
+  -e SUITE='status=0; for i in 0 1 2 3; do echo "=== shard $i/4 ==="; QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=4 cargo test --workspace --features quecto-agentic-harness/test-support --bins --test bdd || status=1; done; exit $status' \
   -w /src \
   quecto-box:local \
-  python3 /pid2_signal_log.py \
-  bash -c 'status=0; for i in 0 1 2 3; do echo "=== shard $i/4 ==="; QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=4 cargo test --workspace --features quecto-agentic-harness/test-support --bins --test bdd || status=1; done; exit $status'
+  bash -c "cargo build --features quecto-agentic-harness/test-support --bin quecto-test-fixture \
+    && exec /tmp/target/debug/quecto-test-fixture pid2-signal-log bash -c \"\$SUITE\""
 status=$?
 echo "exit: $status"
 echo "finished: $(date -Is)"

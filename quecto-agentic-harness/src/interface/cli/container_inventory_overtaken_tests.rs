@@ -22,22 +22,20 @@ fn racing_registry() -> (tempfile::TempDir, CliContext) {
     let workspace = dir.path().join("state/env-one/workspace");
     std::fs::create_dir_all(&workspace).unwrap();
     let store = FileEnvironmentRegistryStore::for_base_dir(&base);
+    // The other process's retention, as the file it leaves (written once
+    // the registry holds C1 running, below): copied over the registry by an
+    // inspect that finds C1 still running, as the other process retains
+    // only a running record. C1 is the registry's one environment, so its
+    // status is the file's one `status` (asserted below).
+    let overtaken = dir.path().join("overtaken.json");
     let inspect = script(
         dir.path(),
         "inspect.sh",
         &format!(
-            r#"python3 - '{}' <<'PY'
-import json, sys
-path = sys.argv[1]
-document = json.load(open(path))
-record = document["environments"]["C1"]
-if record["status"] == "running":
-    record["status"] = "retained"
-    record["metadata"] = {{"retained": "kept by its owner"}}
-json.dump(document, open(path, "w"))
-PY
+            r#"if grep -Eq '"status": ?"running"' '{registry}'; then cp '{overtaken}' '{registry}'; fi
 printf '{{"status":"exited","metadata":{{}}}}'"#,
-            store.path().display()
+            overtaken = overtaken.display(),
+            registry = store.path().display()
         ),
     );
     store
@@ -62,6 +60,18 @@ printf '{{"status":"exited","metadata":{{}}}}'"#,
             created_at: Some(0),
         })
         .unwrap();
+    let mut document: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(store.path()).unwrap()).unwrap();
+    assert_eq!(
+        document["environments"]["C1"]["status"], "running",
+        "{document}"
+    );
+    let environments = document["environments"].as_object().map(|all| all.len());
+    assert_eq!(environments, Some(1), "C1 alone: {document}");
+    let record = &mut document["environments"]["C1"];
+    record["status"] = serde_json::json!("retained");
+    record["metadata"] = serde_json::json!({"retained": "kept by its owner"});
+    std::fs::write(&overtaken, document.to_string()).unwrap();
     let cwd = dir.path().join("cwd");
     std::fs::create_dir_all(&cwd).unwrap();
     let ctx = CliContext {

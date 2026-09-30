@@ -297,6 +297,11 @@ receives from a `sigwaitinfo` loop with `si_pid` and the sender's `cmdline`.
 Pid 2 is where a swarm coordinator's harness sits, so any registry, fixture or
 descendant pid the suite ever targeted would receive the signal there.
 
+*Since #2283* the wrapper is Rust, `quecto-test-fixture pid2-signal-log`, which
+`scripts/bdd-in-box/run.sh` builds in the container before it execs it as pid
+2; the record below is the #1940 run, made with the Python wrapper it
+replaced.
+
 - **Revision:** `ec29e9902b96fdab2534a0f51dd82bdbace0f5e2` (the #1940 PR head at the time of the run; the commits that record it follow)
 - **Image:** `quecto-dev:local`, id `b1f87e8917502e1963979a0ed43fd7866427c961c26aac0d1576a17774b63662`
 - **Command:** `scripts/bdd-in-box/run.sh` (committed with the pid 2
@@ -1294,8 +1299,9 @@ sat *before* the preflight, so `quecto container doctor` could never have
 reported on it. Pin a digest in `--image` if you want one.
 
 **Image contents.** The starter is tooling-neutral: a digest-pinned Debian
-trixie base with a shell, Git/GitHub, search (`ripgrep`, `fd`), `jq`, Python
-and a C toolchain for native dependencies — no language toolchain and no
+trixie base with a shell, Git/GitHub, search (`ripgrep`, `fd`), `jq` and a
+C toolchain for native dependencies — no language toolchain (Python
+included: the harness needs none, #2283) and no
 `ai.quecto.required-tools` label. It ends with a commented section showing
 where the project's toolchain and that label go. This repository's own
 container is the worked example: `.quecto/containers/standard/Containerfile`

@@ -147,18 +147,18 @@ async fn wait_for_file(path: &std::path::Path) -> String {
     }
 }
 
-/// A non-forking child that records every signal it receives to `log` and
-/// its pid to `pid_file`; it never exits on its own.
+/// A non-forking child (the test binary as a stand-in) that records every
+/// signal it receives to `log` and its pid to `pid_file`; it does not exit
+/// on its own within the test (a minute bounds a leftover).
+#[cfg(target_os = "linux")]
 fn signal_logging_child(pid_file: &std::path::Path, log: &std::path::Path) -> String {
-    format!(
-        "python3 -c 'import os, signal; \
-         h = lambda n: lambda *_: open(\"{log}\", \"a\").write(n + chr(10)); \
-         signal.signal(signal.SIGTERM, h(\"TERM\")); signal.signal(signal.SIGINT, h(\"INT\")); \
-         signal.signal(signal.SIGHUP, h(\"HUP\")); \
-         open(\"{pid}\", \"w\").write(str(os.getpid())); \
-         [signal.pause() for _ in iter(int, 1)]'",
-        log = log.display(),
-        pid = pid_file.display(),
+    crate::shell::test_stand_in::command(
+        "signal-log",
+        &[
+            ("PID", &pid_file.to_string_lossy()),
+            ("LOG", &log.to_string_lossy()),
+            ("LIFETIME", "60"),
+        ],
     )
 }
 
@@ -188,13 +188,15 @@ async fn assert_gone(pid: i32) {
 /// A leader that settles its own child on SIGTERM, then exits: the child
 /// is gone before the leader exits, the leader ends 0 after TERM, and the
 /// TUI never signals the child (the child logs every signal it receives).
+// The stand-in is the test binary, reached through a Linux constructor.
+#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn leader_settles_its_child_and_exits_without_the_tui_signalling_the_child() {
     let dir = tempfile::tempdir().unwrap();
     let child_pid = dir.path().join("child.pid");
     let child_log = dir.path().join("child.signals");
     let order = dir.path().join("order");
-    // The child is a single non-forking process (python, no `sleep`
+    // The child is a single non-forking process (the stand-in, no `sleep`
     // grandchild), so `kill -KILL $kid; wait $kid` reaps the whole child
     // subtree deterministically before the leader exits: nothing can
     // outlive the leader and trip the canary.

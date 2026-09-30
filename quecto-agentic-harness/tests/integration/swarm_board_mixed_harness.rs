@@ -1,10 +1,12 @@
 //! The harness's Rust board and members' structured board ops on one board
 //! file (#2278, #2281): the calls the harness makes through its
 //! `SwarmContext`s and the calls a member's structured `swarm` ops make
-//! leave the file the pure-Python board leaves for the same calls. Both
-//! sides run on one fixed instant and draw ids from one counter (review
-//! L3), so the two files are compared unmasked: every time, id and float
-//! as stored.
+//! leave the file the plain board calls leave for the same calls, one
+//! after another on one board (the pure-Python board's until #2283; the
+//! plain calls' answers and files are Python's by the golden fixtures).
+//! Both sides run on one fixed instant and draw ids from one counter
+//! (review L3), so the two files are compared unmasked: every time, id and
+//! float as stored.
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -20,7 +22,7 @@ use quecto::infrastructure::workspace::checkout_paths::ResolvedCheckout;
 
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
 use crate::swarm_board_diff_runs::swarm_board_diff::dump::{first_difference, logical_dump};
-use crate::swarm_board_diff_runs::swarm_board_diff::python::PyBoard;
+use crate::swarm_board_diff_runs::swarm_board_diff::rust::RustBoard;
 
 /// The instant every call reads, the harness's and the members' ops alike:
 /// fixed when the test starts (the tool checks the run's deadline against
@@ -136,17 +138,17 @@ async fn member_board_ops_and_rust_harness_share_one_board() {
     let summary = off_the_runtime(|| coordinator.summary()).unwrap();
     assert_eq!(summary["tasks"][0]["status"], "ready", "{summary}");
 
-    // 5. The same sequence on the pure-Python board, on the same instant
-    // and id sequence: every call the harness and the tool made above, in
-    // order.
+    // 5. The same sequence as plain board calls on a board of its own, on
+    // the same instant and id sequence: every call the harness and the tool
+    // made above, in order.
     let replay = root.path().join("replay");
     std::fs::create_dir_all(&replay).unwrap();
     let database = replay.join("swarm.sqlite");
-    let mut python = PyBoard::start(&database, &replay, &replay);
-    let created = python.call(
+    let plain = RustBoard::open(&database, &replay);
+    let created = plain.call(
         "parent",
         "create",
-        &json!(["mixed", [], contract["criteria"], 3, deadline]).to_string(),
+        &json!(["mixed", [], contract["criteria"], 3, deadline]),
         now,
     );
     let Outcome::Ok(created) = created else {
@@ -194,7 +196,7 @@ async fn member_board_ops_and_rust_harness_share_one_board() {
         ("parent", "summary", json!([null])),
     ];
     for (member, method, args) in replayed {
-        let outcome = python.call(member, method, &args.to_string(), now);
+        let outcome = plain.call(member, method, &args, now);
         assert!(
             matches!(outcome, Outcome::Ok(_)),
             "{member} {method}: {outcome:?}"
@@ -205,6 +207,6 @@ async fn member_board_ops_and_rust_harness_share_one_board() {
     assert_eq!(
         first_difference(&pure, &harness),
         None,
-        "the harness's Rust calls and the members' structured ops leave the pure-Python board, byte for byte"
+        "the harness's calls and the members' structured ops leave the plain calls' board, byte for byte"
     );
 }

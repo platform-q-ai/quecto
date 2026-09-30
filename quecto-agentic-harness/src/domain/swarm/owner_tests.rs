@@ -1,4 +1,4 @@
-//! Ported from `tests/swarm_policy_test.py::OwnerStateBehavior`.
+//! Ported from the deleted Python suite `tests/swarm_policy_test.py::OwnerStateBehavior`.
 use super::*;
 
 #[test]

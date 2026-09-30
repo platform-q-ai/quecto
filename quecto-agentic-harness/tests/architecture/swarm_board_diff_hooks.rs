@@ -1,15 +1,15 @@
 //! The differential harness's tamper hook (#2270 round-2 review L3,
-//! round-3 L3/L4): `try_run_both(steps, after)` lets `after` rewrite the
+//! round-3 L3/L4): `try_run_golden(steps, after)` lets `after` rewrite the
 //! Rust side's file or answer before the comparison, which only a harness
 //! self-test may do and still pass, and its `Err` is a difference between
 //! the boards, which only a pinned divergence may expect. So every
-//! `try_run_both` under `tests/`:
+//! `try_run_golden` under `tests/`:
 //!
 //! - sits in a `harness_self_test_*` function (any hook); or
 //! - passes the no-op hook (a closure whose body is an empty block) and
 //!   either sits in one of the pin table's own tests, checking the `Err`
 //!   (the receiver of `.unwrap_err()` or `.expect_err(..)`), or in the
-//!   harness's own `run_both`, without either (round-4 L2). A pin table's
+//!   harness's own `run_golden`, without either (round-4 L2). A pin table's
 //!   own test is a top-level `#[test]` function of a file the pin table
 //!   lists in `PIN_TABLE_FILES` (`swarm_board_diff_loose.rs` itself, and
 //!   each file holding a pin of its own, #2275; a file is a pin table
@@ -18,12 +18,12 @@
 //!   names neither it nor its test), or by the second pin `SECOND_PINS`
 //!   gives such a divergence (#2273's `outside_edited_evidence` pin in
 //!   `swarm_board_diff_submissions.rs`); and
-//!   the harness's `run_both` is the top-level function of that name in
+//!   the harness's `run_golden` is the top-level function of that name in
 //!   the harness's file.
 //!
 //! The harness is reached by its own name and called directly: an import
-//! renaming it (`use …::try_run_both as t;`) is refused, and so is any
-//! `try_run_both` token the syntax walk does not see as a direct call or a
+//! renaming it (`use …::try_run_golden as t;`) is refused, and so is any
+//! `try_run_golden` token the syntax walk does not see as a direct call or a
 //! plain import (a use as a value, or a call inside a macro's tokens).
 use std::path::{Path, PathBuf};
 
@@ -31,9 +31,9 @@ use proc_macro2::{TokenStream, TokenTree};
 use syn::visit::Visit;
 
 /// The harness entry point whose hook is checked.
-const HARNESS: &str = "try_run_both";
+const HARNESS: &str = "try_run_golden";
 /// The harness's own caller, which compares without expecting a difference.
-const HARNESS_RUNNER: &str = "run_both";
+const HARNESS_RUNNER: &str = "run_golden";
 /// Functions that test the harness itself, and so may tamper and pass.
 const SELF_TEST_PREFIX: &str = "harness_self_test_";
 /// The file holding the pin table.
@@ -48,12 +48,21 @@ const PIN_TABLE_FILES: &str = "PIN_TABLE_FILES";
 /// The pin table's constant naming, for a divergence it pins, a second
 /// pinning test of another name: `(divergence, test)` pairs.
 const SECOND_PINS: &str = "SECOND_PINS";
-/// The file defining the harness and its `run_both`.
+/// The file defining the harness and its `run_golden`.
 const HARNESS_FILE: &str = "tests/common/swarm_board_diff/scenario.rs";
 /// The file holding `outside_edited_evidence`'s second pin, listed in
 /// `PIN_TABLE_FILES`, and that pin's test.
 const EVIDENCE_PIN_FILE: &str = "tests/integration/swarm_board_diff_submissions.rs";
 const EVIDENCE_PIN_TEST: &str = "edited_string_evidence_raises_in_python_and_is_refused_in_rust";
+/// What writes a golden fixture, or replays one a test made: the golden
+/// self-tests' alone (#2344 review M2).
+const FIXTURE_WRITERS: [&str; 3] = ["write_fixture", "record_rust", "try_run_golden_in"];
+/// The golden self-test outside the `harness_self_test_` prefix (its
+/// name is #2283's): `(file, function)`.
+const GOLDEN_SELF_TEST: (&str, &str) = (
+    "tests/integration/swarm_board_diff_runs.rs",
+    "golden_replay_detects_a_changed_rust_result",
+);
 /// The methods that check a harness call's `Err`.
 const EXPECTING_DIFFERENCE: [&str; 2] = ["unwrap_err", "expect_err"];
 /// A test file that is neither.
@@ -217,19 +226,28 @@ struct Function {
     name: String,
     /// One of the pin table's own tests.
     pinned: bool,
-    /// The harness's own `run_both`.
+    /// The harness's own `run_golden`.
     runner: bool,
 }
 
 struct Calls {
     pinned: Vec<String>,
     role: Role,
+    /// The file being checked, relative to the crate.
+    path: String,
     function: Option<Function>,
     seen: usize,
+    /// The fixture-writer uses the syntax walk saw.
+    writers_seen: usize,
     violations: Vec<Violation>,
 }
 
-/// `try_run_both`, by any path ending in that name.
+/// A fixture writer's name.
+fn writer(name: &syn::Ident) -> bool {
+    FIXTURE_WRITERS.iter().any(|writer| name == writer)
+}
+
+/// `try_run_golden`, by any path ending in that name.
 fn names_harness(func: &syn::Expr) -> bool {
     matches!(
         func,
@@ -238,7 +256,7 @@ fn names_harness(func: &syn::Expr) -> bool {
     )
 }
 
-/// `try_run_both(...)`.
+/// `try_run_golden(...)`.
 fn harness_call(expr: &syn::Expr) -> Option<&syn::ExprCall> {
     match expr {
         syn::Expr::Call(call) if names_harness(&call.func) => Some(call),
@@ -258,13 +276,30 @@ fn no_op(hook: &syn::Expr) -> bool {
 }
 
 impl Calls {
-    fn new(pinned: Vec<String>, role: Role) -> Self {
+    fn new(pinned: Vec<String>, role: Role, path: &str) -> Self {
         Self {
             pinned,
             role,
+            path: path.to_owned(),
             function: None,
             seen: 0,
+            writers_seen: 0,
             violations: Vec::new(),
+        }
+    }
+
+    /// One fixture-writer use: only a golden self-test may make it.
+    fn check_writer(&mut self, span: proc_macro2::Span) {
+        self.writers_seen += 1;
+        let allowed = self.function.as_ref().is_some_and(|function| {
+            function.name.starts_with(SELF_TEST_PREFIX)
+                || (self.path == GOLDEN_SELF_TEST.0 && function.name == GOLDEN_SELF_TEST.1)
+        });
+        if !allowed {
+            self.refuse(
+                span,
+                "a golden fixture writer outside the golden self-tests",
+            );
         }
     }
 
@@ -308,7 +343,7 @@ impl Calls {
             (true, _, _) | (false, true, true) => None,
             (false, false, _) => Some("a tampering hook outside a harness self-test"),
             (false, true, false) => Some(
-                "a harness call outside a pinned divergence test that unwraps its Err (only the harness's run_both compares without expecting a difference)",
+                "a harness call outside a pinned divergence test that unwraps its Err (only the harness's run_golden compares without expecting a difference)",
             ),
         }
     }
@@ -353,7 +388,12 @@ impl<'ast> Visit<'ast> for Calls {
                     self.visit_expr(argument);
                 }
             }
-            _ => syn::visit::visit_expr_method_call(self, call),
+            _ => {
+                if writer(&call.method) {
+                    self.check_writer(call.method.span());
+                }
+                syn::visit::visit_expr_method_call(self, call);
+            }
         }
     }
 
@@ -361,6 +401,12 @@ impl<'ast> Visit<'ast> for Calls {
         if names_harness(&call.func) {
             self.check(call, false);
         } else {
+            if let syn::Expr::Path(path) = &*call.func
+                && let Some(last) = path.path.segments.last()
+                && writer(&last.ident)
+            {
+                self.check_writer(last.ident.span());
+            }
             syn::visit::visit_expr_call(self, call);
         }
     }
@@ -370,32 +416,45 @@ impl<'ast> Visit<'ast> for Calls {
         if name.ident == HARNESS {
             self.seen += 1;
         }
+        self.writers_seen += usize::from(writer(&name.ident));
     }
 
     /// An import renaming the harness hides its calls from the walk.
     fn visit_use_rename(&mut self, rename: &'ast syn::UseRename) {
         if rename.ident == HARNESS {
             self.seen += 1 + usize::from(rename.rename == HARNESS);
-            self.refuse(rename.ident.span(), "an import renames try_run_both");
+            self.refuse(rename.ident.span(), "an import renames try_run_golden");
+        }
+        if writer(&rename.ident) {
+            self.writers_seen += 1 + usize::from(writer(&rename.rename));
+            self.refuse(
+                rename.ident.span(),
+                "an import renames a golden fixture writer",
+            );
         }
     }
 }
 
-/// Every `try_run_both` token in `tokens`, macro bodies included and a
-/// function's own definition (`fn try_run_both`) excluded.
+/// Every `try_run_golden` token in `tokens`, macro bodies included and a
+/// function's own definition (`fn try_run_golden`) excluded.
 fn harness_tokens(tokens: TokenStream) -> usize {
+    named_tokens(tokens, &|ident| ident == HARNESS)
+}
+
+/// Every token `named` accepts, as [`harness_tokens`] counts them.
+fn named_tokens(tokens: TokenStream, named: &dyn Fn(&proc_macro2::Ident) -> bool) -> usize {
     let trees: Vec<TokenTree> = tokens.into_iter().collect();
     let mut count = 0;
     for (index, tree) in trees.iter().enumerate() {
         match tree {
-            TokenTree::Ident(ident) if ident == HARNESS => {
+            TokenTree::Ident(ident) if named(ident) => {
                 let defined = index
                     .checked_sub(1)
                     .and_then(|before| trees.get(before))
                     .is_some_and(|before| matches!(before, TokenTree::Ident(word) if word == "fn"));
                 count += usize::from(!defined);
             }
-            TokenTree::Group(group) => count += harness_tokens(group.stream()),
+            TokenTree::Group(group) => count += named_tokens(group.stream(), named),
             _ => {}
         }
     }
@@ -407,7 +466,7 @@ fn harness_tokens(tokens: TokenStream) -> usize {
 /// a plain import is a violation of its own.
 fn violations(path: &str, source: &str) -> Vec<String> {
     let file = syn::parse_file(source).expect("the test file parses");
-    let mut calls = Calls::new(pinned_tests(), Role::of(path, &pin_table_files()));
+    let mut calls = Calls::new(pinned_tests(), Role::of(path, &pin_table_files()), path);
     calls.visit_file(&file);
     let mut found: Vec<String> = calls
         .violations
@@ -422,11 +481,18 @@ fn violations(path: &str, source: &str) -> Vec<String> {
         })
         .collect();
     let tokens: TokenStream = source.parse().expect("the test file tokenizes");
+    let writers = named_tokens(tokens.clone(), &|ident| writer(ident));
     let all = harness_tokens(tokens);
     if all != calls.seen {
         found.push(format!(
             "{} {HARNESS} use(s) the syntax walk cannot check (not called directly, or inside a macro)",
             all.abs_diff(calls.seen)
+        ));
+    }
+    if writers != calls.writers_seen {
+        found.push(format!(
+            "{} golden fixture writer use(s) the syntax walk cannot check (not called directly, or inside a macro)",
+            writers.abs_diff(calls.writers_seen)
         ));
     }
     found
@@ -455,7 +521,7 @@ fn differential_hooks_tamper_only_in_self_tests_or_expected_differences() {
     for path in files {
         let source = std::fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
-        if source.contains(HARNESS) {
+        if source.contains(HARNESS) || FIXTURE_WRITERS.iter().any(|name| source.contains(name)) {
             calling_files += 1;
             failures.extend(
                 violations(&path.to_string_lossy(), &source)
@@ -476,23 +542,23 @@ fn differential_hooks_tamper_only_in_self_tests_or_expected_differences() {
 #[test]
 fn the_hook_checker_rejects_tampering_outside_self_tests() {
     let harness = r#"
-        pub fn try_run_both(steps: &[Step], after: impl FnMut()) -> Result<(), String> { Ok(()) }
-        fn run_both(steps: &[Step]) {
-            if let Err(difference) = try_run_both(steps, |_, _, _| {}) { panic!("{difference}"); }
+        pub fn try_run_golden(steps: &[Step], after: impl FnMut()) -> Result<(), String> { Ok(()) }
+        fn run_golden(steps: &[Step]) {
+            if let Err(difference) = try_run_golden(steps, |_, _, _| {}) { panic!("{difference}"); }
         }
     "#;
     assert_eq!(violations(HARNESS_FILE, harness), Vec::<String>::new());
     let self_test = r#"
         #[test]
         fn harness_self_test_tampers() {
-            let difference = try_run_both(&steps, |index, rust, _| { tamper(rust) });
+            let difference = try_run_golden(&steps, |index, rust, _| { tamper(rust) });
         }
     "#;
     assert_eq!(violations(ELSEWHERE, self_test), Vec::<String>::new());
     let pinned = r#"
         #[test]
         fn outside_edited_columns() {
-            let difference = scenario::try_run_both(&steps, |_, _, _| {}).unwrap_err();
+            let difference = scenario::try_run_golden(&steps, |_, _, _| {}).unwrap_err();
         }
     "#;
     assert_eq!(violations(PIN_TABLE, pinned), Vec::<String>::new());
@@ -506,7 +572,7 @@ fn the_hook_checker_rejects_tampering_outside_self_tests() {
     let ordinary = r#"
         #[test]
         fn a_scenario() {
-            try_run_both(&steps, |_, rust, _| { tamper(rust) }).unwrap();
+            try_run_golden(&steps, |_, rust, _| { tamper(rust) }).unwrap();
         }
     "#;
     let found = violations(ELSEWHERE, ordinary);
@@ -516,14 +582,14 @@ fn the_hook_checker_rejects_tampering_outside_self_tests() {
     // `.unwrap_err()` on something else does not excuse the call inside.
     let wrapped = r#"
         fn a_scenario() {
-            check(try_run_both(&steps, |_, rust, _| { tamper(rust) })).unwrap_err();
+            check(try_run_golden(&steps, |_, rust, _| { tamper(rust) })).unwrap_err();
         }
     "#;
     assert_eq!(violations(ELSEWHERE, wrapped).len(), 1);
 
     let hidden = r#"
         fn a_scenario() {
-            assert!(try_run_both(&steps, |_, rust, _| { tamper(rust) }).is_ok());
+            assert!(try_run_golden(&steps, |_, rust, _| { tamper(rust) }).is_ok());
         }
     "#;
     let found = violations(ELSEWHERE, hidden);
@@ -532,20 +598,20 @@ fn the_hook_checker_rejects_tampering_outside_self_tests() {
 }
 
 /// An expected difference is a pinned divergence (#2270 round-3 review
-/// L3): outside a harness self-test, only the harness's own `run_both` and
+/// L3): outside a harness self-test, only the harness's own `run_golden` and
 /// the pin table's own tests (named in `PERMITTED_DIVERGENCES`, pinned in
-/// that file) may call `try_run_both`, and only with the no-op hook.
+/// that file) may call `try_run_golden`, and only with the no-op hook.
 #[test]
 fn the_hook_checker_requires_expected_differences_to_be_pinned() {
     let pinned = r#"
         #[test]
         fn outside_edited_columns() {
-            let difference = try_run_both(&steps, |_, _, _| {}).unwrap_err();
+            let difference = try_run_golden(&steps, |_, _, _| {}).unwrap_err();
         }
         #[test]
         fn integer_beyond_i64_is_refused() {
             for args in cases {
-                let difference = try_run_both(&steps, |_, _, _| {}).expect_err("a difference");
+                let difference = try_run_golden(&steps, |_, _, _| {}).expect_err("a difference");
             }
         }
     "#;
@@ -569,11 +635,11 @@ fn the_hook_checker_requires_expected_differences_to_be_pinned() {
     }
 
     for unpinned in [
-        "fn a_scenario() { let d = try_run_both(&steps, |_, _, _| {}).unwrap_err(); }",
-        "fn a_scenario() { let held = try_run_both(&steps, |_, _, _| {}); let d = held.unwrap_err(); }",
-        "fn a_scenario() { if let Err(d) = try_run_both(&steps, |_, _, _| {}) { check(d); } }",
-        // `run_both` is the harness's, and never expects a difference.
-        "fn run_both(steps: &[Step]) { try_run_both(steps, |_, _, _| {}).unwrap_err(); }",
+        "fn a_scenario() { let d = try_run_golden(&steps, |_, _, _| {}).unwrap_err(); }",
+        "fn a_scenario() { let held = try_run_golden(&steps, |_, _, _| {}); let d = held.unwrap_err(); }",
+        "fn a_scenario() { if let Err(d) = try_run_golden(&steps, |_, _, _| {}) { check(d); } }",
+        // `run_golden` is the harness's, and never expects a difference.
+        "fn run_golden(steps: &[Step]) { try_run_golden(steps, |_, _, _| {}).unwrap_err(); }",
     ] {
         let found = violations(PIN_TABLE, unpinned);
         assert_eq!(found.len(), 1, "{unpinned}: {found:?}");
@@ -587,7 +653,7 @@ fn the_hook_checker_requires_expected_differences_to_be_pinned() {
     let ordinary_in_pin_file = r#"
         #[test]
         fn edited_stale_first_malformed_later_evidence_is_refused_identically() {
-            try_run_both(&steps, |_, _, _| {}).unwrap_err();
+            try_run_golden(&steps, |_, _, _| {}).unwrap_err();
         }
     "#;
     let found = violations(EVIDENCE_PIN_FILE, ordinary_in_pin_file);
@@ -597,7 +663,7 @@ fn the_hook_checker_requires_expected_differences_to_be_pinned() {
     let tampering = r#"
         #[test]
         fn outside_edited_columns() {
-            try_run_both(&steps, |_, rust, _| { tamper(rust) }).unwrap_err();
+            try_run_golden(&steps, |_, rust, _| { tamper(rust) }).unwrap_err();
         }
     "#;
     let found = violations(PIN_TABLE, tampering);
@@ -611,16 +677,16 @@ fn the_hook_checker_requires_expected_differences_to_be_pinned() {
 #[test]
 fn the_hook_checker_rejects_renamed_or_indirect_harness_uses() {
     let imports = r#"
-        use swarm_board_diff::scenario::{run_both, step, try_run_both};
-        use super::scenario::try_run_both;
+        use swarm_board_diff::scenario::{run_golden, step, try_run_golden};
+        use super::scenario::try_run_golden;
     "#;
     assert_eq!(violations(ELSEWHERE, imports), Vec::<String>::new());
 
     for renamed in [
-        "use swarm_board_diff::scenario::try_run_both as t;\n\
+        "use swarm_board_diff::scenario::try_run_golden as t;\n\
          fn a_scenario() { t(&steps, |_, rust, _| { tamper(rust) }).unwrap(); }",
-        "use scenario::{step, try_run_both as run};",
-        "use scenario::{step, try_run_both as try_run_both};",
+        "use scenario::{step, try_run_golden as run};",
+        "use scenario::{step, try_run_golden as try_run_golden};",
     ] {
         let found = violations(ELSEWHERE, renamed);
         assert_eq!(found.len(), 1, "{renamed}: {found:?}");
@@ -628,9 +694,9 @@ fn the_hook_checker_rejects_renamed_or_indirect_harness_uses() {
     }
 
     for indirect in [
-        "fn a_scenario() { let run = try_run_both; run(&steps, |_, rust, _| { tamper(rust) }).unwrap(); }",
-        "fn a_scenario() { (try_run_both)(&steps, |_, rust, _| { tamper(rust) }).unwrap(); }",
-        "fn a_scenario() { apply(try_run_both); }",
+        "fn a_scenario() { let run = try_run_golden; run(&steps, |_, rust, _| { tamper(rust) }).unwrap(); }",
+        "fn a_scenario() { (try_run_golden)(&steps, |_, rust, _| { tamper(rust) }).unwrap(); }",
+        "fn a_scenario() { apply(try_run_golden); }",
     ] {
         let found = violations(ELSEWHERE, indirect);
         assert_eq!(found.len(), 1, "{indirect}: {found:?}");
@@ -645,7 +711,7 @@ fn the_hook_checker_rejects_renamed_or_indirect_harness_uses() {
 /// review L2): a `#[test]` function of `swarm_board_diff_loose.rs` named
 /// by `PERMITTED_DIVERGENCES` and pinned there (not by `EXTERNAL_PINS`),
 /// whose harness call is the receiver of `.unwrap_err()` or
-/// `.expect_err(..)`; and only the harness file's own `run_both` compares
+/// `.expect_err(..)`; and only the harness file's own `run_golden` compares
 /// without one.
 #[test]
 fn the_hook_checker_permits_only_the_pin_tables_own_tests() {
@@ -653,53 +719,53 @@ fn the_hook_checker_permits_only_the_pin_tables_own_tests() {
         // A divergence pinned outside the suite names no caller here.
         (
             PIN_TABLE,
-            "#[test] fn real_to_text_digits() { try_run_both(&steps, |_, _, _| {}).unwrap_err(); }",
+            "#[test] fn real_to_text_digits() { try_run_golden(&steps, |_, _, _| {}).unwrap_err(); }",
         ),
         (
             PIN_TABLE,
-            "#[test] fn outside_edited_contract() { try_run_both(&steps, |_, _, _| {}).unwrap_err(); }",
+            "#[test] fn outside_edited_contract() { try_run_golden(&steps, |_, _, _| {}).unwrap_err(); }",
         ),
         // Nor does the external test pinning it.
         (
             PIN_TABLE,
-            "#[test] fn a_pause_start_that_is_not_a_float_diverges() { try_run_both(&steps, |_, _, _| {}).unwrap_err(); }",
+            "#[test] fn a_pause_start_that_is_not_a_float_diverges() { try_run_golden(&steps, |_, _, _| {}).unwrap_err(); }",
         ),
         // The reviewer's bypass: a helper, not a test, discarding the Err.
         (
             PIN_TABLE,
-            "fn real_to_text_digits() { let _ = try_run_both(&steps, |_, _, _| {}); }",
+            "fn real_to_text_digits() { let _ = try_run_golden(&steps, |_, _, _| {}); }",
         ),
         (
             PIN_TABLE,
-            "fn outside_edited_columns() { try_run_both(&steps, |_, _, _| {}).unwrap_err(); }",
+            "fn outside_edited_columns() { try_run_golden(&steps, |_, _, _| {}).unwrap_err(); }",
         ),
         // A pinned name outside the pin table's file.
         (
             ELSEWHERE,
-            "#[test] fn outside_edited_columns() { try_run_both(&steps, |_, _, _| {}).unwrap_err(); }",
+            "#[test] fn outside_edited_columns() { try_run_golden(&steps, |_, _, _| {}).unwrap_err(); }",
         ),
         // A pinned test that does not check the Err.
         (
             PIN_TABLE,
-            "#[test] fn outside_edited_columns() { let _ = try_run_both(&steps, |_, _, _| {}); }",
+            "#[test] fn outside_edited_columns() { let _ = try_run_golden(&steps, |_, _, _| {}); }",
         ),
         (
             PIN_TABLE,
-            "#[test] fn outside_edited_columns() { let held = try_run_both(&steps, |_, _, _| {}); held.unwrap_err(); }",
+            "#[test] fn outside_edited_columns() { let held = try_run_golden(&steps, |_, _, _| {}); held.unwrap_err(); }",
         ),
         (
             PIN_TABLE,
-            "#[test] fn outside_edited_columns() { try_run_both(&steps, |_, _, _| {}).ok(); }",
+            "#[test] fn outside_edited_columns() { try_run_golden(&steps, |_, _, _| {}).ok(); }",
         ),
         // A function nested in a pinned test is not that test.
         (
             PIN_TABLE,
-            "#[test] fn outside_edited_columns() { fn outside_edited_columns() { let _ = try_run_both(&steps, |_, _, _| {}); } }",
+            "#[test] fn outside_edited_columns() { fn outside_edited_columns() { let _ = try_run_golden(&steps, |_, _, _| {}); } }",
         ),
-        // A `run_both` of another file is not the harness's.
+        // A `run_golden` of another file is not the harness's.
         (
             ELSEWHERE,
-            "fn run_both(steps: &[Step]) { let _ = try_run_both(steps, |_, _, _| {}); }",
+            "fn run_golden(steps: &[Step]) { let _ = try_run_golden(steps, |_, _, _| {}); }",
         ),
     ] {
         let found = violations(path, bypass);
@@ -740,4 +806,47 @@ fn the_pin_tables_are_the_files_pin_table_files_lists() {
     let source = std::fs::read_to_string(EVIDENCE_PIN_FILE).expect("the second pin's file");
     assert!(source.contains(&format!("#[test]\nfn {EVIDENCE_PIN_TEST}()")));
     assert!(pinned_tests().contains(&EVIDENCE_PIN_TEST.to_owned()));
+}
+
+/// #2283 review M2: the fixture writers and the fixture-taking replay
+/// (`write_fixture`, `record_rust`, `try_run_golden_in`) are the golden
+/// self-tests' alone: anywhere else they could write a fixture, or compare
+/// with one of a test's own making and so bypass the pin table.
+#[test]
+fn the_hook_checker_confines_fixture_writers_to_the_self_tests() {
+    for call in [
+        "record_rust(&steps);",
+        "golden.write_fixture(dir, \"s\", &steps);",
+        "Golden::write_fixture(&golden, dir, \"s\", &steps);",
+        "let _ = try_run_golden_in(dir, \"s\", &steps);",
+        "try_run_golden_in(dir, \"s\", &steps).unwrap_err();",
+    ] {
+        let ordinary = format!("#[test]\nfn a_scenario() {{ {call} }}");
+        let found = violations(ELSEWHERE, &ordinary);
+        assert_eq!(found.len(), 1, "{call}: {found:?}");
+        assert!(
+            found[0].contains("a golden fixture writer"),
+            "{call}: {found:?}"
+        );
+        // Not in a pin either.
+        let pinned = ordinary.replace("a_scenario", "outside_edited_columns");
+        let found = violations(PIN_TABLE, &pinned);
+        assert_eq!(found.len(), 1, "{call}: {found:?}");
+        // A harness self-test, or the golden self-test in its file, may.
+        let self_test = ordinary.replace("a_scenario", "harness_self_test_writes");
+        assert_eq!(violations(ELSEWHERE, &self_test), Vec::<String>::new());
+        let golden = ordinary.replace("a_scenario", GOLDEN_SELF_TEST.1);
+        assert_eq!(
+            violations(GOLDEN_SELF_TEST.0, &golden),
+            Vec::<String>::new()
+        );
+        assert_eq!(violations(ELSEWHERE, &golden).len(), 1, "{call}");
+    }
+    // A writer used as a value, or renamed on import, hides its calls.
+    for hidden in [
+        "fn a_scenario() { apply(record_rust); }",
+        "use scenario::record_rust as r;",
+    ] {
+        assert_eq!(violations(ELSEWHERE, hidden).len(), 1, "{hidden}");
+    }
 }

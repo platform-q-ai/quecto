@@ -2,8 +2,9 @@
 //! once, each through its own board client on the one file. The claim
 //! reads the task and writes the owner and token in one `BEGIN IMMEDIATE`
 //! transaction, so exactly one wins and every other is refused `task is
-//! not ready to claim`, whether every client is a Rust board or Python and
-//! Rust boards share the file.
+//! not ready to claim`. (Until #2283 half the clients were Python boards;
+//! the board's answers are Python's by the golden fixtures, so the race is
+//! Rust boards alone.)
 //!
 //! Contention is forced as in `swarm_board_admission_race`: a connection
 //! outside every board holds the write lock until each contender has been
@@ -18,9 +19,6 @@ use quecto::composition::swarm::{SwarmBoardHandles, build_swarm_board_handles};
 use quecto::infrastructure::tools::swarm_board_dispatch::call;
 use serde_json::{Value, json};
 use serial_test::serial;
-
-use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
-use crate::swarm_board_diff_runs::swarm_board_diff::python::PyBoard;
 
 const LOCKED: &str = "coordination store unavailable or contended: database is locked";
 const NOT_READY: &str = "task is not ready to claim";
@@ -164,51 +162,6 @@ fn concurrent_claims_of_one_task_have_exactly_one_winner() {
                 let member = format!("member-{index}");
                 start.wait();
                 contend(&member, &locked_out, || rust_claim(&handles, &member))
-            })
-        })
-        .collect();
-    release();
-    let answers: Vec<_> = threads
-        .into_iter()
-        .map(|thread| thread.join().unwrap())
-        .collect();
-    judge(&answers, &location);
-}
-
-/// Three Python clients and three Rust clients claim one task at once.
-#[test]
-#[serial]
-fn concurrent_python_and_rust_claims_have_exactly_one_winner() {
-    let dir = tempfile::tempdir().unwrap();
-    let location = board(dir.path());
-    let locked_out = Arc::new(AtomicUsize::new(0));
-    let release = hold_lock_until(&location.database, locked_out.clone());
-    let start = Arc::new(Barrier::new(MEMBERS));
-    let threads: Vec<_> = (0..MEMBERS)
-        .map(|index| {
-            let location = location.clone();
-            let workdir = dir.path().join(format!("python-{index}"));
-            let start = start.clone();
-            let locked_out = locked_out.clone();
-            std::thread::spawn(move || {
-                let member = format!("member-{index}");
-                if index % 2 == 0 {
-                    std::fs::create_dir_all(&workdir).unwrap();
-                    let mut board =
-                        PyBoard::start(&location.database, &location.checkout, &workdir);
-                    start.wait();
-                    contend(&member, &locked_out, || {
-                        match board.call(&member, "claim", "[1]", now()) {
-                            Outcome::Ok(value) => Ok(value),
-                            Outcome::Refused(text) => Err(text),
-                            Outcome::Raised(raised) => panic!("{member}: Python raised {raised}"),
-                        }
-                    })
-                } else {
-                    let handles = build_swarm_board_handles(location, None);
-                    start.wait();
-                    contend(&member, &locked_out, || rust_claim(&handles, &member))
-                }
             })
         })
         .collect();

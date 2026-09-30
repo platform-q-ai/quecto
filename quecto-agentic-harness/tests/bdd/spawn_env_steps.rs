@@ -29,11 +29,7 @@ pub(crate) fn given_shared_script_spawn(world: &mut QuectoWorld, kill_fails_once
     let cfg_path = PathBuf::from(world.config_path.clone().unwrap());
     let cfg_dir = cfg_path.parent().unwrap().to_path_buf();
     let log = shared_log_path(world);
-    std::fs::write(
-        cfg_dir.join("fixture-processes.py"),
-        include_str!("fixture_processes.py"),
-    )
-    .unwrap();
+    crate::install_fixture_processes(&cfg_dir);
     let pid_dir = cfg_dir.join("env-pids");
     std::fs::create_dir_all(&pid_dir).unwrap();
 
@@ -57,7 +53,7 @@ for arg in "$@"; do
 done
 "$@" >/dev/null 2>&1 &
 child_pid="$!"
-python3 '{pid_dir}/../fixture-processes.py' track '{pid_dir}' "$env_id" "$child_pid"
+'{pid_dir}/../fixture-processes' track '{pid_dir}' "$env_id" "$child_pid"
 ws="$(dirname "$0")/workspace-$env_id"; mkdir -p "$ws"; printf '{{"environment_id":"%s","workspace_path":"%s","metadata":{{}},"socket_path":"%s"}}' "$env_id" "$ws" "$socket_path"
 "#,
             log = log.display(),
@@ -83,7 +79,7 @@ for arg in "$@"; do
   prev="$arg"
 done
 "$@" >/dev/null 2>&1 &
-python3 '{pid_dir}/../fixture-processes.py' track '{pid_dir}' "${{QUECTO_CONTAINER_ENVIRONMENT_ID}}" "$!"
+'{pid_dir}/../fixture-processes' track '{pid_dir}' "${{QUECTO_CONTAINER_ENVIRONMENT_ID}}" "$!"
 printf '{{"socket_path":"%s","metadata":{{}}}}' "$socket_path"
 "#,
             log = log.display(),
@@ -123,10 +119,10 @@ exit 1
         format!(
             r#"#!/usr/bin/env bash
 set -euo pipefail
-live="$(python3 '{pid_dir}/../fixture-processes.py' live '{pid_dir}' "${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}")"
+live="$('{pid_dir}/../fixture-processes' live '{pid_dir}' "${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}")"
 echo "{{\"kind\":\"kill\",\"env_id\":\"${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}\",\"live_members\":$live}}" >> '{log}'
 {fail_clause}
-python3 '{pid_dir}/../fixture-processes.py' clean '{pid_dir}' "${{QUECTO_CONTAINER_ENVIRONMENT_ID}}"
+'{pid_dir}/../fixture-processes' clean '{pid_dir}' "${{QUECTO_CONTAINER_ENVIRONMENT_ID}}"
 "#,
             log = log.display(),
             pid_dir = pid_dir.display()
@@ -745,7 +741,7 @@ for arg in "$@"; do
   prev="$arg"
 done
 ( while [ ! -e '{gate}' ]; do sleep 0.05; done; exec "$@" ) >/dev/null 2>&1 &
-python3 '{pid_dir}/../fixture-processes.py' track '{pid_dir}' "$env_id" "$!"
+'{pid_dir}/../fixture-processes' track '{pid_dir}' "$env_id" "$!"
 ws="$(dirname "$0")/workspace-$env_id"; mkdir -p "$ws"; printf '{{"environment_id":"%s","workspace_path":"%s","metadata":{{}},"socket_path":"%s"}}' "$env_id" "$ws" "$socket_path"
 "#,
             log = log.display(),

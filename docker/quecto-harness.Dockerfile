@@ -8,7 +8,6 @@ RUN apk add --no-cache \
     git \
     github-cli \
     openssh-client \
-    python3 \
     ripgrep \
     socat \
     su-exec \

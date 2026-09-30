@@ -88,6 +88,10 @@ The operational limits and cooperative trust model are documented in `docs/swarm
 
 ## Check commands
 
+*Historical (#1680):* the commands as they ran then. The Python suite
+`tests/swarm_helpers_test.py` and the `swarm_coordination` target were deleted
+with the Python board in #2283; the Rust board's golden fixtures replaced them.
+
 ```sh
 PYTHONDONTWRITEBYTECODE=1 python3 quecto-agentic-harness/tests/swarm_helpers_test.py
 cargo test --workspace --features quecto-agentic-harness/test-support --bins --lib

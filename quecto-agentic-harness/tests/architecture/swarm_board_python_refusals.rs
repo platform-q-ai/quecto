@@ -1,12 +1,14 @@
-//! Every refusal the Python board raises has a stable kind (#2303 round-3
+//! Every refusal the Python board raised has a stable kind (#2303 round-3
 //! review L4): [`PYTHON_REFUSALS`] names, for each `SwarmError(...)` text
 //! in the Python sources, the [`RefusalKind`] (or, for a text whose kind
 //! the board chooses at run time, the kinds) the Rust port records for
-//! it. A slice that ports a method (S6–S14) picks its refusals' kinds from
-//! this table, and `swarm_board_refusal_kinds`'s site table must agree
+//! it. A slice that ported a method (S6–S14) picked its refusals' kinds
+//! from this table, and `swarm_board_refusal_kinds`'s site table must agree
 //! with it wherever both hold a text.
 //!
-//! A text is the argument as Python builds it: adjacent literals joined,
+//! The table was checked against a scan of the Python sources until #2283
+//! deleted them: it is now the frozen record of every text they raised.
+//! A text is the argument as Python built it: adjacent literals joined,
 //! an f-string's fields kept as written (`{path}`), and any other
 //! expression written in braces (`{'; '.join(blockers)}`).
 //!
@@ -17,17 +19,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use quecto::domain::swarm::RefusalKind;
 
 use super::swarm_board_refusal_kinds::refusals;
-
-/// The Python board's sources: the helpers the board runs from, and the
-/// policy and use cases they import.
-const PYTHON_SOURCES: &[&str] = &[
-    "src/application/swarm_use_cases.py",
-    "src/domain/swarm_policy.py",
-    "src/infrastructure/tools/swarm_helpers/swarm.py",
-    "src/infrastructure/tools/swarm_helpers/swarm_repository.py",
-    "src/infrastructure/tools/swarm_helpers/swarm_store.py",
-    "src/infrastructure/tools/swarm_helpers/swarm_tasks.py",
-];
 
 /// `(text, kinds)` for every distinct Python refusal text, sorted by text.
 pub(super) const PYTHON_REFUSALS: &[(&str, &[&str])] = &[
@@ -301,173 +292,21 @@ pub(super) const PYTHON_REFUSALS: &[(&str, &[&str])] = &[
     ),
 ];
 
-/// The argument of the call opening at `open` (just past its `(`), up to
-/// its closing parenthesis; strings and nested brackets are skipped.
-fn argument(source: &str, open: usize) -> &str {
-    let bytes = source.as_bytes();
-    let (mut depth, mut quote, mut at) = (0_usize, None, open);
-    loop {
-        let byte = *bytes.get(at).expect("a SwarmError call is closed");
-        match (quote, byte) {
-            (Some(_), b'\\') => at += 1,
-            (Some(open_quote), byte) if byte == open_quote => quote = None,
-            (Some(_), _) => {}
-            (None, b'\'' | b'"') => quote = Some(byte),
-            (None, b'(' | b'[' | b'{') => depth += 1,
-            (None, b')') if depth == 0 => return &source[open..at],
-            (None, b')' | b']' | b'}') => depth -= 1,
-            (None, _) => {}
-        }
-        at += 1;
-    }
-}
-
-/// The literal starting at `at` (an optional `f` prefix, then a quote):
-/// its text, with its escapes decoded as Python decodes them, and where it
-/// ends. Decoded, not normalised (#2303 round-4 review N3): the Rust side's
-/// text is `syn`'s decoded value, so both tables compare the text each
-/// board actually raises.
-fn literal(argument: &str, at: usize) -> Option<(String, usize)> {
-    let bytes = argument.as_bytes();
-    let start = match (bytes.get(at), bytes.get(at + 1)) {
-        (Some(b'f'), Some(b'\'' | b'"')) => at + 1,
-        (Some(b'\'' | b'"'), _) => at,
-        _ => return None,
-    };
-    let quote = bytes[start];
-    let mut text = String::new();
-    let mut chars = argument[start + 1..].char_indices();
-    while let Some((offset, character)) = chars.next() {
-        match character {
-            '\\' => {
-                let (_, escaped) = chars.next()?;
-                decode_escape(escaped, &mut text);
-            }
-            _ if character as u32 == u32::from(quote) => {
-                return Some((text, start + 1 + offset + 1));
-            }
-            _ => text.push(character),
-        }
-    }
-    None
-}
-
-/// Appends what Python's `\<escaped>` stands for in a (non-raw) string
-/// literal. An allowlist: only the escapes the board's texts may use are
-/// decoded, and any other (numeric, named, or one Python keeps whole)
-/// fails the scan rather than be misread.
-fn decode_escape(escaped: char, text: &mut String) {
-    match escaped {
-        'n' => text.push('\n'),
-        't' => text.push('\t'),
-        'r' => text.push('\r'),
-        '\\' | '\'' | '"' => text.push(escaped),
-        // A backslash before a line break continues the literal.
-        '\n' => {}
-        other => panic!("the refusal scan does not decode the escape \\{other}"),
-    }
-}
-
-/// The end of the expression starting at `at`: the next `+` outside
-/// brackets and strings, or the end.
-fn expression_end(argument: &str, at: usize) -> usize {
-    let bytes = argument.as_bytes();
-    let (mut depth, mut quote) = (0_usize, None);
-    for (offset, &byte) in bytes[at..].iter().enumerate() {
-        match (quote, byte) {
-            (Some(open_quote), byte) if byte == open_quote => quote = None,
-            (Some(_), _) => {}
-            (None, b'\'' | b'"') => quote = Some(byte),
-            (None, b'(' | b'[' | b'{') => depth += 1,
-            (None, b')' | b']' | b'}') => depth -= 1,
-            (None, b'+') if depth == 0 => return at + offset,
-            (None, _) => {}
-        }
-    }
-    bytes.len()
-}
-
-/// The text a `SwarmError` argument builds (see the module docs).
-fn text(argument: &str) -> String {
-    let mut text = String::new();
-    let mut at = 0;
-    while at < argument.len() {
-        let rest = &argument[at..];
-        let skipped = rest.len()
-            - rest
-                .trim_start_matches(|c: char| c.is_whitespace() || c == '+')
-                .len();
-        if skipped > 0 {
-            at += skipped;
-            continue;
-        }
-        // A literal stands alone only when a `+`, another literal or the
-        // end follows it; otherwise it starts an expression (`'; '.join`).
-        if let Some((literal, end)) = literal(argument, at) {
-            let next = argument[end..].trim_start();
-            let alone = next.is_empty() || next.starts_with('+') || literal_starts(next);
-            if alone {
-                text.push_str(&literal);
-                at = end;
-                continue;
-            }
-        }
-        let end = expression_end(argument, at);
-        text.push('{');
-        text.push_str(argument[at..end].trim());
-        text.push('}');
-        at = end;
-    }
-    text
-}
-
-fn literal_starts(rest: &str) -> bool {
-    rest.starts_with(['\'', '"']) || rest.starts_with("f'") || rest.starts_with("f\"")
-}
-
-/// Every `SwarmError(...)` text in `source` (its class declaration aside).
-fn refusals_in(source: &str) -> Vec<String> {
-    const CALL: &str = "SwarmError(";
-    source
-        .match_indices(CALL)
-        .filter(|(at, _)| !source[..*at].ends_with("class "))
-        .map(|(at, _)| text(argument(source, at + CALL.len())))
-        .collect()
-}
-
-fn python_refusals() -> BTreeSet<String> {
-    let mut found = BTreeSet::new();
-    for file in PYTHON_SOURCES {
-        let source = std::fs::read_to_string(file).unwrap_or_else(|_| panic!("read {file}"));
-        let texts = refusals_in(&source);
-        assert!(!texts.is_empty(), "{file} raises refusals");
-        found.extend(texts);
-    }
-    found
-}
-
 fn kind(name: &str) -> Option<RefusalKind> {
     serde_json::from_value(serde_json::Value::String(name.to_owned())).ok()
 }
 
 #[test]
 fn every_python_refusal_text_has_a_kind() {
-    let found = python_refusals();
-    assert!(found.len() > 80, "the scan reads the Python board");
-    let table: BTreeSet<String> = PYTHON_REFUSALS
-        .iter()
-        .map(|(text, _)| (*text).to_owned())
-        .collect();
+    assert!(
+        PYTHON_REFUSALS.len() > 80,
+        "the table holds the Python board's texts"
+    );
+    let table: BTreeSet<&str> = PYTHON_REFUSALS.iter().map(|(text, _)| *text).collect();
     assert_eq!(table.len(), PYTHON_REFUSALS.len(), "one row per text");
-    let rows: Vec<String> = found
-        .iter()
-        .map(|text| format!("    ({text:?}, &[\"…\"]),"))
-        .collect();
-    assert_eq!(
-        found,
-        table,
-        "the Python refusal table is out of date (one row per text); the sources raise:\n{}",
-        rows.join("\n")
+    assert!(
+        PYTHON_REFUSALS.windows(2).all(|pair| pair[0].0 < pair[1].0),
+        "the rows are sorted by text"
     );
     for (text, kinds) in PYTHON_REFUSALS {
         assert!(!kinds.is_empty(), "{text:?} has a kind");
@@ -608,40 +447,9 @@ fn a_chooser_returns_the_kinds_its_function_names() {
 }
 
 #[test]
-fn the_scan_reads_literals_f_strings_and_expressions() {
-    let found = refusals_in(
-        r#"
-class SwarmError(RuntimeError):
-    pass
-raise SwarmError('plain')
-raise SwarmError(f"run is {describe(run)}; no")
-raise SwarmError(
-    f'missing at {path}: gone, '
-    'so this run\'s board is lost') from error
-raise SwarmError('again: ' + '; '.join(blockers))
-raise SwarmError(f"message {m} is already {row['status']}")
-raise SwarmError('line\nnext \\ back \' single \" double \tab')
-"#,
-    );
-    assert_eq!(
-        found,
-        [
-            "plain",
-            "run is {describe(run)}; no",
-            "missing at {path}: gone, so this run's board is lost",
-            "again: {'; '.join(blockers)}",
-            "message {m} is already {row['status']}",
-            "line\nnext \\ back ' single \" double \tab",
-        ]
-    );
+fn templates_blank_their_fields_and_variants_read_in_snake_case() {
     assert_eq!(blanked("run is {describe(run)}; no"), "run is {}; no");
+    assert_eq!(blanked("a {b {c}} d {e}"), "a {} d {}");
     assert_eq!(snake("NotRunning"), "not_running");
-}
-
-/// An escape the scan does not decode fails it rather than be misread
-/// (#2303 round-4 review N3).
-#[test]
-#[should_panic(expected = "does not decode the escape \\x")]
-fn an_undecoded_escape_fails_the_scan() {
-    let _ = refusals_in(r"raise SwarmError('byte \x41')");
+    assert_eq!(snake("Store"), "store");
 }

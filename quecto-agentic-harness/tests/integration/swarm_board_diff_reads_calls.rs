@@ -16,11 +16,8 @@ use crate::swarm_board_diff_membership::{HOUR, at};
 use crate::swarm_board_diff_messages::joined;
 use crate::swarm_board_diff_reads::{full, summary, task};
 use crate::swarm_board_diff_runs::NOW;
-use crate::swarm_board_diff_runs::swarm_board_diff::python::{
-    workbench_methods, workbench_parameters,
-};
 use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
-    Hold, Step, corrupt, held, run_both, sql, step,
+    Hold, Step, corrupt, held, run_golden, sql, step,
 };
 use quecto::infrastructure::tools::swarm_board_dispatch::BOARD_OPS;
 
@@ -49,13 +46,13 @@ fn create_answers_the_summary_and_commits_before_its_refusal() {
         step("parent", "create", contract(NOW + HOUR), NOW),
         full(1.0, "parent"),
     ];
-    run_both(&fresh);
+    run_golden(&fresh);
     assert_eq!(answer(&fresh, 0), answer(&fresh, 1));
     let over = [
         step("parent", "bootstrap_run", json!([1, "s", null]), NOW),
         at(1.0, "parent", "create", contract(NOW + HOUR)),
     ];
-    run_both(&over);
+    run_golden(&over);
     assert_eq!(answer(&over, 1)["status"], json!("running"));
     let orphaned = [
         step("parent", "bootstrap_run", json!([1, "s", null]), NOW),
@@ -63,7 +60,7 @@ fn create_answers_the_summary_and_commits_before_its_refusal() {
         at(1.0, "parent", "create", contract(NOW + HOUR)),
         at(2.0, "supervisor", "_status", json!([])),
     ];
-    run_both(&orphaned);
+    run_golden(&orphaned);
     assert_eq!(refusal(&orphaned, 2), UNKNOWN);
     assert_eq!(answer(&orphaned, 3)["status"], json!("running"));
 }
@@ -87,7 +84,7 @@ fn bootstrap_returns_the_coordinator_summary_identically() {
         ),
         full(6.0, "parent"),
     ];
-    run_both(&steps);
+    run_golden(&steps);
     let placeholder = answer(&steps, 0);
     assert_eq!(
         (&placeholder["status"], &placeholder["coordinator"]),
@@ -107,7 +104,7 @@ fn bootstrap_returns_the_coordinator_summary_identically() {
 #[test]
 fn the_join_answers_the_coordinators_summary_in_every_branch() {
     let live = joined([at(3.0, "worker", "_join", json!(["res-w", 11, "t", null]))]);
-    run_both(&live);
+    run_golden(&live);
     assert_eq!(answer(&live, 3)["coordinator"], json!("parent"));
     for edit in [
         "UPDATE run SET coordinator=NULL",
@@ -118,7 +115,7 @@ fn the_join_answers_the_coordinators_summary_in_every_branch() {
             at(3.0, "worker", "_join", json!(["res-w", 11, "t", null])),
             at(4.0, "worker", "_bootstrap", json!([11, "t", null])),
         ]);
-        run_both(&steps);
+        run_golden(&steps);
         assert_eq!(refusal(&steps, 4), UNKNOWN, "{edit}");
         assert_eq!(refusal(&steps, 5), UNKNOWN, "{edit}");
     }
@@ -131,7 +128,7 @@ fn the_join_answers_the_coordinators_summary_in_every_branch() {
         ),
         at(HOUR + 2.0, "supervisor", "_status", json!([])),
     ]);
-    run_both(&expired);
+    run_golden(&expired);
     assert_eq!(
         (
             &answer(&expired, 3)["status"],
@@ -148,7 +145,7 @@ fn the_join_answers_the_coordinators_summary_in_every_branch() {
             json!(["other-reservation", 99, "x", null]),
         ),
     ]);
-    run_both(&admitted);
+    run_golden(&admitted);
     assert_eq!(
         refusal(&admitted, 4),
         "launch reservation does not match invoking process"
@@ -197,7 +194,7 @@ fn read_model_arguments_and_gates_are_checked_as_python_does() {
         summary(9.0, "worker", json!(4)),
         summary(9.1, "worker", json!(0)),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     assert_eq!(refusal(&steps, 19), "unknown task");
     assert_eq!(refusal(&steps, 21), UNKNOWN);
 }
@@ -222,7 +219,7 @@ fn every_read_model_op_on_a_paused_run() {
             at(4.6, "late", "_bootstrap", json!([5, "l", null])),
             at(4.7, "worker", "_join", json!(["res-w", 11, "t", null])),
         ]);
-        run_both(&steps);
+        run_golden(&steps);
     }
 }
 
@@ -236,7 +233,7 @@ fn contention_and_corruption_fail_explicitly() {
         corrupt(),
         full(4.0, "parent"),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     assert!(refusal(&steps, 3).starts_with("coordination store unavailable or contended: "));
     assert_eq!(
         refusal(&steps, 5),
@@ -265,6 +262,79 @@ const INTERNAL_HELPERS: [&str; 15] = [
     "owned_tasks",
 ];
 
+/// Every method of Python's `Workbench` (`dir(Workbench)`, filtered to the
+/// callables `swarm.py` and `swarm_tasks.py` define), public and
+/// underscore, sorted: frozen from the Python board before its sources
+/// were deleted (#2283).
+pub(crate) const WORKBENCH_METHODS: [&str; 66] = [
+    "_accept_wake",
+    "_activate",
+    "_admit",
+    "_bootstrap",
+    "_close",
+    "_confirmed_dead",
+    "_control_status",
+    "_criteria",
+    "_dependencies",
+    "_end_by_loss",
+    "_extend_deadline",
+    "_grace_elapsed",
+    "_join",
+    "_liveness_watch",
+    "_lose_coordinator",
+    "_lost",
+    "_message_id",
+    "_notifications",
+    "_notify_revoked",
+    "_owned",
+    "_owner_views",
+    "_quarantine",
+    "_record_launch",
+    "_record_request",
+    "_release_unlaunched",
+    "_reopen",
+    "_request_admission",
+    "_resume_external",
+    "_retire",
+    "_snapshot",
+    "_socket",
+    "_status",
+    "_task",
+    "_with_owner_liveness",
+    "ack",
+    "amend",
+    "block",
+    "claim",
+    "complete",
+    "create",
+    "dependencies",
+    "events",
+    "evidence",
+    "file_owners",
+    "inbox",
+    "owned_tasks",
+    "pause",
+    "recover",
+    "release",
+    "release_files",
+    "reserve",
+    "resume",
+    "revalidate_task",
+    "revoke",
+    "send",
+    "stop",
+    "submit",
+    "summary",
+    "task",
+    "task_create",
+    "tasks",
+    "unblock",
+    "usage_budget",
+    "usage_report",
+    "verify_task",
+    "withdraw",
+];
+
 /// The dispatcher test-only names, which no `Workbench` method has.
 const TEST_ONLY: [&str; 4] = ["create_run", "bootstrap_run", "bootstrap_join", "task_raw"];
 
@@ -273,6 +343,20 @@ const TEST_ONLY: [&str; 4] = ["create_run", "bootstrap_run", "bootstrap_join", "
 /// run's totals the coordinator's harness reads at settle (#2313), and the
 /// run watch's tick (#2338).
 const RUST_ONLY: [&str; 3] = ["_event_cursor", "_run_totals", "_watch"];
+
+/// The parameter names of Python's `Workbench.<method>` (`self` left out)
+/// for each method [`RUST_ONLY_ARGUMENTS`] names: frozen from the Python
+/// board before its sources were deleted (#2283).
+pub(crate) const WORKBENCH_PARAMETERS: [(&str, &[&str]); 1] = [("_request_admission", &[])];
+
+/// Python's parameter names of `method`, as frozen.
+fn workbench_parameters(method: &str) -> Vec<String> {
+    WORKBENCH_PARAMETERS
+        .iter()
+        .find(|(name, _)| *name == method)
+        .map(|(_, parameters)| parameters.iter().map(|name| (*name).to_owned()).collect())
+        .unwrap_or_else(|| panic!("{method}'s Python parameters are frozen"))
+}
 
 /// Arguments only the Rust board takes, by method (#2339): the harness's
 /// admission gate, which members cannot send (`_request_admission` is a
@@ -286,10 +370,10 @@ const RUST_ONLY_ARGUMENTS: [(&str, &str); 1] = [("_request_admission", "gate")];
 #[test]
 fn only_the_listed_arguments_widen_a_workbench_signature() {
     for (method, argument) in RUST_ONLY_ARGUMENTS {
-        let python = workbench_parameters(method);
+        let golden = workbench_parameters(method);
         assert!(
-            !python.iter().any(|name| name == argument),
-            "{method}: {python:?}"
+            !golden.iter().any(|name| name == argument),
+            "{method}: {golden:?}"
         );
         assert!(BOARD_OPS.contains(&method), "{method}");
     }
@@ -302,7 +386,7 @@ fn only_the_listed_arguments_widen_a_workbench_signature() {
         at(1.0, "parent", "_request_admission", json!([])),
         at(2.0, "parent", "_request_admission", json!({})),
     ];
-    run_both(&steps);
+    run_golden(&steps);
     steps.extend([
         at(3.0, "parent", "_request_admission", json!(["tool"])),
         at(
@@ -318,20 +402,23 @@ fn only_the_listed_arguments_widen_a_workbench_signature() {
     }
 }
 
-/// Every method of Python's `Workbench` (`dir(Workbench)`, filtered to the
-/// callables `swarm.py` and `swarm_tasks.py` define) is a dispatcher
-/// method or a named internal helper, and the dispatcher serves nothing
-/// else.
+/// Every method of Python's `Workbench` ([`WORKBENCH_METHODS`]) is a
+/// dispatcher method or a named internal helper, and the dispatcher serves
+/// nothing else.
 #[test]
 fn the_dispatcher_serves_every_workbench_method() {
-    let python: BTreeSet<String> = workbench_methods().into_iter().collect();
+    let golden: BTreeSet<String> = WORKBENCH_METHODS
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect();
+    assert_eq!(golden.len(), WORKBENCH_METHODS.len(), "listed once each");
     let served: BTreeSet<String> = BOARD_OPS
         .iter()
         .filter(|op| !TEST_ONLY.contains(op) && !RUST_ONLY.contains(op))
         .chain(INTERNAL_HELPERS.iter())
         .map(|name| (*name).to_owned())
         .collect();
-    assert_eq!(python, served);
+    assert_eq!(golden, served);
 }
 
 /// `test_the_advertised_contact_is_a_send_the_board_accepts`: the contact
@@ -351,7 +438,7 @@ fn the_advertised_contact_is_a_send_the_board_accepts() {
         ),
         at(7.0, "worker", "inbox", json!([])),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     assert_eq!(
         answer(&steps, 5)["contact"],
         json!(r#"{"op":"send","request":...,"recipient":"worker","body":...}"#)
@@ -387,7 +474,7 @@ fn message_columns_are_migrated_into_an_older_store() {
         at(3.0, "parent", "withdraw", json!([1])),
         at(4.0, "parent", "inbox", json!([true])),
     ];
-    run_both(&steps);
+    run_golden(&steps);
     assert_eq!(answer(&steps, 3)[0]["revision"], json!("abc1"));
     assert_eq!(answer(&steps, 5)[0]["status"], json!("withdrawn"));
 }
@@ -403,7 +490,7 @@ fn the_launcher_column_is_migrated_into_an_older_store() {
         at(4.0, "parent", "_admit", json!(["late", "reservation-late"])),
         full(5.0, "parent"),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     let members = answer(&steps, 6)["members"].clone();
     let launcher = |id: &str| {
         members
@@ -422,7 +509,7 @@ fn the_launcher_column_is_migrated_into_an_older_store() {
 /// carry `"launcher": null`), and leaves the same board.
 #[test]
 fn a_snapshot_of_a_board_without_the_launcher_column_adds_it() {
-    run_both(&joined([
+    run_golden(&joined([
         sql("ALTER TABLE members DROP COLUMN launcher"),
         at(3.0, "parent", "_snapshot", json!([])),
     ]));
@@ -432,7 +519,7 @@ fn a_snapshot_of_a_board_without_the_launcher_column_adds_it() {
 /// not read: the board Python leaves holds it again, and so does Rust's.
 #[test]
 fn a_snapshot_of_a_board_without_a_message_column_adds_it() {
-    run_both(&joined([
+    run_golden(&joined([
         sql("ALTER TABLE messages DROP COLUMN superseded_by"),
         at(3.0, "parent", "_snapshot", json!([])),
     ]));
@@ -442,9 +529,9 @@ fn a_snapshot_of_a_board_without_a_message_column_adds_it() {
 /// Rust board reads without the write lock, rather than compare it.
 #[test]
 fn harness_self_test_refuses_a_held_unlocked_read() {
-    use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{Hold, held, try_run_both};
+    use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{Hold, held, try_run_golden};
     for method in ["_snapshot", "_watch"] {
-        let refused = try_run_both(
+        let refused = try_run_golden(
             &joined([held(Hold::WaitedOut, at(3.0, "parent", method, json!([])))]),
             |_, _, _| {},
         )

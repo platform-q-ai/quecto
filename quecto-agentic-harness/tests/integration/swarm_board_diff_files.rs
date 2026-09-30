@@ -1,9 +1,9 @@
-//! Differential scenarios (#2275, epic #2265): file reservations,
-//! recovery, revocation and the evidence success needs, on the Python
-//! board and the Rust board, compared after every step by result, refusal
-//! text and logical database dump (`files` ordered by path). Ported from
-//! `tests/swarm_helpers_test.py`, plus the loosely typed arguments Python
-//! accepts (epic P3).
+//! Differential scenarios (#2275, epic #2265): file reservations, recovery,
+//! revocation and the evidence success needs, on the Rust board against the
+//! Python board's answers frozen in its golden fixtures (#2283), compared
+//! after every step by result, refusal text and logical database dump
+//! (`files` ordered by path). Ported from the deleted Python suite `tests/swarm_helpers_test.py`,
+//! plus the loosely typed arguments Python accepts (epic P3).
 //!
 //! Each side's checkout is its own board directory; [`mkdir`] and
 //! [`symlink`] shape both alike. A conflicting `reserve` here always meets
@@ -21,7 +21,7 @@ use crate::swarm_board_diff_membership::{at, create};
 use crate::swarm_board_diff_runs::NOW;
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
 use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
-    Step, mkdir, run_both, run_rust, sql, step, symlink,
+    Step, mkdir, run_golden, run_rust, sql, step, symlink,
 };
 
 /// The `n`th id the harness draws, as the counter writes it.
@@ -80,7 +80,7 @@ fn dead(member: &str) -> Step {
 /// owner's current claim releases, and an escape is refused.
 #[test]
 fn file_reservations_are_atomic_normalized_and_token_owned() {
-    run_both(&claimed([
+    run_golden(&claimed([
         at(
             5.0,
             "parent",
@@ -127,7 +127,7 @@ fn file_reservations_are_atomic_normalized_and_token_owned() {
 /// symlinked directory is reserved under its target.
 #[test]
 fn symlink_alias_cannot_bypass_reservation() {
-    run_both(&claimed([
+    run_golden(&claimed([
         mkdir("real"),
         symlink("alias", "real"),
         at(5.0, "worker", "reserve", json!([1, token(3), ["real/new"]])),
@@ -193,14 +193,14 @@ fn reserved_paths_resolve_as_python_resolves_them() {
         ));
     }
     more.push(owners(30.0));
-    run_both(&claimed(more));
+    run_golden(&claimed(more));
 }
 
 /// `test_resolved_blocker_resumes_original_claim_without_releasing_files`,
 /// the file part: a blocked claim reserves, and unblocking keeps them.
 #[test]
 fn resolved_blocker_resumes_original_claim_without_releasing_files() {
-    run_both(&claimed([
+    run_golden(&claimed([
         at(
             5.0,
             "worker",
@@ -246,7 +246,7 @@ fn revoke_is_coordinator_only() {
         at(7.0, "other", "revoke", json!([1, "not mine to take"])),
         raw(8.0),
     ]);
-    run_both(&claimed(more));
+    run_golden(&claimed(more));
 }
 
 /// `test_revoke_reopens_work_drops_reservations_and_tells_the_previous_owner`:
@@ -285,14 +285,14 @@ fn revoke_reopens_work_drops_reservations_and_tells_the_previous_owner() {
         at(14.0, "parent", "verify_task", json!([1, token(5), "r2"])),
         raw(15.0),
     ]);
-    run_both(&claimed(more));
+    run_golden(&claimed(more));
 }
 
 /// `test_revoked_token_cannot_submit_release_reserve_or_verify`.
 #[test]
 fn revoked_token_cannot_submit_release_reserve_or_verify() {
     let evidence = json!([{"artifact": "a.log", "revision": "r1"}]);
-    run_both(&claimed([
+    run_golden(&claimed([
         at(5.0, "worker", "submit", json!([1, token(3), evidence])),
         at(6.0, "parent", "revoke", json!([1, "stale submission"])),
         at(7.0, "worker", "submit", json!([1, token(3), evidence])),
@@ -310,7 +310,7 @@ fn revoked_token_cannot_submit_release_reserve_or_verify() {
 /// reason is refused; completed work is refused.
 #[test]
 fn revoke_is_idempotent_and_refuses_unclaimed_or_completed_work() {
-    run_both(&claimed([
+    run_golden(&claimed([
         at(5.0, "parent", "revoke", json!([1, "first"])),
         at(6.0, "parent", "revoke", json!([1, "second"])),
         at(7.0, "parent", "revoke", json!([1, ""])),
@@ -333,7 +333,7 @@ fn revoke_is_idempotent_and_refuses_unclaimed_or_completed_work() {
 fn revoke_skips_the_message_when_the_previous_owner_inbox_is_full() {
     let fill = "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<100)
          INSERT INTO messages(sender,recipient,body,status) SELECT 'parent','worker','noise','accepted' FROM n;";
-    run_both(&claimed([
+    run_golden(&claimed([
         sql(fill),
         at(5.0, "parent", "revoke", json!([1, "silent member"])),
         at(6.0, "worker", "claim", json!([1])),
@@ -345,7 +345,7 @@ fn revoke_skips_the_message_when_the_previous_owner_inbox_is_full() {
 /// `test_revoke_after_confirmed_death_records_the_audit_without_a_message`.
 #[test]
 fn revoke_after_death_records_the_audit_without_a_message() {
-    run_both(&claimed([
+    run_golden(&claimed([
         at(5.0, "worker", "reserve", json!([1, token(3), ["src/a.rs"]])),
         dead("worker"),
         at(6.0, "parent", "revoke", json!([1, "reassign after death"])),
@@ -365,23 +365,23 @@ fn revoke_and_recover_read_only_the_owners_status() {
             "UPDATE members SET {column}=CAST(X'FF' AS TEXT) WHERE id='worker'"
         ))
     };
-    run_both(&claimed([
+    run_golden(&claimed([
         corrupt("socket"),
         at(5.0, "parent", "revoke", json!([1, "x"])),
         raw(6.0),
     ]));
-    run_both(&claimed([
+    run_golden(&claimed([
         corrupt("socket"),
         dead("worker"),
         at(5.0, "parent", "recover", json!([1])),
         raw(6.0),
     ]));
-    run_both(&claimed([
+    run_golden(&claimed([
         corrupt("status"),
         at(5.0, "parent", "revoke", json!([1, "x"])),
         at(6.0, "parent", "recover", json!([1])),
     ]));
-    run_both(&claimed([
+    run_golden(&claimed([
         sql("UPDATE members SET status=CAST('dead' AS BLOB) WHERE id='worker'"),
         at(5.0, "parent", "recover", json!([1])),
     ]));
@@ -391,7 +391,7 @@ fn revoke_and_recover_read_only_the_owners_status() {
 /// needs the owner's confirmed death, and the old token is stale after it.
 #[test]
 fn stale_claim_cannot_modify_recovered_work() {
-    run_both(&claimed([
+    run_golden(&claimed([
         at(5.0, "parent", "recover", json!([1])),
         dead("worker"),
         at(6.0, "parent", "recover", json!([1])),
@@ -406,7 +406,7 @@ fn stale_claim_cannot_modify_recovered_work() {
 /// `True` (Python's `is True`: `1` and `"true"` are not).
 #[test]
 fn recover_releases_retained_reservations_only_when_told_true() {
-    run_both(&claimed([
+    run_golden(&claimed([
         at(
             5.0,
             "worker",
@@ -487,7 +487,7 @@ fn empty_queue_and_submissions_do_not_prove_success() {
         at(11.0, "parent", "complete", json!(["abc"])),
         at(12.0, "parent", "_snapshot", json!([])),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
 }
 
 /// `test_workers_cannot_accept_overall_completion`: a worker's pass is a
@@ -511,7 +511,7 @@ fn workers_cannot_accept_overall_completion() {
             json!(["tests", "tests.log", "abc", "command", true]),
         ),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
 }
 
 /// P3: the arguments Python type-checks at run time, and those it binds
@@ -519,7 +519,7 @@ fn workers_cannot_accept_overall_completion() {
 #[test]
 fn reservation_arguments_are_checked_as_python_checks_them() {
     let many: Vec<Value> = (0..101).map(|n| json!(format!("f{n}"))).collect();
-    run_both(&claimed([
+    run_golden(&claimed([
         at(5.0, "worker", "reserve", json!([1, token(3), "a.rs"])),
         at(5.1, "worker", "reserve", json!([1, token(3), []])),
         at(5.2, "worker", "reserve", json!([1, token(3), many])),
@@ -608,14 +608,14 @@ fn reserving_recovering_and_revoking_are_refused_on_a_paused_run() {
             "{method} is granted on the running run"
         );
         let steps = [setup, vec![paused.clone(), op, owners(10.0), raw(11.0)]].concat();
-        run_both(&steps);
+        run_golden(&steps);
         let outcome = run_rust(&steps[..steps.len() - 2]);
         assert!(
             matches!(&outcome, Outcome::Refused(text) if text == refusal),
             "{method}: {outcome:?}"
         );
     }
-    run_both(&claimed([
+    run_golden(&claimed([
         reserved(),
         paused,
         owners(9.0),
@@ -635,7 +635,7 @@ fn reserving_recovering_and_revoking_are_refused_on_a_paused_run() {
 /// edit numbered 10**16.
 #[test]
 fn the_revocation_message_names_the_task_id_as_python_writes_it() {
-    run_both(&claimed([
+    run_golden(&claimed([
         at(5.0, "parent", "revoke", json!([1.0, "a float"])),
         at(6.0, "worker", "claim", json!([1])),
         at(7.0, "parent", "revoke", json!([1, "an integer"])),

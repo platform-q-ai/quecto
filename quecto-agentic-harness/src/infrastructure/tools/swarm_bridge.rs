@@ -56,13 +56,6 @@ impl SwarmContext {
         super::swarm_store_location::member_store_path(&self.checkout)
     }
 
-    /// The packaged Python board, bound to this member (test support only:
-    /// production runs no Python, #2282; #2283 deletes the sources).
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn bootstrap(&self) -> String {
-        bootstrap_source(&self.database(), &self.checkout, &self.member)
-    }
-
     fn rpc(&self, method: &str, args: Value) -> Result<Value, DomainError> {
         self.board.call(self.location(), &self.member, method, args)
     }
@@ -207,37 +200,6 @@ impl SwarmContext {
 /// they find (`SwarmContext::database`); host reads follow this each time.
 pub fn store_database(checkout: &Path) -> PathBuf {
     super::swarm_store_location::located(checkout)
-}
-
-#[cfg(any(test, feature = "test-support"))]
-fn bootstrap_source(database: &Path, checkout: &Path, member: &str) -> String {
-    let mut source = String::from("import sys, types, json\n");
-    for (name, body) in [
-        ("swarm_policy", include_str!("../../domain/swarm_policy.py")),
-        (
-            "swarm_use_cases",
-            include_str!("../../application/swarm_use_cases.py"),
-        ),
-        (
-            "swarm_repository",
-            include_str!("swarm_helpers/swarm_repository.py"),
-        ),
-        ("swarm_store", include_str!("swarm_helpers/swarm_store.py")),
-        ("swarm_tasks", include_str!("swarm_helpers/swarm_tasks.py")),
-        ("swarm", include_str!("swarm_helpers/swarm.py")),
-    ] {
-        source.push_str(&format!(
-            "_m=types.ModuleType({name:?}); sys.modules[{name:?}]=_m; exec(compile({}, {name:?}, 'exec'), _m.__dict__)\n",
-            serde_json::to_string(body).expect("source serializes")
-        ));
-    }
-    source.push_str(&format!(
-        "import swarm\nswarm.board=swarm.Workbench({}, {}, {})\n",
-        json!(database.to_string_lossy()),
-        json!(checkout.to_string_lossy()),
-        json!(member),
-    ));
-    source
 }
 
 /// Host-side handle on a container's coordination store for the supervising

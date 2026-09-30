@@ -540,9 +540,24 @@ inward:
   handles.
 
 Pure policy and fake-port tests supplement the real SQLite tests and the
-differential suite, which runs every operation sequence against the Python
-board and the Rust one and compares results, stored rows and errors until the
-Python board is deleted (#2283).
+differential suite, which ran every operation sequence against the Python
+board and the Rust one and compared results, stored rows and errors. #2283
+froze the Python board's answers into golden fixtures
+(`tests/fixtures/swarm_board/golden/`) and deleted it: the suite now replays
+the Rust board against them, and a board file the last Python board wrote
+(checked in beside them) must open and complete its run. The harness has no
+Python dependency, its tests included.
+
+The goldens are frozen for good: nothing can re-record them, so they are
+never regenerated or edited. `tests/fixtures/swarm_board/golden/MANIFEST`
+lists each fixture's SHA-256 and may only shrink (against the merge base
+too: `scripts/check-golden-manifest.sh`, run by CI and the pre-push hook,
+refuses a changed or added line and a raised `GOLDEN_CEILING`), every
+fixture must be one
+a scenario loads, and only the golden self-tests may write one. A new or
+changed board behaviour is covered by Rust-only assertions of the Rust
+board's answers (`run_rust`, `rust_answers` or a plain test), never by a
+new golden.
 
 ## Agent guidance
 

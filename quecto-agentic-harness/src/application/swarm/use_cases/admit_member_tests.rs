@@ -18,7 +18,7 @@ fn admit(actor: &str, member: Value, reservation: &str) -> AdmitMemberRequest {
     }
 }
 
-/// `swarm_policy_test.py::test_admission_retries_and_capacity_use_same_atomic_port`:
+/// The deleted Python suite's `swarm_policy_test.py::test_admission_retries_and_capacity_use_same_atomic_port`:
 /// a retry under the same reservation answers the same row and writes
 /// nothing, capacity refuses a third member, and only the first admission
 /// records an event.

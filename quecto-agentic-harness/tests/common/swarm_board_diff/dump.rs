@@ -111,7 +111,7 @@ pub fn first_difference(python: &Dump, rust: &Dump) -> Option<String> {
     };
     if names(python) != names(rust) {
         return Some(format!(
-            "tables differ: python {:?}, rust {:?}",
+            "tables differ: golden {:?}, rust {:?}",
             names(python),
             names(rust)
         ));
@@ -119,7 +119,7 @@ pub fn first_difference(python: &Dump, rust: &Dump) -> Option<String> {
     for ((table, python_rows), (_, rust_rows)) in python.iter().zip(rust) {
         if python_rows.len() != rust_rows.len() {
             return Some(format!(
-                "{table}: python holds {} rows, rust {}",
+                "{table}: golden holds {} rows, rust {}",
                 python_rows.len(),
                 rust_rows.len()
             ));
@@ -127,7 +127,7 @@ pub fn first_difference(python: &Dump, rust: &Dump) -> Option<String> {
         for (index, (python_row, rust_row)) in python_rows.iter().zip(rust_rows).enumerate() {
             if !same_row(python_row, rust_row) {
                 return Some(format!(
-                    "{table} row {index}:\n  python {python_row:?}\n  rust   {rust_row:?}"
+                    "{table} row {index}:\n  golden {python_row:?}\n  rust   {rust_row:?}"
                 ));
             }
         }

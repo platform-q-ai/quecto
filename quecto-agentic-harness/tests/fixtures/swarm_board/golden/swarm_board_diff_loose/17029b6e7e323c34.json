@@ -1,0 +1,20 @@
+{
+"steps": [
+ ["parent","bootstrap_run","[18446744073709551615,\"s\",null]","1700000000.25",null]
+],
+"answers": [
+ {"raised":"OverflowError: Python int too large to convert to SQLite INTEGER"}
+],
+"files": [
+ "dump:99e3ee7d2d1334b9bacba0176c4f674943323915a3da36cecc852df79c6038c4"
+],
+"dump": [
+  ["sqlite_master", []],
+  ["PRAGMA journal_mode", [
+   [["text",{"text":"delete"}]]
+  ]],
+  ["PRAGMA user_version", [
+   [["integer",{"integer":0}]]
+  ]]
+ ]
+}

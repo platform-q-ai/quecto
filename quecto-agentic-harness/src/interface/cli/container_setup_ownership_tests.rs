@@ -3,7 +3,7 @@
 use super::e2e_tests::{Rig, status_image_present};
 
 const OWN: &str =
-    "FROM docker.io/library/python:3.13-slim\nLABEL ai.quecto.required-tools=\"python3 uv\"\n";
+    "FROM docker.io/library/node:22-slim\nLABEL ai.quecto.required-tools=\"node npm\"\n";
 
 #[test]
 fn the_projects_containerfile_survives_init_and_refresh_and_status_stays_ready() {

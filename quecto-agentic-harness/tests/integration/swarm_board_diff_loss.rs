@@ -1,10 +1,11 @@
 //! Differential scenarios (#2277, epic #2265): loss and death recording
-//! (`_quarantine`, `_confirmed_dead` and `_lose_coordinator`, #1924,
-//! #1961) on the Python board and the Rust board, compared after every
-//! step by result, refusal text and logical database dump (the events
-//! each op writes, their details and times included). Ported from
-//! `tests/swarm_helpers_test.py`, plus the loosely typed arguments Python
-//! accepts (epic P3) and the paused-run table.
+//! (`_quarantine`, `_confirmed_dead` and `_lose_coordinator`, #1924, #1961)
+//! on the Rust board against the Python board's answers frozen in its
+//! golden fixtures (#2283), compared after every step by result, refusal
+//! text and logical database dump (the events each op writes, their details
+//! and times included). Ported from the deleted Python suite `tests/swarm_helpers_test.py`, plus the
+//! loosely typed arguments Python accepts (epic P3) and the paused-run
+//! table.
 //!
 //! The Python tests read the run through `summary()` and `events()`, which
 //! the read-model half of S12 ports; here `_snapshot` (status, outcome,
@@ -21,7 +22,7 @@ use crate::swarm_board_diff_messages::joined;
 use crate::swarm_board_diff_runs::NOW;
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
 use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
-    Step, run_both, rust_answers, step,
+    Step, run_golden, rust_answers, step,
 };
 
 /// `Workbench.LOSS_GRACE`, in seconds.
@@ -90,7 +91,7 @@ pub(crate) fn launched(offset: f64, launcher: &str, member: &str) -> [Step; 2] {
     ]
 }
 
-/// The Rust board's answer at `steps[index]` (Python's, once `run_both`
+/// The Rust board's answer at `steps[index]` (Python's, once `run_golden`
 /// has compared them).
 pub(crate) fn answer(steps: &[Step], index: usize) -> Value {
     match rust_answers(steps).swap_remove(index) {
@@ -131,7 +132,7 @@ fn coordinator_death_leaves_readable_failed_progress() {
         task(6.0, "worker", "after-parent-death"),
         raw(7.0, 1),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     assert_eq!(state(&answer(&steps, 5)), held("failed"));
     assert!(refusal(&steps, 6).starts_with(NO_NEW_WORK));
     assert_eq!(answer(&steps, 7)["id"], json!(1), "progress stays readable");
@@ -145,7 +146,7 @@ fn status_and_loss_receipts_name_the_run() {
         at(3.0, "supervisor", "_status", json!([])),
         at(4.0, "parent", "_lose_coordinator", json!([])),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     let run_id = answer(&steps, 3)["id"].clone();
     assert!(run_id.as_str().is_some_and(|id| !id.is_empty()));
     let receipt = answer(&steps, 4);
@@ -160,7 +161,7 @@ fn status_and_loss_receipts_name_the_run() {
         ),
         step("supervisor", "_status", json!([]), NOW + 1.0),
     ];
-    run_both(&fresh);
+    run_golden(&fresh);
     assert!(
         answer(&fresh, 1)["id"]
             .as_str()
@@ -181,7 +182,7 @@ fn a_lost_coordinator_ends_the_run_as_a_failed_pause_even_while_paused() {
         at(5.5, "worker", "_control_status", json!([])),
         task(6.0, "worker", "after-parent-death"),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     let (before, after) = (answer(&steps, 4), answer(&steps, 6));
     assert_eq!(state(&after), held("failed"));
     assert_eq!(after["control_generation"], before["control_generation"]);
@@ -204,7 +205,7 @@ fn a_loss_during_a_pause_keeps_the_frozen_budget() {
         at(503.0, "parent", "_resume_external", json!([])),
         snapshot(504.0, "parent"),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     assert_eq!(state(&answer(&steps, 6)), held("failed"));
     assert_eq!(answer(&steps, 8)["deadline"], json!(NOW + HOUR + 500.0));
 }
@@ -227,7 +228,7 @@ fn a_worker_loss_keeps_the_verdict_the_coordinator_already_proposed() {
         at(21.0, "parent", "_close", json!([])),
         snapshot(22.0, "parent"),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     assert_eq!(state(&answer(&steps, 7)), held("succeeded"));
     assert_eq!(answer(&steps, 9)["status"], json!("succeeded"));
 }
@@ -242,7 +243,7 @@ fn revoke_after_confirmed_death_records_the_audit_without_a_message() {
         raw(6.0, 1),
         at(7.0, "parent", "revoke", json!([1, "reassign after death"])),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     assert_eq!(answer(&steps, 6)["status"], json!("blocked"));
     assert_eq!(answer(&steps, 7)["status"], json!("ready"));
 }
@@ -272,7 +273,7 @@ fn a_lost_member_is_recorded_once_and_never_pauses_a_resumed_run_again() {
         at(135.0, "parent", "recover", json!([1])),
         at(136.0, "parent", "claim", json!([1])),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     assert_eq!(state(&answer(&steps, 7)), held("failed"));
     for index in [9, 12, 14, 17] {
         assert_eq!(state(&answer(&steps, index)), running(), "step {index}");
@@ -298,7 +299,7 @@ fn a_confirmed_member_death_keeps_the_run_running_and_blocks_its_work() {
     ]);
     steps.extend(launched(13.0, "parent", "other"));
     steps.push(at(14.0, "other", "claim", json!([1])));
-    run_both(&steps);
+    run_golden(&steps);
     assert_eq!(state(&answer(&steps, 7)), running());
     assert_eq!(answer(&steps, 8), json!([]));
     let blocked = answer(&steps, 9);
@@ -342,7 +343,7 @@ fn only_the_launcher_records_a_member_loss_and_only_after_the_grace() {
         raw(base + GRACE + 0.6, 1),
         at(base + GRACE + 0.7, "parent", "recover", json!([1])),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     for index in [11, 13, 15, 18] {
         assert_eq!(state(&answer(&steps, index)), running(), "step {index}");
     }
@@ -358,7 +359,7 @@ fn the_launcher_records_a_loss_its_reaper_never_confirmed_after_the_grace() {
     ]);
     steps.extend(lose(5.0, "parent", "worker"));
     steps.extend([snapshot(16.0, "parent"), raw(17.0, 1)]);
-    run_both(&steps);
+    run_golden(&steps);
     assert_eq!(state(&answer(&steps, 7)), held("failed"));
     assert_eq!(
         answer(&steps, 8)["owner"],
@@ -383,7 +384,7 @@ fn any_member_records_a_loss_once_the_launcher_itself_is_dead() {
         quarantine(base + GRACE, "parent", json!("nested")),
         snapshot(base + GRACE, "parent"),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     for index in [6, 8, 10] {
         assert_eq!(state(&answer(&steps, index)), running(), "step {index}");
     }
@@ -398,7 +399,7 @@ fn a_launcher_less_member_loss_is_recorded_at_once() {
         quarantine(3.0, "worker", json!("parent")),
         snapshot(4.0, "worker"),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     assert_eq!(state(&answer(&steps, 4)), held("failed"));
 }
 
@@ -434,7 +435,7 @@ fn an_orderly_exit_releases_reservations_and_an_abrupt_one_retains_them() {
         raw(24.0, 3),
         at(25.0, "parent", "recover", json!([3])),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     assert_eq!(refusal(&steps, 6), "exit kind must be orderly or abrupt");
     let blocked = answer(&steps, 8);
     assert_eq!(blocked["status"], json!("blocked"));
@@ -473,7 +474,7 @@ fn revoke_frees_reservations_retained_after_an_abrupt_exit_with_the_reason() {
         owners(8.0),
         raw(9.0, 1),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     assert_eq!(answer(&steps, 8), json!([]));
     assert_eq!(answer(&steps, 9)["status"], json!("ready"));
 }
@@ -493,7 +494,7 @@ fn the_loss_grace_runs_from_the_first_authorised_observation_by_anyone() {
         quarantine(base + GRACE, "other", json!("nested")),
         snapshot(base + GRACE, "parent"),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     assert_eq!(state(&answer(&steps, 9)), running());
     assert_eq!(state(&answer(&steps, 11)), held("failed"));
 }
@@ -530,7 +531,7 @@ fn a_confirmed_death_blocks_every_active_task_and_no_other() {
         abrupt(5.0, "parent", "worker"),
         dead(6.0, "parent", "worker"),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
     for (task, status) in [
         (1, "blocked"),
         (2, "blocked"),

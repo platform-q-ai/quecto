@@ -112,7 +112,7 @@ fn the_valid_ops_are_exactly_the_schema_enum() {
     // A drift guard: an op added to the schema (or the list) without the
     // other would make the unknown-op guidance lie.
     let schema: serde_json::Value =
-        serde_json::from_str(include_str!("swarm_helpers/tool_schema.json")).unwrap();
+        serde_json::from_str(include_str!("swarm_assets/tool_schema.json")).unwrap();
     let mut schema_ops: Vec<&str> = schema["properties"]["op"]["enum"]
         .as_array()
         .unwrap()
@@ -130,7 +130,7 @@ fn the_schema_lists_constraints_as_an_optional_list_of_strings() {
     // #2205: the store defaults an omitted list to empty, so the schema
     // must not require it.
     let schema: serde_json::Value =
-        serde_json::from_str(include_str!("swarm_helpers/tool_schema.json")).unwrap();
+        serde_json::from_str(include_str!("swarm_assets/tool_schema.json")).unwrap();
     assert_eq!(schema["required"], serde_json::json!(["op"]));
     assert_eq!(
         schema["properties"]["constraints"],
@@ -140,7 +140,7 @@ fn the_schema_lists_constraints_as_an_optional_list_of_strings() {
 
 #[test]
 fn the_tool_description_names_op_create_and_a_relative_deadline() {
-    let description = include_str!("swarm_helpers/tool_description.txt");
+    let description = include_str!("swarm_assets/tool_description.txt");
     assert!(description.contains("op=create"), "no op=create");
     assert!(description.contains("deadline_in_seconds"));
 }
@@ -316,7 +316,7 @@ fn an_op_not_a_string_lists_every_valid_op() {
 #[test]
 fn the_schema_has_no_execution_arguments() {
     let schema: serde_json::Value =
-        serde_json::from_str(include_str!("swarm_helpers/tool_schema.json")).unwrap();
+        serde_json::from_str(include_str!("swarm_assets/tool_schema.json")).unwrap();
     for removed in [
         "code",
         "path",

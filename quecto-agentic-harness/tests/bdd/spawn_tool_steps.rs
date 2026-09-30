@@ -857,11 +857,7 @@ pub(crate) fn given_script_spawn(
     let script = base.join("container-create.sh");
     let cfg_path = std::path::PathBuf::from(world.config_path.clone().unwrap());
     let cfg_dir = cfg_path.parent().unwrap().to_path_buf();
-    std::fs::write(
-        cfg_dir.join("fixture-processes.py"),
-        include_str!("fixture_processes.py"),
-    )
-    .unwrap();
+    crate::install_fixture_processes(&cfg_dir);
     let pid_dir = cfg_dir.join("env-pids");
     std::fs::create_dir_all(&pid_dir).unwrap();
     let log = cfg_dir.join("container-log.jsonl");
@@ -870,7 +866,7 @@ pub(crate) fn given_script_spawn(
         r#"#!/usr/bin/env bash
 set -euo pipefail
 env_ref="env-bdd"
-track() {{ python3 '{pid_dir}/../fixture-processes.py' track '{pid_dir}' "$env_ref" "$1"; }}
+track() {{ '{pid_dir}/../fixture-processes' track '{pid_dir}' "$env_ref" "$1"; }}
 # The repository is this config's OWN argv (--repo before `--`), never a
 # Quecto-provided env var (#1410).
 baked_repo=""
@@ -895,17 +891,9 @@ if [ -z "$socket_path" ]; then socket_path="$PWD/script-managed.sock"; fi
 case "{}" in
   readiness) printf '{{"environment_id":"env-bdd","workspace_path":"%s","metadata":{{}},"socket_path":"%s"}}' "$PWD" "$PWD/missing.sock"; exit 0 ;;
   register) "$@" >/dev/null 2>&1 & track "$!"; printf '{{"environment_id":"env-bdd","workspace_path":"%s","metadata":{{}},"socket_path":"%s"}}' "$PWD" "$socket_path"; exit 0 ;;
-  "initial prompt") python3 - "$socket_path" <<'PY' >/dev/null 2>&1 &
-import os, socket, sys, time
-path=sys.argv[1]
-try: os.unlink(path)
-except FileNotFoundError: pass
-s=socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); s.bind(path); s.listen(8)
-# readiness probe connects first; initial prompt connects second and gets EOF/reset
-for _ in range(2):
-    c,_=s.accept(); c.close()
-time.sleep(2)
-PY
+  # The readiness probe connects first; the initial prompt connects second
+  # and gets EOF/reset.
+  "initial prompt") '{fixture}' uds-listen "$socket_path" --unlink --accepts 2 --linger 2 >/dev/null 2>&1 &
 track "$!"
 printf '{{"environment_id":"env-bdd","workspace_path":"%s","metadata":{{}},"socket_path":"%s"}}' "$PWD" "$socket_path"; exit 0 ;;
 esac
@@ -916,7 +904,8 @@ printf '{{"environment_id":"env-bdd","workspace_path":"%s","metadata":{{}},"sock
         mode,
         log.display(),
         mode,
-        pid_dir = pid_dir.display()
+        pid_dir = pid_dir.display(),
+        fixture = env!("CARGO_BIN_EXE_quecto-test-fixture"),
     );
     write_executable(&script, create_script);
     let mut v: serde_json::Value =

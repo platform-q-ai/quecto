@@ -4,8 +4,9 @@
 //! board client on the one file. `_notifications` reads the events after
 //! the member's cursor and advances it in one `BEGIN IMMEDIATE`
 //! transaction, so the one hint is sent once in all, and a later claim
-//! finds none, whether every client is a Rust board or Python and Rust
-//! boards share the file.
+//! finds none. (Until #2283 half the clients were Python boards; the
+//! board's answers are Python's by the golden fixtures, so the races are
+//! Rust boards alone.)
 //!
 //! `_accept_wake` is raced too, as each member's first claim on a file
 //! with no `wake_cursors` table: the claim creates the table inside its
@@ -25,9 +26,6 @@ use quecto::composition::swarm::build_swarm_board_handles;
 use quecto::infrastructure::tools::swarm_board_dispatch::call;
 use serde_json::{Value, json};
 use serial_test::serial;
-
-use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
-use crate::swarm_board_diff_runs::swarm_board_diff::python::PyBoard;
 
 const LOCKED: &str = "coordination store unavailable or contended: database is locked";
 const RETRY_BOUND: Duration = Duration::from_secs(60);
@@ -130,12 +128,9 @@ fn judge(answers: &[(Result<Value, String>, usize)], location: &BoardLocation) {
 }
 
 /// Every contender's answer to `method` with `arguments`, as the member
-/// `member(index)` names, each a Python client where `python_every`
-/// divides its index and a Rust board otherwise.
+/// `member(index)` names, each its own Rust board.
 fn race(
-    dir: &std::path::Path,
     location: &BoardLocation,
-    python_every: Option<usize>,
     member: fn(usize) -> &'static str,
     (method, arguments): (&'static str, Value),
 ) -> Vec<(Result<Value, String>, usize)> {
@@ -145,31 +140,15 @@ fn race(
     let threads: Vec<_> = (0..CLIENTS)
         .map(|index| {
             let location = location.clone();
-            let workdir = dir.join(format!("python-{index}"));
             let (start, locked_out, arguments) =
                 (start.clone(), locked_out.clone(), arguments.clone());
             std::thread::spawn(move || {
-                if python_every.is_some_and(|every| index % every == 0) {
-                    std::fs::create_dir_all(&workdir).unwrap();
-                    let mut board =
-                        PyBoard::start(&location.database, &location.checkout, &workdir);
-                    let text = arguments.to_string();
-                    start.wait();
-                    contend(&locked_out, || {
-                        match board.call(member(index), method, &text, now()) {
-                            Outcome::Ok(value) => Ok(value),
-                            Outcome::Refused(text) => Err(text),
-                            Outcome::Raised(raised) => panic!("Python raised {raised}"),
-                        }
-                    })
-                } else {
-                    let handles = build_swarm_board_handles(location, None);
-                    start.wait();
-                    contend(&locked_out, || {
-                        call(&handles, member(index), method, arguments.clone())
-                            .map_err(|refusal| refusal.message().to_owned())
-                    })
-                }
+                let handles = build_swarm_board_handles(location, None);
+                start.wait();
+                contend(&locked_out, || {
+                    call(&handles, member(index), method, arguments.clone())
+                        .map_err(|refusal| refusal.message().to_owned())
+                })
             })
         })
         .collect();
@@ -185,30 +164,13 @@ fn race(
     answers
 }
 
-fn run_race(python_every: Option<usize>) {
-    let dir = tempfile::tempdir().unwrap();
-    let location = board(dir.path());
-    let answers = race(
-        dir.path(),
-        &location,
-        python_every,
-        |_| "worker",
-        ("_notifications", json!([])),
-    );
-    judge(&answers, &location);
-}
-
 #[test]
 #[serial]
 fn concurrent_notification_claims_do_not_duplicate_hints() {
-    run_race(None);
-}
-
-/// Two Python clients and two Rust clients claim at once.
-#[test]
-#[serial]
-fn concurrent_python_and_rust_notification_claims_do_not_duplicate_hints() {
-    run_race(Some(2));
+    let dir = tempfile::tempdir().unwrap();
+    let location = board(dir.path());
+    let answers = race(&location, |_| "worker", ("_notifications", json!([])));
+    judge(&answers, &location);
 }
 
 /// [`board`], with a message from `parent` to `worker` too, so each has an
@@ -261,16 +223,12 @@ fn claimant(index: usize) -> &'static str {
 /// cursor and is woken, and the other answers `false`; the table exists
 /// once, the file is intact, each member's cursor is at the generation,
 /// and a later claim is not woken.
-fn run_accept_race(python_every: Option<usize>) {
+#[test]
+#[serial]
+fn concurrent_first_wake_claims_create_the_cursors_once() {
     let dir = tempfile::tempdir().unwrap();
     let (location, generation) = fresh_wake_board(dir.path());
-    let answers = race(
-        dir.path(),
-        &location,
-        python_every,
-        claimant,
-        ("_accept_wake", json!([generation])),
-    );
+    let answers = race(&location, claimant, ("_accept_wake", json!([generation])));
     for member in ["parent", "worker"] {
         let mine: Vec<&Value> = answers
             .iter()
@@ -321,17 +279,4 @@ fn run_accept_race(python_every: Option<usize>) {
             "{member}"
         );
     }
-}
-
-#[test]
-#[serial]
-fn concurrent_first_wake_claims_create_the_cursors_once() {
-    run_accept_race(None);
-}
-
-/// A Python client and a Rust client per member claim at once.
-#[test]
-#[serial]
-fn concurrent_python_and_rust_first_wake_claims_create_the_cursors_once() {
-    run_accept_race(Some(2));
 }

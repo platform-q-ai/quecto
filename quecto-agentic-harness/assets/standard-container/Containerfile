@@ -17,12 +17,11 @@ ARG DEBIAN_FRONTEND=noninteractive
 LABEL org.opencontainers.image.title="Project development container"
 
 # What every agent needs whatever the project is: a shell, git and GitHub,
-# search, JSON, Python for scripts, a C toolchain for native dependencies.
+# search, JSON, a C toolchain for native dependencies.
 RUN apt-get update \
  && apt-get install --no-install-recommends --yes \
       bash build-essential ca-certificates coreutils curl fd-find findutils \
-      git gh grep jq less openssh-client procps python3 python3-venv \
-      ripgrep sed \
+      git gh grep jq less openssh-client procps ripgrep sed \
  && rm -rf /var/lib/apt/lists/* \
  && ln -sf /usr/bin/fdfind /usr/local/bin/fd
 

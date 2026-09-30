@@ -137,7 +137,7 @@ Feature: ExecTool (bash) — Quecto compatibility
 
   @done
   Scenario: output_file keeps large output out of the inline result
-    When the agent executes bash with output_file "large.txt" and command "python3 - <<'PY'\nprint('A' * 12000000)\nPY"
+    When the agent executes bash with output_file "large.txt" and command "head -c 12000000 /dev/zero | tr -c A A; echo"
     Then the [ToolResult] should not be an error
     And the [ToolResult] should contain "bytes:"
     And the [ToolResult] should be shorter than 4096 characters

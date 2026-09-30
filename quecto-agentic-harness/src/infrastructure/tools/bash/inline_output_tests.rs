@@ -146,7 +146,7 @@ async fn only_cut_lines_in_the_tail_are_named() {
 
 /// #2196 review: output over the budget whose windowed tail is cut by line
 /// count is not labelled as the 50KB limit's — the reviewer's
-/// `python3 -c "print('x'*60000); [print(i) for i in range(2100)]"`.
+/// output: one 60000-byte line, then the numbers 0 to 2099, a line each.
 #[tokio::test]
 async fn a_line_count_cut_of_windowed_output_is_not_the_50kb_limit() {
     let mut text = format!("{}\n", "x".repeat(60_000));

@@ -1,14 +1,15 @@
 //! Differential scenarios (#2276, epic #2265): durable messages (`send`,
-//! `withdraw`, `inbox` and `ack`) on the Python board and the Rust board,
-//! compared after every step by result, refusal text and logical database
-//! dump. Ported from `tests/swarm_helpers_test.py`, plus the loosely typed
-//! arguments Python accepts (epic P3). The wake-notification steps of the
-//! ported tests (`_notifications`, `_accept_wake`) are the rest of #2276.
+//! `withdraw`, `inbox` and `ack`) on the Rust board against the Python
+//! board's answers frozen in its golden fixtures (#2283), compared after
+//! every step by result, refusal text and logical database dump. Ported
+//! from the deleted Python suite `tests/swarm_helpers_test.py`, plus the loosely typed arguments
+//! Python accepts (epic P3). The wake-notification steps of the ported
+//! tests (`_notifications`, `_accept_wake`) are the rest of #2276.
 use serde_json::{Value, json};
 
 use crate::swarm_board_diff_membership::{at, create};
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
-use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{Step, run_both, run_rust, sql};
+use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{Step, run_golden, run_rust, sql};
 
 /// A running run of five coordinated by `parent`, with `worker` live.
 pub(crate) fn joined(more: impl IntoIterator<Item = Step>) -> Vec<Step> {
@@ -50,7 +51,7 @@ fn filled(count: u32) -> Step {
 /// the hundred-and-first, and superseding one of the hundred makes room.
 #[test]
 fn messages_are_durable_bounded_and_idempotent() {
-    run_both(&joined([
+    run_golden(&joined([
         send(3.0, "worker", "m1", "parent", "blocked on schema"),
         send(4.0, "worker", "m1", "parent", "blocked on schema"),
         inbox(5.0, "parent", json!(false)),
@@ -89,7 +90,7 @@ fn messages_carry_a_revision_and_can_be_superseded_or_withdrawn() {
             json!([request, "parent", body, revision, supersedes]),
         )
     };
-    run_both(&joined([
+    run_golden(&joined([
         revised(3.0, "r1", "review head one", "abc1", Value::Null),
         revised(4.0, "r2", "review head two", "abc2", json!(1)),
         inbox(5.0, "parent", json!(false)),
@@ -131,7 +132,7 @@ fn messages_carry_a_revision_and_can_be_superseded_or_withdrawn() {
 /// older build recorded replays, and one naming a revision is a mismatch.
 #[test]
 fn plain_sends_replay_request_keys_recorded_before_message_revisions() {
-    run_both(&joined([
+    run_golden(&joined([
         send(3.0, "worker", "legacy", "parent", "hello"),
         sql(
             r#"UPDATE requests SET payload='["send","parent","hello"]' WHERE actor='worker' AND request='legacy'"#,
@@ -174,7 +175,7 @@ fn withdraw_and_ack_take_only_message_ids() {
         at(13.0, "worker", "ack", json!([1])),
         at(14.0, "parent", "ack", json!([99])),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
 }
 
 /// `test_a_withdrawn_message_leaves_the_inbox_and_wakes_nobody` (its
@@ -183,7 +184,7 @@ fn withdraw_and_ack_take_only_message_ids() {
 /// an acknowledgment cannot revive it.
 #[test]
 fn a_withdrawn_message_leaves_the_inbox() {
-    run_both(&joined([
+    run_golden(&joined([
         at(
             3.0,
             "worker",
@@ -241,7 +242,7 @@ fn inbox_include_consumed_true_is_bound_as_a_sql_parameter_identically() {
         steps.push(inbox(offset, "parent", include_consumed));
     }
     steps.push(at(30.0, "parent", "inbox", json!({})));
-    run_both(&steps);
+    run_golden(&steps);
 }
 
 /// The arguments `send` checks itself, before the operation gate: the
@@ -291,7 +292,7 @@ fn send_checks_its_arguments_as_python_does() {
         inbox(40.0, "5", json!(true)),
         inbox(41.0, "parent", json!(true)),
     ]);
-    run_both(&steps);
+    run_golden(&steps);
 }
 
 /// A recipient must be a member whose status is not `dead`: a reserved
@@ -299,7 +300,7 @@ fn send_checks_its_arguments_as_python_does() {
 /// recipient that later died is still withdrawn and acknowledged.
 #[test]
 fn a_dead_recipient_is_out_of_the_swarm() {
-    run_both(&joined([
+    run_golden(&joined([
         at(3.0, "parent", "_admit", json!(["later", "res-l"])),
         send(4.0, "worker", "a", "later", "when you start"),
         send(5.0, "parent", "b", "worker", "hello"),
@@ -334,7 +335,7 @@ fn a_retired_message_names_its_stored_status() {
         ));
         steps.push(at(offset + 0.7, "parent", "ack", json!([id])));
     }
-    run_both(&steps);
+    run_golden(&steps);
 }
 
 /// `send` needs a running run (`authorize(active=True)`): on a paused run
@@ -370,7 +371,7 @@ fn every_mutating_message_op_on_a_paused_run() {
             vec![paused.clone(), op, inbox(10.0, "parent", json!(true))],
         ]
         .concat();
-        run_both(&steps);
+        run_golden(&steps);
         let outcome = run_rust(&steps[..steps.len() - 1]);
         match refusal {
             Some(refusal) => assert!(

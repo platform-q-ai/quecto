@@ -648,28 +648,35 @@ async fn launch_uds_agent_maps_workflow_spec_write_failure() {
 #[tokio::test]
 async fn launch_uds_agent_uses_uuid_not_display_label_for_socket_and_session_paths() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let child = dir.path().join("fake-child.py");
-    let args_file = dir.path().join("args.json");
+    let child = dir.path().join("fake-child");
+    let args_file = dir.path().join("args");
+    // The child records its argv, one argument per line, whole; the test
+    // binds the socket it names (a shell child cannot), as a child would.
     write_executable(
         &child,
         format!(
-            r#"#!/usr/bin/env python3
-import json, os, socket, sys, time
-with open({args_file:?}, "w") as f:
-    json.dump(sys.argv[1:], f)
-sock_path = sys.argv[sys.argv.index("--socket") + 1]
-try:
-    os.unlink(sock_path)
-except FileNotFoundError:
-    pass
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.bind(sock_path)
-s.listen(1)
-time.sleep(0.2)
-"#,
-            args_file = args_file.to_string_lossy().to_string()
+            "#!/bin/sh\nprintf '%s\\0' \"$@\" > '{args}.tmp' && mv '{args}.tmp' '{args}'\nsleep 2\n",
+            args = args_file.display()
         ),
     );
+    let named = args_file.clone();
+    let binder = std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let args = loop {
+            match std::fs::read_to_string(&named) {
+                Ok(text) => break text,
+                Err(_) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(error) => panic!("the child never recorded its argv: {error}"),
+            }
+        };
+        let args: Vec<String> = args.split_terminator('\0').map(str::to_owned).collect();
+        let socket = &args[args.iter().position(|arg| arg == "--socket").unwrap() + 1];
+        let _stale = std::fs::remove_file(socket);
+        let listener = std::os::unix::net::UnixListener::bind(socket).expect("bind the socket");
+        (listener, args)
+    });
 
     // SAFETY: this test runs in-process and restores QUECTO_CHILD_BINARY before returning.
     unsafe { std::env::set_var("QUECTO_CHILD_BINARY", &child) };
@@ -694,8 +701,7 @@ time.sleep(0.2)
     unsafe { std::env::remove_var("QUECTO_CHILD_BINARY") };
     assert!(!result.is_error, "{}", result.content);
 
-    let args: Vec<String> =
-        serde_json::from_str(&std::fs::read_to_string(&args_file).unwrap()).unwrap();
+    let (_listener, args) = binder.join().expect("the socket was bound");
     let session = args[args.iter().position(|arg| arg == "-s").unwrap() + 1].clone();
     let socket = args[args.iter().position(|arg| arg == "--socket").unwrap() + 1].clone();
     assert_ne!(

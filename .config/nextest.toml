@@ -23,7 +23,7 @@ fail-fast = false
 # A test still running after 60 s is reported SLOW; after 5 such periods
 # (5 min, the same bound the sharded BDD lanes get) it is killed and fails.
 slow-timeout = { period = "60s", terminate-after = 5 }
-# Tests that launch real `quecto`/python children: a child still holding the
+# Tests that launch real `quecto` or fixture children: a child still holding the
 # test's stdio a moment after the test returns is reported LEAK, not failed.
 leak-timeout = "500ms"
 failure-output = "immediate-final"

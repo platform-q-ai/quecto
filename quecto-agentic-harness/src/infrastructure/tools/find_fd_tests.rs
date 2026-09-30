@@ -23,10 +23,31 @@ pub(super) fn at(root: &str) -> SearchRoot {
     }
 }
 
+/// A fake fd's first lines: it records its pid (the one the tests watch
+/// be reaped), and the 8 KiB chunk it writes under pipe pressure.
+pub(super) const PID: &str = "printf %s $$ > pid";
+const CHUNK: &str = "chunk=x\ni=0\nwhile [ $i -lt 13 ]; do chunk=$chunk$chunk; i=$((i+1)); done";
+/// A fake fd that records its pid and sleeps as that very process (`exec`),
+/// so the pid the tests watch is the one the call must reap.
+pub(super) const SLEEPER: &str = "printf %s $$ > pid\nexec sleep 60";
+/// The streams a fake fd closes before it sleeps: none, stdout, both.
+const CLOSED_STREAMS: [&str; 3] = ["", "exec 1>&-", "exec 1>&- 2>&-"];
+
+/// A fake fd's recorded argv: each argument NUL-terminated, so an
+/// argument may hold any other byte, a newline included.
+fn recorded_argv(path: &Path) -> Vec<String> {
+    let text = std::fs::read_to_string(path).unwrap();
+    let body = text
+        .strip_suffix('\0')
+        .expect("every argument is NUL-terminated");
+    body.split('\0').map(str::to_owned).collect()
+}
+
+/// A fake fd running the POSIX shell `script` in a fresh directory.
 pub(super) fn fixture(script: &str) -> (TempDir, FdFindPaths) {
     let dir = TempDir::new().unwrap();
     let binary = dir.path().join("fake-fd");
-    write_executable(&binary, format!("#!/usr/bin/python3\n{script}\n"));
+    write_executable(&binary, format!("#!/bin/sh\n{script}\n"));
     let effect = FdFindPaths::with_fd_binary(
         Arc::new(dir.path().into()),
         Arc::new(Sandbox::new(None)),
@@ -46,7 +67,7 @@ async fn natural_status_matrix() {
     for code in [0, 1, 2, 3] {
         for output in ["", "entry\\0"] {
             let (_dir, effect) = fixture(&format!(
-                "import sys\nsys.stdout.write('{output}')\nsys.stderr.write('diagnostic')\nsys.exit({code})"
+                "printf '{output}'\nprintf diagnostic >&2\nexit {code}"
             ));
             let result = run(&effect).await;
             // fd exits 1 on an error (#2164): like any other failure, it
@@ -66,8 +87,12 @@ async fn natural_status_matrix() {
 #[tokio::test]
 async fn either_pipe_pressure_stops_and_reaps() {
     for stream in ["stdout", "stderr"] {
+        let redirect = match stream {
+            "stdout" => "",
+            _ => ">&2",
+        };
         let (dir, effect) = fixture(&format!(
-            "import os,sys\nopen('pid','w').write(str(os.getpid()))\nwhile True: os.write(sys.{stream}.fileno(), b'x'*8192)"
+            "{PID}\n{CHUNK}\nwhile :; do printf %s \"$chunk\" {redirect}; done"
         ));
         let result = run(&effect).await.unwrap();
         assert!(result.incomplete);
@@ -108,10 +133,8 @@ pub(super) async fn assert_reaped(dir: &TempDir) {
 
 #[tokio::test]
 async fn dropped_call_reaps_during_streams_and_wait() {
-    for preparation in ["", "os.close(1)", "os.close(1); os.close(2)"] {
-        let (dir, effect) = fixture(&format!(
-            "import os,time\n{preparation}\nopen('pid','w').write(str(os.getpid()))\ntime.sleep(60)"
-        ));
+    for preparation in CLOSED_STREAMS {
+        let (dir, effect) = fixture(&format!("{preparation}\n{SLEEPER}"));
         let effect = Arc::new(effect);
         let mut task = tokio::spawn(async move { effect.find(request("*")).await });
         ready_or_result(&dir, &mut task).await;
@@ -138,14 +161,11 @@ fn normalization_preserves_components_and_complete_lines() {
 
 #[tokio::test]
 async fn argv_cwd_and_glob_are_literal() {
-    let (dir, effect) = fixture(
-        "import os,sys,json\nopen('argv','w').write(json.dumps(sys.argv[1:]))\nopen('cwd','w').write(os.getcwd())",
-    );
+    let (dir, effect) = fixture("printf '%s\\0' \"$@\" > argv\nprintf %s \"$(pwd -P)\" > cwd");
     let mut req = request("./src/*.rs");
     req.limit = 7;
     effect.find(req).await.unwrap();
-    let args: Vec<String> =
-        serde_json::from_str(&std::fs::read_to_string(dir.path().join("argv")).unwrap()).unwrap();
+    let args = recorded_argv(&dir.path().join("argv"));
     assert_eq!(
         &args[..18],
         [
@@ -239,7 +259,7 @@ async fn read_fault_is_not_eof() {
 async fn exact_and_over_caps_never_fabricate_partial_entry() {
     // An unfinished record is bounded by RECORD_MAX: longer is no path.
     for count in [RECORD_MAX, RECORD_MAX + 1] {
-        let (_dir, effect) = fixture(&format!("import os\nos.write(1,b'x'*{count})"));
+        let (_dir, effect) = fixture(&format!("head -c {count} /dev/zero | tr -c x x"));
         let output = run(&effect).await.unwrap();
         if count <= RECORD_MAX {
             assert_eq!(output.entries[0].len(), count);
@@ -252,7 +272,7 @@ async fn exact_and_over_caps_never_fabricate_partial_entry() {
     // Kept entries are bounded by the byte cap: past it the search is
     // incomplete, and what is kept fits.
     let (_dir, effect) = fixture(&format!(
-        "import os\nos.write(1,(b'y'*999+b'\\0')*{})",
+        "y=$(head -c 999 /dev/zero | tr -c y y)\ni=0\nwhile [ $i -lt {} ]; do printf '%s\\0' \"$y\"; i=$((i+1)); done",
         STDOUT_CAP / 1000 + 5
     ));
     let output = run(&effect).await.unwrap();
@@ -263,9 +283,7 @@ async fn exact_and_over_caps_never_fabricate_partial_entry() {
 #[tokio::test]
 async fn signal_status_with_partial_output_is_incomplete() {
     for data in ["", "entry\\0"] {
-        let (_dir, effect) = fixture(&format!(
-            "import os,signal\nos.write(1,b'{data}')\nos.kill(os.getpid(),signal.SIGTERM)"
-        ));
+        let (_dir, effect) = fixture(&format!("printf '{data}'\nkill -TERM $$"));
         let result = run(&effect).await;
         if data.is_empty() {
             assert!(matches!(result, Err(FindError::Search(_))));
@@ -277,9 +295,8 @@ async fn signal_status_with_partial_output_is_incomplete() {
 
 #[tokio::test]
 async fn concurrent_cancel_does_not_affect_other_call() {
-    let (cancel_dir, cancel) =
-        fixture("import os,time\nopen('pid','w').write(str(os.getpid()))\ntime.sleep(60)");
-    let (_success_dir, success) = fixture("print('other-entry', end='\\0')");
+    let (cancel_dir, cancel) = fixture(SLEEPER);
+    let (_success_dir, success) = fixture("printf 'other-entry\\0'");
     let mut task = tokio::spawn(async move { cancel.find(request("*")).await });
     ready_or_result(&cancel_dir, &mut task).await;
     task.abort();
@@ -339,7 +356,7 @@ async fn scoped_ignores_apply_inside_and_outside_git() {
 
 #[tokio::test]
 async fn unpolled_future_never_spawns() {
-    let (dir, effect) = fixture("open('spawned','w').write('yes')");
+    let (dir, effect) = fixture("printf yes > spawned");
     drop(effect.find(request("*")));
     assert!(!dir.path().join("spawned").exists());
 }
@@ -347,10 +364,10 @@ async fn unpolled_future_never_spawns() {
 #[tokio::test]
 async fn both_pipes_and_closed_stdout_pressure_are_bounded() {
     for script in [
-        "import os,threading\nopen('pid','w').write(str(os.getpid()))\ndef stderr():\n while True: os.write(2,b'e'*8192)\nthreading.Thread(target=stderr).start()\nwhile True: os.write(1,b'o'*8192)",
-        "import os\nopen('pid','w').write(str(os.getpid()))\nos.close(1)\nwhile True: os.write(2,b'e'*8192)",
+        format!("{PID}\n{CHUNK}\nwhile :; do printf %s \"$chunk\"; printf %s \"$chunk\" >&2; done"),
+        format!("{PID}\n{CHUNK}\nexec 1>&-\nwhile :; do printf %s \"$chunk\" >&2; done"),
     ] {
-        let (dir, effect) = fixture(script);
+        let (dir, effect) = fixture(&script);
         assert!(run(&effect).await.unwrap().incomplete);
         assert_reaped(&dir).await;
     }
@@ -360,15 +377,12 @@ async fn both_pipes_and_closed_stdout_pressure_are_bounded() {
 async fn repeated_success_error_and_cancel_leave_no_children() {
     for _ in 0..4 {
         for code in [0, 2] {
-            let (dir, effect) = fixture(&format!(
-                "import os,sys\nopen('pid','w').write(str(os.getpid()))\nprint('entry', end='\\0')\nsys.exit({code})"
-            ));
+            let (dir, effect) = fixture(&format!("{PID}\nprintf 'entry\\0'\nexit {code}"));
             let result = run(&effect).await;
             assert_eq!(result.is_ok(), code == 0);
             assert_reaped(&dir).await;
         }
-        let (dir, effect) =
-            fixture("import os,time\nopen('pid','w').write(str(os.getpid()))\ntime.sleep(60)");
+        let (dir, effect) = fixture(SLEEPER);
         let mut task = tokio::spawn(async move { effect.find(request("*")).await });
         ready_or_result(&dir, &mut task).await;
         task.abort();
@@ -411,8 +425,7 @@ async fn shared_path_resolution_and_external_roots_are_preserved() {
 
 #[tokio::test]
 async fn injected_wait_failure_reaps_and_returns_io() {
-    let (dir, effect) =
-        fixture("import os,time\nopen('pid','w').write(str(os.getpid()))\ntime.sleep(60)");
+    let (dir, effect) = fixture(SLEEPER);
     let mut child = effect.command(&request("*"), dir.path()).spawn().unwrap();
     ready_pid(&dir).await;
     let result = finish_wait(
@@ -451,8 +464,7 @@ fn classification_complete_status_stdout_stderr_matrix() {
 
 #[tokio::test]
 async fn injected_read_failure_reaps_and_returns_io() {
-    let (dir, effect) =
-        fixture("import os,time\nopen('pid','w').write(str(os.getpid()))\ntime.sleep(60)");
+    let (dir, effect) = fixture(SLEEPER);
     let mut child = effect.command(&request("*"), dir.path()).spawn().unwrap();
     ready_pid(&dir).await;
     let result = finish_read(
@@ -522,10 +534,8 @@ async fn ready_or_result(
 
 #[cfg(target_os = "linux")]
 fn runtime_destruction_reaps(mut builder: tokio::runtime::Builder) {
-    for preparation in ["", "os.close(1)", "os.close(1); os.close(2)"] {
-        let (dir, effect) = fixture(&format!(
-            "import os,time\n{preparation}\nopen('pid','w').write(str(os.getpid()))\ntime.sleep(60)"
-        ));
+    for preparation in CLOSED_STREAMS {
+        let (dir, effect) = fixture(&format!("{preparation}\n{SLEEPER}"));
         let runtime = builder.enable_all().build().unwrap();
         let mut invocation = effect.find(request("*"));
         let pid = runtime.block_on(async {
@@ -580,7 +590,15 @@ fn multi_thread_runtime_destruction_reaps_fd() {
 #[tokio::test]
 async fn two_live_calls_keep_children_workspaces_and_arguments_isolated() {
     for shared in [true, false] {
-        let script = "import os,sys,time,json\npattern=sys.argv[-2]\nopen(pattern+'.args','w').write(json.dumps(sys.argv[1:]))\nopen(pattern+'.pid','w').write(str(os.getpid()))\nwhile not os.path.exists(pattern+'.release'): time.sleep(0.01)\nprint(os.path.join(sys.argv[-1],pattern), end='\\0')";
+        // The pattern is the second-to-last argument, the root the last.
+        // The pid it records is the process the test samples, and it
+        // waits for its release without forking: blocked opening and
+        // reading a FIFO, never polling through child `sleep`s (a shell that
+        // vforks them, dash, shows `D` while one starts).
+        let script = "prev=\nlast=\nfor a in \"$@\"; do prev=$last; last=$a; done\n\
+                      printf '%s\\0' \"$@\" > \"$prev.args\"\nmkfifo \"$prev.release\"\n\
+                      printf %s $$ > \"$prev.pid\"\nread -r _ < \"$prev.release\" || :\n\
+                      printf '%s/%s\\0' \"$last\" \"$prev\"";
         let (first_dir, first) = fixture(script);
         let (second_dir, second) = fixture(script);
         let first = Arc::new(first);
@@ -614,13 +632,16 @@ async fn two_live_calls_keep_children_workspaces_and_arguments_isolated() {
         .expect("cancelled invocation must be reaped");
         assert!(Path::new(&format!("/proc/{second_pid}")).exists());
         let status = std::fs::read_to_string(format!("/proc/{second_pid}/status")).unwrap();
-        assert!(status.lines().any(|line| {
-            line.starts_with("State:") && (line.contains("sleeping") || line.contains("running"))
-        }));
-        let args: Vec<String> = serde_json::from_str(
-            &std::fs::read_to_string(second_root.join("second.args")).unwrap(),
-        )
-        .unwrap();
+        let state = status
+            .lines()
+            .find(|line| line.starts_with("State:"))
+            .unwrap_or_default();
+        assert!(
+            state.contains("sleeping") || state.contains("running"),
+            "the second call's fd is untouched: {state:?}, {}",
+            process_tree(second_pid)
+        );
+        let args = recorded_argv(&second_root.join("second.args"));
         assert_eq!(args[6], "8", "one past the limit");
         assert_eq!(args[args.len() - 2], "second");
         assert_eq!(
@@ -639,6 +660,35 @@ async fn two_live_calls_keep_children_workspaces_and_arguments_isolated() {
             Ok(false)
         ));
     }
+}
+
+/// `pid`'s parent, process group and session, then its parent's, up to
+/// this test process: for a state assertion's failure report.
+fn process_tree(pid: u32) -> String {
+    let mut links = Vec::new();
+    let mut current = pid;
+    for _ in 0..8 {
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{current}/stat")) else {
+            links.push(format!("{current}: gone"));
+            break;
+        };
+        let (name, fields) = stat.rsplit_once(") ").unwrap_or(("?", ""));
+        let fields: Vec<&str> = fields.split_whitespace().collect();
+        let field = |index: usize| fields.get(index).copied().unwrap_or("?");
+        links.push(format!(
+            "{current} {}) state {} ppid {} pgid {} sid {}",
+            name,
+            field(0),
+            field(1),
+            field(2),
+            field(3)
+        ));
+        match field(1).parse::<u32>() {
+            Ok(parent) if parent > 1 && current != std::process::id() => current = parent,
+            _ => break,
+        }
+    }
+    links.join(" <- ")
 }
 
 async fn named_ready_pid(root: &Path, name: &str) -> u32 {

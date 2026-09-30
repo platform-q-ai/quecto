@@ -1,4 +1,4 @@
-//! Ported from `tests/swarm_policy_test.py::PolicyContract` (notification
+//! Ported from the deleted Python suite `tests/swarm_policy_test.py::PolicyContract` (notification
 //! and wake policy), plus the Rust-only edges of the event detail.
 use serde_json::{Value, json};
 

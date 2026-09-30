@@ -1826,10 +1826,9 @@ impl Drop for QuectoWorld {
         // outlives runtime registry membership.
         if let Some(config) = self.config_path.as_ref() {
             let directory = Path::new(config).parent().unwrap();
-            let helper = directory.join("fixture-processes.py");
+            let helper = directory.join("fixture-processes");
             if helper.exists() {
-                let status = std::process::Command::new("python3")
-                    .arg(helper)
+                let status = std::process::Command::new(helper)
                     .arg("clean")
                     .arg(directory.join("env-pids"))
                     .status()
@@ -1841,6 +1840,8 @@ impl Drop for QuectoWorld {
 }
 
 mod admission_one_broker_steps;
+mod fixture_processes;
+pub(crate) use fixture_processes::install_fixture_processes;
 mod admission_recovery_steps;
 mod inference_admission_authority_steps;
 mod inference_admission_http_steps;

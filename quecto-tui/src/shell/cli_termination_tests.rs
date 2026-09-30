@@ -1,7 +1,7 @@
 //! Termination signals and parent death on the CLI path (#2053).
+#[cfg(target_os = "linux")]
 use super::cli_cov_tests::{args, tmp_dir};
 use super::*;
-use crate::shell::test_executable::write_executable;
 
 /// [`spawn_agent_program_until`] with no signal to interrupt it.
 pub(super) async fn spawn_agent_program(
@@ -64,21 +64,18 @@ async fn a_signal_during_startup_is_taken_once_and_named() {
 
 /// A stand-in that announces its socket only after `delay` seconds and
 /// exits 0 on SIGTERM.
+#[cfg(target_os = "linux")]
 fn slow_agent(tag: &str, delay_secs: u32) -> (PathBuf, PathBuf) {
     let dir = tmp_dir(tag);
     let sock = dir.join("agent.sock");
-    let script = dir.join("slow-agent.py");
-    write_executable(
+    let script = dir.join("slow-agent");
+    crate::shell::test_stand_in::write_script(
         &script,
-        format!(
-            "#!/usr/bin/env python3\n\
-             import signal, sys, time\n\
-             signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))\n\
-             time.sleep({delay_secs})\n\
-             print('quecto-agent-socket: {}', file=sys.stderr, flush=True)\n\
-             signal.pause()\n",
-            sock.display()
-        ),
+        "slow-agent",
+        &[
+            ("DELAY", &delay_secs.to_string()),
+            ("SOCKET", &sock.to_string_lossy()),
+        ],
     );
     (dir, script)
 }
@@ -94,6 +91,8 @@ fn alive(pid: u32) -> bool {
 /// A signal while the announcement is still pending interrupts the spawn
 /// at once — not after the announcement, not after the deadline — and ends
 /// the agent being started.
+// The stand-in is the test binary, reached through a Linux constructor.
+#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn a_signal_while_waiting_for_the_announcement_interrupts_the_spawn_at_once() {
     use crate::shell::signals::TerminationSignal;
@@ -164,19 +163,11 @@ async fn a_signal_while_waiting_leaves_a_detached_agent_running_once_announced()
 fn pdeathsig_reporting_agent(tag: &str) -> (PathBuf, PathBuf) {
     let dir = tmp_dir(tag);
     let sock = dir.join("agent.sock");
-    let script = dir.join("fake-agent.py");
-    write_executable(
+    let script = dir.join("fake-agent");
+    crate::shell::test_stand_in::write_script(
         &script,
-        format!(
-            "#!/usr/bin/env python3\n\
-             import ctypes, signal, sys\n\
-             v = ctypes.c_int()\n\
-             ctypes.CDLL(None).prctl(2, ctypes.byref(v))\n\
-             print('pdeathsig=%d' % v.value, file=sys.stderr, flush=True)\n\
-             print('quecto-agent-socket: {}', file=sys.stderr, flush=True)\n\
-             signal.pause()\n",
-            sock.display()
-        ),
+        "pdeathsig",
+        &[("SOCKET", &sock.to_string_lossy())],
     );
     (dir, script)
 }

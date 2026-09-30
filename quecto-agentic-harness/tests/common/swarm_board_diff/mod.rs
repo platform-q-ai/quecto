@@ -1,28 +1,29 @@
-//! The swarm board's differential harness (#2270, epic #2265): the same
-//! operation sequence against the Python board and the Rust board, each on
-//! its own file, with the same clock and the same id draws. Each side
-//! parses the step's argument text itself (`json.loads`, `py_json::decode`).
-//! After every step the results must be equal, refusals equal text, and the
-//! two files equal logical dumps.
+//! The swarm board's differential harness (#2270, epic #2265): an
+//! operation sequence run on the Rust board, with an injected clock and id
+//! draws, compared step by step with what the Python board answered for the
+//! same sequence: results equal, refusals equal text, and the board file
+//! the same logical dump. Until #2283 the Python board ran beside it, on a
+//! file of its own; #2283 froze its answers into golden fixtures
+//! (`golden.rs`) before deleting it, and the harness replays the Rust
+//! board against them.
 //!
-//! Results are compared as values, not as Python's own text: the driver
-//! writes Python's result with `json.dumps`, the harness reads that as
-//! Python's `json.loads` would (`py_json::decode`, whose float parse is
-//! correctly rounded, #2277 review M1) into a `serde_json::Value`, and the
-//! two sides' `Value`s are compared as serde writes them (an integer never
+//! Results are compared as values, not as Python's own text: the golden
+//! holds the result as Python's `json.dumps` wrote it, which the harness
+//! reads as Python's `json.loads` would (`py_json::decode`, whose float
+//! parse is correctly rounded, #2277 review M1) into a `serde_json::Value`,
+//! and the two `Value`s are compared as serde writes them (an integer never
 //! equals a float, an object's keys compare in order, and serde writes
 //! each float's shortest round-tripping digits, so two floats compare
 //! equal only when they are the same double). The Rust side's `Value` is
 //! the dispatcher's own answer, never parsed from text. What is not seen
 //! here is spelling alone: exponent spelling (`1e+16` against serde's
 //! `1e16`); `NaN`, `Infinity`, an integer beyond u64 or a lone surrogate,
-//! which no `Value` holds, make the harness panic. The results are
-//! rendered in Python's text only on the wire, so S13's wire rendering
-//! must write them with `py_json` (`dumps`), never with serde, and compare
-//! that text against Python's.
+//! which no `Value` holds, make the harness panic. The wire comparison
+//! (`run_golden_wire`) compares the Rust board's wire text with Python's,
+//! byte for byte.
 
 pub mod dump;
-pub mod python;
+pub mod golden;
 pub mod rust;
 pub mod scenario;
 
@@ -33,8 +34,8 @@ pub enum Outcome {
     Ok(serde_json::Value),
     /// The board refused with this text (`SwarmError`, `BoardError`).
     Refused(String),
-    /// Python raised something other than a `SwarmError`: a harness or
-    /// calling fault, never an answer to compare.
+    /// Python raised something other than a `SwarmError` (a golden's
+    /// `raised`): never an answer the Rust board may match.
     Raised(String),
 }
 

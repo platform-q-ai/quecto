@@ -67,12 +67,15 @@ fn adopt(world: &mut TuiWorld, leader: &str) {
     // `kill -KILL $kid; wait $kid` reaps the whole child subtree before it
     // exits and nothing transient can trip the canary.
     let child = format!(
-        "python3 -c 'import os, signal; \
-         h = lambda n: lambda *_: open(\"{d}/child.signals\", \"a\").write(n + chr(10)); \
-         signal.signal(signal.SIGTERM, h(\"TERM\")); signal.signal(signal.SIGINT, h(\"INT\")); \
-         signal.signal(signal.SIGHUP, h(\"HUP\")); \
-         open(\"{d}/child.pid\", \"w\").write(str(os.getpid())); \
-         [signal.pause() for _ in iter(int, 1)]' & kid=$!; "
+        "{} & kid=$!; ",
+        quecto_tui::shell::test_stand_in::command(
+            "signal-log",
+            &[
+                ("PID", &format!("{d}/child.pid")),
+                ("LOG", &format!("{d}/child.signals")),
+                ("LIFETIME", "60"),
+            ],
+        )
     );
     let script = format!("{child}{}", leader.replace("{dir}", &d));
     let harness_pid = with_harness(world, |h| h.adopt_owned_harness_script(&script));

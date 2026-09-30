@@ -36,7 +36,7 @@ use serde_json::json;
 
 use crate::swarm_board_diff_membership::{at, create};
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
-use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{run_both, run_rust, sql};
+use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{run_golden, run_rust, sql};
 
 /// The prefix of a store failure's refusal.
 const CONTENDED: &str = "coordination store unavailable or contended: ";
@@ -48,7 +48,7 @@ const CONTENDED: &str = "coordination store unavailable or contended: ";
 /// counts.
 #[test]
 fn edited_evidence_rows_are_compared_as_python_compares_them() {
-    run_both(&[
+    run_golden(&[
         create(5),
         sql("INSERT INTO evidence VALUES('t','a','R0','command','parent',1)"),
         at(1.0, "parent", "complete", json!(["R1"])),

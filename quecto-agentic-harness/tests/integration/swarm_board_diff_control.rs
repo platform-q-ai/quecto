@@ -1,15 +1,16 @@
 //! Differential scenarios (#2273, epic #2265): run control, the control
-//! receipt and the usage report on the Python board and the Rust board,
-//! compared after every step by result, refusal text and logical database
-//! dump. Ported from `tests/swarm_helpers_test.py`, plus the loosely typed
-//! arguments Python accepts (epic P3). `complete`, `revalidate_task` and
-//! `amend` have their own scenarios (`swarm_board_diff_completion.rs`).
+//! receipt and the usage report on the Rust board against the Python
+//! board's answers frozen in its golden fixtures (#2283), compared after
+//! every step by result, refusal text and logical database dump. Ported
+//! from the deleted Python suite `tests/swarm_helpers_test.py`, plus the loosely typed arguments
+//! Python accepts (epic P3). `complete`, `revalidate_task` and `amend` have
+//! their own scenarios (`swarm_board_diff_completion.rs`).
 use serde_json::json;
 
 use crate::swarm_board_diff_membership::{HOUR, at, create, snapshot};
 use crate::swarm_board_diff_runs::NOW;
 use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
-    Step, run_both, sql, step, step_text,
+    Step, run_golden, sql, step, step_text,
 };
 
 /// A running run of five coordinated by `parent`, with `worker` live.
@@ -48,7 +49,7 @@ fn task(offset: f64, title: &str) -> Step {
 #[test]
 fn pause_is_durable_freezes_budget_and_rejects_mutation() {
     let late = HOUR + 500.0;
-    run_both(&with_worker([
+    run_golden(&with_worker([
         at(
             5.0,
             "parent",
@@ -75,7 +76,7 @@ fn pause_is_durable_freezes_budget_and_rejects_mutation() {
 /// verdict is refused.
 #[test]
 fn coordinator_stop_is_a_resumable_pause_only_the_supervisor_lifts() {
-    run_both(&with_worker([
+    run_golden(&with_worker([
         task(3.0, "work"),
         at(4.0, "worker", "claim", json!([1])),
         at(
@@ -114,7 +115,7 @@ fn coordinator_stop_is_a_resumable_pause_only_the_supervisor_lifts() {
 /// the run is terminal.
 #[test]
 fn a_proposed_outcome_is_held_until_the_supervisor_closes_it() {
-    run_both(&with_worker([
+    run_golden(&with_worker([
         control(3.0, "parent", "_close"),
         at(
             4.0,
@@ -145,7 +146,7 @@ fn a_proposed_outcome_is_held_until_the_supervisor_closes_it() {
 /// `test_cancellation_stays_terminal_even_while_ended`.
 #[test]
 fn cancellation_stays_terminal_even_while_ended() {
-    run_both(&with_worker([
+    run_golden(&with_worker([
         at(3.0, "parent", "stop", json!(["failed", "unrecoverable"])),
         at(
             4.0,
@@ -166,14 +167,14 @@ fn cancellation_stays_terminal_even_while_ended() {
 /// nothing to cancel.
 #[test]
 fn a_closed_run_cannot_be_cancelled_over() {
-    run_both(&with_worker([
+    run_golden(&with_worker([
         at(3.0, "parent", "stop", json!(["failed", "broken"])),
         control(4.0, "parent", "_close"),
         at(5.0, "parent", "stop", json!(["cancelled", "too late"])),
         at(6.0, "other", "stop", json!(["cancelled", "not a member"])),
         snapshot(7.0),
     ]));
-    run_both(&[
+    run_golden(&[
         step(
             "boot",
             "bootstrap_run",
@@ -201,7 +202,7 @@ fn a_closed_run_cannot_be_cancelled_over() {
 /// loosely typed seconds Python's `type(seconds) is int` refuses.
 #[test]
 fn deadline_extension_is_capped_at_seven_days_ahead() {
-    run_both(&with_worker([
+    run_golden(&with_worker([
         at(3.0, "parent", "_extend_deadline", json!([604_800])),
         at(4.0, "parent", "_extend_deadline", json!([3_600])),
         snapshot(5.0),
@@ -222,7 +223,7 @@ fn deadline_extension_is_capped_at_seven_days_ahead() {
 /// behind it) records the integer 0.
 #[test]
 fn extend_grants_from_the_later_of_deadline_and_pause_start() {
-    run_both(&with_worker([
+    run_golden(&with_worker([
         at(10.0, "parent", "pause", json!(["hold"])),
         sql(&format!("UPDATE run SET deadline={}", NOW + 5.0)),
         at(20.0, "parent", "_extend_deadline", json!([60])),
@@ -244,7 +245,7 @@ fn extend_grants_from_the_later_of_deadline_and_pause_start() {
 /// blocked until the deadline is extended, and the grant is future time.
 #[test]
 fn budget_expiry_is_distinct_and_keeps_partial_progress() {
-    run_both(&with_worker([
+    run_golden(&with_worker([
         task(3.0, "work"),
         sql(&format!("UPDATE run SET deadline={}", NOW + 4.0)),
         at(5.0, "worker", "claim", json!([1])),
@@ -266,13 +267,13 @@ fn budget_expiry_is_distinct_and_keeps_partial_progress() {
 /// stop finds it already paused.
 #[test]
 fn cancellation_and_expiry_prevent_new_work() {
-    run_both(&with_worker([
+    run_golden(&with_worker([
         at(3.0, "parent", "stop", json!(["cancelled", "user request"])),
         task(4.0, "after cancellation"),
         at(5.0, "worker", "_admit", json!(["child", "r"])),
         snapshot(6.0),
     ]));
-    run_both(&with_worker([
+    run_golden(&with_worker([
         sql(&format!("UPDATE run SET deadline={}", NOW + 3.0)),
         at(4.0, "parent", "stop", json!(["blocked", "late"])),
         at(5.0, "parent", "stop", json!(["budget-exhausted", "late"])),
@@ -286,7 +287,7 @@ fn cancellation_and_expiry_prevent_new_work() {
 /// later slice's writes leave, and a budget at its limit blocks a resume.
 #[test]
 fn usage_report_on_a_fresh_board_creates_the_usage_tables_identically() {
-    run_both(&with_worker([
+    run_golden(&with_worker([
         control(3.0, "worker", "usage_report"),
         control(4.0, "parent", "usage_report"),
         control(5.0, "parent", "_control_status"),
@@ -301,7 +302,7 @@ fn usage_report_on_a_fresh_board_creates_the_usage_tables_identically() {
             )
         })
         .collect::<String>();
-    run_both(&with_worker([
+    run_golden(&with_worker([
         control(3.0, "parent", "_control_status"),
         sql(&requests),
         sql(
@@ -326,7 +327,7 @@ fn a_lost_coordinator_blocks_the_resume() {
             r#"INSERT INTO events(actor,time,action,detail) VALUES('supervisor',{NOW},'{action}','{{"member": "parent"}}')"#
         ))
     };
-    run_both(&with_worker([
+    run_golden(&with_worker([
         at(3.0, "parent", "pause", json!(["hold"])),
         event("scope_unknown"),
         control(4.0, "parent", "_control_status"),
@@ -348,7 +349,7 @@ fn a_loss_event_at_id_zero_or_below_is_no_loss() {
             r#"INSERT INTO events(id,actor,time,action,detail) VALUES({id},'supervisor',{NOW},'scope_unknown','{{"member": "parent"}}')"#
         ))
     };
-    run_both(&with_worker([
+    run_golden(&with_worker([
         at(3.0, "parent", "pause", json!(["hold"])),
         sql("DELETE FROM events WHERE action='activated'"),
         event(0),
@@ -366,7 +367,7 @@ fn a_loss_event_at_id_zero_or_below_is_no_loss() {
 /// answers it.
 #[test]
 fn a_control_event_below_id_zero_is_the_generation() {
-    run_both(&with_worker([
+    run_golden(&with_worker([
         sql(&format!(
             r#"INSERT INTO events(id,actor,time,action,detail) VALUES(-5,'supervisor',{NOW},'resumed','{{"paused_seconds": 0, "outcome": null}}')"#
         )),
@@ -379,7 +380,7 @@ fn a_control_event_below_id_zero_is_the_generation() {
 #[test]
 fn control_arguments_are_checked_as_python_checks_them() {
     let long = "x".repeat(8_193);
-    run_both(&with_worker([
+    run_golden(&with_worker([
         at(3.0, "parent", "pause", json!([5])),
         at(4.0, "parent", "pause", json!([" "])),
         at(5.0, "parent", "pause", json!([long])),

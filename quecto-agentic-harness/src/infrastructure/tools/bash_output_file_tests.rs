@@ -109,7 +109,7 @@ async fn test_exec_timeout_returns_captured_tail() {
     let (tool, _tmp) = test_exec_with_timeout(1);
 
     let result = tool
-        .execute(r#"{"command": "python3 - <<'PY'\nimport sys, time\nfor i in range(6000):\n    print(f'line-{i}')\nprint('before-timeout')\nsys.stdout.flush()\ntime.sleep(60)\nPY"}"#)
+        .execute(r#"{"command": "seq -f 'line-%g' 0 5999; echo before-timeout; sleep 60"}"#)
         .await
         .unwrap();
     assert!(result.is_error);
@@ -169,7 +169,9 @@ async fn test_exec_output_file_writes_full_combined_output_and_summarizes() {
 async fn test_exec_output_file_keeps_large_output_out_of_inline_result() {
     let (tool, tmp) = test_exec();
     let result = tool
-        .execute(r#"{"command": "python3 - <<'PY'\nprint('A' * 12000000)\nPY", "output_file": "large.txt"}"#)
+        .execute(
+            r#"{"command": "head -c 12000000 /dev/zero | tr -c A A; echo", "output_file": "large.txt"}"#,
+        )
         .await
         .unwrap();
 

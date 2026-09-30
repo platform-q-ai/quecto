@@ -14,13 +14,12 @@ use tokio::time::timeout;
 
 const CAP: usize = 4096;
 const DEADLINE: Duration = Duration::from_secs(5);
-const SCRIPT: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/tests/fixtures/inference_admission/peer.py"
-);
+/// The peer: the Rust fixture's `admission-peer` (#2283; a Python script
+/// until then).
+const PEER: &str = env!("CARGO_BIN_EXE_quecto-test-fixture");
 
 // Also kills nested bridge descendants if an assertion/read panics. The direct
-// child is reaped within a bounded interval; Python normally reaps its own child.
+// child is reaped within a bounded interval; the proxy peer reaps its own child.
 struct ProcessGuard(Child, u32);
 impl Drop for ProcessGuard {
     fn drop(&mut self) {
@@ -38,9 +37,9 @@ impl Drop for ProcessGuard {
 }
 
 fn launch(mode: &str, endpoint: &std::path::Path) -> ProcessGuard {
-    let mut command = Command::new("/usr/bin/python3");
+    let mut command = Command::new(PEER);
     command
-        .args(["-I", SCRIPT, mode])
+        .args(["admission-peer", mode])
         .env_clear()
         .env("LC_ALL", "C")
         .env("ADMISSION_ENDPOINT", endpoint)
@@ -51,7 +50,7 @@ fn launch(mode: &str, endpoint: &std::path::Path) -> ProcessGuard {
         .stderr(Stdio::null())
         .kill_on_drop(true);
     command.process_group(0);
-    let child = command.spawn().expect("python3 fixture available");
+    let child = command.spawn().expect("the peer fixture starts");
     let pid = child.id().unwrap();
     ProcessGuard(child, pid)
 }

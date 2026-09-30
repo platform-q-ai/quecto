@@ -68,16 +68,24 @@ async fn terminate_after_observed_exit_signals_nothing() {
 
 /// #1956: a group member that outlives the leader is NOT signalled — the
 /// canary names it and the caller sees it in the report, nothing more.
+// The stand-in is the test binary, reached through a Linux constructor.
+#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn terminate_after_leader_exit_reports_a_surviving_group_member_without_signalling() {
     let pid_file = std::env::temp_dir().join(format!(
         "quecto-child-watch-survivor-{}",
         std::process::id()
     ));
-    let script = format!(
-        "python3 -c 'import os, time; open(\"{}\", \"w\").write(str(os.getpid())); time.sleep(30)' & exit 0",
-        pid_file.display()
+    let log = pid_file.with_extension("signals");
+    let survivor = crate::shell::test_stand_in::command(
+        "signal-log",
+        &[
+            ("PID", &pid_file.to_string_lossy()),
+            ("LOG", &log.to_string_lossy()),
+            ("LIFETIME", "30"),
+        ],
     );
+    let script = format!("{survivor} & exit 0");
     let watch = watch_child(spawn(&script), StderrTail::default());
     let survivor = wait_for_pid_file(&pid_file).await;
     assert!(
@@ -174,6 +182,7 @@ fn an_abort_is_named_sigabrt() {
     );
 }
 
+#[cfg(target_os = "linux")]
 async fn wait_for_pid_file(path: &std::path::Path) -> i32 {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
     loop {

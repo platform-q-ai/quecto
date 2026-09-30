@@ -56,8 +56,8 @@ fn the_swarm_doc_teaches_only_structured_ops() {
         "Python board calls:\n{}",
         calls.join("\n")
     );
-    // `tests/swarm_helpers_test.py` pins the idle threshold in this prose
-    // until the Python board goes (S18).
+    // The idle threshold this prose teaches (the deleted Python suite,
+    // `tests/swarm_helpers_test.py`, pinned it until #2283).
     assert!(doc.contains("300 seconds"));
     assert!(doc.contains("ADR-0030"));
 }

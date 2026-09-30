@@ -1,7 +1,8 @@
 [package]
 name = "quecto-agentic-harness"
-version = "0.107.197"
+version = "0.107.198"
 edition = "2024"
+default-run = "quecto"
 description = "Ultra-lightweight personal AI assistant"
 license = "LicenseRef-Proprietary"
 
@@ -12,6 +13,17 @@ path = "src/lib.rs"
 [[bin]]
 name = "quecto"
 path = "src/main.rs"
+
+# The processes the harness's tests stand up around it (#2283: no Python,
+# tests included): fixture process ownership, Unix-socket bridges and
+# listeners, the admission transport peer. Test support only; the tests
+# reach it as `env!("CARGO_BIN_EXE_quecto-test-fixture")`.
+[[bin]]
+name = "quecto-test-fixture"
+path = "tests/support/fixture_bin/main.rs"
+required-features = ["test-support"]
+test = false
+doctest = false
 
 [dependencies]
 # Async runtime

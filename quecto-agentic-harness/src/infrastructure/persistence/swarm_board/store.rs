@@ -1,6 +1,7 @@
 //! The swarm board's SQLite store (#2269): the connection discipline of
-//! `swarm_helpers/swarm_store.py::Store`, reproduced exactly so that Python
-//! and Rust processes can share one board file.
+//! the Python board's `Store` (`swarm_store.py`, deleted in #2283), kept
+//! exactly, so a board file the Python board wrote stays readable and
+//! writable (the file format is Python-compatible for legacy boards).
 //!
 //! Every transaction opens its own connection (no pooling) by URI, with
 //! `mode=rw` so a lost board is never recreated, or `mode=rwc` only to
