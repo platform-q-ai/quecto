@@ -19,6 +19,8 @@ mod bdd_lanes;
 /// (#1637).
 #[path = "architecture/dependency_scan.rs"]
 mod dependency_scan;
+#[path = "architecture/layout.rs"]
+mod layout;
 
 use quote::ToTokens;
 use std::collections::{BTreeMap, BTreeSet};
