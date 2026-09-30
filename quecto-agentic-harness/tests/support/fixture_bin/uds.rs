@@ -6,6 +6,10 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+/// A first chunk holding this is a retried connection (the slow-accept
+/// marker's contract).
+const RETRY: &[u8] = b"PROXY_RETRY_MARKER";
+
 /// One read's size, as each pump reads.
 const CHUNK: usize = 65_536;
 
@@ -78,8 +82,8 @@ pub fn bridge(args: &[String]) -> Result<(), String> {
                 .map_err(|e| format!("stdin: {e}"))?;
             prefetched.extend_from_slice(&chunk[..read]);
             if prefetched
-                .windows(18)
-                .any(|window| window == b"PROXY_RETRY_MARKER")
+                .windows(RETRY.len())
+                .any(|window| window == RETRY)
             {
                 let _gone = std::fs::remove_file(marker);
                 return Err("a retried connection is refused".to_owned());
@@ -244,6 +248,14 @@ pub fn listen(args: &[String]) -> Result<(), String> {
             held.push(connection);
         }
     }
+    assert!(
+        options.accepts.is_none_or(|limit| accepted == limit) || options.idle_exit.is_some(),
+        "the listener leaves only at its count or when idle"
+    );
+    assert!(
+        !options.hold || held.len() == accepted,
+        "every connection held"
+    );
     std::thread::sleep(options.linger);
     drop(held);
     Ok(())

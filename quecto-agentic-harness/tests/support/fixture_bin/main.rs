@@ -33,8 +33,23 @@ mod processes {
 fn main() {
     // A fixture that panics fails at once, as every workspace binary does.
     quecto_fail_fast::abort_on_panic();
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let outcome = match args.split_first() {
+    // Arguments that are not UTF-8 are refused, never a panic.
+    let args: Result<Vec<String>, _> = std::env::args_os()
+        .skip(1)
+        .map(std::ffi::OsString::into_string)
+        .collect();
+    let outcome = match args.as_deref() {
+        Err(_) => Err("an argument is not UTF-8".to_owned()),
+        Ok(args) => dispatch(args),
+    };
+    if let Err(reason) = outcome {
+        eprintln!("quecto-test-fixture: {reason}");
+        std::process::exit(1);
+    }
+}
+
+fn dispatch(args: &[String]) -> Result<(), String> {
+    match args.split_first() {
         Some((command, rest)) => match command.as_str() {
             "processes" => processes::run(rest),
             "uds-bridge" => uds::bridge(rest),
@@ -43,9 +58,5 @@ fn main() {
             other => Err(format!("unknown fixture {other}")),
         },
         None => Err("usage: quecto-test-fixture <fixture> [args...]".to_owned()),
-    };
-    if let Err(reason) = outcome {
-        eprintln!("quecto-test-fixture: {reason}");
-        std::process::exit(1);
     }
 }

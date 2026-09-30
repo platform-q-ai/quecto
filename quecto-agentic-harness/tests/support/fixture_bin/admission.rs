@@ -47,14 +47,56 @@ fn write_frame(stream: &mut impl Write, data: &[u8]) -> Result<(), String> {
         .map_err(|error| format!("write a frame: {error}"))
 }
 
+/// A connection to `$ADMISSION_ENDPOINT`, made within [`TIMEOUT`] (as
+/// Python's `settimeout(3)` bounded its `connect`), whose reads and writes
+/// are bounded too.
 fn endpoint() -> Result<UnixStream, String> {
-    let path = std::env::var("ADMISSION_ENDPOINT").map_err(|_| "ADMISSION_ENDPOINT")?;
-    let stream = UnixStream::connect(&path).map_err(|error| format!("connect {path}: {error}"))?;
+    let path = std::env::var_os("ADMISSION_ENDPOINT").ok_or("ADMISSION_ENDPOINT")?;
+    let (sender, connected) = std::sync::mpsc::channel();
+    let target = path.clone();
+    std::thread::spawn(move || {
+        let _gone = sender.send(UnixStream::connect(&target));
+    });
+    let stream = match connected.recv_timeout(TIMEOUT) {
+        Ok(Ok(stream)) => stream,
+        Ok(Err(error)) => return Err(format!("connect {}: {error}", path.to_string_lossy())),
+        Err(_) => return Err(format!("connect {}: timed out", path.to_string_lossy())),
+    };
     stream
         .set_read_timeout(Some(TIMEOUT))
         .and_then(|()| stream.set_write_timeout(Some(TIMEOUT)))
         .map_err(|error| format!("timeouts: {error}"))?;
     Ok(stream)
+}
+
+/// The nested peer: killed and reaped whenever the proxy leaves, however
+/// it leaves (Python's `finally`).
+struct Nested(std::process::Child);
+
+impl Nested {
+    /// The nested peer's exit, waited for within [`TIMEOUT`].
+    fn wait(&mut self) -> Result<std::process::ExitStatus, String> {
+        let deadline = std::time::Instant::now() + TIMEOUT;
+        loop {
+            match self.0.try_wait() {
+                Ok(Some(status)) => return Ok(status),
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Ok(None) => return Err("the nested peer did not exit in time".to_owned()),
+                Err(error) => return Err(format!("wait: {error}")),
+            }
+        }
+    }
+}
+
+impl Drop for Nested {
+    fn drop(&mut self) {
+        if matches!(self.0.try_wait(), Ok(None)) {
+            let _killed = self.0.kill();
+        }
+        let _reaped = self.0.wait();
+    }
 }
 
 /// The request with this peer's record, or the broken or oversized
@@ -64,8 +106,14 @@ fn payload(request: &[u8], mode: &str) -> Result<Vec<u8>, String> {
         serde_json::from_slice(request).map_err(|error| format!("a request: {error}"))?;
     // SAFETY: `getppid` has no preconditions and cannot fail.
     let ppid = unsafe { libc::getppid() };
-    let env: serde_json::Map<String, serde_json::Value> = std::env::vars()
-        .map(|(name, value)| (name, serde_json::Value::String(value)))
+    let env: serde_json::Map<String, serde_json::Value> = std::env::vars_os()
+        .map(|(name, value)| {
+            let value = value.to_string_lossy().into_owned();
+            (
+                name.to_string_lossy().into_owned(),
+                serde_json::Value::String(value),
+            )
+        })
         .collect();
     request["peer"] = serde_json::json!({
         "pid": std::process::id(),
@@ -82,25 +130,24 @@ fn payload(request: &[u8], mode: &str) -> Result<Vec<u8>, String> {
 
 fn proxy() -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|error| format!("the fixture: {error}"))?;
-    let mut child = Command::new(exe)
-        .args(["admission-peer", "nested"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("start the nested peer: {error}"))?;
-    let carried = (|| {
-        let mut to_child = child.stdin.take().ok_or("the nested peer's stdin")?;
-        let mut from_child = child.stdout.take().ok_or("the nested peer's stdout")?;
-        write_frame(&mut to_child, &read_frame(&mut std::io::stdin().lock())?)?;
-        let request = read_frame(&mut from_child)?;
-        let mut wire = endpoint()?;
-        write_frame(&mut wire, &request)?;
-        write_frame(&mut to_child, &read_frame(&mut wire)?)?;
-        write_frame(&mut std::io::stdout().lock(), &read_frame(&mut from_child)?)
-    })();
-    let exited = child.wait().map_err(|error| format!("wait: {error}"))?;
-    carried?;
-    match exited.success() {
+    let mut child = Nested(
+        Command::new(exe)
+            .args(["admission-peer", "nested"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .map_err(|error| format!("start the nested peer: {error}"))?,
+    );
+    let mut to_child = child.0.stdin.take().ok_or("the nested peer's stdin")?;
+    let mut from_child = child.0.stdout.take().ok_or("the nested peer's stdout")?;
+    write_frame(&mut to_child, &read_frame(&mut std::io::stdin().lock())?)?;
+    let request = read_frame(&mut from_child)?;
+    let mut wire = endpoint()?;
+    write_frame(&mut wire, &request)?;
+    write_frame(&mut to_child, &read_frame(&mut wire)?)?;
+    write_frame(&mut std::io::stdout().lock(), &read_frame(&mut from_child)?)?;
+    drop(to_child);
+    match child.wait()?.success() {
         true => Ok(()),
         false => Err("nested child failed".to_owned()),
     }

@@ -1556,19 +1556,6 @@ fn cpu_seconds_self_and_children() -> f64 {
     total
 }
 
-/// Installs `<cfg_dir>/fixture-processes`, which the fixture scripts call
-/// to own the processes they start (`track`, `live`, `clean`; #2283: the
-/// Rust `quecto-test-fixture processes`, where a Python helper was).
-pub(crate) fn install_fixture_processes(cfg_dir: &Path) {
-    quecto::infrastructure::test_support::executable::write_executable(
-        &cfg_dir.join("fixture-processes"),
-        format!(
-            "#!/bin/sh\nexec '{}' processes \"$@\"\n",
-            env!("CARGO_BIN_EXE_quecto-test-fixture")
-        ),
-    );
-}
-
 fn main() {
     // cucumber's debug-build scenario futures are stack-hungry (the runner
     // moves the World through several hundred-KB frames per nesting level),
@@ -1853,6 +1840,8 @@ impl Drop for QuectoWorld {
 }
 
 mod admission_one_broker_steps;
+mod fixture_processes;
+pub(crate) use fixture_processes::install_fixture_processes;
 mod admission_recovery_steps;
 mod inference_admission_authority_steps;
 mod inference_admission_http_steps;
