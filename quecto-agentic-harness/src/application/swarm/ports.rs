@@ -15,7 +15,7 @@ use super::dto::{
     LaunchIdentity, MemberClaimCounts, MemberRow, MemberStatusRow, MessageRow, MessageTally,
     NewEvidence, NewMember, NewMessage, NewRequestUsage, NewReservation, NewRun, NewTask,
     NotificationCursor, PriorEvidence, RunContract, RunOwnerRow, RunStatusRow, ScopeObservation,
-    StoredContract, StoredRequestUsage, TaskRow, TaskUpdate, UsageReport,
+    StoredContract, StoredRequestUsage, TaskRow, TaskUpdate, UsageReport, UsageRow,
 };
 use crate::domain::error::DomainError;
 use crate::domain::swarm::{
@@ -513,6 +513,10 @@ pub trait BoardUsage {
     /// `{token_limit: null, strict_unknown: false, warned: false}` and no
     /// row is written.
     fn usage_report(&self) -> Result<UsageReport, BoardError>;
+    /// `usage_report()['members']` alone (#2313 final review): the
+    /// per-member aggregates, reading no request payload and creating no
+    /// table; none when the board holds no `request_usage` table yet.
+    fn member_usage(&self) -> Result<Vec<UsageRow>, BoardError>;
     /// `usage_report()['budget']`: the stored budget payload as
     /// `json.loads` reads it, or the default budget when there is no row.
     fn usage_budget(&self) -> Result<Value, BoardError>;

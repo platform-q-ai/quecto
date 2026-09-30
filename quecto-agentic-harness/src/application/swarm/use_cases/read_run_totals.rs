@@ -16,8 +16,9 @@ use crate::domain::swarm::{Access, BoardError};
 /// Through the operation gate as a read (any member, a dead one
 /// included), in one transaction: the tasks by state as `summary` counts
 /// them, the messages by what became of them, each member's usage as
-/// `usage_report` aggregates it (whose read creates the usage tables when
-/// absent), the run's creation time and the board's clock.
+/// `usage_report` aggregates it (no request payload is read and no table
+/// created, #2313 final review), the run's creation time and the board's
+/// clock.
 pub struct ReadRunTotals {
     repository: Arc<dyn BoardRepository>,
     clock: Arc<dyn Clock + Send + Sync>,
@@ -50,7 +51,7 @@ impl ReadRunTotals {
                     task_count: transaction.task_count()?,
                     counts: counts(transaction, run.coordinator.as_deref())?,
                     messages: transaction.message_tally()?,
-                    usage: transaction.usage_report()?.members,
+                    usage: transaction.member_usage()?,
                     created_at: transaction.created_at()?,
                     read_at: self.clock.now_seconds(),
                 })
