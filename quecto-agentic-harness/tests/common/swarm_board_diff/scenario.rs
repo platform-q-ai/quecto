@@ -305,6 +305,27 @@ pub fn run_rust(steps: &[Step]) -> Outcome {
     last
 }
 
+/// Runs `steps` on a Python board alone, each granted but the last: its
+/// answer (#2340). For a divergence, so its pin asserts what Python
+/// answers rather than naming it.
+pub fn run_python(steps: &[Step]) -> Outcome {
+    let dir = tempfile::tempdir().expect("a directory for the board");
+    let side = Side::new(dir.path(), "python");
+    let mut python = PyBoard::start(&side.database, &side.root, dir.path());
+    let mut last = Outcome::Ok(Value::Null);
+    for step in steps {
+        assert!(matches!(last, Outcome::Ok(_)), "before {step:?}: {last:?}");
+        last = if step.method == SQL_STEP {
+            edit(&side.database, &step.args)
+        } else if step.method == FS_STEP {
+            shape(&side.root, &step.args)
+        } else {
+            side.neutral(python.call(&step.member, &step.method, &step.args, step.now))
+        };
+    }
+    last
+}
+
 /// Runs `steps` on a Rust board alone (each held as it says) and answers
 /// every step, refused or not: what the Rust board answered at each step
 /// of a scenario `run_both` has compared (so Python's answers too).

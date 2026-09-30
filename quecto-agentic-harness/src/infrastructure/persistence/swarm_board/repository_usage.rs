@@ -46,6 +46,7 @@ const STANDING: &str =
 
 impl BoardUsage for SqliteBoard<'_> {
     fn usage_report(&self) -> Result<UsageReport, BoardError> {
+        self.kept_sums.noted_whole_ledger_read();
         self.usage_schema()?;
         let budget = self.stored_budget()?;
         let totals = self
@@ -103,17 +104,19 @@ impl BoardUsage for SqliteBoard<'_> {
                 Value::from(sums.observed_tokens),
                 Value::from(sums.unknown_usage_requests),
             ),
-            None => self
-                .connection
-                .query_row(
-                    &format!("SELECT {STANDING} FROM request_usage"),
-                    [],
-                    |row| {
-                        fetched(row)?;
-                        Ok((cell_at(row, 0)?, cell_at(row, 1)?))
-                    },
-                )
-                .map_err(failed)?,
+            None => {
+                self.kept_sums.noted_whole_ledger_read();
+                self.connection
+                    .query_row(
+                        &format!("SELECT {STANDING} FROM request_usage"),
+                        [],
+                        |row| {
+                            fetched(row)?;
+                            Ok((cell_at(row, 0)?, cell_at(row, 1)?))
+                        },
+                    )
+                    .map_err(failed)?
+            }
         };
         Ok(UsageStanding {
             budget,
@@ -209,7 +212,10 @@ impl BoardUsage for SqliteBoard<'_> {
         self.usage_schema()?;
         match self.ledger_sums()? {
             Some(sums) => Ok(sums.rows),
-            None => self.count("SELECT count(*) FROM request_usage"),
+            None => {
+                self.kept_sums.noted_whole_ledger_read();
+                self.count("SELECT count(*) FROM request_usage")
+            }
         }
     }
 }
@@ -224,7 +230,7 @@ impl SqliteBoard<'_> {
             .borrow_mut()
             .take()
             .or_else(|| self.kept_sums.kept());
-        let sums = usage_sums::summed(self.connection, known).map_err(failed)?;
+        let sums = usage_sums::summed(self.connection, self.kept_sums, known).map_err(failed)?;
         self.staged_sums.replace(sums.clone());
         Ok(sums)
     }

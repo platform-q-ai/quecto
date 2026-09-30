@@ -85,6 +85,12 @@ impl SqliteBoardRepository {
         }
     }
 
+    /// The ledger work its board calls have done (#2340, tests only).
+    #[cfg(test)]
+    pub(crate) fn ledger_work(&self) -> super::LedgerWork {
+        self.sums.work()
+    }
+
     /// The board file this repository opens, and the sums it keeps.
     pub(super) fn into_parts(self) -> (BoardStore, KeptSums) {
         (self.store, self.sums)

@@ -41,7 +41,7 @@ fn insert(connection: &Connection, request_id: &str, tokens: &str, unknown: bool
 
 fn sums_on(store: &BoardStore, known: Option<UsageSums>) -> Option<UsageSums> {
     let connection = Connection::open(store.path()).unwrap();
-    summed(&connection, known).unwrap()
+    summed(&connection, &KeptSums::default(), known).unwrap()
 }
 
 /// `count(*)`, `sum(tokens)` and `sum(unknown)` by the SQL.

@@ -22,6 +22,12 @@
 //! transaction that computed them commits, so a rolled-back insert is never
 //! counted.
 //!
+//! Run ids and request ids are assumed unique: the board generates run
+//! ids and the harness request ids as UUIDv4s, so a recreated board or a
+//! new run cannot present the same run id with the same request id at the
+//! same rowid. Restoring an older copy of a board file under a running
+//! process is an edit from outside the board, below.
+//!
 //! Permitted divergence (`outside_edited_control_records`): an edit from
 //! outside the board to a row already summed (its counts changed, or it
 //! or an earlier row deleted) is not seen by a process that kept its sums;
@@ -49,13 +55,47 @@ pub(super) struct UsageSums {
 /// The sums a process's transactions on one board file share: those of
 /// the latest committed transaction that computed any.
 #[derive(Clone, Debug, Default)]
-pub(super) struct KeptSums(Arc<Mutex<Option<UsageSums>>>);
+pub(super) struct KeptSums {
+    sums: Arc<Mutex<Option<UsageSums>>>,
+    #[cfg(test)]
+    work: Arc<Mutex<LedgerWork>>,
+}
 
 impl KeptSums {
+    /// The ledger work done so far (tests only).
+    #[cfg(test)]
+    pub(crate) fn work(&self) -> LedgerWork {
+        *self.work.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Notes a row the kept sums were extended by (tests only; a no-op
+    /// otherwise).
+    fn noted_row(&self) {
+        #[cfg(test)]
+        {
+            self.work
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .rows_scanned += 1;
+        }
+    }
+
+    /// Notes a whole-ledger SQL read: a usage report, or the sums'
+    /// fallback (tests only; a no-op otherwise).
+    pub(super) fn noted_whole_ledger_read(&self) {
+        #[cfg(test)]
+        {
+            self.work
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .whole_ledger_reads += 1;
+        }
+    }
+
     /// The sums kept, also after a panic elsewhere poisoned the lock:
     /// they are replaced whole, never left half-written.
     pub(super) fn kept(&self) -> Option<UsageSums> {
-        self.0
+        self.sums
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
@@ -63,7 +103,7 @@ impl KeptSums {
 
     /// Keeps `sums`, which a committed transaction computed.
     pub(super) fn keep(&self, sums: UsageSums) {
-        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = Some(sums);
+        *self.sums.lock().unwrap_or_else(PoisonError::into_inner) = Some(sums);
     }
 }
 
@@ -76,6 +116,7 @@ impl KeptSums {
 /// The store's.
 pub(super) fn summed(
     connection: &Connection,
+    kept: &KeptSums,
     known: Option<UsageSums>,
 ) -> rusqlite::Result<Option<UsageSums>> {
     let Some(run_id) = run_id(connection)? else {
@@ -93,7 +134,7 @@ pub(super) fn summed(
             unknown_usage_requests: 0,
         },
     };
-    extended(connection, base)
+    extended(connection, kept, base)
 }
 
 /// The run row's id, when it is UTF-8 text.
@@ -130,7 +171,11 @@ fn still_last(connection: &Connection, last: Option<&(i64, String)>) -> rusqlite
 }
 
 /// `sums` with every row after its last added, in rowid order.
-fn extended(connection: &Connection, mut sums: UsageSums) -> rusqlite::Result<Option<UsageSums>> {
+fn extended(
+    connection: &Connection,
+    kept: &KeptSums,
+    mut sums: UsageSums,
+) -> rusqlite::Result<Option<UsageSums>> {
     let mut statement = match &sums.last {
         Some(_) => connection.prepare(
             "SELECT rowid, request_id, tokens, unknown FROM request_usage WHERE rowid>? ORDER BY rowid",
@@ -167,6 +212,7 @@ fn extended(connection: &Connection, mut sums: UsageSums) -> rusqlite::Result<Op
             // SQLite's `sum` overflows at this same row: the SQL raises it.
             return Ok(None);
         };
+        kept.noted_row();
         sums.rows = rows;
         sums.observed_tokens = observed;
         sums.unknown_usage_requests = unknown;
@@ -183,6 +229,18 @@ fn count(value: ValueRef<'_>) -> Option<i64> {
         ValueRef::Null => Some(0),
         ValueRef::Real(_) | ValueRef::Text(_) | ValueRef::Blob(_) => None,
     }
+}
+
+/// The ledger work a repository's board calls did (#2340, tests only):
+/// the rows the kept sums were extended by, and the times SQL read the
+/// whole ledger (a usage report, or the sums' fallback), so a test asserts
+/// the work of a call stays the same however long the ledger. Kept beside
+/// the sums, never ambient.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct LedgerWork {
+    pub(crate) rows_scanned: u64,
+    pub(crate) whole_ledger_reads: u64,
 }
 
 #[cfg(test)]

@@ -12,7 +12,7 @@ use crate::swarm_board_diff_messages::joined;
 use crate::swarm_board_diff_runs::NOW;
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
 use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
-    run_both, run_rust, sql, step, step_text,
+    run_both, run_python, run_rust, sql, step, step_text,
 };
 
 /// `create_run`'s arguments as JSON text, a criterion's extra key `w`
@@ -341,57 +341,51 @@ fn outside_edited_control_records() {
     // #2340: the receipt and the budget read only the budget and the two
     // totals, so a ledger row whose payload is not JSON, or whose actor is
     // not UTF-8, is not read by them: `_control_status` and
-    // `_record_request` answer, where Python's `usage_report` raises a
-    // `JSONDecodeError` for the payload among the ten latest and refuses
-    // the actor with `Could not decode to UTF-8` (the report itself still
-    // refuses both, as Python does).
-    for edit in [
-        "INSERT INTO request_usage VALUES('e','parent','x',1,0,1,NULL,NULL,NULL,NULL)",
-        "INSERT INTO request_usage VALUES('e',CAST(x'ff' AS TEXT),'{}',1,0,1,NULL,NULL,NULL,NULL)",
-    ] {
+    // `_record_request` answer, where Python's `usage_report` (read by
+    // each) fails on the payload among the ten latest and on the actor;
+    // the report itself fails on both, on either board.
+    for (edit, pythons) in UNREADABLE_LEDGER_ROWS {
         for (method, args) in [
             ("_control_status", json!([])),
             (
                 "_record_request",
                 json!([{"request_id": "r", "instrumented_attempts": 1, "outcome": "failed"}]),
             ),
+            ("usage_report", json!([])),
         ] {
-            let answered = run_rust(&[
+            let steps = [
                 create(5),
                 at(0.5, "parent", "usage_report", json!([])),
                 sql(edit),
                 at(1.0, "parent", method, args),
-            ]);
-            let Outcome::Ok(receipt) = answered else {
-                panic!("{edit}: {method}: {answered:?}");
-            };
-            assert_eq!(
-                receipt["budget"]["observed_tokens"],
-                json!(1),
-                "{edit}: {method}"
-            );
+            ];
+            let (rust, python) = (run_rust(&steps), run_python(&steps));
+            assert_eq!(python, pythons(), "{edit}: {method}");
+            match method {
+                "usage_report" => assert!(matches!(rust, Outcome::Refused(_)), "{edit}: {rust:?}"),
+                _ => {
+                    let Outcome::Ok(receipt) = rust else {
+                        panic!("{edit}: {method}: {rust:?}");
+                    };
+                    assert_eq!(
+                        receipt["budget"]["observed_tokens"],
+                        json!(1),
+                        "{edit}: {method}"
+                    );
+                }
+            }
         }
-        let reported = run_rust(&[
-            create(5),
-            at(0.5, "parent", "usage_report", json!([])),
-            sql(edit),
-            at(1.0, "parent", "usage_report", json!([])),
-        ]);
-        assert!(
-            matches!(reported, Outcome::Refused(_)),
-            "{edit}: {reported:?}"
-        );
     }
     // #2340: the process keeps the ledger's sums between transactions, so
     // an edit to a row already summed (its counts, or an earlier row
     // deleted) is not seen by the board that summed it, where Python sums
     // on every read; its last row deleted, or a row added after it (by the
-    // board or an edit), is.
+    // board or an edit), is seen by both.
     let counted = |request_id: &str| {
         json!([{"request_id": request_id, "instrumented_attempts": 1, "outcome": "succeeded",
             "context_input_tokens": 2, "output_tokens": 1}])
     };
-    for (edit, observed, pythons) in [
+    for (edit, rusts, pythons) in [
         (
             "UPDATE request_usage SET tokens=100 WHERE request_id='r'",
             6,
@@ -405,21 +399,26 @@ fn outside_edited_control_records() {
             10,
         ),
     ] {
-        let status = run_rust(&[
+        let steps = [
             create(5),
             at(1.0, "parent", "_record_request", counted("r")),
             at(1.5, "parent", "_record_request", counted("s")),
             sql(edit),
             at(2.0, "parent", "_control_status", json!([])),
-        ]);
-        let Outcome::Ok(receipt) = status else {
-            panic!("{edit}: {status:?}");
-        };
-        assert_eq!(
-            receipt["budget"]["observed_tokens"],
-            json!(observed),
-            "{edit}: Python reads {pythons}"
-        );
+        ];
+        for (side, answer, observed) in [
+            ("rust", run_rust(&steps), rusts),
+            ("python", run_python(&steps), pythons),
+        ] {
+            let Outcome::Ok(receipt) = answer else {
+                panic!("{edit}: {side}: {answer:?}");
+            };
+            assert_eq!(
+                receipt["budget"]["observed_tokens"],
+                json!(observed),
+                "{edit}: {side}"
+            );
+        }
     }
     // A budget without `token_limit`, or without `strict_unknown` where the
     // limit is the one asked for, meets `usage_budget`'s idempotence check,
@@ -475,3 +474,26 @@ fn uncounted_usage_totals_pass_through_elsewhere() {
         ]);
     }
 }
+
+/// #2340: ledger rows only an edit writes that Python's `usage_report`
+/// cannot read, and what Python answers a call reading it: it raises a
+/// `JSONDecodeError` for the payload, and refuses the actor as the store's
+/// failure (the Rust report refuses both).
+/// What Python answers a call: built on demand, as `Outcome` owns text.
+type PythonAnswer = fn() -> Outcome;
+
+const UNREADABLE_LEDGER_ROWS: [(&str, PythonAnswer); 2] = [
+    (
+        "INSERT INTO request_usage VALUES('e','parent','x',1,0,1,NULL,NULL,NULL,NULL)",
+        || Outcome::Raised("JSONDecodeError: Expecting value: line 1 column 1 (char 0)".to_owned()),
+    ),
+    (
+        "INSERT INTO request_usage VALUES('e',CAST(x'ff' AS TEXT),'{}',1,0,1,NULL,NULL,NULL,NULL)",
+        || {
+            Outcome::Refused(
+                "coordination store unavailable or contended: Could not decode to UTF-8 column 'member' with text '\u{fffd}'"
+                    .to_owned(),
+            )
+        },
+    ),
+];

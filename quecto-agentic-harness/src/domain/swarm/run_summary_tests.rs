@@ -25,6 +25,7 @@ fn record(op: &str, decision: Option<&str>, duration_us: u64) -> BoardOpObservat
         lock_wait_us: Some(duration_us / 2),
         busy_wait_us: Some(0),
         busy: Some(false),
+        commit_us: Some(0),
         cursor_moved: None,
         result_bytes: 0,
         decision: decision.map(str::to_owned),

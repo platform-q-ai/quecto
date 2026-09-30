@@ -29,18 +29,28 @@ impl IdSource for Counter {
 }
 
 pub(super) fn board(now: f64) -> (tempfile::TempDir, SwarmBoardHandles) {
+    let (dir, handles, _) = board_and_repository(now);
+    (dir, handles)
+}
+
+/// [`board`], with a clone of its repository, which shares what the
+/// repository keeps between calls (#2340: the ledger sums and their work).
+pub(super) fn board_and_repository(
+    now: f64,
+) -> (tempfile::TempDir, SwarmBoardHandles, SqliteBoardRepository) {
     let dir = tempfile::TempDir::new().unwrap();
     let location = BoardLocation {
         database: dir.path().join("swarm.sqlite"),
         checkout: dir.path().to_path_buf(),
     };
+    let repository = SqliteBoardRepository::new(&location);
     let handles = build_swarm_board_handles_with(
-        Arc::new(SqliteBoardRepository::new(&location)),
+        Arc::new(repository.clone()),
         Arc::new(Fixed(now)),
         Arc::new(Counter::default()),
         Arc::new(ResolvedCheckout::new(&location.checkout)),
     );
-    (dir, handles)
+    (dir, handles, repository)
 }
 
 fn create_args() -> Value {
