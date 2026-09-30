@@ -12,18 +12,38 @@ reference runtime lives at [`scripts/container-runtime/`](../scripts/container-r
 ## Standard Rust build cache safety
 
 The repository-owned `standard` runtime's shared Rust caches are an opt-in
-runtime policy, not a new `spawn` field or a generic starter change. Selecting
-this repository's `standard` definition selects its project-owned create adapter.
-The project-owned create adapter intentionally differs from the bundled starter;
-`container init` reports this drift. Review it rather than blindly refreshing:
-`quecto container init --refresh` replaces this adapter with the generic bundle.
-If refreshing after a binary upgrade, first preserve any local edits, then review
-and restore the trusted project adapter (in this repository, `git restore
---source=HEAD -- .quecto/containers/standard/scripts/create.sh`), review the
-project-owned Containerfile, rebuild the standard image, and run `quecto
-container doctor` before launching builds. Doctor is a preflight check, not a
-promise that project-owned scripts match the generic bundle. The image build
-context is `.quecto/containers/standard`.
+runtime policy, not a new `spawn` field or a generic starter change. The
+project-owned adapter is `.quecto/containers/standard/create.sh`, **not** the
+reserved bundle asset `scripts/create.sh`. Launch integrity checks reject an
+altered bundled script; restoring a custom adapter over that asset cannot make
+it launchable. The non-catalogue `create.sh` is trusted through the local
+configuration, while all remaining bundled scripts retain their integrity checks.
+
+After `quecto container init` (including any desired `--repo` and `--image`
+arguments), explicitly opt in from the repository root:
+
+```sh
+adapter="$(pwd -P)/.quecto/containers/standard/create.sh"
+test -f "$adapter" && test -x "$adapter" || exit 1
+create=$(jq -ce --arg adapter "$adapter" '
+  .container_configs.standard.create |
+  if type == "array" and length > 0 and all(.[]; type == "string")
+  then .[0] = $adapter else error("missing standard create argv; run init first") end
+' .quecto/config.json) || exit 1
+quecto config set --local container_configs.standard.create "$create"
+quecto config get --effective container_configs.standard
+quecto container doctor
+```
+
+Only create argv element zero changes: init's state directory, repository,
+image and other arguments are preserved, as are exec/inspect/kill/cleanup argv.
+Review the resulting trusted definition before selecting `standard`. Plain init
+selects the generic bundled adapter, not the cache opt-in. After `init --refresh`
+or another init that rewrites the definition, reapply the recipe; never copy the
+project adapter into `scripts/create.sh`. Refresh does not overwrite the
+non-catalogue project adapter. Review the project-owned Containerfile and rebuild
+the image after upgrades; the image context is `.quecto/containers/standard`.
+Rollback is `quecto container init` to select the bundled create script again.
 
 The adapter uses `rust-cache/{cargo,sccache}` under the canonical state directory's
 parent base, mounted read/write at `/tmp/quecto-cargo` and `/tmp/quecto-sccache`.
@@ -1271,9 +1291,9 @@ starts the container; `exec.sh`, `inspect.sh` and `kill.sh` drive it),
 so a change to them that arrives with a `git pull` is as consequential as
 a change to the overlay itself. What is verified is precisely **the
 program — the first argv element — of each argv the host is about to
-run**, whenever it lies under a `.quecto/containers/standard/`
-directory, compared with the bytes this quecto embeds the way `status`
-compares them:
+run**, whenever its path relative to `.quecto/containers/standard/`
+identifies an embedded catalogue asset (for example `scripts/create.sh`),
+compared with the bytes this quecto embeds the way `status` compares them:
 
 - at **create**, every program the selected entry names (`create`,
   `exec`, `inspect`, `kill`, `cleanup`), before the create runs —
@@ -1308,10 +1328,12 @@ image line carries the same refusal). Review a change to
 committed, `git diff` the directory; where they are local (as in this
 repository, which ignores them), compare them with the bundle a fresh
 `quecto container init` writes into an empty directory.
-An entry that names its own scripts elsewhere — any path outside
-`.quecto/containers/standard/` — is judged `NotStandard` and runs as it
-is, vouched for by the overlay's trust alone: the integrity check is the
-standard bundle's, not a general one. The Containerfile is not a host-side script and is not
+An entry that names its own scripts outside the embedded asset catalogue
+is judged `NotStandard` and runs as it is, vouched for by the overlay's trust
+alone: the integrity check is the standard bundle's, not a general one. This
+includes normalised paths outside `.quecto/containers/standard/` and
+non-catalogue paths inside it, such as this project's supported
+`.quecto/containers/standard/create.sh` cache adapter. The Containerfile is not a host-side script and is not
 checked at launch; it is the project's own file, so `status` lists it as
 `Containerfile: this project's own` (or `yours` beside a drifted script)
 and stays `ready`. Commit `.quecto/containers/standard/Containerfile` so the

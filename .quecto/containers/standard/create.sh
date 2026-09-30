@@ -387,37 +387,95 @@ else
   report ok repo "not needed: sandbox config (no --repo)" ""
 fi
 
+# Protect the namespace before any state/cache creation. Root and our UID
+# are trusted owners; other users must never be able to rename a component.
+# Sticky system ancestors (e.g. /tmp) protect their owned immediate child.
+# This is cross-UID confinement, not protection against a hostile same UID.
+cache_base="$(realpath -e -- "$(dirname "$state_dir")")" || die "cache base does not exist"
+cache_uid="$(id -u)"
+trusted_directory() {
+  local path="$1" owner mode
+  if [ -d "$path" ]; then
+    owner="$(stat -c %u -- "$path")" || return 1
+    mode="$(stat -c %a -- "$path")" || return 1
+    if { [ "$owner" = "$cache_uid" ] || [ "$owner" = 0 ]; } \
+        && [[ "$mode" =~ ^[0-7]{3,4}$ ]]; then
+      return 0
+    fi
+  fi
+  return 1
+}
+namespace_ok=1
+namespace_path="$cache_base"
+namespace_child=""
+while :; do
+  if trusted_directory "$namespace_path"; then
+    namespace_mode="$(stat -c %a -- "$namespace_path")"
+    if (( (8#$namespace_mode & 0022) == 0 )); then
+      :
+    elif [ -n "$namespace_child" ] \
+        && (( (8#$namespace_mode & 01000) == 01000 )) \
+        && trusted_directory "$namespace_child"; then
+      :
+    else
+      namespace_ok=0
+    fi
+  else
+    namespace_ok=0
+  fi
+  if [ "$namespace_path" = / ]; then break; fi
+  namespace_child="$namespace_path"
+  namespace_path="$(dirname "$namespace_path")"
+done
+if [ "$namespace_ok" = 1 ] && [ -O "$cache_base" ] && [ -w "$cache_base" ]; then
+  # Keep legitimate base aliases, but never use their mutable spelling again.
+  state_dir="$cache_base/$(basename "$state_dir")"
+  if [ "$(realpath -ms -- "$state_dir")" = "$state_dir" ]; then
+    :
+  else
+    namespace_ok=0
+  fi
+else
+  namespace_ok=0
+fi
+if [ "$namespace_ok" = 1 ]; then
+  :
+else
+  report fail rust-cache "cache namespace must have trusted owners and protected parents" \
+    "choose a trusted base directory; never chmod existing paths automatically" "$EXIT_STATE_DIR"
+fi
+
 # The state root is created owner-only by a real create; the preflight
 # only judges it (an existing root must be ours and writable, a missing
 # one needs a writable parent) so `--preflight-only` leaves no trace.
-if [ "$preflight_only" = 0 ]; then
-  mkdir -p -m 700 "$state_dir" 2>/dev/null || true
-fi
-if [ -d "$state_dir" ]; then
-  if [ -O "$state_dir" ] && [ -w "$state_dir" ]; then
-    report ok state-dir "state dir $state_dir is writable and owned by the current user" ""
-  elif [ ! -O "$state_dir" ]; then
-    report fail state-dir "state dir $state_dir is not owned by the current user" \
-      "choose a --state-dir under a directory you own" "$EXIT_STATE_DIR"
-  else
-    report fail state-dir "state dir $state_dir is not writable" \
-      "choose a --state-dir under a directory you own" "$EXIT_STATE_DIR"
+validate_state_directory() {
+  local mode
+  if [ -d "$state_dir" ] && [ -O "$state_dir" ] && [ -w "$state_dir" ] \
+      && [ "$(realpath -m -- "$state_dir")" = "$state_dir" ]; then
+    mode="$(stat -c %a -- "$state_dir")" || return 1
+    if [[ "$mode" =~ ^[0-7]{3,4}$ ]] && (( (8#$mode & 0022) == 0 )); then
+      return 0
+    fi
   fi
-else
-  # Walk up to the first existing component: it must be a writable
-  # directory (a file in the way is as fatal as an unwritable parent).
-  state_parent="$state_dir"
-  while [ ! -e "$state_parent" ] && [ "$state_parent" != "/" ] && [ "$state_parent" != "." ]; do
-    state_parent="$(dirname "$state_parent")"
-  done
-  if [ -d "$state_parent" ] && [ -w "$state_parent" ]; then
-    report ok state-dir "state dir $state_dir will be created under writable $state_parent" ""
-  elif [ -e "$state_parent" ] && [ ! -d "$state_parent" ]; then
-    report fail state-dir "state dir $state_dir cannot be created: $state_parent is not a directory" \
-      "choose a --state-dir under a directory you own" "$EXIT_STATE_DIR"
+  return 1
+}
+if [ -e "$state_dir" ] || [ -L "$state_dir" ]; then
+  if validate_state_directory; then
+    report ok state-dir "state directory has a protected owned namespace" ""
   else
-    report fail state-dir "state dir $state_dir cannot be created: $state_parent is not writable" \
-      "choose a --state-dir under a directory you own" "$EXIT_STATE_DIR"
+    report fail state-dir "state directory must be real, owned and protected from other users' writes" \
+      "choose a trusted state directory; inspect existing paths manually" "$EXIT_STATE_DIR"
+  fi
+elif [ "$preflight_only" = 1 ]; then
+  report ok state-dir "state directory will be created owner-only under the trusted base" ""
+elif [ "$namespace_ok" = 1 ]; then
+  # A concurrent creator may win; its directory must pass exactly the same guard.
+  (umask 077; mkdir -m 700 -- "$state_dir") 2>/dev/null || true
+  if validate_state_directory; then
+    report ok state-dir "state directory has a protected owned namespace" ""
+  else
+    report fail state-dir "created state directory failed namespace validation" \
+      "choose a trusted state directory; inspect existing paths manually" "$EXIT_STATE_DIR"
   fi
 fi
 
@@ -456,7 +514,8 @@ for cache_path in "${cache_dirs[@]}"; do
   elif [ "$preflight_only" = 1 ]; then
     report ok rust-cache "shared cache will be created owner-only" ""
   else
-    (umask 077; mkdir -m 700 -- "$cache_path") || die "cannot create shared cache directory"
+    # mkdir success and a concurrent winner both require full confinement.
+    (umask 077; mkdir -m 700 -- "$cache_path") 2>/dev/null || true
     if [ -d "$cache_path" ] && [ -O "$cache_path" ] && [ -w "$cache_path" ] \
         && [ "$(realpath -m -- "$cache_path")" = "$cache_path" ] \
         && [ "$(stat -c %a -- "$cache_path")" = 700 ]; then
@@ -470,6 +529,14 @@ if [ -d "$cache_base/rust-cache/cargo" ]; then
   shopt -s nullglob dotglob
   for entry in "$cache_base/rust-cache/cargo"/*; do
     case "$(basename "$entry")" in
+      .crates.toml|.crates2.json)
+        if [ -f "$entry" ] && [ -O "$entry" ] && [ "$(realpath -m -- "$entry")" = "$entry" ]; then
+          :
+        else
+          report fail rust-cache "Cargo install manifest must be a real owned regular file" \
+            "inspect and clear the dedicated cache" "$EXIT_STATE_DIR"
+        fi
+        ;;
       registry|git|bin|.package-cache|.package-cache-mutate|.global-cache)
         if [ -O "$entry" ] && [ "$(realpath -m -- "$entry")" = "$entry" ]; then
           :
@@ -503,7 +570,7 @@ fi
 child_command=("$@")
 build_boundary=""
 if [ "$agent_launch" = 0 ]; then
-  build_boundary="$(realpath -e -- "$(dirname "${BASH_SOURCE[0]}")/../build-environment.sh")" \
+  build_boundary="$(realpath -e -- "$(dirname "${BASH_SOURCE[0]}")/build-environment.sh")" \
     || die "standard build environment boundary is unavailable"
   if [ -f "$build_boundary" ] && [ -x "$build_boundary" ]; then
     child_command=("$build_boundary" "$@")

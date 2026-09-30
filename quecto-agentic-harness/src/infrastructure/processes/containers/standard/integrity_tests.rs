@@ -106,13 +106,13 @@ fn judges_the_materialised_scripts_as_status_would() {
 /// fake integrity verdict. Custom adapters must live outside the reserved bundle.
 #[test]
 fn production_selector_accepts_the_checkout_custom_adapter() {
-    use std::sync::Arc;
     use crate::application::subagents::dto::{
         ContainerConfigSource, ContainerConfigsError, ContainerLaunchConfig,
         EffectiveContainerConfigSet, SelectContainerConfigRequest,
     };
     use crate::application::subagents::ports::EffectiveContainerConfigs;
     use crate::application::subagents::use_cases::select_container_config::SelectContainerConfig;
+    use std::sync::Arc;
 
     struct CheckoutConfig(ContainerLaunchConfig);
     impl EffectiveContainerConfigs for CheckoutConfig {
@@ -155,14 +155,26 @@ fn production_selector_accepts_the_checkout_custom_adapter() {
         name: Some("pr2388".into()),
     });
     if adapter.ends_with("standard/scripts/create.sh") {
-        assert_eq!(EmbeddedScriptIntegrity.verify(&adapter), StandardScriptVerdict::Differs);
-        assert!(matches!(
-            &result,
-            Err(crate::application::subagents::dto::SelectContainerConfigError::StandardScriptAltered {
-                script, verdict: StandardScriptVerdict::Differs, ..
-            }) if script == &adapter
-        ), "reserved custom adapter must fail specifically integrity: {result:?}");
+        assert_eq!(
+            EmbeddedScriptIntegrity.verify(&adapter),
+            StandardScriptVerdict::Differs
+        );
+        assert!(
+            matches!(
+                &result,
+                Err(crate::application::subagents::dto::SelectContainerConfigError::StandardScriptAltered {
+                    script, verdict: StandardScriptVerdict::Differs, ..
+                }) if script == &adapter
+            ),
+            "reserved custom adapter must fail specifically integrity: {result:?}"
+        );
     }
-    assert!(result.is_ok(), "production selection refused custom adapter: {result:?}");
-    assert_eq!(EmbeddedScriptIntegrity.verify(&adapter), StandardScriptVerdict::NotStandard);
+    assert!(
+        result.is_ok(),
+        "production selection refused custom adapter: {result:?}"
+    );
+    assert_eq!(
+        EmbeddedScriptIntegrity.verify(&adapter),
+        StandardScriptVerdict::NotStandard
+    );
 }

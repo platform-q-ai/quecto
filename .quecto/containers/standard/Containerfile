@@ -3,9 +3,12 @@
 # It lives here, in the repository, because a project's Containerfile is the
 # project's (#2073): `quecto container init` writes a neutral starter only
 # where none exists, never counts this file as drift and never replaces it.
-# scripts/create.sh is this project's committed Rust-cache opt-in adapter.
-# Other runtime scripts are materialised by init. `init --refresh` replaces
-# bundled scripts: restore the project adapter before launching cache builds.
+# create.sh is this project's committed Rust-cache opt-in adapter, outside the
+# reserved bundle catalogue. Init materialises scripts/*.sh unmodified; their
+# launch integrity checks remain enabled. After init/refresh, explicitly wire
+# only standard.create argv[0] to this create.sh using the recipe in
+# docs/container-runtimes.md; preserve all other argv and do not overwrite
+# scripts/create.sh with the project adapter.
 # Build the image with the command init prints (this directory is its context).
 #
 # Keep these versions aligned deliberately with `.github/workflows/ci.yml`.

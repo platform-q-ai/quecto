@@ -17,7 +17,6 @@
 
 mod compiler_environment;
 mod container_cache_wiring;
-mod shared_cache_security;
 mod docker_create_admission_mask;
 mod docker_create_image_contract;
 mod docker_kill_script;
@@ -44,6 +43,7 @@ mod inference_admission_transport;
 mod issue_1193_completion;
 mod legacy_session_startup;
 mod repl_production;
+mod shared_cache_security;
 mod standard_shared_cache;
 mod swarm_agent_loop;
 mod swarm_board_admission_race;
