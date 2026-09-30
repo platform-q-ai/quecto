@@ -110,6 +110,12 @@ impl WatchPolls {
     }
 }
 
+impl Drop for WatchPolls {
+    fn drop(&mut self) {
+        self.flush();
+    }
+}
+
 /// Writes the run watch's ticks `handles` holds, if any (#2338): the watch
 /// ended, recording stops, or the harness exits.
 pub fn flush_watch_polls(handles: &SwarmBoardHandles) {

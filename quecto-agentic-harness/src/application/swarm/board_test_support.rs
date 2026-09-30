@@ -123,9 +123,6 @@ impl BoardRepository for MemoryBoard {
     /// every write is journalled, so a read whose work journalled one is
     /// refused, and neither its state nor its journal entries are kept.
     fn read(&self, work: &mut BoardWork<'_>) -> Result<(), BoardError> {
-        if self.journal.lock().is_ok() {
-            return self.atomic(false, work);
-        }
         *self.reads.lock().unwrap() += 1;
         let working = RefCell::new(self.snapshot());
         let journalled = self.journal.lock().unwrap().len();

@@ -219,7 +219,9 @@ impl WatchTicksOnExit {
 
 impl Drop for WatchTicksOnExit {
     fn drop(&mut self) {
-        let _ = self.0;
+        if let Some(board) = self.0 {
+            board.flush_all_watch_polls();
+        }
     }
 }
 

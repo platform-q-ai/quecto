@@ -49,7 +49,7 @@ impl ReadRunSnapshot {
             |transaction, run| {
                 let event_cursor = transaction.event_generation()?;
                 debug_assert!(event_cursor >= 0, "an event cursor is never negative");
-                let snapshot = match since == Some(event_cursor) && since.is_none() {
+                let snapshot = match since == Some(event_cursor) {
                     true => None,
                     false => Some(snapshot_of(transaction, run)?),
                 };

@@ -135,23 +135,6 @@ impl SwarmContext {
     /// run's snapshot with the cursor otherwise; passing none, always the
     /// snapshot.
     pub fn watch(&self, since: Option<i64>) -> Result<RunWatch, DomainError> {
-        // RED STUB (#2338 review round 1): the cursor, then the snapshot.
-        let event_cursor = self
-            .rpc("_event_cursor", json!([]))?
-            .as_i64()
-            .ok_or_else(|| invalid("missing event cursor"))?;
-        if since == Some(event_cursor) {
-            return Ok(RunWatch {
-                event_cursor,
-                snapshot: None,
-            });
-        }
-        if event_cursor >= 0 {
-            return Ok(RunWatch {
-                event_cursor,
-                snapshot: Some(self.snapshot()?),
-            });
-        }
         let value = self.board.call_as(
             self.location(),
             &self.member,

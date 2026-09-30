@@ -274,9 +274,9 @@ pub fn supervise(
     // settlement, so its board calls are marked as blocking work (#2278).
     std::thread::spawn(super::call_work::blocking(move || {
         let mut suspended = None;
-        // #2338: each tick reads the event cursor, and a snapshot only
-        // when the schedule asks for one (the cursor moved, the deadline
-        // came, a refresh is due).
+        // #2338: each tick is one `_watch` call, which answers the
+        // snapshot only when the board changed or the schedule asks for it
+        // (the deadline came, a refresh is due).
         let mut schedule = crate::domain::swarm::watch::WatchSchedule::new();
         loop {
             let now = crate::application::swarm::ports::Clock::now_seconds(&SystemClock);

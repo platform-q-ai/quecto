@@ -146,32 +146,33 @@ interpreter sandbox, the `tools.swarm` limits); members compute through
 `bash`, and every board call is a structured op on the Rust board. The
 paragraph above records the state before it.
 
-### Amendment (#2338): the event cursor is read without the write lock
+### Amendment (#2338): the watch's reads take no write lock
 
 Every board transaction began `BEGIN IMMEDIATE`, reads included (D2 and
 point 3 above), because Python's did. The run watch made that expensive:
 each member's harness took a `_snapshot` every 500 ms, each one a write-lock
 round trip, which was 76 to 89 % of all board calls in the first real runs
-and nearly all of their `busy` records. The watch now reads the event cursor
-(`_event_cursor`) every tick and takes a `_snapshot` only when the cursor
-moved, the running run's deadline came, or a bounded refresh is due
-(`domain::swarm::watch`).
+and nearly all of their `busy` records. The watch now makes one Rust-only
+call a tick, `_watch(since)`: given the event cursor of its last snapshot,
+it answers only the cursor while that is unchanged, and the snapshot with
+the cursor otherwise; given none (the running run's deadline came, a
+bounded refresh is due), the snapshot (`domain::swarm::watch`).
 
-Two reads now run in a read transaction (`BoardRepository::read`):
-`BEGIN DEFERRED` on a connection set `PRAGMA query_only=ON`, with no schema
-or column upgrade.
+Three reads now run in a read transaction (`BoardRepository::read`, which
+every repository implements and which refuses any write): `BEGIN DEFERRED`
+on a connection set `PRAGMA query_only=ON`, with no schema or column
+upgrade.
 
 - `_event_cursor`, a pure read.
-- `_snapshot`, whenever its operation gate has nothing to write
-  (`board_operation::read_operation`): the gate's authorisation and the
-  snapshot are read in one read transaction. Only a running run whose
-  deadline has come must be ended by the gate first; then the read
-  transaction ends having written nothing, and the op runs as before, in its
-  two `IMMEDIATE` transactions. It does so too when the read transaction
-  fails as a store failure (a board an older writer created, lacking a
-  column only the full transaction adds). Its answers and refusals are the
-  same either way. The measured remainder of the watch's `busy` records were
-  its `IMMEDIATE` snapshots, which three watchers took together.
+- `_snapshot` and `_watch`, whenever their operation gate has nothing to
+  write (`board_operation::read_operation`): the gate's authorisation, the
+  cursor and the snapshot are read in one read transaction. Only a running
+  run whose deadline has come must be ended by the gate first; then the
+  read transaction ends having written nothing, and the op runs as before,
+  in its two `IMMEDIATE` transactions. It does so too when the read
+  transaction fails as a store failure (a board an older writer created,
+  lacking a column only the full transaction adds, which that transaction
+  adds). Its answers and refusals are the same either way.
 
 Why this is safe:
 
@@ -181,24 +182,30 @@ Why this is safe:
   its end: it never takes the reserved (write) lock, so it neither waits for
   a writer between `BEGIN IMMEDIATE` and its commit nor holds one off; a
   writer's commit, which needs the exclusive lock, waits (in its busy
-  handler) at most for the one statement to finish. A read finding a writer
-  mid-commit (pending or exclusive lock) waits in its own busy handler, on
-  the same 500 ms schedule.
+  handler) at most for the read transaction to finish. A read finding a
+  writer mid-commit (pending or exclusive lock) waits in its own busy
+  handler, on the same 500 ms schedule. The cost moves rather than
+  vanishes: under saturation (reads arriving faster than a writer's commit
+  finds a gap), writers' commits wait on readers more often, and the
+  review's contention probe measured more `busy` records on the writers'
+  side there. At realistic load (a tick every 500 ms per member) the reads
+  no longer serialize behind each other or behind writers, and the watch's
+  `busy` records fell to near zero.
 - **Consistency.** The shared lock is held for the whole transaction, and
   no writer can commit while it is held, so everything a read transaction
-  reads is one committed state. The cursor read is one statement (the
-  metered call's run-id note is a second, in the same transaction).
+  reads is one committed state: `_watch`'s cursor and snapshot are read
+  together.
 - **No deadlock.** A read transaction never writes: `query_only` makes
   SQLite refuse any write in it, so it can never try to upgrade its shared
   lock to the write lock, which is where two deferred transactions can
-  deadlock (each holding shared, each wanting reserved). A `_snapshot` that
-  finds the gate must write ends its read first, then begins `IMMEDIATE`:
-  it never upgrades. Every other transaction that may write still begins
+  deadlock (each holding shared, each wanting reserved). A `_snapshot` or
+  `_watch` that finds the gate must write ends its read first, then begins
+  `IMMEDIATE`: it never upgrades. Every other transaction that may write still begins
   `IMMEDIATE`.
 - **Python parity** no longer applies to this concurrency detail: the
-  Python board is test-only and is deleted at S18, and `_event_cursor` is
-  a Rust-only method the differential suite never compares; `_snapshot`
-  answers, refuses and writes as Python's did.
+  Python board is test-only and is deleted at S18, and `_event_cursor` and
+  `_watch` are Rust-only methods the differential suite never compares;
+  `_snapshot` answers, refuses and writes as Python's did.
 
 ## Consequences
 

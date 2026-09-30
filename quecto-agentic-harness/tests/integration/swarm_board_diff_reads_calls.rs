@@ -269,9 +269,10 @@ const INTERNAL_HELPERS: [&str; 15] = [
 const TEST_ONLY: [&str; 4] = ["create_run", "bootstrap_run", "bootstrap_join", "task_raw"];
 
 /// Dispatcher methods Python's `Workbench` has no counterpart of: the
-/// structured ops' event cursor (#2279), read around a member's call, and
-/// the run's totals the coordinator's harness reads at settle (#2313).
-const RUST_ONLY: [&str; 2] = ["_event_cursor", "_run_totals"];
+/// structured ops' event cursor (#2279), read around a member's call, the
+/// run's totals the coordinator's harness reads at settle (#2313), and the
+/// run watch's tick (#2338).
+const RUST_ONLY: [&str; 3] = ["_event_cursor", "_run_totals", "_watch"];
 
 /// Arguments only the Rust board takes, by method (#2339): the harness's
 /// admission gate, which members cannot send (`_request_admission` is a

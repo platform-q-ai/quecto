@@ -155,6 +155,7 @@ impl SwarmBoard {
     pub fn stop_recording(&self) {
         // The watch's ticks held so far were made while the board
         // recorded (#2338 review round 1): written before it stops.
+        self.flush_all_watch_polls();
         *self.recording_lock() = None;
     }
 

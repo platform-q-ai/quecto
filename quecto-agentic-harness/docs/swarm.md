@@ -763,7 +763,7 @@ body, evidence, reason, path or other board text:
 | `kind` | For a refusal, its stable kind: `run_missing`, `not_coordinator`, `not_member`, `not_running`, `budget_exhausted` (the deadline has passed, or the run is paused or ended as `budget-exhausted`), `member_limit`, `identity_taken`, `run_exists`, `completion_unmet`, `stale_revision`, `immutable`, `wrong_state`, `not_owner`, `stale_token`, `reserved_by_other`, `dependency_cycle`, `not_found` (a task, message or recipient the board does not hold), `capacity_full` (a bounded board table is full: tasks, file reservations, an inbox or a request ledger), `supervisor_only` (resume, close or extend, which only the supervisor takes), `launch_conflict` (a launch whose process identity conflicts with the member's), `request_id_reused` (a request id reused with different data), `invalid`, `calling` (no such method, or arguments that do not bind), `contended` (the database stayed busy or locked past 500 ms: the write lock at `BEGIN`, a reader holding off the commit, or `SQLITE_LOCKED`), `store_missing`, `store` (any other store failure) or `internal` |
 | `committed` | Written `true` only for a refusal that came after the op's writes committed: `create` commits the run, then its summary can refuse; `_bootstrap` commits the placeholder (when it writes one), then its join and summary can refuse; `_join` commits an admission, then its activation can refuse, and an admission or activation, then its summary can refuse. Its `decision` (the branch taken so far) and detail (`_bootstrap`'s `placeholder_created`) are recorded too. Left out for any other refusal |
 | `duration_us` | The whole op, in microseconds |
-| `lock_wait_us` | From `BEGIN IMMEDIATE` issued to acquired (or given up), summed over the op's transactions; `null` when the op began no transaction, so nothing was measured. `_event_cursor`, and a `_snapshot` whose gate has nothing to write, begin a read transaction (`BEGIN DEFERRED`, #2338), which takes no lock at `BEGIN`, so the lock wait is only that statement's own |
+| `lock_wait_us` | From `BEGIN IMMEDIATE` issued to acquired (or given up), summed over the op's transactions; `null` when the op began no transaction, so nothing was measured. **A read's is about 0, and its waits are in `busy_wait_us`:** `_event_cursor`, `_watch`, and a `_snapshot` whose gate has nothing to write, begin a read transaction (`BEGIN DEFERRED`, #2338), which takes no lock at `BEGIN`, so their lock wait is only that statement's own. A dashboard of lock waits should read these ops' `busy_wait_us` (and `busy`) instead |
 | `busy_wait_us` | The time the store's busy handler slept for the op, whichever statement found the database busy (`BEGIN`, a read or the commit); `null` when nothing was measured |
 | `busy` | Whether the busy handler fired at all: another connection held a lock the op needed (the write lock, or, at commit, a reader); `null` when nothing was measured |
 | `cursor_moved` | Whether the op moved the caller's cursor: its notification cursor for `_notifications`, its wake cursor for `_accept_wake`; for a `summary` given a cursor, whether the board's cursor is no longer it (`false` for the `unchanged` answer); `null` for an op that has no cursor to move, and for a refusal |
@@ -781,7 +781,7 @@ body, evidence, reason, path or other board text:
 | `unexpected_args` | For a `calling` or `invalid` refusal, `{"count": N, "known": [...]}`: how many keys (or positional values) the op's signature has no parameter for, and, in `known`, those that are a schema field of some other op (a field sent to the wrong op). Any other key is counted only, never named, so no text a member typed as a key reaches the log. `known` is left out when empty, the field when there are none |
 | `wrong_type_args` | For a `calling` or `invalid` refusal of a member-facing op, `[{"arg": ..., "expected": ...}]`: each argument given a value of another JSON type than its schema's, and that type (`integer`, `string`, `boolean`, `null_or_string`, `null_or_integer`, `array_of_string`, `array_of_object`, `null_or_array_of_integer`; `null` first when it is allowed). An array whose items are of another type counts; an item's own properties are not checked (an `evidence` item need only be an object). It compares with the schema, not with the board's own checks, and is kept for any `invalid` refusal, the board's own validation included, so it can name a field that is not the refusal's cause: `task_create` with an empty `acceptance` list and a numeric `request` is refused for the list, and records `request` (which the board binds untyped, as Python does). Left out when there are none |
 | `unreadable_args` | For member input refused before the board as `invalid` (#2341): the schema field whose value the board's JSON value cannot hold (`1e400`, an integer beyond i64 and u64, a string holding a lone surrogate, or nesting more than 128 levels deep, counting the object itself as one level), or `arguments` for the text as a whole. `arguments` covers: text the tool cannot read as JSON (the `unknown` op's record: text that is no JSON, and JSON the serde reader refuses where no structured op was read, such as a harness op or a call with no op holding `1e400`); such a value under a key no schema field names; and, for the harness's own calls only, arguments that are no array or object (a member's JSON array or scalar names no op, so it is refused as op `unknown` with kind `calling` and no argument fields). Left out otherwise |
-| `polls` | For the run watch's `_event_cursor` aggregate (#2338, decision `unchanged`), the unchanged polls it accounts for; left out of every record of one call (see [The run watch](#the-run-watch-2338)) |
+| `polls` | For the run watch's `_watch` aggregate (#2338, decision `unchanged`), the unchanged ticks it accounts for; left out of every record of one call (see [The run watch](#the-run-watch-2338)) |
 | `ended_by_loss` | For a recorded loss (`_quarantine`'s `recorded`, `_lose_coordinator`) or a confirmed death, whether the op ended the run by loss; left out when the op recorded neither |
 
 Every name in `missing_args`, `unexpected_args.known`, `wrong_type_args` and
@@ -841,44 +841,55 @@ the `contended` WARN fires either way.
 
 Every member's harness watches its run on a thread of its own, so it
 suspends its inference on a pause and settles the run's end even when no
-turn is running. The watch ticks every 500 ms. Each tick reads the board's
-event cursor (`_event_cursor`, a read transaction that takes no write lock:
-see ADR-0030) and takes a full `_snapshot` only when:
+turn is running. The watch ticks every 500 ms, and each tick is one board
+call, `_watch` (Rust-only, recorded with role `host`), in one read
+transaction that takes no write lock (ADR-0030). The watch passes the event
+cursor of its last snapshot (`since`); the board answers
+`{"event_cursor", "unchanged": true}` (decision `unchanged`) while its cursor
+is still that one, and `{"event_cursor", "snapshot"}` (decision `snapshot`,
+the snapshot as `_snapshot` answers it) otherwise, the two read together.
+Every change the watch acts on (a pause, a resume, the run's end, a deadline
+extension) writes an event, so the tick after it answers the snapshot, as
+soon as when the watch took a snapshot every tick. The watch passes no
+cursor, so the board answers the snapshot whatever its cursor, when:
 
-- the cursor moved since the last snapshot, or could not be read (every
-  change the watch acts on, a pause, a resume, the run's end, a deadline
-  extension, writes an event), so a change is seen on the next tick, as it
-  was when the watch took a snapshot every tick;
-- the run is running and its deadline has come (the snapshot's gate records
-  the expiry, which no event announces);
+- no snapshot was taken yet, or the last tick could not be read;
+- the run is running and its deadline has come (the gate records the
+  expiry, which no event announces, through its two IMMEDIATE
+  transactions; the tick then answers the paused run);
 - a refresh is due: 5 s after a change, doubling while nothing changes, at
   most 60 s apart.
 
-An idle member so takes about one `_snapshot` a minute instead of 120. Neither
-read contends for the write lock: the cursor read, and the snapshot whenever
-its gate has nothing to write (the deadline has not come), run in a read
-transaction (ADR-0030, #2338). The watch's calls are recorded
-with role `host`. Its unchanged polls are not one record each: consecutive
-polls of one run that found the cursor where the last poll left it are folded
-into one `_event_cursor` record with decision `unchanged` and `polls` counting
-them. Its `duration_us`, `lock_wait_us`, `busy_wait_us` and `result_bytes` are
-the slowest poll's, and `cursor_moved` is `false`. A poll the busy handler
-slowed, a refused poll, the first poll and one that found the cursor moved are
-each recorded alone (decision `read`), as every other call is. An aggregate is
-written before the watch's next record of any other kind, once it has been
-open 60 s, when the watch ends, when the run's summary is taken, and when the
-board's handles for the file are replaced (a session switch): a process that
-exits without any of these loses at most one aggregate's count. The aggregate
-leaves one `tracing` record (`swarm board watch polls`, DEBUG, with `polls`) on
-`quecto::swarm_board`; a poll it holds leaves none. With the event log off,
-nothing is aggregated and every poll leaves its own DEBUG `tracing` record, as
-every read does.
+An idle member so reads about one snapshot a minute instead of 120, and a
+tick after a change is one call and one record. `_watch` answers and
+refuses through `_snapshot`'s gate: a board an older writer created,
+lacking a column only a full transaction adds, is read through the
+IMMEDIATE transactions, which add it.
 
-Count the `_event_cursor` calls a log's records account for (the watch's
-polls, and the structured ops' cursor reads around a member's call):
+The watch's `unchanged` ticks are not one record each: consecutive ones of
+one run are folded into one `_watch` record with decision `unchanged` and
+`polls` counting them. Its `duration_us`, `lock_wait_us`, `busy_wait_us` and
+`result_bytes` are the slowest tick's, and `cursor_moved` is `false`. A tick
+that answered the snapshot (`cursor_moved` `true` when it was given a
+cursor), one the busy handler slowed and a refused one are each recorded
+alone, as every other call is. An aggregate is written before the watch's
+next record of any other kind, once it has been open 60 s, when the watch
+ends, before the run's summary is taken (no later tick is written until the
+summary is), when recording stops, when the board's handles for the file are
+replaced (a session switch) or dropped, and when the agent command ends,
+however it ends: a normal return, the orderly shutdown SIGTERM or SIGINT
+starts, or a panic unwinding through it. Only an exit nothing can intercept
+loses what the watch held, at most one aggregate (60 s of ticks): SIGKILL,
+the OOM killer, or a panic outside a tool call, which the harness's panic
+hook aborts on. The aggregate leaves one `tracing` record (`swarm board
+watch polls`, DEBUG, with `polls`) on `quecto::swarm_board`; a tick it holds
+leaves none. With the event log off, nothing is aggregated and every tick
+leaves its own DEBUG `tracing` record, as every read does.
+
+Count the watch's ticks a log's records account for:
 
 ```sh
-jq -s '[.[] | select(.event == "swarm_op" and .op == "_event_cursor")
+jq -s '[.[] | select(.event == "swarm_op" and .op == "_watch")
   | (.polls // 1)] | add' ~/.quecto/audit/<session>.jsonl
 ```
 
@@ -984,8 +995,8 @@ records:
 | `run_id` | The run, as the board generated its id |
 | `scope` | Always `process`: the fields below, up to `run`, are this harness's own calls |
 | `records` | The run's `swarm_op` records this process folded |
-| `calls` | The board calls those records account for: one per record, but a run-watch aggregate (`polls`, #2338) accounts for each poll it holds. Each op's `ok` and `refused` counts are calls, so `_event_cursor`'s `ok` is every poll the watch made, recorded alone or aggregated |
-| `ops` | Per op: `ok` (answered), `refused` (by `kind`, left out when none), the nearest-rank `p50` and `p95` and the exact `max` of `duration_us`, `lock_wait_us` and `busy_wait_us` (a record that did not measure a wait is left out of its percentiles and counted in that wait's `unmeasured`), `busy` (records whose busy handler fired), and `unsampled` (the percentiles are taken from a uniform sample of at most 4096 of an op's records, drawn over the whole run; the records not held are counted here, and left out when none) |
+| `calls` | The board calls those records account for: one per record, but a run-watch aggregate (`polls`, #2338) accounts for each tick it holds. Each op's `ok` and `refused` counts are calls, so `_watch`'s `ok` is every tick the watch made, recorded alone or aggregated |
+| `ops` | Per op: `ok` (answered), `refused` (by `kind`, left out when none), the nearest-rank `p50` and `p95` and the exact `max` of `duration_us`, `lock_wait_us` and `busy_wait_us` (a record that did not measure a wait is left out of its percentiles and counted in that wait's `unmeasured`; a run-watch aggregate, #2338, adds one sample, its slowest tick's, for all the ticks it holds, so `_watch`'s p50 and p95 lean high), `busy` (records whose busy handler fired), and `unsampled` (the percentiles are taken from a uniform sample of at most 4096 of an op's records, drawn over the whole run; the records not held are counted here, and left out when none) |
 | `busy` | Records whose busy handler fired, over every op |
 | `tasks` | Tasks `created`, `claimed`, `released`, `blocked`, `submitted` and `accepted` (verified) by this process's answered ops, by their decisions |
 | `messages` | Messages `sent`, `acked` (consumed) and `withdrawn` by this process's ops, likewise |

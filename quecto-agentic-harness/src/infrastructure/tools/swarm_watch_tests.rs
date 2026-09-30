@@ -393,3 +393,19 @@ fn an_older_board_without_an_added_column_still_answers() {
     assert_eq!(context.snapshot().unwrap().status, RunStatus::Running);
     assert!(columns(&connection).contains(&"outcome".to_owned()));
 }
+
+/// `_watch`'s `since` is a cursor the board answered, or null.
+#[test]
+fn a_watch_refuses_a_since_that_is_no_cursor() {
+    let (_directory, context, _log) = running();
+    for since in [json!("7"), json!(-1), json!(1.5)] {
+        let refused = context.call("_watch", json!([since])).unwrap_err();
+        assert!(
+            refused
+                .to_string()
+                .contains("since must be an event cursor"),
+            "{refused}"
+        );
+    }
+    assert!(context.call("_watch", json!([null])).unwrap()["snapshot"].is_object());
+}

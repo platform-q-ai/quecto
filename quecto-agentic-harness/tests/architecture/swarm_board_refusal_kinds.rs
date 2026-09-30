@@ -650,6 +650,11 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "Calling",
     ),
     (
+        "src/infrastructure/tools/swarm_board_dispatch_host.rs:run_watch",
+        "since must be an event cursor (a nonnegative integer) or null",
+        "Invalid",
+    ),
+    (
         "src/infrastructure/tools/swarm_board_dispatch_usage.rs:request_admission",
         "_request_admission: gate must be one of model, retry, tool",
         "Invalid",
