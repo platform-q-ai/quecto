@@ -9,6 +9,10 @@ fn lookup_doc_resolves_plain_md_and_prefixed_names() {
         lookup_doc("spike-prompt"),
         Some(include_str!("../../../docs/spike-prompt.md"))
     );
+    assert_eq!(
+        lookup_doc("review-prompt"),
+        Some(include_str!("../../../docs/review-prompt.md"))
+    );
     assert!(lookup_doc("subagents.md").is_some());
     assert!(lookup_doc("docs/subagents.md").is_some());
     assert!(lookup_doc("docs/docs-tool-embeds/workflow.md").is_some());
