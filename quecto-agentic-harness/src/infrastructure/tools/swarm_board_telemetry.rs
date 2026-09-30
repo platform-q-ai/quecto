@@ -18,7 +18,8 @@ use crate::domain::redaction::Redacted;
 use crate::domain::swarm::telemetry::{decision_kind, run_role};
 use crate::domain::swarm::validation::MEMBER_ID_MAX_BYTES;
 use crate::domain::swarm::{
-    BoardError, BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind,
+    ArgumentFaults, BoardError, BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole,
+    RefusalKind,
 };
 
 /// The `tracing` target of every board call record.
@@ -283,6 +284,7 @@ pub(super) fn observation(
         },
         decision: served.map(|served| served.decision.to_owned()),
         detail: served.map_or(BoardOpDetail::NONE, |served| served.detail.clone()),
+        arguments: ArgumentFaults::NONE,
     }
 }
 

@@ -172,6 +172,7 @@ fn observation(outcome: BoardOpOutcome) -> BoardOpObservation {
         result_bytes: 42,
         decision: None,
         detail: BoardOpDetail::NONE,
+        arguments: ArgumentFaults::NONE,
     }
 }
 

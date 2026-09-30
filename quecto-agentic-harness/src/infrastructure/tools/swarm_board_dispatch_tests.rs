@@ -634,3 +634,6 @@ fn serde_float_parsing_would_change_python_equal() {
          caution on `call` may be relaxed"
     );
 }
+
+#[path = "swarm_board_dispatch_binding_tests.rs"]
+mod binding;

@@ -6,7 +6,9 @@ use std::sync::atomic::Ordering;
 use super::EventLogBoardOps;
 use crate::application::swarm::ports::BoardOpLog;
 use crate::domain::redaction::Redacted;
-use crate::domain::swarm::{BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole};
+use crate::domain::swarm::{
+    ArgumentFaults, BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole,
+};
 use crate::infrastructure::persistence::audit_log::AuditLog;
 
 fn observation() -> BoardOpObservation {
@@ -26,6 +28,7 @@ fn observation() -> BoardOpObservation {
         result_bytes: 2,
         decision: None,
         detail: BoardOpDetail::NONE,
+        arguments: ArgumentFaults::NONE,
     }
 }
 

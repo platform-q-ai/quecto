@@ -642,3 +642,6 @@ mod input;
 
 #[path = "swarm_board_ops_notes_tests.rs"]
 mod notes;
+
+#[path = "swarm_board_ops_binding_tests.rs"]
+mod binding;

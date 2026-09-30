@@ -44,7 +44,8 @@ pub use records::{
 pub use run_summary::{RunSummaryFold, SummaryScope, SwarmRunSummary};
 pub use run_totals::{MemberUsage, MessageTotals, RunTotals, TaskStates};
 pub use telemetry::{
-    BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind, RunStatusKind,
+    ArgumentFaults, BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind,
+    RunStatusKind, UnexpectedArgs, WrongTypeArg,
 };
 pub use usage::{
     MAX_REQUEST_PAYLOAD_BYTES, MAX_REQUEST_ROWS, Redelivery, UsageBudget, UsageDecision,
