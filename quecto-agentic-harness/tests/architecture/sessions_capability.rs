@@ -755,7 +755,9 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/application/context_pruning_snapshots.rs", 88),
     // #2348: new modules (the size-aware collapse; the plan, split from
     // `context.rs` so it stays within its ceiling).
-    ("src/application/context_pruning_large_results.rs", 71),
+    ("src/application/context_pruning_large_results.rs", 79),
+    // #2348 review M1: a swarm member's size-aware collapse.
+    ("src/application/context_large_result_switch.rs", 37),
     ("src/application/context_plan.rs", 28),
     ("src/application/agent_loop_spill.rs", 56),
     // #2212: the gauge wrappers moved to their own module (749 → 703).

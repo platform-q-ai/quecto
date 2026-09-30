@@ -62,6 +62,26 @@ impl Tool for ReadTool {
         true
     }
 
+    /// The model no longer holds this read's content in full (#2348 review
+    /// M1): forget every cached delivery of its file, so the next read
+    /// answers the content instead of the unchanged marker.
+    fn result_collapsed(&self, arguments: &str) {
+        let Some(path) = serde_json::from_str::<serde_json::Value>(arguments)
+            .ok()
+            .and_then(|args| {
+                args.get("path")
+                    .and_then(|p| p.as_str())
+                    .map(str::to_string)
+            })
+        else {
+            return;
+        };
+        let resolved = resolve_read_path(&path, &self.workspace);
+        let cache_path = std::fs::canonicalize(&resolved).unwrap_or(resolved);
+        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        cache.entries.retain(|key, _| key.path != cache_path);
+    }
+
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "read".into(),
@@ -223,7 +243,8 @@ impl Tool for ReadTool {
                     if entry.hash == hash {
                         return Ok(ToolResult {
                             content: format!(
-                                "[unchanged since read {}, hash match, {} lines]",
+                                "[unchanged since read {}, hash match, {} lines; if your \
+                                 earlier copy is a recall stub, pass force:true]",
                                 entry.sequence, entry.line_count
                             ),
                             is_error: false,

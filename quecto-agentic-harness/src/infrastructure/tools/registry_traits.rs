@@ -75,6 +75,22 @@ impl ToolExecutor for ToolRegistryImpl {
             ToolSource::Uds | ToolSource::Runtime => None,
         }
     }
+
+    /// Tell a bundled tool its result was collapsed (#2348 review M1); an
+    /// extension answers from no delivery cache the harness owns.
+    fn result_collapsed(&self, name: &str, arguments: &str) {
+        let Some(registration) = self.metadata.get(name) else {
+            return;
+        };
+        match registration.source {
+            ToolSource::BundledNative => {
+                if let Some(tool) = self.get(name) {
+                    tool.result_collapsed(arguments);
+                }
+            }
+            ToolSource::Uds | ToolSource::Runtime => {}
+        }
+    }
 }
 
 impl RuntimeToolLifecycleRegistry for ToolRegistryImpl {

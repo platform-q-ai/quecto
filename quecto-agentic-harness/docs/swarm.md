@@ -653,11 +653,13 @@ and setting it at or above `max_context_tokens` switches it off), and each
 full `summary` answer supersedes the member's older
 ones, which collapse to recall stubs while the newest stays in full. A large
 tool result (a long bash output, a `docs` or `web_fetch` read) collapses to its
-recall stub once the member has seen it for 3 turns (#2348). Each prune
+recall stub once the member has seen it for 3 turns (#2348; on by default only
+for swarm members, and a `recall` answer or a result with images is exempt). Each prune
 that does any of these is visible in the event log's `context_pruned` record
 (`snapshots_superseded`, `large_results_collapsed`, `ceiling_tokens`), and each
 turn's `llm_turn_end` records the cached share of its input
-(`cached_input_tokens`); the moment the cap engages is a
+(`cached_input_tokens`) and the share written to the cache
+(`cache_write_tokens`); the moment the cap engages is a
 `quecto::swarm_board` tracing event. See
 [Sessions](sessions.md#context-management) for the dials.
 

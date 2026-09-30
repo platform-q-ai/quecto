@@ -35,10 +35,14 @@ impl AgentLoopImpl {
                 "the tool definitions take most of the context budget; the messages keep a quarter of it"
             );
         }
+        let live_before = live_result_ids(messages);
         let mut plan = self
             .context_manager
             .prepare_provider_context(messages, budget, spills_dirty)
             .await;
+        if plan.durable_prefix_dirty {
+            self.report_collapsed_results(messages, &live_before);
+        }
         // The floor passed the configured budget, or the tools alone fill
         // the model's window (no transcript fits).
         plan.over_budget |= floor_overrides || window_exceeded;
@@ -103,6 +107,25 @@ impl AgentLoopImpl {
         plan.total_tokens.saturating_add(fixed_tokens)
     }
 
+    /// Tell each tool whose result a rule just collapsed (#2348 review M1),
+    /// so a tool answering repeats from what it delivered (the read cache)
+    /// forgets that delivery. A result dropped with its call leaves no
+    /// arguments to report; the read marker names `force:true` for it.
+    fn report_collapsed_results(
+        &self,
+        messages: &[Message],
+        live_before: &std::collections::BTreeSet<String>,
+    ) {
+        let live_after = live_result_ids(messages);
+        for call in messages.iter().flat_map(|m| &m.tool_calls) {
+            let collapsed = live_before.contains(&call.id) && !live_after.contains(&call.id);
+            if collapsed {
+                self.tool_executor()
+                    .result_collapsed(&call.name, &call.arguments);
+            }
+        }
+    }
+
     /// The estimate of the tool definitions every request carries (#2160).
     pub(super) fn tool_definition_tokens(&self) -> usize {
         self.current_tool_definitions()
@@ -114,6 +137,15 @@ impl AgentLoopImpl {
     pub async fn prune_resumed_context(&self, messages: &mut Vec<Message>) -> usize {
         self.apply_context_pruning(messages, 0, true).await
     }
+}
+
+/// The call ids of the tool results still in full.
+fn live_result_ids(messages: &[Message]) -> std::collections::BTreeSet<String> {
+    messages
+        .iter()
+        .filter(|m| m.role == crate::domain::message::Role::Tool && !m.is_collapsed)
+        .filter_map(|m| m.tool_call_id.clone())
+        .collect()
 }
 
 // #1044/#1045/#1046: context-management tests (750-line cap: separate file).

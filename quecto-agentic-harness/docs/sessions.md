@@ -654,17 +654,30 @@ switch.
    (two summaries in one parallel batch) is superseded only once it has.
    Only bundled tools can mark one. The mark is not persisted: a resumed
    session supersedes nothing it loaded.
-6. **Large results** (#2348): a count dial is blind to size, so a tool
-   result over `context_collapse_large_result_tokens` (default `2000`
-   estimated tokens) collapses to its recall stub once the model has seen
-   it for `context_collapse_large_result_after_turns` (default `3`) turns
-   — three model responses have followed it — whatever the count dials
-   say. It runs after superseded snapshots and before the dials, which
-   then count only what is still in full. A result the model has not
-   seen, one never spilled, the newest snapshot of a state and one whose
-   stub would be no smaller all stay in full. Only the result's content
-   becomes a stub: every call keeps its result. Each prune that collapses
-   one counts it in `context_pruned.large_results_collapsed`.
+6. **Large results** (#2348): a count dial is blind to size, so for a
+   **swarm member** a tool result over `context_collapse_large_result_tokens`
+   (`2000` estimated tokens unless set) collapses to its recall stub once
+   the model has seen it for `context_collapse_large_result_after_turns`
+   (`3` unless set) turns — three model responses have followed it —
+   whatever the count dials say. **For every other agent it is off unless
+   `context_collapse_large_result_tokens` is set**; set, it applies to every
+   agent. The evidence behind it is swarm-only: in a coding session the
+   model edits against whole-file reads well over 2k tokens, so the rule
+   should be reconsidered there once `llm_turn_end.cached_input_tokens`
+   and `cache_write_tokens` data exist. It engages when the process joins
+   a swarm, with the swarm ceiling. It runs after superseded snapshots and
+   before the dials, which then count only what is still in full. A
+   result the model has not seen, one never spilled, the newest snapshot
+   of a state, one whose stub would be no smaller, a `recall` answer (the
+   model asked for it back; collapsing it again would start a recall loop)
+   and a result carrying images (a stub drops them, and recall cannot
+   restore them) all stay in full. Only the result's content becomes a
+   stub: every call keeps its result. Each prune that collapses one counts
+   it in `context_pruned.large_results_collapsed`. Whenever any rule
+   collapses a result, its tool is told: the `read` tool forgets that
+   file's cached delivery, so re-reading an unchanged file answers its
+   content again instead of the `[unchanged since read …]` marker (which
+   itself now says to pass `force:true` when the earlier copy is a stub).
    In the owner's swarm sessions (#2342) one 17k-token bash output was
    31% of a coordinator's input and one 6k-token `docs` read 24% of
    another's; simulated on those sessions at the shipped tool dial of 50,
@@ -699,6 +712,12 @@ the provider's prompt cache misses from that message on. Pruning down to the
 low-water mark (#2213) leaves a quarter of each dial as headroom: the turns
 that follow append without touching the prefix, and the cache miss is paid
 once per batch instead of on every turn. Below a dial nothing is pruned.
+To weigh a prune's saving against the miss it costs, each `llm_turn_end`
+event-log record carries `cached_input_tokens` (the share of `input_tokens`
+the provider's cache served: Anthropic `cache_read_input_tokens`, OpenAI and
+Codex `cached_tokens`) and `cache_write_tokens` (the share it wrote to the
+cache, Anthropic `cache_creation_input_tokens`: the signal of a rewritten
+prefix), each absent when the provider reports none (#2348).
 
 ### Spill and recall
 
@@ -780,8 +799,8 @@ Session behavior is configured in `config.json` under `agents.defaults`:
 | `max_context_tokens` | `200000` | Application-level token budget before context pruning (clamped down to the model's declared context window when known) |
 | `swarm_max_context_tokens` | `48000` | The budget once the process takes part in a swarm: the lower of it and `max_context_tokens` applies from then on, and never disengages. Env: `QUECTO_SWARM_MAX_CONTEXT_TOKENS`. `0` is refused; set it at or above `max_context_tokens` to switch it off |
 | `context_collapse_after_tool_calls` | `50` | Collapse the oldest tool outputs once the session exceeds N tool calls. Set to `4294967295` (`u32::MAX`) to disable. 50 stays the default beside the size-aware rule (#2348): on the owner's swarm sessions a dial of 100 sends 0-8% more input, and 25 saves another 3-21% but rewrites the cached prefix about 1.5 times as often; revisit it with `llm_turn_end.cached_input_tokens` |
-| `context_collapse_large_result_tokens` | `2000` | A tool result over this many estimated tokens collapses to its recall stub once seen for `context_collapse_large_result_after_turns` turns. Env: `QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_TOKENS`. `18446744073709551615` switches it off |
-| `context_collapse_large_result_after_turns` | `3` | How many model responses see a large result in full first. Env: `QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_AFTER_TURNS`. `0` is refused |
+| `context_collapse_large_result_tokens` | unset (`2000` for a swarm member, off otherwise) | A tool result over this many estimated tokens collapses to its recall stub once seen for `context_collapse_large_result_after_turns` turns. Set, it applies to every agent. Env: `QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_TOKENS`. `18446744073709551615` switches it off everywhere |
+| `context_collapse_large_result_after_turns` | unset (`3`) | How many model responses see a large result in full first. Alone it switches nothing on outside a swarm. Env: `QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_AFTER_TURNS`. `0` is refused |
 | `context_collapse_after_messages` | `50` | Collapse the oldest conversation (user/assistant) messages to recall stubs once the session exceeds N live messages. Set to `4294967295` (`u32::MAX`) to disable |
 | `pin_recent_turns` | `2` | How many most-recent turns the context ceiling never demotes or drops |
 

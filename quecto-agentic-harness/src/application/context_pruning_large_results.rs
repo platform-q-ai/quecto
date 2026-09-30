@@ -11,6 +11,12 @@ use super::{collapse_message, collapse_stub, estimate_message_tokens, estimate_t
 use crate::domain::large_result_collapse::LargeResultCollapse;
 use crate::domain::message::{Message, Role};
 
+/// The tool whose results the size rule never collapses (#2348 review M1):
+/// the model asked for that content back, and a re-collapse three turns
+/// later would start a recall loop. A result carrying images is exempt too
+/// (review L1): a stub drops the image blocks, and recall cannot restore them.
+const RECALL: &str = "recall";
+
 /// Collapse every tool result over the dial's size that the model has
 /// seen for its turns to its recall stub. Only a live result that was
 /// spilled (its stub is recallable) and is not the newest snapshot of its
@@ -38,6 +44,8 @@ pub fn collapse_large_results(messages: &mut [Message], dial: LargeResultCollaps
                     && !newest
                     && !msg.is_collapsed
                     && msg.spill_id.is_some()
+                    && msg.image_blocks.is_empty()
+                    && msg.tool_name.as_deref() != Some(RECALL)
                     && large(msg, dial.over_tokens) =>
             {
                 collapse_message(msg);

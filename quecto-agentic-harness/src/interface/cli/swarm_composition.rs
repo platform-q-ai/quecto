@@ -33,12 +33,19 @@ pub(super) fn wire_member(
     defaults: &crate::infrastructure::config::AgentDefaults,
 ) -> AgentLoopImpl {
     let swarm_ceiling_tokens = defaults.swarm_max_context_tokens;
+    let large_results = defaults.swarm_large_result_collapse();
     let cap = agent.context_ceiling_cap();
+    let switch = agent.large_result_switch();
     participation.on_participation(move || {
         cap.lower_to(swarm_ceiling_tokens);
+        // #2348 review M1: the size rule's evidence is swarm-only, so it is
+        // on by default only here.
+        switch.engage(large_results);
         tracing::info!(
             target: "quecto::swarm_board",
             ceiling_tokens = swarm_ceiling_tokens,
+            large_result_tokens = large_results.over_tokens,
+            large_result_after_turns = large_results.after_turns,
             "swarm member context ceiling engaged"
         );
     });

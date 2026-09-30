@@ -43,7 +43,11 @@ use gauge::ContextGaugeCalibration;
 // #2342: a swarm member's lower ceiling, imposed after construction.
 #[path = "context_ceiling_cap.rs"]
 mod ceiling_cap;
-pub use ceiling_cap::{ContextCeilingCap, LargeResultSwitch};
+pub use ceiling_cap::ContextCeilingCap;
+// #2348 review M1: a swarm member's size-aware collapse, engaged likewise.
+#[path = "context_large_result_switch.rs"]
+mod large_result_switch;
+pub use large_result_switch::LargeResultSwitch;
 // The spill writers (split out for the decrease-only line ceiling, #2342).
 #[path = "context_spill_writers.rs"]
 mod spill;

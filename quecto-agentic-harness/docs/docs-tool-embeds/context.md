@@ -15,9 +15,12 @@ Quecto manages long-running sessions with a configurable sliding context window.
 - Recent turns are pinned so the active working tail is preserved.
 - A newer full swarm `summary` supersedes the older ones: they collapse to
   recall stubs, and the newest always stays in full.
-- A large tool result (over 2000 estimated tokens) collapses to its recall
-  stub once you have seen it for 3 turns, whatever the count dials say.
-  Note what you need from a large output while it is in full, or recall it.
+- In a swarm member, a large tool result (over 2000 estimated tokens)
+  collapses to its recall stub once you have seen it for 3 turns, whatever
+  the count dials say (off for other agents unless configured). A recalled
+  result or one with images stays in full. Note what you need from a large
+  output while it is in full, or recall it; re-reading a collapsed file
+  returns its content.
 
 ## Defaults
 
@@ -28,8 +31,8 @@ Configured under `agents.defaults`:
 | `max_context_tokens` | `200000` |
 | `swarm_max_context_tokens` | `48000` |
 | `context_collapse_after_tool_calls` | `50` |
-| `context_collapse_large_result_tokens` | `2000` |
-| `context_collapse_large_result_after_turns` | `3` |
+| `context_collapse_large_result_tokens` | unset (`2000` in a swarm) |
+| `context_collapse_large_result_after_turns` | unset (`3`) |
 | `context_collapse_after_messages` | `50` |
 | `pin_recent_turns` | `2` |
 

@@ -24,7 +24,10 @@ impl AgentDefaults {
     /// (#2348 review M1): off unless `context_collapse_large_result_tokens`
     /// is set.
     pub fn large_result_collapse(&self) -> LargeResultCollapse {
-        self.swarm_large_result_collapse()
+        match self.context_collapse_large_result_tokens {
+            Some(_) => self.swarm_large_result_collapse(),
+            None => LargeResultCollapse::DISABLED,
+        }
     }
 
     /// The size-aware collapse once the process takes part in a swarm:

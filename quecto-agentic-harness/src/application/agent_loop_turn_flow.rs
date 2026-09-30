@@ -337,7 +337,11 @@ impl AgentLoopImpl {
                         .as_ref()
                         .and_then(|u| u.cache_read_tokens)
                         .map(|n| n as usize),
-                    cache_write_tokens: None,
+                    cache_write_tokens: response
+                        .usage
+                        .as_ref()
+                        .and_then(|u| u.cache_write_tokens)
+                        .map(|n| n as usize),
                 },
             )
             .await;
