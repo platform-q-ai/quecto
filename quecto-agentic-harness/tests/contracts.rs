@@ -195,6 +195,8 @@ mod session_key_propagation;
 mod session_layout;
 #[path = "contracts/session_list_scale.rs"]
 mod session_list_scale;
+#[path = "contracts/session_op_log.rs"]
+mod session_op_log;
 #[path = "contracts/session_store.rs"]
 mod session_store;
 #[path = "contracts/session_switch_runtime.rs"]
