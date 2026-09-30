@@ -48,6 +48,9 @@ fn binding_faults_are_traced_by_schema_name_only() {
         for field in fields {
             assert!(line.contains(field), "{field} in {line}");
         }
+        // The call's redacted actor ref, to match it to its call (#2346
+        // review nit).
+        assert!(line.contains("member=\"parent\""), "{line}");
         assert!(line.contains("quecto::swarm_board"), "{line}");
     }
 }
@@ -79,12 +82,12 @@ fn expected_types_are_labelled_from_the_schema() {
     for (name, label) in [
         ("task_id", "integer"),
         ("token", "string"),
-        ("revision", "string_or_null"),
-        ("supersedes", "integer_or_null"),
+        ("revision", "null_or_string"),
+        ("supersedes", "null_or_integer"),
         ("passed", "boolean"),
         ("kind", "string"),
         ("acceptance", "array_of_string"),
-        ("dependencies", "array_of_integer_or_null"),
+        ("dependencies", "null_or_array_of_integer"),
         ("evidence", "array_of_object"),
     ] {
         assert_eq!(expected_type(name).unwrap().label, label, "{name}");
