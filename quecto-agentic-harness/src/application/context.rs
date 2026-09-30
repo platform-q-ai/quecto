@@ -281,7 +281,6 @@ impl ContextManager {
                 .await;
             }
         }
-        let total_tokens = context_pruning::estimate_total_tokens(messages);
         let durable_prefix_dirty = manifest_shifted
             || superseded
                 + large
@@ -292,11 +291,12 @@ impl ContextManager {
                 > 0;
         ContextPlan {
             tokens_before,
-            total_tokens,
+            total_tokens: context_pruning::estimate_total_tokens(messages),
             tool_results_collapsed: collapsed,
             messages_collapsed: msg_collapsed,
             ladder_stubbed: outcome.collapsed_to_stubs,
             messages_dropped: outcome.dropped,
+            dropped_calls: outcome.dropped_calls,
             snapshots_superseded: superseded,
             large_results_collapsed: large,
             over_budget: outcome.over_budget,

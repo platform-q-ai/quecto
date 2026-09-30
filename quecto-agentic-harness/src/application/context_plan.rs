@@ -17,6 +17,8 @@ pub(crate) struct ContextPlan {
     /// Large tool results the size-aware rule collapsed (#2348).
     pub large_results_collapsed: usize,
     pub over_budget: bool,
+    /// Calls the ladder removed with their results, moved out (#2348).
+    pub dropped_calls: Vec<ToolCall>,
     pub durable_prefix_dirty: bool,
 }
 

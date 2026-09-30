@@ -35,13 +35,13 @@ impl AgentLoopImpl {
                 "the tool definitions take most of the context budget; the messages keep a quarter of it"
             );
         }
-        let live_before = live_result_calls(messages);
+        let live_before = live_result_ids(messages);
         let mut plan = self
             .context_manager
             .prepare_provider_context(messages, budget, spills_dirty)
             .await;
         if plan.durable_prefix_dirty {
-            self.report_collapsed_results(messages, &live_before);
+            self.report_collapsed_results(messages, &live_before, &plan.dropped_calls);
         }
         // The floor passed the configured budget, or the tools alone fill
         // the model's window (no transcript fits).
@@ -109,13 +109,20 @@ impl AgentLoopImpl {
 
     /// Tell each tool whose result a rule just collapsed or dropped (#2348
     /// review M1, final review), so a tool answering repeats from what it
-    /// delivered (the read cache) forgets that delivery. The calls were
-    /// recorded before the prune: a dropped result takes its call with it.
-    fn report_collapsed_results(&self, messages: &[Message], live_before: &[ToolCall]) {
+    /// delivered (the read cache) forgets that delivery. Only result ids
+    /// are recorded before the prune; a dropped result's call comes back
+    /// from the ladder, moved out of its message, so no call is cloned (#993).
+    fn report_collapsed_results(
+        &self,
+        messages: &[Message],
+        live_before: &std::collections::BTreeSet<String>,
+        dropped_calls: &[ToolCall],
+    ) {
         let live_after = live_result_ids(messages);
-        for call in live_before
-            .iter()
-            .filter(|call| !live_after.contains(&call.id))
+        let remaining = messages.iter().flat_map(|m| &m.tool_calls);
+        for call in remaining
+            .chain(dropped_calls)
+            .filter(|call| live_before.contains(&call.id) && !live_after.contains(&call.id))
         {
             self.tool_executor()
                 .result_collapsed(&call.name, &call.arguments);
@@ -133,17 +140,6 @@ impl AgentLoopImpl {
     pub async fn prune_resumed_context(&self, messages: &mut Vec<Message>) -> usize {
         self.apply_context_pruning(messages, 0, true).await
     }
-}
-
-/// The calls whose results are still in full, recorded before a prune.
-fn live_result_calls(messages: &[Message]) -> Vec<ToolCall> {
-    let live = live_result_ids(messages);
-    messages
-        .iter()
-        .flat_map(|m| &m.tool_calls)
-        .filter(|call| live.contains(&call.id))
-        .cloned()
-        .collect()
 }
 
 /// The call ids of the tool results still in full.
