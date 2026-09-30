@@ -236,6 +236,9 @@ pub(crate) fn cmd_agent(
     if !swarm_runtime::admit(ctx, &mut flags, stderr) {
         return 1;
     }
+    // The run watch's held ticks are written however the command ends
+    // (#2338 review round 1).
+    let _watch_ticks = swarm_runtime::WatchTicksOnExit::of_process();
 
     if flags.uds_mode {
         return match flags.backend.unwrap_or_default() {

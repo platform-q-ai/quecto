@@ -59,6 +59,8 @@ mod board_op_log;
 mod board_reads;
 #[path = "contracts/board_repository.rs"]
 mod board_repository;
+#[path = "contracts/board_repository_read.rs"]
+mod board_repository_read;
 #[path = "contracts/board_requests.rs"]
 mod board_requests;
 #[path = "contracts/board_run_summary_ports.rs"]

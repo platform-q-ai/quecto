@@ -76,6 +76,8 @@ pub struct MemoryBoard {
     pub journal: Journal,
     /// `create` of each transaction opened, in order.
     pub transactions: Mutex<Vec<bool>>,
+    /// Read transactions opened (#2338), apart from `transactions`.
+    pub reads: Mutex<u32>,
 }
 
 impl MemoryBoard {
@@ -97,6 +99,11 @@ impl MemoryBoard {
     pub fn transactions(&self) -> Vec<bool> {
         self.transactions.lock().unwrap().clone()
     }
+
+    /// Read transactions opened (#2338).
+    pub fn reads(&self) -> u32 {
+        *self.reads.lock().unwrap()
+    }
 }
 
 impl BoardRepository for MemoryBoard {
@@ -110,6 +117,34 @@ impl BoardRepository for MemoryBoard {
         work(&transaction)?;
         *self.state.lock().unwrap() = working.into_inner();
         Ok(())
+    }
+
+    /// A read (#2338) refuses any write, as SQLite's `query_only` does:
+    /// every write is journalled, so a read whose work journalled one is
+    /// refused, and neither its state nor its journal entries are kept.
+    fn read(&self, work: &mut BoardWork<'_>) -> Result<(), BoardError> {
+        if self.journal.lock().is_ok() {
+            return self.atomic(false, work);
+        }
+        *self.reads.lock().unwrap() += 1;
+        let working = RefCell::new(self.snapshot());
+        let journalled = self.journal.lock().unwrap().len();
+        let transaction = MemoryTransaction {
+            state: &working,
+            journal: &self.journal,
+        };
+        let done = work(&transaction);
+        let mut journal = self.journal.lock().unwrap();
+        match journal.len() == journalled {
+            true => done,
+            false => {
+                journal.truncate(journalled);
+                Err(BoardError::new(
+                    RefusalKind::Store,
+                    "coordination store unavailable or contended: attempt to write a readonly database",
+                ))
+            }
+        }
     }
 }
 

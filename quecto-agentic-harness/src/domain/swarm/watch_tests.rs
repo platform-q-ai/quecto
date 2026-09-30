@@ -1,6 +1,7 @@
-//! #2338: the watch reads the event cursor every tick and takes a snapshot
-//! only when the cursor moved, the running run's deadline came, or a
-//! bounded refresh is due; a change is still seen within one tick.
+//! #2338: every watch tick passes the board the cursor of its last
+//! snapshot, so the board answers `unchanged` until the cursor moves; the
+//! schedule passes none, asking for the snapshot whatever the cursor, only
+//! when the running run's deadline came or a bounded refresh is due.
 use super::*;
 use crate::domain::swarm::{OWNER_IDLE_AFTER, RunStatus, Snapshot};
 
@@ -23,52 +24,47 @@ fn running() -> Snapshot {
     run(RunStatus::Running, NOW + 86_400.0)
 }
 
-/// A schedule that took its first snapshot at `NOW`, having read `cursor`.
+/// A schedule that took its first snapshot at `NOW`, at `cursor`.
 fn watched(cursor: i64, snapshot: &Snapshot) -> WatchSchedule {
     let mut schedule = WatchSchedule::new();
-    assert_eq!(schedule.read(Some(cursor), NOW), WatchRead::Snapshot);
-    schedule.snapshotted(Some(cursor), snapshot, NOW);
+    assert_eq!(schedule.since(NOW), None, "the first tick asks for it");
+    schedule.snapshotted(cursor, snapshot, NOW);
     schedule
 }
 
 #[test]
-fn the_first_tick_takes_a_snapshot() {
-    assert_eq!(WatchSchedule::new().read(Some(0), NOW), WatchRead::Snapshot);
-    assert_eq!(WatchSchedule::new().read(None, NOW), WatchRead::Snapshot);
+fn the_first_tick_asks_for_the_snapshot() {
+    assert_eq!(WatchSchedule::new().since(NOW), None);
 }
 
 #[test]
-fn an_unchanged_cursor_takes_no_snapshot_until_a_refresh_is_due() {
+fn a_tick_passes_the_last_snapshots_cursor_until_a_refresh_is_due() {
     let schedule = watched(7, &running());
-    assert_eq!(schedule.read(Some(7), NOW + TICK), WatchRead::Skip);
+    assert_eq!(schedule.since(NOW + TICK), Some(7));
     assert_eq!(
-        schedule.read(Some(7), NOW + REFRESH_MIN.as_secs_f64() - TICK),
-        WatchRead::Skip
+        schedule.since(NOW + REFRESH_MIN.as_secs_f64() - TICK),
+        Some(7)
     );
     assert_eq!(
-        schedule.read(Some(7), NOW + REFRESH_MIN.as_secs_f64()),
-        WatchRead::Snapshot,
+        schedule.since(NOW + REFRESH_MIN.as_secs_f64()),
+        None,
         "the refresh is due"
     );
 }
 
-/// Wake latency: a board change (a pause, a resume, the run's end) moves
-/// the cursor, and the very next tick takes the snapshot that sees it.
+/// Wake latency: the board answers the snapshot as soon as its cursor is
+/// not the one passed, so a change is seen on the very next tick, which
+/// comes as often as the snapshot poll it replaces.
 #[test]
-fn a_moved_cursor_takes_a_snapshot_on_the_next_tick() {
-    let schedule = watched(7, &running());
-    assert_eq!(schedule.read(Some(8), NOW + TICK), WatchRead::Snapshot);
-    assert_eq!(
-        WATCH_TICK,
-        std::time::Duration::from_millis(500),
-        "the tick the snapshot poll ran at, so a change is seen as soon as before"
-    );
+fn the_watch_ticks_as_often_as_the_poll_it_replaces() {
+    assert_eq!(WATCH_TICK, std::time::Duration::from_millis(500));
 }
 
 #[test]
-fn an_unreadable_cursor_takes_a_snapshot() {
-    let schedule = watched(7, &running());
-    assert_eq!(schedule.read(None, NOW + TICK), WatchRead::Snapshot);
+fn an_unreadable_tick_asks_for_the_snapshot_next() {
+    let mut schedule = watched(7, &running());
+    schedule.unreadable();
+    assert_eq!(schedule.since(NOW + TICK), None);
 }
 
 /// A running run's deadline is announced by no event: the snapshot (whose
@@ -77,16 +73,15 @@ fn an_unreadable_cursor_takes_a_snapshot() {
 fn a_running_runs_deadline_is_due_at_the_deadline() {
     let deadline = NOW + 2.0;
     let schedule = watched(7, &run(RunStatus::Running, deadline));
-    assert_eq!(schedule.read(Some(7), deadline - TICK), WatchRead::Skip);
-    assert_eq!(schedule.read(Some(7), deadline), WatchRead::Snapshot);
-    assert_eq!(schedule.read(Some(7), deadline + TICK), WatchRead::Snapshot);
+    assert_eq!(schedule.since(deadline - TICK), Some(7));
+    assert_eq!(schedule.since(deadline), None);
+    assert_eq!(schedule.since(deadline + TICK), None);
 }
 
 #[test]
 fn a_passed_deadline_keeps_the_snapshot_due_while_the_run_reads_running() {
-    let deadline = NOW - 1.0;
-    let schedule = watched(7, &run(RunStatus::Running, deadline));
-    assert_eq!(schedule.read(Some(7), NOW + TICK), WatchRead::Snapshot);
+    let schedule = watched(7, &run(RunStatus::Running, NOW - 1.0));
+    assert_eq!(schedule.since(NOW + TICK), None);
 }
 
 #[test]
@@ -94,8 +89,8 @@ fn only_a_running_runs_deadline_is_scheduled() {
     for status in [RunStatus::Setup, RunStatus::Paused] {
         let schedule = watched(7, &run(status, NOW + 1.0));
         assert_eq!(
-            schedule.read(Some(7), NOW + 2.0),
-            WatchRead::Skip,
+            schedule.since(NOW + 2.0),
+            Some(7),
             "{status:?}: its deadline expires nothing"
         );
     }
@@ -108,29 +103,31 @@ fn the_refresh_backs_off_while_nothing_changes_and_restarts_after_a_change() {
     let mut intervals = Vec::new();
     for _ in 0..7 {
         let next = at + schedule.refresh().as_secs_f64();
-        assert_eq!(schedule.read(Some(7), next - TICK), WatchRead::Skip);
-        assert_eq!(schedule.read(Some(7), next), WatchRead::Snapshot);
-        schedule.snapshotted(Some(7), &running(), next);
+        assert_eq!(schedule.since(next - TICK), Some(7));
+        assert_eq!(schedule.since(next), None);
+        schedule.snapshotted(7, &running(), next);
         intervals.push((next - at) as u64);
         at = next;
     }
     assert_eq!(intervals, [5, 10, 20, 40, 60, 60, 60]);
-    schedule.snapshotted(Some(8), &running(), at + TICK);
+    schedule.snapshotted(8, &running(), at + TICK);
     assert_eq!(schedule.refresh(), REFRESH_MIN, "a change restarts it");
+    assert_eq!(schedule.since(at + 1.0), Some(8));
 }
 
 /// The idle watch over an hour at its tick: no gap between snapshots is
-/// longer than [`REFRESH_MAX`], and after the first minute it takes at
+/// longer than [`REFRESH_MAX`], and after the first minute it asks for at
 /// least ten times fewer snapshots than the poll it replaces (one a tick).
 #[test]
-fn an_idle_hour_takes_ten_times_fewer_snapshots_within_the_refresh_bound() {
+fn an_idle_hour_asks_for_ten_times_fewer_snapshots_within_the_refresh_bound() {
     let mut schedule = WatchSchedule::new();
     let ticks = 3_600 * 2;
     let mut taken = Vec::new();
     for tick in 0..ticks {
         let now = NOW + f64::from(tick) * TICK;
-        if schedule.read(Some(7), now) == WatchRead::Snapshot {
-            schedule.snapshotted(Some(7), &running(), now);
+        // An idle board answers `unchanged` to its own cursor.
+        if schedule.since(now) != Some(7) {
+            schedule.snapshotted(7, &running(), now);
             taken.push(now);
         }
     }

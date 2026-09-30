@@ -4,7 +4,8 @@
 //! running, before it calls the dispatcher, and each refusal is still
 //! recorded as the op's own. Also the Python signature each method binds by,
 //! which the structured ops' table is checked against (#2279).
-use std::time::Duration;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -35,45 +36,94 @@ pub enum CallOrigin {
     Watch,
 }
 
-/// The run watch's polls not yet written (#2338), held with the handles of
-/// one board file while the event log is on.
-#[derive(Debug)]
+/// The run watch's `unchanged` ticks not yet written (#2338), held with the
+/// handles of one board file while the event log is on, and the log they
+/// are written to. Whatever it holds is written when it is flushed, and
+/// when it is dropped (the handles went: the board was dropped, or its
+/// file's handles replaced).
 pub struct WatchPolls {
-    tally: std::sync::Mutex<PollTally>,
-    origin: std::time::Instant,
+    log: Arc<dyn BoardOpLog>,
+    tally: Mutex<PollTally>,
+    origin: Instant,
 }
 
-impl Default for WatchPolls {
-    fn default() -> Self {
-        Self {
-            tally: std::sync::Mutex::new(PollTally::default()),
-            origin: std::time::Instant::now(),
-        }
-    }
-}
-
-/// Writes the run watch's polls `handles` holds, if any (#2338): the watch
-/// ended, the run is summarised, or the handles are replaced.
-pub fn flush_watch_polls(handles: &SwarmBoardHandles) {
-    if let Some(telemetry) = &handles.telemetry {
-        let held = telemetry.polls.held().flush();
-        write_polls(&*telemetry.log, held);
+impl std::fmt::Debug for WatchPolls {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("WatchPolls")
+            .field("held", &self.held().pending_polls())
+            .finish_non_exhaustive()
     }
 }
 
 impl WatchPolls {
-    /// The tally, also after a panic elsewhere left the lock poisoned:
-    /// nothing is left half-updated under it.
-    fn held(&self) -> std::sync::MutexGuard<'_, PollTally> {
-        self.tally
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    /// Ticks held to be written in `log`.
+    pub fn new(log: Arc<dyn BoardOpLog>) -> Self {
+        Self {
+            log,
+            tally: Mutex::new(PollTally::default()),
+            origin: Instant::now(),
+        }
     }
 
-    /// Microseconds since these polls' handles were built: the tally's
-    /// monotonic clock.
+    /// The tally, also after a panic elsewhere left the lock poisoned:
+    /// nothing is left half-updated under it.
+    fn held(&self) -> MutexGuard<'_, PollTally> {
+        self.tally.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Microseconds since these polls were built: the tally's monotonic
+    /// clock.
     fn now_us(&self) -> u64 {
         u64::try_from(self.origin.elapsed().as_micros()).unwrap_or(u64::MAX)
+    }
+
+    /// A tick, held or written with the ones it releases, under the
+    /// tally's lock (so a summary taken under it sees every tick made
+    /// before it). Whether it was written alone (not absorbed).
+    fn tick(&self, observation: BoardOpObservation) -> bool {
+        let mut tally = self.held();
+        let released = tally.poll(observation, self.now_us());
+        let alone = released.iter().any(|record| record.detail.polls.is_none());
+        write_polls(&*self.log, released);
+        drop(tally);
+        alone
+    }
+
+    /// Writes the held ticks now.
+    pub fn flush(&self) {
+        let mut tally = self.held();
+        let held = tally.flush();
+        write_polls(&*self.log, held);
+    }
+
+    /// Writes the held ticks, then runs `then` before any later tick is
+    /// held or written (#2338 review: the run's summary is taken so, and
+    /// accounts for every tick made before it).
+    pub fn flushed_then<R>(&self, then: impl FnOnce() -> R) -> R {
+        let mut tally = self.held();
+        let held = tally.flush();
+        write_polls(&*self.log, held);
+        let result = then();
+        drop(tally);
+        result
+    }
+}
+
+/// Writes the run watch's ticks `handles` holds, if any (#2338): the watch
+/// ended, recording stops, or the harness exits.
+pub fn flush_watch_polls(handles: &SwarmBoardHandles) {
+    if let Some(telemetry) = &handles.telemetry {
+        telemetry.polls.flush();
+    }
+}
+
+/// Runs `then` with the watch's held ticks written first and no later tick
+/// written until it returns (#2338 review round 1).
+pub fn with_watch_polls_flushed<R>(handles: &SwarmBoardHandles, then: impl FnOnce() -> R) -> R {
+    match &handles.telemetry {
+        Some(telemetry) => telemetry.polls.flushed_then(then),
+        None => then(),
     }
 }
 
@@ -144,27 +194,11 @@ pub(super) fn record(
     }
     match (&handles.telemetry, actor, origin) {
         (Some(telemetry), Some(actor), CallOrigin::Watch) => {
+            debug_assert_eq!(finished.op, WATCH_POLL_OP, "the watch calls only _watch");
             let observation = observation(finished, actor.clone(), caller, served, measure.clone());
-            debug_assert!(
-                matches!(finished.op, WATCH_POLL_OP | "_snapshot"),
-                "the watch reads only the cursor and the snapshot"
-            );
-            let mut tally = telemetry.polls.held();
-            let released = match finished.op {
-                WATCH_POLL_OP => {
-                    let cursor = served
-                        .filter(|_| finished.outcome.is_ok())
-                        .and_then(|served| served.value.as_i64());
-                    tally.poll(observation, cursor, telemetry.polls.now_us())
-                }
-                _ => tally.flush().into_iter().chain([observation]).collect(),
-            };
-            drop(tally);
-            let traced = released.iter().any(|record| record.detail.polls.is_none());
-            if traced {
+            if telemetry.polls.tick(observation) {
                 trace(finished, measure.as_ref(), Some(&actor));
             }
-            write_polls(&*telemetry.log, released);
         }
         (Some(telemetry), Some(actor), CallOrigin::Member | CallOrigin::Harness) => {
             trace(finished, measure.as_ref(), Some(&actor));

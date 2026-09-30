@@ -193,3 +193,36 @@ fn disable_workflow(flags: &mut AgentFlags) -> Result<(), crate::domain::error::
 #[cfg(test)]
 #[path = "swarm_runtime_tests.rs"]
 mod tests;
+
+/// Writes the swarm run watch's held ticks when the agent command ends
+/// (#2338 review round 1): a normal return, a signal's orderly shutdown
+/// (SIGTERM or SIGINT: the dispatch loop returns through here), or a
+/// panic unwinding through it. Only an exit nothing can intercept loses
+/// them: SIGKILL, the OOM killer, or a panic the harness's hook aborts on.
+pub(super) struct WatchTicksOnExit(
+    Option<&'static crate::infrastructure::tools::swarm_bridge::SwarmBoard>,
+);
+
+impl WatchTicksOnExit {
+    /// Flushes `board`'s held ticks on drop, when there is one.
+    pub(super) fn of(
+        board: Option<&'static crate::infrastructure::tools::swarm_bridge::SwarmBoard>,
+    ) -> Self {
+        Self(board)
+    }
+
+    /// Flushes this process's board (the one admission bound, if any).
+    pub(super) fn of_process() -> Self {
+        Self::of(crate::infrastructure::tools::swarm_bridge::process_board())
+    }
+}
+
+impl Drop for WatchTicksOnExit {
+    fn drop(&mut self) {
+        let _ = self.0;
+    }
+}
+
+#[cfg(test)]
+#[path = "swarm_runtime_exit_tests.rs"]
+mod exit_tests;

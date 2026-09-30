@@ -98,6 +98,13 @@ impl BoardRepository for NothingMeasured {
     ) -> Result<(), BoardError> {
         self.0.atomic(create, work)
     }
+
+    fn read(
+        &self,
+        work: &mut crate::application::swarm::ports::BoardWork<'_>,
+    ) -> Result<(), BoardError> {
+        self.0.read(work)
+    }
 }
 
 impl MeteredCall for NothingMeasured {
@@ -114,7 +121,7 @@ fn telemetry(log: &Arc<Recorded>, meter: &Arc<Unmeasured>) -> Option<BoardTeleme
         log: log.clone(),
         meter: meter.clone(),
         actors: Arc::new(ActorRefs::default()),
-        polls: Arc::default(),
+        polls: Arc::new(super::WatchPolls::new(log.clone())),
     })
 }
 

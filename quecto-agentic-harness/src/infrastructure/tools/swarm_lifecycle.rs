@@ -247,30 +247,6 @@ async fn settle_suspending(
         .map_err(|e| DomainError::Tool(e.to_string()))?
 }
 
-/// One supervisor snapshot: refresh the snapshot and record swarm
-/// participation from it (#1715), so a member that joined an ordinary
-/// container becomes a swarm agent the moment the run is created by
-/// someone else. Whether the snapshot was read (#2338: the watch's
-/// schedule counts only one that was).
-pub(super) fn observe(
-    context: &SwarmContext,
-    snapshot: &mut crate::domain::swarm::Snapshot,
-    participation: &super::swarm_bridge::Participation,
-) -> bool {
-    let read = match context.watch_snapshot() {
-        Ok(current) => {
-            *snapshot = current;
-            true
-        }
-        Err(error) => {
-            tracing::error!(%error, "swarm supervisor lost coordination; retaining ownership");
-            false
-        }
-    };
-    participation.set(crate::domain::swarm::participates(snapshot.deadline));
-    read
-}
-
 /// Runs `job`, which makes board calls, off the async workers (#2278
 /// review L6), and returns once it has finished (#2278 final review L1,
 /// L2): the caller cannot await it (a drop, or a synchronous port method
@@ -304,7 +280,8 @@ pub fn supervise(
         let mut schedule = crate::domain::swarm::watch::WatchSchedule::new();
         loop {
             let now = crate::application::swarm::ports::Clock::now_seconds(&SystemClock);
-            watch::watch_tick(&context, &mut schedule, &mut snapshot, &participation, now);
+            let _tick =
+                watch::watch_tick(&context, &mut schedule, &mut snapshot, &participation, now);
             if snapshot.status == RunStatus::Paused
                 && suspended != Some(snapshot.control_generation)
             {

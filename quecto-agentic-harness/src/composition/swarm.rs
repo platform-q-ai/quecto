@@ -38,7 +38,9 @@ use crate::infrastructure::persistence::swarm_board::meter::SqliteBoardCallMeter
 use crate::infrastructure::persistence::swarm_board::py_json;
 use crate::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 pub use crate::infrastructure::tools::swarm_board_dispatch::SwarmBoardHandles;
-use crate::infrastructure::tools::swarm_board_dispatch::{ActorRefs, BoardTelemetry, BoardWire};
+use crate::infrastructure::tools::swarm_board_dispatch::{
+    ActorRefs, BoardTelemetry, BoardWire, WatchPolls,
+};
 pub use crate::infrastructure::tools::swarm_bridge::SwarmBoard;
 use crate::infrastructure::tools::swarm_lifecycle::SystemClock;
 use crate::infrastructure::workspace::checkout_paths::ResolvedCheckout;
@@ -257,10 +259,10 @@ pub fn with_event_log(
         build_swarm_board_handles_with(Arc::new(repository.clone()), clock, ids, checkout);
     SwarmBoardHandles {
         telemetry: Some(BoardTelemetry {
-            log: event_log,
+            log: event_log.clone(),
             meter: Arc::new(SqliteBoardCallMeter::new(repository)),
             actors: Arc::new(ActorRefs::default()),
-            polls: Arc::default(),
+            polls: Arc::new(WatchPolls::new(event_log.clone())),
         }),
         ..handles
     }

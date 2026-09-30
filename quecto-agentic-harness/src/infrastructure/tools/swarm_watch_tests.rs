@@ -1,13 +1,14 @@
-//! #2338: the run watch reads the cheap event cursor every tick and takes
-//! a `_snapshot` only when its schedule says so; its unchanged polls are
-//! aggregated in the event log and still counted, and its cursor reads
+//! #2338: the run watch makes one `_watch` call a tick, which answers the
+//! run's snapshot only when the board changed or the schedule asked for
+//! it; its `unchanged` ticks are aggregated in the event log and still
+//! counted (also when the board goes or recording stops), and its reads
 //! never wait for, or hold off, a writer's lock.
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use serde_json::json;
 
-use super::watch_tick;
+use super::{Tick, watch_tick};
 use crate::application::swarm::dto::DroppedRecords;
 use crate::application::swarm::ports::CoordinationPort;
 use crate::application::swarm::ports::{BoardOpLog, SessionOpLog};
@@ -78,60 +79,62 @@ fn running() -> (tempfile::TempDir, SwarmContext, Arc<Recorded>) {
     (directory, context, log)
 }
 
-/// The polls `records` account for: an aggregate's `polls`, else one.
-fn polls(records: &[BoardOpObservation]) -> u64 {
+/// The ticks `records` account for: an aggregate's `polls`, else one.
+fn ticks(records: &[BoardOpObservation]) -> u64 {
     records
         .iter()
-        .filter(|record| record.op == "_event_cursor")
+        .filter(|record| record.op == "_watch")
         .map(|record| record.detail.polls.unwrap_or(1))
         .sum()
 }
 
+/// The records of ticks that answered the snapshot.
 fn snapshots(records: &[BoardOpObservation]) -> usize {
     records
         .iter()
-        .filter(|record| record.op == "_snapshot")
+        .filter(|record| record.op == "_watch" && record.decision.as_deref() == Some("snapshot"))
         .count()
 }
 
 /// Ticks the watch `ticks` times, half a second apart from `start` on the
-/// board's clock; returns the ticks that took a snapshot.
+/// board's clock; returns what each tick read.
 fn watch(
     context: &SwarmContext,
     schedule: &mut WatchSchedule,
     snapshot: &mut crate::domain::swarm::Snapshot,
     start: f64,
     ticks: u32,
-) -> usize {
+) -> Vec<Tick> {
     let participation = Participation::shared();
     (0..ticks)
-        .filter(|tick| {
-            let at = start + f64::from(*tick) * 0.5;
+        .map(|tick| {
+            let at = start + f64::from(tick) * 0.5;
             watch_tick(context, schedule, snapshot, &participation, at)
         })
-        .count()
+        .collect()
 }
 
-/// An idle minute of the watch: at least ten times fewer `_snapshot`s
-/// than the one a tick it replaces, every cursor poll still accounted for
-/// in far fewer records, and none of them slowed by the busy handler.
+/// An idle minute of the watch: one `_watch` call a tick, at least ten
+/// times fewer snapshots than the one a tick it replaces, every tick
+/// accounted for in far fewer records, none slowed by the busy handler.
 #[test]
-fn an_idle_minute_takes_ten_times_fewer_snapshots_and_counts_every_poll() {
+fn an_idle_minute_takes_ten_times_fewer_snapshots_and_counts_every_tick() {
     let (_directory, context, log) = running();
     let mut snapshot = context.snapshot().unwrap();
     let _setup = log.taken();
     let mut schedule = WatchSchedule::new();
-    let taken = watch(&context, &mut schedule, &mut snapshot, now(), 120);
+    let read = watch(&context, &mut schedule, &mut snapshot, now(), 120);
     context.flush_watch_polls();
     let records = log.taken();
+    let taken = read.iter().filter(|tick| **tick == Tick::Snapshot).count();
     assert!(taken <= 12, "{taken} snapshots in 120 ticks");
     assert_eq!(snapshots(&records), taken, "each snapshot is recorded");
-    assert_eq!(polls(&records), 120, "every poll is accounted for");
+    assert_eq!(ticks(&records), 120, "every tick is accounted for");
     assert!(
-        records.len() <= 12 + 4,
-        "{} records for an idle minute",
-        records.len()
+        records.iter().all(|record| record.op == "_watch"),
+        "one call a tick, nothing else: {records:?}"
     );
+    assert!(records.len() <= 2 * 12, "{} records", records.len());
     assert!(
         records.iter().all(|record| record.busy != Some(true)),
         "{records:?}"
@@ -144,7 +147,40 @@ fn an_idle_minute_takes_ten_times_fewer_snapshots_and_counts_every_poll() {
     );
 }
 
-/// Wake latency: a pause lands between two ticks, and the next tick takes
+/// Review round 1, finding 5: a tick after a board change is one call and
+/// one record, the snapshot read with the cursor, not a cursor read and
+/// then a snapshot.
+#[test]
+fn a_tick_after_a_change_is_one_call_and_one_record() {
+    let (_directory, context, log) = running();
+    let mut snapshot = context.snapshot().unwrap();
+    let mut schedule = WatchSchedule::new();
+    let start = now();
+    let _warm = watch(&context, &mut schedule, &mut snapshot, start, 2);
+    context.flush_watch_polls();
+    for n in 0..3 {
+        context
+            .call("task_create", json!([format!("r{n}"), "t", ["tests pass"]]))
+            .unwrap();
+        let _setup = log.taken();
+        let participation = Participation::shared();
+        let tick = watch_tick(
+            &context,
+            &mut schedule,
+            &mut snapshot,
+            &participation,
+            start + 1.0 + f64::from(n) * 0.5,
+        );
+        assert_eq!(tick, Tick::Snapshot);
+        let records = log.taken();
+        assert_eq!(records.len(), 1, "one call, one record: {records:?}");
+        assert_eq!(records[0].op, "_watch");
+        assert_eq!(records[0].decision.as_deref(), Some("snapshot"));
+        assert_eq!(records[0].cursor_moved, Some(true));
+    }
+}
+
+/// Wake latency: a pause lands between two ticks, and the next tick reads
 /// the snapshot that sees it.
 #[test]
 fn a_pause_is_seen_on_the_next_tick() {
@@ -155,21 +191,52 @@ fn a_pause_is_seen_on_the_next_tick() {
     let _warm = watch(&context, &mut schedule, &mut snapshot, start, 4);
     context.pause("operator").unwrap();
     let participation = Participation::shared();
-    assert!(watch_tick(
-        &context,
-        &mut schedule,
-        &mut snapshot,
-        &participation,
-        start + 2.5
-    ));
+    assert_eq!(
+        watch_tick(
+            &context,
+            &mut schedule,
+            &mut snapshot,
+            &participation,
+            start + 2.5
+        ),
+        Tick::Snapshot
+    );
     assert_eq!(snapshot.status, RunStatus::Paused);
     assert!(participation.participating());
 }
 
-/// The run's summary counts the polls the watch still held when it was
-/// written: the fold's `_event_cursor` count equals the polls made.
+/// Review round 1, finding 6: a tick that could not be read says so, keeps
+/// the snapshot held, and asks for the snapshot on the next tick.
 #[test]
-fn the_run_summary_counts_the_polls_still_held() {
+fn an_unreadable_tick_is_reported_and_keeps_the_snapshot() {
+    let (directory, context, _log) = running();
+    let mut snapshot = context.snapshot().unwrap();
+    let mut schedule = WatchSchedule::new();
+    let start = now();
+    let _warm = watch(&context, &mut schedule, &mut snapshot, start, 2);
+    std::fs::remove_file(context.database()).unwrap();
+    let participation = Participation::shared();
+    let tick = watch_tick(
+        &context,
+        &mut schedule,
+        &mut snapshot,
+        &participation,
+        start + 1.0,
+    );
+    assert_eq!(tick, Tick::Unreadable);
+    assert_eq!(snapshot.status, RunStatus::Running, "the snapshot held");
+    assert_eq!(
+        schedule.since(start + 1.5),
+        None,
+        "the next tick asks for it"
+    );
+    drop(directory);
+}
+
+/// The run's summary counts the ticks the watch still held when it was
+/// written: the fold's `_watch` count equals the ticks made.
+#[test]
+fn the_run_summary_counts_the_ticks_still_held() {
     let (_directory, context, log) = running();
     let mut snapshot = context.snapshot().unwrap();
     let mut schedule = WatchSchedule::new();
@@ -181,9 +248,44 @@ fn the_run_summary_counts_the_polls_still_held() {
     assert!(context.summarize_settled(&settled));
     let summaries = log.summaries.lock().unwrap().clone();
     assert_eq!(summaries.len(), 1);
-    assert_eq!(summaries[0].ops["_event_cursor"].ok, 20, "{summaries:?}");
+    assert_eq!(summaries[0].ops["_watch"].ok, 20, "{summaries:?}");
     let written = log.ops.lock().unwrap().clone();
-    assert_eq!(polls(&written), 20, "the held polls were written first");
+    assert_eq!(ticks(&written), 20, "the held ticks were written first");
+}
+
+/// Review round 1, finding 1: dropping the board (the last context holding
+/// it) writes the ticks it held.
+#[test]
+fn dropping_the_board_writes_the_ticks_it_held() {
+    let (_directory, context, log) = running();
+    let mut snapshot = context.snapshot().unwrap();
+    let mut schedule = WatchSchedule::new();
+    let _ticks = watch(&context, &mut schedule, &mut snapshot, now(), 10);
+    let _setup_and_first = log.taken();
+    drop(context);
+    let written = log.taken();
+    assert!(!written.is_empty(), "the held ticks were written");
+    assert!(
+        written.iter().all(|record| record.detail.polls.is_some()),
+        "{written:?}"
+    );
+}
+
+/// Review round 1, finding 1: recording stops only after the ticks held
+/// until then were written.
+#[test]
+fn stopping_recording_writes_the_ticks_held() {
+    let (_directory, context, log) = running();
+    let mut snapshot = context.snapshot().unwrap();
+    let mut schedule = WatchSchedule::new();
+    let read = watch(&context, &mut schedule, &mut snapshot, now(), 10);
+    let unchanged = read.iter().filter(|tick| **tick == Tick::Unchanged).count();
+    assert!(unchanged > 0);
+    let before = ticks(&log.ops.lock().unwrap());
+    context.board.stop_recording();
+    let after = ticks(&log.ops.lock().unwrap());
+    assert_eq!(after, 10, "every tick is written before recording stops");
+    assert!(after > before, "some were still held");
 }
 
 /// A second connection holding `BEGIN IMMEDIATE` on the board until told.
@@ -203,59 +305,91 @@ fn holding_the_write_lock(
     (release, thread)
 }
 
-/// The watch's cursor read takes no write lock: a writer holding one
-/// (between `BEGIN IMMEDIATE` and its commit) neither refuses it nor
-/// makes it wait, and it is recorded as not busy.
+/// A tick takes no write lock: a writer holding one (between `BEGIN
+/// IMMEDIATE` and its commit) neither refuses it nor makes it wait, for
+/// the cursor alone or for the snapshot, and it is recorded as not busy.
 #[test]
-fn a_cursor_poll_does_not_wait_for_a_writers_lock() {
+fn a_tick_does_not_wait_for_a_writers_lock() {
     let (_directory, context, log) = running();
+    let cursor = context.watch(None).unwrap().event_cursor;
+    context.flush_watch_polls();
     let _setup = log.taken();
     let (release, holder) = holding_the_write_lock(context.database());
     let started = Instant::now();
-    let cursor = context.watch_cursor();
+    let unchanged = context.watch(Some(cursor));
+    let snapshot = context.watch(None);
     let waited = started.elapsed();
     drop(release);
     holder.join().unwrap();
-    assert!(cursor.unwrap() > 0, "the run's events");
+    assert!(unchanged.unwrap().snapshot.is_none());
+    assert_eq!(
+        snapshot.unwrap().snapshot.unwrap().status,
+        RunStatus::Running
+    );
     assert!(waited < Duration::from_millis(250), "{waited:?}");
+    context.flush_watch_polls();
     let records = log.taken();
-    assert_eq!(records.len(), 1, "{records:?}");
-    assert_eq!(records[0].busy, Some(false), "{records:?}");
+    assert_eq!(ticks(&records), 2, "{records:?}");
+    assert!(
+        records.iter().all(|record| record.busy == Some(false)),
+        "{records:?}"
+    );
 }
 
-/// The watch's snapshot of a run whose deadline has not come is a pure
-/// read: a writer holding the write lock neither refuses nor delays it.
+/// A tick at the deadline still records the expiry, as the gate always
+/// did: the run reads as paused, holding `budget-exhausted` (the deadline
+/// is moved into the past by hand, as the clock would), whatever cursor
+/// the tick passed.
 #[test]
-fn a_snapshot_does_not_wait_for_a_writers_lock() {
-    let (_directory, context, log) = running();
-    let _setup = log.taken();
-    let (release, holder) = holding_the_write_lock(context.database());
-    let started = Instant::now();
-    let snapshot = context.watch_snapshot();
-    let waited = started.elapsed();
-    drop(release);
-    holder.join().unwrap();
-    assert_eq!(snapshot.unwrap().status, RunStatus::Running);
-    assert!(waited < Duration::from_millis(250), "{waited:?}");
-    let records = log.taken();
-    assert_eq!(records.len(), 1, "{records:?}");
-    assert_eq!(records[0].busy, Some(false), "{records:?}");
-}
-
-/// A snapshot at the deadline still records the expiry, as the gate
-/// always did: the run reads as paused, holding `budget-exhausted` (the
-/// deadline is moved into the past by hand, as the clock would).
-#[test]
-fn a_snapshot_at_the_deadline_still_records_the_expiry() {
+fn a_tick_at_the_deadline_still_records_the_expiry() {
     let (_directory, context, _log) = running();
-    let database = context.database();
-    rusqlite::Connection::open(&database)
+    let cursor = context.watch(None).unwrap().event_cursor;
+    rusqlite::Connection::open(context.database())
         .unwrap()
         .execute("UPDATE run SET deadline = ?1", [now() - 1.0])
         .unwrap();
-    let snapshot = context.watch_snapshot().unwrap();
+    let watched = context.watch(Some(cursor)).unwrap();
+    let snapshot = watched.snapshot.expect("the expiry moved the cursor");
     assert_eq!(snapshot.status, RunStatus::Paused, "{snapshot:?}");
     assert_eq!(snapshot.outcome, Some(RunStatus::BudgetExhausted));
-    let again = context.watch_snapshot().unwrap();
-    assert_eq!(again.status, RunStatus::Paused);
+    assert!(watched.event_cursor > cursor);
+}
+
+/// Review round 1, finding 2: a board an older writer created, lacking a
+/// column only the full transaction adds (`run.outcome`, which the gate
+/// reads), fails the read transaction as a store failure; the tick and
+/// the snapshot still answer, through the IMMEDIATE path, which adds the
+/// column back.
+#[test]
+fn an_older_board_without_an_added_column_still_answers() {
+    let (_directory, context, _log) = running();
+    let connection = rusqlite::Connection::open(context.database()).unwrap();
+    let columns = |connection: &rusqlite::Connection| -> Vec<String> {
+        let mut statement = connection.prepare("PRAGMA table_info(run)").unwrap();
+        statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    let drop_outcome = |connection: &rusqlite::Connection| {
+        connection
+            .execute_batch("ALTER TABLE run DROP COLUMN outcome")
+            .unwrap();
+        assert!(!columns(connection).contains(&"outcome".to_owned()));
+    };
+    drop_outcome(&connection);
+    let watched = context.watch(None).unwrap();
+    assert_eq!(
+        watched.snapshot.unwrap().status,
+        RunStatus::Running,
+        "the tick answers"
+    );
+    assert!(
+        columns(&connection).contains(&"outcome".to_owned()),
+        "the full transaction added the column back"
+    );
+    drop_outcome(&connection);
+    assert_eq!(context.snapshot().unwrap().status, RunStatus::Running);
+    assert!(columns(&connection).contains(&"outcome".to_owned()));
 }

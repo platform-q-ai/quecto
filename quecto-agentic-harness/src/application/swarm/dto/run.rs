@@ -160,6 +160,16 @@ pub struct RunSnapshotView {
     pub members: Vec<MemberRow>,
 }
 
+/// `_watch(since)` (#2338): the board's event cursor, and the run's
+/// snapshot unless the cursor is still the one the watch passed.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RunWatchView {
+    /// The id of the latest event, `0` for none, read with the snapshot.
+    pub event_cursor: i64,
+    /// `None` when the cursor is the one passed: nothing changed.
+    pub snapshot: Option<RunSnapshotView>,
+}
+
 /// The run contract `create` stores. `constraints` and `criteria` are the
 /// values the member gave, stored with the board's `encode()`.
 #[derive(Clone, Debug, PartialEq)]

@@ -153,7 +153,23 @@ impl SwarmBoard {
     /// Records nothing from now on (#2313: the session keeps no event
     /// log), and drops what it held since admission.
     pub fn stop_recording(&self) {
+        // The watch's ticks held so far were made while the board
+        // recorded (#2338 review round 1): written before it stops.
         *self.recording_lock() = None;
+    }
+
+    /// Writes the run watch's ticks every file's handles hold (#2338
+    /// review round 1): the harness is exiting, or recording stops. Only
+    /// an exit nobody can intercept (SIGKILL, the OOM killer) loses them.
+    pub fn flush_all_watch_polls(&self) {
+        let handles: Vec<_> = self
+            .built()
+            .iter()
+            .map(|file| file.handles.clone())
+            .collect();
+        for handles in handles {
+            swarm_board_dispatch::flush_watch_polls(&handles);
+        }
     }
 
     /// Records every later call in `log`, the current session's event log
@@ -189,17 +205,14 @@ impl SwarmBoard {
     /// section `null`, with a warning, and the process's counts are still
     /// written.
     pub(super) fn summarize_run(&self, location: &BoardLocation, member: &str) -> bool {
-        let runs = self
+        let file = self
             .built()
             .iter()
             .find(|file| file.location == *location)
-            .and_then(|file| file.runs.clone());
-        let Some(runs) = runs.filter(|runs| runs.open()) else {
+            .and_then(|file| Some((file.runs.clone()?, file.handles.clone())));
+        let Some((runs, handles)) = file.filter(|(runs, _)| runs.open()) else {
             return false;
         };
-        // The watch's polls still held are the run's calls too (#2338):
-        // written, and so folded, before the summary is taken.
-        self.flush_watch_polls(location);
         let totals = self.call_as(
             location.clone(),
             member,
@@ -218,7 +231,12 @@ impl SwarmBoard {
                 None
             }
         };
-        runs.summarize_run(totals.as_ref())
+        // The watch's ticks still held are the run's calls too (#2338):
+        // written, and so folded, before the summary is taken, and no later
+        // tick is written until it is (review round 1).
+        swarm_board_dispatch::with_watch_polls_flushed(&handles, || {
+            runs.summarize_run(totals.as_ref())
+        })
     }
 
     /// Writes the run watch's polls held for the file at `location`

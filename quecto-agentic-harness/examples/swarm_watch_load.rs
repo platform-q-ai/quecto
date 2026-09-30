@@ -1,8 +1,8 @@
 //! The run watch's board load probe (#2338): what three members' run
 //! watches cost the board, idle and beside a writer, with the snapshot poll
 //! every watch ran until #2338 (`legacy`: a `_snapshot` every tick) and
-//! with the cursor-first watch (`watch`: an `_event_cursor` every tick, a
-//! `_snapshot` only when the schedule asks for one).
+//! with the watch of #2338 (`watch`: one `_watch` call a tick, which
+//! answers the snapshot only when the board changed or the schedule asked).
 //!
 //! Opt-in and re-runnable, never part of a test run:
 //!
@@ -27,10 +27,10 @@ use std::time::{Duration, Instant};
 use quecto::application::swarm::dto::{BoardLocation, DroppedRecords};
 use quecto::application::swarm::ports::{BoardOpLog, CoordinationPort, SessionOpLog};
 use quecto::composition::swarm::{SwarmBoard, board_wire, build_swarm_board_handles};
-use quecto::domain::swarm::watch::{WATCH_TICK, WatchRead, WatchSchedule};
+use quecto::domain::swarm::watch::{WATCH_TICK, WatchSchedule};
 use quecto::domain::swarm::{BoardOpObservation, ProcessIdentity, SwarmRunSummary};
 use quecto::infrastructure::tools::swarm_board_dispatch::call;
-use quecto::infrastructure::tools::swarm_bridge::{SwarmContext, process_start};
+use quecto::infrastructure::tools::swarm_bridge::{RunWatch, SwarmContext, process_start};
 use serde_json::json;
 
 /// Per op: records, the calls they account for, and busy records.
@@ -44,6 +44,12 @@ impl BoardOpLog for Counts {
         entry.0 += 1;
         entry.1 += observation.detail.polls.unwrap_or(1);
         entry.2 += u64::from(observation.busy == Some(true));
+        // The watch's ticks that answered the snapshot, apart.
+        if observation.op == "_watch" && observation.decision.as_deref() == Some("snapshot") {
+            let snapshots = counts.entry("_watch/snapshot".into()).or_default();
+            snapshots.0 += 1;
+            snapshots.1 += 1;
+        }
     }
 
     fn summarize(&self, summary: SwarmRunSummary) {
@@ -78,7 +84,7 @@ fn member(checkout: &std::path::Path, log: &Arc<Counts>) -> SwarmContext {
 }
 
 /// One watcher until `stop`: `legacy` snapshots every tick; otherwise the
-/// cursor-first watch.
+/// watch's one `_watch` call a tick, as its schedule names the cursor.
 fn watch(context: &SwarmContext, legacy: bool, stop: &AtomicBool) {
     let mut schedule = WatchSchedule::new();
     while !stop.load(Ordering::Relaxed) {
@@ -87,12 +93,14 @@ fn watch(context: &SwarmContext, legacy: bool, stop: &AtomicBool) {
                 let _snapshot = context.snapshot();
             }
             false => {
-                let cursor = context.watch_cursor().ok();
                 let at = now();
-                if schedule.read(cursor, at) == WatchRead::Snapshot {
-                    if let Ok(snapshot) = context.watch_snapshot() {
-                        schedule.snapshotted(cursor, &snapshot, at);
-                    }
+                match context.watch(schedule.since(at)) {
+                    Ok(RunWatch {
+                        event_cursor,
+                        snapshot: Some(snapshot),
+                    }) => schedule.snapshotted(event_cursor, &snapshot, at),
+                    Ok(RunWatch { snapshot: None, .. }) => {}
+                    Err(_) => schedule.unreadable(),
                 }
             }
         }
@@ -176,14 +184,15 @@ fn main() {
     for (op, (records, calls, busy)) in counts.iter() {
         println!("{op:<16} {records:>8} {calls:>8} {busy:>6}");
     }
-    let snapshots = counts.get("_snapshot").map_or(0, |entry| entry.1);
-    let watch_busy: u64 = ["_snapshot", "_event_cursor"]
+    let snapshots = counts.get("_snapshot").map_or(0, |entry| entry.1)
+        + counts.get("_watch/snapshot").map_or(0, |entry| entry.1);
+    let watch_busy: u64 = ["_snapshot", "_watch"]
         .iter()
         .filter_map(|op| counts.get(*op))
         .map(|entry| entry.2)
         .sum();
     println!(
-        "_snapshot per member-minute: {:.1}; busy records from the watch: {watch_busy}",
+        "snapshots per member-minute: {:.1}; busy records from the watch: {watch_busy}",
         snapshots as f64 / 3.0 / (elapsed / 60.0)
     );
 }
