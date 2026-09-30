@@ -559,3 +559,30 @@ fn a_ceiling_cap_above_the_budget_or_the_window_changes_nothing() {
     manager.set_model_context_window(Some(30_000));
     assert_eq!(manager.effective_max_context_tokens(), 30_000);
 }
+
+/// #2349 review L2: once lowered, the cap never disengages: not by a model
+/// switch, a new window, a new session, nor a later (higher) value.
+#[test]
+fn a_lowered_ceiling_never_disengages() {
+    let mut manager = manager(200_000);
+    manager.ceiling_cap().lower_to(48_000);
+
+    manager.set_model_context_window(Some(1_000_000));
+    manager.forget_calibration();
+    manager.set_session_key(SessionIdentity::from_persisted_key("another"));
+    manager.ceiling_cap().lower_to(usize::MAX);
+
+    assert_eq!(manager.effective_max_context_tokens(), 48_000);
+    assert_eq!(manager.pruning_ceiling_in_estimate_units(), 48_000);
+}
+
+/// #2349 review M2: the window budget ignores a swarm member's cap.
+#[test]
+fn the_window_budget_ignores_the_swarm_cap() {
+    let mut manager = manager(200_000);
+    manager.ceiling_cap().lower_to(40_000);
+    assert_eq!(manager.window_budget_tokens(), 200_000);
+    manager.set_model_context_window(Some(100_000));
+    assert_eq!(manager.window_budget_tokens(), 100_000);
+    assert_eq!(manager.effective_max_context_tokens(), 40_000);
+}

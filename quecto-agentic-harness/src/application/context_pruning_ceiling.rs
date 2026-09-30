@@ -178,3 +178,8 @@ pub fn enforce_context_ceiling_ladder(
 #[cfg(test)]
 #[path = "context_pruning_ceiling_tests.rs"]
 mod tests;
+
+// #2349 review M1: removal keeps call/result exchanges whole.
+#[cfg(test)]
+#[path = "context_pruning_exchange_tests.rs"]
+mod exchange_tests;

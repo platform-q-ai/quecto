@@ -359,3 +359,53 @@ fn test_openai_provider_accepts_shared_client() {
     let provider = OpenAiProvider::with_client("sk-test".to_string(), None, client);
     assert_eq!(provider.name(), "openai");
 }
+
+/// #2349 review M1 (defence in depth): a call without its result, or a
+/// result without its call, is never sent — chat completions rejects either
+/// with a 400. Paired calls and results pass through untouched.
+#[test]
+fn orphaned_calls_and_results_are_never_sent() {
+    use crate::domain::message::ToolCall;
+    let call = |id: &str| ToolCall {
+        id: id.to_string(),
+        name: "bash".to_string(),
+        arguments: "{}".to_string(),
+    };
+    let messages = vec![
+        Message::user("go"),
+        Message::assistant("", vec![call("paired"), call("orphan-call")]),
+        Message::tool("paired".to_string(), "ok".to_string()),
+        Message::tool("orphan-result".to_string(), "lost its call".to_string()),
+        Message::assistant("done", vec![]),
+    ];
+    let request = ChatRequest {
+        trace: None,
+        admission: None,
+        messages: &messages,
+        tools: &[],
+        model: "gpt-test",
+        max_tokens: 256,
+        temperature: 0.2,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: None,
+    };
+    let body = OpenAiProvider::build_chat_completions_body_for_test("openai", &request);
+    let sent = body["messages"].as_array().unwrap();
+    let call_ids: Vec<&str> = sent
+        .iter()
+        .filter_map(|m| m["tool_calls"].as_array())
+        .flatten()
+        .filter_map(|tc| tc["id"].as_str())
+        .collect();
+    let result_ids: Vec<&str> = sent
+        .iter()
+        .filter_map(|m| m["tool_call_id"].as_str())
+        .collect();
+    assert_eq!(call_ids, ["paired"], "{body}");
+    assert_eq!(result_ids, ["paired"], "{body}");
+    assert_eq!(sent.len(), 4, "the orphaned result is left out: {body}");
+}

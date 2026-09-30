@@ -156,6 +156,12 @@ impl ContextManager {
         (self.pin_recent_turns, self.context_collapse_after_messages)
     }
 
+    /// The configured budget clamped to the model's window, without a swarm
+    /// member's cap: the room the model has, not what the member keeps.
+    pub fn window_budget_tokens(&self) -> usize {
+        self.effective_max_context_tokens()
+    }
+
     /// The lowest of the configured budget, the model's window and the
     /// composition's cap (a swarm member's, #2342).
     pub fn effective_max_context_tokens(&self) -> usize {

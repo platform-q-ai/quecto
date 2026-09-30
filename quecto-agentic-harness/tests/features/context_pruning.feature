@@ -615,3 +615,24 @@ Feature: Context pruning via sliding window and tool-call collapse
     And the LLM returns a plain text response "recovered"
     When the user sends "go" through the pruning agent
     Then the run's appended messages include the malformed-request feedback
+
+  # --- #2342: a swarm member's context ---
+
+  @issue-2342
+  Scenario: A newer board summary supersedes the older ones, which stay recallable
+    Given a configured agent with a mock LLM
+    And the member reads the board summary 3 times, then replies "done"
+    When the user sends "go" through the swarm member agent
+    Then only the newest board summary is in full context
+    And every older board summary is a recall stub of its full answer
+    And the prune records count 2 superseded summaries
+
+  @issue-2342
+  Scenario: A swarm member prunes its context at its swarm ceiling
+    Given a configured agent with a mock LLM
+    And a spilled conversation history of 6 prior turns each exceeding the pruning budget
+    And the member's swarm ceiling is 2000 tokens
+    And the member reads the board summary 1 times, then replies "done"
+    When the user sends "go" through the swarm member agent
+    Then some pre-run messages are collapsed to recall stubs
+    And the prune records name a ceiling of 2000 tokens

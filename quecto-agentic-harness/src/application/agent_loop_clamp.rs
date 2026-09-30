@@ -76,7 +76,8 @@ impl AgentLoopImpl {
         let limit = match (boosted, self.model_max_tokens) {
             (true, Some(cap)) if cap > effective => {
                 let room = self
-                    .effective_max_context_tokens()
+                    .context_manager
+                    .window_budget_tokens()
                     .saturating_sub(context_tokens)
                     .saturating_sub(OUTPUT_ROOM_MARGIN);
                 let room = u32::try_from(room).unwrap_or(u32::MAX);
