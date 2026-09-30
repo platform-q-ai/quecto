@@ -409,3 +409,26 @@ fn a_watch_refuses_a_since_that_is_no_cursor() {
     }
     assert!(context.call("_watch", json!([null])).unwrap()["snapshot"].is_object());
 }
+
+/// #2338 final review: `_snapshot` of a run whose deadline has not come is
+/// read without the write lock: where Python's board waits for a writer
+/// holding it and refuses `database is locked`, Rust's answers at once,
+/// and its record is not busy. The differential harness refuses a held
+/// step of it (`UNLOCKED_READS`); this pins the Rust behaviour instead.
+#[test]
+fn a_snapshot_does_not_wait_for_a_writers_lock() {
+    let (_directory, context, log) = running();
+    let _setup = log.taken();
+    let (release, holder) = holding_the_write_lock(context.database());
+    let started = Instant::now();
+    let snapshot = context.snapshot();
+    let waited = started.elapsed();
+    drop(release);
+    holder.join().unwrap();
+    assert_eq!(snapshot.unwrap().status, RunStatus::Running);
+    assert!(waited < Duration::from_millis(250), "{waited:?}");
+    let records = log.taken();
+    assert_eq!(records.len(), 1, "{records:?}");
+    assert_eq!(records[0].op, "_snapshot");
+    assert_eq!(records[0].busy, Some(false), "{records:?}");
+}

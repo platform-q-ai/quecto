@@ -64,6 +64,9 @@ pub struct BoardState {
     pub notification_cursors: Vec<(String, i64)>,
     /// Each actor's wake cursor; `None` until a claim creates the table.
     pub wake_cursors: Option<Vec<(String, i64)>>,
+    /// A board an older writer created, lacking a column only a write
+    /// transaction adds (#2338); an `atomic` adds them.
+    pub columns_stale: bool,
 }
 
 /// A journal shared by the board and the id source, so a test reads the
@@ -110,6 +113,8 @@ impl BoardRepository for MemoryBoard {
     fn atomic(&self, create: bool, work: &mut BoardWork<'_>) -> Result<(), BoardError> {
         self.transactions.lock().unwrap().push(create);
         let working = RefCell::new(self.snapshot());
+        // `ensure_columns` runs first in every write transaction.
+        working.borrow_mut().columns_stale = false;
         let transaction = MemoryTransaction {
             state: &working,
             journal: &self.journal,
@@ -157,6 +162,10 @@ impl MemoryTransaction<'_> {
 }
 
 impl BoardRuns for MemoryTransaction<'_> {
+    fn columns_current(&self) -> Result<bool, BoardError> {
+        Ok(!self.state.borrow().columns_stale)
+    }
+
     fn run(&self) -> Result<Option<RunRecord>, BoardError> {
         Ok(self
             .state

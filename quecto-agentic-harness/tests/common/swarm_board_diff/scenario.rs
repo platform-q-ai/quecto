@@ -367,6 +367,15 @@ fn run_in(
                 step.method, step.member, step.args, step.now
             )
         };
+        if step.hold.is_some() && UNLOCKED_READS.contains(&step.method.as_str()) {
+            return Err(format!(
+                "{}: a held step of a method read without the write lock is no \
+                 differential scenario: Python refuses it while the lock is held, \
+                 Rust answers it unbusied (ADR-0030, #2338; pinned by \
+                 `a_snapshot_does_not_wait_for_a_writers_lock`)",
+                context()
+            ));
+        }
         let (python_outcome, mut rust_outcome, dispatched) = if step.method == SQL_STEP {
             (
                 edit(&python_side.database, &step.args),
@@ -444,6 +453,13 @@ fn database(path: &Path) -> bool {
         .map(|bytes| bytes.is_empty() || bytes.starts_with(b"SQLite format 3\0"))
         .unwrap_or(false)
 }
+
+/// The methods the Rust board reads in a read transaction that takes no
+/// write lock whenever the gate has nothing to write (#2338, ADR-0030):
+/// a writer holding the lock neither refuses nor slows them, where
+/// Python's `BEGIN IMMEDIATE` waits and then refuses `database is locked`.
+/// A held step of one is refused by the harness, never compared.
+pub const UNLOCKED_READS: [&str; 3] = ["_snapshot", "_watch", "_event_cursor"];
 
 /// The event log holds exactly one record for a dispatched call (none for
 /// a step that never reached the dispatcher), busy when the lock was held.

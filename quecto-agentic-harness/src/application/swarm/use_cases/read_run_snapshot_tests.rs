@@ -127,3 +127,28 @@ fn a_watch_at_the_deadline_records_the_expiry() {
     assert_eq!(view.status.as_deref(), Some("paused"));
     assert_eq!(board.transactions(), [false, false]);
 }
+
+/// #2338 final review: a board lacking a column only a write transaction
+/// adds is answered through the full gate, which adds it, as Python's
+/// board does, for the snapshot and the watch's tick alike.
+#[test]
+fn a_board_missing_an_added_column_is_answered_through_the_full_gate() {
+    for watch in [false, true] {
+        let mut state = running_board(100.0);
+        state.columns_stale = true;
+        let board = MemoryBoard::with(state);
+        let use_case = ReadRunSnapshot::new(board.clone(), SteppingClock::fixed(50.0));
+        let status = match watch {
+            false => use_case.execute("parent").unwrap().status,
+            true => use_case
+                .watch("parent", Some(0))
+                .unwrap()
+                .snapshot
+                .and_then(|view| view.status),
+        };
+        assert_eq!(status.as_deref(), Some("running"), "watch: {watch}");
+        assert_eq!(board.reads(), 1, "the read found a column missing");
+        assert_eq!(board.transactions(), [false, false], "then the full gate");
+        assert!(!board.snapshot().columns_stale, "which added the columns");
+    }
+}

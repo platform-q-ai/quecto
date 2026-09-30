@@ -175,6 +175,10 @@ pub(super) struct SqliteBoard<'c> {
 }
 
 impl BoardRuns for SqliteBoard<'_> {
+    fn columns_current(&self) -> Result<bool, BoardError> {
+        Ok(true)
+    }
+
     fn run(&self) -> Result<Option<RunRecord>, BoardError> {
         self.connection
             .query_row("SELECT * FROM run", [], |row| {

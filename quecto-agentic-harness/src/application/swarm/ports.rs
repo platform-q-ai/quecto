@@ -143,6 +143,11 @@ pub trait SwarmRunControl: Send + Sync {
 pub trait BoardRuns {
     /// The run, when the store holds one.
     fn run(&self) -> Result<Option<RunRecord>, BoardError>;
+    /// Whether the board holds every column a write transaction adds to an
+    /// older board (`ensure_columns`, #2338 final review): a read
+    /// transaction, which adds none, answers only from a board that does,
+    /// so it answers and leaves the board as the full transaction would.
+    fn columns_current(&self) -> Result<bool, BoardError>;
     /// Whether the store holds a run (`_bootstrap`'s `SELECT 1 FROM run`):
     /// no column of it is read.
     fn run_exists(&self) -> Result<bool, BoardError>;

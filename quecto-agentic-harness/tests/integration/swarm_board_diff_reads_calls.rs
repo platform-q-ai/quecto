@@ -416,3 +416,39 @@ fn the_launcher_column_is_migrated_into_an_older_store() {
     assert_eq!(launcher("late"), Some(json!("parent")));
     assert_eq!(launcher("parent"), Some(Value::Null));
 }
+
+/// #2338 final review: `_snapshot` of a board lacking an added column
+/// answers as Python's, which adds the column back first (its members then
+/// carry `"launcher": null`), and leaves the same board.
+#[test]
+fn a_snapshot_of_a_board_without_the_launcher_column_adds_it() {
+    run_both(&joined([
+        sql("ALTER TABLE members DROP COLUMN launcher"),
+        at(3.0, "parent", "_snapshot", json!([])),
+    ]));
+}
+
+/// #2338 final review: likewise for a `messages` column the snapshot does
+/// not read: the board Python leaves holds it again, and so does Rust's.
+#[test]
+fn a_snapshot_of_a_board_without_a_message_column_adds_it() {
+    run_both(&joined([
+        sql("ALTER TABLE messages DROP COLUMN superseded_by"),
+        at(3.0, "parent", "_snapshot", json!([])),
+    ]));
+}
+
+/// #2338 final review: the harness refuses a held step of a method the
+/// Rust board reads without the write lock, rather than compare it.
+#[test]
+fn a_held_unlocked_read_is_refused_by_the_harness() {
+    use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{Hold, held, try_run_both};
+    for method in ["_snapshot", "_watch"] {
+        let refused = try_run_both(
+            &joined([held(Hold::WaitedOut, at(3.0, "parent", method, json!([])))]),
+            |_, _, _| {},
+        )
+        .unwrap_err();
+        assert!(refused.contains("no differential scenario"), "{refused}");
+    }
+}
