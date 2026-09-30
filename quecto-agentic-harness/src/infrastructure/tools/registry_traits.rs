@@ -14,7 +14,7 @@ use crate::domain::tool::{
     ToolPolicyRequest, ToolProfileContext, ToolResult,
 };
 use crate::domain::tool_descriptor::{
-    ProfileAvailabilityScope, ToolCatalogueEntry, ToolDescriptor,
+    ProfileAvailabilityScope, ToolCatalogueEntry, ToolDescriptor, ToolSource,
 };
 use crate::infrastructure::config::{ToolPolicyConfig, ToolPolicyEntryConfig};
 
@@ -70,7 +70,6 @@ impl ToolExecutor for ToolRegistryImpl {
     /// result collapse every older result of it.
     fn snapshot_key(&self, name: &str, arguments: &str, content: &str) -> Option<&'static str> {
         let registration = self.metadata.get(name)?;
-        use crate::domain::tool_descriptor::ToolSource;
         match registration.source {
             ToolSource::BundledNative => self.get(name)?.snapshot_key(arguments, content),
             ToolSource::Uds | ToolSource::Runtime => None,

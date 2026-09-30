@@ -796,6 +796,7 @@ For progress, ask the coordinator for `swarm {"op":"summary"}` and retrieve its 
 | `QUECTO_AGENTS_DEFAULTS_WORKSPACE` | `agents.defaults.workspace` |
 | `QUECTO_AGENTS_DEFAULTS_MAX_SESSION_MESSAGES` | `agents.defaults.max_session_messages` |
 | `QUECTO_MAX_CONTEXT_TOKENS` | `agents.defaults.max_context_tokens` |
+| `QUECTO_SWARM_MAX_CONTEXT_TOKENS` | `agents.defaults.swarm_max_context_tokens` (a swarm member's ceiling; `0` is refused) |
 | `QUECTO_AGENTS_DEFAULTS_EFFORT` | `agents.defaults.effort` (`none`/`low`/`medium`/`high`/`xhigh`/`max`; unknown values are rejected at config load with an error naming the valid values) |
 | `QUECTO_TOOLS_WEB_BRAVE_API_KEY` | `tools.web.brave.api_key` |
 | `OPENAI_API_KEY` | `providers.openai.api_key` |

@@ -43,7 +43,7 @@ use gauge::ContextGaugeCalibration;
 mod ceiling_cap;
 pub use ceiling_cap::ContextCeilingCap;
 // The spill writers (split out for the decrease-only line ceiling, #2342).
-#[path = "context_spill.rs"]
+#[path = "context_spill_writers.rs"]
 mod spill;
 
 /// The narrow handles the pruning policy holds on the sessions
@@ -159,17 +159,16 @@ impl ContextManager {
     /// The configured budget clamped to the model's window, without a swarm
     /// member's cap: the room the model has, not what the member keeps.
     pub fn window_budget_tokens(&self) -> usize {
-        self.effective_max_context_tokens()
+        match self.model_context_window {
+            Some(window) => self.max_context_tokens.min(window),
+            None => self.max_context_tokens,
+        }
     }
 
     /// The lowest of the configured budget, the model's window and the
-    /// composition's cap (a swarm member's, #2342).
+    /// composition's cap (a swarm member's, #2342), in provider tokens.
     pub fn effective_max_context_tokens(&self) -> usize {
-        let budget = self.max_context_tokens.min(self.ceiling_cap.tokens());
-        match self.model_context_window {
-            Some(window) => budget.min(window),
-            None => budget,
-        }
+        self.window_budget_tokens().min(self.ceiling_cap.tokens())
     }
 
     /// The effective budget in estimate units at the provider-observed

@@ -635,8 +635,13 @@ switch.
    `ladder_stubbed` (messages the ceiling ladder's first rung collapsed to
    recall stubs), `messages_dropped`, `tool_results_collapsed`, and
    `tokens_before` / `tokens_after`, `snapshots_superseded` (see
-   below) and `ceiling_tokens` (the effective budget in force); logs
-   written before a count existed read it as 0.
+   below) and `ceiling_tokens` (the effective budget in force, in provider
+   tokens: the unit of `max_context_tokens`, before the ladder converts it
+   to estimate units at the observed scale); logs written before a count
+   existed read it as 0. The second rung removes whole exchanges only: an
+   assistant message with tool calls and all of its results go or stay
+   together, and a kept message keeps its exchange, so no request carries
+   a call without its result or a result without its call.
 5. **Superseded snapshots** (#2342): a tool result its tool marks as a
    whole snapshot of some state (today only a full swarm `summary` answer)
    is superseded by any newer one. Before the dials run, every older
@@ -654,7 +659,15 @@ is also capped at `swarm_max_context_tokens` (default `48000`, #2342): swarm
 members work at 30-90k tokens, where the 200k budget never engages, and
 one large tool output otherwise rides every later request until a count
 dial reaches it. The cap only lowers the budget; the same ladder and
-low-water batching apply, and everything stubbed stays recallable.
+low-water batching apply, and everything stubbed stays recallable. The cap
+never disengages: participation in a swarm is never revoked, and neither a
+model switch, a new window, a new session nor a later configuration raises
+it for the life of the process. It bounds only what the member keeps: the
+room a raised output limit (#2124) may use is still computed from
+`max_context_tokens` and the model's window. Set it with
+`agents.defaults.swarm_max_context_tokens` or
+`QUECTO_SWARM_MAX_CONTEXT_TOKENS`; `0` is refused at load. To switch the cap
+off, set it at or above `max_context_tokens`.
 
 Every collapse or demotion rewrites a message early in the conversation, so
 the provider's prompt cache misses from that message on. Pruning down to the
@@ -740,7 +753,7 @@ Session behavior is configured in `config.json` under `agents.defaults`:
 | Field | Default | Description |
 |-------|---------|-------------|
 | `max_context_tokens` | `200000` | Application-level token budget before context pruning (clamped down to the model's declared context window when known) |
-| `swarm_max_context_tokens` | `48000` | The budget once the process takes part in a swarm: the lower of it and `max_context_tokens` applies from then on |
+| `swarm_max_context_tokens` | `48000` | The budget once the process takes part in a swarm: the lower of it and `max_context_tokens` applies from then on, and never disengages. Env: `QUECTO_SWARM_MAX_CONTEXT_TOKENS`. `0` is refused; set it at or above `max_context_tokens` to switch it off |
 | `context_collapse_after_tool_calls` | `50` | Collapse the oldest tool outputs once the session exceeds N tool calls. Set to `4294967295` (`u32::MAX`) to disable |
 | `context_collapse_after_messages` | `50` | Collapse the oldest conversation (user/assistant) messages to recall stubs once the session exceeds N live messages. Set to `4294967295` (`u32::MAX`) to disable |
 | `pin_recent_turns` | `2` | How many most-recent turns the context ceiling never demotes or drops |

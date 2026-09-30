@@ -64,7 +64,9 @@ impl AgentLoopImpl {
     /// cut-off one request may go above the effective limit, up to the
     /// model's declared cap, twice the effective limit (the configured
     /// `max_tokens` is also a cost ceiling), and what the context window has
-    /// left beside the prompt; never below the effective limit. The value is
+    /// left beside the prompt (the window budget: a swarm member's pruning
+    /// cap bounds what it keeps, not the model's room, #2349 review M2);
+    /// never below the effective limit. The value is
     /// remembered so the reply is judged against what the request asked for.
     pub(super) fn request_max_tokens(&self, estimated_context_tokens: usize) -> u32 {
         use std::sync::atomic::Ordering::Relaxed;

@@ -116,9 +116,11 @@ pub enum AuditEvent {
         /// (#2342); absent from logs written before it, read as 0.
         #[serde(default)]
         snapshots_superseded: usize,
-        /// The pruning ceiling in force, in tokens: the lowest of the
-        /// configured budget, the model's window and a swarm member's cap
-        /// (#2342); absent from logs written before it, read as 0.
+        /// The pruning ceiling in force, in provider tokens (the unit of
+        /// `max_context_tokens`, before the ladder converts it to estimate
+        /// units at the observed scale): the lowest of the configured
+        /// budget, the model's window and a swarm member's cap (#2342);
+        /// absent from logs written before it, read as 0.
         #[serde(default)]
         ceiling_tokens: usize,
     },

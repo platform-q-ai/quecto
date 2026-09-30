@@ -442,6 +442,7 @@ impl Config {
     /// - `QUECTO_AGENTS_DEFAULTS_WORKSPACE` → agents.defaults.workspace
     /// - `QUECTO_AGENTS_DEFAULTS_MAX_SESSION_MESSAGES` → agents.defaults.max_session_messages
     /// - `QUECTO_MAX_CONTEXT_TOKENS` → agents.defaults.max_context_tokens
+    /// - `QUECTO_SWARM_MAX_CONTEXT_TOKENS` → agents.defaults.swarm_max_context_tokens
     /// - `QUECTO_AGENTS_DEFAULTS_EFFORT` → agents.defaults.effort
     /// - `OPENAI_API_KEY` → providers.openai.api_key
     /// - `ANTHROPIC_API_KEY` → providers.anthropic.api_key
@@ -471,6 +472,11 @@ impl Config {
             && let Ok(n) = v.parse::<usize>()
         {
             config.agents.defaults.max_context_tokens = n;
+        }
+        if let Some(v) = env.get("QUECTO_SWARM_MAX_CONTEXT_TOKENS")
+            && let Ok(n) = v.parse::<usize>()
+        {
+            config.agents.defaults.swarm_max_context_tokens = n;
         }
         if let Some(v) = env.get("OPENAI_API_KEY") {
             config.providers.openai.api_key = v.clone();

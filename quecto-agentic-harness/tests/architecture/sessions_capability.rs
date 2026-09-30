@@ -729,23 +729,26 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/interface/cli/retention_handles.rs", 33),
     ("src/infrastructure/tools/recall.rs", 152),
     // #2212: the gauge moved to its own module (336 → 332); #2342: the
-    // spill writers and the swarm cap moved to their own modules (→ 305).
-    ("src/application/context.rs", 305),
+    // spill writers and the swarm cap moved to their own modules (→ 310).
+    ("src/application/context.rs", 310),
     // #2342: new modules (the swarm member's cap; the spill writers).
     ("src/application/context_ceiling_cap.rs", 30),
-    ("src/application/context_spill.rs", 70),
+    ("src/application/context_spill_writers.rs", 70),
     // #2212: new modules (the gauge and its estimate scale; the pure ratio;
     // the per-class estimate).
     ("src/application/context_gauge.rs", 98),
     ("src/domain/context_calibration.rs", 168),
     ("src/domain/token_estimate.rs", 207),
-    // #2212: the estimate doc points at the per-class module (244 → 242).
-    ("src/application/context_pruning.rs", 242),
+    // #2212: the estimate doc points at the per-class module (244 → 242);
+    // #2349 review M1: the drop moved to the exchanges module (→ 209).
+    ("src/application/context_pruning.rs", 209),
+    // #2349 review M1: new module (removal keeps exchanges whole).
+    ("src/application/context_pruning_exchanges.rs", 86),
     // #2213: the demotion-ladder ceiling moved to its own module (304 → 217).
     ("src/application/context_pruning_messages.rs", 217),
     // #2213: new module (the ladder, the low-water mark and the dials' batch);
-    // #2342: the count dials' batch moved to its own module (203 → 180).
-    ("src/application/context_pruning_ceiling.rs", 180),
+    // #2342: the count dials' batch moved to its own module (203 → 186).
+    ("src/application/context_pruning_ceiling.rs", 186),
     // #2342: new modules (the count dials' batch; superseded snapshots).
     ("src/application/context_pruning_count_dial.rs", 41),
     ("src/application/context_pruning_snapshots.rs", 86),

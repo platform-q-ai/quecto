@@ -3,9 +3,11 @@
 // message list: no retention handle, no store.
 
 use super::{collapse_conversation_message, exempt_flags, message_collapse_stub};
+use crate::application::context_pruning::exchanges::{
+    drop_exchanges_until_under_budget, exchange_groups, keep_exchanges_whole,
+};
 use crate::application::context_pruning::{
-    collapse_message, drop_until_under_budget, estimate_message_tokens, estimate_tokens,
-    estimate_total_tokens,
+    collapse_message, estimate_message_tokens, estimate_tokens, estimate_total_tokens,
 };
 use crate::domain::message::{Message, Role};
 use crate::domain::turn_origin::report_to_keep;
@@ -151,12 +153,10 @@ pub fn enforce_context_ceiling_ladder(
         if let Some(report) = report_to_keep(messages) {
             exempt[report] = true;
         }
-        let droppable: Vec<usize> = messages
-            .iter()
-            .enumerate()
-            .filter(|&(i, _)| !exempt[i])
-            .map(|(i, _)| i)
-            .collect();
+        // Whole exchanges only (#2349 review M1): a kept message keeps its
+        // exchange, and a dropped exchange goes with all of its results.
+        let groups = exchange_groups(messages);
+        keep_exchanges_whole(&mut exempt, &groups);
         let exempt_tokens: usize = messages
             .iter()
             .zip(&exempt)
@@ -168,7 +168,8 @@ pub fn enforce_context_ceiling_ladder(
         } else {
             max_tokens
         };
-        outcome.dropped = drop_until_under_budget(messages, drop_target, &droppable).len();
+        outcome.dropped =
+            drop_exchanges_until_under_budget(messages, drop_target, &exempt, &groups);
     }
 
     outcome.over_budget = estimate_total_tokens(messages) > max_tokens;

@@ -648,7 +648,9 @@ general dashboard event API remain separate follow-on work.
 
 A member's own context is kept lean (#2342): once its process takes part in
 a swarm its pruning budget is capped at `agents.defaults.swarm_max_context_tokens`
-(default 48000), and each full `summary` answer supersedes the member's older
+(default 48000, or `QUECTO_SWARM_MAX_CONTEXT_TOKENS`; it never disengages,
+and setting it at or above `max_context_tokens` switches it off), and each
+full `summary` answer supersedes the member's older
 ones, which collapse to recall stubs while the newest stays in full. Each prune
 that does either is visible in the event log's `context_pruned` record
 (`snapshots_superseded`, `ceiling_tokens`); the moment the cap engages is a
