@@ -751,7 +751,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/application/context_pruning_ceiling.rs", 186),
     // #2342: new modules (the count dials' batch; superseded snapshots).
     ("src/application/context_pruning_count_dial.rs", 41),
-    ("src/application/context_pruning_snapshots.rs", 86),
+    ("src/application/context_pruning_snapshots.rs", 88),
     ("src/application/agent_loop_spill.rs", 56),
     // #2212: the gauge wrappers moved to their own module (749 → 703).
     ("src/application/agent_loop.rs", 703),

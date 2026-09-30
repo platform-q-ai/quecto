@@ -146,8 +146,8 @@ impl OpenAiProvider {
         let (paired, orphans) = crate::domain::session::filter_orphan_tool_pairs(messages);
         if orphans.has_orphans() {
             tracing::warn!(
-                orphaned_calls = orphans.orphaned_calls.len(),
-                orphaned_results = orphans.orphaned_results.len(),
+                orphaned_calls = ?orphans.orphaned_calls,
+                orphaned_results = ?orphans.orphaned_results,
                 "chat completions: orphaned tool calls/results left out of the request"
             );
         }
@@ -156,6 +156,13 @@ impl OpenAiProvider {
             .iter()
             .filter(|m| match (&m.role, m.tool_call_id.as_deref()) {
                 (Role::Tool, Some(id)) => is_paired(id),
+                // An assistant turn left with no text and no paired call is
+                // an empty turn: left out, as `codex_input` does.
+                (Role::Assistant, _) => {
+                    m.tool_calls.is_empty()
+                        || m.tool_calls.iter().any(|tc| is_paired(&tc.id))
+                        || !m.content.is_empty()
+                }
                 _ => true,
             })
             .map(|m| {

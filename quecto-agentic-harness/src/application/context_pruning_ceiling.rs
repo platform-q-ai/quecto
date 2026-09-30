@@ -46,7 +46,7 @@ pub fn low_water(limit: usize) -> usize {
 /// keep its results paired, so it is in flight too. With no assistant
 /// message nothing is in flight. Neither count dial nor ladder rung demotes
 /// an in-flight message: a stubbed unseen result would only be recalled.
-pub(super) fn in_flight_start(messages: &[Message]) -> usize {
+pub(in crate::application::context_pruning) fn in_flight_start(messages: &[Message]) -> usize {
     match messages.iter().rposition(|m| m.role == Role::Assistant) {
         Some(last) if messages[last].tool_calls.is_empty() => last + 1,
         Some(last) => last,

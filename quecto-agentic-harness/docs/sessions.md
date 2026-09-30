@@ -648,9 +648,12 @@ switch.
    snapshot collapses to its recall stub, and the newest one (with the call
    that asked for it) is exempt from every dial, so the latest state always
    stays in full. The cursor fast path's `unchanged` answer, an `inbox`
-   answer (it can hold the only copy of a message), an error or a result
-   never spilled is never a snapshot. Only bundled tools can mark one. The
-   mark is not persisted: a resumed session supersedes nothing it loaded.
+   answer (it can hold the only copy of a message) and an error are never
+   snapshots. A superseded snapshot that was never spilled stays in full
+   (its stub could not be recalled), and one the model has not seen yet
+   (two summaries in one parallel batch) is superseded only once it has.
+   Only bundled tools can mark one. The mark is not persisted: a resumed
+   session supersedes nothing it loaded.
 
 The effective budget is the smaller of `max_context_tokens` and the active
 model's context window when the model registry declares one. Once the

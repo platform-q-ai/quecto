@@ -38,13 +38,15 @@ fn newest_indices(messages: &[Message]) -> Vec<(&'static str, usize)> {
 /// Collapse every spilled tool result a newer result with the same
 /// snapshot key supersedes, to its recall stub (the content was spilled at
 /// creation, so it stays recallable). A result never spilled keeps its
-/// content: its stub could not be recalled. Returns how many it collapsed;
-/// a pass that finds nothing new changes nothing, so it rewrites no prompt
-/// prefix.
+/// content: its stub could not be recalled. Only results the model has
+/// seen are superseded (#2213): two summaries of one in-flight batch both
+/// reach the model once. Returns how many it collapsed; a pass that finds
+/// nothing new changes nothing, so it rewrites no prompt prefix.
 pub fn collapse_superseded_snapshots(messages: &mut [Message]) -> usize {
     let newest = newest_indices(messages);
+    let seen_end = super::messages::ceiling::in_flight_start(messages);
     let mut collapsed = 0;
-    for (index, msg) in messages.iter_mut().enumerate() {
+    for (index, msg) in messages[..seen_end].iter_mut().enumerate() {
         let Some(key) = live_snapshot(msg) else {
             continue;
         };
