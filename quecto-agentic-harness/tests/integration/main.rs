@@ -41,6 +41,7 @@ mod inference_admission_transport;
 mod issue_1193_completion;
 mod legacy_session_startup;
 mod repl_production;
+mod standard_shared_cache;
 mod swarm_agent_loop;
 mod swarm_board_admission_race;
 mod swarm_board_claim_race;
