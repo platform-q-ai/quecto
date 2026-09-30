@@ -38,23 +38,13 @@ pub fn low_water(limit: usize) -> usize {
     mark
 }
 
-/// How many of `live` items a count dial collapses: none at or under
-/// `limit`; once `limit` is crossed, enough to leave [`low_water`]`(limit)`.
-pub fn count_to_collapse(live: usize, limit: usize) -> usize {
-    if live > limit {
-        live - low_water(limit)
-    } else {
-        0
-    }
-}
-
 /// Where the in-flight exchange starts (#2213): the model has not seen the
 /// messages after its last assistant message yet (the results of that
 /// message's tool calls), and a tool-calling last assistant message must
 /// keep its results paired, so it is in flight too. With no assistant
 /// message nothing is in flight. Neither count dial nor ladder rung demotes
 /// an in-flight message: a stubbed unseen result would only be recalled.
-fn in_flight_start(messages: &[Message]) -> usize {
+pub(super) fn in_flight_start(messages: &[Message]) -> usize {
     match messages.iter().rposition(|m| m.role == Role::Assistant) {
         Some(last) if messages[last].tool_calls.is_empty() => last + 1,
         Some(last) => last,
@@ -62,23 +52,10 @@ fn in_flight_start(messages: &[Message]) -> usize {
     }
 }
 
-/// The tool results a count dial collapses (#2213), as `(to_collapse,
-/// seen_end)`: collapse `to_collapse` live results, oldest first, within
-/// `messages[..seen_end]`, which ends where the in-flight exchange starts.
-/// Results never spilled (`spill_id == None`) would mint an unresolvable
-/// `recall()` stub: they are neither counted nor collapsed.
-pub fn tool_results_to_collapse(messages: &[Message], limit: usize) -> (usize, usize) {
-    let collapsible = |m: &Message| m.role == Role::Tool && !m.is_collapsed && m.spill_id.is_some();
-    let seen_end = in_flight_start(messages);
-    let live = messages.iter().filter(|m| collapsible(m)).count();
-    let seen = messages[..seen_end]
-        .iter()
-        .filter(|m| collapsible(m))
-        .count();
-    let to_collapse = count_to_collapse(live, limit).min(seen);
-    debug_assert!(to_collapse <= seen && seen <= live);
-    (to_collapse, seen_end)
-}
+// #2213 / #2342: the count dials' batch (split out for the line ceiling).
+#[path = "context_pruning_count_dial.rs"]
+mod count_dial;
+pub use count_dial::{count_to_collapse, tool_results_to_collapse};
 
 /// Outcome of one demotion-ladder ceiling pass (#1046 AC6, #1044 AC1).
 #[derive(Debug, Clone, Default)]

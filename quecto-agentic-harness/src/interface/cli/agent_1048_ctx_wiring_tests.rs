@@ -127,7 +127,23 @@ fn joining_a_swarm_lowers_the_members_pruning_ceiling() {
     let participation = crate::infrastructure::tools::swarm_bridge::Participation::shared();
     let member = build(participation.clone());
     assert_eq!(member.agent.effective_max_context_tokens(), 150_000);
+    let captured = CapturedLog::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(captured.clone())
+        .with_ansi(false)
+        .with_max_level(tracing::Level::INFO)
+        .finish();
+    let guard = tracing::subscriber::set_default(subscriber);
+    tracing::callsite::rebuild_interest_cache();
     participation.set(true);
+    drop(guard);
+    let log = captured.0.lock().unwrap().clone();
+    assert!(
+        log.contains("quecto::swarm_board")
+            && log.contains("swarm member context ceiling engaged")
+            && log.contains("ceiling_tokens=40000"),
+        "the moment the cap engages is a swarm telemetry event: {log}"
+    );
     assert_eq!(
         member.agent.effective_max_context_tokens(),
         40_000,
@@ -136,4 +152,28 @@ fn joining_a_swarm_lowers_the_members_pruning_ceiling() {
 
     let loner = build(crate::infrastructure::tools::swarm_bridge::Participation::none());
     assert_eq!(loner.agent.effective_max_context_tokens(), 150_000);
+}
+
+/// A tracing writer capturing what the subscriber writes.
+#[derive(Clone, Default)]
+struct CapturedLog(std::sync::Arc<std::sync::Mutex<String>>);
+
+impl std::io::Write for CapturedLog {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .unwrap()
+            .push_str(&String::from_utf8_lossy(bytes));
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'writer> tracing_subscriber::fmt::MakeWriter<'writer> for CapturedLog {
+    type Writer = Self;
+    fn make_writer(&'writer self) -> Self::Writer {
+        self.clone()
+    }
 }

@@ -728,8 +728,12 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/composition/retention.rs", 35),
     ("src/interface/cli/retention_handles.rs", 33),
     ("src/infrastructure/tools/recall.rs", 152),
-    // #2212: the gauge moved to its own module (336 → 332).
-    ("src/application/context.rs", 332),
+    // #2212: the gauge moved to its own module (336 → 332); #2342: the
+    // spill writers and the swarm cap moved to their own modules (→ 305).
+    ("src/application/context.rs", 305),
+    // #2342: new modules (the swarm member's cap; the spill writers).
+    ("src/application/context_ceiling_cap.rs", 30),
+    ("src/application/context_spill.rs", 70),
     // #2212: new modules (the gauge and its estimate scale; the pure ratio;
     // the per-class estimate).
     ("src/application/context_gauge.rs", 98),
@@ -739,8 +743,12 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/application/context_pruning.rs", 242),
     // #2213: the demotion-ladder ceiling moved to its own module (304 → 217).
     ("src/application/context_pruning_messages.rs", 217),
-    // #2213: new module (the ladder, the low-water mark and the dials' batch).
-    ("src/application/context_pruning_ceiling.rs", 203),
+    // #2213: new module (the ladder, the low-water mark and the dials' batch);
+    // #2342: the count dials' batch moved to its own module (203 → 180).
+    ("src/application/context_pruning_ceiling.rs", 180),
+    // #2342: new modules (the count dials' batch; superseded snapshots).
+    ("src/application/context_pruning_count_dial.rs", 41),
+    ("src/application/context_pruning_snapshots.rs", 86),
     ("src/application/agent_loop_spill.rs", 56),
     // #2212: the gauge wrappers moved to their own module (749 → 703).
     ("src/application/agent_loop.rs", 703),

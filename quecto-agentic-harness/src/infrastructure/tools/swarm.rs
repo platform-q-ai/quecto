@@ -60,6 +60,26 @@ impl Default for SwarmTool {
 }
 
 impl Tool for SwarmTool {
+    /// A full `summary` answer is a whole snapshot of the board (#2342):
+    /// the op is `summary` and the answer carries the board's `members`,
+    /// `tasks` and `event_cursor`. The fast path's `unchanged` answer
+    /// carries no board state, and no other op's answer is a snapshot (an
+    /// `inbox` answer can hold the only copy of a message).
+    fn snapshot_key(&self, arguments: &str, content: &str) -> Option<&'static str> {
+        let arguments: serde_json::Value = serde_json::from_str(arguments).ok()?;
+        if arguments.get("op").and_then(serde_json::Value::as_str) != Some("summary") {
+            return None;
+        }
+        let answer: serde_json::Value = serde_json::from_str(content).ok()?;
+        let whole = answer
+            .get("members")
+            .is_some_and(serde_json::Value::is_array)
+            && answer.get("tasks").is_some_and(serde_json::Value::is_array)
+            && answer
+                .get("event_cursor")
+                .is_some_and(serde_json::Value::is_number);
+        whole.then_some(SUMMARY_SNAPSHOT)
+    }
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "swarm".into(),

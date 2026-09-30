@@ -268,6 +268,16 @@ impl AgentLoopImpl {
             is_error,
         });
         tool_msg.turn = Some(current_turn);
+        // A successful result its tool names a whole snapshot of a state
+        // (#2342): a newer one supersedes it in the conversation.
+        tool_msg.snapshot_key = match is_error {
+            false => self.tool_executor().snapshot_key(
+                &tc.name,
+                &delivered_tool_arguments,
+                &tool_msg.content,
+            ),
+            true => None,
+        };
         // Stamps `spill_id` on the message only if the append succeeds.
         self.spill_tool_message(&mut tool_msg, spill_id).await;
         PreparedResult {

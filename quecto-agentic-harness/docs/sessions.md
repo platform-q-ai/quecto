@@ -634,11 +634,27 @@ switch.
    collapse, `context_collapse_after_messages`, turned into recall stubs),
    `ladder_stubbed` (messages the ceiling ladder's first rung collapsed to
    recall stubs), `messages_dropped`, `tool_results_collapsed`, and
-   `tokens_before` / `tokens_after`; logs written before
-   `messages_collapsed` and `ladder_stubbed` existed read them as 0.
+   `tokens_before` / `tokens_after`, `snapshots_superseded` (see
+   below) and `ceiling_tokens` (the effective budget in force); logs
+   written before a count existed read it as 0.
+5. **Superseded snapshots** (#2342): a tool result its tool marks as a
+   whole snapshot of some state (today only a full swarm `summary` answer)
+   is superseded by any newer one. Before the dials run, every older
+   snapshot collapses to its recall stub, and the newest one (with the call
+   that asked for it) is exempt from every dial, so the latest state always
+   stays in full. The cursor fast path's `unchanged` answer, an `inbox`
+   answer (it can hold the only copy of a message), an error or a result
+   never spilled is never a snapshot. Only bundled tools can mark one. The
+   mark is not persisted: a resumed session supersedes nothing it loaded.
 
 The effective budget is the smaller of `max_context_tokens` and the active
-model's context window when the model registry declares one.
+model's context window when the model registry declares one. Once the
+process takes part in a swarm (it created a run, or joined one), the budget
+is also capped at `swarm_max_context_tokens` (default `48000`, #2342): swarm
+members work at 30-90k tokens, where the 200k budget never engages, and
+one large tool output otherwise rides every later request until a count
+dial reaches it. The cap only lowers the budget; the same ladder and
+low-water batching apply, and everything stubbed stays recallable.
 
 Every collapse or demotion rewrites a message early in the conversation, so
 the provider's prompt cache misses from that message on. Pruning down to the
@@ -724,6 +740,7 @@ Session behavior is configured in `config.json` under `agents.defaults`:
 | Field | Default | Description |
 |-------|---------|-------------|
 | `max_context_tokens` | `200000` | Application-level token budget before context pruning (clamped down to the model's declared context window when known) |
+| `swarm_max_context_tokens` | `48000` | The budget once the process takes part in a swarm: the lower of it and `max_context_tokens` applies from then on |
 | `context_collapse_after_tool_calls` | `50` | Collapse the oldest tool outputs once the session exceeds N tool calls. Set to `4294967295` (`u32::MAX`) to disable |
 | `context_collapse_after_messages` | `50` | Collapse the oldest conversation (user/assistant) messages to recall stubs once the session exceeds N live messages. Set to `4294967295` (`u32::MAX`) to disable |
 | `pin_recent_turns` | `2` | How many most-recent turns the context ceiling never demotes or drops |

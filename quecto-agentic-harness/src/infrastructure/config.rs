@@ -343,7 +343,12 @@ fn default_max_context_tokens() -> usize {
     200_000
 }
 fn default_swarm_max_context_tokens() -> usize {
-    usize::MAX
+    // A swarm member's hot context (#2342). Members work at 30-90k tokens,
+    // far under the 200k budget, so the size dial never engaged: one 17k
+    // bash output rode 98 coordinator requests (31% of its input). At 48k
+    // the same stub-then-drop ladder (75% low water) keeps it lean;
+    // everything stubbed stays recallable.
+    48_000
 }
 fn default_max_results() -> u32 {
     5

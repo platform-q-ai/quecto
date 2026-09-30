@@ -646,6 +646,15 @@ configuration. `swarm_control` pause/resume/close/extend/status/usage_budget
 bypass the model queue and route through ancestors to the addressed member. Swarm creation and a
 general dashboard event API remain separate follow-on work.
 
+A member's own context is kept lean (#2342): once its process takes part in
+a swarm its pruning budget is capped at `agents.defaults.swarm_max_context_tokens`
+(default 48000), and each full `summary` answer supersedes the member's older
+ones, which collapse to recall stubs while the newest stays in full. Each prune
+that does either is visible in the event log's `context_pruned` record
+(`snapshots_superseded`, `ceiling_tokens`); the moment the cap engages is a
+`quecto::swarm_board` tracing event. See
+[Sessions](sessions.md#context-management) for the dials.
+
 Each attempted logical request records available provider input/output/cache
 usage, unavailable values as null, retry and OAuth-refresh counters, outcome,
 duration, context estimate, and a hash of the logical system/tool prefix. The

@@ -520,7 +520,13 @@ async fn a_plan_supersedes_older_snapshots_and_latches_the_prefix_dirty() {
         .await;
 
     assert_eq!(plan.snapshots_superseded, 1);
-    assert!(messages[1].is_collapsed && !messages[2].is_collapsed);
+    let result = |id: &str| {
+        messages
+            .iter()
+            .find(|m| m.tool_call_id.as_deref() == Some(id))
+            .unwrap()
+    };
+    assert!(result("call-1").is_collapsed && !result("call-2").is_collapsed);
     assert!(
         plan.durable_prefix_dirty,
         "an in-place rewrite is persisted"

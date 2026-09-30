@@ -233,3 +233,31 @@ fn only_a_full_summary_answer_is_a_snapshot() {
         );
     }
 }
+
+/// #2342: the board's real answers. A full summary names the snapshot; the
+/// cursor fast path's `unchanged` answer does not.
+#[tokio::test]
+async fn the_boards_summary_answer_is_a_snapshot_and_its_unchanged_answer_is_not() {
+    let directory = tempfile::tempdir().unwrap();
+    let tool: SwarmTool = super::super::swarm_test_support::tool(
+        Arc::new(directory.path().to_path_buf()),
+        crate::composition::swarm::swarm_board(),
+    );
+    let full = tool.execute(r#"{"op":"summary"}"#).await.unwrap();
+    assert!(!full.is_error, "{}", full.content);
+    assert_eq!(
+        tool.snapshot_key(r#"{"op":"summary"}"#, &full.content),
+        Some(super::SUMMARY_SNAPSHOT)
+    );
+    let cursor = serde_json::from_str::<serde_json::Value>(&full.content).unwrap()["event_cursor"]
+        .as_u64()
+        .unwrap();
+    let since = format!(r#"{{"op":"summary","since":{cursor}}}"#);
+    let unchanged = tool.execute(&since).await.unwrap();
+    assert!(
+        unchanged.content.contains("unchanged"),
+        "{}",
+        unchanged.content
+    );
+    assert_eq!(tool.snapshot_key(&since, &unchanged.content), None);
+}

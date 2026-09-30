@@ -3,7 +3,8 @@
 //! summary every few turns, small results between), measured by the tokens
 //! of every request the provider sees: before (every summary kept, the
 //! 200k default ceiling) and after (superseded summaries collapsed, a swarm
-//! member's 48k ceiling).
+//! member's 48k ceiling), at the shipped tool dial of 50 and at the 100 the
+//! owner's runs pruned at.
 
 use super::ctx_mgmt_tests::{CapturingAuditSink, MemSpillStore};
 use crate::application::agent_loop::tests::MockRegistry;
@@ -122,7 +123,7 @@ impl Tool for ScriptedBash {
                 .collect(),
             n => format!(
                 "On branch work {n}\n{}",
-                "modified: src/lib.rs\n".repeat(20)
+                "modified: src/lib.rs\n".repeat(80)
             ),
         };
         Box::pin(async move { Ok(text(content)) })
@@ -157,7 +158,7 @@ impl Tool for ScriptedSwarm {
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
         let mut reads = self.reads.lock().unwrap();
         *reads += 1;
-        let tasks: Vec<String> = (0..20 + *reads * 4)
+        let tasks: Vec<String> = (0..30 + *reads * 6)
             .map(|i| format!(r#"{{"id":{i},"status":"claimed","owner":"W{}"}}"#, i % 3))
             .collect();
         let content = format!(
@@ -190,9 +191,34 @@ impl Run {
     }
 }
 
-/// Run the scripted coordinator: `after` names summaries snapshots and
-/// lowers the ceiling to a swarm member's 48k, as a joined swarm does.
+/// What a scripted run has on: summaries named snapshots, a swarm
+/// member's ceiling, and the tool-result count dial.
+#[derive(Clone, Copy, Debug)]
+struct Setup {
+    snapshots: bool,
+    cap: Option<usize>,
+    dial: u32,
+}
+
+/// The shipped defaults before #2342: no snapshots, no cap, dial 50.
+const BEFORE: Setup = Setup {
+    snapshots: false,
+    cap: None,
+    dial: 50,
+};
+/// After #2342, as a joined swarm member runs: snapshots and the 48k cap.
+const AFTER: Setup = Setup {
+    snapshots: true,
+    cap: Some(48_000),
+    dial: 50,
+};
+
+/// Run the scripted coordinator, `after` or before #2342.
 async fn run_coordinator(after: bool) -> Run {
+    run_scripted(if after { AFTER } else { BEFORE }).await
+}
+
+async fn run_scripted(setup: Setup) -> Run {
     let provider = Arc::new(ScriptedProvider::default());
     let mut registry = MockRegistry::new();
     registry.register(Arc::new(ScriptedBash {
@@ -200,7 +226,7 @@ async fn run_coordinator(after: bool) -> Run {
     }));
     registry.register(Arc::new(ScriptedSwarm {
         reads: Mutex::new(0),
-        snapshots: after,
+        snapshots: setup.snapshots,
         latest_summary: provider.latest_summary.clone(),
     }));
     let sink = Arc::new(CapturingAuditSink::default());
@@ -214,7 +240,7 @@ async fn run_coordinator(after: bool) -> Run {
             Arc::new(MemSpillStore::default()),
         )),
         session_key: "coordinator".to_string(),
-        context_collapse_after_tool_calls: 50,
+        context_collapse_after_tool_calls: setup.dial,
         max_context_tokens: 200_000,
         progress_callback: None,
         streaming: false,
@@ -225,8 +251,8 @@ async fn run_coordinator(after: bool) -> Run {
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Child,
     });
-    if after {
-        agent.context_ceiling_cap().lower_to(48_000);
+    if let Some(cap) = setup.cap {
+        agent.context_ceiling_cap().lower_to(cap);
     }
     let mut messages = vec![
         Message::system("You coordinate a swarm."),
@@ -237,25 +263,65 @@ async fn run_coordinator(after: bool) -> Run {
 }
 
 #[tokio::test]
-async fn a_scripted_coordinator_sends_far_fewer_tokens_with_the_same_latest_state() {
+async fn a_scripted_coordinator_sends_fewer_tokens_with_the_same_latest_state() {
     let before = run_coordinator(false).await;
     let after = run_coordinator(true).await;
 
     let (before_tokens, after_tokens) =
         (before.total_request_tokens(), after.total_request_tokens());
+    let fewer = |before: usize, after: usize| 100.0 * (1.0 - after as f64 / before as f64);
     eprintln!(
-        "#2342 scripted coordinator ({} requests): before {before_tokens} tokens, after {after_tokens} tokens ({:.1}% fewer)",
+        "#2342 scripted coordinator ({} requests): before {before_tokens}, after {after_tokens} tokens ({:.1}% fewer)",
         after.provider.request_tokens.lock().unwrap().len(),
-        100.0 * (1.0 - after_tokens as f64 / before_tokens as f64)
+        fewer(before_tokens, after_tokens),
     );
+    for dial in [50, 100] {
+        let base = Setup { dial, ..BEFORE };
+        let base_tokens = run_scripted(base).await.total_request_tokens();
+        for setup in [
+            Setup {
+                snapshots: true,
+                ..base
+            },
+            Setup {
+                cap: Some(48_000),
+                ..base
+            },
+            Setup {
+                snapshots: true,
+                cap: Some(48_000),
+                ..base
+            },
+        ] {
+            let tokens = run_scripted(setup).await.total_request_tokens();
+            eprintln!(
+                "#2342   {setup:?}: {base_tokens} -> {tokens} ({:.1}% fewer)",
+                fewer(base_tokens, tokens)
+            );
+        }
+    }
     assert_eq!(
         before.provider.request_tokens.lock().unwrap().len(),
         after.provider.request_tokens.lock().unwrap().len(),
         "the same conversation: the model's calls do not change"
     );
     assert!(
-        after_tokens * 10 < before_tokens * 7,
-        "at least 30% fewer request tokens: before {before_tokens}, after {after_tokens}"
+        after_tokens < before_tokens,
+        "with the shipped dials, fewer request tokens: before {before_tokens}, after {after_tokens}"
+    );
+    // The owner's runs pruned as a tool dial of 100 does: there the count
+    // dial left a large result in place, and the swarm ceiling bounds it.
+    let owners = Setup {
+        dial: 100,
+        ..BEFORE
+    };
+    let owners_before = run_scripted(owners).await.total_request_tokens();
+    let owners_after = run_scripted(Setup { dial: 100, ..AFTER })
+        .await
+        .total_request_tokens();
+    assert!(
+        owners_after * 10 < owners_before * 8,
+        "at least 20% fewer at the owner's dial: before {owners_before}, after {owners_after}"
     );
     assert!(
         after

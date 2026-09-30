@@ -18,7 +18,10 @@
 //!   provider observation;
 //! - the ceiling decides on calibrated occupancy: the effective budget is
 //!   converted to estimate units at the last provider-observed ratio
-//!   (#2212), so the ladder's per-message sums stay consistent with it; and
+//!   (#2212), so the ladder's per-message sums stay consistent with it;
+//! - the newest whole snapshot of a state (a full swarm summary) stays in
+//!   full at every dial, and every older one it supersedes is collapsed to
+//!   its recall stub (#2342); and
 //! - durable prefix dirty semantics are latched for every persisted-layout or
 //!   in-place history mutation, including manifest insert/remove, stub demotion,
 //!   and physical drops.
@@ -27,7 +30,6 @@ use crate::application::context_pruning;
 use crate::application::sessions::use_cases::{ListRetainedContext, RetainContext};
 use crate::domain::context_calibration::EstimateScale;
 use crate::domain::message::{Message, ToolCall};
-use crate::domain::session::SpillEntry;
 use crate::domain::session_identity::SessionIdentity;
 use crate::domain::tool::ImageBlock;
 use std::sync::{Arc, Mutex};
@@ -36,6 +38,13 @@ use std::sync::{Arc, Mutex};
 #[path = "context_gauge.rs"]
 mod gauge;
 use gauge::ContextGaugeCalibration;
+// #2342: a swarm member's lower ceiling, imposed after construction.
+#[path = "context_ceiling_cap.rs"]
+mod ceiling_cap;
+pub use ceiling_cap::ContextCeilingCap;
+// The spill writers (split out for the decrease-only line ceiling, #2342).
+#[path = "context_spill.rs"]
+mod spill;
 
 /// The narrow handles the pruning policy holds on the sessions
 /// capability's retention namespace (D9 #1978): the writer that appends
@@ -52,29 +61,6 @@ pub struct ContextRetention {
 impl std::fmt::Debug for ContextRetention {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ContextRetention").finish_non_exhaustive()
-    }
-}
-
-/// A lower pruning ceiling the composition imposes after construction
-/// (#2342): a swarm member's, from when its process joins a swarm. Shared
-/// between the composition and the context manager; it only ever lowers,
-/// and `usize::MAX` (the start) imposes nothing.
-#[derive(Clone, Debug)]
-pub struct ContextCeilingCap(Arc<std::sync::atomic::AtomicUsize>);
-
-impl Default for ContextCeilingCap {
-    fn default() -> Self {
-        Self(Arc::new(std::sync::atomic::AtomicUsize::new(usize::MAX)))
-    }
-}
-
-impl ContextCeilingCap {
-    /// Lower the cap to `tokens` (never raises it).
-    pub fn lower_to(&self, _tokens: usize) {}
-
-    /// The cap in force: `usize::MAX` when none.
-    pub fn tokens(&self) -> usize {
-        self.0.load(std::sync::atomic::Ordering::SeqCst)
     }
 }
 
@@ -170,10 +156,13 @@ impl ContextManager {
         (self.pin_recent_turns, self.context_collapse_after_messages)
     }
 
+    /// The lowest of the configured budget, the model's window and the
+    /// composition's cap (a swarm member's, #2342).
     pub fn effective_max_context_tokens(&self) -> usize {
+        let budget = self.max_context_tokens.min(self.ceiling_cap.tokens());
         match self.model_context_window {
-            Some(window) => self.max_context_tokens.min(window),
-            None => self.max_context_tokens,
+            Some(window) => budget.min(window),
+            None => budget,
         }
     }
 
@@ -253,44 +242,6 @@ impl ContextManager {
         tool_msg
     }
 
-    pub async fn spill_tool_message(&self, tool_msg: &mut Message, spill_id: String) {
-        let Some(retention) = self.retention.as_ref() else {
-            return;
-        };
-
-        let content = std::mem::take(&mut tool_msg.content);
-        let entry = SpillEntry {
-            id: spill_id,
-            tool: tool_msg
-                .tool_name
-                .clone()
-                .unwrap_or_else(|| "tool".to_string()),
-            input_preview: tool_msg.input_preview.clone().unwrap_or_default(),
-            tokens: context_pruning::estimate_tokens(&content),
-            content,
-        };
-        let result = retention.retain.retain(&self.session_key, &entry).await;
-        tool_msg.content = entry.content;
-        tool_msg.invalidate_token_cache();
-        match result {
-            Ok(retained) => tool_msg.spill_id = Some(retained.id),
-            Err(e) => {
-                tracing::warn!(target: "context_prune", error = %e, "failed to spill tool output");
-            }
-        }
-    }
-
-    pub async fn spill_conversation_message(&self, msg: &mut Message) {
-        if let Some(retention) = self.retention.as_ref() {
-            context_pruning::messages::spill_conversation_message(
-                msg,
-                &retention.retain,
-                &self.session_key,
-            )
-            .await;
-        }
-    }
-
     pub async fn prepare_provider_context(
         &self,
         messages: &mut Vec<Message>,
@@ -299,6 +250,9 @@ impl ContextManager {
     ) -> ContextPlan {
         let tokens_before = context_pruning::estimate_total_tokens(messages);
         let message_spilled = self.spill_unspilled_conversation_messages(messages).await;
+        // Superseded snapshots go first (#2342): the dials then count and
+        // weigh only what is still current.
+        let superseded = context_pruning::snapshots::collapse_superseded_snapshots(messages);
         let collapsed = context_pruning::collapse_tool_results_over_limit(
             messages,
             self.context_collapse_after_tool_calls,
@@ -326,7 +280,12 @@ impl ContextManager {
         }
         let total_tokens = context_pruning::estimate_total_tokens(messages);
         let durable_prefix_dirty = manifest_shifted
-            || collapsed + msg_collapsed + outcome.collapsed_to_stubs + outcome.dropped > 0;
+            || superseded
+                + collapsed
+                + msg_collapsed
+                + outcome.collapsed_to_stubs
+                + outcome.dropped
+                > 0;
         ContextPlan {
             tokens_before,
             total_tokens,
@@ -334,29 +293,10 @@ impl ContextManager {
             messages_collapsed: msg_collapsed,
             ladder_stubbed: outcome.collapsed_to_stubs,
             messages_dropped: outcome.dropped,
-            snapshots_superseded: 0,
+            snapshots_superseded: superseded,
             over_budget: outcome.over_budget,
             durable_prefix_dirty,
         }
-    }
-
-    async fn spill_unspilled_conversation_messages(&self, messages: &mut [Message]) -> bool {
-        let Some(retention) = self.retention.as_ref() else {
-            return false;
-        };
-        let mut spilled = false;
-        for msg in messages
-            .iter_mut()
-            .filter(|m| m.spill_id.is_none() && !m.is_manifest)
-        {
-            spilled |= context_pruning::messages::spill_conversation_message(
-                msg,
-                &retention.retain,
-                &self.session_key,
-            )
-            .await;
-        }
-        spilled
     }
 }
 

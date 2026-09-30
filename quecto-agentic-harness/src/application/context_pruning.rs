@@ -107,25 +107,21 @@ pub fn collapse_tool_results_over_limit(messages: &mut [Message], max_tool_calls
     if max_tool_calls == COLLAPSE_DISABLED {
         return 0;
     }
-    // Unspilled results are excluded from the count and the front, and
+    // Unspilled results and each newest snapshot (#2342) are not counted;
     // results the model has not seen yet are never reached (#2213).
-    let (mut to_collapse, seen_end) =
+    let (to_collapse, seen_end, collapsible) =
         messages::ceiling::tool_results_to_collapse(messages, max_tool_calls as usize);
-    if to_collapse == 0 {
-        return 0;
-    }
     let mut collapsed = 0;
-    for msg in messages[..seen_end].iter_mut() {
-        if to_collapse == 0 {
-            break;
-        }
-        if msg.role != Role::Tool || msg.is_collapsed || msg.spill_id.is_none() {
-            continue;
-        }
+    for (msg, _) in messages[..seen_end]
+        .iter_mut()
+        .zip(&collapsible)
+        .filter(|(_, collapsible)| **collapsible)
+        .take(to_collapse)
+    {
         collapse_message(msg);
         collapsed += 1;
-        to_collapse -= 1;
     }
+    debug_assert_eq!(collapsed, to_collapse, "the seen front holds every one");
     collapsed
 }
 
