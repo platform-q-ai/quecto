@@ -840,3 +840,94 @@ fn unified_inspection_accepts_caller_symlink_for_layout_and_placements() {
         .is_empty()
     );
 }
+
+#[test]
+fn descendant_production_rust_populates_migrated_role() {
+    let root = fixture(&[], &["domain/sessions/entities/nested/deep.rs"]);
+    assert!(shape(root.path(), "domain/sessions", &["entities"]).is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn descendant_symlink_fails_even_with_immediate_rust() {
+    let root = fixture(&["domain/sessions/entities/nested"], &["domain/sessions/entities/one.rs", "outside.rs"]);
+    std::os::unix::fs::symlink(root.path().join("outside.rs"), root.path().join("domain/sessions/entities/nested/link.rs")).unwrap();
+    let failures = shape(root.path(), "domain/sessions", &["entities"]);
+    assert!(matches!(failures.as_slice(), [Violation::InspectionFailed { reason, .. }] if reason.contains("link.rs")), "{failures:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn unreadable_regular_file_fails_real_nonroot_inspection() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = fixture(&[], &["domain/sessions/entities/one.rs"]);
+    let file = root.path().join("domain/sessions/entities/one.rs");
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0)).unwrap();
+    let denied = std::fs::File::open(&file).unwrap_err();
+    assert_eq!(denied.kind(), io::ErrorKind::PermissionDenied, "run this fixture as effective nonroot");
+    let failures = shape(root.path(), "domain/sessions", &["entities"]);
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert!(matches!(failures.as_slice(), [Violation::InspectionFailed { reason, .. }] if reason.contains("one.rs")), "{failures:?}");
+}
+
+#[test]
+fn descendant_test_only_rust_populates_migrated_role() {
+    let root = fixture(&[], &["domain/sessions/entities/nested/only_tests.rs"]);
+    assert!(shape(root.path(), "domain/sessions", &["entities"]).is_empty());
+}
+
+#[test]
+fn shape_diagnostics_prescribe_entry_specific_repairs() {
+    for (directory, file, required) in [
+        ("domain/sessions", "domain/sessions/stray.rs", "move domain/sessions/stray.rs into a declared role directory"),
+        ("domain/sessions/handles", "", "add handles to domain/sessions allowed_roles in MIGRATED"),
+        ("domain/sessions/entities", "", "put a .rs file anywhere beneath domain/sessions/entities or remove the unused role directory"),
+    ] {
+        let files = if file.is_empty() { vec![] } else { vec![file] };
+        let root = fixture(&[directory], &files);
+        let failures = shape(root.path(), "domain/sessions", &["entities"]);
+        assert_eq!(failures.len(), 1, "{failures:?}");
+        let message = format!("{:?}", failures[0]);
+        assert!(message.contains(required), "{message}");
+        assert!(message.contains(WIKI));
+    }
+}
+
+#[test]
+fn missing_budget_and_transitional_placement_prescribe_policy_repairs() {
+    let root = fixture(LAYERS, &[]);
+    let failures = flat(root.path(), "domain/missing", 0);
+    assert!(matches!(failures.as_slice(), [Violation::InspectionFailed { .. }]));
+    let message = format!("{failures:?}");
+    assert!(message.contains("restore domain/missing"), "{message}");
+    assert!(message.contains(WIKI));
+    let rows = [Placement { layer: "domain", name: "removed", citation: format!("{WIKI}#removed"), classification: Classification::Transitional }];
+    let failures = validate_placements(root.path(), &rows);
+    assert_eq!(failures.len(), 1, "{failures:?}");
+    let message = format!("{failures:?}");
+    assert!(message.contains("remove domain/removed from PLACEMENTS"), "{message}");
+    assert!(message.contains(WIKI));
+}
+
+#[test]
+fn broken_layer_root_is_reported_once_for_budget_and_placement() {
+    for substituted in [false, true] {
+        let root = fixture(&["application", "interface", "infrastructure", "composition"], &[]);
+        if substituted { std::fs::write(root.path().join("domain"), "").unwrap(); }
+        let failures = validate_all(root.path(), &[budget("domain", 0)], &[], Some(&[]), &scan);
+        assert!(matches!(failures.as_slice(), [Violation::InspectionFailed { path, .. }] if path == "domain"), "{failures:?}");
+    }
+}
+
+#[test]
+fn relative_root_is_canonicalized_before_scanner_port() {
+    let cwd = std::env::current_dir().unwrap();
+    let relative = tempfile::tempdir_in(&cwd).unwrap();
+    std::fs::create_dir(relative.path().join("domain")).unwrap();
+    let relative_path = relative.path().strip_prefix(&cwd).unwrap();
+    let failures = validate_all(relative_path, &[budget("domain", 0)], &[], None, &|path| {
+        assert!(path.is_absolute(), "canonical root boundary must pass absolute paths to scanner");
+        scan(path)
+    });
+    assert!(failures.is_empty(), "{failures:?}");
+}
