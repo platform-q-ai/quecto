@@ -882,8 +882,8 @@ which add it first, so the answer and the board are Python's.
 
 The watch's `unchanged` ticks are not one record each: consecutive ones of
 one run are folded into one `_watch` record with decision `unchanged` and
-`polls` counting them. Its `duration_us`, `lock_wait_us`, `busy_wait_us` and
-`result_bytes` are the slowest tick's, and `cursor_moved` is `false`. A tick
+`polls` counting them. Its `duration_us`, `lock_wait_us`, `busy_wait_us`,
+`commit_us` and `result_bytes` are the slowest tick's, and `cursor_moved` is `false`. A tick
 that answered the snapshot (`cursor_moved` `true` when it was given a
 cursor), one the busy handler slowed and a refused one are each recorded
 alone, as every other call is. An aggregate is written before the watch's
@@ -1011,7 +1011,7 @@ records:
 | `scope` | Always `process`: the fields below, up to `run`, are this harness's own calls |
 | `records` | The run's `swarm_op` records this process folded |
 | `calls` | The board calls those records account for: one per record, but a run-watch aggregate (`polls`, #2338) accounts for each tick it holds. Each op's `ok` and `refused` counts are calls, so `_watch`'s `ok` is every tick the watch made, recorded alone or aggregated |
-| `ops` | Per op: `ok` (answered), `refused` (by `kind`, left out when none), the nearest-rank `p50` and `p95` and the exact `max` of `duration_us`, `lock_wait_us` and `busy_wait_us` (a record that did not measure a wait is left out of its percentiles and counted in that wait's `unmeasured`; a run-watch aggregate, #2338, adds one sample, its slowest tick's, for all the ticks it holds, so `_watch`'s p50 and p95 lean high), `busy` (records whose busy handler fired), and `unsampled` (the percentiles are taken from a uniform sample of at most 4096 of an op's records, drawn over the whole run; the records not held are counted here, and left out when none) |
+| `ops` | Per op: `ok` (answered), `refused` (by `kind`, left out when none), the nearest-rank `p50` and `p95` and the exact `max` of `duration_us`, `lock_wait_us`, `busy_wait_us` and `commit_us` (#2340: the time the op's `COMMIT`s took; a record that did not measure a wait or a commit time is left out of its percentiles and counted in its `unmeasured`, and a `0` commit time, an op that ran no `COMMIT`, is a measure; a summary written before #2340 has no `commit_us`; a run-watch aggregate, #2338, adds one sample, its slowest tick's, for all the ticks it holds, so `_watch`'s p50 and p95 lean high), `busy` (records whose busy handler fired), and `unsampled` (the percentiles are taken from a uniform sample of at most 4096 of an op's records, drawn over the whole run; the records not held are counted here, and left out when none) |
 | `busy` | Records whose busy handler fired, over every op |
 | `tasks` | Tasks `created`, `claimed`, `released`, `blocked`, `submitted` and `accepted` (verified) by this process's answered ops, by their decisions |
 | `messages` | Messages `sent`, `acked` (consumed) and `withdrawn` by this process's ops, likewise |

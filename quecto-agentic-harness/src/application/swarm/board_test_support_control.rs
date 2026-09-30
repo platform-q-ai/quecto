@@ -3,12 +3,30 @@
 //! The SQLite adapter's contract tests pin the real SQL.
 use serde_json::{Value, json};
 
-use super::{BoardState, MemoryTransaction, RecordedEvent};
+use super::{BoardState, MemoryTransaction};
 use crate::application::swarm::dto::{
     NewRequestUsage, StoredRequestUsage, UsageReport, UsageRow, UsageStanding,
 };
 use crate::application::swarm::ports::BoardUsage;
 use crate::domain::swarm::{BoardError, RunState};
+
+/// One recorded `events` row.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RecordedEvent {
+    pub actor: String,
+    pub time: f64,
+    pub action: String,
+    pub detail: Value,
+}
+
+/// The ledger reads a board served (#2340): each `usage_report` reads the
+/// whole ledger (both aggregates and the latest observations), each
+/// `usage_standing` one aggregate.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct UsageReads {
+    pub whole_reports: usize,
+    pub standings: usize,
+}
 
 impl BoardUsage for MemoryTransaction<'_> {
     fn usage_report(&self) -> Result<UsageReport, BoardError> {

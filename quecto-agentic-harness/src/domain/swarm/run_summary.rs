@@ -172,6 +172,7 @@ struct OpFold {
     durations: Samples,
     lock_waits: Samples,
     busy_waits: Samples,
+    commits: Samples,
 }
 
 /// One measure over an op's records: a uniform sample of at most
@@ -451,6 +452,7 @@ fn fold_op(fold: &mut OpFold, observation: &BoardOpObservation, calls: u64, draw
     fold.durations.observe(Some(observation.duration_us), draw);
     fold.lock_waits.observe(observation.lock_wait_us, draw);
     fold.busy_waits.observe(observation.busy_wait_us, draw);
+    fold.commits.observe(observation.commit_us, draw);
 }
 
 fn summarized(fold: &OpFold) -> OpSummary {
@@ -460,7 +462,7 @@ fn summarized(fold: &OpFold) -> OpSummary {
         duration_us: fold.durations.percentiles(),
         lock_wait_us: fold.lock_waits.percentiles(),
         busy_wait_us: fold.busy_waits.percentiles(),
-        commit_us: Percentiles::default(),
+        commit_us: fold.commits.percentiles(),
         busy: fold.busy,
         unsampled: fold.durations.unsampled(),
     }

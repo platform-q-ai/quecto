@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
-pub use self::control::{paused, recorded, usage};
+pub use self::control::{RecordedEvent, UsageReads, paused, recorded, usage};
 pub use self::evidence::accepted;
 pub use self::files::LexicalCheckout;
 pub use self::ids::{CompactEncoding, CounterIds};
@@ -26,15 +26,6 @@ use crate::application::swarm::ports::{
 use crate::domain::swarm::{
     BoardError, MemberRecord, MemberState, RefusalKind, RunRecord, RunState,
 };
-
-/// One recorded `events` row.
-#[derive(Clone, Debug, PartialEq)]
-pub struct RecordedEvent {
-    pub actor: String,
-    pub time: f64,
-    pub action: String,
-    pub detail: Value,
-}
 
 #[derive(Clone, Debug)]
 pub struct StoredRun {
@@ -69,15 +60,6 @@ pub struct BoardState {
     /// A board an older writer created, lacking a column only a write
     /// transaction adds (#2338); an `atomic` adds them.
     pub columns_stale: bool,
-}
-
-/// The ledger reads a board served (#2340): each `usage_report` reads the
-/// whole ledger (both aggregates and the latest observations), each
-/// `usage_standing` one aggregate.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct UsageReads {
-    pub whole_reports: usize,
-    pub standings: usize,
 }
 
 /// A journal shared by the board and the id source, so a test reads the
