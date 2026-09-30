@@ -54,6 +54,9 @@ const HARNESS_FILE: &str = "tests/common/swarm_board_diff/scenario.rs";
 /// `PIN_TABLE_FILES`, and that pin's test.
 const EVIDENCE_PIN_FILE: &str = "tests/integration/swarm_board_diff_submissions.rs";
 const EVIDENCE_PIN_TEST: &str = "edited_string_evidence_raises_in_python_and_is_refused_in_rust";
+/// What writes a golden fixture, or replays one a test made: the golden
+/// self-tests' alone (#2344 review M2).
+const FIXTURE_WRITERS: [&str; 3] = ["write_fixture", "record_rust", "try_run_golden_in"];
 /// The golden self-test outside the `harness_self_test_` prefix (its
 /// name is #2283's): `(file, function)`.
 const GOLDEN_SELF_TEST: (&str, &str) = (
@@ -230,9 +233,18 @@ struct Function {
 struct Calls {
     pinned: Vec<String>,
     role: Role,
+    /// The file being checked, relative to the crate.
+    path: String,
     function: Option<Function>,
     seen: usize,
+    /// The fixture-writer uses the syntax walk saw.
+    writers_seen: usize,
     violations: Vec<Violation>,
+}
+
+/// A fixture writer's name.
+fn writer(name: &syn::Ident) -> bool {
+    FIXTURE_WRITERS.iter().any(|writer| name == writer)
 }
 
 /// `try_run_golden`, by any path ending in that name.
@@ -264,13 +276,30 @@ fn no_op(hook: &syn::Expr) -> bool {
 }
 
 impl Calls {
-    fn new(pinned: Vec<String>, role: Role) -> Self {
+    fn new(pinned: Vec<String>, role: Role, path: &str) -> Self {
         Self {
             pinned,
             role,
+            path: path.to_owned(),
             function: None,
             seen: 0,
+            writers_seen: 0,
             violations: Vec::new(),
+        }
+    }
+
+    /// One fixture-writer use: only a golden self-test may make it.
+    fn check_writer(&mut self, span: proc_macro2::Span) {
+        self.writers_seen += 1;
+        let allowed = self.function.as_ref().is_some_and(|function| {
+            function.name.starts_with(SELF_TEST_PREFIX)
+                || (self.path == GOLDEN_SELF_TEST.0 && function.name == GOLDEN_SELF_TEST.1)
+        });
+        if !allowed {
+            self.refuse(
+                span,
+                "a golden fixture writer outside the golden self-tests",
+            );
         }
     }
 
@@ -359,7 +388,12 @@ impl<'ast> Visit<'ast> for Calls {
                     self.visit_expr(argument);
                 }
             }
-            _ => syn::visit::visit_expr_method_call(self, call),
+            _ => {
+                if writer(&call.method) {
+                    self.check_writer(call.method.span());
+                }
+                syn::visit::visit_expr_method_call(self, call);
+            }
         }
     }
 
@@ -367,6 +401,12 @@ impl<'ast> Visit<'ast> for Calls {
         if names_harness(&call.func) {
             self.check(call, false);
         } else {
+            if let syn::Expr::Path(path) = &*call.func
+                && let Some(last) = path.path.segments.last()
+                && writer(&last.ident)
+            {
+                self.check_writer(last.ident.span());
+            }
             syn::visit::visit_expr_call(self, call);
         }
     }
@@ -376,6 +416,7 @@ impl<'ast> Visit<'ast> for Calls {
         if name.ident == HARNESS {
             self.seen += 1;
         }
+        self.writers_seen += usize::from(writer(&name.ident));
     }
 
     /// An import renaming the harness hides its calls from the walk.
@@ -384,24 +425,36 @@ impl<'ast> Visit<'ast> for Calls {
             self.seen += 1 + usize::from(rename.rename == HARNESS);
             self.refuse(rename.ident.span(), "an import renames try_run_golden");
         }
+        if writer(&rename.ident) {
+            self.writers_seen += 1 + usize::from(writer(&rename.rename));
+            self.refuse(
+                rename.ident.span(),
+                "an import renames a golden fixture writer",
+            );
+        }
     }
 }
 
 /// Every `try_run_golden` token in `tokens`, macro bodies included and a
 /// function's own definition (`fn try_run_golden`) excluded.
 fn harness_tokens(tokens: TokenStream) -> usize {
+    named_tokens(tokens, &|ident| ident == HARNESS)
+}
+
+/// Every token `named` accepts, as [`harness_tokens`] counts them.
+fn named_tokens(tokens: TokenStream, named: &dyn Fn(&proc_macro2::Ident) -> bool) -> usize {
     let trees: Vec<TokenTree> = tokens.into_iter().collect();
     let mut count = 0;
     for (index, tree) in trees.iter().enumerate() {
         match tree {
-            TokenTree::Ident(ident) if ident == HARNESS => {
+            TokenTree::Ident(ident) if named(ident) => {
                 let defined = index
                     .checked_sub(1)
                     .and_then(|before| trees.get(before))
                     .is_some_and(|before| matches!(before, TokenTree::Ident(word) if word == "fn"));
                 count += usize::from(!defined);
             }
-            TokenTree::Group(group) => count += harness_tokens(group.stream()),
+            TokenTree::Group(group) => count += named_tokens(group.stream(), named),
             _ => {}
         }
     }
@@ -413,7 +466,7 @@ fn harness_tokens(tokens: TokenStream) -> usize {
 /// a plain import is a violation of its own.
 fn violations(path: &str, source: &str) -> Vec<String> {
     let file = syn::parse_file(source).expect("the test file parses");
-    let mut calls = Calls::new(pinned_tests(), Role::of(path, &pin_table_files()));
+    let mut calls = Calls::new(pinned_tests(), Role::of(path, &pin_table_files()), path);
     calls.visit_file(&file);
     let mut found: Vec<String> = calls
         .violations
@@ -428,11 +481,18 @@ fn violations(path: &str, source: &str) -> Vec<String> {
         })
         .collect();
     let tokens: TokenStream = source.parse().expect("the test file tokenizes");
+    let writers = named_tokens(tokens.clone(), &|ident| writer(ident));
     let all = harness_tokens(tokens);
     if all != calls.seen {
         found.push(format!(
             "{} {HARNESS} use(s) the syntax walk cannot check (not called directly, or inside a macro)",
             all.abs_diff(calls.seen)
+        ));
+    }
+    if writers != calls.writers_seen {
+        found.push(format!(
+            "{} golden fixture writer use(s) the syntax walk cannot check (not called directly, or inside a macro)",
+            writers.abs_diff(calls.writers_seen)
         ));
     }
     found
@@ -461,7 +521,7 @@ fn differential_hooks_tamper_only_in_self_tests_or_expected_differences() {
     for path in files {
         let source = std::fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
-        if source.contains(HARNESS) {
+        if source.contains(HARNESS) || FIXTURE_WRITERS.iter().any(|name| source.contains(name)) {
             calling_files += 1;
             failures.extend(
                 violations(&path.to_string_lossy(), &source)

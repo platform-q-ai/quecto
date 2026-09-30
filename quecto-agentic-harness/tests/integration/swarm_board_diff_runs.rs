@@ -238,7 +238,7 @@ fn harness_self_test_detects_a_difference() {
 /// the replay at the step it names.
 #[test]
 fn golden_replay_detects_a_changed_rust_result() {
-    use swarm_board_diff::golden::fixture_path;
+    use swarm_board_diff::golden::{dump_digest, dump_of, fixture_path};
     use swarm_board_diff::scenario::{record_rust, try_run_golden_in};
     let steps = [
         step("parent", "bootstrap_run", json!([7, "s", "/p.sock"]), NOW),
@@ -247,7 +247,8 @@ fn golden_replay_detects_a_changed_rust_result() {
     ];
     let dir = tempfile::tempdir().unwrap();
     record_rust(&steps).write_fixture(dir.path(), "self_test", &steps);
-    assert_eq!(try_run_golden_in(dir.path(), "self_test", &steps), Ok(()));
+    let recorded = try_run_golden_in(dir.path(), "self_test", &steps);
+    assert_eq!(recorded, Ok(()), "a fixture as recorded passes");
     let path = fixture_path(dir.path(), "self_test", &steps);
     let recorded = std::fs::read_to_string(&path).unwrap();
     let corrupt = |change: &dyn Fn(&mut Value)| {
@@ -281,7 +282,9 @@ fn golden_replay_detects_a_changed_rust_result() {
             .to_string()
             .replacen("container_setup", "tampered", 1);
         golden["dump"] = serde_json::from_str(&text).unwrap();
-        golden["files"][2] = json!("dump:0");
+        // A coherent edit (the digest follows the dump), so the load takes
+        // it and the replay must find the difference.
+        golden["files"][2] = json!(format!("dump:{}", dump_digest(&dump_of(&golden["dump"]))));
     })
     .unwrap_err();
     assert!(

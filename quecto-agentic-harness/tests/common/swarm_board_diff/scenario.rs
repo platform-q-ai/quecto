@@ -18,9 +18,7 @@ use std::panic::Location;
 
 use super::Outcome;
 use super::dump::{first_difference, logical_dump};
-use super::golden::{
-    Answer, FULL_DUMP_LIMIT, GOLDEN_DIR, Golden, canonical, dump_of, file_state, scenario_of,
-};
+use super::golden::{Answer, FULL_DUMP_LIMIT, Golden, canonical, dump_of, file_state, scenario_of};
 use super::rust::{RecordedOps, RustBoard};
 
 /// How long a step waits on a lock another connection holds.
@@ -244,7 +242,7 @@ impl Side {
 /// file.
 fn golden_for(scenario: &str, steps: &[Step]) -> Result<Golden, String> {
     refuse_held_unlocked_reads(steps)?;
-    Golden::load(Path::new(GOLDEN_DIR), scenario, steps)
+    Golden::load_committed(scenario, steps)
 }
 
 /// Runs `steps` on the Rust board and panics with the first difference

@@ -23,6 +23,19 @@
 //!   row. Earlier steps keep only the digest (the issue's fixture-size
 //!   trap): the per-step dump comparison was the point while Python
 //!   existed; the final state plus every result is the guard afterwards.
+//!
+//! The fixtures are frozen (#2344 review M2): the Python board that
+//! recorded them is gone, so a fixture is never re-recorded or edited, and
+//! a new scenario asserts the Rust board's answers directly. `MANIFEST`
+//! lists every fixture's SHA-256 and only shrinks; a committed fixture
+//! loads only as listed (`load_committed`), its final dump must be its last
+//! step's digest, and only the golden self-tests may write a fixture or
+//! replay one of their own (`swarm_board_diff_hooks`).
+//!
+//! The digests are of [`canonical`] over `dump::logical_dump`: changing
+//! either (a column's order, a cell's encoding, the `files` ordering)
+//! changes every digest, and so invalidates every fixture, which can then
+//! no longer be regenerated. Neither may change.
 use std::path::{Path, PathBuf};
 
 use rusqlite::types::Value as SqlValue;
@@ -39,8 +52,9 @@ pub const GOLDEN_DIR: &str = concat!(
     "/tests/fixtures/swarm_board/golden"
 );
 
-/// The checked-in manifest: fixture (relative to [`GOLDEN_DIR`]) → its
-/// SHA-256. (#2283 red phase: not yet checked in.)
+/// The checked-in manifest, `MANIFEST` in [`GOLDEN_DIR`]: fixture
+/// (relative to the folder) → the SHA-256 of its bytes, a `<sha256>
+/// <path>` line each, sorted by path. It only shrinks.
 pub fn manifest() -> std::collections::BTreeMap<String, String> {
     let text = std::fs::read_to_string(Path::new(GOLDEN_DIR).join("MANIFEST"))
         .expect("the golden MANIFEST is checked in");
@@ -398,7 +412,59 @@ impl Golden {
                 path.display()
             )
         })?;
-        Self::from_text(&text, steps).map_err(|problem| format!("{}: {problem}", path.display()))
+        let golden = Self::from_text(&text, steps)
+            .map_err(|problem| format!("{}: {problem}", path.display()))?;
+        golden
+            .coherent()
+            .map_err(|problem| format!("{}: {problem}", path.display()))?;
+        Ok(golden)
+    }
+
+    /// The committed fixture for `steps`: its bytes must be the ones
+    /// [`manifest`] lists (a fixture is never edited or re-recorded, #2344
+    /// review M2), and with `QUECTO_SWARM_GOLDEN_LOADED` set its path is
+    /// logged there, a line each (`swarm_board_goldens` checks every fixture
+    /// is loaded).
+    pub fn load_committed(scenario: &str, steps: &[Step]) -> Result<Self, String> {
+        let dir = Path::new(GOLDEN_DIR);
+        let path = fixture_path(dir, scenario, steps);
+        let relative = path
+            .strip_prefix(dir)
+            .expect("a fixture is under the golden folder")
+            .to_string_lossy()
+            .into_owned();
+        let golden = Self::load(dir, scenario, steps)?;
+        let bytes = std::fs::read(&path).map_err(|error| format!("{relative}: {error}"))?;
+        match manifest().get(&relative) {
+            Some(listed) if *listed == sha256(&bytes) => {}
+            Some(_) => return Err(format!("{relative} is not the fixture the MANIFEST lists")),
+            None => return Err(format!("{relative} is in no MANIFEST line")),
+        }
+        if let Some(log) = std::env::var_os("QUECTO_SWARM_GOLDEN_LOADED") {
+            use std::io::Write;
+            let mut log = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log)
+                .map_err(|error| format!("the load log: {error}"))?;
+            // One write per line: appends from concurrent tests stay whole.
+            log.write_all(format!("{relative}\n").as_bytes())
+                .map_err(|error| format!("the load log: {error}"))?;
+        }
+        Ok(golden)
+    }
+
+    /// A fixture's own consistency (#2344 review L6): its full final dump
+    /// is the one its last step's digest names.
+    fn coherent(&self) -> Result<(), String> {
+        let Some(dump) = &self.dump else {
+            return Ok(());
+        };
+        let digest = format!("dump:{}", dump_digest(&dump_of(dump)));
+        match self.files.last() {
+            Some(Some(last)) if *last == digest => Ok(()),
+            _ => Err("the final dump is not the last step's digest".to_owned()),
+        }
     }
 
     /// Writes the fixture for `steps` under `dir`, atomically (a scenario

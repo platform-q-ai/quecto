@@ -548,6 +548,14 @@ the Rust board against them, and a board file the last Python board wrote
 (checked in beside them) must open and complete its run. The harness has no
 Python dependency, its tests included.
 
+The goldens are frozen for good: nothing can re-record them, so they are
+never regenerated or edited. `tests/fixtures/swarm_board/golden/MANIFEST`
+lists each fixture's SHA-256 and may only shrink, every fixture must be one
+a scenario loads, and only the golden self-tests may write one. A new or
+changed board behaviour is covered by Rust-only assertions of the Rust
+board's answers (`run_rust`, `rust_answers` or a plain test), never by a
+new golden.
+
 ## Agent guidance
 
 `docs {"name":"swarm"}` serves a compiled-in manual from any working directory,
