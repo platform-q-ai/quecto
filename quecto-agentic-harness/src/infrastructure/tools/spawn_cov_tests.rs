@@ -671,10 +671,11 @@ async fn launch_uds_agent_uses_uuid_not_display_label_for_socket_and_session_pat
                 Err(error) => panic!("the child never recorded its argv: {error}"),
             }
         };
-        let args: Vec<&str> = args.lines().collect();
-        let socket = args[args.iter().position(|arg| *arg == "--socket").unwrap() + 1];
+        let args: Vec<String> = args.lines().map(str::to_owned).collect();
+        let socket = &args[args.iter().position(|arg| arg == "--socket").unwrap() + 1];
         let _stale = std::fs::remove_file(socket);
-        std::os::unix::net::UnixListener::bind(socket).expect("bind the child's socket")
+        let listener = std::os::unix::net::UnixListener::bind(socket).expect("bind the socket");
+        (listener, args)
     });
 
     // SAFETY: this test runs in-process and restores QUECTO_CHILD_BINARY before returning.
@@ -700,12 +701,7 @@ async fn launch_uds_agent_uses_uuid_not_display_label_for_socket_and_session_pat
     unsafe { std::env::remove_var("QUECTO_CHILD_BINARY") };
     assert!(!result.is_error, "{}", result.content);
 
-    let _listener = binder.join().expect("the socket was bound");
-    let args: Vec<String> = std::fs::read_to_string(&args_file)
-        .unwrap()
-        .lines()
-        .map(str::to_owned)
-        .collect();
+    let (_listener, args) = binder.join().expect("the socket was bound");
     let session = args[args.iter().position(|arg| arg == "-s").unwrap() + 1].clone();
     let socket = args[args.iter().position(|arg| arg == "--socket").unwrap() + 1].clone();
     assert_ne!(
