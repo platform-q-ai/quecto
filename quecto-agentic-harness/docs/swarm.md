@@ -550,7 +550,10 @@ Python dependency, its tests included.
 
 The goldens are frozen for good: nothing can re-record them, so they are
 never regenerated or edited. `tests/fixtures/swarm_board/golden/MANIFEST`
-lists each fixture's SHA-256 and may only shrink, every fixture must be one
+lists each fixture's SHA-256 and may only shrink (against the merge base
+too: `scripts/check-golden-manifest.sh`, run by CI and the pre-push hook,
+refuses a changed or added line and a raised `GOLDEN_CEILING`), every
+fixture must be one
 a scenario loads, and only the golden self-tests may write one. A new or
 changed board behaviour is covered by Rust-only assertions of the Rust
 board's answers (`run_rust`, `rust_answers` or a plain test), never by a

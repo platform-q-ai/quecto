@@ -4,7 +4,7 @@
 //! in its golden fixtures (#2283), compared after every step by result,
 //! refusal text and logical database dump (which shows where `wake_cursors`
 //! sits in `sqlite_master`, so a table created earlier or later than
-//! Python's is a difference). Ported from `tests/swarm_helpers_test.py`;
+//! Python's is a difference). Ported from the deleted Python suite `tests/swarm_helpers_test.py`;
 //! each test also states what the board answers at the steps the Python
 //! test asserts on. `summary()`'s event cursor is the latest event id,
 //! counted here: `joined` writes events 1 (`created`), 2 (`reserved`) and 3

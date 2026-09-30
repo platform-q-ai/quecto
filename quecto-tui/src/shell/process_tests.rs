@@ -150,6 +150,7 @@ async fn wait_for_file(path: &std::path::Path) -> String {
 /// A non-forking child (the test binary as a stand-in) that records every
 /// signal it receives to `log` and its pid to `pid_file`; it does not exit
 /// on its own within the test (a minute bounds a leftover).
+#[cfg(target_os = "linux")]
 fn signal_logging_child(pid_file: &std::path::Path, log: &std::path::Path) -> String {
     crate::shell::test_stand_in::command(
         "signal-log",
@@ -187,6 +188,8 @@ async fn assert_gone(pid: i32) {
 /// A leader that settles its own child on SIGTERM, then exits: the child
 /// is gone before the leader exits, the leader ends 0 after TERM, and the
 /// TUI never signals the child (the child logs every signal it receives).
+// The stand-in is the test binary, reached through a Linux constructor.
+#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn leader_settles_its_child_and_exits_without_the_tui_signalling_the_child() {
     let dir = tempfile::tempdir().unwrap();

@@ -1,5 +1,6 @@
-//! The swarm board's schema, copied verbatim from
-//! `swarm_helpers/swarm_store.py` (#2269).
+//! The swarm board's schema, copied verbatim from the Python board's
+//! `swarm_store.py` (#2269; deleted in #2283, the text kept for legacy
+//! boards).
 //!
 //! SQLite stores each `CREATE` statement's text in `sqlite_master`, and a
 //! board may be created by either implementation, so [`SCHEMA`] is Python's

@@ -24,7 +24,8 @@ run_logged_gate() {
     ) >"$LOG_DIR/gate-${number}.log" 2>&1
 }
 
-run_logged_gate 1 "Repository quality rules" "$ROOT/scripts/check-quality.sh" &
+run_logged_gate 1 "Repository quality rules" \
+    bash -c '"$1/scripts/check-quality.sh" && "$1/scripts/check-golden-manifest.sh"' _ "$ROOT" &
 QUALITY_PID=$!
 run_logged_gate 2 "BDD quality rules" "$ROOT/scripts/check-bdd-quality.sh" &
 BDD_QUALITY_PID=$!

@@ -4,7 +4,7 @@
 //! on the Rust board against the Python board's answers frozen in its
 //! golden fixtures (#2283), compared after every step by result (key order
 //! and float values included), refusal text and logical database dump.
-//! Ported from `tests/swarm_helpers_test.py`. `joined` writes events 1
+//! Ported from the deleted Python suite `tests/swarm_helpers_test.py`. `joined` writes events 1
 //! (`created`), 2 (`reserved`) and 3 (`activated`); the first claim is
 //! token 3.
 use serde_json::{Value, json};

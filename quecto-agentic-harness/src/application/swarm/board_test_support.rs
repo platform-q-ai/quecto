@@ -1,6 +1,6 @@
 //! Test support (compiled only under `cfg(test)`): in-memory doubles of the
 //! board ports for the use-case and gate tests, in the manner of Python's
-//! `MemoryRepository` (`tests/swarm_policy_test.py`): a transaction works
+//! `MemoryRepository` (the deleted Python suite `tests/swarm_policy_test.py`): a transaction works
 //! on a copy of the state that replaces it only when the work succeeds, and
 //! every write and id draw is journalled in order.
 use std::cell::RefCell;

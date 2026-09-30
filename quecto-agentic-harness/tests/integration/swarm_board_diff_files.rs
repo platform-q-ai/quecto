@@ -2,7 +2,7 @@
 //! revocation and the evidence success needs, on the Rust board against the
 //! Python board's answers frozen in its golden fixtures (#2283), compared
 //! after every step by result, refusal text and logical database dump
-//! (`files` ordered by path). Ported from `tests/swarm_helpers_test.py`,
+//! (`files` ordered by path). Ported from the deleted Python suite `tests/swarm_helpers_test.py`,
 //! plus the loosely typed arguments Python accepts (epic P3).
 //!
 //! Each side's checkout is its own board directory; [`mkdir`] and

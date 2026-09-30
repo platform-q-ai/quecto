@@ -53,6 +53,35 @@ fn watched() -> libc::sigset_t {
     set
 }
 
+/// `text` as Python's `repr` writes a `str` (the Python wrapper's log
+/// shape): single quotes unless it holds one and no double quote, the
+/// quote and backslash escaped, control characters as escapes.
+fn repr(text: &str) -> String {
+    let quote = match (text.contains('\''), text.contains('"')) {
+        (true, false) => '"',
+        _ => '\'',
+    };
+    let mut out = String::from(quote);
+    for character in text.chars() {
+        match character {
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ if character == quote => {
+                out.push('\\');
+                out.push(character);
+            }
+            _ if (character as u32) < 0x20 || character as u32 == 0x7f => {
+                out.push_str(&format!("\\x{:02x}", character as u32));
+            }
+            _ => out.push(character),
+        }
+    }
+    out.push(quote);
+    out
+}
+
 fn cmdline(pid: i32) -> String {
     match std::fs::read(format!("/proc/{pid}/cmdline")) {
         Ok(bytes) => String::from_utf8_lossy(&bytes)
@@ -81,8 +110,12 @@ pub fn run(args: &[String]) -> Result<(), String> {
     // SAFETY: `getppid` has no preconditions and cannot fail.
     let ppid = unsafe { libc::getppid() };
     log.line(&format!(
-        "pid2 wrapper started as pid {} ppid {ppid} argv={args:?}",
-        std::process::id()
+        "pid2 wrapper started as pid {} ppid {ppid} argv=[{}]",
+        std::process::id(),
+        args.iter()
+            .map(|arg| repr(arg))
+            .collect::<Vec<_>>()
+            .join(", ")
     ));
     let count = Arc::new(AtomicUsize::new(0));
     let (watcher_log, watcher_count) = (Arc::clone(&log), Arc::clone(&count));
@@ -100,8 +133,8 @@ pub fn run(args: &[String]) -> Result<(), String> {
             // SAFETY: `info` was filled by `sigwaitinfo` for a kill-type signal.
             let (pid, uid) = unsafe { (info.si_pid(), info.si_uid()) };
             watcher_log.line(&format!(
-                "SIGNAL signo={signal} si_pid={pid} si_uid={uid} sender_cmdline={:?}",
-                cmdline(pid)
+                "SIGNAL signo={signal} si_pid={pid} si_uid={uid} sender_cmdline={}",
+                repr(&cmdline(pid))
             ));
         }
     });
@@ -124,10 +157,17 @@ pub fn run(args: &[String]) -> Result<(), String> {
         .map_err(|error| format!("start {program}: {error}"))?;
     log.line(&format!("child pid {}", child.id()));
     let status = child.wait().map_err(|error| format!("wait: {error}"))?;
-    log.line(&format!("child exited status={status}"));
+    // Python's `Popen.wait()`: the exit code, or minus the ending signal.
+    let code = match (status.code(), status.signal()) {
+        (Some(code), _) => code,
+        (None, Some(signal)) => -signal,
+        (None, None) => return Err(format!("{program} ended with no code or signal")),
+    };
+    log.line(&format!("child exited status={code}"));
     log.line(&format!("SIGNALS_TO_PID2 {}", count.load(Ordering::SeqCst)));
-    let code = status
-        .code()
-        .unwrap_or_else(|| 128 + status.signal().unwrap_or(0));
+    let code = match code {
+        0.. => code,
+        signal => 128 - signal,
+    };
     std::process::exit(code)
 }

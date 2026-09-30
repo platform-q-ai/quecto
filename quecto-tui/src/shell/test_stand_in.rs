@@ -3,8 +3,10 @@
 //! the stand-in: `QUECTO_TUI_STAND_IN=<mode>` in its environment makes the
 //! binary act the stand-in on its main thread and never reach the test
 //! harness. The unit tests reach [`run_if_asked`] through a start-up
-//! constructor (below), before libtest starts a thread; `tui_bdd` calls
-//! it first in `main`. Each stand-in is one process that never forks, so a
+//! constructor (below, Linux only), before libtest starts a thread;
+//! `tui_bdd` calls it first in `main`. Off Linux [`command`] and
+//! [`write_script`] refuse, and the tests that run a stand-in are
+//! Linux-only. Each stand-in is one process that never forks, so a
 //! leader's `kill -KILL $kid; wait $kid` reaps it whole.
 //!
 //! Modes (each reads its settings from `QUECTO_STAND_IN_*` variables):
@@ -25,12 +27,14 @@ use std::path::Path;
 pub const MODE: &str = "QUECTO_TUI_STAND_IN";
 
 /// `text` as one single-quoted POSIX shell word.
+#[cfg(target_os = "linux")]
 fn quoted(text: &str) -> String {
     format!("'{}'", text.replace('\'', "'\\''"))
 }
 
 /// The shell words that run this binary as the stand-in `mode` with
 /// `settings` (`QUECTO_STAND_IN_<name>` values), for a `sh -c` script.
+#[cfg(target_os = "linux")]
 pub fn command(mode: &str, settings: &[(&str, &str)]) -> String {
     let exe = std::env::current_exe().expect("the test binary's path");
     let mut words = vec!["env".to_owned(), format!("{MODE}={}", quoted(mode))];
@@ -39,6 +43,14 @@ pub fn command(mode: &str, settings: &[(&str, &str)]) -> String {
     }
     words.push(quoted(&exe.to_string_lossy()));
     words.join(" ")
+}
+
+/// Off Linux no constructor turns the unit-test binary into the stand-in:
+/// running it would re-run the whole suite, these tests included, without
+/// end. So there is no stand-in command off Linux.
+#[cfg(not(target_os = "linux"))]
+pub fn command(mode: &str, _settings: &[(&str, &str)]) -> String {
+    panic!("the stand-ins are Linux-only (the unit tests' constructor is): {mode}")
 }
 
 /// Writes an executable script at `path` that runs the stand-in `mode`

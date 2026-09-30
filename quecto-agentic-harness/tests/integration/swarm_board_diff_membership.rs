@@ -168,7 +168,7 @@ fn join_admits_as_the_coordinator_identically() {
     assert_eq!(worker["status"], json!("live"), "{view}");
 }
 
-/// `swarm_helpers_test.py::test_member_limit_accepts_upper_boundary`: 25
+/// The deleted Python suite's `swarm_helpers_test.py::test_member_limit_accepts_upper_boundary`: 25
 /// members, the coordinator included, are admitted, and the 26th is
 /// refused with the same text.
 #[test]

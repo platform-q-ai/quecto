@@ -19,8 +19,15 @@ fn fixtures() -> BTreeMap<String, String> {
     let root = Path::new(GOLDEN_DIR);
     for scenario in std::fs::read_dir(root).expect("the golden folder") {
         let scenario = scenario.expect("a golden entry").path();
-        if !scenario.is_dir() {
-            continue;
+        // The folder holds a folder per scenario file and the MANIFEST,
+        // nothing else (an allowlist: a stray file is an error).
+        match (
+            scenario.is_dir(),
+            scenario.file_name().and_then(|name| name.to_str()),
+        ) {
+            (true, _) => {}
+            (false, Some("MANIFEST")) => continue,
+            (false, name) => panic!("a stray file in the golden folder: {name:?}"),
         }
         for fixture in std::fs::read_dir(&scenario).expect("a scenario folder") {
             let path = fixture.expect("a fixture").path();
@@ -60,7 +67,10 @@ fn every_golden_fixture_is_in_the_manifest_with_its_digest() {
 #[test]
 fn every_golden_fixture_is_loaded_by_a_scenario() {
     const LOADED: &str = "QUECTO_SWARM_GOLDEN_LOADED";
-    if std::env::var_os(LOADED).is_some() {
+    // Set by this test on its own re-run alone (an inherited LOADED does
+    // not skip the check).
+    const RERUN: &str = "QUECTO_SWARM_GOLDEN_LOADED_RERUN";
+    if matches!(std::env::var(RERUN).as_deref(), Ok("1")) {
         // The re-run's own copy of this test: the parent checks.
         return;
     }
@@ -69,6 +79,7 @@ fn every_golden_fixture_is_loaded_by_a_scenario() {
     let status = Command::new(std::env::current_exe().expect("this test binary"))
         .arg("swarm_board_")
         .env(LOADED, &log)
+        .env(RERUN, "1")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .status()

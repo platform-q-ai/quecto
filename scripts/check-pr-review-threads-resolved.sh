@@ -82,6 +82,6 @@ jq -r '
   | ((.comments.nodes // [])[0]) as $first
   | "  - \(.path // "(no path)")\(if .isOutdated then " [outdated]" else "" end)"
     + " (@\($first.author.login // "?")): "
-    + (($first.body // "") | gsub("^\\s+|\\s+$"; "") | split("\n")[0] // "" | .[0:120])
+    + (($first.body // "") | gsub("\r"; "") | gsub("^\\s+|\\s+$"; "") | split("\n")[0] // "" | .[0:120])
 ' <<<"$PR_JSON"
 exit 1

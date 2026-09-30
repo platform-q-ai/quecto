@@ -1,4 +1,4 @@
-//! Ported from `tests/swarm_policy_test.py`; messages asserted by string.
+//! Ported from the deleted Python suite `tests/swarm_policy_test.py`; messages asserted by string.
 use serde_json::{Value, json};
 
 use super::*;

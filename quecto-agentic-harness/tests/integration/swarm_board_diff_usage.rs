@@ -2,7 +2,7 @@
 //! budget and the inference admission read on the Python board and the
 //! Rust board, compared after every step by result, refusal text and
 //! logical database dump (so every `request_usage` and `usage_budget`
-//! payload byte). Ported from `tests/swarm_helpers_test.py`, plus the
+//! payload byte). Ported from the deleted Python suite `tests/swarm_helpers_test.py`, plus the
 //! loosely typed arguments Python accepts (epic P3). `summary` is S12's, so
 //! the scenarios read the run with `_snapshot` and `_control_status`.
 use quecto::domain::attempt_diagnostics::AttemptDiagnostics;

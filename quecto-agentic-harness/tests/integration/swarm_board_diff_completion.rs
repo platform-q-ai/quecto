@@ -3,7 +3,7 @@
 //! needs, on the Rust board against the Python board's answers frozen in
 //! its golden fixtures (#2283), compared after every step by result,
 //! refusal text and logical database dump. Ported from
-//! `tests/swarm_helpers_test.py`, plus the loosely typed arguments Python
+//! the deleted Python suite `tests/swarm_helpers_test.py`, plus the loosely typed arguments Python
 //! accepts (epic P3).
 use serde_json::{Value, json};
 

@@ -161,17 +161,46 @@ fn harness_files() -> Vec<String> {
     files_of(Path::new(WORKSPACE))
 }
 
-/// The files of the tree at `root`, relative to it, sorted. (#2344 final
-/// review red phase: every file on disk.)
+/// The files of the tree at `root`, relative to it, sorted: in a git
+/// checkout, the files git tracks or would track (`ls-files --cached
+/// --others --exclude-standard`, so nothing it ignores: an agent's
+/// worktree, a local lab), still on disk; outside one, every file under
+/// `root` but git's own and build output (#2344 final review).
 fn files_of(root: &Path) -> Vec<String> {
-    assert_eq!(
-        root,
-        Path::new(WORKSPACE),
-        "the red phase walks the workspace"
-    );
-    let mut files = Vec::new();
-    files_under("", &mut files);
+    let mut git = std::process::Command::new("git");
+    // A hook running this test leaves `GIT_DIR` and friends set, which
+    // would name its repository rather than `root`'s.
+    for (name, _) in std::env::vars_os() {
+        if name.to_string_lossy().starts_with("GIT_") {
+            git.env_remove(name);
+        }
+    }
+    let listed = git
+        .args([
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+        ])
+        .current_dir(root)
+        .stderr(std::process::Stdio::null())
+        .output();
+    let mut files: Vec<String> = match listed {
+        Ok(output) if output.status.success() => String::from_utf8_lossy(&output.stdout)
+            .split_terminator('\0')
+            .filter(|path| root.join(path).is_file())
+            .map(str::to_owned)
+            .collect(),
+        Ok(_) | Err(_) => {
+            assert_eq!(root, Path::new(WORKSPACE), "only the workspace is walked");
+            let mut walked = Vec::new();
+            files_under("", &mut walked);
+            walked
+        }
+    };
     files.sort();
+    files.dedup();
     files
 }
 
@@ -394,7 +423,13 @@ fn the_python_scan_lists_what_git_lists() {
     let dir = tempfile::tempdir().unwrap();
     let repo = dir.path();
     let git = |args: &[&str]| {
-        let status = std::process::Command::new("git")
+        let mut command = std::process::Command::new("git");
+        for (name, _) in std::env::vars_os() {
+            if name.to_string_lossy().starts_with("GIT_") {
+                command.env_remove(name);
+            }
+        }
+        let status = command
             .args(args)
             .current_dir(repo)
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
