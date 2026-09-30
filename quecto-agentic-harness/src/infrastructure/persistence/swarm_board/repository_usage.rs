@@ -69,6 +69,18 @@ impl BoardUsage for SqliteBoard<'_> {
         })
     }
 
+    fn member_usage(&self) -> Result<Vec<UsageRow>, BoardError> {
+        let exists = self.count(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='request_usage'",
+        )?;
+        match exists {
+            0 => Ok(Vec::new()),
+            _ => self.usage_rows(&format!(
+                "SELECT actor member, {AGGREGATES} FROM request_usage GROUP BY actor ORDER BY actor"
+            )),
+        }
+    }
+
     fn usage_budget(&self) -> Result<Value, BoardError> {
         self.usage_schema()?;
         self.stored_budget()

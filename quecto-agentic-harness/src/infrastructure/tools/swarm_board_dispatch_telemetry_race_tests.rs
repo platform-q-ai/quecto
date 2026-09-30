@@ -48,6 +48,8 @@ impl MeteredCall for Racing {
     fn measure(&self) -> Option<CallMeasure> {
         None
     }
+
+    fn role_fixed(&self) {}
 }
 
 /// Opens a [`Racing`] repository for each call.

@@ -170,6 +170,17 @@ impl SwarmContext {
         self.rpc("summary", json!([since]))
     }
 
+    /// Writes the run's `swarm_run_summary` (#2313) when this member's
+    /// harness is the one to: the coordinator's, once the run in
+    /// `snapshot` settled; at most once per run, and only while the event
+    /// log is on. Whether it wrote it.
+    pub(crate) fn summarize_settled(&self, snapshot: &crate::domain::swarm::Snapshot) -> bool {
+        match snapshot.summarized_by(&self.member) {
+            true => self.board.summarize_run(&self.location(), &self.member),
+            false => false,
+        }
+    }
+
     /// The full summary the harness reads for itself on this member's
     /// behalf (the post-call lifecycle's, a settlement's), recorded with
     /// role `host` (#2279 S15 final review). Blocking.

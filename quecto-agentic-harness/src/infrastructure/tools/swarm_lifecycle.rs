@@ -80,8 +80,10 @@ pub fn reconcile(context: &SwarmContext) -> Result<Value, DomainError> {
 /// recorded as `host`, never against the member whose op settled the run
 /// (#2279 S15 final review). `op=reconcile` keeps [`reconcile`], the
 /// member's.
+/// The coordinator's harness writes the run's summary here (#2313).
 fn settled(context: &SwarmContext) -> Result<Value, DomainError> {
-    context.lifecycle.reconcile(context, &LinuxProcesses)?;
+    let snapshot = context.lifecycle.reconcile(context, &LinuxProcesses)?;
+    context.summarize_settled(&snapshot);
     context.host_summary()
 }
 
@@ -323,6 +325,7 @@ pub fn supervise(
                 )) {
                     tracing::error!(%error, "swarm terminal settlement failed");
                 }
+                context.summarize_settled(&snapshot);
                 watch_until_ended(&context, &runtime);
             }
             Err(error) => tracing::error!(%error, "swarm settlement runtime failed"),

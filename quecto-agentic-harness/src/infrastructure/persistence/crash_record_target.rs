@@ -3,9 +3,8 @@
 //! each swapped atomically on a session switch, so the hook takes no lock.
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicPtr, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock};
 
-use crate::application::audit::ports::AuditSink;
 use crate::domain::audit::AuditEvent;
 use crate::domain::crash_record::CrashRecord;
 use crate::domain::session_identity::SessionIdentity;
@@ -256,10 +255,10 @@ pub fn claimed<T>(claimed: T) -> T {
 
 /// The session switched to `session_key` (none: one that leaves nothing
 /// behind), claimed by this process: record for it from now on. Answers
-/// the event log the agent writes to from now on, when it followed too.
-pub fn follow(session_key: Option<&str>) -> Option<Arc<dyn AuditSink>> {
-    let log = ARMED.get()?.follow(session_key)?;
-    Some(Arc::new(log))
+/// the event log the agent (and the swarm board, #2313) writes to from now
+/// on, when it followed too.
+pub fn follow(session_key: Option<&str>) -> Option<AuditLog> {
+    ARMED.get()?.follow(session_key)
 }
 
 /// Record a fatal panic in the armed target, if there is one. Hook-safe.

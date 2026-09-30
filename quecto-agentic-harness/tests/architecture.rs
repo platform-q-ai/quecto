@@ -1289,6 +1289,8 @@ const SWARM_BOARD_USE_CASES: &[&str] = &[
     "ReadRunSummary",
     // The structured ops' event cursor (#2279).
     "ReadEventCursor",
+    // The run's totals the coordinator's harness reads at settle (#2313).
+    "ReadRunTotals",
 ];
 
 /// The board DTOs infrastructure may name (#2270, epic #2265; each later
@@ -1317,6 +1319,10 @@ const SWARM_BOARD_DTOS: &[&str] = &[
     "RunSnapshotView",
     "RunStatusView",
     "RunStatusRow",
+    // The run's totals at settle (#2313).
+    "RunTotalsView",
+    "MessageTally",
+    "DroppedRecords",
     // Tasks and claims (#2272).
     "ClaimTaskRequest",
     "CreateTaskRequest",

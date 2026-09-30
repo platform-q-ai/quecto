@@ -124,10 +124,12 @@ pub const ACTOR_REF_CACHE: usize = 64;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Caller {
     /// The board accepted the call from a member of its run: an op that
-    /// checks membership (or makes the caller one) answered it.
+    /// checks membership (or makes the caller one) answered it, or the
+    /// operation gate authorised the caller before the op refused it
+    /// (#2313 review M2).
     Member,
-    /// Anything else: a refusal, or a membership-free op, which any id
-    /// can make.
+    /// Anything else: a refusal of the gate itself (or before it), or a
+    /// membership-free op, which any id can make.
     Unproven,
 }
 
@@ -216,7 +218,9 @@ pub(super) fn trace(call: &Finished<'_>, measure: Option<&CallMeasure>, actor: O
     }
 }
 
-/// The call's `swarm_op` record, by `actor` (its [`actor_ref`]).
+/// The call's `swarm_op` record, by `actor` (its [`actor_ref`]), whom the
+/// board accepted as a member of its run or not (`caller`, #2313: only a
+/// member's role is recorded).
 /// `served` is what it answered and acted on (`None` for a refusal, but
 /// for one after its writes committed, whose decision and detail are
 /// recorded and whose refusal is marked committed), an answer sized as
@@ -227,6 +231,7 @@ pub(super) fn trace(call: &Finished<'_>, measure: Option<&CallMeasure>, actor: O
 pub(super) fn observation(
     call: &Finished<'_>,
     actor: Redacted,
+    caller: Caller,
     served: Option<&Served>,
     measure: Option<CallMeasure>,
 ) -> BoardOpObservation {
@@ -250,11 +255,12 @@ pub(super) fn observation(
         actor_ref: actor,
         role: call.role.or_else(|| {
             let roles = measure.and_then(|measure| measure.run_roles.as_ref())?;
-            Some(run_role(
+            run_role(
                 call.member,
                 roles.coordinator.as_deref(),
                 roles.integrator.as_deref(),
-            ))
+                caller == Caller::Member,
+            )
         }),
         run_id: measure.and_then(|measure| measure.run_id.clone()),
         task_id: served.and_then(|served| served.task_id),

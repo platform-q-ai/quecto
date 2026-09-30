@@ -755,7 +755,7 @@ body, evidence, reason, path or other board text:
 | `turn` | Always `null`: a board op is not filed under an agent turn (the board is called without one) |
 | `op` | The board method (`unknown` for a name that is none) |
 | `actor_ref` | The caller's member id: the id the caller chose for itself on the board (`members.id`), redacted if it looks like a credential, and cut to its first 128 characters (a refused call can name any id) |
-| `role` | `host` for the harness's own ops, including the `summary` the harness reads for itself to judge a run after an op or when it settles one; for a member's own `summary` or `reconcile`, and for a member-facing op (`task_create`, `claim`, ...), the caller's role in the run as the op read it: `coordinator`, `integrator`, or `worker` for any other caller; `null` when the op read no run (refused before it, or the board holds none) |
+| `role` | `host` for the harness's own ops, including the `summary` the harness reads for itself to judge a run after an op or when it settles one; for a member's own `summary` or `reconcile`, and for a member-facing op (`task_create`, `claim`, ...), when the board answered it as a member's, or refused it only after the operation gate authorised the caller as a member (a stale claim token, a task in the wrong state, a refusal after the op's writes committed), the caller's role in the run as the op read it: `coordinator`, `integrator`, or `worker` for any other member; `null` for a refusal before or by the gate itself (`not_member`, `not_coordinator`, `run_missing`, or a run that permits no new work), or when the op read no run (the board holds none). A stranger is never recorded as `worker`. A member whose death was confirmed still holds its role in the run: the gate admits it to read-only ops, so its reads (`summary`, `events`, ...) record `worker` (or its other role), and only its mutations, which the gate refuses as `not_member`, record `null` (#2313) |
 | `run_id` | The run the op found, when it found one and its id is one the board generates (32 lowercase hex digits); `null` otherwise, so an id edited into the board from outside is never recorded |
 | `task_id`, `message_id` | The task or message the op acted on, by the id its row holds (a task id given as `"2"` is task 2); left out when it acted on none, or its row's id is not an integer |
 | `outcome` | `ok` or `refused` |
@@ -891,8 +891,87 @@ before the board held a run) belong to the run of the container named in
 their `host`, at their time. Each line is written compactly
 (`"event":"swarm_op"`), so a plain `grep '"event":"swarm_op"'` finds them
 too. `swarm_ops_dropped` lines in the same file count records dropped at the
-write gate. Board text never appears in these records: to see what a task or
+write gate, and `swarm_run_summary_dropped` lines the run summaries dropped. Board text never appears in these records: to see what a task or
 message said, read the board itself (`op=events`, or the SQLite file read-only).
 
 A command that reads them back as a report (`quecto swarm report`, #2305) is
 planned and not yet available.
+
+### Run summary and the session's log (#2313)
+
+When a run settles (it ended, or was cancelled), the coordinator's harness
+writes one `swarm_run_summary` record to its event log, once per run, and only
+while the event log is on. It holds two scopes.
+
+The process's own counts (`scope: "process"`). Each member is a process with a
+board of its own, so the coordinator's harness sees only its own board calls: a
+worker's `claim` or `send` is in the worker's log, not here. These fields fold
+the `swarm_op` records this harness wrote for the run, so they equal those
+records:
+
+| Field | Meaning |
+|---|---|
+| `run_id` | The run, as the board generated its id |
+| `scope` | Always `process`: the fields below, up to `run`, are this harness's own calls |
+| `records` | The run's `swarm_op` records this process folded |
+| `ops` | Per op: `ok` (answered), `refused` (by `kind`, left out when none), the nearest-rank `p50` and `p95` and the exact `max` of `duration_us`, `lock_wait_us` and `busy_wait_us` (a record that did not measure a wait is left out of its percentiles and counted in that wait's `unmeasured`), `busy` (records whose busy handler fired), and `unsampled` (the percentiles are taken from a uniform sample of at most 4096 of an op's records, drawn over the whole run; the records not held are counted here, and left out when none) |
+| `busy` | Records whose busy handler fired, over every op |
+| `tasks` | Tasks `created`, `claimed`, `released`, `blocked`, `submitted` and `accepted` (verified) by this process's answered ops, by their decisions |
+| `messages` | Messages `sent`, `acked` (consumed) and `withdrawn` by this process's ops, likewise |
+| `process_span_us` | This process's own span: from the start of the first record of the run it folded to the summary (not the run's wall time, which is `run.wall_time_us`) |
+| `request_usage` | Per member (`actor_ref`, redacted as in `swarm_op`), the provider requests this harness `recorded` on the board (`_record_request`) and those `refused` |
+| `unlisted_ops` | Records of ops past the summary's bound of 128 ops, counted in `records` but in no `ops` entry; left out when none |
+| `unlisted_requests` | Requests of members past the bound of 64, in no `request_usage` entry (they are still counted under `ops._record_request`); left out when none |
+
+The run's own totals (`run`), every member's work, read from the board file at
+settle by one host read (`_run_totals`, recorded as a `swarm_op` with role
+`host`); `null` when that read failed (a warning is logged):
+
+| Field | Meaning |
+|---|---|
+| `run.tasks` | The run's tasks: `total`, and by state `ready`, `claimed`, `blocked` (a `ready` task waiting on a dependency counts here, as `summary` counts it), `submitted` and `completed` |
+| `run.messages` | Every message `sent`, and those `acked` (consumed by their recipient) or `withdrawn` |
+| `run.usage` | Per member (`actor_ref`, redacted), the board's request ledger: `requests`, `tokens` (the tokens the budget counted), `unknown_usage_requests`, `attempts`, and the reported `input_tokens`, `output_tokens`, `cache_read_tokens` and `cache_write_tokens`; at most 64 members |
+| `run.unlisted_usage` | Members past the 64, in no `usage` entry; left out when none |
+| `run.wall_time_us` | The run's wall time: from its `created` event to the read at settle, on the board's clock; `null` when the board holds no creation time |
+
+The fold across every member's records (their latencies and refusals) is left
+to `quecto swarm report` (#2305), which can fold each member's `swarm_op` lines
+of a run offline.
+
+It carries counts, kinds, durations and ids only, never board text, and leaves
+one `tracing` record (`swarm run summary`, INFO) on `quecto::swarm_board`. Being
+written once, off every board call's path, it waits up to 2 s for the log's
+write gate (a `swarm_op` record waits 50 ms); held off past that, it is dropped
+and counted apart from the records, in a
+`{"event":"swarm_run_summary_dropped","dropped":N}` line written before the next
+record (a summary held past the 64 before the session's log opened is counted
+there too).
+Select a run's summary as its records
+are selected:
+
+```sh
+jq -c 'select(.event == "swarm_run_summary" and .run_id == "<run id>")' ~/.quecto/audit/*.jsonl
+```
+
+The board's records are written to the current session's log: when the
+harness switches session, its board calls are recorded in the arriving
+session's log from then on, as the agent's own records are. They are not pinned
+to the session a call was made for: the process has one board, so its run
+watcher's calls, its settlement reads and the run's summary land in whichever
+session is current when they are made, and one run's records (and the fold its
+summary is taken from) can span two sessions' files. Records the
+departing log dropped at its write gate and had not noted yet are noted in the
+arriving log's first `swarm_ops_dropped` line.
+
+A swarm member decides whether the event log is on before its admission, from
+the configuration its build then loads (the same layers and `QUECTO_*`
+overrides, without asking to trust an overlay). When it is on, the admission's
+own board calls (`_status`, `_bootstrap`, `_activate`) are measured and held,
+at most 64, and written first once the session's log opens, followed by a
+`swarm_ops_dropped` line counting any records held past the 64, and a
+`swarm_run_summary_dropped` line for any run summary (a board call made while
+they are written waits for none of them, and lands after them); when it is off,
+or the session opens no log, nothing is measured or written. A
+`--backend claude-code` member opens no event log of its own, so its
+admission's calls leave `tracing` records only.

@@ -79,6 +79,9 @@ pub(crate) fn operation<T>(
         let run = transaction.run()?;
         let member = transaction.member(actor)?;
         authorize(run.as_ref(), actor, member.as_ref(), access)?;
+        // Past the gate with the op's own access: the caller is a member of
+        // the run, whatever the op's work then answers (#2313 review M2).
+        transaction.caller_authorized();
         let Some(run) = run else {
             // `authorize` refuses a missing run first.
             return Err(BoardError::new(

@@ -39,6 +39,7 @@ pub(super) enum Method {
     Status,
     EventCursor,
     Snapshot,
+    RunTotals,
     Admit,
     Activate,
     RecordLaunch,
@@ -118,6 +119,7 @@ impl Method {
             "_status" => Some(Self::Status),
             "_event_cursor" => Some(Self::EventCursor),
             "_snapshot" => Some(Self::Snapshot),
+            "_run_totals" => Some(Self::RunTotals),
             "_admit" => Some(Self::Admit),
             "_activate" => Some(Self::Activate),
             "_record_launch" => Some(Self::RecordLaunch),
@@ -184,6 +186,7 @@ impl Method {
             Self::Status => "_status",
             Self::EventCursor => "_event_cursor",
             Self::Snapshot => "_snapshot",
+            Self::RunTotals => "_run_totals",
             Self::Admit => "_admit",
             Self::Activate => "_activate",
             Self::RecordLaunch => "_record_launch",
@@ -254,6 +257,7 @@ impl Method {
             Self::Status
             | Self::EventCursor
             | Self::Snapshot
+            | Self::RunTotals
             | Self::ControlStatus
             | Self::UsageReport
             | Self::RequestAdmission
@@ -321,6 +325,7 @@ impl Method {
             Self::EventCursor => Some(BoardRole::Host),
             Self::Status
             | Self::Snapshot
+            | Self::RunTotals
             | Self::Admit
             | Self::Activate
             | Self::RecordLaunch
@@ -387,6 +392,7 @@ impl Method {
             // Through the operation gate, which refuses a caller that is
             // no member of the run (or whose death was confirmed).
             Self::Snapshot
+            | Self::RunTotals
             | Self::Admit
             | Self::Activate
             | Self::RecordLaunch
@@ -475,6 +481,7 @@ impl Method {
             Self::Status
             | Self::EventCursor
             | Self::Snapshot
+            | Self::RunTotals
             | Self::Resume
             | Self::ResumeExternal
             | Self::Close

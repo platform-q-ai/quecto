@@ -192,3 +192,70 @@ async fn a_settled_pause_has_suspended_local_inference_on_a_multi_thread_worker(
 async fn a_settled_pause_has_suspended_local_inference_on_a_current_thread_runtime() {
     settling_a_pause_suspends_local_inference_before_it_returns().await;
 }
+
+/// The event log, in memory: the run summaries written (#2313).
+#[derive(Default)]
+struct Summaries(std::sync::Mutex<Vec<crate::domain::swarm::SwarmRunSummary>>);
+
+impl crate::application::swarm::ports::BoardOpLog for Summaries {
+    fn record(&self, _observation: crate::domain::swarm::BoardOpObservation) {}
+
+    fn summarize(&self, summary: crate::domain::swarm::SwarmRunSummary) {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(summary);
+    }
+}
+
+impl crate::application::swarm::ports::SessionOpLog for Summaries {
+    fn dropped(&self, _drops: crate::application::swarm::dto::DroppedRecords) {}
+
+    fn take_unnoted(&self) -> crate::application::swarm::dto::DroppedRecords {
+        crate::application::swarm::dto::DroppedRecords::default()
+    }
+}
+
+impl Summaries {
+    fn written(&self) -> Vec<crate::domain::swarm::SwarmRunSummary> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+}
+
+/// #2313: the coordinator's harness writes the run's `swarm_run_summary`
+/// when it settles a cancelled run, once however often it settles again;
+/// a member that is not the coordinator writes none.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_coordinators_settlement_writes_the_run_summary_once() {
+    let (_directory, context) = crate::swarm_control_fixture::context();
+    let summaries = std::sync::Arc::new(Summaries::default());
+    assert!(context.board.record_in(summaries.clone()));
+    let worker = SwarmContext {
+        member: "worker".into(),
+        ..context.clone()
+    };
+    crate::infrastructure::tools::call_work::off_the_runtime(|| context.cancel_run()).unwrap();
+    // A stranger's settlement reads the board as no member: refused.
+    let _refused = settle(worker).await;
+    assert!(
+        summaries.written().is_empty(),
+        "no member but the coordinator"
+    );
+    settle(context.clone()).await.unwrap();
+    let written = summaries.written();
+    assert_eq!(written.len(), 1, "{written:?}");
+    assert!(written[0].ops.contains_key("stop"), "{:?}", written[0]);
+    // #2313 review M1: the run-wide totals, read from the board at settle.
+    let run = written[0].run.as_ref().expect("the board's totals");
+    assert!(run.wall_time_us.is_some(), "{run:?}");
+    assert!(
+        written[0].ops.contains_key("_run_totals"),
+        "the read is recorded as the harness's own: {:?}",
+        written[0]
+    );
+    settle(context).await.unwrap();
+    assert_eq!(summaries.written().len(), 1, "written once per run");
+}

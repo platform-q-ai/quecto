@@ -11,7 +11,7 @@ use serde_json::Value;
 
 use super::binding;
 use super::repository::{SqliteBoard, cell_at, failed, fetched, loose};
-use crate::application::swarm::dto::{MessageRow, NewMessage};
+use crate::application::swarm::dto::{MessageRow, MessageTally, NewMessage};
 use crate::application::swarm::ports::BoardMessages;
 use crate::domain::swarm::BoardError;
 
@@ -65,6 +65,22 @@ impl BoardMessages for SqliteBoard<'_> {
         )?;
         debug_assert!(changed >= 1, "the message was read in this transaction");
         Ok(())
+    }
+
+    fn message_tally(&self) -> Result<MessageTally, BoardError> {
+        self.connection
+            .query_row(
+                "SELECT count(*), coalesce(sum(status='consumed'),0), coalesce(sum(status='withdrawn'),0) FROM messages",
+                [],
+                |row| {
+                    Ok(MessageTally {
+                        sent: row.get(0)?,
+                        consumed: row.get(1)?,
+                        withdrawn: row.get(2)?,
+                    })
+                },
+            )
+            .map_err(failed)
     }
 
     fn send_message(&self, message: &NewMessage) -> Result<i64, BoardError> {

@@ -459,6 +459,17 @@ impl quecto::application::swarm::ports::BoardOpLog for BoardCalls {
     fn record(&self, observation: quecto::domain::swarm::BoardOpObservation) {
         self.0.lock().unwrap().push(observation);
     }
+
+    /// No summary this test checks is written.
+    fn summarize(&self, _summary: quecto::domain::swarm::SwarmRunSummary) {}
+}
+
+impl quecto::application::swarm::ports::SessionOpLog for BoardCalls {
+    fn dropped(&self, _drops: quecto::application::swarm::dto::DroppedRecords) {}
+
+    fn take_unnoted(&self) -> quecto::application::swarm::dto::DroppedRecords {
+        quecto::application::swarm::dto::DroppedRecords::default()
+    }
 }
 
 /// Answers request `n` with `STEPS[n]`'s tool call, built from the answers

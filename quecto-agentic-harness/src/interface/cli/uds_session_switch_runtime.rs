@@ -3,6 +3,7 @@
 //! crash target and event log (#2192; the [`AgentSession`] tracker keeps no copy, D10 #1979), and
 //! the effort/workflow reset or restore, each bumping the tracker's visible generation only when
 //! something changed. The transactions order these; this adapter decides nothing.
+use super::agent::event_log;
 use super::uds_execution_state::ExecutionStateHandle;
 use super::uds_session::AgentSession;
 use super::uds_turn_accounting::LoopTurnAccounting;
@@ -10,7 +11,6 @@ use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::sessions::ports::session_runtime::TurnAccountingReset;
 use crate::application::sessions::ports::{SessionKeyPropagation, SessionSwitchRuntime};
 use crate::domain::session_identity::SessionIdentity;
-use crate::infrastructure::persistence::crash_record;
 use crate::interface::shared::WorkflowStateHandle;
 
 pub struct LoopSessionSwitchRuntime<'a> {
@@ -57,7 +57,7 @@ impl SessionKeyPropagation for LoopSessionSwitchRuntime<'_> {
         }
         self.agent.set_session_key(identity.clone());
         self.agent
-            .follow_audit_log(crash_record::follow(identity.persisted_key()));
+            .follow_audit_log(event_log::follow_session(identity.persisted_key()));
     }
 }
 

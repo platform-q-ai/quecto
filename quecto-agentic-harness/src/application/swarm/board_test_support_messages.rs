@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use super::tasks::affinity;
 use super::{MemoryTransaction, text_affinity};
-use crate::application::swarm::dto::{MessageRow, NewMessage};
+use crate::application::swarm::dto::{MessageRow, MessageTally, NewMessage};
 use crate::application::swarm::ports::BoardMessages;
 use crate::domain::swarm::{BoardError, python_truthy};
 
@@ -145,6 +145,19 @@ impl BoardMessages for MemoryTransaction<'_> {
         let index = self.found(id).expect("a message read in this transaction");
         self.state.borrow_mut().messages[index].status = status.to_owned();
         Ok(())
+    }
+
+    fn message_tally(&self) -> Result<MessageTally, BoardError> {
+        let messages = &self.state.borrow().messages;
+        let count = |status: &str| {
+            let counted = messages.iter().filter(|m| m.status == status).count();
+            i64::try_from(counted).unwrap()
+        };
+        Ok(MessageTally {
+            sent: i64::try_from(messages.len()).unwrap(),
+            consumed: count("consumed"),
+            withdrawn: count("withdrawn"),
+        })
     }
 
     fn send_message(&self, message: &NewMessage) -> Result<i64, BoardError> {

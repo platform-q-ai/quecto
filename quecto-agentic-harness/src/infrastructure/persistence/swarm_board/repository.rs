@@ -106,10 +106,11 @@ pub(super) fn atomic_on(
                 usage_schema_created: std::cell::Cell::new(false),
             };
             let done = work(&board);
-            // Only a metered op that never read the run row's id asks for
-            // it, and the roles with it: `_status`, whose row names no
-            // integrator, costs no second statement.
-            if let Some(tally) = tally.filter(|tally| tally.wants_run_id()) {
+            // Only a metered op that has not found the run row's id and
+            // roles asks for them (#2313): one whose run rows named no
+            // integrator (`run_status`'s) reads the roles here, so its
+            // caller's role is still recorded.
+            if let Some(tally) = tally.filter(|tally| tally.wants_run()) {
                 board.run_read(tally);
             }
             done.map_err(|refusal| {
@@ -329,6 +330,30 @@ impl BoardEvents for SqliteBoard<'_> {
     fn control_generation(&self) -> Result<i64, BoardError> {
         self.count("SELECT coalesce(max(id),0) FROM events WHERE action IN ('paused','resumed')")
     }
+
+    /// A time the board did not write (text, NULL) is no creation time.
+    fn created_at(&self) -> Result<Option<f64>, BoardError> {
+        let time = self
+            .connection
+            .query_row(
+                "SELECT time FROM events WHERE action='created' ORDER BY id DESC LIMIT 1",
+                [],
+                |row| row.get::<_, rusqlite::types::Value>(0),
+            )
+            .optional()
+            .map_err(failed)?;
+        Ok(match time {
+            Some(rusqlite::types::Value::Real(time)) => Some(time),
+            // An integer time is exact in f64 far past any clock reading.
+            Some(rusqlite::types::Value::Integer(time)) => Some(time as f64),
+            Some(
+                rusqlite::types::Value::Null
+                | rusqlite::types::Value::Text(_)
+                | rusqlite::types::Value::Blob(_),
+            )
+            | None => None,
+        })
+    }
 }
 
 impl SqliteBoard<'_> {
@@ -342,8 +367,9 @@ impl SqliteBoard<'_> {
     }
 
     /// Reads the run's id and roles into `tally`, for telemetry only
-    /// (#2303): only while metered and no run id is found yet (an op that
-    /// never read the run row). No run, or a failed read, notes nothing.
+    /// (#2303): only while metered and the run id or roles are not found
+    /// yet (an op that never read the run row, or read only some of it).
+    /// No run, or a failed read, notes nothing.
     fn run_read(&self, tally: &Tally) {
         let _noted =
             self.connection

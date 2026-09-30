@@ -1,7 +1,9 @@
 //! The coordination board a [`super::SwarmContext`] or a
 //! [`super::HostedStore`] reaches (#2278, epic #2265): composition's
 //! handles builder, the handles it built for each board file recently
-//! called, and the event log each call is recorded in once the session has one.
+//! called, and the event log each call is recorded in once the session has
+//! one: the current session's, followed across a switch (#2313), and from
+//! admission on when the event log was decided on before it.
 //!
 //! Every board call is a direct call of the Rust dispatcher
 //! ([`swarm_board_dispatch::call`]) on the caller's thread: the store's
@@ -11,18 +13,18 @@
 //! build asserts it on every call ([`SwarmBoard::call`]). Nothing here
 //! constructs a repository, a clock, an id source or a use case: the
 //! builder is composition's (`composition::swarm::build_swarm_board_handles`).
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use serde_json::Value;
 
 use crate::application::swarm::dto::BoardLocation;
-use crate::application::swarm::ports::BoardOpLog;
+use crate::application::swarm::ports::{BoardOpLog, SessionOpLog};
 use crate::domain::error::DomainError;
 use crate::domain::swarm::RefusalKind;
 use crate::infrastructure::persistence::audit_log::AuditLog;
 use crate::infrastructure::tools::swarm_board_dispatch::{
-    self, BoardWire, CallOrigin, SwarmBoardHandles,
+    self, BoardWire, CallOrigin, SwarmBoardHandles, TELEMETRY_TARGET,
 };
 
 /// Builds the board handles over one board file, recording each call in
@@ -34,7 +36,7 @@ pub type SwarmBoardHandlesBuilder =
 /// The event log a session's board calls are recorded in, from its audit
 /// log: composition's `board_op_log`, `None` unless the event log is on
 /// (`telemetry.event_log.enabled`, owner decision T1, #2303).
-pub type SwarmBoardOpLogBuilder = fn(bool, &AuditLog) -> Option<Arc<dyn BoardOpLog>>;
+pub type SwarmBoardOpLogBuilder = fn(bool, &AuditLog) -> Option<Arc<dyn SessionOpLog>>;
 
 /// The board handles of every context that shares it: clones share the
 /// built handles and the event log.
@@ -47,16 +49,20 @@ struct Shared {
     build: SwarmBoardHandlesBuilder,
     wire: BoardWire,
     session_log: Option<SwarmBoardOpLogBuilder>,
-    event_log: OnceLock<Arc<dyn BoardOpLog>>,
+    /// The log every call is recorded in, while the board records: `None`
+    /// measures and writes nothing (owner decision T1).
+    recording: Mutex<Option<Arc<SessionLog>>>,
     /// The handles built per file, the most recently called last; at
     /// most [`BUILT_FILES`].
     built: Mutex<Vec<Built>>,
 }
 
-/// The handles built for one board file, with the event log or without.
+/// The handles built for one board file, recording in the session log
+/// given (and folding the file's run for its summary) or not at all.
 struct Built {
     location: BoardLocation,
-    logged: bool,
+    log: Option<Arc<SessionLog>>,
+    runs: Option<Arc<RunFold>>,
     handles: Arc<SwarmBoardHandles>,
 }
 
@@ -70,7 +76,7 @@ impl std::fmt::Debug for SwarmBoard {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("SwarmBoard")
-            .field("logged", &self.shared.event_log.get().is_some())
+            .field("logged", &self.recording().is_some())
             .finish_non_exhaustive()
     }
 }
@@ -84,7 +90,7 @@ impl SwarmBoard {
                 build,
                 wire,
                 session_log: None,
-                event_log: OnceLock::new(),
+                recording: Mutex::new(None),
                 built: Mutex::new(Vec::new()),
             }),
         }
@@ -102,31 +108,139 @@ impl SwarmBoard {
                 build,
                 wire,
                 session_log: Some(session_log),
-                event_log: OnceLock::new(),
+                recording: Mutex::new(None),
                 built: Mutex::new(Vec::new()),
             }),
         }
     }
 
-    /// Records every later call in the session's audit `log` when the
-    /// event log is on (`enabled`) and this board was given composition's
-    /// `session_log`; whether it now records there.
-    pub fn record_in_session(&self, enabled: bool, log: &AuditLog) -> bool {
-        match self
-            .shared
-            .session_log
-            .and_then(|build| build(enabled, log))
-        {
-            Some(log) => self.record_in(log),
-            None => false,
+    /// Measures and records every call from now on, the admission's
+    /// included, when the event log was decided on before admission
+    /// (`event_log_on`, #2313): the records are held until the session's
+    /// log is open ([`Self::record_in_session`]), and written there first.
+    /// With the event log off nothing is measured (owner decision T1).
+    pub fn record_from_admission(&self, event_log_on: bool) {
+        tracing::debug!(
+            target: TELEMETRY_TARGET,
+            event_log_on,
+            "swarm board recording decided before admission"
+        );
+        if event_log_on {
+            self.recording_or_pending();
         }
     }
 
-    /// Records every later call in `log` (the session's event log, once
-    /// it is open). A board records in one log only: `false` when it
-    /// already had one, which it keeps.
-    pub fn record_in(&self, log: Arc<dyn BoardOpLog>) -> bool {
-        self.shared.event_log.set(log).is_ok()
+    /// Records every later call in the session's audit `log` when the
+    /// event log is on (`enabled`) and this board was given composition's
+    /// `session_log`; whether it now records there. Otherwise the board
+    /// records nothing from now on, and what it held is dropped: a board
+    /// without `session_log` can never record in a session's log, so it
+    /// stops too (#2313 review L6), rather than measure and hold forever.
+    pub fn record_in_session(&self, enabled: bool, log: &AuditLog) -> bool {
+        let Some(build) = self.shared.session_log else {
+            self.stop_recording();
+            return false;
+        };
+        match build(enabled, log) {
+            Some(log) => self.record_in(log),
+            None => {
+                self.stop_recording();
+                false
+            }
+        }
+    }
+
+    /// Records nothing from now on (#2313: the session keeps no event
+    /// log), and drops what it held since admission.
+    pub fn stop_recording(&self) {
+        *self.recording_lock() = None;
+    }
+
+    /// Records every later call in `log`, the current session's event log
+    /// (#2313: a later session's replaces an earlier one's); what the board
+    /// held until now is written there first.
+    pub fn record_in(&self, log: Arc<dyn SessionOpLog>) -> bool {
+        self.recording_or_pending().bind(log);
+        true
+    }
+
+    /// The session switched to the one whose audit log is `log` (#2313):
+    /// a board recording in the departing session's log records in `log`
+    /// from now on; one that records nothing still does not.
+    pub fn follow_session(&self, log: &AuditLog) -> bool {
+        let followed = match self.recording() {
+            Some(_) => self.record_in_session(true, log),
+            None => false,
+        };
+        tracing::debug!(
+            target: TELEMETRY_TARGET,
+            followed,
+            "swarm board records follow the session"
+        );
+        followed
+    }
+
+    /// Writes the summary of the run on the file at `location` (#2313),
+    /// once: this process's records the board folded for it, and the run's
+    /// own totals `member`'s harness reads from the board now
+    /// (`_run_totals`, recorded as the harness's own, #2313 review M1).
+    /// `false` when the board records nothing, folded no run there, or
+    /// wrote it already. A totals read that fails leaves the run-wide
+    /// section `null`, with a warning, and the process's counts are still
+    /// written.
+    pub(super) fn summarize_run(&self, location: &BoardLocation, member: &str) -> bool {
+        let runs = self
+            .built()
+            .iter()
+            .find(|file| file.location == *location)
+            .and_then(|file| file.runs.clone());
+        let Some(runs) = runs.filter(|runs| runs.open()) else {
+            return false;
+        };
+        let totals = self.call_as(
+            location.clone(),
+            member,
+            "_run_totals",
+            Value::Array(Vec::new()),
+            CallOrigin::Harness,
+        );
+        let totals = match totals {
+            Ok(totals) => Some(totals),
+            Err(error) => {
+                tracing::warn!(
+                    target: TELEMETRY_TARGET,
+                    %error,
+                    "swarm run totals were not read for the run summary"
+                );
+                None
+            }
+        };
+        runs.summarize_run(totals.as_ref())
+    }
+
+    fn recording_lock(&self) -> MutexGuard<'_, Option<Arc<SessionLog>>> {
+        self.shared
+            .recording
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn recording(&self) -> Option<Arc<SessionLog>> {
+        self.recording_lock().clone()
+    }
+
+    /// The log the board records in, made (not yet bound) if it had none.
+    fn recording_or_pending(&self) -> Arc<SessionLog> {
+        self.recording_lock()
+            .get_or_insert_with(|| Arc::new(SessionLog::pending()))
+            .clone()
+    }
+
+    fn built(&self) -> MutexGuard<'_, Vec<Built>> {
+        self.shared
+            .built
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Whether `other` is this board (a clone of it), not merely one over
@@ -211,30 +325,28 @@ impl SwarmBoard {
     /// Building composes the graph and opens no connection (the repository
     /// opens one per call), so the wait is short.
     fn handles(&self, location: BoardLocation) -> Arc<SwarmBoardHandles> {
-        let event_log = self.shared.event_log.get().cloned();
-        let logged = event_log.is_some();
-        let mut built = self
-            .shared
-            .built
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let log = self.recording();
+        let mut built = self.built();
         let kept = built
             .iter()
             .position(|file| file.location == location)
             .map(|index| built.remove(index))
-            .filter(|file| file.logged == logged);
+            .filter(|file| same_log(file.log.as_ref(), log.as_ref()));
         let file = match kept {
             Some(file) => file,
             None => {
+                let runs = log.clone().map(|log| Arc::new(RunFold::new(log)));
+                let event_log = runs.clone().map(|runs| runs as Arc<dyn BoardOpLog>);
                 let handles = Arc::new((self.shared.build)(location.clone(), event_log));
                 debug_assert_eq!(
                     handles.telemetry.is_some(),
-                    logged,
+                    log.is_some(),
                     "composition's handles record in the log they were given"
                 );
                 Built {
                     location,
-                    logged,
+                    log,
+                    runs,
                     handles,
                 }
             }
@@ -252,6 +364,23 @@ impl SwarmBoard {
     }
 }
 
+/// Whether `kept` is the log `now` is: both none, or the same one.
+fn same_log(kept: Option<&Arc<SessionLog>>, now: Option<&Arc<SessionLog>>) -> bool {
+    match (kept, now) {
+        (Some(kept), Some(now)) => Arc::ptr_eq(kept, now),
+        (None, None) => true,
+        (Some(_), None) | (None, Some(_)) => false,
+    }
+}
+
+#[path = "swarm_bridge_board_log.rs"]
+mod log;
+use log::{RunFold, SessionLog};
+
 #[cfg(test)]
 #[path = "swarm_bridge_board_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "swarm_bridge_board_log_tests.rs"]
+mod log_tests;

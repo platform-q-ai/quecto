@@ -292,6 +292,9 @@ impl MemoryTransaction<'_> {
 }
 
 impl BoardMembers for MemoryTransaction<'_> {
+    /// The in-memory board measures nothing (#2313 review M2).
+    fn caller_authorized(&self) {}
+
     fn member(&self, id: &str) -> Result<Option<MemberRecord>, BoardError> {
         Ok(self
             .state
@@ -544,6 +547,16 @@ impl BoardEvents for MemoryTransaction<'_> {
 
     fn event_page(&self, after: u64, limit: i64) -> Result<Vec<DictRow>, BoardError> {
         Ok(reads::event_page(&self.state.borrow().events, after, limit))
+    }
+
+    fn created_at(&self) -> Result<Option<f64>, BoardError> {
+        let state = self.state.borrow();
+        let created = state
+            .events
+            .iter()
+            .rev()
+            .find(|event| event.action == "created");
+        Ok(created.map(|event| event.time))
     }
 
     fn control_generation(&self) -> Result<i64, BoardError> {

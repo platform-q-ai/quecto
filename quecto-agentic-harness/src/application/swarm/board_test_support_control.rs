@@ -18,6 +18,15 @@ impl BoardUsage for MemoryTransaction<'_> {
             .unwrap_or_else(default_usage))
     }
 
+    fn member_usage(&self) -> Result<Vec<UsageRow>, BoardError> {
+        let state = self.state.borrow();
+        Ok(state
+            .usage
+            .as_ref()
+            .map(|usage| usage.members.clone())
+            .unwrap_or_default())
+    }
+
     fn usage_budget(&self) -> Result<Value, BoardError> {
         self.usage_report().map(|report| report.budget)
     }

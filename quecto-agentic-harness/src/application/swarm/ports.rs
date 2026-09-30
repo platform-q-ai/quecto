@@ -11,17 +11,18 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use super::dto::{
-    AmendedContract, CallMeasure, CompletionState, CountedTask, DictRow, FileRow, LatestActivity,
-    LaunchIdentity, MemberClaimCounts, MemberRow, MemberStatusRow, MessageRow, NewEvidence,
-    NewMember, NewMessage, NewRequestUsage, NewReservation, NewRun, NewTask, NotificationCursor,
-    PriorEvidence, RunContract, RunOwnerRow, RunStatusRow, ScopeObservation, StoredContract,
-    StoredRequestUsage, TaskRow, TaskUpdate, UsageReport,
+    AmendedContract, CallMeasure, CompletionState, CountedTask, DictRow, DroppedRecords, FileRow,
+    LatestActivity, LaunchIdentity, MemberClaimCounts, MemberRow, MemberStatusRow, MessageRow,
+    MessageTally, NewEvidence, NewMember, NewMessage, NewRequestUsage, NewReservation, NewRun,
+    NewTask, NotificationCursor, PriorEvidence, RunContract, RunOwnerRow, RunStatusRow,
+    ScopeObservation, StoredContract, StoredRequestUsage, TaskRow, TaskUpdate, UsageReport,
+    UsageRow,
 };
 use crate::domain::error::DomainError;
 use crate::domain::swarm::{
     BoardError, BoardOpObservation, Member, MemberExit, MemberRecord, NotificationEvent,
     NotificationState, ProcessIdentity, RunControlAction, RunControlReceipt, RunRecord, RunState,
-    RunStatus, Snapshot,
+    RunStatus, Snapshot, SwarmRunSummary,
 };
 
 pub type PortFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -193,6 +194,11 @@ pub trait BoardRuns {
 /// The `members` rows.
 pub trait BoardMembers {
     fn member(&self, id: &str) -> Result<Option<MemberRecord>, BoardError>;
+    /// The operation gate authorised this transaction's caller as a member
+    /// of the run with the op's own access (#2313 review M2). A metered
+    /// call notes it, so a refusal the op then makes still records the
+    /// caller's role; it runs no statement and changes nothing.
+    fn caller_authorized(&self);
     /// Every member row, in store order.
     fn members(&self) -> Result<Vec<MemberRow>, BoardError>;
     /// Members whose status is `live` or `reserved`.
@@ -288,6 +294,10 @@ pub trait BoardEvents {
     /// beyond SQLite's integers is refused as the store refuses an integer
     /// it cannot bind.
     fn event_page(&self, after: u64, limit: i64) -> Result<Vec<DictRow>, BoardError>;
+    /// `SELECT time FROM events WHERE action='created' ORDER BY id DESC
+    /// LIMIT 1` (#2313 review M1): when the run was created, `None` when no
+    /// `created` event holds a number.
+    fn created_at(&self) -> Result<Option<f64>, BoardError>;
 }
 
 /// The `tasks` rows (#2272). A task id is the caller's value, bound as
@@ -422,6 +432,9 @@ pub trait BoardMessages {
     /// `UPDATE messages SET status=? WHERE id=?`, for a message the caller
     /// has read in this transaction.
     fn set_message_status(&self, id: &Value, status: &str) -> Result<(), BoardError>;
+    /// The messages by what became of them (#2313 review M1): `count(*)`,
+    /// and the rows whose status is `consumed` or `withdrawn`.
+    fn message_tally(&self) -> Result<MessageTally, BoardError>;
     /// `send`'s `INSERT INTO messages(sender,recipient,body,status,
     /// revision,supersedes) VALUES(?,?,?,'accepted',?,?)`: its id.
     fn send_message(&self, message: &NewMessage) -> Result<i64, BoardError>;
@@ -501,6 +514,10 @@ pub trait BoardUsage {
     /// `{token_limit: null, strict_unknown: false, warned: false}` and no
     /// row is written.
     fn usage_report(&self) -> Result<UsageReport, BoardError>;
+    /// `usage_report()['members']` alone (#2313 final review): the
+    /// per-member aggregates, reading no request payload and creating no
+    /// table; none when the board holds no `request_usage` table yet.
+    fn member_usage(&self) -> Result<Vec<UsageRow>, BoardError>;
     /// `usage_report()['budget']`: the stored budget payload as
     /// `json.loads` reads it, or the default budget when there is no row.
     fn usage_budget(&self) -> Result<Value, BoardError>;
@@ -622,6 +639,10 @@ pub trait MeteredCall: BoardRepository {
     /// What was measured so far; `None` while no transaction has begun,
     /// so nothing was measured.
     fn measure(&self) -> Option<CallMeasure>;
+
+    /// The call's record has a fixed role (the harness's own op, #2313
+    /// review nit): the run's roles are not read for it, only its id.
+    fn role_fixed(&self);
 }
 
 /// Port: where each board op's `swarm_op` record goes (#2303): the event
@@ -631,4 +652,26 @@ pub trait BoardOpLog: Send + Sync {
     /// never blocking on one, never panicking. A failed write is the
     /// adapter's to report and never changes the op's answer.
     fn record(&self, observation: BoardOpObservation);
+
+    /// Appends a run's `summary` (#2313), as [`Self::record`] appends a
+    /// record: synchronously, never panicking, a failed write the
+    /// adapter's to report.
+    fn summarize(&self, summary: SwarmRunSummary);
+}
+
+/// Port: a session's event log a board records in (#2313): a
+/// [`BoardOpLog`] that also notes the records dropped before they reached
+/// it, and hands over, when a session switch replaces it, the drops it
+/// counted but has not noted yet.
+pub trait SessionOpLog: BoardOpLog {
+    /// Notes `drops` (#2313 review L4: held past their bound before the
+    /// session's log opened, or counted by the log this one replaced):
+    /// written as the log's drop notes, as synchronously and safely as a
+    /// record.
+    fn dropped(&self, drops: DroppedRecords);
+
+    /// The drops this log counted and has not noted yet, taken (the counts
+    /// restart): handed to the log that replaces it on a session switch
+    /// (#2313 review nit), so no drop is lost with the departing log.
+    fn take_unnoted(&self) -> DroppedRecords;
 }

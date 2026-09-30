@@ -16,7 +16,9 @@ pub(crate) struct AgentOutput<'a> {
 mod agent_deadline;
 #[path = "agent/build_result.rs"]
 mod build_result;
-mod event_log;
+pub(super) mod event_log;
+#[path = "agent/loaded_config.rs"]
+mod loaded_config;
 pub(crate) use build_result::AgentBuildResult;
 mod flag_parse;
 mod startup_effort;
@@ -315,38 +317,44 @@ pub(crate) fn build_agent_from_config(
     stderr: &mut String,
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
 ) -> Option<AgentBuildResult> {
-    let config_path = selection.path();
-    // An explicit --config must exist; only a missing GLOBAL config falls
-    // back to zero-config defaults.
-    if let Some(msg) = super::selected_config_missing(config_path, selection.must_exist()) {
-        stderr.push_str(&msg);
-        stderr.push('\n');
-        return None;
-    }
+    let env_overrides = super::config_loading::quecto_env_overrides();
+    build_agent_from_config_in(
+        base_dir,
+        selection,
+        flags,
+        stderr,
+        broadcast_tx,
+        &env_overrides,
+    )
+}
+
+/// [`build_agent_from_config`] over `env_overrides`, the `QUECTO_*`
+/// environment it applies (#2313 review L5: fixed by a test).
+pub(crate) fn build_agent_from_config_in(
+    base_dir: &std::path::Path,
+    selection: &ConfigSelection,
+    flags: &AgentFlags,
+    stderr: &mut String,
+    broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+    env_overrides: &std::collections::HashMap<String, String>,
+) -> Option<AgentBuildResult> {
     // Zero-config: a missing default config file loads defaults (no
     // onboarding step). The overlay (#2024) merges over it when trusted; a
     // one-shot run from a terminal may be asked to trust it, a UDS or
     // spawned run never prompts.
-    let env_overrides = super::config_loading::quecto_env_overrides();
     let prompt_for_trust = !flags.uds_mode && !flags.spawned && flags.stdin_is_tty;
+    let loaded =
+        match loaded_config::load(base_dir, selection, flags, prompt_for_trust, env_overrides) {
+            Ok(loaded) => loaded,
+            Err(error) => {
+                stderr.push_str(&error);
+                stderr.push('\n');
+                return None;
+            }
+        };
     let Some(build_configuration) = flags.configuration else {
-        stderr.push_str("agent: configuration capability not composed\n");
+        debug_assert!(false, "a configuration loaded only through the capability");
         return None;
-    };
-    let loaded = match super::config_loading::load_selected_config(
-        build_configuration,
-        base_dir,
-        selection,
-        prompt_for_trust,
-        &env_overrides,
-        flags.admission_context.is_some(),
-    ) {
-        Ok(loaded) => loaded,
-        Err(error) => {
-            stderr.push_str(&error);
-            stderr.push('\n');
-            return None;
-        }
     };
     for line in super::config_loading::layer_diagnostics(&loaded.sources) {
         stderr.push_str(&line);
@@ -433,7 +441,7 @@ pub(crate) fn build_agent_from_config(
         workspace,
     } = match build_tool_registry(ToolRegistryArgs {
         base_dir,
-        config_path,
+        config_path: selection.path(),
         config: &config,
         http_client: &http_client,
         web_fetch_tool,
@@ -525,8 +533,7 @@ pub(crate) fn build_agent_from_config(
         environment_control,
         workflow_state,
         workspace,
-        event_log: config.telemetry.event_log.enabled
-            || crate::infrastructure::config::telemetry::globally_enabled(base_dir),
+        event_log: event_log::switched_on(config.telemetry.event_log.enabled, base_dir),
     })
 }
 mod agent_tool_registry;

@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use crate::application::swarm::dto::BoardLocation;
 use crate::application::swarm::ports::{
-    BoardOpLog, BoardRepository, CheckoutPaths, Clock, IdSource,
+    BoardOpLog, BoardRepository, CheckoutPaths, Clock, IdSource, SessionOpLog,
 };
 use crate::application::swarm::use_cases::{
     AcceptWake, AcknowledgeMessage, ActivateMember, AdmitMember, AmendRunContract, BlockTask,
@@ -24,11 +24,11 @@ use crate::application::swarm::use_cases::{
     ConfigureUsageBudget, ConfirmMemberDead, CreateRun, CreateTask, ExtendRunDeadline, JoinMember,
     JoinRun, ListFileOwners, ListTasks, LoseCoordinator, PauseRun, QuarantineMember,
     ReadControlStatus, ReadEventCursor, ReadInbox, ReadRequestAdmission, ReadRunEvents,
-    ReadRunSnapshot, ReadRunStatus, ReadRunSummary, ReadTask, ReadUsageReport, RecordEvidence,
-    RecordMemberLaunch, RecordRequestUsage, RecoverTask, RegisterMemberSocket, ReleaseFiles,
-    ReleaseTask, ReleaseUnlaunchedMember, ReserveFiles, ResumeRun, ResumeRunExternally,
-    RevalidateTask, RevokeTask, SendMessage, SetTaskDependencies, StopRun, SubmitTask, UnblockTask,
-    VerifyTask, WithdrawMessage,
+    ReadRunSnapshot, ReadRunStatus, ReadRunSummary, ReadRunTotals, ReadTask, ReadUsageReport,
+    RecordEvidence, RecordMemberLaunch, RecordRequestUsage, RecoverTask, RegisterMemberSocket,
+    ReleaseFiles, ReleaseTask, ReleaseUnlaunchedMember, ReserveFiles, ResumeRun,
+    ResumeRunExternally, RevalidateTask, RevokeTask, SendMessage, SetTaskDependencies, StopRun,
+    SubmitTask, UnblockTask, VerifyTask, WithdrawMessage,
 };
 use crate::infrastructure::persistence::audit_log::AuditLog;
 use crate::infrastructure::persistence::board_op_log::EventLogBoardOps;
@@ -72,11 +72,11 @@ pub fn swarm_board() -> SwarmBoard {
 /// when `event_log_enabled` (`telemetry.event_log.enabled`, owner decision
 /// T1), and only when the log has a synchronous line to append through.
 /// `None` otherwise: nothing is measured or written.
-pub fn board_op_log(event_log_enabled: bool, log: &AuditLog) -> Option<Arc<dyn BoardOpLog>> {
+pub fn board_op_log(event_log_enabled: bool, log: &AuditLog) -> Option<Arc<dyn SessionOpLog>> {
     match event_log_enabled {
         true => log
             .crash_line()
-            .map(|line| Arc::new(EventLogBoardOps::new(line)) as Arc<dyn BoardOpLog>),
+            .map(|line| Arc::new(EventLogBoardOps::new(line)) as Arc<dyn SessionOpLog>),
         false => None,
     }
 }
@@ -115,6 +115,7 @@ pub fn build_swarm_board_handles_with(
         read_run_status: Arc::new(ReadRunStatus::new(repository.clone())),
         read_event_cursor: Arc::new(ReadEventCursor::new(repository.clone())),
         read_run_snapshot: Arc::new(ReadRunSnapshot::new(repository.clone(), clock.clone())),
+        read_run_totals: Arc::new(ReadRunTotals::new(repository.clone(), clock.clone())),
         record_member_launch: Arc::new(RecordMemberLaunch::new(repository.clone(), clock.clone())),
         release_unlaunched_member: Arc::new(ReleaseUnlaunchedMember::new(
             repository.clone(),

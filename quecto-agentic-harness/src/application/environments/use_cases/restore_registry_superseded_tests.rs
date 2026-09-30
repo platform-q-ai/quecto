@@ -160,7 +160,12 @@ fn captured_debug_log(run: impl FnOnce()) -> String {
         .with_ansi(false)
         .with_max_level(tracing::Level::DEBUG)
         .finish();
-    tracing::subscriber::with_default(subscriber, run);
+    tracing::subscriber::with_default(subscriber, || {
+        // A test running at the same time can leave a callsite's cached
+        // interest stale for this subscriber (#1053): rebuilt first.
+        tracing::callsite::rebuild_interest_cache();
+        run();
+    });
     sink.lock().unwrap().clone()
 }
 
@@ -171,11 +176,24 @@ fn captured_debug_log(run: impl FnOnce()) -> String {
 fn an_agreeing_correction_with_a_different_account_is_logged_at_debug() {
     let mut written = record("C1", EnvironmentStatus::Stopped);
     written.last_error = Some("killed by its owner".into());
-    let mut diagnostics = Vec::new();
-    let log = captured_debug_log(|| {
-        diagnostics = restore_racing(written, "cli:one", OvertakenAudience::OwnEnvironments);
-    });
-    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    // The interest cache can still race another test's subscriber (#1053):
+    // a record missed is looked for again on a fresh restore, as the
+    // dispatcher's capture does.
+    let mut log = String::new();
+    for _ in 0..5 {
+        let mut diagnostics = Vec::new();
+        log = captured_debug_log(|| {
+            diagnostics = restore_racing(
+                written.clone(),
+                "cli:one",
+                OvertakenAudience::OwnEnvironments,
+            );
+        });
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        if log.contains("agrees") {
+            break;
+        }
+    }
     let line = log
         .lines()
         .find(|line| line.contains("C1") && line.contains("agrees"))

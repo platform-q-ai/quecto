@@ -46,6 +46,9 @@ impl BoardOpLog for Recorded {
     fn record(&self, observation: BoardOpObservation) {
         self.0.lock().unwrap().push(observation);
     }
+
+    /// No summary this test checks is written.
+    fn summarize(&self, _summary: crate::domain::swarm::SwarmRunSummary) {}
 }
 
 impl Recorded {
@@ -101,6 +104,8 @@ impl MeteredCall for NothingMeasured {
     fn measure(&self) -> Option<CallMeasure> {
         None
     }
+
+    fn role_fixed(&self) {}
 }
 
 /// Telemetry recording in `log`, measured by `meter`.
@@ -313,6 +318,50 @@ fn an_answered_op_records_its_run_role_size_and_measure() {
     assert_eq!(recorded.busy_wait_us, Some(0), "{recorded:?}");
     let lock_wait = recorded.lock_wait_us.expect("a transaction was measured");
     assert!(recorded.duration_us >= lock_wait, "{recorded:?}");
+}
+
+/// #2313 (#2311 reconcile review, Low): a caller the board refused as no
+/// member of the run, a stranger or a member whose death was confirmed,
+/// records role `null`, never `worker`, though the op read the run.
+#[test]
+fn a_caller_refused_as_no_member_records_no_run_role() {
+    let log = Arc::new(Recorded::default());
+    let (dir, handles) = logged(&log);
+    call(&handles, "parent", "bootstrap_run", json!([1, "s", null])).unwrap();
+    call(&handles, "parent", "create_run", create_args()).unwrap();
+    call(&handles, "parent", "_admit", json!(["worker", "r1"])).unwrap();
+    call(
+        &handles,
+        "parent",
+        "_activate",
+        json!(["worker", "r1", 7, "s", "/w.sock"]),
+    )
+    .unwrap();
+    log.clear();
+    let task = json!(["r1", "t", ["tests pass"]]);
+    call(&handles, "stranger", "task_create", task).unwrap_err();
+    let stranger = only(&log);
+    assert_eq!(
+        (stranger.outcome, stranger.role),
+        (
+            BoardOpOutcome::Refused {
+                kind: RefusalKind::NotMember,
+                committed: false
+            },
+            None
+        ),
+        "{stranger:?}"
+    );
+    assert!(stranger.run_id.is_some(), "the op read the run");
+    rusqlite::Connection::open(dir.path().join("swarm.sqlite"))
+        .unwrap()
+        .execute("UPDATE members SET status='dead' WHERE id='worker'", [])
+        .unwrap();
+    log.clear();
+    let task = json!(["r2", "t", ["tests pass"]]);
+    call(&handles, "worker", "task_create", task).unwrap_err();
+    let dead = only(&log);
+    assert_eq!(dead.role, None, "{dead:?}");
 }
 
 /// What was not measured is `null`, never a zero that reads as real
@@ -616,3 +665,6 @@ mod ops;
 
 #[path = "swarm_board_dispatch_telemetry_race_tests.rs"]
 mod race;
+
+#[path = "swarm_board_dispatch_telemetry_role_tests.rs"]
+mod role;

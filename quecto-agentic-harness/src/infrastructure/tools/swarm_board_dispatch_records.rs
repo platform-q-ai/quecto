@@ -58,7 +58,7 @@ pub(super) fn record(
         Some(telemetry) => {
             let actor = telemetry.actors.of(finished.member, caller);
             trace(finished, measure.as_ref(), Some(&actor));
-            let observation = observation(finished, actor, served, measure);
+            let observation = observation(finished, actor, caller, served, measure);
             telemetry.log.record(observation);
         }
         None => trace(finished, None, None),

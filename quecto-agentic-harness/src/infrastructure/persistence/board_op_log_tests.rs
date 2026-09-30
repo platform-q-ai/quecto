@@ -126,3 +126,97 @@ fn drops_accumulate_into_one_note() {
     assert_eq!(lines[0]["dropped"], 3);
     assert_eq!(lines[1]["event"], "swarm_op");
 }
+
+/// #2313: a run's summary is one `swarm_run_summary` line under no turn,
+/// from a plain thread; past the cap it is dropped with the one warning.
+#[test]
+fn a_run_summary_is_one_line_under_no_turn() {
+    use crate::domain::swarm::RunSummaryFold;
+    let run = "0123456789abcdef0123456789abcdef";
+    let summary = || {
+        let mut fold = RunSummaryFold::new(run, 0);
+        fold.observe(&BoardOpObservation {
+            run_id: Some(run.into()),
+            ..observation()
+        });
+        fold.summary(10, None)
+    };
+    let base = tempfile::tempdir().unwrap();
+    let log = AuditLog::open_sync(base.path(), "cli:summary").unwrap();
+    let ops = EventLogBoardOps::new(log.crash_line().unwrap());
+    let written = summary();
+    std::thread::spawn(move || ops.summarize(written))
+        .join()
+        .expect("no runtime is needed and nothing panics");
+    let lines = parsed(base.path(), "cli:summary");
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert_eq!(lines[0]["event"], "swarm_run_summary");
+    assert_eq!(lines[0]["run_id"], run);
+    assert_eq!(lines[0]["records"], 1);
+    assert_eq!(lines[0]["turn"], serde_json::Value::Null);
+    let full = AuditLog::open_sync(base.path(), "cli:full")
+        .unwrap()
+        .with_cap(64);
+    let ops = EventLogBoardOps::new(full.crash_line().unwrap());
+    ops.summarize(summary());
+    assert!(ops.warned.load(Ordering::Acquire), "the drop was reported");
+}
+
+/// A run summary with `records` folded records of a run.
+fn a_summary() -> crate::domain::swarm::SwarmRunSummary {
+    let run = "0123456789abcdef0123456789abcdef";
+    let mut fold = crate::domain::swarm::RunSummaryFold::new(run, 0);
+    fold.observe(&BoardOpObservation {
+        run_id: Some(run.into()),
+        ..observation()
+    });
+    fold.summary(10, None)
+}
+
+/// #2313 review L1: the summary is written once, off the hot path, so it
+/// waits for the gate longer than a record does: a gate held past a
+/// record's bound but within the summary's still gets the summary written.
+#[test]
+fn a_summary_waits_for_the_gate_longer_than_a_record() {
+    let base = tempfile::tempdir().unwrap();
+    let log = AuditLog::open_sync(base.path(), "cli:slow").unwrap();
+    let ops = EventLogBoardOps::new(log.crash_line().unwrap())
+        .with_gate_wait(std::time::Duration::from_millis(20))
+        .with_summary_wait(std::time::Duration::from_secs(5));
+    let holder = log.hold_gate_for(std::time::Duration::from_millis(300));
+    ops.summarize(a_summary());
+    holder.join().unwrap();
+    let lines = parsed(base.path(), "cli:slow");
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert_eq!(lines[0]["event"], "swarm_run_summary");
+    assert_eq!(ops.dropped.load(Ordering::Acquire), 0);
+    assert!(
+        super::SUMMARY_GATE_WAIT > super::SWARM_OP_GATE_WAIT,
+        "the default summary bound is the longer"
+    );
+}
+
+/// #2313 review L1 and final review: a summary the gate still holds off
+/// past its bound is dropped and counted apart from the records, so the
+/// next record written notes it as `swarm_run_summary_dropped`, not as a
+/// dropped `swarm_op`.
+#[test]
+fn a_summary_dropped_at_the_gate_is_counted_and_noted() {
+    let base = tempfile::tempdir().unwrap();
+    let log = AuditLog::open_sync(base.path(), "cli:gone").unwrap();
+    let ops = EventLogBoardOps::new(log.crash_line().unwrap())
+        .with_summary_wait(std::time::Duration::from_millis(20));
+    let holder = log.hold_gate_for(std::time::Duration::from_millis(500));
+    ops.summarize(a_summary());
+    assert_eq!(ops.dropped.load(Ordering::Acquire), 0, "no record dropped");
+    assert_eq!(ops.summaries_dropped.load(Ordering::Acquire), 1, "counted");
+    assert!(ops.warned.load(Ordering::Acquire), "the drop was reported");
+    holder.join().unwrap();
+    ops.record(observation());
+    let lines = parsed(base.path(), "cli:gone");
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert_eq!(lines[0]["event"], "swarm_run_summary_dropped");
+    assert_eq!(lines[0]["dropped"], 1);
+    assert_eq!(lines[1]["event"], "swarm_op");
+    assert_eq!(ops.summaries_dropped.load(Ordering::Acquire), 0, "noted");
+}

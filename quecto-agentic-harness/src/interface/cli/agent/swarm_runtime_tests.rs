@@ -363,3 +363,40 @@ fn a_contracted_process_needs_a_composed_board() {
         super::SWARM_BOARD_NOT_COMPOSED
     );
 }
+
+/// #2313: the admission's board calls are recorded only for a contracted
+/// quecto member whose event log was decided on; the decision is read
+/// only then (a claude-code member opens no event log of its own).
+#[test]
+fn only_a_contracted_quecto_members_admission_is_recorded() {
+    let read = std::cell::Cell::new(0);
+    let decided = |on: bool| {
+        let read = &read;
+        move || {
+            read.set(read.get() + 1);
+            on
+        }
+    };
+    assert!(records_admission(
+        true,
+        MemberBackend::Quecto,
+        decided(true)
+    ));
+    assert!(!records_admission(
+        true,
+        MemberBackend::Quecto,
+        decided(false)
+    ));
+    assert_eq!(read.get(), 2);
+    assert!(!records_admission(
+        true,
+        MemberBackend::ClaudeCode,
+        decided(true)
+    ));
+    assert!(!records_admission(
+        false,
+        MemberBackend::Quecto,
+        decided(true)
+    ));
+    assert_eq!(read.get(), 2, "the switch is read only when it matters");
+}

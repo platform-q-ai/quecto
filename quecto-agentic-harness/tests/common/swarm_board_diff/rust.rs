@@ -54,6 +54,9 @@ impl BoardOpLog for RecordedOps {
     fn record(&self, observation: BoardOpObservation) {
         self.0.lock().unwrap().push(observation);
     }
+
+    /// No summary this test checks is written.
+    fn summarize(&self, _summary: quecto::domain::swarm::SwarmRunSummary) {}
 }
 
 impl RecordedOps {

@@ -22,6 +22,17 @@ impl BoardOpLog for Recorded {
     fn record(&self, observation: BoardOpObservation) {
         self.0.lock().unwrap().push(observation);
     }
+
+    /// No summary this test checks is written.
+    fn summarize(&self, _summary: crate::domain::swarm::SwarmRunSummary) {}
+}
+
+impl crate::application::swarm::ports::SessionOpLog for Recorded {
+    fn dropped(&self, _drops: crate::application::swarm::dto::DroppedRecords) {}
+
+    fn take_unnoted(&self) -> crate::application::swarm::dto::DroppedRecords {
+        crate::application::swarm::dto::DroppedRecords::default()
+    }
 }
 
 impl Recorded {
@@ -220,23 +231,14 @@ fn a_board_with_a_log_records_one_swarm_op_per_call_and_no_argument_text() {
     assert!(!text.contains("title"), "no argument text: {text}");
 }
 
-#[test]
-fn a_board_records_in_its_first_log_only() {
-    let checkout = tempfile::tempdir().unwrap();
-    let board = crate::composition::swarm::swarm_board();
-    let (first, second) = (Arc::new(Recorded::default()), Arc::new(Recorded::default()));
-    assert!(board.record_in(first.clone()));
-    assert!(!board.record_in(second.clone()), "the first log stays");
-    create(&context(checkout.path(), "parent", board));
-    assert_eq!(first.ops(), ["create"]);
-    assert!(second.ops().is_empty());
-}
-
 static SESSION_LOG: std::sync::OnceLock<Arc<Recorded>> = std::sync::OnceLock::new();
 
 /// A `board_op_log` that answers the in-memory log while the event log
 /// is on.
-fn session_log(enabled: bool, _log: &AuditLog) -> Option<Arc<dyn BoardOpLog>> {
+fn session_log(
+    enabled: bool,
+    _log: &AuditLog,
+) -> Option<Arc<dyn crate::application::swarm::ports::SessionOpLog>> {
     match enabled {
         true => Some(SESSION_LOG.get_or_init(Arc::default).clone()),
         false => None,
@@ -320,4 +322,32 @@ async fn a_board_call_on_an_async_worker_is_refused_in_debug_builds() {
         .unwrap();
     assert_eq!(summary.unwrap()["goal"], "ship");
     assert_eq!(run.unwrap().expect("a created run").coordinator, "parent");
+}
+
+/// #2313 review L6: a board built without composition's session log can
+/// never record in a session's log, so once the session's log is attached
+/// it stops recording: what it held since admission is dropped, and later
+/// calls are neither measured nor held.
+#[test]
+fn a_board_without_a_session_log_stops_recording_at_attach() {
+    let base = tempfile::tempdir().unwrap();
+    let log = AuditLog::open_sync(base.path(), "cli:plain").unwrap();
+    let plain = SwarmBoard::new(
+        build_swarm_board_handles,
+        crate::composition::swarm::board_wire(),
+    );
+    plain.record_from_admission(true);
+    let checkout = tempfile::tempdir().unwrap();
+    let parent = context(checkout.path(), "parent", plain.clone());
+    create(&parent);
+    assert!(format!("{plain:?}").contains("logged: true"), "held");
+    assert!(!plain.record_in_session(true, &log));
+    assert!(
+        format!("{plain:?}").contains("logged: false"),
+        "stopped: {plain:?}"
+    );
+    parent.summary().unwrap();
+    let recorded = Arc::new(Recorded::default());
+    assert!(plain.record_in(recorded.clone()));
+    assert!(recorded.ops().is_empty(), "{:?}", recorded.ops());
 }

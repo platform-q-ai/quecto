@@ -35,6 +35,10 @@ impl BoardEvents for Observations {
         unreachable!("the grace reads no control generation")
     }
 
+    fn created_at(&self) -> Result<Option<f64>, BoardError> {
+        unreachable!("the grace reads no creation time")
+    }
+
     fn scope_observations(&self) -> Result<Vec<ScopeObservation>, BoardError> {
         Ok(self.stored.clone())
     }

@@ -9,7 +9,7 @@
 //! time.
 use serde_json::{Map, Value};
 
-use super::{FileRow, MemberClaimCounts, MemberRow, TaskRow};
+use super::{FileRow, MemberClaimCounts, MemberRow, TaskRow, UsageRow};
 
 /// A row as `dict(row)`: every column in table order.
 #[derive(Clone, Debug, PartialEq)]
@@ -192,4 +192,32 @@ pub struct BootstrappedSummary {
     pub created: bool,
     pub joined: Option<super::Joined>,
     pub summary: Result<RunSummary, crate::domain::swarm::BoardError>,
+}
+
+/// What `_run_totals` read (#2313 review M1): the run's own totals, every
+/// member's work, as the board holds them. Counts only, and each member's
+/// usage row as `usage_report` aggregates it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RunTotalsView {
+    /// The run row's id as stored, when it is text.
+    pub run_id: Option<String>,
+    pub task_count: i64,
+    /// The tasks by state, as `summary` counts them.
+    pub counts: SummaryCounts,
+    pub messages: MessageTally,
+    /// `usage_report`'s per-member aggregates.
+    pub usage: Vec<UsageRow>,
+    /// The time of the run's `created` event, when the board holds one.
+    pub created_at: Option<f64>,
+    /// The board's clock when it was read.
+    pub read_at: f64,
+}
+
+/// The `messages` rows by what became of them: every row (each was
+/// sent), those `consumed` by their recipient, and those `withdrawn`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MessageTally {
+    pub sent: i64,
+    pub consumed: i64,
+    pub withdrawn: i64,
 }

@@ -113,21 +113,26 @@ runtime. Board refusals keep their wrapper,
 and its teardown-authority entry are deleted: no child process remains
 to leak.
 
-Two recording gaps are known and left to #2313:
+Two recording gaps were known at the switch, and #2313 closed them:
 
-- **Admission's own calls are not recorded.** The admission's `_status`,
-  `_bootstrap` and `_activate` run before the session's log is attached
-  (`event_log::attach`), and a `--backend claude-code` member never
-  attaches one. Attaching earlier needs the configuration, which is read
-  after admission, to know whether the event log is on; buffering the
-  admission's observations until then would measure calls before that is
-  known, against owner decision T1 (with the event log off, nothing is
-  measured or written). These calls leave `tracing` records only.
-- **One log per process.** A board records in the first log it is given
-  (`SwarmBoard::record_in` is set once), and the process has one board.
-  In multi-session UDS mode every board call is therefore recorded in the
-  first session's log, whichever session made it, until #2313 pins the
-  log to the session.
+- **Admission's own calls.** The admission's `_status`, `_bootstrap` and
+  `_activate` run before the session's log is attached
+  (`event_log::attach`). The event-log switch is now decided before
+  admission, from the configuration the build then loads (owner decision
+  T1 holds: with it off, nothing is measured or written), and the calls
+  are held until the log opens, then written there first. A
+  `--backend claude-code` member never attaches a log, so its admission's
+  calls still leave `tracing` records only (E2).
+- **One log per process.** A board recorded in the first log it was given.
+  It now records in the *current* session's log: a session switch rebinds
+  the board's log (`SwarmBoard::follow_session`), and every board call made
+  from then on is recorded in the arriving session's log, whichever session
+  it is made for. The records are not pinned to the session that made the
+  call: the process has one board, so its run watcher's calls, its
+  settlement reads and the run's `swarm_run_summary` land in whichever
+  session is current when they are made, and the records of one run (and
+  so what its summary folds) can span two sessions' files when the harness
+  switched session during the run.
 
 Python remains only for `op=run` member programs until #2282, and those
 programs use the Python board over the same file as the harness's Rust

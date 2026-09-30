@@ -61,6 +61,8 @@ mod board_reads;
 mod board_repository;
 #[path = "contracts/board_requests.rs"]
 mod board_requests;
+#[path = "contracts/board_run_summary_ports.rs"]
+mod board_run_summary_ports;
 #[path = "contracts/board_runs.rs"]
 mod board_runs;
 #[path = "contracts/board_tasks.rs"]
@@ -193,6 +195,8 @@ mod session_key_propagation;
 mod session_layout;
 #[path = "contracts/session_list_scale.rs"]
 mod session_list_scale;
+#[path = "contracts/session_op_log.rs"]
+mod session_op_log;
 #[path = "contracts/session_store.rs"]
 mod session_store;
 #[path = "contracts/session_switch_runtime.rs"]

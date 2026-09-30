@@ -158,9 +158,14 @@ pub struct BoardOpObservation {
     /// like a credential.
     pub actor_ref: Redacted,
     /// The harness's own op is [`BoardRole::Host`]; a member-facing op
-    /// records the caller's role in the run ([`run_role`]), or `None`
-    /// (written `null`) when the op read no run: it was refused first, or
-    /// the board holds none. Never a role guessed.
+    /// the board answered as a member's, or refused only after the
+    /// operation gate authorised the caller as a member (#2313 review M2),
+    /// records the caller's role in the run ([`run_role`]); `None`
+    /// (written `null`) when the op read no run, or the caller was refused
+    /// before or by the gate (no member, not the coordinator, no run). A
+    /// member whose death was confirmed passes the gate for a read, so its
+    /// reads record its role and only its mutations `None`. Never a role
+    /// guessed.
     pub role: Option<BoardRole>,
     /// The run the op found, when it found one and its id is one the
     /// board generates ([`board_run_id`]); any other id (a board edited
@@ -313,12 +318,26 @@ impl BoardOpDetail {
 /// The role `member` holds in a run whose coordinator and integrator are
 /// the ones given (#2303 reconcile): the coordinator first (Python's
 /// `create` makes it the integrator too), then the integrator, and any
-/// other caller a worker.
-pub fn run_role(member: &str, coordinator: Option<&str>, integrator: Option<&str>) -> BoardRole {
-    match (coordinator == Some(member), integrator == Some(member)) {
-        (true, _) => BoardRole::Coordinator,
-        (false, true) => BoardRole::Integrator,
-        (false, false) => BoardRole::Worker,
+/// other member a worker. `None` unless the board accepted the caller as
+/// a member of the run (`member_of_run`, #2313): a stranger holds no role,
+/// and is never guessed one. A member whose death was confirmed is still
+/// accepted for a read-only op (the gate admits it), so its reads record
+/// the role it holds; its mutations, refused by the gate, record none.
+pub fn run_role(
+    member: &str,
+    coordinator: Option<&str>,
+    integrator: Option<&str>,
+    member_of_run: bool,
+) -> Option<BoardRole> {
+    match (
+        member_of_run,
+        coordinator == Some(member),
+        integrator == Some(member),
+    ) {
+        (false, _, _) => None,
+        (true, true, _) => Some(BoardRole::Coordinator),
+        (true, false, true) => Some(BoardRole::Integrator),
+        (true, false, false) => Some(BoardRole::Worker),
     }
 }
 

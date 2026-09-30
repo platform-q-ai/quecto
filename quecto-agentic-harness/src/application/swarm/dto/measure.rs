@@ -25,6 +25,11 @@ pub struct CallMeasure {
     /// read holds them (#2303 reconcile): only to name a member-facing
     /// op's caller role, never a field of its record.
     pub run_roles: Option<RunRoles>,
+    /// Whether the operation gate authorised the caller as a member of the
+    /// run, with the op's own access, in any of the call's transactions
+    /// (#2313 review M2): a refusal the op made after it still records the
+    /// caller's role.
+    pub authorized: bool,
 }
 
 /// Who holds a run's two named roles, as its row holds them.
@@ -32,4 +37,27 @@ pub struct CallMeasure {
 pub struct RunRoles {
     pub coordinator: Option<String>,
     pub integrator: Option<String>,
+}
+
+/// Board records dropped before they were written (#2313 final review):
+/// `swarm_op` records and run summaries, counted apart.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DroppedRecords {
+    pub ops: u64,
+    pub summaries: u64,
+}
+
+impl DroppedRecords {
+    /// Whether anything was dropped.
+    pub fn any(self) -> bool {
+        self.ops > 0 || self.summaries > 0
+    }
+
+    /// Both counts, added, saturating.
+    pub fn plus(self, other: Self) -> Self {
+        Self {
+            ops: self.ops.saturating_add(other.ops),
+            summaries: self.summaries.saturating_add(other.summaries),
+        }
+    }
 }

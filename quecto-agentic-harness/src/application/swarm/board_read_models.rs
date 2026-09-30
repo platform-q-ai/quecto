@@ -312,7 +312,7 @@ pub(crate) fn summary(
 /// `summary()['counts']`: each task by its status, a `ready` one with a
 /// dependency that is not `completed` (or names no task) counted
 /// `blocked`, then `member_claim_counts`.
-fn counts(
+pub(crate) fn counts(
     transaction: &(impl BoardTransaction + ?Sized),
     coordinator: Option<&str>,
 ) -> Result<SummaryCounts, BoardError> {

@@ -99,6 +99,17 @@ impl crate::application::swarm::ports::BoardOpLog for RecordedOps {
     fn record(&self, observation: crate::domain::swarm::BoardOpObservation) {
         self.0.lock().unwrap().push(observation.op);
     }
+
+    /// No summary this test checks is written.
+    fn summarize(&self, _summary: crate::domain::swarm::SwarmRunSummary) {}
+}
+
+impl crate::application::swarm::ports::SessionOpLog for RecordedOps {
+    fn dropped(&self, _drops: crate::application::swarm::dto::DroppedRecords) {}
+
+    fn take_unnoted(&self) -> crate::application::swarm::dto::DroppedRecords {
+        crate::application::swarm::dto::DroppedRecords::default()
+    }
 }
 
 /// #2278 review M1: the host's board calls are recorded in the session's
