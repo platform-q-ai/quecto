@@ -28,8 +28,8 @@ use super::Level;
 #[cfg(any(test, feature = "test-support"))]
 use super::test_only;
 use super::{
-    completion, control, loss, members, messages, reads, reservations, submissions, tasks, usage,
-    wakes,
+    completion, control, host, loss, members, messages, reads, reservations, submissions, tasks,
+    usage, wakes,
 };
 use crate::domain::swarm::BoardRole;
 
@@ -39,6 +39,8 @@ pub(super) enum Method {
     Status,
     EventCursor,
     Snapshot,
+    /// The run watch's tick (#2338): Rust-only.
+    Watch,
     RunTotals,
     Admit,
     Activate,
@@ -119,6 +121,7 @@ impl Method {
             "_status" => Some(Self::Status),
             "_event_cursor" => Some(Self::EventCursor),
             "_snapshot" => Some(Self::Snapshot),
+            "_watch" => Some(Self::Watch),
             "_run_totals" => Some(Self::RunTotals),
             "_admit" => Some(Self::Admit),
             "_activate" => Some(Self::Activate),
@@ -186,6 +189,7 @@ impl Method {
             Self::Status => "_status",
             Self::EventCursor => "_event_cursor",
             Self::Snapshot => "_snapshot",
+            Self::Watch => "_watch",
             Self::RunTotals => "_run_totals",
             Self::Admit => "_admit",
             Self::Activate => "_activate",
@@ -257,6 +261,7 @@ impl Method {
             Self::Status
             | Self::EventCursor
             | Self::Snapshot
+            | Self::Watch
             | Self::RunTotals
             | Self::ControlStatus
             | Self::UsageReport
@@ -325,6 +330,7 @@ impl Method {
             Self::EventCursor => Some(BoardRole::Host),
             Self::Status
             | Self::Snapshot
+            | Self::Watch
             | Self::RunTotals
             | Self::Admit
             | Self::Activate
@@ -392,6 +398,7 @@ impl Method {
             // Through the operation gate, which refuses a caller that is
             // no member of the run (or whose death was confirmed).
             Self::Snapshot
+            | Self::Watch
             | Self::RunTotals
             | Self::Admit
             | Self::Activate
@@ -488,6 +495,7 @@ impl Method {
             | Self::ControlStatus
             | Self::UsageReport
             | Self::LoseCoordinator => &[],
+            Self::Watch => &host::WATCH,
             Self::Admit => &members::ADMIT,
             Self::Activate => &members::ACTIVATE,
             Self::RecordLaunch => &members::RECORD_LAUNCH,

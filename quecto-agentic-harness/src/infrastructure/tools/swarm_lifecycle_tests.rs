@@ -26,7 +26,10 @@ fn a_supervisor_tick_records_participation_from_the_run() {
     let participation = super::super::swarm_bridge::Participation::shared();
     let mut snapshot = context.snapshot().unwrap();
     assert!(!participation.participating());
-    super::observe(&context, &mut snapshot, &participation);
+    let mut schedule = crate::domain::swarm::watch::WatchSchedule::new();
+    let tick =
+        super::watch::watch_tick(&context, &mut schedule, &mut snapshot, &participation, 0.0);
+    assert_eq!(tick, super::watch::Tick::Snapshot);
     assert!(participation.participating(), "{snapshot:?}");
     assert_eq!(snapshot.status, crate::domain::swarm::RunStatus::Running);
 }

@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use super::{atomic, end, operation};
+use super::{atomic, end, operation, read};
 use crate::application::swarm::board_test_support::{
     MemoryBoard, SteppingClock, member_row, running_board,
 };
@@ -232,6 +232,13 @@ fn atomic_refuses_a_store_that_skipped_the_work() {
         ) -> Result<(), BoardError> {
             Ok(())
         }
+
+        fn read(
+            &self,
+            _work: &mut crate::application::swarm::ports::BoardWork<'_>,
+        ) -> Result<(), BoardError> {
+            Ok(())
+        }
     }
     let skipped = atomic(&Skipping, false, |_| Ok(1));
     assert_eq!(
@@ -239,6 +246,14 @@ fn atomic_refuses_a_store_that_skipped_the_work() {
         BoardError::new(
             RefusalKind::Internal,
             "coordination store committed without running its work"
+        )
+    );
+    // #2338: a read is held to the same.
+    assert_eq!(
+        read(&Skipping, |_| Ok(1)).unwrap_err(),
+        BoardError::new(
+            RefusalKind::Internal,
+            "coordination store ended a read without running its work"
         )
     );
 }
@@ -257,13 +272,28 @@ fn atomic_runs_the_work_at_most_once() {
             self.0.atomic(create, work)?;
             self.0.atomic(create, work)
         }
+
+        fn read(
+            &self,
+            work: &mut crate::application::swarm::ports::BoardWork<'_>,
+        ) -> Result<(), BoardError> {
+            self.0.read(work)?;
+            self.0.read(work)
+        }
     }
-    let twice = atomic(&Twice(board), false, |_| Ok(()));
+    let twice = Twice(board);
     assert_eq!(
-        twice.unwrap_err(),
+        atomic(&twice, false, |_| Ok(())).unwrap_err(),
         BoardError::new(
             RefusalKind::Internal,
             "coordination store ran a transaction's work twice"
+        )
+    );
+    assert_eq!(
+        read(&twice, |_| Ok(())).unwrap_err(),
+        BoardError::new(
+            RefusalKind::Internal,
+            "coordination store ran a read's work twice"
         )
     );
 }

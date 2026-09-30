@@ -1,16 +1,19 @@
 //! The harness's own reads of the board dispatch: `_status`,
-//! `_event_cursor`, `_snapshot` and (#2313 review M1) `_run_totals`, the
+//! `_event_cursor`, `_snapshot`, (#2313 review M1) `_run_totals`, the
 //! run's totals the coordinator's harness reads when the run settles, for
-//! the run-wide section of its `swarm_run_summary`. Each answers `read`,
-//! and names no task or message.
+//! the run-wide section of its `swarm_run_summary`, and (#2338) `_watch`,
+//! the run watch's tick. Each but `_watch` answers `read`; none names a
+//! task or message.
 use serde_json::{Map, Value};
 
-use super::{Served, float, object, snapshot, status};
+use super::method::Parameter;
+use super::{Served, float, object, snapshot, status, take};
 use crate::application::swarm::dto::RunTotalsView;
 use crate::application::swarm::use_cases::{
     ReadEventCursor, ReadRunSnapshot, ReadRunStatus, ReadRunTotals,
 };
-use crate::domain::swarm::{BoardError, BoardOpDetail};
+use crate::domain::swarm::watch_polls::{SNAPSHOT, UNCHANGED};
+use crate::domain::swarm::{BoardError, BoardOpDetail, RefusalKind};
 
 /// A read's answer.
 fn read(value: Value) -> Served {
@@ -38,6 +41,48 @@ pub(super) fn run_snapshot(
     member: &str,
 ) -> Result<Served, BoardError> {
     Ok(read(snapshot(read_run_snapshot.execute(member)?)?))
+}
+
+/// `_watch(since=None)` (#2338): Rust-only, the run watch's one call a
+/// tick.
+pub(super) const WATCH: [Parameter; 1] = [Parameter {
+    name: "since",
+    default: Some(|| Value::Null),
+}];
+
+/// `{event_cursor, unchanged: true}` while the board's event cursor is
+/// `since`, else `{event_cursor, snapshot}` (the snapshot as `_snapshot`
+/// answers it); decided `unchanged` or `snapshot`. `since` is `null` (the
+/// snapshot whatever the cursor) or a cursor the board answered: a
+/// nonnegative integer.
+pub(super) fn run_watch(
+    read_run_snapshot: &ReadRunSnapshot,
+    member: &str,
+    arguments: Vec<Value>,
+) -> Result<Served, BoardError> {
+    let [since] = take(arguments)?;
+    let since = match since {
+        Value::Null => None,
+        given => Some(given.as_i64().filter(|since| *since >= 0).ok_or_else(|| {
+            BoardError::new(
+                RefusalKind::Invalid,
+                "since must be an event cursor (a nonnegative integer) or null",
+            )
+        })?),
+    };
+    let watched = read_run_snapshot.watch(member, since)?;
+    let cursor = ("event_cursor", Value::from(watched.event_cursor));
+    let (value, decision) = match watched.snapshot {
+        None => (
+            object([cursor, ("unchanged", Value::Bool(true))]),
+            UNCHANGED,
+        ),
+        Some(view) => (object([cursor, ("snapshot", snapshot(view)?)]), SNAPSHOT),
+    };
+    let mut served = read(value);
+    served.decision = decision;
+    served.cursor_moved = since.map(|_| decision == SNAPSHOT);
+    Ok(served)
 }
 
 pub(super) fn run_totals(

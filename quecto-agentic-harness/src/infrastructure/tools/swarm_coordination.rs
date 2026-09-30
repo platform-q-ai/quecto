@@ -7,6 +7,14 @@ use crate::domain::swarm::{Member, MemberStatus, ProcessIdentity, RunStatus, Sna
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+/// What a run watch's tick read (#2338): the board's event cursor, and
+/// the run's snapshot unless the cursor was the one the watch passed.
+#[derive(Clone, Debug)]
+pub struct RunWatch {
+    pub event_cursor: i64,
+    pub snapshot: Option<Snapshot>,
+}
+
 #[derive(Deserialize)]
 struct WireMember {
     id: String,
@@ -120,6 +128,40 @@ impl CoordinationPort for SwarmContext {
     }
 }
 impl SwarmContext {
+    /// The run watch's tick (#2338): one `_watch` call, recorded as the
+    /// harness's own (an `unchanged` answer aggregated with the ones
+    /// around it). Passing the cursor of its last snapshot, `since`, it
+    /// gets only the board's cursor back while that is unchanged, and the
+    /// run's snapshot with the cursor otherwise; passing none, always the
+    /// snapshot.
+    pub fn watch(&self, since: Option<i64>) -> Result<RunWatch, DomainError> {
+        let value = self.board.call_as(
+            self.location(),
+            &self.member,
+            "_watch",
+            json!([since]),
+            super::super::swarm_board_dispatch::CallOrigin::Watch,
+        )?;
+        let event_cursor = value["event_cursor"]
+            .as_i64()
+            .filter(|cursor| *cursor >= 0)
+            .ok_or_else(|| invalid("missing event cursor"))?;
+        let snapshot = match (value.get("snapshot"), value["unchanged"].as_bool()) {
+            (Some(snapshot), None) => Some(decode(snapshot.clone())?),
+            (None, Some(true)) if since == Some(event_cursor) => None,
+            _ => return Err(invalid("a watch answers the snapshot or unchanged")),
+        };
+        Ok(RunWatch {
+            event_cursor,
+            snapshot,
+        })
+    }
+
+    /// Writes the run watch's held polls now (#2338): the watch ended.
+    pub fn flush_watch_polls(&self) {
+        self.board.flush_watch_polls(&self.location());
+    }
+
     /// The run as `gate` admits from it (#2339): the board records the
     /// read as that gate's decision.
     pub fn inference_snapshot(

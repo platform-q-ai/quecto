@@ -42,6 +42,21 @@ impl BoardRepository for Racing {
         }
         self.repository.atomic(create, work)
     }
+
+    fn read(&self, work: &mut BoardWork<'_>) -> Result<(), BoardError> {
+        let begun = {
+            let mut begun = self.begun.lock().unwrap();
+            *begun += 1;
+            *begun
+        };
+        if begun == self.nth {
+            rusqlite::Connection::open(&self.database)
+                .unwrap()
+                .execute_batch(self.race)
+                .unwrap();
+        }
+        self.repository.read(work)
+    }
 }
 
 impl MeteredCall for Racing {
@@ -97,6 +112,9 @@ fn raced(
                 race,
             }),
             actors: Arc::new(ActorRefs::default()),
+            polls: Arc::new(
+                crate::infrastructure::tools::swarm_board_dispatch::WatchPolls::new(log.clone()),
+            ),
         }),
         ..plain(repository)
     };

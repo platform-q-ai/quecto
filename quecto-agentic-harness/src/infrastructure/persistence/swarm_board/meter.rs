@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 
 use rusqlite::{Connection, ffi};
 
-use super::repository::{SqliteBoardRepository, atomic_on};
+use super::repository::{SqliteBoardRepository, atomic_on, read_on};
 use super::store::{BUSY_TIMEOUT, BoardStore};
 use crate::application::swarm::dto::{CallMeasure, RunRoles};
 use crate::application::swarm::ports::{BoardCallMeter, BoardRepository, BoardWork, MeteredCall};
@@ -66,6 +66,13 @@ struct SqliteMeteredCall {
 impl BoardRepository for SqliteMeteredCall {
     fn atomic(&self, create: bool, work: &mut BoardWork<'_>) -> Result<(), BoardError> {
         atomic_on(&self.store, Some(&self.tally), create, work)
+    }
+
+    /// A read (#2338), measured as any transaction is: its `BEGIN
+    /// DEFERRED` takes no lock, so its lock wait is only the statement's
+    /// own, and the busy handler fires only if a writer is committing.
+    fn read(&self, work: &mut BoardWork<'_>) -> Result<(), BoardError> {
+        read_on(&self.store, Some(&self.tally), work)
     }
 }
 

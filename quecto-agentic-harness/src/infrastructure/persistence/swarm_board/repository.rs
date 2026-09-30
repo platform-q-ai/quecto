@@ -29,7 +29,8 @@ use super::ledger;
 use super::meter::Tally;
 use super::py_json::{self, PyJson};
 use super::store::{
-    BoardStore, CONTENDED, StoreFailure, TransactionError, Undecodable, contended, failure,
+    BoardStore, CONTENDED, StoreFailure, StoreRefusal, TransactionError, Undecodable, contended,
+    failure,
 };
 use crate::application::swarm::dto::{
     AmendedContract, BoardLocation, DictRow, LatestActivity, MemberRow, NewRun, RunContract,
@@ -86,6 +87,10 @@ impl BoardRepository for SqliteBoardRepository {
     fn atomic(&self, create: bool, work: &mut BoardWork<'_>) -> Result<(), BoardError> {
         atomic_on(&self.store, None, create, work)
     }
+
+    fn read(&self, work: &mut BoardWork<'_>) -> Result<(), BoardError> {
+        read_on(&self.store, None, work)
+    }
 }
 
 /// `BoardRepository::atomic` on `store`, measured on `tally` when there is
@@ -97,31 +102,54 @@ pub(super) fn atomic_on(
     create: bool,
     work: &mut BoardWork<'_>,
 ) -> Result<(), BoardError> {
+    on_store(tally, work, |body| store.measured(create, tally, body))
+}
+
+/// `BoardRepository::read` on `store` (#2338): `work` in the store's read
+/// transaction, measured on `tally` when there is one, its refusals kept
+/// as [`atomic_on`] keeps them.
+pub(super) fn read_on(
+    store: &BoardStore,
+    tally: Option<&Tally>,
+    work: &mut BoardWork<'_>,
+) -> Result<(), BoardError> {
+    on_store(tally, work, |body| store.measured_read(tally, body))
+}
+
+/// The body of a board transaction `begin` runs: the role ports over its
+/// connection, and the run's id and roles noted for a metered call.
+fn on_store(
+    tally: Option<&Tally>,
+    work: &mut BoardWork<'_>,
+    begin: impl FnOnce(
+        &mut dyn FnMut(&rusqlite::Transaction<'_>) -> Result<(), TransactionError>,
+    ) -> Result<(), (StoreRefusal, Option<StoreFailure>)>,
+) -> Result<(), BoardError> {
     let mut refused: Option<BoardError> = None;
-    store
-        .measured(create, tally, |transaction| {
-            let board = SqliteBoard {
-                connection: transaction,
-                tally,
-                usage_schema_created: std::cell::Cell::new(false),
-            };
-            let done = work(&board);
-            // Only a metered op that has not found the run row's id and
-            // roles asks for them (#2313): one whose run rows named no
-            // integrator (`run_status`'s) reads the roles here, so its
-            // caller's role is still recorded.
-            if let Some(tally) = tally.filter(|tally| tally.wants_run()) {
-                board.run_read(tally);
-            }
-            done.map_err(|refusal| {
-                refused = Some(refusal.clone());
-                TransactionError::Board(refusal)
-            })
+    let mut body = |transaction: &rusqlite::Transaction<'_>| {
+        let board = SqliteBoard {
+            connection: transaction,
+            tally,
+            usage_schema_created: std::cell::Cell::new(false),
+        };
+        let done = work(&board);
+        // Only a metered op that has not found the run row's id and
+        // roles asks for them (#2313): one whose run rows named no
+        // integrator (`run_status`'s) reads the roles here, so its
+        // caller's role is still recorded.
+        if let Some(tally) = tally.filter(|tally| tally.wants_run()) {
+            board.run_read(tally);
+        }
+        done.map_err(|refusal| {
+            refused = Some(refusal.clone());
+            TransactionError::Board(refusal)
         })
-        .map_err(|(refusal, failure)| match (failure, refused) {
-            (None, Some(refused)) => refused,
-            (failure, _) => BoardError::new(store_kind(failure), refusal.0),
-        })
+    };
+    let outcome = begin(&mut body);
+    outcome.map_err(|(refusal, failure)| match (failure, refused) {
+        (None, Some(refused)) => refused,
+        (failure, _) => BoardError::new(store_kind(failure), refusal.0),
+    })
 }
 
 /// The kind of a refusal the store raised itself; `None` (a body refusal
@@ -147,6 +175,10 @@ pub(super) struct SqliteBoard<'c> {
 }
 
 impl BoardRuns for SqliteBoard<'_> {
+    fn columns_current(&self) -> Result<bool, BoardError> {
+        super::store::columns_current(self.connection).map_err(failed)
+    }
+
     fn run(&self) -> Result<Option<RunRecord>, BoardError> {
         self.connection
             .query_row("SELECT * FROM run", [], |row| {
@@ -546,3 +578,7 @@ pub(super) fn refused(error: TransactionError) -> BoardError {
 #[cfg(test)]
 #[path = "repository_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "repository_read_tests.rs"]
+mod read_tests;

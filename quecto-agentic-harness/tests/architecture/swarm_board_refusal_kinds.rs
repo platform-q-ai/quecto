@@ -55,6 +55,21 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "RunMissing",
     ),
     (
+        "src/application/swarm/board_operation.rs:read",
+        "coordination store ended a read without running its work",
+        "Internal",
+    ),
+    (
+        "src/application/swarm/board_operation.rs:read",
+        "coordination store ran a read's work twice",
+        "Internal",
+    ),
+    (
+        "src/application/swarm/board_operation.rs:read_operation",
+        "coordination run missing",
+        "RunMissing",
+    ),
+    (
         "src/application/swarm/board_recovery.rs:python_str",
         "a task id that finds a task is text or a number",
         "Internal",
@@ -545,7 +560,7 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "Invalid",
     ),
     (
-        "src/infrastructure/persistence/swarm_board/repository.rs:atomic_on",
+        "src/infrastructure/persistence/swarm_board/repository.rs:on_store",
         "expr: refusal . 0",
         "expr: store_kind (failure)",
     ),
@@ -633,6 +648,11 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "src/infrastructure/tools/swarm_board_dispatch_binding.rs:refusal",
         "{name}: unexpected argument {key}",
         "Calling",
+    ),
+    (
+        "src/infrastructure/tools/swarm_board_dispatch_host.rs:run_watch",
+        "since must be an event cursor (a nonnegative integer) or null",
+        "Invalid",
     ),
     (
         "src/infrastructure/tools/swarm_board_dispatch_usage.rs:request_admission",

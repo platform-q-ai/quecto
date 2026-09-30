@@ -78,6 +78,8 @@ pub(super) fn decided(method: Method) -> (Option<&'static str>, BoardOpDetail) {
             },
         ),
         Method::Join => (Some("already_live"), BoardOpDetail::NONE),
+        // #2338: the watch's tick, given no cursor, answers the snapshot.
+        Method::Watch => (Some("snapshot"), BoardOpDetail::NONE),
         Method::Status
         | Method::EventCursor
         | Method::Snapshot

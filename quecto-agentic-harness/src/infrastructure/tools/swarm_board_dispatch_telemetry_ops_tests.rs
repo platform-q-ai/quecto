@@ -17,6 +17,7 @@ fn every_method() -> Vec<Method> {
         Method::Status,
         Method::EventCursor,
         Method::Snapshot,
+        Method::Watch,
         Method::RunTotals,
         Method::Admit,
         Method::Activate,
@@ -77,6 +78,7 @@ fn every_method() -> Vec<Method> {
             Method::Status
             | Method::EventCursor
             | Method::Snapshot
+            | Method::Watch
             | Method::RunTotals
             | Method::Admit
             | Method::Activate
@@ -197,9 +199,11 @@ fn acted_on(
         call(handles, "parent", "stop", json!(["blocked", "why"])).unwrap();
     };
     match method {
-        Method::Status | Method::EventCursor | Method::Snapshot | Method::RunTotals => {
-            (json!([]), None, None, None)
-        }
+        Method::Status
+        | Method::EventCursor
+        | Method::Snapshot
+        | Method::Watch
+        | Method::RunTotals => (json!([]), None, None, None),
         Method::Admit => (json!(["worker", "r1"]), None, None, None),
         Method::Activate => {
             admitted();

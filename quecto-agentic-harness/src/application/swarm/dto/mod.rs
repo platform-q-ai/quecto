@@ -58,7 +58,7 @@ pub use reads::{
 pub use run::{
     BootstrapRunRequest, Bootstrapped, CreateBranch, CreateRunRequest, CreatedRun,
     MemberClaimCounts, MemberRow, MemberStatusRow, NewMember, NewRun, RunContract, RunOwnerRow,
-    RunSnapshotView, RunStatusRow, RunStatusView,
+    RunSnapshotView, RunStatusRow, RunStatusView, RunWatchView,
 };
 pub use submissions::{
     BlockTaskRequest, SubmitTaskRequest, TaskChange, TaskTransition, UnblockTaskRequest,

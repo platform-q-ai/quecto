@@ -247,23 +247,6 @@ async fn settle_suspending(
         .map_err(|e| DomainError::Tool(e.to_string()))?
 }
 
-/// One supervisor tick: refresh the snapshot and record swarm participation
-/// from it (#1715), so a member that joined an ordinary container becomes a
-/// swarm agent the moment the run is created by someone else.
-pub(super) fn observe(
-    context: &SwarmContext,
-    snapshot: &mut crate::domain::swarm::Snapshot,
-    participation: &super::swarm_bridge::Participation,
-) {
-    match context.snapshot() {
-        Ok(current) => *snapshot = current,
-        Err(error) => {
-            tracing::error!(%error, "swarm supervisor lost coordination; retaining ownership");
-        }
-    }
-    participation.set(crate::domain::swarm::participates(snapshot.deadline));
-}
-
 /// Runs `job`, which makes board calls, off the async workers (#2278
 /// review L6), and returns once it has finished (#2278 final review L1,
 /// L2): the caller cannot await it (a drop, or a synchronous port method
@@ -291,8 +274,14 @@ pub fn supervise(
     // settlement, so its board calls are marked as blocking work (#2278).
     std::thread::spawn(super::call_work::blocking(move || {
         let mut suspended = None;
+        // #2338: each tick is one `_watch` call, which answers the
+        // snapshot only when the board changed or the schedule asks for it
+        // (the deadline came, a refresh is due).
+        let mut schedule = crate::domain::swarm::watch::WatchSchedule::new();
         loop {
-            observe(&context, &mut snapshot, &participation);
+            let now = crate::application::swarm::ports::Clock::now_seconds(&SystemClock);
+            let _tick =
+                watch::watch_tick(&context, &mut schedule, &mut snapshot, &participation, now);
             if snapshot.status == RunStatus::Paused
                 && suspended != Some(snapshot.control_generation)
             {
@@ -310,8 +299,10 @@ pub fn supervise(
                 snapshot.status = context.lifecycle.observed_outcome(&snapshot, &SystemClock);
                 break;
             }
-            std::thread::sleep(std::time::Duration::from_millis(500));
+            std::thread::sleep(crate::domain::swarm::watch::WATCH_TICK);
         }
+        // The polls the watch still holds are written before it settles.
+        context.flush_watch_polls();
         match tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -607,6 +598,9 @@ fn settle_observed_snapshot(
         }
     }
 }
+
+#[path = "swarm_watch.rs"]
+mod watch;
 
 #[cfg(test)]
 #[path = "swarm_pause_generation_tests.rs"]

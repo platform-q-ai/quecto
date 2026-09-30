@@ -140,13 +140,48 @@ impl BoardStore {
         tally: Option<&Tally>,
         body: impl FnOnce(&Transaction<'_>) -> Result<T, TransactionError>,
     ) -> Result<T, (StoreRefusal, Option<StoreFailure>)> {
+        self.transacting(Mode::Write { create }, tally, body)
+    }
+
+    /// A read transaction (#2338), measured on `tally` when there is one:
+    /// `body` runs in a `BEGIN DEFERRED` transaction on a connection set
+    /// `query_only`, so it takes no write lock and SQLite refuses any
+    /// write it attempts. Under the board's rollback journal it holds the
+    /// shared lock only while it reads: it neither waits for a writer
+    /// between `BEGIN IMMEDIATE` and its commit, nor holds one off for
+    /// longer than its reads, and all it reads is one consistent state.
+    /// It opens the board only where it is (`mode=rw`, never creating it)
+    /// and adds no missing column.
+    ///
+    /// # Errors
+    /// As [`Self::transaction`]; a write `body` attempts is a SQLite error.
+    pub(super) fn measured_read<T>(
+        &self,
+        tally: Option<&Tally>,
+        body: impl FnOnce(&Transaction<'_>) -> Result<T, TransactionError>,
+    ) -> Result<T, (StoreRefusal, Option<StoreFailure>)> {
+        self.transacting(Mode::Read, tally, body)
+    }
+
+    /// One transaction in `mode` on a fresh connection, as
+    /// [`Self::measured`] and [`Self::measured_read`] describe.
+    fn transacting<T>(
+        &self,
+        mode: Mode,
+        tally: Option<&Tally>,
+        body: impl FnOnce(&Transaction<'_>) -> Result<T, TransactionError>,
+    ) -> Result<T, (StoreRefusal, Option<StoreFailure>)> {
+        let create = match mode {
+            Mode::Write { create } => create,
+            Mode::Read => false,
+        };
         let failed = |refusal| (refusal, Some(StoreFailure::Failed));
         let path = absolutised(&self.path, std::env::current_dir).map_err(failed)?;
         // Opened only to create it, or where it is; anything else is a store
         // deleted from under its run (#2145), and mode=rw never recreates it.
         if create || path.exists() {
             let mut connection = open(&path, create, tally).map_err(failed)?;
-            let outcome = run(&mut connection, create, tally, body);
+            let outcome = run(&mut connection, mode, tally, body);
             debug_assert!(
                 connection.is_autocommit(),
                 "a board transaction is committed or rolled back before its connection closes"
@@ -185,6 +220,16 @@ impl BoardStore {
             ))
         }
     }
+}
+
+/// How a transaction begins (#2338).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Mode {
+    /// `BEGIN IMMEDIATE`, as every board transaction began before #2338
+    /// and every one that may write still does; `create` makes the board.
+    Write { create: bool },
+    /// `BEGIN DEFERRED` on a `query_only` connection: a pure read.
+    Read,
 }
 
 /// Why the store itself refused a transaction (#2303).
@@ -324,25 +369,38 @@ fn opening_message(error: &rusqlite::Error, uri: &str) -> String {
 }
 
 /// The transaction proper: pragma, `BEGIN IMMEDIATE`, schema on create,
-/// column upgrades, the body, then `COMMIT`; rolled back on any error.
+/// column upgrades, the body, then `COMMIT`; rolled back on any error. A
+/// read ([`Mode::Read`], #2338) begins `DEFERRED` on a `query_only`
+/// connection and runs no schema statement.
 fn run<T>(
     connection: &mut Connection,
-    create: bool,
+    mode: Mode,
     tally: Option<&Tally>,
     body: impl FnOnce(&Transaction<'_>) -> Result<T, TransactionError>,
 ) -> Result<T, TransactionError> {
     connection.execute_batch("PRAGMA foreign_keys=ON")?;
+    let behavior = match mode {
+        Mode::Write { .. } => TransactionBehavior::Immediate,
+        Mode::Read => {
+            connection.execute_batch("PRAGMA query_only=ON")?;
+            TransactionBehavior::Deferred
+        }
+    };
     // The lock wait is measured only for a metered call (#2303).
     let asked = tally.map(|tally| (tally, Instant::now()));
-    let begun = connection.transaction_with_behavior(TransactionBehavior::Immediate);
+    let begun = connection.transaction_with_behavior(behavior);
     if let Some((tally, asked)) = asked {
         tally.lock_waited(asked.elapsed());
     }
     let transaction = begun?;
-    let value = match prepared(&transaction, create).and_then(|()| {
+    let prepared = match mode {
+        Mode::Write { create } => prepared(&transaction, create),
+        Mode::Read => Ok(()),
+    };
+    let value = match prepared.and_then(|()| {
         debug_assert!(
             !transaction.is_autocommit(),
-            "the board body runs inside BEGIN IMMEDIATE"
+            "the board body runs inside its transaction"
         );
         body(&transaction)
     }) {
@@ -386,6 +444,32 @@ fn ensure_columns(connection: &Connection) -> Result<(), TransactionError> {
         }
     }
     Ok(())
+}
+
+/// Whether the board holds every one of [`ADDED_COLUMNS`] (#2338 final
+/// review): one count over `pragma_table_info`, so a read transaction,
+/// which adds none, answers only from a board `ensure_columns` would leave
+/// as it is.
+pub(super) fn columns_current(connection: &Connection) -> rusqlite::Result<bool> {
+    let (mut arms, mut expected) = (Vec::new(), 0_i64);
+    for (table, columns) in ADDED_COLUMNS {
+        let names: Vec<String> = columns
+            .iter()
+            .map(|(name, _)| format!("'{name}'"))
+            .collect();
+        expected += i64::try_from(names.len()).unwrap_or(i64::MAX);
+        arms.push(format!(
+            "SELECT count(*) AS present FROM pragma_table_info('{table}') WHERE name IN ({})",
+            names.join(",")
+        ));
+    }
+    let sql = format!(
+        "SELECT coalesce(sum(present),0) FROM ({})",
+        arms.join(" UNION ALL ")
+    );
+    let present: i64 = connection.query_row(&sql, [], |row| row.get(0))?;
+    debug_assert!(present <= expected, "a column counted twice");
+    Ok(present == expected)
 }
 
 fn column_names(connection: &Connection, table: &str) -> rusqlite::Result<Vec<String>> {

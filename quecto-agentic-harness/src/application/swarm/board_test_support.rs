@@ -64,6 +64,9 @@ pub struct BoardState {
     pub notification_cursors: Vec<(String, i64)>,
     /// Each actor's wake cursor; `None` until a claim creates the table.
     pub wake_cursors: Option<Vec<(String, i64)>>,
+    /// A board an older writer created, lacking a column only a write
+    /// transaction adds (#2338); an `atomic` adds them.
+    pub columns_stale: bool,
 }
 
 /// A journal shared by the board and the id source, so a test reads the
@@ -76,6 +79,8 @@ pub struct MemoryBoard {
     pub journal: Journal,
     /// `create` of each transaction opened, in order.
     pub transactions: Mutex<Vec<bool>>,
+    /// Read transactions opened (#2338), apart from `transactions`.
+    pub reads: Mutex<u32>,
 }
 
 impl MemoryBoard {
@@ -97,12 +102,19 @@ impl MemoryBoard {
     pub fn transactions(&self) -> Vec<bool> {
         self.transactions.lock().unwrap().clone()
     }
+
+    /// Read transactions opened (#2338).
+    pub fn reads(&self) -> u32 {
+        *self.reads.lock().unwrap()
+    }
 }
 
 impl BoardRepository for MemoryBoard {
     fn atomic(&self, create: bool, work: &mut BoardWork<'_>) -> Result<(), BoardError> {
         self.transactions.lock().unwrap().push(create);
         let working = RefCell::new(self.snapshot());
+        // `ensure_columns` runs first in every write transaction.
+        working.borrow_mut().columns_stale = false;
         let transaction = MemoryTransaction {
             state: &working,
             journal: &self.journal,
@@ -110,6 +122,31 @@ impl BoardRepository for MemoryBoard {
         work(&transaction)?;
         *self.state.lock().unwrap() = working.into_inner();
         Ok(())
+    }
+
+    /// A read (#2338) refuses any write, as SQLite's `query_only` does:
+    /// every write is journalled, so a read whose work journalled one is
+    /// refused, and neither its state nor its journal entries are kept.
+    fn read(&self, work: &mut BoardWork<'_>) -> Result<(), BoardError> {
+        *self.reads.lock().unwrap() += 1;
+        let working = RefCell::new(self.snapshot());
+        let journalled = self.journal.lock().unwrap().len();
+        let transaction = MemoryTransaction {
+            state: &working,
+            journal: &self.journal,
+        };
+        let done = work(&transaction);
+        let mut journal = self.journal.lock().unwrap();
+        match journal.len() == journalled {
+            true => done,
+            false => {
+                journal.truncate(journalled);
+                Err(BoardError::new(
+                    RefusalKind::Store,
+                    "coordination store unavailable or contended: attempt to write a readonly database",
+                ))
+            }
+        }
     }
 }
 
@@ -125,6 +162,10 @@ impl MemoryTransaction<'_> {
 }
 
 impl BoardRuns for MemoryTransaction<'_> {
+    fn columns_current(&self) -> Result<bool, BoardError> {
+        Ok(!self.state.borrow().columns_stale)
+    }
+
     fn run(&self) -> Result<Option<RunRecord>, BoardError> {
         Ok(self
             .state

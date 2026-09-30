@@ -47,6 +47,35 @@ pub(crate) fn atomic<T>(
     })
 }
 
+/// Runs `work`, which only reads, once inside one read transaction
+/// ([`BoardRepository::read`], #2338) and returns its value.
+///
+/// # Errors
+/// `work`'s refusal, or the store's (a write attempted included).
+pub(crate) fn read<T>(
+    repository: &dyn BoardRepository,
+    work: impl FnOnce(&dyn BoardTransaction) -> Result<T, BoardError>,
+) -> Result<T, BoardError> {
+    let mut work = Some(work);
+    let mut value = None;
+    repository.read(&mut |transaction| {
+        let work = work.take().ok_or_else(|| {
+            BoardError::new(
+                RefusalKind::Internal,
+                "coordination store ran a read's work twice",
+            )
+        })?;
+        value = Some(work(transaction)?);
+        Ok(())
+    })?;
+    value.ok_or_else(|| {
+        BoardError::new(
+            RefusalKind::Internal,
+            "coordination store ended a read without running its work",
+        )
+    })
+}
+
 /// `Coordination.operation(active, coordinator, read_only)` for `actor`:
 /// `work` runs in the second transaction with the run it was authorised on.
 ///
@@ -94,6 +123,60 @@ pub(crate) fn operation<T>(
         }
         work(transaction, &run)
     })
+}
+
+/// [`operation`] for a read-only op whose `work` only reads (#2338): the
+/// gate and the work in one read transaction ([`read`]), which takes no
+/// write lock, whenever the gate has nothing to write. The full operation
+/// runs instead, as [`operation`] runs it, when the read finds that the
+/// board lacks a column a write transaction adds (an older writer's board:
+/// the full transaction adds it first, as Python's board does, so the
+/// answer and the board are Python's; final review), when the run's
+/// deadline has come (the gate must record the expiry), and when the read
+/// transaction fails as a store failure. Either way it authorises the
+/// caller as [`operation`] does, so it answers and refuses alike.
+///
+/// # Errors
+/// As [`operation`].
+pub(crate) fn read_operation<T>(
+    repository: &dyn BoardRepository,
+    clock: &dyn Clock,
+    actor: &str,
+    work: impl Fn(&dyn BoardTransaction, &RunRecord) -> Result<T, BoardError>,
+) -> Result<T, BoardError> {
+    let reading = Access {
+        read_only: true,
+        ..Access::default()
+    };
+    let read_first = read(repository, |transaction| {
+        if !transaction.columns_current()? {
+            // The full transaction adds the columns first.
+            return Ok(None);
+        }
+        let run = transaction.run()?;
+        let member = transaction.member(actor)?;
+        authorize(run.as_ref(), actor, member.as_ref(), reading)?;
+        match run {
+            Some(run) if !expired(&run, clock.now_seconds()) => {
+                transaction.caller_authorized();
+                work(transaction, &run).map(Some)
+            }
+            // The gate must write the expiry: the full operation does.
+            Some(_) => Ok(None),
+            None => Err(BoardError::new(
+                RefusalKind::RunMissing,
+                "coordination run missing",
+            )),
+        }
+    });
+    match read_first {
+        Ok(Some(value)) => Ok(value),
+        Ok(None) => operation(repository, clock, actor, reading, work),
+        Err(error) if error.kind() == RefusalKind::Store => {
+            operation(repository, clock, actor, reading, work)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// `Coordination._end`: the run pauses holding `outcome` (#1729), recorded

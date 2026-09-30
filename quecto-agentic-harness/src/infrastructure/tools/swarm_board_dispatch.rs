@@ -191,6 +191,8 @@ pub struct BoardTelemetry {
     pub log: Arc<dyn BoardOpLog>,
     pub meter: Arc<dyn BoardCallMeter>,
     pub actors: Arc<ActorRefs>,
+    /// The run watch's unchanged polls, held until written (#2338).
+    pub polls: Arc<WatchPolls>,
 }
 
 impl std::fmt::Debug for SwarmBoardHandles {
@@ -207,6 +209,7 @@ pub const BOARD_OPS: &[&str] = &[
     "_event_cursor",
     "_run_totals",
     "_snapshot",
+    "_watch",
     "_admit",
     "_activate",
     "_record_launch",
@@ -377,7 +380,7 @@ pub fn call_as(
         (_, None, _) | (false, Some(_), false) | (true, Some(false), false) => Caller::Unproven,
     };
     let served = answer.as_ref().ok().or(committed.as_ref());
-    records::record(handles, &finished, caller, served, measure);
+    records::record(handles, origin, &finished, caller, served, measure);
     answer.map(|served| served.value)
 }
 
@@ -428,6 +431,11 @@ fn serve(
         Method::Status => host::run_status(&serving(&*handles.read_run_status, over)),
         Method::EventCursor => host::event_cursor(&serving(&*handles.read_event_cursor, over)),
         Method::Snapshot => host::run_snapshot(&serving(&*handles.read_run_snapshot, over), member),
+        Method::Watch => host::run_watch(
+            &serving(&*handles.read_run_snapshot, over),
+            member,
+            arguments,
+        ),
         Method::RunTotals => host::run_totals(&serving(&*handles.read_run_totals, over), member),
         Method::Admit => members::admit(&serving(&*handles.admit_member, over), member, arguments),
         Method::Activate => {
@@ -634,7 +642,9 @@ mod binding;
 
 #[path = "swarm_board_dispatch_records.rs"]
 mod records;
-pub use records::{CallOrigin, refused, signature};
+pub use records::{
+    CallOrigin, WatchPolls, flush_watch_polls, refused, signature, with_watch_polls_flushed,
+};
 
 #[path = "swarm_board_dispatch_render.rs"]
 mod render;

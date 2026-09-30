@@ -143,6 +143,11 @@ pub trait SwarmRunControl: Send + Sync {
 pub trait BoardRuns {
     /// The run, when the store holds one.
     fn run(&self) -> Result<Option<RunRecord>, BoardError>;
+    /// Whether the board holds every column a write transaction adds to an
+    /// older board (`ensure_columns`, #2338 final review): a read
+    /// transaction, which adds none, answers only from a board that does,
+    /// so it answers and leaves the board as the full transaction would.
+    fn columns_current(&self) -> Result<bool, BoardError>;
     /// Whether the store holds a run (`_bootstrap`'s `SELECT 1 FROM run`):
     /// no column of it is read.
     fn run_exists(&self) -> Result<bool, BoardError>;
@@ -603,6 +608,22 @@ pub trait BoardRepository: Send + Sync {
     /// `work`'s refusal, unchanged, after rolling back; the store's own
     /// refusal (a missing board, contention).
     fn atomic(&self, create: bool, work: &mut BoardWork<'_>) -> Result<(), BoardError>;
+
+    /// Runs `work`, which only reads, in one read transaction (#2338): a
+    /// consistent view of the board that takes no write lock, so it
+    /// neither waits for a writer's transaction nor holds one off (a
+    /// writer's commit waits at most for the read transaction to finish).
+    /// Every implementation refuses any write `work` attempts, and never
+    /// creates a missing board. It adds no missing column
+    /// (`ensure_columns` writes): `work` reads only the board's original
+    /// schema, and a caller that may meet an older board falls back to
+    /// [`Self::atomic`] on a store refusal. There is no default: a read
+    /// that could write would be an `atomic` by another name.
+    ///
+    /// # Errors
+    /// `work`'s refusal; the store's own (a missing board, contention, a
+    /// write attempted).
+    fn read(&self, work: &mut BoardWork<'_>) -> Result<(), BoardError>;
 }
 
 /// `uuid.uuid4().hex`: 32 lowercase hex digits, a fresh value per draw.

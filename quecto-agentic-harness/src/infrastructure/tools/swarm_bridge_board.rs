@@ -153,7 +153,24 @@ impl SwarmBoard {
     /// Records nothing from now on (#2313: the session keeps no event
     /// log), and drops what it held since admission.
     pub fn stop_recording(&self) {
+        // The watch's ticks held so far were made while the board
+        // recorded (#2338 review round 1): written before it stops.
+        self.flush_all_watch_polls();
         *self.recording_lock() = None;
+    }
+
+    /// Writes the run watch's ticks every file's handles hold (#2338
+    /// review round 1): the harness is exiting, or recording stops. Only
+    /// an exit nobody can intercept (SIGKILL, the OOM killer) loses them.
+    pub fn flush_all_watch_polls(&self) {
+        let handles: Vec<_> = self
+            .built()
+            .iter()
+            .map(|file| file.handles.clone())
+            .collect();
+        for handles in handles {
+            swarm_board_dispatch::flush_watch_polls(&handles);
+        }
     }
 
     /// Records every later call in `log`, the current session's event log
@@ -189,12 +206,12 @@ impl SwarmBoard {
     /// section `null`, with a warning, and the process's counts are still
     /// written.
     pub(super) fn summarize_run(&self, location: &BoardLocation, member: &str) -> bool {
-        let runs = self
+        let file = self
             .built()
             .iter()
             .find(|file| file.location == *location)
-            .and_then(|file| file.runs.clone());
-        let Some(runs) = runs.filter(|runs| runs.open()) else {
+            .and_then(|file| Some((file.runs.clone()?, file.handles.clone())));
+        let Some((runs, handles)) = file.filter(|(runs, _)| runs.open()) else {
             return false;
         };
         let totals = self.call_as(
@@ -215,7 +232,25 @@ impl SwarmBoard {
                 None
             }
         };
-        runs.summarize_run(totals.as_ref())
+        // The watch's ticks still held are the run's calls too (#2338):
+        // written, and so folded, before the summary is taken, and no later
+        // tick is written until it is (review round 1).
+        swarm_board_dispatch::with_watch_polls_flushed(&handles, || {
+            runs.summarize_run(totals.as_ref())
+        })
+    }
+
+    /// Writes the run watch's polls held for the file at `location`
+    /// (#2338), if its handles hold any.
+    pub(super) fn flush_watch_polls(&self, location: &BoardLocation) {
+        let handles = self
+            .built()
+            .iter()
+            .find(|file| file.location == *location)
+            .map(|file| file.handles.clone());
+        if let Some(handles) = handles {
+            swarm_board_dispatch::flush_watch_polls(&handles);
+        }
     }
 
     fn recording_lock(&self) -> MutexGuard<'_, Option<Arc<SessionLog>>> {
@@ -328,11 +363,20 @@ impl SwarmBoard {
     fn handles(&self, location: BoardLocation) -> Arc<SwarmBoardHandles> {
         let log = self.recording();
         let mut built = self.built();
-        let kept = built
+        let found = built
             .iter()
             .position(|file| file.location == location)
-            .map(|index| built.remove(index))
-            .filter(|file| same_log(file.log.as_ref(), log.as_ref()));
+            .map(|index| built.remove(index));
+        let kept = match found {
+            Some(file) if same_log(file.log.as_ref(), log.as_ref()) => Some(file),
+            Some(replaced) => {
+                // Its watch polls were made while its log was current
+                // (#2338): written there before its handles go.
+                swarm_board_dispatch::flush_watch_polls(&replaced.handles);
+                None
+            }
+            None => None,
+        };
         let file = match kept {
             Some(file) => file,
             None => {
@@ -355,7 +399,8 @@ impl SwarmBoard {
         let handles = file.handles.clone();
         built.push(file);
         if built.len() > BUILT_FILES {
-            built.remove(0);
+            let dropped = built.remove(0);
+            swarm_board_dispatch::flush_watch_polls(&dropped.handles);
         }
         debug_assert!(
             built.len() <= BUILT_FILES,

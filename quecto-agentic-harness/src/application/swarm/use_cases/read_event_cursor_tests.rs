@@ -17,10 +17,10 @@ fn event(action: &str) -> RecordedEvent {
 fn a_board_without_events_is_at_cursor_zero() {
     let board = MemoryBoard::with(BoardState::default());
     assert_eq!(ReadEventCursor::new(board.clone()).execute().unwrap(), 0);
-    assert_eq!(
-        board.transactions(),
-        [false],
-        "one plain transaction that never creates a board"
+    assert_eq!(board.reads(), 1, "#2338: one read transaction");
+    assert!(
+        board.transactions().is_empty(),
+        "no write transaction, none that creates a board"
     );
 }
 
@@ -44,7 +44,8 @@ fn over_another_repository_reads_that_repository() {
     let cursor = ReadEventCursor::new(empty.clone()).over(other.clone());
     assert_eq!(cursor.execute().unwrap(), 1);
     assert!(
-        empty.transactions().is_empty(),
+        empty.transactions().is_empty() && empty.reads() == 0,
         "the composed one is untouched"
     );
+    assert_eq!(other.reads(), 1);
 }

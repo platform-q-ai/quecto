@@ -4,7 +4,8 @@
 //! running, before it calls the dispatcher, and each refusal is still
 //! recorded as the op's own. Also the Python signature each method binds by,
 //! which the structured ops' table is checked against (#2279).
-use std::time::Duration;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -15,8 +16,10 @@ use super::BindingFaults;
 use super::method::Method;
 use super::{Level, SwarmBoardHandles};
 use crate::application::swarm::dto::CallMeasure;
+use crate::application::swarm::ports::BoardOpLog;
 use crate::domain::redaction::Redacted;
-use crate::domain::swarm::{BoardRole, RefusalKind};
+use crate::domain::swarm::watch_polls::{PollTally, WATCH_POLL_OP};
+use crate::domain::swarm::{BoardOpObservation, BoardRole, RefusalKind};
 
 /// Whom a board call is made for (#2279 S15 final review): the calling
 /// member, whose role in the run a member-facing op records, or the
@@ -27,6 +30,125 @@ use crate::domain::swarm::{BoardRole, RefusalKind};
 pub enum CallOrigin {
     Member,
     Harness,
+    /// The harness's run watch (#2338): its `_watch` ticks, recorded as
+    /// `host`; `unchanged` ticks are aggregated ([`WatchPolls`]).
+    Watch,
+}
+
+/// The run watch's `unchanged` ticks not yet written (#2338), held with the
+/// handles of one board file while the event log is on, and the log they
+/// are written to. Whatever it holds is written when it is flushed, and
+/// when it is dropped (the handles went: the board was dropped, or its
+/// file's handles replaced).
+pub struct WatchPolls {
+    log: Arc<dyn BoardOpLog>,
+    tally: Mutex<PollTally>,
+    origin: Instant,
+}
+
+impl std::fmt::Debug for WatchPolls {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("WatchPolls")
+            .field("held", &self.held().pending_polls())
+            .finish_non_exhaustive()
+    }
+}
+
+impl WatchPolls {
+    /// Ticks held to be written in `log`.
+    pub fn new(log: Arc<dyn BoardOpLog>) -> Self {
+        Self {
+            log,
+            tally: Mutex::new(PollTally::default()),
+            origin: Instant::now(),
+        }
+    }
+
+    /// The tally, also after a panic elsewhere left the lock poisoned:
+    /// nothing is left half-updated under it.
+    fn held(&self) -> MutexGuard<'_, PollTally> {
+        self.tally.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Microseconds since these polls were built: the tally's monotonic
+    /// clock.
+    fn now_us(&self) -> u64 {
+        u64::try_from(self.origin.elapsed().as_micros()).unwrap_or(u64::MAX)
+    }
+
+    /// A tick, held or written with the ones it releases, under the
+    /// tally's lock (so a summary taken under it sees every tick made
+    /// before it). Whether it was written alone (not absorbed).
+    fn tick(&self, observation: BoardOpObservation) -> bool {
+        let mut tally = self.held();
+        let released = tally.poll(observation, self.now_us());
+        let alone = released.iter().any(|record| record.detail.polls.is_none());
+        write_polls(&*self.log, released);
+        drop(tally);
+        alone
+    }
+
+    /// Writes the held ticks now.
+    pub fn flush(&self) {
+        let mut tally = self.held();
+        let held = tally.flush();
+        write_polls(&*self.log, held);
+    }
+
+    /// Writes the held ticks, then runs `then` before any later tick is
+    /// held or written (#2338 review: the run's summary is taken so, and
+    /// accounts for every tick made before it).
+    pub fn flushed_then<R>(&self, then: impl FnOnce() -> R) -> R {
+        let mut tally = self.held();
+        let held = tally.flush();
+        write_polls(&*self.log, held);
+        let result = then();
+        drop(tally);
+        result
+    }
+}
+
+impl Drop for WatchPolls {
+    fn drop(&mut self) {
+        self.flush();
+    }
+}
+
+/// Writes the run watch's ticks `handles` holds, if any (#2338): the watch
+/// ended, recording stops, or the harness exits.
+pub fn flush_watch_polls(handles: &SwarmBoardHandles) {
+    if let Some(telemetry) = &handles.telemetry {
+        telemetry.polls.flush();
+    }
+}
+
+/// Runs `then` with the watch's held ticks written first and no later tick
+/// written until it returns (#2338 review round 1).
+pub fn with_watch_polls_flushed<R>(handles: &SwarmBoardHandles, then: impl FnOnce() -> R) -> R {
+    match &handles.telemetry {
+        Some(telemetry) => telemetry.polls.flushed_then(then),
+        None => then(),
+    }
+}
+
+/// Writes `records` the watch's tally released, in order: an aggregate of
+/// unchanged polls leaves one `tracing` record of its own (a poll it holds
+/// left none), every other record left its own when it was made.
+fn write_polls(log: &dyn BoardOpLog, records: impl IntoIterator<Item = BoardOpObservation>) {
+    for record in records {
+        if let Some(polls) = record.detail.polls {
+            tracing::debug!(
+                target: TELEMETRY_TARGET,
+                op = record.op.as_str(),
+                decision = record.decision.as_deref().unwrap_or("none"),
+                polls,
+                max_duration_us = record.duration_us,
+                "swarm board watch polls"
+            );
+        }
+        log.record(record);
+    }
 }
 
 /// The role a call's records carry (#2303; #2282 final review): `host`
@@ -37,12 +159,14 @@ pub enum CallOrigin {
 /// harness's alone (docs/swarm.md), so an unknown name never maps to it.
 pub(super) fn recorded_role(origin: CallOrigin, known: Option<Method>) -> Option<BoardRole> {
     let role = match (origin, known) {
-        (CallOrigin::Harness, _) => Some(BoardRole::Host),
+        (CallOrigin::Harness | CallOrigin::Watch, _) => Some(BoardRole::Host),
         (CallOrigin::Member, Some(known)) => known.role(),
         (CallOrigin::Member, None) => None,
     };
     debug_assert!(
-        known.is_some() || origin == CallOrigin::Harness || role.is_none(),
+        known.is_some()
+            || matches!(origin, CallOrigin::Harness | CallOrigin::Watch)
+            || role.is_none(),
         "a member's call naming no board method records no role"
     );
     role
@@ -51,8 +175,15 @@ pub(super) fn recorded_role(origin: CallOrigin, known: Option<Method>) -> Option
 /// The `tracing` record of `finished` and, while the event log is on, its
 /// `swarm_op`, by the caller's kept or fresh ref (`caller` says whether the
 /// board accepted it as a member).
+///
+/// A call the run watch made (`origin` [`CallOrigin::Watch`], #2338) goes
+/// through its tally: an `unchanged` `_watch` tick is held (and leaves no
+/// `tracing` record of its own: the aggregate it joins leaves one), and a
+/// tick that answered the snapshot is written after the ticks held before
+/// it.
 pub(super) fn record(
     handles: &SwarmBoardHandles,
+    origin: CallOrigin,
     finished: &Finished<'_>,
     caller: Caller,
     served: Option<&Served>,
@@ -66,13 +197,20 @@ pub(super) fn record(
         let actor = actor.clone().unwrap_or_else(|| actor_ref(finished.member));
         trace_arguments(finished, &actor);
     }
-    match (&handles.telemetry, actor) {
-        (Some(telemetry), Some(actor)) => {
+    match (&handles.telemetry, actor, origin) {
+        (Some(telemetry), Some(actor), CallOrigin::Watch) => {
+            debug_assert_eq!(finished.op, WATCH_POLL_OP, "the watch calls only _watch");
+            let observation = observation(finished, actor.clone(), caller, served, measure.clone());
+            if telemetry.polls.tick(observation) {
+                trace(finished, measure.as_ref(), Some(&actor));
+            }
+        }
+        (Some(telemetry), Some(actor), CallOrigin::Member | CallOrigin::Harness) => {
             trace(finished, measure.as_ref(), Some(&actor));
             let observation = observation(finished, actor, caller, served, measure);
             telemetry.log.record(observation);
         }
-        (Some(_), None) | (None, _) => trace(finished, None, None),
+        (Some(_), None, _) | (None, _, _) => trace(finished, None, None),
     }
 }
 
@@ -127,7 +265,14 @@ pub fn refused(
         outcome,
         elapsed,
     };
-    record(handles, &finished, Caller::Unproven, None, None);
+    record(
+        handles,
+        CallOrigin::Member,
+        &finished,
+        Caller::Unproven,
+        None,
+        None,
+    );
 }
 
 /// The Python signature `method` binds by, each parameter's name and its

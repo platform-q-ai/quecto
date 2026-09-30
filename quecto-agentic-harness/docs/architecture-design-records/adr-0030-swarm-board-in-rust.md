@@ -146,6 +146,75 @@ interpreter sandbox, the `tools.swarm` limits); members compute through
 `bash`, and every board call is a structured op on the Rust board. The
 paragraph above records the state before it.
 
+### Amendment (#2338): the watch's reads take no write lock
+
+Every board transaction began `BEGIN IMMEDIATE`, reads included (D2 and
+point 3 above), because Python's did. The run watch made that expensive:
+each member's harness took a `_snapshot` every 500 ms, each one a write-lock
+round trip, which was 76 to 89 % of all board calls in the first real runs
+and nearly all of their `busy` records. The watch now makes one Rust-only
+call a tick, `_watch(since)`: given the event cursor of its last snapshot,
+it answers only the cursor while that is unchanged, and the snapshot with
+the cursor otherwise; given none (the running run's deadline came, a
+bounded refresh is due), the snapshot (`domain::swarm::watch`).
+
+Three reads now run in a read transaction (`BoardRepository::read`, which
+every repository implements and which refuses any write): `BEGIN DEFERRED`
+on a connection set `PRAGMA query_only=ON`, with no schema or column
+upgrade.
+
+- `_event_cursor`, a pure read.
+- `_snapshot` and `_watch`, whenever their operation gate has nothing to
+  write (`board_operation::read_operation`): the gate's authorisation, the
+  cursor and the snapshot are read in one read transaction. The read ends
+  having written nothing, and the op runs as before, in its two `IMMEDIATE`
+  transactions, when: the board lacks any column a write transaction adds
+  (`ensure_columns`; the read counts them first, one `pragma_table_info`
+  query, so an older writer's board gains them as Python's board gives
+  them, and the answer and the board match Python's); a running run's
+  deadline has come (the gate must record the expiry); or the read fails as
+  a store failure. Its answers and refusals are the same either way.
+
+Why this is safe:
+
+- **Journal mode.** The board keeps SQLite's default rollback journal (D2;
+  it never switches to WAL, which would persist in the file). Under it a
+  deferred transaction takes a shared lock at its first read and holds it to
+  its end: it never takes the reserved (write) lock, so it neither waits for
+  a writer between `BEGIN IMMEDIATE` and its commit nor holds one off; a
+  writer's commit, which needs the exclusive lock, waits (in its busy
+  handler) at most for the read transaction to finish. A read finding a
+  writer mid-commit (pending or exclusive lock) waits in its own busy
+  handler, on the same 500 ms schedule. The cost moves rather than
+  vanishes: under saturation (reads arriving faster than a writer's commit
+  finds a gap), writers' commits wait on readers more often, and the
+  review's contention probe measured more `busy` records on the writers'
+  side there. At realistic load (a tick every 500 ms per member) the reads
+  no longer serialize behind each other or behind writers, and the watch's
+  `busy` records fell to near zero.
+- **Consistency.** The shared lock is held for the whole transaction, and
+  no writer can commit while it is held, so everything a read transaction
+  reads is one committed state: `_watch`'s cursor and snapshot are read
+  together.
+- **No deadlock.** A read transaction never writes: `query_only` makes
+  SQLite refuse any write in it, so it can never try to upgrade its shared
+  lock to the write lock, which is where two deferred transactions can
+  deadlock (each holding shared, each wanting reserved). A `_snapshot` or
+  `_watch` that finds the gate must write ends its read first, then begins
+  `IMMEDIATE`: it never upgrades. Every other transaction that may write
+  still begins `IMMEDIATE`.
+- **Python parity** no longer applies to this concurrency detail: the
+  Python board is test-only and is deleted at S18, and `_event_cursor` and
+  `_watch` are Rust-only methods the differential suite never compares.
+  `_snapshot` answers, refuses and writes as Python's did, with one
+  exception, which is this amendment's point: while another connection
+  holds the write lock, Python's `_snapshot` waits for it and, held past
+  the busy timeout, refuses `database is locked`, where Rust's answers at
+  once and its record is not busy. The differential harness refuses a held
+  step of `_snapshot`, `_watch` or `_event_cursor` (`UNLOCKED_READS`)
+  rather than compare it, and `a_snapshot_does_not_wait_for_a_writers_lock`
+  pins the Rust behaviour.
+
 ## Consequences
 
 - No `python3` is started by the harness for its own board calls; each

@@ -6,14 +6,15 @@
 use std::sync::Arc;
 
 use super::OverRepository;
-use crate::application::swarm::board_operation::atomic;
+use crate::application::swarm::board_operation::read;
 use crate::application::swarm::ports::BoardRepository;
 use crate::domain::swarm::BoardError;
 
-/// Membership-free, in one plain transaction (as `_status`), so the tool
-/// reads it around any member's call without the operation gate: a read
-/// never expires a run or writes an event, so reading the cursor cannot
-/// move it.
+/// Membership-free, in one read transaction (#2338: it takes no write
+/// lock, so the run watch reads it every tick without contending with any
+/// writer), so the tool reads it around any member's call without the
+/// operation gate: a read never expires a run or writes an event, so
+/// reading the cursor cannot move it.
 pub struct ReadEventCursor {
     repository: Arc<dyn BoardRepository>,
 }
@@ -28,7 +29,7 @@ impl ReadEventCursor {
     /// # Errors
     /// The store's refusal (a missing board, contention).
     pub fn execute(&self) -> Result<i64, BoardError> {
-        let cursor = atomic(&*self.repository, false, |transaction| {
+        let cursor = read(&*self.repository, |transaction| {
             transaction.event_generation()
         })?;
         // SQLite's rowids start at 1, and `coalesce` answers 0 for none.
