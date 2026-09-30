@@ -12,23 +12,31 @@ use std::collections::HashMap;
 /// 33% of their simulated input. 1k would save 37-40% but stubs the
 /// 1-2k reads a worker edits against and doubles the prefix rewrites
 /// (21 against 12 for the run 2 coordinator); 4k saves only 10-33%.
-pub(super) fn default_tokens() -> usize {
-    2_000
-}
+const SWARM_DEFAULT_TOKENS: usize = 2_000;
 
 /// How many model responses see a large result in full before it is
 /// stubbed. At 3 the model has read it and acted on it twice more; 2 and 5
 /// differ from 3 by about one point on the same sessions.
-pub(super) fn default_after_turns() -> u32 {
-    3
-}
+const DEFAULT_AFTER_TURNS: u32 = 3;
 
 impl AgentDefaults {
-    /// The size-aware collapse these defaults configure (#2348).
+    /// The size-aware collapse for an agent that takes part in no swarm
+    /// (#2348 review M1): off unless `context_collapse_large_result_tokens`
+    /// is set.
     pub fn large_result_collapse(&self) -> LargeResultCollapse {
+        self.swarm_large_result_collapse()
+    }
+
+    /// The size-aware collapse once the process takes part in a swarm:
+    /// 2000 tokens seen for 3 turns unless configured.
+    pub fn swarm_large_result_collapse(&self) -> LargeResultCollapse {
         LargeResultCollapse {
-            over_tokens: self.context_collapse_large_result_tokens,
-            after_turns: self.context_collapse_large_result_after_turns,
+            over_tokens: self
+                .context_collapse_large_result_tokens
+                .unwrap_or(SWARM_DEFAULT_TOKENS),
+            after_turns: self
+                .context_collapse_large_result_after_turns
+                .unwrap_or(DEFAULT_AFTER_TURNS),
         }
     }
 }
@@ -41,13 +49,13 @@ pub(super) fn apply_env_overrides(defaults: &mut AgentDefaults, env: &HashMap<St
         .get("QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_TOKENS")
         .and_then(|v| v.parse::<usize>().ok())
     {
-        defaults.context_collapse_large_result_tokens = n;
+        defaults.context_collapse_large_result_tokens = Some(n);
     }
     if let Some(n) = env
         .get("QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_AFTER_TURNS")
         .and_then(|v| v.parse::<u32>().ok())
     {
-        defaults.context_collapse_large_result_after_turns = n;
+        defaults.context_collapse_large_result_after_turns = Some(n);
     }
 }
 
@@ -55,8 +63,8 @@ pub(super) fn apply_env_overrides(defaults: &mut AgentDefaults, env: &HashMap<St
 /// The rule is switched off with a size no result reaches instead.
 pub(super) fn validate(defaults: &AgentDefaults) -> Result<(), ConfigError> {
     match defaults.context_collapse_large_result_after_turns {
-        1.. => Ok(()),
-        0 => Err(ConfigError::ContextBudget(
+        None | Some(1..) => Ok(()),
+        Some(0) => Err(ConfigError::ContextBudget(
             "context_collapse_large_result_after_turns must be at least 1: a result \
              the model has not seen is never collapsed; set \
              context_collapse_large_result_tokens to 18446744073709551615 to switch \

@@ -24,14 +24,15 @@ pub fn wire_agent(agent: AgentLoopImpl, context: Option<SwarmContext>) -> AgentL
 }
 
 /// A built member: [`wire_agent`] over this process's swarm context, and
-/// its pruning ceiling lowered to `swarm_ceiling_tokens` the moment the
+/// its pruning ceiling lowered to `swarm_max_context_tokens` the moment the
 /// process takes part in a swarm (#2342), or at once if it already does.
 /// A process that never joins keeps its configured budget.
 pub(super) fn wire_member(
     agent: AgentLoopImpl,
     participation: &Participation,
-    swarm_ceiling_tokens: usize,
+    defaults: &crate::infrastructure::config::AgentDefaults,
 ) -> AgentLoopImpl {
+    let swarm_ceiling_tokens = defaults.swarm_max_context_tokens;
     let cap = agent.context_ceiling_cap();
     participation.on_participation(move || {
         cap.lower_to(swarm_ceiling_tokens);

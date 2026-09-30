@@ -124,3 +124,104 @@ async fn with_the_rule_off_no_large_result_is_collapsed() {
         "without the rule the output rides every early request"
     );
 }
+
+/// A `read` tool: a large file first, small ones after; it records the
+/// collapses it is told of (#2348 review M1).
+#[derive(Default)]
+struct RecordingRead {
+    calls: std::sync::Mutex<u32>,
+    collapsed: std::sync::Mutex<Vec<String>>,
+}
+
+impl crate::application::tools::ports::Tool for RecordingRead {
+    fn definition(&self) -> crate::domain::tool::ToolDefinition {
+        crate::domain::tool::ToolDefinition {
+            name: "read".into(),
+            description: "read".into(),
+            parameters_schema: r#"{"type":"object"}"#.into(),
+        }
+    }
+
+    fn result_collapsed(&self, arguments: &str) {
+        self.collapsed.lock().unwrap().push(arguments.to_string());
+    }
+
+    fn execute(
+        &self,
+        _arguments: &str,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<
+                        crate::domain::tool::ToolResult,
+                        crate::domain::error::DomainError,
+                    >,
+                > + Send
+                + '_,
+        >,
+    > {
+        let mut calls = self.calls.lock().unwrap();
+        *calls += 1;
+        let content = match *calls {
+            1 => "fn alpha() { let value = compute(); }\n".repeat(600),
+            _ => "fn small() {}\n".to_string(),
+        };
+        Box::pin(async move {
+            Ok(crate::domain::tool::ToolResult {
+                content,
+                is_error: false,
+                image_blocks: vec![],
+                delivery_metadata: None,
+            })
+        })
+    }
+}
+
+fn read_call(id: &str, path: &str) -> crate::domain::message::LlmResponse {
+    crate::domain::message::LlmResponse {
+        content: None,
+        tool_calls: vec![crate::domain::message::ToolCall {
+            id: id.to_string(),
+            name: "read".to_string(),
+            arguments: format!(r#"{{"path":"{path}"}}"#),
+        }],
+        usage: None,
+        stop_reason: None,
+        thinking_blocks: vec![],
+    }
+}
+
+/// #2348 review M1: when a rule collapses a result, the loop tells its
+/// tool, so the read cache forgets that delivery and a re-read of the
+/// unchanged file answers the content, not "unchanged".
+#[tokio::test]
+async fn a_collapsed_result_is_reported_to_its_tool() {
+    use crate::application::agent_loop::tests::{MockProvider, MockRegistry, test_config};
+    let read = std::sync::Arc::new(RecordingRead::default());
+    let mut registry = MockRegistry::new();
+    registry.register(read.clone());
+    let provider = std::sync::Arc::new(MockProvider::new(vec![
+        read_call("r1", "big.rs"),
+        read_call("r2", "a.rs"),
+        read_call("r3", "b.rs"),
+        read_call("r4", "c.rs"),
+        crate::application::agent_loop::tests::text_response("done"),
+    ]));
+    let mut agent = crate::application::agent_loop::AgentLoopImpl::new(
+        crate::application::agent_loop::AgentLoopConfig {
+            retention: Some(crate::composition::retention::context_retention_over(
+                std::sync::Arc::new(super::ctx_mgmt_tests::MemSpillStore::default()),
+            )),
+            large_result_collapse: SHIPPED,
+            ..test_config(provider, Box::new(registry))
+        },
+    );
+    let mut messages = vec![crate::domain::message::Message::user("go")];
+    agent.run_loop(&mut messages).await.unwrap();
+
+    assert_eq!(
+        *read.collapsed.lock().unwrap(),
+        vec![r#"{"path":"big.rs"}"#.to_string()],
+        "only the collapsed read is reported, once"
+    );
+}

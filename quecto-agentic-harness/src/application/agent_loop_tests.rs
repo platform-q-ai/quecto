@@ -207,6 +207,16 @@ impl ToolExecutor for MockRegistry {
             .find(|tool| tool.definition().name == name)?;
         tool.snapshot_key(arguments, content)
     }
+
+    fn result_collapsed(&self, name: &str, arguments: &str) {
+        if let Some(tool) = self
+            .tools
+            .iter()
+            .find(|tool| tool.definition().name == name)
+        {
+            tool.result_collapsed(arguments);
+        }
+    }
 }
 
 pub(super) struct MockTool {

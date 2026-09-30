@@ -213,3 +213,32 @@ fn a_result_whose_stub_is_no_cheaper_stays_in_full() {
     assert_eq!(collapse_large_results(&mut messages, tiny), 0);
     assert_eq!(tool_results(&messages)[0].content, "ok");
 }
+
+#[test]
+fn a_recalled_result_is_never_collapsed_by_size() {
+    // #2348 review M1(c): a result the model asked back through `recall`
+    // would otherwise collapse again 3 turns later and start a recall loop.
+    let mut recalled = result(1, large());
+    recalled.tool_name = Some("recall".to_string());
+    let mut messages = conversation(vec![recalled]);
+    responses(&mut messages, 10);
+
+    assert_eq!(collapse_large_results(&mut messages, DIAL), 0);
+    assert_eq!(tool_results(&messages)[0].content, large());
+}
+
+#[test]
+fn a_result_carrying_images_is_never_collapsed_by_size() {
+    // #2348 review L1: a screenshot's base64 counts as its size, and a stub
+    // drops the image blocks, which recall cannot restore.
+    let mut screenshot = result(1, "Read image file [image/png] (40 KB)".to_string());
+    screenshot.image_blocks = vec![crate::domain::tool::ImageBlock {
+        mime_type: "image/png",
+        data: "iVBORw0KGgo".repeat(2_000),
+    }];
+    let mut messages = conversation(vec![screenshot]);
+    responses(&mut messages, 10);
+
+    assert_eq!(collapse_large_results(&mut messages, DIAL), 0);
+    assert_eq!(tool_results(&messages)[0].image_blocks.len(), 1);
+}

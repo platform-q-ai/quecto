@@ -95,6 +95,7 @@ async fn appends_multiple_events_in_order() {
             stop_reason: "end_turn".into(),
             duration_ms: 2000,
             cached_input_tokens: None,
+            cache_write_tokens: None,
         },
     )
     .await
@@ -199,6 +200,7 @@ async fn all_event_types_write_successfully() {
             stop_reason: "end_turn".into(),
             duration_ms: 500,
             cached_input_tokens: None,
+            cache_write_tokens: None,
         },
         AuditEvent::WorkflowStep {
             action: "check".into(),

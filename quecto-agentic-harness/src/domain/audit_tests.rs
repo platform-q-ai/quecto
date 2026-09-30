@@ -50,6 +50,7 @@ fn llm_turn_end_round_trip() {
         stop_reason: "tool_use".into(),
         duration_ms: 4200,
         cached_input_tokens: None,
+        cache_write_tokens: None,
     };
     let json = serde_json::to_string(&event).unwrap();
     let back: AuditEvent = serde_json::from_str(&json).unwrap();

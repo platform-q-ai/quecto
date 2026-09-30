@@ -139,3 +139,37 @@ fn the_registry_asks_the_swarm_tool_for_its_snapshot_key() {
         Some(crate::infrastructure::tools::swarm::SUMMARY_SNAPSHOT)
     );
 }
+
+/// A tool that records the collapses it is told of (#2348 review M1).
+#[derive(Debug, Default)]
+struct Forgetting(std::sync::Mutex<Vec<String>>);
+
+impl Tool for Forgetting {
+    fn result_collapsed(&self, arguments: &str) {
+        self.0.lock().unwrap().push(arguments.to_string());
+    }
+    fn definition(&self) -> crate::domain::tool::ToolDefinition {
+        Named("read").definition()
+    }
+    fn execute(
+        &self,
+        _arguments: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
+        Box::pin(async { Err(DomainError::Tool("unused".into())) })
+    }
+}
+
+/// #2348 review M1: the registry tells the bundled tool its result was
+/// collapsed; an unknown name is told nothing.
+#[test]
+fn the_registry_tells_a_bundled_tool_its_result_was_collapsed() {
+    let mut registry = ToolRegistryImpl::new();
+    let tool = Arc::new(Forgetting::default());
+    assert!(registry.register(tool.clone()));
+    registry.result_collapsed("read", r#"{"path":"a.rs"}"#);
+    registry.result_collapsed("not-a-tool", "{}");
+    assert_eq!(
+        *tool.0.lock().unwrap(),
+        vec![r#"{"path":"a.rs"}"#.to_string()]
+    );
+}

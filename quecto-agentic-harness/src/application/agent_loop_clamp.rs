@@ -163,4 +163,10 @@ impl AgentLoopImpl {
     pub fn context_ceiling_cap(&self) -> crate::application::context::ContextCeilingCap {
         self.context_manager.ceiling_cap()
     }
+
+    /// The size-aware collapse in force, which composition engages once the
+    /// process joins a swarm (#2348 review M1).
+    pub fn large_result_switch(&self) -> crate::application::context::LargeResultSwitch {
+        self.context_manager.large_result_switch()
+    }
 }

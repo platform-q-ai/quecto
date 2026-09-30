@@ -43,7 +43,7 @@ use gauge::ContextGaugeCalibration;
 // #2342: a swarm member's lower ceiling, imposed after construction.
 #[path = "context_ceiling_cap.rs"]
 mod ceiling_cap;
-pub use ceiling_cap::ContextCeilingCap;
+pub use ceiling_cap::{ContextCeilingCap, LargeResultSwitch};
 // The spill writers (split out for the decrease-only line ceiling, #2342).
 #[path = "context_spill_writers.rs"]
 mod spill;
@@ -88,7 +88,7 @@ pub(crate) struct ContextManager {
     max_context_tokens: usize,
     pin_recent_turns: u32,
     context_collapse_after_messages: u32,
-    large_result_collapse: LargeResultCollapse,
+    large_result_collapse: LargeResultSwitch,
     model_context_window: Option<usize>,
     ceiling_cap: ContextCeilingCap,
     gauge: Mutex<ContextGaugeCalibration>,
@@ -103,7 +103,7 @@ impl ContextManager {
             max_context_tokens: config.max_context_tokens,
             pin_recent_turns: config.pin_recent_turns,
             context_collapse_after_messages: config.context_collapse_after_messages,
-            large_result_collapse: config.large_result_collapse,
+            large_result_collapse: LargeResultSwitch::new(config.large_result_collapse),
             model_context_window: config.model_context_window,
             ceiling_cap: ContextCeilingCap::default(),
             gauge: Mutex::new(ContextGaugeCalibration::default()),
@@ -142,10 +142,6 @@ impl ContextManager {
     #[cfg(test)]
     pub fn context_knob_snapshot(&self) -> (u32, u32) {
         (self.pin_recent_turns, self.context_collapse_after_messages)
-    }
-    #[cfg(test)]
-    pub fn large_result_collapse(&self) -> LargeResultCollapse {
-        self.large_result_collapse
     }
 
     /// The configured budget clamped to the model's window, without a swarm
@@ -254,7 +250,7 @@ impl ContextManager {
         // stub whatever the count dials say (#2348).
         let large = context_pruning::large_results::collapse_large_results(
             messages,
-            self.large_result_collapse,
+            self.large_result_collapse.dial(),
         );
         let collapsed = context_pruning::collapse_tool_results_over_limit(
             messages,

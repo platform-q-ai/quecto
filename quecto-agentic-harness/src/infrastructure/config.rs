@@ -97,11 +97,13 @@ pub struct AgentDefaults {
     pub swarm_max_context_tokens: usize,
     /// The size-aware collapse (#2348): a tool result over this many
     /// estimated tokens collapses to its recall stub once the model has
-    /// seen it for `context_collapse_large_result_after_turns` turns.
-    #[serde(default = "large_results::default_tokens")]
-    pub context_collapse_large_result_tokens: usize,
-    #[serde(default = "large_results::default_after_turns")]
-    pub context_collapse_large_result_after_turns: u32,
+    /// seen it for `context_collapse_large_result_after_turns` turns. Unset,
+    /// it is on only for a swarm member (2000; review M1): set, it applies
+    /// to every agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_collapse_large_result_tokens: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_collapse_large_result_after_turns: Option<u32>,
     /// How many most-recent turns the spilling ceiling tail-pins (#1045).
     #[serde(default = "default_pin_recent_turns")]
     pub pin_recent_turns: u32,
@@ -140,8 +142,8 @@ impl Default for AgentDefaults {
             context_collapse_after_tool_calls: default_context_collapse_after_tool_calls(),
             max_context_tokens: default_max_context_tokens(),
             swarm_max_context_tokens: default_swarm_max_context_tokens(),
-            context_collapse_large_result_tokens: large_results::default_tokens(),
-            context_collapse_large_result_after_turns: large_results::default_after_turns(),
+            context_collapse_large_result_tokens: None,
+            context_collapse_large_result_after_turns: None,
             pin_recent_turns: default_pin_recent_turns(),
             context_collapse_after_messages: default_context_collapse_after_messages(),
             effort: None,

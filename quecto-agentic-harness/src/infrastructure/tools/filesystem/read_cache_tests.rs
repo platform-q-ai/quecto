@@ -284,3 +284,57 @@ async fn a_poisoned_cache_is_an_error_not_a_refusal() {
         Ok(result) => panic!("expected an error, got: {}", result.content),
     }
 }
+
+/// #2348 review M1: once pruning collapsed a read's result, the model no
+/// longer holds its copy, so the next read of the unchanged file answers
+/// the content again, not the unchanged marker.
+#[tokio::test]
+async fn a_collapsed_read_is_answered_in_full_on_the_next_read() {
+    let (ws, sb, tmp) = test_tools();
+    let tool = ReadTool::new(ws, sb);
+    std::fs::write(tmp.path().join("big.rs"), "fn alpha() {}\nfn beta() {}\n").unwrap();
+    let args = r#"{"path":"big.rs"}"#;
+    tool.execute(args).await.unwrap();
+
+    tool.result_collapsed(args);
+
+    let again = tool.execute(args).await.unwrap();
+    assert!(again.content.contains("fn alpha"), "{}", again.content);
+    let repeated = tool.execute(args).await.unwrap();
+    assert!(
+        repeated.content.contains("unchanged since read"),
+        "the new delivery is cached again: {}",
+        repeated.content
+    );
+}
+
+/// Only the collapsed file is forgotten; a malformed argument forgets nothing.
+#[tokio::test]
+async fn a_collapse_forgets_only_its_own_file() {
+    let (ws, sb, tmp) = test_tools();
+    let tool = ReadTool::new(ws, sb);
+    std::fs::write(tmp.path().join("a.txt"), "a\n").unwrap();
+    std::fs::write(tmp.path().join("b.txt"), "b\n").unwrap();
+    tool.execute(r#"{"path":"a.txt"}"#).await.unwrap();
+    tool.execute(r#"{"path":"b.txt"}"#).await.unwrap();
+
+    tool.result_collapsed(r#"{"path":"a.txt"}"#);
+    tool.result_collapsed("not json");
+
+    let b = tool.execute(r#"{"path":"b.txt"}"#).await.unwrap();
+    assert!(b.content.contains("unchanged since read"), "{}", b.content);
+}
+
+/// Belt and braces: the marker says how to get the content back when the
+/// earlier copy is a recall stub.
+#[tokio::test]
+async fn the_unchanged_marker_says_how_to_get_the_content_back() {
+    let (ws, sb, tmp) = test_tools();
+    let tool = ReadTool::new(ws, sb);
+    std::fs::write(tmp.path().join("same.txt"), "alpha\n").unwrap();
+    tool.execute(r#"{"path":"same.txt"}"#).await.unwrap();
+
+    let marker = tool.execute(r#"{"path":"same.txt"}"#).await.unwrap();
+    assert!(marker.content.contains("recall stub"), "{}", marker.content);
+    assert!(marker.content.contains("force:true"), "{}", marker.content);
+}

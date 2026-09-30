@@ -646,6 +646,7 @@ Feature: Context pruning via sliding window and tool-call collapse
     And the member reads the board task list, then the board summary 3 times, then replies "done"
     When the user sends "go" through the swarm member agent
     Then the board task list is a recall stub of its full answer
+    And recalling the board task list answers it in full
     And only the newest board summary is in full context
     And the prune records count 1 collapsed large result
     And the prune records count 2 superseded summaries

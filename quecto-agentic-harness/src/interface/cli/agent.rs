@@ -516,7 +516,7 @@ pub(crate) fn build_agent_from_config_in(
     let mut agent = super::swarm_composition::wire_member(
         agent,
         &flags.swarm_participation,
-        config.agents.defaults.swarm_max_context_tokens,
+        &config.agents.defaults,
     );
     // Durable `set_tool_policy … persist` goes through composition's hook (#1849).
     agent.set_tool_policy_persistence(Some(build_tool_policy_persistence(

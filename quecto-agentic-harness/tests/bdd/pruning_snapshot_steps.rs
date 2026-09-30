@@ -376,3 +376,32 @@ fn then_prune_records_ceiling(world: &mut QuectoWorld, expected: usize) {
         "{pruned:?}"
     );
 }
+
+/// #2348 review L4: the stub's `recall` answers the full task list.
+#[then("recalling the board task list answers it in full")]
+fn then_recall_answers_task_list(world: &mut QuectoWorld) {
+    use quecto::application::tools::ports::Tool;
+    let run = run(world);
+    let id = run
+        .messages
+        .iter()
+        .find(|m| m.tool_call_id.as_deref() == Some("tasks-1"))
+        .and_then(|m| m.spill_id.clone())
+        .expect("the task list was spilled");
+    let recall = quecto::infrastructure::tools::recall::RecallTool::new(
+        quecto::composition::retention::retention_handles_over(run.spill.clone()).recall,
+        "bdd-2342".to_string(),
+    );
+    let answer = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(recall.execute(&serde_json::json!({ "id": id }).to_string()))
+        .expect("recall answers");
+    assert!(!answer.is_error, "{}", answer.content);
+    assert!(
+        answer
+            .content
+            .contains(r#"{"id":39,"status":"claimed","read":1}"#),
+        "the whole list comes back: {}",
+        answer.content
+    );
+}

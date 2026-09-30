@@ -259,13 +259,6 @@ impl AgentLoopImpl {
     pub fn context_knob_snapshot(&self) -> (u32, u32) {
         self.context_manager.context_knob_snapshot()
     }
-    /// The size-aware collapse the loop was built with (#2348), test-gated.
-    #[cfg(test)]
-    pub fn large_result_collapse(
-        &self,
-    ) -> crate::domain::large_result_collapse::LargeResultCollapse {
-        self.context_manager.large_result_collapse()
-    }
     /// Fire a progress event to the registered callback, if any. Takes a closure
     /// so the event is only constructed when a callback is registered; on the
     /// headless path (`progress_callback = None`) it's never called.

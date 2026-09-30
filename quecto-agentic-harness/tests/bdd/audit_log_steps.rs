@@ -100,6 +100,7 @@ fn given_llm_turn_end(
         stop_reason,
         duration_ms,
         cached_input_tokens: None,
+        cache_write_tokens: None,
     };
     world.audit_event = Some(event);
 }
@@ -646,6 +647,7 @@ fn when_llm_end_emitted(world: &mut QuectoWorld, turn: u32) {
             stop_reason: "end_turn".into(),
             duration_ms: 2000,
             cached_input_tokens: None,
+            cache_write_tokens: None,
         },
     );
 }

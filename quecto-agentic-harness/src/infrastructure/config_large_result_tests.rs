@@ -1,24 +1,28 @@
-//! #2348: the size-aware collapse's dials.
+//! #2348: the size-aware collapse's dials. Review M1: unset, the rule is
+//! on only for a swarm member; set, it applies to every agent.
 
 use super::Config;
 use crate::domain::large_result_collapse::LargeResultCollapse;
 
+const SWARM_DEFAULT: LargeResultCollapse = LargeResultCollapse {
+    over_tokens: 2_000,
+    after_turns: 3,
+};
+
 #[test]
-fn the_size_aware_collapse_defaults_to_2k_tokens_seen_for_3_turns() {
+fn unset_the_size_aware_collapse_is_off_except_for_a_swarm_member() {
     let defaults = Config::default().agents.defaults;
-    assert_eq!(defaults.context_collapse_large_result_tokens, 2_000);
-    assert_eq!(defaults.context_collapse_large_result_after_turns, 3);
+    assert_eq!(defaults.context_collapse_large_result_tokens, None);
+    assert_eq!(defaults.context_collapse_large_result_after_turns, None);
     assert_eq!(
         defaults.large_result_collapse(),
-        LargeResultCollapse {
-            over_tokens: 2_000,
-            after_turns: 3,
-        }
+        LargeResultCollapse::DISABLED
     );
+    assert_eq!(defaults.swarm_large_result_collapse(), SWARM_DEFAULT);
 }
 
 #[test]
-fn a_config_file_sets_the_size_aware_collapse() {
+fn a_configured_size_applies_to_every_agent() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.json");
     std::fs::write(
@@ -27,12 +31,40 @@ fn a_config_file_sets_the_size_aware_collapse() {
             "context_collapse_large_result_after_turns":5}}}"#,
     )
     .unwrap();
-    let config = Config::load(path.to_str().unwrap()).unwrap();
+    let defaults = Config::load(path.to_str().unwrap())
+        .unwrap()
+        .agents
+        .defaults;
+    let configured = LargeResultCollapse {
+        over_tokens: 4_000,
+        after_turns: 5,
+    };
+    assert_eq!(defaults.large_result_collapse(), configured);
+    assert_eq!(defaults.swarm_large_result_collapse(), configured);
+}
+
+#[test]
+fn configured_turns_alone_switch_nothing_on_outside_a_swarm() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.json");
+    std::fs::write(
+        &path,
+        r#"{"agents":{"defaults":{"context_collapse_large_result_after_turns":5}}}"#,
+    )
+    .unwrap();
+    let defaults = Config::load(path.to_str().unwrap())
+        .unwrap()
+        .agents
+        .defaults;
     assert_eq!(
-        config.agents.defaults.large_result_collapse(),
+        defaults.large_result_collapse(),
+        LargeResultCollapse::DISABLED
+    );
+    assert_eq!(
+        defaults.swarm_large_result_collapse(),
         LargeResultCollapse {
-            over_tokens: 4_000,
             after_turns: 5,
+            ..SWARM_DEFAULT
         }
     );
 }
@@ -65,14 +97,14 @@ fn environment_overrides_set_the_size_aware_collapse() {
     let config = Config::load_with_env(path, &env(&[(TOKENS, "many"), (TURNS, "-1")])).unwrap();
     assert_eq!(
         config.agents.defaults.context_collapse_large_result_tokens,
-        2_000
+        None
     );
     assert_eq!(
         config
             .agents
             .defaults
             .context_collapse_large_result_after_turns,
-        3
+        None
     );
 }
 
@@ -105,9 +137,10 @@ fn zero_turns_is_refused() {
     );
 }
 
-/// The rule is switched off with a size no result reaches.
+/// The rule is switched off, for a swarm member too, with a size no result
+/// reaches.
 #[test]
-fn the_largest_size_switches_the_rule_off() {
+fn the_largest_size_switches_the_rule_off_everywhere() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.json");
     std::fs::write(
@@ -118,9 +151,16 @@ fn the_largest_size_switches_the_rule_off() {
         ),
     )
     .unwrap();
-    let config = Config::load(path.to_str().unwrap()).unwrap();
+    let defaults = Config::load(path.to_str().unwrap())
+        .unwrap()
+        .agents
+        .defaults;
     assert_eq!(
-        config.agents.defaults.large_result_collapse().over_tokens,
+        defaults.large_result_collapse().over_tokens,
+        LargeResultCollapse::DISABLED.over_tokens
+    );
+    assert_eq!(
+        defaults.swarm_large_result_collapse().over_tokens,
         LargeResultCollapse::DISABLED.over_tokens
     );
 }
