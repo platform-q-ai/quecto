@@ -146,6 +146,18 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   numeric `member` is compared by Python's `==`, as Python compares it),
 ///   whether a resume's blockers or `_quarantine`'s loss scan (#2277) meets
 ///   it.
+///   The receipt and the budget (#2340) read only the budget and the two
+///   totals, so a ledger row whose payload is not JSON or whose actor is
+///   not UTF-8 text is not read by a control receipt, `_record_request`
+///   or `_request_admission`, which answer, where Python's `usage_report`
+///   (read by each) raises a `JSONDecodeError` for such a payload among
+///   the ten latest, and refuses such an actor with `Could not decode to
+///   UTF-8`; `usage_report` itself still refuses both. And a process keeps
+///   the ledger's row count and those two totals between transactions
+///   (`swarm_board::usage_sums`), so an edit to a row it already summed
+///   (its counts changed, it or an earlier row deleted) is not seen by
+///   that process's receipts, budget or ledger bound, where Python, which
+///   sums on every read, sees it.
 ///   So is (#2274) a stored request record that is not an object, met
 ///   by its redelivery, a budget without `warned`, met by the budget's
 ///   warning, and a budget without `token_limit` or `strict_unknown`, met by

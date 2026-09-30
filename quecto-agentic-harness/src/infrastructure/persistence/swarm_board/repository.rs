@@ -20,6 +20,8 @@
 //! refused the same way as a store failure, with the driver's conversion
 //! error where Python would answer the value (the differential suite's
 //! `outside_edited_columns` divergence).
+use std::cell::RefCell;
+
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde_json::Value;
@@ -32,6 +34,7 @@ use super::store::{
     BoardStore, CONTENDED, StoreFailure, StoreRefusal, TransactionError, Undecodable, contended,
     failure,
 };
+use super::usage_sums::{KeptSums, UsageSums};
 use crate::application::swarm::dto::{
     AmendedContract, BoardLocation, DictRow, LatestActivity, MemberRow, NewRun, RunContract,
     RunOwnerRow, RunRoles, RunStatusRow, ScopeObservation, StoredContract,
@@ -65,44 +68,52 @@ pub(super) const PYTHON_SOCKET_PARAMETER: usize = 5;
 /// (`meter.rs`), over the same [`atomic_on`].
 ///
 /// [`MeteredCall`]: crate::application::swarm::ports::MeteredCall
+///
+/// Its clones, and the metered calls over it, share the request ledger's
+/// sums the process keeps between transactions (#2340, [`usage_sums`]).
 #[derive(Clone, Debug)]
 pub struct SqliteBoardRepository {
     store: BoardStore,
+    sums: KeptSums,
 }
 
 impl SqliteBoardRepository {
     pub fn new(location: &BoardLocation) -> Self {
         Self {
             store: BoardStore::new(&location.database),
+            sums: KeptSums::default(),
         }
     }
 
-    /// The board file this repository opens.
-    pub(super) fn into_store(self) -> BoardStore {
-        self.store
+    /// The board file this repository opens, and the sums it keeps.
+    pub(super) fn into_parts(self) -> (BoardStore, KeptSums) {
+        (self.store, self.sums)
     }
 }
 
 impl BoardRepository for SqliteBoardRepository {
     fn atomic(&self, create: bool, work: &mut BoardWork<'_>) -> Result<(), BoardError> {
-        atomic_on(&self.store, None, create, work)
+        atomic_on(&self.store, &self.sums, None, create, work)
     }
 
     fn read(&self, work: &mut BoardWork<'_>) -> Result<(), BoardError> {
-        read_on(&self.store, None, work)
+        read_on(&self.store, &self.sums, None, work)
     }
 }
 
 /// `BoardRepository::atomic` on `store`, measured on `tally` when there is
 /// one (#2303). A refusal keeps its kind: `work`'s own refusal is returned
-/// as it was raised, and the store's is classified by why it failed.
+/// as it was raised, and the store's is classified by why it failed. The
+/// ledger's sums the transaction computed are kept in `sums` once it has
+/// committed, and only then (#2340).
 pub(super) fn atomic_on(
     store: &BoardStore,
+    sums: &KeptSums,
     tally: Option<&Tally>,
     create: bool,
     work: &mut BoardWork<'_>,
 ) -> Result<(), BoardError> {
-    on_store(tally, work, |body| store.measured(create, tally, body))
+    on_store(sums, tally, work, |body| store.measured(create, tally, body))
 }
 
 /// `BoardRepository::read` on `store` (#2338): `work` in the store's read
@@ -110,15 +121,17 @@ pub(super) fn atomic_on(
 /// as [`atomic_on`] keeps them.
 pub(super) fn read_on(
     store: &BoardStore,
+    sums: &KeptSums,
     tally: Option<&Tally>,
     work: &mut BoardWork<'_>,
 ) -> Result<(), BoardError> {
-    on_store(tally, work, |body| store.measured_read(tally, body))
+    on_store(sums, tally, work, |body| store.measured_read(tally, body))
 }
 
 /// The body of a board transaction `begin` runs: the role ports over its
 /// connection, and the run's id and roles noted for a metered call.
 fn on_store(
+    sums: &KeptSums,
     tally: Option<&Tally>,
     work: &mut BoardWork<'_>,
     begin: impl FnOnce(
@@ -126,11 +139,14 @@ fn on_store(
     ) -> Result<(), (StoreRefusal, Option<StoreFailure>)>,
 ) -> Result<(), BoardError> {
     let mut refused: Option<BoardError> = None;
+    let staged = RefCell::new(None);
     let mut body = |transaction: &rusqlite::Transaction<'_>| {
         let board = SqliteBoard {
             connection: transaction,
             tally,
             usage_schema_created: std::cell::Cell::new(false),
+            kept_sums: sums,
+            staged_sums: &staged,
         };
         let done = work(&board);
         // Only a metered op that has not found the run row's id and
@@ -145,11 +161,16 @@ fn on_store(
             TransactionError::Board(refusal)
         })
     };
-    let outcome = begin(&mut body);
-    outcome.map_err(|(refusal, failure)| match (failure, refused) {
+    let outcome = begin(&mut body).map_err(|(refusal, failure)| match (failure, refused) {
         (None, Some(refused)) => refused,
         (failure, _) => BoardError::new(store_kind(failure), refusal.0),
-    })
+    });
+    // The ledger's sums the transaction computed are kept once it has
+    // ended well, and only then (#2340): a read's are of committed rows.
+    if let (Ok(()), Some(summed)) = (&outcome, staged.into_inner()) {
+        sums.keep(summed);
+    }
+    outcome
 }
 
 /// The kind of a refusal the store raised itself; `None` (a body refusal
@@ -172,6 +193,10 @@ pub(super) struct SqliteBoard<'c> {
     /// run once per transaction, as their `IF NOT EXISTS` makes every later
     /// run a no-op inside it.
     pub(super) usage_schema_created: std::cell::Cell<bool>,
+    /// The ledger's sums the process kept from a committed transaction.
+    pub(super) kept_sums: &'c KeptSums,
+    /// The ledger's sums this transaction computed, kept once it commits.
+    pub(super) staged_sums: &'c RefCell<Option<UsageSums>>,
 }
 
 impl BoardRuns for SqliteBoard<'_> {

@@ -144,7 +144,10 @@ fn outside_edited_text_reads_as_python_reads_it() {
 /// check, where Python raises a `KeyError`; a stored request whose actor is
 /// a BLOB, or whose payload is `'x'` or NULL, meets its redelivery as a
 /// store failure, where Python refuses the BLOB as another actor's or
-/// raises a `JSONDecodeError` or a `TypeError`.
+/// raises a `JSONDecodeError` or a `TypeError`. And (#2340) a ledger row
+/// whose payload is not JSON, or whose actor is not UTF-8, is not read by
+/// a receipt or the budget, which answer where Python's `usage_report`
+/// raises or refuses.
 #[test]
 fn outside_edited_control_records() {
     let paused = |edit: &str| {
@@ -377,6 +380,45 @@ fn outside_edited_control_records() {
         assert!(
             matches!(reported, Outcome::Refused(_)),
             "{edit}: {reported:?}"
+        );
+    }
+    // #2340: the process keeps the ledger's sums between transactions, so
+    // an edit to a row already summed (its counts, or an earlier row
+    // deleted) is not seen by the board that summed it, where Python sums
+    // on every read; its last row deleted, or a row added after it (by the
+    // board or an edit), is.
+    let counted = |request_id: &str| {
+        json!([{"request_id": request_id, "instrumented_attempts": 1, "outcome": "succeeded",
+            "context_input_tokens": 2, "output_tokens": 1}])
+    };
+    for (edit, observed, pythons) in [
+        (
+            "UPDATE request_usage SET tokens=100 WHERE request_id='r'",
+            6,
+            103,
+        ),
+        ("DELETE FROM request_usage WHERE request_id='r'", 6, 3),
+        ("DELETE FROM request_usage", 0, 0),
+        (
+            "INSERT INTO request_usage VALUES('e','parent','{}',4,0,1,NULL,NULL,NULL,NULL)",
+            10,
+            10,
+        ),
+    ] {
+        let status = run_rust(&[
+            create(5),
+            at(1.0, "parent", "_record_request", counted("r")),
+            at(1.5, "parent", "_record_request", counted("s")),
+            sql(edit),
+            at(2.0, "parent", "_control_status", json!([])),
+        ]);
+        let Outcome::Ok(receipt) = status else {
+            panic!("{edit}: {status:?}");
+        };
+        assert_eq!(
+            receipt["budget"]["observed_tokens"],
+            json!(observed),
+            "{edit}: Python reads {pythons}"
         );
     }
     // A budget without `token_limit`, or without `strict_unknown` where the
