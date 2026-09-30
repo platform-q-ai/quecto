@@ -122,6 +122,48 @@ Quecto uses layered and feature-oriented boundaries in different crates. Preserv
 - Keep the `quecto-line-io` protocol cap/framing behavior centralized rather than duplicating wire constants.
 - Avoid adding production code paths solely for tests; use existing test-support features and test doubles.
 
+### Harness layout ratchet (#2358)
+
+[`quecto-agentic-harness/tests/architecture/layout.rs`](quecto-agentic-harness/tests/architecture/layout.rs)
+is the sole executable policy for budgets, capability placements and permitted
+roles. It follows the [target architecture wiki](https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture).
+L0 moves no source files and declares no existing capability migrated.
+
+The ratchet counts immediate-child production `.rs` files, including `mod.rs`
+and excluding `*_tests.rs`. Counts must exactly equal their table entries.
+When moving flat files into capability folders, lower the corresponding budget
+to the actual count in the same PR. A budget may never rise: unused headroom
+must not be preserved or refilled. Count-neutral renames and replacements are
+allowed; this is a count ratchet, not a filename baseline.
+
+`scripts/check-layout-ratchet.sh` compares the budget table with the merge base.
+CI and pre-push reject raised budgets and new rows, while allowing lowered
+budgets. Remove a row only when its directory no longer exists; a missing
+budgeted directory also fails the Rust check. The gate requires exactly one
+unambiguous budget definition, including commented definitions. This historical
+comparison is separate from the architecture test's current-tree check.
+
+A migrated capability permits its declared role directories plus `mod.rs` and
+its sibling `mod_tests.rs`, but no other top-level source or test files. Omitted
+roles are fine; each role directory present must contain at least one `.rs`
+file anywhere beneath it, including nested modules. The wiki's two-files-per-role
+guidance remains a review rule, not an
+automated minimum. Add or update a placement row with its wiki section when
+introducing a capability, keeping the wiki and executable policy in sync.
+Do not copy budget values, placements or role lists into documentation.
+
+The checker canonicalizes the repository root once, so a symlinked ancestor
+of the checkout is allowed. Symlinks, special entries and unreadable entries
+inside the scanned tree are rejected, with path-specific remediation.
+
+Run focused gates locally; leave full suites to CI:
+
+```bash
+bash scripts/check-layout-ratchet-tests.sh
+scripts/check-layout-ratchet.sh
+cargo test --workspace --features quecto-agentic-harness/test-support --bins --test architecture layout:: -- --nocapture
+```
+
 ## Documentation expectations
 
 Update relevant documentation when behavior, configuration, CLI flags, environment variables, or public APIs change. Common docs to consider:
