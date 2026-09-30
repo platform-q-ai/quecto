@@ -24,6 +24,7 @@ fn poll(duration_us: u64) -> BoardOpObservation {
         result_bytes: 1,
         decision: Some("read".into()),
         detail: BoardOpDetail::NONE,
+        arguments: Box::new(crate::domain::swarm::ArgumentFaults::NONE),
     }
 }
 
