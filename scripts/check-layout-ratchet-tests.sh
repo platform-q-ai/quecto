@@ -41,6 +41,8 @@ check() {
         base="$(bounded git rev-parse HEAD)"
         table "$TABLE" "$current"
         case "$mode" in
+            separated) sed -i 's/const BUDGETS/const \/* comment *\/ BUDGETS/' "$TABLE"
+                sed -i "1i// const BUDGETS: &[FlatBudget<'_>] = &[FlatBudget { path: \"domain\", expected: 2 }];" "$TABLE" ;;
             decoy) sed -i "1i// const BUDGETS: &[FlatBudget<'_>] = &[];" "$TABLE" ;;
             duplicate) cat "$TABLE" >>"$root/second"; cat "$root/second" >>"$TABLE" ;;
             live) mkdir -p quecto-agentic-harness/src/application ;;
@@ -74,6 +76,7 @@ check added 'domain 2' $'domain 2\napplication 1' 1 application
 check lower-and-remove $'domain 2\napplication 1' 'domain 1' 0
 check all-removed 'domain 2' '' 0
 check introduction absent 'domain 2' 0
+check separated-decoy 'domain 2' 'domain 99' 1 'exactly one' separated
 check comment-decoy 'domain 2' 'domain 99' 1 'exactly one' decoy
 check duplicate-base $'domain 2\ndomain 2' 'domain 2' 1 'duplicate'
 check duplicate-table 'domain 2' 'domain 2' 1 'exactly one' duplicate
@@ -81,4 +84,4 @@ check live-row-removal $'domain 2\napplication 1' 'domain 2' 1 'application' liv
 check subdirectory 'domain 2' 'domain 2' 0 '' subdirectory
 
 check git-failure 'domain 2' 'domain 2' 1 'git ls-tree failed' git-failure
-echo '12 layout ratchet fixtures passed'
+echo '13 layout ratchet fixtures passed'
