@@ -1,4 +1,5 @@
 """Standard-only confinement and authenticated-launch tests (no runtime/build)."""
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
@@ -83,6 +84,58 @@ exit 125
         root = self.base / "rust-cache"
         root.mkdir(mode=0o700)
         return root
+
+    def test_cargo_install_manifests_are_accepted_on_reuse(self):
+        cargo = self.cache_root() / "cargo"
+        cargo.mkdir(mode=0o700)
+        for name, content in ((".crates.toml", '[v1]\n"sccache 0.10.0" = ["sccache"]\n'),
+                              (".crates2.json", '{"installs": {}}\n')):
+            (cargo / name).write_text(content)
+        result = self.launch()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_simultaneous_cold_creates_both_succeed(self):
+        # Force both real launches past the absence check before either mkdir.
+        # run_fixture gives EACH launch a bounded SIGKILL process-group lifetime;
+        # tearDown removes barrier files even when an assertion fails.
+        barrier = self.root / "barrier"
+        barrier.mkdir()
+        target = self.base / "rust-cache"
+        self.executable(self.bin / "mkdir", f'''#!/bin/bash -p
+set -eu
+if [ "${{@: -1}}" = '{target}' ]; then
+  /usr/bin/touch '{barrier}/'"$$"
+  for attempt in {{1..200}}; do
+    files=('{barrier}/'*)
+    if [ "${{#files[@]}}" = 2 ]; then break; fi
+    /usr/bin/sleep 0.01
+  done
+  files=('{barrier}/'*)
+  [ "${{#files[@]}}" = 2 ] || exit 124
+fi
+exec /usr/bin/mkdir "$@"
+''')
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: self.launch(), range(2)))
+        self.assertEqual(len(list(barrier.iterdir())), 2)
+        self.assertEqual([result.returncode for result in results], [0, 0],
+                         [result.stderr for result in results])
+        for path in (target, target / "cargo", target / "sccache"):
+            self.assertEqual(path.stat().st_mode & 0o777, 0o700)
+
+    def test_writable_cache_base_is_refused_without_chmod(self):
+        self.base.chmod(0o777)
+        result = self.launch()
+        self.assertEqual(result.returncode, 8, result.stderr)
+        self.assertFalse((self.base / "rust-cache").exists())
+        self.assertEqual(self.base.stat().st_mode & 0o777, 0o777)
+
+    def test_writable_nonsticky_namespace_parent_is_refused(self):
+        self.root.chmod(0o777)
+        result = self.launch()
+        self.assertEqual(result.returncode, 8, result.stderr)
+        self.assertFalse((self.base / "rust-cache").exists())
+        self.assertEqual(self.root.stat().st_mode & 0o777, 0o777)
 
     def test_legitimate_base_symlink_resolves_to_authoritative_parent(self):
         alias = self.root / "alias"
