@@ -23,7 +23,7 @@ table() {
 }
 
 check() {
-    local name="$1" previous="$2" current="$3" expected="$4" field="${5:-maximum}" diagnostic="${6:-}" status=0
+    local name="$1" previous="$2" current="$3" expected="$4" field="${5:-maximum}" diagnostic="${6:-}" mode="${7:-}" status=0
     local root="$SCRATCH/$name"
     mkdir -p "$root"
     (
@@ -40,6 +40,12 @@ check() {
         bounded git -c core.hooksPath=/dev/null commit -q -m base
         base="$(bounded git rev-parse HEAD)"
         table "$TABLE" "$field" "$current"
+        case "$mode" in
+            decoy) sed -i "1i// const BUDGETS: &[FlatBudget<'_>] = &[];" "$TABLE" ;;
+            duplicate) cat "$TABLE" >>"$root/second"; cat "$root/second" >>"$TABLE" ;;
+            live) mkdir -p quecto-agentic-harness/src/application ;;
+            subdirectory) mkdir -p nested; cd nested ;;
+        esac
         bounded bash "$SCRIPT" "$base"
     ) >"$root/output" 2>&1 || status=$?
     if [[ "$status" -eq "$expected" ]]; then
@@ -63,7 +69,10 @@ check added 'domain 2' $'domain 2\napplication 1' 1 maximum application
 check lower-and-remove $'domain 2\napplication 1' 'domain 1' 0
 check all-removed 'domain 2' '' 0
 check introduction absent 'domain 2' 0
-check column-rename 'domain 2' 'domain 2' 0 expected
+check comment-decoy 'domain 2' 'domain 99' 1 maximum 'exactly one' decoy
+check duplicate-table 'domain 2' 'domain 2' 1 maximum 'exactly one' duplicate
+check live-row-removal $'domain 2\napplication 1' 'domain 2' 1 maximum 'application' live
+check subdirectory 'domain 2' 'domain 2' 0 maximum '' subdirectory
 
 # Delegate real Git operations except the tree-inspection failure under test.
 ROOT="$SCRATCH/git-failure"
@@ -93,4 +102,4 @@ chmod +x "$ROOT/bin/git"
         cat output >&2; echo "FAIL: Git tree failure: got $status" >&2; exit 1
     fi
 )
-echo '8 layout ratchet fixtures passed'
+echo '11 layout ratchet fixtures passed'
