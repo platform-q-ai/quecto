@@ -31,7 +31,9 @@ budgets() {
             or die "$ARGV: BUDGETS missing; restore the budget table\n";
         my $body = $1;
         $body =~ s{//[^\n]*}{}g;
+        my %seen;
         while ($body =~ s/^\s*FlatBudget\s*\{\s*path:\s*"([^"]+)"\s*,\s*expected:\s*(\d+)\s*,?\s*\}\s*,?//s) {
+            $seen{$1}++ == 0 or die "BUDGETS: duplicate path $1; keep one row per path\n";
             print "$1\t", 0 + $2, "\n";
         }
         $body =~ /^\s*$/s
