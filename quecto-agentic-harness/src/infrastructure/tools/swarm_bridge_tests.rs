@@ -23,20 +23,6 @@ fn create(context: &SwarmContext, limit: u64) {
 }
 
 #[test]
-fn isolated_bootstrap_loads_compiled_helpers_not_checkout_modules() {
-    let directory = tempfile::tempdir().unwrap();
-    std::fs::write(
-        directory.path().join("swarm.py"),
-        "raise RuntimeError('poisoned')",
-    )
-    .unwrap();
-    let context = context(&directory);
-    create(&context, 1);
-    assert_eq!(context.summary().unwrap()["goal"], "ship");
-    assert_eq!(context.summary().unwrap()["usage"], 1);
-}
-
-#[test]
 fn missing_and_corrupt_databases_fail_closed() {
     let directory = tempfile::tempdir().unwrap();
     let context = context(&directory);

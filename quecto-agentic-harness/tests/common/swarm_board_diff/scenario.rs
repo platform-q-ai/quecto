@@ -19,10 +19,8 @@ use std::panic::Location;
 use super::Outcome;
 use super::dump::{first_difference, logical_dump};
 use super::golden::{
-    Answer, FULL_DUMP_LIMIT, GOLDEN_DIR, Golden, canonical, dump_of, file_state, fixture_path,
-    scenario_of,
+    Answer, FULL_DUMP_LIMIT, GOLDEN_DIR, Golden, canonical, dump_of, file_state, scenario_of,
 };
-use super::python::PyBoard;
 use super::rust::{RecordedOps, RustBoard};
 
 /// How long a step waits on a lock another connection holds.
@@ -242,60 +240,11 @@ impl Side {
     }
 }
 
-/// How a scenario run treats its golden fixture. Replay is the only mode
-/// once the Python board is gone; recording and verifying run it live.
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum Mode {
-    /// Compare the Rust board with the committed fixture.
-    Replay,
-    /// Run the scenario on the live Python board, write its fixture under
-    /// this folder, then compare the Rust board with it.
-    Record(PathBuf),
-    /// Run the scenario on the live Python board and require the committed
-    /// fixture to be what it answers, then compare the Rust board with it.
-    Verify,
-}
-
-/// `QUECTO_SWARM_GOLDEN`: unset for replay, `record` (into
-/// `QUECTO_SWARM_GOLDEN_DIR`, or the committed folder) or `verify`.
-fn mode() -> Mode {
-    match std::env::var("QUECTO_SWARM_GOLDEN").ok().as_deref() {
-        None => Mode::Replay,
-        Some("record") => Mode::Record(
-            std::env::var_os("QUECTO_SWARM_GOLDEN_DIR")
-                .map_or_else(|| PathBuf::from(GOLDEN_DIR), PathBuf::from),
-        ),
-        Some("verify") => Mode::Verify,
-        Some(other) => panic!("QUECTO_SWARM_GOLDEN is record or verify, not {other}"),
-    }
-}
-
-/// The fixture the scenario `steps`, run from `scenario`'s file, is
-/// compared with, as the mode says.
-fn golden_for(scenario: &str, steps: &[Step]) -> Result<(Golden, PathBuf), String> {
+/// The committed fixture of the scenario `steps`, run from `scenario`'s
+/// file.
+fn golden_for(scenario: &str, steps: &[Step]) -> Result<Golden, String> {
     refuse_held_unlocked_reads(steps)?;
-    match mode() {
-        Mode::Replay => Ok((
-            Golden::load(Path::new(GOLDEN_DIR), scenario, steps)?,
-            PathBuf::from(GOLDEN_DIR),
-        )),
-        Mode::Record(dir) => {
-            let golden = record_python(steps);
-            golden.save(&dir, scenario, steps);
-            Ok((golden, dir))
-        }
-        Mode::Verify => {
-            let stored = Golden::load(Path::new(GOLDEN_DIR), scenario, steps)?;
-            let live = record_python(steps);
-            match live == stored {
-                true => Ok((stored, PathBuf::from(GOLDEN_DIR))),
-                false => Err(format!(
-                    "the golden {} is not what the live Python board answers:\n  golden {stored:?}\n  live   {live:?}",
-                    fixture_path(Path::new(GOLDEN_DIR), scenario, steps).display()
-                )),
-            }
-        }
-    }
+    Golden::load(Path::new(GOLDEN_DIR), scenario, steps)
 }
 
 /// Runs `steps` on the Rust board and panics with the first difference
@@ -318,7 +267,7 @@ pub fn run_golden(steps: &[Step]) {
 #[track_caller]
 pub fn run_golden_wire(steps: &[Step]) {
     let scenario = scenario_of(Location::caller().file());
-    let (golden, _) = golden_for(&scenario, steps).unwrap_or_else(|problem| panic!("{problem}"));
+    let golden = golden_for(&scenario, steps).unwrap_or_else(|problem| panic!("{problem}"));
     let dir = tempfile::tempdir().expect("a directory for the board");
     let rust_side = Side::new(dir.path(), "rust");
     let rust = RustBoard::open(&rust_side.database, &rust_side.root);
@@ -379,7 +328,7 @@ pub fn run_rust(steps: &[Step]) -> Outcome {
 #[track_caller]
 pub fn golden_answer(steps: &[Step]) -> Outcome {
     let scenario = scenario_of(Location::caller().file());
-    let (golden, _) = golden_for(&scenario, steps).unwrap_or_else(|problem| panic!("{problem}"));
+    let golden = golden_for(&scenario, steps).unwrap_or_else(|problem| panic!("{problem}"));
     let (last, before) = golden.answers.split_last().expect("a scenario has a step");
     for (step, answer) in steps.iter().zip(before) {
         let outcome = answer.outcome();
@@ -462,7 +411,7 @@ fn compare_golden(
     steps: &[Step],
     after: impl FnMut(usize, &Path, &mut Outcome),
 ) -> Result<(), String> {
-    let (golden, _) = golden_for(scenario, steps)?;
+    let golden = golden_for(scenario, steps)?;
     replay(steps, &golden, after)
 }
 
@@ -623,16 +572,6 @@ fn record(
         _ => None,
     };
     golden
-}
-
-/// The fixture the live Python board records for `steps`.
-fn record_python(steps: &[Step]) -> Golden {
-    let dir = tempfile::tempdir().expect("a directory for the board");
-    let side = Side::new(dir.path(), "python");
-    let mut python = PyBoard::start(&side.database, &side.root, dir.path());
-    record(steps, &side, |step| {
-        python.call_wire(&step.member, &step.method, &step.args, step.now)
-    })
 }
 
 /// The fixture the Rust board would record for `steps`: for the harness's

@@ -1,5 +1,5 @@
-//! The Rust side of the differential harness: the same call interface as
-//! `python.rs`, over `swarm_board_dispatch::call` and handles composed by
+//! The Rust side of the differential harness, over
+//! `swarm_board_dispatch::call` and handles composed by
 //! `composition::swarm::build_swarm_board_handles_with` on a clock the step
 //! sets and a counter that draws Python's id sequence, with the file
 //! reservations' paths normalised in the side's own checkout. The harness

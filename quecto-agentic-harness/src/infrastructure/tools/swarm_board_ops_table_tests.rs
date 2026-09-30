@@ -206,7 +206,7 @@ fn a_null_default_is_an_allowed_value() {
 #[test]
 fn the_checked_in_schema_is_the_rendering_of_board_ops() {
     let checked_in: Value =
-        serde_json::from_str(include_str!("swarm_helpers/tool_schema.json")).unwrap();
+        serde_json::from_str(include_str!("swarm_assets/tool_schema.json")).unwrap();
     assert_eq!(checked_in, tool_schema());
     let ops: Vec<&str> = checked_in["properties"]["op"]["enum"]
         .as_array()
@@ -282,7 +282,7 @@ fn the_schema_types_the_new_fields() {
 
 #[test]
 fn the_description_teaches_the_structured_ops_not_python() {
-    let description = include_str!("swarm_helpers/tool_description.txt");
+    let description = include_str!("swarm_assets/tool_description.txt");
     for spec in BOARD_OPS {
         let args: Vec<&str> = spec.args.iter().map(|arg| arg.name).collect();
         let call = format!("{}({})", spec.name, args.join(","));

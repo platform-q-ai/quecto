@@ -252,9 +252,9 @@ fn the_run_owner_row_is_fetched_as_python_fetches_it() {
     }
 }
 
-/// `_bootstrap`'s member statement, as `swarm.py` holds it: `pid`,
-/// `started` and `socket` are its 3rd, 4th and 5th parameters, since
-/// `status` is the literal `'live'`.
+/// `_bootstrap`'s member statement, as `swarm.py` held it (frozen here
+/// when #2283 deleted the Python board): `pid`, `started` and `socket` are
+/// its 3rd, 4th and 5th parameters, since `status` is the literal `'live'`.
 const PYTHON_BOOTSTRAP_MEMBER_INSERT: &str =
     "INSERT INTO members(id,reservation,status,pid,started,socket) VALUES(?,?,'live',?,?,?)";
 
@@ -289,11 +289,6 @@ fn parameter_of(statement: &str, column: &str) -> usize {
 /// the launcher.
 #[test]
 fn an_unbindable_member_value_names_pythons_parameter() {
-    let python = include_str!("../../tools/swarm_helpers/swarm.py");
-    assert!(
-        python.contains(PYTHON_BOOTSTRAP_MEMBER_INSERT),
-        "swarm.py still binds _bootstrap's member row this way"
-    );
     for column in ["pid", "started", "socket"] {
         let position = parameter_of(PYTHON_BOOTSTRAP_MEMBER_INSERT, column);
         let mut row = member("parent", MemberState::LIVE);

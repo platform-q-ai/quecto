@@ -83,8 +83,8 @@ impl Tool for SwarmTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "swarm".into(),
-            description: include_str!("swarm_helpers/tool_description.txt").into(),
-            parameters_schema: include_str!("swarm_helpers/tool_schema.json").into(),
+            description: include_str!("swarm_assets/tool_description.txt").into(),
+            parameters_schema: include_str!("swarm_assets/tool_schema.json").into(),
         }
     }
     fn execute(

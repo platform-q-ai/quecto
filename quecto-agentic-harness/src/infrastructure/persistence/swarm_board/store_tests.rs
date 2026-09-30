@@ -17,7 +17,12 @@ const SCHEMA_FIXTURE: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/fixtures/swarm_board/schema_after_create.json"
 ));
-const PYTHON_STORE: &str = include_str!("../../tools/swarm_helpers/swarm_store.py");
+/// The SHA-256 and length of `swarm_store.py`'s `SCHEMA` literal, frozen
+/// when #2283 deleted the Python board (until then this test compared the
+/// two texts).
+const PYTHON_SCHEMA_SHA256: &str =
+    "d5a6fec2c48102683d3c3894772d8b5ffe19a5e93f0484d7a53d4bfbbd5f9df3";
+const PYTHON_SCHEMA_LENGTH: usize = 1259;
 
 type MasterRow = (String, String, String, Option<String>);
 
@@ -75,14 +80,13 @@ fn count(path: &Path, table: &str) -> i64 {
 
 #[test]
 fn the_schema_is_the_python_text_verbatim() {
-    let start = PYTHON_STORE
-        .find("SCHEMA = '''")
-        .expect("swarm_store.py defines SCHEMA")
-        + "SCHEMA = '''".len();
-    let length = PYTHON_STORE[start..]
-        .find("'''")
-        .expect("SCHEMA's literal ends");
-    assert_eq!(SCHEMA, &PYTHON_STORE[start..start + length]);
+    use sha2::{Digest, Sha256};
+    assert_eq!(SCHEMA.len(), PYTHON_SCHEMA_LENGTH);
+    let digest: String = Sha256::digest(SCHEMA.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    assert_eq!(digest, PYTHON_SCHEMA_SHA256);
 }
 
 #[test]

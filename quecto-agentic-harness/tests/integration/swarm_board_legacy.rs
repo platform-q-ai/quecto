@@ -180,6 +180,46 @@ fn a_legacy_python_board_opens_and_completes_under_rust() {
             stored(&database, "SELECT token FROM tasks WHERE id=3"),
         ),
     ];
+    // The file holds what the recorded calls wrote: a task per
+    // `task_create`, a message per `send`, a member per `_admit` beside the
+    // coordinator, and the one recorded request.
+    let calls = |method: &str| {
+        python_steps()
+            .iter()
+            .filter(|Call(_, called, _, _)| *called == method)
+            .count()
+            .to_string()
+    };
+    for (sql, method) in [
+        ("SELECT CAST(count(*) AS TEXT) FROM tasks", "task_create"),
+        ("SELECT CAST(count(*) AS TEXT) FROM messages", "send"),
+        ("SELECT CAST(count(*) - 1 AS TEXT) FROM members", "_admit"),
+        (
+            "SELECT CAST(count(*) AS TEXT) FROM request_usage",
+            "_record_request",
+        ),
+    ] {
+        assert_eq!(stored(&database, sql), calls(method), "{sql}");
+    }
+    // Every caller is a member of the file, the calls ran in clock order
+    // before the Rust board's first (at 20 s), and every claim token a call
+    // named is one the file still holds.
+    let steps = python_steps();
+    for (index, Call(member, method, args, offset)) in steps.iter().enumerate() {
+        let known = format!("SELECT CAST(count(*) AS TEXT) FROM members WHERE id='{member}'");
+        assert_eq!(stored(&database, &known), "1", "{method} by {member}");
+        assert!(*offset < 20.0, "{method} at {offset}");
+        if let Some(Call(_, _, _, earlier)) = index.checked_sub(1).map(|at| &steps[at]) {
+            assert!(earlier < offset, "{method} at {offset} after {earlier}");
+        }
+        for task in [1, 3] {
+            if args.to_string().contains(&format!("{{token{task}}}")) {
+                let held =
+                    format!("SELECT CAST(token IS NOT NULL AS TEXT) FROM tasks WHERE id={task}");
+                assert_eq!(stored(&database, &held), "1", "{method} {args}");
+            }
+        }
+    }
     let board = RustBoard::open_after(&database, dir.path(), DRAWN_BY_PYTHON);
     let call = |member: &str, method: &str, args: Value, offset: f64| {
         granted(&board, member, method, with_tokens(&args, &tokens), offset)
