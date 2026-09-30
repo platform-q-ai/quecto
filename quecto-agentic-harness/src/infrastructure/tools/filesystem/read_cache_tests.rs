@@ -335,6 +335,11 @@ async fn the_unchanged_marker_says_how_to_get_the_content_back() {
     tool.execute(r#"{"path":"same.txt"}"#).await.unwrap();
 
     let marker = tool.execute(r#"{"path":"same.txt"}"#).await.unwrap();
-    assert!(marker.content.contains("recall stub"), "{}", marker.content);
-    assert!(marker.content.contains("force:true"), "{}", marker.content);
+    assert!(
+        marker
+            .content
+            .contains("if you no longer have its full content, pass force:true"),
+        "{}",
+        marker.content
+    );
 }

@@ -225,3 +225,57 @@ async fn a_collapsed_result_is_reported_to_its_tool() {
         "only the collapsed read is reported, once"
     );
 }
+
+/// #2348 final review: the drop rung removes an unspilled read together
+/// with its call; its tool is still told, so the read cache forgets it.
+#[tokio::test]
+async fn a_read_dropped_with_its_call_is_reported_to_its_tool() {
+    use crate::application::agent_loop::tests::{MockProvider, MockRegistry, test_config};
+    use crate::domain::message::{Message, ToolCall};
+    let read = std::sync::Arc::new(RecordingRead::default());
+    let mut registry = MockRegistry::new();
+    registry.register(read.clone());
+    let provider = std::sync::Arc::new(MockProvider::new(vec![
+        crate::application::agent_loop::tests::text_response("done"),
+    ]));
+    let mut agent = crate::application::agent_loop::AgentLoopImpl::new(
+        crate::application::agent_loop::AgentLoopConfig {
+            max_context_tokens: 1_500,
+            ..test_config(provider, Box::new(registry))
+        },
+    );
+    // A previous prompt: an unspilled 4k-token read at turn 1, then turns
+    // 2-4; no retention, so the ladder can only drop it, with its call.
+    let mut call = Message::assistant(
+        "",
+        vec![ToolCall {
+            id: "r1".to_string(),
+            name: "read".to_string(),
+            arguments: r#"{"path":"a.rs"}"#.to_string(),
+        }],
+    );
+    call.turn = Some(1);
+    let mut result = Message::tool("r1", "fn alpha() { let value = compute(); }\n".repeat(400));
+    result.tool_name = Some("read".to_string());
+    result.turn = Some(1);
+    let mut messages = vec![Message::user("first"), call, result];
+    for turn in 2..=4 {
+        let mut reply = Message::assistant(format!("reply {turn}"), vec![]);
+        reply.turn = Some(turn);
+        messages.push(reply);
+    }
+    messages.push(Message::user("now"));
+    agent.run_loop(&mut messages).await.unwrap();
+
+    assert!(
+        messages
+            .iter()
+            .all(|m| m.tool_call_id.as_deref() != Some("r1")),
+        "the read was dropped"
+    );
+    assert_eq!(
+        *read.collapsed.lock().unwrap(),
+        vec![r#"{"path":"a.rs"}"#.to_string()],
+        "the dropped read is reported, once"
+    );
+}
