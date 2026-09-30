@@ -122,6 +122,87 @@ Quecto uses layered and feature-oriented boundaries in different crates. Preserv
 - Keep the `quecto-line-io` protocol cap/framing behavior centralized rather than duplicating wire constants.
 - Avoid adding production code paths solely for tests; use existing test-support features and test doubles.
 
+### Harness layout ratchet (#2358)
+
+`quecto-agentic-harness/tests/architecture/layout.rs` enforces the L0 slice of
+[the target architecture](https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture).
+Paths below are relative to the harness `src/` directory. This slice freezes
+existing flat-file growth and validates capability placement; it does not move
+source files, change APIs, or declare existing capabilities migrated.
+
+The checked-in immediate-child Rust-file budgets are:
+
+| Directory | Maximum |
+| --- | ---: |
+| `domain` | 71 |
+| `application` | 45 |
+| `interface` | 6 |
+| `infrastructure` | 28 |
+| `composition` | 24 |
+| `interface/cli` | 106 |
+| `infrastructure/tools` | 122 |
+| `infrastructure/persistence` | 36 |
+| `application/swarm` | 23 |
+| `domain/swarm` | 15 |
+
+These are frozen baselines, not a generic 20-file cap. Count only immediate
+regular `.rs` files and exclude only filenames ending in `_tests.rs`.
+`mod.rs`, inline `#[cfg(test)]` code, and other test-support Rust files count;
+nested descendants and non-Rust files do not. Exactly the maximum passes;
+maximum plus one fails. When a structural split reduces the count, lower the
+checked-in maximum in that PR rather than leaving growth headroom. Never raise
+a budget or remove a policy row to evade checks. Deliberate retirement or
+repointing of a tracked directory requires a reviewed migration. Review budget
+changes against the merge base: the runtime check alone cannot detect an
+increased maximum. Diagnostics identify the path,
+actual count, and maximum.
+
+A separate explicit migrated-capability table opts individual capabilities into
+strict shape enforcement. It is empty in L0. Each opted-in root permits only the
+file `mod.rs` and its explicitly declared role directories: a role-named file,
+stray direct source, `*_tests.rs`, or undeclared directory is not allowed.
+Declared roles must match that specific capability's wiki tree, not a broad
+layer-wide union. For example, application capabilities usually use
+`use_cases`, `ports`, and `dto`; interface CLI/REPL use `controllers`,
+`presenters`, and `dto`; infrastructure persistence uses `file`, `sqlite`,
+`records`, `locks`, and `migrations`. Domain usually uses `entities`,
+`value_objects`, `services`, and `events`, but identity only uses
+`value_objects`. Composition has concern directories rather than invented
+business-capability roles. Do not invent a CLI `handles` allowance or mark a
+role-less capability migrated using guessed roles. Sparse layouts are valid;
+this validator imposes no minimum production-file count on a role directory.
+
+Every immediate capability directory under `domain`, `application`,
+`interface`, `infrastructure`, or `composition` needs an explicit placement row
+with its layer, name, target-wiki section citation, and classification enum
+(`Target`, `Transitional`, or `Testing`). `Target` rows cite the full wiki
+page URL with the matching layer fragment (`#domain`, `#application`,
+`#interface`, `#infrastructure`, or `#composition`). `Transitional` and
+`Testing` rows cite that URL with `#capability-coverage-and-naming`.
+Update the wiki and placement policy together when adding a capability.
+Only explicit mappings are accepted;
+unknown directories are rejected, not classified by a naming heuristic.
+Future target rows may precede their directories. Current special mappings are
+`domain/environment_registry` and `application/agent_loop` as transitional,
+and `infrastructure/test_support` as testing. Migrated capabilities must also
+have a cited placement row.
+
+Policy paths and rows must be safe and unique. Monitored directories must
+exist and be directories. Inspection fails closed on read/metadata errors,
+symlinks (including broken links), special entries, and non-UTF-8 entry names;
+errors are not silently discarded. This slice adds no retired-path list.
+
+Run the focused layout tests, leaving full suites to CI and retaining normal
+quality hooks:
+
+```bash
+cargo test --workspace --features quecto-agentic-harness/test-support --bins --test architecture layout:: -- --nocapture
+```
+
+Fixture tests should cover budget boundaries and ratcheting, filename counting,
+strict migrated roots, layer-specific roles, explicit placements and citations,
+invalid policy rows, and filesystem failures alongside the real-tree check.
+
 ## Documentation expectations
 
 Update relevant documentation when behavior, configuration, CLI flags, environment variables, or public APIs change. Common docs to consider:
