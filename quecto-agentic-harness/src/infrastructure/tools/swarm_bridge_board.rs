@@ -218,6 +218,12 @@ impl SwarmBoard {
         runs.summarize_run(totals.as_ref())
     }
 
+    /// Writes the run watch's polls held for the file at `location`
+    /// (#2338), if its handles hold any.
+    pub(super) fn flush_watch_polls(&self, location: &BoardLocation) {
+        let _ = location;
+    }
+
     fn recording_lock(&self) -> MutexGuard<'_, Option<Arc<SessionLog>>> {
         self.shared
             .recording

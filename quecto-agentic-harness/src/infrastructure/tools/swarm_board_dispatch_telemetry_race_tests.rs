@@ -97,6 +97,7 @@ fn raced(
                 race,
             }),
             actors: Arc::new(ActorRefs::default()),
+            polls: Arc::default(),
         }),
         ..plain(repository)
     };

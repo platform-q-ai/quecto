@@ -546,3 +546,7 @@ pub(super) fn refused(error: TransactionError) -> BoardError {
 #[cfg(test)]
 #[path = "repository_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "repository_read_tests.rs"]
+mod read_tests;

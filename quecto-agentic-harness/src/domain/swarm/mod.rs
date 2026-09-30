@@ -20,6 +20,7 @@ pub mod run_totals;
 pub mod telemetry;
 pub mod usage;
 pub mod validation;
+pub mod watch_polls;
 
 pub use admission_gate::AdmissionGate;
 pub use dependencies::{DEPENDENCIES_MAX, dependency_list, validate_dependencies};

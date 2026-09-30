@@ -603,6 +603,22 @@ pub trait BoardRepository: Send + Sync {
     /// `work`'s refusal, unchanged, after rolling back; the store's own
     /// refusal (a missing board, contention).
     fn atomic(&self, create: bool, work: &mut BoardWork<'_>) -> Result<(), BoardError>;
+
+    /// Runs `work`, which only reads, in one read transaction (#2338): a
+    /// consistent view of the board that takes no write lock, so it
+    /// neither waits for a writer's transaction nor holds one off (a
+    /// writer's commit waits at most for the read to finish). The store
+    /// refuses any write `work` attempts. It adds no missing column
+    /// (`ensure_columns` writes): `work` reads only the board's original
+    /// schema. A repository without such a transaction runs `work` in an
+    /// ordinary one, which is as consistent.
+    ///
+    /// # Errors
+    /// `work`'s refusal; the store's own (a missing board, contention, a
+    /// write attempted).
+    fn read(&self, work: &mut BoardWork<'_>) -> Result<(), BoardError> {
+        self.atomic(false, work)
+    }
 }
 
 /// `uuid.uuid4().hex`: 32 lowercase hex digits, a fresh value per draw.

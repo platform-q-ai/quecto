@@ -608,6 +608,9 @@ fn settle_observed_snapshot(
     }
 }
 
+#[path = "swarm_watch.rs"]
+mod watch;
+
 #[cfg(test)]
 #[path = "swarm_pause_generation_tests.rs"]
 mod pause_generation_tests;

@@ -191,6 +191,8 @@ pub struct BoardTelemetry {
     pub log: Arc<dyn BoardOpLog>,
     pub meter: Arc<dyn BoardCallMeter>,
     pub actors: Arc<ActorRefs>,
+    /// The run watch's unchanged polls, held until written (#2338).
+    pub polls: Arc<WatchPolls>,
 }
 
 impl std::fmt::Debug for SwarmBoardHandles {
@@ -634,7 +636,7 @@ mod binding;
 
 #[path = "swarm_board_dispatch_records.rs"]
 mod records;
-pub use records::{CallOrigin, refused, signature};
+pub use records::{CallOrigin, WatchPolls, flush_watch_polls, refused, signature};
 
 #[path = "swarm_board_dispatch_render.rs"]
 mod render;

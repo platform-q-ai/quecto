@@ -114,6 +114,7 @@ fn telemetry(log: &Arc<Recorded>, meter: &Arc<Unmeasured>) -> Option<BoardTeleme
         log: log.clone(),
         meter: meter.clone(),
         actors: Arc::new(ActorRefs::default()),
+        polls: Arc::default(),
     })
 }
 

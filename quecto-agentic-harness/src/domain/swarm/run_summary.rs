@@ -123,6 +123,12 @@ pub struct SwarmRunSummary {
     pub scope: SummaryScope,
     /// Every `swarm_op` record of the run this process folded.
     pub records: u64,
+    /// The board calls those records account for (#2338): one per record,
+    /// but an aggregate of the run watch's unchanged cursor polls, which
+    /// accounts for its `polls`. Each op's counts are calls. `0` in a
+    /// summary written before it was kept.
+    #[serde(default)]
+    pub calls: u64,
     /// Each op's records, by the op's name.
     pub ops: BTreeMap<String, OpSummary>,
     /// Records whose store's busy handler fired, over every op.
@@ -397,6 +403,7 @@ impl RunSummaryFold {
             run_id: self.run_id.clone(),
             scope: SummaryScope::Process,
             records: self.records,
+            calls: self.records,
             ops,
             busy,
             tasks: self.tasks,

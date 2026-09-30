@@ -448,6 +448,7 @@ fn a_decision_and_its_detail_are_recorded_as_kinds_and_counts() {
             has_more: Some(false),
             fast_path_defeated: Some(true),
             placeholder_created: Some(false),
+            polls: Some(5),
         },
         ..observation(BoardOpOutcome::Ok)
     });
@@ -484,6 +485,8 @@ fn a_decision_and_its_detail_are_recorded_as_kinds_and_counts() {
             &json!(false)
         )
     );
+    // #2338: the watch's aggregated unchanged polls.
+    assert_eq!(line["polls"], json!(5));
     assert_eq!(
         serde_json::from_value::<AuditEvent>(line).unwrap(),
         recorded
@@ -500,6 +503,7 @@ fn a_decision_and_its_detail_are_recorded_as_kinds_and_counts() {
         "has_more",
         "fast_path_defeated",
         "placeholder_created",
+        "polls",
         "committed",
     ] {
         assert_eq!(bare.get(field), None, "{field}: {bare}");

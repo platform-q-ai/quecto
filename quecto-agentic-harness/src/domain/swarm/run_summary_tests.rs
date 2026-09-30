@@ -384,3 +384,45 @@ fn only_the_coordinator_of_a_settled_run_writes_its_summary() {
         assert!(!snapshot(status).summarized_by("parent"), "{status:?}");
     }
 }
+
+/// #2338: an aggregate of the watch's unchanged cursor polls is one record
+/// counting `polls` calls: the op's `ok` and the summary's `calls` count
+/// every poll, `records` the lines, and the aggregate adds one sample (its
+/// slowest poll's) to the percentiles.
+#[test]
+fn an_aggregate_of_unchanged_polls_counts_every_poll_it_holds() {
+    let aggregate = BoardOpObservation {
+        decision: Some("unchanged".into()),
+        cursor_moved: Some(false),
+        detail: BoardOpDetail {
+            polls: Some(118),
+            ..BoardOpDetail::NONE
+        },
+        ..record("_event_cursor", Some("unchanged"), 40)
+    };
+    let summary = folded(&[
+        record("_event_cursor", Some("read"), 10),
+        aggregate,
+        record("_event_cursor", Some("read"), 20),
+        record("_snapshot", Some("read"), 30),
+    ]);
+    assert_eq!(summary.records, 4, "the lines folded");
+    assert_eq!(summary.calls, 121, "every board call the lines account for");
+    let polls = &summary.ops["_event_cursor"];
+    assert_eq!(polls.ok, 120, "each poll counted, recorded or aggregated");
+    assert_eq!(polls.duration_us.max, Some(40));
+    assert_eq!(polls.duration_us.unmeasured, 0);
+    assert_eq!(summary.ops["_snapshot"].ok, 1);
+    let line = serde_json::to_value(AuditEvent::SwarmRunSummary(summary)).unwrap();
+    assert_eq!(line["calls"], 121);
+}
+
+/// A summary written before #2338 (no `calls`) still reads back.
+#[test]
+fn a_summary_without_calls_reads_back() {
+    let summary = folded(&[record("claim", Some("claimed"), 10)]);
+    let mut line = serde_json::to_value(AuditEvent::SwarmRunSummary(summary)).unwrap();
+    line.as_object_mut().unwrap().remove("calls");
+    let read: AuditEvent = serde_json::from_value(line).unwrap();
+    assert!(matches!(read, AuditEvent::SwarmRunSummary(summary) if summary.calls == 0));
+}

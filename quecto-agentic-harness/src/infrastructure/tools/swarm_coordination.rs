@@ -120,6 +120,39 @@ impl CoordinationPort for SwarmContext {
     }
 }
 impl SwarmContext {
+    /// The board's event cursor, as the run watch reads it every tick
+    /// (#2338): recorded as the harness's own, and aggregated while it is
+    /// unchanged.
+    pub fn watch_cursor(&self) -> Result<i64, DomainError> {
+        self.board
+            .call_as(
+                self.location(),
+                &self.member,
+                "_event_cursor",
+                json!([]),
+                super::super::swarm_board_dispatch::CallOrigin::Watch,
+            )?
+            .as_i64()
+            .ok_or_else(|| invalid("missing event cursor"))
+    }
+
+    /// The run, as the run watch reads it when its schedule says so
+    /// (#2338): recorded as the harness's own, after the polls it held.
+    pub fn watch_snapshot(&self) -> Result<Snapshot, DomainError> {
+        decode(self.board.call_as(
+            self.location(),
+            &self.member,
+            "_snapshot",
+            json!([]),
+            super::super::swarm_board_dispatch::CallOrigin::Watch,
+        )?)
+    }
+
+    /// Writes the run watch's held polls now (#2338): the watch ended.
+    pub fn flush_watch_polls(&self) {
+        self.board.flush_watch_polls(&self.location());
+    }
+
     /// The run as `gate` admits from it (#2339): the board records the
     /// read as that gate's decision.
     pub fn inference_snapshot(

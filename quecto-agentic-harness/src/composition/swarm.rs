@@ -260,6 +260,7 @@ pub fn with_event_log(
             log: event_log,
             meter: Arc::new(SqliteBoardCallMeter::new(repository)),
             actors: Arc::new(ActorRefs::default()),
+            polls: Arc::default(),
         }),
         ..handles
     }

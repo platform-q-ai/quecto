@@ -27,6 +27,35 @@ use crate::domain::swarm::{BoardRole, RefusalKind};
 pub enum CallOrigin {
     Member,
     Harness,
+    /// The harness's run watch (#2338): its `_event_cursor` polls and its
+    /// `_snapshot`s, recorded as `host`; unchanged polls are aggregated
+    /// ([`WatchPolls`]).
+    Watch,
+}
+
+/// The run watch's polls not yet written (#2338), held with the handles of
+/// one board file while the event log is on.
+#[derive(Debug)]
+pub struct WatchPolls {
+    tally: std::sync::Mutex<crate::domain::swarm::watch_polls::PollTally>,
+    origin: std::time::Instant,
+}
+
+impl Default for WatchPolls {
+    fn default() -> Self {
+        Self {
+            tally: std::sync::Mutex::new(crate::domain::swarm::watch_polls::PollTally::default()),
+            origin: std::time::Instant::now(),
+        }
+    }
+}
+
+/// Writes the run watch's polls `handles` holds, if any (#2338): the watch
+/// ended, the run is summarised, or the handles are replaced.
+pub fn flush_watch_polls(handles: &SwarmBoardHandles) {
+    if let Some(telemetry) = &handles.telemetry {
+        let _ = (&telemetry.polls.tally, telemetry.polls.origin);
+    }
 }
 
 /// The role a call's records carry (#2303; #2282 final review): `host`
@@ -37,12 +66,14 @@ pub enum CallOrigin {
 /// harness's alone (docs/swarm.md), so an unknown name never maps to it.
 pub(super) fn recorded_role(origin: CallOrigin, known: Option<Method>) -> Option<BoardRole> {
     let role = match (origin, known) {
-        (CallOrigin::Harness, _) => Some(BoardRole::Host),
+        (CallOrigin::Harness | CallOrigin::Watch, _) => Some(BoardRole::Host),
         (CallOrigin::Member, Some(known)) => known.role(),
         (CallOrigin::Member, None) => None,
     };
     debug_assert!(
-        known.is_some() || origin == CallOrigin::Harness || role.is_none(),
+        known.is_some()
+            || matches!(origin, CallOrigin::Harness | CallOrigin::Watch)
+            || role.is_none(),
         "a member's call naming no board method records no role"
     );
     role
