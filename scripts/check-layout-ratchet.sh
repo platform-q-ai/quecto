@@ -25,8 +25,12 @@ budgets() {
     perl -0777 -e '
         use strict; use warnings;
         my $source = <>;
+        my @comments;
+        $source =~ s{(?<block>/\*(?:[^*/]+|/(?!\*)|\*(?!/)|(?&block))*\*/)|//[^\n]*}{push @comments, $&; " "}gse;
+        my $commented = 0;
+        $commented += () = /\bconst\b(?:(?!\bconst\b).)*?\bBUDGETS\b/sg for @comments;
         my @definitions = $source =~ /\bconst\s+BUDGETS\b/g;
-        @definitions == 1 or die "BUDGETS: expected exactly one definition, including comments; remove ambiguity\n";
+        @definitions + $commented == 1 or die "BUDGETS: expected exactly one definition, including comments; remove ambiguity\n";
         $source =~ /const\s+BUDGETS\s*:[^=]+?=\s*&\[(.*?)\];/s
             or die "$ARGV: BUDGETS missing; restore the budget table\n";
         my $body = $1;
