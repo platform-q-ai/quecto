@@ -1,5 +1,9 @@
 use super::*;
 const SESSIONS: &str = "domain/sessions";
+const DOMAIN_EMPTY: FlatBudget<'_> = FlatBudget {
+    path: "domain",
+    expected: 0,
+};
 const ENTITIES: &str = "domain/sessions/entities";
 struct Tree(tempfile::TempDir);
 impl Tree {
@@ -27,26 +31,17 @@ fn fixture(dirs: &[&str], files: &[&str]) -> Tree {
     }
     tree
 }
-fn budget(path: &str, expected: usize) -> Budget<'_> {
-    Budget(path, expected)
-}
-fn capability<'a>(path: &'a str, allowed_roles: &'a [&'a str]) -> Capability<'a> {
-    Capability {
-        path,
-        allowed_roles,
-    }
-}
 fn flat(root: &Path, path: &str, expected: usize) -> Vec<Violation> {
-    validate(root, &[budget(path, expected)], &[])
+    validate(root, &[FlatBudget { path, expected }], &[])
 }
 fn shape(root: &Path, path: &str, roles: &[&str]) -> Vec<Violation> {
-    validate(root, &[], &[capability(path, roles)])
+    validate(root, &[], &[Capability(path, roles)])
 }
 fn entities(root: &Path) -> Vec<Violation> {
     shape(root, SESSIONS, &["entities"])
 }
 fn mismatch(path: &str, actual: usize, expected: usize) -> Violation {
-    Violation::BudgetMismatch {
+    Violation::FlatBudgetMismatch {
         path: path.into(),
         actual,
         expected,
@@ -54,23 +49,24 @@ fn mismatch(path: &str, actual: usize, expected: usize) -> Violation {
 }
 fn inspection(failures: &[Violation], path: Option<&str>, reason: &str) {
     assert!(
-        matches!(failures, [Violation::Inspection { path: actual, reason: why }]
+        matches!(failures, [Violation::Inspection(actual, why)]
         if path.is_none_or(|path| path == actual) && why.contains(reason)),
         "{failures:?}"
     );
 }
 fn fragments(failures: &[Violation], required: &[&str]) {
-    let message = format!("{failures:?}");
+    let message = failures
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
     for text in required {
         assert!(message.contains(text), "{message}");
     }
 }
 fn populate_transitional(root: &Tree) {
-    for row in PLACEMENTS
-        .iter()
-        .filter(|row| row.classification == Classification::Transitional)
-    {
-        root.mkdir(&format!("{}/{}", row.layer, row.name));
+    for (layer, name) in TRANSITIONAL {
+        root.mkdir(&format!("{layer}/{name}"));
     }
 }
 #[test]
@@ -209,7 +205,7 @@ fn missing_substituted_and_restored_roots_and_injected_denials() {
     assert!(
         failures
             .iter()
-            .all(|v| matches!(v, Violation::Inspection { .. }))
+            .all(|v| matches!(v, Violation::Inspection(..)))
     );
     root.write("application");
     assert_eq!(placements(root.path(), PLACEMENTS).len(), 4);
@@ -220,8 +216,8 @@ fn missing_substituted_and_restored_roots_and_injected_denials() {
         let root = fixture(&[ENTITIES], &["domain/sessions/entities/one.rs"]);
         let failures = validate_all(
             root.path(),
-            &[budget("domain", 0)],
-            &[capability(SESSIONS, &["entities"])],
+            &[DOMAIN_EMPTY],
+            &[Capability(SESSIONS, &["entities"])],
             None,
             &|entry| {
                 if entry.ends_with(path) {
@@ -242,7 +238,7 @@ fn missing_substituted_and_restored_roots_and_injected_denials() {
             root.write("domain");
         }
         inspection(
-            &validate_all(root.path(), &[budget("domain", 0)], &[], Some(&[]), &scan),
+            &validate_all(root.path(), &[DOMAIN_EMPTY], &[], Some(&[]), &scan),
             Some("domain"),
             "",
         );
@@ -267,15 +263,13 @@ fn placement_future_targets_unknowns_and_stale_transitional_rows() {
         );
     }
     let root = fixture(LAYERS, &[]);
-    let rows = [Placement {
-        layer: "domain",
-        name: "removed",
-        _citation: WIKI,
-        classification: Classification::Transitional,
-    }];
-    let failures = placements(root.path(), &rows);
+    root.mkdir("application/agent_loop");
+    let failures = placements(root.path(), PLACEMENTS);
     assert_eq!(failures.len(), 1);
-    fragments(&failures, &["remove domain/removed from PLACEMENTS", WIKI]);
+    fragments(
+        &failures,
+        &["remove domain/environment_registry from PLACEMENTS", WIKI],
+    );
 }
 #[test]
 fn diagnostics_prescribe_each_actual_repair_and_budget_direction() {
@@ -306,26 +300,22 @@ fn diagnostics_prescribe_each_actual_repair_and_budget_direction() {
     let failures = flat(root.path(), "domain/missing", 0);
     inspection(&failures, None, "");
     fragments(&failures, &["restore domain/missing", WIKI]);
-    for (failure, required) in [
-        (
-            mismatch("domain", 2, 1),
-            &["BUDGETS", "capability", WIKI][..],
-        ),
-        (
-            mismatch("domain", 1, 2),
-            &["actual 1, expected 2", "lower domain to 1 in BUDGETS"][..],
-        ),
-        (
-            Violation::UnlistedPlacement("domain/widgets".into()),
-            &["add a placement row with this capability's wiki section"][..],
-        ),
-        (
-            Violation::EmptyRole(ENTITIES.into()),
-            &["put a .rs file anywhere beneath domain/sessions/entities"][..],
-        ),
-    ] {
-        fragments(&[failure], required);
-    }
+    fragments(
+        &[mismatch("domain", 2, 1)],
+        &["BUDGETS", "capability", WIKI],
+    );
+    fragments(
+        &[mismatch("domain", 1, 2)],
+        &["actual 1, expected 2", "lower domain to 1 in BUDGETS"],
+    );
+    fragments(
+        &[Violation::UnlistedPlacement("domain/widgets".into())],
+        &["add a placement row with this capability's wiki section"],
+    );
+    fragments(
+        &[Violation::EmptyRole(ENTITIES.into())],
+        &["put a .rs file anywhere beneath domain/sessions/entities"],
+    );
 }
 #[test]
 fn relative_root_is_canonicalized_before_scanner_port() {
@@ -334,7 +324,7 @@ fn relative_root_is_canonicalized_before_scanner_port() {
     std::fs::create_dir(root.path().join("domain")).unwrap();
     let failures = validate_all(
         root.path().strip_prefix(&cwd).unwrap(),
-        &[budget("domain", 0)],
+        &[DOMAIN_EMPTY],
         &[],
         None,
         &|path| {
@@ -393,7 +383,7 @@ fn symlink_ancestors_descendants_and_caller_root_aliases() {
     assert!(
         validate_all(
             &root.at("alias"),
-            &[budget("domain", 0)],
+            &[DOMAIN_EMPTY],
             &[],
             Some(PLACEMENTS),
             &scan

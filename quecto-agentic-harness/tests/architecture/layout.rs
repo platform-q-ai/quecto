@@ -3,75 +3,65 @@
 use std::collections::BTreeSet;
 use std::io;
 use std::path::Path;
-// Explicit source-policy pair: relative path and exact expected count.
-struct Budget<'a>(&'a str, usize);
-struct Capability<'a> {
+struct FlatBudget<'a> {
     path: &'a str,
-    allowed_roles: &'a [&'a str],
+    expected: usize,
 }
-#[derive(PartialEq, Eq)]
+struct Capability<'a>(&'a str, &'a [&'a str]);
+#[derive(PartialEq, Eq, Debug)]
 enum Violation {
-    BudgetMismatch {
+    FlatBudgetMismatch {
         path: String,
         actual: usize,
         expected: usize,
     },
     StrayEntry(String),
-    Inspection {
-        path: String,
-        reason: String,
-    },
+    Inspection(String, String),
     UndeclaredRole(String),
     EmptyRole(String),
     StalePlacement(String),
     UnlistedPlacement(String),
 }
-impl std::fmt::Debug for Violation {
+impl std::fmt::Display for Violation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::BudgetMismatch {
+        let message = match self {
+            Self::FlatBudgetMismatch {
                 path,
                 actual,
                 expected,
             } => {
-                write!(f, "{path}: actual {actual}, expected {expected}; ")?;
-                if actual < expected {
-                    write!(f, "lower {path} to {actual} in BUDGETS in this PR. {WIKI}")
+                let repair = if actual < expected {
+                    format!("lower {path} to {actual} in BUDGETS in this PR. {WIKI}")
                 } else {
-                    write!(
-                        f,
+                    format!(
                         "move growth into the target capability/role directory in an authorized layout slice; do not raise BUDGETS. {WIKI}"
                     )
-                }
+                };
+                format!("{path}: actual {actual}, expected {expected}; {repair}")
             }
-            Self::StrayEntry(path) => write!(
-                f,
+            Self::StrayEntry(path) => format!(
                 "{path}: migrated shape violation; move {path} into a declared role directory; keep only mod.rs and mod_tests.rs at the capability root. {WIKI}"
             ),
             Self::UndeclaredRole(path) => {
                 let (capability, name) = path.rsplit_once('/').expect("role has capability parent");
-                write!(
-                    f,
+                format!(
                     "{path}: undeclared role directory; add {name} to {capability} allowed_roles in MIGRATED or remove the directory. {WIKI}"
                 )
             }
-            Self::EmptyRole(path) => write!(
-                f,
+            Self::EmptyRole(path) => format!(
                 "{path}: empty role; put a .rs file anywhere beneath {path} or remove the unused role directory. {WIKI}"
             ),
-            Self::StalePlacement(path) => write!(
-                f,
+            Self::StalePlacement(path) => format!(
                 "{path}: stale transitional placement; remove {path} from PLACEMENTS when its directory has been retired. {WIKI}"
             ),
-            Self::UnlistedPlacement(path) => write!(
-                f,
+            Self::UnlistedPlacement(path) => format!(
                 "{path}: unlisted immediate capability directory; add a placement row with this capability's wiki section and classify it as target, transitional, or testing, or move the directory into a listed placement. {WIKI}"
             ),
-            Self::Inspection { path, reason } => write!(
-                f,
+            Self::Inspection(path, reason) => format!(
                 "{path}: inspection failed ({reason}); restore {path} as a readable real directory/file tree; descendant symlinks are not inspected. {WIKI}"
             ),
-        }
+        };
+        f.write_str(&message)
     }
 }
 const LAYERS: &[&str] = &[
@@ -84,51 +74,35 @@ const LAYERS: &[&str] = &[
 const WIKI: &str =
     "https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture";
 #[rustfmt::skip] // One readable source-policy row per path.
-const BUDGETS: &[Budget<'_>] = &[
-    Budget("domain", 71),
-    Budget("application", 45),
-    Budget("interface", 6),
-    Budget("infrastructure", 28),
-    Budget("composition", 24),
-    Budget("interface/cli", 106),
-    Budget("infrastructure/tools", 122),
-    Budget("infrastructure/persistence", 36),
-    Budget("application/swarm", 23),
-    Budget("domain/swarm", 15),
+const BUDGETS: &[FlatBudget<'_>] = &[
+    FlatBudget { path: "domain", expected: 71 },
+    FlatBudget { path: "application", expected: 45 },
+    FlatBudget { path: "interface", expected: 6 },
+    FlatBudget { path: "infrastructure", expected: 28 },
+    FlatBudget { path: "composition", expected: 24 },
+    FlatBudget { path: "interface/cli", expected: 106 },
+    FlatBudget { path: "infrastructure/tools", expected: 122 },
+    FlatBudget { path: "infrastructure/persistence", expected: 36 },
+    FlatBudget { path: "application/swarm", expected: 23 },
+    FlatBudget { path: "domain/swarm", expected: 15 },
 ];
 // L0 moves nothing: future slices explicitly opt capabilities into strict shape.
 const MIGRATED: &[Capability<'_>] = &[];
-#[derive(PartialEq, Eq)]
-enum Classification {
-    Target,
-    Transitional,
-    Testing,
-}
-struct Placement<'a> {
-    layer: &'a str,
-    name: &'a str,
-    _citation: &'a str,
-    classification: Classification,
-}
-// Compile-time expansion: explicit names and wiki ownership, never runtime name generation.
-macro_rules! placement_table {
-    ($(($layer:literal, $citation:literal, $kind:ident) => [$($name:literal),*];)*) => {
-        const PLACEMENTS: &[Placement<'static>] = &[$($(Placement {
-            layer: $layer, name: $name, _citation: $citation,
-            classification: Classification::$kind,
-        },)*)*];
-    };
-}
-placement_table! {
-    ("domain", "https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture#domain", Target) => ["conversation", "admission", "environments", "catalogue", "tool_policy", "sessions", "agents", "audit", "inference", "commander", "identity", "shared", "external_agent", "swarm", "workflow"];
-    ("application", "https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture#application", Target) => ["admission", "agent_turn", "audit", "catalogue", "configuration", "environments", "extensions", "external_agent", "provider_runtime", "providers", "search", "sessions", "subagents", "swarm", "tools", "workflow", "agent_commander", "shared"];
-    ("interface", "https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture#interface", Target) => ["cli", "repl", "tools", "uds"];
-    ("infrastructure", "https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture#infrastructure", Target) => ["admission", "auth", "config", "extensions", "external_agents", "http", "persistence", "processes", "providers", "search", "security", "tools", "workspace", "judgment", "observability", "time"];
-    ("composition", "https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture#composition", Target) => ["bootstrap", "runtime", "logging", "shutdown"];
-    ("domain", "https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture#capability-coverage-and-naming", Transitional) => ["environment_registry"];
-    ("application", "https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture#capability-coverage-and-naming", Transitional) => ["agent_loop"];
-    ("infrastructure", "https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture#capability-coverage-and-naming", Testing) => ["test_support"];
-}
+// Wiki target-source-tree anchors define allowed future names; Transitional rows must exist.
+// https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture#target-source-tree
+type Placement<'a> = (&'a str, &'a [&'a str]);
+#[rustfmt::skip]
+const PLACEMENTS: &[Placement<'_>] = &[
+    ("domain", &["conversation", "admission", "environments", "catalogue", "tool_policy", "sessions", "agents", "audit", "inference", "commander", "identity", "shared", "external_agent", "swarm", "workflow", "environment_registry"]),
+    ("application", &["admission", "agent_turn", "audit", "catalogue", "configuration", "environments", "extensions", "external_agent", "provider_runtime", "providers", "search", "sessions", "subagents", "swarm", "tools", "workflow", "agent_commander", "shared", "agent_loop"]),
+    ("interface", &["cli", "repl", "tools", "uds"]),
+    ("infrastructure", &["admission", "auth", "config", "extensions", "external_agents", "http", "persistence", "processes", "providers", "search", "security", "tools", "workspace", "judgment", "observability", "time", "test_support"]),
+    ("composition", &["bootstrap", "runtime", "logging", "shutdown"]),
+ ];
+const TRANSITIONAL: &[(&str, &str)] = &[
+    ("domain", "environment_registry"),
+    ("application", "agent_loop"),
+];
 enum Kind {
     File,
     Directory,
@@ -170,7 +144,6 @@ fn scan(path: &Path) -> io::Result<Vec<Entry>> {
 fn regular_rust(entry: &Entry) -> bool {
     matches!(entry.1, Kind::File) && entry.0.ends_with(".rs")
 }
-// Canonicalize only the caller root; check descendants without following links.
 fn checked_directory(root: &Path, relative: &str) -> io::Result<std::path::PathBuf> {
     let mut path = root.to_path_buf();
     for component in Path::new(relative).components() {
@@ -178,11 +151,6 @@ fn checked_directory(root: &Path, relative: &str) -> io::Result<std::path::PathB
         real_directory(&path)?;
     }
     Ok(path)
-}
-fn canonical_root(root: &Path) -> io::Result<std::path::PathBuf> {
-    let root = std::fs::canonicalize(root)?;
-    real_directory(&root)?;
-    Ok(root)
 }
 struct Inspector<'a, F> {
     root: &'a Path,
@@ -194,32 +162,27 @@ impl<F: Fn(&Path) -> io::Result<Vec<Entry>>> Inspector<'_, F> {
         checked_directory(self.root, relative)
             .and_then(|path| (self.scanner)(&path))
             .map_err(|error| {
-                self.failures.push(Violation::Inspection {
-                    path: relative.into(),
-                    reason: error.to_string(),
-                })
+                self.failures
+                    .push(Violation::Inspection(relative.into(), error.to_string()))
             })
             .ok()
     }
-    // Visit all descendants, including those after a Rust file: any inspection error fails closed.
+    // Inspect every descendant after success or failure; try_fold would short-circuit.
+    #[expect(clippy::manual_try_fold)]
     fn role_has_rust(&mut self, relative: &str) -> Option<bool> {
-        let entries = self.inspect(relative)?;
-        let mut populated = false;
-        let mut complete = true;
-        for entry in entries {
-            match entry.1 {
-                Kind::File => populated |= regular_rust(&entry),
-                Kind::Directory => match self.role_has_rust(&format!("{relative}/{}", entry.0)) {
-                    Some(found) => populated |= found,
-                    None => complete = false,
-                },
-            }
-        }
-        complete.then_some(populated)
+        self.inspect(relative)?
+            .into_iter()
+            .fold(Some(false), |found, entry| {
+                let next = match entry.1 {
+                    Kind::File => Some(regular_rust(&entry)),
+                    Kind::Directory => self.role_has_rust(&format!("{relative}/{}", entry.0)),
+                };
+                found.zip(next).map(|(found, next)| found || next)
+            })
     }
-    fn layout(&mut self, budgets: &[Budget<'_>], migrated: &[Capability<'_>]) {
+    fn layout(&mut self, budgets: &[FlatBudget<'_>], migrated: &[Capability<'_>]) {
         for budget in budgets {
-            if let Some(entries) = self.inspect(budget.0) {
+            if let Some(entries) = self.inspect(budget.path) {
                 let actual = entries
                     .iter()
                     .filter(|entry| match entry.0.strip_suffix("_tests.rs") {
@@ -227,23 +190,23 @@ impl<F: Fn(&Path) -> io::Result<Vec<Entry>>> Inspector<'_, F> {
                         None => regular_rust(entry),
                     })
                     .count();
-                if actual == budget.1 {
+                if actual == budget.expected {
                     continue;
                 }
-                self.failures.push(Violation::BudgetMismatch {
-                    path: budget.0.into(),
+                self.failures.push(Violation::FlatBudgetMismatch {
+                    path: budget.path.into(),
                     actual,
-                    expected: budget.1,
+                    expected: budget.expected,
                 });
             }
         }
         for capability in migrated {
-            if let Some(entries) = self.inspect(capability.path) {
+            if let Some(entries) = self.inspect(capability.0) {
                 for entry in entries {
-                    let path = format!("{}/{}", capability.path, entry.0);
+                    let path = format!("{}/{}", capability.0, entry.0);
                     match entry.1 {
                         Kind::File if matches!(entry.0.as_str(), "mod.rs" | "mod_tests.rs") => {}
-                        Kind::Directory if capability.allowed_roles.contains(&entry.0.as_str()) => {
+                        Kind::Directory if capability.1.contains(&entry.0.as_str()) => {
                             if let Some(false) = self.role_has_rust(&path) {
                                 self.failures.push(Violation::EmptyRole(path));
                             }
@@ -256,25 +219,29 @@ impl<F: Fn(&Path) -> io::Result<Vec<Entry>>> Inspector<'_, F> {
         }
     }
     fn placements(&mut self, rows: &[Placement<'_>]) {
-        let paths: BTreeSet<_> = rows.iter().map(|row| (row.layer, row.name)).collect();
         for layer in LAYERS {
             if let Some(entries) = self.inspect(layer) {
-                for row in rows.iter().filter(|row| {
-                    row.layer == *layer && row.classification == Classification::Transitional
+                for (_, name) in TRANSITIONAL.iter().filter(|(owner, name)| {
+                    owner == layer
+                        && rows
+                            .iter()
+                            .any(|(layer, names)| layer == owner && names.contains(name))
                 }) {
                     if entries
                         .iter()
-                        .any(|entry| entry.0 == row.name && matches!(entry.1, Kind::Directory))
+                        .any(|entry| entry.0 == *name && matches!(entry.1, Kind::Directory))
                     {
                         continue;
                     }
                     self.failures
-                        .push(Violation::StalePlacement(format!("{layer}/{}", row.name)));
+                        .push(Violation::StalePlacement(format!("{layer}/{name}")));
                 }
                 for entry in entries {
                     if matches!(entry.1, Kind::Directory) {
                         let path = format!("{layer}/{}", entry.0);
-                        if paths.contains(&(*layer, entry.0.as_str())) {
+                        if rows.iter().any(|(owner, names)| {
+                            owner == layer && names.contains(&entry.0.as_str())
+                        }) {
                             continue;
                         }
                         self.failures.push(Violation::UnlistedPlacement(path));
@@ -284,24 +251,30 @@ impl<F: Fn(&Path) -> io::Result<Vec<Entry>>> Inspector<'_, F> {
         }
     }
 }
-fn validate(root: &Path, budgets: &[Budget<'_>], migrated: &[Capability<'_>]) -> Vec<Violation> {
+fn validate(
+    root: &Path,
+    budgets: &[FlatBudget<'_>],
+    migrated: &[Capability<'_>],
+) -> Vec<Violation> {
     validate_all(root, budgets, migrated, None, &scan)
 }
-// One canonicalization boundary for a complete inspection, including placements.
 fn validate_all(
     root: &Path,
-    budgets: &[Budget<'_>],
+    budgets: &[FlatBudget<'_>],
     migrated: &[Capability<'_>],
     rows: Option<&[Placement<'_>]>,
     scanner: &impl Fn(&Path) -> io::Result<Vec<Entry>>,
 ) -> Vec<Violation> {
-    let root = match canonical_root(root) {
+    let root = match std::fs::canonicalize(root).and_then(|root| {
+        real_directory(&root)?;
+        Ok(root)
+    }) {
         Ok(root) => root,
         Err(error) => {
-            return vec![Violation::Inspection {
-                path: root.display().to_string(),
-                reason: error.to_string(),
-            }];
+            return vec![Violation::Inspection(
+                root.display().to_string(),
+                error.to_string(),
+            )];
         }
     };
     let mut inspector = Inspector {
@@ -315,7 +288,7 @@ fn validate_all(
     }
     let mut reported = BTreeSet::new();
     inspector.failures.retain(|failure| match failure {
-        Violation::Inspection { path, .. } => reported.insert(path.clone()),
+        Violation::Inspection(path, _) => reported.insert(path.clone()),
         _ => true,
     });
     inspector.failures
@@ -327,15 +300,18 @@ fn placements(root: &Path, rows: &[Placement<'_>]) -> Vec<Violation> {
 fn source_tree_layout_obeys_checked_in_policy() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let rows = PLACEMENTS;
-    let keys: BTreeSet<_> = BUDGETS
-        .iter()
-        .map(|row| ("budget", "", row.0))
-        .chain(MIGRATED.iter().map(|row| ("migrated", "", row.path)))
-        .chain(rows.iter().map(|row| ("placement", row.layer, row.name)))
-        .collect();
+    let keys: BTreeSet<_> =
+        BUDGETS
+            .iter()
+            .map(|row| ("budget", "", row.path))
+            .chain(MIGRATED.iter().map(|row| ("migrated", "", row.0)))
+            .chain(rows.iter().flat_map(|(layer, names)| {
+                names.iter().map(move |name| ("placement", *layer, *name))
+            }))
+            .collect();
     assert_eq!(
         keys.len(),
-        BUDGETS.len() + MIGRATED.len() + rows.len(),
+        BUDGETS.len() + MIGRATED.len() + rows.iter().map(|(_, names)| names.len()).sum::<usize>(),
         "duplicate source-policy row"
     );
     let failures = validate_all(&root, BUDGETS, MIGRATED, Some(rows), &scan);
