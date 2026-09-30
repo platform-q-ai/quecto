@@ -673,11 +673,13 @@ switch.
    and a result carrying images (a stub drops them, and recall cannot
    restore them) all stay in full. Only the result's content becomes a
    stub: every call keeps its result. Each prune that collapses one counts
-   it in `context_pruned.large_results_collapsed`. Whenever any rule
-   collapses a result, its tool is told: the `read` tool forgets that
-   file's cached delivery, so re-reading an unchanged file answers its
-   content again instead of the `[unchanged since read …]` marker (which
-   itself now says to pass `force:true` when the earlier copy is a stub).
+   it in `context_pruned.large_results_collapsed`. Only this size rule is
+   swarm-only by default. **For every agent**, whenever any rule (a count
+   dial, the ladder, a superseded snapshot or the size rule) collapses or
+   drops a result, its tool is told: the `read` tool forgets that file's
+   cached delivery, so re-reading an unchanged file answers its content
+   again instead of the `[unchanged since read …]` marker (which itself
+   says to pass `force:true` if you no longer have its full content).
    In the owner's swarm sessions (#2342) one 17k-token bash output was
    31% of a coordinator's input and one 6k-token `docs` read 24% of
    another's; simulated on those sessions at the shipped tool dial of 50,

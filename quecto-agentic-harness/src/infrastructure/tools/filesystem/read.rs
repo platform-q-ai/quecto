@@ -30,6 +30,10 @@ pub struct ReadTool {
 #[derive(Default)]
 struct ReadCache {
     entries: HashMap<ReadCacheKey, ReadCacheEntry>,
+    /// The canonical file each requested `path` argument resolved to when
+    /// its delivery was cached (#2348): a collapse notice finds the file
+    /// without touching the filesystem.
+    resolved: HashMap<String, PathBuf>,
     next_sequence: u64,
 }
 
@@ -76,9 +80,12 @@ impl Tool for ReadTool {
         else {
             return;
         };
-        let resolved = resolve_read_path(&path, &self.workspace);
-        let cache_path = std::fs::canonicalize(&resolved).unwrap_or(resolved);
+        // No filesystem call here: the notice runs on the async pruning
+        // path, so the file is the one this argument resolved to when read.
         let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(cache_path) = cache.resolved.get(&path).cloned() else {
+            return;
+        };
         cache.entries.retain(|key, _| key.path != cache_path);
     }
 
@@ -243,8 +250,8 @@ impl Tool for ReadTool {
                     if entry.hash == hash {
                         return Ok(ToolResult {
                             content: format!(
-                                "[unchanged since read {}, hash match, {} lines; if your \
-                                 earlier copy is a recall stub, pass force:true]",
+                                "[unchanged since read {}, hash match, {} lines; if you no \
+                                 longer have its full content, pass force:true]",
                                 entry.sequence, entry.line_count
                             ),
                             is_error: false,
@@ -256,7 +263,7 @@ impl Tool for ReadTool {
             }
 
             let output = apply_read_truncation(&content, path, offset, limit)?;
-            update_read_cache(cache, key, hash, line_count)?;
+            update_read_cache(cache, path, key, hash, line_count)?;
 
             Ok(ToolResult {
                 content: output,
@@ -375,6 +382,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 
 fn update_read_cache(
     cache: Arc<Mutex<ReadCache>>,
+    requested: &str,
     key: ReadCacheKey,
     hash: String,
     line_count: usize,
@@ -389,6 +397,9 @@ fn update_read_cache(
             cache.next_sequence
         }
     };
+    cache
+        .resolved
+        .insert(requested.to_string(), key.path.clone());
     cache.entries.insert(
         key,
         ReadCacheEntry {

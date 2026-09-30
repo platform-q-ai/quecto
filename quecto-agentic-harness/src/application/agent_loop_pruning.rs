@@ -35,7 +35,7 @@ impl AgentLoopImpl {
                 "the tool definitions take most of the context budget; the messages keep a quarter of it"
             );
         }
-        let live_before = live_result_ids(messages);
+        let live_before = live_result_calls(messages);
         let mut plan = self
             .context_manager
             .prepare_provider_context(messages, budget, spills_dirty)
@@ -107,22 +107,18 @@ impl AgentLoopImpl {
         plan.total_tokens.saturating_add(fixed_tokens)
     }
 
-    /// Tell each tool whose result a rule just collapsed (#2348 review M1),
-    /// so a tool answering repeats from what it delivered (the read cache)
-    /// forgets that delivery. A result dropped with its call leaves no
-    /// arguments to report; the read marker names `force:true` for it.
-    fn report_collapsed_results(
-        &self,
-        messages: &[Message],
-        live_before: &std::collections::BTreeSet<String>,
-    ) {
+    /// Tell each tool whose result a rule just collapsed or dropped (#2348
+    /// review M1, final review), so a tool answering repeats from what it
+    /// delivered (the read cache) forgets that delivery. The calls were
+    /// recorded before the prune: a dropped result takes its call with it.
+    fn report_collapsed_results(&self, messages: &[Message], live_before: &[ToolCall]) {
         let live_after = live_result_ids(messages);
-        for call in messages.iter().flat_map(|m| &m.tool_calls) {
-            let collapsed = live_before.contains(&call.id) && !live_after.contains(&call.id);
-            if collapsed {
-                self.tool_executor()
-                    .result_collapsed(&call.name, &call.arguments);
-            }
+        for call in live_before
+            .iter()
+            .filter(|call| !live_after.contains(&call.id))
+        {
+            self.tool_executor()
+                .result_collapsed(&call.name, &call.arguments);
         }
     }
 
@@ -137,6 +133,17 @@ impl AgentLoopImpl {
     pub async fn prune_resumed_context(&self, messages: &mut Vec<Message>) -> usize {
         self.apply_context_pruning(messages, 0, true).await
     }
+}
+
+/// The calls whose results are still in full, recorded before a prune.
+fn live_result_calls(messages: &[Message]) -> Vec<ToolCall> {
+    let live = live_result_ids(messages);
+    messages
+        .iter()
+        .flat_map(|m| &m.tool_calls)
+        .filter(|call| live.contains(&call.id))
+        .cloned()
+        .collect()
 }
 
 /// The call ids of the tool results still in full.

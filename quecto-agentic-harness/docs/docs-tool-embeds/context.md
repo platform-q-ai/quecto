@@ -17,10 +17,13 @@ Quecto manages long-running sessions with a configurable sliding context window.
   recall stubs, and the newest always stays in full.
 - In a swarm member, a large tool result (over 2000 estimated tokens)
   collapses to its recall stub once you have seen it for 3 turns, whatever
-  the count dials say (off for other agents unless configured). A recalled
-  result or one with images stays in full. Note what you need from a large
-  output while it is in full, or recall it; re-reading a collapsed file
-  returns its content.
+  the count dials say (off for other agents unless
+  `context_collapse_large_result_tokens` is set; setting only the turns
+  switches nothing on outside a swarm). A recalled result or one with
+  images stays in full. Note what you need from a large output while it is
+  in full, or recall it.
+- In every agent, re-reading a file whose earlier result was collapsed or
+  dropped returns its content, not the unchanged marker.
 
 ## Defaults
 
