@@ -24,58 +24,107 @@ use crate::domain::swarm::{ArgumentFaults, BoardError, RefusalKind, UnexpectedAr
 pub(super) const WHOLE: &str = "arguments";
 
 /// Binds `args` to `parameters` as Python binds a call: positionally from
-/// an array, by name from an object, then each unbound parameter's default.
+/// an array, by name from an object, then each unbound parameter's default;
+/// or the refusal ([`refusal`]). The dispatcher calls the two halves
+/// itself, reading a refusal's faults between them.
+#[cfg(test)]
 pub(super) fn bind(
     method: Method,
     parameters: &[Parameter],
     args: Value,
 ) -> Result<Vec<Value>, BoardError> {
+    match refusal(method, parameters, &args) {
+        Some(refusal) => Err(refusal),
+        None => Ok(slotted(parameters, args)),
+    }
+}
+
+/// Why `args` does not bind to `parameters`, as Python refuses the call,
+/// read without taking the arguments (#2346 final review: a refusal's
+/// faults are read from them only then); `None` when they bind.
+pub(super) fn refusal(
+    method: Method,
+    parameters: &[Parameter],
+    args: &Value,
+) -> Option<BoardError> {
     let name = method.name();
+    let given: Vec<bool> = match args {
+        Value::Array(values) if values.len() > parameters.len() => {
+            return Some(BoardError::new(
+                RefusalKind::Calling,
+                format!(
+                    "{name}: takes {} arguments, {} given",
+                    parameters.len(),
+                    values.len()
+                ),
+            ));
+        }
+        Value::Array(values) => (0..parameters.len())
+            .map(|index| index < values.len())
+            .collect(),
+        Value::Object(fields) => {
+            let position = |key: &str| parameters.iter().position(|p| p.name == key);
+            if let Some(key) = fields.keys().find(|key| position(key).is_none()) {
+                return Some(BoardError::new(
+                    RefusalKind::Calling,
+                    format!("{name}: unexpected argument {key}"),
+                ));
+            }
+            parameters
+                .iter()
+                .map(|parameter| fields.contains_key(parameter.name))
+                .collect()
+        }
+        _ => {
+            return Some(BoardError::new(
+                RefusalKind::Calling,
+                format!("{name}: arguments must be a JSON array or object"),
+            ));
+        }
+    };
+    parameters
+        .iter()
+        .zip(given)
+        .find(|(parameter, given)| !given && parameter.default.is_none())
+        .map(|(parameter, _)| {
+            BoardError::new(
+                RefusalKind::Calling,
+                format!("{name}: missing required argument {}", parameter.name),
+            )
+        })
+}
+
+/// `args`, which [`refusal`] found to bind, bound to `parameters`.
+pub(super) fn slotted(parameters: &[Parameter], args: Value) -> Vec<Value> {
     let mut slots: Vec<Option<Value>> = vec![None; parameters.len()];
     match args {
         Value::Array(values) => {
-            if values.len() > parameters.len() {
-                return Err(BoardError::new(
-                    RefusalKind::Calling,
-                    format!(
-                        "{name}: takes {} arguments, {} given",
-                        parameters.len(),
-                        values.len()
-                    ),
-                ));
-            }
             for (slot, value) in slots.iter_mut().zip(values) {
                 *slot = Some(value);
             }
         }
         Value::Object(fields) => {
             for (key, value) in fields {
-                let Some(index) = parameters.iter().position(|p| p.name == key) else {
-                    return Err(BoardError::new(
-                        RefusalKind::Calling,
-                        format!("{name}: unexpected argument {key}"),
-                    ));
-                };
-                slots[index] = Some(value);
+                if let Some(index) = parameters.iter().position(|p| p.name == key) {
+                    slots[index] = Some(value);
+                }
             }
         }
-        _ => {
-            return Err(BoardError::new(
-                RefusalKind::Calling,
-                format!("{name}: arguments must be a JSON array or object"),
-            ));
-        }
+        _ => {}
     }
+    debug_assert!(
+        slots
+            .iter()
+            .zip(parameters)
+            .all(|(slot, parameter)| slot.is_some() || parameter.default.is_some()),
+        "only arguments that bind are slotted"
+    );
     slots
         .into_iter()
         .zip(parameters)
-        .map(|(slot, parameter)| match (slot, parameter.default) {
-            (Some(value), _) => Ok(value),
-            (None, Some(default)) => Ok(default()),
-            (None, None) => Err(BoardError::new(
-                RefusalKind::Calling,
-                format!("{name}: missing required argument {}", parameter.name),
-            )),
+        .map(|(slot, parameter)| {
+            slot.or_else(|| parameter.default.map(|default| default()))
+                .unwrap_or(Value::Null)
         })
         .collect()
 }
@@ -84,6 +133,32 @@ pub(super) fn bind(
 /// [`BOARD_OPS`] table's own `&'static str`. Its field is private and only
 /// [`schema_field`] makes one, so no text from outside (a member's key, a
 /// caller's string) can become a name a record carries.
+///
+/// ```
+/// use quecto::infrastructure::tools::swarm_board_dispatch::{SchemaField, schema_field};
+/// let field: SchemaField = schema_field("task_id").expect("a schema field");
+/// assert_eq!(field.as_str(), "task_id");
+/// assert!(schema_field("sk-ant-api03-anything").is_none());
+/// ```
+///
+/// No text builds one: its field is private,
+///
+/// ```compile_fail
+/// use quecto::infrastructure::tools::swarm_board_dispatch::SchemaField;
+/// let field = SchemaField("sk-ant-api03-anything");
+/// ```
+///
+/// and it has no conversion from a string, nor a deserializer.
+///
+/// ```compile_fail
+/// use quecto::infrastructure::tools::swarm_board_dispatch::SchemaField;
+/// let field = SchemaField::from(String::from("sk-ant-api03-anything"));
+/// ```
+///
+/// ```compile_fail
+/// use quecto::infrastructure::tools::swarm_board_dispatch::SchemaField;
+/// let field: SchemaField = serde_json::from_str(r#""sk-ant-api03-anything""#).unwrap();
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SchemaField(&'static str);
 
@@ -128,6 +203,27 @@ impl ArgName {
 /// fields are private: only [`faults`] and [`unreadable_arguments`] make
 /// one with anything in it, so the allowlist holds by type, in a release
 /// build too (#2346 review M). [`Self::record`] is the event log's form.
+///
+/// ```
+/// use quecto::infrastructure::tools::swarm_board_dispatch::{BindingFaults, unreadable_arguments};
+/// let faults = unreadable_arguments(Some(vec!["sk-ant-api03-anything".to_owned()]));
+/// assert_eq!(faults.record().unreadable_args, ["arguments"]);
+/// assert!(BindingFaults::NONE.is_empty());
+/// ```
+///
+/// Its fields are private, so none is filled from outside,
+///
+/// ```compile_fail
+/// use quecto::infrastructure::tools::swarm_board_dispatch::BindingFaults;
+/// let faults = BindingFaults { missing: Vec::new(), ..BindingFaults::NONE };
+/// ```
+///
+/// and it has no deserializer.
+///
+/// ```compile_fail
+/// use quecto::infrastructure::tools::swarm_board_dispatch::BindingFaults;
+/// let faults: BindingFaults = serde_json::from_str("{}").unwrap();
+/// ```
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BindingFaults {
     missing: Vec<SchemaField>,
@@ -274,6 +370,17 @@ pub(super) fn faults(method: Method, args: &Value) -> BindingFaults {
         .filter_map(|(parameter, _)| schema_field(parameter.name))
         .collect();
     faults
+}
+
+/// The schema type mismatches of arguments that bind (#2346 final review):
+/// read before binding takes them, since the board may still refuse a
+/// value as `invalid`, and only for a member-facing op ([`op_spec`]); any
+/// other method (the harness's own polling) reads nothing.
+pub(super) fn mistyped(method: Method, args: &Value) -> BindingFaults {
+    match op_spec(method.name()) {
+        Some(_) => faults(method, args),
+        None => BindingFaults::NONE,
+    }
 }
 
 fn unexpected(faults: &mut BindingFaults, known: Option<SchemaField>) {

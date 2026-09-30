@@ -159,7 +159,8 @@ pub fn object_text(text: &str, key: &str) -> Option<String> {
 
 /// The keys of the JSON object `text` holds whose value a
 /// `serde_json::Value` cannot hold exactly (#2341: which field a refused
-/// member text was refused for), in the object's order; a key that is no
+/// member text was refused for), in the object's order, each value
+/// checked at its real depth inside the object (#2346 final review); a key that is no
 /// Rust string (a lone surrogate) is given as `""`. `None` when `text` is
 /// no object Python reads.
 pub fn unreadable_fields(text: &str) -> Option<Vec<String>> {
@@ -170,7 +171,7 @@ pub fn unreadable_fields(text: &str) -> Option<Vec<String>> {
     Some(
         fields
             .iter()
-            .filter(|(key, value)| key.as_str().is_none() || value.to_value().is_err())
+            .filter(|(key, value)| key.as_str().is_none() || value.field_to_value().is_err())
             .map(|(key, _)| key.as_str().unwrap_or_default().to_owned())
             .collect(),
     )

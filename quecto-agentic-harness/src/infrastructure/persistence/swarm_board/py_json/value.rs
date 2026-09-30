@@ -361,6 +361,16 @@ impl PyJson {
     pub fn to_value(&self) -> Result<Value, PyJsonError> {
         to_value(self, 0)
     }
+
+    /// [`Self::to_value`] of a field of a top-level object (#2346 final
+    /// review): at its real depth, one level inside the object, so it fails
+    /// exactly when the whole object would for this field.
+    ///
+    /// # Errors
+    /// As [`Self::to_value`].
+    pub fn field_to_value(&self) -> Result<Value, PyJsonError> {
+        to_value(self, 1)
+    }
 }
 
 impl TryFrom<&Value> for PyJson {

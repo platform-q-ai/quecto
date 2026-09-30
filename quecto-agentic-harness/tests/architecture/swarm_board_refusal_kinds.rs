@@ -615,22 +615,22 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "Calling",
     ),
     (
-        "src/infrastructure/tools/swarm_board_dispatch_binding.rs:bind",
+        "src/infrastructure/tools/swarm_board_dispatch_binding.rs:refusal",
         "{name}: arguments must be a JSON array or object",
         "Calling",
     ),
     (
-        "src/infrastructure/tools/swarm_board_dispatch_binding.rs:bind",
+        "src/infrastructure/tools/swarm_board_dispatch_binding.rs:refusal",
         "{name}: missing required argument {}",
         "Calling",
     ),
     (
-        "src/infrastructure/tools/swarm_board_dispatch_binding.rs:bind",
+        "src/infrastructure/tools/swarm_board_dispatch_binding.rs:refusal",
         "{name}: takes {} arguments, {} given",
         "Calling",
     ),
     (
-        "src/infrastructure/tools/swarm_board_dispatch_binding.rs:bind",
+        "src/infrastructure/tools/swarm_board_dispatch_binding.rs:refusal",
         "{name}: unexpected argument {key}",
         "Calling",
     ),

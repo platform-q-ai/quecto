@@ -85,7 +85,6 @@ use crate::application::swarm::use_cases::{
 };
 use crate::domain::swarm::{BoardError, BoardOpDetail, RefusalKind};
 
-use self::binding::bind;
 pub use self::binding::{BindingFaults, SchemaField, schema_field, unreadable_arguments};
 use self::method::{Method, Parameter, required};
 pub use super::swarm_board_telemetry::{ActorRefs, TELEMETRY_TARGET};
@@ -316,20 +315,29 @@ pub fn call_as(
         }
         metered
     });
-    // What a binding refusal found wrong (#2341), read before binding
-    // takes the arguments.
-    let faults = known.map(|known| binding::faults(known, &args));
-    let answer = match known {
-        Some(known) => bind(known, known.parameters(), args).and_then(|arguments| {
-            let over = metered
-                .clone()
-                .map(|metered| metered as Arc<dyn BoardRepository>);
-            serve(handles, over, member, known, arguments)
-        }),
-        None => Err(BoardError::new(
-            RefusalKind::Calling,
-            format!("swarm board has no method {method}"),
-        )),
+    // What a binding refusal found wrong (#2341), read only for a call the
+    // binding refuses, or, for a member-facing op the board may refuse as
+    // invalid, its type mismatches before binding takes the arguments.
+    let (answer, faults) = match known {
+        Some(known) => match binding::refusal(known, known.parameters(), &args) {
+            Some(refusal) => (Err(refusal), Some(binding::faults(known, &args))),
+            None => {
+                let faults = binding::mistyped(known, &args);
+                let arguments = binding::slotted(known.parameters(), args);
+                let over = metered
+                    .clone()
+                    .map(|metered| metered as Arc<dyn BoardRepository>);
+                let served = serve(handles, over, member, known, arguments);
+                (served, Some(faults))
+            }
+        },
+        None => (
+            Err(BoardError::new(
+                RefusalKind::Calling,
+                format!("swarm board has no method {method}"),
+            )),
+            None,
+        ),
     };
     let (answer, committed) = split_committed(answer);
     let measure = metered.and_then(|metered| metered.measure());
