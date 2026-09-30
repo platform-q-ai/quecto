@@ -566,6 +566,8 @@ mod context_settings {
             audit_log: None,
             pin_recent_turns: defaults.pin_recent_turns,
             context_collapse_after_messages: defaults.context_collapse_after_messages,
+            large_result_collapse:
+                crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
             model_context_window,
             tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
         })

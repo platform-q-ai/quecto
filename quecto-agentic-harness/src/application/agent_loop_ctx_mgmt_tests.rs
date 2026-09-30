@@ -89,8 +89,8 @@ impl ContextSpillStore for MemSpillStore {
 
 /// Audit sink capturing every emitted event for assertions.
 #[derive(Debug, Default)]
-pub(super) struct CapturingAuditSink {
-    pub(super) events: Mutex<Vec<AuditEvent>>,
+pub(in crate::application::agent_loop) struct CapturingAuditSink {
+    pub(in crate::application::agent_loop) events: Mutex<Vec<AuditEvent>>,
 }
 
 impl AuditSink for CapturingAuditSink {
@@ -129,6 +129,7 @@ fn agent(
         audit_log,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
+        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
@@ -586,6 +587,7 @@ fn agent_loop_config_carries_context_knobs_as_constructor_fields() {
         audit_log: None,
         pin_recent_turns: 5,
         context_collapse_after_messages: 7,
+        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: Some(48_000),
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });

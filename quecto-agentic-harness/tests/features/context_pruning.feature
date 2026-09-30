@@ -636,3 +636,17 @@ Feature: Context pruning via sliding window and tool-call collapse
     When the user sends "go" through the swarm member agent
     Then some pre-run messages are collapsed to recall stubs
     And the prune records name a ceiling of 2000 tokens
+
+  # --- #2348: the size-aware collapse ---
+
+  @issue-2348
+  Scenario: A large tool result the model has seen for its turns collapses to a recall stub
+    Given a configured agent with a mock LLM
+    And the member's large results collapse over 200 tokens once seen for 3 turns
+    And the member reads the board task list, then the board summary 3 times, then replies "done"
+    When the user sends "go" through the swarm member agent
+    Then the board task list is a recall stub of its full answer
+    And recalling the board task list answers it in full
+    And only the newest board summary is in full context
+    And the prune records count 1 collapsed large result
+    And the prune records count 2 superseded summaries

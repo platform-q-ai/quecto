@@ -234,6 +234,7 @@ pub(crate) fn build_uds_agent(
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
+        large_result_collapse: quecto::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     })

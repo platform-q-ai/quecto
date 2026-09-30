@@ -64,10 +64,10 @@ pub use count_dial::{count_to_collapse, tool_results_to_collapse};
 pub struct CeilingLadderOutcome {
     /// Full conversation messages demoted to recall stubs (first rung).
     pub collapsed_to_stubs: usize,
-    /// Stubs removed entirely, manifest-only (second rung).
+    /// Stubs removed entirely (second rung); their calls, moved out, follow.
     pub dropped: usize,
-    /// The budget is still exceeded after full demotion: the pinned/exempt
-    /// set alone, the kept report among it (#2226), is over it (#1044).
+    pub dropped_calls: Vec<crate::domain::message::ToolCall>,
+    /// The pinned/exempt set alone (with the kept report, #2226) is over it.
     pub over_budget: bool,
 }
 
@@ -168,7 +168,7 @@ pub fn enforce_context_ceiling_ladder(
         } else {
             max_tokens
         };
-        outcome.dropped =
+        (outcome.dropped, outcome.dropped_calls) =
             drop_exchanges_until_under_budget(messages, drop_target, &exempt, &groups);
     }
 

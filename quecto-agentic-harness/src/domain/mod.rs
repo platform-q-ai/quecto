@@ -24,6 +24,7 @@ pub mod external_agent;
 pub mod harness_lifetime;
 pub mod html_text;
 pub mod ids;
+pub mod large_result_collapse;
 pub mod message;
 pub mod nat64_prefix;
 pub mod network_destination;

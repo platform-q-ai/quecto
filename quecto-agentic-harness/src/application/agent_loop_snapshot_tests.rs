@@ -20,10 +20,14 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
+use crate::domain::large_result_collapse::LargeResultCollapse;
+
 const SUMMARY_KEY: &str = "swarm.summary";
 const TURNS: u32 = 100;
+/// How the large bash output starts.
+pub(super) const LARGE_HEAD: &str = "commit 0 touched";
 /// A secret-shaped string inside a summary: no record may carry it.
-const SECRET: &str = "sk-live-2342SECRETSHAPEDVALUEabcdef0123456789";
+pub(super) const SECRET: &str = "sk-live-2342SECRETSHAPEDVALUEabcdef0123456789";
 
 /// The coordinator's script: a large bash output at turn 1, a summary
 /// every 6th turn, a small bash result otherwise, then a closing reply.
@@ -37,14 +41,16 @@ fn scripted_call(turn: u32) -> (&'static str, String) {
 
 /// The provider: answers the script and records what each request carries.
 #[derive(Debug, Default)]
-struct ScriptedProvider {
+pub(super) struct ScriptedProvider {
     turn: Mutex<u32>,
     /// Estimated tokens of each request's messages.
     request_tokens: Mutex<Vec<usize>>,
     /// Per request: whether the latest delivered summary was there in full.
-    latest_summary_visible: Mutex<Vec<bool>>,
+    pub(super) latest_summary_visible: Mutex<Vec<bool>>,
     /// Per request: how many summaries it carried in full.
     full_summaries: Mutex<Vec<usize>>,
+    /// Per request: whether it carried the large bash output in full.
+    pub(super) large_in_full: Mutex<Vec<bool>>,
     latest_summary: Arc<Mutex<Option<String>>>,
 }
 
@@ -69,6 +75,11 @@ impl LlmProvider for ScriptedProvider {
             .filter(|m| m.content.starts_with("{\"members\""))
             .count();
         self.full_summaries.lock().unwrap().push(full);
+        let large = request
+            .messages
+            .iter()
+            .any(|m| m.content.starts_with(LARGE_HEAD));
+        self.large_in_full.lock().unwrap().push(large);
         let mut turn = self.turn.lock().unwrap();
         *turn += 1;
         let response = if *turn > TURNS {
@@ -180,13 +191,13 @@ fn text(content: String) -> ToolResult {
     }
 }
 
-struct Run {
-    provider: Arc<ScriptedProvider>,
-    sink: Arc<CapturingAuditSink>,
+pub(super) struct Run {
+    pub(super) provider: Arc<ScriptedProvider>,
+    pub(super) sink: Arc<CapturingAuditSink>,
 }
 
 impl Run {
-    fn total_request_tokens(&self) -> usize {
+    pub(super) fn total_request_tokens(&self) -> usize {
         self.provider.request_tokens.lock().unwrap().iter().sum()
     }
 }
@@ -194,10 +205,12 @@ impl Run {
 /// What a scripted run has on: summaries named snapshots, a swarm
 /// member's ceiling, and the tool-result count dial.
 #[derive(Clone, Copy, Debug)]
-struct Setup {
-    snapshots: bool,
-    cap: Option<usize>,
-    dial: u32,
+pub(super) struct Setup {
+    pub(super) snapshots: bool,
+    pub(super) cap: Option<usize>,
+    pub(super) dial: u32,
+    /// The size-aware collapse (#2348); off in the #2342 measurements.
+    pub(super) large: LargeResultCollapse,
 }
 
 /// The shipped defaults before #2342: no snapshots, no cap, dial 50.
@@ -205,12 +218,14 @@ const BEFORE: Setup = Setup {
     snapshots: false,
     cap: None,
     dial: 50,
+    large: LargeResultCollapse::DISABLED,
 };
 /// After #2342, as a joined swarm member runs: snapshots and the 48k cap.
-const AFTER: Setup = Setup {
+pub(super) const AFTER: Setup = Setup {
     snapshots: true,
     cap: Some(48_000),
     dial: 50,
+    large: LargeResultCollapse::DISABLED,
 };
 
 /// Run the scripted coordinator, `after` or before #2342.
@@ -218,7 +233,7 @@ async fn run_coordinator(after: bool) -> Run {
     run_scripted(if after { AFTER } else { BEFORE }).await
 }
 
-async fn run_scripted(setup: Setup) -> Run {
+pub(super) async fn run_scripted(setup: Setup) -> Run {
     let provider = Arc::new(ScriptedProvider::default());
     let mut registry = MockRegistry::new();
     registry.register(Arc::new(ScriptedBash {
@@ -248,6 +263,7 @@ async fn run_scripted(setup: Setup) -> Run {
         audit_log: Some(sink.clone() as Arc<dyn AuditSink>),
         pin_recent_turns: 2,
         context_collapse_after_messages: 50,
+        large_result_collapse: setup.large,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Child,
     });
@@ -463,6 +479,7 @@ async fn a_failed_call_is_never_a_snapshot() {
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: 50,
+        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Child,
     });

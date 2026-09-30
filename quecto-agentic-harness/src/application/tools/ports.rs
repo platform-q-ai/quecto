@@ -64,6 +64,12 @@ pub trait Tool: Send + Sync {
     fn snapshot_key(&self, _arguments: &str, _content: &str) -> Option<&'static str> {
         None
     }
+
+    /// The result of this call (with `arguments`) no longer stands in the
+    /// conversation in full (#2348 review M1): a pruning rule collapsed it
+    /// to its recall stub, or dropped it. A tool that answers repeats from
+    /// what it delivered (the read cache) forgets that delivery.
+    fn result_collapsed(&self, _arguments: &str) {}
     /// Return the tool's definition for the LLM.
     fn definition(&self) -> ToolDefinition;
 
@@ -176,6 +182,10 @@ pub trait ToolExecutor: Send + Sync {
     fn snapshot_key(&self, _name: &str, _arguments: &str, _content: &str) -> Option<&'static str> {
         None
     }
+
+    /// A result of `name` with `arguments` no longer stands in the
+    /// conversation in full (#2348 review M1): see [`Tool::result_collapsed`].
+    fn result_collapsed(&self, _name: &str, _arguments: &str) {}
 }
 
 /// Port: live runtime policy mutation for registered tools.

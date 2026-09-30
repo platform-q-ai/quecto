@@ -166,8 +166,10 @@ the `submit`. In a later turn, read the task again for its claim token. A
 string `acceptance` such as `"tests pass"` is invalid; use `["tests pass"]`.
 An object `body` is invalid; serialize the message to a string. Do not
 reserve `/tmp` or paths outside the checkout. Ownership is cooperative, not a
-filesystem lock. Stale tokens cannot mutate someone else's work. Store large
-content in artifacts, not messages or evidence fields.
+filesystem lock (bash can bypass it). Stale tokens cannot mutate someone else's work. Store large
+content in artifacts, not messages or evidence fields. Address members by the
+stable member ids `op=summary` lists. A message is accepted, then consumed by
+its `ack`; neither marks any work done. Never edit the store.
 
 ## Coordinator verification and control
 
@@ -203,6 +205,13 @@ content in artifacts, not messages or evidence fields.
   normally confirms the death instead; a recorded loss pauses the run holding
   `failed`, once per member, and ownership is retained until the master
   resumes and you `revoke`. Other members' reconciles record nothing.
+
+Worker evidence is submitted for your review and is immutable under that
+claim token: an identical `submit` retry is safe. To change submitted evidence
+the worker releases and reclaims the task for a new token; do not block a
+submitted task. An amendment keeps the full contract before and after it.
+Persist final evidence before `complete` or `stop`, and report from the
+harness afterward.
 
 Actually inspect command results and independent review before accepting them.
 Worker proposals, an empty queue or a message acknowledgment do not prove done.

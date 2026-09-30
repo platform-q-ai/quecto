@@ -49,6 +49,8 @@ fn llm_turn_end_round_trip() {
         output_tokens: 1830,
         stop_reason: "tool_use".into(),
         duration_ms: 4200,
+        cached_input_tokens: None,
+        cache_write_tokens: None,
     };
     let json = serde_json::to_string(&event).unwrap();
     let back: AuditEvent = serde_json::from_str(&json).unwrap();
@@ -97,6 +99,7 @@ fn context_pruned_round_trip() {
         ladder_stubbed: 3,
         snapshots_superseded: 0,
         ceiling_tokens: 0,
+        large_results_collapsed: 0,
     };
     let json = serde_json::to_string(&event).unwrap();
     let back: AuditEvent = serde_json::from_str(&json).unwrap();
@@ -117,6 +120,7 @@ fn context_pruned_round_trip_preserves_unmet_budget() {
         ladder_stubbed: 0,
         snapshots_superseded: 0,
         ceiling_tokens: 0,
+        large_results_collapsed: 0,
     };
     let json = serde_json::to_string(&event).unwrap();
     assert!(json.contains("\"budget_unmet\":true"), "got: {json}");
@@ -139,6 +143,7 @@ fn context_pruned_records_the_messages_it_stubbed() {
         ladder_stubbed: 1,
         snapshots_superseded: 0,
         ceiling_tokens: 0,
+        large_results_collapsed: 0,
     };
     let json = serde_json::to_string(&event).unwrap();
     assert!(json.contains("\"messages_collapsed\":2"), "got: {json}");
@@ -163,6 +168,7 @@ fn a_context_pruned_record_from_before_2214_reads_as_nothing_stubbed() {
             ladder_stubbed: 0,
             snapshots_superseded: 0,
             ceiling_tokens: 0,
+            large_results_collapsed: 0,
         }
     );
 }

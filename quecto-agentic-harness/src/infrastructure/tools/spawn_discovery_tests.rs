@@ -317,7 +317,75 @@ fn the_spawn_and_swarm_descriptions_stay_within_the_budget() {
     );
     let swarm_len = include_str!("swarm_helpers/tool_description.txt").len();
     assert!(
-        swarm_len <= DESCRIPTION_BUDGET_BYTES,
+        swarm_len <= SWARM_DESCRIPTION_BUDGET_BYTES,
         "swarm description is {swarm_len} bytes"
     );
+}
+
+/// #2348: every member request carries the swarm description, so it holds
+/// the op grammar and what every member needs; the coordinator's prose
+/// (verification, recovery, awaiting approval) lives in the docs page.
+/// Ratcheted down from 8,192 (8,000 before #2348): it only shrinks.
+const SWARM_DESCRIPTION_BUDGET_BYTES: usize = 3_584;
+
+#[test]
+fn the_swarm_descriptions_coordinator_prose_is_in_the_docs_page() {
+    let description = include_str!("swarm_helpers/tool_description.txt");
+    let docs = crate::infrastructure::tools::docs::lookup_doc("swarm").unwrap();
+    assert!(
+        description.contains(r#"docs {"name":"swarm"}: coordinators read it before op=create"#),
+        "the description sends a coordinator to the docs page"
+    );
+    for moved in [
+        "keep the run **running**",
+        "the master can resume or close",
+        "is immutable under that",
+        "releases and reclaims the task for a new token",
+        "Do not pause a run because one member failed",
+        "records the loss, after a ten-second grace",
+        "Never edit the store",
+        "stable member ids",
+    ] {
+        assert!(docs.contains(moved), "the docs page lacks {moved:?}");
+    }
+    for prose in [
+        "Awaiting master clarification",
+        "ten-second grace",
+        "re-arms",
+    ] {
+        assert!(
+            !description.contains(prose),
+            "{prose:?} is coordinator prose"
+        );
+    }
+}
+
+/// #2348 review M2: the docs page a coordinator read collapses to a stub
+/// three turns later, so the rules no refusal teaches stay in the
+/// description: verify before accepting, revoke/recover need a running
+/// run, a recorded loss pauses it.
+#[test]
+fn the_swarm_description_keeps_the_coordinators_verify_rule() {
+    let description = include_str!("swarm_helpers/tool_description.txt");
+    for rule in [
+        "verify artifacts and independent review before accepting evidence or complete",
+        "revoke/recover need a running run",
+        "a recorded loss pauses the run",
+    ] {
+        assert!(description.contains(rule), "missing {rule:?}");
+    }
+}
+
+/// #2348 final review: worker rules live on the docs page too, so the
+/// description sends every member there and keeps the most important.
+#[test]
+fn the_swarm_description_sends_members_to_the_docs_page() {
+    let description = include_str!("swarm_helpers/tool_description.txt");
+    for rule in [
+        "members before their first board op",
+        "large content in artifacts",
+        "never edit the store",
+    ] {
+        assert!(description.contains(rule), "missing {rule:?}");
+    }
 }

@@ -136,6 +136,7 @@ fn given_real_retention_agent(world: &mut QuectoWorld, session_name: String) {
         audit_log: None,
         pin_recent_turns: 0,
         context_collapse_after_messages: u32::MAX,
+        large_result_collapse: quecto::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     });

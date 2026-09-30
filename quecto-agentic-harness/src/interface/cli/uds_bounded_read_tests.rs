@@ -37,6 +37,7 @@ fn make_agent() -> AgentLoopImpl {
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
+        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })

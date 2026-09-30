@@ -96,6 +96,9 @@ pub struct AgentLoopConfig {
     /// (`u32::MAX` / `COLLAPSE_DISABLED` disables). Constructor field for the
     /// same reason as `pin_recent_turns`.
     pub context_collapse_after_messages: u32,
+    /// #2348: the size-aware collapse (`LargeResultCollapse::DISABLED`
+    /// switches it off). Constructor field for the same reason.
+    pub large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse,
     /// #1044: active model context window (`None` unknown); bounds pruning budget.
     pub model_context_window: Option<usize>,
     pub tool_profile_context: ToolProfileContext,
@@ -173,6 +176,7 @@ impl AgentLoopImpl {
             max_context_tokens: config.max_context_tokens,
             pin_recent_turns: config.pin_recent_turns,
             context_collapse_after_messages: config.context_collapse_after_messages,
+            large_result_collapse: config.large_result_collapse,
             model_context_window: config.model_context_window,
         });
         Self {

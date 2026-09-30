@@ -107,3 +107,19 @@ fn snapshot_key_is_none_unless_the_tool_names_a_whole_snapshot() {
     );
     assert_eq!(swarm.snapshot_key(r#"{"op":"inbox"}"#, whole), None);
 }
+
+/// #2348 review M1: after `result_collapsed(arguments)` a tool that answers
+/// repeats from what it delivered answers in full again; a tool that keeps
+/// no such state is unaffected (the default does nothing).
+#[tokio::test]
+async fn result_collapsed_makes_the_next_answer_whole() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("a.txt"), "alpha\n").unwrap();
+    let tool = read_tool(tmp.path().to_path_buf());
+    let args = r#"{"path":"a.txt"}"#;
+    tool.execute(args).await.unwrap();
+    tool.result_collapsed(args);
+    assert!(tool.execute(args).await.unwrap().content.contains("alpha"));
+    let swarm = quecto::infrastructure::tools::swarm::SwarmTool::new();
+    swarm.result_collapsed(r#"{"op":"summary"}"#);
+}

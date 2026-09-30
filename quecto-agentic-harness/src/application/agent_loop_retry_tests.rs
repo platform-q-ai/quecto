@@ -35,6 +35,7 @@ async fn retries_retryable_provider_failures_before_returning_success() {
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
+        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
@@ -73,6 +74,7 @@ async fn retries_streaming_provider_failures_before_any_output() {
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
+        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
@@ -111,6 +113,7 @@ async fn does_not_retry_streaming_provider_failures_after_output() {
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
+        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
@@ -150,6 +153,7 @@ async fn does_not_retry_non_streaming_openai_insufficient_quota_429() {
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
+        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
@@ -186,6 +190,7 @@ async fn does_not_retry_streaming_openai_insufficient_quota_429() {
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
+        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
@@ -221,6 +226,7 @@ async fn provider_context_limit_errors_are_actionable() {
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
+        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
@@ -267,6 +273,7 @@ async fn retries_empty_streaming_done_before_success() {
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
+        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
@@ -310,6 +317,7 @@ async fn empty_streaming_done_with_max_tokens_preserves_stop_reason() {
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
+        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
@@ -353,6 +361,7 @@ async fn paused_execution_never_calls_provider() {
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
+        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
@@ -390,6 +399,7 @@ async fn long_reset_horizon_prevents_stream_initiation_retry() {
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
+        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
@@ -435,6 +445,7 @@ async fn a_stalled_stream_is_retried_once_with_its_own_guidance() {
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
+        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
@@ -472,6 +483,7 @@ fn streaming_agent(provider: Arc<MockStreamingProvider>) -> AgentLoopImpl {
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
+        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
@@ -647,6 +659,7 @@ async fn a_request_answered_first_time_is_admitted_once() {
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
+        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })

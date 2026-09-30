@@ -144,3 +144,26 @@ fn snapshot_key_is_the_registered_tools_own_answer() {
     assert_eq!(executor.snapshot_key("alpha", "{}", "x"), None);
     assert_eq!(executor.snapshot_key("nonexistent", "{}", "x"), None);
 }
+
+/// #2348 review M1: `result_collapsed(name, ..)` reaches the registered
+/// tool; an unknown name is ignored.
+#[tokio::test]
+async fn result_collapsed_reaches_the_registered_tool() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("a.txt"), "alpha\n").unwrap();
+    let workspace = Arc::new(tmp.path().to_path_buf());
+    let sandbox = Arc::new(quecto::infrastructure::security::sandbox::Sandbox::new(
+        Some(tmp.path().to_path_buf()),
+    ));
+    let mut reg = ToolRegistryImpl::new();
+    reg.register(Arc::new(
+        quecto::infrastructure::tools::filesystem::ReadTool::new(workspace, sandbox),
+    ));
+    let executor: Arc<dyn ToolExecutor> = Arc::new(reg);
+    let args = r#"{"path":"a.txt"}"#;
+    executor.execute("read", args).await.unwrap();
+    executor.result_collapsed("read", args);
+    executor.result_collapsed("nonexistent", args);
+    let again = executor.execute("read", args).await.unwrap();
+    assert!(again.content.contains("alpha"), "{}", again.content);
+}

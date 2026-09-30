@@ -177,3 +177,78 @@ impl<'writer> tracing_subscriber::fmt::MakeWriter<'writer> for CapturedLog {
         self.clone()
     }
 }
+
+/// #2348: the size-aware collapse's dials reach the built loop.
+#[test]
+fn build_agent_from_config_threads_the_size_aware_collapse_into_the_loop() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("config.json"),
+        r#"{"providers":{"fireworks":{"api_key":"k"}},"agents":{"defaults":{"context_collapse_large_result_tokens":4000,"context_collapse_large_result_after_turns":5}}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{"fireworks":{"api":"openai-completions","baseUrl":"https://e.example/v1","apiKey":"k","models":[{"id":"small-window","contextWindow":100000}]}}}"#,
+    )
+    .unwrap();
+    let flags = flags_for_wiring_test();
+    let mut stderr = String::new();
+    let cfg = tmp.path().join("config.json");
+    let result = build_agent_from_config(
+        tmp.path(),
+        &selection_for_test(&cfg, false),
+        &flags,
+        &mut stderr,
+        None,
+    )
+    .expect("agent build should succeed");
+    assert_eq!(
+        result.agent.large_result_switch().dial(),
+        crate::domain::large_result_collapse::LargeResultCollapse {
+            over_tokens: 4_000,
+            after_turns: 5,
+        }
+    );
+}
+
+/// #2348 review M1: unset, the size-aware collapse is off for an ordinary
+/// agent and engages, at the swarm default, when its process joins a swarm.
+#[test]
+fn joining_a_swarm_engages_the_size_aware_collapse() {
+    use crate::domain::large_result_collapse::LargeResultCollapse;
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("config.json"),
+        r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#,
+    )
+    .unwrap();
+    let cfg = tmp.path().join("config.json");
+    let participation = crate::infrastructure::tools::swarm_bridge::Participation::shared();
+    let mut flags = flags_for_wiring_test();
+    flags.model_override = None;
+    flags.swarm_participation = participation.clone();
+    let mut stderr = String::new();
+    let member = build_agent_from_config(
+        tmp.path(),
+        &selection_for_test(&cfg, false),
+        &flags,
+        &mut stderr,
+        None,
+    )
+    .expect("agent build should succeed");
+    assert_eq!(
+        member.agent.large_result_switch().dial(),
+        LargeResultCollapse::DISABLED,
+        "off for an agent that takes part in no swarm"
+    );
+    participation.set(true);
+    assert_eq!(
+        member.agent.large_result_switch().dial(),
+        LargeResultCollapse {
+            over_tokens: 2_000,
+            after_turns: 3,
+        },
+        "on at the swarm default from the moment the process joins"
+    );
+}

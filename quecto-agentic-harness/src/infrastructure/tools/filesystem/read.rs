@@ -30,6 +30,10 @@ pub struct ReadTool {
 #[derive(Default)]
 struct ReadCache {
     entries: HashMap<ReadCacheKey, ReadCacheEntry>,
+    /// The canonical file each requested `path` argument resolved to when
+    /// its delivery was cached (#2348): a collapse notice finds the file
+    /// without touching the filesystem.
+    resolved: HashMap<String, PathBuf>,
     next_sequence: u64,
 }
 
@@ -60,6 +64,29 @@ impl Tool for ReadTool {
     /// Reads only: calls may overlap (#2169).
     fn overlaps_safely(&self, _arguments: &str) -> bool {
         true
+    }
+
+    /// The model no longer holds this read's content in full (#2348 review
+    /// M1): forget every cached delivery of its file, so the next read
+    /// answers the content instead of the unchanged marker.
+    fn result_collapsed(&self, arguments: &str) {
+        let Some(path) = serde_json::from_str::<serde_json::Value>(arguments)
+            .ok()
+            .and_then(|args| {
+                args.get("path")
+                    .and_then(|p| p.as_str())
+                    .map(str::to_string)
+            })
+        else {
+            return;
+        };
+        // No filesystem call here: the notice runs on the async pruning
+        // path, so the file is the one this argument resolved to when read.
+        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(cache_path) = cache.resolved.get(&path).cloned() else {
+            return;
+        };
+        cache.entries.retain(|key, _| key.path != cache_path);
     }
 
     fn definition(&self) -> ToolDefinition {
@@ -223,7 +250,8 @@ impl Tool for ReadTool {
                     if entry.hash == hash {
                         return Ok(ToolResult {
                             content: format!(
-                                "[unchanged since read {}, hash match, {} lines]",
+                                "[unchanged since read {}, hash match, {} lines; if you no \
+                                 longer have its full content, pass force:true]",
                                 entry.sequence, entry.line_count
                             ),
                             is_error: false,
@@ -235,7 +263,7 @@ impl Tool for ReadTool {
             }
 
             let output = apply_read_truncation(&content, path, offset, limit)?;
-            update_read_cache(cache, key, hash, line_count)?;
+            update_read_cache(cache, path, key, hash, line_count)?;
 
             Ok(ToolResult {
                 content: output,
@@ -354,6 +382,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 
 fn update_read_cache(
     cache: Arc<Mutex<ReadCache>>,
+    requested: &str,
     key: ReadCacheKey,
     hash: String,
     line_count: usize,
@@ -368,6 +397,9 @@ fn update_read_cache(
             cache.next_sequence
         }
     };
+    cache
+        .resolved
+        .insert(requested.to_string(), key.path.clone());
     cache.entries.insert(
         key,
         ReadCacheEntry {

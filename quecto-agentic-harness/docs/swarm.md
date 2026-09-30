@@ -651,11 +651,25 @@ a swarm its pruning budget is capped at `agents.defaults.swarm_max_context_token
 (default 48000, or `QUECTO_SWARM_MAX_CONTEXT_TOKENS`; it never disengages,
 and setting it at or above `max_context_tokens` switches it off), and each
 full `summary` answer supersedes the member's older
-ones, which collapse to recall stubs while the newest stays in full. Each prune
-that does either is visible in the event log's `context_pruned` record
-(`snapshots_superseded`, `ceiling_tokens`); the moment the cap engages is a
+ones, which collapse to recall stubs while the newest stays in full. A large
+tool result (a long bash output, a `docs` or `web_fetch` read) collapses to its
+recall stub once the member has seen it for 3 turns (#2348; on by default only
+for swarm members, and a `recall` answer or a result with images is exempt). Each prune
+that does any of these is visible in the event log's `context_pruned` record
+(`snapshots_superseded`, `large_results_collapsed`, `ceiling_tokens`), and each
+turn's `llm_turn_end` records the cached share of its input
+(`cached_input_tokens`) and the share written to the cache
+(`cache_write_tokens`); the moment the cap engages is a
 `quecto::swarm_board` tracing event. See
 [Sessions](sessions.md#context-management) for the dials.
+
+Every member request also carries the `swarm` tool definition, so its
+description (#2348) holds only the op grammar and what every member needs:
+3.5 KB, about 1.4k estimated tokens with the schema (2.5k before). The
+coordinator's prose (verification, recovery, awaiting approval, supervisor
+controls) is in the [agent manual](docs-tool-embeds/swarm.md), which the
+description tells a coordinator to read before `op=create`. A test pins the
+description at 3,584 bytes; the budget only shrinks.
 
 Each attempted logical request records available provider input/output/cache
 usage, unavailable values as null, retry and OAuth-refresh counters, outcome,

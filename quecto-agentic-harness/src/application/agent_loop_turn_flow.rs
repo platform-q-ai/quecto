@@ -331,6 +331,17 @@ impl AgentLoopImpl {
                     output_tokens: output_toks,
                     stop_reason: stop,
                     duration_ms,
+                    // #2348: the share the provider's prompt cache served.
+                    cached_input_tokens: response
+                        .usage
+                        .as_ref()
+                        .and_then(|u| u.cache_read_tokens)
+                        .map(|n| n as usize),
+                    cache_write_tokens: response
+                        .usage
+                        .as_ref()
+                        .and_then(|u| u.cache_write_tokens)
+                        .map(|n| n as usize),
                 },
             )
             .await;
@@ -526,3 +537,8 @@ impl AgentLoopImpl {
         }
     }
 }
+
+// #2348: the cached share of the input on `llm_turn_end`.
+#[cfg(test)]
+#[path = "agent_loop_cached_tokens_tests.rs"]
+mod cached_tokens_tests;

@@ -5,7 +5,7 @@
 // the message list.
 
 use super::{estimate_message_tokens, estimate_total_tokens};
-use crate::domain::message::{Message, Role};
+use crate::domain::message::{Message, Role, ToolCall};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Per message, the exchange it belongs to: the index of the assistant
@@ -47,15 +47,15 @@ pub(super) fn keep_exchanges_whole(exempt: &mut [bool], groups: &[usize]) {
 }
 
 /// Remove whole non-exempt exchanges, oldest first, until the total fits
-/// `max_tokens`, in a single pass. Never stops inside an exchange. Returns
-/// the number of messages removed. `exempt` must already be whole over
-/// exchanges ([`keep_exchanges_whole`]).
+/// `max_tokens`, in a single pass. Never stops inside an exchange. Returns the
+/// number of messages removed and the calls they carried, moved out (#2348).
+/// `exempt` must already be whole over exchanges ([`keep_exchanges_whole`]).
 pub(super) fn drop_exchanges_until_under_budget(
     messages: &mut Vec<Message>,
     max_tokens: usize,
     exempt: &[bool],
     groups: &[usize],
-) -> usize {
+) -> (usize, Vec<ToolCall>) {
     let mut units: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
     for (index, (&keep, &group)) in exempt.iter().zip(groups).enumerate() {
         if !keep {
@@ -74,13 +74,13 @@ pub(super) fn drop_exchanges_until_under_budget(
         }
     }
     let dropped = dropping.iter().filter(|&&drop| drop).count();
-    if dropped > 0 {
-        let mut index = 0;
-        messages.retain(|_| {
-            let keep = !dropping[index];
-            index += 1;
-            keep
-        });
+    let mut calls = Vec::new();
+    let kept = Vec::with_capacity(messages.len() - dropped);
+    for (msg, drop) in std::mem::replace(messages, kept).into_iter().zip(dropping) {
+        match drop {
+            true => calls.extend(msg.tool_calls),
+            false => messages.push(msg),
+        }
     }
-    dropped
+    (dropped, calls)
 }
