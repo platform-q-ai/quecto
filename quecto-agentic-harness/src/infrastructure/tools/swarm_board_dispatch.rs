@@ -86,7 +86,7 @@ use crate::application::swarm::use_cases::{
 use crate::domain::swarm::{BoardError, BoardOpDetail, RefusalKind};
 
 use self::binding::bind;
-pub use self::binding::{schema_field, unreadable_arguments};
+pub use self::binding::{BindingFaults, SchemaField, schema_field, unreadable_arguments};
 use self::method::{Method, Parameter, required};
 pub use super::swarm_board_telemetry::{ActorRefs, TELEMETRY_TARGET};
 use super::swarm_board_telemetry::{Caller, Finished, Level, Served, split_committed};

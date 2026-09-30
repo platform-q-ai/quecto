@@ -40,12 +40,14 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value, json};
 
-use super::swarm_board_dispatch::{BoardWire, TELEMETRY_TARGET, unreadable_arguments};
+use super::swarm_board_dispatch::{
+    BindingFaults, BoardWire, TELEMETRY_TARGET, unreadable_arguments,
+};
 use super::swarm_bridge::SwarmContext;
 use super::swarm_control::AfterExecution;
 use super::swarm_output::tool_err;
 use crate::domain::error::DomainError;
-use crate::domain::swarm::{ArgumentFaults, RefusalKind};
+use crate::domain::swarm::RefusalKind;
 use crate::domain::tool::ToolResult;
 
 /// One argument of a board op: its name, its JSON schema (as JSON text),
@@ -332,7 +334,7 @@ pub(super) struct BoardOpRequest {
     spec: &'static OpSpec,
     /// The arguments, or why the text was refused and which fields it
     /// could not hold (#2341).
-    arguments: Result<Map<String, Value>, (String, ArgumentFaults)>,
+    arguments: Result<Map<String, Value>, (String, BindingFaults)>,
     wire: BoardWire,
 }
 
@@ -407,7 +409,7 @@ async fn blocking<T: Send + 'static>(
 /// found wrong in the arguments (#2341), then answers `text`.
 async fn refuse(
     context: &SwarmContext,
-    (op, kind, faults): (&'static str, RefusalKind, ArgumentFaults),
+    (op, kind, faults): (&'static str, RefusalKind, BindingFaults),
     started: Instant,
     text: String,
 ) -> Result<ToolResult, DomainError> {
@@ -441,7 +443,7 @@ async fn serve(
     };
     if let Some((kind, gate, text)) = gated(op, &status) {
         record.gate = gate;
-        return refuse(context, (op, kind, ArgumentFaults::NONE), started, text).await;
+        return refuse(context, (op, kind, BindingFaults::NONE), started, text).await;
     }
     let before = match record.read_only {
         true => None,
@@ -470,7 +472,7 @@ async fn unreadable(
     error: &DomainError,
 ) -> Result<ToolResult, DomainError> {
     record.gate = "unreadable";
-    let refusal = (op, RefusalKind::Store, ArgumentFaults::NONE);
+    let refusal = (op, RefusalKind::Store, BindingFaults::NONE);
     refuse(context, refusal, started, error.to_string()).await
 }
 

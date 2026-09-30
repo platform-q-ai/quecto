@@ -629,3 +629,29 @@ fn argument_faults_are_flat_and_left_out_when_empty() {
         assert!(!shaped(text).names_are_kinds(), "{text}");
     }
 }
+
+/// #2346 review: a `swarm_op` line an older writer wrote, without the
+/// argument fields, reads back with none.
+#[test]
+fn an_older_swarm_op_line_reads_with_no_argument_faults() {
+    let line = json!({
+        "event": "swarm_op",
+        "op": "claim",
+        "actor_ref": "worker-1",
+        "role": "worker",
+        "run_id": null,
+        "outcome": "refused",
+        "kind": "calling",
+        "duration_us": 5,
+        "lock_wait_us": null,
+        "busy_wait_us": null,
+        "busy": null,
+        "cursor_moved": null,
+        "result_bytes": 0,
+    });
+    let AuditEvent::SwarmOp(read) = serde_json::from_value::<AuditEvent>(line).unwrap() else {
+        panic!("a swarm_op line reads as one");
+    };
+    assert_eq!(*read.arguments, ArgumentFaults::NONE);
+    assert_eq!(read.detail, BoardOpDetail::NONE);
+}

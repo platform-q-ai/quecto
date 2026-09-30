@@ -21,10 +21,10 @@ use serde_json::Value;
 use crate::application::swarm::dto::BoardLocation;
 use crate::application::swarm::ports::{BoardOpLog, SessionOpLog};
 use crate::domain::error::DomainError;
-use crate::domain::swarm::{ArgumentFaults, RefusalKind};
+use crate::domain::swarm::RefusalKind;
 use crate::infrastructure::persistence::audit_log::AuditLog;
 use crate::infrastructure::tools::swarm_board_dispatch::{
-    self, BoardWire, CallOrigin, SwarmBoardHandles, TELEMETRY_TARGET,
+    self, BindingFaults, BoardWire, CallOrigin, SwarmBoardHandles, TELEMETRY_TARGET,
 };
 
 /// Builds the board handles over one board file, recording each call in
@@ -300,7 +300,7 @@ impl SwarmBoard {
         location: BoardLocation,
         member: &str,
         method: &str,
-        (kind, arguments): (RefusalKind, ArgumentFaults),
+        (kind, arguments): (RefusalKind, BindingFaults),
         elapsed: Duration,
     ) {
         let handles = self.handles(location);

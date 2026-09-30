@@ -9,12 +9,14 @@ use std::time::Duration;
 use serde_json::Value;
 
 use super::super::swarm_board_telemetry::{
-    Caller, Finished, Served, TELEMETRY_TARGET, observation, trace,
+    Caller, Finished, Served, TELEMETRY_TARGET, actor_ref, observation, trace,
 };
+use super::BindingFaults;
 use super::method::Method;
 use super::{Level, SwarmBoardHandles};
 use crate::application::swarm::dto::CallMeasure;
-use crate::domain::swarm::{ArgumentFaults, BoardRole, RefusalKind};
+use crate::domain::redaction::Redacted;
+use crate::domain::swarm::{BoardRole, RefusalKind};
 
 /// Whom a board call is made for (#2279 S15 final review): the calling
 /// member, whose role in the run a member-facing op records, or the
@@ -56,25 +58,30 @@ pub(super) fn record(
     served: Option<&Served>,
     measure: Option<CallMeasure>,
 ) {
+    let actor = handles
+        .telemetry
+        .as_ref()
+        .map(|telemetry| telemetry.actors.of(finished.member, caller));
     if !finished.arguments.is_empty() {
-        trace_arguments(finished);
+        let actor = actor.clone().unwrap_or_else(|| actor_ref(finished.member));
+        trace_arguments(finished, &actor);
     }
-    match &handles.telemetry {
-        Some(telemetry) => {
-            let actor = telemetry.actors.of(finished.member, caller);
+    match (&handles.telemetry, actor) {
+        (Some(telemetry), Some(actor)) => {
             trace(finished, measure.as_ref(), Some(&actor));
             let observation = observation(finished, actor, caller, served, measure);
             telemetry.log.record(observation);
         }
-        None => trace(finished, None, None),
+        (Some(_), None) | (None, _) => trace(finished, None, None),
     }
 }
 
 /// The `tracing` record of a binding refusal's faults (#2341), on the
 /// board's target: the op and the schema names only, each list
-/// comma-joined (`missing_args=token,reason`).
-fn trace_arguments(finished: &Finished<'_>) {
-    let faults = &finished.arguments;
+/// comma-joined (`missing_args=token,reason`), and the caller's redacted
+/// `actor` ref, which matches it to the call's own record (#2346 review).
+fn trace_arguments(finished: &Finished<'_>, actor: &Redacted) {
+    let faults = finished.arguments.record();
     let unexpected = faults.unexpected_args.as_ref();
     let known = unexpected.map_or(&[][..], |unexpected| &unexpected.known[..]);
     let wrong: Vec<String> = faults
@@ -85,6 +92,7 @@ fn trace_arguments(finished: &Finished<'_>) {
     tracing::info!(
         target: TELEMETRY_TARGET,
         op = finished.op,
+        member = actor.as_str(),
         missing_args = %faults.missing_args.join(","),
         unexpected_args = unexpected.map_or(0, |unexpected| unexpected.count),
         unexpected_known = %known.join(","),
@@ -105,7 +113,7 @@ pub fn refused(
     member: &str,
     method: &str,
     kind: RefusalKind,
-    arguments: ArgumentFaults,
+    arguments: BindingFaults,
     elapsed: Duration,
 ) {
     let known = Method::parse(method);

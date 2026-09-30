@@ -779,16 +779,20 @@ body, evidence, reason, path or other board text:
 | `placeholder_created` | For `_bootstrap`, whether it wrote the container's placeholder run; its `decision` is the join's branch (`admitted`, `already_live`, `reactivated`), as `_join`'s is, or `placeholder` for a `committed` refusal met before the join took a branch; `create`'s is `fresh` or `over_setup` |
 | `missing_args` | For a `calling` or `invalid` refusal (#2341), the required arguments the call left out, by their schema names, every one (not only the first the refusal's text names); a parameter no `swarm` op's schema has (a harness-internal method's) is left out. Left out when there are none |
 | `unexpected_args` | For a `calling` or `invalid` refusal, `{"count": N, "known": [...]}`: how many keys (or positional values) the op's signature has no parameter for, and, in `known`, those that are a schema field of some other op (a field sent to the wrong op). Any other key is counted only, never named, so no text a member typed as a key reaches the log. `known` is left out when empty, the field when there are none |
-| `wrong_type_args` | For a `calling` or `invalid` refusal of a member-facing op, `[{"arg": ..., "expected": ...}]`: each argument given a value of another JSON type than its schema's, and that type (`integer`, `string`, `boolean`, `string_or_null`, `integer_or_null`, `array_of_string`, `array_of_object`, `array_of_integer_or_null`); an array whose items are of another type counts. It compares with the schema, not with the board's own checks: a task id given as `"2"` binds (as Python binds it) and is recorded only if the op is refused as `calling` or `invalid` for another reason. Left out when there are none |
+| `wrong_type_args` | For a `calling` or `invalid` refusal of a member-facing op, `[{"arg": ..., "expected": ...}]`: each argument given a value of another JSON type than its schema's, and that type (`integer`, `string`, `boolean`, `null_or_string`, `null_or_integer`, `array_of_string`, `array_of_object`, `null_or_array_of_integer`; `null` first when it is allowed). An array whose items are of another type counts; an item's own properties are not checked (an `evidence` item need only be an object). It compares with the schema, not with the board's own checks, and is kept for any `invalid` refusal, the board's own validation included, so it can name a field that is not the refusal's cause: `task_create` with an empty `acceptance` list and a numeric `request` is refused for the list, and records `request` (which the board binds untyped, as Python does). Left out when there are none |
 | `unreadable_args` | For member input refused before the board as `invalid` (#2341): the schema field whose value the board's JSON value cannot hold (`1e400`, an integer beyond i64 and u64, a lone surrogate), or `arguments` for the text as a whole: text that is no JSON (the `unknown` op's record), arguments that are no array or object, or such a value under a key no schema field names. Left out otherwise |
 | `ended_by_loss` | For a recorded loss (`_quarantine`'s `recorded`, `_lose_coordinator`) or a confirmed death, whether the op ended the run by loss; left out when the op recorded neither |
 
 Every name in `missing_args`, `unexpected_args.known`, `wrong_type_args` and
 `unreadable_args` is a field name of the `swarm` tool's schema (the board ops'
-table, `BOARD_OPS`), or `arguments`: the record carries the table's own name,
-checked against that allowlist, never the member's text. Each binding refusal
-also leaves one `swarm board call arguments` `tracing` record (INFO, target
-`quecto::swarm_board`) with the op and the same names comma-joined
+table, `BOARD_OPS`), or `arguments`. This holds by type: the dispatcher records
+only a `SchemaField`, the table's own `&'static str`, which nothing but the
+table lookup (`schema_field`) can construct, so no member text (nor any other
+string) can become a recorded name, in a release build too; debug builds also
+assert it on every record. Each binding refusal also leaves one
+`swarm board call arguments` `tracing` record (INFO, target
+`quecto::swarm_board`) with the op, the caller's redacted `member` ref (as the
+call's own `swarm board call` record has it) and the same names comma-joined
 (`missing_args=token,reason`, `unexpected_args=2`, `unexpected_known=title`,
 `wrong_type_args=acceptance:array_of_string`, `unreadable_args=task_id`), also
 while the event log is off. To see what members got wrong in a run:

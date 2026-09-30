@@ -3,8 +3,9 @@
 //! wrong, for the call's records (#2341).
 //!
 //! The records name arguments by the `swarm` tool's schema only
-//! ([`BOARD_OPS`]): every name recorded is the table's own `&'static str`,
-//! found by [`schema_field`], never the member's text. An unexpected key
+//! ([`BOARD_OPS`]): every name recorded is a [`SchemaField`], the table's
+//! own `&'static str`, which only [`schema_field`] makes, never the
+//! member's text. An unexpected key
 //! is counted and named only when some op's schema has that field; a
 //! parameter no schema field names (a harness-internal method's) is left
 //! out; and `arguments` stands for the arguments as a whole (text that is
@@ -79,19 +80,116 @@ pub(super) fn bind(
         .collect()
 }
 
+/// A field name of some board op's schema (#2346 review M): the
+/// [`BOARD_OPS`] table's own `&'static str`. Its field is private and only
+/// [`schema_field`] makes one, so no text from outside (a member's key, a
+/// caller's string) can become a name a record carries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SchemaField(&'static str);
+
+impl SchemaField {
+    pub fn as_str(self) -> &'static str {
+        self.0
+    }
+}
+
 /// The field `key` names in some board op's schema: the table's own name,
 /// so a record names it and never the text it was given as; `None` for
 /// any other key.
-pub fn schema_field(key: &str) -> Option<&'static str> {
+pub fn schema_field(key: &str) -> Option<SchemaField> {
     BOARD_OPS
         .iter()
         .flat_map(|spec| spec.args.iter())
         .map(|arg| arg.name)
         .find(|name| *name == key)
+        .map(SchemaField)
+}
+
+/// A name an unreadable argument is recorded under: its schema field, or
+/// [`WHOLE`] for the arguments as a whole.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ArgName {
+    Field(SchemaField),
+    Whole,
+}
+
+impl ArgName {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Field(field) => field.as_str(),
+            Self::Whole => WHOLE,
+        }
+    }
+}
+
+/// What a refusal raised while binding a call's arguments found wrong
+/// (#2341), as the dispatcher records it. Every name is a [`SchemaField`]
+/// (or [`WHOLE`]) and every type label the schema table's own, and its
+/// fields are private: only [`faults`] and [`unreadable_arguments`] make
+/// one with anything in it, so the allowlist holds by type, in a release
+/// build too (#2346 review M). [`Self::record`] is the event log's form.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BindingFaults {
+    missing: Vec<SchemaField>,
+    unexpected: u64,
+    unexpected_known: Vec<SchemaField>,
+    wrong_type: Vec<(SchemaField, &'static str)>,
+    unreadable: Vec<ArgName>,
+}
+
+impl BindingFaults {
+    /// Nothing found wrong.
+    pub const NONE: Self = Self {
+        missing: Vec::new(),
+        unexpected: 0,
+        unexpected_known: Vec::new(),
+        wrong_type: Vec::new(),
+        unreadable: Vec::new(),
+    };
+
+    pub fn is_empty(&self) -> bool {
+        self == &Self::NONE
+    }
+
+    /// The faults as the `swarm_op` record carries them.
+    pub fn record(&self) -> ArgumentFaults {
+        let names = |fields: &[SchemaField]| {
+            fields
+                .iter()
+                .map(|field| field.as_str().to_owned())
+                .collect()
+        };
+        let recorded = ArgumentFaults {
+            missing_args: names(&self.missing),
+            unexpected_args: (self.unexpected > 0).then(|| UnexpectedArgs {
+                count: self.unexpected,
+                known: names(&self.unexpected_known),
+            }),
+            wrong_type_args: self
+                .wrong_type
+                .iter()
+                .map(|(field, expected)| WrongTypeArg {
+                    arg: field.as_str().to_owned(),
+                    expected: (*expected).to_owned(),
+                })
+                .collect(),
+            unreadable_args: self
+                .unreadable
+                .iter()
+                .map(|name| name.as_str().to_owned())
+                .collect(),
+        };
+        debug_assert!(
+            allowlisted(&recorded),
+            "argument faults name schema fields only"
+        );
+        recorded
+    }
 }
 
 /// Whether every name `faults` holds is a schema field (or [`WHOLE`]):
-/// the allowlist every record is held to.
+/// the allowlist every record is held to, which [`BindingFaults`] keeps by
+/// type; checked again, in debug builds, on every record made.
 pub(super) fn allowlisted(faults: &ArgumentFaults) -> bool {
     let known = |name: &String| name == WHOLE || schema_field(name).is_some();
     let unexpected = faults
@@ -109,43 +207,45 @@ pub(super) fn allowlisted(faults: &ArgumentFaults) -> bool {
         && faults.names_are_kinds()
 }
 
-/// The faults a call's records keep: `faults` for a refusal the binding
-/// raises (`calling`: an argument missing or unexpected; `invalid`: a
-/// value refused), none for any other outcome.
+/// The faults a call's records keep: `faults` for a `calling` refusal (the
+/// binding's own: an argument missing or unexpected) or an `invalid` one
+/// (a value refused: before the board, or by the board's own checks,
+/// whose cause the faults need not be; see [`faults`]), none for any
+/// other outcome.
 pub(super) fn recorded<T>(
     outcome: &Result<T, RefusalKind>,
-    faults: Option<ArgumentFaults>,
-) -> ArgumentFaults {
-    let kept = match outcome {
+    faults: Option<BindingFaults>,
+) -> BindingFaults {
+    match outcome {
         Err(RefusalKind::Calling | RefusalKind::Invalid) => faults.unwrap_or_default(),
-        _ => ArgumentFaults::NONE,
-    };
-    debug_assert!(
-        allowlisted(&kept),
-        "argument faults name schema fields only"
-    );
-    kept
+        _ => BindingFaults::NONE,
+    }
 }
 
 /// What `args` gets wrong against `method`'s signature: the required
 /// parameters not given, the keys (or positions) it has no parameter for,
 /// and, for a member-facing op ([`op_spec`]), the values of another JSON
-/// type than its schema's.
-pub(super) fn faults(method: Method, args: &Value) -> ArgumentFaults {
+/// type than its schema's (an array's items by their own type only: an
+/// `evidence` item need only be an object, its properties unchecked).
+///
+/// A type mismatch is found against the schema, not the board's checks,
+/// and is recorded for any `invalid` refusal: the board refuses one value
+/// (an empty acceptance list) while another differs from the schema (a
+/// request id given as a number, which the board binds untyped), and the
+/// record names the one that differs, which need not be the cause.
+pub(super) fn faults(method: Method, args: &Value) -> BindingFaults {
     let parameters = method.parameters();
     let typed = op_spec(method.name()).is_some();
-    let mut faults = ArgumentFaults::NONE;
+    let mut faults = BindingFaults::NONE;
     let mut given = vec![false; parameters.len()];
-    let mut bound = |faults: &mut ArgumentFaults, index: usize, value: &Value| {
+    let mut bound = |faults: &mut BindingFaults, index: usize, value: &Value| {
         given[index] = true;
         let name = parameters[index].name;
-        if let (true, Some(expected)) = (typed, expected_type(name))
+        if let (true, Some(field), Some(expected)) =
+            (typed, schema_field(name), expected_type(name))
             && !expected.admits(value)
         {
-            faults.wrong_type_args.push(WrongTypeArg {
-                arg: name.to_owned(),
-                expected: expected.label.clone(),
-            });
+            faults.wrong_type.push((field, expected.label.as_str()));
         }
     };
     match args {
@@ -165,62 +265,51 @@ pub(super) fn faults(method: Method, args: &Value) -> ArgumentFaults {
                 }
             }
         }
-        _ => faults.unreadable_args.push(WHOLE.to_owned()),
+        _ => faults.unreadable.push(ArgName::Whole),
     }
-    faults.missing_args = parameters
+    faults.missing = parameters
         .iter()
         .zip(given)
         .filter(|(parameter, given)| !given && parameter.default.is_none())
         .filter_map(|(parameter, _)| schema_field(parameter.name))
-        .map(str::to_owned)
         .collect();
-    debug_assert!(
-        allowlisted(&faults),
-        "argument faults name schema fields only"
-    );
     faults
 }
 
-fn unexpected(faults: &mut ArgumentFaults, known: Option<&'static str>) {
-    let unexpected = faults
-        .unexpected_args
-        .get_or_insert_with(UnexpectedArgs::default);
-    unexpected.count += 1;
-    unexpected.known.extend(known.map(str::to_owned));
+fn unexpected(faults: &mut BindingFaults, known: Option<SchemaField>) {
+    faults.unexpected += 1;
+    faults.unexpected_known.extend(known);
 }
 
 /// The faults of member text the board's value type cannot hold (#2341),
 /// given the keys `unreadable` found (`None`: the text as a whole): each
 /// key's schema field, and [`WHOLE`] once for the text as a whole or a
 /// key no schema field names.
-pub fn unreadable_arguments(keys: Option<Vec<String>>) -> ArgumentFaults {
+pub fn unreadable_arguments(keys: Option<Vec<String>>) -> BindingFaults {
     let keys = keys.unwrap_or_default();
-    let mut names: Vec<String> = Vec::new();
+    let mut names: Vec<ArgName> = Vec::new();
     let mut whole = keys.is_empty();
     for key in &keys {
-        match schema_field(key) {
-            Some(name) if !names.iter().any(|kept| kept == name) => names.push(name.to_owned()),
+        match schema_field(key).map(ArgName::Field) {
+            Some(name) if !names.contains(&name) => names.push(name),
             Some(_) => {}
             None => whole = true,
         }
     }
     if whole {
-        names.push(WHOLE.to_owned());
+        names.push(ArgName::Whole);
     }
-    let faults = ArgumentFaults {
-        unreadable_args: names,
-        ..ArgumentFaults::NONE
-    };
-    debug_assert!(
-        allowlisted(&faults),
-        "argument faults name schema fields only"
-    );
-    faults
+    BindingFaults {
+        unreadable: names,
+        ..BindingFaults::NONE
+    }
 }
 
 /// The JSON type a schema field expects: its `type` (one or several) and,
 /// for an array, its items' `type`, and the label a record gives it
-/// (`integer`, `string_or_null`, `array_of_string`, ...).
+/// (`integer`, `null_or_string`, `array_of_string`,
+/// `null_or_array_of_integer`, ...): `null` first, so a label reads one
+/// way.
 #[derive(Debug)]
 pub(super) struct Expected {
     types: Vec<String>,
@@ -232,8 +321,13 @@ impl Expected {
     fn of(schema: &Value) -> Self {
         let types = type_names(&schema["type"]);
         let items = type_names(&schema["items"]["type"]);
-        let label = types
-            .iter()
+        // `null` first: `null_or_array_of_integer` reads one way, where
+        // `array_of_integer_or_null` could be an array of either.
+        let (null, others): (Vec<&String>, Vec<&String>) =
+            types.iter().partition(|name| *name == "null");
+        let label = null
+            .into_iter()
+            .chain(others)
             .map(|name| match (name.as_str(), items.is_empty()) {
                 ("array", false) => format!("array_of_{}", items.join("_or_")),
                 _ => name.clone(),

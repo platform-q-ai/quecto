@@ -13,13 +13,13 @@ use std::time::Duration;
 
 use serde_json::Value;
 
+use super::swarm_board_dispatch::BindingFaults;
 use crate::application::swarm::dto::CallMeasure;
 use crate::domain::redaction::Redacted;
 use crate::domain::swarm::telemetry::{decision_kind, run_role};
 use crate::domain::swarm::validation::MEMBER_ID_MAX_BYTES;
 use crate::domain::swarm::{
-    ArgumentFaults, BoardError, BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole,
-    RefusalKind,
+    BoardError, BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind,
 };
 
 /// The `tracing` target of every board call record.
@@ -58,7 +58,7 @@ pub(super) struct Finished<'a> {
     pub elapsed: Duration,
     /// What a refusal raised while binding the arguments found wrong
     /// (#2341), by schema name; none for any other outcome.
-    pub arguments: ArgumentFaults,
+    pub arguments: BindingFaults,
 }
 
 /// What a served call decided, and what it acted on, for its records.
@@ -254,8 +254,8 @@ pub(super) fn observation(
         "an answered call served its answer"
     );
     debug_assert!(
-        call.arguments.names_are_kinds() && (call.outcome.is_err() || call.arguments.is_empty()),
-        "argument faults are schema names, recorded for a refusal only"
+        call.outcome.is_err() || call.arguments.is_empty(),
+        "argument faults are recorded for a refusal only"
     );
     let measure = measure.as_ref();
     BoardOpObservation {
@@ -291,7 +291,7 @@ pub(super) fn observation(
         },
         decision: served.map(|served| served.decision.to_owned()),
         detail: served.map_or(BoardOpDetail::NONE, |served| served.detail.clone()),
-        arguments: Box::new(call.arguments.clone()),
+        arguments: Box::new(call.arguments.record()),
     }
 }
 

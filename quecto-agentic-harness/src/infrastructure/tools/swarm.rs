@@ -174,7 +174,7 @@ async fn refuse_op(
     let arguments = match &refused {
         Refused::InvalidJson(_) => super::swarm_board_dispatch::unreadable_arguments(None),
         Refused::Unknown(_) | Refused::NotAString | Refused::Missing { .. } => {
-            crate::domain::swarm::ArgumentFaults::NONE
+            super::swarm_board_dispatch::BindingFaults::NONE
         }
     };
     let ctx = context.clone();

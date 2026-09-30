@@ -357,7 +357,7 @@ pub struct UnexpectedArgs {
 }
 
 /// An argument given a value of the wrong JSON type (#2341): its schema
-/// name and the type the schema expects (`integer`, `string_or_null`,
+/// name and the type the schema expects (`integer`, `null_or_string`,
 /// `array_of_string`, ...).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WrongTypeArg {

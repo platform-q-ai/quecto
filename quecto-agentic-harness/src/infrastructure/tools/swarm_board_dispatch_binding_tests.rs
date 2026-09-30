@@ -6,7 +6,8 @@ use serde_json::json;
 use super::super::call;
 use super::super::tests::captured;
 use super::{
-    WHOLE, allowlisted, expected_type, faults, recorded, schema_field, unreadable_arguments,
+    BindingFaults, SchemaField, WHOLE, allowlisted, expected_type, faults, recorded, schema_field,
+    unreadable_arguments,
 };
 use crate::domain::swarm::{ArgumentFaults, RefusalKind, UnexpectedArgs, WrongTypeArg};
 use crate::infrastructure::tools::swarm_board_ops::BOARD_OPS;
@@ -60,7 +61,10 @@ fn binding_faults_are_traced_by_schema_name_only() {
 #[test]
 fn only_a_board_ops_field_is_a_schema_name() {
     for arg in BOARD_OPS.iter().flat_map(|spec| spec.args.iter()) {
-        assert_eq!(schema_field(arg.name), Some(arg.name));
+        assert_eq!(
+            schema_field(arg.name).map(SchemaField::as_str),
+            Some(arg.name)
+        );
     }
     for key in [SECRET, "op", "member_limit", "Title", "title ", "", WHOLE] {
         assert_eq!(schema_field(key), None, "{key}");
@@ -73,6 +77,54 @@ fn only_a_board_ops_field_is_a_schema_name() {
     assert!(allowlisted(&named(WHOLE)));
     assert!(!allowlisted(&named("owner")));
     assert!(!allowlisted(&named(SECRET)));
+}
+
+/// #2346 review M: a name a record carries is a `SchemaField`, which only
+/// `schema_field` makes (its field is private, so no text from outside
+/// compiles into one); whatever keys a call or unreadable text holds, the
+/// record names schema fields and `arguments` only, in a release build too.
+#[test]
+fn a_non_schema_name_cannot_be_recorded() {
+    let hostile: Vec<String> = [
+        SECRET,
+        "ghp_0123456789abcdef",
+        "owner",
+        "Title",
+        "op",
+        "\u{feff}title",
+    ]
+    .iter()
+    .map(|key| (*key).to_owned())
+    .collect();
+    for key in &hostile {
+        assert!(schema_field(key).is_none(), "{key}");
+    }
+    let claim = super::Method::parse("claim").unwrap();
+    let mut args = serde_json::Map::new();
+    for key in &hostile {
+        args.insert(key.clone(), json!(SECRET));
+    }
+    args.insert("title".into(), json!(1));
+    let recorded = faults(claim, &serde_json::Value::Object(args)).record();
+    assert_eq!(
+        recorded,
+        ArgumentFaults {
+            missing_args: vec!["task_id".into()],
+            unexpected_args: Some(UnexpectedArgs {
+                count: 7,
+                known: vec!["title".into()],
+            }),
+            ..ArgumentFaults::NONE
+        }
+    );
+    let unreadable = unreadable_arguments(Some(hostile)).record();
+    assert_eq!(unreadable.unreadable_args, [WHOLE]);
+    for faults in [&recorded, &unreadable] {
+        assert!(allowlisted(faults), "{faults:?}");
+        assert!(!format!("{faults:?}").contains("ghp_"), "{faults:?}");
+    }
+    assert!(BindingFaults::NONE.is_empty() && BindingFaults::default().is_empty());
+    assert_eq!(BindingFaults::NONE.record(), ArgumentFaults::NONE);
 }
 
 /// Each field's expected type, labelled from its schema, and what it
@@ -101,6 +153,13 @@ fn expected_types_are_labelled_from_the_schema() {
     let dependencies = expected_type("dependencies").unwrap();
     assert!(dependencies.admits(&json!(null)) && dependencies.admits(&json!([1, 2])));
     assert!(!dependencies.admits(&json!([1, "2"])) && !dependencies.admits(&json!(1)));
+    // #2346 review L: an array's items are checked by their own type only;
+    // an `evidence` item's properties are not.
+    let evidence = expected_type("evidence").unwrap();
+    for value in [json!([{}]), json!([{"artifact": 1, "revision": null}])] {
+        assert!(evidence.admits(&value), "{value}");
+    }
+    assert!(!evidence.admits(&json!(["a"])) && !evidence.admits(&json!({})));
 }
 
 /// A call's faults against its signature: arguments that are no array or
@@ -110,12 +169,14 @@ fn expected_types_are_labelled_from_the_schema() {
 fn faults_name_schema_fields_only() {
     let release = super::Method::parse("release").unwrap();
     assert_eq!(
-        faults(release, &json!("text")).unreadable_args,
+        faults(release, &json!("text")).record().unreadable_args,
         [WHOLE],
         "no array or object"
     );
     assert_eq!(
-        faults(release, &json!({"task_id": "1", "token": 2})).wrong_type_args,
+        faults(release, &json!({"task_id": "1", "token": 2}))
+            .record()
+            .wrong_type_args,
         [
             WrongTypeArg {
                 arg: "task_id".into(),
@@ -129,7 +190,7 @@ fn faults_name_schema_fields_only() {
     );
     let admit = super::Method::parse("_admit").unwrap();
     assert_eq!(
-        faults(admit, &json!({"member": 1, "reservation": 2, (SECRET): 1})),
+        faults(admit, &json!({"member": 1, "reservation": 2, (SECRET): 1})).record(),
         ArgumentFaults {
             unexpected_args: Some(UnexpectedArgs {
                 count: 1,
@@ -142,7 +203,7 @@ fn faults_name_schema_fields_only() {
     let socket = super::Method::parse("_socket").unwrap();
     assert_eq!(
         faults(socket, &json!({})),
-        ArgumentFaults::NONE,
+        BindingFaults::NONE,
         "socket is no schema field"
     );
 }
@@ -151,7 +212,7 @@ fn faults_name_schema_fields_only() {
 /// for the text as a whole or a key no schema field names.
 #[test]
 fn unreadable_input_names_its_fields_or_the_whole() {
-    let names = |faults: ArgumentFaults| faults.unreadable_args;
+    let names = |faults: BindingFaults| faults.record().unreadable_args;
     assert_eq!(names(unreadable_arguments(None)), [WHOLE]);
     assert_eq!(names(unreadable_arguments(Some(vec![]))), [WHOLE]);
     assert_eq!(
@@ -172,12 +233,8 @@ fn unreadable_input_names_its_fields_or_the_whole() {
 /// Faults are kept for a `calling` or `invalid` refusal only.
 #[test]
 fn faults_are_recorded_for_a_binding_refusal_only() {
-    let found = || {
-        Some(ArgumentFaults {
-            missing_args: vec!["token".into()],
-            ..ArgumentFaults::NONE
-        })
-    };
+    let release = super::Method::parse("release").unwrap();
+    let found = || Some(faults(release, &json!([1])));
     for kind in [RefusalKind::Calling, RefusalKind::Invalid] {
         assert!(!recorded::<()>(&Err(kind), found()).is_empty(), "{kind:?}");
     }

@@ -271,3 +271,22 @@ fn a_positional_call_records_its_missing_and_extra_values() {
         assert_eq!(*records[0].arguments, expected, "{args}");
     }
 }
+
+/// #2346 review L (pinned, documented): a type mismatch is found against
+/// the schema and kept for any `invalid` refusal, the board's own checks
+/// included, so it can name a field that is not the refusal's cause:
+/// here the board refuses the empty acceptance list, while the request id
+/// (which the board binds untyped) is the field recorded.
+#[tokio::test]
+async fn a_board_invalid_records_a_schema_mismatch_that_need_not_be_its_cause() {
+    let (_directory, context, log) = logged();
+    let text = r#"{"op":"task_create","request":5,"title":"t","acceptance":[]}"#;
+    let record = refusal(&context, &log, "task_create", text, RefusalKind::Invalid).await;
+    assert_eq!(
+        *record.arguments,
+        ArgumentFaults {
+            wrong_type_args: vec![wrong("request", "string")],
+            ..ArgumentFaults::NONE
+        }
+    );
+}

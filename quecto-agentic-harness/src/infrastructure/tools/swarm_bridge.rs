@@ -93,7 +93,7 @@ impl SwarmContext {
         &self,
         method: &str,
         kind: crate::domain::swarm::RefusalKind,
-        arguments: crate::domain::swarm::ArgumentFaults,
+        arguments: super::swarm_board_dispatch::BindingFaults,
         elapsed: std::time::Duration,
     ) {
         self.board.refused(
