@@ -60,6 +60,8 @@ jobs:
       - run: scripts/check-quality.sh
       # The swarm board's golden MANIFEST only shrinks against the base (#2344).
       - run: scripts/check-golden-manifest.sh "$(git merge-base HEAD "origin/${{ github.base_ref || 'master' }}")"
+      - run: bash scripts/check-layout-ratchet-tests.sh
+      - run: scripts/check-layout-ratchet.sh "$(git merge-base HEAD "origin/${{ github.base_ref || 'master' }}")"
       - run: scripts/check-bdd-quality.sh
       - run: scripts/check-bdd-tags.sh
       - run: cargo fmt --all -- --check
