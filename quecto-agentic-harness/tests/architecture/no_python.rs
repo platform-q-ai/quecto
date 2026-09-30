@@ -71,7 +71,12 @@ const RULE_FILE: &str = "tests/architecture/no_python.rs";
 /// Every word of `text` that names a Python program: `python`, optionally
 /// versioned (`python3`, `python3.12`), bare or by path.
 pub(super) fn python_programs_in_text(text: &str) -> Vec<String> {
-    let program = regex::Regex::new(r"^python[0-9.]*$").expect("program regex");
+    static PROGRAM: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"^python[0-9.]*$").expect("program regex"));
+    if !text.contains("python") {
+        return Vec::new();
+    }
+    let program = &*PROGRAM;
     text.split(|c: char| {
         c.is_whitespace() || matches!(c, '\'' | '"' | ';' | '&' | '|' | '(' | ')' | '`' | '=')
     })
