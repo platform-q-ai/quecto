@@ -267,6 +267,8 @@ pub struct RunSummaryFold {
     run_id: String,
     started_at_us: u64,
     records: u64,
+    /// The board calls the records account for (#2338).
+    calls: u64,
     ops: BTreeMap<String, OpFold>,
     tasks: TaskCounts,
     messages: MessageCounts,
@@ -288,6 +290,7 @@ impl RunSummaryFold {
             run_id: run_id.to_owned(),
             started_at_us,
             records: 0,
+            calls: 0,
             ops: BTreeMap::new(),
             tasks: TaskCounts::default(),
             messages: MessageCounts::default(),
@@ -310,12 +313,21 @@ impl RunSummaryFold {
             Some(self.run_id.as_str()),
             "a fold takes its own run's records only"
         );
+        // An aggregate of the watch's unchanged polls (#2338) accounts for
+        // each poll it holds; any other record for its one call.
+        let calls = observation.detail.polls.unwrap_or(1);
+        debug_assert!(calls >= 1, "a record accounts for at least one call");
         self.records = self.records.saturating_add(1);
+        self.calls = self.calls.saturating_add(calls);
         let answered = match observation.outcome {
             BoardOpOutcome::Ok => true,
             BoardOpOutcome::Refused { .. } => false,
         };
         if answered {
+            debug_assert!(
+                calls == 1 || observation.decision.as_deref() == Some("unchanged"),
+                "only an aggregate of unchanged polls holds more than one call"
+            );
             self.count_change(&observation.op, observation.decision.as_deref());
         }
         if observation.op == "_record_request" {
@@ -326,9 +338,10 @@ impl RunSummaryFold {
             true => fold_op(
                 self.ops.entry(observation.op.clone()).or_default(),
                 observation,
+                calls,
                 &mut self.draw,
             ),
-            false => self.unlisted_ops = self.unlisted_ops.saturating_add(1),
+            false => self.unlisted_ops = self.unlisted_ops.saturating_add(calls),
         }
     }
 
@@ -396,14 +409,15 @@ impl RunSummaryFold {
                 .map(|op| op.ok + op.refused.values().sum::<u64>())
                 .sum::<u64>()
                 + self.unlisted_ops,
-            self.records,
-            "every record folded is counted once"
+            self.calls,
+            "every call folded is counted once"
         );
+        debug_assert!(self.calls >= self.records, "a record is at least one call");
         SwarmRunSummary {
             run_id: self.run_id.clone(),
             scope: SummaryScope::Process,
             records: self.records,
-            calls: self.records,
+            calls: self.calls,
             ops,
             busy,
             tasks: self.tasks,
@@ -417,10 +431,12 @@ impl RunSummaryFold {
     }
 }
 
-/// Folds `observation` into its op's `fold`, drawing from `draw`.
-fn fold_op(fold: &mut OpFold, observation: &BoardOpObservation, draw: &mut Draw) {
+/// Folds `observation`, which accounts for `calls` board calls, into its
+/// op's `fold`, drawing from `draw`: each call is counted, and the record's
+/// measures are one sample (an aggregate's are its slowest poll's).
+fn fold_op(fold: &mut OpFold, observation: &BoardOpObservation, calls: u64, draw: &mut Draw) {
     match observation.outcome {
-        BoardOpOutcome::Ok => fold.ok = fold.ok.saturating_add(1),
+        BoardOpOutcome::Ok => fold.ok = fold.ok.saturating_add(calls),
         BoardOpOutcome::Refused { kind, .. } => {
             let refused = fold.refused.entry(kind).or_default();
             *refused = refused.saturating_add(1);

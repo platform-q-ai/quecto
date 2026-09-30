@@ -11,8 +11,8 @@ use super::watch_tick;
 use crate::application::swarm::dto::DroppedRecords;
 use crate::application::swarm::ports::CoordinationPort;
 use crate::application::swarm::ports::{BoardOpLog, SessionOpLog};
-use crate::application::swarm::watch::WatchSchedule;
 use crate::composition::swarm::{board_wire, build_swarm_board_handles};
+use crate::domain::swarm::watch::WatchSchedule;
 use crate::domain::swarm::{BoardOpObservation, RunStatus, SwarmRunSummary};
 use crate::infrastructure::tools::swarm_bridge::{Participation, SwarmBoard, SwarmContext};
 

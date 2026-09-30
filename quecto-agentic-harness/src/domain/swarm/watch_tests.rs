@@ -2,7 +2,6 @@
 //! only when the cursor moved, the running run's deadline came, or a
 //! bounded refresh is due; a change is still seen within one tick.
 use super::*;
-use crate::application::swarm::board_loss::LOSS_GRACE;
 use crate::domain::swarm::{OWNER_IDLE_AFTER, RunStatus, Snapshot};
 
 const NOW: f64 = 1_000_000.0;
@@ -149,10 +148,11 @@ fn an_idle_hour_takes_ten_times_fewer_snapshots_within_the_refresh_bound() {
 }
 
 /// Liveness: the longest the watch holds a view without a snapshot is well
-/// inside the time an owner takes to turn idle, and a lost harness's grace.
+/// inside the time an owner takes to turn idle (and so inside the idle
+/// threshold plus a lost harness's grace).
 #[test]
-fn the_watchs_longest_stale_view_is_inside_owner_idle_and_loss_grace() {
+fn the_watchs_longest_stale_view_is_inside_owner_idle() {
     let stale = REFRESH_MAX.as_secs_f64() + WATCH_TICK.as_secs_f64();
-    assert!(stale < OWNER_IDLE_AFTER + LOSS_GRACE, "{stale}");
+    assert!(stale < OWNER_IDLE_AFTER, "{stale}");
     assert!(REFRESH_MIN <= REFRESH_MAX);
 }

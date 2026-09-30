@@ -21,7 +21,6 @@ mod board_wakes;
 pub mod dto;
 pub mod ports;
 pub mod use_cases;
-pub mod watch;
 
 use ports::{
     Clock, CoordinationPort, PortFuture, ProcessControl, ProcessObservation, SettlementStep,

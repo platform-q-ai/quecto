@@ -15,8 +15,10 @@ use super::BindingFaults;
 use super::method::Method;
 use super::{Level, SwarmBoardHandles};
 use crate::application::swarm::dto::CallMeasure;
+use crate::application::swarm::ports::BoardOpLog;
 use crate::domain::redaction::Redacted;
-use crate::domain::swarm::{BoardRole, RefusalKind};
+use crate::domain::swarm::watch_polls::{PollTally, WATCH_POLL_OP};
+use crate::domain::swarm::{BoardOpObservation, BoardRole, RefusalKind};
 
 /// Whom a board call is made for (#2279 S15 final review): the calling
 /// member, whose role in the run a member-facing op records, or the
@@ -37,14 +39,14 @@ pub enum CallOrigin {
 /// one board file while the event log is on.
 #[derive(Debug)]
 pub struct WatchPolls {
-    tally: std::sync::Mutex<crate::domain::swarm::watch_polls::PollTally>,
+    tally: std::sync::Mutex<PollTally>,
     origin: std::time::Instant,
 }
 
 impl Default for WatchPolls {
     fn default() -> Self {
         Self {
-            tally: std::sync::Mutex::new(crate::domain::swarm::watch_polls::PollTally::default()),
+            tally: std::sync::Mutex::new(PollTally::default()),
             origin: std::time::Instant::now(),
         }
     }
@@ -54,7 +56,43 @@ impl Default for WatchPolls {
 /// ended, the run is summarised, or the handles are replaced.
 pub fn flush_watch_polls(handles: &SwarmBoardHandles) {
     if let Some(telemetry) = &handles.telemetry {
-        let _ = (&telemetry.polls.tally, telemetry.polls.origin);
+        let held = telemetry.polls.held().flush();
+        write_polls(&*telemetry.log, held);
+    }
+}
+
+impl WatchPolls {
+    /// The tally, also after a panic elsewhere left the lock poisoned:
+    /// nothing is left half-updated under it.
+    fn held(&self) -> std::sync::MutexGuard<'_, PollTally> {
+        self.tally
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Microseconds since these polls' handles were built: the tally's
+    /// monotonic clock.
+    fn now_us(&self) -> u64 {
+        u64::try_from(self.origin.elapsed().as_micros()).unwrap_or(u64::MAX)
+    }
+}
+
+/// Writes `records` the watch's tally released, in order: an aggregate of
+/// unchanged polls leaves one `tracing` record of its own (a poll it holds
+/// left none), every other record left its own when it was made.
+fn write_polls(log: &dyn BoardOpLog, records: impl IntoIterator<Item = BoardOpObservation>) {
+    for record in records {
+        if let Some(polls) = record.detail.polls {
+            tracing::debug!(
+                target: TELEMETRY_TARGET,
+                op = record.op.as_str(),
+                decision = record.decision.as_deref().unwrap_or("none"),
+                polls,
+                max_duration_us = record.duration_us,
+                "swarm board watch polls"
+            );
+        }
+        log.record(record);
     }
 }
 
@@ -82,8 +120,15 @@ pub(super) fn recorded_role(origin: CallOrigin, known: Option<Method>) -> Option
 /// The `tracing` record of `finished` and, while the event log is on, its
 /// `swarm_op`, by the caller's kept or fresh ref (`caller` says whether the
 /// board accepted it as a member).
+///
+/// A call the run watch made (`origin` [`CallOrigin::Watch`], #2338) goes
+/// through its tally: an `_event_cursor` poll is held while it finds the
+/// cursor unchanged (and leaves no `tracing` record of its own: the
+/// aggregate it joins leaves one), and anything else the watch records is
+/// written after the polls held before it.
 pub(super) fn record(
     handles: &SwarmBoardHandles,
+    origin: CallOrigin,
     finished: &Finished<'_>,
     caller: Caller,
     served: Option<&Served>,
@@ -97,13 +142,36 @@ pub(super) fn record(
         let actor = actor.clone().unwrap_or_else(|| actor_ref(finished.member));
         trace_arguments(finished, &actor);
     }
-    match (&handles.telemetry, actor) {
-        (Some(telemetry), Some(actor)) => {
+    match (&handles.telemetry, actor, origin) {
+        (Some(telemetry), Some(actor), CallOrigin::Watch) => {
+            let observation = observation(finished, actor.clone(), caller, served, measure.clone());
+            debug_assert!(
+                matches!(finished.op, WATCH_POLL_OP | "_snapshot"),
+                "the watch reads only the cursor and the snapshot"
+            );
+            let mut tally = telemetry.polls.held();
+            let released = match finished.op {
+                WATCH_POLL_OP => {
+                    let cursor = served
+                        .filter(|_| finished.outcome.is_ok())
+                        .and_then(|served| served.value.as_i64());
+                    tally.poll(observation, cursor, telemetry.polls.now_us())
+                }
+                _ => tally.flush().into_iter().chain([observation]).collect(),
+            };
+            drop(tally);
+            let traced = released.iter().any(|record| record.detail.polls.is_none());
+            if traced {
+                trace(finished, measure.as_ref(), Some(&actor));
+            }
+            write_polls(&*telemetry.log, released);
+        }
+        (Some(telemetry), Some(actor), CallOrigin::Member | CallOrigin::Harness) => {
             trace(finished, measure.as_ref(), Some(&actor));
             let observation = observation(finished, actor, caller, served, measure);
             telemetry.log.record(observation);
         }
-        (Some(_), None) | (None, _) => trace(finished, None, None),
+        (Some(_), None, _) | (None, _, _) => trace(finished, None, None),
     }
 }
 
@@ -158,7 +226,14 @@ pub fn refused(
         outcome,
         elapsed,
     };
-    record(handles, &finished, Caller::Unproven, None, None);
+    record(
+        handles,
+        CallOrigin::Member,
+        &finished,
+        Caller::Unproven,
+        None,
+        None,
+    );
 }
 
 /// The Python signature `method` binds by, each parameter's name and its

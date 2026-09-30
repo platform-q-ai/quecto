@@ -3,14 +3,16 @@
 use std::sync::Arc;
 
 use super::OverRepository;
-use crate::application::swarm::board_operation::operation;
+use crate::application::swarm::board_operation::read_operation;
 use crate::application::swarm::dto::RunSnapshotView;
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::{Access, BoardError};
+use crate::domain::swarm::BoardError;
 
 /// Through the operation gate as a read (`active=False, read_only=True`):
 /// any member, a dead one included, reads it, and a run whose deadline has
-/// come is ended as `budget-exhausted` first.
+/// come is ended as `budget-exhausted` first. Otherwise (#2338) it is one
+/// read transaction, which takes no write lock: the run watch of every
+/// member reads it, and it never contends with a writer.
 pub struct ReadRunSnapshot {
     repository: Arc<dyn BoardRepository>,
     clock: Arc<dyn Clock + Send + Sync>,
@@ -24,15 +26,10 @@ impl ReadRunSnapshot {
     /// # Errors
     /// An authorisation refusal (no run, an unknown member), or the store's.
     pub fn execute(&self, member: &str) -> Result<RunSnapshotView, BoardError> {
-        let reading = Access {
-            read_only: true,
-            ..Access::default()
-        };
-        operation(
+        read_operation(
             &*self.repository,
             &*self.clock,
             member,
-            reading,
             |transaction, run| {
                 let control_generation = transaction.control_generation()?;
                 let members = transaction.members()?;

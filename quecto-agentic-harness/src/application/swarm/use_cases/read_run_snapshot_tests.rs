@@ -23,7 +23,11 @@ fn snapshot_reads_the_run_and_every_member_through_the_gate() {
         snapshot.members,
         [member_row("parent", "live"), member_row("worker", "dead")]
     );
-    assert_eq!(board.transactions(), [false, false], "the two-step gate");
+    assert_eq!(
+        board.transactions(),
+        [false],
+        "#2338: one read, the gate having nothing to write"
+    );
 }
 
 #[test]
@@ -73,6 +77,7 @@ fn over_reads_the_given_board_on_the_composed_clock() {
         .execute("parent")
         .unwrap();
     assert_eq!(snapshot.status.as_deref(), Some("paused"));
-    assert_eq!(other.transactions(), [false, false]);
+    // #2338: the read found the deadline come, so the two-step gate ran.
+    assert_eq!(other.transactions(), [false, false, false]);
     assert!(composed_over.transactions().is_empty());
 }

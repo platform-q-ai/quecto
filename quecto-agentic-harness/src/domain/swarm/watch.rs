@@ -23,11 +23,11 @@
 //! by the store's clock when any member reads it (`summary`, `task`,
 //! `tasks`, [`OWNER_IDLE_AFTER`](crate::domain::swarm::OWNER_IDLE_AFTER)),
 //! and a lost harness is recorded by `reconcile` after its grace. The
-//! watch's longest gap between snapshots stays well inside both, so it
-//! never holds a stale view past either.
+//! watch's longest gap between snapshots stays well inside the idle
+//! threshold, so it never holds a stale view past either.
 use std::time::Duration;
 
-use crate::domain::swarm::Snapshot;
+use super::{RunStatus, Snapshot};
 
 /// How often the watch reads the event cursor: the 500 ms the snapshot
 /// poll it replaces ran at, so a change is observed within one tick.
@@ -81,13 +81,47 @@ impl WatchSchedule {
     /// What the tick at `now` reads, given the `cursor` it read first
     /// (`None` when that read failed).
     pub fn read(&self, cursor: Option<i64>, now: f64) -> WatchRead {
-        let _ = (cursor, now, self.seen, self.due_at);
-        WatchRead::Snapshot
+        let unchanged = cursor.is_some() && cursor == self.seen;
+        match (unchanged, now >= self.due_at) {
+            (true, false) => WatchRead::Skip,
+            (true, true) | (false, _) => WatchRead::Snapshot,
+        }
     }
 
-    /// The tick at `now` took `snapshot`, having read `cursor` before it.
+    /// The tick at `now` took `snapshot`, having read `cursor` before it:
+    /// the next snapshot is due one refresh later (sooner at a running
+    /// run's deadline). The refresh doubles, up to [`REFRESH_MAX`], when
+    /// this snapshot was a refresh of an unchanged board, and restarts at
+    /// [`REFRESH_MIN`] when the cursor had moved.
     pub fn snapshotted(&mut self, cursor: Option<i64>, snapshot: &Snapshot, now: f64) {
-        let _ = (cursor, snapshot, now, self.refresh);
+        let unchanged = cursor.is_some() && cursor == self.seen;
+        self.refresh = match unchanged {
+            true => (self.refresh * 2).min(REFRESH_MAX),
+            false => REFRESH_MIN,
+        };
+        self.seen = cursor;
+        let refresh_at = now + self.refresh.as_secs_f64();
+        // Only a running run's deadline ends anything (`observed_outcome`);
+        // a passed one keeps the snapshot due every tick until the run
+        // reads as paused, as the poll this replaces did.
+        self.due_at = match snapshot.status {
+            RunStatus::Running => refresh_at.min(snapshot.deadline),
+            RunStatus::Setup
+            | RunStatus::Paused
+            | RunStatus::Succeeded
+            | RunStatus::Blocked
+            | RunStatus::Failed
+            | RunStatus::Cancelled
+            | RunStatus::BudgetExhausted => refresh_at,
+        };
+        debug_assert!(
+            (REFRESH_MIN..=REFRESH_MAX).contains(&self.refresh),
+            "the refresh stays within its bounds"
+        );
+        debug_assert!(
+            self.due_at <= refresh_at,
+            "a snapshot is never due later than one refresh on"
+        );
     }
 
     /// The refresh interval now in force.

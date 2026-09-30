@@ -55,6 +55,21 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "RunMissing",
     ),
     (
+        "src/application/swarm/board_operation.rs:read",
+        "coordination store ended a read without running its work",
+        "Internal",
+    ),
+    (
+        "src/application/swarm/board_operation.rs:read",
+        "coordination store ran a read's work twice",
+        "Internal",
+    ),
+    (
+        "src/application/swarm/board_operation.rs:read_operation",
+        "coordination run missing",
+        "RunMissing",
+    ),
+    (
         "src/application/swarm/board_recovery.rs:python_str",
         "a task id that finds a task is text or a number",
         "Internal",
@@ -545,7 +560,7 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "Invalid",
     ),
     (
-        "src/infrastructure/persistence/swarm_board/repository.rs:atomic_on",
+        "src/infrastructure/persistence/swarm_board/repository.rs:on_store",
         "expr: refusal . 0",
         "expr: store_kind (failure)",
     ),

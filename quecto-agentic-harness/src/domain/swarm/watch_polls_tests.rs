@@ -175,6 +175,7 @@ fn an_aggregate_carries_no_text_beyond_the_polls_own() {
     };
     let _first = tally.poll(secret_shaped.clone(), Some(7), 0);
     assert!(tally.poll(secret_shaped.clone(), Some(7), 1).is_empty());
+    assert!(tally.poll(secret_shaped.clone(), Some(7), 2).is_empty());
     let aggregate = tally.flush().unwrap();
     let text = serde_json::to_string(&aggregate).unwrap();
     assert!(

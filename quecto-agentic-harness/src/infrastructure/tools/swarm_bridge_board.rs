@@ -197,6 +197,9 @@ impl SwarmBoard {
         let Some(runs) = runs.filter(|runs| runs.open()) else {
             return false;
         };
+        // The watch's polls still held are the run's calls too (#2338):
+        // written, and so folded, before the summary is taken.
+        self.flush_watch_polls(location);
         let totals = self.call_as(
             location.clone(),
             member,
@@ -221,7 +224,14 @@ impl SwarmBoard {
     /// Writes the run watch's polls held for the file at `location`
     /// (#2338), if its handles hold any.
     pub(super) fn flush_watch_polls(&self, location: &BoardLocation) {
-        let _ = location;
+        let handles = self
+            .built()
+            .iter()
+            .find(|file| file.location == *location)
+            .map(|file| file.handles.clone());
+        if let Some(handles) = handles {
+            swarm_board_dispatch::flush_watch_polls(&handles);
+        }
     }
 
     fn recording_lock(&self) -> MutexGuard<'_, Option<Arc<SessionLog>>> {
@@ -334,11 +344,20 @@ impl SwarmBoard {
     fn handles(&self, location: BoardLocation) -> Arc<SwarmBoardHandles> {
         let log = self.recording();
         let mut built = self.built();
-        let kept = built
+        let found = built
             .iter()
             .position(|file| file.location == location)
-            .map(|index| built.remove(index))
-            .filter(|file| same_log(file.log.as_ref(), log.as_ref()));
+            .map(|index| built.remove(index));
+        let kept = match found {
+            Some(file) if same_log(file.log.as_ref(), log.as_ref()) => Some(file),
+            Some(replaced) => {
+                // Its watch polls were made while its log was current
+                // (#2338): written there before its handles go.
+                swarm_board_dispatch::flush_watch_polls(&replaced.handles);
+                None
+            }
+            None => None,
+        };
         let file = match kept {
             Some(file) => file,
             None => {
@@ -361,7 +380,8 @@ impl SwarmBoard {
         let handles = file.handles.clone();
         built.push(file);
         if built.len() > BUILT_FILES {
-            built.remove(0);
+            let dropped = built.remove(0);
+            swarm_board_dispatch::flush_watch_polls(&dropped.handles);
         }
         debug_assert!(
             built.len() <= BUILT_FILES,
