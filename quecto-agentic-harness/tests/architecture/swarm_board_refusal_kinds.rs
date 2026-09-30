@@ -610,28 +610,28 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "Invalid",
     ),
     (
-        "src/infrastructure/tools/swarm_board_dispatch.rs:bind",
+        "src/infrastructure/tools/swarm_board_dispatch.rs:call_as",
+        "swarm board has no method {method}",
+        "Calling",
+    ),
+    (
+        "src/infrastructure/tools/swarm_board_dispatch_binding.rs:refusal",
         "{name}: arguments must be a JSON array or object",
         "Calling",
     ),
     (
-        "src/infrastructure/tools/swarm_board_dispatch.rs:bind",
+        "src/infrastructure/tools/swarm_board_dispatch_binding.rs:refusal",
         "{name}: missing required argument {}",
         "Calling",
     ),
     (
-        "src/infrastructure/tools/swarm_board_dispatch.rs:bind",
+        "src/infrastructure/tools/swarm_board_dispatch_binding.rs:refusal",
         "{name}: takes {} arguments, {} given",
         "Calling",
     ),
     (
-        "src/infrastructure/tools/swarm_board_dispatch.rs:bind",
+        "src/infrastructure/tools/swarm_board_dispatch_binding.rs:refusal",
         "{name}: unexpected argument {key}",
-        "Calling",
-    ),
-    (
-        "src/infrastructure/tools/swarm_board_dispatch.rs:call_as",
-        "swarm board has no method {method}",
         "Calling",
     ),
     (

@@ -212,6 +212,12 @@ pub struct BoardOpObservation {
     /// does not apply.
     #[serde(flatten)]
     pub detail: BoardOpDetail,
+    /// Which arguments a refusal raised while binding them found wrong
+    /// (#2341), flat beside the other fields: schema names only, each
+    /// field left out when it has none. Boxed: most records have none, and
+    /// every audit event is as large as its largest.
+    #[serde(flatten)]
+    pub arguments: Box<ArgumentFaults>,
 }
 
 /// Whether `decision` is shaped as a decision kind: nonempty lowercase
@@ -313,6 +319,85 @@ impl BoardOpDetail {
         fast_path_defeated: None,
         placeholder_created: None,
     };
+}
+
+/// What a refusal raised while binding an op's arguments found wrong
+/// (#2341): a `calling` refusal (a missing or unexpected argument) or an
+/// `invalid` one (a value of the wrong type, or one the board's value
+/// type cannot hold). Every name is a field name of the `swarm` tool's
+/// schema, never the member's text: an unexpected key is counted, and
+/// named only when it is some op's schema field. Additive, as
+/// [`BoardOpDetail`] is; each field is left out when it has nothing.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArgumentFaults {
+    /// The required arguments that were not given, by schema name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub missing_args: Vec<String>,
+    /// The keys (or positions) the op's signature has no parameter for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unexpected_args: Option<UnexpectedArgs>,
+    /// The arguments given a value of another JSON type than the schema's.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub wrong_type_args: Vec<WrongTypeArg>,
+    /// The arguments whose value the board's value type cannot hold (an
+    /// integer beyond i64 and u64, a number that overflows, a lone
+    /// surrogate), by schema name; `arguments` for the text as a whole
+    /// (not JSON, or such a value under a key no schema field names).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unreadable_args: Vec<String>,
+}
+
+/// The unexpected arguments of a call (#2341): how many, and the ones
+/// that are a schema field of some op (a field sent to the wrong op).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnexpectedArgs {
+    pub count: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub known: Vec<String>,
+}
+
+/// An argument given a value of the wrong JSON type (#2341): its schema
+/// name and the type the schema expects (`integer`, `null_or_string`,
+/// `array_of_string`, ...).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WrongTypeArg {
+    pub arg: String,
+    pub expected: String,
+}
+
+impl ArgumentFaults {
+    /// No fault: the record of any call that did not refuse its binding.
+    pub const NONE: Self = Self {
+        missing_args: Vec::new(),
+        unexpected_args: None,
+        wrong_type_args: Vec::new(),
+        unreadable_args: Vec::new(),
+    };
+
+    /// Whether nothing was found wrong.
+    pub fn is_empty(&self) -> bool {
+        self == &Self::NONE
+    }
+
+    /// Whether every name and type is shaped as a kind ([`decision_kind`]):
+    /// lowercase ASCII letters, digits and underscores, so no text a
+    /// member could send in a key (a credential, a sentence) passes as one.
+    pub fn names_are_kinds(&self) -> bool {
+        let unexpected = self
+            .unexpected_args
+            .iter()
+            .flat_map(|unexpected| unexpected.known.iter());
+        let wrong = self
+            .wrong_type_args
+            .iter()
+            .flat_map(|wrong| [&wrong.arg, &wrong.expected]);
+        self.missing_args
+            .iter()
+            .chain(unexpected)
+            .chain(wrong)
+            .chain(self.unreadable_args.iter())
+            .all(|name| decision_kind(name))
+    }
 }
 
 /// The role `member` holds in a run whose coordinator and integrator are

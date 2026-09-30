@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 
+use super::swarm_board_dispatch::BindingFaults;
 use crate::application::swarm::dto::CallMeasure;
 use crate::domain::redaction::Redacted;
 use crate::domain::swarm::telemetry::{decision_kind, run_role};
@@ -55,6 +56,9 @@ pub(super) struct Finished<'a> {
     /// The decision taken, or the refusal's kind.
     pub outcome: Result<&'static str, RefusalKind>,
     pub elapsed: Duration,
+    /// What a refusal raised while binding the arguments found wrong
+    /// (#2341), by schema name; none for any other outcome.
+    pub arguments: BindingFaults,
 }
 
 /// What a served call decided, and what it acted on, for its records.
@@ -249,6 +253,10 @@ pub(super) fn observation(
         served.is_some() || call.outcome.is_err(),
         "an answered call served its answer"
     );
+    debug_assert!(
+        call.outcome.is_err() || call.arguments.is_empty(),
+        "argument faults are recorded for a refusal only"
+    );
     let measure = measure.as_ref();
     BoardOpObservation {
         op: call.op.to_owned(),
@@ -283,6 +291,7 @@ pub(super) fn observation(
         },
         decision: served.map(|served| served.decision.to_owned()),
         detail: served.map_or(BoardOpDetail::NONE, |served| served.detail.clone()),
+        arguments: Box::new(call.arguments.record()),
     }
 }
 

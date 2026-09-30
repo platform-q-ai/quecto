@@ -170,11 +170,20 @@ async fn refuse_op(
         super::swarm_board_dispatch::signature(UNKNOWN_OP).is_none(),
         "a refused call is recorded under no board method's name"
     );
+    // Text that is no JSON is refused as a whole (#2341).
+    let arguments = match &refused {
+        Refused::InvalidJson(_) => super::swarm_board_dispatch::unreadable_arguments(None),
+        Refused::Unknown(_) | Refused::NotAString | Refused::Missing { .. } => {
+            super::swarm_board_dispatch::BindingFaults::NONE
+        }
+    };
     let ctx = context.clone();
     let elapsed = started.elapsed();
-    super::call_work::spawn_blocking_in_call(move || ctx.refused(UNKNOWN_OP, kind, elapsed))
-        .await
-        .map_err(|error| DomainError::Tool(error.to_string()))?;
+    super::call_work::spawn_blocking_in_call(move || {
+        ctx.refused(UNKNOWN_OP, kind, arguments, elapsed)
+    })
+    .await
+    .map_err(|error| DomainError::Tool(error.to_string()))?;
     match refused {
         Refused::Unknown(op) => ok_json(
             json!({"status":"error","message":swarm_guidance::unknown_op(op)}),

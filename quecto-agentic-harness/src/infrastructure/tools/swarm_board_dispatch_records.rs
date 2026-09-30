@@ -8,10 +8,14 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-use super::super::swarm_board_telemetry::{Caller, Finished, Served, observation, trace};
+use super::super::swarm_board_telemetry::{
+    Caller, Finished, Served, TELEMETRY_TARGET, actor_ref, observation, trace,
+};
+use super::BindingFaults;
 use super::method::Method;
 use super::{Level, SwarmBoardHandles};
 use crate::application::swarm::dto::CallMeasure;
+use crate::domain::redaction::Redacted;
 use crate::domain::swarm::{BoardRole, RefusalKind};
 
 /// Whom a board call is made for (#2279 S15 final review): the calling
@@ -54,35 +58,73 @@ pub(super) fn record(
     served: Option<&Served>,
     measure: Option<CallMeasure>,
 ) {
-    match &handles.telemetry {
-        Some(telemetry) => {
-            let actor = telemetry.actors.of(finished.member, caller);
+    let actor = handles
+        .telemetry
+        .as_ref()
+        .map(|telemetry| telemetry.actors.of(finished.member, caller));
+    if !finished.arguments.is_empty() {
+        let actor = actor.clone().unwrap_or_else(|| actor_ref(finished.member));
+        trace_arguments(finished, &actor);
+    }
+    match (&handles.telemetry, actor) {
+        (Some(telemetry), Some(actor)) => {
             trace(finished, measure.as_ref(), Some(&actor));
             let observation = observation(finished, actor, caller, served, measure);
             telemetry.log.record(observation);
         }
-        None => trace(finished, None, None),
+        (Some(_), None) | (None, _) => trace(finished, None, None),
     }
+}
+
+/// The `tracing` record of a binding refusal's faults (#2341), on the
+/// board's target: the op and the schema names only, each list
+/// comma-joined (`missing_args=token,reason`), and the caller's redacted
+/// `actor` ref, which matches it to the call's own record (#2346 review).
+fn trace_arguments(finished: &Finished<'_>, actor: &Redacted) {
+    let faults = finished.arguments.record();
+    let unexpected = faults.unexpected_args.as_ref();
+    let known = unexpected.map_or(&[][..], |unexpected| &unexpected.known[..]);
+    let wrong: Vec<String> = faults
+        .wrong_type_args
+        .iter()
+        .map(|wrong| format!("{}:{}", wrong.arg, wrong.expected))
+        .collect();
+    tracing::info!(
+        target: TELEMETRY_TARGET,
+        op = finished.op,
+        member = actor.as_str(),
+        missing_args = %faults.missing_args.join(","),
+        unexpected_args = unexpected.map_or(0, |unexpected| unexpected.count),
+        unexpected_known = %known.join(","),
+        wrong_type_args = %wrong.join(","),
+        unreadable_args = %faults.unreadable_args.join(","),
+        "swarm board call arguments"
+    );
 }
 
 /// Records `method`, called by `member`, as refused with `kind` before it
 /// reached the board, `elapsed` after the op began: the same records a
 /// refused call leaves, with nothing measured (no transaction began) and
-/// the caller unproven.
+/// the caller unproven. `arguments` is what the refusal found wrong in the
+/// member's text (#2341: a value the board cannot hold), kept only for an
+/// `invalid` or `calling` refusal.
 pub fn refused(
     handles: &SwarmBoardHandles,
     member: &str,
     method: &str,
     kind: RefusalKind,
+    arguments: BindingFaults,
     elapsed: Duration,
 ) {
     let known = Method::parse(method);
+    let outcome = Err(kind);
     let finished = Finished {
         op: known.map_or("unknown", Method::name),
         level: known.map_or(Level::Mutation, Method::level),
         role: recorded_role(CallOrigin::Member, known),
         member,
-        outcome: Err(kind),
+        arguments: super::binding::recorded(&outcome, Some(arguments)),
+        outcome,
         elapsed,
     };
     record(handles, &finished, Caller::Unproven, None, None);

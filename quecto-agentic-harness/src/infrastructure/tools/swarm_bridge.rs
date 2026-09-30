@@ -93,10 +93,16 @@ impl SwarmContext {
         &self,
         method: &str,
         kind: crate::domain::swarm::RefusalKind,
+        arguments: super::swarm_board_dispatch::BindingFaults,
         elapsed: std::time::Duration,
     ) {
-        self.board
-            .refused(self.location(), &self.member, method, kind, elapsed);
+        self.board.refused(
+            self.location(),
+            &self.member,
+            method,
+            (kind, arguments),
+            elapsed,
+        );
     }
 
     pub fn accept_wake(&self, generation: u64) -> Result<bool, DomainError> {

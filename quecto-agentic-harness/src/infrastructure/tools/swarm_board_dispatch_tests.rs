@@ -2,7 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
 
-use super::{Method, Parameter, SwarmBoardHandles, TELEMETRY_TARGET, bind, call, required};
+use super::binding::bind;
+use super::{Method, Parameter, SwarmBoardHandles, TELEMETRY_TARGET, call, required};
 use crate::application::swarm::dto::BoardLocation;
 use crate::application::swarm::ports::{Clock, IdSource};
 use crate::composition::swarm::build_swarm_board_handles_with;

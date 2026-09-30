@@ -206,7 +206,8 @@ How an op is served:
    number that overflows (`1e400`) and a string holding a lone surrogate
    (`"\ud800"`). The refusal is
    `tool error: swarm: "arguments: not representable as a serde_json value: <why>"`, and
-   its `swarm_op` record has kind `invalid`. These are inputs Python took (or
+   its `swarm_op` record has kind `invalid` and names the field in
+   `unreadable_args` (see [Telemetry](#telemetry)). These are inputs Python took (or
    read) but the board refuses; the differential suite lists them as
    permitted divergences. `NaN`, `Infinity` and `-Infinity` never reach the
    tool: they are not JSON, so the agent loop answers the call itself with
@@ -776,7 +777,30 @@ body, evidence, reason, path or other board text:
 | `has_more` | For `events`, whether a later page holds more |
 | `fast_path_defeated` | For a `summary` given the board's own cursor, whether an owner turned idle by the clock alone since it, which defeats the `unchanged` answer |
 | `placeholder_created` | For `_bootstrap`, whether it wrote the container's placeholder run; its `decision` is the join's branch (`admitted`, `already_live`, `reactivated`), as `_join`'s is, or `placeholder` for a `committed` refusal met before the join took a branch; `create`'s is `fresh` or `over_setup` |
+| `missing_args` | For a `calling` or `invalid` refusal (#2341), the required arguments the call left out, by their schema names, every one (not only the first the refusal's text names); a parameter no `swarm` op's schema has (a harness-internal method's) is left out. Left out when there are none |
+| `unexpected_args` | For a `calling` or `invalid` refusal, `{"count": N, "known": [...]}`: how many keys (or positional values) the op's signature has no parameter for, and, in `known`, those that are a schema field of some other op (a field sent to the wrong op). Any other key is counted only, never named, so no text a member typed as a key reaches the log. `known` is left out when empty, the field when there are none |
+| `wrong_type_args` | For a `calling` or `invalid` refusal of a member-facing op, `[{"arg": ..., "expected": ...}]`: each argument given a value of another JSON type than its schema's, and that type (`integer`, `string`, `boolean`, `null_or_string`, `null_or_integer`, `array_of_string`, `array_of_object`, `null_or_array_of_integer`; `null` first when it is allowed). An array whose items are of another type counts; an item's own properties are not checked (an `evidence` item need only be an object). It compares with the schema, not with the board's own checks, and is kept for any `invalid` refusal, the board's own validation included, so it can name a field that is not the refusal's cause: `task_create` with an empty `acceptance` list and a numeric `request` is refused for the list, and records `request` (which the board binds untyped, as Python does). Left out when there are none |
+| `unreadable_args` | For member input refused before the board as `invalid` (#2341): the schema field whose value the board's JSON value cannot hold (`1e400`, an integer beyond i64 and u64, a string holding a lone surrogate, or nesting more than 128 levels deep, counting the object itself as one level), or `arguments` for the text as a whole. `arguments` covers: text the tool cannot read as JSON (the `unknown` op's record: text that is no JSON, and JSON the serde reader refuses where no structured op was read, such as a harness op or a call with no op holding `1e400`); such a value under a key no schema field names; and, for the harness's own calls only, arguments that are no array or object (a member's JSON array or scalar names no op, so it is refused as op `unknown` with kind `calling` and no argument fields). Left out otherwise |
 | `ended_by_loss` | For a recorded loss (`_quarantine`'s `recorded`, `_lose_coordinator`) or a confirmed death, whether the op ended the run by loss; left out when the op recorded neither |
+
+Every name in `missing_args`, `unexpected_args.known`, `wrong_type_args` and
+`unreadable_args` is a field name of the `swarm` tool's schema (the board ops'
+table, `BOARD_OPS`), or `arguments`. This holds by type: the dispatcher records
+only a `SchemaField`, the table's own `&'static str`, which nothing but the
+table lookup (`schema_field`) can construct, so no member text (nor any other
+string) can become a recorded name, in a release build too; debug builds also
+assert it on every record. Each binding refusal also leaves one
+`swarm board call arguments` `tracing` record (INFO, target
+`quecto::swarm_board`) with the op, the caller's redacted `member` ref (as the
+call's own `swarm board call` record has it) and the same names comma-joined
+(`missing_args=token,reason`, `unexpected_args=2`, `unexpected_known=title`,
+`wrong_type_args=acceptance:array_of_string`, `unreadable_args=task_id`), also
+while the event log is off. To see what members got wrong in a run:
+
+```bash
+jq -c 'select(.event == "swarm_op" and (.kind == "calling" or .kind == "invalid"))
+  | {op, kind, missing_args, unexpected_args, wrong_type_args, unreadable_args}' ~/.quecto/audit/*.jsonl
+```
 
 Kinds are additive: a later release may add a kind (each refusal the Python
 board raises already has one), but never renames or reuses one. A consumer of
@@ -843,11 +867,11 @@ the board is still recorded as the op's own `swarm_op`, with no run read
 
 | Refused at | `kind` |
 |---|---|
-| Member input (a value the board's JSON value cannot hold: `1e400`, an integer beyond i64 and u64, a lone surrogate) | `invalid` |
+| Member input (a value the board's JSON value cannot hold: `1e400`, an integer beyond i64 and u64, a lone surrogate), its field in `unreadable_args` | `invalid` |
 | The running gate, when the run is not `running` | `not_running` |
 | The running gate, when the running run's deadline has passed, is missing or is not a number | `budget_exhausted` |
 | The running gate, when the `_status` call failed, the status read is not text, or a mutating op's first `_event_cursor` call failed (gate `unreadable`) | `store` |
-| No valid op: a name the tool does not serve (an internal board method's such as `_close` included), an op that is missing or not a string, or arguments that are not JSON; recorded as op `unknown`, never under the member's name, and never with role `host` | `calling` (`invalid` for arguments that are not JSON) |
+| No valid op: a name the tool does not serve (an internal board method's such as `_close` included), an op that is missing or not a string, or arguments that are not JSON; recorded as op `unknown`, never under the member's name, and never with role `host` | `calling` (`invalid` for arguments that are not JSON, with `unreadable_args` `["arguments"]`) |
 
 Each structured op also leaves one `tracing` event, `swarm structured op`,
 on target `quecto::swarm_board` (DEBUG for the read-only ops `task`, `tasks`,

@@ -85,6 +85,7 @@ use crate::application::swarm::use_cases::{
 };
 use crate::domain::swarm::{BoardError, BoardOpDetail, RefusalKind};
 
+pub use self::binding::{BindingFaults, SchemaField, schema_field, unreadable_arguments};
 use self::method::{Method, Parameter, required};
 pub use super::swarm_board_telemetry::{ActorRefs, TELEMETRY_TARGET};
 use super::swarm_board_telemetry::{Caller, Finished, Level, Served, split_committed};
@@ -175,6 +176,11 @@ pub struct BoardWire {
     pub read: fn(&str) -> Result<Value, String>,
     pub op: fn(&str) -> Option<String>,
     pub write: fn(&Value) -> Result<String, String>,
+    /// The keys of the object a refused text holds whose values `read`
+    /// could not hold (#2341; a key that is no Rust string as `""`),
+    /// `None` when the text is no object: compared only with the schema's
+    /// field names, never recorded.
+    pub unreadable: fn(&str) -> Option<Vec<String>>,
 }
 
 /// The event log a board call records in, the meter that measures it and
@@ -309,17 +315,29 @@ pub fn call_as(
         }
         metered
     });
-    let answer = match known {
-        Some(known) => bind(known, known.parameters(), args).and_then(|arguments| {
-            let over = metered
-                .clone()
-                .map(|metered| metered as Arc<dyn BoardRepository>);
-            serve(handles, over, member, known, arguments)
-        }),
-        None => Err(BoardError::new(
-            RefusalKind::Calling,
-            format!("swarm board has no method {method}"),
-        )),
+    // What a binding refusal found wrong (#2341), read only for a call the
+    // binding refuses, or, for a member-facing op the board may refuse as
+    // invalid, its type mismatches before binding takes the arguments.
+    let (answer, faults) = match known {
+        Some(known) => match binding::refusal(known, known.parameters(), &args) {
+            Some(refusal) => (Err(refusal), Some(binding::faults(known, &args))),
+            None => {
+                let faults = binding::mistyped(known, &args);
+                let arguments = binding::slotted(known.parameters(), args);
+                let over = metered
+                    .clone()
+                    .map(|metered| metered as Arc<dyn BoardRepository>);
+                let served = serve(handles, over, member, known, arguments);
+                (served, Some(faults))
+            }
+        },
+        None => (
+            Err(BoardError::new(
+                RefusalKind::Calling,
+                format!("swarm board has no method {method}"),
+            )),
+            None,
+        ),
     };
     let (answer, committed) = split_committed(answer);
     let measure = metered.and_then(|metered| metered.measure());
@@ -330,6 +348,10 @@ pub fn call_as(
                 .is_none_or(|measure| measure.run_roles.is_none()),
         "a name that is no board method reads no run, so no role is read from one"
     );
+    let outcome = answer
+        .as_ref()
+        .map(|served| served.decision)
+        .map_err(BoardError::kind);
     let finished = Finished {
         op: known.map_or("unknown", Method::name),
         level: match (known, &answer) {
@@ -339,10 +361,8 @@ pub fn call_as(
         },
         role,
         member,
-        outcome: answer
-            .as_ref()
-            .map(|served| served.decision)
-            .map_err(BoardError::kind),
+        arguments: binding::recorded(&outcome, faults),
+        outcome,
         elapsed: started.elapsed(),
     };
     // A member: answered by an op that checks membership, or authorised by
@@ -359,59 +379,6 @@ pub fn call_as(
     let served = answer.as_ref().ok().or(committed.as_ref());
     records::record(handles, &finished, caller, served, measure);
     answer.map(|served| served.value)
-}
-
-/// Binds `args` to `parameters` as Python binds a call: positionally from
-/// an array, by name from an object, then each unbound parameter's default.
-fn bind(method: Method, parameters: &[Parameter], args: Value) -> Result<Vec<Value>, BoardError> {
-    let name = method.name();
-    let mut slots: Vec<Option<Value>> = vec![None; parameters.len()];
-    match args {
-        Value::Array(values) => {
-            if values.len() > parameters.len() {
-                return Err(BoardError::new(
-                    RefusalKind::Calling,
-                    format!(
-                        "{name}: takes {} arguments, {} given",
-                        parameters.len(),
-                        values.len()
-                    ),
-                ));
-            }
-            for (slot, value) in slots.iter_mut().zip(values) {
-                *slot = Some(value);
-            }
-        }
-        Value::Object(fields) => {
-            for (key, value) in fields {
-                let Some(index) = parameters.iter().position(|p| p.name == key) else {
-                    return Err(BoardError::new(
-                        RefusalKind::Calling,
-                        format!("{name}: unexpected argument {key}"),
-                    ));
-                };
-                slots[index] = Some(value);
-            }
-        }
-        _ => {
-            return Err(BoardError::new(
-                RefusalKind::Calling,
-                format!("{name}: arguments must be a JSON array or object"),
-            ));
-        }
-    }
-    slots
-        .into_iter()
-        .zip(parameters)
-        .map(|(slot, parameter)| match (slot, parameter.default) {
-            (Some(value), _) => Ok(value),
-            (None, Some(default)) => Ok(default()),
-            (None, None) => Err(BoardError::new(
-                RefusalKind::Calling,
-                format!("{name}: missing required argument {}", parameter.name),
-            )),
-        })
-        .collect()
 }
 
 /// The composed use case, or the same one over a metered call's own
@@ -661,6 +628,9 @@ fn take<const N: usize>(arguments: Vec<Value>) -> Result<[Value; N], BoardError>
         )
     })
 }
+
+#[path = "swarm_board_dispatch_binding.rs"]
+mod binding;
 
 #[path = "swarm_board_dispatch_records.rs"]
 mod records;

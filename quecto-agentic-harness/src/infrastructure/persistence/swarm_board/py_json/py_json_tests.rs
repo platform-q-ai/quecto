@@ -348,3 +348,45 @@ fn dumps_value_writes_as_json_dumps() {
         r#"{"z": 1e+16, "a": [0.1, "\u00e9"], "n": null}"#
     );
 }
+
+/// #2341: the keys whose values a `Value` cannot hold, in the object's
+/// order; a key that is no Rust string as `""`; `None` for no object.
+#[test]
+fn unreadable_fields_are_the_keys_a_value_cannot_hold() {
+    assert_eq!(
+        unreadable_fields(
+            r#"{"a": 1e400, "b": 1, "c": [18446744073709551616], "d": "\ud800", "\udc00": 2}"#
+        ),
+        Some(vec!["a".into(), "c".into(), "d".into(), String::new()])
+    );
+    assert_eq!(unreadable_fields(r#"{"a": NaN}"#), Some(vec!["a".into()]));
+    assert_eq!(unreadable_fields(r#"{"a": 1}"#), Some(vec![]));
+    for text in ["[1e400]", "{", "1"] {
+        assert_eq!(unreadable_fields(text), None, "{text}");
+    }
+}
+
+/// #2346 final review: a field's value is checked at its real depth,
+/// inside the object: the object is one level, so a value nested 128
+/// levels makes the text 129 deep, which a `Value` cannot hold, and names
+/// its field; 127 levels is readable.
+#[test]
+fn an_unreadable_field_is_checked_at_its_real_depth() {
+    let nested = |levels: usize| {
+        format!(
+            r#"{{"op":"claim","task_id":{}1{}}}"#,
+            "[".repeat(levels),
+            "]".repeat(levels)
+        )
+    };
+    assert!(decode_value(&nested(127)).is_ok());
+    assert_eq!(unreadable_fields(&nested(127)), Some(vec![]));
+    for levels in [128, 129] {
+        assert!(decode_value(&nested(levels)).is_err(), "{levels}");
+        assert_eq!(
+            unreadable_fields(&nested(levels)),
+            Some(vec!["task_id".into()]),
+            "{levels}"
+        );
+    }
+}

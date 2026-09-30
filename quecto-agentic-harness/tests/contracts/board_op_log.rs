@@ -5,7 +5,7 @@
 use quecto::application::swarm::ports::BoardOpLog;
 use quecto::domain::redaction::Redacted;
 use quecto::domain::swarm::{
-    BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind,
+    ArgumentFaults, BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind,
 };
 use quecto::infrastructure::persistence::audit_log::AuditLog;
 use quecto::infrastructure::persistence::board_op_log::EventLogBoardOps;
@@ -30,6 +30,7 @@ fn observation() -> BoardOpObservation {
         result_bytes: 0,
         decision: None,
         detail: BoardOpDetail::NONE,
+        arguments: Box::new(ArgumentFaults::NONE),
     }
 }
 

@@ -172,6 +172,7 @@ fn observation(outcome: BoardOpOutcome) -> BoardOpObservation {
         result_bytes: 42,
         decision: None,
         detail: BoardOpDetail::NONE,
+        arguments: Box::new(ArgumentFaults::NONE),
     }
 }
 
@@ -563,4 +564,94 @@ fn a_committed_refusal_is_marked() {
         serde_json::from_value::<AuditEvent>(line).unwrap(),
         committed
     );
+}
+
+/// A binding refusal's argument faults (#2341) sit flat beside the other
+/// fields, each left out when empty, and read back as written; a record
+/// without them (an older writer's) reads as none.
+#[test]
+fn argument_faults_are_flat_and_left_out_when_empty() {
+    let faults = ArgumentFaults {
+        missing_args: vec!["token".into()],
+        unexpected_args: Some(UnexpectedArgs {
+            count: 2,
+            known: vec!["title".into()],
+        }),
+        wrong_type_args: vec![WrongTypeArg {
+            arg: "acceptance".into(),
+            expected: "array_of_string".into(),
+        }],
+        unreadable_args: vec!["arguments".into()],
+    };
+    assert!(faults.names_are_kinds() && !faults.is_empty());
+    let recorded = AuditEvent::SwarmOp(BoardOpObservation {
+        arguments: Box::new(faults),
+        ..observation(BoardOpOutcome::Refused {
+            kind: RefusalKind::Calling,
+            committed: false,
+        })
+    });
+    let line = serde_json::to_value(&recorded).unwrap();
+    assert_eq!(line["missing_args"], json!(["token"]));
+    assert_eq!(
+        line["unexpected_args"],
+        json!({"count": 2, "known": ["title"]})
+    );
+    assert_eq!(
+        line["wrong_type_args"],
+        json!([{"arg": "acceptance", "expected": "array_of_string"}])
+    );
+    assert_eq!(line["unreadable_args"], json!(["arguments"]));
+    assert_eq!(
+        serde_json::from_value::<AuditEvent>(line).unwrap(),
+        recorded
+    );
+    let none = serde_json::to_value(AuditEvent::SwarmOp(observation(BoardOpOutcome::Ok))).unwrap();
+    for field in [
+        "missing_args",
+        "unexpected_args",
+        "wrong_type_args",
+        "unreadable_args",
+    ] {
+        assert_eq!(none.get(field), None, "{field}: {none}");
+    }
+    let bare = serde_json::to_value(UnexpectedArgs {
+        count: 1,
+        known: vec![],
+    })
+    .unwrap();
+    assert_eq!(bare, json!({"count": 1}));
+    let shaped = |name: &str| ArgumentFaults {
+        missing_args: vec![name.into()],
+        ..ArgumentFaults::NONE
+    };
+    for text in ["sk-ant-api03-x", "Token", "two words", ""] {
+        assert!(!shaped(text).names_are_kinds(), "{text}");
+    }
+}
+
+/// #2346 review: a `swarm_op` line an older writer wrote, without the
+/// argument fields, reads back with none.
+#[test]
+fn an_older_swarm_op_line_reads_with_no_argument_faults() {
+    let line = json!({
+        "event": "swarm_op",
+        "op": "claim",
+        "actor_ref": "worker-1",
+        "role": "worker",
+        "run_id": null,
+        "outcome": "refused",
+        "kind": "calling",
+        "duration_us": 5,
+        "lock_wait_us": null,
+        "busy_wait_us": null,
+        "busy": null,
+        "cursor_moved": null,
+        "result_bytes": 0,
+    });
+    let AuditEvent::SwarmOp(read) = serde_json::from_value::<AuditEvent>(line).unwrap() else {
+        panic!("a swarm_op line reads as one");
+    };
+    assert_eq!(*read.arguments, ArgumentFaults::NONE);
+    assert_eq!(read.detail, BoardOpDetail::NONE);
 }
