@@ -95,6 +95,13 @@ pub struct AgentDefaults {
     /// the lower of it and `max_context_tokens` applies from then on.
     #[serde(default = "default_swarm_max_context_tokens")]
     pub swarm_max_context_tokens: usize,
+    /// The size-aware collapse (#2348): a tool result over this many
+    /// estimated tokens collapses to its recall stub once the model has
+    /// seen it for `context_collapse_large_result_after_turns` turns.
+    #[serde(default = "large_results::default_tokens")]
+    pub context_collapse_large_result_tokens: usize,
+    #[serde(default = "large_results::default_after_turns")]
+    pub context_collapse_large_result_after_turns: u32,
     /// How many most-recent turns the spilling ceiling tail-pins (#1045).
     #[serde(default = "default_pin_recent_turns")]
     pub pin_recent_turns: u32,
@@ -133,6 +140,8 @@ impl Default for AgentDefaults {
             context_collapse_after_tool_calls: default_context_collapse_after_tool_calls(),
             max_context_tokens: default_max_context_tokens(),
             swarm_max_context_tokens: default_swarm_max_context_tokens(),
+            context_collapse_large_result_tokens: large_results::default_tokens(),
+            context_collapse_large_result_after_turns: large_results::default_after_turns(),
             pin_recent_turns: default_pin_recent_turns(),
             context_collapse_after_messages: default_context_collapse_after_messages(),
             effort: None,
@@ -443,6 +452,8 @@ impl Config {
     /// - `QUECTO_AGENTS_DEFAULTS_MAX_SESSION_MESSAGES` → agents.defaults.max_session_messages
     /// - `QUECTO_MAX_CONTEXT_TOKENS` → agents.defaults.max_context_tokens
     /// - `QUECTO_SWARM_MAX_CONTEXT_TOKENS` → agents.defaults.swarm_max_context_tokens
+    /// - `QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_TOKENS` and
+    ///   `QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_AFTER_TURNS` → the size-aware collapse (#2348)
     /// - `QUECTO_AGENTS_DEFAULTS_EFFORT` → agents.defaults.effort
     /// - `OPENAI_API_KEY` → providers.openai.api_key
     /// - `ANTHROPIC_API_KEY` → providers.anthropic.api_key
@@ -478,6 +489,7 @@ impl Config {
         {
             config.agents.defaults.swarm_max_context_tokens = n;
         }
+        large_results::apply_env_overrides(&mut config.agents.defaults, env);
         if let Some(v) = env.get("OPENAI_API_KEY") {
             config.providers.openai.api_key = v.clone();
         }
@@ -702,6 +714,8 @@ pub mod telemetry;
 pub use grep_tool::GrepToolConfig;
 pub mod loaders;
 pub mod mapping;
+// #2348: the size-aware collapse's dials.
+mod large_results;
 pub mod persistence;
 pub mod writer;
 
@@ -721,6 +735,9 @@ mod container_slice2_tests;
 #[cfg(test)]
 #[path = "config_cov_tests.rs"]
 mod cov_tests;
+#[cfg(test)]
+#[path = "config_large_result_tests.rs"]
+mod large_result_tests;
 #[cfg(test)]
 #[path = "config_swarm_context_tests.rs"]
 mod swarm_context_tests;

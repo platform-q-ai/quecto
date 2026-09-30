@@ -99,6 +99,7 @@ fn given_llm_turn_end(
         output_tokens,
         stop_reason,
         duration_ms,
+        cached_input_tokens: None,
     };
     world.audit_event = Some(event);
 }
@@ -167,6 +168,7 @@ fn given_context_pruned(
         ladder_stubbed: 0,
         snapshots_superseded: 0,
         ceiling_tokens: 0,
+        large_results_collapsed: 0,
     };
     world.audit_event = Some(event);
 }
@@ -405,6 +407,8 @@ fn when_agent_processes_failing_turn(world: &mut QuectoWorld) {
         ),
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
+        large_result_collapse:
+            quecto::application::context_pruning::large_results::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     });
@@ -642,6 +646,7 @@ fn when_llm_end_emitted(world: &mut QuectoWorld, turn: u32) {
             output_tokens: 500,
             stop_reason: "end_turn".into(),
             duration_ms: 2000,
+            cached_input_tokens: None,
         },
     );
 }

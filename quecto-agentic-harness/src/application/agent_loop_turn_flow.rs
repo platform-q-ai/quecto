@@ -331,6 +331,7 @@ impl AgentLoopImpl {
                     output_tokens: output_toks,
                     stop_reason: stop,
                     duration_ms,
+                    cached_input_tokens: None,
                 },
             )
             .await;
@@ -526,3 +527,8 @@ impl AgentLoopImpl {
         }
     }
 }
+
+// #2348: the cached share of the input on `llm_turn_end`.
+#[cfg(test)]
+#[path = "agent_loop_cached_tokens_tests.rs"]
+mod cached_tokens_tests;

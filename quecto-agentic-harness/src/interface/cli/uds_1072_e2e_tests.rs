@@ -211,6 +211,8 @@ async fn shrinking_turn_emits_exactly_the_run_appended_messages_and_dirty_flag()
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
+        large_result_collapse:
+            crate::application::context_pruning::large_results::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
@@ -350,6 +352,8 @@ async fn under_budget_turn_reports_prefix_clean_on_its_outcome() {
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
+        large_result_collapse:
+            crate::application::context_pruning::large_results::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });

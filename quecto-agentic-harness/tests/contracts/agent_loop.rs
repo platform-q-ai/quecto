@@ -96,6 +96,8 @@ fn agent_loop(reply: &str) -> Box<dyn AgentLoop> {
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
+        large_result_collapse:
+            quecto::application::context_pruning::large_results::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     }))
@@ -152,6 +154,8 @@ fn failing_agent_loop(body: &str, sink: Arc<dyn AuditSink>) -> Box<dyn AgentLoop
         audit_log: Some(sink),
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
+        large_result_collapse:
+            quecto::application::context_pruning::large_results::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     }))

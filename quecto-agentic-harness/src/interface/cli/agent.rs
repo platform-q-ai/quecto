@@ -499,6 +499,7 @@ pub(crate) fn build_agent_from_config_in(
         // #1044/#1045/#1046: constructor fields — config cannot be dropped.
         pin_recent_turns: config.agents.defaults.pin_recent_turns,
         context_collapse_after_messages: config.agents.defaults.context_collapse_after_messages,
+        large_result_collapse: config.agents.defaults.large_result_collapse(),
         model_context_window: window,
         tool_profile_context: if flags.spawned {
             crate::domain::tool::ToolProfileContext::Child
@@ -629,7 +630,6 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
     let mut agent = build.agent;
     // Enable incremental streaming so the UDS layer emits token events.
     agent.set_streaming(true);
-
     agent.set_session_key(session_identity.clone());
 
     event_log::attach(

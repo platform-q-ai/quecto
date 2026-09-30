@@ -21,17 +21,19 @@
 //!   (#2212), so the ladder's per-message sums stay consistent with it;
 //! - the newest whole snapshot of a state (a full swarm summary) stays in
 //!   full at every dial, and every older one it supersedes is collapsed to
-//!   its recall stub (#2342); and
+//!   its recall stub (#2342);
+//! - a large tool result the model has seen for a few turns collapses to
+//!   its recall stub whatever the count dials say (#2348); and
 //! - durable prefix dirty semantics are latched for every persisted-layout or
 //!   in-place history mutation, including manifest insert/remove, stub demotion,
 //!   and physical drops.
 
 use crate::application::context_pruning;
+use crate::application::context_pruning::large_results::LargeResultCollapse;
 use crate::application::sessions::use_cases::{ListRetainedContext, RetainContext};
 use crate::domain::context_calibration::EstimateScale;
-use crate::domain::message::{Message, ToolCall};
+use crate::domain::message::Message;
 use crate::domain::session_identity::SessionIdentity;
-use crate::domain::tool::ImageBlock;
 use std::sync::{Arc, Mutex};
 
 // #2212: the provider-calibrated gauge and the estimate scale it observes.
@@ -45,6 +47,10 @@ pub use ceiling_cap::ContextCeilingCap;
 // The spill writers (split out for the decrease-only line ceiling, #2342).
 #[path = "context_spill_writers.rs"]
 mod spill;
+// The plan and the tool-message input (split out likewise, #2348).
+#[path = "context_plan.rs"]
+mod plan;
+pub(crate) use plan::{ContextPlan, ToolMessageBuild};
 
 /// The narrow handles the pruning policy holds on the sessions
 /// capability's retention namespace (D9 #1978): the writer that appends
@@ -71,6 +77,7 @@ pub struct ContextManagerConfig {
     pub max_context_tokens: usize,
     pub pin_recent_turns: u32,
     pub context_collapse_after_messages: u32,
+    pub large_result_collapse: LargeResultCollapse,
     pub model_context_window: Option<usize>,
 }
 
@@ -81,30 +88,10 @@ pub(crate) struct ContextManager {
     max_context_tokens: usize,
     pin_recent_turns: u32,
     context_collapse_after_messages: u32,
+    large_result_collapse: LargeResultCollapse,
     model_context_window: Option<usize>,
     ceiling_cap: ContextCeilingCap,
     gauge: Mutex<ContextGaugeCalibration>,
-}
-
-#[derive(Debug, Clone, Default)]
-pub(crate) struct ContextPlan {
-    pub tokens_before: usize,
-    pub total_tokens: usize,
-    pub tool_results_collapsed: usize,
-    pub messages_collapsed: usize,
-    pub ladder_stubbed: usize,
-    pub messages_dropped: usize,
-    /// Tool results a newer snapshot of the same state superseded (#2342).
-    pub snapshots_superseded: usize,
-    pub over_budget: bool,
-    pub durable_prefix_dirty: bool,
-}
-
-pub(crate) struct ToolMessageBuild<'a> {
-    pub tc: &'a ToolCall,
-    pub content: String,
-    pub image_blocks: Vec<ImageBlock>,
-    pub is_error: bool,
 }
 
 impl ContextManager {
@@ -116,6 +103,7 @@ impl ContextManager {
             max_context_tokens: config.max_context_tokens,
             pin_recent_turns: config.pin_recent_turns,
             context_collapse_after_messages: config.context_collapse_after_messages,
+            large_result_collapse: config.large_result_collapse,
             model_context_window: config.model_context_window,
             ceiling_cap: ContextCeilingCap::default(),
             gauge: Mutex::new(ContextGaugeCalibration::default()),
@@ -258,6 +246,12 @@ impl ContextManager {
         // Superseded snapshots go first (#2342): the dials then count and
         // weigh only what is still current.
         let superseded = context_pruning::snapshots::collapse_superseded_snapshots(messages);
+        // A large result the model has seen for a few turns goes to its
+        // stub whatever the count dials say (#2348).
+        let large = context_pruning::large_results::collapse_large_results(
+            messages,
+            self.large_result_collapse,
+        );
         let collapsed = context_pruning::collapse_tool_results_over_limit(
             messages,
             self.context_collapse_after_tool_calls,
@@ -286,6 +280,7 @@ impl ContextManager {
         let total_tokens = context_pruning::estimate_total_tokens(messages);
         let durable_prefix_dirty = manifest_shifted
             || superseded
+                + large
                 + collapsed
                 + msg_collapsed
                 + outcome.collapsed_to_stubs
@@ -299,6 +294,7 @@ impl ContextManager {
             ladder_stubbed: outcome.collapsed_to_stubs,
             messages_dropped: outcome.dropped,
             snapshots_superseded: superseded,
+            large_results_collapsed: large,
             over_budget: outcome.over_budget,
             durable_prefix_dirty,
         }

@@ -63,6 +63,7 @@ impl AgentLoopImpl {
             || plan.ladder_stubbed > 0
             || plan.messages_dropped > 0
             || plan.snapshots_superseded > 0
+            || plan.large_results_collapsed > 0
             || plan.over_budget
         {
             let ceiling_tokens = self.context_manager.effective_max_context_tokens();
@@ -73,6 +74,7 @@ impl AgentLoopImpl {
                 ladder_stubbed = plan.ladder_stubbed,
                 dropped = plan.messages_dropped,
                 snapshots_superseded = plan.snapshots_superseded,
+                large_results_collapsed = plan.large_results_collapsed,
                 ceiling_tokens,
                 budget_unmet = plan.over_budget,
                 estimate_scale_permille = self.context_manager.estimate_scale().permille(),
@@ -93,6 +95,7 @@ impl AgentLoopImpl {
                     ladder_stubbed: plan.ladder_stubbed,
                     snapshots_superseded: plan.snapshots_superseded,
                     ceiling_tokens,
+                    large_results_collapsed: plan.large_results_collapsed,
                 },
             )
             .await;
@@ -116,7 +119,7 @@ impl AgentLoopImpl {
 // #1044/#1045/#1046: context-management tests (750-line cap: separate file).
 #[cfg(test)]
 #[path = "agent_loop_ctx_mgmt_tests.rs"]
-mod ctx_mgmt_tests;
+pub(super) mod ctx_mgmt_tests;
 
 // #2212: provider-calibrated ceiling tests.
 #[cfg(test)]
@@ -127,3 +130,8 @@ mod calibration_tests;
 #[cfg(test)]
 #[path = "agent_loop_snapshot_tests.rs"]
 mod snapshot_tests;
+
+// #2348: the size-aware collapse on the same scripted coordinator.
+#[cfg(test)]
+#[path = "agent_loop_large_result_tests.rs"]
+mod large_result_tests;

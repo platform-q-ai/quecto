@@ -1,17 +1,13 @@
 // Context pruning: tool-call collapse + sliding-window enforcement with spill-to-disk.
 //
-// Once the number of tool-result messages in the session exceeds
-// `context_collapse_after_tool_calls` (default 50), the oldest tool results are
-// collapsed to compact `recall(spill_id)` stubs. Conversation messages get the
-// symmetric lifecycle in the `messages` submodule (#1046): spilled at creation,
-// count-collapsed via `context_collapse_after_messages`, and demoted down the
-// ladder (stub → drop) when the conversation exceeds the token budget. All
-// content spills to disk at creation time, so `recall()` can retrieve
-// collapsed or dropped content.
+// Past `context_collapse_after_tool_calls` (default 50) tool results, the
+// oldest collapse to compact `recall(spill_id)` stubs; a large one the model
+// has seen for a few turns collapses whatever the count (#2348). Conversation
+// messages get the symmetric lifecycle in `messages` (#1046). All content
+// spills at creation, so `recall()` retrieves collapsed or dropped content.
 //
 // Depends on: domain::message, application::sessions::use_cases (the narrow
-// retention reader, D9 #1978). Never imports infrastructure, never reaches
-// the retention store.
+// retention reader, D9 #1978). Never imports infrastructure or the store.
 
 // #1046: conversation-message collapse, demotion ladder, creation-time spill.
 #[path = "context_pruning_messages.rs"]
@@ -24,6 +20,10 @@ pub mod snapshots;
 // #2349 review M1: removal keeps call/result exchanges whole.
 #[path = "context_pruning_exchanges.rs"]
 mod exchanges;
+
+// #2348: a large result seen for a few turns collapses whatever the count.
+#[path = "context_pruning_large_results.rs"]
+pub mod large_results;
 
 use crate::application::sessions::use_cases::ListRetainedContext;
 use crate::domain::message::{Message, Role};

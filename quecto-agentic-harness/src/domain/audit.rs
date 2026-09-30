@@ -76,6 +76,13 @@ pub enum AuditEvent {
         output_tokens: usize,
         stop_reason: String,
         duration_ms: u64,
+        /// The share of `input_tokens` the provider served from its prompt
+        /// cache (#2348): Anthropic `cache_read_input_tokens`, OpenAI chat
+        /// `prompt_tokens_details.cached_tokens`, Codex/Responses
+        /// `input_tokens_details.cached_tokens`. Absent when the provider
+        /// reported none (or no usage at all), and in logs written before it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cached_input_tokens: Option<usize>,
     },
     #[cfg(any(test, feature = "test-support"))]
     WorkflowStep {
@@ -123,6 +130,12 @@ pub enum AuditEvent {
         /// absent from logs written before it, read as 0.
         #[serde(default)]
         ceiling_tokens: usize,
+        /// Tool results the size-aware rule collapsed this prune: each over
+        /// `context_collapse_large_result_tokens`, seen for
+        /// `context_collapse_large_result_after_turns` turns (#2348); absent
+        /// from logs written before it, read as 0.
+        #[serde(default)]
+        large_results_collapsed: usize,
     },
     #[cfg(any(test, feature = "test-support"))]
     SubagentSpawned {

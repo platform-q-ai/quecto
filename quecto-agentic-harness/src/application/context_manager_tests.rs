@@ -75,7 +75,11 @@ impl ContextSpillStore for MemSpillStore {
 }
 
 fn manager(max_context_tokens: usize) -> ContextManager {
-    ContextManager::new(ContextManagerConfig {
+    ContextManager::new(config_for(max_context_tokens))
+}
+
+fn config_for(max_context_tokens: usize) -> ContextManagerConfig {
+    ContextManagerConfig {
         retention: Some(crate::composition::retention::context_retention_over(
             Arc::new(MemSpillStore::default()),
         )),
@@ -84,8 +88,10 @@ fn manager(max_context_tokens: usize) -> ContextManager {
         max_context_tokens,
         pin_recent_turns: 2,
         context_collapse_after_messages: context_pruning::COLLAPSE_DISABLED,
+        large_result_collapse:
+            crate::application::context_pruning::large_results::LargeResultCollapse::DISABLED,
         model_context_window: None,
-    })
+    }
 }
 
 fn long_message(turn: u32) -> Message {
@@ -477,6 +483,8 @@ async fn the_count_based_collapse_is_counted_apart_from_the_ladder() {
         max_context_tokens: 190_000,
         pin_recent_turns: 1,
         context_collapse_after_messages: 1,
+        large_result_collapse:
+            crate::application::context_pruning::large_results::LargeResultCollapse::DISABLED,
         model_context_window: None,
     });
     let mut messages = vec![
@@ -585,4 +593,49 @@ fn the_window_budget_ignores_the_swarm_cap() {
     manager.set_model_context_window(Some(100_000));
     assert_eq!(manager.window_budget_tokens(), 100_000);
     assert_eq!(manager.effective_max_context_tokens(), 40_000);
+}
+
+// --- #2348: the size-aware collapse ---
+
+#[tokio::test]
+async fn a_plan_collapses_a_large_seen_result_and_latches_the_prefix_dirty() {
+    use crate::application::context_pruning::large_results::LargeResultCollapse;
+    use crate::domain::message::ToolCall;
+    let manager = ContextManager::new(ContextManagerConfig {
+        large_result_collapse: LargeResultCollapse {
+            over_tokens: 2_000,
+            after_turns: 3,
+        },
+        ..config_for(1_000_000)
+    });
+    let mut large = Message::tool("call-1", "the quick brown fox ".repeat(2_000));
+    large.tool_name = Some("bash".to_string());
+    large.spill_id = Some("turn1:bash:0".to_string());
+    let call = ToolCall {
+        id: "call-1".to_string(),
+        name: "bash".to_string(),
+        arguments: "{}".to_string(),
+    };
+    let mut messages = vec![
+        Message::user("go"),
+        Message::assistant("", vec![call]),
+        large,
+    ];
+    for n in 0..3 {
+        messages.push(Message::assistant(format!("reply {n}"), vec![]));
+        messages.push(Message::user(format!("next {n}")));
+    }
+
+    let plan = manager
+        .prepare_provider_context(&mut messages, 1_000_000, false)
+        .await;
+
+    assert_eq!(plan.large_results_collapsed, 1);
+    assert_eq!(plan.tool_results_collapsed, 0, "not the count dial's");
+    assert!(messages[2].is_collapsed);
+    assert!(
+        plan.durable_prefix_dirty,
+        "an in-place rewrite is persisted"
+    );
+    assert!(plan.total_tokens < plan.tokens_before);
 }

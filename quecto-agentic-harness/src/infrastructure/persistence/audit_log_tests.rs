@@ -94,6 +94,7 @@ async fn appends_multiple_events_in_order() {
             output_tokens: 500,
             stop_reason: "end_turn".into(),
             duration_ms: 2000,
+            cached_input_tokens: None,
         },
     )
     .await
@@ -197,6 +198,7 @@ async fn all_event_types_write_successfully() {
             output_tokens: 200,
             stop_reason: "end_turn".into(),
             duration_ms: 500,
+            cached_input_tokens: None,
         },
         AuditEvent::WorkflowStep {
             action: "check".into(),
@@ -221,6 +223,7 @@ async fn all_event_types_write_successfully() {
             ladder_stubbed: 2,
             snapshots_superseded: 0,
             ceiling_tokens: 0,
+            large_results_collapsed: 0,
         },
         AuditEvent::SubagentSpawned {
             agent_id: "reviewer".into(),

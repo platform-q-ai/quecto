@@ -352,6 +352,8 @@ async fn run_turn(
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
+        large_result_collapse:
+            crate::application::context_pruning::large_results::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
@@ -409,6 +411,8 @@ async fn run_streaming_turn(deltas: Vec<&str>, response: &str, prompt: &str) -> 
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
+        large_result_collapse:
+            crate::application::context_pruning::large_results::LargeResultCollapse::DISABLED,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });

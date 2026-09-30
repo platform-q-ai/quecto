@@ -6,6 +6,7 @@
 use super::*;
 use quecto::application::agent_loop::AgentLoopConfig;
 use quecto::application::audit::ports::AuditSink;
+use quecto::application::context_pruning::large_results::LargeResultCollapse;
 use quecto::application::sessions::ports::{ContextSpillStore, SpillIndexList};
 use quecto::domain::audit::AuditEvent;
 use quecto::domain::session::{SpillEntry, SpillIndex};
@@ -158,6 +159,23 @@ impl MemberRun {
             })
             .collect()
     }
+
+    /// The large results each prune record counts (#2348).
+    fn large_results_collapsed(&self) -> Vec<usize> {
+        self.audit
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|event| match event {
+                AuditEvent::ContextPruned {
+                    large_results_collapsed,
+                    ..
+                } => Some(*large_results_collapsed),
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 fn run(world: &QuectoWorld) -> &MemberRun {
@@ -187,6 +205,60 @@ fn given_member_reads_summaries(world: &mut QuectoWorld, reads: u32, reply: Stri
         stop_reason: None,
         thinking_blocks: vec![],
     });
+}
+
+/// #2348: the member reads a large, non-snapshot board answer first.
+#[given(
+    expr = "the member reads the board task list, then the board summary {int} times, then replies {string}"
+)]
+fn given_member_reads_tasks_then_summaries(world: &mut QuectoWorld, reads: u32, reply: String) {
+    let mock = super::agent_loop_steps::ensure_mock_llm(world);
+    mock.push_response(LlmResponse {
+        content: None,
+        tool_calls: vec![ToolCall {
+            id: "tasks-1".to_string(),
+            name: "board".to_string(),
+            arguments: r#"{"op":"tasks"}"#.to_string(),
+        }],
+        usage: None,
+        stop_reason: None,
+        thinking_blocks: vec![],
+    });
+    given_member_reads_summaries(world, reads, reply);
+}
+
+#[given(expr = "the member's large results collapse over {int} tokens once seen for {int} turns")]
+fn given_member_large_results(world: &mut QuectoWorld, over_tokens: usize, after_turns: u32) {
+    world.member_large_results = Some(LargeResultCollapse {
+        over_tokens,
+        after_turns,
+    });
+}
+
+#[then("the board task list is a recall stub of its full answer")]
+fn then_task_list_recallable(world: &mut QuectoWorld) {
+    let run = run(world);
+    let list = run
+        .messages
+        .iter()
+        .find(|m| m.tool_call_id.as_deref() == Some("tasks-1"))
+        .expect("the member read the task list");
+    let id = list.spill_id.as_deref().expect("the task list was spilled");
+    assert!(list.is_collapsed, "{}", list.content);
+    assert!(list.content.contains(&format!("recall(\"{id}\")")));
+    let retained = run.spill.0.lock().unwrap();
+    let entry = retained.iter().find(|e| e.id == id).expect("retained");
+    assert!(
+        entry.content.starts_with("{\"members\""),
+        "{}",
+        entry.content
+    );
+}
+
+#[then(expr = "the prune records count {int} collapsed large result(s)")]
+fn then_prune_records_large(world: &mut QuectoWorld, expected: usize) {
+    let large = run(world).large_results_collapsed();
+    assert_eq!(large.iter().sum::<usize>(), expected, "{large:?}");
 }
 
 #[given(expr = "the member's swarm ceiling is {int} tokens")]
@@ -219,6 +291,9 @@ fn when_user_sends_through_member(world: &mut QuectoWorld, text: String) {
         audit_log: Some(audit.clone() as Arc<dyn AuditSink>),
         pin_recent_turns: 2,
         context_collapse_after_messages: 50,
+        large_result_collapse: world
+            .member_large_results
+            .unwrap_or(LargeResultCollapse::DISABLED),
         model_context_window: None,
         tool_profile_context: quecto::domain::tool::ToolProfileContext::Child,
     });
