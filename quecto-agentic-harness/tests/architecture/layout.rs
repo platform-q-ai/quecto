@@ -876,31 +876,44 @@ fn descendant_test_only_rust_populates_migrated_role() {
     assert!(shape(root.path(), "domain/sessions", &["entities"]).is_empty());
 }
 
-#[test]
-fn shape_diagnostics_prescribe_entry_specific_repairs() {
-    for (directory, file, required) in [
-        ("domain/sessions", "domain/sessions/stray.rs", "move domain/sessions/stray.rs into a declared role directory"),
-        ("domain/sessions/handles", "", "add handles to domain/sessions allowed_roles in MIGRATED"),
-        ("domain/sessions/entities", "", "put a .rs file anywhere beneath domain/sessions/entities or remove the unused role directory"),
-    ] {
-        let files = if file.is_empty() { vec![] } else { vec![file] };
-        let root = fixture(&[directory], &files);
-        let failures = shape(root.path(), "domain/sessions", &["entities"]);
-        assert_eq!(failures.len(), 1, "{failures:?}");
-        let message = format!("{:?}", failures[0]);
-        assert!(message.contains(required), "{message}");
-        assert!(message.contains(WIKI));
-    }
+fn assert_shape_repair(directory: &str, file: Option<&str>, required: &str) {
+    let files: Vec<_> = file.into_iter().collect();
+    let root = fixture(&[directory], &files);
+    let failures = shape(root.path(), "domain/sessions", &["entities"]);
+    assert_eq!(failures.len(), 1, "{failures:?}");
+    let message = format!("{:?}", failures[0]);
+    assert!(message.contains(required), "{message}");
+    assert!(message.contains(WIKI));
 }
 
 #[test]
-fn missing_budget_and_transitional_placement_prescribe_policy_repairs() {
+fn stray_file_diagnostic_prescribes_move() {
+    assert_shape_repair("domain/sessions", Some("domain/sessions/stray.rs"), "move domain/sessions/stray.rs into a declared role directory");
+}
+
+#[test]
+fn undeclared_role_diagnostic_prescribes_allowlist_adjustment() {
+    assert_shape_repair("domain/sessions/handles", None, "add handles to domain/sessions allowed_roles in MIGRATED");
+}
+
+#[test]
+fn empty_role_diagnostic_prescribes_descendant_or_removal() {
+    assert_shape_repair("domain/sessions/entities", None, "put a .rs file anywhere beneath domain/sessions/entities or remove the unused role directory");
+}
+
+#[test]
+fn missing_budget_prescribes_restore_path() {
     let root = fixture(LAYERS, &[]);
     let failures = flat(root.path(), "domain/missing", 0);
     assert!(matches!(failures.as_slice(), [Violation::InspectionFailed { .. }]));
     let message = format!("{failures:?}");
     assert!(message.contains("restore domain/missing"), "{message}");
     assert!(message.contains(WIKI));
+ }
+
+#[test]
+fn stale_transitional_placement_prescribes_row_removal() {
+    let root = fixture(LAYERS, &[]);
     let rows = [Placement { layer: "domain", name: "removed", citation: format!("{WIKI}#removed"), classification: Classification::Transitional }];
     let failures = validate_placements(root.path(), &rows);
     assert_eq!(failures.len(), 1, "{failures:?}");
