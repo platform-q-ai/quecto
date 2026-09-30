@@ -53,6 +53,33 @@ pub(super) fn board_and_repository(
     (dir, handles, repository)
 }
 
+/// [`board_and_repository`] with the event log on (records discarded), so
+/// its calls run through the metered repository (#2340).
+pub(super) fn metered_board_and_repository(
+    now: f64,
+) -> (tempfile::TempDir, SwarmBoardHandles, SqliteBoardRepository) {
+    struct Discarded;
+    impl crate::application::swarm::ports::BoardOpLog for Discarded {
+        fn record(&self, _: crate::domain::swarm::BoardOpObservation) {}
+        fn summarize(&self, _: crate::domain::swarm::SwarmRunSummary) {}
+    }
+    let dir = tempfile::TempDir::new().unwrap();
+    let location = BoardLocation {
+        database: dir.path().join("swarm.sqlite"),
+        checkout: dir.path().to_path_buf(),
+    };
+    let repository = SqliteBoardRepository::new(&location);
+    let handles = crate::composition::swarm::with_event_log(
+        repository.clone(),
+        Arc::new(Fixed(now)),
+        Arc::new(Counter::default()),
+        Arc::new(ResolvedCheckout::new(&location.checkout)),
+        Arc::new(Discarded),
+    );
+    assert!(handles.telemetry.is_some(), "the calls are metered");
+    (dir, handles, repository)
+}
+
 fn create_args() -> Value {
     json!({
         "goal": "ship",

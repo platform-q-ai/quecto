@@ -9,10 +9,11 @@
 //! refused naming the record, where Python raises a `TypeError` or a
 //! `KeyError`, or computes with the value as it is: the
 //! `outside_edited_control_records` divergence. Usage totals that are not
-//! counts (a REAL or a negative sum) are refused so only where a paused
-//! run's budget, with a token limit that is not null, is checked for a
-//! resume; everywhere else (the receipt's budget, the usage report) they
-//! pass through as Python passes them.
+//! counts (a REAL or a negative sum) are refused so only where the budget
+//! decides under a token limit that is not null (a paused run's resume
+//! check, and a running run's recorded request and admission read, where
+//! Python compares them with the limit); everywhere else (the receipt's
+//! budget, the usage report) they pass through as Python passes them.
 //!
 //! The receipt and the budget decision read the usage standing (#2340),
 //! the budget and the two totals, where Python reads the whole usage

@@ -127,9 +127,10 @@ fn outside_edited_text_reads_as_python_reads_it() {
 /// number (a boolean included, which Python counts as 0 or 1), or a
 /// budget payload that is not an object (or whose token limit is not a
 /// count), is refused naming the record; usage totals that are not counts
-/// (a REAL or a negative sum) are refused so only when a paused run's
-/// budget, with a non-null token limit, is checked for a resume (elsewhere
-/// they pass through, as `uncounted_usage_totals_pass_through_elsewhere`
+/// (a REAL or a negative sum) are refused so only where the budget decides
+/// under a non-null token limit: a paused run's resume check, and a
+/// running run's `_record_request` and `_request_admission` (a receipt and
+/// the report carry them, as `uncounted_usage_totals_pass_through_elsewhere`
 /// pins). Python raises a `TypeError` (or, for a list payload, answers a
 /// budget of the totals alone; for a boolean start or uncounted totals,
 /// answers as it computes). An integer
@@ -338,44 +339,7 @@ fn outside_edited_control_records() {
         ]),
         refused("usage budget")
     );
-    // #2340: the receipt and the budget read only the budget and the two
-    // totals, so a ledger row whose payload is not JSON, or whose actor is
-    // not UTF-8, is not read by them: `_control_status` and
-    // `_record_request` answer, where Python's `usage_report` (read by
-    // each) fails on the payload among the ten latest and on the actor;
-    // the report itself fails on both, on either board.
-    for (edit, pythons) in UNREADABLE_LEDGER_ROWS {
-        for (method, args) in [
-            ("_control_status", json!([])),
-            (
-                "_record_request",
-                json!([{"request_id": "r", "instrumented_attempts": 1, "outcome": "failed"}]),
-            ),
-            ("usage_report", json!([])),
-        ] {
-            let steps = [
-                create(5),
-                at(0.5, "parent", "usage_report", json!([])),
-                sql(edit),
-                at(1.0, "parent", method, args),
-            ];
-            let (rust, python) = (run_rust(&steps), run_python(&steps));
-            assert_eq!(python, pythons(), "{edit}: {method}");
-            match method {
-                "usage_report" => assert!(matches!(rust, Outcome::Refused(_)), "{edit}: {rust:?}"),
-                _ => {
-                    let Outcome::Ok(receipt) = rust else {
-                        panic!("{edit}: {method}: {rust:?}");
-                    };
-                    assert_eq!(
-                        receipt["budget"]["observed_tokens"],
-                        json!(1),
-                        "{edit}: {method}"
-                    );
-                }
-            }
-        }
-    }
+    unread_ledger_rows_and_totals(&refused);
     // #2340: the process keeps the ledger's sums between transactions, so
     // an edit to a row already summed (its counts, or an earlier row
     // deleted) is not seen by the board that summed it, where Python sums
@@ -497,3 +461,110 @@ const UNREADABLE_LEDGER_ROWS: [(&str, PythonAnswer); 2] = [
         },
     ),
 ];
+
+/// `outside_edited_control_records`, the ledger's part (#2340): what the
+/// receipt, `_record_request` and `_request_admission` read of the usage
+/// report is the budget and its two totals (the board's standing), where
+/// Python's read the whole report. Each case asserts both boards' answers.
+fn unread_ledger_rows_and_totals(refused: &dyn Fn(&str) -> Outcome) {
+    let record = json!([{"request_id": "r", "instrumented_attempts": 1, "outcome": "failed"}]);
+    let calls = [
+        ("_control_status", json!([])),
+        ("_record_request", record),
+        ("_request_admission", json!([])),
+    ];
+    // A ledger row whose payload is not JSON, or whose actor is not UTF-8:
+    // Python's report fails on it (the payload among the ten latest); the
+    // standing does not read it, so the Rust board answers. The report
+    // itself fails on both, on either board.
+    for (edit, pythons) in UNREADABLE_LEDGER_ROWS {
+        for (method, args) in calls.iter().cloned().chain([("usage_report", json!([]))]) {
+            let steps = [
+                create(5),
+                at(0.5, "parent", "usage_report", json!([])),
+                sql(edit),
+                at(1.0, "parent", method, args),
+            ];
+            let (rust, python) = (run_rust(&steps), run_python(&steps));
+            assert_eq!(python, pythons(), "{edit}: {method}");
+            match method {
+                "usage_report" => {
+                    assert!(matches!(rust, Outcome::Refused(_)), "{edit}: {rust:?}");
+                }
+                _ => assert_answered(method, &rust, (1, None), edit),
+            }
+        }
+    }
+    // Another of the report's sums overflowing (two rows of i64::MAX
+    // attempts), with or without a limit: Python raises SQLite's `integer
+    // overflow` as the store's refusal; the standing sums no attempts, so
+    // the Rust board answers, and `_record_request` records its row.
+    let overflowing = "INSERT INTO request_usage VALUES('e1','parent','{}',0,0,9223372036854775807,NULL,NULL,NULL,NULL); INSERT INTO request_usage VALUES('e2','parent','{}',0,0,9223372036854775807,NULL,NULL,NULL,NULL)";
+    for budget in [json!([null]), json!([1_000, false])] {
+        for (method, args) in calls.iter().cloned() {
+            let steps = [
+                create(5),
+                at(0.5, "parent", "usage_budget", budget.clone()),
+                sql(overflowing),
+                at(1.0, "parent", method, args),
+            ];
+            assert_eq!(
+                run_python(&steps),
+                Outcome::Refused(
+                    "coordination store unavailable or contended: integer overflow".to_owned()
+                ),
+                "{budget}: {method}"
+            );
+            let unknown = u64::from(method == "_record_request");
+            assert_answered(method, &run_rust(&steps), (0, Some(unknown)), "overflow");
+        }
+    }
+    // A REAL token total on a running run under a limit: the budget's
+    // decision refuses it naming the record (`_record_request`,
+    // `_request_admission`), where Python compares 10.5 with the limit and
+    // answers; the receipt alone carries it on both boards.
+    let real = "INSERT INTO request_usage(request_id, actor, payload, tokens) VALUES('e','parent','{}',10.5)";
+    for (method, args) in calls {
+        let steps = [
+            create(5),
+            at(0.5, "parent", "usage_budget", json!([1_000, false])),
+            sql(real),
+            at(1.0, "parent", method, args),
+        ];
+        let (rust, python) = (run_rust(&steps), run_python(&steps));
+        assert!(matches!(python, Outcome::Ok(_)), "{method}: {python:?}");
+        match method {
+            "_control_status" => assert_eq!(rust, python, "{method}"),
+            _ => assert_eq!(rust, refused("usage totals record"), "{method}"),
+        }
+        if let (Outcome::Ok(answer), "_record_request") = (&python, method) {
+            assert_eq!(answer["budget"]["observed_tokens"], json!(10.5));
+        }
+    }
+}
+
+/// The Rust board answered `method`: a receipt whose observed tokens (and
+/// unknown requests, when given) are `totals`, or the admission read of
+/// the running run.
+fn assert_answered(method: &str, rust: &Outcome, totals: (u64, Option<u64>), case: &str) {
+    let Outcome::Ok(answer) = rust else {
+        panic!("{case}: {method}: {rust:?}");
+    };
+    match method {
+        "_request_admission" => assert_eq!(answer["status"], json!("running"), "{case}"),
+        _ => {
+            assert_eq!(
+                answer["budget"]["observed_tokens"],
+                json!(totals.0),
+                "{case}: {method}"
+            );
+            if let Some(unknown) = totals.1 {
+                assert_eq!(
+                    answer["budget"]["unknown_usage_requests"],
+                    json!(unknown),
+                    "{case}: {method}"
+                );
+            }
+        }
+    }
+}

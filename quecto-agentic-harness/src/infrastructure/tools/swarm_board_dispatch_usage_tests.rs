@@ -339,40 +339,51 @@ fn a_retry_or_tool_gate_read_that_warns_or_pauses_records_the_budget() {
 /// none. Before the fix each call read the whole usage report twice.
 #[test]
 fn recording_a_request_does_not_grow_with_the_ledger() {
-    use super::super::tests::board_and_repository;
+    use super::super::tests::{board_and_repository, metered_board_and_repository};
     use crate::infrastructure::persistence::swarm_board::LedgerWork;
     const CALLS: usize = 1_000;
-    let (_dir, handles, repository) = board_and_repository(1_000.0);
-    running(&handles);
-    let work_of = |method: &str, args: Value| {
-        let before = repository.ledger_work();
-        call(&handles, "parent", method, args).unwrap();
-        let after = repository.ledger_work();
-        LedgerWork {
-            rows_scanned: after.rows_scanned - before.rows_scanned,
-            whole_ledger_reads: after.whole_ledger_reads - before.whole_ledger_reads,
-        }
-    };
-    let one_row = LedgerWork {
-        rows_scanned: 1,
-        whole_ledger_reads: 0,
-    };
-    for index in 0..CALLS {
-        let record = json!([{"request_id": format!("r{index}"), "instrumented_attempts": 1,
-            "outcome": "succeeded", "context_input_tokens": 3, "output_tokens": 1}]);
-        assert_eq!(
-            work_of("_record_request", record),
-            one_row,
-            "request {index}"
-        );
-        if index % 100 == 99 {
+    // The plain repository, and (the event log on) a metered repository
+    // per call, which shares the sums the plain one keeps.
+    for (dir_handles_repository, path) in [
+        (board_and_repository(1_000.0), "plain"),
+        (metered_board_and_repository(1_000.0), "metered"),
+    ] {
+        let (_dir, handles, repository) = dir_handles_repository;
+        running(&handles);
+        let work_of = |method: &str, args: Value| {
+            let before = repository.ledger_work();
+            call(&handles, "parent", method, args).unwrap();
+            let after = repository.ledger_work();
+            LedgerWork {
+                rows_scanned: after.rows_scanned - before.rows_scanned,
+                whole_ledger_reads: after.whole_ledger_reads - before.whole_ledger_reads,
+            }
+        };
+        let one_row = LedgerWork {
+            rows_scanned: 1,
+            whole_ledger_reads: 0,
+        };
+        for index in 0..CALLS {
+            let record = json!([{"request_id": format!("r{index}"), "instrumented_attempts": 1,
+                "outcome": "succeeded", "context_input_tokens": 3, "output_tokens": 1}]);
             assert_eq!(
-                work_of("_control_status", json!([])),
-                LedgerWork::default(),
-                "the receipt after request {index}"
+                work_of("_record_request", record),
+                one_row,
+                "{path}: request {index}"
             );
+            if index % 100 == 99 {
+                assert_eq!(
+                    work_of("_control_status", json!([])),
+                    LedgerWork::default(),
+                    "{path}: the receipt after request {index}"
+                );
+            }
         }
+        let status = call(&handles, "parent", "_control_status", json!([])).unwrap();
+        assert_eq!(
+            status["budget"]["observed_tokens"],
+            json!(4 * CALLS),
+            "{path}"
+        );
     }
-    let status = call(&handles, "parent", "_control_status", json!([])).unwrap();
-    assert_eq!(status["budget"]["observed_tokens"], json!(4 * CALLS));
 }
