@@ -20,8 +20,7 @@ TABLE=quecto-agentic-harness/tests/architecture/layout.rs
 SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/layout-ratchet.XXXXXX")"
 trap 'rm -rf "$SCRATCH"' EXIT
 
-# Read literal policy rows, not a second authoritative budget table. The old
-# column spelling remains readable across the exact-count transition.
+# Read literal policy rows, not a second authoritative budget table.
 budgets() {
     perl -0777 -e '
         use strict; use warnings;
@@ -32,7 +31,7 @@ budgets() {
             or die "$ARGV: BUDGETS missing; restore the budget table\n";
         my $body = $1;
         $body =~ s{//[^\n]*}{}g;
-        while ($body =~ s/^\s*FlatBudget\s*\{\s*path:\s*"([^"]+)"\s*,\s*(?:maximum|expected):\s*(\d+)\s*,?\s*\}\s*,?//s) {
+        while ($body =~ s/^\s*FlatBudget\s*\{\s*path:\s*"([^"]+)"\s*,\s*expected:\s*(\d+)\s*,?\s*\}\s*,?//s) {
             print "$1\t", 0 + $2, "\n";
         }
         $body =~ /^\s*$/s

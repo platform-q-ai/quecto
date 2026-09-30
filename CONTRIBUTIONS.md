@@ -138,13 +138,16 @@ allowed; this is a count ratchet, not a filename baseline.
 
 `scripts/check-layout-ratchet.sh` compares the budget table with the merge base.
 CI and pre-push reject raised budgets and new rows, while allowing lowered
-budgets and removed rows. This historical comparison is separate from the
-architecture test, which checks the current tree against its current table.
+budgets. Remove a row only when its directory no longer exists; a missing
+budgeted directory also fails the Rust check. The gate requires exactly one
+unambiguous budget definition, including commented definitions. This historical
+comparison is separate from the architecture test's current-tree check.
 
 A migrated capability permits its declared role directories plus `mod.rs` and
 its sibling `mod_tests.rs`, but no other top-level source or test files. Omitted
 roles are fine; each role directory present must contain at least one `.rs`
-file. The wiki's two-files-per-role guidance remains a review rule, not an
+file anywhere beneath it, including nested modules. The wiki's two-files-per-role
+guidance remains a review rule, not an
 automated minimum. Add or update a placement row with its wiki section when
 introducing a capability, keeping the wiki and executable policy in sync.
 Do not copy budget values, placements or role lists into documentation.
