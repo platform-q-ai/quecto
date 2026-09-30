@@ -177,6 +177,26 @@ fn program() -> String {
 /// out: `dir(Workbench)` filtered by callables whose `__module__` is one
 /// of them, sorted.
 pub fn workbench_methods() -> Vec<String> {
+    workbench_query(
+        "print(json.dumps(sorted(n for n in dir(_w) if not n.startswith('__') \
+         and callable(getattr(_w, n)) \
+         and getattr(getattr(_w, n), '__module__', None) in ('swarm', 'swarm_tasks'))))\n",
+    )
+}
+
+/// The parameter names of Python's `Workbench.<method>`, `self` left out
+/// (#2339 final review: pins the arguments only the Rust board takes).
+pub fn workbench_parameters(method: &str) -> Vec<String> {
+    workbench_query(&format!(
+        "import inspect\n\
+         print(json.dumps([p for p in inspect.signature(getattr(_w, {method:?})).parameters \
+         if p != 'self']))\n"
+    ))
+}
+
+/// Runs `query` against Python's `Workbench` (bound as `_w`), which prints
+/// one JSON list of names.
+fn workbench_query(query: &str) -> Vec<String> {
     let mut program = String::from("import sys, types, json, time, uuid\n");
     for (name, body) in SOURCES {
         program.push_str(&format!(
@@ -184,13 +204,8 @@ pub fn workbench_methods() -> Vec<String> {
             serde_json::to_string(body).expect("source serializes")
         ));
     }
-    program.push_str(
-        "import swarm\n\
-         _w = swarm.Workbench\n\
-         print(json.dumps(sorted(n for n in dir(_w) if not n.startswith('__') \
-         and callable(getattr(_w, n)) \
-         and getattr(getattr(_w, n), '__module__', None) in ('swarm', 'swarm_tasks'))))\n",
-    );
+    program.push_str("import swarm\n_w = swarm.Workbench\n");
+    program.push_str(query);
     let output = Command::new("python3")
         .arg("-I")
         .arg("-c")
@@ -198,8 +213,8 @@ pub fn workbench_methods() -> Vec<String> {
         .stderr(Stdio::inherit())
         .output()
         .expect("python3 is required for the differential harness");
-    assert!(output.status.success(), "the Workbench listing ran");
-    serde_json::from_slice(&output.stdout).expect("a JSON list of method names")
+    assert!(output.status.success(), "the Workbench query ran");
+    serde_json::from_slice(&output.stdout).expect("a JSON list of names")
 }
 
 pub struct PyBoard {

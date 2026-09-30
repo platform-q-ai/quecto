@@ -16,7 +16,9 @@ use crate::swarm_board_diff_membership::{HOUR, at};
 use crate::swarm_board_diff_messages::joined;
 use crate::swarm_board_diff_reads::{full, summary, task};
 use crate::swarm_board_diff_runs::NOW;
-use crate::swarm_board_diff_runs::swarm_board_diff::python::workbench_methods;
+use crate::swarm_board_diff_runs::swarm_board_diff::python::{
+    workbench_methods, workbench_parameters,
+};
 use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
     Hold, Step, corrupt, held, run_both, sql, step,
 };
@@ -269,6 +271,50 @@ const TEST_ONLY: [&str; 4] = ["create_run", "bootstrap_run", "bootstrap_join", "
 /// Dispatcher methods Python's `Workbench` has no counterpart of: the
 /// structured ops' event cursor (#2279), read around a member's call.
 const RUST_ONLY: [&str; 1] = ["_event_cursor"];
+
+/// Arguments only the Rust board takes, by method (#2339): the harness's
+/// admission gate, which members cannot send (`_request_admission` is a
+/// host method) and which a call leaves out to answer as Python does, so
+/// no `PERMITTED_DIVERGENCES` row covers it.
+const RUST_ONLY_ARGUMENTS: [(&str, &str); 1] = [("_request_admission", "gate")];
+
+/// Each Rust-only argument is absent from Python's signature of its
+/// method, which is otherwise the dispatcher's, and the Rust board takes
+/// it: a call naming it answers there as the call without it.
+#[test]
+fn only_the_listed_arguments_widen_a_workbench_signature() {
+    for (method, argument) in RUST_ONLY_ARGUMENTS {
+        let python = workbench_parameters(method);
+        assert!(
+            !python.iter().any(|name| name == argument),
+            "{method}: {python:?}"
+        );
+        assert!(BOARD_OPS.contains(&method), "{method}");
+    }
+    assert_eq!(
+        workbench_parameters("_request_admission"),
+        Vec::<String>::new()
+    );
+    let mut steps = vec![
+        step("parent", "create", contract(NOW + HOUR), NOW),
+        at(1.0, "parent", "_request_admission", json!([])),
+        at(2.0, "parent", "_request_admission", json!({})),
+    ];
+    run_both(&steps);
+    steps.extend([
+        at(3.0, "parent", "_request_admission", json!(["tool"])),
+        at(
+            4.0,
+            "parent",
+            "_request_admission",
+            json!({"gate": "retry"}),
+        ),
+    ]);
+    let without = answer(&steps, 1);
+    for index in [3, 4] {
+        assert_eq!(answer(&steps, index), without, "step {index}");
+    }
+}
 
 /// Every method of Python's `Workbench` (`dir(Workbench)`, filtered to the
 /// callables `swarm.py` and `swarm_tasks.py` define) is a dispatcher
