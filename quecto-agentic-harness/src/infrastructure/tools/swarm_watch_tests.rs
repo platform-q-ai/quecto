@@ -222,3 +222,40 @@ fn a_cursor_poll_does_not_wait_for_a_writers_lock() {
     assert_eq!(records.len(), 1, "{records:?}");
     assert_eq!(records[0].busy, Some(false), "{records:?}");
 }
+
+/// The watch's snapshot of a run whose deadline has not come is a pure
+/// read: a writer holding the write lock neither refuses nor delays it.
+#[test]
+fn a_snapshot_does_not_wait_for_a_writers_lock() {
+    let (_directory, context, log) = running();
+    let _setup = log.taken();
+    let (release, holder) = holding_the_write_lock(context.database());
+    let started = Instant::now();
+    let snapshot = context.watch_snapshot();
+    let waited = started.elapsed();
+    drop(release);
+    holder.join().unwrap();
+    assert_eq!(snapshot.unwrap().status, RunStatus::Running);
+    assert!(waited < Duration::from_millis(250), "{waited:?}");
+    let records = log.taken();
+    assert_eq!(records.len(), 1, "{records:?}");
+    assert_eq!(records[0].busy, Some(false), "{records:?}");
+}
+
+/// A snapshot at the deadline still records the expiry, as the gate
+/// always did: the run reads as paused, holding `budget-exhausted` (the
+/// deadline is moved into the past by hand, as the clock would).
+#[test]
+fn a_snapshot_at_the_deadline_still_records_the_expiry() {
+    let (_directory, context, _log) = running();
+    let database = context.database();
+    rusqlite::Connection::open(&database)
+        .unwrap()
+        .execute("UPDATE run SET deadline = ?1", [now() - 1.0])
+        .unwrap();
+    let snapshot = context.watch_snapshot().unwrap();
+    assert_eq!(snapshot.status, RunStatus::Paused, "{snapshot:?}");
+    assert_eq!(snapshot.outcome, Some(RunStatus::BudgetExhausted));
+    let again = context.watch_snapshot().unwrap();
+    assert_eq!(again.status, RunStatus::Paused);
+}
