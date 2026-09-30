@@ -9,6 +9,72 @@ reference runtime lives at [`scripts/container-runtime/`](../scripts/container-r
 (`create.sh`, `exec.sh`, `inspect.sh`, `kill.sh` — see
 "[The canonical reference runtime](#the-canonical-reference-runtime)").
 
+## Standard Rust build cache safety
+
+The repository-owned `standard` runtime's shared Rust caches are an opt-in
+runtime policy, not a new `spawn` field or a generic starter change. Selecting
+this repository's `standard` definition selects its project-owned create adapter.
+The project-owned create adapter intentionally differs from the bundled starter;
+`container init` reports this drift. Review it rather than blindly refreshing:
+`quecto container init --refresh` replaces this adapter with the generic bundle.
+If refreshing after a binary upgrade, first preserve any local edits, then review
+and restore the trusted project adapter (in this repository, `git restore
+--source=HEAD -- .quecto/containers/standard/scripts/create.sh`), review the
+project-owned Containerfile, rebuild the standard image, and run `quecto
+container doctor` before launching builds. Doctor is a preflight check, not a
+promise that project-owned scripts match the generic bundle. The image build
+context is `.quecto/containers/standard`.
+
+The adapter uses `rust-cache/{cargo,sccache}` under the canonical state directory's
+parent base, mounted read/write at `/tmp/quecto-cargo` and `/tmp/quecto-sccache`.
+A `QUECTO_BASE_DIR` override must resolve to that same base; a legitimate base
+symlink alias is allowed, but cache descendants must not be symlink aliases or
+escape the base. Cache directories must be real, owned by the effective user,
+mode `0700`, and writable; unsafe existing paths fail with a `rust-cache`
+diagnostic. Each container's `target` directory stays
+private. Do not seed the dedicated Cargo home from a user's existing Cargo home:
+it can contain credentials, configuration, or credential-provider settings.
+Tool binaries stay in `/opt/cargo/bin`, the Rust toolchain in `/opt/rustup`, and
+the image's compiler-cache eviction target is `2G`.
+
+Shared caches are for trusted builds by the same operator. Owner-only directory
+permissions limit access; they do **not** sanitize artifacts. Build scripts and
+`env!` can embed arbitrary data, including secrets, and writable shared caches
+introduce cache-poisoning and private-source disclosure risks. The build and
+cache-server environments must use affirmative allowlists; normal agent
+credentials remain available at the supported `agent --mode uds` launch boundary,
+not in ordinary direct-build launches. Image-owned `cargo`, `rustc`, `rustdoc`,
+`rustup`, and `sccache` PATH wrappers sanitize build environments, including the
+cache server. This is not a sandbox: invoking `/opt/cargo/bin` directly bypasses
+the wrappers, and build code can read files it can access. Never publish raw
+environment dumps as verification evidence.
+
+A finite sccache size setting is an eviction target, not a hard disk quota.
+Cargo registry/git storage grows independently. Monitor both, and stop all
+writers before clearing either dedicated cache. Remove only the cache paths
+owned by this runtime, never the base directory, toolchain, user Cargo home, or
+another container's target directory. Reuse requires compatible toolchains and
+build flags and a writable effective-user UID mapping. Reject unsafe path
+confinement, symlink, ownership, or permission conditions rather than silently
+falling back to an unrelated location.
+
+Performance evidence must distinguish fresh-container cache reuse from a warm
+private target: use baseline first/second and patched first/second fresh
+containers, empty private targets, identical commands/resources within each
+pair, and per-command clippy and `cargo test --no-run` wall times and sccache
+counter deltas. Source-contract tests alone do not establish actual cache hits.
+Test simultaneous Cargo-home writers and interrupted-writer retry separately;
+Cargo locking must preserve correctness, even when contention reduces speed.
+
+The #2383 host measurement attempt built both images, but the first baseline
+`cargo test --workspace --all-targets --no-run` rustc lib-test process terminated
+with SIGKILL (command status 101; owned-resource cleanup status 0). It used a
+12 GiB memory limit and a 1800-second hard timeout. Memory pressure is suspected,
+not established by primary OOM counters. Cold/warm comparisons, cache hit rates,
+and contention/retry evidence remain unmeasured; no speedup is claimed.
+[Follow-up #2387](https://github.com/platform-q-ai/quecto/issues/2387) tracks the
+bounded diagnosis and complete comparable measurement.
+
 ## Spawning
 
 The `spawn` tool's `container` field selects the launch adapter:

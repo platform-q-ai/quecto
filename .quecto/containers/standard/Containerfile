@@ -3,8 +3,10 @@
 # It lives here, in the repository, because a project's Containerfile is the
 # project's (#2073): `quecto container init` writes a neutral starter only
 # where none exists, never counts this file as drift and never replaces it.
-# The runtime scripts beside it are quecto's and are materialised by init
-# (they are not committed). Build the image with the command init prints.
+# scripts/create.sh is this project's committed Rust-cache opt-in adapter.
+# Other runtime scripts are materialised by init. `init --refresh` replaces
+# bundled scripts: restore the project adapter before launching cache builds.
+# Build the image with the command init prints (this directory is its context).
 #
 # Keep these versions aligned deliberately with `.github/workflows/ci.yml`.
 # CI follows stable Rust; this image pins the stable release current at the
@@ -17,7 +19,8 @@ ARG CARGO_NEXTEST_VERSION=0.9.144
 ARG CARGO_LLVM_COV_VERSION=0.8.4
 ARG CARGO_DENY_VERSION=0.19.0
 ARG CARGO_MACHETE_VERSION=0.9.1
-ARG STANDARD_IMAGE_VERSION=3
+ARG SCCACHE_VERSION=0.12.0
+ARG STANDARD_IMAGE_VERSION=4
 
 LABEL org.opencontainers.image.title="Quecto development container" \
       org.opencontainers.image.version="${STANDARD_IMAGE_VERSION}" \
@@ -45,6 +48,7 @@ RUN curl --proto '=https' --tlsv1.2 --fail --show-error --silent \
  && cargo install --locked cargo-llvm-cov --version "${CARGO_LLVM_COV_VERSION}" \
  && cargo install --locked cargo-deny --version "${CARGO_DENY_VERSION}" \
  && cargo install --locked cargo-machete --version "${CARGO_MACHETE_VERSION}" \
+ && cargo install --locked sccache --version "${SCCACHE_VERSION}" --no-default-features \
  && rustc --version \
  && cargo --version \
  && cargo fmt --version \
@@ -52,18 +56,32 @@ RUN curl --proto '=https' --tlsv1.2 --fail --show-error --silent \
  && cargo nextest --version \
  && cargo llvm-cov --version \
  && cargo deny --version \
- && cargo machete --version
+ && cargo machete --version \
+ && sccache --version
 
 # Keep the installed toolchain in /opt, but give each container's non-root
 # agent a writable Cargo registry for dependencies absent from the image.
-ENV CARGO_HOME=/tmp/quecto-cargo
+ENV CARGO_HOME=/tmp/quecto-cargo \
+    RUSTC_WRAPPER=/usr/local/bin/sccache \
+    SCCACHE_DIR=/tmp/quecto-sccache \
+    SCCACHE_CACHE_SIZE=2G \
+    PATH=/usr/local/bin:/opt/cargo/bin:${PATH}
+
+# These wrappers isolate cache-using processes (including the sccache server)
+# from the authenticated agent's environment. Tool binaries stay image-owned.
+COPY build-environment.sh /usr/local/lib/quecto/build-environment.sh
+RUN chmod 755 /usr/local/lib/quecto/build-environment.sh \
+ && for tool in cargo rustc rustdoc rustup sccache; do \
+      printf '#!/bin/bash -p\nexec /usr/local/lib/quecto/build-environment.sh /opt/cargo/bin/%s "$@"\n' "$tool" > "/usr/local/bin/$tool"; \
+      chmod 755 "/usr/local/bin/$tool"; \
+    done
 
 # What this image promises its agents. `quecto container doctor` runs the
 # image and fails, naming the tool, if any of these is not on PATH. The check
 # is the image's own: an image without this label is asked for nothing beyond
 # a shell and git. Declared after the installs so an edit rebuilds no layer;
 # an image derived `FROM` this one inherits the list unless it redeclares it.
-LABEL ai.quecto.required-tools="cargo rustc rustfmt cargo-clippy cargo-nextest cargo-llvm-cov cargo-deny cargo-machete"
+LABEL ai.quecto.required-tools="cargo rustc rustfmt cargo-clippy cargo-nextest cargo-llvm-cov cargo-deny cargo-machete sccache"
 
 # The host-side adapter supplies the child command and mounts its checkout.
 ENTRYPOINT []
