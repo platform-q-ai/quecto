@@ -62,14 +62,18 @@ impl AgentLoopImpl {
             || plan.messages_collapsed > 0
             || plan.ladder_stubbed > 0
             || plan.messages_dropped > 0
+            || plan.snapshots_superseded > 0
             || plan.over_budget
         {
+            let ceiling_tokens = self.context_manager.effective_max_context_tokens();
             tracing::info!(
                 target: "context_prune",
                 collapsed = plan.tool_results_collapsed,
                 messages_collapsed = plan.messages_collapsed,
                 ladder_stubbed = plan.ladder_stubbed,
                 dropped = plan.messages_dropped,
+                snapshots_superseded = plan.snapshots_superseded,
+                ceiling_tokens,
                 budget_unmet = plan.over_budget,
                 estimate_scale_permille = self.context_manager.estimate_scale().permille(),
                 turn = current_turn,
@@ -87,6 +91,8 @@ impl AgentLoopImpl {
                     budget_unmet: plan.over_budget,
                     messages_collapsed: plan.messages_collapsed,
                     ladder_stubbed: plan.ladder_stubbed,
+                    snapshots_superseded: plan.snapshots_superseded,
+                    ceiling_tokens,
                 },
             )
             .await;
@@ -116,3 +122,8 @@ mod ctx_mgmt_tests;
 #[cfg(test)]
 #[path = "agent_loop_calibration_tests.rs"]
 mod calibration_tests;
+
+// #2342: a scripted coordinator's request tokens, before and after.
+#[cfg(test)]
+#[path = "agent_loop_snapshot_tests.rs"]
+mod snapshot_tests;

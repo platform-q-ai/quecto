@@ -22,7 +22,7 @@ fn id(k: &str) -> SessionIdentity {
 }
 
 #[derive(Debug, Default)]
-struct MemSpillStore {
+pub(super) struct MemSpillStore {
     entries: Mutex<Vec<SpillEntry>>,
 }
 
@@ -89,8 +89,8 @@ impl ContextSpillStore for MemSpillStore {
 
 /// Audit sink capturing every emitted event for assertions.
 #[derive(Debug, Default)]
-struct CapturingAuditSink {
-    events: Mutex<Vec<AuditEvent>>,
+pub(super) struct CapturingAuditSink {
+    pub(super) events: Mutex<Vec<AuditEvent>>,
 }
 
 impl AuditSink for CapturingAuditSink {

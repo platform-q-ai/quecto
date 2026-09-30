@@ -13,6 +13,8 @@ Quecto manages long-running sessions with a configurable sliding context window.
 - The model can call `recall("list")` to inspect the live spill index.
 - The model can call `recall("<spill-id>")` to retrieve full spilled content.
 - Recent turns are pinned so the active working tail is preserved.
+- A newer full swarm `summary` supersedes the older ones: they collapse to
+  recall stubs, and the newest always stays in full.
 
 ## Defaults
 
@@ -21,11 +23,12 @@ Configured under `agents.defaults`:
 | Field | Default |
 |---|---:|
 | `max_context_tokens` | `200000` |
+| `swarm_max_context_tokens` | `48000` |
 | `context_collapse_after_tool_calls` | `50` |
 | `context_collapse_after_messages` | `50` |
 | `pin_recent_turns` | `2` |
 
-The effective context budget is clamped to the active model's declared context window when known.
+The effective context budget is clamped to the active model's declared context window when known, and to `swarm_max_context_tokens` once the process takes part in a swarm (from then on for the life of the process).
 
 ## Agent guidance
 

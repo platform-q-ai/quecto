@@ -512,12 +512,12 @@ pub(crate) fn build_agent_from_config_in(
             .unwrap_or(config.agents.defaults.max_tool_iterations),
     )
     .with_model_max_tokens(cap);
-    let mut agent = super::swarm_composition::wire_agent(
+    let mut agent = super::swarm_composition::wire_member(
         agent,
-        crate::interface::tool_runtime::swarm_context(),
+        &flags.swarm_participation,
+        config.agents.defaults.swarm_max_context_tokens,
     );
-    // Durable `set_tool_policy … persist` writes into the run's config
-    // file through composition's persistence hook (#1849).
+    // Durable `set_tool_policy … persist` goes through composition's hook (#1849).
     agent.set_tool_policy_persistence(Some(build_tool_policy_persistence(
         base_dir,
         &config_sources,

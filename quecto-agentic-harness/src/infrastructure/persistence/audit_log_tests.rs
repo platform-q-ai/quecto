@@ -219,6 +219,8 @@ async fn all_event_types_write_successfully() {
             budget_unmet: false,
             messages_collapsed: 1,
             ladder_stubbed: 2,
+            snapshots_superseded: 0,
+            ceiling_tokens: 0,
         },
         AuditEvent::SubagentSpawned {
             agent_id: "reviewer".into(),

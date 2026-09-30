@@ -495,3 +495,94 @@ async fn the_count_based_collapse_is_counted_apart_from_the_ladder() {
     assert_eq!(plan.ladder_stubbed, 0, "{plan:?}");
     assert!(plan.durable_prefix_dirty);
 }
+
+// --- #2342: superseded snapshots and a swarm member's ceiling ---
+
+fn summary_result(turn: u32) -> Message {
+    let mut msg = Message::tool(
+        format!("call-{turn}"),
+        format!("summary {turn} {}", "y".repeat(800)),
+    );
+    msg.tool_name = Some("swarm".to_string());
+    msg.turn = Some(turn);
+    msg.spill_id = Some(format!("turn{turn}:swarm:0"));
+    msg.snapshot_key = Some("swarm.summary");
+    msg
+}
+
+#[tokio::test]
+async fn a_plan_supersedes_older_snapshots_and_latches_the_prefix_dirty() {
+    let manager = manager(1_000_000);
+    let mut messages = vec![Message::user("go"), summary_result(1), summary_result(2)];
+
+    let plan = manager
+        .prepare_provider_context(&mut messages, 1_000_000, false)
+        .await;
+
+    assert_eq!(plan.snapshots_superseded, 1);
+    let result = |id: &str| {
+        messages
+            .iter()
+            .find(|m| m.tool_call_id.as_deref() == Some(id))
+            .unwrap()
+    };
+    assert!(result("call-1").is_collapsed && !result("call-2").is_collapsed);
+    assert!(
+        plan.durable_prefix_dirty,
+        "an in-place rewrite is persisted"
+    );
+    assert!(plan.total_tokens < plan.tokens_before);
+}
+
+#[test]
+fn a_ceiling_cap_lowers_the_budget_and_never_raises_it() {
+    let manager = manager(200_000);
+    let cap = manager.ceiling_cap();
+    assert_eq!(cap.tokens(), usize::MAX, "no cap until one is imposed");
+    assert_eq!(manager.effective_max_context_tokens(), 200_000);
+
+    cap.lower_to(48_000);
+    assert_eq!(manager.effective_max_context_tokens(), 48_000);
+    assert_eq!(manager.pruning_ceiling_in_estimate_units(), 48_000);
+
+    cap.lower_to(64_000);
+    assert_eq!(cap.tokens(), 48_000, "a cap only ever lowers");
+    assert_eq!(manager.effective_max_context_tokens(), 48_000);
+}
+
+#[test]
+fn a_ceiling_cap_above_the_budget_or_the_window_changes_nothing() {
+    let mut manager = manager(40_000);
+    manager.ceiling_cap().lower_to(48_000);
+    assert_eq!(manager.effective_max_context_tokens(), 40_000);
+
+    manager.set_model_context_window(Some(30_000));
+    assert_eq!(manager.effective_max_context_tokens(), 30_000);
+}
+
+/// #2349 review L2: once lowered, the cap never disengages: not by a model
+/// switch, a new window, a new session, nor a later (higher) value.
+#[test]
+fn a_lowered_ceiling_never_disengages() {
+    let mut manager = manager(200_000);
+    manager.ceiling_cap().lower_to(48_000);
+
+    manager.set_model_context_window(Some(1_000_000));
+    manager.forget_calibration();
+    manager.set_session_key(SessionIdentity::from_persisted_key("another"));
+    manager.ceiling_cap().lower_to(usize::MAX);
+
+    assert_eq!(manager.effective_max_context_tokens(), 48_000);
+    assert_eq!(manager.pruning_ceiling_in_estimate_units(), 48_000);
+}
+
+/// #2349 review M2: the window budget ignores a swarm member's cap.
+#[test]
+fn the_window_budget_ignores_the_swarm_cap() {
+    let mut manager = manager(200_000);
+    manager.ceiling_cap().lower_to(40_000);
+    assert_eq!(manager.window_budget_tokens(), 200_000);
+    manager.set_model_context_window(Some(100_000));
+    assert_eq!(manager.window_budget_tokens(), 100_000);
+    assert_eq!(manager.effective_max_context_tokens(), 40_000);
+}

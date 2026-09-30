@@ -14,7 +14,7 @@ use crate::domain::tool::{
     ToolPolicyRequest, ToolProfileContext, ToolResult,
 };
 use crate::domain::tool_descriptor::{
-    ProfileAvailabilityScope, ToolCatalogueEntry, ToolDescriptor,
+    ProfileAvailabilityScope, ToolCatalogueEntry, ToolDescriptor, ToolSource,
 };
 use crate::infrastructure::config::{ToolPolicyConfig, ToolPolicyEntryConfig};
 
@@ -63,6 +63,17 @@ impl ToolExecutor for ToolRegistryImpl {
             && self
                 .get(name)
                 .is_some_and(|tool| tool.overlaps_safely(arguments))
+    }
+
+    /// A bundled tool's snapshot key (#2342); every other tool, an
+    /// extension included whatever it claims, names none: a key lets a
+    /// result collapse every older result of it.
+    fn snapshot_key(&self, name: &str, arguments: &str, content: &str) -> Option<&'static str> {
+        let registration = self.metadata.get(name)?;
+        match registration.source {
+            ToolSource::BundledNative => self.get(name)?.snapshot_key(arguments, content),
+            ToolSource::Uds | ToolSource::Runtime => None,
+        }
     }
 }
 

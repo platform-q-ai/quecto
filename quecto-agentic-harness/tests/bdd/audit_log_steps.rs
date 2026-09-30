@@ -165,6 +165,8 @@ fn given_context_pruned(
         budget_unmet: false,
         messages_collapsed: 0,
         ladder_stubbed: 0,
+        snapshots_superseded: 0,
+        ceiling_tokens: 0,
     };
     world.audit_event = Some(event);
 }

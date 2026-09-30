@@ -14,6 +14,8 @@ pub enum ConfigError {
     ContainerConfigs(String),
     /// Invalid `admission` section (#1679).
     Admission(String),
+    /// An invalid context budget (#2349 review L3).
+    ContextBudget(String),
 }
 
 impl std::fmt::Display for ConfigError {
@@ -37,6 +39,7 @@ impl std::fmt::Display for ConfigError {
                 write!(f, "invalid container_configs: {err}")
             }
             ConfigError::Admission(err) => write!(f, "invalid admission config: {err}"),
+            ConfigError::ContextBudget(err) => write!(f, "invalid context budget: {err}"),
         }
     }
 }

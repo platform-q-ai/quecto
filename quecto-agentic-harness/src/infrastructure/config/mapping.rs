@@ -50,6 +50,7 @@ impl Config {
         let config: Config = serde_json::from_value(value).map_err(ConfigError::Parse)?;
         config.validate_effort()?;
         config.validate_container_configs()?;
+        config.validate_context_budgets()?;
         Ok(config)
     }
 
@@ -66,6 +67,7 @@ impl Config {
         let config: Config = serde_json::from_value(value).map_err(ConfigError::Parse)?;
         config.validate_effort()?;
         config.validate_admission()?;
+        config.validate_context_budgets()?;
         Ok(config)
     }
 
@@ -73,7 +75,22 @@ impl Config {
         self.validate_effort()?;
         self.validate_container_configs()?;
         self.validate_admission()?;
+        self.validate_context_budgets()?;
         Ok(self)
+    }
+
+    /// A swarm member's ceiling of 0 would prune it to nothing on every
+    /// request (#2349 review L3): refused. The cap is switched off by
+    /// setting it at or above `max_context_tokens`.
+    pub(super) fn validate_context_budgets(&self) -> Result<(), ConfigError> {
+        match self.agents.defaults.swarm_max_context_tokens {
+            1.. => Ok(()),
+            0 => Err(ConfigError::ContextBudget(
+                "swarm_max_context_tokens must be at least 1; set it at or above \
+                 max_context_tokens to switch the swarm ceiling off"
+                    .to_string(),
+            )),
+        }
     }
 
     /// Apply environment variable overrides to a loaded configuration and
@@ -86,6 +103,7 @@ impl Config {
         Self::apply_env_overrides(&mut self, env_overrides);
         self.validate_effort()?;
         self.validate_container_configs()?;
+        self.validate_context_budgets()?;
         Ok(self)
     }
 }

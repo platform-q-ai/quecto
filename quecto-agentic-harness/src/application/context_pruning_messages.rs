@@ -70,6 +70,7 @@ fn collapse_conversation_message(msg: &mut Message, spill_id: &str) {
 
 /// Per-message exemption flags for the count trigger and the demotion ladder
 /// (#1046 AC3): pinned messages (system prompt, manifest), system messages,
+/// the newest snapshot of each state and its call (#2342),
 /// the in-flight user prompt (last turn-less user message), turn-less
 /// messages of the current prompt, and messages within the
 /// `pin_recent_turns` most recent distinct turns.
@@ -105,11 +106,14 @@ fn exempt_flags(messages: &[Message], pin_recent_turns: u32, tail_fallback: bool
     let keep_from = recent_turns.len().saturating_sub(pin_recent_turns as usize);
     let pinned_turns = &recent_turns[keep_from..];
 
+    // The newest snapshot of each state and its call (#2342): never demoted.
+    let newest = super::snapshots::newest_snapshots(messages);
     messages
         .iter()
         .enumerate()
         .map(|(i, m)| {
             m.is_pinned
+                || newest[i]
                 || m.role == Role::System
                 || (i >= region_start && m.turn.is_none())
                 || (i >= tail_start && m.turn.is_some_and(|t| pinned_turns.contains(&t)))

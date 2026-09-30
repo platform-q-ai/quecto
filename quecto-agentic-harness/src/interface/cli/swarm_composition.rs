@@ -1,6 +1,6 @@
 //! Swarm-specific execution ports and cancellation wiring at the CLI boundary.
 use crate::application::agent_loop::AgentLoopImpl;
-use crate::infrastructure::tools::swarm_bridge::SwarmContext;
+use crate::infrastructure::tools::swarm_bridge::{Participation, SwarmContext};
 use std::sync::Arc;
 
 /// A member's tool gate, request usage record and model gates, all over
@@ -21,6 +21,27 @@ pub fn wire_agent(agent: AgentLoopImpl, context: Option<SwarmContext>) -> AgentL
                 value as Arc<dyn crate::application::providers::ports::RequestAdmission>
             }),
         )
+}
+
+/// A built member: [`wire_agent`] over this process's swarm context, and
+/// its pruning ceiling lowered to `swarm_ceiling_tokens` the moment the
+/// process takes part in a swarm (#2342), or at once if it already does.
+/// A process that never joins keeps its configured budget.
+pub(super) fn wire_member(
+    agent: AgentLoopImpl,
+    participation: &Participation,
+    swarm_ceiling_tokens: usize,
+) -> AgentLoopImpl {
+    let cap = agent.context_ceiling_cap();
+    participation.on_participation(move || {
+        cap.lower_to(swarm_ceiling_tokens);
+        tracing::info!(
+            target: "quecto::swarm_board",
+            ceiling_tokens = swarm_ceiling_tokens,
+            "swarm member context ceiling engaged"
+        );
+    });
+    wire_agent(agent, crate::interface::tool_runtime::swarm_context())
 }
 
 pub(super) fn bind_suspension(

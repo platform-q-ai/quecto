@@ -64,7 +64,9 @@ impl AgentLoopImpl {
     /// cut-off one request may go above the effective limit, up to the
     /// model's declared cap, twice the effective limit (the configured
     /// `max_tokens` is also a cost ceiling), and what the context window has
-    /// left beside the prompt; never below the effective limit. The value is
+    /// left beside the prompt (the window budget: a swarm member's pruning
+    /// cap bounds what it keeps, not the model's room, #2349 review M2);
+    /// never below the effective limit. The value is
     /// remembered so the reply is judged against what the request asked for.
     pub(super) fn request_max_tokens(&self, estimated_context_tokens: usize) -> u32 {
         use std::sync::atomic::Ordering::Relaxed;
@@ -76,7 +78,8 @@ impl AgentLoopImpl {
         let limit = match (boosted, self.model_max_tokens) {
             (true, Some(cap)) if cap > effective => {
                 let room = self
-                    .effective_max_context_tokens()
+                    .context_manager
+                    .window_budget_tokens()
                     .saturating_sub(context_tokens)
                     .saturating_sub(OUTPUT_ROOM_MARGIN);
                 let room = u32::try_from(room).unwrap_or(u32::MAX);
@@ -151,5 +154,13 @@ impl AgentLoopImpl {
     /// proximity indicator rather than a full-window percentage.
     pub fn effective_max_context_tokens(&self) -> usize {
         self.context_manager.effective_max_context_tokens()
+    }
+
+    /// The handle through which the composition lowers this loop's pruning
+    /// ceiling after construction (#2342): a swarm member's, once its
+    /// process joins a swarm. The effective budget is the lowest of the
+    /// configured budget, the model's window and this cap.
+    pub fn context_ceiling_cap(&self) -> crate::application::context::ContextCeilingCap {
+        self.context_manager.ceiling_cap()
     }
 }

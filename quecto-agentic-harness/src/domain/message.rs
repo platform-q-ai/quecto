@@ -90,6 +90,10 @@ pub struct Message {
     /// Stored as a `Vec` because a single assistant turn can interleave multiple
     /// thinking blocks with text/tool_use blocks.
     pub thinking_blocks: Vec<ThinkingBlock>,
+    /// The state this tool result is a whole snapshot of (#2342), as its
+    /// tool names it: a newer result with the same key supersedes it.
+    /// Transient: not persisted, so a reloaded result supersedes nothing.
+    pub snapshot_key: Option<&'static str>,
     /// Cached token estimate for this message. Lazily computed on first use
     /// and reset when the message is cloned.
     cached_tokens: TokenCache,
@@ -176,6 +180,7 @@ impl Clone for Message {
             stop_reason: self.stop_reason.clone(),
             user_image_blocks: self.user_image_blocks.clone(),
             thinking_blocks: self.thinking_blocks.clone(),
+            snapshot_key: self.snapshot_key,
             cached_tokens: TokenCache::default(),
         }
     }

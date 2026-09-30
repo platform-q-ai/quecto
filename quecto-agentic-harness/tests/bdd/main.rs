@@ -423,6 +423,10 @@ pub struct QuectoWorld {
     pub watermark_prefix_dirty: bool,
     /// #1072: context token budget for the pruning agent (0 = default).
     pub watermark_budget: usize,
+    /// #2342: a swarm member's ceiling for the member agent, if it joined.
+    pub member_ceiling: Option<usize>,
+    /// #2342: what the swarm member agent's run left behind.
+    pub member_run: Option<pruning_snapshot_steps::MemberRun>,
     /// Session workspace path (for session scenarios)
     pub session_workspace: Option<PathBuf>,
     /// Session store for session scenarios
@@ -1475,6 +1479,7 @@ mod provider_auth_modes_steps;
 mod provider_steps;
 mod pruning_1072_steps;
 mod pruning_calibration_steps;
+mod pruning_snapshot_steps;
 mod read_tool_steps;
 mod reasoning_effort_capability_steps;
 mod recall_tool_steps;

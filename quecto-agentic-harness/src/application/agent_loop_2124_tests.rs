@@ -364,3 +364,25 @@ async fn a_retry_reply_is_judged_against_the_limit_that_retry_was_sent_with() {
         .expect("not failed as a cut-off");
     assert_eq!(provider.request_count(), 2);
 }
+
+/// #2349 review M2: a swarm member's pruning ceiling bounds what it keeps
+/// in context, not the model's window: the raised limit is computed from
+/// the window budget, so a member with a 30k-token prompt under a 40k cap
+/// still gets the full boost.
+#[tokio::test]
+async fn a_swarm_members_ceiling_does_not_shrink_the_raised_limit() {
+    let (agent, provider) = agent(vec![
+        Ok(reasoning_only_at_the_limit()),
+        Ok(text_response("the answer")),
+    ]);
+    let mut agent = agent.with_model_max_tokens(Some(32_768));
+    agent.context_ceiling_cap().lower_to(40_000);
+    let mut messages = vec![Message::user("sentence of prose. ".repeat(6_500))];
+    let prompt = messages[0].estimated_tokens();
+    assert!(
+        (28_000..38_000).contains(&prompt),
+        "a ~30k prompt: {prompt}"
+    );
+    agent.run_loop(&mut messages).await.unwrap();
+    assert_eq!(provider.seen_max_tokens(), [8192, 16_384]);
+}

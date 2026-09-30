@@ -140,8 +140,31 @@ impl OpenAiProvider {
         // "system is always first" invariant: a non-system message preceding the
         // system prompt no longer causes the real system message to be demoted.
         let mut seen_system = false;
+        // #2349 review M1: chat completions rejects a call without its result
+        // and a result without its call (400); leave both out, as the
+        // Responses route does (`codex_input`).
+        let (paired, orphans) = crate::domain::session::filter_orphan_tool_pairs(messages);
+        if orphans.has_orphans() {
+            tracing::warn!(
+                orphaned_calls = ?orphans.orphaned_calls,
+                orphaned_results = ?orphans.orphaned_results,
+                "chat completions: orphaned tool calls/results left out of the request"
+            );
+        }
+        let is_paired = |id: &str| paired.contains(id);
         let msgs: Vec<serde_json::Value> = messages
             .iter()
+            .filter(|m| match (&m.role, m.tool_call_id.as_deref()) {
+                (Role::Tool, Some(id)) => is_paired(id),
+                // An assistant turn left with no text and no paired call is
+                // an empty turn: left out, as `codex_input` does.
+                (Role::Assistant, _) => {
+                    m.tool_calls.is_empty()
+                        || m.tool_calls.iter().any(|tc| is_paired(&tc.id))
+                        || !m.content.is_empty()
+                }
+                _ => true,
+            })
             .map(|m| {
                 let is_system = matches!(m.role, Role::System);
                 let demote_system = is_system && seen_system;
@@ -162,10 +185,11 @@ impl OpenAiProvider {
                     "role": role,
                     "content": content,
                 });
-                if !m.tool_calls.is_empty() {
+                if m.tool_calls.iter().any(|tc| is_paired(&tc.id)) {
                     let tcs: Vec<serde_json::Value> = m
                         .tool_calls
                         .iter()
+                        .filter(|tc| is_paired(&tc.id))
                         .map(|tc| {
                             serde_json::json!({
                                 "id": tc.id,

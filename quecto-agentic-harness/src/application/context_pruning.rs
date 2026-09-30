@@ -17,6 +17,14 @@
 #[path = "context_pruning_messages.rs"]
 pub mod messages;
 
+// #2342: superseded snapshots (a newer full swarm summary supersedes older).
+#[path = "context_pruning_snapshots.rs"]
+pub mod snapshots;
+
+// #2349 review M1: removal keeps call/result exchanges whole.
+#[path = "context_pruning_exchanges.rs"]
+mod exchanges;
+
 use crate::application::sessions::use_cases::ListRetainedContext;
 use crate::domain::message::{Message, Role};
 
@@ -103,63 +111,22 @@ pub fn collapse_tool_results_over_limit(messages: &mut [Message], max_tool_calls
     if max_tool_calls == COLLAPSE_DISABLED {
         return 0;
     }
-    // Unspilled results are excluded from the count and the front, and
+    // Unspilled results and each newest snapshot (#2342) are not counted;
     // results the model has not seen yet are never reached (#2213).
-    let (mut to_collapse, seen_end) =
+    let (to_collapse, seen_end, collapsible) =
         messages::ceiling::tool_results_to_collapse(messages, max_tool_calls as usize);
-    if to_collapse == 0 {
-        return 0;
-    }
     let mut collapsed = 0;
-    for msg in messages[..seen_end].iter_mut() {
-        if to_collapse == 0 {
-            break;
-        }
-        if msg.role != Role::Tool || msg.is_collapsed || msg.spill_id.is_none() {
-            continue;
-        }
+    for (msg, _) in messages[..seen_end]
+        .iter_mut()
+        .zip(&collapsible)
+        .filter(|(_, collapsible)| **collapsible)
+        .take(to_collapse)
+    {
         collapse_message(msg);
         collapsed += 1;
-        to_collapse -= 1;
     }
+    debug_assert_eq!(collapsed, to_collapse, "the seen front holds every one");
     collapsed
-}
-
-/// Walk `droppable` (oldest first) marking messages for removal until the
-/// running total fits `max_tokens`, then remove them in a single pass.
-/// Returns the removed messages, oldest first. `droppable` must be sorted
-/// ascending (it is built by an in-order scan).
-fn drop_until_under_budget(
-    messages: &mut Vec<Message>,
-    max_tokens: usize,
-    droppable: &[usize],
-) -> Vec<Message> {
-    let mut total = estimate_total_tokens(messages);
-    let mut drop_count = 0;
-    for &idx in droppable {
-        if total <= max_tokens {
-            break;
-        }
-        total = total.saturating_sub(estimate_message_tokens(&messages[idx]));
-        drop_count += 1;
-    }
-    if drop_count == 0 {
-        return Vec::new();
-    }
-    // Only the first `drop_count` droppable entries go. Sorted slice +
-    // binary_search gives O(log n) lookup without a HashSet.
-    let drop_indices = &droppable[..drop_count];
-    let mut dropped = Vec::with_capacity(drop_count);
-    let mut kept = Vec::with_capacity(messages.len() - drop_count);
-    for (idx, msg) in std::mem::take(messages).into_iter().enumerate() {
-        if drop_indices.binary_search(&idx).is_ok() {
-            dropped.push(msg);
-        } else {
-            kept.push(msg);
-        }
-    }
-    *messages = kept;
-    dropped
 }
 
 /// Default number of most-recent turns the demotion-ladder ceiling never

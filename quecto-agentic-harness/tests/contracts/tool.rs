@@ -81,3 +81,29 @@ async fn invalid_json_arguments_are_llm_addressable_errors() {
         r.content
     );
 }
+
+/// #2342: `snapshot_key` names the state a successful result is a whole
+/// snapshot of. A tool that does not say so names none, for any call and any
+/// content (the default); the swarm tool names only a whole board summary.
+#[test]
+fn snapshot_key_is_none_unless_the_tool_names_a_whole_snapshot() {
+    let tmp = tempfile::tempdir().unwrap();
+    let tool = read_tool(tmp.path().to_path_buf());
+    for (arguments, content) in [
+        ("{}", ""),
+        (r#"{"path":"a"}"#, "file text"),
+        (
+            r#"{"op":"summary"}"#,
+            r#"{"members":[],"tasks":[],"event_cursor":1}"#,
+        ),
+    ] {
+        assert_eq!(tool.snapshot_key(arguments, content), None);
+    }
+    let swarm = quecto::infrastructure::tools::swarm::SwarmTool::new();
+    let whole = r#"{"members":[],"tasks":[],"event_cursor":1}"#;
+    assert_eq!(
+        swarm.snapshot_key(r#"{"op":"summary"}"#, whole),
+        Some(quecto::infrastructure::tools::swarm::SUMMARY_SNAPSHOT)
+    );
+    assert_eq!(swarm.snapshot_key(r#"{"op":"inbox"}"#, whole), None);
+}

@@ -18,7 +18,10 @@
 //!   provider observation;
 //! - the ceiling decides on calibrated occupancy: the effective budget is
 //!   converted to estimate units at the last provider-observed ratio
-//!   (#2212), so the ladder's per-message sums stay consistent with it; and
+//!   (#2212), so the ladder's per-message sums stay consistent with it;
+//! - the newest whole snapshot of a state (a full swarm summary) stays in
+//!   full at every dial, and every older one it supersedes is collapsed to
+//!   its recall stub (#2342); and
 //! - durable prefix dirty semantics are latched for every persisted-layout or
 //!   in-place history mutation, including manifest insert/remove, stub demotion,
 //!   and physical drops.
@@ -27,7 +30,6 @@ use crate::application::context_pruning;
 use crate::application::sessions::use_cases::{ListRetainedContext, RetainContext};
 use crate::domain::context_calibration::EstimateScale;
 use crate::domain::message::{Message, ToolCall};
-use crate::domain::session::SpillEntry;
 use crate::domain::session_identity::SessionIdentity;
 use crate::domain::tool::ImageBlock;
 use std::sync::{Arc, Mutex};
@@ -36,6 +38,13 @@ use std::sync::{Arc, Mutex};
 #[path = "context_gauge.rs"]
 mod gauge;
 use gauge::ContextGaugeCalibration;
+// #2342: a swarm member's lower ceiling, imposed after construction.
+#[path = "context_ceiling_cap.rs"]
+mod ceiling_cap;
+pub use ceiling_cap::ContextCeilingCap;
+// The spill writers (split out for the decrease-only line ceiling, #2342).
+#[path = "context_spill_writers.rs"]
+mod spill;
 
 /// The narrow handles the pruning policy holds on the sessions
 /// capability's retention namespace (D9 #1978): the writer that appends
@@ -73,6 +82,7 @@ pub(crate) struct ContextManager {
     pin_recent_turns: u32,
     context_collapse_after_messages: u32,
     model_context_window: Option<usize>,
+    ceiling_cap: ContextCeilingCap,
     gauge: Mutex<ContextGaugeCalibration>,
 }
 
@@ -84,6 +94,8 @@ pub(crate) struct ContextPlan {
     pub messages_collapsed: usize,
     pub ladder_stubbed: usize,
     pub messages_dropped: usize,
+    /// Tool results a newer snapshot of the same state superseded (#2342).
+    pub snapshots_superseded: usize,
     pub over_budget: bool,
     pub durable_prefix_dirty: bool,
 }
@@ -105,6 +117,7 @@ impl ContextManager {
             pin_recent_turns: config.pin_recent_turns,
             context_collapse_after_messages: config.context_collapse_after_messages,
             model_context_window: config.model_context_window,
+            ceiling_cap: ContextCeilingCap::default(),
             gauge: Mutex::new(ContextGaugeCalibration::default()),
         }
     }
@@ -117,6 +130,11 @@ impl ContextManager {
             .get_mut()
             .unwrap_or_else(|e| e.into_inner())
             .forget_calibration();
+    }
+
+    /// The handle the composition lowers the ceiling through (#2342).
+    pub fn ceiling_cap(&self) -> ContextCeilingCap {
+        self.ceiling_cap.clone()
     }
 
     pub fn set_model_context_window(&mut self, model_context_window: Option<usize>) {
@@ -138,11 +156,19 @@ impl ContextManager {
         (self.pin_recent_turns, self.context_collapse_after_messages)
     }
 
-    pub fn effective_max_context_tokens(&self) -> usize {
+    /// The configured budget clamped to the model's window, without a swarm
+    /// member's cap: the room the model has, not what the member keeps.
+    pub fn window_budget_tokens(&self) -> usize {
         match self.model_context_window {
             Some(window) => self.max_context_tokens.min(window),
             None => self.max_context_tokens,
         }
+    }
+
+    /// The lowest of the configured budget, the model's window and the
+    /// composition's cap (a swarm member's, #2342), in provider tokens.
+    pub fn effective_max_context_tokens(&self) -> usize {
+        self.window_budget_tokens().min(self.ceiling_cap.tokens())
     }
 
     /// The effective budget in estimate units at the provider-observed
@@ -221,44 +247,6 @@ impl ContextManager {
         tool_msg
     }
 
-    pub async fn spill_tool_message(&self, tool_msg: &mut Message, spill_id: String) {
-        let Some(retention) = self.retention.as_ref() else {
-            return;
-        };
-
-        let content = std::mem::take(&mut tool_msg.content);
-        let entry = SpillEntry {
-            id: spill_id,
-            tool: tool_msg
-                .tool_name
-                .clone()
-                .unwrap_or_else(|| "tool".to_string()),
-            input_preview: tool_msg.input_preview.clone().unwrap_or_default(),
-            tokens: context_pruning::estimate_tokens(&content),
-            content,
-        };
-        let result = retention.retain.retain(&self.session_key, &entry).await;
-        tool_msg.content = entry.content;
-        tool_msg.invalidate_token_cache();
-        match result {
-            Ok(retained) => tool_msg.spill_id = Some(retained.id),
-            Err(e) => {
-                tracing::warn!(target: "context_prune", error = %e, "failed to spill tool output");
-            }
-        }
-    }
-
-    pub async fn spill_conversation_message(&self, msg: &mut Message) {
-        if let Some(retention) = self.retention.as_ref() {
-            context_pruning::messages::spill_conversation_message(
-                msg,
-                &retention.retain,
-                &self.session_key,
-            )
-            .await;
-        }
-    }
-
     pub async fn prepare_provider_context(
         &self,
         messages: &mut Vec<Message>,
@@ -267,6 +255,9 @@ impl ContextManager {
     ) -> ContextPlan {
         let tokens_before = context_pruning::estimate_total_tokens(messages);
         let message_spilled = self.spill_unspilled_conversation_messages(messages).await;
+        // Superseded snapshots go first (#2342): the dials then count and
+        // weigh only what is still current.
+        let superseded = context_pruning::snapshots::collapse_superseded_snapshots(messages);
         let collapsed = context_pruning::collapse_tool_results_over_limit(
             messages,
             self.context_collapse_after_tool_calls,
@@ -294,7 +285,12 @@ impl ContextManager {
         }
         let total_tokens = context_pruning::estimate_total_tokens(messages);
         let durable_prefix_dirty = manifest_shifted
-            || collapsed + msg_collapsed + outcome.collapsed_to_stubs + outcome.dropped > 0;
+            || superseded
+                + collapsed
+                + msg_collapsed
+                + outcome.collapsed_to_stubs
+                + outcome.dropped
+                > 0;
         ContextPlan {
             tokens_before,
             total_tokens,
@@ -302,28 +298,10 @@ impl ContextManager {
             messages_collapsed: msg_collapsed,
             ladder_stubbed: outcome.collapsed_to_stubs,
             messages_dropped: outcome.dropped,
+            snapshots_superseded: superseded,
             over_budget: outcome.over_budget,
             durable_prefix_dirty,
         }
-    }
-
-    async fn spill_unspilled_conversation_messages(&self, messages: &mut [Message]) -> bool {
-        let Some(retention) = self.retention.as_ref() else {
-            return false;
-        };
-        let mut spilled = false;
-        for msg in messages
-            .iter_mut()
-            .filter(|m| m.spill_id.is_none() && !m.is_manifest)
-        {
-            spilled |= context_pruning::messages::spill_conversation_message(
-                msg,
-                &retention.retain,
-                &self.session_key,
-            )
-            .await;
-        }
-        spilled
     }
 }
 
