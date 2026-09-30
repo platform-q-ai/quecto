@@ -55,7 +55,7 @@ impl Fixture {
         executable(
             &bin.join("probe"),
             &format!(
-                "#!/bin/bash -p\n/usr/bin/env | cut -d= -f1 | sort > '{}'\n",
+                "#!/bin/bash -p\ntr '\\0' '\\n' < /proc/$$/environ | cut -d= -f1 | sort > '{}'\n",
                 root.join("names").display()
             ),
         );
@@ -516,11 +516,26 @@ fn real_offline_cargo_install_is_accepted_on_second_launch() {
     fs::write(package.join("src/main.rs"), "fn main() {}\n").unwrap();
     let tool_path = std::env::var_os("PATH").expect("installed Rust toolchain PATH");
     let mut discovery = Command::new("rustup");
-    discovery.env_clear().env("PATH", &tool_path).env("HOME", &f.home)
-        .env("RUSTUP_HOME", std::env::var_os("RUSTUP_HOME").expect("installed rustup home"))
+    discovery
+        .env_clear()
+        .env("PATH", &tool_path)
+        .env("HOME", &f.home)
+        .env(
+            "RUSTUP_HOME",
+            std::env::var_os("RUSTUP_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| {
+                    PathBuf::from(std::env::var_os("HOME").expect("host toolchain home"))
+                        .join(".rustup")
+                }),
+        )
         .args(["which", "cargo"]);
     let located = bounded_output(discovery, Duration::from_secs(5));
-    assert!(located.status.success(), "{}", String::from_utf8_lossy(&located.stderr));
+    assert!(
+        located.status.success(),
+        "{}",
+        String::from_utf8_lossy(&located.stderr)
+    );
     let cargo_binary = PathBuf::from(String::from_utf8(located.stdout).unwrap().trim());
     assert!(cargo_binary.is_file());
     let compiler_path = format!("{}:/usr/bin:/bin", cargo_binary.parent().unwrap().display());

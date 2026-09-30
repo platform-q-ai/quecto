@@ -16,6 +16,7 @@
 //! deadline instead of on connection loss, past the test's 20 s bound).
 
 mod compiler_environment;
+mod container_cache_wiring;
 mod shared_cache_security;
 mod docker_create_admission_mask;
 mod docker_create_image_contract;

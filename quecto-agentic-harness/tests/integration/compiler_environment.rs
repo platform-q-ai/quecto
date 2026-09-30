@@ -67,6 +67,60 @@ fn entry_environment_has_only_explicit_names() {
     );
 }
 #[test]
+fn compiler_protocol_allows_metadata_without_cargo_credentials() {
+    let root = tempfile::tempdir().unwrap();
+    for tool in ["rustc", "rustdoc", "sccache"] {
+        let executable = root.path().join(tool);
+        fs::write(
+            &executable,
+            "#!/bin/bash -p\n/usr/bin/tr '\\0' '\\n' < /proc/$$/environ\n",
+        )
+        .unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+        let output = bounded("5s")
+            .arg(sanitizer())
+            .arg(executable)
+            .env("CARGO_PKG_NAME", "fixture")
+            .env("CARGO_PKG_VERSION", "1.2.3")
+            .env("OUT_DIR", "/tmp/generated")
+            .env("CARGO_MANIFEST_DIR", "/tmp/fixture")
+            .env("CARGO_REGISTRY_TOKEN", "fixture")
+            .env("CARGO_REGISTRIES_FIXTURE_TOKEN", "fixture")
+            .env("CARGO_UNRECOGNISED_CREDENTIAL", "fixture")
+            .env("OPENAI_API_KEY", "fixture")
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let names: Vec<_> = String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .map(|line| line.split_once('=').unwrap().0.to_owned())
+            .collect();
+        assert!(
+            names.iter().all(|name| [
+                "PATH",
+                "TERM",
+                "CARGO_PKG_NAME",
+                "CARGO_PKG_VERSION",
+                "OUT_DIR",
+                "CARGO_MANIFEST_DIR"
+            ]
+            .contains(&name.as_str())),
+            "{names:?}"
+        );
+        assert!(
+            [
+                "CARGO_PKG_NAME",
+                "CARGO_PKG_VERSION",
+                "OUT_DIR",
+                "CARGO_MANIFEST_DIR"
+            ]
+            .iter()
+            .all(|name| names.iter().any(|actual| actual == name))
+        );
+    }
+}
+#[test]
 fn shell_startup_is_isolated() {
     let root = tempfile::tempdir().unwrap();
     let sentinel = root.path().join("startup-was-sourced");
