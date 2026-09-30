@@ -99,14 +99,12 @@ check_replace() {
     return
   fi
 
-  python3 - "$file" "$before" "$after" <<'PYEOF'
-import sys
-path, before, after = sys.argv[1], sys.argv[2], sys.argv[3]
-with open(path) as fh:
-    text = fh.read()
-with open(path, "w") as fh:
-    fh.write(text.replace(before, after, 1))
-PYEOF
+  # A literal, first-occurrence replacement in bash itself (#2283: no
+  # Python anywhere in the workspace); the sentinel keeps trailing newlines.
+  local text
+  text="$(cat -- "$file"; printf x)"
+  text="${text%x}"
+  printf '%s' "${text/"$before"/"$after"}" >"$file"
 
   local raw
   raw=$(cargo test -p quecto-tui --lib 2>&1)

@@ -13,12 +13,16 @@
 //!   listener (`uds.rs`).
 //! - `admission-peer direct|proxy|nested`: the inference-admission
 //!   transport experiment's peer (`admission.rs`).
+//! - `pid2-signal-log <command…>`: the in-container proof's signal-logging
+//!   pid 2 (`pid2.rs`, `scripts/bdd-in-box/run.sh`).
 //!
 //! Any failure exits non-zero with its reason on stderr. The process
 //! fixture reads `/proc` and signals through pidfds, so it is Linux's
 //! alone; elsewhere it refuses (the tests that use it run on Linux).
 
 mod admission;
+#[cfg(target_os = "linux")]
+mod pid2;
 #[cfg(target_os = "linux")]
 mod processes;
 mod uds;
@@ -27,6 +31,13 @@ mod uds;
 mod processes {
     pub fn run(_args: &[String]) -> Result<(), String> {
         Err("the process fixture is Linux-only".to_owned())
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+mod pid2 {
+    pub fn run(_args: &[String]) -> Result<(), String> {
+        Err("the pid 2 signal log is Linux-only".to_owned())
     }
 }
 
@@ -55,6 +66,7 @@ fn dispatch(args: &[String]) -> Result<(), String> {
             "uds-bridge" => uds::bridge(rest),
             "uds-listen" => uds::listen(rest),
             "admission-peer" => admission::run(rest),
+            "pid2-signal-log" => pid2::run(rest),
             other => Err(format!("unknown fixture {other}")),
         },
         None => Err("usage: quecto-test-fixture <fixture> [args...]".to_owned()),

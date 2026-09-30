@@ -288,8 +288,11 @@ fn the_description_teaches_the_structured_ops_not_python() {
         let call = format!("{}({})", spec.name, args.join(","));
         assert!(description.contains(&call), "{call} is not taught");
     }
-    for python in ["from swarm import board", "board.", "RLIMIT", "op=run"] {
-        assert!(!description.contains(python), "{python} is still taught");
+    for workbench in ["from swarm import board", "board.", "RLIMIT", "op=run"] {
+        assert!(
+            !description.contains(workbench),
+            "{workbench} is still taught"
+        );
     }
     assert!(
         description.contains(r#"{"op":"claim","task_id":"#),

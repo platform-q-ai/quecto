@@ -386,6 +386,8 @@ mod tui_tool_search_ranking_steps;
 mod tui_uds_client_defence_steps;
 
 fn main() {
+    // A scenario's stand-in process is this binary (#2283).
+    quecto_tui::shell::test_stand_in::run_if_asked();
     let tag_filter = std::env::var("QUECTO_TAG").ok();
     let shard_index = std::env::var("QUECTO_BDD_SHARD_INDEX")
         .ok()

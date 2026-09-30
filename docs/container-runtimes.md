@@ -297,6 +297,11 @@ receives from a `sigwaitinfo` loop with `si_pid` and the sender's `cmdline`.
 Pid 2 is where a swarm coordinator's harness sits, so any registry, fixture or
 descendant pid the suite ever targeted would receive the signal there.
 
+*Since #2283* the wrapper is Rust, `quecto-test-fixture pid2-signal-log`, which
+`scripts/bdd-in-box/run.sh` builds in the container before it execs it as pid
+2; the record below is the #1940 run, made with the Python wrapper it
+replaced.
+
 - **Revision:** `ec29e9902b96fdab2534a0f51dd82bdbace0f5e2` (the #1940 PR head at the time of the run; the commits that record it follow)
 - **Image:** `quecto-dev:local`, id `b1f87e8917502e1963979a0ed43fd7866427c961c26aac0d1576a17774b63662`
 - **Command:** `scripts/bdd-in-box/run.sh` (committed with the pid 2

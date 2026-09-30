@@ -372,7 +372,7 @@ fn outside_edited_control_records() {
         ];
         for (side, answer, observed) in [
             ("rust", run_rust(&steps), rusts),
-            ("python", golden_answer(&steps), pythons),
+            ("golden", golden_answer(&steps), pythons),
         ] {
             let Outcome::Ok(receipt) = answer else {
                 panic!("{edit}: {side}: {answer:?}");
@@ -485,8 +485,8 @@ fn unread_ledger_rows_and_totals(refused: &dyn Fn(&str) -> Outcome) {
                 sql(edit),
                 at(1.0, "parent", method, args),
             ];
-            let (rust, python) = (run_rust(&steps), golden_answer(&steps));
-            assert_eq!(python, pythons(), "{edit}: {method}");
+            let (rust, golden) = (run_rust(&steps), golden_answer(&steps));
+            assert_eq!(golden, pythons(), "{edit}: {method}");
             match method {
                 "usage_report" => {
                     assert!(matches!(rust, Outcome::Refused(_)), "{edit}: {rust:?}");
@@ -531,13 +531,13 @@ fn unread_ledger_rows_and_totals(refused: &dyn Fn(&str) -> Outcome) {
             sql(real),
             at(1.0, "parent", method, args),
         ];
-        let (rust, python) = (run_rust(&steps), golden_answer(&steps));
-        assert!(matches!(python, Outcome::Ok(_)), "{method}: {python:?}");
+        let (rust, golden) = (run_rust(&steps), golden_answer(&steps));
+        assert!(matches!(golden, Outcome::Ok(_)), "{method}: {golden:?}");
         match method {
-            "_control_status" => assert_eq!(rust, python, "{method}"),
+            "_control_status" => assert_eq!(rust, golden, "{method}"),
             _ => assert_eq!(rust, refused("usage totals record"), "{method}"),
         }
-        if let (Outcome::Ok(answer), "_record_request") = (&python, method) {
+        if let (Outcome::Ok(answer), "_record_request") = (&golden, method) {
             assert_eq!(answer["budget"]["observed_tokens"], json!(10.5));
         }
     }

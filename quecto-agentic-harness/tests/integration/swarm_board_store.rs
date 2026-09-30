@@ -4,7 +4,7 @@
 //! Python board wrote opens in Rust without any change to its schema.
 //!
 //! Until #2283 the other store was Python's `swarm_store.Store`, run in a
-//! `python3` child. With the Python board deleted, the other store is a
+//! Python child. With the Python board deleted, the other store is a
 //! second Rust store on its own thread, and Python stands in the files it
 //! wrote: `schema_after_create.json` (the schema Python's `create` wrote)
 //! and `legacy_python_board.sqlite` (a mid-run board the last Python board

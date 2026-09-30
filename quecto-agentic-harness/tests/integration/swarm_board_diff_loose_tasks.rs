@@ -12,7 +12,7 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 const CONTENDED: &str = "coordination store unavailable or contended: ";
 
 /// `outside_edited_task_columns`: each hand edit of task 1 (after
-/// `before`), then the `probe` where the boards differ: `python` is in
+/// `before`), then the `probe` where the boards differ: `golden` is in
 /// Python's side of the difference, `rust` in the Rust board's answer.
 #[test]
 fn outside_edited_task_columns() {
@@ -35,15 +35,15 @@ fn outside_edited_task_columns() {
         at(5.0, "w1", "task_create", json!(["a", "one", ["ok"]])),
         at(6.0, "w1", "task_create", json!(["b", "two", ["ok"]])),
     ];
-    let pinned = |before: &[Step], edit: &str, probe: Step, python: &str, rust: &str| {
+    let pinned = |before: &[Step], edit: &str, probe: Step, golden: &str, rust: &str| {
         let mut steps = setup.to_vec();
         steps.extend_from_slice(before);
         let prefix = format!("step {}: {}", steps.len() + 1, probe.method);
         steps.extend([sql(&format!("UPDATE tasks SET {edit} WHERE id=1")), probe]);
         let difference = try_run_golden(&steps, |_, _, _| {}).unwrap_err();
-        let python_side = difference.split("\n  rust").next().unwrap_or_default();
+        let golden_side = difference.split("\n  rust").next().unwrap_or_default();
         assert!(
-            difference.starts_with(&prefix) && python_side.contains(python),
+            difference.starts_with(&prefix) && golden_side.contains(golden),
             "{edit}: {difference}"
         );
         let outcome = format!("{:?}", run_rust(&steps));
@@ -55,7 +55,7 @@ fn outside_edited_task_columns() {
         r#""status": String("ready")"#,
         r#""status": String("blocked")"#,
     );
-    for (edit, python, rust) in [
+    for (edit, golden, rust) in [
         ("acceptance='not json'", "raised JSONDecodeError", CONTENDED),
         ("evidence=NULL", "raised TypeError", CONTENDED),
         ("dependencies='[99]'", "raised TypeError", blocked),
@@ -64,7 +64,7 @@ fn outside_edited_task_columns() {
         ("dependencies='null'", "raised TypeError", ready),
         ("dependencies='5'", "raised TypeError", ready),
     ] {
-        pinned(&[], edit, raw(), python, rust);
+        pinned(&[], edit, raw(), golden, rust);
     }
     let unknown = r#"golden Refused("unknown task")"#;
     let unmet = r#"Refused("unmet dependencies")"#;
@@ -119,7 +119,7 @@ fn outside_edited_task_columns() {
 fn outside_edited_evidence() {
     let task = at(1.0, "parent", "task_create", json!(["r", "t", ["ok"]]));
     let mut steps = vec![create(5), task];
-    for (evidence, python) in [
+    for (evidence, golden) in [
         (r#"[{"artifact":"a"}]"#, "Python raised KeyError"),
         (r#"{"revision":"R1"}"#, "Python raised TypeError"),
         ("null", "Python raised TypeError"),
@@ -134,7 +134,7 @@ fn outside_edited_evidence() {
         ]);
         let difference = try_run_golden(&steps, |_, _, _| {}).unwrap_err();
         assert!(
-            difference.starts_with("step 3: verify_task") && difference.contains(python),
+            difference.starts_with("step 3: verify_task") && difference.contains(golden),
             "{evidence}: {difference}"
         );
         let outcome = format!("{:?}", run_rust(&steps));

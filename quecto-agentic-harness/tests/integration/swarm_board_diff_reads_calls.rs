@@ -370,10 +370,10 @@ const RUST_ONLY_ARGUMENTS: [(&str, &str); 1] = [("_request_admission", "gate")];
 #[test]
 fn only_the_listed_arguments_widen_a_workbench_signature() {
     for (method, argument) in RUST_ONLY_ARGUMENTS {
-        let python = workbench_parameters(method);
+        let golden = workbench_parameters(method);
         assert!(
-            !python.iter().any(|name| name == argument),
-            "{method}: {python:?}"
+            !golden.iter().any(|name| name == argument),
+            "{method}: {golden:?}"
         );
         assert!(BOARD_OPS.contains(&method), "{method}");
     }
@@ -407,18 +407,18 @@ fn only_the_listed_arguments_widen_a_workbench_signature() {
 /// nothing else.
 #[test]
 fn the_dispatcher_serves_every_workbench_method() {
-    let python: BTreeSet<String> = WORKBENCH_METHODS
+    let golden: BTreeSet<String> = WORKBENCH_METHODS
         .iter()
         .map(|name| (*name).to_owned())
         .collect();
-    assert_eq!(python.len(), WORKBENCH_METHODS.len(), "listed once each");
+    assert_eq!(golden.len(), WORKBENCH_METHODS.len(), "listed once each");
     let served: BTreeSet<String> = BOARD_OPS
         .iter()
         .filter(|op| !TEST_ONLY.contains(op) && !RUST_ONLY.contains(op))
         .chain(INTERNAL_HELPERS.iter())
         .map(|name| (*name).to_owned())
         .collect();
-    assert_eq!(python, served);
+    assert_eq!(golden, served);
 }
 
 /// `test_the_advertised_contact_is_a_send_the_board_accepts`: the contact

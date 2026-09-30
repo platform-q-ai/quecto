@@ -203,40 +203,38 @@ fi
 # superseded `bdd-<old hash>` would report its functions at zero and drag the
 # threshold down after every source change (cargo-llvm-cov normally avoids
 # this by cleaning the workspace packages before each run).
-RESOLVED_FILE="$TMP_DIR/resolved.txt"
-python3 - "$BUILD_JSON" "$TEST_TARGET" "$COVERAGE" >"$RESOLVED_FILE" <<'PY'
-import json, os, sys
-build_json, test_target, coverage = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
-artifacts = []
-for line in open(build_json, encoding="utf-8"):
-    line = line.strip()
-    if not line.startswith("{"):
-        continue
-    msg = json.loads(line)
-    if msg.get("reason") == "compiler-artifact" and msg.get("executable"):
-        artifacts.append(msg)
-tests = [m for m in artifacts if "test" in m["target"]["kind"] and m["target"]["name"] == test_target]
-if not tests:
-    sys.exit(f"no test executable named {test_target!r} in {build_json}")
-test_exe, manifest = tests[0]["executable"], tests[0]["manifest_path"]
-bins = [f"CARGO_BIN_EXE_{m['target']['name']}={m['executable']}"
-        for m in artifacts if m["manifest_path"] == manifest and "bin" in m["target"]["kind"]]
-if coverage:
-    produced = {m["executable"] for m in artifacts}
-    deps_dir = os.path.dirname(test_exe)
-    for name in os.listdir(deps_dir):
-        path = os.path.join(deps_dir, name)
-        if "." not in name and os.path.isfile(path) and os.access(path, os.X_OK) and path not in produced:
-            os.remove(path)
-            print(f"removed stale instrumented executable {path}", file=sys.stderr)
-print(test_exe)
-print(os.path.dirname(manifest))
-print("\n".join(bins))
-PY
-mapfile -t RESOLVED <"$RESOLVED_FILE"
-TEST_EXE="${RESOLVED[0]}"
-PACKAGE_DIR="${RESOLVED[1]}"
-BIN_ENV=("${RESOLVED[@]:2}")
+# The resolver is jq's (#2283: no Python anywhere in the workspace).
+ARTIFACTS="$TMP_DIR/artifacts.jsonl"
+jq -R -c 'select(startswith("{")) | fromjson
+  | select(.reason == "compiler-artifact" and .executable != null)' \
+  "$BUILD_JSON" >"$ARTIFACTS"
+TEST_ARTIFACT="$(jq -c --arg t "$TEST_TARGET" \
+  'select((.target.kind | index("test")) and .target.name == $t)' "$ARTIFACTS" | head -n1)"
+if [[ -z "$TEST_ARTIFACT" ]]; then
+    echo "no test executable named '${TEST_TARGET}' in ${BUILD_JSON}" >&2
+    exit 1
+fi
+TEST_EXE="$(jq -r .executable <<<"$TEST_ARTIFACT")"
+TEST_MANIFEST="$(jq -r .manifest_path <<<"$TEST_ARTIFACT")"
+PACKAGE_DIR="$(dirname "$TEST_MANIFEST")"
+mapfile -t BIN_ENV < <(jq -r --arg m "$TEST_MANIFEST" \
+  'select(.manifest_path == $m and (.target.kind | index("bin")))
+   | "CARGO_BIN_EXE_\(.target.name)=\(.executable)"' "$ARTIFACTS")
+if [[ "$COVERAGE" == "1" ]]; then
+    mapfile -t PRODUCED < <(jq -r .executable "$ARTIFACTS")
+    for path in "$(dirname "$TEST_EXE")"/*; do
+        name="$(basename "$path")"
+        [[ "$name" == *.* || ! -f "$path" || ! -x "$path" ]] && continue
+        stale=1
+        for produced in "${PRODUCED[@]}"; do
+            [[ "$produced" == "$path" ]] && stale=0 && break
+        done
+        if [[ "$stale" == "1" ]]; then
+            rm -f -- "$path"
+            echo "removed stale instrumented executable ${path}" >&2
+        fi
+    done
+fi
 # `<build root>/debug/deps/<exe>`: the build root is what cargo would have
 # used as the target dir for this build (under --coverage it is
 # `<target>/llvm-cov-target`), and steps that spawn `<target>/debug/quecto`

@@ -74,10 +74,16 @@ async fn terminate_after_leader_exit_reports_a_surviving_group_member_without_si
         "quecto-child-watch-survivor-{}",
         std::process::id()
     ));
-    let script = format!(
-        "python3 -c 'import os, time; open(\"{}\", \"w\").write(str(os.getpid())); time.sleep(30)' & exit 0",
-        pid_file.display()
+    let log = pid_file.with_extension("signals");
+    let survivor = crate::shell::test_stand_in::command(
+        "signal-log",
+        &[
+            ("PID", &pid_file.to_string_lossy()),
+            ("LOG", &log.to_string_lossy()),
+            ("LIFETIME", "30"),
+        ],
     );
+    let script = format!("{survivor} & exit 0");
     let watch = watch_child(spawn(&script), StderrTail::default());
     let survivor = wait_for_pid_file(&pid_file).await;
     assert!(

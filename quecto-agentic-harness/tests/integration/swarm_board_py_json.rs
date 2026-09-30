@@ -5,7 +5,7 @@
 //! word trailing-comma errors differently) wrote; every invalid text must
 //! be refused with Python's message (for a syntax error: its text, line,
 //! column and char). Python's texts are frozen in
-//! `json_corpus.golden.json`: until #2283 `python3` wrote them on every run.
+//! `json_corpus.golden.json`: until #2283 a Python child wrote them on every run.
 
 use quecto::infrastructure::persistence::swarm_board::py_json::{self, PyJson, PyStr};
 

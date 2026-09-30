@@ -72,29 +72,30 @@ fi
 # `cargo llvm-cov report` feeds every executable under the profile dir to
 # llvm-cov, so in this persistent target a superseded `quecto-<old hash>`
 # would report its functions at zero after every source change.
-python3 - "$SCRATCH/build.json" <<'PY' >"$SCRATCH/libs.tsv"
-import json, os, sys
-artifacts = []
-for line in open(sys.argv[1], encoding="utf-8"):
-    line = line.strip()
-    if not line.startswith("{"):
-        continue
-    msg = json.loads(line)
-    if msg.get("reason") == "compiler-artifact" and msg.get("executable"):
-        artifacts.append(msg)
-produced = {m["executable"] for m in artifacts}
-for deps_dir in {os.path.dirname(e) for e in produced}:
-    for name in os.listdir(deps_dir):
-        path = os.path.join(deps_dir, name)
-        if "." not in name and os.path.isfile(path) and os.access(path, os.X_OK) and path not in produced:
-            os.remove(path)
-            print(f"removed stale instrumented executable {path}", file=sys.stderr)
-for msg in artifacts:
-    kind = msg["target"]["kind"]
-    if msg["profile"]["test"] and ("lib" in kind or "rlib" in kind):
-        pkg = os.path.basename(os.path.dirname(msg["manifest_path"]))
-        print(f"{pkg}\t{os.path.dirname(msg['manifest_path'])}\t{msg['executable']}")
-PY
+# jq's (#2283: no Python anywhere in the workspace).
+ARTIFACTS="$SCRATCH/artifacts.jsonl"
+jq -R -c 'select(startswith("{")) | fromjson
+  | select(.reason == "compiler-artifact" and .executable != null)' \
+  "$SCRATCH/build.json" >"$ARTIFACTS"
+mapfile -t PRODUCED < <(jq -r .executable "$ARTIFACTS")
+mapfile -t DEPS_DIRS < <(for produced in "${PRODUCED[@]}"; do dirname "$produced"; done | sort -u)
+for deps_dir in "${DEPS_DIRS[@]}"; do
+    for path in "$deps_dir"/*; do
+        name="$(basename "$path")"
+        [[ "$name" == *.* || ! -f "$path" || ! -x "$path" ]] && continue
+        stale=1
+        for produced in "${PRODUCED[@]}"; do
+            [[ "$produced" == "$path" ]] && stale=0 && break
+        done
+        if [[ "$stale" == "1" ]]; then
+            rm -f -- "$path"
+            echo "removed stale instrumented executable ${path}" >&2
+        fi
+    done
+done
+jq -r 'select(.profile.test and ((.target.kind | index("lib")) or (.target.kind | index("rlib"))))
+  | (.manifest_path | split("/") | .[:-1] | join("/")) as $dir
+  | "\($dir | split("/") | last)\t\($dir)\t\(.executable)"' "$ARTIFACTS" >"$SCRATCH/libs.tsv"
 
 FAIL=0
 for spec in "${SPECS[@]}"; do

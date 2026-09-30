@@ -20,53 +20,53 @@ use proc_macro2::{TokenStream, TokenTree};
 const PYTHON_AS_DATA: &[(&str, &str)] = &[
     // The command policy classifies interpreter commands; none is run.
     (
-        "src/infrastructure/security/denylist_tests.rs",
+        "quecto-agentic-harness/src/infrastructure/security/denylist_tests.rs",
         "python -m pytest tests/test_reboot.py",
     ),
     (
-        "src/infrastructure/security/denylist_tests.rs",
+        "quecto-agentic-harness/src/infrastructure/security/denylist_tests.rs",
         r#"python -c "print('rm -rf /')""#,
     ),
     (
-        "src/infrastructure/security/denylist_tests.rs",
+        "quecto-agentic-harness/src/infrastructure/security/denylist_tests.rs",
         "python <<EOF\nprint('reboot')\nEOF",
     ),
     (
-        "src/infrastructure/security/sandbox_escape_tests.rs",
+        "quecto-agentic-harness/src/infrastructure/security/sandbox_escape_tests.rs",
         r#"python -c "print('halt')""#,
     ),
     (
-        "tests/features/security.feature",
+        "quecto-agentic-harness/tests/features/security.feature",
         r#"| python -c "print('rm -rf /')"        |"#,
     ),
     // The docs must not teach the interpreter the board once ran in, and
     // the starter container must not offer it.
-    ("tests/docs/swarm_docs.rs", "python3 -I"),
     (
-        "tests/integration/docker_create_image_contract.rs",
+        "quecto-agentic-harness/tests/docs/swarm_docs.rs",
+        "python3 -I",
+    ),
+    (
+        "quecto-agentic-harness/tests/integration/docker_create_image_contract.rs",
         "python",
     ),
-    // This rule's own spelling tests.
-    (RULE_FILE, r#"Command::new("python3")"#),
-    (RULE_FILE, r#"Command::new("python")"#),
-    (RULE_FILE, r#"Command::new("/usr/bin/python3")"#),
-    (RULE_FILE, r#"Command::new("python3.12")"#),
-    (RULE_FILE, r#"Command::new("/usr/bin/env").arg("python3")"#),
-    (
-        RULE_FILE,
-        r#"Command::new("sh").args(["-c", "/usr/bin/env python -c 'x'"])"#,
-    ),
-    (RULE_FILE, r#"const PROGRAM: &str = "python2";"#),
-    (RULE_FILE, r##"Command::new(r#"python3"#)"##),
-    (RULE_FILE, "#!/usr/bin/python3\nprint(1)"),
-    (RULE_FILE, "exec python3 - \"$sock\" <<'PY'"),
-    (RULE_FILE, "python3"),
 ];
 
-/// This rule's file, whose spelling tests name Python on purpose, and
-/// which holds [`PYTHON_AS_DATA`]'s texts: a text of this file is allowed
-/// when it is any entry's text.
-const RULE_FILE: &str = "tests/architecture/no_python.rs";
+/// Whole files that are data naming Python, never run, with why.
+const PYTHON_DATA_FILES: &[(&str, &str)] = &[
+    (
+        ".quecto/containers/standard/Containerfile",
+        "this repository's own dev container keeps its interpreter (epic P6)",
+    ),
+    (
+        "quecto-agentic-harness/tests/fixtures/claude_code/rt.stream.jsonl",
+        "a recorded Claude Code transcript a projection test reads",
+    ),
+    (RULE_FILE, "this rule's own spelling tests and allowlists"),
+];
+
+/// This rule's file, whose spelling tests and allowlists name Python on
+/// purpose.
+const RULE_FILE: &str = "quecto-agentic-harness/tests/architecture/no_python.rs";
 
 /// Every word of `text` that names a Python program: `python`, optionally
 /// versioned (`python3`, `python3.12`), bare or by path.
@@ -77,34 +77,20 @@ pub(super) fn python_programs_in_text(text: &str) -> Vec<String> {
         return Vec::new();
     }
     let program = &*PROGRAM;
-    text.split(|c: char| {
-        c.is_whitespace() || matches!(c, '\'' | '"' | ';' | '&' | '|' | '(' | ')' | '`' | '=')
-    })
-    .filter(|word| program.is_match(word.rsplit('/').next().unwrap_or(word)))
-    .map(str::to_owned)
-    .collect()
+    // A word of a command holds only these (an allowlist): any other
+    // character (a redirection, a brace list, an escape, a quote) ends it.
+    text.split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-')))
+        .filter(|word| program.is_match(word.rsplit('/').next().unwrap_or(word)))
+        .map(str::to_owned)
+        .collect()
 }
 
 /// The value of every string and byte-string literal in `tokens`, doc
-/// comments (`#[doc = "…"]`, `#![doc = "…"]`) left out: prose may name
-/// Python, code may not.
+/// comments (`#[doc = "…"]`, `#![doc = "…"]`) included: a doctest or an
+/// example in one can start an interpreter too (#2344 review L1).
 fn literals(tokens: TokenStream, found: &mut Vec<String>) {
-    let trees: Vec<TokenTree> = tokens.into_iter().collect();
-    let mut index = 0;
-    while index < trees.len() {
-        match &trees[index] {
-            TokenTree::Punct(punct) if punct.as_char() == '#' => {
-                let attribute = match trees.get(index + 1) {
-                    Some(TokenTree::Punct(bang)) if bang.as_char() == '!' => index + 2,
-                    _ => index + 1,
-                };
-                if let Some(TokenTree::Group(group)) = trees.get(attribute)
-                    && is_doc(group.stream())
-                {
-                    index = attribute + 1;
-                    continue;
-                }
-            }
+    for tree in tokens {
+        match tree {
             TokenTree::Group(group) => literals(group.stream(), found),
             TokenTree::Literal(literal) => match syn::parse_str::<syn::Lit>(&literal.to_string()) {
                 Ok(syn::Lit::Str(text)) => found.push(text.value()),
@@ -118,16 +104,11 @@ fn literals(tokens: TokenStream, found: &mut Vec<String>) {
             },
             TokenTree::Ident(_) | TokenTree::Punct(_) => {}
         }
-        index += 1;
     }
 }
 
-fn is_doc(attribute: TokenStream) -> bool {
-    matches!(attribute.into_iter().next(), Some(TokenTree::Ident(ident)) if ident == "doc")
-}
-
 /// The texts of one file that name a Python program: a Rust source's
-/// string literals, or a feature file's lines.
+/// string literals and doc comments, or any other text file's lines.
 fn python_texts(path: &str, source: &str) -> Vec<String> {
     let texts: Vec<String> = match Path::new(path).extension().and_then(|e| e.to_str()) {
         Some("rs") => {
@@ -138,10 +119,7 @@ fn python_texts(path: &str, source: &str) -> Vec<String> {
             literals(tokens, &mut found);
             found
         }
-        Some("feature" | "sh") => source.lines().map(|line| line.trim().to_owned()).collect(),
-        other => panic!(
-            "{path}: only Rust sources, features and shell scripts are scanned, not {other:?}"
-        ),
+        _ => source.lines().map(|line| line.trim().to_owned()).collect(),
     };
     texts
         .into_iter()
@@ -149,49 +127,68 @@ fn python_texts(path: &str, source: &str) -> Vec<String> {
         .collect()
 }
 
-/// Every file under `dir`, relative to the crate.
+/// The workspace root: every crate, the repository's scripts, its CI and
+/// container files (#2344 review L2).
+const WORKSPACE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
+
+/// The folders the scan never enters: build output and git's own.
+fn skipped_dir(relative: &str) -> bool {
+    matches!(relative, ".git" | "target") || relative.ends_with("/target")
+}
+
+/// Every file under the workspace's `dir` (relative to the workspace).
 fn files_under(dir: &str, found: &mut Vec<String>) {
-    let entries = std::fs::read_dir(dir).unwrap_or_else(|error| panic!("read {dir}: {error}"));
+    let absolute = Path::new(WORKSPACE).join(dir);
+    let entries =
+        std::fs::read_dir(&absolute).unwrap_or_else(|error| panic!("read {dir}: {error}"));
     for entry in entries {
-        let path = entry.expect("a directory entry").path();
-        let path = path.to_string_lossy().into_owned();
-        if Path::new(&path).is_dir() {
-            files_under(&path, found);
-        } else {
-            found.push(path);
+        let name = entry.expect("a directory entry").file_name();
+        let name = name.to_string_lossy();
+        let relative = match dir {
+            "" => name.into_owned(),
+            dir => format!("{dir}/{name}"),
+        };
+        match Path::new(WORKSPACE).join(&relative).is_dir() {
+            true if skipped_dir(&relative) => {}
+            true => files_under(&relative, found),
+            false => found.push(relative),
         }
     }
 }
 
+/// Every file of the workspace, relative to its root, sorted.
 fn harness_files() -> Vec<String> {
     let mut files = Vec::new();
-    files_under("src", &mut files);
-    files_under("tests", &mut files);
-    if Path::new("build.rs").exists() {
-        files.push("build.rs".to_owned());
-    }
+    files_under("", &mut files);
     files.sort();
     files
 }
 
-/// The files the Python scan reads: Rust sources, Gherkin features and
-/// shell scripts (fixtures a test runs).
+/// Prose the scan does not read: Markdown (a command in it runs nowhere).
+fn prose(path: &str) -> bool {
+    Path::new(path)
+        .extension()
+        .is_some_and(|extension| extension == "md")
+}
+
+/// The files the Python scan reads: every workspace file but prose (a file
+/// that is not UTF-8 text is passed over when read).
 fn scanned(files: &[String]) -> Vec<&String> {
-    files
-        .iter()
-        .filter(|path| {
-            Path::new(path)
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .is_some_and(|extension| matches!(extension, "rs" | "feature" | "sh"))
-        })
-        .collect()
+    files.iter().filter(|path| !prose(path)).collect()
+}
+
+/// A workspace file's text, or `None` for a file that is not UTF-8 (a
+/// database, an image): no interpreter runs from one.
+fn text_of(path: &str) -> Option<String> {
+    let bytes = std::fs::read(Path::new(WORKSPACE).join(path))
+        .unwrap_or_else(|error| panic!("read {path}: {error}"));
+    String::from_utf8(bytes).ok()
 }
 
 #[test]
 fn no_python_sources_in_the_harness() {
     let files = harness_files();
-    assert!(files.len() > 500, "the harness's files are listed");
+    assert!(files.len() > 1000, "the workspace's files are listed");
     let python: Vec<&String> = files
         .iter()
         .filter(|path| {
@@ -202,7 +199,7 @@ fn no_python_sources_in_the_harness() {
         .collect();
     assert!(
         python.is_empty(),
-        "Python sources in the harness: {python:?}"
+        "Python sources in the workspace: {python:?}"
     );
     let production = super::teardown_authority::production_files();
     assert!(production.len() > 200, "the production files are listed");
@@ -221,30 +218,37 @@ fn no_python_in_the_harness() {
     let files = harness_files();
     let scanned = scanned(&files);
     assert!(
-        scanned.iter().any(|path| path.ends_with(".feature")) && scanned.len() > 500,
-        "the harness's Rust sources and features are scanned"
+        scanned.iter().any(|path| path.ends_with(".feature")) && scanned.len() > 1000,
+        "the workspace's sources, features and scripts are scanned"
     );
+    for (file, reason) in PYTHON_DATA_FILES {
+        assert!(
+            files.iter().any(|path| path == file),
+            "{file} ({reason}) is gone"
+        );
+    }
     let mut named = Vec::new();
     let mut allowed_seen = Vec::new();
     for path in scanned {
-        let source =
-            std::fs::read_to_string(path).unwrap_or_else(|error| panic!("read {path}: {error}"));
+        let Some(source) = text_of(path) else {
+            continue;
+        };
+        if PYTHON_DATA_FILES.iter().any(|(file, _)| file == path) {
+            continue;
+        }
         for text in python_texts(path, &source) {
-            let listed = PYTHON_AS_DATA
+            match PYTHON_AS_DATA
                 .iter()
-                .position(|(file, data)| file == path && *data == text);
-            let rule_text =
-                path == RULE_FILE && PYTHON_AS_DATA.iter().any(|(_, data)| *data == text);
-            match (listed, rule_text) {
-                (Some(entry), _) => allowed_seen.push(entry),
-                (None, true) => {}
-                (None, false) => named.push(format!("{path}: {text:?}")),
+                .position(|(file, data)| file == path && *data == text)
+            {
+                Some(entry) => allowed_seen.push(entry),
+                None => named.push(format!("{path}: {text:?}")),
             }
         }
     }
     assert!(
         named.is_empty(),
-        "the harness starts no Python; these texts name an interpreter:\n{}",
+        "the workspace starts no Python; these texts name an interpreter:\n{}",
         named.join("\n")
     );
     // Every allowlisted text is still where it is listed: a stale entry
@@ -294,8 +298,8 @@ fn the_python_scan_catches_every_interpreter_spelling() {
             "a false positive in {clean}"
         );
     }
-    // A Rust source's literals are read, raw and byte strings included;
-    // its doc comments and plain comments are not.
+    // A Rust source's literals are read, raw and byte strings included,
+    // and its doc comments; its plain comments are not.
     let word = "python3";
     let source = format!(
         "//! Once the {word} board ran here.\n\
@@ -307,7 +311,8 @@ fn the_python_scan_catches_every_interpreter_spelling() {
              let _ = b\"{word}\";\n\
          }}\n"
     );
-    assert_eq!(python_texts("src/a.rs", &source), [word, word, word]);
+    // Two doc comments and three literals.
+    assert_eq!(python_texts("src/a.rs", &source).len(), 5);
     assert_eq!(
         python_texts("tests/a.rs", "fn f() { let _ = 1; }"),
         Vec::<String>::new()
