@@ -63,6 +63,9 @@ pub struct OpSummary {
     pub duration_us: Percentiles,
     pub lock_wait_us: Percentiles,
     pub busy_wait_us: Percentiles,
+    /// The time the records' `COMMIT`s took (#2340).
+    #[serde(default)]
+    pub commit_us: Percentiles,
     /// Records whose store's busy handler fired.
     pub busy: u64,
     /// Records not held in the op's sample of [`SAMPLES_PER_OP`] (a
@@ -457,6 +460,7 @@ fn summarized(fold: &OpFold) -> OpSummary {
         duration_us: fold.durations.percentiles(),
         lock_wait_us: fold.lock_waits.percentiles(),
         busy_wait_us: fold.busy_waits.percentiles(),
+        commit_us: Percentiles::default(),
         busy: fold.busy,
         unsampled: fold.durations.unsampled(),
     }

@@ -119,7 +119,9 @@ pub(super) fn atomic_on(
     create: bool,
     work: &mut BoardWork<'_>,
 ) -> Result<(), BoardError> {
-    on_store(sums, tally, work, |body| store.measured(create, tally, body))
+    on_store(sums, tally, work, |body| {
+        store.measured(create, tally, body)
+    })
 }
 
 /// `BoardRepository::read` on `store` (#2338): `work` in the store's read

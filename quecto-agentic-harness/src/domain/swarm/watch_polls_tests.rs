@@ -29,6 +29,7 @@ fn poll(duration_us: u64) -> BoardOpObservation {
         lock_wait_us: Some(duration_us / 4),
         busy_wait_us: Some(0),
         busy: Some(false),
+        commit_us: Some(0),
         cursor_moved: None,
         result_bytes: 1,
         decision: Some(UNCHANGED.into()),
@@ -186,4 +187,21 @@ fn an_aggregate_carries_no_text_beyond_the_ticks_own() {
         "the actor ref is the tick's redacted one: {text}"
     );
     assert!(text.contains("\"polls\":2"), "{text}");
+}
+
+/// #2340: an aggregate's commit time is its slowest tick's, whichever
+/// tick that is (a read commits nothing to disk, but a busy reader can
+/// hold its `COMMIT`); an unmeasured one is kept out.
+#[test]
+fn an_aggregates_commit_time_is_its_slowest_ticks() {
+    let mut tally = PollTally::default();
+    for (at, commit_us) in [(0, Some(3)), (500_000, Some(40)), (1_000_000, None)] {
+        let tick = BoardOpObservation {
+            commit_us,
+            ..poll(10)
+        };
+        assert!(tally.poll(tick, at).is_empty());
+    }
+    let aggregate = tally.flush().expect("the held ticks");
+    assert_eq!(aggregate.commit_us, Some(40));
 }
