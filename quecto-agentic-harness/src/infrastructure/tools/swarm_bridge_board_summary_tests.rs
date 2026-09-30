@@ -194,3 +194,32 @@ fn the_summary_counts_its_process_and_reads_the_run_from_the_board() {
         "{text}"
     );
 }
+
+/// #2313 final review: the run's totals read only the per-member usage
+/// aggregates, never a request's payload, so a malformed payload leaves
+/// the run-wide section intact; and a board without the usage tables is
+/// read without creating them.
+#[test]
+fn the_run_totals_read_no_payload_and_create_no_table() {
+    let checkout = tempfile::tempdir().unwrap();
+    let (parent, _log) = process(checkout.path(), "parent");
+    create(&parent);
+    let tables = |parent: &SwarmContext| {
+        board_count(
+            parent,
+            "SELECT count(*) FROM sqlite_master WHERE name IN ('request_usage','usage_budget')",
+        )
+    };
+    let totals = parent.call("_run_totals", json!([])).unwrap();
+    assert_eq!(totals["usage"], json!([]), "{totals}");
+    assert_eq!(tables(&parent), 0, "a read creates no table");
+    let rejected = json!([{"request_id": "p1", "instrumented_attempts": 0, "outcome": "rejected"}]);
+    parent.call("_record_request", rejected).unwrap();
+    rusqlite::Connection::open(parent.database())
+        .unwrap()
+        .execute("UPDATE request_usage SET payload='{not json'", [])
+        .unwrap();
+    let totals = parent.call("_run_totals", json!([])).unwrap();
+    assert_eq!(totals["usage"][0]["member"], "parent", "{totals}");
+    assert_eq!(totals["usage"][0]["requests"], 1, "{totals}");
+}
