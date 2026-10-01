@@ -30,6 +30,8 @@ pub struct RequestTrace {
     /// How the request's input relates to its session's previous request
     /// (#2398), as its provider first serialized it.
     input_prefix: Mutex<Option<InputPrefix>>,
+    /// The session's input baseline the provider compares with (#2398).
+    input_baseline: std::sync::OnceLock<InputBaseline>,
 }
 impl RequestTrace {
     /// The provider serialized the request's input (#2398). The first
@@ -39,6 +41,15 @@ impl RequestTrace {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .get_or_insert(prefix);
+    }
+    /// Compare the request's input with `baseline`, its session's (#2398);
+    /// the first attached stays.
+    pub fn attach_input_baseline(&self, baseline: InputBaseline) {
+        let _ = (baseline, &self.input_baseline); // red stub (#2398)
+    }
+    /// The session's input baseline, when one is attached.
+    pub fn input_baseline(&self) -> Option<InputBaseline> {
+        self.input_baseline.get().cloned()
     }
     /// How the request's input relates to its session's previous request,
     /// when its provider observed it.
@@ -149,6 +160,39 @@ pub struct RequestObservation {
     pub input_prefix: Option<InputPrefix>,
 }
 
+/// A session's last accepted request input, as the provider that
+/// serializes its requests keeps it (#2398). Opaque here: the session (its
+/// agent loop) owns it and hands it to each request's trace, so a provider
+/// rebuilt mid-session compares with what its predecessor sent; only the
+/// provider reads or replaces what it holds.
+#[derive(Clone, Default)]
+pub struct InputBaseline(std::sync::Arc<Mutex<Option<Box<dyn std::any::Any + Send>>>>);
+
+impl InputBaseline {
+    /// Read the baseline kept as a `T`: `None` when none is, or another
+    /// type is.
+    pub fn read<T: 'static, R>(&self, read: impl FnOnce(Option<&T>) -> R) -> R {
+        let kept = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        read(kept.as_ref().and_then(|value| value.downcast_ref::<T>()))
+    }
+
+    /// Keep `value` as the baseline.
+    pub fn keep<T: Send + 'static>(&self, value: T) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(Box::new(value));
+    }
+
+    /// Whether `other` is this same baseline.
+    pub fn is(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl std::fmt::Debug for InputBaseline {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("InputBaseline(..)")
+    }
+}
+
 /// The kind of one item of a request's input (#2398).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -242,8 +286,8 @@ impl InputPrefix {
                 "an item this request lacks has no kind",
             ),
             (
-                item.is_none_or(|index| index > 0 || prefix == 0),
-                "a change at the first item leaves no unchanged item",
+                item.is_none_or(|start| start > 0) || prefix == 0,
+                "an unchanged prefix that starts at item 0 has no items",
             ),
             (
                 prefix <= request && unchanged <= request,

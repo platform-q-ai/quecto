@@ -56,9 +56,6 @@ pub struct CodexProvider {
     key_origin: String,
     /// The bound on a silent streaming reply (#2210).
     stream_idle: super::stream_idle::StreamIdle,
-    /// Each session's last accepted input, as digests (#2398): shared by
-    /// every provider of the process, so a rebuilt one keeps comparing.
-    input_digests: std::sync::Arc<super::input_prefix::InputDigests>,
 }
 
 impl CodexProvider {
@@ -99,7 +96,6 @@ impl CodexProvider {
             replay_refused: Default::default(),
             key_origin: String::new(),
             stream_idle: Default::default(),
-            input_digests: super::input_prefix::InputDigests::shared(),
             auth: ResponsesAuth::ChatGptOAuth { account_id },
         }
     }
@@ -119,7 +115,6 @@ impl CodexProvider {
             replay_refused: Default::default(),
             key_origin: uuid::Uuid::new_v4().to_string(),
             stream_idle: Default::default(),
-            input_digests: super::input_prefix::InputDigests::shared(),
             auth: ResponsesAuth::ApiKey,
         }
     }

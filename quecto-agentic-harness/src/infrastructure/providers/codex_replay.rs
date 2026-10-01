@@ -14,7 +14,7 @@ use crate::domain::provider::{CancelFlag, StreamEvent};
 use crate::domain::request_observation::RequestTrace;
 use crate::infrastructure::providers::attempt_profile::{Profile, Surface, Vendor};
 use crate::infrastructure::providers::attempt_transport::PassiveAttempt;
-use crate::infrastructure::providers::input_prefix::MeasuredInput;
+use crate::infrastructure::providers::input_prefix::PendingInput;
 use crate::infrastructure::providers::stream_idle::BodyError;
 
 /// Everything one request's sends share.
@@ -37,7 +37,7 @@ pub(super) struct Bodies {
     pub(super) plain: Option<serde_json::Value>,
     /// The replaying body's input measured, kept as its session's baseline
     /// once a send is accepted (#2398); `None` when not observed.
-    pub(super) measured: Option<MeasuredInput>,
+    pub(super) measured: Option<PendingInput>,
 }
 
 impl CodexProvider {
@@ -51,20 +51,18 @@ impl CodexProvider {
         let replaying = Self::build_request_body(request, &self.auth, replay_to);
         let plain = replays_any(request.messages, replay_to)
             .then(|| Self::build_request_body(request, &self.auth, ""));
+        let url = self.responses_url();
         // Where the input sent first differs from its session's last
         // accepted request (#2398), compared as the first body sends it.
-        // Only an observed request of a named session is compared, and it
-        // becomes the baseline only once a send of it is accepted.
+        // Only an observed request of a named session whose trace carries
+        // the session's baseline is compared, and it becomes the baseline
+        // only once a send of it is accepted.
         let measured = match (&request.trace, request.session_id) {
-            (Some(trace), Some(session)) => {
-                let measured = MeasuredInput::of(session, &replaying);
-                trace.record_input_prefix(self.input_digests.compare(&measured));
-                Some(measured)
-            }
+            (Some(trace), Some(session)) => PendingInput::begin(trace, session, &url, &replaying),
             (None, _) | (_, None) => None,
         };
         let call = Call {
-            url: self.responses_url(),
+            url,
             session: Self::request_session(request),
             model: request.model.to_string(),
             origin,
@@ -121,9 +119,9 @@ impl CodexProvider {
     }
 
     /// A send of the measured body was accepted (#2398).
-    fn accept(&self, measured: Option<MeasuredInput>) {
+    fn accept(&self, measured: Option<PendingInput>) {
         if let Some(measured) = measured {
-            self.input_digests.commit(measured);
+            measured.accept();
         }
     }
 
@@ -134,7 +132,7 @@ impl CodexProvider {
         first: Option<StreamEvent>,
         events: &mut tokio::sync::mpsc::Receiver<StreamEvent>,
         tx: &tokio::sync::mpsc::Sender<StreamEvent>,
-        mut measured: Option<MeasuredInput>,
+        mut measured: Option<PendingInput>,
     ) {
         let mut next = first;
         while let Some(event) = next {

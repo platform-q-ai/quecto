@@ -1,9 +1,10 @@
 //! #2398: each request records, on its trace, where the input it sends
 //! first differs from its session's last accepted request.
-use super::super::input_prefix::InputDigests;
 use super::*;
 use crate::domain::message::{Message, ToolCall};
-use crate::domain::request_observation::{InputItemKind, InputPrefixParts, RequestTrace};
+use crate::domain::request_observation::{
+    InputBaseline, InputItemKind, InputPrefixParts, RequestTrace,
+};
 use crate::domain::token_estimate::estimate_tokens;
 use std::sync::Arc;
 use wiremock::matchers::{body_string_contains, method};
@@ -39,16 +40,21 @@ async fn server(refused: Option<(&str, u16, &str)>) -> MockServer {
     server
 }
 
-/// A provider at `server` with baselines of its own.
+/// A provider at `server`.
 fn provider_at(server: &MockServer) -> CodexProvider {
-    let mut provider = CodexProvider::with_client(
+    CodexProvider::with_client(
         "sk-test".into(),
         "acct".into(),
         Some(server.uri()),
         reqwest::Client::new(),
-    );
-    provider.input_digests = Arc::new(InputDigests::default());
-    provider
+    )
+}
+
+/// A trace carrying the session's `baseline`.
+fn traced(baseline: &InputBaseline) -> Arc<RequestTrace> {
+    let trace = Arc::new(RequestTrace::default());
+    trace.attach_input_baseline(baseline.clone());
+    trace
 }
 
 fn request<'a>(
@@ -102,15 +108,16 @@ async fn send_on(
     }
 }
 
-/// What a sent request of `messages` in `session` records.
+/// What a sent request of `messages` in session `s`, whose baseline is
+/// `baseline`, records.
 async fn send(
     provider: &CodexProvider,
     path: Path,
     messages: &[Message],
-    session: &str,
+    baseline: &InputBaseline,
 ) -> Option<InputPrefixParts> {
-    let trace = Arc::new(RequestTrace::default());
-    send_on(provider, path, messages, Some(session), Some(trace.clone())).await;
+    let trace = traced(baseline);
+    send_on(provider, path, messages, Some("s"), Some(trace.clone())).await;
     trace.input_prefix().map(|prefix| prefix.parts())
 }
 
@@ -122,7 +129,8 @@ fn plain_body(messages: &[Message]) -> serde_json::Value {
     CodexProvider::build_request_body(&request(messages, None, None), &auth, "")
 }
 
-/// The estimated tokens of the first `count` input items `messages` send.
+/// The estimated tokens of the first `count` input items `messages` send
+/// (none of them reasoning).
 fn item_tokens(messages: &[Message], count: usize) -> usize {
     plain_body(messages)["input"].as_array().unwrap()[..count]
         .iter()
@@ -130,10 +138,12 @@ fn item_tokens(messages: &[Message], count: usize) -> usize {
         .sum()
 }
 
-/// The estimated tokens of the instructions and tools `messages` send.
+/// The estimated tokens of the instructions `messages` send (they send no
+/// tools).
 fn head_tokens(messages: &[Message]) -> usize {
     let body = plain_body(messages);
-    estimate_tokens(&serde_json::json!([&body["instructions"], &body["tools"]]).to_string())
+    assert!(body.get("tools").is_none());
+    estimate_tokens(&body["instructions"].to_string())
 }
 
 fn call(id: &str) -> ToolCall {
@@ -166,8 +176,9 @@ async fn a_tool_loop_records_append_only_requests() {
     for path in [Path::Assembled, Path::Streamed] {
         let server = server(None).await;
         let provider = provider_at(&server);
+        let baseline = InputBaseline::default();
         let mut messages = vec![Message::system("sys"), Message::user("list the files")];
-        let first = send(&provider, path, &messages, "s")
+        let first = send(&provider, path, &messages, &baseline)
             .await
             .expect("observed");
         assert_eq!(
@@ -186,7 +197,7 @@ async fn a_tool_loop_records_append_only_requests() {
         let previous = messages.clone();
         messages.push(Message::assistant("", vec![call("c1")]));
         messages.push(Message::tool("c1", "a.rs b.rs"));
-        let second = send(&provider, path, &messages, "s")
+        let second = send(&provider, path, &messages, &baseline)
             .await
             .expect("observed");
         let prefix = item_tokens(&previous, 1);
@@ -210,16 +221,17 @@ async fn a_tool_loop_records_append_only_requests() {
 async fn an_edited_tool_output_records_its_index_and_kind() {
     let server = server(None).await;
     let provider = provider_at(&server);
+    let baseline = InputBaseline::default();
     let mut messages = vec![
         Message::system("sys"),
         Message::user("go"),
         Message::assistant("", vec![call("c1")]),
         Message::tool("c1", "a very long tool output"),
     ];
-    send(&provider, Path::Assembled, &messages, "s").await;
+    send(&provider, Path::Assembled, &messages, &baseline).await;
     messages[3] = Message::tool("c1", "[pruned]");
     messages.push(Message::user("next"));
-    let observed = send(&provider, Path::Assembled, &messages, "s")
+    let observed = send(&provider, Path::Assembled, &messages, &baseline)
         .await
         .expect("observed");
     assert_eq!(observed.input_items, 4);
@@ -236,19 +248,20 @@ async fn an_edited_tool_output_records_its_index_and_kind() {
 async fn a_removed_message_records_where_the_inputs_diverge() {
     let server = server(None).await;
     let provider = provider_at(&server);
+    let baseline = InputBaseline::default();
     let before = [
         Message::system("sys"),
         Message::user("1"),
         Message::user("2"),
         Message::user("3"),
     ];
-    send(&provider, Path::Assembled, &before, "s").await;
+    send(&provider, Path::Assembled, &before, &baseline).await;
     let after = [
         Message::system("sys"),
         Message::user("1"),
         Message::user("3"),
     ];
-    let observed = send(&provider, Path::Assembled, &after, "s")
+    let observed = send(&provider, Path::Assembled, &after, &baseline)
         .await
         .expect("observed");
     assert_eq!(observed.first_changed_item, Some(1));
@@ -262,15 +275,11 @@ async fn a_removed_message_records_where_the_inputs_diverge() {
 async fn a_resent_request_keeps_the_record_of_its_first_send() {
     let server = server(None).await;
     let provider = provider_at(&server);
-    send(
-        &provider,
-        Path::Assembled,
-        &[Message::system("sys"), Message::user("a")],
-        "s",
-    )
-    .await;
+    let baseline = InputBaseline::default();
+    let base = [Message::system("sys"), Message::user("a")];
+    send(&provider, Path::Assembled, &base, &baseline).await;
     let messages = [Message::system("sys"), Message::user("b")];
-    let trace = Arc::new(RequestTrace::default());
+    let trace = traced(&baseline);
     for _ in 0..2 {
         send_on(
             &provider,
@@ -292,10 +301,11 @@ async fn a_resent_request_keeps_the_record_of_its_first_send() {
 async fn the_replaying_body_is_the_one_compared() {
     let server = server(None).await;
     let provider = provider_at(&server);
+    let baseline = InputBaseline::default();
     let mut messages = reasoning_turn(&provider);
-    send(&provider, Path::Assembled, &messages, "s").await;
+    send(&provider, Path::Assembled, &messages, &baseline).await;
     messages.push(Message::user("next"));
-    let observed = send(&provider, Path::Assembled, &messages, "s")
+    let observed = send(&provider, Path::Assembled, &messages, &baseline)
         .await
         .expect("observed");
     assert_eq!(
@@ -314,8 +324,9 @@ async fn a_refused_replay_leaves_the_accepted_plain_body_as_the_baseline() {
         let refusal = "{\"error\":{\"message\":\"The encrypted content could not be verified\"}}";
         let server = server(Some((BLOB, 400, refusal))).await;
         let provider = provider_at(&server);
+        let baseline = InputBaseline::default();
         let mut messages = reasoning_turn(&provider);
-        let first = send(&provider, path, &messages, "s")
+        let first = send(&provider, path, &messages, &baseline)
             .await
             .expect("observed");
         assert_eq!(
@@ -323,7 +334,7 @@ async fn a_refused_replay_leaves_the_accepted_plain_body_as_the_baseline() {
             "{path:?}: compared as the replaying body"
         );
         messages.push(Message::user("next"));
-        let observed = send(&provider, path, &messages, "s")
+        let observed = send(&provider, path, &messages, &baseline)
             .await
             .expect("observed");
         assert_eq!(
@@ -343,18 +354,17 @@ async fn a_failed_send_does_not_become_the_baseline() {
     for path in [Path::Assembled, Path::Streamed] {
         let server = server(Some(("EDITED", 500, "overloaded"))).await;
         let provider = provider_at(&server);
-        let session = Some("s");
+        let baseline = InputBaseline::default();
         let base = [Message::system("sys"), Message::user("a")];
-        assert!(send_on(&provider, path, &base, session, Some(Default::default())).await);
+        assert!(send_on(&provider, path, &base, Some("s"), Some(traced(&baseline))).await);
         let edited = [Message::system("sys"), Message::user("EDITED")];
-        let trace = Arc::new(RequestTrace::default());
-        assert!(!send_on(&provider, path, &edited, session, Some(trace)).await);
+        assert!(!send_on(&provider, path, &edited, Some("s"), Some(traced(&baseline))).await);
         let appended = [
             Message::system("sys"),
             Message::user("a"),
             Message::user("b"),
         ];
-        let observed = send(&provider, path, &appended, "s")
+        let observed = send(&provider, path, &appended, &baseline)
             .await
             .expect("observed");
         assert_eq!(observed.previous_items, Some(1), "{path:?}");
@@ -362,27 +372,31 @@ async fn a_failed_send_does_not_become_the_baseline() {
     }
 }
 
-/// Only an observed request (with a trace) of a named session is compared
-/// or becomes a baseline.
+/// Only a request of a named session whose trace carries its baseline is
+/// compared.
 #[tokio::test]
-async fn only_an_observed_request_of_a_named_session_is_compared() {
+async fn only_a_request_carrying_its_sessions_baseline_is_compared() {
     let server = server(None).await;
     let provider = provider_at(&server);
+    let baseline = InputBaseline::default();
     let base = [Message::system("sys"), Message::user("a")];
-    send(&provider, Path::Assembled, &base, "s").await;
+    send(&provider, Path::Assembled, &base, &baseline).await;
     let other = [Message::system("sys"), Message::user("unobserved")];
-    assert!(send_on(&provider, Path::Assembled, &other, Some("s"), None).await);
+    for trace in [None, Some(Arc::new(RequestTrace::default()))] {
+        assert!(send_on(&provider, Path::Assembled, &other, Some("s"), trace.clone()).await);
+        assert_eq!(trace.and_then(|trace| trace.input_prefix()), None);
+    }
     let appended = [
         Message::system("sys"),
         Message::user("a"),
         Message::user("b"),
     ];
-    let observed = send(&provider, Path::Assembled, &appended, "s")
+    let observed = send(&provider, Path::Assembled, &appended, &baseline)
         .await
         .expect("observed");
     assert_eq!(observed.previous_items, Some(1));
     assert_eq!(observed.first_changed_item, None);
-    let trace = Arc::new(RequestTrace::default());
+    let trace = traced(&baseline);
     send_on(
         &provider,
         Path::Assembled,
@@ -394,26 +408,18 @@ async fn only_an_observed_request_of_a_named_session_is_compared() {
     assert_eq!(trace.input_prefix(), None, "no session, nothing compared");
 }
 
-/// A provider rebuilt (an OAuth refresh) compares with what its
-/// predecessor sent.
+/// A provider rebuilt mid-session (an OAuth refresh) compares with what its
+/// predecessor sent: the baseline is the session's, not the provider's.
 #[tokio::test]
-async fn a_rebuilt_provider_compares_with_its_predecessors_requests() {
+async fn a_provider_rebuilt_mid_session_compares_with_the_previous_request() {
     let server = server(None).await;
-    let build = || {
-        CodexProvider::with_client(
-            "sk-test".into(),
-            "acct".into(),
-            Some(server.uri()),
-            reqwest::Client::new(),
-        )
-    };
-    let session = uuid::Uuid::new_v4().to_string();
+    let baseline = InputBaseline::default();
     let before = [
         Message::system("sys"),
         Message::user("a"),
         Message::user("b"),
     ];
-    let first = send(&build(), Path::Assembled, &before, &session)
+    let first = send(&provider_at(&server), Path::Assembled, &before, &baseline)
         .await
         .expect("observed");
     assert_eq!(first.previous_items, None);
@@ -422,11 +428,23 @@ async fn a_rebuilt_provider_compares_with_its_predecessors_requests() {
         Message::user("EDITED"),
         Message::user("b"),
     ];
-    let observed = send(&build(), Path::Assembled, &after, &session)
+    let observed = send(&provider_at(&server), Path::Assembled, &after, &baseline)
         .await
         .expect("observed");
     assert_eq!(observed.previous_items, Some(2));
     assert_eq!(observed.first_changed_item, Some(0));
+    let fresh = send(
+        &provider_at(&server),
+        Path::Assembled,
+        &after,
+        &InputBaseline::default(),
+    )
+    .await
+    .expect("observed");
+    assert_eq!(
+        fresh.previous_items, None,
+        "another session's baseline is its own"
+    );
 }
 
 /// The record carries no content, and nothing kept carries the session key.
@@ -436,11 +454,14 @@ async fn the_record_carries_no_content() {
     let session = format!("cli:{SECRET}");
     let server = server(None).await;
     let provider = provider_at(&server);
-    send(
+    let baseline = InputBaseline::default();
+    let base = [Message::system(SECRET), Message::user(SECRET)];
+    send_on(
         &provider,
         Path::Assembled,
-        &[Message::system(SECRET), Message::user(SECRET)],
-        &session,
+        &base,
+        Some(&session),
+        Some(traced(&baseline)),
     )
     .await;
     let messages = [
@@ -449,7 +470,7 @@ async fn the_record_carries_no_content() {
         Message::assistant(SECRET, vec![call("c1")]),
         Message::tool("c1", SECRET),
     ];
-    let trace = Arc::new(RequestTrace::default());
+    let trace = traced(&baseline);
     send_on(
         &provider,
         Path::Assembled,
@@ -461,11 +482,62 @@ async fn the_record_carries_no_content() {
     let observed = trace.input_prefix().expect("observed");
     assert_eq!(observed.parts().first_changed_item, Some(0));
     let text = format!(
-        "{observed:?} {} {:?}",
+        "{observed:?} {} {baseline:?}",
         serde_json::to_string(&observed).unwrap(),
-        provider.input_digests
     );
     for fragment in ["sk-proj", "hunter2", "SECRET", "9d1f", "cli:"] {
         assert!(!text.contains(fragment), "{fragment} in {text}");
     }
+}
+
+/// A server that streams one text delta, then holds the reply open.
+async fn stalling_server() -> (String, tokio::task::JoinHandle<()>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = [0u8; 65536];
+        let _ = socket.read(&mut request).await;
+        let event = serde_json::json!({"type": "response.output_text.delta", "delta": "hi"});
+        let data = format!("data: {event}\n\n");
+        let reply = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ntransfer-encoding: chunked\r\n\r\n{:x}\r\n{data}\r\n",
+            data.len()
+        );
+        socket.write_all(reply.as_bytes()).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        drop(socket);
+    });
+    (url, task)
+}
+
+/// Review: with no admission gate, the relay returns once its caller drops
+/// the receiver, though the reply stalls, so the send it relays stops.
+#[tokio::test]
+async fn the_relay_returns_once_its_caller_drops_the_receiver() {
+    let (url, server) = stalling_server().await;
+    let provider = CodexProvider::with_client(
+        "sk-test".into(),
+        "acct".into(),
+        Some(url),
+        reqwest::Client::new(),
+    );
+    let messages = [Message::system("sys"), Message::user("hi")];
+    let (call, bodies) = provider.prepare(&request(&messages, Some("s"), None));
+    let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+    let relay = tokio::spawn(provider.clone().stream(call, bodies, tx));
+    let first = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv())
+        .await
+        .expect("a first event");
+    assert!(
+        matches!(first, Some(StreamEvent::TextDelta(_))),
+        "{first:?}"
+    );
+    drop(rx);
+    tokio::time::timeout(std::time::Duration::from_secs(5), relay)
+        .await
+        .expect("the relay returns")
+        .unwrap();
+    server.abort();
 }

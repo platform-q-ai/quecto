@@ -232,7 +232,7 @@ mod input_prefix_tests {
     /// Each inconsistent record is refused, by the constructor and when read.
     #[test]
     fn an_inconsistent_record_is_refused() {
-        let cases: [(&str, Edit); 12] = [
+        let cases: [(&str, Edit); 13] = [
             ("a kind without an index", |p| {
                 p.first_changed_item = None;
             }),
@@ -272,6 +272,12 @@ mod input_prefix_tests {
             }),
             ("a prefix before the first item", |p| {
                 p.first_changed_item = Some(0);
+            }),
+            ("an item prefix after an empty previous input", |p| {
+                p.previous_items = Some(0);
+                p.first_changed_item = None;
+                p.first_changed_kind = None;
+                p.prefix_tokens_estimate = 50;
             }),
             ("an item prefix larger than its request", |p| {
                 p.prefix_tokens_estimate = 301;
@@ -324,5 +330,34 @@ mod input_prefix_tests {
         trace.record_input_prefix(first);
         trace.record_input_prefix(InputPrefix::new(append_only()).unwrap());
         assert_eq!(trace.input_prefix(), Some(first));
+    }
+}
+
+/// #2398: the opaque baseline a session owns and its requests' traces carry.
+#[cfg(test)]
+mod input_baseline_tests {
+    use super::super::*;
+
+    #[test]
+    fn a_baseline_keeps_one_value_its_clones_share() {
+        let baseline = InputBaseline::default();
+        assert_eq!(baseline.read(|kept: Option<&u64>| kept.copied()), None);
+        let shared = baseline.clone();
+        shared.keep(7u64);
+        assert_eq!(baseline.read(|kept: Option<&u64>| kept.copied()), Some(7));
+        assert_eq!(baseline.read(|kept: Option<&String>| kept.cloned()), None);
+        assert!(baseline.is(&shared));
+        assert!(!baseline.is(&InputBaseline::default()));
+        assert_eq!(format!("{baseline:?}"), "InputBaseline(..)");
+    }
+
+    #[test]
+    fn a_trace_carries_the_first_baseline_attached() {
+        let trace = RequestTrace::default();
+        assert!(trace.input_baseline().is_none());
+        let baseline = InputBaseline::default();
+        trace.attach_input_baseline(baseline.clone());
+        trace.attach_input_baseline(InputBaseline::default());
+        assert!(trace.input_baseline().expect("attached").is(&baseline));
     }
 }
