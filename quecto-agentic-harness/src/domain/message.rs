@@ -54,6 +54,8 @@ pub struct Message {
     pub is_collapsed: bool,
     /// What opened this message's turn, stamped when it is appended (#2226).
     pub turn_origin: crate::domain::turn_origin::TurnOrigin,
+    /// A prompt, a cut's stub, or neither (#2403); saved with the message.
+    pub user_kind: crate::domain::conversation::UserKind,
     /// Tool name for tool result messages.
     pub tool_name: Option<String>,
     /// First chars of tool input (for collapse preview).
@@ -172,6 +174,7 @@ impl Clone for Message {
             is_manifest: self.is_manifest,
             is_collapsed: self.is_collapsed,
             turn_origin: self.turn_origin,
+            user_kind: self.user_kind,
             tool_name: self.tool_name.clone(),
             input_preview: self.input_preview.clone(),
             spill_id: self.spill_id.clone(),

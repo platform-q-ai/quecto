@@ -34,27 +34,9 @@ pub struct Config {
     pub(super) admission_base_dir: PathBuf,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(deny_unknown_fields)]
-pub struct ContainerConfig {
-    /// Marks the config `container: true` selects. The label travels with
-    /// the entry when copied between config files.
-    #[serde(default)]
-    pub default: bool,
-    #[serde(default)]
-    pub create: Vec<String>,
-    #[serde(default)]
-    pub cleanup: Vec<String>,
-    /// Argv for joining an existing environment (#1369 slice 2).
-    #[serde(default)]
-    pub exec: Vec<String>,
-    /// Argv for stopping an environment (#1369 slice 2).
-    #[serde(default)]
-    pub kill: Vec<String>,
-    /// Argv for the post-mortem inspect of a dead member (#1369 slice 3).
-    #[serde(default)]
-    pub inspect: Vec<String>,
-}
+// #2403: moved to its own module for the line cap.
+mod container_config;
+pub use container_config::ContainerConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentConfig {
@@ -104,6 +86,9 @@ pub struct AgentDefaults {
     pub context_collapse_large_result_tokens: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_collapse_large_result_after_turns: Option<u32>,
+    /// The context mode and its marks (#2403), in `config/context_mode.rs`.
+    #[serde(flatten)]
+    pub context_mode: context_mode::ContextModeConfig,
     /// How many most-recent turns the spilling ceiling tail-pins (#1045).
     #[serde(default = "default_pin_recent_turns")]
     pub pin_recent_turns: u32,
@@ -144,6 +129,7 @@ impl Default for AgentDefaults {
             swarm_max_context_tokens: default_swarm_max_context_tokens(),
             context_collapse_large_result_tokens: None,
             context_collapse_large_result_after_turns: None,
+            context_mode: Default::default(),
             pin_recent_turns: default_pin_recent_turns(),
             context_collapse_after_messages: default_context_collapse_after_messages(),
             effort: None,
@@ -454,6 +440,7 @@ impl Config {
     /// - `QUECTO_SWARM_MAX_CONTEXT_TOKENS` → agents.defaults.swarm_max_context_tokens
     /// - `QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_TOKENS` and
     ///   `QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_AFTER_TURNS` → the size-aware collapse (#2348)
+    /// - `QUECTO_CONTEXT_MODE`, `QUECTO_CONTEXT_{HIGH,LOW}_TOKENS` → the context mode (#2403)
     /// - `QUECTO_AGENTS_DEFAULTS_EFFORT` → agents.defaults.effort
     /// - `OPENAI_API_KEY` → providers.openai.api_key
     /// - `ANTHROPIC_API_KEY` → providers.anthropic.api_key
@@ -490,6 +477,7 @@ impl Config {
             config.agents.defaults.swarm_max_context_tokens = n;
         }
         large_results::apply_env_overrides(&mut config.agents.defaults, env);
+        context_mode::apply_env_overrides(&mut config.agents.defaults, env);
         if let Some(v) = env.get("OPENAI_API_KEY") {
             config.providers.openai.api_key = v.clone();
         }
@@ -716,6 +704,8 @@ pub mod loaders;
 pub mod mapping;
 // #2348: the size-aware collapse's dials.
 mod large_results;
+// #2403: the context mode and its marks.
+pub mod context_mode;
 pub mod persistence;
 pub mod writer;
 

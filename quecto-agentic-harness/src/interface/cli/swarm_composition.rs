@@ -77,3 +77,7 @@ pub(super) fn suspension_callback(
         });
     })
 }
+
+#[cfg(test)]
+#[path = "swarm_composition_tests.rs"]
+mod tests;

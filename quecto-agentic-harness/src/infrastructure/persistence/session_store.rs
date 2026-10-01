@@ -4,7 +4,7 @@ use crate::domain::message::{Message, Role, StopReason, ToolCall};
 use crate::domain::session::{Session, SessionSummary};
 use crate::domain::session_identity::SessionIdentity;
 use crate::domain::{error::DomainError, workflow::WorkflowRunPersisted};
-use crate::infrastructure::turn_origin_names::{origin_from_name, origin_name};
+use crate::infrastructure::turn_origin_names::{self as names, origin_from_name, origin_name};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -407,6 +407,7 @@ fn message_to_record_ref(msg: &Message) -> MessageRecordRef<'_> {
         is_manifest: msg.is_manifest,
         is_collapsed: msg.is_collapsed,
         turn_origin: origin_name(msg.turn_origin),
+        user_kind: names::user_kind_name(msg.user_kind),
         tool_name: msg.tool_name.as_deref(),
         input_preview: msg.input_preview.as_deref(),
         spill_id: msg.spill_id.as_deref(),
@@ -440,6 +441,7 @@ fn message_to_record(msg: &Message) -> MessageRecord {
         is_manifest: msg.is_manifest,
         is_collapsed: msg.is_collapsed,
         turn_origin: origin_name(msg.turn_origin).map(str::to_string),
+        user_kind: names::user_kind_name(msg.user_kind).map(str::to_string),
         tool_name: msg.tool_name.clone(),
         input_preview: msg.input_preview.clone(),
         spill_id: msg.spill_id.clone(),
@@ -454,7 +456,6 @@ fn message_to_record(msg: &Message) -> MessageRecord {
 }
 
 fn record_to_message(rec: MessageRecord) -> Message {
-    let role = str_to_role(&rec.role);
     let tool_calls = rec
         .tool_calls
         .into_iter()
@@ -464,7 +465,7 @@ fn record_to_message(rec: MessageRecord) -> Message {
             arguments: tc.arguments,
         })
         .collect();
-    let mut msg = match role {
+    let mut msg = match str_to_role(&rec.role) {
         Role::System => Message::system(rec.content),
         Role::User => Message::user(rec.content),
         Role::Assistant => Message::assistant(rec.content, tool_calls),
@@ -475,14 +476,13 @@ fn record_to_message(rec: MessageRecord) -> Message {
     msg.is_manifest = rec.is_manifest;
     msg.is_collapsed = rec.is_collapsed;
     msg.turn_origin = origin_from_name(rec.turn_origin.as_deref());
+    msg.user_kind = names::user_kind_from_name(rec.user_kind.as_deref());
     msg.tool_name = rec.tool_name;
     msg.input_preview = rec.input_preview;
     msg.spill_id = rec.spill_id;
     msg.is_error = rec.is_error;
     msg.stop_reason = rec.stop_reason.as_deref().map(StopReason::parse);
-    if let Some(pinned) = rec.is_pinned {
-        msg.is_pinned = pinned;
-    }
+    msg.is_pinned = rec.is_pinned.unwrap_or(msg.is_pinned);
     msg.thinking_blocks = rec.thinking_blocks.into_iter().map(Into::into).collect();
     msg
 }

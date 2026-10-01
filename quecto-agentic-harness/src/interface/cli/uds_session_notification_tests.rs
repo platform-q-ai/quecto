@@ -124,3 +124,32 @@ fn pending_messages_open_turns_of_their_known_origin() {
     }
     assert_eq!(note().into_message(&[]).role, Role::User);
 }
+
+/// #2403: a steer and a queued control (a parent's or a swarm's task) are
+/// prompts the watermark context pins; a sub-agent's note, a coalesced
+/// note and a swarm wake are the harness's, unmarked.
+#[test]
+fn only_an_instruction_from_a_sender_is_marked_a_prompt() {
+    use crate::domain::conversation::UserKind;
+    let harness = [
+        PendingMessage::subagent_notification("reviewer".into(), 1, "done".into(), true),
+        PendingMessage::CoalescedSubagentNotification {
+            content: "a, b".into(),
+        },
+        PendingMessage::Automatic("wake".into()),
+    ];
+    for pending in harness {
+        assert_eq!(pending.into_message(&[]).user_kind, UserKind::Unmarked);
+    }
+    let prompts = [
+        PendingMessage::user("steer".into()),
+        PendingMessage::Control {
+            id: "c".into(),
+            command: "follow_up".into(),
+            content: "task".into(),
+        },
+    ];
+    for pending in prompts {
+        assert_eq!(pending.into_message(&[]).user_kind, UserKind::Prompt);
+    }
+}

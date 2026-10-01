@@ -223,6 +223,42 @@ async fn turn_origin_survives_a_save_and_an_append() {
     assert_eq!(reloaded.messages[3].turn_origin, TurnOrigin::Unrecognised);
 }
 
+/// #2403: a prompt and a cut's stub keep their kind through a full save
+/// and an appended delta, so a resumed watermark context still pins the
+/// latest prompt and archives the stub; a harness message stays unmarked,
+/// and a kind this build does not know loads unmarked.
+#[tokio::test]
+async fn user_kind_survives_a_save_and_an_append() {
+    use crate::domain::conversation::UserKind;
+    use crate::domain::conversation::watermark_cut::archive_stub;
+    use crate::domain::turn_origin::{harness_note, prompt};
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+    let mut messages = vec![prompt("brief".into()), archive_stub(3, Some("archive"))];
+    store
+        .save_clean_delta(&id("test:kind"), &messages, 0, None)
+        .await
+        .unwrap();
+    messages.push(harness_note("a wake".into(), &[]));
+    messages.push(prompt("latest".into()));
+    store
+        .save_clean_delta(&id("test:kind"), &messages, 2, None)
+        .await
+        .unwrap();
+    let loaded = store.load(&id("test:kind")).await.unwrap().unwrap();
+    let kinds: Vec<UserKind> = loaded.messages.iter().map(|m| m.user_kind).collect();
+    use UserKind::{ArchiveStub as S, Prompt as P, Unmarked as U};
+    assert_eq!(kinds, [P, S, U, P]);
+    let path = tmp.path().join("sessions/test_kind.json");
+    let raw = tokio::fs::read_to_string(&path).await.unwrap();
+    assert!(raw.contains(r#""user_kind":"archiveStub""#), "{raw}");
+    tokio::fs::write(&path, raw.replace("archiveStub", "somethingNew"))
+        .await
+        .unwrap();
+    let reloaded = store.load(&id("test:kind")).await.unwrap().unwrap();
+    assert_eq!(reloaded.messages[1].user_kind, UserKind::Unmarked);
+}
+
 #[tokio::test]
 async fn test_is_manifest_survives_round_trip() {
     let tmp = TempDir::new().unwrap();

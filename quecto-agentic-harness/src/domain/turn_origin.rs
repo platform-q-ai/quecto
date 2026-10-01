@@ -95,6 +95,13 @@ pub fn instruction(text: String) -> Message {
     opener(text, TurnOrigin::Instruction)
 }
 
+/// A prompt (#2403): an instruction the user sent, or a task a parent or a
+/// swarm gave; the watermark context pins the latest one.
+pub fn prompt(text: String) -> Message {
+    let message = instruction(text);
+    message
+}
+
 /// A progress nudge the workflow engine injects.
 pub fn progress_nudge(text: String) -> Message {
     opener(text, TurnOrigin::ProgressNudge)
