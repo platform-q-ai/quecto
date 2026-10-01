@@ -37,15 +37,17 @@ pub(super) fn wire_member(
 ) -> AgentLoopImpl {
     let mode = defaults.context_mode();
     agent.set_context_mode(mode);
+    let source = defaults.context_mode_source();
     match mode {
         crate::domain::conversation::ContextMode::Watermark(marks) => tracing::info!(
             target: "context_prune",
             high = marks.high(),
             low = marks.low(),
+            ?source,
             "context mode: watermark"
         ),
         crate::domain::conversation::ContextMode::Default => {
-            tracing::info!(target: "context_prune", "context mode: default")
+            tracing::info!(target: "context_prune", ?source, "context mode: default")
         }
     }
     let swarm_ceiling_tokens = defaults.swarm_max_context_tokens;

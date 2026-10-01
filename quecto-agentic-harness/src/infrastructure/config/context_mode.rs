@@ -32,6 +32,12 @@ pub struct ContextModeConfig {
     /// An environment value that is no count, refused at validation.
     #[serde(skip)]
     invalid_env: Option<String>,
+    /// Whether `QUECTO_CONTEXT_MODE` set the mode.
+    #[serde(skip)]
+    mode_from_env: bool,
+    /// Whether the launching agent's mode filled an unset mode.
+    #[serde(skip)]
+    mode_inherited: bool,
 }
 
 impl ContextModeConfig {
@@ -88,13 +94,47 @@ impl AgentDefaults {
     /// Adopt what the launching agent handed down with
     /// `--inherited-context-mode` (`default`, or `watermark:<high>:<low>`).
     pub fn inherit_context_mode(&mut self, value: &str) -> Result<(), ConfigError> {
-        let _ = value;
-        Ok(())
+        let refusal = || {
+            refused(&format!(
+                "--inherited-context-mode must be \"{DEFAULT}\" or \"{WATERMARK}:<high>:<low>\", not {value:?}"
+            ))
+        };
+        let parts: Vec<&str> = value.split(':').collect();
+        let (mode, marks) = match parts.as_slice() {
+            [DEFAULT] => (DEFAULT, None),
+            [WATERMARK, high, low] => {
+                let high = high.parse::<usize>().map_err(|_| refusal())?;
+                let low = low.parse::<usize>().map_err(|_| refusal())?;
+                (WATERMARK, Some((high, low)))
+            }
+            _ => return Err(refusal()),
+        };
+        // For each of the mode and the marks, this agent's own setting wins.
+        let config = &mut self.context_mode;
+        if config.context_mode.is_none() {
+            config.context_mode = Some(mode.to_string());
+            config.mode_inherited = true;
+        }
+        if let Some((high, low)) = marks {
+            config.context_high_tokens.get_or_insert(high);
+            config.context_low_tokens.get_or_insert(low);
+        }
+        validate(self)
     }
 
     /// Where the effective context mode came from.
     pub fn context_mode_source(&self) -> ContextModeSource {
-        ContextModeSource::Default
+        let config = &self.context_mode;
+        match (
+            config.context_mode.is_some(),
+            config.mode_from_env,
+            config.mode_inherited,
+        ) {
+            (true, true, _) => ContextModeSource::OwnEnvironment,
+            (true, false, true) => ContextModeSource::Inherited,
+            (true, false, false) => ContextModeSource::OwnConfiguration,
+            (false, _, _) => ContextModeSource::Default,
+        }
     }
 }
 
@@ -115,6 +155,7 @@ pub(super) fn apply_env_overrides(defaults: &mut AgentDefaults, env: &HashMap<St
     let config = &mut defaults.context_mode;
     if let Some(mode) = env.get("QUECTO_CONTEXT_MODE") {
         config.context_mode = Some(mode.clone());
+        config.mode_from_env = true;
     }
     for (key, mark) in [
         (

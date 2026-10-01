@@ -40,7 +40,7 @@ impl AgentLoopImpl {
         // #2403: in watermark mode its pass replaces every pruning rule.
         let watermark = self
             .context_manager
-            .prepare_watermark_context(messages, fixed_tokens, spills_dirty)
+            .prepare_watermark_context(messages, (fixed_tokens, budget), spills_dirty)
             .await;
         let mut plan = match watermark {
             Some(plan) => plan,

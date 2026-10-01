@@ -189,7 +189,6 @@ pub(super) fn build_child_cli_args(spec: &ChildLaunchSpec<'_>) -> Vec<OsString> 
         parent_control_path,
         inherited_context_mode,
     } = *spec;
-    let _ = inherited_context_mode;
 
     let mut args: Vec<OsString> = vec!["agent".into(), "--mode".into(), "uds".into()];
     // The child's brain (#2287), right after the mode it requires; a
@@ -234,6 +233,13 @@ pub(super) fn build_child_cli_args(spec: &ChildLaunchSpec<'_>) -> Vec<OsString> 
         args.push("--effort".into());
         args.push(effort.into());
     }
+
+    // The launching agent's context mode and marks (#2403): an argument,
+    // so it reaches a container member through the runtime's
+    // `-- <binary> <args>` contract unchanged; the child adopts what its own
+    // configuration leaves unset.
+    args.push("--inherited-context-mode".into());
+    args.push(inherited_context_mode.into());
 
     // Forward --config when a custom (or inherited runtime) config applies, so
     // children share the same tool isolation defaults as the parent.

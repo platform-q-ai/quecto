@@ -352,6 +352,10 @@ fn build_shell_command(
         "QUECTO_SWARM_BOOTSTRAP",
         "QUECTO_SWARM_CONTAINER",
         "QUECTO_SWARM_HOST_PID_NS",
+        // The harness's context mode (#2403): a command decides its own.
+        "QUECTO_CONTEXT_MODE",
+        "QUECTO_CONTEXT_HIGH_TOKENS",
+        "QUECTO_CONTEXT_LOW_TOKENS",
         "RUST_LOG",
         // A non-interactive shell sources these before the command: code
         // the command policy never saw (#2207 review).

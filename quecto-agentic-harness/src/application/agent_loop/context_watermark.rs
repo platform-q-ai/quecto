@@ -90,7 +90,7 @@ impl ContextManager {
     pub async fn prepare_watermark_context(
         &self,
         messages: &mut Vec<Message>,
-        tool_tokens: usize,
+        (tool_tokens, message_budget): (usize, usize),
         spills_dirty: bool,
     ) -> Option<ContextPlan> {
         let state = self.watermark.as_ref()?;
@@ -113,10 +113,46 @@ impl ContextManager {
             self.cut(state, trigger, messages, tool_tokens, &mut plan)
                 .await;
         }
+        let over_ceiling = |messages: &[Message]| {
+            context_pruning::estimate_total_tokens(messages).saturating_add(tool_tokens)
+                > trigger.ceiling
+        };
+        if over_ceiling(messages) {
+            self.ladder_fallback(messages, message_budget, &mut plan);
+        }
         plan.total_tokens = context_pruning::estimate_total_tokens(messages);
-        plan.over_budget = plan.total_tokens.saturating_add(tool_tokens) > trigger.ceiling;
-        plan.durable_prefix_dirty = manifest_shifted || plan.messages_dropped > 0;
+        plan.over_budget |= over_ceiling(messages);
+        plan.durable_prefix_dirty |= manifest_shifted || plan.messages_dropped > 0;
         Some(plan)
+    }
+
+    /// The emergency fallback (#2403 final review L3): no cut brought the
+    /// request under the ceiling, so the default ladder (stub, then drop)
+    /// runs for this request, as the default mode would; it edits history
+    /// in place, a cache miss, and only ever over the ceiling.
+    fn ladder_fallback(
+        &self,
+        messages: &mut Vec<Message>,
+        message_budget: usize,
+        plan: &mut ContextPlan,
+    ) {
+        let outcome = context_pruning::messages::enforce_context_ceiling_ladder(
+            messages,
+            message_budget,
+            self.pin_recent_turns,
+        );
+        tracing::warn!(
+            target: "context_prune",
+            stubbed = outcome.collapsed_to_stubs,
+            dropped = outcome.dropped,
+            message_budget,
+            "watermark: no cut fits under the ceiling; the default ladder ran for this request"
+        );
+        plan.ladder_stubbed = outcome.collapsed_to_stubs;
+        plan.messages_dropped += outcome.dropped;
+        plan.dropped_calls.extend(outcome.dropped_calls);
+        plan.over_budget = outcome.over_budget;
+        plan.durable_prefix_dirty |= outcome.collapsed_to_stubs + outcome.dropped > 0;
     }
 
     /// The trigger in estimate units: the marks at the provider-observed

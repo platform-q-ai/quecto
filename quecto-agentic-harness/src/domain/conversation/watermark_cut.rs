@@ -88,7 +88,12 @@ pub fn rewound_stub() -> Message {
 /// spill id, and a cut's stub becomes [`rewound_stub`] (#2403 review M2).
 pub fn forget_retention(message: &mut Message) {
     match message.user_kind {
-        UserKind::ArchiveStub => *message = rewound_stub(),
+        UserKind::ArchiveStub => {
+            // Same place, same durable ordinal: nothing new to a reader.
+            let ordinal = message.ordinal;
+            *message = rewound_stub();
+            message.ordinal = ordinal;
+        }
         UserKind::Prompt | UserKind::Unmarked => {}
     }
     message.spill_id = None;
@@ -166,10 +171,18 @@ fn index_line(n: usize, message: &Message) -> String {
 }
 
 /// Make the cut `plan` describes: the archived messages leave `messages`
-/// (returned, in order) and `stub` goes in before the kept tail; nothing
-/// kept changes. `plan` must have been made for exactly these messages.
-pub fn apply_cut(messages: &mut Vec<Message>, plan: &CutPlan, stub: Message) -> Vec<Message> {
+/// (returned, in order) and `stub` goes in before the kept tail, numbered
+/// as the newest message it replaces; nothing kept changes. `plan` must have been made for exactly these messages.
+pub fn apply_cut(messages: &mut Vec<Message>, plan: &CutPlan, mut stub: Message) -> Vec<Message> {
     assert_eq!(stub.user_kind, UserKind::ArchiveStub, "the stub is marked");
+    // The stub takes the durable ordinal of the newest message it replaces
+    // (#2403 final review L2): a reader who read up to it sees nothing new,
+    // and it falls between the head and the tail whenever the cut archived
+    // anything after the head (otherwise no free ordinal exists there).
+    stub.ordinal = archived(messages, plan)
+        .iter()
+        .filter_map(|m| m.ordinal)
+        .max();
     let archived_count: usize = plan.archived().iter().map(|range| range.len()).sum();
     assert_eq!(
         plan.kept().len() + archived_count,

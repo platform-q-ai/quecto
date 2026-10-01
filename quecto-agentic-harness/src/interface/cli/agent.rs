@@ -49,7 +49,8 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
     let mut no_workflow_requested = false;
     let mut workflow_guards = false;
     let mut workflow_spec_path: Option<std::path::PathBuf> = None;
-    let mut parent_id: Option<String> = None;
+    let (mut parent_id, mut inherited_context_mode): (Option<String>, Option<String>) =
+        (None, None);
     let mut admission_context: Option<std::path::PathBuf> = None;
     let mut parent_control: Option<std::path::PathBuf> = None;
     let mut inherited_tool_policy_path: Option<std::path::PathBuf> = None;
@@ -87,12 +88,13 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
                 message = Some(val.to_string());
                 i += 2;
             }
-            f @ ("--system" | "--model" | "--parent-id") => {
+            f @ ("--system" | "--model" | "--parent-id" | "--inherited-context-mode") => {
                 let msg = format!("{f} requires a value");
                 let val = next_arg(args, i, &msg, stderr)?;
                 *(match f {
                     "--system" => &mut system_prompt,
                     "--parent-id" => &mut parent_id,
+                    "--inherited-context-mode" => &mut inherited_context_mode,
                     _ => &mut model_override,
                 }) = Some(val.to_string());
                 i += 2;
@@ -169,7 +171,6 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
             }
         }
     }
-    let inherited_context_mode = None;
     let mut flags = AgentFlags {
         inherited_context_mode,
         session_name,

@@ -312,9 +312,11 @@ fn the_opener_of_the_turn_in_flight_is_pinned_beside_the_latest_prompt() {
 #[test]
 fn forgetting_retention_rewrites_only_a_stub_and_drops_every_spill_id() {
     let mut stub = archive_stub(4, Some("archive"));
+    stub.ordinal = Some(42);
     let old = stub.id();
     forget_retention(&mut stub);
     assert_ne!(stub.id(), old);
+    assert_eq!(stub.ordinal, Some(42), "same place in the transcript");
     assert_eq!(stub.user_kind, UserKind::ArchiveStub);
     assert!(!stub.content.contains("recall("), "{}", stub.content);
     let mut kept = prompt("a prompt".to_string());

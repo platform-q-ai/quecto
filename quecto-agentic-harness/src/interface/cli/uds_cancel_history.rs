@@ -36,7 +36,13 @@ pub(super) fn finalize_interrupted_turn(
     prompt_id: uuid::Uuid,
     mode: crate::domain::conversation::ContextMode,
 ) -> FinalizedInterruptedTurn {
-    let _ = mode;
+    use crate::domain::conversation::ContextMode;
+    // Watermark mode never edits a message already sent (#2403): its text
+    // and reasoning stay, so the next request still extends the last.
+    let clears_sent = match mode {
+        ContextMode::Default => true,
+        ContextMode::Watermark(_) => false,
+    };
     let Some(index) = prompt_position(messages, prompt_id) else {
         return FinalizedInterruptedTurn {
             retained_tail: Vec::new(),
@@ -49,9 +55,11 @@ pub(super) fn finalize_interrupted_turn(
     for mut message in interrupted_tail {
         match message.role {
             Role::Assistant if !message.tool_calls.is_empty() => {
-                message.content.clear();
-                message.thinking_blocks.clear();
-                message.invalidate_token_cache();
+                if clears_sent {
+                    message.content.clear();
+                    message.thinking_blocks.clear();
+                    message.invalidate_token_cache();
+                }
                 retained_tail.push(message);
             }
             Role::Tool => retained_tail.push(message),
