@@ -3,10 +3,15 @@
 use super::Config;
 
 #[test]
-fn a_swarm_members_ceiling_defaults_to_48k_under_the_general_budget() {
+fn a_swarm_members_ceiling_defaults_to_the_general_budget() {
+    // Owner decision (2026-10-01, epic #2401): every agent, swarm members
+    // included, runs at 300k, so the watermark marks (256k/70k) apply unscaled.
     let defaults = Config::default().agents.defaults;
-    assert_eq!(defaults.swarm_max_context_tokens, 48_000);
-    assert!(defaults.swarm_max_context_tokens < defaults.max_context_tokens);
+    assert_eq!(defaults.swarm_max_context_tokens, 300_000);
+    assert_eq!(
+        defaults.swarm_max_context_tokens,
+        defaults.max_context_tokens
+    );
 }
 
 #[test]
@@ -20,7 +25,7 @@ fn a_config_file_sets_a_swarm_members_ceiling() {
     .unwrap();
     let config = Config::load(path.to_str().unwrap()).unwrap();
     assert_eq!(config.agents.defaults.swarm_max_context_tokens, 64_000);
-    assert_eq!(config.agents.defaults.max_context_tokens, 200_000);
+    assert_eq!(config.agents.defaults.max_context_tokens, 300_000);
 }
 
 fn env(value: &str) -> std::collections::HashMap<String, String> {
@@ -41,7 +46,7 @@ fn an_environment_override_sets_a_swarm_members_ceiling() {
     let config = Config::load_with_env(path, &env("64000")).unwrap();
     assert_eq!(config.agents.defaults.swarm_max_context_tokens, 64_000);
     let config = Config::load_with_env(path, &env("many")).unwrap();
-    assert_eq!(config.agents.defaults.swarm_max_context_tokens, 48_000);
+    assert_eq!(config.agents.defaults.swarm_max_context_tokens, 300_000);
 }
 
 /// #2349 review L3: 0 would prune a member to nothing on every request, so

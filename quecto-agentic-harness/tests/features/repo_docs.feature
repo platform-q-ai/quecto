@@ -15,7 +15,7 @@ Feature: Repository documentation
   @docs
   Scenario: README runtime details match current code
     When I read the repository file "README.md"
-    Then the output should contain "`max_context_tokens = 200000`"
+    Then the output should contain "`max_context_tokens = 300000`"
     And the output should contain "`context_collapse_after_tool_calls = 50`"
     And the output should not contain "`max_context_tokens = 1000000`"
     And the output should not contain "QUECTO_* environment variables (including API keys) are stripped"

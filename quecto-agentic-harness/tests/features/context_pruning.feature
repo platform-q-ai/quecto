@@ -546,12 +546,12 @@ Feature: Context pruning via sliding window and tool-call collapse
     When the user sends "go" through the pruning agent
     Then no pre-run message is collapsed to a recall stub
 
-  # --- Default max context tokens is 200,000 ---
+  # --- Default max context tokens is 300,000 ---
 
   @done
-  Scenario: Default max context tokens is 200000
+  Scenario: Default max context tokens is 300000
     Given a default agent configuration
-    Then the max_context_tokens is 200000
+    Then the max_context_tokens is 300000
 
   # --- Session persistence ---
 

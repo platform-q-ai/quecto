@@ -345,21 +345,19 @@ fn default_context_collapse_after_messages() -> u32 {
     50
 }
 fn default_max_context_tokens() -> usize {
-    // Application-level pruning ceiling. Sized well below GPT-5.5's
-    // ~1M token window on purpose: a smaller hot-context target
-    // keeps latency and cost predictable on long sessions, with
-    // older tool output already spilled (see
-    // `default_context_collapse_after_tool_calls`) and the hard-drop
-    // window dropping oldest non-pinned messages once we breach it.
-    200_000
+    // Application-level context ceiling (owner decision 2026-10-01, epic
+    // #2401): 300k, so watermark mode's 256k/70k marks apply unscaled. It is
+    // still lowered to what the model's window leaves the prompt beside the
+    // reply (#2405): 258,400 on the Codex surface.
+    300_000
 }
 fn default_swarm_max_context_tokens() -> usize {
-    // A swarm member's hot context (#2342). Members work at 30-90k tokens,
-    // far under the 200k budget, so the size dial never engaged: one 17k
-    // bash output rode 98 coordinator requests (31% of its input). At 48k
-    // the same stub-then-drop ladder (75% low water) keeps it lean;
-    // everything stubbed stays recallable.
-    48_000
+    // A swarm member's context ceiling. #2342 kept members lean at 48k under
+    // the default pruning ladder; the owner raised every agent, members
+    // included, to 300k (2026-10-01, epic #2401), so long-running members
+    // can use watermark mode's 256k/70k marks. Lower it in config to bring
+    // back a lean member under default pruning.
+    300_000
 }
 fn default_max_results() -> u32 {
     5

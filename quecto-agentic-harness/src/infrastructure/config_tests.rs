@@ -588,7 +588,7 @@ fn test_default_max_session_messages() {
 #[test]
 fn test_default_max_context_tokens() {
     let config: Config = serde_json::from_str("{}").unwrap();
-    assert_eq!(config.agents.defaults.max_context_tokens, 200_000);
+    assert_eq!(config.agents.defaults.max_context_tokens, 300_000);
 }
 
 #[test]
