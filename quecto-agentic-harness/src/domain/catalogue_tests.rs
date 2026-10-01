@@ -10,6 +10,7 @@ fn capabilities() -> ModelCapabilities {
         max_output_tokens_explicit: false,
         reasoning: false,
         cost: ModelCost::default(),
+        prompt_limit: Default::default(),
     }
 }
 
@@ -615,45 +616,134 @@ fn resolution_keeps_the_missing_credential_reason() {
 
 // --- #2405: the ceiling from the real window ---
 
-fn window(window: Option<usize>, output_reserve: usize) -> ModelWindow {
-    ModelWindow::new(window, output_reserve)
+use PromptLimit::{SharedWithRequest, WindowLessOutputCap};
+
+fn window(
+    window: Option<usize>,
+    limit: PromptLimit,
+    cap: Option<usize>,
+    requested: usize,
+) -> ModelWindow {
+    ModelWindow::new(window, limit, cap, requested)
 }
 
+/// OpenAI fixes the input limit at the window less the output cap (400k =
+/// 272k + 128k), less the headroom Codex also keeps (95% of 272k).
 #[test]
-fn the_effective_ceiling_is_the_lower_of_the_budget_and_the_room_beside_the_reply() {
-    // A Codex model: a 400k window shared with a 128k reply leaves 272k.
-    assert_eq!(window(Some(400_000), 128_000).ceiling(300_000), 272_000);
+fn an_openai_window_leaves_the_fixed_input_limit_less_the_headroom() {
+    let codex = window(Some(400_000), WindowLessOutputCap, Some(128_000), 8_192);
+    assert_eq!(FIXED_INPUT_HEADROOM_PERCENT, 5);
+    assert_eq!(codex.prompt_room(), Some(258_400));
+    assert_eq!(codex.ceiling(300_000), 258_400);
     // A configured budget below the room wins.
-    assert_eq!(window(Some(400_000), 128_000).ceiling(200_000), 200_000);
-    // A 128k window with an 8k reply leaves 120k, under a 256k mark.
-    assert_eq!(window(Some(128_000), 8_192).ceiling(256_000), 119_808);
-    assert_eq!(
-        window(Some(1_050_000), 128_000).prompt_room(),
-        Some(922_000)
-    );
+    assert_eq!(codex.ceiling(200_000), 200_000);
+    let api = window(Some(1_050_000), WindowLessOutputCap, Some(128_000), 8_192);
+    assert_eq!(api.prompt_room(), Some(875_900));
+    // Without a declared cap the provider's input limit is unknown: the
+    // reply's reserve is what a request asks for, with no headroom.
+    let spark = window(Some(128_000), WindowLessOutputCap, None, 8_192);
+    assert_eq!(spark.prompt_room(), Some(119_808));
+}
+
+/// Elsewhere the provider checks the prompt plus the requested output, so
+/// the reserve is what a request can ask for: the effective limit, or up
+/// to twice it after an output-limit cut-off (#2124), never the full cap.
+#[test]
+fn a_shared_window_reserves_what_a_request_can_ask_for() {
+    // A user model, 128k window and a 64k cap, asking for 8k a request.
+    let user = window(Some(131_072), SharedWithRequest, Some(65_536), 8_192);
+    assert_eq!(user.prompt_room(), Some(131_072 - 16_384));
+    // A cap under twice the request bounds the raised limit.
+    let low_cap = window(Some(131_072), SharedWithRequest, Some(10_000), 8_192);
+    assert_eq!(low_cap.prompt_room(), Some(121_072));
+    // No declared cap: no raise, the request itself.
+    let local = window(Some(32_768), SharedWithRequest, None, 1_024);
+    assert_eq!(local.ceiling(300_000), 31_744);
     // An unknown window falls back to the configured budget.
-    assert_eq!(window(None, 128_000).ceiling(256_000), 256_000);
-    assert_eq!(window(None, 128_000).prompt_room(), None);
+    assert_eq!(
+        window(None, WindowLessOutputCap, Some(128_000), 8_192).ceiling(256_000),
+        256_000
+    );
+    assert_eq!(
+        window(None, SharedWithRequest, None, 8_192).prompt_room(),
+        None
+    );
     assert_eq!(ModelWindow::default().ceiling(256_000), 256_000);
 }
 
-/// A declaration whose reply cap fills the whole window (some catalogues
-/// list `maxTokens` equal to `contextWindow`) leaves no prompt room: it is
-/// not trusted, and the window alone bounds the ceiling, as before.
+/// #2405 review M1: a cap just under the window must not collapse the
+/// prompt (it went 128,000 -> 1 -> 2,000 as the window grew past the cap).
+/// The ceiling never falls as the window grows, whatever the cap, and the
+/// prompt keeps at least half the window.
 #[test]
-fn a_reserve_that_fills_the_window_leaves_the_window_as_the_bound() {
-    assert_eq!(window(Some(128_000), 128_000).prompt_room(), Some(128_000));
-    assert_eq!(window(Some(100), 4_096).prompt_room(), Some(100));
-    assert_eq!(window(Some(32_000), 32_000).ceiling(200_000), 32_000);
-    // A reply that leaves room is subtracted.
-    assert_eq!(window(Some(128_000), 127_999).prompt_room(), Some(1));
+fn the_ceiling_is_monotonic_in_the_window_and_never_collapses() {
+    let caps = [
+        None,
+        Some(0),
+        Some(1),
+        Some(8_192),
+        Some(65_536),
+        Some(128_000),
+        Some(1_000_000),
+    ];
+    let mut windows: Vec<usize> = (1..=600_000).step_by(997).collect();
+    for edge in [128_000usize, 131_072, 256_000] {
+        windows.extend(edge - 3..=edge + 3);
+    }
+    windows.sort_unstable();
+    for limit in [SharedWithRequest, WindowLessOutputCap] {
+        for cap in caps {
+            for requested in [0, 1_024, 8_192, 128_000] {
+                let mut previous = 0;
+                for &w in &windows {
+                    let room = window(Some(w), limit, cap, requested)
+                        .prompt_room()
+                        .expect("a known window has a room");
+                    assert!(
+                        room >= previous,
+                        "{limit:?} cap {cap:?} request {requested}: {previous} at a smaller window, {room} at {w}"
+                    );
+                    assert!(room >= w / 2, "{limit:?} cap {cap:?}: {room} in {w}");
+                    assert!(room <= w, "{limit:?} cap {cap:?}: {room} in {w}");
+                    previous = room;
+                }
+            }
+        }
+    }
+    // The reviewer's case: no collapse just past the cap.
+    for w in [128_000, 128_001, 130_000] {
+        let room = window(Some(w), WindowLessOutputCap, Some(128_000), 8_192).prompt_room();
+        assert!(room >= Some(w / 2), "{w}: {room:?}");
+    }
+}
+
+/// When the reserve would leave the prompt under its floor, the reserve is
+/// clamped (the room is half the window) and the clamp is reported, so the
+/// caller can warn; the reply keeps what a request asks for, up to half.
+#[test]
+fn a_reserve_past_the_floor_is_clamped_and_reported() {
+    let tight = window(Some(130_000), WindowLessOutputCap, Some(128_000), 8_192);
+    assert_eq!(tight.prompt_room(), Some(65_000));
+    assert!(tight.reserve_clamped());
+    // A cap that fills the window still leaves the reply room.
+    let full = window(Some(32_000), SharedWithRequest, Some(32_000), 32_000);
+    assert_eq!(full.prompt_room(), Some(16_000));
+    assert!(full.reserve_clamped());
+    let roomy = window(Some(400_000), WindowLessOutputCap, Some(128_000), 8_192);
+    assert!(!roomy.reserve_clamped());
+    assert!(!window(None, SharedWithRequest, None, 8_192).reserve_clamped());
 }
 
 /// The whole-window budget ignores the reserve: a raised output limit may
 /// use what the prompt leaves of the window (#2124).
 #[test]
 fn the_whole_window_budget_ignores_the_reply_reserve() {
-    assert_eq!(window(Some(400_000), 128_000).budget(300_000), 300_000);
-    assert_eq!(window(Some(100_000), 128_000).budget(300_000), 100_000);
-    assert_eq!(window(None, 128_000).budget(300_000), 300_000);
+    let codex = window(Some(400_000), WindowLessOutputCap, Some(128_000), 8_192);
+    assert_eq!(codex.budget(300_000), 300_000);
+    let small = window(Some(100_000), SharedWithRequest, Some(128_000), 8_192);
+    assert_eq!(small.budget(300_000), 100_000);
+    assert_eq!(
+        window(None, SharedWithRequest, None, 8_192).budget(300_000),
+        300_000
+    );
 }

@@ -107,6 +107,14 @@ fn config_for(max_context_tokens: usize) -> ContextManagerConfig {
     }
 }
 
+/// A known window with nothing reserved for the reply.
+fn window_only(window: usize) -> crate::domain::catalogue::ModelWindow {
+    crate::domain::catalogue::ModelWindow {
+        window: Some(window),
+        ..Default::default()
+    }
+}
+
 fn long_message(turn: u32) -> Message {
     let mut msg = Message::assistant("x".repeat(2_000), vec![]);
     msg.turn = Some(turn);
@@ -376,7 +384,7 @@ fn a_session_change_forgets_the_observed_scale() {
 fn the_calibrated_ceiling_follows_the_model_window() {
     let mut manager = manager(100_000);
     manager.observe_provider_context_gauge(200_000, 100_000);
-    manager.set_model_context_window(Some(40_000));
+    manager.set_model_window(window_only(40_000));
     assert_eq!(manager.pruning_ceiling_in_estimate_units(), 20_000);
     manager.forget_calibration();
     assert_eq!(manager.pruning_ceiling_in_estimate_units(), 40_000);
@@ -576,7 +584,7 @@ fn a_ceiling_cap_above_the_budget_or_the_window_changes_nothing() {
     manager.ceiling_cap().lower_to(48_000);
     assert_eq!(manager.effective_max_context_tokens(), 40_000);
 
-    manager.set_model_context_window(Some(30_000));
+    manager.set_model_window(window_only(30_000));
     assert_eq!(manager.effective_max_context_tokens(), 30_000);
 }
 
@@ -587,7 +595,7 @@ fn a_lowered_ceiling_never_disengages() {
     let mut manager = manager(200_000);
     manager.ceiling_cap().lower_to(48_000);
 
-    manager.set_model_context_window(Some(1_000_000));
+    manager.set_model_window(window_only(1_000_000));
     manager.forget_calibration();
     manager.set_session_key(SessionIdentity::from_persisted_key("another"));
     manager.ceiling_cap().lower_to(usize::MAX);
@@ -602,7 +610,7 @@ fn the_window_budget_ignores_the_swarm_cap() {
     let mut manager = manager(200_000);
     manager.ceiling_cap().lower_to(40_000);
     assert_eq!(manager.window_budget_tokens(), 200_000);
-    manager.set_model_context_window(Some(100_000));
+    manager.set_model_window(window_only(100_000));
     assert_eq!(manager.window_budget_tokens(), 100_000);
     assert_eq!(manager.effective_max_context_tokens(), 40_000);
 }
@@ -611,18 +619,24 @@ fn the_window_budget_ignores_the_swarm_cap() {
 
 #[test]
 fn the_ceiling_keeps_the_reply_reserve_free_of_the_window() {
+    use crate::domain::catalogue::{ModelWindow, PromptLimit};
     let mut manager = manager(300_000);
-    manager.set_model_context_window(Some(400_000));
-    manager.set_output_reserve(128_000);
-    assert_eq!(manager.effective_max_context_tokens(), 272_000);
-    assert_eq!(manager.pruning_ceiling_in_estimate_units(), 272_000);
+    manager.set_model_window(ModelWindow::new(
+        Some(400_000),
+        PromptLimit::WindowLessOutputCap,
+        Some(128_000),
+        8_192,
+    ));
+    // 272k of fixed input, less 5% headroom.
+    assert_eq!(manager.effective_max_context_tokens(), 258_400);
+    assert_eq!(manager.pruning_ceiling_in_estimate_units(), 258_400);
     // The hard limit the floor may not pass is the prompt's room too.
-    assert_eq!(manager.window_in_estimate_units(), Some(272_000));
+    assert_eq!(manager.window_in_estimate_units(), Some(258_400));
     // The reply's own room is still the whole window (#2124 boost).
     assert_eq!(manager.window_budget_tokens(), 300_000);
 
     // An unknown window falls back to the configured budget.
-    manager.set_model_context_window(None);
+    manager.set_model_window(ModelWindow::default());
     assert_eq!(manager.effective_max_context_tokens(), 300_000);
     assert_eq!(manager.window_in_estimate_units(), None);
 }

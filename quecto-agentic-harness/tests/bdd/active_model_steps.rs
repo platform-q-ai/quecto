@@ -55,6 +55,7 @@ fn am_entry(qualified: &str, limits: Option<(u32, u32)>) -> CatalogueEntry {
                 max_output_tokens_explicit: limits.is_some(),
                 reasoning: true,
                 cost: ModelCost::default(),
+                prompt_limit: Default::default(),
             },
             availability: Availability::runnable(),
         },
@@ -288,6 +289,7 @@ fn then_loop_runs_with_limits(world: &mut QuectoWorld, model: String, max: u32, 
         ModelLimits {
             max_output_tokens: Some(max),
             context_window: Some(window),
+            prompt_limit: Default::default(),
         }
     );
 }

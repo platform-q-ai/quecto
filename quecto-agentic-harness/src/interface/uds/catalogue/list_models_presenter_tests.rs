@@ -40,6 +40,7 @@ fn entry(oauth: bool) -> CatalogueEntry {
                     cache_read: 0.25,
                     cache_write: 0.5,
                 },
+                prompt_limit: Default::default(),
             },
             availability: Availability::runnable(),
         },

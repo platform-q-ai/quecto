@@ -73,6 +73,7 @@ fn app_capabilities() -> ModelCapabilities {
         max_output_tokens_explicit: false,
         reasoning: false,
         cost: ModelCost::default(),
+        prompt_limit: Default::default(),
     }
 }
 

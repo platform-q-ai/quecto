@@ -135,6 +135,8 @@ pub struct AgentLoopImpl {
     session_key: String,
     /// #1044: the active model's known context window (None when unknown).
     pub(super) model_context_window: Option<usize>,
+    /// #2405: how the active model's provider bounds the prompt.
+    model_prompt_limit: crate::domain::catalogue::PromptLimit,
     /// #2405: the models already noted as declaring no context window.
     unknown_window_noted: std::collections::HashSet<String>,
     /// When true, use incremental streaming for LLM calls.
@@ -206,6 +208,7 @@ impl AgentLoopImpl {
             retains_context: config.retention.is_some(),
             session_key: config.session_key,
             model_context_window: config.model_context_window,
+            model_prompt_limit: Default::default(),
             unknown_window_noted: std::collections::HashSet::new(),
             progress_callback: config.progress_callback,
             streaming: config.streaming,

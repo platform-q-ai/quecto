@@ -108,7 +108,10 @@ impl ContextManager {
             pin_recent_turns: config.pin_recent_turns,
             context_collapse_after_messages: config.context_collapse_after_messages,
             large_result_collapse: LargeResultSwitch::new(config.large_result_collapse),
-            model_window: ModelWindow::new(config.model_context_window, 0),
+            model_window: ModelWindow {
+                window: config.model_context_window,
+                ..ModelWindow::default()
+            },
             ceiling_cap: ContextCeilingCap::default(),
             gauge: Mutex::new(ContextGaugeCalibration::default()),
         }
@@ -129,13 +132,10 @@ impl ContextManager {
         self.ceiling_cap.clone()
     }
 
-    pub fn set_model_context_window(&mut self, model_context_window: Option<usize>) {
-        self.model_window.window = model_context_window;
-    }
-
-    /// The tokens kept free of the window for the reply (#2405).
-    pub fn set_output_reserve(&mut self, output_reserve: usize) {
-        self.model_window.output_reserve = output_reserve;
+    /// The model's window and what its reply needs beside the prompt
+    /// (#2405), set together so they never diverge.
+    pub fn set_model_window(&mut self, model_window: ModelWindow) {
+        self.model_window = model_window;
     }
 
     #[cfg(test)]

@@ -49,6 +49,7 @@ fn model(provider: &str, api: ProviderApi, auth: AuthMode) -> ModelRecord {
         reasoning: false,
         auth,
         oauth_provider: None,
+        prompt_limit: Default::default(),
     }
 }
 

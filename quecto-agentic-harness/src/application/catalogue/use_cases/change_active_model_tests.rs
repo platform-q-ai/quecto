@@ -42,6 +42,7 @@ fn entry(provider: &str, model: &str, explicit_limits: Option<(u32, u32)>) -> Ca
                 max_output_tokens_explicit: explicit_limits.is_some(),
                 reasoning: true,
                 cost: ModelCost::default(),
+                prompt_limit: Default::default(),
             },
             availability: Availability::runnable(),
         },
@@ -270,6 +271,7 @@ fn plan_reads_explicit_limits_from_the_generation_it_just_published() {
         ModelLimits {
             max_output_tokens: Some(50),
             context_window: Some(1234),
+            prompt_limit: Default::default(),
         }
     );
     assert_eq!(rig.store.current().generation(), 1, "the plan published");
@@ -290,6 +292,7 @@ fn each_limit_clamps_only_when_declared_explicitly() {
         ModelLimits {
             max_output_tokens: Some(50),
             context_window: None,
+            prompt_limit: Default::default(),
         }
     );
     assert_eq!(
@@ -297,6 +300,7 @@ fn each_limit_clamps_only_when_declared_explicitly() {
         ModelLimits {
             max_output_tokens: None,
             context_window: Some(1234),
+            prompt_limit: Default::default(),
         }
     );
 }
@@ -323,6 +327,7 @@ fn a_model_added_since_the_last_read_is_switchable_without_a_refresh() {
         ModelLimits {
             max_output_tokens: Some(10),
             context_window: Some(20),
+            prompt_limit: Default::default(),
         }
     );
     assert_eq!(*rig.loader.loads.lock().unwrap(), 2);

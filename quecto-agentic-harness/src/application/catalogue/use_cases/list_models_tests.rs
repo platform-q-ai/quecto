@@ -37,6 +37,7 @@ fn entry(provider_id: &str, model: &str, display: &str) -> CatalogueEntry {
                 max_output_tokens_explicit: false,
                 reasoning: false,
                 cost: ModelCost::default(),
+                prompt_limit: Default::default(),
             },
             availability: Availability::runnable(),
         },

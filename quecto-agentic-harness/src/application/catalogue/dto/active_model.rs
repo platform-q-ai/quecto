@@ -1,7 +1,7 @@
 //! Request and outcome of changing the session's active model (#1847).
 
 use crate::application::catalogue::dto::{DefaultScope, PersistedDefault};
-use crate::domain::catalogue::{ModelRef, UnavailableReason};
+use crate::domain::catalogue::{ModelRef, PromptLimit, UnavailableReason};
 
 /// The per-model limits the loop clamps to, each `None` unless the
 /// catalogue declared it explicitly (a synthesized default never clamps).
@@ -9,6 +9,8 @@ use crate::domain::catalogue::{ModelRef, UnavailableReason};
 pub struct ModelLimits {
     pub max_output_tokens: Option<u32>,
     pub context_window: Option<usize>,
+    /// How the provider bounds the prompt inside the window (#2405).
+    pub prompt_limit: PromptLimit,
 }
 
 /// What the published runtime generation says about the requested model.

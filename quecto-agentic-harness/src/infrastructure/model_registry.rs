@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::domain::catalogue::PromptLimit;
 use crate::domain::message::claude_sonnet_5_pricing;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -31,6 +32,8 @@ pub struct ModelRecord {
     /// limit, so the #1044 window-aware budget (`context_window_for`) applies
     /// only when this is true.
     pub context_window_explicit: bool,
+    /// How the provider bounds the prompt inside the window (#2405).
+    pub prompt_limit: PromptLimit,
     pub cost: ModelCost,
     pub reasoning: bool,
     /// How this provider authenticates. `ApiKey` uses the resolved `api_key`;
@@ -559,6 +562,7 @@ impl ModelRecord {
             max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
             max_tokens_explicit: false,
             context_window_explicit: false,
+            prompt_limit: PromptLimit::SharedWithRequest,
             cost: ModelCost::default(),
             reasoning: false,
             auth: AuthMode::ApiKey,

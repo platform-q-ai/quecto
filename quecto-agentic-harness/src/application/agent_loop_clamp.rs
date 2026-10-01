@@ -10,6 +10,7 @@
 use super::AgentLoopImpl;
 use crate::application::catalogue::dto::ModelLimits;
 use crate::application::catalogue::ports::ModelRuntime;
+use crate::domain::catalogue::ModelWindow;
 
 /// Tokens kept free of the context window when a retry raises the output limit.
 const OUTPUT_ROOM_MARGIN: usize = 1024;
@@ -20,7 +21,7 @@ impl ModelRuntime for AgentLoopImpl {
     }
 
     fn apply_model(&mut self, model: String, limits: ModelLimits) {
-        self.switch_model(model, limits.max_output_tokens, limits.context_window);
+        self.switch_model(model, limits);
     }
 
     fn route_check(&self, model: &str) -> crate::application::providers::ports::RouteCheck {
@@ -29,28 +30,30 @@ impl ModelRuntime for AgentLoopImpl {
 }
 
 impl AgentLoopImpl {
-    /// Switch the active model, its per-model output cap, and its known
-    /// context window together so they can never diverge. `model_max_tokens`
-    /// is the new model's registry cap (or `None` for no clamp); the effective
-    /// request tokens become `min(max_tokens, cap)` (#935).
-    /// `model_context_window` is the new model's known context window (or
-    /// `None` when unknown); the effective pruning budget becomes
-    /// `min(max_context_tokens, window - output reserve)` (#1044, #2405). Taking both as parameters
-    /// (rather than separate setters) ensures every switch re-clamps with no
-    /// fragile multi-call protocol. The change-active-model use case is the
-    /// only caller (#1847), through the [`ModelRuntime`] port.
-    fn switch_model(
-        &mut self,
-        model: String,
-        model_max_tokens: Option<u32>,
-        model_context_window: Option<usize>,
-    ) {
+    /// Switch the active model and its limits together so they can never
+    /// diverge: the output cap clamps each request to `min(max_tokens, cap)`
+    /// (#935), and the window and its prompt limit bound the context
+    /// ceiling (#1044, #2405). The change-active-model use case is the only
+    /// caller (#1847), through the [`ModelRuntime`] port.
+    fn switch_model(&mut self, model: String, limits: ModelLimits) {
         self.model = model;
-        self.model_max_tokens = model_max_tokens;
-        self.model_context_window = model_context_window;
-        self.sync_context_limits();
+        self.set_model_limits(limits);
         // #2212: another model may tokenise differently.
         self.context_manager.forget_calibration();
+    }
+
+    fn set_model_limits(&mut self, limits: ModelLimits) {
+        self.model_max_tokens = limits.max_output_tokens;
+        self.model_context_window = limits.context_window;
+        self.model_prompt_limit = limits.prompt_limit;
+        self.sync_context_limits();
+    }
+
+    /// Builder variant: the startup model's limits (#2405), which the
+    /// composition reads from the published catalogue.
+    pub fn with_model_limits(mut self, limits: ModelLimits) -> Self {
+        self.set_model_limits(limits);
+        self
     }
 
     /// Builder variant: set the per-model output cap at construction time.
@@ -66,11 +69,13 @@ impl AgentLoopImpl {
     /// else the configured `max_tokens` each request asks for. A model that
     /// declares no window keeps the configured budget, noted once per model.
     pub(super) fn sync_context_limits(&mut self) {
-        let reserve = self.model_max_tokens.unwrap_or(self.max_tokens);
-        let reserve = usize::try_from(reserve).unwrap_or(usize::MAX);
-        self.context_manager
-            .set_model_context_window(self.model_context_window);
-        self.context_manager.set_output_reserve(reserve);
+        let tokens = |value: u32| usize::try_from(value).unwrap_or(usize::MAX);
+        self.context_manager.set_model_window(ModelWindow::new(
+            self.model_context_window,
+            self.model_prompt_limit,
+            self.model_max_tokens.map(tokens),
+            tokens(self.effective_max_tokens()),
+        ));
         if self.model_context_window.is_none()
             && self.unknown_window_noted.insert(self.model.clone())
         {
@@ -164,12 +169,6 @@ impl AgentLoopImpl {
         self.model_context_window = window;
         self.sync_context_limits();
         self
-    }
-
-    /// How many models were noted as declaring no context window (#2405).
-    #[cfg(test)]
-    pub(super) fn unknown_window_notes(&self) -> usize {
-        self.unknown_window_noted.len()
     }
 
     /// The effective context-token budget (#1044, #2405): what the active

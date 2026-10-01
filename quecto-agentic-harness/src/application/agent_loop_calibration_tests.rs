@@ -241,6 +241,7 @@ async fn a_model_switch_forgets_the_observed_scale() {
         crate::application::catalogue::dto::ModelLimits {
             max_output_tokens: None,
             context_window: None,
+            prompt_limit: Default::default(),
         },
     );
 

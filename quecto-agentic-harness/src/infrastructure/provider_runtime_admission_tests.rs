@@ -357,6 +357,7 @@ fn mixed_usable_slots_report_only_unbound_once_and_fallback_covers_them() {
         reasoning: false,
         auth: AuthMode::ApiKey,
         oauth_provider: None,
+        prompt_limit: Default::default(),
     };
     let inputs = AgentRuntimeInputs {
         base_dir: tmp.path().into(),
