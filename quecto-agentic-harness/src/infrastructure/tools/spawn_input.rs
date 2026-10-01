@@ -52,10 +52,8 @@ fn parse_new_mode(
 fn parse_existing_mode(
     map: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<ContainerSelection, String> {
-    for new_only in ["container_config"] {
-        if map.contains_key(new_only) {
-            return Err(format!("container.{new_only} is only valid for mode 'new'"));
-        }
+    if map.contains_key("container_config") {
+        return Err("container.container_config is only valid for mode 'new'".into());
     }
     reject_unknown_container_fields(map, &["mode", "ref", "name"])?;
     let env_ref = optional_string(map, "ref")?;

@@ -264,11 +264,18 @@ fn written(appended: Appended) -> std::io::Result<()> {
 /// Reserve `len` bytes of the budget `reserved` holds under `cap`: taken
 /// whole, atomically, or (it would pass the cap) not at all.
 fn reserve(reserved: &AtomicU64, len: u64, cap: u64) -> bool {
-    reserved
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |held| {
-            held.checked_add(len).filter(|taken| *taken <= cap)
-        })
-        .is_ok()
+    // A compare-exchange loop, not `fetch_update` (deprecated from Rust 1.99)
+    // or `try_update` (stable from 1.95, above the clippy MSRV).
+    let mut held = reserved.load(Ordering::Acquire);
+    loop {
+        let Some(taken) = held.checked_add(len).filter(|taken| *taken <= cap) else {
+            return false;
+        };
+        match reserved.compare_exchange_weak(held, taken, Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) => return true,
+            Err(now) => held = now,
+        }
+    }
 }
 
 impl std::fmt::Debug for AuditLog {
