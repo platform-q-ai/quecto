@@ -129,6 +129,11 @@ pub trait SwarmRunControl: Send + Sync {
         &self,
         action: RunControlAction,
     ) -> PortFuture<'_, Result<RunControlReceipt, DomainError>>;
+    /// Another member's harness changed the run (a pushed `watch`) or its
+    /// work (a `wake`): this process's run watch reads the board now
+    /// rather than at its refresh (#2390). No board call, no model turn,
+    /// no prompt, and the wake cursor is left as it is.
+    fn nudge_watch(&self);
 }
 
 // ─── The coordination board (epic #2265, #2270) ─────────────────────────────

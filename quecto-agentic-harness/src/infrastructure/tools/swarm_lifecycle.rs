@@ -262,7 +262,7 @@ pub(super) fn run_off_the_workers(job: impl FnOnce()) {
 /// reaches it.
 pub fn supervise(
     context: SwarmContext,
-    mut snapshot: crate::domain::swarm::Snapshot,
+    snapshot: crate::domain::swarm::Snapshot,
     participation: super::swarm_bridge::Participation,
 ) {
     static STARTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
@@ -270,37 +270,15 @@ pub fn supervise(
         return;
     }
     // The watcher's own thread, never an async worker: it blocks on the
-    // board between ticks and drives a runtime of its own only for its
-    // settlement, so its board calls are marked as blocking work (#2278).
+    // board's latch between ticks and drives a runtime of its own only for
+    // its settlement, so its board calls are marked as blocking work (#2278).
     std::thread::spawn(super::call_work::blocking(move || {
-        let mut suspended = None;
-        // #2338: each tick is one `_watch` call, which answers the
-        // snapshot only when the board changed or the schedule asks for it
-        // (the deadline came, a refresh is due).
-        let mut schedule = crate::domain::swarm::watch::WatchSchedule::new();
-        loop {
-            let now = crate::application::swarm::ports::Clock::now_seconds(&SystemClock);
-            let _tick =
-                watch::watch_tick(&context, &mut schedule, &mut snapshot, &participation, now);
-            if snapshot.status == RunStatus::Paused
-                && suspended != Some(snapshot.control_generation)
-            {
-                if settle_observed_snapshot(&context, &snapshot) {
-                    suspended = Some(snapshot.control_generation);
-                }
-            } else if snapshot.status == RunStatus::Running {
-                suspended = None;
-            }
-            if context
-                .lifecycle
-                .observed_outcome(&snapshot, &SystemClock)
-                .terminal()
-            {
-                snapshot.status = context.lifecycle.observed_outcome(&snapshot, &SystemClock);
-                break;
-            }
-            std::thread::sleep(crate::domain::swarm::watch::WATCH_TICK);
-        }
+        let snapshot = watch::watch_until_terminal(
+            &context,
+            snapshot,
+            &participation,
+            &mut Supervisor(&context),
+        );
         // The polls the watch still holds are written before it settles.
         context.flush_watch_polls();
         match tokio::runtime::Builder::new_current_thread()
@@ -322,6 +300,25 @@ pub fn supervise(
             Err(error) => tracing::error!(%error, "swarm settlement runtime failed"),
         }
     }));
+}
+
+/// The supervisor's side of the watch: it suspends this process's
+/// inference on a pause, and tells the other members of a control change
+/// this process made (#2390).
+struct Supervisor<'a>(&'a SwarmContext);
+impl watch::WatchObserver for Supervisor<'_> {
+    fn paused(&mut self, snapshot: &crate::domain::swarm::Snapshot) -> bool {
+        settle_observed_snapshot(self.0, snapshot)
+    }
+    fn announce(&mut self, snapshot: &crate::domain::swarm::Snapshot) {
+        let _ = snapshot;
+    }
+}
+
+/// #2390: this process changed the run's control state.
+async fn announce_control_change(context: &SwarmContext, members: &[Member]) -> Vec<String> {
+    let _ = (context, members);
+    Vec::new()
 }
 
 /// How long a member waits after settling for its launcher to end it: the
@@ -525,6 +522,7 @@ impl crate::application::swarm::ports::SwarmRunControl for SwarmContext {
             Ok(receipt)
         })
     }
+    fn nudge_watch(&self) {}
 }
 
 /// The tool gate (#2339): each tool call reads the admission afresh, as

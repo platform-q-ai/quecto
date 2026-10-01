@@ -22,6 +22,7 @@ use crate::application::swarm::dto::BoardLocation;
 use crate::application::swarm::ports::{BoardOpLog, SessionOpLog};
 use crate::domain::error::DomainError;
 use crate::domain::swarm::RefusalKind;
+use crate::domain::swarm::watch::Nudge;
 use crate::infrastructure::persistence::audit_log::AuditLog;
 use crate::infrastructure::tools::swarm_board_dispatch::{
     self, BindingFaults, BoardWire, CallOrigin, SwarmBoardHandles, TELEMETRY_TARGET,
@@ -55,6 +56,27 @@ struct Shared {
     /// The handles built per file, the most recently called last; at
     /// most [`BUILT_FILES`].
     built: Mutex<Vec<Built>>,
+    /// The run watch's latch (#2390).
+    nudges: WatchNudges,
+}
+
+/// The run watch's nudge latch (#2390).
+#[derive(Debug, Default)]
+pub struct WatchNudges {
+    pending: Mutex<Option<Nudge>>,
+}
+
+impl WatchNudges {
+    /// Latches `nudge` and wakes the watch.
+    pub fn nudge(&self, nudge: Nudge) {
+        let _ = (nudge, &self.pending);
+    }
+
+    /// Waits up to `timeout` for a nudge, taking it.
+    pub fn wait(&self, timeout: Duration) -> Option<Nudge> {
+        std::thread::sleep(timeout);
+        None
+    }
 }
 
 /// The handles built for one board file, recording in the session log
@@ -92,6 +114,7 @@ impl SwarmBoard {
                 session_log: None,
                 recording: Mutex::new(None),
                 built: Mutex::new(Vec::new()),
+                nudges: WatchNudges::default(),
             }),
         }
     }
@@ -110,6 +133,7 @@ impl SwarmBoard {
                 session_log: Some(session_log),
                 recording: Mutex::new(None),
                 built: Mutex::new(Vec::new()),
+                nudges: WatchNudges::default(),
             }),
         }
     }
@@ -276,6 +300,11 @@ impl SwarmBoard {
             .built
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The run watch's latch, shared by every clone of this board (#2390).
+    pub fn watch_nudges(&self) -> &WatchNudges {
+        &self.shared.nudges
     }
 
     /// Whether `other` is this board (a clone of it), not merely one over

@@ -4,6 +4,7 @@ use crate::application::swarm::ports::SwarmRunControl;
 use crate::domain::swarm::{RunControlAction, RunControlReceipt, RunStatus};
 struct Control(RunStatus);
 impl SwarmRunControl for Control {
+    fn nudge_watch(&self) {}
     fn apply(
         &self,
         _: RunControlAction,
@@ -155,6 +156,7 @@ fn composed_suspension_rechecks_durable_generation_before_cancelling() {
 /// the re-arming can be observed without a model turn.
 struct RunningAt(u64);
 impl SwarmRunControl for RunningAt {
+    fn nudge_watch(&self) {}
     fn apply(
         &self,
         _: RunControlAction,
@@ -244,6 +246,7 @@ async fn a_resume_wake_re_arms_a_provider_suspended_member() {
 struct Answer(Result<(RunStatus, u64), &'static str>);
 
 impl SwarmRunControl for Answer {
+    fn nudge_watch(&self) {}
     fn apply(
         &self,
         _: RunControlAction,
@@ -719,6 +722,7 @@ async fn a_stale_abort_drain_dates_a_failed_explicit_turn() {
 /// A control port whose generation rises by ten on every probe.
 struct Rising(std::sync::atomic::AtomicU64);
 impl SwarmRunControl for Rising {
+    fn nudge_watch(&self) {}
     fn apply(
         &self,
         _: RunControlAction,

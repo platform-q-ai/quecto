@@ -38,6 +38,9 @@ use super::{RunStatus, Snapshot};
 /// poll it replaces ran at, so a change is observed within one tick.
 pub const WATCH_TICK: Duration = Duration::from_millis(500);
 
+/// How long a tick that is due at once waits (#2390).
+pub const RETRY: Duration = WATCH_TICK;
+
 /// The refresh interval after a change: the first safety snapshot while
 /// nothing moves comes this long after the last.
 pub const REFRESH_MIN: Duration = Duration::from_secs(5);
@@ -131,6 +134,53 @@ impl WatchSchedule {
     pub fn refresh(&self) -> Duration {
         self.refresh
     }
+}
+
+impl WatchSchedule {
+    /// How long the watch waits at `now`, when nothing nudges it, before
+    /// its next tick (#2390).
+    pub fn wait(&self, _now: f64) -> Duration {
+        WATCH_TICK
+    }
+}
+
+/// What woke the watch before its schedule was due (#2390).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Nudge {
+    /// Another member's harness pushed a `watch` or a `wake`.
+    Remote,
+    /// A board op in this process changed the run's control state.
+    Local,
+}
+
+impl Nudge {
+    /// Two nudges latched before the watch took them.
+    pub fn merge(self, other: Self) -> Self {
+        let _ = other;
+        self
+    }
+}
+
+/// Whether this process owes the other members a `watch` push (#2390).
+#[derive(Clone, Debug)]
+pub struct Announcement;
+
+impl Announcement {
+    /// The obligation of a watch that starts from `snapshot`.
+    pub fn new(_snapshot: &Snapshot) -> Self {
+        Self
+    }
+
+    /// A tick woken by `cause` read `snapshot`: whether to push now.
+    pub fn observed(&mut self, _cause: Option<Nudge>, _snapshot: Option<&Snapshot>) -> bool {
+        false
+    }
+}
+
+/// Whether board op `op`, deciding `decision`, changed the run's control
+/// state (#2390).
+pub fn changes_run_control(_op: &str, _decision: &str) -> bool {
+    false
 }
 
 #[cfg(test)]

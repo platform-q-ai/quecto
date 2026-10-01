@@ -2,8 +2,9 @@
 //! domain's [`WatchSchedule`] names, which answers the run's snapshot only
 //! when the board changed or the schedule asked for it.
 use super::super::swarm_bridge::{Participation, RunWatch, SwarmContext};
-use crate::domain::swarm::Snapshot;
-use crate::domain::swarm::watch::WatchSchedule;
+use crate::application::swarm::ports::Clock;
+use crate::domain::swarm::watch::{Announcement, WatchSchedule};
+use crate::domain::swarm::{RunStatus, Snapshot};
 
 /// What one tick of the watch read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,6 +48,69 @@ pub(super) fn watch_tick(
     tick
 }
 
+/// What the watch does about what it observes: the lifecycle's (the
+/// supervisor's), or a test's.
+pub(super) trait WatchObserver {
+    /// The run is paused at a control generation not yet suspended:
+    /// suspend this process's inference; whether it did.
+    fn paused(&mut self, snapshot: &Snapshot) -> bool;
+    /// This process changed the run's control state: push a `watch` to
+    /// every other live member (#2390).
+    fn announce(&mut self, snapshot: &Snapshot);
+}
+
+/// Watches the run from `snapshot` until its outcome is terminal, and
+/// answers the snapshot it ended on (its status the observed outcome).
+/// Between ticks it waits on the board's latch until nudged, or until its
+/// schedule is due (#2390).
+pub(super) fn watch_until_terminal(
+    context: &SwarmContext,
+    mut snapshot: Snapshot,
+    participation: &Participation,
+    observer: &mut dyn WatchObserver,
+) -> Snapshot {
+    let clock = super::SystemClock;
+    let nudges = context.board.watch_nudges();
+    let mut suspended = None;
+    let mut schedule = WatchSchedule::new();
+    let mut announcement = Announcement::new(&snapshot);
+    // The first tick is the watch's own, nudged by nobody.
+    let mut cause = None;
+    loop {
+        let tick = watch_tick(
+            context,
+            &mut schedule,
+            &mut snapshot,
+            participation,
+            clock.now_seconds(),
+        );
+        let read = match tick {
+            Tick::Snapshot | Tick::Unchanged => Some(&snapshot),
+            Tick::Unreadable => None,
+        };
+        if announcement.observed(cause, read) {
+            observer.announce(&snapshot);
+        }
+        if snapshot.status == RunStatus::Paused && suspended != Some(snapshot.control_generation) {
+            if observer.paused(&snapshot) {
+                suspended = Some(snapshot.control_generation);
+            }
+        } else if snapshot.status == RunStatus::Running {
+            suspended = None;
+        }
+        let outcome = context.lifecycle.observed_outcome(&snapshot, &clock);
+        if outcome.terminal() {
+            snapshot.status = outcome;
+            return snapshot;
+        }
+        cause = nudges.wait(schedule.wait(clock.now_seconds()));
+    }
+}
+
 #[cfg(test)]
 #[path = "swarm_watch_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "swarm_watch_push_tests.rs"]
+mod push_tests;
