@@ -30,10 +30,10 @@
 
 use crate::application::context_pruning;
 use crate::application::sessions::use_cases::{ListRetainedContext, RetainContext};
-use crate::domain::context_calibration::EstimateScale;
 use crate::domain::large_result_collapse::LargeResultCollapse;
 use crate::domain::message::Message;
 use crate::domain::session_identity::SessionIdentity;
+use crate::domain::{catalogue::ModelWindow, context_calibration::EstimateScale};
 use std::sync::{Arc, Mutex};
 
 // #2212: the provider-calibrated gauge and the estimate scale it observes.
@@ -93,7 +93,7 @@ pub(crate) struct ContextManager {
     pin_recent_turns: u32,
     context_collapse_after_messages: u32,
     large_result_collapse: LargeResultSwitch,
-    model_context_window: Option<usize>,
+    model_window: ModelWindow,
     ceiling_cap: ContextCeilingCap,
     gauge: Mutex<ContextGaugeCalibration>,
 }
@@ -108,7 +108,10 @@ impl ContextManager {
             pin_recent_turns: config.pin_recent_turns,
             context_collapse_after_messages: config.context_collapse_after_messages,
             large_result_collapse: LargeResultSwitch::new(config.large_result_collapse),
-            model_context_window: config.model_context_window,
+            model_window: ModelWindow {
+                window: config.model_context_window,
+                ..ModelWindow::default()
+            },
             ceiling_cap: ContextCeilingCap::default(),
             gauge: Mutex::new(ContextGaugeCalibration::default()),
         }
@@ -129,8 +132,10 @@ impl ContextManager {
         self.ceiling_cap.clone()
     }
 
-    pub fn set_model_context_window(&mut self, model_context_window: Option<usize>) {
-        self.model_context_window = model_context_window;
+    /// The model's window and what its reply needs beside the prompt
+    /// (#2405), set together so they never diverge.
+    pub fn set_model_window(&mut self, model_window: ModelWindow) {
+        self.model_window = model_window;
     }
 
     #[cfg(test)]
@@ -148,19 +153,17 @@ impl ContextManager {
         (self.pin_recent_turns, self.context_collapse_after_messages)
     }
 
-    /// The configured budget clamped to the model's window, without a swarm
-    /// member's cap: the room the model has, not what the member keeps.
+    /// The budget clamped to the model's whole window, without a swarm cap or
+    /// the reply's reserve: the model's room, not what the member keeps.
     pub fn window_budget_tokens(&self) -> usize {
-        match self.model_context_window {
-            Some(window) => self.max_context_tokens.min(window),
-            None => self.max_context_tokens,
-        }
+        self.model_window.budget(self.max_context_tokens)
     }
 
-    /// The lowest of the configured budget, the model's window and the
-    /// composition's cap (a swarm member's, #2342), in provider tokens.
+    /// The lowest of the configured budget, the window less the reply (#2405)
+    /// and the composition's cap (a swarm member's, #2342), in provider tokens.
     pub fn effective_max_context_tokens(&self) -> usize {
-        self.window_budget_tokens().min(self.ceiling_cap.tokens())
+        let ceiling = self.model_window.ceiling(self.max_context_tokens);
+        ceiling.min(self.ceiling_cap.tokens())
     }
 
     /// The effective budget in estimate units at the provider-observed
@@ -172,11 +175,10 @@ impl ContextManager {
         ceiling
     }
 
-    /// The model's window (a hard provider limit) in estimate units.
+    /// The prompt's hard limit (the window less the reply, #2405) in estimate units.
     pub fn window_in_estimate_units(&self) -> Option<usize> {
-        let scale = self.estimate_scale();
-        self.model_context_window
-            .map(|window| scale.in_estimate_units(window))
+        let room = self.model_window.prompt_room();
+        room.map(|room| self.estimate_scale().in_estimate_units(room))
     }
 
     pub fn estimate_scale(&self) -> EstimateScale {
@@ -214,18 +216,6 @@ impl ContextManager {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .observe_estimate_only(estimate);
-    }
-
-    #[cfg(test)]
-    pub fn poison_context_gauge_lock_for_test(&self) {
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _guard = self.gauge.lock().unwrap();
-            panic!("poison context gauge mutex for coverage");
-        }));
-        assert!(
-            self.gauge.is_poisoned(),
-            "context gauge mutex must be poisoned after the intentional panic"
-        );
     }
 
     pub fn build_tool_message(&self, args: ToolMessageBuild<'_>) -> Message {

@@ -207,11 +207,6 @@ const SANCTIONED_CATCHES: &[(&str, &str, &str)] = &[
         "the containment every tool call runs in",
     ),
     (
-        "src/application/context.rs",
-        "poison_context_gauge_lock_for_test",
-        "a #[cfg(test)] helper that poisons a lock",
-    ),
-    (
         "src/infrastructure/persistence/swarm_board/meter.rs",
         "busy_callback",
         "SQLite's busy handler (#2303): an extern \"C\" callback, which a panic must never unwind out of into SQLite; it gives up the wait instead",

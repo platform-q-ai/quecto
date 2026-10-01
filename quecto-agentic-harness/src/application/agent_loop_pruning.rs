@@ -12,6 +12,7 @@ impl AgentLoopImpl {
         // against the budget and in the estimate. #2212: all in estimate
         // units at the provider-observed residual scale; the ladder sums
         // per-class estimates against it, the scale applying to all alike.
+        self.log_pending_window_note();
         let fixed_tokens = self.tool_definition_tokens();
         let effective = self.context_manager.pruning_ceiling_in_estimate_units();
         let window = self.context_manager.window_in_estimate_units();

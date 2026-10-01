@@ -39,7 +39,7 @@ Configured under `agents.defaults`:
 | `context_collapse_after_messages` | `50` |
 | `pin_recent_turns` | `2` |
 
-The effective context budget is clamped to the active model's declared context window when known, and to `swarm_max_context_tokens` once the process takes part in a swarm (from then on for the life of the process).
+The effective context budget is clamped to what the active model's declared context window leaves the prompt when known (OpenAI with a declared output cap: the window less the cap, less 5% headroom; other providers and OpenAI entries without a cap: the window less what a request asks for, never under half the window), and to `swarm_max_context_tokens` once the process takes part in a swarm (from then on for the life of the process).
 
 ## Agent guidance
 

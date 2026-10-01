@@ -83,7 +83,8 @@ fn build_agent_from_config_threads_context_knobs_into_the_loop() {
     .expect("agent build should succeed");
     assert_eq!(
         result.agent.effective_max_context_tokens(),
-        100_000,
+        // #2405: less the default 8192-token reply, the model declaring no cap.
+        100_000 - 8_192,
         "the model's declared window must bound the effective budget (#1044)"
     );
     let (pin, collapse_after_messages) = result.agent.context_knob_snapshot();
@@ -94,6 +95,39 @@ fn build_agent_from_config_threads_context_knobs_into_the_loop() {
     assert_eq!(
         collapse_after_messages, 7,
         "a non-default context_collapse_after_messages must reach the loop (#1046)"
+    );
+}
+
+/// #2405 final review L2: a built-in OpenAI model's fixed input limit is
+/// carried from the registry through the published catalogue to the loop:
+/// gpt-5.3-codex's 400k window less its 128k output, less 5% headroom.
+/// Under the shared rule (the record's or the catalogue's prompt limit lost
+/// on the way) the ceiling would be 300,000.
+#[test]
+fn build_agent_from_config_carries_an_openai_fixed_input_limit_to_the_loop() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("config.json"),
+        r#"{"providers":{"openai":{"api_key":"sk-test"}},"agents":{"defaults":{"max_context_tokens":300000}}}"#,
+    )
+    .unwrap();
+    let mut flags = flags_for_wiring_test();
+    flags.model_override = Some("openai-api/gpt-5.3-codex".into());
+    let mut stderr = String::new();
+    let cfg = tmp.path().join("config.json");
+    let result = build_agent_from_config(
+        tmp.path(),
+        &selection_for_test(&cfg, false),
+        &flags,
+        &mut stderr,
+        None,
+    )
+    .expect("agent build should succeed");
+    assert_eq!(result.agent.model(), "openai-api/gpt-5.3-codex");
+    assert_eq!(
+        result.agent.effective_max_context_tokens(),
+        258_400,
+        "{stderr}"
     );
 }
 

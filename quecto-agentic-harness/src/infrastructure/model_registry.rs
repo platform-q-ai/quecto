@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::domain::catalogue::PromptLimit;
 use crate::domain::message::claude_sonnet_5_pricing;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -31,6 +32,8 @@ pub struct ModelRecord {
     /// limit, so the #1044 window-aware budget (`context_window_for`) applies
     /// only when this is true.
     pub context_window_explicit: bool,
+    /// How the provider bounds the prompt inside the window (#2405).
+    pub prompt_limit: PromptLimit,
     pub cost: ModelCost,
     pub reasoning: bool,
     /// How this provider authenticates. `ApiKey` uses the resolved `api_key`;
@@ -148,16 +151,26 @@ impl ModelRegistry {
                 // OpenAI reasoning tiers share these published limits;
                 // sources: developers.openai.com/api/docs/models/gpt-5.6-{sol,terra,luna},
                 // developers.openai.com/api/docs/models/gpt-6-astra, and
-                // developers.openai.com/api/docs/models/gpt-6.1-sol.
+                // developers.openai.com/api/docs/models/gpt-6.1-sol; Codex's
+                // window in `gpt_5_6_window`.
                 if id == "gpt-6.1-sol" {
                     record.input = vec!["text".to_string(), "image".to_string()];
                 }
-                record.context_window = 1_050_000;
+                record.context_window = gpt_5_6_window(provider);
                 record.context_window_explicit = true;
                 record.max_tokens = 128_000;
                 record.max_tokens_explicit = true;
                 record.reasoning = true;
                 record.cost = cost;
+            } else if let Some(published) = openai_published_limits(provider, id) {
+                // #2405: the window the ceiling is computed from; sources in
+                // `model_registry_openai_tables.rs`.
+                record.context_window = published.context_window;
+                record.context_window_explicit = true;
+                if let Some(cap) = published.max_output_tokens {
+                    record.max_tokens = cap;
+                    record.max_tokens_explicit = true;
+                }
             } else if id == "grok-4.7" {
                 // xAI published specs: 500K context, image input, configurable
                 // reasoning, $2/M input and $6/M output
@@ -198,6 +211,11 @@ impl ModelRegistry {
                     cache_read: 0.0,
                     cache_write: 0.0,
                 };
+            }
+            // #2405: OpenAI fixes the input limit at the window less the
+            // output cap; every other built-in shares it with the request.
+            if matches!(provider, "openai-api" | "openai-oauth") {
+                record.prompt_limit = PromptLimit::WindowLessOutputCap;
             }
             r.upsert(record);
         }
@@ -550,6 +568,7 @@ impl ModelRecord {
             max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
             max_tokens_explicit: false,
             context_window_explicit: false,
+            prompt_limit: PromptLimit::SharedWithRequest,
             cost: ModelCost::default(),
             reasoning: false,
             auth: AuthMode::ApiKey,
@@ -698,10 +717,13 @@ where
 mod file_format;
 use file_format::RegistryFile;
 
-#[path = "model_registry_gpt56_pricing.rs"]
-mod gpt56_pricing;
-use gpt56_pricing::gpt_5_6_cost;
+#[path = "model_registry_openai_tables.rs"]
+mod openai_tables;
+use openai_tables::{gpt_5_6_cost, gpt_5_6_window, openai_published_limits};
 
+#[cfg(test)]
+#[path = "model_registry_openai_limits_tests.rs"]
+mod openai_limits_tests;
 #[cfg(test)]
 #[path = "model_registry_tests.rs"]
 mod tests;

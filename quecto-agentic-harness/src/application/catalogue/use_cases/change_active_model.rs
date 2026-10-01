@@ -222,6 +222,7 @@ impl ChangeActiveModel {
             context_window: capabilities
                 .context_window_explicit
                 .then_some(capabilities.context_window as usize),
+            prompt_limit: capabilities.prompt_limit,
         }
     }
 }

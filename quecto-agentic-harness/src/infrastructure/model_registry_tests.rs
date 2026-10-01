@@ -219,8 +219,14 @@ fn builtin_openai_reasoning_tiers_resolve_for_api_key_and_oauth_with_published_l
                     }
                 );
             }
-            // Published limits (OpenAI, 2026-07-09): shared across the tiers.
-            assert_eq!(m.context_window, 1_050_000, "{id} context window");
+            // Published limits (OpenAI, 2026-07-09): shared across the tiers;
+            // Codex runs them at 400k (272k of input, #2405 review M3).
+            let window = if provider == "openai-api" {
+                1_050_000
+            } else {
+                400_000
+            };
+            assert_eq!(m.context_window, window, "{id} context window");
             assert!(m.context_window_explicit, "{id} context window is explicit");
             assert_eq!(m.max_tokens, 128_000, "{id} max output");
             assert!(m.max_tokens_explicit, "{id} max output is explicit");

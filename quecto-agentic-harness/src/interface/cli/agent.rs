@@ -481,7 +481,6 @@ pub(crate) fn build_agent_from_config_in(
     // (bounds the budget) come from the change-active-model use case — the
     // same read a later set_model performs (#1847).
     let limits = catalogue.model.startup_limits(&model);
-    let (cap, window) = (limits.max_output_tokens, limits.context_window);
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
         tool_registry: Box::new(registry),
@@ -500,7 +499,7 @@ pub(crate) fn build_agent_from_config_in(
         pin_recent_turns: config.agents.defaults.pin_recent_turns,
         context_collapse_after_messages: config.agents.defaults.context_collapse_after_messages,
         large_result_collapse: config.agents.defaults.large_result_collapse(),
-        model_context_window: window,
+        model_context_window: limits.context_window,
         tool_profile_context: if flags.spawned {
             crate::domain::tool::ToolProfileContext::Child
         } else {
@@ -512,7 +511,7 @@ pub(crate) fn build_agent_from_config_in(
             .max_iterations
             .unwrap_or(config.agents.defaults.max_tool_iterations),
     )
-    .with_model_max_tokens(cap);
+    .with_model_limits(limits);
     let mut agent = super::swarm_composition::wire_member(
         agent,
         &flags.swarm_participation,

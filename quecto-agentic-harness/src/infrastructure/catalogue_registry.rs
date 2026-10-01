@@ -78,6 +78,7 @@ fn entry_from_record(record: &ModelRecord) -> Result<CatalogueEntry, String> {
                     cache_read: record.cost.cache_read,
                     cache_write: record.cost.cache_write,
                 },
+                prompt_limit: record.prompt_limit,
             },
             availability: Availability::runnable(),
         },
@@ -169,6 +170,7 @@ pub(crate) fn default_capabilities() -> ModelCapabilities {
         max_output_tokens_explicit: false,
         reasoning: false,
         cost: DomainModelCost::default(),
+        prompt_limit: Default::default(),
     }
 }
 

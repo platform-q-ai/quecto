@@ -21,11 +21,13 @@ fn model_and_limits_switch_together_and_reclamp() {
         ModelLimits {
             max_output_tokens: Some(8),
             context_window: Some(2_048),
+            prompt_limit: Default::default(),
         },
     );
     assert_eq!(ModelRuntime::model(&rt.agent), "acme/limited");
     assert_eq!(rt.agent.effective_max_tokens(), 8);
-    assert_eq!(rt.agent.effective_max_context_tokens(), 2_048);
+    // The window less the declared 8-token reply (#2405).
+    assert_eq!(rt.agent.effective_max_context_tokens(), 2_048 - 8);
     // No declared limits lifts the clamp back to the configured values.
     rt.agent
         .apply_model("acme/open".into(), ModelLimits::default());
