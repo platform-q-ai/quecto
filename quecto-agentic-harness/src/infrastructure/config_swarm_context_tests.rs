@@ -25,7 +25,7 @@ fn a_config_file_sets_a_swarm_members_ceiling() {
     .unwrap();
     let config = Config::load(path.to_str().unwrap()).unwrap();
     assert_eq!(config.agents.defaults.swarm_max_context_tokens, 64_000);
-    assert_eq!(config.agents.defaults.max_context_tokens, 200_000);
+    assert_eq!(config.agents.defaults.max_context_tokens, 300_000);
 }
 
 fn env(value: &str) -> std::collections::HashMap<String, String> {

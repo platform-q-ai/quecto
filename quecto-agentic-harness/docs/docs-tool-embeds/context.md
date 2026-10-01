@@ -31,8 +31,8 @@ Configured under `agents.defaults`:
 
 | Field | Default |
 |---|---:|
-| `max_context_tokens` | `200000` |
-| `swarm_max_context_tokens` | `48000` |
+| `max_context_tokens` | `300000` |
+| `swarm_max_context_tokens` | `300000` |
 | `context_collapse_after_tool_calls` | `50` |
 | `context_collapse_large_result_tokens` | unset (`2000` in a swarm) |
 | `context_collapse_large_result_after_turns` | unset (`3`) |
