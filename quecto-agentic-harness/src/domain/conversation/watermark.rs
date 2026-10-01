@@ -31,14 +31,16 @@ impl Watermark {
     }
 
     /// The effective marks under `ceiling`: H is `min(H, ceiling)`, and when
-    /// the ceiling lowers H, L scales by the same ratio.
+    /// the ceiling lowers H, L scales by the same ratio. The marks never
+    /// vanish: a ceiling under 2 counts as 2, and L is at least 1, so a
+    /// tiny ceiling still cuts, as deep as it can.
     pub fn under_ceiling(self, ceiling: usize) -> Self {
-        match ceiling {
+        match ceiling.max(2) {
             at_or_above if at_or_above >= self.high => self,
-            below => Self {
-                high: below,
-                low: scale(self.low, below, self.high),
-            },
+            below => {
+                let low = scale(self.low, below, self.high).clamp(1, below - 1);
+                Self::new(below, low).expect("1 <= scaled L < scaled H")
+            }
         }
     }
 }
@@ -48,7 +50,7 @@ impl Watermark {
 fn scale(value: usize, numerator: usize, denominator: usize) -> usize {
     assert!(numerator < denominator, "a ceiling scales a mark down");
     let scaled = value as u128 * numerator as u128 / denominator as u128;
-    usize::try_from(scaled).unwrap_or(value)
+    usize::try_from(scaled).expect("a scaled mark is at most the mark")
 }
 
 /// When a cut is due. It needs only the request's total, so a caller can
@@ -60,7 +62,8 @@ pub struct CutTrigger {
     /// reserve, or the configured maximum.
     pub ceiling: usize,
     /// The request's estimated tokens right after the previous cut, if one
-    /// was made.
+    /// was made: the plan's `projected_tokens`, in the same estimate units
+    /// as every other count here (not the provider's reported usage).
     pub after_last_cut: Option<usize>,
 }
 
@@ -73,13 +76,18 @@ impl CutTrigger {
     /// Whether a request of `total` estimated tokens (messages plus tool
     /// definitions) reached H and, after a previous cut, has grown by at
     /// least `(H - L) / 2` since: one exchange over H never cuts every turn.
+    /// The guard gives way once the total reaches the ceiling, and a
+    /// baseline above the total is stale (the conversation was cleared or
+    /// rewound since) and is ignored.
     pub fn is_due(&self, total: usize) -> bool {
         let marks = self.effective_marks();
         let grown = match self.after_last_cut {
-            Some(after) => total >= after.saturating_add((marks.high - marks.low) / 2),
-            None => true,
+            Some(after) if after <= total => {
+                total >= after.saturating_add((marks.high - marks.low) / 2)
+            }
+            Some(_) | None => true,
         };
-        total >= marks.high && grown
+        total >= marks.high && (total >= self.ceiling || grown)
     }
 }
 
@@ -156,6 +164,7 @@ impl CutPlan {
         tail_start: usize,
         fixed: usize,
         fill: Fill,
+        low: usize,
     ) -> Self {
         let keeps = |i: &usize| *i >= tail_start || pinned[*i];
         let kept: Vec<usize> = (0..messages.len()).filter(keeps).collect();
@@ -174,15 +183,22 @@ impl CutPlan {
             projected_tokens,
             fill,
         };
-        plan.assert_invariants(messages, pinned, fixed);
+        plan.assert_invariants(messages, pinned, fixed, low);
         plan
     }
 
     /// Every message is kept or archived, once; the pinned head is kept,
     /// then the stub's slot, then a tail opening on a boundary; no stub is
     /// kept; something besides a stub is archived; no call is split from
-    /// its result; the projection counts exactly what is kept.
-    fn assert_invariants(&self, messages: &[PlanMessage<'_>], pinned: &[bool], fixed: usize) {
+    /// its result; the projection counts exactly what is kept, and the fill
+    /// says how it compares with `low`.
+    fn assert_invariants(
+        &self,
+        messages: &[PlanMessage<'_>],
+        pinned: &[bool],
+        fixed: usize,
+        low: usize,
+    ) {
         let mut kept = vec![false; messages.len()];
         self.kept.iter().for_each(|&i| kept[i] = true);
         let archived = self.archived.iter().flat_map(Clone::clone);
@@ -214,7 +230,14 @@ impl CutPlan {
             opens_exchange(&messages[tail_start].role),
             "the tail opens an exchange"
         );
-        let real = |i: usize| messages[i].role != PlanRole::ArchiveStub;
+        let real = |i: usize| match messages[i].role {
+            PlanRole::System
+            | PlanRole::Prompt
+            | PlanRole::User
+            | PlanRole::Assistant { .. }
+            | PlanRole::ToolResult { .. } => true,
+            PlanRole::ArchiveStub => false,
+        };
         assert!(
             self.kept.iter().all(|&i| real(i)),
             "the old stub is not kept"
@@ -232,6 +255,27 @@ impl CutPlan {
         assert_eq!(
             self.projected_tokens, projected,
             "the projection counts the kept set"
+        );
+        self.assert_fill(messages, fixed, low);
+    }
+
+    /// The fill matches the kept set: within L, or over it because of the
+    /// newest exchange, or because of the head alone.
+    fn assert_fill(&self, messages: &[PlanMessage<'_>], fixed: usize, low: usize) {
+        let head_tokens = self.kept[..self.stub_slot]
+            .iter()
+            .map(|&i| messages[i].tokens);
+        let head = fixed.saturating_add(sum(head_tokens));
+        let fits = self.projected_tokens <= low;
+        let consistent = match self.fill {
+            Fill::WithinLow => fits,
+            Fill::NewestExchangeOverLow => !fits && head <= low,
+            Fill::HeadOverLow => !fits && head > low,
+        };
+        assert!(
+            consistent,
+            "{:?} for {} over L {low}",
+            self.fill, self.projected_tokens
         );
     }
 
@@ -262,15 +306,24 @@ impl CutPlan {
     }
 }
 
+/// A cut must save at least `H / MIN_SAVING_DIVISOR` estimated tokens.
+///
+/// Every cut misses the prompt cache once: the next request re-sends the
+/// whole kept set uncached. A cut that saves little buys little on each
+/// later request, and the context soon grows back over H for another
+/// cut, so a cut saving under a tenth of H costs more cache than it saves.
+/// At the ceiling any saving is taken: the request cannot be sent as it is.
+pub const MIN_SAVING_DIVISOR: usize = 10;
+
 /// The cut to make before the next request, or `None` when none is due:
 /// the trigger is not due, a cut would archive nothing but a previous
-/// stub, or it would not save enough.
+/// stub, or it would not save enough (see [`MIN_SAVING_DIVISOR`]).
 ///
 /// The cut keeps the pinned head in place (every system message, the first
 /// user message and the latest prompt), puts one stub right after it, and
 /// keeps the newest whole exchanges that fit within L, or the newest one
 /// alone, whole, when none fits. Everything else is archived, a previous
-/// stub with it.
+/// stub and harness user messages with it.
 pub fn plan_cut(input: &CutInput<'_>) -> Option<CutPlan> {
     let messages = input.messages;
     let total = input
@@ -281,9 +334,21 @@ pub fn plan_cut(input: &CutInput<'_>) -> Option<CutPlan> {
         let pinned = pinned(messages)?;
         let fixed = input.tool_tokens.saturating_add(input.stub_tokens);
         let (tail_start, fill) = tail_start(messages, &pinned, fixed, low)?;
-        Some(CutPlan::new(messages, &pinned, tail_start, fixed, fill))
+        let plan = CutPlan::new(messages, &pinned, tail_start, fixed, fill, low);
+        let saving = total.saturating_sub(plan.projected_tokens);
+        (saving >= min_saving(&input.trigger, total)).then_some(plan)
     } else {
         None
+    }
+}
+
+/// The least a cut of a `total`-token request must save: a tenth of H, or
+/// any saving at all once the request reaches the ceiling. Never zero, so
+/// a cut always shrinks the request.
+fn min_saving(trigger: &CutTrigger, total: usize) -> usize {
+    match total >= trigger.ceiling {
+        true => 1,
+        false => (trigger.effective_marks().high / MIN_SAVING_DIVISOR).max(1),
     }
 }
 
@@ -302,14 +367,15 @@ fn opens_exchange(role: &PlanRole<'_>) -> bool {
 
 /// Which messages the cut keeps in place whatever it costs: every system
 /// message, the first user message and the latest prompt, so a running
-/// turn never loses its prompt. `None` without a user message.
+/// turn never loses its prompt (a harness message after it does not take
+/// its place). `None` without a user message.
 fn pinned(messages: &[PlanMessage<'_>]) -> Option<Vec<bool>> {
     let is_user = |m: &PlanMessage<'_>| matches!(m.role, PlanRole::Prompt | PlanRole::User);
     let first = messages.iter().position(is_user)?;
-    let latest = messages.iter().rposition(is_user)?;
+    let latest = messages.iter().rposition(|m| m.role == PlanRole::Prompt);
     let pinned = messages.iter().enumerate().map(|(i, m)| match m.role {
         PlanRole::System => true,
-        PlanRole::Prompt | PlanRole::User => i == first || i == latest,
+        PlanRole::Prompt | PlanRole::User => i == first || Some(i) == latest,
         PlanRole::ArchiveStub | PlanRole::Assistant { .. } | PlanRole::ToolResult { .. } => false,
     });
     Some(pinned.collect())
@@ -405,9 +471,11 @@ fn tail_start(
             }
         }
     }
-    fitting
-        .map(|i| (i, Fill::WithinLow))
-        .or(newest.map(|i| (i, Fill::NewestExchangeOverLow)))
+    let over = |i: usize| match fixed.saturating_add(pinned_before[i]) > low {
+        true => (i, Fill::HeadOverLow),
+        false => (i, Fill::NewestExchangeOverLow),
+    };
+    fitting.map(|i| (i, Fill::WithinLow)).or(newest.map(over))
 }
 
 #[cfg(test)]
