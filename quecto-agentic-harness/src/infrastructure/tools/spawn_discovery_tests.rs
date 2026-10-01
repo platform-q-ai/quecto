@@ -327,8 +327,10 @@ fn the_spawn_and_swarm_descriptions_stay_within_the_budget() {
 /// (verification, recovery, awaiting approval) lives in the docs page.
 /// Ratcheted down from 8,192 (8,000 before #2348), then from 3,584 when
 /// #2389 dropped the guide pointer, then from 3,472 when the send rules
-/// came in for trimmed host-only wording: it only shrinks.
-const SWARM_DESCRIPTION_BUDGET_BYTES: usize = 3_463;
+/// came in for trimmed host-only wording, then from 3,463 when the
+/// coordinator's inbox rule replaced field types the schema already states:
+/// it only shrinks.
+const SWARM_DESCRIPTION_BUDGET_BYTES: usize = 3_446;
 
 #[test]
 fn the_swarm_descriptions_coordinator_prose_is_in_the_docs_page() {
@@ -411,6 +413,21 @@ fn the_swarm_description_states_the_send_rules_members_tripped_on() {
     for rule in [
         "recipient is a member id from op=summary",
         "a retry reuses its request with the same payload; new content needs a new request",
+    ] {
+        assert!(description.contains(rule), "missing {rule:?}");
+    }
+}
+
+/// The PR 1400 review swarm (2026-10-01): its coordinator never read its
+/// inbox (22 member messages left unread) and directed members with nine
+/// `agent_cmd steer` calls, five of which cut a request off mid-flight. The
+/// board is the coordination channel, so the description says so.
+#[test]
+fn the_swarm_description_sends_the_coordinator_to_its_inbox() {
+    let description = include_str!("swarm_assets/tool_description.txt");
+    for rule in [
+        "read your inbox and ack what you act on",
+        "direct members with send, not agent_cmd steer",
     ] {
         assert!(description.contains(rule), "missing {rule:?}");
     }
