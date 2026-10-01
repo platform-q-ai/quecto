@@ -321,7 +321,8 @@ pub fn supervise(
             snapshot,
             &participation,
             &mut Supervisor(&context),
-        );
+        )
+        .snapshot;
         // The polls the watch still holds are written before it settles.
         context.flush_watch_polls();
         match tokio::runtime::Builder::new_current_thread()

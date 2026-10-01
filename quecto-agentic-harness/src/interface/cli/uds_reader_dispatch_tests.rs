@@ -493,3 +493,18 @@ async fn a_wake_hint_also_nudges_the_run_watch() {
         "the wake itself is still queued"
     );
 }
+
+/// #2390 review round 2, L4: only a `wake` whose generation validates
+/// nudges the run watch.
+#[tokio::test]
+async fn a_wake_without_a_generation_nudges_nothing() {
+    let control = std::sync::Arc::new(WatchedControl::default());
+    let (reply, _turn_control, queued) = dispatched_with(
+        control.clone(),
+        r#"{"type":"swarm_control","action":"wake","id":"wake-1"}"#,
+    )
+    .await;
+    assert_eq!(reply["success"], false, "{reply}");
+    assert_eq!(control.nudges.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert!(queued.is_none(), "nothing reached the turn queue");
+}

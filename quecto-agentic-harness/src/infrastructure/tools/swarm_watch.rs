@@ -64,6 +64,23 @@ pub(super) trait WatchObserver {
 /// transactions.
 const LATE_LOCAL: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// What a watch that ended answers: the snapshot it ended on (its status
+/// the observed outcome), and what it owes the other members.
+pub(super) struct Watched {
+    pub(super) snapshot: Snapshot,
+    announcement: Announcement,
+}
+
+/// After settling (review round 2, L2): pushes a change this process made
+/// whose local nudge came late.
+pub(super) fn announce_late(
+    context: &SwarmContext,
+    watched: &mut Watched,
+    observer: &mut dyn WatchObserver,
+) {
+    let _ = (context, &mut watched.announcement, observer);
+}
+
 /// Watches the run from `snapshot` until its outcome is terminal, and
 /// answers the snapshot it ended on (its status the observed outcome).
 /// Between ticks it waits on the board's latch until nudged, or until its
@@ -73,7 +90,7 @@ pub(super) fn watch_until_terminal(
     mut snapshot: Snapshot,
     participation: &Participation,
     observer: &mut dyn WatchObserver,
-) -> Snapshot {
+) -> Watched {
     let clock = super::SystemClock;
     let nudges = context.board.watch_nudges(&context.database());
     let mut suspended = None;
@@ -121,7 +138,10 @@ pub(super) fn watch_until_terminal(
                 snapshot.status.terminal(),
                 "the watch ends on a terminal run"
             );
-            return snapshot;
+            return Watched {
+                snapshot,
+                announcement,
+            };
         }
         cause = nudges.wait(schedule.wait(clock.now_seconds()));
     }

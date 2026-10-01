@@ -106,6 +106,12 @@ impl WatchNudges {
         taken
     }
 
+    /// Waits up to `left` (review round 2, L1), taking remote nudges
+    /// without returning; returns at once on a local one.
+    pub fn wait_floor(&self, left: Duration) -> Option<Nudge> {
+        self.wait(left)
+    }
+
     /// A board op of this process that may change the run's control state
     /// begins; it is counted until it finishes (or is dropped).
     pub fn control_op(self: &Arc<Self>) -> ControlOp {

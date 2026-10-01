@@ -371,6 +371,7 @@ async fn the_supervisor_pushes_a_local_change_to_a_members_endpoint() {
             &super::super::swarm_bridge::Participation::none(),
             &mut Supervisor(&watching),
         )
+        .snapshot
     });
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     crate::infrastructure::tools::call_work::off_the_runtime(|| context.pause("operator")).unwrap();

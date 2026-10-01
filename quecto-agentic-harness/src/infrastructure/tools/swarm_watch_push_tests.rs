@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 
-use super::{Tick, WatchObserver, watch_tick, watch_until_terminal};
+use super::{Tick, WatchObserver, announce_late, watch_tick, watch_until_terminal};
 use crate::application::swarm::dto::DroppedRecords;
 use crate::application::swarm::ports::{
     BoardOpLog, CoordinationPort, SessionOpLog, SwarmRunControl,
@@ -21,12 +21,33 @@ use crate::infrastructure::tools::swarm_bridge::{
     Participation, SwarmBoard, SwarmContext, WatchNudges,
 };
 
-/// The `_watch` calls a board made, as the event log counts them.
+/// The `_watch` calls a board made, as the event log counts them; and,
+/// as a seam for an op still in flight after its commit, a record of one
+/// op that is slowed, saying first that it committed.
 #[derive(Default)]
-struct Recorded(Mutex<Vec<BoardOpObservation>>);
+struct Recorded(Mutex<Vec<BoardOpObservation>>, Mutex<Option<Slowed>>);
+
+/// The op whose record is slowed, by how long, and who is told it
+/// committed.
+struct Slowed {
+    op: &'static str,
+    by: Duration,
+    committed: mpsc::Sender<()>,
+}
 
 impl BoardOpLog for Recorded {
     fn record(&self, observation: BoardOpObservation) {
+        let slowed = self
+            .1
+            .lock()
+            .unwrap()
+            .as_ref()
+            .filter(|slowed| slowed.op == observation.op)
+            .map(|slowed| (slowed.by, slowed.committed.clone()));
+        if let Some((by, committed)) = slowed {
+            let _ = committed.send(());
+            std::thread::sleep(by);
+        }
         self.0.lock().unwrap().push(observation);
     }
 
@@ -42,6 +63,14 @@ impl SessionOpLog for Recorded {
 }
 
 impl Recorded {
+    /// Slows the record of `op` by `by`; answers when each such op has
+    /// committed.
+    fn slow(&self, op: &'static str, by: Duration) -> mpsc::Receiver<()> {
+        let (committed, told) = mpsc::channel();
+        *self.1.lock().unwrap() = Some(Slowed { op, by, committed });
+        told
+    }
+
     /// The `_watch` calls recorded: an aggregate's `polls`, else one.
     fn watches(&self) -> u64 {
         self.0
@@ -116,6 +145,8 @@ fn running() -> Run {
 enum Seen {
     Paused(Instant, Snapshot),
     Announced(Snapshot),
+    /// The watch returned, ready to settle.
+    Terminal(Instant),
     Ended(Snapshot),
 }
 
@@ -139,10 +170,13 @@ fn watch(run: &Run) -> mpsc::Receiver<Seen> {
     let snapshot = context.snapshot().unwrap();
     std::thread::spawn(move || {
         let mut observer = Observer(seen.clone());
-        let ended =
+        let mut watched =
             watch_until_terminal(&context, snapshot, &Participation::shared(), &mut observer);
+        let _ = seen.send(Seen::Terminal(Instant::now()));
+        // As `supervise`: the settlement, then the late push.
+        announce_late(&context, &mut watched, &mut observer);
         context.flush_watch_polls();
-        let _ = seen.send(Seen::Ended(ended));
+        let _ = seen.send(Seen::Ended(watched.snapshot));
     });
     events
 }
@@ -164,6 +198,7 @@ fn next_pause_announcing(
         match events.recv_timeout(left) {
             Ok(Seen::Paused(at, snapshot)) => return (at, snapshot),
             Ok(Seen::Announced(snapshot)) => announced.push(snapshot),
+            Ok(Seen::Terminal(_)) => {}
             Ok(Seen::Ended(snapshot)) => panic!("the watch ended first: {snapshot:?}"),
             Err(error) => panic!("no pause observed within {within:?}: {error}"),
         }
@@ -180,7 +215,7 @@ fn cancel(run: &Run, events: &mpsc::Receiver<Seen>) -> (Vec<Snapshot>, Snapshot)
     loop {
         match events.recv_timeout(Duration::from_secs(3)) {
             Ok(Seen::Announced(snapshot)) => announced.push(snapshot),
-            Ok(Seen::Paused(..)) => {}
+            Ok(Seen::Paused(..) | Seen::Terminal(_)) => {}
             Ok(Seen::Ended(snapshot)) => return (announced, snapshot),
             Err(error) => panic!("the pushed cancellation was not observed: {error}"),
         }
@@ -496,11 +531,115 @@ fn a_local_terminal_change_still_in_flight_is_announced_before_the_watch_ends() 
     let ended = loop {
         match events.recv_timeout(Duration::from_secs(3)) {
             Ok(Seen::Announced(snapshot)) => announced.push(snapshot.status),
-            Ok(Seen::Paused(..)) => {}
+            Ok(Seen::Paused(..) | Seen::Terminal(_)) => {}
             Ok(Seen::Ended(snapshot)) => break snapshot,
             Err(error) => panic!("the watch did not end: {error}"),
         }
     };
+    assert_eq!(ended.status, RunStatus::Cancelled);
+    assert_eq!(announced, [RunStatus::Cancelled]);
+}
+
+/// Review round 2, L1: a received push has a rate floor. A flood of remote
+/// nudges (every 2 ms) is read at most about ten times a second.
+#[test]
+fn a_flood_of_remote_nudges_is_read_at_most_ten_times_a_second() {
+    let run = running();
+    let events = watch(&run);
+    std::thread::sleep(Duration::from_millis(300));
+    let latch = run.watching.board.watch_nudges(&run.watching.database());
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_millis(1_300) {
+        latch.nudge(Nudge::Remote);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let (_, ended) = cancel(&run, &events);
+    assert_eq!(ended.status, RunStatus::Cancelled);
+    let watches = run.log.watches();
+    assert!(watches <= 18, "{watches} board reads for a 1.3 s flood");
+}
+
+/// Review round 2, L1: the floor takes remote nudges without returning,
+/// and gives way at once to a local one.
+#[test]
+fn the_floor_holds_remote_nudges_and_gives_way_to_a_local_one() {
+    let nudges = Arc::new(WatchNudges::default());
+    nudges.nudge(Nudge::Remote);
+    let started = Instant::now();
+    assert_eq!(
+        nudges.wait_floor(Duration::from_millis(200)),
+        Some(Nudge::Remote)
+    );
+    assert!(started.elapsed() >= Duration::from_millis(150), "held");
+    let local = nudges.clone();
+    let nudger = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(50));
+        local.nudge(Nudge::Local);
+    });
+    let started = Instant::now();
+    assert_eq!(
+        nudges.wait_floor(Duration::from_secs(5)),
+        Some(Nudge::Local)
+    );
+    assert!(started.elapsed() < Duration::from_secs(1), "gave way");
+    nudger.join().unwrap();
+}
+
+/// Review round 2, L2: an op of this process that cannot end the run (a
+/// request's accounting, on every model request) still in flight never
+/// delays the settlement of a run another harness ended.
+#[test]
+fn an_unrelated_op_in_flight_does_not_delay_the_settlement() {
+    let run = running();
+    let events = watch(&run);
+    std::thread::sleep(Duration::from_millis(300));
+    let committed = run.log.slow("_record_request", Duration::from_secs(2));
+    let accounting = run.watching.clone();
+    let record = json!({"request_id": "q", "instrumented_attempts": 0, "outcome": "rejected"});
+    let in_flight = std::thread::spawn(move || accounting.call("_record_request", json!([record])));
+    committed.recv_timeout(Duration::from_secs(5)).unwrap();
+    run.other.cancel_run().unwrap();
+    let cancelled = Instant::now();
+    run.watching.nudge_watch();
+    let settled = loop {
+        match events.recv_timeout(Duration::from_secs(5)).unwrap() {
+            Seen::Terminal(at) => break at,
+            Seen::Paused(..) | Seen::Announced(_) => {}
+            Seen::Ended(snapshot) => panic!("ended before it settled: {snapshot:?}"),
+        }
+    };
+    assert!(
+        settled - cancelled < Duration::from_secs(1),
+        "{:?}",
+        settled - cancelled
+    );
+    in_flight.join().unwrap().unwrap();
+}
+
+/// Review round 2, L3: the production in-flight count. This process's own
+/// cancellation commits, its record (and so its local nudge) is slowed,
+/// and a remote nudge makes the watch read the end first; the watch, about
+/// to end, waits for the op through `SwarmBoard::call_as`'s count and
+/// still pushes the end.
+#[test]
+fn a_real_cancellation_racing_a_remote_nudge_is_still_pushed() {
+    let run = running();
+    let events = watch(&run);
+    std::thread::sleep(Duration::from_millis(300));
+    let committed = run.log.slow("stop", Duration::from_millis(500));
+    let cancelling = run.watching.clone();
+    let cancel = std::thread::spawn(move || cancelling.cancel_run());
+    committed.recv_timeout(Duration::from_secs(5)).unwrap();
+    run.watching.nudge_watch();
+    let mut announced = Vec::new();
+    let ended = loop {
+        match events.recv_timeout(Duration::from_secs(5)).unwrap() {
+            Seen::Announced(snapshot) => announced.push(snapshot.status),
+            Seen::Paused(..) | Seen::Terminal(_) => {}
+            Seen::Ended(snapshot) => break snapshot,
+        }
+    };
+    cancel.join().unwrap().unwrap();
     assert_eq!(ended.status, RunStatus::Cancelled);
     assert_eq!(announced, [RunStatus::Cancelled]);
 }
