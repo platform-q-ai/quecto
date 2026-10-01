@@ -25,6 +25,7 @@ fn read(value: Value) -> Served {
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
         refused: None,
+        controls_run: false,
     }
 }
 

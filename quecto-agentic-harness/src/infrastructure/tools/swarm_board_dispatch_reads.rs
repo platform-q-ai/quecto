@@ -215,7 +215,11 @@ pub(super) fn create(
 ) -> Result<Served, BoardError> {
     let created = created(create_run, member, arguments)?;
     let decision = branch(&created);
-    Ok(summarised(created.summary, decision, BoardOpDetail::NONE))
+    // Fresh or over the placeholder, the run now runs (#2390).
+    Ok(Served {
+        controls_run: true,
+        ..summarised(created.summary, decision, BoardOpDetail::NONE)
+    })
 }
 
 /// The summary answered with `decision` and `detail`, or the refusal met
@@ -233,6 +237,7 @@ fn summarised(
         },
         Err(refusal) => Served {
             refused: Some(refusal),
+            controls_run: false,
             detail,
             ..done(decision)
         },

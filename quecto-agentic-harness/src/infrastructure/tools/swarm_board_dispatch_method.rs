@@ -387,6 +387,74 @@ impl Method {
         }
     }
 
+    /// Whether the op may change the run's control state (#2390 review
+    /// M1): its serving sets `controls_run` only for these. Exhaustive, so
+    /// a new method does not compile until it is classified. A deadline
+    /// any gated op records as passed is not counted: every run watch is
+    /// due at the deadline itself.
+    pub(super) fn may_control_run(self) -> bool {
+        match self {
+            Self::Create
+            | Self::Pause
+            | Self::Resume
+            | Self::ResumeExternal
+            | Self::Close
+            | Self::ExtendDeadline
+            | Self::Stop
+            | Self::Complete
+            | Self::UsageBudget
+            | Self::RecordRequest
+            | Self::RequestAdmission
+            | Self::Quarantine
+            | Self::ConfirmedDead
+            | Self::LoseCoordinator => true,
+            #[cfg(any(test, feature = "test-support"))]
+            Self::CreateRun => true,
+            Self::Status
+            | Self::EventCursor
+            | Self::Snapshot
+            | Self::Watch
+            | Self::RunTotals
+            | Self::Admit
+            | Self::Activate
+            | Self::RecordLaunch
+            | Self::ReleaseUnlaunched
+            | Self::Socket
+            | Self::TaskCreate
+            | Self::Dependencies
+            | Self::Claim
+            | Self::Release
+            | Self::Block
+            | Self::Unblock
+            | Self::Submit
+            | Self::VerifyTask
+            | Self::ControlStatus
+            | Self::UsageReport
+            | Self::RevalidateTask
+            | Self::Amend
+            | Self::Evidence
+            | Self::Reserve
+            | Self::ReleaseFiles
+            | Self::FileOwners
+            | Self::Recover
+            | Self::Revoke
+            | Self::Send
+            | Self::Withdraw
+            | Self::Inbox
+            | Self::Ack
+            | Self::Notifications
+            | Self::AcceptWake
+            | Self::Summary
+            | Self::Events
+            | Self::Task
+            | Self::Tasks
+            | Self::Bootstrap
+            | Self::Join => false,
+            #[cfg(any(test, feature = "test-support"))]
+            Self::BootstrapRun | Self::BootstrapJoin | Self::TaskRaw => false,
+        }
+    }
+
     /// Whether an answer proves the caller a member of the run (#2303
     /// round-4 review L1): the op checks membership, or makes the caller
     /// the run's coordinator. `_status` is membership-free, so any id can

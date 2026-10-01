@@ -1756,12 +1756,12 @@ event generation and is rechecked for actionability at dispatch; it answers
 `{"status":"accepted"}` when a wake turn is queued, `{"status":"coalesced"}` when
 the generation joined an already pending wake, or an error (`wake unavailable`,
 `wake queue full`) when nothing would drain it — the durable inbox remains
-authoritative in every case. A `wake` also nudges the receiving harness's run watch. The
-internal `watch` action (#2390), pushed by the harness whose board op changed
-the run's control state, only nudges the receiving harness's run watch to read
-the board now: it starts no turn, queues no prompt or wake, and leaves the
-wake cursor alone; it answers `{"status":"nudged"}`, or the error
-`watch unavailable` outside a swarm.
+authoritative in every case. A `wake` also nudges the receiving harness's
+run watch. The internal `watch` action (#2390), pushed by the harness whose
+board op changed the run's control state, only nudges the receiving
+harness's run watch to read the board now: it starts no turn, queues no
+prompt or wake, and leaves the wake cursor alone; it answers
+`{"status":"nudged"}`, or the error `watch unavailable` outside a swarm.
 
 `get_state` adds bounded `controlReceipts` identified by command ID, with queued,
 started, completed, failed, cancelled or rejected status. Completed means a model

@@ -155,37 +155,52 @@ async fn send_hints(
     what: &str,
 ) -> Vec<String> {
     let line = command.to_string();
-    let sends = members
+    let recipients: Vec<_> = members
         .iter()
-        .filter(|member| member.id != context.member && member.status == MemberStatus::Live)
+        .filter(|member| pushed_to(member, &context.member))
         .filter_map(|member| Some((member, member.endpoint.as_deref()?)))
-        .map(|(member, socket)| {
-            let line = &line;
-            async move {
-                let accepted = super::subagent_registry::send_subagent_uds_command_with_timeout(
-                    std::path::Path::new(socket),
-                    line,
-                    std::time::Duration::from_millis(500),
-                )
-                .await
-                .is_ok_and(|response| {
-                    serde_json::from_str::<Value>(&response)
-                        .is_ok_and(|value| value["success"] == true)
-                });
-                match accepted {
-                    true => None,
-                    false => Some(format!(
-                        "{what} failed for {}; durable board is authoritative",
-                        member.id
-                    )),
-                }
+        .collect();
+    let sends = recipients.iter().map(|&(member, socket)| {
+        let line = &line;
+        async move {
+            let accepted = super::subagent_registry::send_subagent_uds_command_with_timeout(
+                std::path::Path::new(socket),
+                line,
+                std::time::Duration::from_millis(500),
+            )
+            .await
+            .is_ok_and(|response| {
+                serde_json::from_str::<Value>(&response).is_ok_and(|value| value["success"] == true)
+            });
+            match accepted {
+                true => None,
+                false => Some(format!(
+                    "{what} failed for {}; durable board is authoritative",
+                    member.id
+                )),
             }
-        });
-    futures::future::join_all(sends)
+        }
+    });
+    let warnings: Vec<String> = futures::future::join_all(sends)
         .await
         .into_iter()
         .flatten()
-        .collect()
+        .collect();
+    debug_assert!(
+        warnings.len() <= recipients.len(),
+        "at most one warning a recipient"
+    );
+    warnings
+}
+
+/// Whether a hint goes to `member`, seen from the harness of member `own`:
+/// a live member that is another harness's (review L4: the recipients by
+/// allowlist).
+fn pushed_to(member: &Member, own: &str) -> bool {
+    match (member.status, member.id == own) {
+        (MemberStatus::Live, false) => true,
+        (MemberStatus::Live, true) | (MemberStatus::Reserved | MemberStatus::Dead, _) => false,
+    }
 }
 
 /// The process's local-inference suspension, as composition bound it.

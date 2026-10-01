@@ -28,6 +28,12 @@ pub(super) const EXTEND: [Parameter; 1] = [required("seconds")];
 /// The receipt, with `applied` as the decision of a change and
 /// `unchanged` for a call that found the run already as asked.
 fn answered(answer: ControlAnswer, applied: &'static str) -> Served {
+    // Each op answered here is a control op: it changed the run's control
+    // state exactly when it applied (#2390 review M2).
+    let controls_run = match answer.transition {
+        RunTransition::Applied => true,
+        RunTransition::Unchanged => false,
+    };
     Served {
         value: receipt(answer.receipt),
         decision: match answer.transition {
@@ -39,6 +45,7 @@ fn answered(answer: ControlAnswer, applied: &'static str) -> Served {
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
         refused: None,
+        controls_run,
     }
 }
 
@@ -112,6 +119,7 @@ pub(super) fn control_status(
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
         refused: None,
+        controls_run: false,
     })
 }
 
@@ -127,6 +135,7 @@ pub(super) fn usage_report(
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
         refused: None,
+        controls_run: false,
     })
 }
 

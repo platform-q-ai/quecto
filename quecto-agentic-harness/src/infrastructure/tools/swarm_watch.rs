@@ -3,7 +3,7 @@
 //! when the board changed or the schedule asked for it.
 use super::super::swarm_bridge::{Participation, RunWatch, SwarmContext};
 use crate::application::swarm::ports::Clock;
-use crate::domain::swarm::watch::{Announcement, WatchSchedule};
+use crate::domain::swarm::watch::{Announcement, Nudge, WatchSchedule};
 use crate::domain::swarm::{RunStatus, Snapshot};
 
 /// What one tick of the watch read.
@@ -59,6 +59,11 @@ pub(super) trait WatchObserver {
     fn announce(&mut self, snapshot: &Snapshot);
 }
 
+/// How long a watch about to end waits for this process's control ops in
+/// flight (review M1): two of the store's busy waits, an op's two
+/// transactions.
+const LATE_LOCAL: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Watches the run from `snapshot` until its outcome is terminal, and
 /// answers the snapshot it ended on (its status the observed outcome).
 /// Between ticks it waits on the board's latch until nudged, or until its
@@ -84,13 +89,9 @@ pub(super) fn watch_until_terminal(
             participation,
             clock.now_seconds(),
         );
-        let read = match tick {
-            Tick::Snapshot | Tick::Unchanged => Some(&snapshot),
-            Tick::Unreadable => None,
-        };
-        if announcement.observed(cause, read) {
-            observer.announce(&snapshot);
-        }
+        // This process's own inference is suspended first, so an
+        // unreachable member never delays it (review L3); then the change
+        // this process made is pushed to the others.
         if snapshot.status == RunStatus::Paused && suspended != Some(snapshot.control_generation) {
             if observer.paused(&snapshot) {
                 suspended = Some(snapshot.control_generation);
@@ -98,9 +99,28 @@ pub(super) fn watch_until_terminal(
         } else if snapshot.status == RunStatus::Running {
             suspended = None;
         }
+        let read = match tick {
+            Tick::Snapshot | Tick::Unchanged => Some(&snapshot),
+            Tick::Unreadable => None,
+        };
+        if announcement.observed(cause, read) {
+            observer.announce(&snapshot);
+        }
         let outcome = context.lifecycle.observed_outcome(&snapshot, &clock);
         if outcome.terminal() {
+            // Review M1: an op of this process whose change the tick read
+            // may not have latched its nudge yet; the watch waits for it
+            // before it ends, so the end is still pushed.
+            if nudges.take_late_local(LATE_LOCAL)
+                && announcement.observed(Some(Nudge::Local), Some(&snapshot))
+            {
+                observer.announce(&snapshot);
+            }
             snapshot.status = outcome;
+            debug_assert!(
+                snapshot.status.terminal(),
+                "the watch ends on a terminal run"
+            );
             return snapshot;
         }
         cause = nudges.wait(schedule.wait(clock.now_seconds()));

@@ -886,10 +886,14 @@ turn is running. The watch is push-driven (#2390): it has no fixed tick.
 Between ticks it waits until it is nudged, or until its schedule is due.
 It is nudged:
 
-- by a board op in its own process that changed the run's control state
-  (a pause, resume, close, cancellation, stop, completion, deadline
-  extension, budget pause, recorded loss, or a run created over the
-  container's placeholder);
+- by a board op in its own process that changed the run's control state,
+  as the board's dispatcher says next to the op's decision (a run created,
+  fresh or over the container's placeholder; a pause, resume, close,
+  cancellation, stop, completion, deadline extension or budget pause; a
+  loss that ended the run, recorded by `reconcile` or the launcher's
+  reaper). Only the watch of that run's board file is nudged: a change this
+  process makes to another run's board (a nested launcher's, the host's)
+  nudges no watch of its own;
 - by a `{"type":"swarm_control","action":"watch"}` pushed to its socket:
   the harness whose op changed the run's control state pushes one to every
   other live member with an endpoint, once its own watch has read the
@@ -898,6 +902,18 @@ It is nudged:
   receiving harness only nudges its watch: no model turn, no queued prompt,
   no wake, and the wake cursor is left as it is;
 - by a `wake` hint, which also queues its wake as before.
+
+The harness that made a change pushes it once its own watch has read it,
+after suspending its own inference: a change its watch read first on
+another nudge is still pushed on its own op's nudge, and a watch about to
+end on a terminal run waits (up to 2 s) for its process's control ops in
+flight, so an end it read before the op's nudge was latched is still
+pushed. A coordinator loss recorded by the host, once the coordinator's
+harness has exited, is not pushed: the host reaches the container only
+through the coordinator's own endpoint, which is gone, never the members'
+endpoints inside it. The members' watches see that loss at their refresh,
+and each member's next model request or tool call is refused at once by its
+admission gate, which reads the board each time.
 
 The nudge is latched, so one that arrives before the watch waits is never
 lost. Each tick is one board call, `_watch` (Rust-only, recorded with role
@@ -949,8 +965,9 @@ summary is), when recording stops, when the board's handles for the file are
 replaced (a session switch) or dropped, and when the agent command ends,
 however it ends: a normal return, the orderly shutdown SIGTERM or SIGINT
 starts, or a panic unwinding through it. Only an exit that skips the
-command's own return loses what the watch held, at most one aggregate (60 s
-of ticks): SIGKILL, the OOM killer, a panic outside a tool call (which the
+command's own return loses what the watch held, at most one aggregate (the
+`unchanged` ticks of up to a minute, held until the watch's next tick, which
+an idle watch makes up to ten minutes later): SIGKILL, the OOM killer, a panic outside a tool call (which the
 harness's panic hook aborts on), and the forced exit a second SIGTERM or
 SIGINT makes more than 45 s into the shutdown (`process::exit`). The aggregate leaves one `tracing` record (`swarm board
 watch polls`, DEBUG, with `polls`) on `quecto::swarm_board`; a tick it holds

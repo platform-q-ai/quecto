@@ -308,9 +308,9 @@ pub fn call_as(
     call_deciding(handles, member, method, args, origin).0
 }
 
-/// [`call_as`], answering also the decision the op took (#2390: whether it
-/// changed the run's control state), the committed one of a refusal met
-/// after its writes; `None` for an op refused before it decided.
+/// [`call_as`], answering also whether the op changed the run's control
+/// state (#2390): as its serving said, for an answer or a refusal met after
+/// its writes committed; `false` for an op refused before it decided.
 pub fn call_deciding(
     handles: &SwarmBoardHandles,
     member: &str,
@@ -393,18 +393,20 @@ pub fn call_deciding(
         (_, None, _) | (false, Some(_), false) | (true, Some(false), false) => Caller::Unproven,
     };
     let served = answer.as_ref().ok().or(committed.as_ref());
-    let controls_run = served.is_some_and(|served| {
-        crate::domain::swarm::watch::changes_run_control(method, served.decision)
-    });
+    let controls_run = served.is_some_and(|served| served.controls_run);
+    debug_assert!(
+        !controls_run || known.is_some_and(Method::may_control_run),
+        "{method} changed the run's control state but is not listed as one that may"
+    );
     records::record(handles, origin, &finished, caller, served, measure);
     (answer.map(|served| served.value), controls_run)
 }
 
 /// Whether `method` names a board op that may change the run's control
-/// state (#2390 review M1).
+/// state (#2390 review M1): the run watch counts such an op in flight, so
+/// a watch about to end waits for the op's nudge.
 pub fn may_control_run(method: &str) -> bool {
-    let _ = method;
-    false
+    Method::parse(method).is_some_and(Method::may_control_run)
 }
 
 /// The composed use case, or the same one over a metered call's own
@@ -647,6 +649,7 @@ fn done(decision: &'static str) -> Served {
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
         refused: None,
+        controls_run: false,
     }
 }
 

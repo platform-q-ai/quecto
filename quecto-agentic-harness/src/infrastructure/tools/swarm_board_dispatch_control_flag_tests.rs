@@ -152,10 +152,11 @@ fn completing_a_run_changes_it() {
     assert!(controls(&handles, "parent", "complete", json!(["R1"])));
 }
 
-/// Only the coordinator's loss ends the run; a worker's loss leaves its
-/// control state as it was.
+/// A recorded loss changes it exactly when it ends the run by loss: a
+/// worker's past its grace, or the coordinator's; not one inside its grace,
+/// nor a later one on a run the first loss already ended.
 #[test]
-fn only_a_loss_that_ends_the_run_changes_it() {
+fn a_loss_changes_it_exactly_when_it_ends_the_run() {
     let (dir, handles) = board(1_000.0);
     with_worker(&handles);
     assert!(
@@ -163,15 +164,27 @@ fn only_a_loss_that_ends_the_run_changes_it() {
         "grace"
     );
     backdate_observations(&dir.path().join("swarm.sqlite"));
-    assert!(
-        !controls(&handles, "parent", "_quarantine", json!(["worker"])),
-        "a worker"
-    );
-    assert!(!controls(
+    assert!(controls(
         &handles,
         "parent",
-        "_confirmed_dead",
+        "_quarantine",
         json!(["worker"])
+    ));
+    assert!(
+        !controls(&handles, "parent", "_quarantine", json!(["worker"])),
+        "already lost"
+    );
+    assert!(
+        !controls(&handles, "parent", "_confirmed_dead", json!(["worker"])),
+        "the run already ended"
+    );
+    let (_dir, handles) = board(1_000.0);
+    with_worker(&handles);
+    assert!(controls(
+        &handles,
+        "worker",
+        "_quarantine",
+        json!(["parent"])
     ));
     let (_dir, handles) = board(1_000.0);
     with_worker(&handles);
@@ -188,24 +201,6 @@ fn only_a_loss_that_ends_the_run_changes_it() {
     let (_dir, handles) = board(1_000.0);
     created(&handles);
     assert!(controls(&handles, "parent", "_lose_coordinator", json!([])));
-}
-
-/// A coordinator quarantined past its grace ends the run by loss.
-#[test]
-fn a_coordinator_quarantined_past_its_grace_changes_it() {
-    let (dir, handles) = board(1_000.0);
-    with_worker(&handles);
-    assert!(
-        !controls(&handles, "worker", "_quarantine", json!(["parent"])),
-        "grace"
-    );
-    backdate_observations(&dir.path().join("swarm.sqlite"));
-    assert!(controls(
-        &handles,
-        "worker",
-        "_quarantine",
-        json!(["parent"])
-    ));
 }
 
 /// Every loss observation on the board file moved a minute into the past,

@@ -5,7 +5,7 @@
 //! The watch is push-driven (#2390): it has no fixed tick. Between ticks it
 //! waits until nudged, or until its schedule is due ([`WatchSchedule::wait`]).
 //! A nudge ([`Nudge`]) comes from a board op in this process that changed
-//! the run's control state ([`changes_run_control`]), from another member's
+//! the run's control state (the board's dispatcher says which), from another member's
 //! harness that made such a change and pushed a no-turn `watch`, or from a
 //! `wake` hint. The harness that made a change pushes it to every other
 //! live member once ([`Announcement`]). The nudge is latched, so one that
@@ -211,12 +211,16 @@ impl ControlView {
 
 /// Whether this process owes the other members a `watch` push (#2390): it
 /// does when a tick after one of its own (local) nudges reads a control
-/// state the members were not told of. A change another member pushed is
-/// never pushed again, and one a scheduled tick saw first is still pushed
-/// on the local nudge's tick.
+/// state it has not told them of. Only an announcement settles what they
+/// were told (review M1): a change read on a remote nudge or a due tick may
+/// be this process's own, read before the op latched its local nudge, so
+/// the local nudge's tick still pushes it. The price is a rare duplicate
+/// push of a change another member already pushed, when this process later
+/// makes a change of its own.
 #[derive(Clone, Debug)]
 pub struct Announcement {
-    /// The control state the members were last told of, or found out.
+    /// The control state this process last told the members of (the one
+    /// every member started from, before it told any).
     told: ControlView,
     /// A local nudge whose tick has not yet read the board.
     owed: bool,
@@ -242,44 +246,19 @@ impl Announcement {
             return false;
         };
         let view = ControlView::of(snapshot);
-        let changed = view != self.told;
-        let announce = self.owed && changed;
+        let announce = self.owed && view != self.told;
         // A readable tick after a local nudge settles it: the change is
-        // told now, or the op changed nothing.
+        // told now, or the op changed nothing this tick could see.
         self.owed = false;
-        match (announce, cause) {
-            // Told now, or by the member that pushed it to every member.
-            (true, _) | (false, Some(Nudge::Remote)) => self.told = view,
-            (false, Some(Nudge::Local) | None) => {}
+        if announce {
+            self.told = view;
         }
+        debug_assert!(
+            !announce || self.told == ControlView::of(snapshot),
+            "an announced change is what the members were told"
+        );
         announce
     }
-}
-
-/// Whether board op `op`, answering with `decision`, changed the run's
-/// control state (#2390): an affirmative list of the ops and the decisions
-/// that changed the status, the control generation or the deadline. An op
-/// that found the run as asked (`unchanged`), a read, and every other op
-/// nudge nobody. A deadline the gate of any op records as passed is not
-/// listed: every watch is due at the deadline itself.
-pub fn changes_run_control(op: &str, decision: &str) -> bool {
-    matches!(
-        (op, decision),
-        ("create", "fresh" | "over_setup")
-            | ("pause", "paused")
-            | ("resume" | "_resume_external", "resumed")
-            | ("_close", "closed")
-            | ("_extend_deadline", "extended")
-            | ("stop", "stopped")
-            | ("complete", "completed")
-            | (
-                "usage_budget" | "_record_request" | "_request_admission",
-                "paused"
-            )
-            | ("_quarantine", "recorded")
-            | ("_confirmed_dead", "confirmed" | "coordinator_confirmed")
-            | ("_lose_coordinator", "lost")
-    )
 }
 
 #[cfg(test)]

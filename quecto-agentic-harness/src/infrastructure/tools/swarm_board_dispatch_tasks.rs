@@ -65,6 +65,7 @@ pub(super) fn task_create(
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
         refused: None,
+        controls_run: false,
     })
 }
 
@@ -87,6 +88,7 @@ pub(super) fn dependencies(
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
         refused: None,
+        controls_run: false,
     })
 }
 
@@ -110,6 +112,7 @@ pub(super) fn claim(
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
         refused: None,
+        controls_run: false,
     })
 }
 
@@ -132,6 +135,7 @@ pub(super) fn release(
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
         refused: None,
+        controls_run: false,
     })
 }
 
@@ -156,6 +160,7 @@ pub(super) fn task(
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
         refused: None,
+        controls_run: false,
     })
 }
 

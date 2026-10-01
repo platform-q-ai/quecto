@@ -62,9 +62,14 @@ fn found(status: Option<&RunState>) -> BoardOpDetail {
     }
 }
 
-/// `null`, with `decision` and its `detail`.
+/// `null`, with `decision` and its `detail`. A loss changed the run's
+/// control state (#2390 review M2) exactly when it ended the run.
 fn detailed(decision: &'static str, detail: BoardOpDetail) -> Served {
     let mut served = done(decision);
+    served.controls_run = match detail.ended_by_loss {
+        Some(true) => true,
+        Some(false) | None => false,
+    };
     served.detail = detail;
     served
 }
@@ -131,6 +136,10 @@ pub(super) fn lose_coordinator(
             ended_by_loss: Some(loss.lost),
             ..found(loss.found.as_ref())
         },
+    );
+    debug_assert_eq!(
+        served.controls_run, loss.lost,
+        "a recorded loss ends the run"
     );
     served.value = Value::Object(answer);
     Ok(served)
