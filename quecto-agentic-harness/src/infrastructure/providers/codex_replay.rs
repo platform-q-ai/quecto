@@ -59,9 +59,7 @@ impl CodexProvider {
             (Some(trace), Some(session)) => {
                 let measured = MeasuredInput::of(session, &replaying);
                 trace.record_input_prefix(self.input_digests.compare(&measured));
-                // Red stub (#2398): kept before any send is accepted.
-                self.input_digests.commit(measured);
-                None
+                Some(measured)
             }
             (None, _) | (_, None) => None,
         };
@@ -152,7 +150,7 @@ impl CodexProvider {
             if tx.send(event).await.is_err() {
                 break;
             }
-            next = events.recv().await;
+            next = next_event(events, tx).await;
         }
     }
 
@@ -246,7 +244,7 @@ impl CodexProvider {
             let call = call.clone();
             tokio::spawn(async move { provider.stream_once(&call, replaying, first_tx).await })
         };
-        let first = first_rx.recv().await;
+        let first = next_event(&mut first_rx, &tx).await;
         match (first, plain) {
             (Some(StreamEvent::Error(message)), Some(plain))
                 if Self::is_replay_refusal(&message) =>
@@ -255,9 +253,12 @@ impl CodexProvider {
                 self.note_replay_refused(&message);
                 let measured = measured.map(|replaying| replaying.for_body(&plain));
                 let (plain_tx, mut plain_rx) = tokio::sync::mpsc::channel(64);
-                let forward = async {
-                    let first = plain_rx.recv().await;
-                    self.forward(first, &mut plain_rx, &tx, measured).await;
+                let (this, tx) = (&self, &tx);
+                // Owns its receiver: returning drops it, which cancels the
+                // send once the caller has gone.
+                let forward = async move {
+                    let first = next_event(&mut plain_rx, tx).await;
+                    this.forward(first, &mut plain_rx, tx, measured).await;
                 };
                 tokio::join!(self.stream_once(&call, plain, plain_tx), forward);
             }
@@ -290,6 +291,19 @@ impl CodexProvider {
             }
             None => self.pump_codex_sse(call, body, tx, handler).await,
         }
+    }
+}
+
+/// The next event of a send, or `None` once the caller has gone: a send's
+/// transport stops when its receiver is dropped, so a caller that drops its
+/// own must not leave the send blocked behind this relay.
+async fn next_event(
+    events: &mut tokio::sync::mpsc::Receiver<StreamEvent>,
+    tx: &tokio::sync::mpsc::Sender<StreamEvent>,
+) -> Option<StreamEvent> {
+    tokio::select! {
+        event = events.recv() => event,
+        () = tx.closed() => None,
     }
 }
 

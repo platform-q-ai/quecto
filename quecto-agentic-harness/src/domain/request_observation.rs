@@ -209,7 +209,59 @@ impl std::fmt::Display for InvalidInputPrefix {
 impl InputPrefix {
     /// `parts`, when its counts agree with each other.
     pub fn new(parts: InputPrefixParts) -> Result<Self, InvalidInputPrefix> {
-        Ok(Self(parts))
+        let InputPrefixParts {
+            input_items,
+            previous_items,
+            first_changed_item: item,
+            first_changed_kind: kind,
+            prefix_tokens_estimate: prefix,
+            unchanged_prefix_tokens_estimate: unchanged,
+            request_tokens_estimate: request,
+        } = parts;
+        let rules = [
+            (
+                kind.is_none() || item.is_some(),
+                "a kind names a changed item",
+            ),
+            (
+                previous_items.is_some() || (prefix == 0 && unchanged == 0),
+                "nothing compared leaves no unchanged prefix",
+            ),
+            (
+                item.is_some() || previous_items.is_none_or(|previous| previous <= input_items),
+                "an unchanged previous input is a prefix of this one",
+            ),
+            (
+                item.is_none_or(|index| {
+                    previous_items.is_some_and(|previous| index < previous) && index <= input_items
+                }),
+                "a changed item was compared, within the previous input and at most one past this one",
+            ),
+            (
+                item.is_none_or(|index| index < input_items || kind.is_none()),
+                "an item this request lacks has no kind",
+            ),
+            (
+                item.is_none_or(|index| index > 0 || prefix == 0),
+                "a change at the first item leaves no unchanged item",
+            ),
+            (
+                prefix <= request && unchanged <= request,
+                "a prefix is part of its request",
+            ),
+            (
+                unchanged == 0 || unchanged >= prefix,
+                "the unchanged whole prefix includes the unchanged items",
+            ),
+        ];
+        let broken = rules.into_iter().find_map(|(holds, reason)| match holds {
+            true => None,
+            false => Some(reason),
+        });
+        match broken {
+            None => Ok(Self(parts)),
+            Some(reason) => Err(InvalidInputPrefix(reason)),
+        }
     }
 
     /// The record's counts.

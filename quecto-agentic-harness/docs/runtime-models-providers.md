@@ -322,22 +322,45 @@ and leaves no record.
 
 ## Where a request's input changed
 
-A Responses (`codex`) request's `request_observed` record also says how its
-input relates to the previous request of the same session, so a cache miss
-caused by the harness changing an earlier input item can be told from one the
-provider caused. It records counts, an index and a kind, never content:
+A Responses (`codex`) request of a named session also says, in its
+`request_observed` record, how its input relates to the session's last
+accepted request. That tells a cache miss caused by the harness changing an
+earlier input item from one the provider caused. It records counts, indices,
+a kind and token estimates, never content:
 
 - `input_items`: the input items the request sent;
+- `previous_items`: the input items of the request it was compared with;
+  `null` when there was none to compare with: the session's first request,
+  or one whose baseline the process no longer keeps (it keeps the 32 most
+  recently active sessions, and nothing across a restart);
 - `first_changed_item`: the first item whose serialized bytes differ from the
   previous request's item at the same index (or, when the input got shorter,
   the first item it lacks); `null` when the previous input is a byte-identical
-  prefix of this one — append-only, as is a session's first request;
+  prefix of this one (append-only), or when nothing was compared;
 - `first_changed_kind`: that item's kind (`user`, `assistant`,
   `function_call`, `function_call_output` or `reasoning`), `null` when there
   is none;
-- `prefix_tokens_estimate`: the estimated tokens of the unchanged prefix (`0`
-  for a session's first request).
+- `prefix_tokens_estimate`: the estimated tokens of the unchanged input items;
+- `unchanged_prefix_tokens_estimate`: the estimated tokens of the unchanged
+  prefix of the whole request: the instructions and tools, when they are
+  unchanged, then the unchanged input items; `0` when the instructions or
+  tools changed;
+- `request_tokens_estimate`: the estimated tokens of the whole request
+  (instructions, tools and every input item).
 
-The provider keeps one 64-bit digest per input item of each session's last
-request (the 32 most recently active sessions), not the items. A retry records
-what its first send found. Other providers do not record these fields.
+The three estimates use one estimator, so compare
+`cache_read_tokens / input_tokens` with
+`unchanged_prefix_tokens_estimate / request_tokens_estimate`. With
+`previous_items` set, `first_changed_item` null and the cached share far below
+the expected one, the provider missed its cache. With `first_changed_item`
+set, the harness changed that item, and nothing after it can be cached.
+
+The baseline is the request a send of which the provider accepted (a reply,
+or a streamed event that is not an error): a refused, failed or cancelled send
+never becomes it, and when replayed reasoning is refused the request resent
+without it does. A retry records what its first send found. Each provider of
+the process, including one rebuilt after an OAuth refresh, compares with the
+same baselines; they hold one 64-bit digest per item and a digest of the
+session key, never the items or the key. A request without a session (or
+without request observation) is neither compared nor kept. Other providers do
+not record these fields.

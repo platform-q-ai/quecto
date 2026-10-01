@@ -32,7 +32,6 @@ pub(crate) struct InputDigests {
 
 /// One session's last accepted request, as digests.
 #[derive(Debug)]
-#[expect(dead_code, reason = "red stub (#2398)")]
 struct SessionDigests {
     /// The session's digest, not its key.
     session: u64,
@@ -106,40 +105,97 @@ impl MeasuredInput {
 impl InputDigests {
     /// The baselines every provider of this process shares.
     pub(crate) fn shared() -> Arc<Self> {
-        let _ = &*SHARED;
-        Arc::default()
+        SHARED.clone()
     }
 
-    /// How `measured` relates to its session's last accepted request.
+    /// How `measured` relates to its session's last accepted request. The
+    /// lock is held only to compare digests.
     pub(crate) fn compare(&self, measured: &MeasuredInput) -> InputPrefix {
-        let _ = (
-            &self.sessions,
-            measured.session,
-            measured.head,
-            measured.head_tokens,
-        );
-        let _ = measured
-            .items
-            .iter()
-            .map(|i| (i.digest, i.tokens, i.kind))
-            .count();
-        InputPrefix::new(InputPrefixParts {
-            input_items: measured.items.len(),
-            previous_items: None,
-            first_changed_item: None,
-            first_changed_kind: None,
-            prefix_tokens_estimate: 0,
-            unchanged_prefix_tokens_estimate: 0,
-            request_tokens_estimate: 0,
-        })
-        .expect("stub")
+        let items = &measured.items;
+        let compared = {
+            let sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
+            sessions
+                .iter()
+                .find(|kept| kept.session == measured.session)
+                .map(|previous| Compared {
+                    previous_items: previous.items.len(),
+                    first_changed_item: first_change(&previous.items, items),
+                    head_unchanged: previous.head == measured.head,
+                })
+        };
+        let item_tokens = |count: usize| -> usize { items[..count].iter().map(|i| i.tokens).sum() };
+        let request_tokens_estimate = measured
+            .head_tokens
+            .saturating_add(item_tokens(items.len()));
+        let parts = match compared {
+            Some(compared) => {
+                let first_changed_item = compared.first_changed_item;
+                let prefix_tokens_estimate =
+                    item_tokens(first_changed_item.unwrap_or(compared.previous_items));
+                let unchanged_prefix_tokens_estimate = match compared.head_unchanged {
+                    true => measured.head_tokens.saturating_add(prefix_tokens_estimate),
+                    false => 0,
+                };
+                InputPrefixParts {
+                    input_items: items.len(),
+                    previous_items: Some(compared.previous_items),
+                    first_changed_item,
+                    first_changed_kind: first_changed_item
+                        .and_then(|index| items.get(index))
+                        .and_then(|item| item.kind),
+                    prefix_tokens_estimate,
+                    unchanged_prefix_tokens_estimate,
+                    request_tokens_estimate,
+                }
+            }
+            None => InputPrefixParts {
+                input_items: items.len(),
+                previous_items: None,
+                first_changed_item: None,
+                first_changed_kind: None,
+                prefix_tokens_estimate: 0,
+                unchanged_prefix_tokens_estimate: 0,
+                request_tokens_estimate,
+            },
+        };
+        InputPrefix::new(parts).expect("a comparison's counts agree")
     }
 
     /// The provider accepted a send of `measured`: it is its session's
     /// baseline now, and the session the most recently used.
     pub(crate) fn commit(&self, measured: MeasuredInput) {
-        let _ = measured;
+        let kept = SessionDigests {
+            session: measured.session,
+            head: measured.head,
+            items: measured.items.iter().map(|item| item.digest).collect(),
+        };
+        let mut sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
+        sessions.retain(|other| other.session != kept.session);
+        sessions.push(kept);
+        let excess = sessions.len().saturating_sub(SESSIONS_RETAINED);
+        sessions.drain(..excess);
+        debug_assert!(sessions.len() <= SESSIONS_RETAINED);
     }
+}
+
+/// What comparing with a session's baseline found.
+struct Compared {
+    previous_items: usize,
+    first_changed_item: Option<usize>,
+    head_unchanged: bool,
+}
+
+/// The first index where `items` differs from `previous`: the first
+/// differing digest, or — when `previous` ran past `items`, which it
+/// starts — the first item `items` lacks; `None` when `previous` is a
+/// prefix of `items`.
+fn first_change(previous: &[u64], items: &[MeasuredItem]) -> Option<usize> {
+    let diverged = previous
+        .iter()
+        .zip(items)
+        .position(|(kept, item)| *kept != item.digest);
+    let truncated = (previous.len() > items.len()).then_some(items.len());
+    diverged.or(truncated)
 }
 
 /// A 64-bit digest of `bytes`, stable within the process.

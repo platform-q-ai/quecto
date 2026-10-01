@@ -226,15 +226,20 @@ mod input_prefix_tests {
         }
     }
 
+    /// An edit making a consistent record inconsistent.
+    type Edit = fn(&mut InputPrefixParts);
+
     /// Each inconsistent record is refused, by the constructor and when read.
     #[test]
     fn an_inconsistent_record_is_refused() {
-        let cases: [(&str, fn(&mut InputPrefixParts)); 11] = [
+        let cases: [(&str, Edit); 12] = [
             ("a kind without an index", |p| {
                 p.first_changed_item = None;
             }),
             ("an index without a previous input", |p| {
                 p.previous_items = None;
+                p.prefix_tokens_estimate = 0;
+                p.unchanged_prefix_tokens_estimate = 0;
             }),
             ("an uncompared request with an item prefix", |p| {
                 *p = InputPrefixParts {
@@ -268,8 +273,11 @@ mod input_prefix_tests {
             ("a prefix before the first item", |p| {
                 p.first_changed_item = Some(0);
             }),
-            ("a prefix larger than its request", |p| {
+            ("an item prefix larger than its request", |p| {
                 p.prefix_tokens_estimate = 301;
+                p.unchanged_prefix_tokens_estimate = 0;
+            }),
+            ("a whole prefix larger than its request", |p| {
                 p.unchanged_prefix_tokens_estimate = 301;
             }),
             ("a whole prefix smaller than its item prefix", |p| {
