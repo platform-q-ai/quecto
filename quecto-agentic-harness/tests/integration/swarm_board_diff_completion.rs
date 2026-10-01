@@ -8,11 +8,11 @@
 use serde_json::{Value, json};
 
 use crate::swarm_board_diff_membership::{HOUR, at, snapshot};
-use crate::swarm_board_diff_runs::NOW;
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
 use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
-    Step, run_golden, run_rust, sql, step,
+    Step, run_golden, run_rust, rust_answers, sql, step,
 };
+use crate::swarm_board_diff_runs::{NOW, assert_changed_answer_refused, harness_self_test_tamper};
 
 /// `WorkbenchBehavior.setUp`: `parent` creates `ship feature` with a
 /// command and a review criterion, and `worker` is admitted and live.
@@ -147,7 +147,12 @@ fn dependent_tasks_can_be_revalidated_at_final_revision() {
 /// live) until the supervisor closes it, and then terminal.
 #[test]
 fn completion_holds_success_until_the_supervisor_closes_it() {
-    run_golden(&with_worker([
+    run_golden(&held_success());
+}
+
+/// The steps of [`completion_holds_success_until_the_supervisor_closes_it`].
+fn held_success() -> Vec<Step> {
+    with_worker([
         evidence(3.0, "parent", "tests", "command", json!(true)),
         evidence(3.1, "parent", "review", "review", json!(true)),
         at(4.0, "parent", "_close", json!([])),
@@ -172,7 +177,7 @@ fn completion_holds_success_until_the_supervisor_closes_it() {
             json!(["after", "after close", ["ok"]]),
         ),
         at(15.0, "parent", "_resume_external", json!([])),
-    ]));
+    ])
 }
 
 /// Completion's refusals in Python's order: the revision, then accepted
@@ -288,8 +293,14 @@ fn evidence_arguments_are_checked_as_python_checks_them() {
 /// first), every evidence row goes, and the event holds both contracts.
 #[test]
 fn amendment_preserves_the_entire_original_contract() {
+    run_golden(&amended());
+}
+
+/// The steps of [`amendment_preserves_the_entire_original_contract`]: the
+/// coordinator's `amend` is at `NOW + 5`.
+fn amended() -> Vec<Step> {
     let changed = json!([{"id": "tests", "kind": "command", "description": "replacement test"}]);
-    run_golden(&with_worker([
+    with_worker([
         evidence(3.0, "parent", "tests", "command", json!(true)),
         evidence(3.1, "worker", "review", "review", json!(false)),
         at(
@@ -317,7 +328,52 @@ fn amendment_preserves_the_entire_original_contract() {
             json!({"goal": "new goal", "constraints": {"not": "a list"}, "criteria": [{"id": "tests", "kind": "command", "description": "pass", "extra": [1.5, "é"]}], "reason": "scope agreed"}),
         ),
         at(8.0, "worker", "complete", json!(["R1"])),
-    ]));
+    ])
+}
+
+/// #2394 round-1 review M1/L2: `evidence`, `amend` and `complete`'s
+/// changed answers are checked against the board, column by column.
+#[test]
+fn harness_self_test_checks_completion_answers() {
+    let steps = held_success();
+    for (field, tampered) in [
+        ("criterion", json!("review")),
+        ("artifact", json!("bogus")),
+        ("accepted", json!(false)),
+        ("actor", json!("worker")),
+    ] {
+        let difference = harness_self_test_tamper(&steps, "evidence", 3.0, |answer| {
+            answer.insert(field.to_owned(), tampered.clone());
+        });
+        assert_changed_answer_refused(difference, &format!("column {field} is not the board's"));
+    }
+    let completed = steps
+        .iter()
+        .zip(rust_answers(&steps))
+        .find(|(step, answer)| step.method == "complete" && matches!(answer, Outcome::Ok(_)))
+        .map(|(step, _)| step.now - NOW)
+        .expect("a granted complete");
+    for (field, tampered) in [
+        ("reason", json!("completed at bogus")),
+        ("status", json!("running")),
+        ("outcome", json!("failed")),
+    ] {
+        let difference = harness_self_test_tamper(&steps, "complete", completed, |answer| {
+            answer.insert(field.to_owned(), tampered.clone());
+        });
+        assert_changed_answer_refused(difference, &format!("column {field} is not the board's"));
+    }
+    let steps = amended();
+    for (field, tampered) in [
+        ("goal", json!("bogus")),
+        ("constraints", json!(["bogus"])),
+        ("criteria", json!([])),
+    ] {
+        let difference = harness_self_test_tamper(&steps, "amend", 5.0, |answer| {
+            answer.insert(field.to_owned(), tampered.clone());
+        });
+        assert_changed_answer_refused(difference, &format!("column {field} is not the board's"));
+    }
 }
 
 /// `amend` bounds the goal, the reason and the encoded constraints before

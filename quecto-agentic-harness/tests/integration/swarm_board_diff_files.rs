@@ -18,11 +18,11 @@
 use serde_json::{Value, json};
 
 use crate::swarm_board_diff_membership::{at, create};
-use crate::swarm_board_diff_runs::NOW;
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
 use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
     Step, mkdir, run_golden, run_rust, sql, step, symlink,
 };
+use crate::swarm_board_diff_runs::{NOW, assert_changed_answer_refused, harness_self_test_tamper};
 
 /// The `n`th id the harness draws, as the counter writes it.
 pub(crate) fn token(n: u64) -> String {
@@ -80,7 +80,13 @@ fn dead(member: &str) -> Step {
 /// owner's current claim releases, and an escape is refused.
 #[test]
 fn file_reservations_are_atomic_normalized_and_token_owned() {
-    run_golden(&claimed([
+    run_golden(&atomic_reservations());
+}
+
+/// The steps of [`file_reservations_are_atomic_normalized_and_token_owned`]:
+/// the owner's `release_files` is at `NOW + 11`.
+fn atomic_reservations() -> Vec<Step> {
+    claimed([
         at(
             5.0,
             "parent",
@@ -120,7 +126,38 @@ fn file_reservations_are_atomic_normalized_and_token_owned() {
             "reserve",
             json!([1, token(3), ["../escape"]]),
         ),
-    ]));
+    ])
+}
+
+/// #2394 round-1 review M1/L1/L2: `release_files`' changed answer is
+/// checked against the step's arguments and the board: the task the
+/// argument names, the reservation it gave, and how many files that
+/// reservation held before the step.
+#[test]
+fn harness_self_test_checks_a_release_files_answer() {
+    let steps = atomic_reservations();
+    for (field, tampered, problem) in [
+        (
+            "task_id",
+            json!(2),
+            "task_id is not the task the argument names",
+        ),
+        (
+            "reservation",
+            json!("bogus"),
+            "reservation is not the argument",
+        ),
+        (
+            "released",
+            json!(0),
+            "released is not the files the reservation held before the step",
+        ),
+    ] {
+        let difference = harness_self_test_tamper(&steps, "release_files", 11.0, |answer| {
+            answer.insert(field.to_owned(), tampered.clone());
+        });
+        assert_changed_answer_refused(difference, problem);
+    }
 }
 
 /// `test_symlink_alias_cannot_bypass_reservation`: a path through a

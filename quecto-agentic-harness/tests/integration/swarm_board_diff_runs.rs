@@ -10,9 +10,51 @@ use rusqlite::Connection;
 use serde_json::{Map, Value, json};
 use swarm_board_diff::Outcome;
 use swarm_board_diff::dump::{Dump, first_difference, logical_dump};
-use swarm_board_diff::scenario::{Hold, held, run_golden, sql, step, try_run_golden};
+use swarm_board_diff::scenario::{Hold, Step, held, run_golden, sql, step, try_run_golden};
 
 pub(crate) const NOW: f64 = 1_700_000_000.25;
+
+/// #2394's harness self-tests: runs `steps` with the answer of `method` at
+/// `NOW + offset`, an object, edited by `edit`, and answers the difference
+/// and the exact prefix a changed answer's difference starts with (the
+/// step, then `#2394's <method> answer: `).
+#[track_caller]
+pub(crate) fn harness_self_test_tamper(
+    steps: &[Step],
+    method: &str,
+    offset: f64,
+    edit: impl Fn(&mut Map<String, Value>),
+) -> (String, String) {
+    let index = steps
+        .iter()
+        .position(|step| step.method == method && step.now == NOW + offset)
+        .unwrap_or_else(|| panic!("a {method} step at NOW + {offset}"));
+    let mut tampered = false;
+    let difference = try_run_golden(steps, |at, _, rust| {
+        if let (true, Outcome::Ok(Value::Object(answer))) = (at == index, &mut *rust) {
+            edit(answer);
+            tampered = true;
+        }
+    })
+    .unwrap_err();
+    assert!(tampered, "{method} at NOW + {offset} answered an object");
+    let step = &steps[index];
+    let prefix = format!(
+        "step {index}: {} as {} with {} at {}: #2394's {method} answer: ",
+        step.method, step.member, step.args, step.now
+    );
+    (difference, prefix)
+}
+
+/// [`harness_self_test_tamper`]'s difference starts with its prefix and
+/// then `problem`.
+#[track_caller]
+pub(crate) fn assert_changed_answer_refused((difference, prefix): (String, String), problem: &str) {
+    assert!(
+        difference.starts_with(&format!("{prefix}{problem}")),
+        "expected `{prefix}{problem}…`, got {difference}"
+    );
+}
 const HOUR: f64 = 3_600.0;
 const DAY: f64 = 86_400.0;
 

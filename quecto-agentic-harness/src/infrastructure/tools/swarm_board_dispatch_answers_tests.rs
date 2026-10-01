@@ -216,28 +216,75 @@ fn evidence_answers_the_recorded_evidence() {
     );
 }
 
+/// `release_files` answers the task, the reservation, and how many files it
+/// released (round-1 review L1): a reservation that holds nothing (already
+/// released, or never there) answers `released: 0`, not a silent success.
 #[test]
-fn release_files_answers_the_task_and_the_reservation_it_released() {
+fn release_files_answers_the_task_the_reservation_and_what_it_released() {
     let (_dir, handles) = board(1_000.0);
     let token = claimed(&handles);
-    let reserved = call(&handles, "worker", "reserve", json!([1, token, ["a.rs"]])).unwrap();
+    let reserved = call(
+        &handles,
+        "worker",
+        "reserve",
+        json!([1, token, ["a.rs", "b.rs"]]),
+    )
+    .unwrap();
     let reservation = reserved["token"].clone();
-    let answer = call(
+    for released in [2, 0] {
+        let answer = call(
+            &handles,
+            "worker",
+            "release_files",
+            json!([1, token, reservation]),
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_string(&answer).unwrap(),
+            format!(r#"{{"task_id":1,"reservation":{reservation},"released":{released}}}"#),
+        );
+    }
+    let bogus = call(
         &handles,
         "worker",
         "release_files",
-        json!([1, token, reservation]),
+        json!(["1", token, "bogus"]),
     )
     .unwrap();
     assert_eq!(
-        answer,
-        json!({"task_id": 1, "reservation": reservation}),
-        "{answer}"
+        bogus,
+        json!({"task_id": 1, "reservation": "bogus", "released": 0}),
+        "the task id its row holds, the reservation as given"
     );
     assert_eq!(
         call(&handles, "worker", "file_owners", json!([])).unwrap(),
         json!([])
     );
+}
+
+/// `evidence` answers the criterion as the evidence row stores it (round-1
+/// review nit), not as the caller gave it: a criterion configured as the
+/// integer 1 (a run edited outside the board) is stored as the text "1".
+#[test]
+fn evidence_answers_the_criterion_as_stored() {
+    let (dir, handles, _) = board_and_repository(1_000.0);
+    running(&handles);
+    rusqlite::Connection::open(dir.path().join("swarm.sqlite"))
+        .unwrap()
+        .execute(
+            r#"UPDATE run SET criteria='[{"id": 1, "kind": "command", "description": "d"}]'"#,
+            [],
+        )
+        .unwrap();
+    let recorded = call(
+        &handles,
+        "parent",
+        "evidence",
+        json!([1, "ci.log", "R1", "command", true]),
+    )
+    .unwrap();
+    assert_eq!(recorded["criterion"], json!("1"), "{recorded}");
+    assert_eq!(recorded["accepted"], json!(true), "{recorded}");
 }
 
 #[test]

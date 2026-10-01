@@ -11,6 +11,7 @@ use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
 use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
     Step, run_golden, run_rust, sql, try_run_golden,
 };
+use crate::swarm_board_diff_runs::{assert_changed_answer_refused, harness_self_test_tamper};
 
 /// A running run of five coordinated by `parent`, with `worker` live and
 /// holding the claim of task 1 under [`token`]`(3)` (`create` drew ids 1
@@ -457,32 +458,49 @@ fn every_mutating_task_op_is_refused_on_a_paused_run() {
 
 /// #2394's changed answers are checked, not waved through: where Python
 /// answered `null`, the Rust board's answer must be the task's row as its
-/// own board holds it. A tampered row, another shape, or a `null` again
-/// (the answer #2394 removed) is a difference at that step.
+/// own board holds it, every column (round-1 review M1: a row with other
+/// evidence, acceptance or dependencies passed), and a `null` again (the
+/// answer #2394 removed) is a difference at that step.
 #[test]
 fn harness_self_test_checks_a_changed_answer_against_the_board() {
     let steps = not_completion();
-    let submit = 6;
-    assert_eq!(steps[submit].method, "submit");
-    let mut tampered_row = None;
+    for (method, offset) in [("submit", 6.0), ("verify_task", 9.0)] {
+        for (column, tampered) in [
+            ("status", json!("claimed")),
+            ("evidence", json!([])),
+            ("acceptance", json!(["bogus"])),
+            ("dependencies", json!([99])),
+            ("token", json!("stale")),
+        ] {
+            let difference = harness_self_test_tamper(&steps, method, offset, |row| {
+                row.insert(column.to_owned(), tampered.clone());
+            });
+            assert_changed_answer_refused(
+                difference,
+                &format!("column {column} is not the board's"),
+            );
+        }
+        let difference = harness_self_test_tamper(&steps, method, offset, |row| {
+            row.insert("id".to_owned(), json!(2));
+        });
+        assert_changed_answer_refused(difference, "id is not the task the argument names");
+        let difference = harness_self_test_tamper(&steps, method, offset, |row| {
+            row.shift_remove("blocker");
+        });
+        assert_changed_answer_refused(difference, "not a task's dict in the table's order");
+    }
+    let mut nulled = None;
     let difference = try_run_golden(&steps, |index, _, rust| {
-        if let (true, Outcome::Ok(Value::Object(row))) = (index == submit, &mut *rust) {
-            row.insert("status".to_owned(), json!("claimed"));
-            tampered_row = Some(row.clone());
+        if index == 6 {
+            *rust = Outcome::Ok(Value::Null);
+            nulled = Some(index);
         }
     })
     .unwrap_err();
-    assert!(tampered_row.is_some(), "submit answered the task's row");
-    assert!(difference.starts_with("step 6: submit"), "{difference}");
-    assert!(difference.contains("#2394's submit answer"), "{difference}");
-    for tampered in [json!({"id": 1}), Value::Null] {
-        let difference = try_run_golden(&steps, |index, _, rust| {
-            if index == submit {
-                *rust = Outcome::Ok(tampered.clone());
-            }
-        })
-        .unwrap_err();
-        assert!(difference.starts_with("step 6: submit"), "{difference}");
-        assert!(difference.contains("not"), "{difference}");
-    }
+    assert_eq!(nulled, Some(6));
+    let expected = format!(
+        "step 6: submit as worker with {} at {}: #2394's submit answer: not an object",
+        steps[6].args, steps[6].now
+    );
+    assert!(difference.starts_with(&expected), "{difference}");
 }
