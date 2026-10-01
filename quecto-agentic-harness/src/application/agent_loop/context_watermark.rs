@@ -21,10 +21,6 @@ impl ContextManager {
         self.watermark = watermark;
     }
 
-    pub fn context_watermark(&self) -> Option<ContextWatermark> {
-        self.watermark
-    }
-
     /// The watermark pass, when the mode is on: `None` means the default
     /// pruning applies. `fixed_tokens` are the tool definitions' estimate.
     pub async fn prepare_watermark_context(
@@ -73,19 +69,26 @@ impl ContextManager {
     }
 
     /// The marks for the messages alone, in estimate units: each mark at
-    /// the provider-observed scale, less the tool definitions, and the high
-    /// mark never above the model's window.
+    /// the provider-observed scale, less the tool definitions. The context
+    /// ceiling (the configured budget, the model's window, a swarm member's
+    /// cap) wins over the high mark: a high mark above it is lowered to it,
+    /// and the low mark with it in proportion, so a cut still frees the
+    /// same share of the context.
     fn watermark_marks_in_estimate_units(
         &self,
         watermark: ContextWatermark,
         fixed_tokens: usize,
     ) -> (usize, usize) {
         let scale = self.estimate_scale();
-        let mut high = scale.in_estimate_units(watermark.high_tokens());
-        if let Some(window) = self.window_in_estimate_units() {
-            high = high.min(window);
-        }
-        let low = scale.in_estimate_units(watermark.low_tokens()).min(high);
+        let wanted_high = scale.in_estimate_units(watermark.high_tokens());
+        let wanted_low = scale.in_estimate_units(watermark.low_tokens());
+        let high = wanted_high.min(self.pruning_ceiling_in_estimate_units());
+        let low = if high < wanted_high {
+            (wanted_low as u128 * high as u128 / wanted_high.max(1) as u128) as usize
+        } else {
+            wanted_low
+        };
+        debug_assert!(low <= high, "the low mark stays under the high mark");
         (
             high.saturating_sub(fixed_tokens),
             low.saturating_sub(fixed_tokens),

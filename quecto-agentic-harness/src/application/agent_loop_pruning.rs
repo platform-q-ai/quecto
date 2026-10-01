@@ -183,6 +183,11 @@ mod calibration_tests;
 #[path = "agent_loop_snapshot_tests.rs"]
 mod snapshot_tests;
 
+// SPIKE: the watermark context's prompt-cache simulator.
+#[cfg(test)]
+#[path = "agent_loop_watermark_sim_tests.rs"]
+mod watermark_sim_tests;
+
 // #2348: the size-aware collapse on the same scripted coordinator.
 #[cfg(test)]
 #[path = "agent_loop_large_result_tests.rs"]

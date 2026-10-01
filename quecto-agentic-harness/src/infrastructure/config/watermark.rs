@@ -10,8 +10,11 @@ use std::collections::HashMap;
 const WATERMARK: &str = "watermark";
 /// The default pruning (the same as leaving the mode unset).
 const DEFAULT: &str = "default";
-const DEFAULT_HIGH_TOKENS: usize = 100_000;
-const DEFAULT_LOW_TOKENS: usize = 30_000;
+/// The owner's marks: cut at 256k, down to 70k. The context ceiling
+/// (`max_context_tokens`, 200k by default, and the model's window) still
+/// wins: raise `max_context_tokens` to let the high mark be reached.
+const DEFAULT_HIGH_TOKENS: usize = 256_000;
+const DEFAULT_LOW_TOKENS: usize = 70_000;
 
 impl AgentDefaults {
     /// The watermark marks when `context_mode` is `watermark`; `None`
