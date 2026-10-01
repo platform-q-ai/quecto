@@ -106,13 +106,13 @@ impl PendingMessage {
     /// whole request. The `<subagent_notification>` wrapper marks the note as
     /// harness-injected so clients can render it distinctly from user input.
     ///
-    /// A prompt or a queued control is an instruction; a harness note (a
+    /// A prompt or a queued control is an instruction marked a prompt (#2403); a harness note (a
     /// sub-agent note, a swarm wake) opens a turn of the phase it lands in,
     /// that of `conversation` (#2226).
     pub fn into_message(self, conversation: &[Message]) -> Message {
-        use crate::domain::turn_origin::{harness_note, instruction};
+        use crate::domain::turn_origin::{harness_note, prompt};
         match self {
-            Self::User(content) | Self::Control { content, .. } => instruction(content),
+            Self::User(content) | Self::Control { content, .. } => prompt(content),
             Self::Automatic(content) => harness_note(content, conversation),
             Self::SubagentNotification {
                 agent_id,

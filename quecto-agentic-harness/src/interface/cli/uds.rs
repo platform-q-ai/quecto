@@ -342,7 +342,7 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
         super::uds_swarm_control::date_provider_suspension(ctx).await;
         return false;
     };
-    let mut message = crate::domain::turn_origin::instruction(message);
+    let mut message = crate::domain::turn_origin::prompt(message);
     if let Err(err) = persist_user_prompt_before_run(ctx, &mut message).await {
         tracing::warn!("failed to persist user prompt before turn: {err}");
     }

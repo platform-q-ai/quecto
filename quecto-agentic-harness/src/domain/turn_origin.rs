@@ -98,7 +98,8 @@ pub fn instruction(text: String) -> Message {
 /// A prompt (#2403): an instruction the user sent, or a task a parent or a
 /// swarm gave; the watermark context pins the latest one.
 pub fn prompt(text: String) -> Message {
-    let message = instruction(text);
+    let mut message = instruction(text);
+    message.user_kind = crate::domain::conversation::UserKind::Prompt;
     message
 }
 

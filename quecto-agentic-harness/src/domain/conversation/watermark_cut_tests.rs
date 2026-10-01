@@ -52,14 +52,14 @@ fn plan(messages: &[Message], high: usize, low: usize) -> CutPlan {
     .expect("a cut is due")
 }
 
-/// A session over 20k: the system prompt, the brief, eight 2k exchanges,
+/// A session over 20k: the system prompt, the brief, nine 2k exchanges,
 /// the latest prompt and its turn so far.
 fn session() -> Vec<Message> {
     let mut messages = vec![
         Message::system(text("system", 300)),
         prompt(text("brief", 200)),
     ];
-    for n in 0..8 {
+    for n in 0..9 {
         exchange(&mut messages, &format!("old-{n}"), 2_000);
         messages.push(Message::assistant(
             text(&format!("answer-{n}"), 100),
@@ -184,9 +184,11 @@ fn the_stub_names_its_archive_and_says_when_there_is_none() {
     let archived = archive_stub(12, Some("archive:3"));
     assert!(archived.content.contains("12 earlier messages"));
     assert!(archived.content.contains(r#"recall("archive:3")"#));
+    assert_eq!(archived.spill_id.as_deref(), Some("archive:3"));
     let dropped = archive_stub(12, None);
     assert!(dropped.content.contains("dropped"), "{}", dropped.content);
     assert!(!dropped.content.contains("archive:"));
+    assert_eq!(dropped.spill_id, None);
 }
 
 #[test]

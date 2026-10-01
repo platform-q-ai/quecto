@@ -44,6 +44,16 @@ fn total(messages: &[Message]) -> usize {
 /// An agent whose every mid-history rule fires at once in the default
 /// mode: two tool results, three messages, a 500-token result seen once.
 fn agent(store: Arc<dyn ContextSpillStore>, mode: Option<ContextMode>) -> AgentLoopImpl {
+    agent_under(store, mode, 1_000_000, None)
+}
+
+/// [`agent`] under a configured budget and a model window.
+fn agent_under(
+    store: Arc<dyn ContextSpillStore>,
+    mode: Option<ContextMode>,
+    max_context_tokens: usize,
+    model_context_window: Option<usize>,
+) -> AgentLoopImpl {
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: Arc::new(MockProvider::new(vec![])),
         tool_registry: Box::new(MockRegistry::new()),
@@ -53,7 +63,7 @@ fn agent(store: Arc<dyn ContextSpillStore>, mode: Option<ContextMode>) -> AgentL
         retention: Some(crate::composition::retention::context_retention_over(store)),
         session_key: SESSION.to_string(),
         context_collapse_after_tool_calls: 2,
-        max_context_tokens: 1_000_000,
+        max_context_tokens,
         progress_callback: None,
         streaming: false,
         effort: None,
@@ -64,7 +74,7 @@ fn agent(store: Arc<dyn ContextSpillStore>, mode: Option<ContextMode>) -> AgentL
             over_tokens: 500,
             after_turns: 1,
         },
-        model_context_window: None,
+        model_context_window,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
     if let Some(mode) = mode {
@@ -183,6 +193,32 @@ async fn a_cut_at_the_high_mark_keeps_the_head_byte_identical_and_reaches_the_lo
         "the stub follows the head"
     );
     assert!(total(&messages) <= LOW, "down to L: {}", total(&messages));
+}
+
+/// The ceiling wins (#2401): a high mark over the configured budget or
+/// the model's room is lowered to it, and the low mark with it in
+/// proportion, so the cut comes at the ceiling and frees the same share.
+#[tokio::test]
+async fn the_ceiling_lowers_both_marks() {
+    let marks = ContextMode::Watermark(Watermark::new(100_000, 30_000).unwrap());
+    for (budget, window) in [(20_000, None), (1_000_000, Some(24_000))] {
+        let mut rig = Rig::watermark();
+        rig.agent = agent_under(rig.store.clone(), Some(marks), budget, window);
+        let ceiling = rig.agent.context_manager.effective_max_context_tokens();
+        assert!(ceiling <= 24_000, "{budget} {window:?}: {ceiling}");
+        let mut messages = rig.opened().await;
+        while total(&messages) < ceiling {
+            rig.exchange(&mut messages, 1_000).await;
+        }
+        rig.pass(&mut messages).await;
+        assert_eq!(stubs(&messages).len(), 1, "{budget} {window:?}: a cut");
+        let low = 30_000 * ceiling / 100_000;
+        assert!(
+            total(&messages) <= low,
+            "{budget} {window:?}: down to {low}: {}",
+            total(&messages)
+        );
+    }
 }
 
 /// No mid-history edit: below H nothing in the conversation changes in
