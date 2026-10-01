@@ -905,10 +905,13 @@ It is nudged:
 
 The harness that made a change pushes it once its own watch has read it,
 after suspending its own inference: a change its watch read first on
-another nudge is still pushed on its own op's nudge, and a watch about to
-end on a terminal run waits (up to 2 s) for its process's control ops in
-flight, so an end it read before the op's nudge was latched is still
-pushed. A coordinator loss recorded by the host, once the coordinator's
+another nudge is still pushed on its own op's nudge, and a watch that
+ended on a terminal run, once it has settled, waits (up to 2 s) for its
+process's cancellations and closes still in flight, so an end it read
+before the op's nudge was latched is still pushed. Ticks a pushed `watch`
+or `wake` woke come at most every 100 ms: a flood of pushes is read about
+ten times a second, and a local nudge is never held by that floor. Only a
+`wake` with a generation nudges the watch. A coordinator loss recorded by the host, once the coordinator's
 harness has exited, is not pushed: the host reaches the container only
 through the coordinator's own endpoint, which is gone, never the members'
 endpoints inside it. The members' watches see that loss at their refresh,

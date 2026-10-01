@@ -122,6 +122,10 @@ pub(super) fn lose_coordinator(
     let loss = lose_coordinator.execute(LoseCoordinatorRequest {
         actor: actor.to_owned(),
     })?;
+    debug_assert!(
+        !loss.lost || matches!(loss.run.status.as_deref(), Some("paused" | "failed")),
+        "a recorded loss leaves the run paused, or its placeholder failed"
+    );
     let text = |value: Option<String>| value.map_or(Value::Null, Value::String);
     let mut answer = Map::new();
     answer.insert("id".to_owned(), text(loss.run.id));
@@ -136,10 +140,6 @@ pub(super) fn lose_coordinator(
             ended_by_loss: Some(loss.lost),
             ..found(loss.found.as_ref())
         },
-    );
-    debug_assert_eq!(
-        served.controls_run, loss.lost,
-        "a recorded loss ends the run"
     );
     served.value = Value::Object(answer);
     Ok(served)

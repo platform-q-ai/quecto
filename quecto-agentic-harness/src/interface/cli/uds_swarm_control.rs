@@ -101,8 +101,9 @@ pub(super) async fn intercept(ctx: &ReaderDispatchCtx<'_>) -> bool {
         return true;
     }
     if matches!(action, Action::Wake) {
-        // #2390 (d): a wake hint also nudges the run watch.
-        if let Some(control) = ctx.turn_control.swarm_control.as_ref() {
+        // #2390 (d): a wake hint whose generation validates also nudges
+        // the run watch (review round 2, L4).
+        if let (Some(_), Some(control)) = (generation, ctx.turn_control.swarm_control.as_ref()) {
             control.nudge_watch();
         }
         let event = match (

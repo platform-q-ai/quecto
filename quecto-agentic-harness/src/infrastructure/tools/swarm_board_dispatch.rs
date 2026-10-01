@@ -86,6 +86,7 @@ use crate::application::swarm::use_cases::{
 use crate::domain::swarm::{BoardError, BoardOpDetail, RefusalKind};
 
 pub use self::binding::{BindingFaults, SchemaField, schema_field, unreadable_arguments};
+pub use self::method::may_end_run;
 use self::method::{Method, Parameter, required};
 pub use super::swarm_board_telemetry::{ActorRefs, TELEMETRY_TARGET};
 use super::swarm_board_telemetry::{Caller, Finished, Level, Served, split_committed};
@@ -403,8 +404,7 @@ pub fn call_deciding(
 }
 
 /// Whether `method` names a board op that may change the run's control
-/// state (#2390 review M1): the run watch counts such an op in flight, so
-/// a watch about to end waits for the op's nudge.
+/// state (#2390): only these may answer `controls_run`.
 pub fn may_control_run(method: &str) -> bool {
     Method::parse(method).is_some_and(Method::may_control_run)
 }

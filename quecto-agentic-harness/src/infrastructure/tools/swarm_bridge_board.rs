@@ -97,23 +97,40 @@ impl WatchNudges {
     /// Waits up to `timeout` for a nudge and takes it; at once when one is
     /// latched already, `None` when none came.
     pub fn wait(&self, timeout: Duration) -> Option<Nudge> {
-        let (mut latched, _) = self
+        let (mut latched, waited) = self
             .nudged
             .wait_timeout_while(self.latched(), timeout, |latched| latched.pending.is_none())
             .unwrap_or_else(PoisonError::into_inner);
         let taken = latched.pending.take();
-        debug_assert!(latched.pending.is_none(), "a nudge is taken once");
+        debug_assert!(
+            taken.is_some() || waited.timed_out(),
+            "a wait that took no nudge ran its whole timeout"
+        );
         taken
     }
 
-    /// Waits up to `left` (review round 2, L1), taking remote nudges
-    /// without returning; returns at once on a local one.
+    /// The rest of the rate floor after a tick a remote nudge woke (review
+    /// round 2, L1): waits up to `left`, holding every remote nudge that
+    /// comes meanwhile, and returns at once on a local one. Answers what it
+    /// took, `None` when nothing came.
     pub fn wait_floor(&self, left: Duration) -> Option<Nudge> {
-        self.wait(left)
+        let (mut latched, waited) = self
+            .nudged
+            .wait_timeout_while(self.latched(), left, |latched| match latched.pending {
+                Some(Nudge::Local) => false,
+                Some(Nudge::Remote) | None => true,
+            })
+            .unwrap_or_else(PoisonError::into_inner);
+        let taken = latched.pending.take();
+        debug_assert!(
+            taken == Some(Nudge::Local) || waited.timed_out(),
+            "the floor gives way only to a local nudge"
+        );
+        taken
     }
 
-    /// A board op of this process that may change the run's control state
-    /// begins; it is counted until it finishes (or is dropped).
+    /// A board op of this process that may end the run begins; it is
+    /// counted until it finishes (or is dropped).
     pub fn control_op(self: &Arc<Self>) -> ControlOp {
         self.latched().in_flight += 1;
         ControlOp(Some(self.clone()))
@@ -123,10 +140,14 @@ impl WatchNudges {
     /// process's control ops in flight to finish, then answers whether a
     /// local nudge was latched, taking it.
     pub fn take_late_local(&self, bound: Duration) -> bool {
-        let (mut latched, _) = self
+        let (mut latched, waited) = self
             .nudged
             .wait_timeout_while(self.latched(), bound, |latched| latched.in_flight > 0)
             .unwrap_or_else(PoisonError::into_inner);
+        debug_assert!(
+            latched.in_flight == 0 || waited.timed_out(),
+            "the watch stops waiting only once no op is in flight, or at the bound"
+        );
         match latched.pending {
             Some(Nudge::Local) => {
                 latched.pending = None;
@@ -468,20 +489,23 @@ impl SwarmBoard {
             crate::infrastructure::tools::call_work::may_block(),
             "a board call ({method}) is made off the async workers (#2278)"
         );
-        // #2390: an op that may change the run's control state is counted
-        // in flight on the file's watch latch, and its change nudges the
-        // watch, which reads it at once and tells the other members.
-        let in_flight = match swarm_board_dispatch::may_control_run(method) {
-            true => self
-                .watched(&location.database)
-                .map(|nudges| nudges.control_op()),
-            false => None,
+        // #2390: a control change to a board file a watch here waits on
+        // nudges that watch, which reads it at once and tells the other
+        // members. An op that may end the run is counted in flight first
+        // (review M1), so a watch about to end waits for its nudge; the
+        // ops every model request and tool call make are not (round 2, L2).
+        let watched = self.watched(&location.database);
+        let in_flight = match (swarm_board_dispatch::may_end_run(method), &watched) {
+            (true, Some(nudges)) => Some(nudges.control_op()),
+            (true, None) | (false, _) => None,
         };
         let handles = self.handles(location);
         let (answer, controls_run) =
             swarm_board_dispatch::call_deciding(&handles, member, method, args, origin);
-        if let Some(op) = in_flight {
-            op.finish(controls_run);
+        match (in_flight, watched, controls_run) {
+            (Some(op), _, changed) => op.finish(changed),
+            (None, Some(nudges), true) => nudges.nudge(Nudge::Local),
+            (None, Some(_), false) | (None, None, _) => {}
         }
         answer.map_err(|refusal| {
             DomainError::Tool(format!(

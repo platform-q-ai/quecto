@@ -3,7 +3,9 @@
 //! when the board changed or the schedule asked for it.
 use super::super::swarm_bridge::{Participation, RunWatch, SwarmContext};
 use crate::application::swarm::ports::Clock;
-use crate::domain::swarm::watch::{Announcement, Nudge, WatchSchedule};
+use std::time::{Duration, Instant};
+
+use crate::domain::swarm::watch::{Announcement, Nudge, REMOTE_FLOOR, WatchSchedule};
 use crate::domain::swarm::{RunStatus, Snapshot};
 
 /// What one tick of the watch read.
@@ -59,9 +61,10 @@ pub(super) trait WatchObserver {
     fn announce(&mut self, snapshot: &Snapshot);
 }
 
-/// How long a watch about to end waits for this process's control ops in
-/// flight (review M1): two of the store's busy waits, an op's two
-/// transactions.
+/// How long an ended watch, once settled, waits for this process's ops in
+/// flight that may end the run (review M1): an op whose end the watch read
+/// has committed, and only its event-log record and its return remain
+/// before it latches its nudge; this bounds a stalled record.
 const LATE_LOCAL: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// What a watch that ended answers: the snapshot it ended on (its status
@@ -78,7 +81,16 @@ pub(super) fn announce_late(
     watched: &mut Watched,
     observer: &mut dyn WatchObserver,
 ) {
-    let _ = (context, &mut watched.announcement, observer);
+    // Review M1: an op of this process whose end the watch read may not
+    // have latched its nudge yet; once it has, the end is still pushed.
+    let nudges = context.board.watch_nudges(&context.database());
+    if nudges.take_late_local(LATE_LOCAL)
+        && watched
+            .announcement
+            .observed(Some(Nudge::Local), Some(&watched.snapshot))
+    {
+        observer.announce(&watched.snapshot);
+    }
 }
 
 /// Watches the run from `snapshot` until its outcome is terminal, and
@@ -99,6 +111,7 @@ pub(super) fn watch_until_terminal(
     // The first tick is the watch's own, nudged by nobody.
     let mut cause = None;
     loop {
+        let ticked = Instant::now();
         let tick = watch_tick(
             context,
             &mut schedule,
@@ -125,14 +138,6 @@ pub(super) fn watch_until_terminal(
         }
         let outcome = context.lifecycle.observed_outcome(&snapshot, &clock);
         if outcome.terminal() {
-            // Review M1: an op of this process whose change the tick read
-            // may not have latched its nudge yet; the watch waits for it
-            // before it ends, so the end is still pushed.
-            if nudges.take_late_local(LATE_LOCAL)
-                && announcement.observed(Some(Nudge::Local), Some(&snapshot))
-            {
-                observer.announce(&snapshot);
-            }
             snapshot.status = outcome;
             debug_assert!(
                 snapshot.status.terminal(),
@@ -144,6 +149,18 @@ pub(super) fn watch_until_terminal(
             };
         }
         cause = nudges.wait(schedule.wait(clock.now_seconds()));
+        // Review round 2, L1: a tick a remote nudge woke comes at most every
+        // REMOTE_FLOOR; the pushes meanwhile are read by that one tick, and a
+        // local nudge is never held.
+        cause = match cause {
+            Some(Nudge::Remote) => match REMOTE_FLOOR.saturating_sub(ticked.elapsed()) {
+                Duration::ZERO => cause,
+                left => nudges
+                    .wait_floor(left)
+                    .map_or(cause, |more| Some(more.merge(Nudge::Remote))),
+            },
+            Some(Nudge::Local) | None => cause,
+        };
     }
 }
 

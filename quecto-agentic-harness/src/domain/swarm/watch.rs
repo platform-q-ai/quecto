@@ -56,6 +56,11 @@ pub const RETRY: Duration = Duration::from_millis(500);
 /// nothing moves comes this long after the last.
 pub const REFRESH_MIN: Duration = Duration::from_secs(5);
 
+/// The shortest gap between two ticks a remote nudge woke (#2390 review
+/// round 2): a flood of pushes is read at most ten times a second. A local
+/// nudge is never held by it.
+pub const REMOTE_FLOOR: Duration = Duration::from_millis(100);
+
 /// The longest the watch goes without a snapshot while nothing changes:
 /// ten minutes (owner decision, #2390), the safety net for a lost push.
 pub const REFRESH_MAX: Duration = Duration::from_secs(600);
@@ -247,16 +252,19 @@ impl Announcement {
         };
         let view = ControlView::of(snapshot);
         let announce = self.owed && view != self.told;
+        // The control generation is the id of the latest pause or resume
+        // event, so it never goes back: a view behind what was told is a
+        // stale read, never a change to push.
+        debug_assert!(
+            !announce || view.generation >= self.told.generation,
+            "an announced change is never older than what was told"
+        );
         // A readable tick after a local nudge settles it: the change is
         // told now, or the op changed nothing this tick could see.
         self.owed = false;
         if announce {
             self.told = view;
         }
-        debug_assert!(
-            !announce || self.told == ControlView::of(snapshot),
-            "an announced change is what the members were told"
-        );
         announce
     }
 }

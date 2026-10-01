@@ -181,14 +181,17 @@ async fn send_hints(
             }
         }
     });
+    let started = std::time::Instant::now();
     let warnings: Vec<String> = futures::future::join_all(sends)
         .await
         .into_iter()
         .flatten()
         .collect();
+    // The sends run at once, each bounded to 500 ms: one after another,
+    // a swarm's members would hold the watch for seconds.
     debug_assert!(
-        warnings.len() <= recipients.len(),
-        "at most one warning a recipient"
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "the hints are sent concurrently"
     );
     warnings
 }
@@ -312,17 +315,20 @@ pub fn supervise(
     if STARTED.set(()).is_err() {
         return;
     }
+    // The latch exists before the watch starts (review round 2): a local
+    // change made from here on nudges it.
+    let _latch = context.board.watch_nudges(&context.database());
     // The watcher's own thread, never an async worker: it blocks on the
     // board's latch between ticks and drives a runtime of its own only for
     // its settlement, so its board calls are marked as blocking work (#2278).
     std::thread::spawn(super::call_work::blocking(move || {
-        let snapshot = watch::watch_until_terminal(
+        let mut watched = watch::watch_until_terminal(
             &context,
             snapshot,
             &participation,
             &mut Supervisor(&context),
-        )
-        .snapshot;
+        );
+        let snapshot = watched.snapshot.clone();
         // The polls the watch still holds are written before it settles.
         context.flush_watch_polls();
         match tokio::runtime::Builder::new_current_thread()
@@ -339,9 +345,15 @@ pub fn supervise(
                     tracing::error!(%error, "swarm terminal settlement failed");
                 }
                 context.summarize_settled(&snapshot);
+                // Settled first (review round 2, L2), then a change this
+                // process made whose nudge came late is pushed.
+                watch::announce_late(&context, &mut watched, &mut Supervisor(&context));
                 watch_until_ended(&context, &runtime);
             }
-            Err(error) => tracing::error!(%error, "swarm settlement runtime failed"),
+            Err(error) => {
+                tracing::error!(%error, "swarm settlement runtime failed");
+                watch::announce_late(&context, &mut watched, &mut Supervisor(&context));
+            }
         }
     }));
 }
