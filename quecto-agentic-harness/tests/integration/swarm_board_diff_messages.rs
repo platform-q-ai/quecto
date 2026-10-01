@@ -250,6 +250,23 @@ fn harness_self_test_checks_ack_and_withdraw_answers() {
     assert_changed_answer_refused(difference, "changed is no bool");
 }
 
+/// #2394 final review L-1: `changed` must say whether the step changed
+/// the message's status, read before and after it. A real change answered
+/// `changed: false` (ack of message 2 at `NOW + 19`, the first withdrawal
+/// at `NOW + 4`) is a difference.
+#[test]
+fn harness_self_test_checks_the_changed_flag_of_ack_and_withdraw() {
+    for (steps, method, offset) in [(revisions(), "ack", 19.0), (withdrawn(), "withdraw", 4.0)] {
+        let difference = harness_self_test_tamper(&steps, method, offset, |answer| {
+            answer.insert("changed".to_owned(), json!(false));
+        });
+        assert_changed_answer_refused(
+            difference,
+            "changed is not whether the step changed the status: \"accepted\" before",
+        );
+    }
+}
+
 /// Python binds `include_consumed` into `(status='accepted' OR ?)`
 /// untyped: SQLite's truth of the bound value decides, a NULL keeps only
 /// accepted messages, and a list or an object is refused naming

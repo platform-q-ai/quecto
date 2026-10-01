@@ -159,3 +159,32 @@ fn only_the_coordinators_pass_is_accepted_and_a_repeat_is_a_no_op() {
         ]
     );
 }
+
+/// The criterion is answered as the evidence row stores it (#2394 final
+/// review N-2): the in-memory board, as SQLite's TEXT column, stores a
+/// criterion configured as the integer 1 (a run edited outside the board)
+/// as the text "1".
+#[test]
+fn the_criterion_is_answered_as_the_row_stores_it() {
+    let mut state = board_state();
+    state.run.as_mut().unwrap().contract.criteria =
+        json!([{"id": 1, "kind": "command", "description": "pass"}]);
+    let board = MemoryBoard::with(state);
+    let recorded = service(&board)
+        .execute(evidence("parent", json!(1), "command", json!(true)))
+        .unwrap();
+    assert_eq!(recorded.criterion, json!("1"));
+    let again = service(&board)
+        .execute(evidence("parent", json!(1), "command", json!(true)))
+        .unwrap();
+    assert_eq!(
+        again.transition,
+        EvidenceTransition::Unchanged,
+        "the stored row is found"
+    );
+    assert_eq!(
+        board.snapshot().evidence.len(),
+        1,
+        "one row per criterion and actor"
+    );
+}
