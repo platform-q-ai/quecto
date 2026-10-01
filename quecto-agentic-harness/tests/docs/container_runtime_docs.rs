@@ -517,19 +517,3 @@ fn the_container_runtime_embed_examples_name_the_shipped_bundle_version() {
         );
     }
 }
-
-/// #2403 review M4: the Docker adapter hands a container member the
-/// launching agent's context mode, at create and at every join.
-#[test]
-fn the_docker_adapter_forwards_the_inherited_context_mode() {
-    for script in [
-        "scripts/container-runtime/docker/create.sh",
-        "scripts/container-runtime/docker/exec.sh",
-    ] {
-        let text = read_workspace_file(script);
-        assert!(
-            text.contains(r#"-e "QUECTO_INHERITED_CONTEXT_MODE=$QUECTO_INHERITED_CONTEXT_MODE""#),
-            "{script} forwards QUECTO_INHERITED_CONTEXT_MODE"
-        );
-    }
-}

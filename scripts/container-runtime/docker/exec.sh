@@ -84,10 +84,6 @@ workdir="$workspace_path/repo"
 [ -d "$workdir" ] || workdir="$workspace_path"
 
 envs=(-e "HOME=$HOME" -e "QUECTO_SWARM_CONTAINER=isolated-pid-v1" -e "QUECTO_SWARM_HOST_PID_NS=$(readlink /proc/self/ns/pid)" -e "QUECTO_SWARM_CHECKOUT=$workdir" -e "QUECTO_SWARM_BOOTSTRAP=0")
-# The launching agent's context mode (#2403): the member adopts it unless
-# its own configuration sets one.
-[ -n "${QUECTO_INHERITED_CONTEXT_MODE:-}" ] \
-  && envs+=(-e "QUECTO_INHERITED_CONTEXT_MODE=$QUECTO_INHERITED_CONTEXT_MODE")
 # Joiners get the same environment contract as the creator: git identity +
 # gh credential helper as non-secret GIT_CONFIG_* entries, and the 0600
 # provider-env file (API keys + GH token) sourced by a bootstrap so secrets

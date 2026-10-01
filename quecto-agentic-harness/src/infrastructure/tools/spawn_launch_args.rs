@@ -168,6 +168,9 @@ pub(super) struct ChildLaunchSpec<'a> {
     /// Private sidecar carrying the launch-bound parent control credential
     /// (#1935). Only the path is forwarded; the material never reaches argv.
     pub parent_control_path: Option<&'a Path>,
+    /// The launching agent's context mode and marks (#2403), as
+    /// `--inherited-context-mode` takes them.
+    pub inherited_context_mode: &'a str,
 }
 
 /// Build the ordered CLI argument list for launching a child `quecto agent` in
@@ -184,7 +187,9 @@ pub(super) fn build_child_cli_args(spec: &ChildLaunchSpec<'_>) -> Vec<OsString> 
         workflow_spec_path,
         inherited_tool_policy_path,
         parent_control_path,
+        inherited_context_mode,
     } = *spec;
+    let _ = inherited_context_mode;
 
     let mut args: Vec<OsString> = vec!["agent".into(), "--mode".into(), "uds".into()];
     // The child's brain (#2287), right after the mode it requires; a

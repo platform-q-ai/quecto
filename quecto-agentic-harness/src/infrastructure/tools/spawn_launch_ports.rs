@@ -175,6 +175,8 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
             config.config_path.as_ref(),
             self.tool.parent_config_path.as_ref(),
         );
+        let inherited_context_mode =
+            crate::infrastructure::config::context_mode::inherited_value(self.tool.context_mode);
         Ok(super::spawn_launch_args::build_child_cli_args(
             &super::spawn_launch_args::ChildLaunchSpec {
                 session_name: child_session_key(agent_uuid),
@@ -190,6 +192,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 workflow_spec_path: workflow_spec_path.as_deref(),
                 inherited_tool_policy_path: inherited_tool_policy_path.as_deref(),
                 parent_control_path: Some(&parent_control_path),
+                inherited_context_mode: &inherited_context_mode,
             },
         ))
     }
@@ -247,7 +250,6 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     cli_args: &launch_args,
                     base_dir: &self.tool.base_dir,
                     admission_dir: admission_dir.as_deref(),
-                    context_mode: self.tool.context_mode,
                 },
                 &self.tool.environment_registry,
                 self.tool.container_config_selection.as_deref(),

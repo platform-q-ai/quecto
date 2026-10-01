@@ -28,6 +28,7 @@ pub(super) fn load(
     {
         return Err(missing);
     }
+    let _inherited = flags.inherited_context_mode.as_deref();
     let Some(build_configuration) = flags.configuration else {
         return Err("agent: configuration capability not composed".to_owned());
     };

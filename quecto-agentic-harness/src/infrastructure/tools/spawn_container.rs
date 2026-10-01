@@ -48,8 +48,6 @@ pub(super) struct ChildCommand<'a> {
     /// is admission-enabled (#1679 P3). Script-managed runtimes must expose
     /// it to the child by path and report the capability, or the launch fails.
     pub admission_dir: Option<&'a Path>,
-    /// The launching agent's context mode, handed to the child (#2403).
-    pub context_mode: crate::domain::conversation::ContextMode,
 }
 
 /// The only container admission capability P3 supports: the authority's
@@ -189,7 +187,7 @@ async fn join_script_managed_child(
     let mut cmd = script_command(&record.retained_exec_argv, child.binary, child.cli_args);
     cmd.env("QUECTO_CONTAINER_CONFIG", &record.script_name);
     cmd.env("QUECTO_CONTAINER_ENVIRONMENT_ID", &record.environment_id);
-    apply_common_child_env(&mut cmd, child);
+    apply_common_child_env(&mut cmd, child.base_dir);
     apply_admission_env(&mut cmd, child.admission_dir);
     let output = run_script(cmd, "exec").await?;
     let endpoint = parse_exec_result(&output.stdout, child.admission_dir)?;
@@ -299,7 +297,7 @@ async fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, Do
         reservation.configure(&mut cmd);
     }
     cmd.args(child.cli_args);
-    apply_common_child_env(&mut cmd, child);
+    apply_common_child_env(&mut cmd, child.base_dir);
     // The child's stderr is drained for its whole life and its tail kept,
     // so a startup refusal reaches the launcher (#1937 review).
     cmd.stderr(std::process::Stdio::piped());
@@ -435,7 +433,7 @@ async fn spawn_script_managed_child(
     let mut cmd = script_command(&container.create, child.binary, child.cli_args);
     cmd.env("QUECTO_CONTAINER_CONFIG", config_name);
     cmd.env("QUECTO_CONTAINER_ENVIRONMENT_REF", &environment_ref);
-    apply_common_child_env(&mut cmd, child);
+    apply_common_child_env(&mut cmd, child.base_dir);
     apply_admission_env(&mut cmd, child.admission_dir);
     // A spawn dropped mid-create stops its create (#2173): the script's
     // group gets SIGTERM, its cue to remove what it made. A create that
@@ -615,14 +613,10 @@ fn apply_admission_env(cmd: &mut tokio::process::Command, admission_dir: Option<
 /// The environment every child and script gets. Streams are the caller's
 /// decision: a local child's stderr is drained for its whole life, a
 /// script's is kept as a bounded tail for the failure report.
-fn apply_common_child_env(cmd: &mut tokio::process::Command, child: &ChildCommand<'_>) {
-    if !child.base_dir.as_os_str().is_empty() {
-        cmd.env("QUECTO_BASE_DIR", child.base_dir);
+fn apply_common_child_env(cmd: &mut tokio::process::Command, base_dir: &Path) {
+    if !base_dir.as_os_str().is_empty() {
+        cmd.env("QUECTO_BASE_DIR", base_dir);
     }
-    cmd.env(
-        crate::infrastructure::config::context_mode::INHERITED_CONTEXT_MODE,
-        crate::infrastructure::config::context_mode::inherited_value(child.context_mode),
-    );
     cmd.stdout(std::process::Stdio::null());
 }
 

@@ -82,6 +82,7 @@ pub(super) fn test_flags(
     sys: Option<&str>,
 ) -> AgentFlags {
     AgentFlags {
+        inherited_context_mode: None,
         session_name: session.map(String::from),
         no_session: false,
         message: msg.map(String::from),

@@ -79,7 +79,6 @@ async fn a_new_container_needs_a_composed_selection_but_a_local_child_does_not()
             cli_args: &[],
             base_dir: dir.path(),
             admission_dir: None,
-            context_mode: crate::domain::conversation::ContextMode::Default,
         },
         &EnvironmentRegistry::new(),
         None,
@@ -102,7 +101,6 @@ async fn a_new_container_needs_a_composed_selection_but_a_local_child_does_not()
                 cli_args: &[],
                 base_dir: dir.path(),
                 admission_dir: None,
-                context_mode: crate::domain::conversation::ContextMode::Default,
             },
             &EnvironmentRegistry::new(),
             None,
@@ -125,7 +123,6 @@ async fn local_subagent_inherits_parent_process_group() {
         cli_args: &cli_args,
         base_dir: dir.path(),
         admission_dir: None,
-        context_mode: crate::domain::conversation::ContextMode::Default,
     })
     .await
     .expect("local child should spawn");
@@ -168,7 +165,6 @@ async fn selection_errors_surface_as_tool_errors_without_a_launch() {
         cli_args: &[],
         base_dir: dir.path(),
         admission_dir: None,
-        context_mode: crate::domain::conversation::ContextMode::Default,
     };
     let err = spawn_prepared_child(
         &without_config,
@@ -261,7 +257,6 @@ async fn local_child_and_container_errors_cover_spawn_paths() {
                 cli_args: &[],
                 base_dir: Path::new("/tmp"),
                 admission_dir: None,
-                context_mode: crate::domain::conversation::ContextMode::Default,
             },
             &EnvironmentRegistry::new(),
             None,
@@ -285,7 +280,6 @@ async fn local_child_and_container_errors_cover_spawn_paths() {
                 cli_args: &[],
                 base_dir: Path::new("/tmp"),
                 admission_dir: None,
-                context_mode: crate::domain::conversation::ContextMode::Default,
             },
             &EnvironmentRegistry::new(),
             None,
@@ -306,7 +300,6 @@ async fn local_child_and_container_errors_cover_spawn_paths() {
                 cli_args: &[],
                 base_dir: Path::new("/tmp"),
                 admission_dir: None,
-                context_mode: crate::domain::conversation::ContextMode::Default,
             },
             &EnvironmentRegistry::new(),
             None,
@@ -346,7 +339,6 @@ async fn script_managed_spawn_error_uses_config_and_selected_script() {
             cli_args: &[],
             base_dir: dir.path(),
             admission_dir: None,
-            context_mode: crate::domain::conversation::ContextMode::Default,
         },
         &EnvironmentRegistry::new(),
         Some(&selection),
@@ -364,19 +356,7 @@ async fn script_managed_spawn_error_uses_config_and_selected_script() {
 fn create_command_and_common_env_are_constructed_without_shell() {
     let create = vec!["echo".to_string(), "prefix".to_string()];
     let mut cmd = script_command(&create, Path::new("/bin/quecto"), &["--mode".into()]);
-    apply_common_child_env(
-        &mut cmd,
-        &ChildCommand {
-            swarm_context: None,
-            swarm_member: false,
-            supervisor: &test_supervisor(),
-            binary: Path::new("/bin/quecto"),
-            cli_args: &[],
-            base_dir: Path::new("/tmp/base"),
-            admission_dir: None,
-            context_mode: crate::domain::conversation::ContextMode::Default,
-        },
-    );
+    apply_common_child_env(&mut cmd, Path::new("/tmp/base"));
     let std_cmd = cmd.as_std();
     assert_eq!(std_cmd.get_program(), "echo");
     let args: Vec<_> = std_cmd
@@ -432,7 +412,6 @@ async fn script_env_includes_optional_selection_values() {
             cli_args: &[],
             base_dir: dir.path(),
             admission_dir: None,
-            context_mode: crate::domain::conversation::ContextMode::Default,
         },
         &registry,
         Some(&selection),
@@ -466,7 +445,6 @@ async fn local_child_success_has_no_cleanup_plan() {
             cli_args: &[],
             base_dir: Path::new("/tmp"),
             admission_dir: None,
-            context_mode: crate::domain::conversation::ContextMode::Default,
         },
         &EnvironmentRegistry::new(),
         None,
@@ -541,7 +519,6 @@ async fn a_named_launch_over_a_withheld_overlay_carries_the_diagnostic() {
         cli_args: &[],
         base_dir: &base,
         admission_dir: None,
-        context_mode: crate::domain::conversation::ContextMode::Default,
     };
     let registry = EnvironmentRegistry::new();
     // The implicit default is refused: the overlay's default is unknown.
@@ -622,7 +599,6 @@ async fn a_nested_container_is_refused_inside_a_container_by_the_real_condition(
                     cli_args: &[],
                     base_dir: &dir,
                     admission_dir: None,
-                    context_mode: crate::domain::conversation::ContextMode::Default,
                 },
                 &EnvironmentRegistry::new(),
                 Some(&test_selection(&dir)),
@@ -657,38 +633,79 @@ async fn a_nested_container_is_refused_inside_a_container_by_the_real_condition(
     }
 }
 
-/// #2403 review M4: every child, local or in a container, is handed the
-/// launching agent's context mode and marks.
-#[test]
-fn every_child_is_handed_the_launching_agents_context_mode() {
-    use crate::domain::conversation::ContextMode;
-    use crate::domain::conversation::watermark::Watermark;
+/// #2403 final review M3: the context mode the spawn hands a child (a CLI
+/// argument) reaches a local child's argv and a container child's, through
+/// the runtime argv the spawn builds, with no runtime script involved.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_local_and_a_container_child_both_receive_the_inherited_context_mode() {
+    use crate::infrastructure::tools::spawn_launch_args::{ChildLaunchSpec, build_child_cli_args};
     let dir = TempDir::new().unwrap();
-    let supervisor = test_supervisor();
-    let handed = |mode: ContextMode| {
-        let mut cmd = tokio::process::Command::new("true");
-        apply_common_child_env(
-            &mut cmd,
-            &ChildCommand {
-                swarm_context: None,
-                swarm_member: false,
-                supervisor: &supervisor,
-                binary: Path::new("true"),
-                cli_args: &[],
-                base_dir: dir.path(),
-                admission_dir: None,
-                context_mode: mode,
-            },
-        );
-        cmd.as_std()
-            .get_envs()
-            .find(|(key, _)| *key == "QUECTO_INHERITED_CONTEXT_MODE")
-            .and_then(|(_, value)| value.map(|v| v.to_string_lossy().into_owned()))
+    let config = base_config(ContainerSelection::Local);
+    let args = build_child_cli_args(&ChildLaunchSpec {
+        session_name: "w1",
+        socket_path: Path::new("/run/w1.sock"),
+        config: &config,
+        effective_config: None,
+        parent_id: None,
+        workflow_spec_path: None,
+        inherited_tool_policy_path: None,
+        parent_control_path: None,
+        inherited_context_mode: "watermark:256000:70000",
+    });
+    let handed = |argv: &[String]| {
+        argv.windows(2).any(|pair| {
+            pair[0] == "--inherited-context-mode" && pair[1] == "watermark:256000:70000"
+        })
     };
-    let marks = Watermark::new(120_000, 40_000).unwrap();
-    assert_eq!(
-        handed(ContextMode::Watermark(marks)).as_deref(),
-        Some("watermark:120000:40000")
+    // A local child: the argv it actually ran with.
+    let seen = dir.path().join("argv");
+    let child = dir.path().join("child.sh");
+    std::fs::write(
+        &child,
+        format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n", seen.display()),
+    )
+    .unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&child, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let mut prepared = spawn_local_child(&ChildCommand {
+        swarm_context: None,
+        swarm_member: false,
+        supervisor: &test_supervisor(),
+        binary: &child,
+        cli_args: &args,
+        base_dir: dir.path(),
+        admission_dir: None,
+    })
+    .await
+    .expect("local child should spawn");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !seen.exists() && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    prepared.rollback_once().await;
+    let local: Vec<String> = std::fs::read_to_string(&seen)
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert!(handed(&local), "local child argv: {local:?}");
+    // A container child: the runtime argv the spawn builds for the script.
+    let cmd = script_command(&["exec.sh".to_string()], Path::new("/bin/quecto"), &args);
+    let container: Vec<String> = cmd
+        .as_std()
+        .get_args()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
+    let after = container
+        .iter()
+        .position(|arg| arg == "--")
+        .expect("the -- separator");
+    assert_eq!(container[after + 1], "/bin/quecto");
+    assert!(
+        handed(&container[after + 2..]),
+        "container child argv: {container:?}"
     );
-    assert_eq!(handed(ContextMode::Default).as_deref(), Some("default"));
 }

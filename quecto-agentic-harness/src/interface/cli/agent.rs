@@ -87,11 +87,12 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
                 message = Some(val.to_string());
                 i += 2;
             }
-            f @ ("--system" | "--model") => {
+            f @ ("--system" | "--model" | "--parent-id") => {
                 let msg = format!("{f} requires a value");
                 let val = next_arg(args, i, &msg, stderr)?;
                 *(match f {
                     "--system" => &mut system_prompt,
+                    "--parent-id" => &mut parent_id,
                     _ => &mut model_override,
                 }) = Some(val.to_string());
                 i += 2;
@@ -139,11 +140,6 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
                 workflow_spec_path = Some(std::path::PathBuf::from(val));
                 i += 2;
             }
-            "--parent-id" => {
-                let val = next_arg(args, i, "--parent-id requires a value", stderr)?;
-                parent_id = Some(val.to_string());
-                i += 2;
-            }
             f @ ("--admission-context" | "--parent-control") => {
                 let msg = format!("{f} requires a path");
                 let val = next_arg(args, i, &msg, stderr)?;
@@ -173,7 +169,9 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
             }
         }
     }
+    let inherited_context_mode = None;
     let mut flags = AgentFlags {
+        inherited_context_mode,
         session_name,
         no_session,
         message,

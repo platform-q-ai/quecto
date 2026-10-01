@@ -24,6 +24,7 @@ fn test_build_agent_from_config_clamps_effective_max_tokens_to_registry_cap() {
     )
     .unwrap();
     let flags = AgentFlags {
+        inherited_context_mode: None,
         session_name: None,
         no_session: false,
         message: Some("hi".into()),

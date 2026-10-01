@@ -9,6 +9,7 @@ use super::*;
 
 fn flags_for_wiring_test() -> AgentFlags {
     AgentFlags {
+        inherited_context_mode: None,
         session_name: None,
         no_session: false,
         message: Some("hi".into()),

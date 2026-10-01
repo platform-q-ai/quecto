@@ -227,6 +227,30 @@ async fn the_ceiling_lowers_both_marks() {
     }
 }
 
+/// Final review L3: where no cut can bring the request under the ceiling
+/// (here the pinned brief alone is over it), watermark mode falls back to
+/// the default ladder for that request: it never sends over the ceiling
+/// where the default mode would not.
+#[tokio::test]
+async fn watermark_mode_never_sends_over_the_ceiling_where_the_default_mode_would_not() {
+    let marks = ContextMode::Watermark(Watermark::new(100_000, 30_000).unwrap());
+    for mode in [Some(marks), None] {
+        let mut rig = Rig::new(None);
+        rig.agent = agent_under(rig.store.clone(), mode, 20_000, None);
+        let mut answer = Message::assistant(text("the first answer", 100), vec![]);
+        answer.turn = Some(1);
+        let mut messages = vec![
+            Message::system(text("system", 300)),
+            prompt(text("a brief over the ceiling", 30_000)),
+            answer,
+            prompt(text("latest", 100)),
+        ];
+        rig.exchange(&mut messages, 300).await;
+        let sent = rig.pass(&mut messages).await;
+        assert!(sent <= 20_000, "{mode:?}: {sent} over the 20k ceiling");
+    }
+}
+
 /// No mid-history edit: below H nothing in the conversation changes in
 /// watermark mode, where the same dials collapse earlier results and
 /// messages in the default mode.

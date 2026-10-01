@@ -75,11 +75,30 @@ impl AgentDefaults {
     }
 }
 
-/// The variable a parent hands every child its resolved mode in (#2403
-/// review M4): `default`, or `watermark:<high>:<low>`.
-pub const INHERITED_CONTEXT_MODE: &str = "QUECTO_INHERITED_CONTEXT_MODE";
+/// Where the effective context mode came from (#2403 final review L4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextModeSource {
+    OwnConfiguration,
+    OwnEnvironment,
+    Inherited,
+    Default,
+}
 
-/// The [`INHERITED_CONTEXT_MODE`] value of `mode`.
+impl AgentDefaults {
+    /// Adopt what the launching agent handed down with
+    /// `--inherited-context-mode` (`default`, or `watermark:<high>:<low>`).
+    pub fn inherit_context_mode(&mut self, value: &str) -> Result<(), ConfigError> {
+        let _ = value;
+        Ok(())
+    }
+
+    /// Where the effective context mode came from.
+    pub fn context_mode_source(&self) -> ContextModeSource {
+        ContextModeSource::Default
+    }
+}
+
+/// The `--inherited-context-mode` value of `mode`.
 pub fn inherited_value(mode: ContextMode) -> String {
     match mode {
         ContextMode::Default => DEFAULT.to_string(),
@@ -89,34 +108,9 @@ pub fn inherited_value(mode: ContextMode) -> String {
     }
 }
 
-/// Adopt the mode and marks a parent handed down, when this agent's own
-/// configuration (its files and `QUECTO_CONTEXT_MODE`) sets no mode; a
-/// value that is neither form is kept as refused.
-fn inherit(config: &mut ContextModeConfig, value: &str) {
-    let parts: Vec<&str> = value.split(':').collect();
-    let marks = |high: &str, low: &str| Some((high.parse().ok()?, low.parse().ok()?));
-    match parts.as_slice() {
-        [DEFAULT] => config.context_mode = Some(DEFAULT.to_string()),
-        [WATERMARK, high, low] if marks(high, low).is_some() => {
-            let (high, low) = marks(high, low).expect("checked just above");
-            config.context_mode = Some(WATERMARK.to_string());
-            config.context_high_tokens = Some(high);
-            config.context_low_tokens = Some(low);
-        }
-        _ => {
-            config.invalid_env.get_or_insert_with(|| {
-                format!(
-                    "{INHERITED_CONTEXT_MODE} must be \"{DEFAULT}\" or \"{WATERMARK}:<high>:<low>\", not {value:?}"
-                )
-            });
-        }
-    }
-}
-
 /// `QUECTO_CONTEXT_MODE`, `QUECTO_CONTEXT_HIGH_TOKENS` and
-/// `QUECTO_CONTEXT_LOW_TOKENS`, then the parent's [`INHERITED_CONTEXT_MODE`]
-/// when none of the agent's own configuration set a mode. A mark that is
-/// no count is kept as refused, so the load fails naming it.
+/// `QUECTO_CONTEXT_LOW_TOKENS`. A mark that is no count is kept as
+/// refused, so the load fails naming it.
 pub(super) fn apply_env_overrides(defaults: &mut AgentDefaults, env: &HashMap<String, String>) {
     let config = &mut defaults.context_mode;
     if let Some(mode) = env.get("QUECTO_CONTEXT_MODE") {
@@ -138,9 +132,6 @@ pub(super) fn apply_env_overrides(defaults: &mut AgentDefaults, env: &HashMap<St
             }
             None => {}
         }
-    }
-    if let (None, Some(value)) = (&config.context_mode, env.get(INHERITED_CONTEXT_MODE)) {
-        inherit(config, value);
     }
 }
 

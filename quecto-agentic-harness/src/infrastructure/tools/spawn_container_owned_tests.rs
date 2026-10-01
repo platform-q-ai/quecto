@@ -71,7 +71,6 @@ async fn script_managed_child_success_sets_environment_ref_and_cleanup() {
             cli_args: &[],
             base_dir: dir.path(),
             admission_dir: None,
-            context_mode: crate::domain::conversation::ContextMode::Default,
         },
         &registry,
         Some(&selection),
@@ -174,7 +173,6 @@ async fn join_fails_for_unknown_target_and_missing_retained_exec() {
         cli_args: &[],
         base_dir: Path::new("/tmp"),
         admission_dir: None,
-        context_mode: crate::domain::conversation::ContextMode::Default,
     };
     // Unknown ref: no exec is attempted.
     let err = join_script_managed_child(
@@ -227,7 +225,6 @@ async fn join_refuses_an_altered_standard_exec_script_before_running_it() {
         cli_args: &[],
         base_dir: Path::new("/tmp"),
         admission_dir: None,
-        context_mode: crate::domain::conversation::ContextMode::Default,
     };
     let err = join_script_managed_child(
         &child,
@@ -277,7 +274,6 @@ async fn explicit_selection_also_fails_at_load_when_no_default_is_labeled() {
             cli_args: &[],
             base_dir: dir.path(),
             admission_dir: None,
-            context_mode: crate::domain::conversation::ContextMode::Default,
         },
         &EnvironmentRegistry::new(),
         Some(&selection),

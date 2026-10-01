@@ -164,62 +164,108 @@ fn the_environment_overrides_the_file_for_each_key() {
     );
 }
 
-const INHERITED: &str = "QUECTO_INHERITED_CONTEXT_MODE";
-
-/// Review M4: a member launched by a parent in a context mode takes that
-/// mode and its marks, unless its own configuration sets a mode.
-#[test]
-fn a_member_inherits_the_parents_mode_unless_its_own_configuration_sets_one() {
-    let inherited = load_env(&[(INHERITED, "watermark:100000:30000")]).unwrap();
-    assert_eq!(
-        inherited.agents.defaults.context_mode(),
-        watermark(100_000, 30_000)
-    );
-    let own_file = {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.json");
-        std::fs::write(
-            &path,
-            r#"{"agents":{"defaults":{"context_mode":"default"}}}"#,
-        )
-        .unwrap();
-        Config::load_with_env(
-            path.to_str().unwrap(),
-            &env(&[(INHERITED, "watermark:100000:30000")]),
-        )
-        .unwrap()
-    };
-    assert_eq!(
-        own_file.agents.defaults.context_mode(),
-        ContextMode::Default
-    );
-    let own_env = load_env(&[
-        (INHERITED, "watermark:100000:30000"),
-        ("QUECTO_CONTEXT_MODE", "watermark"),
-    ])
-    .unwrap();
-    assert_eq!(
-        own_env.agents.defaults.context_mode(),
-        watermark(256_000, 70_000),
-        "the member's own mode keeps its own marks"
-    );
-    let parent_default = load_env(&[(INHERITED, "default")]).unwrap();
-    assert_eq!(
-        parent_default.agents.defaults.context_mode(),
-        ContextMode::Default
-    );
-    let error = load_env(&[(INHERITED, "watermark:lots")])
-        .expect_err("refused")
-        .to_string();
-    assert!(error.contains(INHERITED), "{error}");
+/// A member's configuration, loaded from `defaults` and `pairs`, then
+/// given what its parent handed down with `--inherited-context-mode`.
+fn member(defaults: &str, pairs: &[(&str, &str)], inherited: &str) -> Result<Config, ConfigError> {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.json");
+    std::fs::write(&path, format!(r#"{{"agents":{{"defaults":{defaults}}}}}"#)).unwrap();
+    let mut config = Config::load_with_env(path.to_str().unwrap(), &env(pairs))?;
+    config.agents.defaults.inherit_context_mode(inherited)?;
+    Ok(config)
 }
 
-/// The value a parent hands a member round-trips to the same mode.
+const PARENT: &str = "watermark:256000:70000";
+
+/// Final review M1/M3: for each of the mode, the high and the low mark, the
+/// member's own configuration or environment wins, then what the parent
+/// handed down, then the default.
 #[test]
-fn the_inherited_value_round_trips() {
+fn a_member_inherits_only_what_its_own_configuration_leaves_unset() {
+    let mode = |config: Config| config.agents.defaults.context_mode();
+    assert_eq!(
+        mode(member("{}", &[], PARENT).unwrap()),
+        watermark(256_000, 70_000)
+    );
+    assert_eq!(
+        mode(
+            member(
+                r#"{"context_high_tokens":300000,"context_low_tokens":100000}"#,
+                &[],
+                PARENT
+            )
+            .unwrap()
+        ),
+        watermark(300_000, 100_000),
+        "own marks win"
+    );
+    assert_eq!(
+        mode(member("{}", &[("QUECTO_CONTEXT_HIGH_TOKENS", "300000")], PARENT).unwrap()),
+        watermark(300_000, 70_000),
+        "an own env mark wins, the other is inherited"
+    );
+    assert_eq!(
+        mode(member(r#"{"context_mode":"default"}"#, &[], PARENT).unwrap()),
+        ContextMode::Default,
+        "an own mode wins"
+    );
+    assert_eq!(
+        mode(member("{}", &[("QUECTO_CONTEXT_MODE", "default")], PARENT).unwrap()),
+        ContextMode::Default,
+        "an own env mode wins"
+    );
+    assert_eq!(
+        mode(
+            member(
+                r#"{"context_mode":"watermark"}"#,
+                &[],
+                "watermark:120000:40000"
+            )
+            .unwrap()
+        ),
+        watermark(120_000, 40_000),
+        "an own mode without marks takes the parent's marks"
+    );
+    assert_eq!(
+        mode(member("{}", &[], "default").unwrap()),
+        ContextMode::Default
+    );
+    let error = member("{}", &[], "watermark:lots")
+        .expect_err("refused")
+        .to_string();
+    assert!(error.contains("--inherited-context-mode"), "{error}");
+    let error = member("{}", &[], "watermark:100000:95000")
+        .expect_err("refused")
+        .to_string();
+    assert!(error.contains("too close"), "{error}");
+}
+
+/// The value a parent hands a member round-trips to the same mode, and
+/// the environment carries none (the CLI argument is the only channel).
+#[test]
+fn the_inherited_value_round_trips_and_no_environment_carries_it() {
     use super::inherited_value;
     for mode in [ContextMode::Default, watermark(120_000, 40_000)] {
-        let config = load_env(&[(INHERITED, &inherited_value(mode))]).unwrap();
+        let config = member("{}", &[], &inherited_value(mode)).unwrap();
         assert_eq!(config.agents.defaults.context_mode(), mode);
     }
+    let config = load_env(&[("QUECTO_INHERITED_CONTEXT_MODE", PARENT)]).unwrap();
+    assert_eq!(config.agents.defaults.context_mode(), ContextMode::Default);
+}
+
+/// Final review L4: where the effective mode came from.
+#[test]
+fn the_mode_names_where_it_came_from() {
+    use super::ContextModeSource as S;
+    let source = |config: Config| config.agents.defaults.context_mode_source();
+    assert_eq!(source(member("{}", &[], PARENT).unwrap()), S::Inherited);
+    assert_eq!(
+        source(member(r#"{"context_mode":"watermark"}"#, &[], PARENT).unwrap()),
+        S::OwnConfiguration
+    );
+    assert_eq!(
+        source(member("{}", &[("QUECTO_CONTEXT_MODE", "watermark")], PARENT).unwrap()),
+        S::OwnEnvironment
+    );
+    assert_eq!(source(load_env(&[]).unwrap()), S::Default);
 }

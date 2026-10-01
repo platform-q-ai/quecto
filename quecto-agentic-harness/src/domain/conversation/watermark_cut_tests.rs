@@ -324,3 +324,52 @@ fn forgetting_retention_rewrites_only_a_stub_and_drops_every_spill_id() {
     assert_eq!((kept.id(), kept.content.as_str()), (id, "a prompt"));
     assert_eq!(kept.spill_id, None);
 }
+
+/// The reported view of `messages` an unread read selects from.
+fn reported(messages: &[Message]) -> Vec<crate::domain::unread_report::ReportedMessage> {
+    messages
+        .iter()
+        .map(|m| crate::domain::unread_report::ReportedMessage {
+            ordinal: m.ordinal,
+            substantive_assistant: crate::domain::turn_origin::is_substantive_reply(m),
+            origin: m.turn_origin,
+        })
+        .collect()
+}
+
+/// #2403 final review L2: the stub takes the ordinal of the newest message
+/// it replaces, never a new one: a supervisor that read everything before
+/// the cut is shown nothing new, and where the cut archived messages after
+/// the head, ordinals stay strictly increasing in transcript order.
+#[test]
+fn the_stub_takes_the_ordinal_of_the_newest_message_it_replaces() {
+    use crate::domain::unread_report::{UnreadSelection, select_unread};
+    let mut messages = session();
+    for n in 1..6 {
+        exchange(&mut messages, &format!("now-{n}"), 2_000);
+    }
+    crate::domain::session::assign_missing_ordinals(&mut messages);
+    let read = messages.iter().filter_map(|m| m.ordinal).max().unwrap();
+    let cut = plan(&messages, 20_000, 6_000);
+    let newest_archived = archived(&messages, &cut)
+        .iter()
+        .filter_map(|m| m.ordinal)
+        .max();
+    apply_cut(&mut messages, &cut, archive_stub(9, Some("archive")));
+    let stub = messages
+        .iter()
+        .find(|m| m.user_kind == UserKind::ArchiveStub)
+        .unwrap();
+    assert_eq!(stub.ordinal, newest_archived);
+    let ordinals: Vec<u64> = messages.iter().filter_map(|m| m.ordinal).collect();
+    assert_eq!(ordinals.len(), messages.len(), "every message is numbered");
+    assert!(
+        ordinals.windows(2).all(|w| w[0] < w[1]),
+        "strictly increasing: {ordinals:?}"
+    );
+    assert_eq!(
+        select_unread(&reported(&messages), read, false),
+        UnreadSelection::Unchanged,
+        "nothing new to a reader who read it all"
+    );
+}

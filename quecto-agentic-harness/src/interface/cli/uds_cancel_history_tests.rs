@@ -1,4 +1,5 @@
 use super::*;
+use crate::domain::conversation::ContextMode;
 use crate::domain::message::{Message, ToolCall};
 
 fn assistant_call(id: &str, name: &str) -> Message {
@@ -14,7 +15,8 @@ fn assistant_call(id: &str, name: &str) -> Message {
 #[test]
 fn finalize_unknown_prompt_is_empty_and_leaves_history_unchanged() {
     let mut messages = vec![Message::user("hello")];
-    let finalized = finalize_interrupted_turn(&mut messages, uuid::Uuid::new_v4());
+    let finalized =
+        finalize_interrupted_turn(&mut messages, uuid::Uuid::new_v4(), ContextMode::Default);
 
     assert!(finalized.retained_tail.is_empty());
     assert!(finalized.recordable_messages().is_empty());
@@ -29,7 +31,7 @@ fn finalize_preserves_answered_tool_call_without_synthetic_result() {
     let tool = Message::tool("call-1", "done");
     let mut messages = vec![prompt, assistant, tool];
 
-    let finalized = finalize_interrupted_turn(&mut messages, prompt_id);
+    let finalized = finalize_interrupted_turn(&mut messages, prompt_id, ContextMode::Default);
 
     assert_eq!(finalized.retained_tail.len(), 2);
     assert!(finalized.synthetic_results.is_empty());
@@ -44,7 +46,7 @@ fn finalize_synthesizes_error_for_unanswered_tool_call_and_drops_chatter() {
     let chatter = Message::assistant("unrelated", vec![]);
     let mut messages = vec![prompt, assistant, chatter];
 
-    let finalized = finalize_interrupted_turn(&mut messages, prompt_id);
+    let finalized = finalize_interrupted_turn(&mut messages, prompt_id, ContextMode::Default);
 
     assert_eq!(finalized.retained_tail.len(), 1);
     assert_eq!(finalized.synthetic_results.len(), 1);
@@ -73,8 +75,38 @@ fn finalize_keeps_a_watermark_stub_in_place() {
         assistant_call("call-1", "bash"),
         Message::tool("call-1", "done"),
     ];
-    finalize_interrupted_turn(&mut messages, prompt_id);
+    finalize_interrupted_turn(&mut messages, prompt_id, ContextMode::Default);
     assert_eq!(messages[1].id(), stub_id, "the stub stays where it was");
     assert_eq!(messages[1].content, stub_text, "byte-identical");
     assert_eq!(messages.len(), 4);
+}
+
+/// #2403 final review L1: in watermark mode an interrupt never edits a
+/// message already sent: the interrupted turn's tool-call messages keep
+/// their text and reasoning, so the next request still extends the last.
+#[test]
+fn finalize_keeps_sent_tool_call_messages_whole_in_watermark_mode() {
+    use crate::domain::conversation::watermark::Watermark;
+    use crate::domain::message::ThinkingBlock;
+    let prompt = crate::domain::turn_origin::prompt("run it".into());
+    let prompt_id = prompt.id();
+    let mut call = assistant_call("call-1", "bash");
+    call.thinking_blocks = vec![ThinkingBlock::Redacted {
+        data: "opaque".into(),
+    }];
+    let mut messages = vec![prompt, call, Message::tool("call-1", "done")];
+    let watermark = ContextMode::Watermark(Watermark::new(20_000, 6_000).unwrap());
+    finalize_interrupted_turn(&mut messages, prompt_id, watermark);
+    assert_eq!(messages[1].content, "partial answer", "the text stays");
+    assert_eq!(messages[1].thinking_blocks.len(), 1, "the reasoning stays");
+    let mut default = vec![
+        crate::domain::turn_origin::prompt("run it".into()),
+        assistant_call("call-1", "bash"),
+    ];
+    let id = default[0].id();
+    finalize_interrupted_turn(&mut default, id, ContextMode::Default);
+    assert_eq!(
+        default[1].content, "",
+        "the default mode clears it as before"
+    );
 }

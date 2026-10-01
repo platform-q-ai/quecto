@@ -34,7 +34,9 @@ impl FinalizedInterruptedTurn {
 pub(super) fn finalize_interrupted_turn(
     messages: &mut Vec<Message>,
     prompt_id: uuid::Uuid,
+    mode: crate::domain::conversation::ContextMode,
 ) -> FinalizedInterruptedTurn {
+    let _ = mode;
     let Some(index) = prompt_position(messages, prompt_id) else {
         return FinalizedInterruptedTurn {
             retained_tail: Vec::new(),
