@@ -151,11 +151,12 @@ impl ModelRegistry {
                 // OpenAI reasoning tiers share these published limits;
                 // sources: developers.openai.com/api/docs/models/gpt-5.6-{sol,terra,luna},
                 // developers.openai.com/api/docs/models/gpt-6-astra, and
-                // developers.openai.com/api/docs/models/gpt-6.1-sol.
+                // developers.openai.com/api/docs/models/gpt-6.1-sol; Codex's
+                // window in `gpt_5_6_window`.
                 if id == "gpt-6.1-sol" {
                     record.input = vec!["text".to_string(), "image".to_string()];
                 }
-                record.context_window = 1_050_000;
+                record.context_window = gpt_5_6_window(provider);
                 record.context_window_explicit = true;
                 record.max_tokens = 128_000;
                 record.max_tokens_explicit = true;
@@ -210,6 +211,11 @@ impl ModelRegistry {
                     cache_read: 0.0,
                     cache_write: 0.0,
                 };
+            }
+            // #2405: OpenAI fixes the input limit at the window less the
+            // output cap; every other built-in shares it with the request.
+            if matches!(provider, "openai-api" | "openai-oauth") {
+                record.prompt_limit = PromptLimit::WindowLessOutputCap;
             }
             r.upsert(record);
         }
@@ -713,7 +719,7 @@ use file_format::RegistryFile;
 
 #[path = "model_registry_openai_tables.rs"]
 mod openai_tables;
-use openai_tables::{gpt_5_6_cost, openai_published_limits};
+use openai_tables::{gpt_5_6_cost, gpt_5_6_window, openai_published_limits};
 
 #[cfg(test)]
 #[path = "model_registry_openai_limits_tests.rs"]

@@ -235,11 +235,24 @@ pub enum PromptLimit {
     WindowLessOutputCap,
 }
 
-/// The percent of a fixed input limit kept free for estimator drift.
+/// The percent of a fixed input limit kept free (#2405 review L5): the
+/// estimate can run under the provider's count between calibrations, and a
+/// prompt over a fixed input limit is refused outright. Codex keeps the
+/// same margin (`effective_context_window_percent: 95` in openai/codex).
 pub const FIXED_INPUT_HEADROOM_PERCENT: usize = 5;
+
+/// The prompt keeps at least `1 / PROMPT_FLOOR_DIVISOR` of a known window
+/// whatever the reply reserves (#2405 review M1).
+const PROMPT_FLOOR_DIVISOR: usize = 2;
 
 /// A model's declared context window and what its reply needs beside the
 /// prompt (#2405): the one rule the context ceiling is computed from.
+///
+/// The prompt's room is the window less the reply's reserve, which depends
+/// on how the provider bounds the prompt ([`PromptLimit`]), and never less
+/// than half the window: a reserve past that is clamped (and reported, see
+/// [`Self::reserve_clamped`]), so the room never falls as the window grows
+/// and never collapses when a declared cap nearly fills the window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ModelWindow {
     /// The declared window in tokens, `None` when the model declares none.
@@ -269,16 +282,50 @@ impl ModelWindow {
 
     /// The room the window leaves the prompt; `None` when unknown.
     pub fn prompt_room(self) -> Option<usize> {
-        let reserve = self.output_cap.unwrap_or(self.requested_output);
-        self.window.map(|window| match window.checked_sub(reserve) {
-            Some(room) if room > 0 => room,
-            Some(_) | None => window,
+        self.window.map(|window| {
+            self.unfloored_room(window)
+                .max(window / PROMPT_FLOOR_DIVISOR)
         })
     }
 
-    /// Whether the reply's reserve would leave the prompt under its floor.
+    /// Whether the reply's reserve would leave the prompt under its floor,
+    /// so the reserve was clamped and the declaration deserves a warning.
     pub fn reserve_clamped(self) -> bool {
-        false
+        self.window
+            .is_some_and(|window| self.unfloored_room(window) < window / PROMPT_FLOOR_DIVISOR)
+    }
+
+    /// Whether the provider fixes the input limit at the window less a
+    /// declared output cap; without a declared cap that limit is unknown,
+    /// and the reply reserves what a request asks for, as elsewhere.
+    fn fixed_input(self) -> bool {
+        self.prompt_limit == PromptLimit::WindowLessOutputCap && self.output_cap.is_some()
+    }
+
+    /// What the reply needs beside the prompt: the declared cap under a
+    /// fixed input limit; elsewhere what a request can ask for, the
+    /// effective limit or, after an output-limit cut-off, up to twice it
+    /// within the cap (#2124).
+    fn reply_reserve(self) -> usize {
+        let requested = self.requested_output;
+        match self.output_cap {
+            Some(cap) if self.fixed_input() => cap,
+            Some(cap) => cap.min(requested.saturating_mul(2)).max(requested),
+            None => requested,
+        }
+    }
+
+    /// The window less the reply's reserve (and, under a fixed input limit,
+    /// its headroom), before the floor.
+    fn unfloored_room(self, window: usize) -> usize {
+        let room = window.saturating_sub(self.reply_reserve());
+        if self.fixed_input() {
+            // Exact in u128, and never more than `room`.
+            let headroom = room as u128 * FIXED_INPUT_HEADROOM_PERCENT as u128 / 100;
+            room - usize::try_from(headroom).unwrap_or(room)
+        } else {
+            room
+        }
     }
 
     /// The context ceiling: the lower of the `configured` budget

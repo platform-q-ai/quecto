@@ -657,7 +657,8 @@ mod context_settings {
         let agent = agent_with(&AgentDefaults::default(), 2_000_000, window);
         assert_eq!(
             agent.effective_max_context_tokens(),
-            1_000_000,
+            // #2405: less the 100-token request the reply needs beside it.
+            1_000_000 - 100,
             "a smaller known window must clamp the configured budget"
         );
     }

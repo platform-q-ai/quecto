@@ -35,6 +35,19 @@ pub(super) fn gpt_5_6_cost(id: &str) -> Option<ModelCost> {
     })
 }
 
+/// The GPT-5.6/GPT-6 tiers' window on `provider` (#2405 review M3). Codex
+/// (`openai-oauth`) runs them at 272k of input beside the 128k output, a
+/// 400k window: `context_window: 272000` for each tier in Codex's own
+/// `codex-rs/models-manager/models.json` (openai/codex@b1e72963,
+/// 2026-09-29; its `max_context_window` of 872000 is an opt-in, not the
+/// default). The API publishes 1,050,000 (see `build_builtin`).
+pub(super) fn gpt_5_6_window(provider: &str) -> u32 {
+    match provider {
+        "openai-oauth" => 400_000,
+        _ => 1_050_000,
+    }
+}
+
 /// A model's published limits: its context window (input and output
 /// together) and, when the provider publishes one, its output cap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,7 +70,8 @@ const fn limits(context_window: u32, max_output_tokens: Option<u32>) -> Publishe
 /// - gpt-5.5 (API): developers.openai.com/api/docs/models/gpt-5.5
 ///   (1,050,000 window, 128,000 output).
 /// - gpt-5.5 in Codex (ChatGPT sign-in): openai.com/index/introducing-gpt-5-5
-///   (a 400K window in Codex); the output cap is the model's 128,000.
+///   (a 400K window in Codex; Codex's `models.json` gives 272000 of input,
+///   openai/codex@b1e72963); the output cap is the model's 128,000.
 /// - gpt-5.3-codex, gpt-5.2-codex: developers.openai.com/api/docs/models/{id}
 ///   (400,000 window, 128,000 output).
 /// - gpt-5.3-codex-spark: openai.com/index/introducing-gpt-5-3-codex-spark

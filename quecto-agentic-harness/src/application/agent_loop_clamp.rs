@@ -63,29 +63,60 @@ impl AgentLoopImpl {
         self
     }
 
-    /// Hand the context manager the model's window and the reply's reserve
-    /// (#2405), from which it computes the ceiling: the declared output cap
-    /// when the model has one (the provider counts it inside the window),
-    /// else the configured `max_tokens` each request asks for. A model that
-    /// declares no window keeps the configured budget, noted once per model.
+    /// Hand the context manager the model's window, how its provider bounds
+    /// the prompt, its declared output cap and what a request asks for
+    /// (#2405), from which it computes the ceiling. A window the ceiling
+    /// cannot use as declared (none, or a cap that leaves the prompt under
+    /// its floor) is noted at the next request, once per model.
     pub(super) fn sync_context_limits(&mut self) {
         let tokens = |value: u32| usize::try_from(value).unwrap_or(usize::MAX);
-        self.context_manager.set_model_window(ModelWindow::new(
+        let window = ModelWindow::new(
             self.model_context_window,
             self.model_prompt_limit,
             self.model_max_tokens.map(tokens),
             tokens(self.effective_max_tokens()),
-        ));
-        if self.model_context_window.is_none()
-            && self.unknown_window_noted.insert(self.model.clone())
-        {
-            tracing::info!(
+        );
+        self.context_manager.set_model_window(window);
+        let note = match window.window {
+            None => Some(WindowNote::NoWindow),
+            Some(_) if window.reserve_clamped() => Some(WindowNote::ReserveClamped),
+            Some(_) => None,
+        };
+        let notes = self
+            .context_notes
+            .get_mut()
+            .unwrap_or_else(|e| e.into_inner());
+        notes.pending = note.filter(|_| !notes.noted.contains(&self.model));
+    }
+
+    /// Log the active model's pending note (#2405), once per model, with
+    /// the ceiling in force at the request: after a swarm member's cap.
+    pub(super) fn log_pending_window_note(&self) {
+        let mut notes = self.context_notes.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(note) = notes.pending.take() else {
+            return;
+        };
+        if !notes.noted.insert(self.model.clone()) {
+            return;
+        }
+        let max_context_tokens = self.context_manager.effective_max_context_tokens();
+        match note {
+            WindowNote::NoWindow => tracing::info!(
                 target: "context_ceiling",
                 model = %self.model,
-                max_context_tokens = self.context_manager.effective_max_context_tokens(),
+                max_context_tokens,
                 "the model declares no context window; the context ceiling is the configured \
                  max_context_tokens"
-            );
+            ),
+            WindowNote::ReserveClamped => tracing::warn!(
+                target: "context_ceiling",
+                model = %self.model,
+                context_window = self.model_context_window,
+                max_output_tokens = self.model_max_tokens,
+                max_context_tokens,
+                "the model's declared output cap leaves the prompt under half its context window; \
+                 the reply's reserve is clamped so the prompt keeps half"
+            ),
         }
     }
 
@@ -199,4 +230,20 @@ impl AgentLoopImpl {
     pub fn large_result_switch(&self) -> crate::application::context::LargeResultSwitch {
         self.context_manager.large_result_switch()
     }
+}
+
+/// Why the active model's window is worth a line in the log (#2405).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum WindowNote {
+    /// The model declares no window: the configured budget stands.
+    NoWindow,
+    /// The declared cap would leave the prompt under its floor.
+    ReserveClamped,
+}
+
+/// The note awaiting the next request, and the models already noted.
+#[derive(Debug, Default)]
+pub(super) struct ContextNotes {
+    pending: Option<WindowNote>,
+    noted: std::collections::HashSet<String>,
 }
