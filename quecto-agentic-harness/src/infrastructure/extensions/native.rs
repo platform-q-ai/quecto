@@ -197,6 +197,8 @@ pub struct AgentControlToolDeps {
     /// The parent agent's own config path (#1369 follow-up): container spawns
     /// without an explicit `config` argument fall back to it.
     pub parent_config_path: Option<PathBuf>,
+    /// The context mode the launching agent runs in, handed to its children.
+    pub context_mode: crate::domain::conversation::ContextMode,
     /// The one owner of every process this composition spawns (#1935).
     pub owned_child_supervisor:
         Arc<crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor>,
@@ -254,6 +256,7 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
             .with_socket_dir(deps.socket_dir)
             .with_environment_registry(environment_registry.clone())
             .with_parent_config_path(deps.parent_config_path)
+            .with_context_mode(deps.context_mode)
             .with_effort_control(deps.effort_control)
             .with_container_config_selection(deps.container_config_selection)
             .with_container_config_roster(deps.container_config_roster.clone())

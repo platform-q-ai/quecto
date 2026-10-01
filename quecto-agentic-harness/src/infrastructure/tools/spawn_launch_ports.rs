@@ -247,6 +247,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     cli_args: &launch_args,
                     base_dir: &self.tool.base_dir,
                     admission_dir: admission_dir.as_deref(),
+                    context_mode: self.tool.context_mode,
                 },
                 &self.tool.environment_registry,
                 self.tool.container_config_selection.as_deref(),

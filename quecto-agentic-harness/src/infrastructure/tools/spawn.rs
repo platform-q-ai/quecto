@@ -107,6 +107,8 @@ pub struct SpawnTool {
     /// when the spawn call names none. Container-config *selection* never
     /// reads it (#2024 S4a): that is `container_config_selection` below.
     pub(super) parent_config_path: Option<PathBuf>,
+    /// This agent's context mode, handed to every child it launches (#2403).
+    pub(super) context_mode: crate::domain::conversation::ContextMode,
     /// Composition's container-config selection (#2024 S4a): launch policy
     /// over the launching agent's effective configuration for its checkout
     /// (trusted overlay merged), or an explicit spawn `config` file. A tool
@@ -184,6 +186,7 @@ impl SpawnTool {
             inherited_tool_policy: super::spawn_inherited_policy::new_state(),
             environment_registry: EnvironmentRegistry::new(),
             parent_config_path: None,
+            context_mode: Default::default(),
             container_config_selection: None,
             container_config_roster: None,
             roster_line: Mutex::new(None),
@@ -210,6 +213,7 @@ impl SpawnTool {
             inherited_tool_policy: super::spawn_inherited_policy::new_state(),
             environment_registry: EnvironmentRegistry::new(),
             parent_config_path: None,
+            context_mode: Default::default(),
             container_config_selection: None,
             container_config_roster: None,
             roster_line: Mutex::new(None),
@@ -239,6 +243,12 @@ impl SpawnTool {
     /// container config (#2024 S4a).
     pub fn with_parent_config_path(mut self, parent_config_path: Option<PathBuf>) -> Self {
         self.parent_config_path = parent_config_path;
+        self
+    }
+
+    /// The context mode every child is handed (#2403 review M4).
+    pub fn with_context_mode(mut self, mode: crate::domain::conversation::ContextMode) -> Self {
+        self.context_mode = mode;
         self
     }
 

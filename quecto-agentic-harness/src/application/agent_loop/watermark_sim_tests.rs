@@ -17,7 +17,7 @@ use crate::domain::conversation::watermark::Watermark;
 use crate::domain::conversation::{ContextMode, UserKind};
 use crate::domain::error::DomainError;
 use crate::domain::large_result_collapse::LargeResultCollapse;
-use crate::domain::message::{LlmResponse, Message, ToolCall};
+use crate::domain::message::{LlmResponse, Message, StopReason, ToolCall};
 use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::domain::turn_origin::prompt;
 use crate::infrastructure::providers::codex::CodexProvider;
@@ -111,17 +111,31 @@ struct SimProvider {
     previous: Mutex<String>,
     head: Mutex<Option<String>>,
     observed: Mutex<Vec<Observed>>,
+    /// Every this many turns, the turn's first reply is cut off before
+    /// anything visible (#2124): the loop asks again with feedback.
+    cut_off_every: Option<usize>,
+    cut_off: Mutex<std::collections::BTreeSet<usize>>,
 }
 
 impl SimProvider {
-    fn new(script: Vec<Turn>) -> Self {
+    fn new(script: Vec<Turn>, cut_off_every: Option<usize>) -> Self {
         Self {
             script,
             cursor: Mutex::new((0, 0)),
             previous: Mutex::new(String::new()),
             head: Mutex::new(None),
             observed: Mutex::new(Vec::new()),
+            cut_off_every,
+            cut_off: Mutex::new(std::collections::BTreeSet::new()),
         }
+    }
+
+    /// Whether this request, the first of turn `turn`, is cut off.
+    fn cuts_off(&self, turn: usize, call: usize) -> bool {
+        let due = self
+            .cut_off_every
+            .is_some_and(|every| call == 0 && turn % every == every - 1);
+        due && self.cut_off.lock().unwrap().insert(turn)
     }
 
     fn observe(&self, request: &ChatRequest<'_>) {
@@ -162,6 +176,16 @@ impl LlmProvider for SimProvider {
         let mut cursor = self.cursor.lock().unwrap();
         let (turn, call) = *cursor;
         let script = &self.script[turn];
+        if self.cuts_off(turn, call) {
+            let response = LlmResponse {
+                content: None,
+                tool_calls: vec![],
+                usage: None,
+                stop_reason: Some(StopReason::MaxTokens),
+                thinking_blocks: vec![],
+            };
+            return Box::pin(async move { Ok(response) });
+        }
         let (content, tool_calls) = if call < script.calls.len() {
             *cursor = (turn, call + 1);
             let call = ToolCall {
@@ -224,9 +248,14 @@ impl Tool for SimRead {
     }
 }
 
-async fn simulate(high: usize, low: usize, requests: usize) -> Vec<Observed> {
+async fn simulate(
+    high: usize,
+    low: usize,
+    requests: usize,
+    cut_off_every: Option<usize>,
+) -> Vec<Observed> {
     let script = script(requests);
-    let provider = Arc::new(SimProvider::new(script.clone()));
+    let provider = Arc::new(SimProvider::new(script.clone(), cut_off_every));
     let mut registry = MockRegistry::new();
     registry.register(Arc::new(SimRead));
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
@@ -263,13 +292,18 @@ async fn simulate(high: usize, low: usize, requests: usize) -> Vec<Observed> {
         agent.run_loop(&mut messages).await.unwrap();
     }
     let observed = provider.observed.lock().unwrap().clone();
-    assert_eq!(observed.len(), requests, "the script ran to its end");
+    let cut_offs = provider.cut_off.lock().unwrap().len();
+    assert_eq!(
+        observed.len(),
+        requests + cut_offs,
+        "the script ran to its end"
+    );
     observed
 }
 
-#[tokio::test]
-async fn every_request_extends_the_previous_one_except_right_after_a_cut() {
-    let observed = simulate(30_000, 12_000, 150).await;
+/// Every request extends the previous one, byte for byte, except a
+/// request right after a cut.
+fn assert_append_only(observed: &[Observed]) {
     let mut cuts = 0;
     for (n, pair) in observed.windows(2).enumerate() {
         let (previous, request) = (&pair[0], &pair[1]);
@@ -287,4 +321,17 @@ async fn every_request_extends_the_previous_one_except_right_after_a_cut() {
         observed.iter().all(|request| request.head_kept),
         "the head never changes"
     );
+}
+
+#[tokio::test]
+async fn every_request_extends_the_previous_one_except_right_after_a_cut() {
+    assert_append_only(&simulate(30_000, 12_000, 150, None).await);
+}
+
+/// Review L1: a reply cut off before anything visible is asked again with
+/// feedback; the feedback is appended, never merged into the prompt already
+/// sent, so no request but one after a cut breaks the prefix.
+#[tokio::test]
+async fn feedback_after_a_cut_off_reply_keeps_every_request_an_extension() {
+    assert_append_only(&simulate(30_000, 12_000, 150, Some(5)).await);
 }

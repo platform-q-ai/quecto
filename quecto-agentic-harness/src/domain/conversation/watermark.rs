@@ -182,9 +182,12 @@ pub enum PlanRole<'a> {
     System,
     /// A user message the user sent: the prompt of a turn.
     Prompt,
-    /// A user-role message the harness added: feedback, a sub-agent's
-    /// note, a swarm wake-up.
+    /// A user-role message the harness added inside a turn: the loop's
+    /// feedback.
     User,
+    /// A user-role message the harness added that opens a turn: a
+    /// sub-agent's note, a swarm wake, a workflow nudge (#2403 review M3).
+    Opener,
     /// The stub a previous cut placed; it is archived by the next cut.
     ArchiveStub,
     /// An assistant message and the ids of the tool calls it makes.
@@ -352,6 +355,7 @@ impl CutPlan {
             PlanRole::System
             | PlanRole::Prompt
             | PlanRole::User
+            | PlanRole::Opener
             | PlanRole::Assistant { .. }
             | PlanRole::ToolResult { .. } => true,
             PlanRole::ArchiveStub => false,
@@ -492,7 +496,7 @@ fn sum(tokens: impl Iterator<Item = usize>) -> usize {
 /// call/result pair spans it.
 fn opens_exchange(role: &PlanRole<'_>) -> bool {
     match role {
-        PlanRole::Prompt | PlanRole::User | PlanRole::Assistant { .. } => true,
+        PlanRole::Prompt | PlanRole::User | PlanRole::Opener | PlanRole::Assistant { .. } => true,
         PlanRole::System | PlanRole::ArchiveStub | PlanRole::ToolResult { .. } => false,
     }
 }
@@ -502,12 +506,14 @@ fn opens_exchange(role: &PlanRole<'_>) -> bool {
 /// turn never loses its prompt (a harness message after it does not take
 /// its place). `None` without a user message.
 fn pinned(messages: &[PlanMessage<'_>]) -> Option<Vec<bool>> {
-    let is_user = |m: &PlanMessage<'_>| matches!(m.role, PlanRole::Prompt | PlanRole::User);
+    let is_user = |m: &PlanMessage<'_>| {
+        matches!(m.role, PlanRole::Prompt | PlanRole::User | PlanRole::Opener)
+    };
     let first = messages.iter().position(is_user)?;
     let latest = messages.iter().rposition(|m| m.role == PlanRole::Prompt);
     let pinned = messages.iter().enumerate().map(|(i, m)| match m.role {
         PlanRole::System => true,
-        PlanRole::Prompt | PlanRole::User => i == first || Some(i) == latest,
+        PlanRole::Prompt | PlanRole::User | PlanRole::Opener => i == first || Some(i) == latest,
         PlanRole::ArchiveStub | PlanRole::Assistant { .. } | PlanRole::ToolResult { .. } => false,
     });
     Some(pinned.collect())
@@ -525,7 +531,11 @@ fn call_of_each_result(messages: &[PlanMessage<'_>]) -> Vec<Option<usize>> {
                 None
             }
             PlanRole::ToolResult { call } => issued.get(call).copied(),
-            PlanRole::System | PlanRole::Prompt | PlanRole::User | PlanRole::ArchiveStub => None,
+            PlanRole::System
+            | PlanRole::Prompt
+            | PlanRole::User
+            | PlanRole::Opener
+            | PlanRole::ArchiveStub => None,
         });
     }
     calls
@@ -568,6 +578,7 @@ fn tail_start(
     let archivable = |i: &usize| match messages[*i].role {
         PlanRole::Prompt
         | PlanRole::User
+        | PlanRole::Opener
         | PlanRole::Assistant { .. }
         | PlanRole::ToolResult { .. } => !pinned[*i],
         PlanRole::System | PlanRole::ArchiveStub => false,

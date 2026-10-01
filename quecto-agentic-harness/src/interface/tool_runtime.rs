@@ -340,6 +340,7 @@ pub(crate) fn build_tool_runtime(
         parent_session_name,
         inherited_tool_policy: None,
         parent_config_path,
+        context_mode: config.agents.defaults.context_mode(),
         owned_child_supervisor:
             crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor::process_wide(),
         effort_control,

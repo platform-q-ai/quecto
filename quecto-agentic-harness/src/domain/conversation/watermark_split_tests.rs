@@ -86,7 +86,9 @@ fn assert_sound(input: &CutInput<'_>, plan: &CutPlan) {
             }
         }
     }
-    let users = |m: &&PlanMessage<'_>| matches!(m.role, PlanRole::Prompt | PlanRole::User);
+    let users = |m: &&PlanMessage<'_>| {
+        matches!(m.role, PlanRole::Prompt | PlanRole::User | PlanRole::Opener)
+    };
     let first = messages
         .iter()
         .position(|m| users(&m))
@@ -95,12 +97,17 @@ fn assert_sound(input: &CutInput<'_>, plan: &CutPlan) {
     if let Some(prompt) = messages.iter().rposition(|m| m.role == PlanRole::Prompt) {
         assert!(kept(prompt), "the latest prompt is pinned: {plan:?}");
     }
+    let opens = |m: &PlanMessage<'_>| matches!(m.role, PlanRole::Prompt | PlanRole::Opener);
+    if let Some(opener) = messages.iter().rposition(opens) {
+        assert!(kept(opener), "the open turn's opener is pinned: {plan:?}");
+    }
     for (i, message) in messages.iter().enumerate() {
         match message.role {
             PlanRole::System => assert!(kept(i), "system {i} pinned: {plan:?}"),
             PlanRole::ArchiveStub => assert!(!kept(i), "stub {i} archived: {plan:?}"),
             PlanRole::Prompt
             | PlanRole::User
+            | PlanRole::Opener
             | PlanRole::Assistant { .. }
             | PlanRole::ToolResult { .. } => {}
         }
@@ -108,7 +115,7 @@ fn assert_sound(input: &CutInput<'_>, plan: &CutPlan) {
     let tail_start = plan.kept()[plan.stub_slot()];
     assert!(matches!(
         messages[tail_start].role,
-        PlanRole::Prompt | PlanRole::User | PlanRole::Assistant { .. }
+        PlanRole::Prompt | PlanRole::User | PlanRole::Opener | PlanRole::Assistant { .. }
     ));
     let fixed = input.tool_tokens + input.stub_tokens;
     let projected = fixed + tokens_of(messages, plan.kept().iter());
@@ -285,7 +292,13 @@ fn random_conversation(rng: &mut Lcg) -> Vec<PlanMessage<'static>> {
     for _ in 0..=rng.below(40) {
         match rng.below(11) {
             0 => messages.push(p(rng.below(500) + 1)),
-            1 => messages.push(u(rng.below(100) + 1)),
+            1 => {
+                let role = match rng.below(2) {
+                    0 => PlanRole::User,
+                    _ => PlanRole::Opener,
+                };
+                messages.push(m(role, rng.below(100) + 1));
+            }
             2 => messages.push(s(rng.below(50) + 1)),
             3 => messages.push(m(PlanRole::ArchiveStub, 50)),
             4 | 5 => {

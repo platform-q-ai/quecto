@@ -70,6 +70,16 @@ impl AgentDefaults {
     }
 }
 
+/// The variable a parent hands every child its resolved mode in (#2403
+/// review M4): `default`, or `watermark:<high>:<low>`.
+pub const INHERITED_CONTEXT_MODE: &str = "QUECTO_INHERITED_CONTEXT_MODE";
+
+/// The [`INHERITED_CONTEXT_MODE`] value of `mode`.
+pub fn inherited_value(mode: ContextMode) -> String {
+    let _ = mode;
+    String::new()
+}
+
 /// `QUECTO_CONTEXT_MODE`, `QUECTO_CONTEXT_HIGH_TOKENS` and
 /// `QUECTO_CONTEXT_LOW_TOKENS`.
 /// A mark that is no count is kept as refused, so the load fails naming it.

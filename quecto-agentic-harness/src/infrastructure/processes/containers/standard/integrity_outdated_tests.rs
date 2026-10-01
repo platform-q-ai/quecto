@@ -17,8 +17,16 @@ use crate::infrastructure::processes::containers::standard::assets::{
 };
 
 /// Every previously shipped script (`bundle path`, the old bytes).
-fn shipped() -> [(&'static str, &'static [u8]); 4] {
+fn shipped() -> [(&'static str, &'static [u8]); 6] {
     [
+        (
+            "scripts/create.sh",
+            include_bytes!("../../../../../tests/fixtures/standard-bundle-v6/create.sh"),
+        ),
+        (
+            "scripts/exec.sh",
+            include_bytes!("../../../../../tests/fixtures/standard-bundle-v6/exec.sh"),
+        ),
         (
             "scripts/create.sh",
             include_bytes!(
@@ -63,9 +71,9 @@ fn embedded(relative: &str) -> Vec<u8> {
 }
 
 #[test]
-fn the_bundle_is_version_6() {
-    assert_eq!(STANDARD_ASSET_VERSION, 6);
-    assert_eq!(EmbeddedStandardAssets.catalogue().version, 6);
+fn the_bundle_is_version_7() {
+    assert_eq!(STANDARD_ASSET_VERSION, 7);
+    assert_eq!(EmbeddedStandardAssets.catalogue().version, 7);
 }
 
 #[test]

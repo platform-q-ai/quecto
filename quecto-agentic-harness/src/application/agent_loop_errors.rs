@@ -57,11 +57,12 @@ pub(super) fn append_malformed_feedback(
     messages: &mut Vec<Message>,
     err: &DomainError,
     current_turn: u32,
+    mode: crate::domain::conversation::ContextMode,
 ) -> Feedback {
     let feedback = format!(
         "Your previous request was rejected by the provider as malformed (not retryable): {err}\n\nPlease correct the request — for example fix any malformed tool call arguments or invalid fields — and try again.",
     );
-    append_feedback(messages, feedback, current_turn)
+    append_feedback(messages, feedback, current_turn, mode)
 }
 
 /// Whether `append_feedback` added a message or merged into the last one.
@@ -105,7 +106,9 @@ pub(super) fn append_feedback(
     messages: &mut Vec<Message>,
     feedback: String,
     current_turn: u32,
+    mode: crate::domain::conversation::ContextMode,
 ) -> Feedback {
+    let _ = mode;
     match messages.last_mut() {
         Some(last) if last.role == Role::User => {
             last.content.push_str("\n\n");

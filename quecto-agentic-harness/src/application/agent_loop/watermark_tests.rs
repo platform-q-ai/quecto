@@ -179,9 +179,15 @@ async fn a_cut_at_the_high_mark_keeps_the_head_byte_identical_and_reaches_the_lo
         rig.exchange(&mut messages, 2_000).await;
     }
     assert!(total(&messages) >= HIGH);
+    let before = snapshot(&messages);
     rig.pass(&mut messages).await;
     let stubs = stubs(&messages);
     assert_eq!(stubs.len(), 1, "one cut, one stub");
+    let tail = snapshot(&messages[head.len() + 1..]);
+    assert!(
+        before.ends_with(&tail),
+        "the kept tail is byte-identical to the newest messages before the cut"
+    );
     assert_eq!(
         snapshot(&messages[..head.len()]),
         head,
@@ -388,6 +394,83 @@ async fn the_storm_guard_holds_until_the_stub_leaves_the_conversation() {
             "{leave}: no baseline holds it back"
         );
     }
+}
+
+/// Review M2: a rewind to a prompt after the stub keeps the stub, but the
+/// archive it names is wiped with the session memory. The stub then names
+/// no archive, the baseline is reset, and the next cut's index never
+/// points at an archive of the old name.
+#[tokio::test]
+async fn a_rewind_after_the_stub_leaves_no_dangling_archive_and_resets_the_guard() {
+    let mut rig = Rig::watermark();
+    let mut messages = rig.opened().await;
+    messages.push(prompt(text("latest", 100)));
+    for _ in 0..3 {
+        rig.exchange(&mut messages, 2_000).await;
+    }
+    rig.exchange(&mut messages, 17_000).await;
+    rig.pass(&mut messages).await;
+    assert_eq!(stubs(&messages).len(), 1, "the first cut");
+    let target = messages.len();
+    messages.push(prompt(text("after the cut", 100)));
+    rig.exchange(&mut messages, 500).await;
+    assert!(
+        crate::application::sessions::use_cases::rewind_conversation::rewind_to_message_index_for_test(
+            &mut messages,
+            target,
+        )
+    );
+    // The rewind transaction wipes the session memory.
+    rig.store
+        .clear(&SessionIdentity::from_persisted_key(SESSION))
+        .await
+        .unwrap();
+    let stub = stubs(&messages)[0].content.clone();
+    assert!(!stub.contains("recall("), "no dangling recall: {stub}");
+    messages.push(prompt(text("again", 100)));
+    rig.exchange(&mut messages, 2_500).await;
+    rig.exchange(&mut messages, 2_500).await;
+    assert!(total(&messages) >= HIGH, "over H");
+    rig.pass(&mut messages).await;
+    let after = stubs(&messages);
+    assert_eq!(after.len(), 1);
+    assert!(
+        after[0].content.contains(r#"recall("archive")"#),
+        "a new cut, no baseline holds it back: {}",
+        after[0].content
+    );
+    let index = rig.recall("archive").await.expect("the new index");
+    let first = index.content.lines().next().unwrap_or_default();
+    assert!(
+        !first.contains(r#"recall("archive")"#),
+        "the new index never points at itself: {}",
+        index.content
+    );
+}
+
+/// Review L1: feedback after a reply cut off before anything visible goes
+/// in as its own message in watermark mode: the prompt already sent, and
+/// pinned, is never edited.
+#[tokio::test]
+async fn feedback_never_edits_a_sent_prompt_in_watermark_mode() {
+    use super::super::agent_loop_errors::{Feedback, append_feedback};
+    for (mode, expected) in [
+        (watermark(), Feedback::Added),
+        (ContextMode::Default, Feedback::Merged),
+    ] {
+        let mut messages = vec![prompt("the prompt".to_string())];
+        let how = append_feedback(&mut messages, "feedback".to_string(), 1, mode);
+        assert_eq!(how, expected, "{mode:?}");
+        assert_eq!(messages[0].user_kind, UserKind::Prompt);
+    }
+    let mut messages = vec![prompt("the prompt".to_string())];
+    append_feedback(&mut messages, "feedback".to_string(), 1, watermark());
+    assert_eq!(
+        messages[0].content, "the prompt",
+        "the sent prompt is unchanged"
+    );
+    assert_eq!(messages[1].turn, Some(1), "feedback is inside the turn");
+    assert_eq!(messages[1].user_kind, UserKind::Unmarked, "never a prompt");
 }
 
 /// A store that never finishes writing an archive.

@@ -33,6 +33,13 @@ fn exchange(messages: &mut Vec<Message>, id: &str, tokens: usize) {
     messages.push(result(id, tokens));
 }
 
+/// The loop's own feedback: a user message inside a turn.
+fn feedback(text: &str) -> Message {
+    let mut message = Message::user(text);
+    message.turn = Some(1);
+    message
+}
+
 fn trigger(high: usize, low: usize) -> CutTrigger {
     CutTrigger {
         marks: Watermark::new(high, low).unwrap(),
@@ -80,7 +87,7 @@ fn each_message_takes_the_planner_role_of_what_it_is() {
         instruction("the completion nudge".to_string()),
         progress_nudge("continue".to_string()),
         harness_note("<subagent_notification>".to_string(), &[]),
-        Message::user("feedback"),
+        feedback("feedback"),
         stub,
         Message::assistant("", vec![call("a"), call("b")]),
         result("a", 10),
@@ -91,9 +98,9 @@ fn each_message_takes_the_planner_role_of_what_it_is() {
         vec![
             PlanRole::System,
             PlanRole::Prompt,
-            PlanRole::User,
-            PlanRole::User,
-            PlanRole::User,
+            PlanRole::Opener,
+            PlanRole::Opener,
+            PlanRole::Opener,
             PlanRole::User,
             PlanRole::ArchiveStub,
             PlanRole::Assistant {
@@ -210,6 +217,15 @@ fn a_cut_keeps_the_head_byte_identical_and_puts_the_stub_after_it() {
     );
     for (kept, &index) in messages[slot + 1..].iter().zip(&cut.kept()[slot..]) {
         assert_eq!(kept.id(), before[index].id(), "the tail is kept whole");
+        assert_eq!(kept.content, before[index].content, "byte-identical");
+        let calls = |m: &Message| -> Vec<String> {
+            m.tool_calls
+                .iter()
+                .map(|c| format!("{}{}{}", c.id, c.name, c.arguments))
+                .collect()
+        };
+        assert_eq!(calls(kept), calls(&before[index]));
+        assert_eq!(kept.tool_call_id, before[index].tool_call_id);
     }
     assert_eq!(messages.len(), cut.kept().len() + 1);
     let archived_ids: Vec<_> = archived.iter().map(Message::id).collect();
@@ -265,4 +281,30 @@ fn archived_lists_what_the_plan_archives_in_order() {
         .collect();
     assert!(!listed.is_empty());
     assert_eq!(listed, planned);
+}
+
+/// Review M3: a harness message that opened the turn in flight (a queued
+/// wake, a sub-agent's note, a nudge) is pinned with the latest prompt, so
+/// the turn can still be stamped, reported and cancelled after a cut.
+#[test]
+fn the_opener_of_the_turn_in_flight_is_pinned_beside_the_latest_prompt() {
+    let mut messages = session();
+    let latest = messages.len() - 3;
+    exchange(&mut messages, "now-1", 2_000);
+    messages.push(Message::assistant(text("the answer", 100), vec![]));
+    let opener = messages.len();
+    messages.push(harness_note("[swarm wake]".to_string(), &messages));
+    exchange(&mut messages, "woken-0", 2_000);
+    messages.push(feedback("feedback inside the woken turn"));
+    exchange(&mut messages, "woken-1", 2_000);
+    exchange(&mut messages, "woken-2", 2_000);
+    let cut = plan(&messages, 20_000, 6_000);
+    assert!(cut.kept().contains(&opener), "the opener is pinned");
+    assert!(cut.kept().contains(&latest), "so is the latest prompt");
+    let opener_id = messages[opener].id();
+    apply_cut(&mut messages, &cut, archive_stub(9, Some("archive")));
+    assert!(
+        crate::domain::turn_origin::stamp_turn(&mut messages, opener_id) > 0,
+        "the turn in flight is still stamped by its opener"
+    );
 }

@@ -56,3 +56,25 @@ fn finalize_synthesizes_error_for_unanswered_tool_call_and_drops_chatter() {
     assert_eq!(messages.len(), 3);
     assert_eq!(messages[1].content, "");
 }
+
+/// #2403 review M1: a turn interrupted after a mid-turn watermark cut
+/// keeps the cut's stub, byte-identical and in place, so the archive it
+/// names, the storm guard's baseline and the chain survive the interrupt.
+#[test]
+fn finalize_keeps_a_watermark_stub_in_place() {
+    use crate::domain::conversation::watermark_cut::archive_stub;
+    let prompt = crate::domain::turn_origin::prompt("run it".into());
+    let prompt_id = prompt.id();
+    let stub = archive_stub(7, Some("archive"));
+    let (stub_id, stub_text) = (stub.id(), stub.content.clone());
+    let mut messages = vec![
+        prompt,
+        stub,
+        assistant_call("call-1", "bash"),
+        Message::tool("call-1", "done"),
+    ];
+    finalize_interrupted_turn(&mut messages, prompt_id);
+    assert_eq!(messages[1].id(), stub_id, "the stub stays where it was");
+    assert_eq!(messages[1].content, stub_text, "byte-identical");
+    assert_eq!(messages.len(), 4);
+}

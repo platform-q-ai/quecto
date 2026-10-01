@@ -76,3 +76,7 @@ impl<'a> TranscriptSave<'a> {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "run_session_prompt_tests.rs"]
+mod prompt_tests;

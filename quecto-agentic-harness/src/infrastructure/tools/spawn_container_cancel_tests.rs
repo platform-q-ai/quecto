@@ -48,6 +48,7 @@ async fn launch(dir: &Path, registry: &EnvironmentRegistry) -> Result<PreparedCh
             cli_args: &[],
             base_dir: dir,
             admission_dir: None,
+            context_mode: crate::domain::conversation::ContextMode::Default,
         },
         registry,
         Some(&test_selection(dir)),
