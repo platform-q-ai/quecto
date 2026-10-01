@@ -415,3 +415,18 @@ fn the_swarm_description_states_the_send_rules_members_tripped_on() {
         assert!(description.contains(rule), "missing {rule:?}");
     }
 }
+
+/// The PR 1400 review swarm (2026-10-01): its coordinator never read its
+/// inbox (22 member messages left unread) and directed members with nine
+/// `agent_cmd steer` calls, five of which cut a request off mid-flight. The
+/// board is the coordination channel, so the description says so.
+#[test]
+fn the_swarm_description_sends_the_coordinator_to_its_inbox() {
+    let description = include_str!("swarm_assets/tool_description.txt");
+    for rule in [
+        "read your inbox and ack what you act on",
+        "direct members with send, not agent_cmd steer",
+    ] {
+        assert!(description.contains(rule), "missing {rule:?}");
+    }
+}
