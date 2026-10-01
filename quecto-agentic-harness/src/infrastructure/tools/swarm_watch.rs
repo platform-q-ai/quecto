@@ -70,7 +70,7 @@ pub(super) fn watch_until_terminal(
     observer: &mut dyn WatchObserver,
 ) -> Snapshot {
     let clock = super::SystemClock;
-    let nudges = context.board.watch_nudges();
+    let nudges = context.board.watch_nudges(&context.database());
     let mut suspended = None;
     let mut schedule = WatchSchedule::new();
     let mut announcement = Announcement::new(&snapshot);

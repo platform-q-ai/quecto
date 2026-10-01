@@ -220,25 +220,32 @@ fn paused(generation: u64) -> Snapshot {
 }
 
 /// The member whose process changed the run's control state tells the
-/// others, once; a change another member pushed is not pushed again.
+/// others, once. Only an announcement settles what the members were told:
+/// a change read on a remote nudge (or a due tick) may be this process's
+/// own, read before its local nudge was latched (review M1), so the local
+/// nudge's tick still announces it. A rare duplicate push is the price.
 #[test]
-fn a_local_change_is_announced_once_and_a_remote_one_never() {
+fn a_local_change_is_announced_once_even_when_a_remote_tick_read_it_first() {
     let mut announcement = Announcement::new(&running());
     assert!(!announcement.observed(None, Some(&running())));
     assert!(
         !announcement.observed(Some(Nudge::Local), Some(&running())),
         "no change"
     );
-    assert!(announcement.observed(Some(Nudge::Local), Some(&paused(3))));
+    assert!(
+        !announcement.observed(Some(Nudge::Remote), Some(&paused(3))),
+        "a remote nudge obliges nothing"
+    );
+    assert!(
+        announcement.observed(Some(Nudge::Local), Some(&paused(3))),
+        "this process's own pause, read first on the remote tick"
+    );
     assert!(
         !announcement.observed(Some(Nudge::Local), Some(&paused(3))),
         "told already"
     );
     assert!(!announcement.observed(Some(Nudge::Remote), Some(&running())));
-    assert!(
-        !announcement.observed(Some(Nudge::Local), Some(&running())),
-        "the remote member told every member of that change"
-    );
+    assert!(!announcement.observed(None, Some(&running())));
 }
 
 /// A change this process made but a scheduled tick saw first is still
@@ -264,45 +271,4 @@ fn a_local_change_is_announced_however_the_ticks_fall() {
         announcement.observed(Some(Nudge::Local), Some(&deadline)),
         "an extension is a control change"
     );
-}
-
-/// The board ops whose answer changed the run's control state, by an
-/// affirmative list of (op, decision); anything else, an op that found the
-/// run as asked included, nudges nobody.
-#[test]
-fn only_an_op_that_changed_the_runs_control_state_nudges_the_watch() {
-    for (op, decision) in [
-        ("create", "fresh"),
-        ("create", "over_setup"),
-        ("pause", "paused"),
-        ("resume", "resumed"),
-        ("_resume_external", "resumed"),
-        ("_close", "closed"),
-        ("_extend_deadline", "extended"),
-        ("stop", "stopped"),
-        ("complete", "completed"),
-        ("usage_budget", "paused"),
-        ("_record_request", "paused"),
-        ("_request_admission", "paused"),
-        ("_quarantine", "recorded"),
-        ("_confirmed_dead", "confirmed"),
-        ("_confirmed_dead", "coordinator_confirmed"),
-        ("_lose_coordinator", "lost"),
-    ] {
-        assert!(changes_run_control(op, decision), "{op} {decision}");
-    }
-    for (op, decision) in [
-        ("pause", "unchanged"),
-        ("_close", "unchanged"),
-        ("_record_request", "recorded"),
-        ("_request_admission", "model"),
-        ("usage_budget", "warned"),
-        ("_quarantine", "grace_pending"),
-        ("_lose_coordinator", "not_lost"),
-        ("_watch", "snapshot"),
-        ("summary", "full"),
-        ("claim", "claimed"),
-    ] {
-        assert!(!changes_run_control(op, decision), "{op} {decision}");
-    }
 }

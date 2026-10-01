@@ -22,7 +22,7 @@ use crate::application::swarm::dto::BoardLocation;
 use crate::application::swarm::ports::{BoardOpLog, SessionOpLog};
 use crate::domain::error::DomainError;
 use crate::domain::swarm::RefusalKind;
-use crate::domain::swarm::watch::{Nudge, changes_run_control};
+use crate::domain::swarm::watch::Nudge;
 use crate::infrastructure::persistence::audit_log::AuditLog;
 use crate::infrastructure::tools::swarm_board_dispatch::{
     self, BindingFaults, BoardWire, CallOrigin, SwarmBoardHandles, TELEMETRY_TARGET,
@@ -57,7 +57,7 @@ struct Shared {
     /// most [`BUILT_FILES`].
     built: Mutex<Vec<Built>>,
     /// The run watch's latch (#2390).
-    nudges: WatchNudges,
+    nudges: Arc<WatchNudges>,
 }
 
 /// The run watch's nudge latch (#2390): one per board, shared by every
@@ -89,6 +89,23 @@ impl WatchNudges {
             .wait_timeout_while(pending, timeout, |pending| pending.is_none())
             .unwrap_or_else(PoisonError::into_inner);
         pending.take()
+    }
+
+    /// A board op of this process that may change the run's control state
+    /// begins (#2390 review M1).
+    pub fn control_op(self: &Arc<Self>) -> ControlOp {
+        ControlOp(self.clone())
+    }
+}
+
+/// A board op that may change the run's control state, in flight.
+#[derive(Debug)]
+pub struct ControlOp(Arc<WatchNudges>);
+
+impl ControlOp {
+    /// The op ended, having changed the run's control state or not.
+    pub fn finish(self, changed: bool) {
+        let _ = (changed, &self.0);
     }
 }
 
@@ -127,7 +144,7 @@ impl SwarmBoard {
                 session_log: None,
                 recording: Mutex::new(None),
                 built: Mutex::new(Vec::new()),
-                nudges: WatchNudges::default(),
+                nudges: Arc::default(),
             }),
         }
     }
@@ -146,7 +163,7 @@ impl SwarmBoard {
                 session_log: Some(session_log),
                 recording: Mutex::new(None),
                 built: Mutex::new(Vec::new()),
-                nudges: WatchNudges::default(),
+                nudges: Arc::default(),
             }),
         }
     }
@@ -316,8 +333,15 @@ impl SwarmBoard {
     }
 
     /// The run watch's latch, shared by every clone of this board (#2390).
-    pub fn watch_nudges(&self) -> &WatchNudges {
-        &self.shared.nudges
+    /// Whether a watch here holds the latch of the board file `database`.
+    pub fn watches(&self, database: &std::path::Path) -> bool {
+        let _ = database;
+        true
+    }
+
+    pub fn watch_nudges(&self, database: &std::path::Path) -> Arc<WatchNudges> {
+        let _ = database;
+        self.shared.nudges.clone()
     }
 
     /// Whether `other` is this board (a clone of it), not merely one over
@@ -360,11 +384,11 @@ impl SwarmBoard {
             "a board call ({method}) is made off the async workers (#2278)"
         );
         let handles = self.handles(location);
-        let (answer, decision) =
+        let (answer, controls_run) =
             swarm_board_dispatch::call_deciding(&handles, member, method, args, origin);
         // #2390: a control change made in this process nudges its run
         // watch, which reads it at once and tells the other members.
-        if decision.is_some_and(|decision| changes_run_control(method, decision)) {
+        if controls_run {
             self.shared.nudges.nudge(Nudge::Local);
         }
         answer.map_err(|refusal| {

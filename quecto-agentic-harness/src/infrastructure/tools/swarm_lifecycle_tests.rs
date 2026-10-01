@@ -344,3 +344,53 @@ async fn a_control_change_is_pushed_to_every_other_live_member_as_a_watch() {
     assert_eq!(commands[0]["action"], "watch");
     assert!(own_sink.await.unwrap().is_empty(), "never to itself");
 }
+
+/// #2390 review L1: the production observer, wired into the watch: a pause
+/// this process makes is suspended and pushed, as a `watch`, to the live
+/// member's real endpoint; a cancellation another harness pushes ends the
+/// watch.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_supervisor_pushes_a_local_change_to_a_members_endpoint() {
+    let (directory, context) = crate::swarm_control_fixture::context();
+    let socket = directory.path().join("worker.sock");
+    let (sink, stop) = command_sink(&socket);
+    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        context.call("_admit", serde_json::json!(["worker", "r"]))?;
+        context.call(
+            "_activate",
+            serde_json::json!(["worker", "r", 123, "identity", socket]),
+        )
+    })
+    .unwrap();
+    let watching = context.clone();
+    let watch = std::thread::spawn(move || {
+        let snapshot = watching.snapshot().unwrap();
+        watch::watch_until_terminal(
+            &watching,
+            snapshot,
+            &super::super::swarm_bridge::Participation::none(),
+            &mut Supervisor(&watching),
+        )
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    crate::infrastructure::tools::call_work::off_the_runtime(|| context.pause("operator")).unwrap();
+    // The watch reads the pause at once, suspends, then pushes.
+    tokio::time::sleep(std::time::Duration::from_millis(1_500)).await;
+    let other = SwarmContext {
+        board: crate::composition::swarm::swarm_board(),
+        ..context.clone()
+    };
+    crate::infrastructure::tools::call_work::off_the_runtime(|| other.cancel_run()).unwrap();
+    crate::application::swarm::ports::SwarmRunControl::nudge_watch(&context);
+    let ended = tokio::task::spawn_blocking(move || watch.join().unwrap())
+        .await
+        .unwrap();
+    stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    let commands = sink.await.unwrap();
+    assert_eq!(ended.status, RunStatus::Cancelled);
+    let actions: Vec<_> = commands
+        .iter()
+        .map(|command| command["action"].as_str().unwrap_or_default().to_owned())
+        .collect();
+    assert_eq!(actions, ["watch"], "{commands:?}");
+}

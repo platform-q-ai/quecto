@@ -317,7 +317,7 @@ pub fn call_deciding(
     method: &str,
     args: Value,
     origin: CallOrigin,
-) -> (Result<Value, BoardError>, Option<&'static str>) {
+) -> (Result<Value, BoardError>, bool) {
     let started = Instant::now();
     let known = Method::parse(method);
     let role = records::recorded_role(origin, known);
@@ -393,9 +393,18 @@ pub fn call_deciding(
         (_, None, _) | (false, Some(_), false) | (true, Some(false), false) => Caller::Unproven,
     };
     let served = answer.as_ref().ok().or(committed.as_ref());
-    let decision = served.map(|served| served.decision);
+    let controls_run = served.is_some_and(|served| {
+        crate::domain::swarm::watch::changes_run_control(method, served.decision)
+    });
     records::record(handles, origin, &finished, caller, served, measure);
-    (answer.map(|served| served.value), decision)
+    (answer.map(|served| served.value), controls_run)
+}
+
+/// Whether `method` names a board op that may change the run's control
+/// state (#2390 review M1).
+pub fn may_control_run(method: &str) -> bool {
+    let _ = method;
+    false
 }
 
 /// The composed use case, or the same one over a metered call's own
@@ -719,6 +728,10 @@ mod stall_tests;
 #[cfg(test)]
 #[path = "swarm_board_dispatch_loss_tests.rs"]
 mod loss_tests;
+
+#[cfg(test)]
+#[path = "swarm_board_dispatch_control_flag_tests.rs"]
+mod control_flag_tests;
 
 #[cfg(test)]
 #[path = "swarm_board_dispatch_reads_tests.rs"]

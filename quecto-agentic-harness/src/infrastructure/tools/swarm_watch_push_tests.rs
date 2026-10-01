@@ -219,27 +219,65 @@ fn a_local_nudge_outranks_a_remote_one_latched_with_it() {
 }
 
 /// (a) A board op in this process that changed the run's control state
-/// nudges its watch; a read, and an op that found the run as asked, do
-/// not.
+/// nudges the watch of that run's board file; a read, and an op that found
+/// the run as asked, do not, nor does another process's change.
 #[test]
 fn a_control_change_on_this_board_nudges_its_watch() {
-    let run = running();
-    let creator = run.other.board.watch_nudges();
-    assert_eq!(creator.wait(Duration::ZERO), Some(Nudge::Local), "create");
-    let nudges = run.watching.board.watch_nudges();
-    assert_eq!(
-        nudges.wait(Duration::ZERO),
-        None,
-        "nothing changed here yet"
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(directory.path().join(".quecto")).unwrap();
+    let creator = context_over(
+        directory.path(),
+        SwarmBoard::new(build_swarm_board_handles, board_wire()),
     );
-    run.watching.summary().unwrap();
+    let nudges = creator.board.watch_nudges(&creator.database());
+    creator
+        .call(
+            "create",
+            json!(["watch", [], [{"id":"tests","kind":"command","description":"pass"}], 3, now() + 3_600.0]),
+        )
+        .unwrap();
+    assert_eq!(nudges.wait(Duration::ZERO), Some(Nudge::Local), "create");
+    let other = context_over(
+        directory.path(),
+        SwarmBoard::new(build_swarm_board_handles, board_wire()),
+    );
+    creator.summary().unwrap();
     assert_eq!(nudges.wait(Duration::ZERO), None, "a read");
-    run.watching.pause("operator").unwrap();
+    creator.pause("operator").unwrap();
     assert_eq!(nudges.wait(Duration::ZERO), Some(Nudge::Local), "a pause");
-    run.watching.pause("operator").unwrap();
+    creator.pause("operator").unwrap();
     assert_eq!(nudges.wait(Duration::ZERO), None, "already paused");
-    run.other.resume_external().unwrap();
+    other.resume_external().unwrap();
     assert_eq!(nudges.wait(Duration::ZERO), None, "another board's change");
+}
+
+/// Review L2: the latch is keyed by the run's board file. A control change
+/// this process makes on another run's board (a nested launcher recording
+/// its launchee's loss, the host recording a lost coordinator) nudges no
+/// watch of its own run, and a board file nobody here watches gets no
+/// latch at all.
+#[test]
+fn a_control_change_on_another_runs_board_nudges_nothing_here() {
+    let run = running();
+    let nested = running();
+    // One process board serving both files, as a nested launcher's does.
+    let launcher = SwarmContext {
+        checkout: nested.watching.checkout.clone(),
+        ..run.watching.clone()
+    };
+    let own = run.watching.board.watch_nudges(&run.watching.database());
+    launcher.pause("the nested run").unwrap();
+    assert_eq!(own.wait(Duration::ZERO), None, "another run's change");
+    let hosted = crate::infrastructure::tools::swarm_bridge::HostedStore::at(
+        nested.watching.checkout.clone(),
+        run.watching.board.clone(),
+    );
+    hosted.record_lost_coordinator("coordinator").unwrap();
+    assert_eq!(own.wait(Duration::ZERO), None, "a hosted loss elsewhere");
+    assert!(
+        !run.watching.board.watches(&nested.watching.database()),
+        "no latch for a file nobody here watches"
+    );
 }
 
 /// Acceptance: with nothing changing, a supervised member makes a handful
@@ -252,7 +290,8 @@ fn an_idle_watch_reads_the_board_a_handful_of_times_not_twice_a_second() {
     std::thread::sleep(Duration::from_secs(3));
     let started = Instant::now();
     let (announced, ended) = cancel(&run, &events);
-    assert!(started.elapsed() < Duration::from_secs(1));
+    // Well inside the 5 s refresh: the push, not the schedule, ended it.
+    assert!(started.elapsed() < Duration::from_secs(2));
     assert_eq!(ended.status, RunStatus::Cancelled);
     assert!(announced.is_empty(), "another harness cancelled it");
     let watches = run.log.watches();
@@ -315,9 +354,11 @@ fn a_running_runs_deadline_is_observed_at_the_deadline_without_a_nudge() {
     assert_eq!(snapshot.outcome, Some(RunStatus::BudgetExhausted));
     let (_, ended) = cancel(&run, &events);
     assert_eq!(ended.status, RunStatus::Cancelled);
+    // The first snapshot, the deadline's (one more when the wall clock
+    // wakes the watch a hair early and it retries), and the cancellation's.
     let watches = run.log.watches();
     assert!(
-        watches <= 3,
+        watches <= 4,
         "{watches} board reads before and at the deadline"
     );
 }
@@ -394,4 +435,72 @@ fn a_long_refresh_never_leaves_the_watch_acting_on_a_stale_view() {
         snapshot.members.iter().any(|member| member.id == "worker"),
         "{snapshot:?}"
     );
+}
+
+/// Review L3: the watch suspends this process's own inference before it
+/// pushes the change to the others, so an unreachable member never delays
+/// it.
+#[test]
+fn the_watch_suspends_before_it_announces() {
+    let run = running();
+    let events = watch(&run);
+    std::thread::sleep(Duration::from_millis(300));
+    run.watching.pause("operator").unwrap();
+    let first = events.recv_timeout(REFRESH_MIN).unwrap();
+    assert!(matches!(first, Seen::Paused(..)), "{first:?}");
+    let second = events.recv_timeout(REFRESH_MIN).unwrap();
+    assert!(matches!(second, Seen::Announced(..)), "{second:?}");
+    let (_, ended) = cancel(&run, &events);
+    assert_eq!(ended.status, RunStatus::Cancelled);
+}
+
+/// Review M1: this process's pause commits, a remote nudge wakes the watch,
+/// which reads the pause before the op latched its local nudge; the late
+/// local nudge still announces it.
+#[test]
+fn a_local_change_read_first_on_a_remote_tick_is_still_announced() {
+    let run = running();
+    let events = watch(&run);
+    std::thread::sleep(Duration::from_millis(300));
+    let latch = run.watching.board.watch_nudges(&run.watching.database());
+    // The op commits; its nudge is not latched yet.
+    run.other.pause("operator").unwrap();
+    latch.nudge(Nudge::Remote);
+    let (_, snapshot) = next_pause(&events, REFRESH_MIN);
+    assert_eq!(snapshot.status, RunStatus::Paused);
+    // The op's late local nudge.
+    latch.nudge(Nudge::Local);
+    match events.recv_timeout(REFRESH_MIN) {
+        Ok(Seen::Announced(snapshot)) => assert_eq!(snapshot.status, RunStatus::Paused),
+        other => panic!("the late local nudge was not announced: {other:?}"),
+    }
+    let (_, ended) = cancel(&run, &events);
+    assert_eq!(ended.status, RunStatus::Cancelled);
+}
+
+/// Review M1, the terminal case: this process's cancellation is still in
+/// flight when a remote nudge makes the watch read it; the watch, about to
+/// end, waits for the op and announces its late local nudge.
+#[test]
+fn a_local_terminal_change_still_in_flight_is_announced_before_the_watch_ends() {
+    let run = running();
+    let events = watch(&run);
+    std::thread::sleep(Duration::from_millis(300));
+    let latch = run.watching.board.watch_nudges(&run.watching.database());
+    let op = latch.control_op();
+    run.other.cancel_run().unwrap();
+    latch.nudge(Nudge::Remote);
+    std::thread::sleep(Duration::from_millis(300));
+    op.finish(true);
+    let mut announced = Vec::new();
+    let ended = loop {
+        match events.recv_timeout(Duration::from_secs(3)) {
+            Ok(Seen::Announced(snapshot)) => announced.push(snapshot.status),
+            Ok(Seen::Paused(..)) => {}
+            Ok(Seen::Ended(snapshot)) => break snapshot,
+            Err(error) => panic!("the watch did not end: {error}"),
+        }
+    };
+    assert_eq!(ended.status, RunStatus::Cancelled);
+    assert_eq!(announced, [RunStatus::Cancelled]);
 }

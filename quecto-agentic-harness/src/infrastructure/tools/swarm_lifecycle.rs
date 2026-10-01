@@ -557,7 +557,7 @@ impl crate::application::swarm::ports::SwarmRunControl for SwarmContext {
     }
     fn nudge_watch(&self) {
         self.board
-            .watch_nudges()
+            .watch_nudges(&self.database())
             .nudge(crate::domain::swarm::watch::Nudge::Remote);
     }
 }
