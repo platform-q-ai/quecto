@@ -135,6 +135,7 @@ struct Observed {
 }
 
 /// The provider: plays the script and serializes every request.
+#[derive(Debug)]
 struct SimProvider {
     script: Vec<Turn>,
     cursor: Mutex<(usize, usize)>,
