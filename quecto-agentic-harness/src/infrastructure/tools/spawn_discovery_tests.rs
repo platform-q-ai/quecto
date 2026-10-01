@@ -400,3 +400,17 @@ fn the_swarm_description_sends_no_one_to_read_a_guide() {
     }
     assert!(crate::infrastructure::tools::docs::lookup_doc("swarm").is_some());
 }
+
+/// The first swarm run on the description alone (2026-10-01) had its two
+/// refusals on rules only the guide stated: a recipient that was not a
+/// board member id, and a reused request id carrying a new payload.
+#[test]
+fn the_swarm_description_states_the_send_rules_members_tripped_on() {
+    let description = include_str!("swarm_assets/tool_description.txt");
+    for rule in [
+        "recipient is a member id from op=summary",
+        "a retry reuses its request with the same payload; new content needs a new request",
+    ] {
+        assert!(description.contains(rule), "missing {rule:?}");
+    }
+}
