@@ -46,17 +46,33 @@ impl CodexProvider {
             .collect()
     }
 
+    /// The `phase` of the assistant message at `idx` (#2397). It depends
+    /// only on the message and the one right after it, never on how many
+    /// turns follow, so an earlier answer is sent the same way every time and
+    /// the prompt cache keeps it: text that ended its turn (nothing after
+    /// it, or a user message) is a `final_answer`; text the same turn went
+    /// on from (another assistant message next), or text sent with tool
+    /// calls, is `commentary`.
+    fn phase(messages: &[Message], idx: usize) -> &'static str {
+        let msg = &messages[idx];
+        debug_assert!(
+            matches!(msg.role, Role::Assistant),
+            "only an assistant message has a phase"
+        );
+        let continued = messages
+            .get(idx + 1)
+            .is_some_and(|next| matches!(next.role, Role::Assistant | Role::Tool));
+        match (msg.tool_calls.is_empty(), continued) {
+            (true, false) => "final_answer",
+            (true, true) | (false, _) => "commentary",
+        }
+    }
+
     pub(super) fn build_input_for(
         messages: &[Message],
         origin: &str,
     ) -> (Option<String>, Vec<serde_json::Value>) {
         let (valid_pairs, diag) = crate::domain::session::filter_orphan_tool_pairs(messages);
-        let last_non_tool_assistant_idx = messages
-            .iter()
-            .enumerate()
-            .rev()
-            .find(|(_, m)| matches!(m.role, Role::Assistant) && m.tool_calls.is_empty())
-            .map(|(i, _)| i);
         if diag.has_orphans() {
             tracing::warn!(
                 orphaned_calls = ?diag.orphaned_calls,
@@ -82,11 +98,7 @@ impl CodexProvider {
                     input.push(serde_json::json!({ "role": "user", "content": msg.content }));
                 }
                 Role::Assistant => {
-                    let phase = if Some(idx) == last_non_tool_assistant_idx {
-                        "final_answer"
-                    } else {
-                        "commentary"
-                    };
+                    let phase = Self::phase(messages, idx);
                     // Each reasoning item goes just before the item it led
                     // to, and only with it (#2162).
                     if !msg.tool_calls.is_empty() {
