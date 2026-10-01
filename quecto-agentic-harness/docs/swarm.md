@@ -314,7 +314,7 @@ then `revoke`, for a lost one). Board activity is the only liveness the store
 sees: an idle owner may be mid-turn running a long command, so `idle` is a
 prompt to look (or `send`), not proof of a stall, and nothing follows from it
 automatically. A provider suspension is a harness fact the board cannot see;
-`agent_cmd status` (get_state's `automaticTurnsSuspended`) is the source for
+`agent_cmd get_state` (its `automaticTurnsSuspended`) is the source for
 that. Unowned tasks carry none of these fields. The summary's `counts` add
 `members_without_claim` (live or reserved members other than the coordinator
 holding no active claim) and `members_dead`. Because an owner turns idle by
