@@ -15,6 +15,9 @@ enum Action {
     Extend,
     Status,
     Wake,
+    /// #2390: another member's harness changed the run's control state;
+    /// only this process's run watch is nudged.
+    Watch,
     UsageBudget,
 }
 
@@ -72,7 +75,36 @@ pub(super) async fn intercept(ctx: &ReaderDispatchCtx<'_>) -> bool {
         });
         return true;
     }
+    if matches!(action, Action::Watch) {
+        // #2390: the watch reads the board now. Nothing else: no control
+        // action, no model turn, no queued prompt or wake, and the wake
+        // cursor is left as it is.
+        let event = match ctx.turn_control.swarm_control.as_ref() {
+            Some(control) => {
+                control.nudge_watch();
+                super::protocol::AgentEvent::ok(
+                    id.as_deref(),
+                    "swarm_control",
+                    Some(serde_json::json!({"status":"nudged"})),
+                )
+            }
+            None => super::protocol::AgentEvent::err(
+                id.as_deref(),
+                "swarm_control",
+                "watch unavailable",
+            ),
+        };
+        if let Some(writer) = super::uds_ext_protocol::client_writer_tx(ctx.registry, ctx.client_id)
+        {
+            let _ = writer.send(event.to_json_line() + "\n").await;
+        }
+        return true;
+    }
     if matches!(action, Action::Wake) {
+        // #2390 (d): a wake hint also nudges the run watch.
+        if let Some(control) = ctx.turn_control.swarm_control.as_ref() {
+            control.nudge_watch();
+        }
         let event = match (
             generation,
             ctx.turn_control.swarm_control.as_ref(),
@@ -167,7 +199,9 @@ pub(super) async fn intercept(ctx: &ReaderDispatchCtx<'_>) -> bool {
             }
         },
         Action::Status => RunControlAction::Status,
-        Action::Wake => unreachable!("wake handled before supervisor control"),
+        Action::Wake | Action::Watch => {
+            unreachable!("wake and watch are handled before supervisor control")
+        }
     };
     let resuming = matches!(action, RunControlAction::Resume);
     let result = match &ctx.turn_control.swarm_control {

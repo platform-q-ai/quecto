@@ -305,6 +305,19 @@ pub fn call_as(
     args: Value,
     origin: CallOrigin,
 ) -> Result<Value, BoardError> {
+    call_deciding(handles, member, method, args, origin).0
+}
+
+/// [`call_as`], answering also the decision the op took (#2390: whether it
+/// changed the run's control state), the committed one of a refusal met
+/// after its writes; `None` for an op refused before it decided.
+pub fn call_deciding(
+    handles: &SwarmBoardHandles,
+    member: &str,
+    method: &str,
+    args: Value,
+    origin: CallOrigin,
+) -> (Result<Value, BoardError>, Option<&'static str>) {
     let started = Instant::now();
     let known = Method::parse(method);
     let role = records::recorded_role(origin, known);
@@ -380,8 +393,9 @@ pub fn call_as(
         (_, None, _) | (false, Some(_), false) | (true, Some(false), false) => Caller::Unproven,
     };
     let served = answer.as_ref().ok().or(committed.as_ref());
+    let decision = served.map(|served| served.decision);
     records::record(handles, origin, &finished, caller, served, measure);
-    answer.map(|served| served.value)
+    (answer.map(|served| served.value), decision)
 }
 
 /// The composed use case, or the same one over a metered call's own

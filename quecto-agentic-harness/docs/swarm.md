@@ -878,31 +878,58 @@ measured while it is off (decision T1), the tracing record's waits are
 measured, and the slow-lock WARN can fire, only while the event log is on;
 the `contended` WARN fires either way.
 
-### The run watch (#2338)
+### The run watch (#2338, #2390)
 
 Every member's harness watches its run on a thread of its own, so it
 suspends its inference on a pause and settles the run's end even when no
-turn is running. The watch ticks every 500 ms, and each tick is one board
-call, `_watch` (Rust-only, recorded with role `host`), in one read
-transaction that takes no write lock (ADR-0030). The watch passes the event
-cursor of its last snapshot (`since`); the board answers
-`{"event_cursor", "unchanged": true}` (decision `unchanged`) while its cursor
-is still that one, and `{"event_cursor", "snapshot"}` (decision `snapshot`,
-the snapshot as `_snapshot` answers it) otherwise, the two read together.
-Every change the watch acts on (a pause, a resume, the run's end, a deadline
-extension) writes an event, so the tick after it answers the snapshot, as
-soon as when the watch took a snapshot every tick. The watch passes no
-cursor, so the board answers the snapshot whatever its cursor, when:
+turn is running. The watch is push-driven (#2390): it has no fixed tick.
+Between ticks it waits until it is nudged, or until its schedule is due.
+It is nudged:
 
-- no snapshot was taken yet, or the last tick could not be read;
+- by a board op in its own process that changed the run's control state
+  (a pause, resume, close, cancellation, stop, completion, deadline
+  extension, budget pause, recorded loss, or a run created over the
+  container's placeholder);
+- by a `{"type":"swarm_control","action":"watch"}` pushed to its socket:
+  the harness whose op changed the run's control state pushes one to every
+  other live member with an endpoint, once its own watch has read the
+  change, delivered as wake hints are (best effort, 500 ms each; a member
+  not reached is a warning in that harness's log, never an error). The
+  receiving harness only nudges its watch: no model turn, no queued prompt,
+  no wake, and the wake cursor is left as it is;
+- by a `wake` hint, which also queues its wake as before.
+
+The nudge is latched, so one that arrives before the watch waits is never
+lost. Each tick is one board call, `_watch` (Rust-only, recorded with role
+`host`), in one read transaction that takes no write lock (ADR-0030). The
+watch passes the event cursor of its last snapshot (`since`); the board
+answers `{"event_cursor", "unchanged": true}` (decision `unchanged`) while
+its cursor is still that one, and `{"event_cursor", "snapshot"}` (decision
+`snapshot`, the snapshot as `_snapshot` answers it) otherwise, the two read
+together. Every change the watch acts on (a pause, a resume, the run's end,
+a deadline extension) writes an event, so the tick after it answers the
+snapshot, however long since the last one. Unnudged, the watch ticks, and
+passes no cursor so the board answers the snapshot whatever its cursor,
+when:
+
+- no snapshot was taken yet, or the last tick could not be read (it retries
+  every 500 ms);
 - the run is running and its deadline has come (the gate records the
   expiry, which no event announces, through its two IMMEDIATE
-  transactions; the tick then answers the paused run);
-- a refresh is due: 5 s after a change, doubling while nothing changes, at
-  most 60 s apart.
+  transactions; the tick then answers the paused run): the watch wakes at
+  the deadline itself;
+- a refresh is due, the safety net for a lost push: 5 s after a change,
+  doubling while nothing changes, at most 600 s apart (owner decision,
+  #2390).
 
-An idle member so reads about one snapshot a minute instead of 120, and a
-tick after a change is one call and one record. `_watch` answers and
+An idle member so reads the board about a dozen times in its first hour and
+once every ten minutes after, where the fixed 500 ms tick read it 7,200
+times an hour; a pushed change is observed as soon as the push arrives, and
+a lost one by the refresh. The ten-minute ceiling is past the time a task
+owner takes to turn idle (300 s), which does not matter to the watch: owner
+liveness is computed by the store's clock when a member reads the board,
+losses are recorded by `reconcile` and the launcher's reaper, and the watch
+acts only on a snapshot read on the tick that observed the change. `_watch` answers and
 refuses through `_snapshot`'s gate. Both read the board in their read
 transaction only when it holds every column a write transaction adds; a
 board an older writer created, lacking one (`members.launcher`,

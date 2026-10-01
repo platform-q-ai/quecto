@@ -1,52 +1,64 @@
-//! The run watch's schedule (#2338): when a member's harness, watching its
-//! run, asks the board for a full snapshot.
+//! The run watch's schedule (#2338, #2390): when a member's harness,
+//! watching its run, reads the board, and when it asks it for a full
+//! snapshot.
 //!
-//! The watch ticks every [`WATCH_TICK`], as it always has, so a board
-//! change is seen as soon as before. Each tick is one board call, `_watch`,
-//! in one read transaction that takes no write lock: given the event cursor
-//! the watch last saw (`since`), the board answers `unchanged` when the
-//! cursor is still there, and the run's snapshot with its cursor otherwise.
-//! The schedule passes no cursor, so the board answers the snapshot
-//! whatever the cursor, only when:
+//! The watch is push-driven (#2390): it has no fixed tick. Between ticks it
+//! waits until nudged, or until its schedule is due ([`WatchSchedule::wait`]).
+//! A nudge ([`Nudge`]) comes from a board op in this process that changed
+//! the run's control state ([`changes_run_control`]), from another member's
+//! harness that made such a change and pushed a no-turn `watch`, or from a
+//! `wake` hint. The harness that made a change pushes it to every other
+//! live member once ([`Announcement`]). The nudge is latched, so one that
+//! arrives before the wait starts is never lost.
 //!
-//! - the last tick could not be read, or no snapshot was taken yet;
+//! Each tick is one board call, `_watch`, in one read transaction that
+//! takes no write lock: given the event cursor the watch last saw
+//! (`since`), the board answers `unchanged` when the cursor is still there,
+//! and the run's snapshot with its cursor otherwise. The schedule passes no
+//! cursor, so the board answers the snapshot whatever the cursor, only
+//! when:
+//!
+//! - the last tick could not be read, or no snapshot was taken yet (such a
+//!   tick is due at once, and the watch retries after [`RETRY`]);
 //! - the run is running and its deadline has come: a passed deadline is
 //!   the one change no event announces (the board records it on the next
 //!   gated op, and `_watch` is one), so the snapshot is due at the deadline
-//!   itself, not one refresh later;
-//! - a refresh is due: a safety net for a change made without an event
-//!   (only a board edited from outside makes one). The refresh backs off
-//!   while nothing changes, from [`REFRESH_MIN`] doubling to
-//!   [`REFRESH_MAX`], and restarts at [`REFRESH_MIN`] after a change.
+//!   itself, and the unnudged watch wakes then;
+//! - a refresh is due: a safety net for a lost push, and for a change made
+//!   without an event (only a board edited from outside makes one). The
+//!   refresh backs off while nothing changes, from [`REFRESH_MIN`] doubling
+//!   to [`REFRESH_MAX`], and restarts at [`REFRESH_MIN`] after a change.
 //!
 //! Every change the watch acts on (a pause or resume, a run's end, a
 //! deadline extension, a run created over the container's placeholder)
 //! writes an event in the same transaction, so it moves the cursor, and the
-//! next tick's answer is the snapshot.
+//! next tick's answer is the snapshot, however long since the last one.
 //!
 //! Owner liveness is not the watch's to detect: a task owner turns idle
 //! by the store's clock when any member reads it (`summary`, `task`,
 //! `tasks`, [`OWNER_IDLE_AFTER`](crate::domain::swarm::OWNER_IDLE_AFTER)),
-//! and a lost harness is recorded by `reconcile` after its grace. The
-//! watch's longest gap between snapshots stays well inside the idle
-//! threshold, so it never holds a stale view past either.
+//! and a lost harness is recorded by `reconcile` or the launcher's reaper
+//! after its grace. The watch reads neither, and it acts (suspends or
+//! settles) only on a snapshot read on the tick that observed the change,
+//! so its ten-minute refresh ceiling (owner decision, #2390), past the idle
+//! threshold, holds no stale view it would act on.
 use std::time::Duration;
 
 use super::{RunStatus, Snapshot};
 
-/// How often the watch reads the event cursor: the 500 ms the snapshot
-/// poll it replaces ran at, so a change is observed within one tick.
-pub const WATCH_TICK: Duration = Duration::from_millis(500);
-
-/// How long a tick that is due at once waits (#2390).
-pub const RETRY: Duration = WATCH_TICK;
+/// How long a tick that is due at once waits (#2390): one that could not
+/// be read, or a passed deadline the board still reads as running. The
+/// poll the watch replaced ran at this, so the watch never spins on the
+/// board.
+pub const RETRY: Duration = Duration::from_millis(500);
 
 /// The refresh interval after a change: the first safety snapshot while
 /// nothing moves comes this long after the last.
 pub const REFRESH_MIN: Duration = Duration::from_secs(5);
 
-/// The longest the watch goes without a snapshot while nothing changes.
-pub const REFRESH_MAX: Duration = Duration::from_secs(60);
+/// The longest the watch goes without a snapshot while nothing changes:
+/// ten minutes (owner decision, #2390), the safety net for a lost push.
+pub const REFRESH_MAX: Duration = Duration::from_secs(600);
 
 /// When the watch next asks for a snapshot, from the last one it took.
 #[derive(Clone, Debug)]
@@ -138,49 +150,136 @@ impl WatchSchedule {
 
 impl WatchSchedule {
     /// How long the watch waits at `now`, when nothing nudges it, before
-    /// its next tick (#2390).
-    pub fn wait(&self, _now: f64) -> Duration {
-        WATCH_TICK
+    /// its next tick (#2390): until its snapshot is due, at the refresh or
+    /// at a running run's deadline. A tick already due (the last could not
+    /// be read, or a passed deadline still reads running) waits [`RETRY`].
+    pub fn wait(&self, now: f64) -> Duration {
+        let ahead = self.due_at - now;
+        match self.seen {
+            Some(_) if ahead > 0.0 => {
+                // A clock that stepped back is never waited out past the
+                // ceiling.
+                Duration::try_from_secs_f64(ahead.min(REFRESH_MAX.as_secs_f64())).unwrap_or(RETRY)
+            }
+            Some(_) | None => RETRY,
+        }
     }
 }
 
 /// What woke the watch before its schedule was due (#2390).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Nudge {
-    /// Another member's harness pushed a `watch` or a `wake`.
+    /// Another member's harness pushed a `watch` (it changed the run's
+    /// control state, and told every member itself) or a `wake`.
     Remote,
-    /// A board op in this process changed the run's control state.
+    /// A board op in this process changed the run's control state: only
+    /// this process tells the other members.
     Local,
 }
 
 impl Nudge {
-    /// Two nudges latched before the watch took them.
+    /// Two nudges latched before the watch took them: a local one wins,
+    /// as only it obliges the watch to tell the others.
     pub fn merge(self, other: Self) -> Self {
-        let _ = other;
-        self
+        match (self, other) {
+            (Self::Remote, Self::Remote) => Self::Remote,
+            (Self::Local, _) | (_, Self::Local) => Self::Local,
+        }
     }
 }
 
-/// Whether this process owes the other members a `watch` push (#2390).
+/// The run's control state, as the watch acts on it: what a pause, a
+/// resume, an end or a deadline extension changes.
+#[derive(Clone, Debug, PartialEq)]
+struct ControlView {
+    status: RunStatus,
+    outcome: Option<RunStatus>,
+    generation: u64,
+    deadline: f64,
+}
+
+impl ControlView {
+    fn of(snapshot: &Snapshot) -> Self {
+        Self {
+            status: snapshot.status,
+            outcome: snapshot.outcome,
+            generation: snapshot.control_generation,
+            deadline: snapshot.deadline,
+        }
+    }
+}
+
+/// Whether this process owes the other members a `watch` push (#2390): it
+/// does when a tick after one of its own (local) nudges reads a control
+/// state the members were not told of. A change another member pushed is
+/// never pushed again, and one a scheduled tick saw first is still pushed
+/// on the local nudge's tick.
 #[derive(Clone, Debug)]
-pub struct Announcement;
+pub struct Announcement {
+    /// The control state the members were last told of, or found out.
+    told: ControlView,
+    /// A local nudge whose tick has not yet read the board.
+    owed: bool,
+}
 
 impl Announcement {
-    /// The obligation of a watch that starts from `snapshot`.
-    pub fn new(_snapshot: &Snapshot) -> Self {
-        Self
+    /// The obligation of a watch that starts from `snapshot`, which every
+    /// member reads for itself.
+    pub fn new(snapshot: &Snapshot) -> Self {
+        Self {
+            told: ControlView::of(snapshot),
+            owed: false,
+        }
     }
 
-    /// A tick woken by `cause` read `snapshot`: whether to push now.
-    pub fn observed(&mut self, _cause: Option<Nudge>, _snapshot: Option<&Snapshot>) -> bool {
-        false
+    /// A tick woken by `cause` (`None`: the schedule) read the run as
+    /// `snapshot` (`None`: it could not be read, and a local nudge is
+    /// carried to the next readable tick). Whether to push a `watch` to
+    /// every other member now.
+    pub fn observed(&mut self, cause: Option<Nudge>, snapshot: Option<&Snapshot>) -> bool {
+        self.owed |= cause == Some(Nudge::Local);
+        let Some(snapshot) = snapshot else {
+            return false;
+        };
+        let view = ControlView::of(snapshot);
+        let changed = view != self.told;
+        let announce = self.owed && changed;
+        // A readable tick after a local nudge settles it: the change is
+        // told now, or the op changed nothing.
+        self.owed = false;
+        match (announce, cause) {
+            // Told now, or by the member that pushed it to every member.
+            (true, _) | (false, Some(Nudge::Remote)) => self.told = view,
+            (false, Some(Nudge::Local) | None) => {}
+        }
+        announce
     }
 }
 
-/// Whether board op `op`, deciding `decision`, changed the run's control
-/// state (#2390).
-pub fn changes_run_control(_op: &str, _decision: &str) -> bool {
-    false
+/// Whether board op `op`, answering with `decision`, changed the run's
+/// control state (#2390): an affirmative list of the ops and the decisions
+/// that changed the status, the control generation or the deadline. An op
+/// that found the run as asked (`unchanged`), a read, and every other op
+/// nudge nobody. A deadline the gate of any op records as passed is not
+/// listed: every watch is due at the deadline itself.
+pub fn changes_run_control(op: &str, decision: &str) -> bool {
+    matches!(
+        (op, decision),
+        ("create", "fresh" | "over_setup")
+            | ("pause", "paused")
+            | ("resume" | "_resume_external", "resumed")
+            | ("_close", "closed")
+            | ("_extend_deadline", "extended")
+            | ("stop", "stopped")
+            | ("complete", "completed")
+            | (
+                "usage_budget" | "_record_request" | "_request_admission",
+                "paused"
+            )
+            | ("_quarantine", "recorded")
+            | ("_confirmed_dead", "confirmed" | "coordinator_confirmed")
+            | ("_lose_coordinator", "lost")
+    )
 }
 
 #[cfg(test)]

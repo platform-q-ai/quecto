@@ -149,12 +149,21 @@ fn watch(run: &Run) -> mpsc::Receiver<Seen> {
 
 /// The next pause the watch observed, within `within`.
 fn next_pause(events: &mpsc::Receiver<Seen>, within: Duration) -> (Instant, Snapshot) {
+    next_pause_announcing(events, within, &mut Vec::new())
+}
+
+/// [`next_pause`], keeping what the watch announced before it.
+fn next_pause_announcing(
+    events: &mpsc::Receiver<Seen>,
+    within: Duration,
+    announced: &mut Vec<Snapshot>,
+) -> (Instant, Snapshot) {
     let until = Instant::now() + within;
     loop {
         let left = until.saturating_duration_since(Instant::now());
         match events.recv_timeout(left) {
             Ok(Seen::Paused(at, snapshot)) => return (at, snapshot),
-            Ok(Seen::Announced(_)) => {}
+            Ok(Seen::Announced(snapshot)) => announced.push(snapshot),
             Ok(Seen::Ended(snapshot)) => panic!("the watch ended first: {snapshot:?}"),
             Err(error) => panic!("no pause observed within {within:?}: {error}"),
         }
@@ -323,13 +332,15 @@ fn a_control_change_made_in_this_process_is_observed_and_announced_once() {
     std::thread::sleep(Duration::from_millis(300));
     run.watching.pause("operator").unwrap();
     let paused = Instant::now();
-    let (at, snapshot) = next_pause(&events, REFRESH_MIN);
+    let mut announced = Vec::new();
+    let (at, snapshot) = next_pause_announcing(&events, REFRESH_MIN, &mut announced);
     assert!(at - paused < Duration::from_secs(1), "{:?}", at - paused);
     assert_eq!(snapshot.status, RunStatus::Paused);
     run.other.resume_external().unwrap();
     run.watching.nudge_watch();
     std::thread::sleep(Duration::from_millis(300));
-    let (announced, ended) = cancel(&run, &events);
+    let (later, ended) = cancel(&run, &events);
+    announced.extend(later);
     assert_eq!(ended.status, RunStatus::Cancelled);
     let statuses: Vec<_> = announced.iter().map(|snapshot| snapshot.status).collect();
     assert_eq!(

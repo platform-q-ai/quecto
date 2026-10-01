@@ -13,7 +13,7 @@
 //! build asserts it on every call ([`SwarmBoard::call`]). Nothing here
 //! constructs a repository, a clock, an id source or a use case: the
 //! builder is composition's (`composition::swarm::build_swarm_board_handles`).
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use serde_json::Value;
@@ -22,7 +22,7 @@ use crate::application::swarm::dto::BoardLocation;
 use crate::application::swarm::ports::{BoardOpLog, SessionOpLog};
 use crate::domain::error::DomainError;
 use crate::domain::swarm::RefusalKind;
-use crate::domain::swarm::watch::Nudge;
+use crate::domain::swarm::watch::{Nudge, changes_run_control};
 use crate::infrastructure::persistence::audit_log::AuditLog;
 use crate::infrastructure::tools::swarm_board_dispatch::{
     self, BindingFaults, BoardWire, CallOrigin, SwarmBoardHandles, TELEMETRY_TARGET,
@@ -60,22 +60,35 @@ struct Shared {
     nudges: WatchNudges,
 }
 
-/// The run watch's nudge latch (#2390).
+/// The run watch's nudge latch (#2390): one per board, shared by every
+/// context over it, so this process's watch is nudged by its own control
+/// changes ([`SwarmBoard::call_as`]) and by the pushes its UDS handler
+/// receives. A latched flag, never a bare notify: a nudge that comes before
+/// the watch waits is taken by that wait, so none is lost.
 #[derive(Debug, Default)]
 pub struct WatchNudges {
     pending: Mutex<Option<Nudge>>,
+    nudged: Condvar,
 }
 
 impl WatchNudges {
-    /// Latches `nudge` and wakes the watch.
+    /// Latches `nudge` (a local one outranks a remote one held with it)
+    /// and wakes the watch.
     pub fn nudge(&self, nudge: Nudge) {
-        let _ = (nudge, &self.pending);
+        let mut pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
+        *pending = Some(pending.map_or(nudge, |held| held.merge(nudge)));
+        self.nudged.notify_all();
     }
 
-    /// Waits up to `timeout` for a nudge, taking it.
+    /// Waits up to `timeout` for a nudge and takes it; at once when one is
+    /// latched already, `None` when none came.
     pub fn wait(&self, timeout: Duration) -> Option<Nudge> {
-        std::thread::sleep(timeout);
-        None
+        let pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
+        let (mut pending, _) = self
+            .nudged
+            .wait_timeout_while(pending, timeout, |pending| pending.is_none())
+            .unwrap_or_else(PoisonError::into_inner);
+        pending.take()
     }
 }
 
@@ -347,7 +360,14 @@ impl SwarmBoard {
             "a board call ({method}) is made off the async workers (#2278)"
         );
         let handles = self.handles(location);
-        swarm_board_dispatch::call_as(&handles, member, method, args, origin).map_err(|refusal| {
+        let (answer, decision) =
+            swarm_board_dispatch::call_deciding(&handles, member, method, args, origin);
+        // #2390: a control change made in this process nudges its run
+        // watch, which reads it at once and tells the other members.
+        if decision.is_some_and(|decision| changes_run_control(method, decision)) {
+            self.shared.nudges.nudge(Nudge::Local);
+        }
+        answer.map_err(|refusal| {
             DomainError::Tool(format!(
                 "swarm: {}",
                 Value::String(refusal.message().to_owned())

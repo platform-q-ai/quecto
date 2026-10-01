@@ -268,7 +268,7 @@ async fn kill_claiming_member(world: &mut QuectoWorld) {
 }
 
 /// The pause between the racing member's reconcile passes. A real member
-/// reconciles on its tool calls and its 500 ms supervisor tick; this one
+/// reconciles on its tool calls (its run watch only reads); this one
 /// stays far busier (well over a hundred passes a second) but leaves the
 /// store's write lock free between passes, as the Python board worker's
 /// round trip once did (~110 passes a second). Back to back, the in-process

@@ -625,7 +625,7 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "Invalid",
     ),
     (
-        "src/infrastructure/tools/swarm_board_dispatch.rs:call_as",
+        "src/infrastructure/tools/swarm_board_dispatch.rs:call_deciding",
         "swarm board has no method {method}",
         "Calling",
     ),

@@ -132,32 +132,60 @@ async fn send_wake_hints(
     members: &[Member],
     generation: u64,
 ) -> Vec<String> {
-    let mut warnings = Vec::new();
-    for member in members {
-        let Some(socket) = &member.endpoint else {
-            continue;
-        };
-        if member.id == context.member || member.status != MemberStatus::Live {
-            continue;
-        }
-        let command = json!({"type":"swarm_control", "action":"wake", "generation":generation});
-        let accepted = super::subagent_registry::send_subagent_uds_command_with_timeout(
-            std::path::Path::new(socket),
-            &command.to_string(),
-            std::time::Duration::from_millis(500),
-        )
-        .await
-        .is_ok_and(|response| {
-            serde_json::from_str::<Value>(&response).is_ok_and(|value| value["success"] == true)
+    let command = json!({"type":"swarm_control", "action":"wake", "generation":generation});
+    send_hints(context, members, &command, "wake hint").await
+}
+
+/// #2390: this process changed the run's control state, so every other
+/// live member with an endpoint is pushed a no-turn `watch`: its run watch
+/// reads the board now rather than at its refresh. Delivered as wake hints
+/// are; the warnings name the members it did not reach.
+async fn announce_control_change(context: &SwarmContext, members: &[Member]) -> Vec<String> {
+    let command = json!({"type":"swarm_control", "action":"watch"});
+    send_hints(context, members, &command, "watch push").await
+}
+
+/// Sends `command` to every live member but this one that has an endpoint,
+/// all at once, each bounded to 500 ms: best effort, as the durable board
+/// is authoritative; a member that did not accept it is a warning.
+async fn send_hints(
+    context: &SwarmContext,
+    members: &[Member],
+    command: &Value,
+    what: &str,
+) -> Vec<String> {
+    let line = command.to_string();
+    let sends = members
+        .iter()
+        .filter(|member| member.id != context.member && member.status == MemberStatus::Live)
+        .filter_map(|member| Some((member, member.endpoint.as_deref()?)))
+        .map(|(member, socket)| {
+            let line = &line;
+            async move {
+                let accepted = super::subagent_registry::send_subagent_uds_command_with_timeout(
+                    std::path::Path::new(socket),
+                    line,
+                    std::time::Duration::from_millis(500),
+                )
+                .await
+                .is_ok_and(|response| {
+                    serde_json::from_str::<Value>(&response)
+                        .is_ok_and(|value| value["success"] == true)
+                });
+                match accepted {
+                    true => None,
+                    false => Some(format!(
+                        "{what} failed for {}; durable board is authoritative",
+                        member.id
+                    )),
+                }
+            }
         });
-        if !accepted {
-            warnings.push(format!(
-                "wake hint failed for {}; durable board is authoritative",
-                member.id
-            ));
-        }
-    }
-    warnings
+    futures::future::join_all(sends)
+        .await
+        .into_iter()
+        .flatten()
+        .collect()
 }
 
 /// The process's local-inference suspension, as composition bound it.
@@ -311,14 +339,19 @@ impl watch::WatchObserver for Supervisor<'_> {
         settle_observed_snapshot(self.0, snapshot)
     }
     fn announce(&mut self, snapshot: &crate::domain::swarm::Snapshot) {
-        let _ = snapshot;
+        // The watch's own thread, outside any runtime: a runtime of its
+        // own for the pushes, as for its settlement.
+        let warnings = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => runtime.block_on(announce_control_change(self.0, &snapshot.members)),
+            Err(error) => vec![format!("swarm watch push runtime failed: {error}")],
+        };
+        for warning in warnings {
+            tracing::warn!(%warning, "swarm watch push not delivered");
+        }
     }
-}
-
-/// #2390: this process changed the run's control state.
-async fn announce_control_change(context: &SwarmContext, members: &[Member]) -> Vec<String> {
-    let _ = (context, members);
-    Vec::new()
 }
 
 /// How long a member waits after settling for its launcher to end it: the
@@ -522,7 +555,11 @@ impl crate::application::swarm::ports::SwarmRunControl for SwarmContext {
             Ok(receipt)
         })
     }
-    fn nudge_watch(&self) {}
+    fn nudge_watch(&self) {
+        self.board
+            .watch_nudges()
+            .nudge(crate::domain::swarm::watch::Nudge::Remote);
+    }
 }
 
 /// The tool gate (#2339): each tool call reads the admission afresh, as
