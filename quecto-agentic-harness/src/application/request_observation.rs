@@ -166,6 +166,7 @@ impl<'a> ObservationGuard<'a> {
             let since = at.saturating_duration_since(self.started).as_millis();
             u64::try_from(since).unwrap_or(u64::MAX)
         });
+        record.input_prefix = self.trace.input_prefix();
         record.instrumented_attempts = self.trace.attempts();
         record.oauth_retries = self.trace.oauth_retries();
         if let Some(outbox) = self.sinks.outbox {

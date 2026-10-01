@@ -47,6 +47,15 @@ impl CodexProvider {
         let replaying = Self::build_request_body(request, &self.auth, replay_to);
         let plain = replays_any(request.messages, replay_to)
             .then(|| Self::build_request_body(request, &self.auth, ""));
+        // Where the input sent first differs from the previous observed
+        // request of its session (#2398), compared as the first body sends
+        // it. A request outside the observed sequence is not compared.
+        if let Some(trace) = &request.trace {
+            let input = replaying["input"].as_array();
+            debug_assert!(input.is_some(), "a Responses body carries an input list");
+            let input = input.map_or(&[][..], Vec::as_slice);
+            trace.record_input_prefix(self.input_digests.observe(request.session_id, input));
+        }
         let call = Call {
             url: self.responses_url(),
             session: Self::request_session(request),

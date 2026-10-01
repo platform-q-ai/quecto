@@ -36,7 +36,20 @@ impl RequestTrace {
     /// record stays: a retry sends the same input again, which the
     /// provider then compares with itself.
     pub fn record_input_prefix(&self, prefix: InputPrefix) {
-        let _ = prefix;
+        debug_assert!(
+            prefix.first_changed_item.is_some() || prefix.first_changed_kind.is_none(),
+            "a kind names a changed item"
+        );
+        debug_assert!(
+            prefix
+                .first_changed_item
+                .is_none_or(|index| index <= prefix.input_items),
+            "a changed item is one this request sent, or the first it lacks"
+        );
+        self.input_prefix
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_or_insert(prefix);
     }
     /// How the request's input relates to its session's previous request,
     /// when its provider observed it.
