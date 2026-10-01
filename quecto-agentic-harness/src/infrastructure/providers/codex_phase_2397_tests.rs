@@ -65,13 +65,33 @@ fn every_answer_that_ended_its_turn_is_a_final_answer() {
 }
 
 #[test]
-fn text_the_same_turn_continues_after_stays_commentary() {
-    let messages = vec![
-        Message::user("Go"),
-        Message::assistant("Looking first.", vec![]),
-        Message::assistant("Done.", vec![]),
-    ];
-    let (_, input) = CodexProvider::build_input(&messages);
-    assert_eq!(input[1]["phase"], "commentary");
-    assert_eq!(input[2]["phase"], "final_answer");
+fn an_answer_at_the_end_keeps_its_phase_when_more_assistant_text_follows() {
+    // Review round 1, L1: no lookahead, so even the last item of a sent
+    // request is serialized the same way once anything is appended.
+    let before = vec![Message::user("Go"), Message::assistant("Part one.", vec![])];
+    let mut after = before.clone();
+    after.push(Message::assistant("Part two.", vec![]));
+    let (_, earlier) = CodexProvider::build_input(&before);
+    let (_, later) = CodexProvider::build_input(&after);
+    assert_eq!(earlier[1], later[1], "the earlier answer changed");
+    assert_eq!(later[1]["phase"], "final_answer");
+    assert_eq!(later[2]["phase"], "final_answer");
+}
+
+#[test]
+fn text_sent_in_place_of_orphaned_tool_calls_is_commentary() {
+    // Review round 1, L2: the orphan fallback carries text that came with
+    // tool calls, so it never ended its turn.
+    let mut assistant = Message::assistant("I was going to read a file.", vec![]);
+    assistant.tool_calls = vec![ToolCall {
+        id: "call_orphan".to_string(),
+        name: "read".into(),
+        arguments: "{}".to_string(),
+    }];
+    let (_, input) = CodexProvider::build_input(&[Message::user("Go"), assistant]);
+    let text = input
+        .iter()
+        .find(|item| item["role"] == "assistant")
+        .expect("the fallback text is sent");
+    assert_eq!(text["phase"], "commentary", "{text}");
 }

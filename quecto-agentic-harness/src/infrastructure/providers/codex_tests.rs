@@ -271,7 +271,8 @@ fn test_build_input_marks_assistant_phase_for_gpt54() {
     ];
     let (_, input) = CodexProvider::build_input(&messages);
     assert_eq!(input[0]["role"], "assistant");
-    assert_eq!(input[0]["phase"], "commentary");
+    // #2397: a text-only message ended its turn, whatever follows it.
+    assert_eq!(input[0]["phase"], "final_answer");
     assert_eq!(input[1]["role"], "assistant");
     assert_eq!(input[1]["phase"], "final_answer");
     assert_eq!(input[2]["role"], "user");
