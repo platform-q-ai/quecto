@@ -700,14 +700,19 @@ on how the provider bounds it:
 - OpenAI (`openai-api`, `openai-oauth`): the provider fixes the input limit
   at the window less the declared output cap (the 400k Codex window is 272k
   of input beside a 128k reply), and the ceiling keeps 5% of that limit
-  free for estimator drift, as Codex does (258,400 for Codex).
+  free for estimator drift, as Codex does (258,400 for Codex). An OpenAI
+  entry that declares no output cap (`gpt-5.3-codex-spark`) has no known
+  input limit and uses the shared rule below.
 - Every other provider (Anthropic, OpenAI-compatible endpoints, local
   servers) checks the prompt plus the requested `max_tokens`, so the reply
   reserves what a request can ask for: the effective `max_tokens`, or up to
   twice it within the declared cap after an output-limit cut-off.
 
-The prompt always keeps at least half the window: a declared cap that would
-leave less is clamped, and the log warns once for that model. A model that
+Where the window is shared with the request, the prompt always keeps at
+least half the window: a declared cap that would leave less is clamped.
+Under a fixed input limit the ceiling stays the provider's limit, however
+small. Either way the log warns once for that model when the reply's
+reserve leaves the prompt under half the window. A model that
 declares no window keeps `max_context_tokens`, and the log says so once for
 that model, at its first request. Once the
 process takes part in a swarm (it created a run, or joined one), the budget

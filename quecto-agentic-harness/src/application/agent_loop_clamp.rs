@@ -67,7 +67,8 @@ impl AgentLoopImpl {
     /// the prompt, its declared output cap and what a request asks for
     /// (#2405), from which it computes the ceiling. A window the ceiling
     /// cannot use as declared (none, or a cap that leaves the prompt under
-    /// its floor) is noted at the next request, once per model.
+    /// half the window) is noted at the next request, once per model and
+    /// kind of note.
     pub(super) fn sync_context_limits(&mut self) {
         let tokens = |value: u32| usize::try_from(value).unwrap_or(usize::MAX);
         let window = ModelWindow::new(
@@ -86,7 +87,7 @@ impl AgentLoopImpl {
             .context_notes
             .get_mut()
             .unwrap_or_else(|e| e.into_inner());
-        notes.pending = note.filter(|_| !notes.noted.contains(&self.model));
+        notes.pending = note.filter(|note| !notes.noted.contains(&(self.model.clone(), *note)));
     }
 
     /// Log the active model's pending note (#2405), once per model, with
@@ -96,7 +97,7 @@ impl AgentLoopImpl {
         let Some(note) = notes.pending.take() else {
             return;
         };
-        if !notes.noted.insert(self.model.clone()) {
+        if !notes.noted.insert((self.model.clone(), note)) {
             return;
         }
         let max_context_tokens = self.context_manager.effective_max_context_tokens();
@@ -115,7 +116,8 @@ impl AgentLoopImpl {
                 max_output_tokens = self.model_max_tokens,
                 max_context_tokens,
                 "the model's declared output cap leaves the prompt under half its context window; \
-                 the reply's reserve is clamped so the prompt keeps half"
+                 a shared window's reserve is clamped so the prompt keeps half, a fixed input \
+                 limit is kept as the provider sets it"
             ),
         }
     }
@@ -233,7 +235,7 @@ impl AgentLoopImpl {
 }
 
 /// Why the active model's window is worth a line in the log (#2405).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum WindowNote {
     /// The model declares no window: the configured budget stands.
     NoWindow,
@@ -241,9 +243,10 @@ pub(super) enum WindowNote {
     ReserveClamped,
 }
 
-/// The note awaiting the next request, and the models already noted.
+/// The note awaiting the next request, and the (model, note) pairs already
+/// logged: each kind of note once per model.
 #[derive(Debug, Default)]
 pub(super) struct ContextNotes {
     pending: Option<WindowNote>,
-    noted: std::collections::HashSet<String>,
+    noted: std::collections::HashSet<(String, WindowNote)>,
 }

@@ -241,18 +241,22 @@ pub enum PromptLimit {
 /// same margin (`effective_context_window_percent: 95` in openai/codex).
 pub const FIXED_INPUT_HEADROOM_PERCENT: usize = 5;
 
-/// The prompt keeps at least `1 / PROMPT_FLOOR_DIVISOR` of a known window
-/// whatever the reply reserves (#2405 review M1).
+/// Where the provider shares the window with the request, the prompt keeps
+/// at least `1 / PROMPT_FLOOR_DIVISOR` of it whatever the reply reserves
+/// (#2405 review M1).
 const PROMPT_FLOOR_DIVISOR: usize = 2;
 
 /// A model's declared context window and what its reply needs beside the
 /// prompt (#2405): the one rule the context ceiling is computed from.
 ///
 /// The prompt's room is the window less the reply's reserve, which depends
-/// on how the provider bounds the prompt ([`PromptLimit`]), and never less
-/// than half the window: a reserve past that is clamped (and reported, see
-/// [`Self::reserve_clamped`]), so the room never falls as the window grows
-/// and never collapses when a declared cap nearly fills the window.
+/// on how the provider bounds the prompt ([`PromptLimit`]). Under a fixed
+/// input limit it is that limit less the headroom, never lifted past it.
+/// Where the window is shared with the request it is never less than half
+/// the window: a reserve past that is clamped, so the room never collapses
+/// when a declared cap nearly fills the window. Either way the room never
+/// falls as the window grows, and a reserve leaving the prompt under half
+/// the window is reported ([`Self::reserve_clamped`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ModelWindow {
     /// The declared window in tokens, `None` when the model declares none.
@@ -282,14 +286,30 @@ impl ModelWindow {
 
     /// The room the window leaves the prompt; `None` when unknown.
     pub fn prompt_room(self) -> Option<usize> {
-        self.window.map(|window| {
-            self.unfloored_room(window)
-                .max(window / PROMPT_FLOOR_DIVISOR)
-        })
+        let window = self.window?;
+        let unfloored = self.unfloored_room(window);
+        if self.fixed_input() {
+            // The provider's own limit: the floor never lifts it (#2405
+            // final review L1).
+            debug_assert!(
+                unfloored <= window.saturating_sub(self.reply_reserve()),
+                "a fixed input ceiling stays within the provider's limit"
+            );
+            return Some(unfloored);
+        }
+        let floor = window / PROMPT_FLOOR_DIVISOR;
+        let room = unfloored.max(floor);
+        debug_assert!(
+            floor <= room && room <= window,
+            "a shared prompt keeps half the window, and no more than the window"
+        );
+        Some(room)
     }
 
-    /// Whether the reply's reserve would leave the prompt under its floor,
-    /// so the reserve was clamped and the declaration deserves a warning.
+    /// Whether the reply's reserve leaves the prompt under half the window:
+    /// clamped where the window is shared, kept as the provider sets it
+    /// under a fixed input limit; either way the declaration deserves a
+    /// warning.
     pub fn reserve_clamped(self) -> bool {
         self.window
             .is_some_and(|window| self.unfloored_room(window) < window / PROMPT_FLOOR_DIVISOR)
