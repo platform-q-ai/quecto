@@ -302,6 +302,8 @@ fn tool_heavy_agent(
     let audit = Arc::new(PrunedAudit::default());
     let agent = AgentLoopImpl::new(crate::application::agent_loop::AgentLoopConfig {
         audit_log: Some(audit.clone() as Arc<dyn crate::application::audit::ports::AuditSink>),
+        // A one-token reply reserve (#2405) leaves the prompt the window.
+        max_tokens: 1,
         ..test_config(Arc::new(MockProvider::new(vec![])), Box::new(registry))
     })
     .with_model_context_window(Some(window));

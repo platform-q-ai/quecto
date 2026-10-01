@@ -35,7 +35,7 @@ impl AgentLoopImpl {
     /// request tokens become `min(max_tokens, cap)` (#935).
     /// `model_context_window` is the new model's known context window (or
     /// `None` when unknown); the effective pruning budget becomes
-    /// `min(max_context_tokens, window)` (#1044). Taking both as parameters
+    /// `min(max_context_tokens, window - output reserve)` (#1044, #2405). Taking both as parameters
     /// (rather than separate setters) ensures every switch re-clamps with no
     /// fragile multi-call protocol. The change-active-model use case is the
     /// only caller (#1847), through the [`ModelRuntime`] port.
@@ -48,8 +48,7 @@ impl AgentLoopImpl {
         self.model = model;
         self.model_max_tokens = model_max_tokens;
         self.model_context_window = model_context_window;
-        self.context_manager
-            .set_model_context_window(model_context_window);
+        self.sync_context_limits();
         // #2212: another model may tokenise differently.
         self.context_manager.forget_calibration();
     }
@@ -57,7 +56,32 @@ impl AgentLoopImpl {
     /// Builder variant: set the per-model output cap at construction time.
     pub fn with_model_max_tokens(mut self, model_max_tokens: Option<u32>) -> Self {
         self.model_max_tokens = model_max_tokens;
+        self.sync_context_limits();
         self
+    }
+
+    /// Hand the context manager the model's window and the reply's reserve
+    /// (#2405), from which it computes the ceiling: the declared output cap
+    /// when the model has one (the provider counts it inside the window),
+    /// else the configured `max_tokens` each request asks for. A model that
+    /// declares no window keeps the configured budget, noted once per model.
+    pub(super) fn sync_context_limits(&mut self) {
+        let reserve = self.model_max_tokens.unwrap_or(self.max_tokens);
+        let reserve = usize::try_from(reserve).unwrap_or(usize::MAX);
+        self.context_manager
+            .set_model_context_window(self.model_context_window);
+        self.context_manager.set_output_reserve(reserve);
+        if self.model_context_window.is_none()
+            && self.unknown_window_noted.insert(self.model.clone())
+        {
+            tracing::info!(
+                target: "context_ceiling",
+                model = %self.model,
+                max_context_tokens = self.context_manager.effective_max_context_tokens(),
+                "the model declares no context window; the context ceiling is the configured \
+                 max_context_tokens"
+            );
+        }
     }
 
     /// The output limit for the next request (#2124). After an output-limit
@@ -138,20 +162,21 @@ impl AgentLoopImpl {
     #[cfg(test)]
     pub fn with_model_context_window(mut self, window: Option<usize>) -> Self {
         self.model_context_window = window;
-        self.context_manager.set_model_context_window(window);
+        self.sync_context_limits();
         self
     }
 
     /// How many models were noted as declaring no context window (#2405).
     #[cfg(test)]
     pub(super) fn unknown_window_notes(&self) -> usize {
-        0
+        self.unknown_window_noted.len()
     }
 
-    /// The effective context-token budget (#1044): the active model's known
-    /// context window when it is smaller than the configured
-    /// `max_context_tokens`; the config value is the override/fallback
-    /// (unknown windows leave the configured budget untouched).
+    /// The effective context-token budget (#1044, #2405): what the active
+    /// model's known context window leaves beside the reply's reserve, when
+    /// that is smaller than the configured `max_context_tokens`; the config
+    /// value is the override/fallback (unknown windows leave the configured
+    /// budget untouched).
     ///
     /// The footer numerator is provider-reported prompt occupancy when usage is
     /// available, so it includes provider-side overhead such as tool schemas.

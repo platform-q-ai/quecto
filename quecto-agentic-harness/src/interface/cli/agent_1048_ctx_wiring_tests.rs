@@ -83,7 +83,8 @@ fn build_agent_from_config_threads_context_knobs_into_the_loop() {
     .expect("agent build should succeed");
     assert_eq!(
         result.agent.effective_max_context_tokens(),
-        100_000,
+        // #2405: less the default 8192-token reply, the model declaring no cap.
+        100_000 - 8_192,
         "the model's declared window must bound the effective budget (#1044)"
     );
     let (pin, collapse_after_messages) = result.agent.context_knob_snapshot();

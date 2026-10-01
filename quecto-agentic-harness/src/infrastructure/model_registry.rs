@@ -158,6 +158,15 @@ impl ModelRegistry {
                 record.max_tokens_explicit = true;
                 record.reasoning = true;
                 record.cost = cost;
+            } else if let Some(published) = openai_published_limits(provider, id) {
+                // #2405: the window the ceiling is computed from; sources in
+                // `model_registry_openai_limits.rs`.
+                record.context_window = published.context_window;
+                record.context_window_explicit = true;
+                if let Some(cap) = published.max_output_tokens {
+                    record.max_tokens = cap;
+                    record.max_tokens_explicit = true;
+                }
             } else if id == "grok-4.7" {
                 // xAI published specs: 500K context, image input, configurable
                 // reasoning, $2/M input and $6/M output
@@ -701,6 +710,10 @@ use file_format::RegistryFile;
 #[path = "model_registry_gpt56_pricing.rs"]
 mod gpt56_pricing;
 use gpt56_pricing::gpt_5_6_cost;
+
+#[path = "model_registry_openai_limits.rs"]
+mod openai_limits;
+use openai_limits::openai_published_limits;
 
 #[cfg(test)]
 #[path = "model_registry_openai_limits_tests.rs"]

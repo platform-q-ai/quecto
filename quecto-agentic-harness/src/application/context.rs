@@ -30,7 +30,7 @@
 
 use crate::application::context_pruning;
 use crate::application::sessions::use_cases::{ListRetainedContext, RetainContext};
-use crate::domain::context_calibration::EstimateScale;
+use crate::domain::context_calibration::{EstimateScale, effective_context_ceiling, prompt_room};
 use crate::domain::large_result_collapse::LargeResultCollapse;
 use crate::domain::message::Message;
 use crate::domain::session_identity::SessionIdentity;
@@ -94,6 +94,8 @@ pub(crate) struct ContextManager {
     context_collapse_after_messages: u32,
     large_result_collapse: LargeResultSwitch,
     model_context_window: Option<usize>,
+    /// The tokens the reply keeps free of the window (#2405).
+    output_reserve: usize,
     ceiling_cap: ContextCeilingCap,
     gauge: Mutex<ContextGaugeCalibration>,
 }
@@ -109,6 +111,7 @@ impl ContextManager {
             context_collapse_after_messages: config.context_collapse_after_messages,
             large_result_collapse: LargeResultSwitch::new(config.large_result_collapse),
             model_context_window: config.model_context_window,
+            output_reserve: 0,
             ceiling_cap: ContextCeilingCap::default(),
             gauge: Mutex::new(ContextGaugeCalibration::default()),
         }
@@ -134,7 +137,9 @@ impl ContextManager {
     }
 
     /// The tokens kept free of the window for the reply (#2405).
-    pub fn set_output_reserve(&mut self, _output_reserve: usize) {}
+    pub fn set_output_reserve(&mut self, output_reserve: usize) {
+        self.output_reserve = output_reserve;
+    }
 
     #[cfg(test)]
     pub fn set_pin_recent_turns(&mut self, pin_recent_turns: u32) {
@@ -151,8 +156,9 @@ impl ContextManager {
         (self.pin_recent_turns, self.context_collapse_after_messages)
     }
 
-    /// The configured budget clamped to the model's window, without a swarm
-    /// member's cap: the room the model has, not what the member keeps.
+    /// The configured budget clamped to the model's whole window, without a
+    /// swarm member's cap or the reply's reserve: the room the model has
+    /// for the prompt and the reply together, not what the member keeps.
     pub fn window_budget_tokens(&self) -> usize {
         match self.model_context_window {
             Some(window) => self.max_context_tokens.min(window),
@@ -160,10 +166,17 @@ impl ContextManager {
         }
     }
 
-    /// The lowest of the configured budget, the model's window and the
-    /// composition's cap (a swarm member's, #2342), in provider tokens.
+    /// The lowest of the configured budget, what the model's window leaves
+    /// beside the reply's reserve (#2405) and the composition's cap (a swarm
+    /// member's, #2342), in provider tokens. The one place the ceiling is
+    /// computed: pruning, the gauge and the reported budget all read it.
     pub fn effective_max_context_tokens(&self) -> usize {
-        self.window_budget_tokens().min(self.ceiling_cap.tokens())
+        effective_context_ceiling(
+            self.max_context_tokens,
+            self.model_context_window,
+            self.output_reserve,
+        )
+        .min(self.ceiling_cap.tokens())
     }
 
     /// The effective budget in estimate units at the provider-observed
@@ -175,11 +188,12 @@ impl ContextManager {
         ceiling
     }
 
-    /// The model's window (a hard provider limit) in estimate units.
+    /// The prompt's hard provider limit, the model's window less the
+    /// reply's reserve (#2405), in estimate units.
     pub fn window_in_estimate_units(&self) -> Option<usize> {
         let scale = self.estimate_scale();
-        self.model_context_window
-            .map(|window| scale.in_estimate_units(window))
+        prompt_room(self.model_context_window, self.output_reserve)
+            .map(|room| scale.in_estimate_units(room))
     }
 
     pub fn estimate_scale(&self) -> EstimateScale {

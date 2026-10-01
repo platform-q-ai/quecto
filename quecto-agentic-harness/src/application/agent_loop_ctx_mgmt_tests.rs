@@ -311,11 +311,12 @@ async fn effective_budget_derives_from_known_model_window() {
     let store = Arc::new(MemSpillStore::default());
     let base = || agent(vec![], store.clone(), 200_000, None);
 
-    // Known window smaller than the config value → the window wins.
+    // Known window smaller than the config value → the window, less the
+    // 1024-token reply reserve (#2405), wins.
     let known = base().with_model_context_window(Some(100_000));
     assert_eq!(
         known.effective_max_context_tokens(),
-        100_000,
+        100_000 - 1_024,
         "a known smaller model window must clamp the effective budget"
     );
 
@@ -343,7 +344,8 @@ async fn set_model_rederives_the_context_window_budget() {
     // stops over-pruning, and large → small re-clamps before overflow.
     let store = Arc::new(MemSpillStore::default());
     let mut agent = agent(vec![], store, 300_000, None).with_model_context_window(Some(32_768));
-    assert_eq!(agent.effective_max_context_tokens(), 32_768);
+    // #2405: the window less the 1024-token reply reserve.
+    assert_eq!(agent.effective_max_context_tokens(), 32_768 - 1_024);
 
     crate::application::catalogue::ports::ModelRuntime::apply_model(
         &mut agent,
@@ -369,7 +371,7 @@ async fn set_model_rederives_the_context_window_budget() {
     );
     assert_eq!(
         agent.effective_max_context_tokens(),
-        32_768,
+        32_768 - 1_024,
         "switching to a small-window model must re-clamp the budget"
     );
 
@@ -399,7 +401,7 @@ async fn reported_max_context_tokens_matches_the_enforced_budget() {
         agent.effective_max_context_tokens(),
         "the reported budget must never diverge from the enforced one"
     );
-    assert_eq!(agent.max_context_tokens(), 32_768);
+    assert_eq!(agent.max_context_tokens(), 32_768 - 1_024);
 }
 
 // --- #1044 AC1: a met ceiling records no over-budget prune ---

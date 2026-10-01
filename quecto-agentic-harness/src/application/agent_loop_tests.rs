@@ -700,7 +700,8 @@ fn new_threads_context_knobs_and_model_window_into_observable_budget() {
         ..test_config(provider, Box::new(registry))
     });
     assert_eq!(agent.context_knob_snapshot(), (7, 11));
-    assert_eq!(agent.max_context_tokens(), 4_096);
+    // #2405: the window less the 512-token reply reserve.
+    assert_eq!(agent.max_context_tokens(), 4_096 - 512);
     let debug = format!("{agent:?}");
     assert!(debug.contains("test-model"));
     assert!(debug.contains("max_tool_iterations"));

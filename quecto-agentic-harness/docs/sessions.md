@@ -692,8 +692,13 @@ switch.
    unseen result is never stubbed). Set the size to
    `18446744073709551615` to switch the rule off.
 
-The effective budget is the smaller of `max_context_tokens` and the active
-model's context window when the model registry declares one. Once the
+The effective budget is the smaller of `max_context_tokens` and what the
+active model's context window leaves beside the reply when the model
+registry declares a window (#2405): the window less the model's declared
+output cap, or less the configured `max_tokens` when it declares none
+(OpenAI's 400k Codex window is 272k of prompt beside a 128k reply). A model
+that declares no window keeps `max_context_tokens`, and the log says so once
+for that model. Once the
 process takes part in a swarm (it created a run, or joined one), the budget
 is also capped at `swarm_max_context_tokens` (default `48000`, #2342): swarm
 members work at 30-90k tokens, where the 200k budget never engages, and
@@ -798,7 +803,7 @@ Session behavior is configured in `config.json` under `agents.defaults`:
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `max_context_tokens` | `200000` | Application-level token budget before context pruning (clamped down to the model's declared context window when known) |
+| `max_context_tokens` | `200000` | Application-level token budget before context pruning (clamped down to the model's declared context window, less the reply's output reserve, when known) |
 | `swarm_max_context_tokens` | `48000` | The budget once the process takes part in a swarm: the lower of it and `max_context_tokens` applies from then on, and never disengages. Env: `QUECTO_SWARM_MAX_CONTEXT_TOKENS`. `0` is refused; set it at or above `max_context_tokens` to switch it off |
 | `context_collapse_after_tool_calls` | `50` | Collapse the oldest tool outputs once the session exceeds N tool calls. Set to `4294967295` (`u32::MAX`) to disable. 50 stays the default beside the size-aware rule (#2348): on the owner's swarm sessions a dial of 100 sends 0-8% more input, and 25 saves another 3-21% but rewrites the cached prefix about 1.5 times as often; revisit it with `llm_turn_end.cached_input_tokens` |
 | `context_collapse_large_result_tokens` | unset (`2000` for a swarm member, off otherwise) | A tool result over this many estimated tokens collapses to its recall stub once seen for `context_collapse_large_result_after_turns` turns. Set, it applies to every agent. Env: `QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_TOKENS`. `18446744073709551615` switches it off everywhere |
