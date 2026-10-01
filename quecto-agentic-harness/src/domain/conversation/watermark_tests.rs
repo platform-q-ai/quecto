@@ -112,6 +112,11 @@ fn kept_tokens(messages: &[PlanMessage<'_>], plan: &CutPlan) -> usize {
             .sum::<usize>()
 }
 
+/// The archived ranges as `(start, end)` pairs.
+fn spans(plan: &CutPlan) -> Vec<(usize, usize)> {
+    plan.archived().iter().map(|r| (r.start, r.end)).collect()
+}
+
 /// Every index is kept or archived, once; no call is split from its result.
 fn assert_whole(messages: &[PlanMessage<'_>], plan: &CutPlan) {
     let mut seen: Vec<usize> = plan.kept().to_vec();
@@ -159,7 +164,7 @@ fn at_the_high_mark_the_head_the_stub_and_the_newest_exchanges_fit_within_low() 
         kept,
         "system, brief and the nine newest exchanges"
     );
-    assert_eq!(plan.archived(), [2..tail_start]);
+    assert_eq!(spans(&plan), [(2, tail_start)]);
     assert_eq!(plan.stub_slot(), 2, "the stub follows the pinned head");
     assert_eq!(plan.projected_tokens(), kept_tokens(&messages, &plan));
     assert_eq!(plan.projected_tokens(), 9_850);
@@ -169,6 +174,8 @@ fn at_the_high_mark_the_head_the_stub_and_the_newest_exchanges_fit_within_low() 
     );
     assert!(!plan.over_low_mark());
     assert_whole(&messages, &plan);
+    let exact = plan_cut(&input(&messages, total(&messages), 9_850));
+    assert_eq!(exact, Some(plan), "a tail of exactly L fits");
 }
 
 #[test]
@@ -210,7 +217,7 @@ fn the_latest_prompt_stays_pinned_in_a_long_single_prompt_turn() {
     assert_eq!(plan.stub_slot(), 3, "system, brief, latest prompt");
     assert_eq!(plan.kept()[..3], [0, 1, prompt]);
     let tail_start = plan.kept()[3];
-    assert_eq!(plan.archived(), [2..prompt, prompt + 1..tail_start]);
+    assert_eq!(spans(&plan), [(2, prompt), (prompt + 1, tail_start)]);
     assert!(plan.projected_tokens() <= 10_000);
     assert_whole(&messages, &plan);
 }
@@ -336,8 +343,8 @@ fn archiving_only_the_previous_stub_is_no_cut_but_one_more_exchange_is() {
     let messages = script.messages();
     let plan = plan_cut(&input(&messages, 10_000, 5_000)).expect("a real exchange to archive");
     assert_eq!(
-        plan.archived(),
-        [2..5],
+        spans(&plan),
+        [(2, 5)],
         "the stub with the exchange after it"
     );
 }
