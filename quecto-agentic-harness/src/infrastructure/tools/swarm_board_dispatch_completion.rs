@@ -1,22 +1,25 @@
 //! The completion methods of the board dispatch (#2273): `complete`,
 //! `revalidate_task`, `amend` and the criterion `evidence` that success
 //! needs, with their Python signatures and their serving. Every argument
-//! reaches the use case as the JSON value passed, and each method answers
-//! `None`. The decision names what the call did; `revalidate_task`'s
-//! record names the task its row holds (#2303), and the others act on no
-//! task, message or cursor.
+//! reaches the use case as the JSON value passed. Where Python answered
+//! `None`, each answers what it changed (#2394): `complete` the run's
+//! `{status, outcome, reason}` (as `stop`'s receipt opens),
+//! `revalidate_task` the task's dict, `amend` the contract and `evidence`
+//! the evidence as recorded. The decision names what the call did;
+//! `revalidate_task`'s record names the task its row holds (#2303), and the
+//! others act on no task, message or cursor.
 use serde_json::Value;
 
 use super::tasks::acted_on;
-use super::{Parameter, Served, done, required, take};
+use super::{Parameter, Served, done, object, required, take};
 use crate::application::swarm::dto::{
-    AmendRunContractRequest, CompleteRunRequest, EvidenceTransition, RecordEvidenceRequest,
-    RevalidateTaskRequest,
+    AmendRunContractRequest, CompleteRunRequest, EvidenceTransition, NewEvidence,
+    RecordEvidenceRequest, RevalidateTaskRequest, StoredContract,
 };
 use crate::application::swarm::use_cases::{
     AmendRunContract, CompleteRun, RecordEvidence, RevalidateTask,
 };
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::{BoardError, RunRecord};
 
 /// `complete(revision)`.
 pub(super) const COMPLETE: [Parameter; 1] = [required("revision")];
@@ -48,11 +51,12 @@ pub(super) fn complete(
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
     let [revision] = take(arguments)?;
-    complete_run.execute(CompleteRunRequest {
+    let ended = complete_run.execute(CompleteRunRequest {
         actor: actor.to_owned(),
         revision,
     })?;
     Ok(Served {
+        value: ended_run(ended),
         controls_run: true,
         ..done("completed")
     })
@@ -66,14 +70,15 @@ pub(super) fn revalidate_task(
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
     let [task_id, revision, evidence] = take(arguments)?;
-    let stored = revalidate_task.execute(RevalidateTaskRequest {
+    let task = revalidate_task.execute(RevalidateTaskRequest {
         actor: actor.to_owned(),
         task_id,
         revision,
         evidence,
     })?;
     Ok(Served {
-        task_id: acted_on(Some(&stored)),
+        task_id: acted_on(task.get("id")),
+        value: task.into_value(),
         ..done("revalidated")
     })
 }
@@ -84,14 +89,52 @@ pub(super) fn amend(
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
     let [goal, constraints, criteria, reason] = take(arguments)?;
-    amend_run_contract.execute(AmendRunContractRequest {
+    let amended = amend_run_contract.execute(AmendRunContractRequest {
         actor: actor.to_owned(),
         goal,
         constraints,
         criteria,
         reason,
     })?;
-    Ok(done("amended"))
+    Ok(Served {
+        value: contract(amended),
+        ..done("amended")
+    })
+}
+
+/// `{status, outcome, reason}`: the run as it now stands, in the order the
+/// control receipt opens with.
+fn ended_run(run: RunRecord) -> Value {
+    let text = |value: Option<String>| value.map_or(Value::Null, Value::String);
+    object([
+        (
+            "status",
+            text(run.status.map(|status| status.as_str().to_owned())),
+        ),
+        ("outcome", text(run.outcome)),
+        ("reason", text(run.outcome_reason)),
+    ])
+}
+
+/// `{goal, constraints, criteria}`: the run's contract as it now stands.
+fn contract(contract: StoredContract) -> Value {
+    object([
+        ("goal", contract.goal),
+        ("constraints", contract.constraints),
+        ("criteria", contract.criteria),
+    ])
+}
+
+/// The evidence as recorded, in the `evidence` table's column order.
+fn recorded(evidence: NewEvidence) -> Value {
+    object([
+        ("criterion", evidence.criterion),
+        ("artifact", Value::from(evidence.artifact)),
+        ("revision", Value::from(evidence.revision)),
+        ("kind", Value::from(evidence.kind)),
+        ("actor", Value::from(evidence.actor)),
+        ("accepted", Value::Bool(evidence.accepted)),
+    ])
 }
 
 pub(super) fn evidence(
@@ -100,7 +143,7 @@ pub(super) fn evidence(
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
     let [criterion, artifact, revision, kind, passed] = take(arguments)?;
-    let transition = record_evidence.execute(RecordEvidenceRequest {
+    let recorded_evidence = record_evidence.execute(RecordEvidenceRequest {
         actor: actor.to_owned(),
         criterion,
         artifact,
@@ -108,10 +151,13 @@ pub(super) fn evidence(
         kind,
         passed,
     })?;
-    Ok(done(match transition {
-        EvidenceTransition::Recorded => "recorded",
-        EvidenceTransition::Unchanged => "unchanged",
-    }))
+    Ok(Served {
+        value: recorded(recorded_evidence.evidence),
+        ..done(match recorded_evidence.transition {
+            EvidenceTransition::Recorded => "recorded",
+            EvidenceTransition::Unchanged => "unchanged",
+        })
+    })
 }
 
 #[cfg(test)]

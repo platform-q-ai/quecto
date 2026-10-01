@@ -1,23 +1,30 @@
-use serde_json::{Value, json};
+use serde_json::json;
 
 use super::super::TELEMETRY_TARGET;
 use super::super::tests::{board, captured, running};
 use crate::domain::swarm::{BoardError, RefusalKind};
 use crate::infrastructure::tools::swarm_board_dispatch::call;
 
-/// Each completion method answers `None`, as Python's do; a completed run
+/// `evidence` answers the evidence as recorded and `complete` the run as it
+/// now stands (#2394, where Python answered `None`); a completed run
 /// is paused holding `succeeded` until the supervisor closes it.
 #[test]
-fn completion_methods_answer_none_and_complete_holds_success() {
+fn completion_methods_answer_what_they_changed_and_complete_holds_success() {
     let (_dir, handles) = board(1_000.0);
     running(&handles);
-    for (method, args) in [
-        ("evidence", json!(["t", "ci.log", "R1", "command", true])),
-        ("complete", json!(["R1"])),
-    ] {
-        assert_eq!(call(&handles, "parent", method, args).unwrap(), Value::Null);
-    }
+    let recorded = call(
+        &handles,
+        "parent",
+        "evidence",
+        json!(["t", "ci.log", "R1", "command", true]),
+    )
+    .unwrap();
+    assert_eq!(recorded["accepted"], json!(true), "{recorded}");
+    let completed = call(&handles, "parent", "complete", json!(["R1"])).unwrap();
     let status = call(&handles, "parent", "_control_status", json!([])).unwrap();
+    for field in ["status", "outcome", "reason"] {
+        assert_eq!(completed[field], status[field], "{field}: {completed}");
+    }
     assert_eq!(
         (&status["status"], &status["outcome"], &status["reason"]),
         (
@@ -71,7 +78,11 @@ fn completion_methods_bind_pythons_signatures() {
             "goal": "new goal",
         }),
     );
-    assert_eq!(amended.unwrap(), Value::Null);
+    assert_eq!(
+        amended.unwrap(),
+        json!({"goal": "new goal", "constraints": [],
+               "criteria": [{"id": "t", "kind": "review", "description": "d"}]})
+    );
 }
 
 /// Each completion call leaves one INFO record with its decision, and no

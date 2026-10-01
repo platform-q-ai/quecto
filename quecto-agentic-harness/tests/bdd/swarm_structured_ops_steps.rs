@@ -67,7 +67,12 @@ fn structured_worker(world: &mut QuectoWorld) {
     assert_eq!(reserved["paths"], json!(["src/lib.rs"]), "{reserved}");
     let submitted = call(json!({"op":"submit","task_id":1,"token":token,
         "evidence":[{"artifact":"tests.log","revision":"R1"}]}));
-    assert!(submitted.is_null(), "{submitted}");
+    // #2394: the op answers the task's row as it now stands.
+    assert_eq!(
+        (&submitted["status"], &submitted["token"]),
+        (&json!("submitted"), &token),
+        "{submitted}"
+    );
 }
 
 #[when("the coordinator verifies the submitted task through a structured op")]
@@ -78,7 +83,7 @@ fn structured_verify(world: &mut QuectoWorld) {
         world,
         json!({"op":"verify_task","task_id":1,"token":task["token"],"revision":"R1"}),
     );
-    assert!(verified.is_null(), "{verified}");
+    assert_eq!(verified["status"], "completed", "{verified}");
     run(world, json!({"op":"summary"}));
 }
 

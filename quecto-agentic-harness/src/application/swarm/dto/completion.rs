@@ -56,6 +56,15 @@ pub enum EvidenceTransition {
     Unchanged,
 }
 
+/// What `evidence` answered (#2394): whether it wrote its row, and the
+/// evidence as recorded (the row's columns, `accepted` as the board
+/// decided it), so the member sees whether its pass was accepted.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecordedEvidence {
+    pub transition: EvidenceTransition,
+    pub evidence: NewEvidence,
+}
+
 /// One `evidence` row as stored (`SELECT * FROM evidence`): the board
 /// writes text for the first four columns and `0` or `1` for `accepted`.
 #[derive(Clone, Debug, PartialEq, Eq)]

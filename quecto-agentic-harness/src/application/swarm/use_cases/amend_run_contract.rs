@@ -43,7 +43,9 @@ impl AmendRunContract {
     /// A bound, an authorisation or budget refusal, a criteria refusal
     /// with Python's text, a stored contract that is not JSON, or the
     /// store's.
-    pub fn execute(&self, request: AmendRunContractRequest) -> Result<(), BoardError> {
+    ///
+    /// Answers the contract as it now stands (#2394).
+    pub fn execute(&self, request: AmendRunContractRequest) -> Result<StoredContract, BoardError> {
         let goal = bounded(&request.goal, "goal", TEXT_MAX_BYTES)?;
         let reason = bounded(&request.reason, "amendment reason", TEXT_MAX_BYTES)?;
         bounded_text(
@@ -93,9 +95,10 @@ impl AmendRunContract {
                         ("goal", text(goal)),
                         ("reason", text(reason)),
                         ("before", contract(before)),
-                        ("after", contract(after)),
+                        ("after", contract(after.clone())),
                     ]),
-                )
+                )?;
+                Ok(after)
             },
         )
     }

@@ -10,7 +10,9 @@ use serde_json::Value;
 use super::OverRepository;
 use crate::application::swarm::board_completion::definition;
 use crate::application::swarm::board_operation::{detail, operation, text};
-use crate::application::swarm::dto::{EvidenceTransition, NewEvidence, RecordEvidenceRequest};
+use crate::application::swarm::dto::{
+    EvidenceTransition, NewEvidence, RecordEvidenceRequest, RecordedEvidence,
+};
 use crate::application::swarm::ports::{BoardRepository, Clock};
 use crate::domain::swarm::{
     Access, BoardError, RefusalKind, bounded, edited_criteria, python_equal,
@@ -43,10 +45,9 @@ impl RecordEvidence {
     /// A bound, an authorisation or budget refusal, `evidence must match a
     /// configured criterion and kind`, criteria the board never writes, or
     /// the store's.
-    pub fn execute(
-        &self,
-        request: RecordEvidenceRequest,
-    ) -> Result<EvidenceTransition, BoardError> {
+    ///
+    /// Answers the evidence as recorded (#2394), the same row for a no-op.
+    pub fn execute(&self, request: RecordEvidenceRequest) -> Result<RecordedEvidence, BoardError> {
         let artifact = bounded(&request.artifact, "artifact reference", ARTIFACT_MAX_BYTES)?;
         let revision = bounded(&request.revision, "artifact revision", REVISION_MAX_BYTES)?;
         let actor = request.actor.as_str();
@@ -91,17 +92,21 @@ impl RecordEvidence {
                         && python_equal(&prior.kind, &text(kind))
                         && python_equal(&prior.accepted, &Value::Bool(accepted))
                 });
-                if same {
-                    return Ok(EvidenceTransition::Unchanged);
-                }
-                transaction.record_evidence(&NewEvidence {
+                let evidence = NewEvidence {
                     criterion: request.criterion.clone(),
                     artifact: artifact.to_owned(),
                     revision: revision.to_owned(),
                     kind: kind.to_owned(),
                     actor: actor.to_owned(),
                     accepted,
-                })?;
+                };
+                if same {
+                    return Ok(RecordedEvidence {
+                        transition: EvidenceTransition::Unchanged,
+                        evidence,
+                    });
+                }
+                transaction.record_evidence(&evidence)?;
                 transaction.event(
                     actor,
                     self.clock.now_seconds(),
@@ -113,7 +118,10 @@ impl RecordEvidence {
                         ("accepted", Value::Bool(accepted)),
                     ]),
                 )?;
-                Ok(EvidenceTransition::Recorded)
+                Ok(RecordedEvidence {
+                    transition: EvidenceTransition::Recorded,
+                    evidence,
+                })
             },
         )
     }

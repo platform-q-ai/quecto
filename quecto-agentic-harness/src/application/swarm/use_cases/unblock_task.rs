@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use super::OverRepository;
 use crate::application::swarm::board_operation::{detail, operation};
-use crate::application::swarm::board_tasks::{owned, stored_id};
+use crate::application::swarm::board_tasks::{changed, owned};
 use crate::application::swarm::dto::{TaskChange, TaskTransition, TaskUpdate, UnblockTaskRequest};
 use crate::application::swarm::ports::{BoardRepository, Clock};
 use crate::domain::swarm::validation::TEXT_MAX_BYTES;
@@ -44,12 +44,11 @@ impl UnblockTask {
             running,
             |transaction, _| {
                 let task = owned(transaction, &request.task_id, &request.token, actor)?;
-                let changed = |transition| TaskChange {
-                    task_id: stored_id(&task),
-                    transition,
-                };
                 match task.text("status") {
-                    Some("claimed") => Ok(changed(TaskTransition::Unchanged)),
+                    Some("claimed") => Ok(TaskChange {
+                        task,
+                        transition: TaskTransition::Unchanged,
+                    }),
                     Some("blocked") => {
                         transaction.update_task_status(&request.task_id, &TaskUpdate::Unblock)?;
                         transaction.event(
@@ -61,7 +60,7 @@ impl UnblockTask {
                                 ("reason", Value::from(reason)),
                             ]),
                         )?;
-                        Ok(changed(TaskTransition::Applied))
+                        changed(transaction, &request.task_id, "claimed")
                     }
                     _ => Err(BoardError::new(
                         RefusalKind::WrongState,

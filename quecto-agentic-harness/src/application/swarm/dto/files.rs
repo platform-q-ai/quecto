@@ -82,10 +82,11 @@ pub struct RecoverTaskRequest {
 }
 
 /// What `recover` did: the reservations it released with the task, and
-/// the task's id as its row holds it (#2303), for the call's record.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// the task's row as it now stands (#2394: the op answers it), whose id
+/// the call's record names (#2303).
+#[derive(Clone, Debug, PartialEq)]
 pub struct Recovered {
-    pub task_id: Value,
+    pub task: TaskRow,
     pub reservations_released: i64,
 }
 

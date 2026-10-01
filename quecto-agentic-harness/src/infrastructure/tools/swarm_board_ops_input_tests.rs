@@ -136,12 +136,20 @@ async fn an_answer_reaches_the_member_as_python_writes_it() {
         "{}",
         result.content
     );
-    let nothing = execute(
+    let changed = execute(
         &context,
         r#"{"op":"dependencies","task_id":1,"dependencies":[]}"#,
     )
     .await;
-    assert_eq!(nothing.content, "null", "a method returning None");
+    let row = wire_text(
+        &board_wire(),
+        &direct(&context, "task", json!([1])).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        changed.content, row,
+        "a method Python answered None with answers the task's row (#2394)"
+    );
 }
 
 #[derive(Clone, Default)]

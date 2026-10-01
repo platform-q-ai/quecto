@@ -3,13 +3,11 @@
 //! that the run can complete at it.
 use std::sync::Arc;
 
-use serde_json::Value;
-
 use super::OverRepository;
 use crate::application::swarm::board_completion::task_record;
 use crate::application::swarm::board_operation::{detail, operation};
-use crate::application::swarm::board_tasks::stored_id;
-use crate::application::swarm::dto::RevalidateTaskRequest;
+use crate::application::swarm::board_tasks::read_task;
+use crate::application::swarm::dto::{RevalidateTaskRequest, TaskRow};
 use crate::application::swarm::ports::{BoardEncoding, BoardRepository, Clock};
 use crate::domain::swarm::validation::TEXT_MAX_BYTES;
 use crate::domain::swarm::{Access, BoardError, RefusalKind, bounded_text, revalidation};
@@ -45,7 +43,10 @@ impl RevalidateTask {
     /// # Errors
     /// The evidence's bound, an authorisation or budget refusal, `unknown
     /// task`, a revalidation refusal with Python's text, or the store's.
-    pub fn execute(&self, request: RevalidateTaskRequest) -> Result<Value, BoardError> {
+    ///
+    /// Answers the task's row as it now stands, its new evidence included
+    /// (#2394).
+    pub fn execute(&self, request: RevalidateTaskRequest) -> Result<TaskRow, BoardError> {
         bounded_text(
             &self.encoding.encode(&request.evidence)?,
             "evidence references",
@@ -83,7 +84,7 @@ impl RevalidateTask {
                         ("evidence", evidence.clone()),
                     ]),
                 )?;
-                Ok(stored_id(&task))
+                read_task(transaction, &request.task_id)
             },
         )
     }

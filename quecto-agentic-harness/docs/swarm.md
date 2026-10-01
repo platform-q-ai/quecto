@@ -156,8 +156,11 @@ connection, runs its transactions and answers.
 
 Members reach it through the `swarm` tool's structured ops. Each op is the
 former Python `board.<method>` of the same name, with the same arguments (as
-named JSON fields, with the same defaults) and the same JSON result: only the
-calling syntax changed, `{"op":"claim","task_id":3}`. `swarm_board_ops.rs`
+named JSON fields, with the same defaults) and the same JSON result, except
+where Python answered `null`: an op that changes a task answers the task's row
+as it now stands, and every other op answers what it changed, so no op answers
+a bare `null` (#2394). Otherwise only the calling syntax changed,
+`{"op":"claim","task_id":3}`. `swarm_board_ops.rs`
 (`BOARD_OPS`) is the one table of them; the tool schema and the dispatcher's
 argument binding are rendered from and held to it.
 
@@ -167,25 +170,25 @@ argument binding are rendered from and held to it.
 | `tasks` | `offset` integer (0), `limit` integer 1–100 (50) | list of tasks | any member |
 | `file_owners` | `offset` integer (0), `limit` integer 1–100 (50) | list of file reservations | any member |
 | `task_create` | `request` string, `title` string, `acceptance` nonempty list of nonblank strings, `dependencies` list of task ids or null (`null`) | task (replayed on a retry) | any member |
-| `dependencies` | `task_id` integer, `dependencies` list of task ids or null | `null` | any member |
+| `dependencies` | `task_id` integer, `dependencies` list of task ids or null | task | any member |
 | `claim` | `task_id` integer | task with its claim `token` | any member |
-| `release` | `task_id` integer, `token` string | `null` | the owner |
-| `block` | `task_id` integer, `token` string, `reason` string | `null` | the owner |
-| `unblock` | `task_id` integer, `token` string, `reason` string | `null` | the owner |
-| `submit` | `task_id` integer, `token` string, `evidence` list of `{artifact, revision}` | `null` | the owner |
+| `release` | `task_id` integer, `token` string | task | the owner |
+| `block` | `task_id` integer, `token` string, `reason` string | task | the owner |
+| `unblock` | `task_id` integer, `token` string, `reason` string | task | the owner |
+| `submit` | `task_id` integer, `token` string, `evidence` list of `{artifact, revision}` | task | the owner |
 | `reserve` | `task_id` integer, `token` string, `paths` list of strings | `{token, paths}` | the owner |
-| `release_files` | `task_id` integer, `token` string, `reservation` string | `null` | the owner |
+| `release_files` | `task_id` integer, `token` string, `reservation` string | `{task_id, reservation}` | the owner |
 | `send` | `request` string, `recipient` member id, `body` string, `revision` string or null (`null`), `supersedes` message id or null (`null`) | `{id, status}` | any member |
-| `withdraw` | `message_id` integer | `null` | the sender |
+| `withdraw` | `message_id` integer | `{message_id, changed}` | the sender |
 | `inbox` | `include_consumed` boolean (`false`; bound loosely, so any nonzero number such as `1` also reads consumed history) | list of messages | any member |
-| `ack` | `message_id` integer | `null` | the recipient |
-| `evidence` | `criterion` string, `artifact` string, `revision` string or null, `kind` `command` or `review`, `passed` boolean | `null` | any member (a worker's is a proposal) |
-| `amend` | `goal` string, `constraints` list of strings, `criteria` list of `{id, kind, description}`, `reason` string | `null` | coordinator |
-| `verify_task` | `task_id` integer, `token` string, `revision` string or null | `null` | coordinator |
-| `revalidate_task` | `task_id` integer, `revision` string or null, `evidence` list of `{artifact, revision}` | `null` | coordinator |
-| `recover` | `task_id` integer, `release_files` boolean (`false`) | `null` | coordinator |
+| `ack` | `message_id` integer | `{message_id, changed}` | the recipient |
+| `evidence` | `criterion` string, `artifact` string, `revision` string or null, `kind` `command` or `review`, `passed` boolean | `{criterion, artifact, revision, kind, actor, accepted}` | any member (a worker's is a proposal) |
+| `amend` | `goal` string, `constraints` list of strings, `criteria` list of `{id, kind, description}`, `reason` string | `{goal, constraints, criteria}` | coordinator |
+| `verify_task` | `task_id` integer, `token` string, `revision` string or null | task | coordinator |
+| `revalidate_task` | `task_id` integer, `revision` string or null, `evidence` list of `{artifact, revision}` | task | coordinator |
+| `recover` | `task_id` integer, `release_files` boolean (`false`) | task | coordinator |
 | `revoke` | `task_id` integer, `reason` string | task | coordinator |
-| `complete` | `revision` string or null | `null` | coordinator |
+| `complete` | `revision` string or null | `{status, outcome, reason}` | coordinator |
 | `stop` | `status` string, `reason` string | control receipt | coordinator |
 | `usage_report` | none | usage report (as `op=usage`) | any member |
 

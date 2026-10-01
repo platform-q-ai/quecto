@@ -1,6 +1,8 @@
 //! Structured `swarm` board ops (#2279, epic #2265 owner decision D4):
 //! each member-facing `board.<method>` is a `swarm` op of the same name,
-//! with the same arguments (named JSON fields) and the same result.
+//! with the same arguments (named JSON fields) and the same result, except
+//! that no op answers a bare `null` (#2394: a changed task's row, or what
+//! the op changed, where Python answered `None`).
 //!
 //! [`BOARD_OPS`] is the one table of them: the named-argument binding (the
 //! dispatcher's, `swarm_board_dispatch::signature`, which a test holds the

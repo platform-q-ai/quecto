@@ -5,7 +5,9 @@
 //! task id, a token or a reservation untyped and type-checks the rest at
 //! run time (`recover`'s `release_files` is compared by `is True`), so no
 //! type is refused here. A record names the task by the id its row holds
-//! (#2303), as the task methods' records do.
+//! (#2303), as the task methods' records do. Where Python answered
+//! `None`, `recover` answers the task's dict and `release_files` the task
+//! and the reservation it released (#2394).
 use serde_json::{Map, Value};
 
 use super::tasks::acted_on;
@@ -87,6 +89,9 @@ pub(super) fn reserve(
     ))
 }
 
+/// `{task_id, reservation}` (#2394, where Python answered `None`): the
+/// task as its row holds its id, and the reservation that no longer holds
+/// files (none, when it was not there).
 pub(super) fn release_files(
     release_files: &ReleaseFiles,
     actor: &str,
@@ -97,9 +102,12 @@ pub(super) fn release_files(
         actor: actor.to_owned(),
         task_id,
         token,
-        reservation,
+        reservation: reservation.clone(),
     })?;
-    Ok(on_task(Value::Null, "released", &task_id))
+    let mut answer = Map::new();
+    answer.insert("task_id".to_owned(), task_id.clone());
+    answer.insert("reservation".to_owned(), reservation);
+    Ok(on_task(Value::Object(answer), "released", &task_id))
 }
 
 /// The page of `files` rows, each as `dict(row)`.
@@ -126,6 +134,8 @@ pub(super) fn file_owners(
     })
 }
 
+/// The task's dict as it now stands, reopened (#2394, where Python
+/// answered `None`).
 pub(super) fn recover(
     recover_task: &RecoverTask,
     actor: &str,
@@ -142,7 +152,8 @@ pub(super) fn recover(
     } else {
         "recovered"
     };
-    Ok(on_task(Value::Null, decision, &recovered.task_id))
+    let stored = recovered.task.get("id").cloned().unwrap_or(Value::Null);
+    Ok(on_task(recovered.task.into_value(), decision, &stored))
 }
 
 /// The task's dict as it now stands.

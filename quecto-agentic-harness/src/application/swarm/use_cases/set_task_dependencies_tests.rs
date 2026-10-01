@@ -122,7 +122,10 @@ fn over_changes_the_given_board_and_answers_the_stored_id() {
         .over(other.clone())
         .execute(set(json!("2"), json!([])))
         .unwrap();
-    assert_eq!(task, json!(2));
+    assert_eq!(
+        (task.get("id"), task.get("dependencies")),
+        (Some(&json!(2)), Some(&json!([])))
+    );
     assert_eq!(other.snapshot().events.len(), 1);
     assert!(composed_over.transactions().is_empty());
 }

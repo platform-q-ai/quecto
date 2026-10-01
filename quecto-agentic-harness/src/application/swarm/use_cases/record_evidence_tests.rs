@@ -134,7 +134,8 @@ fn only_the_coordinators_pass_is_accepted_and_a_repeat_is_a_no_op() {
         assert_eq!(
             service(&board)
                 .execute(evidence(actor, json!("tests"), "command", passed))
-                .unwrap(),
+                .unwrap()
+                .transition,
             transition
         );
         let state = board.snapshot();

@@ -59,7 +59,13 @@ fn scenario(more: impl IntoIterator<Item = Step>) -> Vec<Step> {
 /// coordinator verifies, and verifying twice is idempotent.
 #[test]
 fn submission_is_not_completion_and_requires_current_token() {
-    run_golden(&scenario([
+    run_golden(&not_completion());
+}
+
+/// The steps of [`submission_is_not_completion_and_requires_current_token`]:
+/// the owner's `submit` is step 6.
+fn not_completion() -> Vec<Step> {
+    scenario([
         at(
             5.0,
             "worker",
@@ -77,7 +83,7 @@ fn submission_is_not_completion_and_requires_current_token() {
         at(9.0, "parent", "verify_task", json!([1, token(3), "abc"])),
         at(10.0, "parent", "verify_task", json!([1, token(3), "abc"])),
         raw(11.0, json!(1)),
-    ]));
+    ])
 }
 
 /// `test_reviewed_submission_cannot_be_replaced_under_the_same_claim`: an
@@ -446,5 +452,37 @@ fn every_mutating_task_op_is_refused_on_a_paused_run() {
             matches!(&outcome, Outcome::Refused(text) if text == refusal),
             "{method}: {outcome:?}"
         );
+    }
+}
+
+/// #2394's changed answers are checked, not waved through: where Python
+/// answered `null`, the Rust board's answer must be the task's row as its
+/// own board holds it. A tampered row, another shape, or a `null` again
+/// (the answer #2394 removed) is a difference at that step.
+#[test]
+fn harness_self_test_checks_a_changed_answer_against_the_board() {
+    let steps = not_completion();
+    let submit = 6;
+    assert_eq!(steps[submit].method, "submit");
+    let mut tampered_row = None;
+    let difference = try_run_golden(&steps, |index, _, rust| {
+        if let (true, Outcome::Ok(Value::Object(row))) = (index == submit, &mut *rust) {
+            row.insert("status".to_owned(), json!("claimed"));
+            tampered_row = Some(row.clone());
+        }
+    })
+    .unwrap_err();
+    assert!(tampered_row.is_some(), "submit answered the task's row");
+    assert!(difference.starts_with("step 6: submit"), "{difference}");
+    assert!(difference.contains("#2394's submit answer"), "{difference}");
+    for tampered in [json!({"id": 1}), Value::Null] {
+        let difference = try_run_golden(&steps, |index, _, rust| {
+            if index == submit {
+                *rust = Outcome::Ok(tampered.clone());
+            }
+        })
+        .unwrap_err();
+        assert!(difference.starts_with("step 6: submit"), "{difference}");
+        assert!(difference.contains("not"), "{difference}");
     }
 }

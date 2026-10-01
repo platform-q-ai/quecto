@@ -20,8 +20,8 @@ pub mod usage;
 
 pub use completion::{
     AmendRunContractRequest, AmendedContract, CompleteRunRequest, CompletionState, EvidenceEntry,
-    EvidenceTransition, NewEvidence, PriorEvidence, RecordEvidenceRequest, RevalidateTaskRequest,
-    StoredContract,
+    EvidenceTransition, NewEvidence, PriorEvidence, RecordEvidenceRequest, RecordedEvidence,
+    RevalidateTaskRequest, StoredContract,
 };
 pub use control::{
     ControlAnswer, ControlReceipt, ExtendRunDeadlineRequest, PauseRunRequest, RecentRequest,

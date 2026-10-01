@@ -4,7 +4,7 @@ use super::BlockTask;
 use crate::application::swarm::board_test_support::{
     BoardState, MemoryBoard, SteppingClock, member_row, running_board, stored_task,
 };
-use crate::application::swarm::dto::{BlockTaskRequest, TaskChange, TaskTransition};
+use crate::application::swarm::dto::{BlockTaskRequest, TaskTransition};
 use crate::domain::swarm::{BoardError, RefusalKind};
 
 /// Task 1 claimed by the worker (token `stored-token`), task 2 submitted
@@ -38,16 +38,16 @@ fn the_owner_blocks_its_claim_once_per_reason() {
     let board = MemoryBoard::with(board());
     let service = BlockTask::new(board.clone(), SteppingClock::fixed(50.0));
     let reason = json!("awaiting approval");
+    let change = service
+        .execute(block(json!("1"), "stored-token", reason.clone()))
+        .unwrap();
+    assert_eq!(change.transition, TaskTransition::Applied);
     assert_eq!(
-        service
-            .execute(block(json!("1"), "stored-token", reason.clone()))
-            .unwrap(),
-        TaskChange {
-            task_id: json!(1),
-            transition: TaskTransition::Applied,
-        },
-        "the task acted on is the id its row holds"
+        (change.task.get("id"), change.task.text("status")),
+        (Some(&json!(1)), Some("blocked")),
+        "the answer is the row as it now stands, its id the one it holds (#2394)"
     );
+    assert_eq!(change.task.get("blocker"), Some(&reason));
     assert_eq!(
         service
             .execute(block(json!(1), "stored-token", reason.clone()))

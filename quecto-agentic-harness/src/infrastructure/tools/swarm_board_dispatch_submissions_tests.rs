@@ -27,10 +27,11 @@ fn claimed(handles: &SwarmBoardHandles) -> Value {
     call(handles, "worker", "claim", json!([1])).unwrap()["token"].clone()
 }
 
-/// Each method binds Python's signature and answers `None`; the task
-/// moves through blocked, claimed, submitted and completed.
+/// Each method binds Python's signature and answers the task's dict as it
+/// now stands (#2394); the task moves through blocked, claimed, submitted
+/// and completed.
 #[test]
-fn submission_methods_answer_none_and_move_the_task() {
+fn submission_methods_answer_the_task_and_move_it() {
     let (_dir, handles) = board(1_000.0);
     let token = claimed(&handles);
     let status = || call(&handles, "worker", "task_raw", json!([1])).unwrap()["status"].clone();
@@ -51,11 +52,8 @@ fn submission_methods_answer_none_and_move_the_task() {
             "completed",
         ),
     ] {
-        assert_eq!(
-            call(&handles, member, method, args).unwrap(),
-            Value::Null,
-            "{method}"
-        );
+        let answer = call(&handles, member, method, args).unwrap();
+        assert_eq!(answer["status"], json!(after), "{method}");
         assert_eq!(status(), json!(after), "{method}");
     }
     for (method, message) in [

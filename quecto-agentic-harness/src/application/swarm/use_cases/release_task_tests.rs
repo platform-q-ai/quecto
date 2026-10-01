@@ -99,7 +99,10 @@ fn over_releases_on_the_given_board_and_answers_the_stored_id() {
         .over(other.clone())
         .execute(release(json!(true), json!("stored-token")))
         .unwrap();
-    assert_eq!(task, json!(1));
+    assert_eq!(
+        (task.get("id"), task.text("status")),
+        (Some(&json!(1)), Some("ready"))
+    );
     assert_eq!(other.snapshot().tasks[0].text("status"), Some("ready"));
     assert!(composed_over.transactions().is_empty());
 }

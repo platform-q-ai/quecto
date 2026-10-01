@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use super::OverRepository;
 use crate::application::swarm::board_operation::{detail, operation};
-use crate::application::swarm::board_tasks::{owned, stored_id, unsubmitted};
+use crate::application::swarm::board_tasks::{changed, owned, unsubmitted};
 use crate::application::swarm::dto::{SubmitTaskRequest, TaskChange, TaskTransition, TaskUpdate};
 use crate::application::swarm::ports::{BoardEncoding, BoardRepository, Clock};
 use crate::domain::swarm::validation::TEXT_MAX_BYTES;
@@ -63,15 +63,14 @@ impl SubmitTask {
             running,
             |transaction, _| {
                 let task = owned(transaction, &request.task_id, &request.token, actor)?;
-                let changed = |transition| TaskChange {
-                    task_id: stored_id(&task),
-                    transition,
-                };
                 let same_evidence = task
                     .get("evidence")
                     .is_some_and(|stored| python_equal(stored, &request.evidence));
                 if task.text("status") == Some("submitted") && same_evidence {
-                    return Ok(changed(TaskTransition::Unchanged));
+                    return Ok(TaskChange {
+                        task,
+                        transition: TaskTransition::Unchanged,
+                    });
                 }
                 unsubmitted(&task)?;
                 let update = TaskUpdate::Submit {
@@ -84,7 +83,7 @@ impl SubmitTask {
                     "submitted",
                     &detail([("task", request.task_id.clone())]),
                 )?;
-                Ok(changed(TaskTransition::Applied))
+                changed(transaction, &request.task_id, "submitted")
             },
         )
     }

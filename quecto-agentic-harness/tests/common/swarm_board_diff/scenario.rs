@@ -17,6 +17,7 @@ use serde_json::Value;
 use std::panic::Location;
 
 use super::Outcome;
+use super::changed::superseded;
 use super::dump::{first_difference, logical_dump};
 use super::golden::{Answer, FULL_DUMP_LIMIT, Golden, canonical, dump_of, file_state, scenario_of};
 use super::rust::{RecordedOps, RustBoard};
@@ -281,13 +282,24 @@ pub fn run_golden_wire(steps: &[Step]) {
             "step {index}: {} as {} with {}",
             step.method, step.member, step.args
         );
-        match (answer, rust_outcome) {
-            (Answer::Ok(text), Outcome::Ok(value)) => assert_eq!(
+        let changed = superseded(
+            &step.method,
+            &step.member,
+            &answer.outcome(),
+            &rust_outcome,
+            &rust_side.database,
+        );
+        match (answer, rust_outcome, changed) {
+            // #2394's answer, where Python's was `null` (`changed.rs`).
+            (_, _, Some(checked)) => {
+                checked.unwrap_or_else(|problem| panic!("{context}: {problem}"));
+            }
+            (Answer::Ok(text), Outcome::Ok(value), None) => assert_eq!(
                 text,
                 &rust.wire_text(&value),
                 "{context}: the wire texts differ"
             ),
-            (answer, rust_outcome) => assert_eq!(
+            (answer, rust_outcome, None) => assert_eq!(
                 answer.outcome(),
                 rust_side.neutral(rust_outcome),
                 "{context}"
@@ -482,11 +494,25 @@ fn run_in(
                 context()
             ));
         }
-        if expected != rust_outcome {
-            return Err(format!(
-                "{}: results differ\n  golden {expected:?}\n  rust   {rust_outcome:?}",
-                context()
-            ));
+        let changed = superseded(
+            &step.method,
+            &step.member,
+            &expected,
+            &rust_outcome,
+            &rust_side.database,
+        );
+        match (changed, expected == rust_outcome) {
+            // #2394's answer, where Python's was `null` (`changed.rs`).
+            (Some(checked), _) => {
+                checked.map_err(|problem| format!("{}: {problem}", context()))?;
+            }
+            (None, true) => {}
+            (None, false) => {
+                return Err(format!(
+                    "{}: results differ\n  golden {expected:?}\n  rust   {rust_outcome:?}",
+                    context()
+                ));
+            }
         }
         let state = file_state(&rust_side.database);
         match (&golden.files[index], &state) {

@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use super::OverRepository;
 use crate::application::swarm::board_operation::{detail, operation};
-use crate::application::swarm::board_tasks::{read_task, stored_id};
+use crate::application::swarm::board_tasks::{changed, read_task};
 use crate::application::swarm::dto::{
     TaskChange, TaskRow, TaskTransition, TaskUpdate, VerifyTaskRequest,
 };
@@ -47,10 +47,6 @@ impl VerifyTask {
             coordinating,
             |transaction, _| {
                 let task = read_task(transaction, &request.task_id)?;
-                let changed = |transition| TaskChange {
-                    task_id: stored_id(&task),
-                    transition,
-                };
                 let current = task
                     .get("token")
                     .is_some_and(|token| python_equal(token, &request.token));
@@ -64,7 +60,10 @@ impl VerifyTask {
                 };
                 current_revision(&task, &request.revision)?;
                 if status == Some("completed") {
-                    return Ok(changed(TaskTransition::Unchanged));
+                    return Ok(TaskChange {
+                        task,
+                        transition: TaskTransition::Unchanged,
+                    });
                 }
                 transaction.update_task_status(&request.task_id, &TaskUpdate::Complete)?;
                 transaction.delete_claim_files(&request.task_id, &request.token)?;
@@ -77,7 +76,7 @@ impl VerifyTask {
                         ("revision", request.revision.clone()),
                     ]),
                 )?;
-                Ok(changed(TaskTransition::Applied))
+                changed(transaction, &request.task_id, "completed")
             },
         )
     }

@@ -292,7 +292,7 @@ fn amend_answers_the_contract_as_it_now_stands() {
 }
 
 #[test]
-fn complete_answers_the_runs_control_receipt() {
+fn complete_answers_the_run_as_it_now_stands() {
     let (_dir, handles) = board(1_000.0);
     running(&handles);
     call(
@@ -312,9 +312,13 @@ fn complete_answers_the_runs_control_receipt() {
         ),
         "{answer}"
     );
-    assert_eq!(
-        answer,
-        call(&handles, "parent", "_control_status", json!([])).unwrap(),
-        "the receipt _control_status reads"
-    );
+    // The run row alone: the full control receipt would read the usage
+    // ledger, which creates its tables (the board file would change).
+    let keys: Vec<&str> = answer
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(keys, ["status", "outcome", "reason"], "{answer}");
 }

@@ -60,7 +60,7 @@ fn message_calls_record_their_decisions_without_argument_text() {
 }
 
 /// `send` answers its receipt, `inbox` each row as `dict(row)` in table
-/// order, and `withdraw` and `ack` answer `null`.
+/// order, and `withdraw` and `ack` answer `{message_id, changed}` (#2394).
 #[test]
 fn message_methods_render_pythons_shape() {
     let (_dir, handles) = board(1_000.0);
@@ -79,8 +79,8 @@ fn message_methods_render_pythons_shape() {
         r#"[{"id":1,"sender":"parent","recipient":"parent","body":"hi","status":"accepted","revision":null,"supersedes":null,"superseded_by":null}]"#
     );
     assert_eq!(
-        call(&handles, "parent", "ack", json!([1])).unwrap(),
-        json!(null)
+        serde_json::to_string(&call(&handles, "parent", "ack", json!([1])).unwrap()).unwrap(),
+        r#"{"message_id":1,"changed":true}"#
     );
     assert_eq!(
         call(&handles, "parent", "withdraw", json!([1]))
