@@ -66,6 +66,7 @@ impl BoardEvidence for MemoryTransaction<'_> {
             .iter()
             .find(|(by, row)| by == actor && &row.criterion == criterion)
             .map(|(_, row)| PriorEvidence {
+                criterion: row.criterion.clone(),
                 artifact: row.artifact.clone(),
                 revision: row.revision.clone(),
                 kind: row.kind.clone(),

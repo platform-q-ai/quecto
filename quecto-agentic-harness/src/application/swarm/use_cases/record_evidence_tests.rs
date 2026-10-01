@@ -131,13 +131,13 @@ fn only_the_coordinators_pass_is_accepted_and_a_repeat_is_a_no_op() {
         ),
     ];
     for (actor, passed, transition, stored) in recorded {
-        assert_eq!(
-            service(&board)
-                .execute(evidence(actor, json!("tests"), "command", passed))
-                .unwrap()
-                .transition,
-            transition
-        );
+        let recorded = service(&board)
+            .execute(evidence(actor, json!("tests"), "command", passed))
+            .unwrap();
+        assert_eq!(recorded.transition, transition);
+        // The criterion as the row stores it, recorded or found (#2394).
+        assert_eq!(recorded.criterion, json!("tests"));
+        assert_eq!(recorded.evidence.actor, actor);
         let state = board.snapshot();
         let row = state.evidence.iter().find(|(by, _)| by == actor).unwrap();
         assert_eq!(row.1.accepted, stored);

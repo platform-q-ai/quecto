@@ -14,7 +14,8 @@ fn claimed(handles: &SwarmBoardHandles) -> Value {
 }
 
 /// `reserve` answers `{token, paths}` in that order, `file_owners` the rows
-/// as `dict(row)`, `release_files` `{task_id, reservation}` (#2394), and
+/// as `dict(row)`, `release_files` `{task_id, reservation, released}`
+/// (#2394), and
 /// `revoke` the task's dict.
 #[test]
 fn reservation_methods_render_pythons_shape() {
@@ -43,7 +44,7 @@ fn reservation_methods_render_pythons_shape() {
     .unwrap();
     assert_eq!(
         serde_json::to_string(&released).unwrap(),
-        format!(r#"{{"task_id":1,"reservation":"{ownership}"}}"#)
+        format!(r#"{{"task_id":1,"reservation":"{ownership}","released":2}}"#)
     );
     assert_eq!(
         call(&handles, "parent", "file_owners", json!([])).unwrap(),

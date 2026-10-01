@@ -177,7 +177,7 @@ argument binding are rendered from and held to it.
 | `unblock` | `task_id` integer, `token` string, `reason` string | task | the owner |
 | `submit` | `task_id` integer, `token` string, `evidence` list of `{artifact, revision}` | task | the owner |
 | `reserve` | `task_id` integer, `token` string, `paths` list of strings | `{token, paths}` | the owner |
-| `release_files` | `task_id` integer, `token` string, `reservation` string | `{task_id, reservation}` | the owner |
+| `release_files` | `task_id` integer, `token` string, `reservation` string | `{task_id, reservation, released}` | the owner |
 | `send` | `request` string, `recipient` member id, `body` string, `revision` string or null (`null`), `supersedes` message id or null (`null`) | `{id, status}` | any member |
 | `withdraw` | `message_id` integer | `{message_id, changed}` | the sender |
 | `inbox` | `include_consumed` boolean (`false`; bound loosely, so any nonzero number such as `1` also reads consumed history) | list of messages | any member |

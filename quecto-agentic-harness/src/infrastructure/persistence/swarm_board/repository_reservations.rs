@@ -68,7 +68,7 @@ impl BoardFiles for SqliteBoard<'_> {
         owner: &str,
         claim: &Value,
         token: &Value,
-    ) -> Result<(), BoardError> {
+    ) -> Result<usize, BoardError> {
         // Any number of reservations, none included.
         self.run(
             "DELETE FROM files WHERE task=? AND owner=? AND claim=? AND token=?",
@@ -79,7 +79,6 @@ impl BoardFiles for SqliteBoard<'_> {
                 loose(4, token)?,
             ],
         )
-        .map(|_| ())
     }
 
     fn task_file_count(&self, task: &Value) -> Result<i64, BoardError> {

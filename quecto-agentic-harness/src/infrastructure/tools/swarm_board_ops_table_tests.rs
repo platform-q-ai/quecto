@@ -310,4 +310,19 @@ fn the_description_promises_no_null_answers() {
         !description.contains("null for none"),
         "the description still says ops answer null"
     );
+    // The page the `docs` tool serves agents says so too (round-1 review
+    // M2), and names what the changed ops answer.
+    let docs = crate::infrastructure::tools::docs::lookup_doc("swarm").unwrap();
+    assert!(
+        !docs.contains("for an op that\nreturns nothing") && docs.contains("never a bare `null`"),
+        "the swarm docs page still says an op answers null"
+    );
+    for answer in [
+        "answers the task, `submitted`",
+        "answers `{task_id, reservation, released}`",
+        "answers `{message_id, changed}`",
+        "Answers the recorded `{criterion, artifact, revision, kind, actor, accepted}`",
+    ] {
+        assert!(docs.contains(answer), "the swarm docs page lacks {answer}");
+    }
 }

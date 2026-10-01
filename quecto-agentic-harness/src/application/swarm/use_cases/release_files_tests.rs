@@ -4,7 +4,7 @@ use super::ReleaseFiles;
 use crate::application::swarm::board_test_support::{
     BoardState, MemoryBoard, SteppingClock, StoredFile, member_row, running_board, stored_task,
 };
-use crate::application::swarm::dto::ReleaseFilesRequest;
+use crate::application::swarm::dto::{ReleaseFilesRequest, ReleasedFiles};
 use crate::domain::swarm::{BoardError, RefusalKind, RunState};
 
 fn file(path: &str, owner: &str, claim: &str, token: &str) -> StoredFile {
@@ -51,12 +51,25 @@ fn the_owner_releases_one_reservation_set() {
         service.execute(release("stale", json!("r1"))).unwrap_err(),
         BoardError::new(RefusalKind::StaleToken, "stale or unowned claim")
     );
-    service
-        .execute(release("stored-token", json!("r1")))
-        .unwrap();
-    service
-        .execute(release("stored-token", json!("none")))
-        .unwrap();
+    // How many files each release took (#2394 round-1 review L1): the
+    // claim's own `r1` file, not the older claim's, and none for an unknown
+    // reservation.
+    assert_eq!(
+        service
+            .execute(release("stored-token", json!("r1")))
+            .unwrap(),
+        ReleasedFiles {
+            task_id: json!(1),
+            released: 1,
+        }
+    );
+    assert_eq!(
+        service
+            .execute(release("stored-token", json!("none")))
+            .unwrap()
+            .released,
+        0
+    );
     let state = board.snapshot();
     let paths: Vec<&str> = state.files.iter().map(|f| f.path.as_str()).collect();
     assert_eq!(paths, ["b", "c"]);

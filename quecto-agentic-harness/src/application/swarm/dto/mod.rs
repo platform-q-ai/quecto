@@ -29,7 +29,8 @@ pub use control::{
 };
 pub use files::{
     FileRow, ListFileOwnersRequest, NewReservation, RecoverTaskRequest, Recovered,
-    ReleaseFilesRequest, Reservation, ReserveFilesRequest, Revocation, RevokeTaskRequest, Revoked,
+    ReleaseFilesRequest, ReleasedFiles, Reservation, ReserveFilesRequest, Revocation,
+    RevokeTaskRequest, Revoked,
 };
 pub use location::BoardLocation;
 pub use loss::{

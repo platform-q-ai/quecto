@@ -504,3 +504,48 @@ fn harness_self_test_checks_a_changed_answer_against_the_board() {
     );
     assert!(difference.starts_with(&expected), "{difference}");
 }
+
+/// #2394 round-1 review L2: `run_golden_wire`'s comparison of one step
+/// checks a changed answer as `run_golden` does. The Rust board answers
+/// `submit` with the task's row (where Python answered `null`): the row
+/// passes, and the row with other evidence, or a `null`, is a difference
+/// naming the step.
+#[test]
+fn harness_self_test_wire_checks_a_changed_answer() {
+    use crate::swarm_board_diff_runs::swarm_board_diff::changed::before;
+    use crate::swarm_board_diff_runs::swarm_board_diff::golden::Answer;
+    use crate::swarm_board_diff_runs::swarm_board_diff::rust::RustBoard;
+    use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{step_context, wire_step};
+
+    let steps = not_completion();
+    let submit = 6;
+    assert_eq!(steps[submit].method, "submit");
+    let dir = tempfile::tempdir().unwrap();
+    let database = dir.path().join("swarm.sqlite");
+    let rust = RustBoard::open(&database, dir.path());
+    for step in &steps[..submit] {
+        rust.call_text(&step.member, &step.method, &step.args, step.now);
+    }
+    let step = &steps[submit];
+    let held = before(step, &database);
+    let (answered, _) = rust.call_text(&step.member, &step.method, &step.args, step.now);
+    let python = Answer::Ok("null".to_owned());
+    let compare =
+        |outcome: Outcome| wire_step(submit, step, &python, outcome, (&rust, &database, held));
+    compare(answered.clone()).expect("the row the board holds");
+    let Outcome::Ok(Value::Object(mut row)) = answered else {
+        panic!("submit answers the task's row: {answered:?}");
+    };
+    row.insert("evidence".to_owned(), json!([]));
+    let prefix = format!("{}: #2394's submit answer: ", step_context(submit, step));
+    let difference = compare(Outcome::Ok(Value::Object(row))).unwrap_err();
+    assert!(
+        difference.starts_with(&format!("{prefix}column evidence is not the board's")),
+        "{difference}"
+    );
+    let difference = compare(Outcome::Ok(Value::Null)).unwrap_err();
+    assert!(
+        difference.starts_with(&format!("{prefix}not an object")),
+        "{difference}"
+    );
+}

@@ -86,7 +86,7 @@ impl RecordEvidence {
                 let accepted = run.coordinator.as_deref() == Some(actor)
                     && request.passed == Value::Bool(true);
                 let prior = transaction.prior_evidence(&request.criterion, actor)?;
-                let same = prior.is_some_and(|prior| {
+                let same = prior.as_ref().is_some_and(|prior| {
                     python_equal(&prior.artifact, &text(artifact))
                         && python_equal(&prior.revision, &text(revision))
                         && python_equal(&prior.kind, &text(kind))
@@ -100,13 +100,19 @@ impl RecordEvidence {
                     actor: actor.to_owned(),
                     accepted,
                 };
-                if same {
+                if let (true, Some(prior)) = (same, prior) {
                     return Ok(RecordedEvidence {
                         transition: EvidenceTransition::Unchanged,
                         evidence,
+                        criterion: prior.criterion,
                     });
                 }
                 transaction.record_evidence(&evidence)?;
+                let stored = transaction
+                    .prior_evidence(&request.criterion, actor)?
+                    .ok_or_else(|| {
+                        BoardError::new(RefusalKind::Store, "the recorded evidence row is gone")
+                    })?;
                 transaction.event(
                     actor,
                     self.clock.now_seconds(),
@@ -121,6 +127,7 @@ impl RecordEvidence {
                 Ok(RecordedEvidence {
                     transition: EvidenceTransition::Recorded,
                     evidence,
+                    criterion: stored.criterion,
                 })
             },
         )

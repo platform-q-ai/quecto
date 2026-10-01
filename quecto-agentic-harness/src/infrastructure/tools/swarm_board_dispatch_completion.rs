@@ -125,10 +125,11 @@ fn contract(contract: StoredContract) -> Value {
     ])
 }
 
-/// The evidence as recorded, in the `evidence` table's column order.
-fn recorded(evidence: NewEvidence) -> Value {
+/// The evidence as recorded, in the `evidence` table's column order, its
+/// criterion as the row stores it.
+fn recorded(criterion: Value, evidence: NewEvidence) -> Value {
     object([
-        ("criterion", evidence.criterion),
+        ("criterion", criterion),
         ("artifact", Value::from(evidence.artifact)),
         ("revision", Value::from(evidence.revision)),
         ("kind", Value::from(evidence.kind)),
@@ -152,7 +153,7 @@ pub(super) fn evidence(
         passed,
     })?;
     Ok(Served {
-        value: recorded(recorded_evidence.evidence),
+        value: recorded(recorded_evidence.criterion, recorded_evidence.evidence),
         ..done(match recorded_evidence.transition {
             EvidenceTransition::Recorded => "recorded",
             EvidenceTransition::Unchanged => "unchanged",

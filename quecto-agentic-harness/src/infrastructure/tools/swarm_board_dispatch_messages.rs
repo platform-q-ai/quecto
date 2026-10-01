@@ -11,7 +11,7 @@
 //! changed its status or found it already settled.
 use serde_json::Value;
 
-use super::{Parameter, Served, required, take};
+use super::{Parameter, Served, object, required, take};
 use crate::application::swarm::dto::{MessageIdRequest, ReadInboxRequest, SendMessageRequest};
 use crate::application::swarm::use_cases::{
     AcknowledgeMessage, ReadInbox, SendMessage, WithdrawMessage,
@@ -135,10 +135,10 @@ pub(super) fn ack(
 
 /// `{message_id, changed}`: what `withdraw` or `ack` settled (#2394).
 fn answer(message_id: &Value, changed: bool) -> Value {
-    let mut answer = serde_json::Map::new();
-    answer.insert("message_id".to_owned(), message_id.clone());
-    answer.insert("changed".to_owned(), Value::Bool(changed));
-    Value::Object(answer)
+    object([
+        ("message_id", message_id.clone()),
+        ("changed", Value::Bool(changed)),
+    ])
 }
 
 #[cfg(test)]

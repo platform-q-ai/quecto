@@ -56,13 +56,16 @@ pub enum EvidenceTransition {
     Unchanged,
 }
 
-/// What `evidence` answered (#2394): whether it wrote its row, and the
+/// What `evidence` answered (#2394): whether it wrote its row, the
 /// evidence as recorded (the row's columns, `accepted` as the board
-/// decided it), so the member sees whether its pass was accepted.
+/// decided it), so the member sees whether its pass was accepted, and the
+/// criterion as the row stores it (the caller's value under the column's
+/// TEXT affinity).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RecordedEvidence {
     pub transition: EvidenceTransition,
     pub evidence: NewEvidence,
+    pub criterion: Value,
 }
 
 /// One `evidence` row as stored (`SELECT * FROM evidence`): the board
@@ -76,10 +79,12 @@ pub struct EvidenceEntry {
     pub accepted: Value,
 }
 
-/// `SELECT artifact,revision,kind,accepted FROM evidence WHERE
-/// criterion=? AND actor=?`: the row `evidence` compares a new record with.
+/// `SELECT criterion,artifact,revision,kind,accepted FROM evidence WHERE
+/// criterion=? AND actor=?`: the row `evidence` compares a new record with,
+/// and (#2394) the criterion as the row stores it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PriorEvidence {
+    pub criterion: Value,
     pub artifact: Value,
     pub revision: Value,
     pub kind: Value,

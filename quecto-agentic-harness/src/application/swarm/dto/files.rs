@@ -81,6 +81,15 @@ pub struct RecoverTaskRequest {
     pub release_files: Value,
 }
 
+/// What `release_files` did (#2394 round-1 review L1): the task's id as
+/// its row holds it (#2303), and how many files the reservation released
+/// (none for a reservation that holds nothing).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReleasedFiles {
+    pub task_id: Value,
+    pub released: usize,
+}
+
 /// What `recover` did: the reservations it released with the task, and
 /// the task's row as it now stands (#2394: the op answers it), whose id
 /// the call's record names (#2303).

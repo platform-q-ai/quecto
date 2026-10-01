@@ -215,6 +215,11 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "Invalid",
     ),
     (
+        "src/application/swarm/use_cases/record_evidence.rs:RecordEvidence::execute",
+        "the recorded evidence row is gone",
+        "Store",
+    ),
+    (
         "src/application/swarm/use_cases/record_member_launch.rs:RecordMemberLaunch::execute",
         "conflicting launch identity",
         "LaunchConflict",

@@ -389,14 +389,15 @@ pub trait BoardFiles {
     /// order given.
     fn insert_files(&self, reservation: &NewReservation) -> Result<(), BoardError>;
     /// `DELETE FROM files WHERE task=? AND owner=? AND claim=? AND
-    /// token=?`: one reservation set of one claim, when it is there.
+    /// token=?`: one reservation set of one claim, when it is there; how
+    /// many files it released (#2394 round-1 review L1), none included.
     fn delete_reservation(
         &self,
         task: &Value,
         owner: &str,
         claim: &Value,
         token: &Value,
-    ) -> Result<(), BoardError>;
+    ) -> Result<usize, BoardError>;
     /// `SELECT count(*) FROM files WHERE task=?`.
     fn task_file_count(&self, task: &Value) -> Result<i64, BoardError>;
     /// `DELETE FROM files WHERE task=?`: every reservation of the task,
