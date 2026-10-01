@@ -5,6 +5,7 @@ pub mod child_end;
 pub mod child_session;
 pub mod constants;
 pub mod context_calibration;
+pub mod conversation;
 pub mod conversation_edit;
 pub mod conversation_view;
 pub mod crash_record;
