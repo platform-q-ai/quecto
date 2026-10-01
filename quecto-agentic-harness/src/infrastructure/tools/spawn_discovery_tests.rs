@@ -325,17 +325,14 @@ fn the_spawn_and_swarm_descriptions_stay_within_the_budget() {
 /// #2348: every member request carries the swarm description, so it holds
 /// the op grammar and what every member needs; the coordinator's prose
 /// (verification, recovery, awaiting approval) lives in the docs page.
-/// Ratcheted down from 8,192 (8,000 before #2348): it only shrinks.
-const SWARM_DESCRIPTION_BUDGET_BYTES: usize = 3_584;
+/// Ratcheted down from 8,192 (8,000 before #2348), then from 3,584 when
+/// #2389 dropped the guide pointer: it only shrinks.
+const SWARM_DESCRIPTION_BUDGET_BYTES: usize = 3_472;
 
 #[test]
 fn the_swarm_descriptions_coordinator_prose_is_in_the_docs_page() {
     let description = include_str!("swarm_assets/tool_description.txt");
     let docs = crate::infrastructure::tools::docs::lookup_doc("swarm").unwrap();
-    assert!(
-        description.contains(r#"docs {"name":"swarm"}: coordinators read it before op=create"#),
-        "the description sends a coordinator to the docs page"
-    );
     for moved in [
         "keep the run **running**",
         "the master can resume or close",
@@ -376,16 +373,30 @@ fn the_swarm_description_keeps_the_coordinators_verify_rule() {
     }
 }
 
-/// #2348 final review: worker rules live on the docs page too, so the
-/// description sends every member there and keeps the most important.
+/// #2389: members run on the description alone. It names no guide and asks
+/// no one to read one (the docs page stays served for the host parent), yet
+/// keeps the rules the old pointer carried.
 #[test]
-fn the_swarm_description_sends_members_to_the_docs_page() {
+fn the_swarm_description_sends_no_one_to_read_a_guide() {
     let description = include_str!("swarm_assets/tool_description.txt");
+    for pointer in [
+        r#"docs {"name":"swarm"}"#,
+        r#""name":"swarm""#,
+        "guide",
+        "read it",
+        "first board op",
+    ] {
+        assert!(
+            !description.contains(pointer),
+            "the description still points at the guide: {pointer:?}"
+        );
+    }
     for rule in [
-        "members before their first board op",
         "large content in artifacts",
         "never edit the store",
+        "an ack is not work done",
     ] {
         assert!(description.contains(rule), "missing {rule:?}");
     }
+    assert!(crate::infrastructure::tools::docs::lookup_doc("swarm").is_some());
 }
