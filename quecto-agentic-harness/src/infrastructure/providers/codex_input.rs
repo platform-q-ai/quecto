@@ -46,25 +46,19 @@ impl CodexProvider {
             .collect()
     }
 
-    /// The `phase` of the assistant message at `idx` (#2397). It depends
-    /// only on the message and the one right after it, never on how many
-    /// turns follow, so an earlier answer is sent the same way every time and
-    /// the prompt cache keeps it: text that ended its turn (nothing after
-    /// it, or a user message) is a `final_answer`; text the same turn went
-    /// on from (another assistant message next), or text sent with tool
-    /// calls, is `commentary`.
-    fn phase(messages: &[Message], idx: usize) -> &'static str {
-        let msg = &messages[idx];
+    /// The `phase` of an assistant message (#2397): text-only is a
+    /// `final_answer`, because it ended its turn; text sent with tool calls
+    /// (the orphan fallback) is `commentary`. It depends on the message alone,
+    /// never on what comes after it, so an earlier item is sent the same way
+    /// on every later request and the prompt cache keeps it.
+    fn phase(msg: &Message) -> &'static str {
         debug_assert!(
             matches!(msg.role, Role::Assistant),
             "only an assistant message has a phase"
         );
-        let continued = messages
-            .get(idx + 1)
-            .is_some_and(|next| matches!(next.role, Role::Assistant | Role::Tool));
-        match (msg.tool_calls.is_empty(), continued) {
-            (true, false) => "final_answer",
-            (true, true) | (false, _) => "commentary",
+        match msg.tool_calls.is_empty() {
+            true => "final_answer",
+            false => "commentary",
         }
     }
 
@@ -85,7 +79,7 @@ impl CodexProvider {
         let mut instructions: Option<String> = None;
         let mut input = Vec::new();
 
-        for (idx, msg) in messages.iter().enumerate() {
+        for msg in messages {
             match msg.role {
                 Role::System => match &mut instructions {
                     Some(existing) => {
@@ -98,7 +92,7 @@ impl CodexProvider {
                     input.push(serde_json::json!({ "role": "user", "content": msg.content }));
                 }
                 Role::Assistant => {
-                    let phase = Self::phase(messages, idx);
+                    let phase = Self::phase(msg);
                     // Each reasoning item goes just before the item it led
                     // to, and only with it (#2162).
                     if !msg.tool_calls.is_empty() {
