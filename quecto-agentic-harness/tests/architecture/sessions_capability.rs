@@ -730,8 +730,10 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/infrastructure/tools/recall.rs", 152),
     // #2212: the gauge moved to its own module (336 → 332); #2342: the
     // spill writers and the swarm cap moved to their own modules (→ 310);
-    // #2348: the plan moved to its own module (the size-aware rule fits).
-    ("src/application/context.rs", 310),
+    // #2348: the plan moved to its own module (the size-aware rule fits);
+    // #2405: the window rule moved to the domain, the gauge poison to the
+    // tests (→ 300).
+    ("src/application/context.rs", 300),
     // #2342: new modules (the swarm member's cap; the spill writers).
     ("src/application/context_ceiling_cap.rs", 30),
     ("src/application/context_spill_writers.rs", 70),

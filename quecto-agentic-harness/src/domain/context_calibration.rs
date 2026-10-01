@@ -163,41 +163,6 @@ pub fn message_budget(ceiling: usize, window: Option<usize>, fixed: usize) -> Me
     budget
 }
 
-/// The room a model's window leaves the prompt (#2405): the window less
-/// `output_reserve`, the tokens kept for the reply. `None` when the window
-/// is unknown.
-///
-/// The published windows count input and output together (OpenAI's 400k
-/// Codex window is 272k of prompt beside a 128k reply). A reserve that
-/// leaves the prompt no room (a catalogue listing `maxTokens` equal to
-/// `contextWindow`) is not a usable declaration: the window alone bounds
-/// the prompt then, as before #2405.
-pub fn prompt_room(window: Option<usize>, output_reserve: usize) -> Option<usize> {
-    let room = window.map(|window| match window.checked_sub(output_reserve) {
-        Some(room) if room > 0 => room,
-        Some(_) | None => window,
-    });
-    debug_assert!(
-        room.zip(window).is_none_or(|(room, window)| room <= window),
-        "the prompt's room never exceeds the window"
-    );
-    room
-}
-
-/// The context ceiling (#2405): the lower of the `configured` budget
-/// (`max_context_tokens`) and what the model's window leaves the prompt
-/// beside `output_reserve`. An unknown window leaves the configured budget.
-pub fn effective_context_ceiling(
-    configured: usize,
-    window: Option<usize>,
-    output_reserve: usize,
-) -> usize {
-    match prompt_room(window, output_reserve) {
-        Some(room) => configured.min(room),
-        None => configured,
-    }
-}
-
 #[cfg(test)]
 #[path = "context_calibration_tests.rs"]
 mod tests;

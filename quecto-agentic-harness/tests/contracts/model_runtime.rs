@@ -25,7 +25,8 @@ fn model_and_limits_switch_together_and_reclamp() {
     );
     assert_eq!(ModelRuntime::model(&rt.agent), "acme/limited");
     assert_eq!(rt.agent.effective_max_tokens(), 8);
-    assert_eq!(rt.agent.effective_max_context_tokens(), 2_048);
+    // The window less the declared 8-token reply (#2405).
+    assert_eq!(rt.agent.effective_max_context_tokens(), 2_048 - 8);
     // No declared limits lifts the clamp back to the configured values.
     rt.agent
         .apply_model("acme/open".into(), ModelLimits::default());

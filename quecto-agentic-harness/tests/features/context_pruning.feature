@@ -476,11 +476,12 @@ Feature: Context pruning via sliding window and tool-call collapse
     When the agent completes a prompt exceeding the budget
     Then the ContextPruned audit event records the budget as unmet
 
-  Scenario: Effective context budget derives from the model window when known
+  # #2405: the window less the agent's 1024-token reply reserve.
+  Scenario: Effective context budget derives from the model window less the reply when known
     Given a configured agent with max_context_tokens 200000
     And the active model has a known context window of 100000 tokens
     When the agent derives its effective context budget
-    Then the effective context budget is 100000
+    Then the effective context budget is 98976
 
   Scenario: Config max_context_tokens overrides a larger model window
     Given a configured agent with max_context_tokens 200000

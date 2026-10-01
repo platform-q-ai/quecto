@@ -612,3 +612,48 @@ fn resolution_keeps_the_missing_credential_reason() {
         &[UnavailableReason::MissingCredential]
     );
 }
+
+// --- #2405: the ceiling from the real window ---
+
+fn window(window: Option<usize>, output_reserve: usize) -> ModelWindow {
+    ModelWindow::new(window, output_reserve)
+}
+
+#[test]
+fn the_effective_ceiling_is_the_lower_of_the_budget_and_the_room_beside_the_reply() {
+    // A Codex model: a 400k window shared with a 128k reply leaves 272k.
+    assert_eq!(window(Some(400_000), 128_000).ceiling(300_000), 272_000);
+    // A configured budget below the room wins.
+    assert_eq!(window(Some(400_000), 128_000).ceiling(200_000), 200_000);
+    // A 128k window with an 8k reply leaves 120k, under a 256k mark.
+    assert_eq!(window(Some(128_000), 8_192).ceiling(256_000), 119_808);
+    assert_eq!(
+        window(Some(1_050_000), 128_000).prompt_room(),
+        Some(922_000)
+    );
+    // An unknown window falls back to the configured budget.
+    assert_eq!(window(None, 128_000).ceiling(256_000), 256_000);
+    assert_eq!(window(None, 128_000).prompt_room(), None);
+    assert_eq!(ModelWindow::default().ceiling(256_000), 256_000);
+}
+
+/// A declaration whose reply cap fills the whole window (some catalogues
+/// list `maxTokens` equal to `contextWindow`) leaves no prompt room: it is
+/// not trusted, and the window alone bounds the ceiling, as before.
+#[test]
+fn a_reserve_that_fills_the_window_leaves_the_window_as_the_bound() {
+    assert_eq!(window(Some(128_000), 128_000).prompt_room(), Some(128_000));
+    assert_eq!(window(Some(100), 4_096).prompt_room(), Some(100));
+    assert_eq!(window(Some(32_000), 32_000).ceiling(200_000), 32_000);
+    // A reply that leaves room is subtracted.
+    assert_eq!(window(Some(128_000), 127_999).prompt_room(), Some(1));
+}
+
+/// The whole-window budget ignores the reserve: a raised output limit may
+/// use what the prompt leaves of the window (#2124).
+#[test]
+fn the_whole_window_budget_ignores_the_reply_reserve() {
+    assert_eq!(window(Some(400_000), 128_000).budget(300_000), 300_000);
+    assert_eq!(window(Some(100_000), 128_000).budget(300_000), 100_000);
+    assert_eq!(window(None, 128_000).budget(300_000), 300_000);
+}

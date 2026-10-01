@@ -160,7 +160,7 @@ impl ModelRegistry {
                 record.cost = cost;
             } else if let Some(published) = openai_published_limits(provider, id) {
                 // #2405: the window the ceiling is computed from; sources in
-                // `model_registry_openai_limits.rs`.
+                // `model_registry_openai_tables.rs`.
                 record.context_window = published.context_window;
                 record.context_window_explicit = true;
                 if let Some(cap) = published.max_output_tokens {
@@ -707,13 +707,9 @@ where
 mod file_format;
 use file_format::RegistryFile;
 
-#[path = "model_registry_gpt56_pricing.rs"]
-mod gpt56_pricing;
-use gpt56_pricing::gpt_5_6_cost;
-
-#[path = "model_registry_openai_limits.rs"]
-mod openai_limits;
-use openai_limits::openai_published_limits;
+#[path = "model_registry_openai_tables.rs"]
+mod openai_tables;
+use openai_tables::{gpt_5_6_cost, openai_published_limits};
 
 #[cfg(test)]
 #[path = "model_registry_openai_limits_tests.rs"]

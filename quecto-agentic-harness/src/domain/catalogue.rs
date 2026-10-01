@@ -220,6 +220,62 @@ pub struct ModelCapabilities {
     pub cost: ModelCost,
 }
 
+/// A model's declared context window and the tokens its reply keeps free
+/// of it (#2405): the one rule the context ceiling is computed from.
+///
+/// Published windows count input and output together (OpenAI's 400k Codex
+/// window is 272k of prompt beside a 128k reply), so the prompt's room is
+/// the window less `output_reserve`. A reserve that leaves the prompt no
+/// room (a catalogue listing `maxTokens` equal to `contextWindow`) is not a
+/// usable declaration: the window alone bounds the prompt then, as before.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ModelWindow {
+    /// The declared window in tokens, `None` when the model declares none.
+    pub window: Option<usize>,
+    /// The tokens kept free of the window for the reply.
+    pub output_reserve: usize,
+}
+
+impl ModelWindow {
+    pub fn new(window: Option<usize>, output_reserve: usize) -> Self {
+        Self {
+            window,
+            output_reserve,
+        }
+    }
+
+    /// The room the window leaves the prompt; `None` when unknown.
+    pub fn prompt_room(self) -> Option<usize> {
+        let room = self
+            .window
+            .map(|window| match window.checked_sub(self.output_reserve) {
+                Some(room) if room > 0 => room,
+                Some(_) | None => window,
+            });
+        debug_assert!(
+            room.zip(self.window)
+                .is_none_or(|(room, window)| room <= window),
+            "the prompt's room never exceeds the window"
+        );
+        room
+    }
+
+    /// The context ceiling: the lower of the `configured` budget
+    /// (`max_context_tokens`) and the prompt's room. An unknown window
+    /// leaves the configured budget.
+    pub fn ceiling(self, configured: usize) -> usize {
+        self.prompt_room()
+            .map_or(configured, |room| configured.min(room))
+    }
+
+    /// The configured budget clamped to the whole window, prompt and reply
+    /// together (the room a raised output limit may use, #2124).
+    pub fn budget(self, configured: usize) -> usize {
+        self.window
+            .map_or(configured, |window| configured.min(window))
+    }
+}
+
 /// The reasoning-effort vocabulary a model accepts on the wire (#1996): the
 /// one domain rule that seeds [`ModelCapabilities::effort_levels`]. Every
 /// surface — the `get_state` listing, the selector, `set_effort`, spawn and

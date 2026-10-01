@@ -8,6 +8,20 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
+// Test-only: moved out of `context.rs` for its decrease-only ceiling (#2405).
+impl ContextManager {
+    pub fn poison_context_gauge_lock_for_test(&self) {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = self.gauge.lock().unwrap();
+            panic!("poison context gauge mutex for coverage");
+        }));
+        assert!(
+            self.gauge.is_poisoned(),
+            "context gauge mutex must be poisoned after the intentional panic"
+        );
+    }
+}
+
 #[derive(Debug, Default)]
 struct MemSpillStore {
     entries: Mutex<Vec<SpillEntry>>,
