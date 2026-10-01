@@ -258,3 +258,38 @@ fn a_request_dropped_unfinished_is_marked_dropping_first() {
         Termination::Dropped
     );
 }
+
+/// #2398: the published observation carries where the request's input
+/// first differed from its session's previous request, as its provider
+/// recorded it on the trace, whether the request finished or was dropped.
+#[test]
+fn a_published_observation_carries_the_input_prefix_its_provider_recorded() {
+    use crate::domain::request_observation::{InputItemKind, InputPrefix, InputPrefixParts};
+    let prefix = InputPrefix::new(InputPrefixParts {
+        input_items: 6,
+        previous_items: Some(6),
+        first_changed_item: Some(4),
+        first_changed_kind: Some(InputItemKind::Reasoning),
+        prefix_tokens_estimate: 321,
+        unchanged_prefix_tokens_estimate: 400,
+        request_tokens_estimate: 500,
+    })
+    .unwrap();
+    let sinks = Sinks::default();
+    let trace = Arc::new(RequestTrace::default());
+    let mut guard = sinks.guard(&trace);
+    trace.record_input_prefix(prefix);
+    let record = guard.finish(&Err(DomainError::Other("stopped".into())));
+    assert_eq!(record.input_prefix, Some(prefix));
+
+    let trace = Arc::new(RequestTrace::default());
+    let guard = sinks.guard(&trace);
+    trace.record_input_prefix(prefix);
+    drop(guard);
+    assert_eq!(sinks.interrupted()[0].input_prefix, Some(prefix));
+
+    let unobserved = Arc::new(RequestTrace::default());
+    let mut guard = sinks.guard(&unobserved);
+    let record = guard.finish(&Err(DomainError::Other("stopped".into())));
+    assert_eq!(record.input_prefix, None);
+}

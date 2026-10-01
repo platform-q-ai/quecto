@@ -319,3 +319,57 @@ record with outcome `cancelled`; its attempt in flight appears in
 `attempt_diagnostics` with termination `Interrupted`, its `event_count`,
 `output_bytes` and `first_token_ms` as they stood. A SIGKILL cannot be handled
 and leaves no record.
+
+## Where a request's input changed
+
+A Responses (`codex`) request of a named session also says, in its
+`request_observed` record, how its input relates to the session's last
+accepted request. That tells a cache miss caused by the harness changing an
+earlier input item from one the provider caused. It records counts, indices,
+a kind and token estimates, never content:
+
+- `input_items`: the input items the request sent;
+- `previous_items`: the input items of the request it was compared with;
+  `null` when there was none to compare with (the session's first request
+  in this process);
+- `first_changed_item`: the first item whose serialized bytes differ from the
+  previous request's item at the same index (or, when the input got shorter,
+  the first item it lacks); `null` when the previous input is a byte-identical
+  prefix of this one (append-only), or when nothing was compared;
+- `first_changed_kind`: that item's kind (`user`, `assistant`,
+  `function_call`, `function_call_output` or `reasoning`), `null` when there
+  is none;
+- `prefix_tokens_estimate`: the estimated tokens of the unchanged input items;
+- `unchanged_prefix_tokens_estimate`: the estimated tokens of the unchanged
+  prefix of the whole request: the instructions and tools, when they, the
+  model and the endpoint are unchanged, then the unchanged input items; `0`
+  when any of those changed, since the service caches per model;
+- `request_tokens_estimate`: the estimated tokens of the whole request
+  (instructions, tools and every input item).
+
+The three estimates use one estimator, so compare
+`cache_read_tokens / input_tokens` with
+`unchanged_prefix_tokens_estimate / request_tokens_estimate`. Before reading
+them, allow for what the service does and the estimator does not know:
+
+- the service caches only a prompt of 1,024 tokens or more, and caches in
+  128-token blocks, so expect `cache_read_tokens` at most the unchanged prefix
+  rounded down to a multiple of 128, and `0` for a request below 1,024;
+- encrypted reasoning items are opaque: they are estimated at the plain
+  ASCII rate of 4 characters a token, not as the reasoning the service counts,
+  so a reasoning-heavy prefix can be off in either direction.
+
+So, with `previous_items` set and `first_changed_item` null, a cached share far
+below the expected one (beyond those allowances) means the provider missed
+its cache. With `first_changed_item` set, the harness changed that item, and
+nothing after it can be cached.
+
+The baseline is the session's: its agent loop keeps it and hands it to every
+request, so a provider rebuilt mid-session (an OAuth refresh) keeps
+comparing. It holds one 64-bit digest per item and a digest of the session
+key, never the items or the key, and a request replaces it only once the
+provider accepts a send of it (a reply, or a streamed event that is not an
+error): a refused, failed or cancelled send never becomes it, and when
+replayed reasoning is refused the request resent without it does. A retry
+records what its first send found. A request without a session is neither
+compared nor kept. Other providers do not record these fields.

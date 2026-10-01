@@ -397,3 +397,56 @@ async fn a_retry_success_observes_the_cut_attempts_spend_too() {
     assert_eq!(records[0].cache_read_tokens, Some(4));
     assert_eq!(records[0].context_input_tokens, Some(1204));
 }
+
+/// #2398: a provider that reports the input baseline each request's trace
+/// carries, and keeps a request count in it, as a real one keeps digests.
+#[derive(Debug, Default)]
+struct BaselineProvider {
+    seen: Mutex<Vec<Option<u64>>>,
+}
+
+impl LlmProvider for BaselineProvider {
+    fn name(&self) -> &str {
+        "baseline"
+    }
+    fn chat<'a>(
+        &'a self,
+        request: ChatRequest<'a>,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<LlmResponse, DomainError>> + Send + 'a>>
+    {
+        let baseline = request
+            .trace
+            .as_ref()
+            .and_then(|trace| trace.input_baseline());
+        let seen = baseline
+            .as_ref()
+            .map(|baseline| baseline.read(|kept: Option<&u64>| kept.copied().unwrap_or(0)));
+        if let (Some(baseline), Some(count)) = (&baseline, seen) {
+            baseline.keep(count + 1);
+        }
+        self.seen.lock().unwrap().push(seen);
+        Box::pin(async { Ok(text_response("ok")) })
+    }
+}
+
+/// #2398: the session's input baseline outlives its provider, so a
+/// provider rebuilt mid-session (an OAuth refresh) still compares with the
+/// previous request.
+#[tokio::test]
+async fn a_provider_rebuilt_mid_session_sees_the_previous_requests_baseline() {
+    let (mut agent, _) = make_agent(vec![], vec![]);
+    let first = Arc::new(BaselineProvider::default());
+    agent.provider = first.clone();
+    agent
+        .run_loop(&mut vec![Message::user("one")])
+        .await
+        .unwrap();
+    let rebuilt = Arc::new(BaselineProvider::default());
+    agent.provider = rebuilt.clone();
+    agent
+        .run_loop(&mut vec![Message::user("two")])
+        .await
+        .unwrap();
+    assert_eq!(*first.seen.lock().unwrap(), vec![Some(0)]);
+    assert_eq!(*rebuilt.seen.lock().unwrap(), vec![Some(1)]);
+}

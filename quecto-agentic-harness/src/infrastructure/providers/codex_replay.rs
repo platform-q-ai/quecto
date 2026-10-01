@@ -14,6 +14,7 @@ use crate::domain::provider::{CancelFlag, StreamEvent};
 use crate::domain::request_observation::RequestTrace;
 use crate::infrastructure::providers::attempt_profile::{Profile, Surface, Vendor};
 use crate::infrastructure::providers::attempt_transport::PassiveAttempt;
+use crate::infrastructure::providers::input_prefix::PendingInput;
 use crate::infrastructure::providers::stream_idle::BodyError;
 
 /// Everything one request's sends share.
@@ -34,6 +35,9 @@ pub(super) struct Call {
 pub(super) struct Bodies {
     pub(super) replaying: serde_json::Value,
     pub(super) plain: Option<serde_json::Value>,
+    /// The replaying body's input measured, kept as its session's baseline
+    /// once a send is accepted (#2398); `None` when not observed.
+    pub(super) measured: Option<PendingInput>,
 }
 
 impl CodexProvider {
@@ -47,15 +51,30 @@ impl CodexProvider {
         let replaying = Self::build_request_body(request, &self.auth, replay_to);
         let plain = replays_any(request.messages, replay_to)
             .then(|| Self::build_request_body(request, &self.auth, ""));
+        let url = self.responses_url();
+        // Where the input sent first differs from its session's last
+        // accepted request (#2398), compared as the first body sends it.
+        // Only an observed request of a named session whose trace carries
+        // the session's baseline is compared, and it becomes the baseline
+        // only once a send of it is accepted.
+        let measured = match (&request.trace, request.session_id) {
+            (Some(trace), Some(session)) => PendingInput::begin(trace, session, &url, &replaying),
+            (None, _) | (_, None) => None,
+        };
         let call = Call {
-            url: self.responses_url(),
+            url,
             session: Self::request_session(request),
             model: request.model.to_string(),
             origin,
             trace: request.trace.clone(),
             cancel: request.cancel_flag.clone(),
         };
-        (call, Bodies { replaying, plain })
+        let bodies = Bodies {
+            replaying,
+            plain,
+            measured,
+        };
+        (call, bodies)
     }
 
     /// Whether an error is the service refusing replayed reasoning.
@@ -72,19 +91,64 @@ impl CodexProvider {
         );
     }
 
-    /// Send, and on a refused replay send once more without it.
+    /// Send, and on a refused replay send once more without it; the body
+    /// accepted becomes its session's baseline (#2398).
     pub(super) async fn assemble(
         &self,
         call: &Call,
         bodies: Bodies,
     ) -> Result<LlmResponse, DomainError> {
-        let first = self.assemble_once(call, &bodies.replaying).await;
-        match (first, bodies.plain) {
+        let Bodies {
+            replaying,
+            plain,
+            measured,
+        } = bodies;
+        let first = self.assemble_once(call, &replaying).await;
+        let (result, accepted) = match (first, plain) {
             (Err(error), Some(plain)) if Self::is_replay_refusal(&error.to_string()) => {
                 self.note_replay_refused(&error.to_string());
-                self.assemble_once(call, &plain).await
+                let measured = measured.map(|replaying| replaying.for_body(&plain));
+                (self.assemble_once(call, &plain).await, measured)
             }
-            (result, _) => result,
+            (result, _) => (result, measured),
+        };
+        if result.is_ok() {
+            self.accept(accepted);
+        }
+        result
+    }
+
+    /// A send of the measured body was accepted (#2398).
+    fn accept(&self, measured: Option<PendingInput>) {
+        if let Some(measured) = measured {
+            measured.accept();
+        }
+    }
+
+    /// Forward a send's events from `first` on; the first that is not an
+    /// error shows the send accepted (#2398).
+    async fn forward(
+        &self,
+        first: Option<StreamEvent>,
+        events: &mut tokio::sync::mpsc::Receiver<StreamEvent>,
+        tx: &tokio::sync::mpsc::Sender<StreamEvent>,
+        mut measured: Option<PendingInput>,
+    ) {
+        let mut next = first;
+        while let Some(event) = next {
+            match &event {
+                StreamEvent::TextDelta(_)
+                | StreamEvent::ThinkingDelta(_)
+                | StreamEvent::ToolCallStart { .. }
+                | StreamEvent::ToolCallDelta(_)
+                | StreamEvent::ToolCallEnd { .. }
+                | StreamEvent::Done(_) => self.accept(measured.take()),
+                StreamEvent::Error(_) => {}
+            }
+            if tx.send(event).await.is_err() {
+                break;
+            }
+            next = next_event(events, tx).await;
         }
     }
 
@@ -167,36 +231,36 @@ impl CodexProvider {
         bodies: Bodies,
         tx: tokio::sync::mpsc::Sender<StreamEvent>,
     ) {
-        let Some(plain) = bodies.plain else {
-            self.stream_once(&call, bodies.replaying, tx).await;
-            return;
-        };
+        let Bodies {
+            replaying,
+            plain,
+            measured,
+        } = bodies;
         let (first_tx, mut first_rx) = tokio::sync::mpsc::channel(64);
         let attempt = {
             let provider = self.clone();
             let call = call.clone();
-            tokio::spawn(async move {
-                provider
-                    .stream_once(&call, bodies.replaying, first_tx)
-                    .await
-            })
+            tokio::spawn(async move { provider.stream_once(&call, replaying, first_tx).await })
         };
-        match first_rx.recv().await {
-            Some(StreamEvent::Error(message)) if Self::is_replay_refusal(&message) => {
+        let first = next_event(&mut first_rx, &tx).await;
+        match (first, plain) {
+            (Some(StreamEvent::Error(message)), Some(plain))
+                if Self::is_replay_refusal(&message) =>
+            {
                 let _ = attempt.await;
                 self.note_replay_refused(&message);
-                self.stream_once(&call, plain, tx).await;
+                let measured = measured.map(|replaying| replaying.for_body(&plain));
+                let (plain_tx, mut plain_rx) = tokio::sync::mpsc::channel(64);
+                let (this, tx) = (&self, &tx);
+                // Owns its receiver: returning drops it, which cancels the
+                // send once the caller has gone.
+                let forward = async move {
+                    let first = next_event(&mut plain_rx, tx).await;
+                    this.forward(first, &mut plain_rx, tx, measured).await;
+                };
+                tokio::join!(self.stream_once(&call, plain, plain_tx), forward);
             }
-            Some(event) => {
-                let mut next = Some(event);
-                while let Some(event) = next {
-                    if tx.send(event).await.is_err() {
-                        break;
-                    }
-                    next = first_rx.recv().await;
-                }
-            }
-            None => {}
+            (first, _) => self.forward(first, &mut first_rx, &tx, measured).await,
         }
     }
 
@@ -225,6 +289,19 @@ impl CodexProvider {
             }
             None => self.pump_codex_sse(call, body, tx, handler).await,
         }
+    }
+}
+
+/// The next event of a send, or `None` once the caller has gone: a send's
+/// transport stops when its receiver is dropped, so a caller that drops its
+/// own must not leave the send blocked behind this relay.
+async fn next_event(
+    events: &mut tokio::sync::mpsc::Receiver<StreamEvent>,
+    tx: &tokio::sync::mpsc::Sender<StreamEvent>,
+) -> Option<StreamEvent> {
+    tokio::select! {
+        event = events.recv() => event,
+        () = tx.closed() => None,
     }
 }
 

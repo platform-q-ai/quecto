@@ -237,6 +237,7 @@ fn a_real_request_observation_round_trips_identically() {
         harness_prefix_sha256: "ab".repeat(32),
         harness_prefix_bytes: 4_096,
         harness_prefix_unchanged: Some(true),
+        input_prefix: None,
     };
     let mut value = serde_json::to_value(&observation).unwrap();
     // A runtime identity of the shape `runtime_identity::current()` writes,

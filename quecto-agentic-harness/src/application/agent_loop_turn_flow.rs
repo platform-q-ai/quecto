@@ -83,6 +83,8 @@ impl AgentLoopImpl {
             .replace(prefix.0.clone())
             .map(|previous| previous == prefix.0);
         let trace = Arc::new(crate::domain::request_observation::RequestTrace::default());
+        // #2398: the provider compares the input with the session's last.
+        trace.attach_input_baseline(self.input_baseline.clone());
         // #2210: every attempt is capped at its output limit's worth of bytes.
         trace.set_output_cap(crate::domain::request_progress::output_cap_bytes(
             self.model_max_tokens,

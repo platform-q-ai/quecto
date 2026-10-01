@@ -27,8 +27,35 @@ pub struct RequestTrace {
     /// Usage attempts reported before they were cut short (#2249 review):
     /// tokens the provider counted for a reply that never completed.
     unfinished_usage: Mutex<Vec<crate::domain::message::UsageInfo>>,
+    /// How the request's input relates to its session's previous request
+    /// (#2398), as its provider first serialized it.
+    input_prefix: Mutex<Option<InputPrefix>>,
+    /// The session's input baseline the provider compares with (#2398).
+    input_baseline: std::sync::OnceLock<InputBaseline>,
 }
 impl RequestTrace {
+    /// The provider serialized the request's input (#2398). The first
+    /// record stays: a retry sends the same input again.
+    pub fn record_input_prefix(&self, prefix: InputPrefix) {
+        self.input_prefix
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_or_insert(prefix);
+    }
+    /// Compare the request's input with `baseline`, its session's (#2398);
+    /// the first attached stays.
+    pub fn attach_input_baseline(&self, baseline: InputBaseline) {
+        let _ = self.input_baseline.set(baseline);
+    }
+    /// The session's input baseline, when one is attached.
+    pub fn input_baseline(&self) -> Option<InputBaseline> {
+        self.input_baseline.get().cloned()
+    }
+    /// How the request's input relates to its session's previous request,
+    /// when its provider observed it.
+    pub fn input_prefix(&self) -> Option<InputPrefix> {
+        *self.input_prefix.lock().unwrap_or_else(|e| e.into_inner())
+    }
     /// An attempt was cut short after its provider reported `usage` (#2249
     /// review): those tokens were spent, so they are still counted.
     pub fn record_unfinished_usage(&self, usage: crate::domain::message::UsageInfo) {
@@ -127,6 +154,177 @@ pub struct RequestObservation {
     pub harness_prefix_sha256: String,
     pub harness_prefix_bytes: usize,
     pub harness_prefix_unchanged: Option<bool>,
+    /// Where the request's input first differs from its session's previous
+    /// request (#2398); absent when its provider does not observe its input.
+    #[serde(flatten)]
+    pub input_prefix: Option<InputPrefix>,
+}
+
+/// A session's last accepted request input, as the provider that
+/// serializes its requests keeps it (#2398). Opaque here: the session (its
+/// agent loop) owns it and hands it to each request's trace, so a provider
+/// rebuilt mid-session compares with what its predecessor sent; only the
+/// provider reads or replaces what it holds.
+#[derive(Clone, Default)]
+pub struct InputBaseline(std::sync::Arc<Mutex<Option<Box<dyn std::any::Any + Send>>>>);
+
+impl InputBaseline {
+    /// Read the baseline kept as a `T`: `None` when none is, or another
+    /// type is.
+    pub fn read<T: 'static, R>(&self, read: impl FnOnce(Option<&T>) -> R) -> R {
+        let kept = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        read(kept.as_ref().and_then(|value| value.downcast_ref::<T>()))
+    }
+
+    /// Keep `value` as the baseline.
+    pub fn keep<T: Send + 'static>(&self, value: T) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(Box::new(value));
+    }
+
+    /// Whether `other` is this same baseline.
+    pub fn is(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl std::fmt::Debug for InputBaseline {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("InputBaseline(..)")
+    }
+}
+
+/// The kind of one item of a request's input (#2398).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum InputItemKind {
+    User,
+    Assistant,
+    FunctionCall,
+    FunctionCallOutput,
+    Reasoning,
+}
+
+/// How a request's serialized input relates to the previous request of the
+/// same session (#2398), as written: counts, indices, a kind and token
+/// estimates, never content. Every estimate uses one estimator, so they
+/// compare with each other and with the provider's `cache_read_tokens`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InputPrefixParts {
+    /// The input items the request sent.
+    pub input_items: usize,
+    /// The input items of the previous request it was compared with;
+    /// `None` when there was none to compare with (the session's first
+    /// observed request, or one its provider no longer remembers).
+    pub previous_items: Option<usize>,
+    /// The first item whose serialized bytes differ from the previous
+    /// request's item at the same index (or that the previous request had
+    /// and this one lacks); `None` when the previous input is a
+    /// byte-identical prefix of this one (append-only), or when nothing was
+    /// compared.
+    pub first_changed_item: Option<usize>,
+    /// That item's kind; `None` when it is not an item this request sent.
+    pub first_changed_kind: Option<InputItemKind>,
+    /// The estimated tokens of the unchanged input items.
+    pub prefix_tokens_estimate: usize,
+    /// The estimated tokens of the unchanged prefix of the whole request:
+    /// its instructions and tools, when they are unchanged, and then its
+    /// unchanged input items; `0` when the instructions or tools changed.
+    pub unchanged_prefix_tokens_estimate: usize,
+    /// The estimated tokens of the whole request: instructions, tools and
+    /// every input item.
+    pub request_tokens_estimate: usize,
+}
+
+/// An [`InputPrefixParts`] whose counts agree with each other (#2398).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(try_from = "InputPrefixParts", into = "InputPrefixParts")]
+pub struct InputPrefix(InputPrefixParts);
+
+/// Why an [`InputPrefixParts`] is not a consistent record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvalidInputPrefix(pub &'static str);
+
+impl std::fmt::Display for InvalidInputPrefix {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "inconsistent input prefix: {}", self.0)
+    }
+}
+
+impl InputPrefix {
+    /// `parts`, when its counts agree with each other.
+    pub fn new(parts: InputPrefixParts) -> Result<Self, InvalidInputPrefix> {
+        let InputPrefixParts {
+            input_items,
+            previous_items,
+            first_changed_item: item,
+            first_changed_kind: kind,
+            prefix_tokens_estimate: prefix,
+            unchanged_prefix_tokens_estimate: unchanged,
+            request_tokens_estimate: request,
+        } = parts;
+        let rules = [
+            (
+                kind.is_none() || item.is_some(),
+                "a kind names a changed item",
+            ),
+            (
+                previous_items.is_some() || (prefix == 0 && unchanged == 0),
+                "nothing compared leaves no unchanged prefix",
+            ),
+            (
+                item.is_some() || previous_items.is_none_or(|previous| previous <= input_items),
+                "an unchanged previous input is a prefix of this one",
+            ),
+            (
+                item.is_none_or(|index| {
+                    previous_items.is_some_and(|previous| index < previous) && index <= input_items
+                }),
+                "a changed item was compared, within the previous input and at most one past this one",
+            ),
+            (
+                item.is_none_or(|index| index < input_items || kind.is_none()),
+                "an item this request lacks has no kind",
+            ),
+            (
+                item.or(previous_items).is_none_or(|start| start > 0) || prefix == 0,
+                "an unchanged prefix that starts at item 0 has no items",
+            ),
+            (
+                prefix <= request && unchanged <= request,
+                "a prefix is part of its request",
+            ),
+            (
+                unchanged == 0 || unchanged >= prefix,
+                "the unchanged whole prefix includes the unchanged items",
+            ),
+        ];
+        let broken = rules.into_iter().find_map(|(holds, reason)| match holds {
+            true => None,
+            false => Some(reason),
+        });
+        match broken {
+            None => Ok(Self(parts)),
+            Some(reason) => Err(InvalidInputPrefix(reason)),
+        }
+    }
+
+    /// The record's counts.
+    pub fn parts(self) -> InputPrefixParts {
+        self.0
+    }
+}
+
+impl TryFrom<InputPrefixParts> for InputPrefix {
+    type Error = InvalidInputPrefix;
+    fn try_from(parts: InputPrefixParts) -> Result<Self, Self::Error> {
+        Self::new(parts)
+    }
+}
+
+impl From<InputPrefix> for InputPrefixParts {
+    fn from(prefix: InputPrefix) -> Self {
+        prefix.0
+    }
 }
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RequestDiagnostics {

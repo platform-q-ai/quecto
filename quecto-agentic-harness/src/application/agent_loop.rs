@@ -116,6 +116,8 @@ pub struct AgentLoopImpl {
     request_accounting: Option<Arc<dyn crate::application::providers::ports::RequestAccounting>>,
     tool_admission: Option<Arc<dyn crate::application::tools::ports::ToolExecutionAdmission>>,
     request_prefix: std::sync::Mutex<Option<String>>,
+    /// The session's input baseline, which outlives a rebuilt provider (#2398).
+    input_baseline: crate::domain::request_observation::InputBaseline,
     provider: Arc<dyn LlmProvider>,
     pub(super) tool_registry: Box<dyn ToolRegistry>,
     model: String,
@@ -188,6 +190,7 @@ impl AgentLoopImpl {
             accounting_outbox: std::sync::Mutex::new(Vec::new()),
             tool_admission: None,
             request_prefix: std::sync::Mutex::new(None),
+            input_baseline: Default::default(),
             request_admission: None,
             provider: config.provider,
             tool_registry: config.tool_registry,
