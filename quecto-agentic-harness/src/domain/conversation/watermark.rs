@@ -62,7 +62,7 @@ impl Watermark {
         match low {
             0 => Err(InvalidMarks::LowNotPositive),
             at_or_above if at_or_above >= high => Err(InvalidMarks::LowNotBelowHigh { high, low }),
-            close if high - close < min_gap && false => {
+            close if high - close < min_gap => {
                 Err(InvalidMarks::GapUnderMinSaving { high, low, min_gap })
             }
             _ => Ok(Self { high, low }),
@@ -147,19 +147,19 @@ impl CutTrigger {
         let marks = self.effective_marks();
         let total = size.total();
         let grown = match self.after_last_cut {
-            Some(after) if after <= total => {
-                total >= after.saturating_add((marks.high - marks.low) / 2)
+            Some(after) => {
+                size.message_tokens >= after.saturating_add((marks.high - marks.low) / 2)
             }
-            Some(_) | None => true,
+            None => true,
         };
-        total >= marks.high && (total >= self.ceiling || grown)
+        total >= marks.high && (total > self.ceiling || grown)
     }
 
     /// The trigger once `plan` is made: the plan's message tokens are the
     /// baseline the next cut must grow from.
     pub fn after_cut(self, plan: &CutPlan) -> Self {
         Self {
-            after_last_cut: Some(plan.projected_tokens),
+            after_last_cut: Some(plan.projected_message_tokens),
             ..self
         }
     }
@@ -459,16 +459,15 @@ pub fn plan_cut(input: &CutInput<'_>) -> Result<CutPlan, NoCut> {
     };
     if input.trigger.is_due(size) {
         let low = input.trigger.effective_marks().low;
-        let pinned = pinned(messages).ok_or(NoCut::NotDue)?;
+        let pinned = pinned(messages).ok_or(NoCut::NoUserMessage)?;
         let fixed = input.tool_tokens.saturating_add(input.stub_tokens);
-        let (tail_start, fill) =
-            tail_start(messages, &pinned, fixed, low).map_err(|_| NoCut::NotDue)?;
+        let (tail_start, fill) = tail_start(messages, &pinned, fixed, low)?;
         let plan = CutPlan::new(input, &pinned, tail_start, fill, low);
         let saving = size.total().saturating_sub(plan.projected_tokens);
         let needed = min_saving(&input.trigger, size.total());
         match saving >= needed {
             true => Ok(plan),
-            false => Err(NoCut::NotDue),
+            false => Err(NoCut::SavingTooSmall { saving, needed }),
         }
     } else {
         Err(NoCut::NotDue)
@@ -479,7 +478,7 @@ pub fn plan_cut(input: &CutInput<'_>) -> Result<CutPlan, NoCut> {
 /// any saving at all once the request is over the ceiling. Never zero, so
 /// a cut always shrinks the request.
 fn min_saving(trigger: &CutTrigger, total: usize) -> usize {
-    match total >= trigger.ceiling {
+    match total > trigger.ceiling {
         true => 1,
         false => (trigger.effective_marks().high / MIN_SAVING_DIVISOR).max(1),
     }
