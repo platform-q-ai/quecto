@@ -731,9 +731,9 @@ pub mod loaders;
 pub mod mapping;
 // #2348: the size-aware collapse's dials.
 mod large_results;
+pub mod persistence;
 // SPIKE: the watermark context's switch and marks.
 mod watermark;
-pub mod persistence;
 pub mod writer;
 
 #[cfg(test)]

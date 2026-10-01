@@ -55,7 +55,6 @@ mod spill;
 #[path = "context_plan.rs"]
 mod plan;
 pub(crate) use plan::{ContextPlan, ToolMessageBuild};
-// SPIKE: the watermark context (append-only between cuts).
 #[path = "agent_loop/context_watermark.rs"]
 mod watermark;
 
@@ -99,7 +98,6 @@ pub(crate) struct ContextManager {
     model_context_window: Option<usize>,
     ceiling_cap: ContextCeilingCap,
     gauge: Mutex<ContextGaugeCalibration>,
-    /// SPIKE: `Some` switches the watermark context on (no pruning pass).
     watermark: Option<crate::domain::conversation::watermark::ContextWatermark>,
 }
 

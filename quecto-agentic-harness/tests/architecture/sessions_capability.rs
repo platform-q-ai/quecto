@@ -731,7 +731,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // #2212: the gauge moved to its own module (336 → 332); #2342: the
     // spill writers and the swarm cap moved to their own modules (→ 310);
     // #2348: the plan moved to its own module (the size-aware rule fits).
-    ("src/application/context.rs", 310),
+    ("src/application/context.rs", 314), // SPIKE: watermark field + module
     // #2342: new modules (the swarm member's cap; the spill writers).
     ("src/application/context_ceiling_cap.rs", 30),
     ("src/application/context_spill_writers.rs", 70),
