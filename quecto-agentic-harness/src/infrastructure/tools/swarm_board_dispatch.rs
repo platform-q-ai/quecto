@@ -739,3 +739,7 @@ mod control_flag_tests;
 #[cfg(test)]
 #[path = "swarm_board_dispatch_reads_tests.rs"]
 mod reads_tests;
+
+#[cfg(test)]
+#[path = "swarm_board_dispatch_answers_tests.rs"]
+mod answers_tests;

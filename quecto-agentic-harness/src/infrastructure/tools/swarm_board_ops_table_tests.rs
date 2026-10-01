@@ -299,3 +299,15 @@ fn the_description_teaches_the_structured_ops_not_python() {
         "an example of a structured op"
     );
 }
+
+/// #2394: no member-facing op answers a bare `null` any more (a task op
+/// answers the task's row, `evidence` the recorded evidence), so the
+/// description no longer says ops answer "null for none".
+#[test]
+fn the_description_promises_no_null_answers() {
+    let description = include_str!("swarm_assets/tool_description.txt");
+    assert!(
+        !description.contains("null for none"),
+        "the description still says ops answer null"
+    );
+}
