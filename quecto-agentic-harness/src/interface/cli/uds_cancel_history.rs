@@ -1,11 +1,13 @@
 //! Cancellation history (#483): what an interrupted turn leaves in the live
 //! conversation — the tail after the cancelled prompt is truncated to the
-//! tool-call steps and tool results already recorded, and every unanswered
+//! tool-call steps and tool results already recorded (and a watermark cut's
+//! stub, #2403), and every unanswered
 //! tool call gets a synthetic `aborted by user` error result so the
 //! transcript stays replayable. Owner role: cancellation. Reads and edits
 //! the loop's live `Vec<Message>` only; no session persistence, no store.
 use std::collections::HashSet;
 
+use crate::domain::conversation::UserKind;
 use crate::domain::message::{Message, Role};
 
 fn prompt_position(messages: &[Message], prompt_id: uuid::Uuid) -> Option<usize> {
@@ -51,6 +53,8 @@ pub(super) fn finalize_interrupted_turn(
                 retained_tail.push(message);
             }
             Role::Tool => retained_tail.push(message),
+            // A watermark cut's stub stays where it is (#2403).
+            Role::User if message.user_kind == UserKind::ArchiveStub => retained_tail.push(message),
             _ => {}
         }
     }

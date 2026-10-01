@@ -7,15 +7,23 @@ use super::UserKind;
 use super::watermark::{CutPlan, PlanMessage, PlanRole};
 use crate::domain::message::{Message, Role};
 use crate::domain::text::truncate_chars;
+use crate::domain::turn_origin::opens_turn;
 
 /// How the planner sees `message`: a user message is a prompt or a stub
-/// only when it was marked one; every other user message is the harness's.
+/// only when it was marked one; every other user message is the harness's,
+/// an opener when it opens a turn (a note, a wake, a nudge), the loop's own
+/// feedback otherwise. A session saved before #2403 carries no marks: its
+/// prompts plan as the harness's (no legacy effort, the harness has no
+/// users yet).
 pub fn plan_role(message: &Message) -> PlanRole<'_> {
     match (&message.role, message.user_kind) {
         (Role::System, _) => PlanRole::System,
         (Role::User, UserKind::Prompt) => PlanRole::Prompt,
         (Role::User, UserKind::ArchiveStub) => PlanRole::ArchiveStub,
-        (Role::User, UserKind::Unmarked) => PlanRole::User,
+        (Role::User, UserKind::Unmarked) => match opens_turn(message) {
+            true => PlanRole::Opener,
+            false => PlanRole::User,
+        },
         (Role::Assistant, _) => PlanRole::Assistant {
             calls: message.tool_calls.iter().map(|c| c.id.as_str()).collect(),
         },
@@ -63,6 +71,29 @@ pub fn archive_stub(archived: usize, index_id: Option<&str>) -> Message {
     stub
 }
 
+/// The stub a rewind leaves in place of one whose archive it wiped
+/// (#2403 review M2): it names no archive, and it is a new message, so the
+/// storm guard's baseline (held by the old stub) is reset.
+pub fn rewound_stub() -> Message {
+    let mut stub = Message::user(
+        "[Context archive] Earlier messages of this session were dropped to keep the context \
+         small; a rewind cleared the archive that held them."
+            .to_string(),
+    );
+    stub.user_kind = UserKind::ArchiveStub;
+    stub
+}
+
+/// What `message` keeps once the session memory is wiped (a rewind): no
+/// spill id, and a cut's stub becomes [`rewound_stub`] (#2403 review M2).
+pub fn forget_retention(message: &mut Message) {
+    match message.user_kind {
+        UserKind::ArchiveStub => *message = rewound_stub(),
+        UserKind::Prompt | UserKind::Unmarked => {}
+    }
+    message.spill_id = None;
+}
+
 /// The most estimated tokens a stub can take, whatever it names: the
 /// planner plans with it before the stub's text is known. The longest
 /// count and the longest index id (`archive:` and a `usize` suffix, as the
@@ -88,13 +119,16 @@ pub fn archived<'a>(messages: &'a [Message], plan: &CutPlan) -> Vec<&'a Message>
 /// line per message with its recall id, or its content in full when it was
 /// never retained.
 pub fn archive_index(archived: &[&Message]) -> String {
-    let is_stub = |m: &&&Message| m.user_kind == UserKind::ArchiveStub;
+    let (stubs, messages): (Vec<&Message>, Vec<&Message>) =
+        archived.iter().partition(|m| match m.user_kind {
+            UserKind::ArchiveStub => true,
+            UserKind::Prompt | UserKind::Unmarked => false,
+        });
     let mut index = String::new();
-    for stub in archived.iter().filter(is_stub) {
+    for stub in stubs {
         index.push_str(&format!("previous archive: {}\n", stub.content));
     }
-    let messages = archived.iter().filter(|m| !is_stub(m));
-    for (n, message) in messages.enumerate() {
+    for (n, message) in messages.into_iter().enumerate() {
         index.push_str(&index_line(n + 1, message));
     }
     index

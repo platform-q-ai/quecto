@@ -620,6 +620,10 @@ fi
 # trace of why (termination signal, teardown, socket close). The host can
 # still override the level per spawn.
 envs=(-e "RUST_LOG=${RUST_LOG:-info}" -e "HOME=$HOME" -e "QUECTO_SWARM_CONTAINER=isolated-pid-v1" -e "QUECTO_SWARM_HOST_PID_NS=$(readlink /proc/self/ns/pid)" -e "QUECTO_SWARM_CHECKOUT=$child_cwd" -e "QUECTO_SWARM_BOOTSTRAP=1")
+# The launching agent's context mode (#2403): the member adopts it unless
+# its own configuration sets one.
+[ -n "${QUECTO_INHERITED_CONTEXT_MODE:-}" ] \
+  && envs+=(-e "QUECTO_INHERITED_CONTEXT_MODE=$QUECTO_INHERITED_CONTEXT_MODE")
 # Run as the host user so the identity-mounted paths keep their ownership.
 # Under rootless Podman, --userns=keep-id maps the host uid/gid to the same
 # ids inside the container (the default rootless mapping would send uid 1000

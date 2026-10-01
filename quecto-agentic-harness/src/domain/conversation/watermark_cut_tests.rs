@@ -308,3 +308,19 @@ fn the_opener_of_the_turn_in_flight_is_pinned_beside_the_latest_prompt() {
         "the turn in flight is still stamped by its opener"
     );
 }
+
+#[test]
+fn forgetting_retention_rewrites_only_a_stub_and_drops_every_spill_id() {
+    let mut stub = archive_stub(4, Some("archive"));
+    let old = stub.id();
+    forget_retention(&mut stub);
+    assert_ne!(stub.id(), old);
+    assert_eq!(stub.user_kind, UserKind::ArchiveStub);
+    assert!(!stub.content.contains("recall("), "{}", stub.content);
+    let mut kept = prompt("a prompt".to_string());
+    kept.spill_id = Some("turn0:msg:user".to_string());
+    let id = kept.id();
+    forget_retention(&mut kept);
+    assert_eq!((kept.id(), kept.content.as_str()), (id, "a prompt"));
+    assert_eq!(kept.spill_id, None);
+}

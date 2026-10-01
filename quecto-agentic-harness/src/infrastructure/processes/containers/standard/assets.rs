@@ -23,15 +23,25 @@ use crate::application::environments::ports::ContainerAssetStore;
 
 /// Bumped when an embedded asset changes, so `status` can say which
 /// bundle a project carries.
-pub const STANDARD_ASSET_VERSION: u32 = 6;
+pub const STANDARD_ASSET_VERSION: u32 = 7;
 
 /// SHA-256 digests of bundle scripts an earlier quecto wrote (#2206):
 /// version 5's `inspect.sh` and `kill.sh`, and its `create.sh` as shipped
-/// before #2184 (d950204ee) and before #2173 (cc08db65b). A file holding
+/// before #2184 (d950204ee) and before #2173 (cc08db65b); version 6's
+/// `create.sh` and `exec.sh`, before they forwarded the inherited context
+/// mode (#2403). A file holding
 /// exactly those bytes is `Outdated`, not an edit: quecto wrote them, so
 /// replacing them loses nothing a person wrote. Any other bytes stay
 /// `Differs`. Never list the current bytes here.
 const PREVIOUSLY_SHIPPED: &[(&str, &str)] = &[
+    (
+        "scripts/create.sh",
+        "07419171ffa008c2c9f20009aad8721258cf1c497ad5b31b38e4eeafcccbaf32",
+    ),
+    (
+        "scripts/exec.sh",
+        "3d9b1273d161a9072263c00b953019400034aa2f3d8abfb35f46ab6277eca7ad",
+    ),
     (
         "scripts/create.sh",
         "008c19f962a358eb1b1c376991c9d08b42a10a0d9e1dd7b70d34cef6e478524b",

@@ -10,6 +10,11 @@
 //! baseline is reset. It is not saved: a resumed session starts without
 //! it, so its first request over H may cut at once, a cut that still has
 //! to save a tenth of H.
+//!
+//! A pass dropped after its archive was written but before the cut leaves
+//! that index entry orphaned: no stub names it, the next cut writes the
+//! next `archive:n`, and the orphan stays listed by `recall("list")` until
+//! the session memory is cleared. It holds only recall ids and previews.
 
 use super::{ContextManager, ContextPlan};
 use crate::application::context_pruning;

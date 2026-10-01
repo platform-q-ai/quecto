@@ -619,7 +619,10 @@ fn apply_common_child_env(cmd: &mut tokio::process::Command, child: &ChildComman
     if !child.base_dir.as_os_str().is_empty() {
         cmd.env("QUECTO_BASE_DIR", child.base_dir);
     }
-    let _ = child.context_mode;
+    cmd.env(
+        crate::infrastructure::config::context_mode::INHERITED_CONTEXT_MODE,
+        crate::infrastructure::config::context_mode::inherited_value(child.context_mode),
+    );
     cmd.stdout(std::process::Stdio::null());
 }
 

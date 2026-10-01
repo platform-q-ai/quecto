@@ -191,9 +191,15 @@ pub fn report_to_keep(messages: &[Message]) -> Option<usize> {
 }
 
 /// A message that opens a turn: a user message the loop did not append
-/// inside a turn (a prompt, a task, a nudge, a note, a steer).
+/// inside a turn (a prompt, a task, a nudge, a note, a steer). A watermark
+/// cut's stub opens none (#2403).
 pub fn opens_turn(message: &Message) -> bool {
-    message.role == Role::User && message.turn.is_none()
+    use crate::domain::conversation::UserKind;
+    let opener_kind = match message.user_kind {
+        UserKind::Prompt | UserKind::Unmarked => true,
+        UserKind::ArchiveStub => false,
+    };
+    message.role == Role::User && message.turn.is_none() && opener_kind
 }
 
 /// The index of the latest message of `messages` that opens a turn: the

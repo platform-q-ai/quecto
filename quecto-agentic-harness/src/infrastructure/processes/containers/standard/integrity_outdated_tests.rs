@@ -21,14 +21,6 @@ fn shipped() -> [(&'static str, &'static [u8]); 6] {
     [
         (
             "scripts/create.sh",
-            include_bytes!("../../../../../tests/fixtures/standard-bundle-v6/create.sh"),
-        ),
-        (
-            "scripts/exec.sh",
-            include_bytes!("../../../../../tests/fixtures/standard-bundle-v6/exec.sh"),
-        ),
-        (
-            "scripts/create.sh",
             include_bytes!(
                 "../../../../../tests/fixtures/standard-bundle-v5/create-before-2184.sh"
             ),
@@ -46,6 +38,14 @@ fn shipped() -> [(&'static str, &'static [u8]); 6] {
         (
             "scripts/kill.sh",
             include_bytes!("../../../../../tests/fixtures/standard-bundle-v5/kill.sh"),
+        ),
+        (
+            "scripts/create.sh",
+            include_bytes!("../../../../../tests/fixtures/standard-bundle-v6/create.sh"),
+        ),
+        (
+            "scripts/exec.sh",
+            include_bytes!("../../../../../tests/fixtures/standard-bundle-v6/exec.sh"),
         ),
     ]
 }
@@ -191,9 +191,9 @@ fn a_script_outside_the_bundle_directory_runs_as_it_is() {
 }
 
 /// `quecto container status` refreshes a script an earlier quecto wrote,
-/// says so, reports it `ok`, and names version 6.
+/// says so, reports it `ok`, and names version 7.
 #[test]
-fn status_refreshes_an_outdated_script_and_reports_version_6() {
+fn status_refreshes_an_outdated_script_and_reports_version_7() {
     use crate::application::environments::dto::{
         ContainerRuntimeTarget, DiagnosableContainerConfig, PreflightCheck,
     };
@@ -230,7 +230,7 @@ fn status_refreshes_an_outdated_script_and_reports_version_6() {
         std::sync::Arc::new(NoLookup),
     )
     .execute(project.path());
-    assert_eq!(status.version, 6);
+    assert_eq!(status.version, 7);
     assert!(
         status
             .assets

@@ -35,7 +35,19 @@ pub(super) fn wire_member(
     participation: &Participation,
     defaults: &crate::infrastructure::config::AgentDefaults,
 ) -> AgentLoopImpl {
-    agent.set_context_mode(defaults.context_mode());
+    let mode = defaults.context_mode();
+    agent.set_context_mode(mode);
+    match mode {
+        crate::domain::conversation::ContextMode::Watermark(marks) => tracing::info!(
+            target: "context_prune",
+            high = marks.high(),
+            low = marks.low(),
+            "context mode: watermark"
+        ),
+        crate::domain::conversation::ContextMode::Default => {
+            tracing::info!(target: "context_prune", "context mode: default")
+        }
+    }
     let swarm_ceiling_tokens = defaults.swarm_max_context_tokens;
     let large_results = defaults.swarm_large_result_collapse();
     let cap = agent.context_ceiling_cap();

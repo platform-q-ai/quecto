@@ -451,7 +451,8 @@ pub const MIN_SAVING_DIVISOR: usize = 10;
 /// would not save enough (see [`MIN_SAVING_DIVISOR`]).
 ///
 /// The cut keeps the pinned head in place (every system message, the first
-/// user message and the latest prompt), puts one stub right after it, and
+/// user message, the latest prompt and the open turn's opener), puts one
+/// stub right after it, and
 /// keeps the newest whole exchanges that fit within L, or the newest one
 /// alone, whole, when none fits. Everything else is archived, a previous
 /// stub and harness user messages with it.
@@ -502,18 +503,24 @@ fn opens_exchange(role: &PlanRole<'_>) -> bool {
 }
 
 /// Which messages the cut keeps in place whatever it costs: every system
-/// message, the first user message and the latest prompt, so a running
-/// turn never loses its prompt (a harness message after it does not take
-/// its place). `None` without a user message.
+/// message, the first user message, the latest prompt, and the opener of
+/// the turn in flight (the latest prompt or turn-opening harness message,
+/// #2403 review M3), so a running turn never loses what opened it nor its
+/// prompt (a harness message after it does not take its place). `None`
+/// without a user message.
 fn pinned(messages: &[PlanMessage<'_>]) -> Option<Vec<bool>> {
     let is_user = |m: &PlanMessage<'_>| {
         matches!(m.role, PlanRole::Prompt | PlanRole::User | PlanRole::Opener)
     };
+    let opens = |m: &PlanMessage<'_>| matches!(m.role, PlanRole::Prompt | PlanRole::Opener);
     let first = messages.iter().position(is_user)?;
     let latest = messages.iter().rposition(|m| m.role == PlanRole::Prompt);
+    let opener = messages.iter().rposition(opens);
     let pinned = messages.iter().enumerate().map(|(i, m)| match m.role {
         PlanRole::System => true,
-        PlanRole::Prompt | PlanRole::User | PlanRole::Opener => i == first || Some(i) == latest,
+        PlanRole::Prompt | PlanRole::User | PlanRole::Opener => {
+            i == first || Some(i) == latest || Some(i) == opener
+        }
         PlanRole::ArchiveStub | PlanRole::Assistant { .. } | PlanRole::ToolResult { .. } => false,
     });
     Some(pinned.collect())

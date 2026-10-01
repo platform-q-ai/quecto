@@ -928,6 +928,12 @@ worktree's git directory is outside it, so that board is unreadable and the
 environment is kept. A container created before #2145 keeps its board in the
 work tree, where the host no longer looks: end such runs before upgrading.
 
+**The context mode (#2403).** The `create` and `exec` scripts are given
+`QUECTO_INHERITED_CONTEXT_MODE` (`default`, or `watermark:<high>:<low>`):
+the context mode and marks of the agent that launches the member. A script
+should pass it into the container (the Docker adapter does, with `-e`); a
+member adopts it unless its own configuration sets `context_mode`.
+
 **Stopping a create (#2173).** The script runs in a process group of its
 own. When the spawn that started it is cancelled (the run was stopped by
 `--max-time`, the turn was cancelled, the harness is exiting), the whole
@@ -1346,7 +1352,7 @@ line from the first of these three checks that failed, so it never says
 `ready` for an image the doctor refuses.
 
 `quecto container status` reports, one line each and exit 1 while anything
-is missing: the assets (`present (5 of 5, version 6)`, or which differ or
+is missing: the assets (`present (5 of 5, version 7)`, or which differ or
 are missing), the `standard` entry of the effective set (`default` with a
 `this repo's default` line when the overlay declares it labelled; `default
 by rule` plus a `note:` with the remedy — `quecto container init --refresh`

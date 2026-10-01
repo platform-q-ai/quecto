@@ -320,3 +320,37 @@ async fn rejected_socket_steer_does_not_cancel_but_explicit_abort_does() {
     ));
     accept.abort();
 }
+
+/// #2403 review H1/M5: a prompt or a steer that reaches an idle agent is
+/// marked a prompt; a swarm wake that reaches an idle member is the
+/// harness's, unmarked, so the member's real task keeps its pin.
+#[tokio::test]
+async fn an_idle_wake_is_unmarked_and_a_prompt_or_steer_is_a_prompt() {
+    use crate::domain::conversation::UserKind;
+    use crate::interface::cli::uds_swarm_control::SWARM_WAKE;
+    for (type_name, id, expected) in [
+        ("prompt", Some("p"), UserKind::Prompt),
+        ("steer", Some("s"), UserKind::Prompt),
+        (SWARM_WAKE, None, UserKind::Unmarked),
+    ] {
+        let mut env = DispatchTestEnv::with_unselected_workflow();
+        let mut ctx = env.ctx();
+        let text = format!("sent as {type_name}");
+        super::handle_prompt(
+            &mut ctx,
+            super::PromptCommand {
+                id: id.map(str::to_string),
+                type_name: type_name.into(),
+                message: text.clone(),
+                streaming_behavior: None,
+            },
+        )
+        .await;
+        let sent = ctx
+            .messages
+            .iter()
+            .find(|message| message.content == text)
+            .unwrap_or_else(|| panic!("{type_name}: the message ran"));
+        assert_eq!(sent.user_kind, expected, "{type_name}");
+    }
+}

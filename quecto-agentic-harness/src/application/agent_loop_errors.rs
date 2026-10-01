@@ -101,16 +101,23 @@ pub(super) fn output_limit_feedback(max_tokens: u32) -> String {
 }
 
 /// Adds `feedback` for the model, merged into a trailing user message so two
-/// user turns never follow each other (some providers reject that).
+/// user turns never follow each other (some providers reject that); in
+/// watermark mode always its own message, since the trailing one was sent.
 pub(super) fn append_feedback(
     messages: &mut Vec<Message>,
     feedback: String,
     current_turn: u32,
     mode: crate::domain::conversation::ContextMode,
 ) -> Feedback {
-    let _ = mode;
+    use crate::domain::conversation::ContextMode;
+    // In watermark mode a sent message is never edited (#2403): the
+    // feedback goes in as its own message.
+    let merges = match mode {
+        ContextMode::Default => true,
+        ContextMode::Watermark(_) => false,
+    };
     match messages.last_mut() {
-        Some(last) if last.role == Role::User => {
+        Some(last) if merges && last.role == Role::User => {
             last.content.push_str("\n\n");
             last.content.push_str(&feedback);
             last.invalidate_token_cache();

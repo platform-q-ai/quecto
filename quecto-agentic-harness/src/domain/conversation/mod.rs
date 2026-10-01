@@ -9,7 +9,8 @@ pub mod watermark_cut;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum UserKind {
     /// Not a prompt: the harness's feedback, a sub-agent's note, a swarm
-    /// wake or a workflow nudge; and every message saved before #2403.
+    /// wake or a workflow nudge; and every message saved before #2403 (an
+    /// old session's prompts plan as the harness's: no legacy effort).
     #[default]
     Unmarked,
     /// A prompt: what the user sent, or the task a parent or a swarm gave
