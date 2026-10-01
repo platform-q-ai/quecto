@@ -10,6 +10,18 @@ use crate::application::swarm::dto::{
 use crate::application::swarm::ports::BoardEvidence;
 use crate::domain::swarm::BoardError;
 
+/// A criterion as the `evidence` table's TEXT column stores it (#2394
+/// final review N-2), as SQLite applies TEXT affinity to the bound value:
+/// text as it is, a number (a bool binds as 0 or 1) as its text, NULL as
+/// NULL.
+fn stored_criterion(criterion: &Value) -> Value {
+    match criterion {
+        Value::Null | Value::String(_) => criterion.clone(),
+        Value::Bool(flag) => Value::from(i64::from(*flag).to_string()),
+        other => Value::from(other.to_string()),
+    }
+}
+
 /// An evidence row `actor` recorded for `criterion` at `revision`, of
 /// `kind`, accepted as the board stores it (`1`).
 pub fn accepted(
@@ -64,7 +76,7 @@ impl BoardEvidence for MemoryTransaction<'_> {
             .borrow()
             .evidence
             .iter()
-            .find(|(by, row)| by == actor && &row.criterion == criterion)
+            .find(|(by, row)| by == actor && row.criterion == stored_criterion(criterion))
             .map(|(_, row)| PriorEvidence {
                 criterion: row.criterion.clone(),
                 artifact: row.artifact.clone(),
@@ -95,13 +107,14 @@ impl BoardEvidence for MemoryTransaction<'_> {
     fn record_evidence(&self, evidence: &NewEvidence) -> Result<(), BoardError> {
         self.note(format!("record_evidence {}", evidence.criterion));
         let mut state = self.state.borrow_mut();
+        let criterion = stored_criterion(&evidence.criterion);
         state
             .evidence
-            .retain(|(by, row)| !(by == &evidence.actor && row.criterion == evidence.criterion));
+            .retain(|(by, row)| !(by == &evidence.actor && row.criterion == criterion));
         state.evidence.push((
             evidence.actor.clone(),
             EvidenceEntry {
-                criterion: evidence.criterion.clone(),
+                criterion,
                 artifact: json!(evidence.artifact),
                 revision: json!(evidence.revision),
                 kind: json!(evidence.kind),

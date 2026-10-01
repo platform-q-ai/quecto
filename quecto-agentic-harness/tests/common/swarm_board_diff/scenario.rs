@@ -321,8 +321,13 @@ pub fn wire_step(
         rust_outcome,
     ) {
         (Some(checked), _, rust_outcome) => {
+            // No text comparison here, on purpose: the golden's text is
+            // Python's `null`, which #2394 changed, and no recorded text of
+            // the new answer exists (the fixtures are frozen). The answer is
+            // checked as a value against the step's arguments and the board
+            // instead; its text is only required to be writable, since the
+            // member reads it as wire text.
             if let Outcome::Ok(value) = &rust_outcome {
-                // The member reads it as wire text: it must be writable.
                 rust.wire_text(value);
             }
             checked.map_err(|problem| format!("{context}: {problem}"))

@@ -530,8 +530,15 @@ fn harness_self_test_wire_checks_a_changed_answer() {
     let held = before(step, &database);
     let (answered, _) = rust.call_text(&step.member, &step.method, &step.args, step.now);
     let python = Answer::Ok("null".to_owned());
-    let compare =
-        |outcome: Outcome| wire_step(submit, step, &python, outcome, (&rust, &database, held));
+    let compare = |outcome: Outcome| {
+        wire_step(
+            submit,
+            step,
+            &python,
+            outcome,
+            (&rust, &database, held.clone()),
+        )
+    };
     compare(answered.clone()).expect("the row the board holds");
     let Outcome::Ok(Value::Object(mut row)) = answered else {
         panic!("submit answers the task's row: {answered:?}");

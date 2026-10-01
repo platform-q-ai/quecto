@@ -51,10 +51,14 @@ pub const CHANGED_ANSWERS: [(&str, &[&str]); 14] = [
 const JSON_COLUMNS: [&str; 3] = ["acceptance", "dependencies", "evidence"];
 
 /// What the board held before a step that a changed answer reports on:
-/// for `release_files`, how many files the reservation held.
-#[derive(Clone, Copy, Debug, Default)]
+/// for `release_files`, how many files the reservation held; for `ack`
+/// and `withdraw`, the message's status. `None` when the step's method
+/// reads nothing before; a read that failed keeps its error (#2394 final
+/// review N-1), which the check then names.
+#[derive(Clone, Debug, Default)]
 pub struct Before {
-    held_files: Option<i64>,
+    held_files: Option<Result<i64, String>>,
+    message_status: Option<Result<Option<String>, String>>,
 }
 
 /// One changed-answer step: its method's parameters bound to its
@@ -116,36 +120,65 @@ fn arguments_of(step: &Step) -> Value {
 /// What a changed answer of `step` will be checked against that the step
 /// itself changes: read before the step runs (nothing for other steps).
 pub fn before(step: &Step, database: &Path) -> Before {
-    let (Some(parameters), true) = (
-        parameters(&step.method).filter(|_| step.method == "release_files"),
-        database.exists(),
-    ) else {
-        return Before::default();
+    let read = |what: &str| -> Result<Checked<'_>, String> {
+        let parameters = parameters(&step.method).ok_or("no changed answer")?;
+        let board = match database.exists() {
+            true => open(database)?,
+            false => return Err(format!("no board file to read {what} from")),
+        };
+        Ok(Checked {
+            parameters,
+            arguments: arguments_of(step),
+            member: &step.member,
+            board,
+        })
     };
-    let Ok(board) = open(database) else {
-        return Before::default();
-    };
-    let checked = Checked {
-        parameters,
-        arguments: arguments_of(step),
-        member: &step.member,
-        board,
-    };
-    let held = |checked: &Checked<'_>| -> Option<i64> {
-        let [task, claim, token] = ["task_id", "token", "reservation"]
-            .map(|name| checked.argument(name).map(bound).unwrap_or(SqlValue::Null));
-        checked
-            .board
-            .query_row(
-                "SELECT count(*) FROM files WHERE task=? AND owner=? AND claim=? AND token=?",
-                params![task, checked.member, claim, token],
-                |row| row.get(0),
-            )
-            .ok()
-    };
-    Before {
-        held_files: held(&checked),
+    match step.method.as_str() {
+        "release_files" => Before {
+            held_files: Some(read("the reserved files").and_then(|checked| held_files(&checked))),
+            message_status: None,
+        },
+        "ack" | "withdraw" => Before {
+            held_files: None,
+            message_status: Some(
+                read("the message status").and_then(|checked| message_status(&checked)),
+            ),
+        },
+        _ => Before::default(),
     }
+}
+
+/// How many files the reservation argument holds for the claim argument.
+fn held_files(checked: &Checked<'_>) -> Result<i64, String> {
+    let [task, claim, token] = ["task_id", "token", "reservation"]
+        .map(|name| checked.argument(name).map(bound).unwrap_or(SqlValue::Null));
+    checked
+        .board
+        .query_row(
+            "SELECT count(*) FROM files WHERE task=? AND owner=? AND claim=? AND token=?",
+            params![task, checked.member, claim, token],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("read the reserved files: {error}"))
+}
+
+/// The status of the message the `message_id` argument binds to (`None`
+/// when there is no such message, or its status is NULL).
+fn message_status(checked: &Checked<'_>) -> Result<Option<String>, String> {
+    let id = checked
+        .argument("message_id")
+        .ok_or("no message_id argument")?;
+    checked
+        .board
+        .query_row(
+            "SELECT status FROM messages WHERE id=?",
+            params![bound(id)],
+            |row| row.get(0),
+        )
+        .or_else(|error| match error {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            error => Err(format!("read the message status: {error}")),
+        })
 }
 
 /// For a step whose golden answer is Python's `null`, of a method in
@@ -186,8 +219,8 @@ fn checked(
     match step.method.as_str() {
         "evidence" => evidence(&checked, answer),
         "release_files" => released_files(&checked, answer, before),
-        "withdraw" => settled(&checked, answer, Settles::Withdraw),
-        "ack" => settled(&checked, answer, Settles::Ack),
+        "withdraw" => settled(&checked, answer, Settles::Withdraw, before),
+        "ack" => settled(&checked, answer, Settles::Ack, before),
         "amend" => contract(&checked, answer),
         "complete" => ended_run(&checked, answer),
         "dependencies" | "release" | "block" | "unblock" | "submit" | "verify_task"
@@ -395,7 +428,7 @@ fn released_files(checked: &Checked<'_>, answer: &Value, before: Before) -> Resu
     }
     let held = before
         .held_files
-        .ok_or("the files the reservation held were not read before the step")?;
+        .ok_or("the files the reservation held were not read before the step")??;
     if answer["released"] != held {
         return Err(format!(
             "released is not the files the reservation held before the step: {held}"
@@ -426,7 +459,12 @@ enum Settles {
 /// stored status is the op's when it changed it, and already settled
 /// when it did not (`ack` leaves any message but an unread one, `withdraw`
 /// only a withdrawn one).
-fn settled(checked: &Checked<'_>, answer: &Value, settles: Settles) -> Result<(), String> {
+fn settled(
+    checked: &Checked<'_>,
+    answer: &Value,
+    settles: Settles,
+    before: Before,
+) -> Result<(), String> {
     if keys(answer)? != ["message_id", "changed"] {
         return Err("not {message_id, changed}".to_owned());
     }
@@ -449,9 +487,25 @@ fn settled(checked: &Checked<'_>, answer: &Value, settles: Settles) -> Result<()
         Settles::Withdraw => ("withdrawn", status == Some("withdrawn")),
     };
     match (changed, status == Some(expected), settled) {
-        (true, true, _) | (false, _, true) => Ok(()),
-        (true, false, _) => Err(format!("status is not {expected}: {status:?}")),
-        (false, _, false) => Err(format!("an unchanged message is not settled: {status:?}")),
+        (true, true, _) | (false, _, true) => {}
+        (true, false, _) => return Err(format!("status is not {expected}: {status:?}")),
+        (false, _, false) => {
+            return Err(format!("an unchanged message is not settled: {status:?}"));
+        }
+    }
+    // `changed` says whether this step changed the status (#2394 final
+    // review L-1): a real change answered `changed: false` is a difference.
+    let earlier = before
+        .message_status
+        .ok_or("the message status was not read before the step")??;
+    let shown = |status: Option<&str>| status.map_or("NULL".to_owned(), |text| format!("{text:?}"));
+    match changed == (earlier.as_deref() != status) {
+        true => Ok(()),
+        false => Err(format!(
+            "changed is not whether the step changed the status: {} before, {} after",
+            shown(earlier.as_deref()),
+            shown(status)
+        )),
     }
 }
 
