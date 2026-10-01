@@ -5,6 +5,7 @@ use super::*;
 /// A control port for a run the coordinator ended: paused holding `outcome`.
 struct Ended(RunStatus);
 impl SwarmRunControl for Ended {
+    fn nudge_watch(&self) {}
     fn apply(
         &self,
         _: RunControlAction,

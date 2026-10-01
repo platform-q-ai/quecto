@@ -10,7 +10,8 @@ use serde_json::{Value, json};
 use crate::application::swarm::dto::BoardLocation;
 use crate::domain::error::DomainError;
 
-pub use self::board::{SwarmBoard, SwarmBoardHandlesBuilder, SwarmBoardOpLogBuilder};
+pub use self::board::ControlOp;
+pub use self::board::{SwarmBoard, SwarmBoardHandlesBuilder, SwarmBoardOpLogBuilder, WatchNudges};
 pub use self::coordination::RunWatch;
 
 #[derive(Clone, Debug)]

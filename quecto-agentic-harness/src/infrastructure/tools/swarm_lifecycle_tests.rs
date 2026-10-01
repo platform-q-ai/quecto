@@ -262,3 +262,136 @@ async fn the_coordinators_settlement_writes_the_run_summary_once() {
     settle(context).await.unwrap();
     assert_eq!(summaries.written().len(), 1, "written once per run");
 }
+
+/// A member endpoint that answers every command and records it.
+fn command_sink(
+    socket: &std::path::Path,
+) -> (
+    tokio::task::JoinHandle<Vec<serde_json::Value>>,
+    std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
+    let listener = tokio::net::UnixListener::bind(socket).unwrap();
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let done = stop.clone();
+    let task = tokio::spawn(async move {
+        let mut commands = Vec::new();
+        while !done.load(std::sync::atomic::Ordering::SeqCst) {
+            let accept =
+                tokio::time::timeout(std::time::Duration::from_millis(50), listener.accept());
+            let Ok(Ok((stream, _))) = accept.await else {
+                continue;
+            };
+            let (read, mut write) = tokio::io::split(stream);
+            let mut read = tokio::io::BufReader::new(read);
+            let bytes =
+                quecto_line_io::read_frame(&mut read, quecto_line_io::PROTOCOL_FRAME_CAP_BYTES)
+                    .await
+                    .unwrap()
+                    .unwrap();
+            let command: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            let response = serde_json::json!({"type":"response","id":command["id"],"success":true});
+            commands.push(command);
+            quecto_line_io::write_frame(
+                &mut write,
+                response.to_string().as_bytes(),
+                quecto_line_io::PROTOCOL_FRAME_CAP_BYTES,
+            )
+            .await
+            .unwrap();
+        }
+        commands
+    });
+    (task, stop)
+}
+
+/// #2390 (b): a control change this process made is pushed to every other
+/// live member with an endpoint as a no-turn `watch`, delivered as wake
+/// hints are (best effort, a failure a warning); never to itself, a member
+/// without an endpoint, or one that is not live.
+#[tokio::test]
+async fn a_control_change_is_pushed_to_every_other_live_member_as_a_watch() {
+    let (directory, context) = crate::swarm_control_fixture::context();
+    let worker = directory.path().join("worker.sock");
+    let (sink, stop) = command_sink(&worker);
+    let own = directory.path().join("own.sock");
+    let (own_sink, own_stop) = command_sink(&own);
+    let member = |id: &str, status, endpoint: Option<&std::path::Path>| Member {
+        id: id.into(),
+        status,
+        process: None,
+        endpoint: endpoint.map(|socket| socket.to_string_lossy().into_owned()),
+        launcher: None,
+    };
+    let gone = directory.path().join("gone.sock");
+    let members = [
+        member(&context.member, MemberStatus::Live, Some(&own)),
+        member("worker", MemberStatus::Live, Some(&worker)),
+        member("reserved", MemberStatus::Reserved, Some(&worker)),
+        member("dead", MemberStatus::Dead, Some(&worker)),
+        member("silent", MemberStatus::Live, None),
+    ];
+    let warnings = announce_control_change(&context, &members).await;
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let unreachable = [member("lost", MemberStatus::Live, Some(&gone))];
+    let warnings = announce_control_change(&context, &unreachable).await;
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("lost"), "{warnings:?}");
+    stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    own_stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    let commands = sink.await.unwrap();
+    assert_eq!(commands.len(), 1, "{commands:?}");
+    assert_eq!(commands[0]["type"], "swarm_control");
+    assert_eq!(commands[0]["action"], "watch");
+    assert!(own_sink.await.unwrap().is_empty(), "never to itself");
+}
+
+/// #2390 review L1: the production observer, wired into the watch: a pause
+/// this process makes is suspended and pushed, as a `watch`, to the live
+/// member's real endpoint; a cancellation another harness pushes ends the
+/// watch.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_supervisor_pushes_a_local_change_to_a_members_endpoint() {
+    let (directory, context) = crate::swarm_control_fixture::context();
+    let socket = directory.path().join("worker.sock");
+    let (sink, stop) = command_sink(&socket);
+    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        context.call("_admit", serde_json::json!(["worker", "r"]))?;
+        context.call(
+            "_activate",
+            serde_json::json!(["worker", "r", 123, "identity", socket]),
+        )
+    })
+    .unwrap();
+    let watching = context.clone();
+    let watch = std::thread::spawn(move || {
+        let snapshot = watching.snapshot().unwrap();
+        watch::watch_until_terminal(
+            &watching,
+            snapshot,
+            &super::super::swarm_bridge::Participation::none(),
+            &mut Supervisor(&watching),
+        )
+        .snapshot
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    crate::infrastructure::tools::call_work::off_the_runtime(|| context.pause("operator")).unwrap();
+    // The watch reads the pause at once, suspends, then pushes.
+    tokio::time::sleep(std::time::Duration::from_millis(1_500)).await;
+    let other = SwarmContext {
+        board: crate::composition::swarm::swarm_board(),
+        ..context.clone()
+    };
+    crate::infrastructure::tools::call_work::off_the_runtime(|| other.cancel_run()).unwrap();
+    crate::application::swarm::ports::SwarmRunControl::nudge_watch(&context);
+    let ended = tokio::task::spawn_blocking(move || watch.join().unwrap())
+        .await
+        .unwrap();
+    stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    let commands = sink.await.unwrap();
+    assert_eq!(ended.status, RunStatus::Cancelled);
+    let actions: Vec<_> = commands
+        .iter()
+        .map(|command| command["action"].as_str().unwrap_or_default().to_owned())
+        .collect();
+    assert_eq!(actions, ["watch"], "{commands:?}");
+}

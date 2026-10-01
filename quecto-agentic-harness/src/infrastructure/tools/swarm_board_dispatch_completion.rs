@@ -52,7 +52,10 @@ pub(super) fn complete(
         actor: actor.to_owned(),
         revision,
     })?;
-    Ok(done("completed"))
+    Ok(Served {
+        controls_run: true,
+        ..done("completed")
+    })
 }
 
 /// Records the task by the id its row holds (#2303), as the task methods'

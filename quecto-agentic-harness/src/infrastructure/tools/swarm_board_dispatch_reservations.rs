@@ -60,6 +60,7 @@ fn on_task(value: Value, decision: &'static str, task_id: &Value) -> Served {
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
         refused: None,
+        controls_run: false,
     }
 }
 
@@ -121,6 +122,7 @@ pub(super) fn file_owners(
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
         refused: None,
+        controls_run: false,
     })
 }
 

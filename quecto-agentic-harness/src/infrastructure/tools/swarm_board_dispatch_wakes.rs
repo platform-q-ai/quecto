@@ -32,6 +32,7 @@ fn on_cursor(value: Value, decision: &'static str, cursor_moved: bool) -> Served
         cursor_moved: Some(cursor_moved),
         detail: BoardOpDetail::NONE,
         refused: None,
+        controls_run: false,
     }
 }
 

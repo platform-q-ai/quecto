@@ -48,6 +48,7 @@ fn on_message(value: Value, decision: &'static str, message_id: Option<&Value>) 
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
         refused: None,
+        controls_run: false,
     }
 }
 

@@ -83,6 +83,11 @@ pub(super) struct Served {
     /// answers it, and its record keeps the decision and detail, marked
     /// committed. `None` for an answer.
     pub refused: Option<BoardError>,
+    /// Whether the op changed the run's control state (#2390 review M2):
+    /// its status, control generation or deadline. Set by the op's serving,
+    /// next to the decision that changed it, so the run watch is nudged
+    /// exactly then.
+    pub controls_run: bool,
 }
 
 /// A served call split into what it answers and, for a refusal it

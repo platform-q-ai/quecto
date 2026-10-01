@@ -662,6 +662,10 @@ mod catalogue_tests;
 mod profile_tests;
 
 #[cfg(test)]
+#[path = "tool_runtime_swarm_board_tests.rs"]
+mod swarm_board_tests;
+
+#[cfg(test)]
 #[path = "tool_runtime_inherited_workflow_tests.rs"]
 mod inherited_workflow_tests;
 

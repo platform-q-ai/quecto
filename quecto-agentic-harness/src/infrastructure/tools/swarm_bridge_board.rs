@@ -13,7 +13,7 @@
 //! build asserts it on every call ([`SwarmBoard::call`]). Nothing here
 //! constructs a repository, a clock, an id source or a use case: the
 //! builder is composition's (`composition::swarm::build_swarm_board_handles`).
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use serde_json::Value;
@@ -22,6 +22,7 @@ use crate::application::swarm::dto::BoardLocation;
 use crate::application::swarm::ports::{BoardOpLog, SessionOpLog};
 use crate::domain::error::DomainError;
 use crate::domain::swarm::RefusalKind;
+use crate::domain::swarm::watch::Nudge;
 use crate::infrastructure::persistence::audit_log::AuditLog;
 use crate::infrastructure::tools::swarm_board_dispatch::{
     self, BindingFaults, BoardWire, CallOrigin, SwarmBoardHandles, TELEMETRY_TARGET,
@@ -55,6 +56,140 @@ struct Shared {
     /// The handles built per file, the most recently called last; at
     /// most [`BUILT_FILES`].
     built: Mutex<Vec<Built>>,
+    /// The run watches' latches, one per board file a watch here waits on
+    /// (#2390 review L2), by the file's path.
+    watches: Mutex<Vec<(std::path::PathBuf, Arc<WatchNudges>)>>,
+}
+
+/// The run watch's nudge latch (#2390): one per board file a watch waits
+/// on, shared by every context over the board, so this process's watch is
+/// nudged by its own control changes to that file ([`SwarmBoard::call_as`])
+/// and by the pushes its UDS handler receives. A latched flag, never a bare
+/// notify: a nudge that comes before the watch waits is taken by that wait,
+/// so none is lost. It also counts this process's ops in flight that may
+/// change the run's control state (review M1), so a watch about to end can
+/// wait for the local nudge of an op whose change it already read.
+#[derive(Debug, Default)]
+pub struct WatchNudges {
+    state: Mutex<Latched>,
+    nudged: Condvar,
+}
+
+#[derive(Debug, Default)]
+struct Latched {
+    pending: Option<Nudge>,
+    in_flight: u32,
+}
+
+impl WatchNudges {
+    fn latched(&self) -> MutexGuard<'_, Latched> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Latches `nudge` (a local one outranks a remote one held with it)
+    /// and wakes the watch.
+    pub fn nudge(&self, nudge: Nudge) {
+        let mut latched = self.latched();
+        latched.pending = Some(latched.pending.map_or(nudge, |held| held.merge(nudge)));
+        self.nudged.notify_all();
+    }
+
+    /// Waits up to `timeout` for a nudge and takes it; at once when one is
+    /// latched already, `None` when none came.
+    pub fn wait(&self, timeout: Duration) -> Option<Nudge> {
+        let (mut latched, waited) = self
+            .nudged
+            .wait_timeout_while(self.latched(), timeout, |latched| latched.pending.is_none())
+            .unwrap_or_else(PoisonError::into_inner);
+        let taken = latched.pending.take();
+        debug_assert!(
+            taken.is_some() || waited.timed_out(),
+            "a wait that took no nudge ran its whole timeout"
+        );
+        taken
+    }
+
+    /// The rest of the rate floor after a tick a remote nudge woke (review
+    /// round 2, L1): waits up to `left`, holding every remote nudge that
+    /// comes meanwhile, and returns at once on a local one. Answers what it
+    /// took, `None` when nothing came.
+    pub fn wait_floor(&self, left: Duration) -> Option<Nudge> {
+        let (mut latched, waited) = self
+            .nudged
+            .wait_timeout_while(self.latched(), left, |latched| match latched.pending {
+                Some(Nudge::Local) => false,
+                Some(Nudge::Remote) | None => true,
+            })
+            .unwrap_or_else(PoisonError::into_inner);
+        let taken = latched.pending.take();
+        debug_assert!(
+            taken == Some(Nudge::Local) || waited.timed_out(),
+            "the floor gives way only to a local nudge"
+        );
+        taken
+    }
+
+    /// A board op of this process that may end the run begins; it is
+    /// counted until it finishes (or is dropped).
+    pub fn control_op(self: &Arc<Self>) -> ControlOp {
+        self.latched().in_flight += 1;
+        ControlOp(Some(self.clone()))
+    }
+
+    /// The watch is about to end (review M1): waits up to `bound` for this
+    /// process's control ops in flight to finish, then answers whether a
+    /// local nudge was latched, taking it.
+    pub fn take_late_local(&self, bound: Duration) -> bool {
+        let (mut latched, waited) = self
+            .nudged
+            .wait_timeout_while(self.latched(), bound, |latched| latched.in_flight > 0)
+            .unwrap_or_else(PoisonError::into_inner);
+        debug_assert!(
+            latched.in_flight == 0 || waited.timed_out(),
+            "the watch stops waiting only once no op is in flight, or at the bound"
+        );
+        match latched.pending {
+            Some(Nudge::Local) => {
+                latched.pending = None;
+                true
+            }
+            Some(Nudge::Remote) | None => false,
+        }
+    }
+
+    fn finished(&self, changed: bool) {
+        let mut latched = self.latched();
+        debug_assert!(latched.in_flight > 0, "an op finishes once it began");
+        latched.in_flight = latched.in_flight.saturating_sub(1);
+        if changed {
+            latched.pending = Some(Nudge::Local);
+        }
+        self.nudged.notify_all();
+    }
+}
+
+/// A board op of this process that may change the run's control state, in
+/// flight (review M1). Dropped unfinished (the call panicked), it changed
+/// nothing.
+#[derive(Debug)]
+pub struct ControlOp(Option<Arc<WatchNudges>>);
+
+impl ControlOp {
+    /// The op ended, having changed the run's control state or not: a
+    /// change latches the local nudge.
+    pub fn finish(mut self, changed: bool) {
+        if let Some(nudges) = self.0.take() {
+            nudges.finished(changed);
+        }
+    }
+}
+
+impl Drop for ControlOp {
+    fn drop(&mut self) {
+        if let Some(nudges) = self.0.take() {
+            nudges.finished(false);
+        }
+    }
 }
 
 /// The handles built for one board file, recording in the session log
@@ -92,6 +227,7 @@ impl SwarmBoard {
                 session_log: None,
                 recording: Mutex::new(None),
                 built: Mutex::new(Vec::new()),
+                watches: Mutex::new(Vec::new()),
             }),
         }
     }
@@ -110,6 +246,7 @@ impl SwarmBoard {
                 session_log: Some(session_log),
                 recording: Mutex::new(None),
                 built: Mutex::new(Vec::new()),
+                watches: Mutex::new(Vec::new()),
             }),
         }
     }
@@ -278,6 +415,41 @@ impl SwarmBoard {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// The run watch's latch, shared by every clone of this board (#2390).
+    /// Whether a watch here holds the latch of the board file `database`.
+    pub fn watches(&self, database: &std::path::Path) -> bool {
+        self.watched(database).is_some()
+    }
+
+    /// The run watch's latch for the board file `database` (#2390), made
+    /// when none is held: the watch's, and the UDS handler's that nudges
+    /// it. Every clone of this board shares it.
+    pub fn watch_nudges(&self, database: &std::path::Path) -> Arc<WatchNudges> {
+        let mut watches = self.watches_lock();
+        if let Some((_, nudges)) = watches.iter().find(|(file, _)| file == database) {
+            return nudges.clone();
+        }
+        let nudges = Arc::new(WatchNudges::default());
+        watches.push((database.to_path_buf(), nudges.clone()));
+        nudges
+    }
+
+    /// The latch a watch here holds for the board file `database`, if any:
+    /// a control change to a file nobody here watches nudges nothing.
+    fn watched(&self, database: &std::path::Path) -> Option<Arc<WatchNudges>> {
+        self.watches_lock()
+            .iter()
+            .find(|(file, _)| file == database)
+            .map(|(_, nudges)| nudges.clone())
+    }
+
+    fn watches_lock(&self) -> MutexGuard<'_, Vec<(std::path::PathBuf, Arc<WatchNudges>)>> {
+        self.shared
+            .watches
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// Whether `other` is this board (a clone of it), not merely one over
     /// the same builder.
     #[cfg(any(test, feature = "test-support"))]
@@ -317,8 +489,25 @@ impl SwarmBoard {
             crate::infrastructure::tools::call_work::may_block(),
             "a board call ({method}) is made off the async workers (#2278)"
         );
+        // #2390: a control change to a board file a watch here waits on
+        // nudges that watch, which reads it at once and tells the other
+        // members. An op that may end the run is counted in flight first
+        // (review M1), so a watch about to end waits for its nudge; the
+        // ops every model request and tool call make are not (round 2, L2).
+        let watched = self.watched(&location.database);
+        let in_flight = match (swarm_board_dispatch::may_end_run(method), &watched) {
+            (true, Some(nudges)) => Some(nudges.control_op()),
+            (true, None) | (false, _) => None,
+        };
         let handles = self.handles(location);
-        swarm_board_dispatch::call_as(&handles, member, method, args, origin).map_err(|refusal| {
+        let (answer, controls_run) =
+            swarm_board_dispatch::call_deciding(&handles, member, method, args, origin);
+        match (in_flight, watched, controls_run) {
+            (Some(op), _, changed) => op.finish(changed),
+            (None, Some(nudges), true) => nudges.nudge(Nudge::Local),
+            (None, Some(_), false) | (None, None, _) => {}
+        }
+        answer.map_err(|refusal| {
             DomainError::Tool(format!(
                 "swarm: {}",
                 Value::String(refusal.message().to_owned())

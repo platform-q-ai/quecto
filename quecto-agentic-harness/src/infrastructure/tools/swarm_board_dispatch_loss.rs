@@ -62,9 +62,14 @@ fn found(status: Option<&RunState>) -> BoardOpDetail {
     }
 }
 
-/// `null`, with `decision` and its `detail`.
+/// `null`, with `decision` and its `detail`. A loss changed the run's
+/// control state (#2390 review M2) exactly when it ended the run.
 fn detailed(decision: &'static str, detail: BoardOpDetail) -> Served {
     let mut served = done(decision);
+    served.controls_run = match detail.ended_by_loss {
+        Some(true) => true,
+        Some(false) | None => false,
+    };
     served.detail = detail;
     served
 }
@@ -117,6 +122,10 @@ pub(super) fn lose_coordinator(
     let loss = lose_coordinator.execute(LoseCoordinatorRequest {
         actor: actor.to_owned(),
     })?;
+    debug_assert!(
+        !loss.lost || matches!(loss.run.status.as_deref(), Some("paused" | "failed")),
+        "a recorded loss leaves the run paused, or its placeholder failed"
+    );
     let text = |value: Option<String>| value.map_or(Value::Null, Value::String);
     let mut answer = Map::new();
     answer.insert("id".to_owned(), text(loss.run.id));

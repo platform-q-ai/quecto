@@ -39,6 +39,15 @@ pub(super) const REQUEST_ADMISSION: [Parameter; 1] = [Parameter {
     default: Some(|| Value::String(AdmissionGate::Model.as_str().to_owned())),
 }];
 
+/// Whether the budget's effect changed the run's control state (#2390
+/// review M2): a budget pause did.
+fn pauses(effect: BudgetEffect) -> bool {
+    match effect {
+        BudgetEffect::Paused => true,
+        BudgetEffect::Warned | BudgetEffect::Unchanged => false,
+    }
+}
+
 /// The budget's effect as the decision, or `otherwise` when it had none.
 fn decided(effect: BudgetEffect, otherwise: &'static str) -> &'static str {
     match effect {
@@ -71,6 +80,7 @@ pub(super) fn usage_budget(
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
         refused: None,
+        controls_run: pauses(configured.effect),
     })
 }
 
@@ -97,6 +107,7 @@ pub(super) fn record_request(
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
         refused: None,
+        controls_run: pauses(recorded.effect),
     })
 }
 
@@ -139,6 +150,7 @@ pub(super) fn request_admission(
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
         refused: None,
+        controls_run: pauses(admission.effect),
     })
 }
 

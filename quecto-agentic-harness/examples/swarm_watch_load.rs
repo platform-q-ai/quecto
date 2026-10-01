@@ -3,6 +3,8 @@
 //! every watch ran until #2338 (`legacy`: a `_snapshot` every tick) and
 //! with the watch of #2338 (`watch`: one `_watch` call a tick, which
 //! answers the snapshot only when the board changed or the schedule asked).
+//! Since #2390 the `watch` ticks only when its schedule is due (nothing
+//! pushes a nudge here), where `legacy` still polls every 500 ms.
 //!
 //! Opt-in and re-runnable, never part of a test run:
 //!
@@ -27,11 +29,15 @@ use std::time::{Duration, Instant};
 use quecto::application::swarm::dto::{BoardLocation, DroppedRecords};
 use quecto::application::swarm::ports::{BoardOpLog, CoordinationPort, SessionOpLog};
 use quecto::composition::swarm::{SwarmBoard, board_wire, build_swarm_board_handles};
-use quecto::domain::swarm::watch::{WATCH_TICK, WatchSchedule};
+use quecto::domain::swarm::watch::WatchSchedule;
 use quecto::domain::swarm::{BoardOpObservation, ProcessIdentity, SwarmRunSummary};
 use quecto::infrastructure::tools::swarm_board_dispatch::call;
 use quecto::infrastructure::tools::swarm_bridge::{RunWatch, SwarmContext, process_start};
 use serde_json::json;
+
+/// The fixed tick every watch ran at before #2390, and the `legacy` poll
+/// still runs at.
+const LEGACY_TICK: Duration = Duration::from_millis(500);
 
 /// Per op: records, the calls they account for, and busy records.
 #[derive(Default)]
@@ -83,8 +89,9 @@ fn member(checkout: &std::path::Path, log: &Arc<Counts>) -> SwarmContext {
     }
 }
 
-/// One watcher until `stop`: `legacy` snapshots every tick; otherwise the
-/// watch's one `_watch` call a tick, as its schedule names the cursor.
+/// One watcher until `stop`: `legacy` snapshots every 500 ms; otherwise the
+/// watch's one `_watch` call a tick, as its schedule names the cursor and
+/// when its schedule is due.
 fn watch(context: &SwarmContext, legacy: bool, stop: &AtomicBool) {
     let mut schedule = WatchSchedule::new();
     while !stop.load(Ordering::Relaxed) {
@@ -104,7 +111,14 @@ fn watch(context: &SwarmContext, legacy: bool, stop: &AtomicBool) {
                 }
             }
         }
-        std::thread::sleep(WATCH_TICK);
+        let wait = match legacy {
+            true => LEGACY_TICK,
+            false => schedule.wait(now()),
+        };
+        let until = Instant::now() + wait;
+        while Instant::now() < until && !stop.load(Ordering::Relaxed) {
+            std::thread::sleep(Duration::from_millis(50));
+        }
     }
     context.flush_watch_polls();
 }

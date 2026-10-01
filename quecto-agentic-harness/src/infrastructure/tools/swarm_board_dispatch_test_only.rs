@@ -19,7 +19,10 @@ pub(super) fn create_run(
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
     let created = super::reads::created(create_run, member, arguments)?;
-    Ok(done(super::reads::branch(&created)))
+    Ok(Served {
+        controls_run: true,
+        ..done(super::reads::branch(&created))
+    })
 }
 
 /// The three values reach the store as the member passed them: Python
@@ -48,6 +51,7 @@ pub(super) fn bootstrap_run(
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
         refused: None,
+        controls_run: false,
     })
 }
 
