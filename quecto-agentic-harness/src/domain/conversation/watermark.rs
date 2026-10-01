@@ -3,12 +3,13 @@
 //! A prompt cache matches the longest identical prefix of a request, so the
 //! watermark context only appends. When the request reaches the high mark
 //! (H), one deep cut takes it down to the low mark (L). This module plans
-//! that cut; it is pure: no I/O, no tokenizer. Token estimates come in.
+//! that cut; it is pure: no I/O, no tokenizer. Token estimates come in, and
+//! every token count here is in those estimate units.
 
 use std::ops::Range;
 
-/// The two marks, in tokens of the whole request: messages plus tool
-/// definitions. Always `0 < low < high`.
+/// The two marks, in estimated tokens of the whole request: messages plus
+/// tool definitions. Always `0 < low < high`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Watermark {
     high: usize,
@@ -30,12 +31,14 @@ impl Watermark {
     }
 
     /// The effective marks under `ceiling`: H is `min(H, ceiling)`, and when
-    /// the ceiling lowers H, L scales by the same ratio. `None` when the
-    /// ceiling leaves no positive low mark.
-    pub fn under_ceiling(self, ceiling: usize) -> Option<Self> {
+    /// the ceiling lowers H, L scales by the same ratio.
+    pub fn under_ceiling(self, ceiling: usize) -> Self {
         match ceiling {
-            at_or_above if at_or_above >= self.high => Some(self),
-            below => Self::new(below, scale(self.low, below, self.high)),
+            at_or_above if at_or_above >= self.high => self,
+            below => Self {
+                high: below,
+                low: scale(self.low, below, self.high),
+            },
         }
     }
 }
@@ -48,11 +51,48 @@ fn scale(value: usize, numerator: usize, denominator: usize) -> usize {
     usize::try_from(scaled).unwrap_or(value)
 }
 
+/// When a cut is due. It needs only the request's total, so a caller can
+/// ask before it builds the planner's view of every message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CutTrigger {
+    pub marks: Watermark,
+    /// The most the request may hold: the model window less the output
+    /// reserve, or the configured maximum.
+    pub ceiling: usize,
+    /// The request's estimated tokens right after the previous cut, if one
+    /// was made.
+    pub after_last_cut: Option<usize>,
+}
+
+impl CutTrigger {
+    /// The marks under the ceiling.
+    pub fn effective_marks(&self) -> Watermark {
+        self.marks.under_ceiling(self.ceiling)
+    }
+
+    /// Whether a request of `total` estimated tokens (messages plus tool
+    /// definitions) reached H and, after a previous cut, has grown by at
+    /// least `(H - L) / 2` since: one exchange over H never cuts every turn.
+    pub fn is_due(&self, total: usize) -> bool {
+        let marks = self.effective_marks();
+        let grown = match self.after_last_cut {
+            Some(after) => total >= after.saturating_add((marks.high - marks.low) / 2),
+            None => true,
+        };
+        total >= marks.high && grown
+    }
+}
+
 /// What the planner knows about one message: its role, and its links to
-/// tool calls.
+/// tool calls. Call ids are assumed unique; a result answers the latest
+/// assistant message before it that made its call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanRole<'a> {
     System,
+    /// A user message the user sent: the prompt of a turn.
+    Prompt,
+    /// A user-role message the harness added: feedback, a sub-agent's
+    /// note, a swarm wake-up.
     User,
     /// The stub a previous cut placed; it is archived by the next cut.
     ArchiveStub,
@@ -81,12 +121,20 @@ pub struct CutInput<'a> {
     pub tool_tokens: usize,
     /// The estimated tokens of the archive stub the cut will insert.
     pub stub_tokens: usize,
-    pub marks: Watermark,
-    /// The most the request may hold: the model window less the output
-    /// reserve, or the configured maximum.
-    pub ceiling: usize,
-    /// The request's tokens right after the previous cut, if one was made.
-    pub after_last_cut: Option<usize>,
+    pub trigger: CutTrigger,
+}
+
+/// How the kept set compares with L.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fill {
+    /// The kept set fits within L.
+    WithinLow,
+    /// The head fits within L, but the newest exchange does not fit in what
+    /// is left; it is kept whole regardless.
+    NewestExchangeOverLow,
+    /// The head alone (tools, pinned messages, stub) is over L; the newest
+    /// exchange is kept whole with it.
+    HeadOverLow,
 }
 
 /// One cut: which messages stay, which are archived, where the stub goes.
@@ -96,7 +144,7 @@ pub struct CutPlan {
     archived: Vec<Range<usize>>,
     stub_slot: usize,
     projected_tokens: usize,
-    over_low_mark: bool,
+    fill: Fill,
 }
 
 impl CutPlan {
@@ -107,7 +155,7 @@ impl CutPlan {
         pinned: &[bool],
         tail_start: usize,
         fixed: usize,
-        low: usize,
+        fill: Fill,
     ) -> Self {
         let keeps = |i: &usize| *i >= tail_start || pinned[*i];
         let kept: Vec<usize> = (0..messages.len()).filter(keeps).collect();
@@ -124,7 +172,7 @@ impl CutPlan {
             kept,
             archived,
             projected_tokens,
-            over_low_mark: projected_tokens > low,
+            fill,
         };
         plan.assert_invariants(messages, pinned, fixed);
         plan
@@ -163,10 +211,7 @@ impl CutPlan {
             "the stub follows the head"
         );
         assert!(
-            matches!(
-                messages[tail_start].role,
-                PlanRole::User | PlanRole::Assistant { .. }
-            ),
+            opens_exchange(&messages[tail_start].role),
             "the tail opens an exchange"
         );
         let real = |i: usize| messages[i].role != PlanRole::ArchiveStub;
@@ -211,36 +256,32 @@ impl CutPlan {
         self.projected_tokens
     }
 
-    /// Whether even the newest exchange alone does not fit within L; it is
-    /// kept whole regardless.
-    pub fn over_low_mark(&self) -> bool {
-        self.over_low_mark
+    /// How the kept set compares with L.
+    pub fn fill(&self) -> Fill {
+        self.fill
     }
 }
 
 /// The cut to make before the next request, or `None` when none is due:
-/// the request is below the effective high mark, it has not grown by
-/// `(H - L) / 2` since the last cut, or a cut would archive nothing but a
-/// previous stub.
+/// the trigger is not due, a cut would archive nothing but a previous
+/// stub, or it would not save enough.
 ///
 /// The cut keeps the pinned head in place (every system message, the first
-/// user message and the latest user prompt), puts one stub right after it,
-/// and keeps the newest whole exchanges that fit within L, or the newest
-/// one alone, whole, when none fits. Everything else is archived, a
-/// previous stub with it.
+/// user message and the latest prompt), puts one stub right after it, and
+/// keeps the newest whole exchanges that fit within L, or the newest one
+/// alone, whole, when none fits. Everything else is archived, a previous
+/// stub with it.
 pub fn plan_cut(input: &CutInput<'_>) -> Option<CutPlan> {
-    let marks = input.marks.under_ceiling(input.ceiling)?;
     let messages = input.messages;
     let total = input
         .tool_tokens
         .saturating_add(sum(messages.iter().map(|m| m.tokens)));
-    if cut_due(total, marks, input.after_last_cut) {
+    if input.trigger.is_due(total) {
+        let low = input.trigger.effective_marks().low;
         let pinned = pinned(messages)?;
         let fixed = input.tool_tokens.saturating_add(input.stub_tokens);
-        let (tail_start, fits) = tail_start(messages, &pinned, fixed, marks.low)?;
-        let plan = CutPlan::new(messages, &pinned, tail_start, fixed, marks.low);
-        assert_eq!(plan.over_low_mark, !fits, "the fill and the plan agree");
-        Some(plan)
+        let (tail_start, fill) = tail_start(messages, &pinned, fixed, low)?;
+        Some(CutPlan::new(messages, &pinned, tail_start, fixed, fill))
     } else {
         None
     }
@@ -250,26 +291,25 @@ fn sum(tokens: impl Iterator<Item = usize>) -> usize {
     tokens.fold(0, usize::saturating_add)
 }
 
-/// Whether the request reached H and, after a previous cut, has grown by at
-/// least `(H - L) / 2` since: one exchange over H never cuts every turn.
-fn cut_due(total: usize, marks: Watermark, after_last_cut: Option<usize>) -> bool {
-    let grown = match after_last_cut {
-        Some(after) => total >= after.saturating_add((marks.high - marks.low) / 2),
-        None => true,
-    };
-    total >= marks.high && grown
+/// Whether a cut may fall right before a message of this role, when no
+/// call/result pair spans it.
+fn opens_exchange(role: &PlanRole<'_>) -> bool {
+    match role {
+        PlanRole::Prompt | PlanRole::User | PlanRole::Assistant { .. } => true,
+        PlanRole::System | PlanRole::ArchiveStub | PlanRole::ToolResult { .. } => false,
+    }
 }
 
 /// Which messages the cut keeps in place whatever it costs: every system
-/// message, the first user message and the latest user prompt, so a
-/// running turn never loses its prompt. `None` without a user message.
+/// message, the first user message and the latest prompt, so a running
+/// turn never loses its prompt. `None` without a user message.
 fn pinned(messages: &[PlanMessage<'_>]) -> Option<Vec<bool>> {
-    let is_user = |m: &PlanMessage<'_>| m.role == PlanRole::User;
+    let is_user = |m: &PlanMessage<'_>| matches!(m.role, PlanRole::Prompt | PlanRole::User);
     let first = messages.iter().position(is_user)?;
     let latest = messages.iter().rposition(is_user)?;
     let pinned = messages.iter().enumerate().map(|(i, m)| match m.role {
         PlanRole::System => true,
-        PlanRole::User => i == first || i == latest,
+        PlanRole::Prompt | PlanRole::User => i == first || i == latest,
         PlanRole::ArchiveStub | PlanRole::Assistant { .. } | PlanRole::ToolResult { .. } => false,
     });
     Some(pinned.collect())
@@ -287,14 +327,14 @@ fn call_of_each_result(messages: &[PlanMessage<'_>]) -> Vec<Option<usize>> {
                 None
             }
             PlanRole::ToolResult { call } => issued.get(call).copied(),
-            PlanRole::System | PlanRole::User | PlanRole::ArchiveStub => None,
+            PlanRole::System | PlanRole::Prompt | PlanRole::User | PlanRole::ArchiveStub => None,
         });
     }
     calls
 }
 
-/// Whether a cut may fall right before each message: a user message, or an
-/// assistant message, that no call/result pair spans.
+/// Whether a cut may fall right before each message: one that opens an
+/// exchange, and that no call/result pair spans.
 fn boundaries(messages: &[PlanMessage<'_>]) -> Vec<bool> {
     let mut opens = vec![0usize; messages.len() + 1];
     let mut closes = vec![0usize; messages.len() + 1];
@@ -313,25 +353,25 @@ fn boundaries(messages: &[PlanMessage<'_>]) -> Vec<bool> {
     messages
         .iter()
         .zip(spanned)
-        .map(|(m, spanned)| match m.role {
-            PlanRole::User | PlanRole::Assistant { .. } => !spanned,
-            PlanRole::System | PlanRole::ArchiveStub | PlanRole::ToolResult { .. } => false,
-        })
+        .map(|(m, spanned)| opens_exchange(&m.role) && !spanned)
         .collect()
 }
 
-/// Where the kept tail starts, and whether it fits within `low`: the
-/// earliest boundary whose kept set fits, or the newest boundary when none
-/// does. The tail holds no stub, and the cut archives at least one message
-/// that is not a stub. `fixed` is the tools plus the new stub.
+/// Where the kept tail starts, and how the kept set compares with `low`:
+/// the earliest boundary whose kept set fits, or the newest boundary when
+/// none does. The tail holds no stub, and the cut archives at least one
+/// message that is not a stub. `fixed` is the tools plus the new stub.
 fn tail_start(
     messages: &[PlanMessage<'_>],
     pinned: &[bool],
     fixed: usize,
     low: usize,
-) -> Option<(usize, bool)> {
+) -> Option<(usize, Fill)> {
     let archivable = |i: &usize| match messages[*i].role {
-        PlanRole::User | PlanRole::Assistant { .. } | PlanRole::ToolResult { .. } => !pinned[*i],
+        PlanRole::Prompt
+        | PlanRole::User
+        | PlanRole::Assistant { .. }
+        | PlanRole::ToolResult { .. } => !pinned[*i],
         PlanRole::System | PlanRole::ArchiveStub => false,
     };
     let first_archivable = (0..messages.len()).find(archivable)?;
@@ -365,9 +405,15 @@ fn tail_start(
             }
         }
     }
-    fitting.map(|i| (i, true)).or(newest.map(|i| (i, false)))
+    fitting
+        .map(|i| (i, Fill::WithinLow))
+        .or(newest.map(|i| (i, Fill::NewestExchangeOverLow)))
 }
 
 #[cfg(test)]
 #[path = "watermark_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "watermark_split_tests.rs"]
+mod split_tests;
