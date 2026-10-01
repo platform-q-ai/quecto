@@ -55,6 +55,9 @@ mod spill;
 #[path = "context_plan.rs"]
 mod plan;
 pub(crate) use plan::{ContextPlan, ToolMessageBuild};
+// SPIKE: the watermark context (append-only between cuts).
+#[path = "agent_loop/context_watermark.rs"]
+mod watermark;
 
 /// The narrow handles the pruning policy holds on the sessions
 /// capability's retention namespace (D9 #1978): the writer that appends
@@ -96,6 +99,8 @@ pub(crate) struct ContextManager {
     model_context_window: Option<usize>,
     ceiling_cap: ContextCeilingCap,
     gauge: Mutex<ContextGaugeCalibration>,
+    /// SPIKE: `Some` switches the watermark context on (no pruning pass).
+    watermark: Option<crate::domain::conversation::watermark::ContextWatermark>,
 }
 
 impl ContextManager {
@@ -111,6 +116,7 @@ impl ContextManager {
             model_context_window: config.model_context_window,
             ceiling_cap: ContextCeilingCap::default(),
             gauge: Mutex::new(ContextGaugeCalibration::default()),
+            watermark: None,
         }
     }
 

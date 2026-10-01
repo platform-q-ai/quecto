@@ -104,6 +104,14 @@ pub struct AgentDefaults {
     pub context_collapse_large_result_tokens: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_collapse_large_result_after_turns: Option<u32>,
+    /// SPIKE: `watermark` switches the watermark context on (append-only
+    /// between cuts at `context_high_tokens`, down to `context_low_tokens`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_high_tokens: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_low_tokens: Option<usize>,
     /// How many most-recent turns the spilling ceiling tail-pins (#1045).
     #[serde(default = "default_pin_recent_turns")]
     pub pin_recent_turns: u32,
@@ -144,6 +152,9 @@ impl Default for AgentDefaults {
             swarm_max_context_tokens: default_swarm_max_context_tokens(),
             context_collapse_large_result_tokens: None,
             context_collapse_large_result_after_turns: None,
+            context_mode: None,
+            context_high_tokens: None,
+            context_low_tokens: None,
             pin_recent_turns: default_pin_recent_turns(),
             context_collapse_after_messages: default_context_collapse_after_messages(),
             effort: None,
@@ -456,6 +467,7 @@ impl Config {
     /// - `QUECTO_SWARM_MAX_CONTEXT_TOKENS` → agents.defaults.swarm_max_context_tokens
     /// - `QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_TOKENS` and
     ///   `QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_AFTER_TURNS` → the size-aware collapse (#2348)
+    /// - `QUECTO_CONTEXT_MODE`, `QUECTO_CONTEXT_HIGH_TOKENS`, `QUECTO_CONTEXT_LOW_TOKENS` → the watermark context (SPIKE)
     /// - `QUECTO_AGENTS_DEFAULTS_EFFORT` → agents.defaults.effort
     /// - `OPENAI_API_KEY` → providers.openai.api_key
     /// - `ANTHROPIC_API_KEY` → providers.anthropic.api_key
@@ -492,6 +504,7 @@ impl Config {
             config.agents.defaults.swarm_max_context_tokens = n;
         }
         large_results::apply_env_overrides(&mut config.agents.defaults, env);
+        watermark::apply_env_overrides(&mut config.agents.defaults, env);
         if let Some(v) = env.get("OPENAI_API_KEY") {
             config.providers.openai.api_key = v.clone();
         }
@@ -718,6 +731,8 @@ pub mod loaders;
 pub mod mapping;
 // #2348: the size-aware collapse's dials.
 mod large_results;
+// SPIKE: the watermark context's switch and marks.
+mod watermark;
 pub mod persistence;
 pub mod writer;
 

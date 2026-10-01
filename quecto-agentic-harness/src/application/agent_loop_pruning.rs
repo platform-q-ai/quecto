@@ -36,10 +36,19 @@ impl AgentLoopImpl {
             );
         }
         let live_before = live_result_ids(messages);
-        let mut plan = self
+        // SPIKE: the watermark context replaces every pruning rule.
+        let watermark = self
             .context_manager
-            .prepare_provider_context(messages, budget, spills_dirty)
+            .prepare_watermark_context(messages, fixed_tokens, spills_dirty)
             .await;
+        let mut plan = match watermark {
+            Some(plan) => plan,
+            None => {
+                self.context_manager
+                    .prepare_provider_context(messages, budget, spills_dirty)
+                    .await
+            }
+        };
         if plan.durable_prefix_dirty {
             self.report_collapsed_results(messages, &live_before, &plan.dropped_calls);
         }
@@ -135,6 +144,14 @@ impl AgentLoopImpl {
             .iter()
             .map(crate::domain::tool::ToolDefinition::estimated_tokens)
             .sum()
+    }
+
+    /// SPIKE: switch the watermark context on (`Some`) or off.
+    pub fn set_context_watermark(
+        &mut self,
+        watermark: Option<crate::domain::conversation::watermark::ContextWatermark>,
+    ) {
+        self.context_manager.set_context_watermark(watermark);
     }
 
     pub async fn prune_resumed_context(&self, messages: &mut Vec<Message>) -> usize {

@@ -518,6 +518,8 @@ pub(crate) fn build_agent_from_config_in(
         &flags.swarm_participation,
         &config.agents.defaults,
     );
+    // SPIKE: the watermark context, when `context_mode` is `watermark`.
+    agent.set_context_watermark(config.agents.defaults.context_watermark());
     // Durable `set_tool_policy … persist` goes through composition's hook (#1849).
     agent.set_tool_policy_persistence(Some(build_tool_policy_persistence(
         base_dir,
