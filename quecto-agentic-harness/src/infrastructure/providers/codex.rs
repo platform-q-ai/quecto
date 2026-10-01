@@ -687,5 +687,9 @@ mod cov_tests;
 mod issue_2162_tests;
 
 #[cfg(test)]
+#[path = "codex_phase_2397_tests.rs"]
+mod phase_2397_tests;
+
+#[cfg(test)]
 #[path = "codex_stream_end_tests.rs"]
 mod stream_end_tests;
