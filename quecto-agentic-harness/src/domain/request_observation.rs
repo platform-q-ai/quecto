@@ -33,19 +33,8 @@ pub struct RequestTrace {
 }
 impl RequestTrace {
     /// The provider serialized the request's input (#2398). The first
-    /// record stays: a retry sends the same input again, which the
-    /// provider then compares with itself.
+    /// record stays: a retry sends the same input again.
     pub fn record_input_prefix(&self, prefix: InputPrefix) {
-        debug_assert!(
-            prefix.first_changed_item.is_some() || prefix.first_changed_kind.is_none(),
-            "a kind names a changed item"
-        );
-        debug_assert!(
-            prefix
-                .first_changed_item
-                .is_none_or(|index| index <= prefix.input_items),
-            "a changed item is one this request sent, or the first it lacks"
-        );
         self.input_prefix
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -172,21 +161,74 @@ pub enum InputItemKind {
 }
 
 /// How a request's serialized input relates to the previous request of the
-/// same session (#2398): counts, an index and a kind, never content.
+/// same session (#2398), as written: counts, indices, a kind and token
+/// estimates, never content. Every estimate uses one estimator, so they
+/// compare with each other and with the provider's `cache_read_tokens`.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub struct InputPrefix {
+pub struct InputPrefixParts {
     /// The input items the request sent.
     pub input_items: usize,
+    /// The input items of the previous request it was compared with;
+    /// `None` when there was none to compare with (the session's first
+    /// observed request, or one its provider no longer remembers).
+    pub previous_items: Option<usize>,
     /// The first item whose serialized bytes differ from the previous
     /// request's item at the same index (or that the previous request had
     /// and this one lacks); `None` when the previous input is a
-    /// byte-identical prefix of this one (append-only, and so the first
-    /// request of a session).
+    /// byte-identical prefix of this one (append-only), or when nothing was
+    /// compared.
     pub first_changed_item: Option<usize>,
     /// That item's kind; `None` when it is not an item this request sent.
     pub first_changed_kind: Option<InputItemKind>,
-    /// The estimated tokens of the unchanged prefix.
+    /// The estimated tokens of the unchanged input items.
     pub prefix_tokens_estimate: usize,
+    /// The estimated tokens of the unchanged prefix of the whole request:
+    /// its instructions and tools, when they are unchanged, and then its
+    /// unchanged input items; `0` when the instructions or tools changed.
+    pub unchanged_prefix_tokens_estimate: usize,
+    /// The estimated tokens of the whole request: instructions, tools and
+    /// every input item.
+    pub request_tokens_estimate: usize,
+}
+
+/// An [`InputPrefixParts`] whose counts agree with each other (#2398).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(try_from = "InputPrefixParts", into = "InputPrefixParts")]
+pub struct InputPrefix(InputPrefixParts);
+
+/// Why an [`InputPrefixParts`] is not a consistent record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvalidInputPrefix(pub &'static str);
+
+impl std::fmt::Display for InvalidInputPrefix {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "inconsistent input prefix: {}", self.0)
+    }
+}
+
+impl InputPrefix {
+    /// `parts`, when its counts agree with each other.
+    pub fn new(parts: InputPrefixParts) -> Result<Self, InvalidInputPrefix> {
+        Ok(Self(parts))
+    }
+
+    /// The record's counts.
+    pub fn parts(self) -> InputPrefixParts {
+        self.0
+    }
+}
+
+impl TryFrom<InputPrefixParts> for InputPrefix {
+    type Error = InvalidInputPrefix;
+    fn try_from(parts: InputPrefixParts) -> Result<Self, Self::Error> {
+        Self::new(parts)
+    }
+}
+
+impl From<InputPrefix> for InputPrefixParts {
+    fn from(prefix: InputPrefix) -> Self {
+        prefix.0
+    }
 }
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RequestDiagnostics {

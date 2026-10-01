@@ -264,13 +264,17 @@ fn a_request_dropped_unfinished_is_marked_dropping_first() {
 /// recorded it on the trace, whether the request finished or was dropped.
 #[test]
 fn a_published_observation_carries_the_input_prefix_its_provider_recorded() {
-    use crate::domain::request_observation::{InputItemKind, InputPrefix};
-    let prefix = InputPrefix {
+    use crate::domain::request_observation::{InputItemKind, InputPrefix, InputPrefixParts};
+    let prefix = InputPrefix::new(InputPrefixParts {
         input_items: 6,
+        previous_items: Some(6),
         first_changed_item: Some(4),
         first_changed_kind: Some(InputItemKind::Reasoning),
         prefix_tokens_estimate: 321,
-    };
+        unchanged_prefix_tokens_estimate: 400,
+        request_tokens_estimate: 500,
+    })
+    .unwrap();
     let sinks = Sinks::default();
     let trace = Arc::new(RequestTrace::default());
     let mut guard = sinks.guard(&trace);
