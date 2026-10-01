@@ -722,3 +722,6 @@ impl std::error::Error for CatalogueDomainError {}
 #[cfg(test)]
 #[path = "catalogue_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "catalogue_window_tests.rs"]
+mod window_tests;

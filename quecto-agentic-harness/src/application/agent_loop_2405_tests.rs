@@ -164,15 +164,16 @@ fn an_unknown_window_is_logged_once_with_the_ceiling_after_the_swarm_cap() {
     assert!(line.contains("max_context_tokens=48000"), "{line}");
 }
 
-/// #2405 review M1: a declared cap that would leave the prompt under half
-/// the window is clamped, and that is warned once.
+/// #2405 review M1: a declared cap that leaves the prompt under half the
+/// window is warned once; under a fixed input limit the ceiling stays the
+/// provider's limit less the headroom (final review L1): 2,000 x 0.95.
 #[test]
-fn a_clamped_reserve_is_warned_once() {
+fn a_reserve_past_the_floor_is_warned_once() {
     let lines = ceiling_log(|runtime| {
         let mut agent = agent(300_000, 8_192, None);
         let tight = limits(Some(128_000), Some(130_000), WindowLessOutputCap);
         agent.apply_model("acme/tight".into(), tight);
-        assert_eq!(agent.effective_max_context_tokens(), 65_000);
+        assert_eq!(agent.effective_max_context_tokens(), 1_900);
         let mut messages = vec![crate::domain::message::Message::user("go")];
         runtime.block_on(agent.apply_context_pruning(&mut messages, 1, false));
         agent.apply_model("acme/tight".into(), tight);
@@ -182,8 +183,32 @@ fn a_clamped_reserve_is_warned_once() {
     assert_eq!(warned.len(), 1, "{lines:#?}");
     assert!(warned[0].contains("model=acme/tight"), "{}", warned[0]);
     assert!(
-        warned[0].contains("max_context_tokens=65000"),
+        warned[0].contains("max_context_tokens=1900"),
         "{}",
         warned[0]
     );
+}
+
+/// The notes are kept per model and kind of note: a model noted for having
+/// no window is still warned when it later carries a reserve past the floor.
+#[test]
+fn each_kind_of_note_is_logged_once_per_model() {
+    let lines = ceiling_log(|runtime| {
+        let mut agent = agent(300_000, 8_192, None);
+        let mut messages = vec![crate::domain::message::Message::user("go")];
+        runtime.block_on(agent.apply_context_pruning(&mut messages, 1, false));
+        let tight = limits(Some(32_000), Some(32_000), SharedWithRequest);
+        agent.apply_model("test-model".into(), tight);
+        runtime.block_on(agent.apply_context_pruning(&mut messages, 2, false));
+        agent.apply_model("test-model".into(), tight);
+        runtime.block_on(agent.apply_context_pruning(&mut messages, 3, false));
+    });
+    assert_eq!(lines.len(), 2, "{lines:#?}");
+    assert!(
+        lines[0].contains("declares no context window"),
+        "{}",
+        lines[0]
+    );
+    assert!(lines[1].contains("WARN"), "{}", lines[1]);
+    assert!(lines[1].contains("model=test-model"), "{}", lines[1]);
 }
