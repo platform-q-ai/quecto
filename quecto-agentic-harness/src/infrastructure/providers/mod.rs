@@ -3,6 +3,7 @@ pub mod anthropic;
 pub(crate) mod attempt_profile;
 pub(crate) mod attempt_transport;
 pub mod codex;
+pub(crate) mod input_prefix;
 pub mod openai;
 pub mod openai_endpoint_router;
 pub mod refresh_wiring;

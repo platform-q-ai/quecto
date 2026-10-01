@@ -77,3 +77,127 @@ fn the_earliest_first_token_mark_stays() {
     trace.mark_first_token(late);
     assert_eq!(trace.first_token(), Some(early));
 }
+
+/// #2398: where a request's input first differs from its session's previous
+/// request travels in the observation as counts, an index and a kind.
+#[cfg(test)]
+mod input_prefix_tests {
+    use super::super::*;
+
+    fn observation(input_prefix: Option<InputPrefix>) -> RequestObservation {
+        RequestObservation {
+            request_id: "r".into(),
+            started_unix_ms: None,
+            finished_unix_ms: None,
+            attempt_diagnostics: Vec::new(),
+            model: "m".into(),
+            provider: "codex".into(),
+            outcome: "succeeded".into(),
+            error_class: None,
+            input_tokens: None,
+            context_input_tokens: None,
+            output_tokens: None,
+            cache_read_tokens: None,
+            cache_write_tokens: None,
+            estimated_cost_micro_usd: None,
+            estimated_context_tokens: 0,
+            instrumented_attempts: 1,
+            oauth_retries: 0,
+            duration_ms: 0,
+            first_token_ms: None,
+            harness_prefix_sha256: String::new(),
+            harness_prefix_bytes: 0,
+            harness_prefix_unchanged: None,
+            input_prefix,
+        }
+    }
+
+    #[test]
+    fn an_append_only_input_records_a_null_first_changed_item() {
+        let record = observation(Some(InputPrefix {
+            input_items: 5,
+            first_changed_item: None,
+            first_changed_kind: None,
+            prefix_tokens_estimate: 40,
+        }));
+        let value = serde_json::to_value(&record).unwrap();
+        assert_eq!(value["input_items"], 5);
+        assert!(
+            value
+                .as_object()
+                .unwrap()
+                .contains_key("first_changed_item")
+        );
+        assert_eq!(value["first_changed_item"], serde_json::Value::Null);
+        assert_eq!(value["first_changed_kind"], serde_json::Value::Null);
+        assert_eq!(value["prefix_tokens_estimate"], 40);
+        let back: RequestObservation = serde_json::from_value(value).unwrap();
+        assert_eq!(back, record);
+    }
+
+    #[test]
+    fn a_changed_item_records_its_index_and_kind() {
+        let record = observation(Some(InputPrefix {
+            input_items: 9,
+            first_changed_item: Some(3),
+            first_changed_kind: Some(InputItemKind::FunctionCallOutput),
+            prefix_tokens_estimate: 12,
+        }));
+        let value = serde_json::to_value(&record).unwrap();
+        assert_eq!(value["first_changed_item"], 3);
+        assert_eq!(value["first_changed_kind"], "function_call_output");
+        let back: RequestObservation = serde_json::from_value(value).unwrap();
+        assert_eq!(back, record);
+    }
+
+    /// A provider that does not observe its input writes none of the
+    /// fields, and a record without them reads as unobserved.
+    #[test]
+    fn an_unobserved_input_writes_no_fields_and_reads_back_unobserved() {
+        let value = serde_json::to_value(observation(None)).unwrap();
+        for key in [
+            "input_items",
+            "first_changed_item",
+            "first_changed_kind",
+            "prefix_tokens_estimate",
+        ] {
+            assert!(!value.as_object().unwrap().contains_key(key), "{key}");
+        }
+        let back: RequestObservation = serde_json::from_value(value).unwrap();
+        assert_eq!(back.input_prefix, None);
+    }
+
+    #[test]
+    fn every_kind_has_its_wire_name() {
+        for (kind, name) in [
+            (InputItemKind::User, "user"),
+            (InputItemKind::Assistant, "assistant"),
+            (InputItemKind::FunctionCall, "function_call"),
+            (InputItemKind::FunctionCallOutput, "function_call_output"),
+            (InputItemKind::Reasoning, "reasoning"),
+        ] {
+            assert_eq!(serde_json::to_value(kind).unwrap(), name);
+        }
+    }
+
+    /// A retry sends the same input again: the first record stays.
+    #[test]
+    fn the_first_input_prefix_a_request_records_stays() {
+        let trace = RequestTrace::default();
+        assert_eq!(trace.input_prefix(), None);
+        let first = InputPrefix {
+            input_items: 4,
+            first_changed_item: Some(2),
+            first_changed_kind: Some(InputItemKind::Assistant),
+            prefix_tokens_estimate: 7,
+        };
+        trace.record_input_prefix(first);
+        trace.record_input_prefix(InputPrefix {
+            input_items: 4,
+            first_changed_item: None,
+            first_changed_kind: None,
+            prefix_tokens_estimate: 30,
+        });
+        assert_eq!(trace.input_prefix(), Some(first));
+    }
+}

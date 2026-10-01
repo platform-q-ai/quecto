@@ -27,8 +27,22 @@ pub struct RequestTrace {
     /// Usage attempts reported before they were cut short (#2249 review):
     /// tokens the provider counted for a reply that never completed.
     unfinished_usage: Mutex<Vec<crate::domain::message::UsageInfo>>,
+    /// How the request's input relates to its session's previous request
+    /// (#2398), as its provider first serialized it.
+    input_prefix: Mutex<Option<InputPrefix>>,
 }
 impl RequestTrace {
+    /// The provider serialized the request's input (#2398). The first
+    /// record stays: a retry sends the same input again, which the
+    /// provider then compares with itself.
+    pub fn record_input_prefix(&self, prefix: InputPrefix) {
+        let _ = prefix;
+    }
+    /// How the request's input relates to its session's previous request,
+    /// when its provider observed it.
+    pub fn input_prefix(&self) -> Option<InputPrefix> {
+        *self.input_prefix.lock().unwrap_or_else(|e| e.into_inner())
+    }
     /// An attempt was cut short after its provider reported `usage` (#2249
     /// review): those tokens were spent, so they are still counted.
     pub fn record_unfinished_usage(&self, usage: crate::domain::message::UsageInfo) {
@@ -127,6 +141,39 @@ pub struct RequestObservation {
     pub harness_prefix_sha256: String,
     pub harness_prefix_bytes: usize,
     pub harness_prefix_unchanged: Option<bool>,
+    /// Where the request's input first differs from its session's previous
+    /// request (#2398); absent when its provider does not observe its input.
+    #[serde(flatten)]
+    pub input_prefix: Option<InputPrefix>,
+}
+
+/// The kind of one item of a request's input (#2398).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum InputItemKind {
+    User,
+    Assistant,
+    FunctionCall,
+    FunctionCallOutput,
+    Reasoning,
+}
+
+/// How a request's serialized input relates to the previous request of the
+/// same session (#2398): counts, an index and a kind, never content.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InputPrefix {
+    /// The input items the request sent.
+    pub input_items: usize,
+    /// The first item whose serialized bytes differ from the previous
+    /// request's item at the same index (or that the previous request had
+    /// and this one lacks); `None` when the previous input is a
+    /// byte-identical prefix of this one (append-only, and so the first
+    /// request of a session).
+    pub first_changed_item: Option<usize>,
+    /// That item's kind; `None` when it is not an item this request sent.
+    pub first_changed_kind: Option<InputItemKind>,
+    /// The estimated tokens of the unchanged prefix.
+    pub prefix_tokens_estimate: usize,
 }
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RequestDiagnostics {

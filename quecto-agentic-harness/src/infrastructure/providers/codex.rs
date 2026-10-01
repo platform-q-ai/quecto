@@ -693,3 +693,7 @@ mod phase_2397_tests;
 #[cfg(test)]
 #[path = "codex_stream_end_tests.rs"]
 mod stream_end_tests;
+
+#[cfg(test)]
+#[path = "codex_2398_tests.rs"]
+mod issue_2398_tests;
