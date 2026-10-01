@@ -52,6 +52,13 @@ fn bare<'a>(
     }
 }
 
+fn size_of(input: &CutInput<'_>) -> RequestSize {
+    RequestSize {
+        tool_tokens: input.tool_tokens,
+        message_tokens: input.messages.iter().map(|m| m.tokens).sum(),
+    }
+}
+
 fn tokens_of<'a>(messages: &[PlanMessage<'_>], indices: impl Iterator<Item = &'a usize>) -> usize {
     indices.map(|&i| messages[i].tokens).sum()
 }
@@ -117,15 +124,20 @@ fn assert_sound(input: &CutInput<'_>, plan: &CutPlan) {
     }
 }
 
+/// The highest L the marks allow under `high`.
+fn max_low(high: usize) -> usize {
+    (high - 1).min(high - high / MIN_SAVING_DIVISOR)
+}
+
 /// Plans `messages` at every L under three levels of H, checking each
 /// plan; the number of plans made.
 fn sweep(messages: &[PlanMessage<'_>]) -> usize {
     let total: usize = messages.iter().map(|m| m.tokens).sum();
     let mut plans = 0;
     for high in [total, total * 3 / 4, total / 2] {
-        for low in 1..high {
+        for low in 1..=max_low(high) {
             let input = bare(messages, (high, low), usize::MAX, None);
-            if let Some(plan) = plan_cut(&input) {
+            if let Ok(plan) = plan_cut(&input) {
                 assert_sound(&input, &plan);
                 plans += 1;
             }
@@ -305,7 +317,7 @@ fn seeded_random_conversations_keep_every_promise() {
         let messages = random_conversation(&mut rng);
         let total: usize = messages.iter().map(|m| m.tokens).sum();
         let high = rng.below(total) + 2;
-        let low = rng.below(high - 1) + 1;
+        let low = rng.below(max_low(high)) + 1;
         let ceiling = match rng.below(4) {
             0 => rng.below(total * 2),
             _ => usize::MAX,
@@ -319,9 +331,13 @@ fn seeded_random_conversations_keep_every_promise() {
             stub_tokens: rng.below(60) + 1,
             ..bare(&messages, (high, low), ceiling, after)
         };
-        if let Some(plan) = plan_cut(&input) {
-            assert_sound(&input, &plan);
-            plans += 1;
+        match plan_cut(&input) {
+            Ok(plan) => {
+                assert_sound(&input, &plan);
+                plans += 1;
+            }
+            Err(NoCut::NotDue) => assert!(!input.trigger.is_due(size_of(&input))),
+            Err(_) => assert!(input.trigger.is_due(size_of(&input))),
         }
     }
     assert!(

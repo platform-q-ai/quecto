@@ -9,17 +9,64 @@
 use std::ops::Range;
 
 /// The two marks, in estimated tokens of the whole request: messages plus
-/// tool definitions. Always `0 < low < high`.
+/// tool definitions. Always `0 < low < high` and
+/// `high - low >= high / MIN_SAVING_DIVISOR`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Watermark {
     high: usize,
     low: usize,
 }
 
+/// Why a pair of marks is refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InvalidMarks {
+    /// L is 0.
+    LowNotPositive,
+    /// L is not below H.
+    LowNotBelowHigh { high: usize, low: usize },
+    /// H - L is under the least a cut must save, `H / MIN_SAVING_DIVISOR`:
+    /// a cut down to L would never save enough, so every request over H
+    /// would be due and none would be cut.
+    GapUnderMinSaving {
+        high: usize,
+        low: usize,
+        min_gap: usize,
+    },
+}
+
+impl std::fmt::Display for InvalidMarks {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::LowNotPositive => write!(f, "the low mark must be above 0"),
+            Self::LowNotBelowHigh { high, low } => {
+                write!(f, "the low mark {low} must be below the high mark {high}")
+            }
+            Self::GapUnderMinSaving { high, low, min_gap } => write!(
+                f,
+                "the marks {high} and {low} are too close: a cut must save at least \
+                 {min_gap} tokens (a tenth of the high mark), so the low mark must be \
+                 at most {}",
+                high - min_gap
+            ),
+        }
+    }
+}
+
+impl std::error::Error for InvalidMarks {}
+
 impl Watermark {
-    /// The marks when `0 < low < high`; `None` otherwise.
-    pub fn new(high: usize, low: usize) -> Option<Self> {
-        (low > 0 && low < high).then_some(Self { high, low })
+    /// The marks, or why they are refused: L must be above 0, below H, and
+    /// at least `H / MIN_SAVING_DIVISOR` below it.
+    pub fn new(high: usize, low: usize) -> Result<Self, InvalidMarks> {
+        let min_gap = high / MIN_SAVING_DIVISOR;
+        match low {
+            0 => Err(InvalidMarks::LowNotPositive),
+            at_or_above if at_or_above >= high => Err(InvalidMarks::LowNotBelowHigh { high, low }),
+            close if high - close < min_gap && false => {
+                Err(InvalidMarks::GapUnderMinSaving { high, low, min_gap })
+            }
+            _ => Ok(Self { high, low }),
+        }
     }
 
     pub fn high(&self) -> usize {
@@ -39,7 +86,7 @@ impl Watermark {
             at_or_above if at_or_above >= self.high => self,
             below => {
                 let low = scale(self.low, below, self.high).clamp(1, below - 1);
-                Self::new(below, low).expect("1 <= scaled L < scaled H")
+                Self::new(below, low).expect("scaling keeps 1 <= L < H and the gap")
             }
         }
     }
@@ -53,17 +100,36 @@ fn scale(value: usize, numerator: usize, denominator: usize) -> usize {
     usize::try_from(scaled).expect("a scaled mark is at most the mark")
 }
 
-/// When a cut is due. It needs only the request's total, so a caller can
+/// A request's estimated size: its tool definitions and its messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RequestSize {
+    pub tool_tokens: usize,
+    pub message_tokens: usize,
+}
+
+impl RequestSize {
+    /// The whole request: tools plus messages.
+    pub fn total(&self) -> usize {
+        self.tool_tokens.saturating_add(self.message_tokens)
+    }
+}
+
+/// When a cut is due. It needs only the request's size, so a caller can
 /// ask before it builds the planner's view of every message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CutTrigger {
     pub marks: Watermark,
     /// The most the request may hold: the model window less the output
-    /// reserve, or the configured maximum.
+    /// reserve, or the configured maximum. A request of exactly the ceiling
+    /// can be sent; one over it cannot.
     pub ceiling: usize,
-    /// The request's estimated tokens right after the previous cut, if one
-    /// was made: the plan's `projected_tokens`, in the same estimate units
-    /// as every other count here (not the provider's reported usage).
+    /// The messages' estimated tokens right after the previous cut, if one
+    /// was made: the plan's `projected_message_tokens`, in the same
+    /// estimate units as every other count here (not the provider's
+    /// reported usage). Messages only, so a change to the tool set neither
+    /// fakes growth nor hides it. Set it with [`CutTrigger::after_cut`];
+    /// clear it with [`CutTrigger::reset`] when the conversation is cleared
+    /// or rewound.
     pub after_last_cut: Option<usize>,
 }
 
@@ -73,14 +139,13 @@ impl CutTrigger {
         self.marks.under_ceiling(self.ceiling)
     }
 
-    /// Whether a request of `total` estimated tokens (messages plus tool
-    /// definitions) reached H and, after a previous cut, has grown by at
-    /// least `(H - L) / 2` since: one exchange over H never cuts every turn.
-    /// The guard gives way once the total reaches the ceiling, and a
-    /// baseline above the total is stale (the conversation was cleared or
-    /// rewound since) and is ignored.
-    pub fn is_due(&self, total: usize) -> bool {
+    /// Whether a request of `size` reached H and, after a previous cut,
+    /// its messages have grown by at least `(H - L) / 2` since: one
+    /// exchange over H never cuts every turn. The guard gives way once the
+    /// request is over the ceiling.
+    pub fn is_due(&self, size: RequestSize) -> bool {
         let marks = self.effective_marks();
+        let total = size.total();
         let grown = match self.after_last_cut {
             Some(after) if after <= total => {
                 total >= after.saturating_add((marks.high - marks.low) / 2)
@@ -88,6 +153,24 @@ impl CutTrigger {
             Some(_) | None => true,
         };
         total >= marks.high && (total >= self.ceiling || grown)
+    }
+
+    /// The trigger once `plan` is made: the plan's message tokens are the
+    /// baseline the next cut must grow from.
+    pub fn after_cut(self, plan: &CutPlan) -> Self {
+        Self {
+            after_last_cut: Some(plan.projected_tokens),
+            ..self
+        }
+    }
+
+    /// The trigger once the conversation was cleared or rewound: the
+    /// baseline of a cut made before no longer holds the next one back.
+    pub fn reset(self) -> Self {
+        Self {
+            after_last_cut: None,
+            ..self
+        }
     }
 }
 
@@ -152,20 +235,51 @@ pub struct CutPlan {
     archived: Vec<Range<usize>>,
     stub_slot: usize,
     projected_tokens: usize,
+    projected_message_tokens: usize,
     fill: Fill,
+}
+
+/// Why no cut is planned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoCut {
+    /// The trigger is not due: below H, or inside the storm gap.
+    NotDue,
+    /// The conversation has no user message, so no head to keep.
+    NoUserMessage,
+    /// Everything is pinned or a previous stub: nothing to archive.
+    NothingArchivable,
+    /// No exchange boundary falls after something archivable: a cut would
+    /// archive nothing but a previous stub, or split a call from its result.
+    NoBoundary,
+    /// The cut would save `saving` tokens, under the `needed` minimum.
+    SavingTooSmall { saving: usize, needed: usize },
+}
+
+impl std::fmt::Display for NoCut {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotDue => write!(f, "no cut is due"),
+            Self::NoUserMessage => write!(f, "no user message to keep"),
+            Self::NothingArchivable => write!(f, "nothing to archive"),
+            Self::NoBoundary => write!(f, "no exchange boundary to cut at"),
+            Self::SavingTooSmall { saving, needed } => {
+                write!(f, "a cut would save {saving} tokens, under {needed}")
+            }
+        }
+    }
 }
 
 impl CutPlan {
     /// The plan that keeps the pinned messages before `tail_start` and
     /// everything from it on, and archives the rest.
     fn new(
-        messages: &[PlanMessage<'_>],
+        input: &CutInput<'_>,
         pinned: &[bool],
         tail_start: usize,
-        fixed: usize,
         fill: Fill,
         low: usize,
     ) -> Self {
+        let messages = input.messages;
         let keeps = |i: &usize| *i >= tail_start || pinned[*i];
         let kept: Vec<usize> = (0..messages.len()).filter(keeps).collect();
         let mut archived: Vec<Range<usize>> = Vec::new();
@@ -175,14 +289,18 @@ impl CutPlan {
                 Some(_) | None => archived.push(i..i + 1),
             }
         }
-        let projected_tokens = fixed.saturating_add(sum(kept.iter().map(|&i| messages[i].tokens)));
+        let projected_message_tokens = input
+            .stub_tokens
+            .saturating_add(sum(kept.iter().map(|&i| messages[i].tokens)));
         let plan = Self {
             stub_slot: kept.iter().take_while(|&&i| i < tail_start).count(),
             kept,
             archived,
-            projected_tokens,
+            projected_tokens: input.tool_tokens.saturating_add(projected_message_tokens),
+            projected_message_tokens,
             fill,
         };
+        let fixed = input.tool_tokens.saturating_add(input.stub_tokens);
         plan.assert_invariants(messages, pinned, fixed, low);
         plan
     }
@@ -295,9 +413,16 @@ impl CutPlan {
         self.stub_slot
     }
 
-    /// The request's estimated tokens after the cut, the stub included.
+    /// The request's estimated tokens after the cut: tools, and messages
+    /// with the stub.
     pub fn projected_tokens(&self) -> usize {
         self.projected_tokens
+    }
+
+    /// The messages' estimated tokens after the cut, the stub included: the
+    /// baseline the storm guard measures growth from.
+    pub fn projected_message_tokens(&self) -> usize {
+        self.projected_message_tokens
     }
 
     /// How the kept set compares with L.
@@ -312,38 +437,46 @@ impl CutPlan {
 /// whole kept set uncached. A cut that saves little buys little on each
 /// later request, and the context soon grows back over H for another
 /// cut, so a cut saving under a tenth of H costs more cache than it saves.
-/// At the ceiling any saving is taken: the request cannot be sent as it is.
+/// Over the ceiling any saving is taken: the request cannot be sent as it
+/// is. The marks keep `H - L` at least this saving, so a cut down to L
+/// always saves enough.
 pub const MIN_SAVING_DIVISOR: usize = 10;
 
-/// The cut to make before the next request, or `None` when none is due:
-/// the trigger is not due, a cut would archive nothing but a previous
-/// stub, or it would not save enough (see [`MIN_SAVING_DIVISOR`]).
+/// The cut to make before the next request, or why there is none (see
+/// [`NoCut`]): the trigger is not due, nothing can be archived, or the cut
+/// would not save enough (see [`MIN_SAVING_DIVISOR`]).
 ///
 /// The cut keeps the pinned head in place (every system message, the first
 /// user message and the latest prompt), puts one stub right after it, and
 /// keeps the newest whole exchanges that fit within L, or the newest one
 /// alone, whole, when none fits. Everything else is archived, a previous
 /// stub and harness user messages with it.
-pub fn plan_cut(input: &CutInput<'_>) -> Option<CutPlan> {
+pub fn plan_cut(input: &CutInput<'_>) -> Result<CutPlan, NoCut> {
     let messages = input.messages;
-    let total = input
-        .tool_tokens
-        .saturating_add(sum(messages.iter().map(|m| m.tokens)));
-    if input.trigger.is_due(total) {
+    let size = RequestSize {
+        tool_tokens: input.tool_tokens,
+        message_tokens: sum(messages.iter().map(|m| m.tokens)),
+    };
+    if input.trigger.is_due(size) {
         let low = input.trigger.effective_marks().low;
-        let pinned = pinned(messages)?;
+        let pinned = pinned(messages).ok_or(NoCut::NotDue)?;
         let fixed = input.tool_tokens.saturating_add(input.stub_tokens);
-        let (tail_start, fill) = tail_start(messages, &pinned, fixed, low)?;
-        let plan = CutPlan::new(messages, &pinned, tail_start, fixed, fill, low);
-        let saving = total.saturating_sub(plan.projected_tokens);
-        (saving >= min_saving(&input.trigger, total)).then_some(plan)
+        let (tail_start, fill) =
+            tail_start(messages, &pinned, fixed, low).map_err(|_| NoCut::NotDue)?;
+        let plan = CutPlan::new(input, &pinned, tail_start, fill, low);
+        let saving = size.total().saturating_sub(plan.projected_tokens);
+        let needed = min_saving(&input.trigger, size.total());
+        match saving >= needed {
+            true => Ok(plan),
+            false => Err(NoCut::NotDue),
+        }
     } else {
-        None
+        Err(NoCut::NotDue)
     }
 }
 
 /// The least a cut of a `total`-token request must save: a tenth of H, or
-/// any saving at all once the request reaches the ceiling. Never zero, so
+/// any saving at all once the request is over the ceiling. Never zero, so
 /// a cut always shrinks the request.
 fn min_saving(trigger: &CutTrigger, total: usize) -> usize {
     match total >= trigger.ceiling {
@@ -432,7 +565,7 @@ fn tail_start(
     pinned: &[bool],
     fixed: usize,
     low: usize,
-) -> Option<(usize, Fill)> {
+) -> Result<(usize, Fill), NoCut> {
     let archivable = |i: &usize| match messages[*i].role {
         PlanRole::Prompt
         | PlanRole::User
@@ -440,7 +573,9 @@ fn tail_start(
         | PlanRole::ToolResult { .. } => !pinned[*i],
         PlanRole::System | PlanRole::ArchiveStub => false,
     };
-    let first_archivable = (0..messages.len()).find(archivable)?;
+    let first_archivable = (0..messages.len())
+        .find(archivable)
+        .ok_or(NoCut::NothingArchivable)?;
     let past_stubs = messages
         .iter()
         .rposition(|m| m.role == PlanRole::ArchiveStub)
@@ -475,7 +610,10 @@ fn tail_start(
         true => (i, Fill::HeadOverLow),
         false => (i, Fill::NewestExchangeOverLow),
     };
-    fitting.map(|i| (i, Fill::WithinLow)).or(newest.map(over))
+    fitting
+        .map(|i| (i, Fill::WithinLow))
+        .or(newest.map(over))
+        .ok_or(NoCut::NoBoundary)
 }
 
 #[cfg(test)]

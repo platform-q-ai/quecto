@@ -97,6 +97,18 @@ fn total(messages: &[PlanMessage<'_>]) -> usize {
     TOOLS + messages.iter().map(|m| m.tokens).sum::<usize>()
 }
 
+fn size(tool_tokens: usize, message_tokens: usize) -> RequestSize {
+    RequestSize {
+        tool_tokens,
+        message_tokens,
+    }
+}
+
+/// The messages' tokens alone.
+fn message_tokens(messages: &[PlanMessage<'_>]) -> usize {
+    messages.iter().map(|m| m.tokens).sum()
+}
+
 fn trigger(high: usize, low: usize) -> CutTrigger {
     CutTrigger {
         marks: Watermark::new(high, low).expect("valid marks"),
@@ -174,30 +186,64 @@ fn below_the_high_mark_there_is_no_plan() {
     let script = Script::default().system(100).prompt(200).exchanges(20);
     let messages = script.messages();
     let at = total(&messages);
-    assert_eq!(plan_cut(&input(&messages, at + 1, 1_000)), None);
-    assert!(plan_cut(&input(&messages, at, 1_000)).is_some(), "at H");
+    assert_eq!(
+        plan_cut(&input(&messages, at + 1, 1_000)),
+        Err(NoCut::NotDue)
+    );
+    assert!(plan_cut(&input(&messages, at, 1_000)).is_ok(), "at H");
 }
 
 #[test]
 fn the_trigger_alone_says_when_a_cut_is_due() {
     let due = trigger(10_000, 4_000);
-    assert!(!due.is_due(9_999));
-    assert!(due.is_due(10_000));
+    assert!(!due.is_due(size(500, 9_499)));
+    assert!(due.is_due(size(500, 9_500)), "tools count toward H");
+    // The storm gap is 3,000 message tokens over a 38,000 baseline.
     let held = CutTrigger {
-        after_last_cut: Some(30_000),
+        after_last_cut: Some(38_000),
         ceiling: 40_000,
         ..due
     };
     assert!(
-        !held.is_due(32_999),
-        "inside the storm gap, under the ceiling"
+        !held.is_due(size(1_000, 39_000)),
+        "exactly the ceiling is sendable"
     );
-    assert!(held.is_due(40_000), "at the ceiling the gap gives way");
-    let stale = CutTrigger {
-        after_last_cut: Some(30_000),
-        ..due
-    };
-    assert!(stale.is_due(12_000), "a baseline above the total is stale");
+    assert!(
+        held.is_due(size(1_001, 39_000)),
+        "over the ceiling the gap gives way"
+    );
+    assert!(held.is_due(size(0, 41_000)), "grown by the gap");
+    assert!(
+        held.reset().is_due(size(0, 12_000)),
+        "a reset drops the baseline"
+    );
+}
+
+#[test]
+fn marks_too_close_to_save_enough_are_refused() {
+    assert_eq!(
+        Watermark::new(100_000, 95_000),
+        Err(InvalidMarks::GapUnderMinSaving {
+            high: 100_000,
+            low: 95_000,
+            min_gap: 10_000
+        })
+    );
+    assert!(
+        Watermark::new(100_000, 90_000).is_ok(),
+        "a gap of exactly H/10"
+    );
+    assert!(Watermark::new(100_000, 90_001).is_err());
+    assert_eq!(Watermark::new(100, 0), Err(InvalidMarks::LowNotPositive));
+    assert_eq!(
+        Watermark::new(100, 100),
+        Err(InvalidMarks::LowNotBelowHigh {
+            high: 100,
+            low: 100
+        })
+    );
+    let refused = Watermark::new(100_000, 95_000).expect_err("too close");
+    assert!(refused.to_string().contains("at most 90000"), "{refused}");
 }
 
 #[test]
@@ -226,7 +272,7 @@ fn at_the_high_mark_the_head_the_stub_and_the_newest_exchanges_fit_within_low() 
     assert_eq!(plan.fill(), Fill::WithinLow);
     assert_whole(&messages, &plan);
     let exact = plan_cut(&input(&messages, total(&messages), 9_850));
-    assert_eq!(exact, Some(plan), "a tail of exactly L fits");
+    assert_eq!(exact, Ok(plan), "a tail of exactly L fits");
 }
 
 #[test]
@@ -317,7 +363,10 @@ fn a_ceiling_below_high_lowers_both_marks_proportionally() {
         },
         ..input(&messages, 2, 1)
     };
-    assert_eq!(plan_cut(&at_ceiling(total(&messages) + 1)), None);
+    assert_eq!(
+        plan_cut(&at_ceiling(total(&messages) + 1)),
+        Err(NoCut::NotDue)
+    );
     let plan = plan_cut(&at_ceiling(128_000)).expect("over the ceiling's H");
     assert!(plan.projected_tokens() <= 35_000, "{plan:?}");
     assert!(plan.projected_tokens() + 1_000 > 35_000, "{plan:?}");
@@ -350,20 +399,38 @@ fn no_cut_storm_after_a_cut_over_low() {
     let marks = (50_000, 20_000);
     let first = plan_cut(&input(&messages, marks.0, marks.1)).expect("at H");
     assert_eq!(first.fill(), Fill::NewestExchangeOverLow);
-    let after = first.projected_tokens();
-    assert!(after > marks.0, "a single exchange keeps it above H");
+    assert!(
+        first.projected_tokens() > marks.0,
+        "one exchange keeps it over H"
+    );
+    let after = trigger(marks.0, marks.1).after_cut(&first);
+    assert_eq!(
+        after.after_last_cut,
+        Some(first.projected_tokens() - TOOLS),
+        "the baseline counts messages only"
+    );
 
     let grown = |count| script.after_cut(&first).exchanges(count);
     let gap = (marks.0 - marks.1) / 2;
     let short = grown(gap / 1_000 - 1);
     let messages = short.messages();
     assert!(total(&messages) >= marks.0);
-    let held = later(&messages, marks, usize::MAX, Some(after));
-    assert_eq!(plan_cut(&held), None, "grown by less than (H-L)/2");
+    let held = CutInput {
+        trigger: after,
+        ..input(&messages, marks.0, marks.1)
+    };
+    assert_eq!(
+        plan_cut(&held),
+        Err(NoCut::NotDue),
+        "grown by under (H-L)/2"
+    );
 
     let enough = grown(gap / 1_000);
     let messages = enough.messages();
-    let due = later(&messages, marks, usize::MAX, Some(after));
+    let due = CutInput {
+        trigger: after,
+        ..input(&messages, marks.0, marks.1)
+    };
     let plan = plan_cut(&due).expect("grown by (H-L)/2");
     assert_whole(&messages, &plan);
 }
@@ -379,35 +446,85 @@ fn the_storm_guard_gives_way_at_the_ceiling() {
     let messages = script.messages();
     let total = total(&messages);
     assert_eq!(total, 271_000);
-    let held = later(&messages, (256_000, 70_000), total + 1, Some(180_000));
-    assert_eq!(plan_cut(&held), None, "under the ceiling the guard holds");
+    let held = later(&messages, (256_000, 70_000), total, Some(180_000));
+    assert_eq!(
+        plan_cut(&held),
+        Err(NoCut::NotDue),
+        "at exactly the ceiling the guard holds"
+    );
     let over = later(&messages, (256_000, 70_000), 270_000, Some(180_000));
     let plan = plan_cut(&over).expect("over the ceiling a cut is due");
     assert_whole(&messages, &plan);
 }
 
 #[test]
-fn under_a_ceiling_below_high_the_effective_marks_rule_the_guard() {
-    // Under a ceiling below H the effective H is the ceiling, so reaching it
-    // also gives the storm guard way: the scaled gap never holds a cut.
+fn the_storm_gap_uses_the_ceiling_scaled_marks() {
+    // H 100k, L 40k under a ceiling of 50,800: H 50,800, L 20,320, so the
+    // gap is 15,240 (unscaled it would be 30,000).
     let script = Script::default().system(100).prompt(200).exchanges(50);
     let messages = script.messages();
     let ceiling = total(&messages);
-    let request = later(&messages, (100_000, 40_000), ceiling, Some(ceiling - 1_000));
-    assert_eq!(request.trigger.effective_marks().high(), ceiling);
-    let plan = plan_cut(&request).expect("at the effective H");
-    assert!(plan.projected_tokens() <= request.trigger.effective_marks().low());
+    let grown = message_tokens(&messages);
+    let at = |after| later(&messages, (100_000, 40_000), ceiling, Some(after));
+    assert_eq!(at(0).trigger.effective_marks().high(), ceiling);
+    assert_eq!(plan_cut(&at(grown - 15_239)), Err(NoCut::NotDue));
+    let plan = plan_cut(&at(grown - 15_240)).expect("grown by the scaled gap");
+    assert!(plan.projected_tokens() <= at(0).trigger.effective_marks().low());
 }
 
 #[test]
-fn a_stale_baseline_does_not_block_cuts() {
-    // A baseline from a larger, since-cleared conversation.
+fn only_a_reset_drops_the_baseline() {
+    // A baseline from a larger conversation, since cleared or rewound.
     let script = Script::default().system(10).prompt(10).exchanges(60);
     let messages = script.messages();
-    let stale = later(&messages, (50_000, 20_000), usize::MAX, Some(100_000));
-    assert!(total(&messages) < 100_000);
-    let plan = plan_cut(&stale).expect("the stale baseline is reset");
+    let before = later(&messages, (50_000, 20_000), usize::MAX, Some(100_000));
+    assert_eq!(plan_cut(&before), Err(NoCut::NotDue), "the baseline holds");
+    let reset = CutInput {
+        trigger: before.trigger.reset(),
+        ..before
+    };
+    let plan = plan_cut(&reset).expect("after the reset");
     assert_whole(&messages, &plan);
+}
+
+#[test]
+fn a_tool_set_change_neither_hides_nor_fakes_growth() {
+    // An over-L cut kept a 240k result; the model then made one small call.
+    let script = Script::default()
+        .system(5_000)
+        .prompt(2_000)
+        .parallel(&[60_000])
+        .parallel(&[240_000]);
+    let messages = script.messages();
+    let tools = 20_000;
+    let first = CutInput {
+        tool_tokens: tools,
+        ..input(&messages, 256_000, 70_000)
+    };
+    let first = plan_cut(&first).expect("first cut");
+    let after = trigger(256_000, 70_000).after_cut(&first);
+    let next = script.after_cut(&first).parallel(&[1_000]);
+    let messages = next.messages();
+    let with_tools = |tool_tokens| CutInput {
+        tool_tokens,
+        trigger: after,
+        ..input(&messages, 256_000, 70_000)
+    };
+    assert!(
+        message_tokens(&messages) + tools - 5_000 >= 256_000,
+        "over H"
+    );
+    assert_eq!(plan_cut(&with_tools(tools)), Err(NoCut::NotDue));
+    assert_eq!(
+        plan_cut(&with_tools(tools - 5_000)),
+        Err(NoCut::NotDue),
+        "fewer tools are no reset"
+    );
+    assert_eq!(
+        plan_cut(&with_tools(tools + 93_000)),
+        Err(NoCut::NotDue),
+        "more tools are no growth"
+    );
 }
 
 #[test]
@@ -420,7 +537,7 @@ fn a_cut_down_to_low_does_not_hold_the_next_one_back() {
         usize::MAX,
         Some(9_000),
     );
-    assert!(plan_cut(&next).is_some(), "H is reached again");
+    assert!(plan_cut(&next).is_ok(), "H is reached again");
 }
 
 #[test]
@@ -437,7 +554,13 @@ fn a_cut_must_save_a_tenth_of_high() {
     let (high, low) = (10_000, 5_000);
     let short = with_reply(1_049);
     let messages = short.messages();
-    assert_eq!(plan_cut(&input(&messages, high, low)), None, "saves 999");
+    assert_eq!(
+        plan_cut(&input(&messages, high, low)),
+        Err(NoCut::SavingTooSmall {
+            saving: 999,
+            needed: 1_000
+        })
+    );
     let enough = with_reply(1_050);
     let messages = enough.messages();
     let plan = plan_cut(&input(&messages, high, low)).expect("saves 1,000");
@@ -446,11 +569,18 @@ fn a_cut_must_save_a_tenth_of_high() {
     // A cut that grows the request is never made.
     let tiny = with_reply(1);
     let messages = tiny.messages();
-    assert_eq!(plan_cut(&input(&messages, high, low)), None, "grows it");
-    // At the ceiling any real saving is worth a cut.
+    assert_eq!(
+        plan_cut(&input(&messages, high, low)),
+        Err(NoCut::SavingTooSmall {
+            saving: 0,
+            needed: 1_000
+        }),
+        "it would grow the request"
+    );
+    // Over the ceiling any real saving is worth a cut.
     let small = with_reply(60);
     let messages = small.messages();
-    let full = later(&messages, (high, low), total(&messages), None);
+    let full = later(&messages, (high, low), total(&messages) - 1, None);
     let plan = plan_cut(&full).expect("over the ceiling");
     assert_eq!(total(&messages) - plan.projected_tokens(), 10);
 }
@@ -481,7 +611,10 @@ fn archiving_only_the_previous_stub_is_no_cut_but_one_more_exchange_is() {
         .push(Row::Stub(STUB))
         .parallel(&[60_000]);
     let messages = script.messages();
-    assert_eq!(plan_cut(&input(&messages, 10_000, 5_000)), None);
+    assert_eq!(
+        plan_cut(&input(&messages, 10_000, 5_000)),
+        Err(NoCut::NoBoundary)
+    );
 
     let script = script.parallel(&[1_000]);
     let messages = script.messages();
@@ -504,5 +637,23 @@ fn the_plan_is_deterministic() {
     let messages = script.messages();
     let request = input(&messages, total(&messages), 8_000);
     let plan = plan_cut(&request).expect("at H");
-    assert_eq!(plan_cut(&request), Some(plan));
+    assert_eq!(plan_cut(&request), Ok(plan));
+}
+
+#[test]
+fn each_reason_for_no_cut_is_told() {
+    let script = Script::default().system(100).prompt(200).exchanges(5);
+    let messages = script.messages();
+    let below = input(&messages, total(&messages) + 1, 1_000);
+    assert_eq!(plan_cut(&below), Err(NoCut::NotDue));
+
+    let no_user = Script::default().system(100).exchanges(5);
+    let messages = no_user.messages();
+    let at = input(&messages, total(&messages), 1_000);
+    assert_eq!(plan_cut(&at), Err(NoCut::NoUserMessage));
+
+    let all_pinned = Script::default().system(100).prompt(20_000).prompt(300);
+    let messages = all_pinned.messages();
+    let at = input(&messages, total(&messages), 1_000);
+    assert_eq!(plan_cut(&at), Err(NoCut::NothingArchivable));
 }
