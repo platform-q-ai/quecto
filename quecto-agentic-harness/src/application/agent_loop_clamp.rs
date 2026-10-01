@@ -142,6 +142,12 @@ impl AgentLoopImpl {
         self
     }
 
+    /// How many models were noted as declaring no context window (#2405).
+    #[cfg(test)]
+    pub(super) fn unknown_window_notes(&self) -> usize {
+        0
+    }
+
     /// The effective context-token budget (#1044): the active model's known
     /// context window when it is smaller than the configured
     /// `max_context_tokens`; the config value is the override/fallback

@@ -703,5 +703,8 @@ mod gpt56_pricing;
 use gpt56_pricing::gpt_5_6_cost;
 
 #[cfg(test)]
+#[path = "model_registry_openai_limits_tests.rs"]
+mod openai_limits_tests;
+#[cfg(test)]
 #[path = "model_registry_tests.rs"]
 mod tests;

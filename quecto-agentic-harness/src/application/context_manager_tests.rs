@@ -593,6 +593,26 @@ fn the_window_budget_ignores_the_swarm_cap() {
     assert_eq!(manager.effective_max_context_tokens(), 40_000);
 }
 
+// --- #2405: the ceiling from the real window ---
+
+#[test]
+fn the_ceiling_keeps_the_reply_reserve_free_of_the_window() {
+    let mut manager = manager(300_000);
+    manager.set_model_context_window(Some(400_000));
+    manager.set_output_reserve(128_000);
+    assert_eq!(manager.effective_max_context_tokens(), 272_000);
+    assert_eq!(manager.pruning_ceiling_in_estimate_units(), 272_000);
+    // The hard limit the floor may not pass is the prompt's room too.
+    assert_eq!(manager.window_in_estimate_units(), Some(272_000));
+    // The reply's own room is still the whole window (#2124 boost).
+    assert_eq!(manager.window_budget_tokens(), 300_000);
+
+    // An unknown window falls back to the configured budget.
+    manager.set_model_context_window(None);
+    assert_eq!(manager.effective_max_context_tokens(), 300_000);
+    assert_eq!(manager.window_in_estimate_units(), None);
+}
+
 // --- #2348: the size-aware collapse ---
 
 #[tokio::test]

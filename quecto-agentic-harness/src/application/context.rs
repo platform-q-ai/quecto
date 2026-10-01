@@ -133,6 +133,9 @@ impl ContextManager {
         self.model_context_window = model_context_window;
     }
 
+    /// The tokens kept free of the window for the reply (#2405).
+    pub fn set_output_reserve(&mut self, _output_reserve: usize) {}
+
     #[cfg(test)]
     pub fn set_pin_recent_turns(&mut self, pin_recent_turns: u32) {
         self.pin_recent_turns = pin_recent_turns;

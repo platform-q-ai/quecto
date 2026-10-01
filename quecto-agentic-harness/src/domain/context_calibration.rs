@@ -163,6 +163,27 @@ pub fn message_budget(ceiling: usize, window: Option<usize>, fixed: usize) -> Me
     budget
 }
 
+/// The room a model's window leaves the prompt (#2405): the window less
+/// `output_reserve`, the tokens kept for the reply. `None` when the window
+/// is unknown.
+pub fn prompt_room(window: Option<usize>, _output_reserve: usize) -> Option<usize> {
+    window
+}
+
+/// The context ceiling (#2405): the lower of the `configured` budget
+/// (`max_context_tokens`) and what the model's window leaves the prompt
+/// beside `output_reserve`. An unknown window leaves the configured budget.
+pub fn effective_context_ceiling(
+    configured: usize,
+    window: Option<usize>,
+    output_reserve: usize,
+) -> usize {
+    match prompt_room(window, output_reserve) {
+        Some(room) => configured.min(room),
+        None => configured,
+    }
+}
+
 #[cfg(test)]
 #[path = "context_calibration_tests.rs"]
 mod tests;
