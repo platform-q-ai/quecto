@@ -325,8 +325,9 @@ fn the_spawn_and_swarm_descriptions_stay_within_the_budget() {
 /// #2348: every member request carries the swarm description, so it holds
 /// the op grammar and what every member needs; the coordinator's prose
 /// (verification, recovery, awaiting approval) lives in the docs page.
-/// Ratcheted down from 8,192 (8,000 before #2348): it only shrinks.
-const SWARM_DESCRIPTION_BUDGET_BYTES: usize = 3_584;
+/// Ratcheted down from 8,192 (8,000 before #2348), then from 3,584 when
+/// #2389 dropped the guide pointer: it only shrinks.
+const SWARM_DESCRIPTION_BUDGET_BYTES: usize = 3_472;
 
 #[test]
 fn the_swarm_descriptions_coordinator_prose_is_in_the_docs_page() {
