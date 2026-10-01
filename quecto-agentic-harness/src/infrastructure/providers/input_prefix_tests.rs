@@ -261,7 +261,7 @@ fn reasoning_is_estimated_at_the_opaque_rate() {
     let text = serde_json::to_string(&item).unwrap();
     assert_ne!(estimate_opaque_tokens(&text), estimate_tokens(&text));
     let baseline = InputBaseline::default();
-    observe(&baseline, "s", &[item.clone()]);
+    observe(&baseline, "s", std::slice::from_ref(&item));
     let observed = observe(&baseline, "s", &[item, user("next")]);
     assert_eq!(
         observed.prefix_tokens_estimate,

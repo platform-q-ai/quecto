@@ -14,7 +14,7 @@
 use crate::domain::request_observation::{
     InputBaseline, InputItemKind, InputPrefix, InputPrefixParts, RequestTrace,
 };
-use crate::domain::token_estimate::estimate_tokens;
+use crate::domain::token_estimate::{estimate_opaque_tokens, estimate_tokens};
 use std::hash::Hasher;
 
 /// A session's last accepted request, as its baseline keeps it.
@@ -67,7 +67,8 @@ impl MeasuredInput {
         // The model and endpoint select the cache: a change in either
         // leaves nothing cached, though neither is a token sent.
         let mut head = std::hash::DefaultHasher::new();
-        let _ = endpoint; // red stub (#2398)
+        head.write_u64(endpoint);
+        head.write(body["model"].as_str().unwrap_or_default().as_bytes());
         let mut head_tokens = 0usize;
         for part in [&body["instructions"], &body["tools"]] {
             let text = serialized(part, &mut bytes);
@@ -92,7 +93,8 @@ impl MeasuredInput {
                 // Encrypted reasoning is opaque: estimated at the plain
                 // ASCII rate, as images are, not as dense high-entropy text.
                 let tokens = match kind {
-                    Some(_) | None => estimate_tokens(text), // red stub (#2398)
+                    Some(InputItemKind::Reasoning) => estimate_opaque_tokens(text),
+                    Some(_) | None => estimate_tokens(text),
                 };
                 MeasuredItem {
                     digest: digest(text.as_bytes()),

@@ -45,7 +45,7 @@ impl RequestTrace {
     /// Compare the request's input with `baseline`, its session's (#2398);
     /// the first attached stays.
     pub fn attach_input_baseline(&self, baseline: InputBaseline) {
-        let _ = (baseline, &self.input_baseline); // red stub (#2398)
+        let _ = self.input_baseline.set(baseline);
     }
     /// The session's input baseline, when one is attached.
     pub fn input_baseline(&self) -> Option<InputBaseline> {
@@ -286,7 +286,7 @@ impl InputPrefix {
                 "an item this request lacks has no kind",
             ),
             (
-                item.is_none_or(|start| start > 0) || prefix == 0,
+                item.or(previous_items).is_none_or(|start| start > 0) || prefix == 0,
                 "an unchanged prefix that starts at item 0 has no items",
             ),
             (
