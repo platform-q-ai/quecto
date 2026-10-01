@@ -131,12 +131,13 @@ fn only_the_coordinators_pass_is_accepted_and_a_repeat_is_a_no_op() {
         ),
     ];
     for (actor, passed, transition, stored) in recorded {
-        assert_eq!(
-            service(&board)
-                .execute(evidence(actor, json!("tests"), "command", passed))
-                .unwrap(),
-            transition
-        );
+        let recorded = service(&board)
+            .execute(evidence(actor, json!("tests"), "command", passed))
+            .unwrap();
+        assert_eq!(recorded.transition, transition);
+        // The criterion as the row stores it, recorded or found (#2394).
+        assert_eq!(recorded.criterion, json!("tests"));
+        assert_eq!(recorded.evidence.actor, actor);
         let state = board.snapshot();
         let row = state.evidence.iter().find(|(by, _)| by == actor).unwrap();
         assert_eq!(row.1.accepted, stored);
@@ -156,5 +157,34 @@ fn only_the_coordinators_pass_is_accepted_and_a_repeat_is_a_no_op() {
             ("parent".to_owned(), detail(false)),
             ("parent".to_owned(), detail(true)),
         ]
+    );
+}
+
+/// The criterion is answered as the evidence row stores it (#2394 final
+/// review N-2): the in-memory board, as SQLite's TEXT column, stores a
+/// criterion configured as the integer 1 (a run edited outside the board)
+/// as the text "1".
+#[test]
+fn the_criterion_is_answered_as_the_row_stores_it() {
+    let mut state = board_state();
+    state.run.as_mut().unwrap().contract.criteria =
+        json!([{"id": 1, "kind": "command", "description": "pass"}]);
+    let board = MemoryBoard::with(state);
+    let recorded = service(&board)
+        .execute(evidence("parent", json!(1), "command", json!(true)))
+        .unwrap();
+    assert_eq!(recorded.criterion, json!("1"));
+    let again = service(&board)
+        .execute(evidence("parent", json!(1), "command", json!(true)))
+        .unwrap();
+    assert_eq!(
+        again.transition,
+        EvidenceTransition::Unchanged,
+        "the stored row is found"
+    );
+    assert_eq!(
+        board.snapshot().evidence.len(),
+        1,
+        "one row per criterion and actor"
     );
 }

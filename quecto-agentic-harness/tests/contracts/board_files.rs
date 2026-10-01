@@ -128,11 +128,18 @@ fn a_set_or_a_tasks_files_are_deleted_and_nothing_else() {
          INSERT INTO files VALUES('d',1,'w','old','t1');
          INSERT INTO files VALUES('e',2,'w','c','t1');",
     );
-    repository
-        .atomic(false, &mut |transaction| {
-            transaction.delete_reservation(&json!(1), "w", &json!("c"), &json!("t1"))
-        })
-        .unwrap();
+    // How many files it released (#2394 round-1 review L1): `a` alone, and
+    // none for the same set again.
+    for released in [1, 0] {
+        repository
+            .atomic(false, &mut |transaction| {
+                let deleted =
+                    transaction.delete_reservation(&json!(1), "w", &json!("c"), &json!("t1"))?;
+                assert_eq!(deleted, released);
+                Ok(())
+            })
+            .unwrap();
+    }
     let left: Vec<String> = rows(&database).into_iter().map(|row| row.0).collect();
     assert_eq!(left, ["b", "c", "d", "e"]);
     repository

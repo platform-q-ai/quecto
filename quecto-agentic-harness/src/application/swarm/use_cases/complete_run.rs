@@ -5,11 +5,13 @@ use std::sync::Arc;
 
 use super::OverRepository;
 use crate::application::swarm::board_completion::{evidence_rows, task_record};
+use crate::application::swarm::board_control::current;
 use crate::application::swarm::board_operation::{detail, end, operation};
 use crate::application::swarm::dto::CompleteRunRequest;
 use crate::application::swarm::ports::{BoardRepository, Clock};
 use crate::domain::swarm::{
-    Access, BoardError, RefusalKind, RunState, completion, completion_revision, stored_criteria,
+    Access, BoardError, RefusalKind, RunRecord, RunState, completion, completion_revision,
+    stored_criteria,
 };
 
 /// Through the operation gate for the coordinator (a running run): the
@@ -32,7 +34,11 @@ impl CompleteRun {
     /// # Errors
     /// An authorisation or budget refusal, a completion refusal with
     /// Python's text, criteria the board never writes, or the store's.
-    pub fn execute(&self, request: CompleteRunRequest) -> Result<(), BoardError> {
+    ///
+    /// Answers the run as it now stands, ended (#2394). Only the run row is
+    /// read: the full control receipt would read the usage ledger, which
+    /// creates its tables on a board that has none.
+    pub fn execute(&self, request: CompleteRunRequest) -> Result<RunRecord, BoardError> {
         let actor = request.actor.as_str();
         let coordinating = Access {
             active: true,
@@ -78,7 +84,14 @@ impl CompleteRun {
                     actor,
                     outcome.as_str(),
                     &format!("completed at {revision}"),
-                )
+                )?;
+                let ended = current(transaction)?;
+                debug_assert_eq!(
+                    ended.outcome.as_deref(),
+                    Some(outcome.as_str()),
+                    "the run holds the outcome completion proposed"
+                );
+                Ok(ended)
             },
         )
     }

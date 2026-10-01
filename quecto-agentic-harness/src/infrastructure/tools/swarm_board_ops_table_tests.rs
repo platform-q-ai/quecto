@@ -299,3 +299,30 @@ fn the_description_teaches_the_structured_ops_not_python() {
         "an example of a structured op"
     );
 }
+
+/// #2394: no member-facing op answers a bare `null` any more (a task op
+/// answers the task's row, `evidence` the recorded evidence), so the
+/// description no longer says ops answer "null for none".
+#[test]
+fn the_description_promises_no_null_answers() {
+    let description = include_str!("swarm_assets/tool_description.txt");
+    assert!(
+        !description.contains("null for none"),
+        "the description still says ops answer null"
+    );
+    // The page the `docs` tool serves agents says so too (round-1 review
+    // M2), and names what the changed ops answer.
+    let docs = crate::infrastructure::tools::docs::lookup_doc("swarm").unwrap();
+    assert!(
+        !docs.contains("for an op that\nreturns nothing") && docs.contains("never a bare `null`"),
+        "the swarm docs page still says an op answers null"
+    );
+    for answer in [
+        "answers the task, `submitted`",
+        "answers `{task_id, reservation, released}`",
+        "answers `{message_id, changed}`",
+        "Answers the recorded `{criterion, artifact, revision, kind, actor, accepted}`",
+    ] {
+        assert!(docs.contains(answer), "the swarm docs page lacks {answer}");
+    }
+}

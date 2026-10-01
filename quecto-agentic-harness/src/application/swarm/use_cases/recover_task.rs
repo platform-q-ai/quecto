@@ -8,7 +8,7 @@ use super::OverRepository;
 
 use crate::application::swarm::board_operation::{detail, operation};
 use crate::application::swarm::board_recovery::reopen;
-use crate::application::swarm::board_tasks::{HELD_CLAIM, read_task, stored_id};
+use crate::application::swarm::board_tasks::{HELD_CLAIM, read_task};
 use crate::application::swarm::dto::{RecoverTaskRequest, Recovered};
 use crate::application::swarm::ports::{BoardRepository, Clock};
 use crate::domain::swarm::{Access, BoardError, RefusalKind};
@@ -88,7 +88,7 @@ impl RecoverTask {
                     ]),
                 )?;
                 Ok(Recovered {
-                    task_id: stored_id(&task),
+                    task: read_task(transaction, &request.task_id)?,
                     reservations_released: retained,
                 })
             },

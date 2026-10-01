@@ -6,8 +6,51 @@
 /// `(file:function, text, kind)` for each construction site of the
 /// durable messages (`board_messages.rs` and the four message use cases)
 /// and the wake notifications (`accept_wake.rs`), and the loss and death
-/// records and the read models (#2277).
+/// records and the read models (#2277), and the completion use cases
+/// (`amend_run_contract.rs`, `complete_run.rs`, `record_evidence.rs`,
+/// `revalidate_task.rs`; moved here by #2394 to keep the table's file
+/// within 750 lines).
 pub(super) const MESSAGE_REFUSALS: &[(&str, &str, &str)] = &[
+    (
+        "src/application/swarm/use_cases/amend_run_contract.rs:AmendRunContract::execute",
+        "coordination run missing",
+        "RunMissing",
+    ),
+    (
+        "src/application/swarm/use_cases/complete_run.rs:CompleteRun::execute",
+        "completion accepted a revision that is not text",
+        "Internal",
+    ),
+    (
+        "src/application/swarm/use_cases/record_evidence.rs:RecordEvidence::execute",
+        "coordination run missing",
+        "RunMissing",
+    ),
+    (
+        "src/application/swarm/use_cases/record_evidence.rs:RecordEvidence::execute",
+        "evidence must match a configured criterion and kind",
+        "Invalid",
+    ),
+    (
+        "src/application/swarm/use_cases/record_evidence.rs:RecordEvidence::execute",
+        "evidence must match a configured criterion and kind",
+        "Invalid",
+    ),
+    (
+        "src/application/swarm/use_cases/record_evidence.rs:RecordEvidence::execute",
+        "the recorded evidence row is gone",
+        "Store",
+    ),
+    (
+        "src/application/swarm/use_cases/revalidate_task.rs:RevalidateTask::execute",
+        "the board's task row has no evidence",
+        "Store",
+    ),
+    (
+        "src/application/swarm/use_cases/revalidate_task.rs:RevalidateTask::execute",
+        "unknown task",
+        "NotFound",
+    ),
     (
         "src/application/swarm/board_read_models.rs:summary",
         "coordination run missing",

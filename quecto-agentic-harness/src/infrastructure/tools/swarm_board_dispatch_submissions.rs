@@ -2,7 +2,8 @@
 //! (#2272): their Python signatures and their serving. Every argument
 //! reaches the use case as the JSON value passed (Python binds a task id
 //! or a token untyped and type-checks the rest at run time), and each
-//! method answers `None`. The decision names whether the call changed the
+//! method answers the task's row as it now stands (#2394, where Python
+//! answered `None`). The decision names whether the call changed the
 //! task or found it already as asked; the record names the task by the id
 //! its row holds (#2303), as the task methods' records do.
 use serde_json::Value;
@@ -26,17 +27,18 @@ pub(super) const SUBMIT: [Parameter; 3] =
 pub(super) const VERIFY_TASK: [Parameter; 3] =
     [required("task_id"), required("token"), required("revision")];
 
-/// `None`, with `applied` as the decision of a change and `unchanged` for
-/// a call that found the task already as asked, recording the task the
-/// row holds (#2303).
+/// The task's row, with `applied` as the decision of a change and
+/// `unchanged` for a call that found the task already as asked, recording
+/// the task the row holds (#2303).
 fn answered(change: TaskChange, applied: &'static str) -> Served {
+    let task_id = acted_on(change.task.get("id"));
     Served {
-        value: Value::Null,
+        value: change.task.into_value(),
         decision: match change.transition {
             TaskTransition::Applied => applied,
             TaskTransition::Unchanged => "unchanged",
         },
-        task_id: acted_on(Some(&change.task_id)),
+        task_id,
         message_id: None,
         cursor_moved: None,
         detail: BoardOpDetail::NONE,

@@ -5,8 +5,8 @@ use serde_json::Value;
 
 use super::OverRepository;
 use crate::application::swarm::board_operation::{detail, operation};
-use crate::application::swarm::board_tasks::{owned, stored_id};
-use crate::application::swarm::dto::{ReleaseTaskRequest, TaskUpdate};
+use crate::application::swarm::board_tasks::{owned, read_task};
+use crate::application::swarm::dto::{ReleaseTaskRequest, TaskRow, TaskUpdate};
 use crate::application::swarm::ports::{BoardRepository, Clock};
 use crate::domain::swarm::{Access, BoardError};
 
@@ -29,9 +29,9 @@ impl ReleaseTask {
     /// An authorisation or budget refusal, `unknown task`, `stale or
     /// unowned claim`, or the store's.
     ///
-    /// Answers the id of the task it released, as its row holds it
-    /// (#2303: the task the op acted on).
-    pub fn execute(&self, request: ReleaseTaskRequest) -> Result<Value, BoardError> {
+    /// Answers the released task's row as it now stands (#2394), its id
+    /// the one the row holds (#2303: the task the op acted on).
+    pub fn execute(&self, request: ReleaseTaskRequest) -> Result<TaskRow, BoardError> {
         let actor = request.actor.as_str();
         let running = Access {
             active: true,
@@ -43,7 +43,7 @@ impl ReleaseTask {
             actor,
             running,
             |transaction, _| {
-                let task = owned(transaction, &request.task_id, &request.token, actor)?;
+                owned(transaction, &request.task_id, &request.token, actor)?;
                 transaction.update_task_status(&request.task_id, &TaskUpdate::Release)?;
                 transaction.delete_claim_files(&request.task_id, &request.token)?;
                 transaction.event(
@@ -52,7 +52,13 @@ impl ReleaseTask {
                     "released",
                     &detail([("task", request.task_id.clone())]),
                 )?;
-                Ok(stored_id(&task))
+                let released = read_task(transaction, &request.task_id)?;
+                debug_assert!(
+                    released.get("owner").is_some_and(Value::is_null)
+                        && released.get("token").is_some_and(Value::is_null),
+                    "a released task has no owner or token"
+                );
+                Ok(released)
             },
         )
     }

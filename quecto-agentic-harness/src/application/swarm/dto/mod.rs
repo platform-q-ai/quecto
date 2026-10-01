@@ -20,8 +20,8 @@ pub mod usage;
 
 pub use completion::{
     AmendRunContractRequest, AmendedContract, CompleteRunRequest, CompletionState, EvidenceEntry,
-    EvidenceTransition, NewEvidence, PriorEvidence, RecordEvidenceRequest, RevalidateTaskRequest,
-    StoredContract,
+    EvidenceTransition, NewEvidence, PriorEvidence, RecordEvidenceRequest, RecordedEvidence,
+    RevalidateTaskRequest, StoredContract,
 };
 pub use control::{
     ControlAnswer, ControlReceipt, ExtendRunDeadlineRequest, PauseRunRequest, RecentRequest,
@@ -29,7 +29,8 @@ pub use control::{
 };
 pub use files::{
     FileRow, ListFileOwnersRequest, NewReservation, RecoverTaskRequest, Recovered,
-    ReleaseFilesRequest, Reservation, ReserveFilesRequest, Revocation, RevokeTaskRequest, Revoked,
+    ReleaseFilesRequest, ReleasedFiles, Reservation, ReserveFilesRequest, Revocation,
+    RevokeTaskRequest, Revoked,
 };
 pub use location::BoardLocation;
 pub use loss::{

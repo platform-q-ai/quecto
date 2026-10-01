@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use super::OverRepository;
 use crate::application::swarm::board_operation::{detail, operation};
-use crate::application::swarm::board_tasks::{owned, stored_id, unsubmitted};
+use crate::application::swarm::board_tasks::{changed, owned, unsubmitted};
 use crate::application::swarm::dto::{BlockTaskRequest, TaskChange, TaskTransition, TaskUpdate};
 use crate::application::swarm::ports::{BoardRepository, Clock};
 use crate::domain::swarm::validation::TEXT_MAX_BYTES;
@@ -44,16 +44,15 @@ impl BlockTask {
             running,
             |transaction, _| {
                 let task = owned(transaction, &request.task_id, &request.token, actor)?;
-                let changed = |transition| TaskChange {
-                    task_id: stored_id(&task),
-                    transition,
-                };
                 unsubmitted(&task)?;
                 let same_blocker = task
                     .get("blocker")
                     .is_some_and(|blocker| python_equal(blocker, &request.reason));
                 if task.text("status") == Some("blocked") && same_blocker {
-                    return Ok(changed(TaskTransition::Unchanged));
+                    return Ok(TaskChange {
+                        task,
+                        transition: TaskTransition::Unchanged,
+                    });
                 }
                 let update = TaskUpdate::Block {
                     reason: reason.to_owned(),
@@ -68,7 +67,7 @@ impl BlockTask {
                         ("reason", Value::from(reason)),
                     ]),
                 )?;
-                Ok(changed(TaskTransition::Applied))
+                changed(transaction, &request.task_id, "blocked")
             },
         )
     }

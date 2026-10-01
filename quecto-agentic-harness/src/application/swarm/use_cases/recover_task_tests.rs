@@ -4,7 +4,7 @@ use super::RecoverTask;
 use crate::application::swarm::board_test_support::{
     BoardState, MemoryBoard, SteppingClock, StoredFile, member_row, running_board, stored_task,
 };
-use crate::application::swarm::dto::{RecoverTaskRequest, Recovered};
+use crate::application::swarm::dto::RecoverTaskRequest;
 use crate::domain::swarm::{BoardError, RefusalKind};
 
 /// Task 1 blocked under the dead worker's claim, holding one reservation;
@@ -100,14 +100,14 @@ fn recovery_is_refused_in_pythons_order() {
 fn recovery_reopens_the_task_and_frees_its_files() {
     let board = MemoryBoard::with(board());
     let service = RecoverTask::new(board.clone(), SteppingClock::fixed(50.0));
+    let recovered = service
+        .execute(recover("parent", json!("1"), json!(true)))
+        .unwrap();
+    assert_eq!(recovered.reservations_released, 1);
     assert_eq!(
-        service
-            .execute(recover("parent", json!("1"), json!(true)))
-            .unwrap(),
-        Recovered {
-            task_id: json!(1),
-            reservations_released: 1
-        }
+        (recovered.task.get("id"), recovered.task.text("status")),
+        (Some(&json!(1)), Some("ready")),
+        "the answer is the reopened row, its id the one it holds (#2394)"
     );
     let state = board.snapshot();
     let task = &state.tasks[0];

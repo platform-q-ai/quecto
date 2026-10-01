@@ -74,8 +74,11 @@ Until a run is created it is in `setup`, and every board op is refused.
 
 The board is a SQLite store the harness serves in-process. Every board call
 is one `swarm` call: `{"op":"<name>", ...fields}`, with the op's arguments as
-named JSON fields. The answer is the op's JSON result (`null` for an op that
-returns nothing). Durable state lives on the board, not in your context.
+named JSON fields. The answer is the op's JSON result, never a bare `null`:
+an op that changes a task answers the task's row as it now stands (status,
+owner, and the claim `token` while you hold the claim), and every other op
+answers what it changed. Durable state lives on the board, not in your
+context.
 
 - **Send the schema's types.** Task and message ids, `offset`, `limit` and
   `supersedes` are JSON integers: send `3`, not `true` or `3.0` (these bind
@@ -127,19 +130,19 @@ Any member:
 | `{"op":"tasks","offset":0,"limit":50}` | Page the tasks; `offset` integer ≥0 (default 0), `limit` integer 1–100 (default 50) |
 | `{"op":"file_owners","offset":0,"limit":50}` | Page the file reservations; same paging |
 | `{"op":"task_create","request":"implement-v1","title":"Implement behavior","acceptance":["Acceptance tests pass"],"dependencies":[]}` | Stable request string, title string, **nonempty list of strings** as `acceptance`, optional list of task ids as `dependencies` (default `null`, none); answers the task. A retry needs the same request **and** payload |
-| `{"op":"dependencies","task_id":3,"dependencies":[1,2]}` | Replace a task's dependencies before it is claimed; missing, self and cyclic dependencies are refused |
+| `{"op":"dependencies","task_id":3,"dependencies":[1,2]}` | Replace a task's dependencies before it is claimed; missing, self and cyclic dependencies are refused; answers the task |
 | `{"op":"claim","task_id":3}` | Answers the task you now own, with a new claim `token`; unmet dependencies refuse |
-| `{"op":"block","task_id":3,"token":"<token>","reason":"needs the schema decision"}` | Nonempty string reason |
-| `{"op":"unblock","task_id":3,"token":"<token>","reason":"schema decided"}` | Resume your blocked claim, keeping token and reservations; submitted work cannot be reopened |
-| `{"op":"release","task_id":3,"token":"<token>"}` | Release your claim and its files; a later claim gets a new token |
-| `{"op":"submit","task_id":3,"token":"<token>","evidence":[{"artifact":"tests.log","revision":"<commit>"}]}` | Submit evidence for coordinator verification; submission is not completion |
+| `{"op":"block","task_id":3,"token":"<token>","reason":"needs the schema decision"}` | Nonempty string reason; answers the task, `blocked` |
+| `{"op":"unblock","task_id":3,"token":"<token>","reason":"schema decided"}` | Resume your blocked claim, keeping token and reservations; submitted work cannot be reopened; answers the task, `claimed` |
+| `{"op":"release","task_id":3,"token":"<token>"}` | Release your claim and its files; a later claim gets a new token; answers the task, `ready` with no owner or token |
+| `{"op":"submit","task_id":3,"token":"<token>","evidence":[{"artifact":"tests.log","revision":"<commit>"}]}` | Submit evidence for coordinator verification; submission is not completion; answers the task, `submitted` with that evidence |
 | `{"op":"reserve","task_id":3,"token":"<token>","paths":["src/example.rs"]}` | 1–100 checkout-contained paths, all or nothing; answers `{token, paths}` with the reservation token |
-| `{"op":"release_files","task_id":3,"token":"<token>","reservation":"<reservation token>"}` | Release that reservation of this claim |
+| `{"op":"release_files","task_id":3,"token":"<token>","reservation":"<reservation token>"}` | Release that reservation of this claim; answers `{task_id, reservation, released}`, where `released` is how many files it freed (`0`: that reservation held none) |
 | `{"op":"send","request":"schema-question-v1","recipient":"<member id>","body":"Which schema version?","revision":null,"supersedes":null}` | Any member may message any other member directly; a question about a task you depend on belongs with that task's owner (`contact` on its row). Stable request string, member id, **string** body ≤8192 UTF-8 bytes; optional `revision` the message is about; optional `supersedes`, the id of your own earlier unread message to the same recipient, which becomes `superseded` in the same transaction. Answers `{id, status}`; a retry needs the same request and payload |
-| `{"op":"withdraw","message_id":7}` | Withdraw your own unread message; it leaves the recipient's inbox and wake path and stays in the audit as `withdrawn` |
+| `{"op":"withdraw","message_id":7}` | Withdraw your own unread message; it leaves the recipient's inbox and wake path and stays in the audit as `withdrawn`; answers `{message_id, changed}` (`changed: false`: already withdrawn) |
 | `{"op":"inbox","include_consumed":false}` | At most 100 of your unread messages (`revision`, `supersedes`, `superseded_by` included); `true` adds consumed, superseded and withdrawn history |
-| `{"op":"ack","message_id":7}` | Acknowledge a message after reading it |
-| `{"op":"evidence","criterion":"tests","artifact":"tests.log","revision":"<commit>","kind":"command","passed":true}` | `kind` is `command` or `review`. A worker's call records a proposal with **accepted=0**; only the coordinator's `passed: true` accepts evidence |
+| `{"op":"ack","message_id":7}` | Acknowledge a message after reading it; answers `{message_id, changed}` (`changed: false`: it was already settled) |
+| `{"op":"evidence","criterion":"tests","artifact":"tests.log","revision":"<commit>","kind":"command","passed":true}` | `kind` is `command` or `review`. A worker's call records a proposal with **accepted=0**; only the coordinator's `passed: true` accepts evidence. Answers the recorded `{criterion, artifact, revision, kind, actor, accepted}` |
 | `{"op":"usage_report"}` | Per-member usage totals and recent request diagnostics (the same report as `op=usage`, which works whatever the run's state; `usage_report` needs a running run) |
 
 The harness's own ops: `{"op":"summary"}` (goal, members, counts of task
@@ -175,13 +178,13 @@ its `ack`; neither marks any work done. Never edit the store.
 
 | Example | Behavior |
 |---|---|
-| `{"op":"verify_task","task_id":3,"token":"<claim token>","revision":"<commit>"}` | Accepts the submitted task's evidence at that revision |
-| `{"op":"revalidate_task","task_id":3,"revision":"<final commit>","evidence":[{"artifact":"tests-final.log","revision":"<final commit>"}]}` | Needs a completed task and fresh nonempty evidence matching the final revision, after later dependent work changed it |
-| `{"op":"amend","goal":"...","constraints":["read-only"],"criteria":[{"id":"tests","kind":"command","description":"Acceptance tests pass"}],"reason":"scope narrowed"}` | Updates the contract with a string reason and invalidates prior overall evidence |
-| `{"op":"complete","revision":"<commit>"}` | Needs every criterion accepted and every task verified at that revision, with no outstanding work or file reservations |
+| `{"op":"verify_task","task_id":3,"token":"<claim token>","revision":"<commit>"}` | Accepts the submitted task's evidence at that revision; answers the task, `completed` |
+| `{"op":"revalidate_task","task_id":3,"revision":"<final commit>","evidence":[{"artifact":"tests-final.log","revision":"<final commit>"}]}` | Needs a completed task and fresh nonempty evidence matching the final revision, after later dependent work changed it; answers the task with its new evidence |
+| `{"op":"amend","goal":"...","constraints":["read-only"],"criteria":[{"id":"tests","kind":"command","description":"Acceptance tests pass"}],"reason":"scope narrowed"}` | Updates the contract with a string reason and invalidates prior overall evidence; answers `{goal, constraints, criteria}` |
+| `{"op":"complete","revision":"<commit>"}` | Needs every criterion accepted and every task verified at that revision, with no outstanding work or file reservations; answers the ended run's `{status, outcome, reason}` |
 | `{"op":"stop","status":"blocked","reason":"..."}` | `status` is `blocked`, `failed`, `cancelled` or `budget-exhausted`; use `op=cancel_run` for parent cancellation |
 | `{"op":"revoke","task_id":3,"reason":"member silent"}` | Takes a claim back (see below); answers the task |
-| `{"op":"recover","task_id":3,"release_files":false}` | Reopens work whose owner's death was confirmed (see below) |
+| `{"op":"recover","task_id":3,"release_files":false}` | Reopens work whose owner's death was confirmed (see below); answers the task |
 
 - `revoke` takes a claim back from a member that will not finish
   (suspended, hung, silent), alive or not: the task returns to `ready` with no

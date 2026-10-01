@@ -105,11 +105,6 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "Internal",
     ),
     (
-        "src/application/swarm/use_cases/amend_run_contract.rs:AmendRunContract::execute",
-        "coordination run missing",
-        "RunMissing",
-    ),
-    (
         "src/application/swarm/use_cases/claim_task.rs:ClaimTask::execute",
         "task is not ready to claim",
         "WrongState",
@@ -123,11 +118,6 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "src/application/swarm/use_cases/close_run.rs:CloseRun::execute",
         "run is {} without a proposed outcome; resume it or cancel the run",
         "WrongState",
-    ),
-    (
-        "src/application/swarm/use_cases/complete_run.rs:CompleteRun::execute",
-        "completion accepted a revision that is not text",
-        "Internal",
     ),
     (
         "src/application/swarm/use_cases/configure_usage_budget.rs:ConfigureUsageBudget::execute",
@@ -197,21 +187,6 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
     (
         "src/application/swarm/use_cases/list_file_owners.rs:ListFileOwners::execute",
         "file page requires nonnegative offset and limit 1 through 100",
-        "Invalid",
-    ),
-    (
-        "src/application/swarm/use_cases/record_evidence.rs:RecordEvidence::execute",
-        "coordination run missing",
-        "RunMissing",
-    ),
-    (
-        "src/application/swarm/use_cases/record_evidence.rs:RecordEvidence::execute",
-        "evidence must match a configured criterion and kind",
-        "Invalid",
-    ),
-    (
-        "src/application/swarm/use_cases/record_evidence.rs:RecordEvidence::execute",
-        "evidence must match a configured criterion and kind",
         "Invalid",
     ),
     (
@@ -293,16 +268,6 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "src/application/swarm/use_cases/resume_run_externally.rs:ResumeRunExternally::execute",
         "resume would pause again at once: {}",
         "BudgetExhausted",
-    ),
-    (
-        "src/application/swarm/use_cases/revalidate_task.rs:RevalidateTask::execute",
-        "the board's task row has no evidence",
-        "Store",
-    ),
-    (
-        "src/application/swarm/use_cases/revalidate_task.rs:RevalidateTask::execute",
-        "unknown task",
-        "NotFound",
     ),
     (
         "src/application/swarm/use_cases/revoke_task.rs:RevokeTask::execute",

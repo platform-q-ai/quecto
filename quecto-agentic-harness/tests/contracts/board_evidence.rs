@@ -166,6 +166,7 @@ fn evidence_is_read_and_recorded_per_criterion_and_actor() {
         assert_eq!(
             transaction.prior_evidence(&json!("t"), "parent")?,
             Some(PriorEvidence {
+                criterion: json!("t"),
                 artifact: json!("b"),
                 revision: json!("R1"),
                 kind: json!("command"),

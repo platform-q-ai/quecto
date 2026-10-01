@@ -20,8 +20,11 @@
 //! `1e16`); `NaN`, `Infinity`, an integer beyond u64 or a lone surrogate,
 //! which no `Value` holds, make the harness panic. The wire comparison
 //! (`run_golden_wire`) compares the Rust board's wire text with Python's,
-//! byte for byte.
+//! byte for byte. The one exception is an answer #2394 changed on purpose
+//! (`changed.rs`): where Python answered `null`, the Rust board's answer is
+//! checked against its own board file instead.
 
+pub mod changed;
 pub mod dump;
 pub mod golden;
 pub mod rust;

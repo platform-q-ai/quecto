@@ -5,8 +5,8 @@ use serde_json::Value;
 
 use super::OverRepository;
 use crate::application::swarm::board_operation::{detail, operation};
-use crate::application::swarm::board_tasks::{read_task, stored_id};
-use crate::application::swarm::dto::SetTaskDependenciesRequest;
+use crate::application::swarm::board_tasks::read_task;
+use crate::application::swarm::dto::{SetTaskDependenciesRequest, TaskRow};
 use crate::application::swarm::ports::{BoardRepository, Clock};
 use crate::domain::swarm::{
     Access, BoardError, RefusalKind, dependency_list, validate_dependencies,
@@ -33,9 +33,10 @@ impl SetTaskDependencies {
     /// may change only before claiming`, a dependency refusal, or the
     /// store's.
     ///
-    /// Answers the id of the task it changed, as its row holds it (#2303:
-    /// the task the op acted on, which the caller's id only binds to).
-    pub fn execute(&self, request: SetTaskDependenciesRequest) -> Result<Value, BoardError> {
+    /// Answers the task's row as it now stands (#2394), its id the one the
+    /// row holds (#2303: the task the op acted on, which the caller's id
+    /// only binds to).
+    pub fn execute(&self, request: SetTaskDependenciesRequest) -> Result<TaskRow, BoardError> {
         let actor = request.actor.as_str();
         let running = Access {
             active: true,
@@ -75,7 +76,7 @@ impl SetTaskDependencies {
                         ("dependencies", request.dependencies.clone()),
                     ]),
                 )?;
-                Ok(stored_id(&task))
+                read_task(transaction, &request.task_id)
             },
         )
     }

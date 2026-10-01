@@ -82,7 +82,7 @@ impl BoardEvidence for SqliteBoard<'_> {
         let parameters = [loose(1, criterion)?, SqlValue::Text(actor.to_owned())];
         let mut statement = binding::bound_statement(
             self.connection,
-            "SELECT artifact,revision,kind,accepted FROM evidence WHERE criterion=? AND actor=?",
+            "SELECT criterion,artifact,revision,kind,accepted FROM evidence WHERE criterion=? AND actor=?",
             &parameters,
         )
         .map_err(failed)?;
@@ -92,6 +92,7 @@ impl BoardEvidence for SqliteBoard<'_> {
                 row.map(|row| {
                     fetched(row)?;
                     Ok(PriorEvidence {
+                        criterion: cell(row, "criterion")?,
                         artifact: cell(row, "artifact")?,
                         revision: cell(row, "revision")?,
                         kind: cell(row, "kind")?,

@@ -17,6 +17,7 @@ use serde_json::Value;
 use std::panic::Location;
 
 use super::Outcome;
+use super::changed::{Before, before, superseded};
 use super::dump::{first_difference, logical_dump};
 use super::golden::{Answer, FULL_DUMP_LIMIT, Golden, canonical, dump_of, file_state, scenario_of};
 use super::rust::{RecordedOps, RustBoard};
@@ -274,25 +275,76 @@ pub fn run_golden_wire(steps: &[Step]) {
             step.method != SQL_STEP && step.method != FS_STEP && step.hold.is_none(),
             "step {index}: a wire scenario makes board calls only"
         );
-        let rust_outcome = rust
-            .call_text(&step.member, &step.method, &step.args, step.now)
-            .0;
-        let context = format!(
-            "step {index}: {} as {} with {}",
-            step.method, step.member, step.args
+        let before = before(step, &rust_side.database);
+        let rust_outcome = rust_side.neutral(
+            rust.call_text(&step.member, &step.method, &step.args, step.now)
+                .0,
         );
-        match (answer, rust_outcome) {
-            (Answer::Ok(text), Outcome::Ok(value)) => assert_eq!(
-                text,
-                &rust.wire_text(&value),
-                "{context}: the wire texts differ"
-            ),
-            (answer, rust_outcome) => assert_eq!(
-                answer.outcome(),
-                rust_side.neutral(rust_outcome),
-                "{context}"
-            ),
+        let compared = wire_step(
+            index,
+            step,
+            answer,
+            rust_outcome,
+            (&rust, &rust_side.database, before),
+        );
+        compared.unwrap_or_else(|difference| panic!("{difference}"));
+    }
+}
+
+/// How a difference names step `index`.
+pub fn step_context(index: usize, step: &Step) -> String {
+    format!(
+        "step {index}: {} as {} with {} at {}",
+        step.method, step.member, step.args, step.now
+    )
+}
+
+/// [`run_golden_wire`]'s comparison of one step (public for the harness's
+/// self-tests): the golden `answer` with the Rust board's `rust_outcome`
+/// (its refusal text already neutral), a result by the board's wire text,
+/// byte for byte, and #2394's changed answer (`changed.rs`) by the step's
+/// arguments and the board file after it.
+///
+/// # Errors
+/// The difference, naming the step.
+pub fn wire_step(
+    index: usize,
+    step: &Step,
+    answer: &Answer,
+    rust_outcome: Outcome,
+    (rust, database, before): (&RustBoard, &Path, Before),
+) -> Result<(), String> {
+    let context = step_context(index, step);
+    match (
+        superseded(step, &answer.outcome(), &rust_outcome, database, before),
+        answer,
+        rust_outcome,
+    ) {
+        (Some(checked), _, rust_outcome) => {
+            // No text comparison here, on purpose: the golden's text is
+            // Python's `null`, which #2394 changed, and no recorded text of
+            // the new answer exists (the fixtures are frozen). The answer is
+            // checked as a value against the step's arguments and the board
+            // instead; its text is only required to be writable, since the
+            // member reads it as wire text.
+            if let Outcome::Ok(value) = &rust_outcome {
+                rust.wire_text(value);
+            }
+            checked.map_err(|problem| format!("{context}: {problem}"))
         }
+        (None, Answer::Ok(text), Outcome::Ok(value)) => match rust.wire_text(&value) {
+            written if written == *text => Ok(()),
+            written => Err(format!(
+                "{context}: the wire texts differ\n  golden {text}\n  rust   {written}"
+            )),
+        },
+        (None, answer, rust_outcome) => match answer.outcome() == rust_outcome {
+            true => Ok(()),
+            false => Err(format!(
+                "{context}: results differ\n  golden {:?}\n  rust   {rust_outcome:?}",
+                answer.outcome()
+            )),
+        },
     }
 }
 
@@ -445,12 +497,7 @@ fn run_in(
     };
     let last = steps.len().saturating_sub(1);
     for (index, step) in steps.iter().enumerate() {
-        let context = || {
-            format!(
-                "step {index}: {} as {} with {} at {}",
-                step.method, step.member, step.args, step.now
-            )
-        };
+        let context = || step_context(index, step);
         if step.hold.is_some() && UNLOCKED_READS.contains(&step.method.as_str()) {
             return Err(format!(
                 "{}: a held step of a method read without the write lock is no \
@@ -460,6 +507,8 @@ fn run_in(
                 context()
             ));
         }
+        // What a changed answer reports on that the step changes (#2394).
+        let before = before(step, &rust_side.database);
         let (mut rust_outcome, dispatched) = if step.method == SQL_STEP {
             (edit(&rust_side.database, &step.args), false)
         } else if step.method == FS_STEP {
@@ -482,11 +531,19 @@ fn run_in(
                 context()
             ));
         }
-        if expected != rust_outcome {
-            return Err(format!(
-                "{}: results differ\n  golden {expected:?}\n  rust   {rust_outcome:?}",
-                context()
-            ));
+        let changed = superseded(step, &expected, &rust_outcome, &rust_side.database, before);
+        match (changed, expected == rust_outcome) {
+            // #2394's answer, where Python's was `null` (`changed.rs`).
+            (Some(checked), _) => {
+                checked.map_err(|problem| format!("{}: {problem}", context()))?;
+            }
+            (None, true) => {}
+            (None, false) => {
+                return Err(format!(
+                    "{}: results differ\n  golden {expected:?}\n  rust   {rust_outcome:?}",
+                    context()
+                ));
+            }
         }
         let state = file_state(&rust_side.database);
         match (&golden.files[index], &state) {

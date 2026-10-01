@@ -15,12 +15,11 @@ use super::{
 use crate::domain::swarm::{BoardOpOutcome, BoardRole, RefusalKind};
 use crate::infrastructure::tools::swarm_bridge::SwarmContext;
 
-/// `dependencies` answers `None`; setting them on a ready task hands it to
-/// the free worker, whose endpoint refuses the wake hint. The answer is
-/// `{"result": null, "notification_warnings": […]}`, written as Python
-/// writes it, the result first.
+/// `dependencies` answers the task's row (#2394); setting them on a ready
+/// task hands it to the free worker, whose endpoint refuses the wake hint.
+/// The warnings are added to the row, after its own fields.
 #[tokio::test]
-async fn a_null_answer_rides_beside_the_wake_warnings_as_its_result() {
+async fn an_object_answer_carries_the_wake_warnings() {
     let (_directory, context) = board();
     direct(&context, "task_create", json!(["r1", "t", ["pass"]])).unwrap();
     let recipient = rejecting_worker(&context);
@@ -32,17 +31,45 @@ async fn a_null_answer_rides_beside_the_wake_warnings_as_its_result() {
     recipient.join().unwrap();
     assert!(!result.is_error, "{}", result.content);
     assert!(
-        result.content.starts_with(
-            r#"{"result": null, "notification_warnings": ["wake hint failed for worker"#
-        ),
+        result.content.starts_with(r#"{"id": 1, "#),
         "{}",
         result.content
     );
     let answer: Value = serde_json::from_str(&result.content).unwrap();
-    let fields = answer.as_object().unwrap();
-    assert_eq!(fields.len(), 2, "{answer}");
-    assert_eq!(fields["result"], Value::Null);
-    assert_eq!(fields["notification_warnings"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        (&answer["status"], &answer["dependencies"]),
+        (&json!("ready"), &json!([])),
+        "{answer}"
+    );
+    let warnings = answer["notification_warnings"].as_array().unwrap();
+    assert_eq!(warnings.len(), 1, "{answer}");
+    assert!(
+        warnings[0]
+            .as_str()
+            .unwrap()
+            .starts_with("wake hint failed for worker"),
+        "{answer}"
+    );
+}
+
+/// An answer that is not an object (no member-facing op answers one since
+/// #2394, so this is the defensive path) rides beside the notes as
+/// `{"result": …}`, written as Python writes it, the result first.
+#[test]
+fn a_non_object_answer_rides_beside_the_notes_as_its_result() {
+    let mut notes = serde_json::Map::new();
+    notes.insert("notification_warnings".to_owned(), json!(["w"]));
+    let result = crate::infrastructure::tools::swarm_board_ops::answered(
+        &crate::composition::swarm::board_wire(),
+        Ok(Value::Null),
+        notes,
+    )
+    .unwrap();
+    assert!(!result.is_error, "{}", result.content);
+    assert_eq!(
+        result.content,
+        r#"{"result": null, "notification_warnings": ["w"]}"#
+    );
 }
 
 /// `stop` ends the run, so the lifecycle settles it; the settlement fails,

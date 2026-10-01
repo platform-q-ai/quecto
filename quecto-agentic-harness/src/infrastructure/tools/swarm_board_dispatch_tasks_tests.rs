@@ -42,7 +42,7 @@ const COLUMNS: [&str; 9] = [
 /// The task's dict keeps `SELECT *` column order; a replayed request
 /// answers the stored text as `json.loads` reads it, keys sorted; `claim`
 /// answers the claimed task with its token; `dependencies` and `release`
-/// answer `null`.
+/// answer the task's dict as it now stands (#2394), in the same order.
 #[test]
 fn task_methods_render_pythons_shape() {
     let (_dir, handles) = board(1_000.0);
@@ -79,9 +79,11 @@ fn task_methods_render_pythons_shape() {
     )
     .unwrap();
     assert_eq!(second["status"], json!("blocked"));
+    let changed = call(&handles, "worker", "dependencies", json!([2, []])).unwrap();
+    assert_eq!(keys(&changed), COLUMNS);
     assert_eq!(
-        call(&handles, "worker", "dependencies", json!([2, []])).unwrap(),
-        Value::Null
+        (&changed["id"], &changed["status"], &changed["dependencies"]),
+        (&json!(2), &json!("ready"), &json!([]))
     );
     let claimed = call(&handles, "worker", "claim", json!({"task_id": 1})).unwrap();
     assert_eq!(keys(&claimed), COLUMNS);
@@ -92,13 +94,15 @@ fn task_methods_render_pythons_shape() {
         call(&handles, "worker", "task_raw", json!([1])).unwrap(),
         claimed
     );
+    let released = call(&handles, "worker", "release", json!([1, token])).unwrap();
+    assert_eq!(keys(&released), COLUMNS);
     assert_eq!(
-        call(&handles, "worker", "release", json!([1, token])).unwrap(),
-        Value::Null
+        call(&handles, "worker", "task_raw", json!([1])).unwrap(),
+        released
     );
     assert_eq!(
-        call(&handles, "worker", "task_raw", json!([1])).unwrap()["status"],
-        json!("ready")
+        (&released["status"], &released["owner"], &released["token"]),
+        (&json!("ready"), &Value::Null, &Value::Null)
     );
     assert_eq!(
         call(&handles, "worker", "task_create", json!(["r3", "t"])).unwrap_err(),

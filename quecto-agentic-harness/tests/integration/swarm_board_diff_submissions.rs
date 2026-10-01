@@ -11,6 +11,7 @@ use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
 use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
     Step, run_golden, run_rust, sql, try_run_golden,
 };
+use crate::swarm_board_diff_runs::{assert_changed_answer_refused, harness_self_test_tamper};
 
 /// A running run of five coordinated by `parent`, with `worker` live and
 /// holding the claim of task 1 under [`token`]`(3)` (`create` drew ids 1
@@ -59,7 +60,13 @@ fn scenario(more: impl IntoIterator<Item = Step>) -> Vec<Step> {
 /// coordinator verifies, and verifying twice is idempotent.
 #[test]
 fn submission_is_not_completion_and_requires_current_token() {
-    run_golden(&scenario([
+    run_golden(&not_completion());
+}
+
+/// The steps of [`submission_is_not_completion_and_requires_current_token`]:
+/// the owner's `submit` is step 6.
+fn not_completion() -> Vec<Step> {
+    scenario([
         at(
             5.0,
             "worker",
@@ -77,7 +84,7 @@ fn submission_is_not_completion_and_requires_current_token() {
         at(9.0, "parent", "verify_task", json!([1, token(3), "abc"])),
         at(10.0, "parent", "verify_task", json!([1, token(3), "abc"])),
         raw(11.0, json!(1)),
-    ]));
+    ])
 }
 
 /// `test_reviewed_submission_cannot_be_replaced_under_the_same_claim`: an
@@ -447,4 +454,105 @@ fn every_mutating_task_op_is_refused_on_a_paused_run() {
             "{method}: {outcome:?}"
         );
     }
+}
+
+/// #2394's changed answers are checked, not waved through: where Python
+/// answered `null`, the Rust board's answer must be the task's row as its
+/// own board holds it, every column (round-1 review M1: a row with other
+/// evidence, acceptance or dependencies passed), and a `null` again (the
+/// answer #2394 removed) is a difference at that step.
+#[test]
+fn harness_self_test_checks_a_changed_answer_against_the_board() {
+    let steps = not_completion();
+    for (method, offset) in [("submit", 6.0), ("verify_task", 9.0)] {
+        for (column, tampered) in [
+            ("status", json!("claimed")),
+            ("evidence", json!([])),
+            ("acceptance", json!(["bogus"])),
+            ("dependencies", json!([99])),
+            ("token", json!("stale")),
+        ] {
+            let difference = harness_self_test_tamper(&steps, method, offset, |row| {
+                row.insert(column.to_owned(), tampered.clone());
+            });
+            assert_changed_answer_refused(
+                difference,
+                &format!("column {column} is not the board's"),
+            );
+        }
+        let difference = harness_self_test_tamper(&steps, method, offset, |row| {
+            row.insert("id".to_owned(), json!(2));
+        });
+        assert_changed_answer_refused(difference, "id is not the task the argument names");
+        let difference = harness_self_test_tamper(&steps, method, offset, |row| {
+            row.shift_remove("blocker");
+        });
+        assert_changed_answer_refused(difference, "not a task's dict in the table's order");
+    }
+    let mut nulled = None;
+    let difference = try_run_golden(&steps, |index, _, rust| {
+        if index == 6 {
+            *rust = Outcome::Ok(Value::Null);
+            nulled = Some(index);
+        }
+    })
+    .unwrap_err();
+    assert_eq!(nulled, Some(6));
+    let expected = format!(
+        "step 6: submit as worker with {} at {}: #2394's submit answer: not an object",
+        steps[6].args, steps[6].now
+    );
+    assert!(difference.starts_with(&expected), "{difference}");
+}
+
+/// #2394 round-1 review L2: `run_golden_wire`'s comparison of one step
+/// checks a changed answer as `run_golden` does. The Rust board answers
+/// `submit` with the task's row (where Python answered `null`): the row
+/// passes, and the row with other evidence, or a `null`, is a difference
+/// naming the step.
+#[test]
+fn harness_self_test_wire_checks_a_changed_answer() {
+    use crate::swarm_board_diff_runs::swarm_board_diff::changed::before;
+    use crate::swarm_board_diff_runs::swarm_board_diff::golden::Answer;
+    use crate::swarm_board_diff_runs::swarm_board_diff::rust::RustBoard;
+    use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{step_context, wire_step};
+
+    let steps = not_completion();
+    let submit = 6;
+    assert_eq!(steps[submit].method, "submit");
+    let dir = tempfile::tempdir().unwrap();
+    let database = dir.path().join("swarm.sqlite");
+    let rust = RustBoard::open(&database, dir.path());
+    for step in &steps[..submit] {
+        rust.call_text(&step.member, &step.method, &step.args, step.now);
+    }
+    let step = &steps[submit];
+    let held = before(step, &database);
+    let (answered, _) = rust.call_text(&step.member, &step.method, &step.args, step.now);
+    let python = Answer::Ok("null".to_owned());
+    let compare = |outcome: Outcome| {
+        wire_step(
+            submit,
+            step,
+            &python,
+            outcome,
+            (&rust, &database, held.clone()),
+        )
+    };
+    compare(answered.clone()).expect("the row the board holds");
+    let Outcome::Ok(Value::Object(mut row)) = answered else {
+        panic!("submit answers the task's row: {answered:?}");
+    };
+    row.insert("evidence".to_owned(), json!([]));
+    let prefix = format!("{}: #2394's submit answer: ", step_context(submit, step));
+    let difference = compare(Outcome::Ok(Value::Object(row))).unwrap_err();
+    assert!(
+        difference.starts_with(&format!("{prefix}column evidence is not the board's")),
+        "{difference}"
+    );
+    let difference = compare(Outcome::Ok(Value::Null)).unwrap_err();
+    assert!(
+        difference.starts_with(&format!("{prefix}not an object")),
+        "{difference}"
+    );
 }

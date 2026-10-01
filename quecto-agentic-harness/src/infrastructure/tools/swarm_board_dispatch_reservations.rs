@@ -5,11 +5,13 @@
 //! task id, a token or a reservation untyped and type-checks the rest at
 //! run time (`recover`'s `release_files` is compared by `is True`), so no
 //! type is refused here. A record names the task by the id its row holds
-//! (#2303), as the task methods' records do.
+//! (#2303), as the task methods' records do. Where Python answered
+//! `None`, `recover` answers the task's dict and `release_files` the task
+//! and the reservation it released (#2394).
 use serde_json::{Map, Value};
 
 use super::tasks::acted_on;
-use super::{Parameter, Served, required, take};
+use super::{Parameter, Served, object, required, take};
 use crate::application::swarm::dto::{
     ListFileOwnersRequest, RecoverTaskRequest, ReleaseFilesRequest, ReserveFilesRequest,
     Revocation, RevokeTaskRequest,
@@ -50,12 +52,13 @@ pub(super) const RECOVER: [Parameter; 2] = [
 /// `revoke(task_id, reason)`.
 pub(super) const REVOKE: [Parameter; 2] = [required("task_id"), required("reason")];
 
-/// `value` with `decision`, recording the task `task_id` (its row's id).
-fn on_task(value: Value, decision: &'static str, task_id: &Value) -> Served {
+/// `value` with `decision`, recording the task `task_id` (its row's id,
+/// [`acted_on`]).
+fn on_task(value: Value, decision: &'static str, task_id: Option<i64>) -> Served {
     Served {
         value,
         decision,
-        task_id: acted_on(Some(task_id)),
+        task_id,
         message_id: None,
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
@@ -83,23 +86,36 @@ pub(super) fn reserve(
     Ok(on_task(
         Value::Object(answer),
         "reserved",
-        &reservation.task_id,
+        acted_on(Some(&reservation.task_id)),
     ))
 }
 
+/// `{task_id, reservation, released}` (#2394, where Python answered
+/// `None`): the task as its row holds its id, the reservation as given,
+/// and how many files it released (`0` for a reservation that held none,
+/// so a wrong or repeated release is not a silent success).
 pub(super) fn release_files(
     release_files: &ReleaseFiles,
     actor: &str,
     arguments: Vec<Value>,
 ) -> Result<Served, BoardError> {
     let [task_id, token, reservation] = take(arguments)?;
-    let task_id = release_files.execute(ReleaseFilesRequest {
+    let released = release_files.execute(ReleaseFilesRequest {
         actor: actor.to_owned(),
         task_id,
         token,
-        reservation,
+        reservation: reservation.clone(),
     })?;
-    Ok(on_task(Value::Null, "released", &task_id))
+    let answer = object([
+        ("task_id", released.task_id.clone()),
+        ("reservation", reservation),
+        ("released", Value::from(released.released)),
+    ]);
+    Ok(on_task(
+        answer,
+        "released",
+        acted_on(Some(&released.task_id)),
+    ))
 }
 
 /// The page of `files` rows, each as `dict(row)`.
@@ -126,6 +142,8 @@ pub(super) fn file_owners(
     })
 }
 
+/// The task's dict as it now stands, reopened (#2394, where Python
+/// answered `None`).
 pub(super) fn recover(
     recover_task: &RecoverTask,
     actor: &str,
@@ -142,7 +160,8 @@ pub(super) fn recover(
     } else {
         "recovered"
     };
-    Ok(on_task(Value::Null, decision, &recovered.task_id))
+    let task_id = acted_on(recovered.task.get("id"));
+    Ok(on_task(recovered.task.into_value(), decision, task_id))
 }
 
 /// The task's dict as it now stands.
@@ -162,8 +181,8 @@ pub(super) fn revoke(
         Revocation::Revoked { notified: true } => "revoked_notified",
         Revocation::Revoked { notified: false } => "revoked_unnotified",
     };
-    let stored = revoked.task.get("id").cloned().unwrap_or(Value::Null);
-    Ok(on_task(revoked.task.into_value(), decision, &stored))
+    let task_id = acted_on(revoked.task.get("id"));
+    Ok(on_task(revoked.task.into_value(), decision, task_id))
 }
 
 #[cfg(test)]

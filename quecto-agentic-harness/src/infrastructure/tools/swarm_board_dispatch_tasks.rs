@@ -69,6 +69,7 @@ pub(super) fn task_create(
     })
 }
 
+/// The task's dict as it now stands (#2394).
 pub(super) fn dependencies(
     set_task_dependencies: &SetTaskDependencies,
     actor: &str,
@@ -80,10 +81,11 @@ pub(super) fn dependencies(
         task_id,
         dependencies,
     })?;
+    let task_id = acted_on(task.get("id"));
     Ok(Served {
-        value: Value::Null,
+        value: task.into_value(),
         decision: "updated",
-        task_id: acted_on(Some(&task)),
+        task_id,
         message_id: None,
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
@@ -116,6 +118,7 @@ pub(super) fn claim(
     })
 }
 
+/// The released task's dict as it now stands (#2394).
 pub(super) fn release(
     release_task: &ReleaseTask,
     actor: &str,
@@ -127,10 +130,11 @@ pub(super) fn release(
         task_id,
         token,
     })?;
+    let task_id = acted_on(task.get("id"));
     Ok(Served {
-        value: Value::Null,
+        value: task.into_value(),
         decision: "released",
-        task_id: acted_on(Some(&task)),
+        task_id,
         message_id: None,
         cursor_moved: None,
         detail: BoardOpDetail::NONE,

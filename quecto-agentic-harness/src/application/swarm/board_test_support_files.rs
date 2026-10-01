@@ -73,17 +73,19 @@ impl BoardFiles for MemoryTransaction<'_> {
         owner: &str,
         claim: &Value,
         token: &Value,
-    ) -> Result<(), BoardError> {
+    ) -> Result<usize, BoardError> {
         self.note(format!("delete_reservation {task} {token}"));
         let task = affinity(task);
         let (claim, token) = (text_of(claim), text_of(token));
-        self.state.borrow_mut().files.retain(|file| {
+        let files = &mut self.state.borrow_mut().files;
+        let before = files.len();
+        files.retain(|file| {
             !(Some(file.task) == task
                 && file.owner == owner
                 && claim.as_deref() == Some(&file.claim)
                 && token.as_deref() == Some(&file.token))
         });
-        Ok(())
+        Ok(before - files.len())
     }
 
     fn task_file_count(&self, task: &Value) -> Result<i64, BoardError> {

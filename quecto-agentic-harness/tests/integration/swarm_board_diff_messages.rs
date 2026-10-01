@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use crate::swarm_board_diff_membership::{at, create};
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
 use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{Step, run_golden, run_rust, sql};
+use crate::swarm_board_diff_runs::{assert_changed_answer_refused, harness_self_test_tamper};
 
 /// A running run of five coordinated by `parent`, with `worker` live.
 pub(crate) fn joined(more: impl IntoIterator<Item = Step>) -> Vec<Step> {
@@ -82,6 +83,12 @@ fn messages_are_durable_bounded_and_idempotent() {
 /// refused; acknowledging a superseded message changes nothing.
 #[test]
 fn messages_carry_a_revision_and_can_be_superseded_or_withdrawn() {
+    run_golden(&revisions());
+}
+
+/// The steps of [`messages_carry_a_revision_and_can_be_superseded_or_withdrawn`]:
+/// `ack` of the superseded message 1 at `NOW + 17`, of message 2 at `NOW + 19`.
+fn revisions() -> Vec<Step> {
     let revised = |offset, request: &str, body: &str, revision: &str, supersedes: Value| {
         at(
             offset,
@@ -90,7 +97,7 @@ fn messages_carry_a_revision_and_can_be_superseded_or_withdrawn() {
             json!([request, "parent", body, revision, supersedes]),
         )
     };
-    run_golden(&joined([
+    joined([
         revised(3.0, "r1", "review head one", "abc1", Value::Null),
         revised(4.0, "r2", "review head two", "abc2", json!(1)),
         inbox(5.0, "parent", json!(false)),
@@ -124,7 +131,7 @@ fn messages_carry_a_revision_and_can_be_superseded_or_withdrawn() {
         inbox(18.0, "parent", json!(true)),
         at(19.0, "parent", "ack", json!([2])),
         inbox(20.0, "parent", json!(false)),
-    ]));
+    ])
 }
 
 /// `test_plain_sends_replay_request_keys_recorded_before_message_revisions`:
@@ -184,7 +191,13 @@ fn withdraw_and_ack_take_only_message_ids() {
 /// an acknowledgment cannot revive it.
 #[test]
 fn a_withdrawn_message_leaves_the_inbox() {
-    run_golden(&joined([
+    run_golden(&withdrawn());
+}
+
+/// The steps of [`a_withdrawn_message_leaves_the_inbox`]: the sender's
+/// `withdraw` is at `NOW + 4`.
+fn withdrawn() -> Vec<Step> {
+    joined([
         at(
             3.0,
             "worker",
@@ -204,7 +217,54 @@ fn a_withdrawn_message_leaves_the_inbox() {
             "send",
             json!(["w2", "parent", "again", null, 1]),
         ),
-    ]));
+    ])
+}
+
+/// #2394 round-1 review M1/L2: `ack` and `withdraw`'s changed answers name
+/// the message the argument binds to, and a change the board holds.
+#[test]
+fn harness_self_test_checks_ack_and_withdraw_answers() {
+    let steps = revisions();
+    let difference = harness_self_test_tamper(&steps, "ack", 19.0, |answer| {
+        answer.insert("message_id".to_owned(), json!(1));
+    });
+    assert_changed_answer_refused(
+        difference,
+        "message_id is not the message the argument names",
+    );
+    let difference = harness_self_test_tamper(&steps, "ack", 17.0, |answer| {
+        answer.insert("changed".to_owned(), json!(true));
+    });
+    assert_changed_answer_refused(difference, "status is not consumed");
+    let steps = withdrawn();
+    let difference = harness_self_test_tamper(&steps, "withdraw", 4.0, |answer| {
+        answer.insert("message_id".to_owned(), json!(2));
+    });
+    assert_changed_answer_refused(
+        difference,
+        "message_id is not the message the argument names",
+    );
+    let difference = harness_self_test_tamper(&steps, "withdraw", 4.0, |answer| {
+        answer.insert("changed".to_owned(), json!("yes"));
+    });
+    assert_changed_answer_refused(difference, "changed is no bool");
+}
+
+/// #2394 final review L-1: `changed` must say whether the step changed
+/// the message's status, read before and after it. A real change answered
+/// `changed: false` (ack of message 2 at `NOW + 19`, the first withdrawal
+/// at `NOW + 4`) is a difference.
+#[test]
+fn harness_self_test_checks_the_changed_flag_of_ack_and_withdraw() {
+    for (steps, method, offset) in [(revisions(), "ack", 19.0), (withdrawn(), "withdraw", 4.0)] {
+        let difference = harness_self_test_tamper(&steps, method, offset, |answer| {
+            answer.insert("changed".to_owned(), json!(false));
+        });
+        assert_changed_answer_refused(
+            difference,
+            "changed is not whether the step changed the status: \"accepted\" before",
+        );
+    }
 }
 
 /// Python binds `include_consumed` into `(status='accepted' OR ?)`

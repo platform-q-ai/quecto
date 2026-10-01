@@ -7,6 +7,8 @@
 //! events as given, and compares stored values with them by Python's `==`.
 use serde_json::Value;
 
+use super::TaskRow;
+
 /// Whether an owner operation changed the task or found it already as
 /// asked: `block` with the stored blocker, `unblock` of a claimed task,
 /// `submit` of the stored evidence, `verify_task` of completed work. Each
@@ -17,12 +19,13 @@ pub enum TaskTransition {
     Unchanged,
 }
 
-/// What an owner operation did, and to which task (#2303): the id its row
-/// holds, which the caller's id (`"2"`, `true`) only binds to, for the
-/// op's telemetry record.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// What an owner operation did, and the task's row as it now stands
+/// (#2394: the op's answer, read in the op's own transaction). Its `id` is
+/// the one the row holds, which the caller's id (`"2"`, `true`) only binds
+/// to, for the op's telemetry record (#2303).
+#[derive(Clone, Debug, PartialEq)]
 pub struct TaskChange {
-    pub task_id: Value,
+    pub task: TaskRow,
     pub transition: TaskTransition,
 }
 

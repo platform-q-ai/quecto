@@ -4,7 +4,7 @@ use super::UnblockTask;
 use crate::application::swarm::board_test_support::{
     BoardState, MemoryBoard, SteppingClock, member_row, running_board, stored_task,
 };
-use crate::application::swarm::dto::{TaskChange, TaskTransition, UnblockTaskRequest};
+use crate::application::swarm::dto::{TaskTransition, UnblockTaskRequest};
 use crate::domain::swarm::{BoardError, RefusalKind};
 
 /// Task 1 blocked, task 2 claimed and task 3 submitted, all by the worker
@@ -39,19 +39,18 @@ fn unblock(task_id: Value, token: &str, reason: Value) -> UnblockTaskRequest {
 fn a_resolved_blocker_resumes_the_original_claim() {
     let board = MemoryBoard::with(board());
     let service = UnblockTask::new(board.clone(), SteppingClock::fixed(50.0));
+    let change = service
+        .execute(unblock(
+            json!(true),
+            "stored-token",
+            json!("approval received"),
+        ))
+        .unwrap();
+    assert_eq!(change.transition, TaskTransition::Applied);
     assert_eq!(
-        service
-            .execute(unblock(
-                json!(true),
-                "stored-token",
-                json!("approval received")
-            ))
-            .unwrap(),
-        TaskChange {
-            task_id: json!(1),
-            transition: TaskTransition::Applied,
-        },
-        "the task acted on is the id its row holds"
+        (change.task.get("id"), change.task.text("status")),
+        (Some(&json!(1)), Some("claimed")),
+        "the answer is the row as it now stands, its id the one it holds (#2394)"
     );
     for task in [1, 2] {
         assert_eq!(

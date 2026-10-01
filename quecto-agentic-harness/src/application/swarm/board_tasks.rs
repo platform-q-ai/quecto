@@ -4,7 +4,7 @@
 //! port.
 use serde_json::Value;
 
-use super::dto::TaskRow;
+use super::dto::{TaskChange, TaskRow, TaskTransition};
 use super::ports::BoardTasks;
 use crate::domain::swarm::{BoardError, RefusalKind, python_equal, require_unsubmitted};
 
@@ -85,6 +85,29 @@ pub(crate) fn stored_id(task: &TaskRow) -> Value {
     let id = task.get("id").cloned();
     debug_assert!(id.is_some(), "a task row holds its id column");
     id.unwrap_or(Value::Null)
+}
+
+/// An owner operation's change of `task_id` to `status`, with the task's
+/// row as it now stands (#2394: the op answers it), read in the
+/// operation's own transaction so the answer is the state it wrote.
+///
+/// # Errors
+/// [`read_task`]'s refusal.
+pub(crate) fn changed(
+    transaction: &(impl BoardTasks + ?Sized),
+    task_id: &Value,
+    status: &str,
+) -> Result<TaskChange, BoardError> {
+    let task = read_task(transaction, task_id)?;
+    debug_assert_eq!(
+        task.text("status"),
+        Some(status),
+        "the row reads the status the op wrote"
+    );
+    Ok(TaskChange {
+        task,
+        transition: TaskTransition::Applied,
+    })
 }
 
 /// `require_unsubmitted(task)` of a task [`owned`] returned: its evidence

@@ -328,9 +328,10 @@ fn the_spawn_and_swarm_descriptions_stay_within_the_budget() {
 /// Ratcheted down from 8,192 (8,000 before #2348), then from 3,584 when
 /// #2389 dropped the guide pointer, then from 3,472 when the send rules
 /// came in for trimmed host-only wording, then from 3,463 when the
-/// coordinator's inbox rule replaced field types the schema already states:
-/// it only shrinks.
-const SWARM_DESCRIPTION_BUDGET_BYTES: usize = 3_446;
+/// coordinator's inbox rule replaced field types the schema already states,
+/// then from 3,446 when #2394 made every op answer what it changed (no
+/// "null for none"): it only shrinks.
+const SWARM_DESCRIPTION_BUDGET_BYTES: usize = 3_417;
 
 #[test]
 fn the_swarm_descriptions_coordinator_prose_is_in_the_docs_page() {

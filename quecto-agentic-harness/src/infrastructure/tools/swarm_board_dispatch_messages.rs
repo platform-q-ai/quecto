@@ -6,10 +6,12 @@
 //! message by its id (#2303): the receipt's for `send` (a replay's too),
 //! the argument's for `withdraw` and `ack`, which is the row's id once the
 //! board found it; `inbox` acts on no one message. No op moves a message
-//! cursor.
+//! cursor. Where Python answered `None`, `withdraw` and `ack` answer
+//! `{message_id, changed}` (#2394): the message and whether the call
+//! changed its status or found it already settled.
 use serde_json::Value;
 
-use super::{Parameter, Served, required, take};
+use super::{Parameter, Served, object, required, take};
 use crate::application::swarm::dto::{MessageIdRequest, ReadInboxRequest, SendMessageRequest};
 use crate::application::swarm::use_cases::{
     AcknowledgeMessage, ReadInbox, SendMessage, WithdrawMessage,
@@ -87,7 +89,11 @@ pub(super) fn withdraw(
     } else {
         "unchanged"
     };
-    Ok(on_message(Value::Null, decision, Some(&settled.message_id)))
+    Ok(on_message(
+        answer(&settled.message_id, settled.changed),
+        decision,
+        Some(&settled.message_id),
+    ))
 }
 
 /// Each message to the caller as `dict(row)`.
@@ -120,7 +126,19 @@ pub(super) fn ack(
     } else {
         "unchanged"
     };
-    Ok(on_message(Value::Null, decision, Some(&settled.message_id)))
+    Ok(on_message(
+        answer(&settled.message_id, settled.changed),
+        decision,
+        Some(&settled.message_id),
+    ))
+}
+
+/// `{message_id, changed}`: what `withdraw` or `ack` settled (#2394).
+fn answer(message_id: &Value, changed: bool) -> Value {
+    object([
+        ("message_id", message_id.clone()),
+        ("changed", Value::Bool(changed)),
+    ])
 }
 
 #[cfg(test)]

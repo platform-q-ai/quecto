@@ -14,8 +14,9 @@ fn claimed(handles: &SwarmBoardHandles) -> Value {
 }
 
 /// `reserve` answers `{token, paths}` in that order, `file_owners` the rows
-/// as `dict(row)`, `release_files` and `recover` `None`, and `revoke` the
-/// task's dict.
+/// as `dict(row)`, `release_files` `{task_id, reservation, released}`
+/// (#2394), and
+/// `revoke` the task's dict.
 #[test]
 fn reservation_methods_render_pythons_shape() {
     let (_dir, handles) = board(1_000.0);
@@ -34,15 +35,16 @@ fn reservation_methods_render_pythons_shape() {
             token.as_str().unwrap()
         )
     );
+    let released = call(
+        &handles,
+        "parent",
+        "release_files",
+        json!([1, token, ownership]),
+    )
+    .unwrap();
     assert_eq!(
-        call(
-            &handles,
-            "parent",
-            "release_files",
-            json!([1, token, ownership])
-        )
-        .unwrap(),
-        Value::Null
+        serde_json::to_string(&released).unwrap(),
+        format!(r#"{{"task_id":1,"reservation":"{ownership}","released":2}}"#)
     );
     assert_eq!(
         call(&handles, "parent", "file_owners", json!([])).unwrap(),

@@ -161,7 +161,12 @@ fn the_evidence_is_replaced_and_the_previous_evidence_recorded() {
             evidence.clone(),
         ))
         .unwrap();
-    assert_eq!(stored, json!(1));
+    assert_eq!(stored.get("id"), Some(&json!(1)));
+    assert_eq!(
+        stored.get("evidence"),
+        Some(&evidence),
+        "the row as it now stands"
+    );
     let state = board.snapshot();
     assert_eq!(state.tasks[0].get("evidence"), Some(&evidence));
     assert_eq!(state.tasks[0].text("status"), Some("completed"));
