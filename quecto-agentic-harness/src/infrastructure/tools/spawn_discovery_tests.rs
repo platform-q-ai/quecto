@@ -326,8 +326,9 @@ fn the_spawn_and_swarm_descriptions_stay_within_the_budget() {
 /// the op grammar and what every member needs; the coordinator's prose
 /// (verification, recovery, awaiting approval) lives in the docs page.
 /// Ratcheted down from 8,192 (8,000 before #2348), then from 3,584 when
-/// #2389 dropped the guide pointer: it only shrinks.
-const SWARM_DESCRIPTION_BUDGET_BYTES: usize = 3_472;
+/// #2389 dropped the guide pointer, then from 3,472 when the send rules
+/// came in for trimmed host-only wording: it only shrinks.
+const SWARM_DESCRIPTION_BUDGET_BYTES: usize = 3_463;
 
 #[test]
 fn the_swarm_descriptions_coordinator_prose_is_in_the_docs_page() {
@@ -399,4 +400,18 @@ fn the_swarm_description_sends_no_one_to_read_a_guide() {
         assert!(description.contains(rule), "missing {rule:?}");
     }
     assert!(crate::infrastructure::tools::docs::lookup_doc("swarm").is_some());
+}
+
+/// The first swarm run on the description alone (2026-10-01) had its two
+/// refusals on rules only the guide stated: a recipient that was not a
+/// board member id, and a reused request id carrying a new payload.
+#[test]
+fn the_swarm_description_states_the_send_rules_members_tripped_on() {
+    let description = include_str!("swarm_assets/tool_description.txt");
+    for rule in [
+        "recipient is a member id from op=summary",
+        "a retry reuses its request with the same payload; new content needs a new request",
+    ] {
+        assert!(description.contains(rule), "missing {rule:?}");
+    }
 }

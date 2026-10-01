@@ -288,3 +288,43 @@ fn the_swarm_embed_is_self_contained() {
         );
     }
 }
+
+/// The words the swarm docs write as an `agent_cmd` command: each
+/// `agent_cmd <word>` or `` agent_cmd` `<word> `` names its next word, a
+/// run of lowercase letters and underscores.
+fn named_agent_cmd_commands(doc: &str) -> Vec<String> {
+    ["agent_cmd ", "agent_cmd` `"]
+        .iter()
+        .flat_map(|lead| doc.match_indices(lead).map(move |(at, _)| at + lead.len()))
+        .map(|start| {
+            doc[start..]
+                .chars()
+                .take_while(|c| c.is_ascii_lowercase() || *c == '_')
+                .collect::<String>()
+        })
+        // A JSON call (`agent_cmd {"command":…}`) names no word here.
+        .filter(|word| !word.is_empty())
+        .collect()
+}
+
+/// A swarm run's report (2026-10-01) caught the guide naming
+/// `agent_cmd status`, which is not a command: every command the swarm docs
+/// name must be one `agent_cmd` accepts.
+#[test]
+fn the_swarm_docs_name_only_real_agent_cmd_commands() {
+    let pages = [
+        ("the swarm embed", embed()),
+        ("docs/swarm.md", include_str!("../../../docs/swarm.md")),
+    ];
+    for (page, doc) in pages {
+        let named = named_agent_cmd_commands(doc);
+        assert!(!named.is_empty(), "{page} names no agent_cmd command");
+        for command in named {
+            assert!(
+                crate::infrastructure::tools::agent_cmd_parse::SUPPORTED_COMMANDS
+                    .contains(&command.as_str()),
+                "{page} names `agent_cmd {command}`, which is not a command"
+            );
+        }
+    }
+}

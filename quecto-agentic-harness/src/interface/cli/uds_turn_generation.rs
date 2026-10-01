@@ -21,17 +21,29 @@ impl Default for TurnControl {
 impl TurnControl {
     /// Record a control generation seen on a receipt or wake; never regresses.
     pub fn observe_control_generation(&self, generation: u64) {
-        self.control_generation
-            .fetch_update(
+        // A compare-exchange loop, not `fetch_update` (deprecated from Rust
+        // 1.99) or `try_update` (stable from 1.95, above the clippy MSRV).
+        let mut current = self
+            .control_generation
+            .load(std::sync::atomic::Ordering::SeqCst);
+        loop {
+            let advances = match current {
+                u64::MAX => true,
+                seen => generation > seen,
+            };
+            if !advances {
+                return;
+            }
+            match self.control_generation.compare_exchange_weak(
+                current,
+                generation,
                 std::sync::atomic::Ordering::SeqCst,
                 std::sync::atomic::Ordering::SeqCst,
-                |current| match current {
-                    u64::MAX => Some(generation),
-                    seen if generation > seen => Some(generation),
-                    _ => None,
-                },
-            )
-            .ok();
+            ) {
+                Ok(_) => return,
+                Err(now) => current = now,
+            }
+        }
     }
 
     /// The latest control generation seen, if any.
@@ -101,11 +113,21 @@ impl TurnControl {
     /// One admitted steering command has reached its handler. Other queued
     /// steering commands keep priority over buffered follow-ups.
     pub fn consume_steer(&self) {
-        let _ = self.pending_steers.fetch_update(
-            std::sync::atomic::Ordering::SeqCst,
-            std::sync::atomic::Ordering::SeqCst,
-            |pending| pending.checked_sub(1),
-        );
+        // A compare-exchange loop, not `fetch_update` (see above).
+        let mut pending = self
+            .pending_steers
+            .load(std::sync::atomic::Ordering::SeqCst);
+        while let Some(fewer) = pending.checked_sub(1) {
+            match self.pending_steers.compare_exchange_weak(
+                pending,
+                fewer,
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+            ) {
+                Ok(_) => return,
+                Err(now) => pending = now,
+            }
+        }
     }
 
     /// Abort/reset releases all pending steering intent.

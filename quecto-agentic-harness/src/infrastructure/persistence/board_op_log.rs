@@ -97,9 +97,17 @@ impl EventLogBoardOps {
             (&self.dropped, drops.ops),
             (&self.summaries_dropped, drops.summaries),
         ] {
-            let _always = counter.fetch_update(Ordering::AcqRel, Ordering::Acquire, |held| {
-                Some(held.saturating_add(more))
-            });
+            // A compare-exchange loop, not `fetch_update` (deprecated from
+            // Rust 1.99) or `try_update` (stable from 1.95, above the MSRV).
+            let mut held = counter.load(Ordering::Acquire);
+            while let Err(now) = counter.compare_exchange_weak(
+                held,
+                held.saturating_add(more),
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                held = now;
+            }
         }
     }
 
