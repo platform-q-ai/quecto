@@ -9,7 +9,13 @@
 //! request, at 4 bytes a token, rounded down to 128-token blocks with a
 //! 1,024-token minimum, as OpenAI's prompt cache counts them.
 //!
-//! The table: `cargo test --lib watermark_sim_table -- --ignored --nocapture`.
+//! The table: `WATERMARK_SIM_TABLE=1 cargo test --lib watermark_sim_table -- --nocapture`.
+//!
+//! Measured 2026-10-01 (800 requests, log-uniform results), steady-state
+//! hit / uncached tokens / cuts: watermark 256k/70k 98.63% / 1.74M / 6;
+//! 120k/40k 97.18% / 1.76M / 15; 100k/30k 96.83% / 1.63M / 17; 60k/25k
+//! 94.93% / 1.65M / 33; today's default pruning 92.96% / 7.33M (66
+//! prefix-breaking prune passes); swarm member 93.89% / 2.30M (242).
 
 use super::ctx_mgmt_tests::{CapturingAuditSink, MemSpillStore};
 use crate::application::agent_loop::tests::MockRegistry;
@@ -474,9 +480,12 @@ async fn watermark_requests_append_only_between_cuts_and_keep_the_head() {
     );
 }
 
+/// Runs only with `WATERMARK_SIM_TABLE=1` (about 6 minutes in a debug build).
 #[tokio::test]
-#[ignore = "the spike's measurement table: run with --ignored --nocapture"]
 async fn watermark_sim_table() {
+    if std::env::var("WATERMARK_SIM_TABLE").as_deref() != Ok("1") {
+        return;
+    }
     let requests: usize = std::env::var("WATERMARK_SIM_REQUESTS")
         .ok()
         .and_then(|v| v.parse().ok())
