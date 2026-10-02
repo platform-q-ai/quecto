@@ -1,13 +1,15 @@
 //! The token estimate of an image, from its pixel size (#2420).
 //!
 //! Providers price an image by its pixels, not its bytes: Anthropic's
-//! newer models take up to 2576 px on the long edge at about `w*h/750`
-//! tokens, at most 4,784 an image; OpenAI's "original" detail charges
-//! about 1.2 tokens per 32x32 patch (1920x1080 is about 2,450). One
-//! conservative estimate covers them: the long edge scaled to at most
-//! 2576 px, aspect kept, then `ceil(w*h/750)` within [85, 4784]. The
-//! provider's own count comes back with the usage anyway
-//! (`domain::context_calibration`).
+//! newer models take up to 2576 px on the long edge and bill 28x28 px
+//! patches, about `w*h/750` tokens, at most 4,784 an image. OpenAI bills
+//! about 1.2 tokens per 32x32 patch; quecto always sends OpenAI and Codex
+//! images at "high" detail, never "original", which caps them at 2,500
+//! patches (3,000 tokens). So one conservative estimate covers every
+//! provider: the long edge scaled to at most 2576 px, aspect kept, then
+//! the larger of `ceil(w*h/750)` and the 28 px patch count (a thin strip
+//! costs its patches), within [85, 4784]. The provider's own count comes
+//! back with the usage anyway (`domain::context_calibration`).
 
 use super::image_dimensions::{Dimensions, image_dimensions};
 
@@ -15,6 +17,8 @@ use super::image_dimensions::{Dimensions, image_dimensions};
 pub const MAX_LONG_EDGE: u32 = 2_576;
 /// Pixels per token, after scaling.
 pub const PIXELS_PER_TOKEN: u64 = 750;
+/// The side of Anthropic's square patch, one token each, in pixels.
+pub const PATCH_SIDE: u64 = 28;
 /// The least an image costs.
 pub const MIN_IMAGE_TOKENS: usize = 85;
 /// The most an image costs.
@@ -64,10 +68,13 @@ pub fn scaled(dimensions: Dimensions) -> Dimensions {
     scaled
 }
 
-/// `ceil(w*h/750)`, within [`MIN_IMAGE_TOKENS`], [`MAX_IMAGE_TOKENS`].
+/// The larger of `ceil(w*h/750)` and `ceil(w/28)*ceil(h/28)`, within
+/// [`MIN_IMAGE_TOKENS`], [`MAX_IMAGE_TOKENS`].
 fn tokens_at(dimensions: Dimensions) -> usize {
-    let pixels = u64::from(dimensions.width) * u64::from(dimensions.height);
-    usize::try_from(pixels.div_ceil(PIXELS_PER_TOKEN))
+    let (width, height) = (u64::from(dimensions.width), u64::from(dimensions.height));
+    let by_area = (width * height).div_ceil(PIXELS_PER_TOKEN);
+    let by_patches = width.div_ceil(PATCH_SIDE) * height.div_ceil(PATCH_SIDE);
+    usize::try_from(by_area.max(by_patches))
         .unwrap_or(MAX_IMAGE_TOKENS)
         .clamp(MIN_IMAGE_TOKENS, MAX_IMAGE_TOKENS)
 }

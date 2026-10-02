@@ -272,10 +272,8 @@ fn the_jpeg_segment_bound_is_exact() {
         bytes.extend_from_slice(&jpeg(640, 480)[2..]);
         read("image/jpeg", &bytes)
     };
-    assert!(
-        MAX_JPEG_SEGMENTS >= 256,
-        "room for a camera file and a split ICC profile"
-    );
+    // A camera file and a split ICC profile fit: lowering the bound under
+    // 256 fails here.
     assert_eq!(behind(255), Some((640, 480)));
     assert_eq!(behind(MAX_JPEG_SEGMENTS - 1), Some((640, 480)));
     assert_eq!(behind(MAX_JPEG_SEGMENTS), None);
