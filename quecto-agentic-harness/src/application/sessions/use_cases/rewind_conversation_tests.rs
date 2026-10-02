@@ -358,3 +358,36 @@ fn the_use_case_debug_names_itself_without_its_handles() {
     let rig = build_rewrite_rig(RewriteOptions::default());
     assert_eq!(format!("{:?}", rig.rewind), "RewindConversation { .. }");
 }
+
+/// #2403 review M2: a watermark cut's stub that survives a rewind names an
+/// archive the rewind wipes. It becomes a new stub that says the earlier
+/// messages were dropped: no recall, no spill id, and a new identity, so
+/// the storm guard's baseline (held by the old stub) is reset too.
+#[test]
+fn rewinding_rewrites_a_surviving_archive_stub_to_its_dropped_text() {
+    use crate::domain::conversation::UserKind;
+    use crate::domain::conversation::watermark_cut::archive_stub;
+    let stub = archive_stub(12, Some("archive"));
+    let old_id = stub.id();
+    let mut messages = vec![
+        Message::system("Be helpful."),
+        Message::user("first"),
+        stub,
+        Message::user("second"),
+    ];
+    assert!(rewind_to_message_index(&mut messages, 3));
+    let rewritten = &messages[2];
+    assert_eq!(rewritten.user_kind, UserKind::ArchiveStub);
+    assert_ne!(rewritten.id(), old_id, "a new stub");
+    assert!(
+        !rewritten.content.contains("recall("),
+        "{}",
+        rewritten.content
+    );
+    assert!(
+        rewritten.content.contains("dropped"),
+        "{}",
+        rewritten.content
+    );
+    assert_eq!(rewritten.spill_id, None);
+}

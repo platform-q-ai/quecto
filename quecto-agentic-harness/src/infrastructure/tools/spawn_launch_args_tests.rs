@@ -33,6 +33,7 @@ fn spec<'a>(config: &'a SubagentConfig) -> ChildLaunchSpec<'a> {
         workflow_spec_path: None,
         inherited_tool_policy_path: None,
         parent_control_path: None,
+        inherited_context_mode: "default",
     }
 }
 
@@ -133,6 +134,7 @@ fn forwards_existing_flags_alongside_model() {
         workflow_spec_path: Some(Path::new("/run/spec.json")),
         inherited_tool_policy_path: None,
         parent_control_path: None,
+        inherited_context_mode: "default",
     };
     let args = build_child_cli_args(&s);
     let strs = as_strings(&args);
@@ -225,6 +227,7 @@ fn child_session_flag_uses_uuid_key_not_display_label() {
         workflow_spec_path: None,
         inherited_tool_policy_path: None,
         parent_control_path: None,
+        inherited_context_mode: "default",
     };
     let strs = as_strings(&build_child_cli_args(&s));
     let s_pos = strs
@@ -306,4 +309,20 @@ fn claude_code_backend_adds_the_backend_flag() {
 fn the_quecto_backend_adds_no_backend_flag() {
     let strs = as_strings(&build_child_cli_args(&spec(&base_config())));
     assert!(!strs.iter().any(|a| a == "--backend"), "{strs:?}");
+}
+
+/// #2403 final review M3/L4: the child is handed the launching agent's
+/// context mode and marks as a CLI argument, which every runtime carries
+/// through `-- <binary> <args>` unchanged.
+#[test]
+fn hands_the_child_the_launching_agents_context_mode() {
+    let cfg = base_config();
+    let mut s = spec(&cfg);
+    s.inherited_context_mode = "watermark:256000:70000";
+    let strs = as_strings(&build_child_cli_args(&s));
+    let at = strs
+        .iter()
+        .position(|arg| arg == "--inherited-context-mode")
+        .unwrap_or_else(|| panic!("the flag is passed: {strs:?}"));
+    assert_eq!(strs[at + 1], "watermark:256000:70000");
 }

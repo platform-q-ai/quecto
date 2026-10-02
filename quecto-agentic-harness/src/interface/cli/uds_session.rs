@@ -106,13 +106,20 @@ impl PendingMessage {
     /// whole request. The `<subagent_notification>` wrapper marks the note as
     /// harness-injected so clients can render it distinctly from user input.
     ///
-    /// A prompt or a queued control is an instruction; a harness note (a
+    /// A prompt or a queued control is an instruction, marked a prompt when
+    /// a user or a parent sent it (#2403); a harness note (a
     /// sub-agent note, a swarm wake) opens a turn of the phase it lands in,
     /// that of `conversation` (#2226).
     pub fn into_message(self, conversation: &[Message]) -> Message {
-        use crate::domain::turn_origin::{harness_note, instruction};
+        use crate::domain::turn_origin::{harness_note, instruction, prompt};
         match self {
-            Self::User(content) | Self::Control { content, .. } => instruction(content),
+            Self::User(content) => prompt(content),
+            Self::Control {
+                content, command, ..
+            } => match is_sent_command(&command) {
+                true => prompt(content),
+                false => instruction(content),
+            },
             Self::Automatic(content) => harness_note(content, conversation),
             Self::SubagentNotification {
                 agent_id,
@@ -138,6 +145,22 @@ impl PendingMessage {
         }
     }
 }
+/// Whether `command` is one a user or a parent sends (#2403): what it
+/// carries is a prompt. Anything else (a swarm wake) is the harness's.
+pub(crate) fn is_sent_command(command: &str) -> bool {
+    matches!(command, "prompt" | "steer" | "follow_up")
+}
+
+/// The message a `command` puts in the conversation as it runs at once
+/// (#2403 review H1): a prompt for a command a user or a parent sends, a
+/// harness note (of the phase it lands in) for any other, an idle wake.
+pub(crate) fn command_message(command: &str, text: String, conversation: &[Message]) -> Message {
+    match is_sent_command(command) {
+        true => crate::domain::turn_origin::prompt(text),
+        false => crate::domain::turn_origin::harness_note(text, conversation),
+    }
+}
+
 /// Maximum number of agent names listed verbatim in a coalesced completion note
 /// before the remainder is summarized as a `(+M more)` tail (#894).
 const COALESCE_NAME_CAP: usize = 10;

@@ -429,7 +429,7 @@ impl AgentLoopImpl {
                 max = MAX_CUT_OFF_RETRIES,
                 "reply hit the output limit with nothing visible — asking again, concisely"
             );
-            let how = append_feedback(messages, feedback, current_turn);
+            let how = append_feedback(messages, feedback, current_turn, self.context_mode());
             record_feedback(messages, appended_messages, how);
             // The retry may use the model's cap, not repeat the same budget.
             self.output_boost
@@ -458,7 +458,8 @@ impl AgentLoopImpl {
             error = %error,
             "provider rejected request as malformed — re-prompting with addressable feedback"
         );
-        let how = append_malformed_feedback(messages, error, current_turn);
+        let mode = self.context_mode();
+        let how = append_malformed_feedback(messages, error, current_turn, mode);
         // Feedback the run added belongs in the ledger (#1072 review), once.
         record_feedback(messages, appended_messages, how);
     }

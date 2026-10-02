@@ -1,11 +1,13 @@
 //! Cancellation history (#483): what an interrupted turn leaves in the live
 //! conversation — the tail after the cancelled prompt is truncated to the
-//! tool-call steps and tool results already recorded, and every unanswered
+//! tool-call steps and tool results already recorded (and a watermark cut's
+//! stub, #2403), and every unanswered
 //! tool call gets a synthetic `aborted by user` error result so the
 //! transcript stays replayable. Owner role: cancellation. Reads and edits
 //! the loop's live `Vec<Message>` only; no session persistence, no store.
 use std::collections::HashSet;
 
+use crate::domain::conversation::UserKind;
 use crate::domain::message::{Message, Role};
 
 fn prompt_position(messages: &[Message], prompt_id: uuid::Uuid) -> Option<usize> {
@@ -32,7 +34,15 @@ impl FinalizedInterruptedTurn {
 pub(super) fn finalize_interrupted_turn(
     messages: &mut Vec<Message>,
     prompt_id: uuid::Uuid,
+    mode: crate::domain::conversation::ContextMode,
 ) -> FinalizedInterruptedTurn {
+    use crate::domain::conversation::ContextMode;
+    // Watermark mode never edits a message already sent (#2403): its text
+    // and reasoning stay, so the next request still extends the last.
+    let clears_sent = match mode {
+        ContextMode::Default => true,
+        ContextMode::Watermark(_) => false,
+    };
     let Some(index) = prompt_position(messages, prompt_id) else {
         return FinalizedInterruptedTurn {
             retained_tail: Vec::new(),
@@ -45,12 +55,16 @@ pub(super) fn finalize_interrupted_turn(
     for mut message in interrupted_tail {
         match message.role {
             Role::Assistant if !message.tool_calls.is_empty() => {
-                message.content.clear();
-                message.thinking_blocks.clear();
-                message.invalidate_token_cache();
+                if clears_sent {
+                    message.content.clear();
+                    message.thinking_blocks.clear();
+                    message.invalidate_token_cache();
+                }
                 retained_tail.push(message);
             }
             Role::Tool => retained_tail.push(message),
+            // A watermark cut's stub stays where it is (#2403).
+            Role::User if message.user_kind == UserKind::ArchiveStub => retained_tail.push(message),
             _ => {}
         }
     }

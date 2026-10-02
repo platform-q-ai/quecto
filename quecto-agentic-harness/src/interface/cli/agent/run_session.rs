@@ -82,7 +82,7 @@ pub(crate) fn run_agent_session(
     });
 
     let message = flags.message.as_deref().unwrap_or("");
-    let prompt = crate::domain::turn_origin::instruction(message.to_string());
+    let prompt = crate::domain::turn_origin::prompt(message.to_string());
     let run_start = prompt.id();
     messages.push(prompt);
 

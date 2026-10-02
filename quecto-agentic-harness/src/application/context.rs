@@ -55,6 +55,9 @@ mod spill;
 #[path = "context_plan.rs"]
 mod plan;
 pub(crate) use plan::{ContextPlan, ToolMessageBuild};
+// #2403: the watermark context's pass, beside the agent loop.
+#[path = "agent_loop/context_watermark.rs"]
+mod watermark;
 
 /// The narrow handles the pruning policy holds on the sessions
 /// capability's retention namespace (D9 #1978): the writer that appends
@@ -96,6 +99,7 @@ pub(crate) struct ContextManager {
     model_window: ModelWindow,
     ceiling_cap: ContextCeilingCap,
     gauge: Mutex<ContextGaugeCalibration>,
+    watermark: Option<watermark::WatermarkState>,
 }
 
 impl ContextManager {
@@ -114,6 +118,7 @@ impl ContextManager {
             },
             ceiling_cap: ContextCeilingCap::default(),
             gauge: Mutex::new(ContextGaugeCalibration::default()),
+            watermark: None,
         }
     }
 
@@ -260,17 +265,9 @@ impl ContextManager {
             message_budget,
             self.pin_recent_turns,
         );
-        let mut manifest_shifted = false;
-        if spills_dirty || message_spilled {
-            if let Some(retention) = self.retention.as_ref() {
-                manifest_shifted = context_pruning::update_spill_manifest(
-                    messages,
-                    &retention.list,
-                    &self.session_key,
-                )
-                .await;
-            }
-        }
+        let manifest_shifted = self
+            .refresh_spill_manifest(messages, spills_dirty || message_spilled)
+            .await;
         let durable_prefix_dirty = manifest_shifted
             || superseded
                 + large

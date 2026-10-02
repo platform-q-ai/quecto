@@ -116,7 +116,7 @@ fn remove_spill_references(messages: &mut Vec<Message>) {
             }
             message.is_collapsed = false;
         }
-        message.spill_id = None;
+        crate::domain::conversation::watermark_cut::forget_retention(message);
     }
 }
 

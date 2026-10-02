@@ -632,3 +632,80 @@ async fn a_nested_container_is_refused_inside_a_container_by_the_real_condition(
         );
     }
 }
+
+/// #2403 final review M3: the context mode the spawn hands a child (a CLI
+/// argument) reaches a local child's argv and a container child's, through
+/// the runtime argv the spawn builds, with no runtime script involved.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_local_and_a_container_child_both_receive_the_inherited_context_mode() {
+    use crate::infrastructure::tools::spawn_launch_args::{ChildLaunchSpec, build_child_cli_args};
+    let dir = TempDir::new().unwrap();
+    let config = base_config(ContainerSelection::Local);
+    let args = build_child_cli_args(&ChildLaunchSpec {
+        session_name: "w1",
+        socket_path: Path::new("/run/w1.sock"),
+        config: &config,
+        effective_config: None,
+        parent_id: None,
+        workflow_spec_path: None,
+        inherited_tool_policy_path: None,
+        parent_control_path: None,
+        inherited_context_mode: "watermark:256000:70000",
+    });
+    let handed = |argv: &[String]| {
+        argv.windows(2).any(|pair| {
+            pair[0] == "--inherited-context-mode" && pair[1] == "watermark:256000:70000"
+        })
+    };
+    // A local child: the argv it actually ran with.
+    let seen = dir.path().join("argv");
+    let child = dir.path().join("child.sh");
+    std::fs::write(
+        &child,
+        format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n", seen.display()),
+    )
+    .unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&child, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let mut prepared = spawn_local_child(&ChildCommand {
+        swarm_context: None,
+        swarm_member: false,
+        supervisor: &test_supervisor(),
+        binary: &child,
+        cli_args: &args,
+        base_dir: dir.path(),
+        admission_dir: None,
+    })
+    .await
+    .expect("local child should spawn");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !seen.exists() && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    prepared.rollback_once().await;
+    let local: Vec<String> = std::fs::read_to_string(&seen)
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert!(handed(&local), "local child argv: {local:?}");
+    // A container child: the runtime argv the spawn builds for the script.
+    let cmd = script_command(&["exec.sh".to_string()], Path::new("/bin/quecto"), &args);
+    let container: Vec<String> = cmd
+        .as_std()
+        .get_args()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
+    let after = container
+        .iter()
+        .position(|arg| arg == "--")
+        .expect("the -- separator");
+    assert_eq!(container[after + 1], "/bin/quecto");
+    assert!(
+        handed(&container[after + 2..]),
+        "container child argv: {container:?}"
+    );
+}

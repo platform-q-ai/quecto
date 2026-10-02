@@ -163,6 +163,25 @@ fn only_auto_continue_nudges_are_progress_nudges() {
     assert_eq!(completion.turn_origin, TurnOrigin::Instruction);
 }
 
+/// #2403 review M5: no workflow nudge is a prompt, the completion nudge
+/// included: the harness sends them all.
+#[test]
+fn no_workflow_nudge_is_marked_a_prompt() {
+    use crate::domain::conversation::UserKind;
+    use crate::interface::cli::uds_workflow_nudge::WorkflowNudge;
+    let auto = || WorkflowNudge::AutoContinue {
+        standard: "standard".into(),
+        corrective: "corrective".into(),
+    };
+    for nudge in [
+        auto().into_message(false),
+        auto().into_message(true),
+        WorkflowNudge::Completion("report".into()).into_message(true),
+    ] {
+        assert_eq!(nudge.user_kind, UserKind::Unmarked, "{}", nudge.content);
+    }
+}
+
 #[tokio::test]
 async fn workflow_nudge_message_scopes_generated_unnamed_sessions_independently() {
     use crate::infrastructure::tools::subagent_registry::{

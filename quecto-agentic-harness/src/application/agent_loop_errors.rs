@@ -57,11 +57,12 @@ pub(super) fn append_malformed_feedback(
     messages: &mut Vec<Message>,
     err: &DomainError,
     current_turn: u32,
+    mode: crate::domain::conversation::ContextMode,
 ) -> Feedback {
     let feedback = format!(
         "Your previous request was rejected by the provider as malformed (not retryable): {err}\n\nPlease correct the request — for example fix any malformed tool call arguments or invalid fields — and try again.",
     );
-    append_feedback(messages, feedback, current_turn)
+    append_feedback(messages, feedback, current_turn, mode)
 }
 
 /// Whether `append_feedback` added a message or merged into the last one.
@@ -100,14 +101,23 @@ pub(super) fn output_limit_feedback(max_tokens: u32) -> String {
 }
 
 /// Adds `feedback` for the model, merged into a trailing user message so two
-/// user turns never follow each other (some providers reject that).
+/// user turns never follow each other (some providers reject that); in
+/// watermark mode always its own message, since the trailing one was sent.
 pub(super) fn append_feedback(
     messages: &mut Vec<Message>,
     feedback: String,
     current_turn: u32,
+    mode: crate::domain::conversation::ContextMode,
 ) -> Feedback {
+    use crate::domain::conversation::ContextMode;
+    // In watermark mode a sent message is never edited (#2403): the
+    // feedback goes in as its own message.
+    let merges = match mode {
+        ContextMode::Default => true,
+        ContextMode::Watermark(_) => false,
+    };
     match messages.last_mut() {
-        Some(last) if last.role == Role::User => {
+        Some(last) if merges && last.role == Role::User => {
             last.content.push_str("\n\n");
             last.content.push_str(&feedback);
             last.invalidate_token_cache();

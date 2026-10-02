@@ -31,12 +31,21 @@ pub(super) fn load(
     let Some(build_configuration) = flags.configuration else {
         return Err("agent: configuration capability not composed".to_owned());
     };
-    load_selected_config(
+    let mut loaded = load_selected_config(
         build_configuration,
         base_dir,
         selection,
         prompt_for_trust,
         env_overrides,
         flags.admission_context.is_some(),
-    )
+    )?;
+    // What the launching agent handed down fills what this agent's own
+    // configuration leaves unset (#2403).
+    if let Some(inherited) = flags.inherited_context_mode.as_deref() {
+        let defaults = &mut loaded.config.agents.defaults;
+        defaults
+            .inherit_context_mode(inherited)
+            .map_err(|error| format!("agent: {error}"))?;
+    }
+    Ok(loaded)
 }

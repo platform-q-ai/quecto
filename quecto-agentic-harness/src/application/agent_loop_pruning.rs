@@ -37,10 +37,19 @@ impl AgentLoopImpl {
             );
         }
         let live_before = live_result_ids(messages);
-        let mut plan = self
+        // #2403: in watermark mode its pass replaces every pruning rule.
+        let watermark = self
             .context_manager
-            .prepare_provider_context(messages, budget, spills_dirty)
+            .prepare_watermark_context(messages, (fixed_tokens, budget), spills_dirty)
             .await;
+        let mut plan = match watermark {
+            Some(plan) => plan,
+            None => {
+                self.context_manager
+                    .prepare_provider_context(messages, budget, spills_dirty)
+                    .await
+            }
+        };
         if plan.durable_prefix_dirty {
             self.report_collapsed_results(messages, &live_before, &plan.dropped_calls);
         }
@@ -138,6 +147,17 @@ impl AgentLoopImpl {
             .sum()
     }
 
+    /// Switch the context mode (#2403): the default pruning rules, or the
+    /// watermark context.
+    pub fn set_context_mode(&mut self, mode: crate::domain::conversation::ContextMode) {
+        self.context_manager.set_context_mode(mode);
+    }
+
+    /// The context mode in force.
+    pub fn context_mode(&self) -> crate::domain::conversation::ContextMode {
+        self.context_manager.context_mode()
+    }
+
     pub async fn prune_resumed_context(&self, messages: &mut Vec<Message>) -> usize {
         self.apply_context_pruning(messages, 0, true).await
     }
@@ -166,6 +186,16 @@ mod calibration_tests;
 #[cfg(test)]
 #[path = "agent_loop_snapshot_tests.rs"]
 mod snapshot_tests;
+
+// #2403: the watermark context's pass on the agent loop.
+#[cfg(test)]
+#[path = "agent_loop/watermark_tests.rs"]
+mod watermark_tests;
+
+// #2403: every request extends the previous one, through the Codex serializer.
+#[cfg(test)]
+#[path = "agent_loop/watermark_sim_tests.rs"]
+mod watermark_sim_tests;
 
 // #2348: the size-aware collapse on the same scripted coordinator.
 #[cfg(test)]

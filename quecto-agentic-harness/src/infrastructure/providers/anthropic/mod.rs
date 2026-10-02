@@ -735,3 +735,7 @@ mod effort_1066_tests;
 #[cfg(test)]
 #[path = "anthropic_1338_tests.rs"]
 mod issue_1338_tests;
+
+#[cfg(test)]
+#[path = "anthropic_watermark_tests.rs"]
+mod watermark_tests;

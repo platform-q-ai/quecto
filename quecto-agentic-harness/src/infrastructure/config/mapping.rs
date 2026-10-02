@@ -84,6 +84,7 @@ impl Config {
     /// setting it at or above `max_context_tokens`.
     pub(super) fn validate_context_budgets(&self) -> Result<(), ConfigError> {
         super::large_results::validate(&self.agents.defaults)?;
+        super::context_mode::validate(&self.agents.defaults)?;
         match self.agents.defaults.swarm_max_context_tokens {
             1.. => Ok(()),
             0 => Err(ConfigError::ContextBudget(

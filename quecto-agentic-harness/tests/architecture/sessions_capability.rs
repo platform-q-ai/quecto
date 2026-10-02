@@ -732,8 +732,9 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // spill writers and the swarm cap moved to their own modules (→ 310);
     // #2348: the plan moved to its own module (the size-aware rule fits);
     // #2405: the window rule moved to the domain, the gauge poison to the
-    // tests (→ 300).
-    ("src/application/context.rs", 300),
+    // tests (→ 300); #2403: the manifest refresh moved beside the
+    // watermark pass (→ 297).
+    ("src/application/context.rs", 297),
     // #2342: new modules (the swarm member's cap; the spill writers).
     ("src/application/context_ceiling_cap.rs", 30),
     ("src/application/context_spill_writers.rs", 70),

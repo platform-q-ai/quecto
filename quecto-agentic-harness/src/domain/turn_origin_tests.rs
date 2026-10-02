@@ -309,3 +309,20 @@ fn the_latest_opener_is_the_latest_user_message_outside_a_turn() {
     assert_eq!(super::latest_opener(&messages[1..2]), None);
     assert_eq!(super::latest_opener(&[]), None);
 }
+
+/// #2403 review L5: a watermark cut's stub opens no turn, whatever mode
+/// the session runs in later.
+#[test]
+fn an_archive_stub_opens_no_turn() {
+    use crate::domain::conversation::watermark_cut::archive_stub;
+    assert!(!super::opens_turn(&archive_stub(3, Some("archive"))));
+    assert!(super::opens_turn(&crate::domain::turn_origin::prompt(
+        "p".into()
+    )));
+    assert!(super::opens_turn(&harness_note("a wake".into(), &[])));
+    let messages = vec![
+        crate::domain::turn_origin::prompt("p".into()),
+        archive_stub(3, Some("archive")),
+    ];
+    assert_eq!(super::latest_opener(&messages), Some(0));
+}
