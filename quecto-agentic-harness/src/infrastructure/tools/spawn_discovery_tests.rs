@@ -433,3 +433,14 @@ fn the_swarm_description_sends_the_coordinator_to_its_inbox() {
         assert!(description.contains(rule), "missing {rule:?}");
     }
 }
+
+/// The 2026-10-02 swarm test: the coordinator read its inbox but still
+/// made six `agent_cmd get_messages` calls, reading the workers'
+/// transcripts as well as their board messages. The findings arrive on the
+/// board, so the description points there.
+#[test]
+fn the_swarm_description_keeps_the_coordinator_off_worker_transcripts() {
+    let description = include_str!("swarm_assets/tool_description.txt");
+    let rule = "read your inbox and ack what you act on, not agent_cmd get_messages";
+    assert!(description.contains(rule), "missing {rule:?}");
+}
