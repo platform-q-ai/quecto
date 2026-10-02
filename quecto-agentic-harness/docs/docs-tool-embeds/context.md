@@ -33,7 +33,9 @@ edited in place: the context only grows at the end. Once the request reaches
 the high mark (`context_high_tokens`, default `256000`), one cut takes it down
 to the low mark (`context_low_tokens`, default `70000`). The cut keeps the
 system messages, the first user message (the brief), the latest prompt and the
-newest whole exchanges that fit, and puts one archive stub after the brief:
+newest whole exchanges that fit, and puts one archive stub right after the kept
+head (the system messages, the brief, and the latest prompt when it comes
+before the kept exchanges), before those exchanges:
 
 ```
 [Context archive] 412 earlier messages of this session were archived to keep

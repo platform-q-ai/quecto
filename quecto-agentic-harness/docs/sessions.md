@@ -783,8 +783,10 @@ and inherits the rest. Tool subprocesses (`bash`) get no context mode.
 of `max_context_tokens`, default `300000`, what the model's window leaves the
 prompt, and a swarm member's `swarm_max_context_tokens`). When the budget is
 below H, H becomes the budget and L scales by the same ratio: under a 200k
-budget the marks are 200k and 54,687. The marks are compared with the
-request's estimate at the provider-observed scale, tool definitions included.
+budget the marks are 200k and 54,687. The marks and the budget are set in
+provider tokens; the harness converts them to its own estimate units at the
+provider-observed scale and compares them with the request's raw estimate,
+tool definitions included.
 
 **The cut.** Before a request whose size reached H, the cut keeps in place
 every system message, the first user message (the brief), the latest prompt
@@ -808,29 +810,40 @@ stays byte-identical until the next cut archives it. On the wire
 `"userKind": "archiveStub"`; a prompt the user sent is `"userKind": "prompt"`.
 
 **Event-log records.** Records hold counts, ids and kinds, never content.
-Token counts are estimates of the whole request (messages and tool
-definitions) at the provider-observed scale; `marks.estimate_scale_permille`
-converts them to provider tokens (× scale / 1000).
+Every token count in them is in raw estimate units: the harness's own
+estimate of the whole request (messages and tool definitions), the unit the
+cut is planned in. Multiply by `marks.estimate_scale_permille` / 1000 for
+provider tokens (1000 until the provider has reported a prompt size).
 
 - `context_cut`, once per cut: `tokens_before`, `tokens_after`; `marks`
-  (`high_tokens` and `low_tokens` in force, `ceiling_tokens`,
-  `ceiling_lowered_marks`, `estimate_scale_permille`); `messages_archived`
+  (`high_tokens` and `low_tokens` in force, `ceiling_estimate_tokens` (the
+  ceiling in estimate units, unlike `context_pruned.ceiling_tokens`, which is
+  in provider tokens), `ceiling_lowered_marks`, `estimate_scale_permille`);
+  `messages_archived`
   (a previous stub among them), `messages_kept`; `archive_id` (`null` when
   nothing retains context or the write failed); `fill`: `within_low`,
   `newest_exchange_over_low` (the newest exchange, kept whole, took the
   context over L) or `head_over_low` (the pinned head alone is over L).
 - `context_cut_skipped`, when a cut was due but not made: `tokens`, `marks`
-  and `reason`: `saving_too_small` (with `saving_tokens` and
-  `needed_tokens`), `no_boundary` (the newest exchange is the only one after
-  the head: a long turn in flight), `nothing_archivable` or
-  `no_user_message`. It repeats on each request while the cause holds.
+  and `reason`, adjacently tagged: `{"kind": "saving_too_small", "detail":
+  {"saving_tokens", "needed_tokens"}}`, `{"kind": "no_boundary"}` (a single
+  exchange follows the head: one huge result, or one batch of parallel
+  calls), `{"kind": "nothing_archivable"}` or `{"kind": "no_user_message"}`.
+  It is written once per request while the cause holds, a short series: the
+  context has to grow by only about H/10 more (or a new exchange has to
+  open a boundary) before the cut saves enough and is made.
 - A cut is never a `context_pruned` record. The emergency ladder's is, with
-  `watermark_fallback: true` (false in the default mode).
+  `watermark_fallback: true`, measured from the size the cut (if any) left.
+  Watermark mode also writes `context_pruned` with `watermark_fallback: false`
+  and `budget_unmet: true` when the tool definitions fill the budget or the
+  model's window, as the default mode does; it counts no cut.
 
 **Reading the cache figures.** Pair each turn's `llm_turn_end`
 (`cached_input_tokens`) with its `request_observed` record's input diagnostic
 (#2400, see "Where a request's input changed" in
-[runtime-models-providers.md](runtime-models-providers.md)). In watermark mode
+[runtime-models-providers.md](runtime-models-providers.md)). Only Responses
+(`codex`) requests of a named session record that diagnostic; for other
+providers only the cached share in `llm_turn_end` is there to read. In watermark mode
 every request extends the previous one, so `first_changed_item` should be
 `null` and the cached share near
 `unchanged_prefix_tokens_estimate / request_tokens_estimate`. A miss right

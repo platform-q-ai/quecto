@@ -666,7 +666,7 @@ general dashboard event API remain separate follow-on work.
 
 A member's own context is kept lean (#2342): once its process takes part in
 a swarm its pruning budget is capped at `agents.defaults.swarm_max_context_tokens`
-(default 48000, or `QUECTO_SWARM_MAX_CONTEXT_TOKENS`; it never disengages,
+(default 300000, or `QUECTO_SWARM_MAX_CONTEXT_TOKENS`; it never disengages,
 and setting it at or above `max_context_tokens` switches it off), and each
 full `summary` answer supersedes the member's older
 ones, which collapse to recall stubs while the newest stays in full. A large
@@ -679,7 +679,13 @@ turn's `llm_turn_end` records the cached share of its input
 (`cached_input_tokens`) and the share written to the cache
 (`cache_write_tokens`); the moment the cap engages is a
 `quecto::swarm_board` tracing event. See
-[Sessions](sessions.md#context-management) for the dials.
+[Sessions](sessions.md#context-management) for the dials. In watermark mode
+(`agents.defaults.context_mode = "watermark"`, which members inherit from the
+agent that launched them) none of these rules runs: the member's context only
+grows until one cut at the high mark, written to the event log as a
+`context_cut` record; the swarm cap, like any ceiling below the high mark,
+still lowers both marks (see
+[Watermark mode](sessions.md#watermark-mode-2401)).
 
 Every member request also carries the `swarm` tool definition, so its
 description (#2348) holds only the op grammar and what every member needs:
