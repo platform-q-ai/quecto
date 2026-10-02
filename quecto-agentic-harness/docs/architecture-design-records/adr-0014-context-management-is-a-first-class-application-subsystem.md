@@ -7,7 +7,8 @@
 ## Context
 
 Context management is central to the harness. It determines what messages are
-sent to providers, how large tool results are collapsed, when history is spilled
+sent to providers, where the one watermark cut falls (history is append-only between
+cuts; epic #2401), how large tool results are spilled when appended, when history is spilled
 or recalled, how provider-reported token truth is reconciled with local
 estimates, and when durable persisted history must be reconciled after pruning.
 
@@ -17,7 +18,7 @@ invariants are more important than any single implementation file:
 
 - recent turns may be pinned;
 - tool call/result relationships must remain coherent;
-- collapsed or spilled content must remain recoverable where promised;
+- archived or spilled content must remain recoverable where promised;
 - local token estimates and provider-truth gauges must not be confused;
 - pruning that mutates persisted history must mark the durable prefix dirty;
 - frame-size workarounds should not leak into application-level context policy.
@@ -38,9 +39,9 @@ application/context/
   estimate.rs
   gauge.rs
   plan.rs
-  pruning.rs
+  watermark.rs
+  ladder.rs
   spill.rs
-  collapse.rs
   durable_prefix.rs
 ```
 
