@@ -112,15 +112,13 @@ async fn test_spill_preserves_message_content_after_spill() {
             spill_store.clone(),
         )),
         session_key: "test-session".to_string(),
-        context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 190_000,
         progress_callback: None,
         streaming: false,
         effort: None,
         audit_log: None,
         pin_recent_turns: 2,
-        context_collapse_after_messages: u32::MAX,
-        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
+        context_marks: Default::default(),
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
@@ -160,15 +158,13 @@ fn tight_budget_agent(
             spill_store,
         )),
         session_key: "test-session".to_string(),
-        context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens,
         progress_callback: None,
         streaming: false,
         effort: None,
         audit_log: None,
         pin_recent_turns: 2,
-        context_collapse_after_messages: u32::MAX,
-        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
+        context_marks: Default::default(),
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
@@ -362,15 +358,13 @@ async fn failed_tool_spill_leaves_no_spill_id_and_blocks_collapse() {
             Arc::new(FailingSpillStore),
         )),
         session_key: "test-session".to_string(),
-        context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 190_000,
         progress_callback: None,
         streaming: false,
         effort: None,
         audit_log: None,
         pin_recent_turns: 2,
-        context_collapse_after_messages: u32::MAX,
-        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
+        context_marks: Default::default(),
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
@@ -387,22 +381,12 @@ async fn failed_tool_spill_leaves_no_spill_id_and_blocks_collapse() {
         tool_msg.content, "irreplaceable output",
         "content must survive the failed spill"
     );
-
-    // And the collapse trigger must skip the unspilled result entirely.
-    let mut msgs = messages.clone();
-    let collapsed = context_pruning::collapse_tool_results_over_limit(&mut msgs, 0);
-    assert_eq!(collapsed, 0, "unspilled tool results must never be stubbed");
-    let tool_after = msgs.iter().find(|m| m.role == Role::Tool).unwrap();
-    assert!(
-        !tool_after.is_collapsed && tool_after.content == "irreplaceable output",
-        "an unresolvable recall() stub must never replace unspilled output"
-    );
 }
 
 // --- ephemeral sessions (empty key): both spill writers must persist ---
 // Pins the tool/conversation spill symmetry for `--no-session` runs (see the
-// NOTE in agent_loop_spill.rs): recall() stubs minted by collapse or the
-// demotion ladder must stay resolvable within an ephemeral run, so neither
+// NOTE in agent_loop_spill.rs): recall() stubs minted by a cut or the
+// emergency ladder must stay resolvable within an ephemeral run, so neither
 // writer may guard on an empty session key.
 
 #[tokio::test]
@@ -425,15 +409,13 @@ async fn ephemeral_session_spills_both_tool_output_and_conversation_messages() {
             spill_store.clone(),
         )),
         session_key: String::new(), // ephemeral: --no-session
-        context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 190_000,
         progress_callback: None,
         streaming: false,
         effort: None,
         audit_log: None,
         pin_recent_turns: 2,
-        context_collapse_after_messages: u32::MAX,
-        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
+        context_marks: Default::default(),
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });

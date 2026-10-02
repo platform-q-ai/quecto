@@ -13,10 +13,9 @@ use crate::application::agent_loop::tests::MockRegistry;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::application::tools::ports::Tool;
+use crate::domain::conversation::UserKind;
 use crate::domain::conversation::watermark::Watermark;
-use crate::domain::conversation::{ContextMode, UserKind};
 use crate::domain::error::DomainError;
-use crate::domain::large_result_collapse::LargeResultCollapse;
 use crate::domain::message::{LlmResponse, Message, StopReason, ToolCall};
 use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::domain::turn_origin::prompt;
@@ -248,8 +247,8 @@ impl Tool for SimRead {
     }
 }
 
-/// The loop the simulation runs: `None` builds it as every composition
-/// does, with no context mode switched on, under `max_context_tokens`.
+/// The loop the simulation runs, at `marks` (`None`: the owner's) under
+/// `max_context_tokens`.
 fn sim_agent(
     provider: Arc<SimProvider>,
     marks: Option<(usize, usize)>,
@@ -257,21 +256,10 @@ fn sim_agent(
 ) -> AgentLoopImpl {
     let mut registry = MockRegistry::new();
     registry.register(Arc::new(SimRead));
-    let dials = match marks {
-        // Dials that edit history on nearly every request in the default
-        // mode: none may run in watermark mode.
-        Some(_) => (
-            3,
-            4,
-            LargeResultCollapse {
-                over_tokens: 1_000,
-                after_turns: 1,
-            },
-        ),
-        // The configured defaults'.
-        None => (50, 50, LargeResultCollapse::DISABLED),
-    };
-    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+    let marks = marks.map_or_else(Watermark::default, |(high, low)| {
+        Watermark::new(high, low).unwrap()
+    });
+    AgentLoopImpl::new(AgentLoopConfig {
         provider,
         tool_registry: Box::new(registry),
         model: "gpt-sim".to_string(),
@@ -281,22 +269,16 @@ fn sim_agent(
             Arc::new(MemSpillStore::default()),
         )),
         session_key: "watermark-sim".to_string(),
-        context_collapse_after_tool_calls: dials.0,
         max_context_tokens,
         progress_callback: None,
         streaming: false,
         effort: None,
         audit_log: None,
         pin_recent_turns: 1,
-        context_collapse_after_messages: dials.1,
-        large_result_collapse: dials.2,
+        context_marks: marks,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
-    });
-    if let Some((high, low)) = marks {
-        agent.set_context_mode(ContextMode::Watermark(Watermark::new(high, low).unwrap()));
-    }
-    agent
+    })
 }
 
 async fn simulate(
@@ -368,9 +350,9 @@ async fn feedback_after_a_cut_off_reply_keeps_every_request_an_extension() {
 }
 
 /// #2414: watermark is the only context mode. Over a long session, a loop
-/// built with no mode switched on (the configured defaults' dials, the
-/// owner's marks scaled to a 40k ceiling) never edits an earlier message
-/// except at a cut: every other request extends the one before it.
+/// built by default (the owner's marks scaled to a 40k ceiling) never edits
+/// an earlier message except at a cut: every other request extends the one
+/// before it.
 #[tokio::test]
 async fn a_loop_built_with_no_mode_set_edits_no_earlier_message_except_at_a_cut() {
     assert_append_only(&simulate_on(None, 40_000, 200, Some(7)).await);

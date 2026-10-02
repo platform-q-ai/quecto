@@ -49,8 +49,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
     let mut no_workflow_requested = false;
     let mut workflow_guards = false;
     let mut workflow_spec_path: Option<std::path::PathBuf> = None;
-    let (mut parent_id, mut inherited_context_mode): (Option<String>, Option<String>) =
-        (None, None);
+    let mut parent_id: Option<String> = None;
     let mut admission_context: Option<std::path::PathBuf> = None;
     let mut parent_control: Option<std::path::PathBuf> = None;
     let mut inherited_tool_policy_path: Option<std::path::PathBuf> = None;
@@ -88,13 +87,12 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
                 message = Some(val.to_string());
                 i += 2;
             }
-            f @ ("--system" | "--model" | "--parent-id" | "--inherited-context-mode") => {
+            f @ ("--system" | "--model" | "--parent-id") => {
                 let msg = format!("{f} requires a value");
                 let val = next_arg(args, i, &msg, stderr)?;
                 *(match f {
                     "--system" => &mut system_prompt,
                     "--parent-id" => &mut parent_id,
-                    "--inherited-context-mode" => &mut inherited_context_mode,
                     _ => &mut model_override,
                 }) = Some(val.to_string());
                 i += 2;
@@ -172,7 +170,6 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         }
     }
     let mut flags = AgentFlags {
-        inherited_context_mode,
         session_name,
         no_session,
         message,
@@ -488,16 +485,14 @@ pub(crate) fn build_agent_from_config_in(
         temperature: config.agents.defaults.temperature,
         retention: Some(retention.context.clone()),
         session_key,
-        context_collapse_after_tool_calls: config.agents.defaults.context_collapse_after_tool_calls,
         max_context_tokens: config.agents.defaults.max_context_tokens,
         progress_callback: None,
         streaming: false,
         effort,
         audit_log: None,
-        // #1044/#1045/#1046: constructor fields — config cannot be dropped.
+        // #1045/#2414: constructor fields — config cannot be dropped.
         pin_recent_turns: config.agents.defaults.pin_recent_turns,
-        context_collapse_after_messages: config.agents.defaults.context_collapse_after_messages,
-        large_result_collapse: config.agents.defaults.large_result_collapse(),
+        context_marks: config.agents.defaults.context_marks(),
         model_context_window: limits.context_window,
         tool_profile_context: if flags.spawned {
             crate::domain::tool::ToolProfileContext::Child

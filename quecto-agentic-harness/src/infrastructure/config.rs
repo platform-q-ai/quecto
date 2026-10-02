@@ -64,38 +64,23 @@ pub struct AgentDefaults {
     pub exec_max_capture_bytes: usize,
     #[serde(default = "default_max_session_messages")]
     pub max_session_messages: usize,
-    // `context_collapse_after_turns` is the pre-#1017 name; kept as a serde
-    // alias so existing config files continue to deserialize.
-    #[serde(
-        default = "default_context_collapse_after_tool_calls",
-        alias = "context_collapse_after_turns"
-    )]
-    pub context_collapse_after_tool_calls: u32,
+    /// The emergency ladder's ceiling (#1044); the watermark marks scale
+    /// down under it (#2401).
     #[serde(default = "default_max_context_tokens")]
     pub max_context_tokens: usize,
-    /// The pruning ceiling once this process takes part in a swarm (#2342):
-    /// the lower of it and `max_context_tokens` applies from then on.
+    /// The ceiling once this process takes part in a swarm (#2342): the
+    /// lower of it and `max_context_tokens` applies from then on.
     #[serde(default = "default_swarm_max_context_tokens")]
     pub swarm_max_context_tokens: usize,
-    /// The size-aware collapse (#2348): a tool result over this many
-    /// estimated tokens collapses to its recall stub once the model has
-    /// seen it for `context_collapse_large_result_after_turns` turns. Unset,
-    /// it is on only for a swarm member (2000; review M1): set, it applies
-    /// to every agent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context_collapse_large_result_tokens: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context_collapse_large_result_after_turns: Option<u32>,
-    /// The context mode and its marks (#2403), in `config/context_mode.rs`.
+    /// The watermark marks (#2403), in `config/context_marks.rs`.
     #[serde(flatten)]
-    pub context_mode: context_mode::ContextModeConfig,
-    /// How many most-recent turns the spilling ceiling tail-pins (#1045).
+    pub context_marks: context_marks::ContextMarksConfig,
+    /// The removed context keys (#2414), refused at load.
+    #[serde(flatten)]
+    pub removed_context_keys: removed_keys::RemovedContextKeys,
+    /// How many most-recent turns the emergency ladder tail-pins (#1045).
     #[serde(default = "default_pin_recent_turns")]
     pub pin_recent_turns: u32,
-    /// Count-based conversation-message collapse threshold (#1046).
-    /// `u32::MAX` disables (conservative default until tuned by observation).
-    #[serde(default = "default_context_collapse_after_messages")]
-    pub context_collapse_after_messages: u32,
     /// Effort level for 4.6 models (`low`/`medium`/`high`/`max`).
     /// Defaults to `None`; provider applies `low` for 4.6 models when unset.
     #[serde(default)]
@@ -124,14 +109,11 @@ impl Default for AgentDefaults {
             _deprecated_restrict_to_workspace: None,
             exec_max_capture_bytes: default_exec_max_capture_bytes(),
             max_session_messages: default_max_session_messages(),
-            context_collapse_after_tool_calls: default_context_collapse_after_tool_calls(),
             max_context_tokens: default_max_context_tokens(),
             swarm_max_context_tokens: default_swarm_max_context_tokens(),
-            context_collapse_large_result_tokens: None,
-            context_collapse_large_result_after_turns: None,
-            context_mode: Default::default(),
+            context_marks: Default::default(),
+            removed_context_keys: Default::default(),
             pin_recent_turns: default_pin_recent_turns(),
-            context_collapse_after_messages: default_context_collapse_after_messages(),
             effort: None,
             _deprecated_command_allowlist: None,
         }
@@ -315,34 +297,21 @@ fn default_exec_max_capture_bytes() -> usize {
 fn default_max_session_messages() -> usize {
     200
 }
-fn default_context_collapse_after_tool_calls() -> u32 {
-    // Once the session accumulates more than this many tool calls, the oldest
-    // tool results get collapsed to a `recall(spill_id)` stub and their full
-    // content spilled to disk. Keeps the hot context small on long sessions;
-    // the agent can retrieve spilled content via the `recall` tool when needed.
-    50
-}
 fn default_pin_recent_turns() -> u32 {
     2
 }
-fn default_context_collapse_after_messages() -> u32 {
-    // Past 50 live conversation (assistant+user) messages, the oldest collapse
-    // to recall() stubs down to a low-water mark (#2213) — mirrors the tool dial.
-    50
-}
 fn default_max_context_tokens() -> usize {
     // Application-level context ceiling (owner decision 2026-10-01, epic
-    // #2401): 300k, so watermark mode's 256k/70k marks apply unscaled. It is
+    // #2401): 300k, so the 256k/70k watermark marks apply unscaled. It is
     // still lowered to what the model's window leaves the prompt beside the
     // reply (#2405): 258,400 on the Codex surface.
     300_000
 }
 fn default_swarm_max_context_tokens() -> usize {
-    // A swarm member's context ceiling. #2342 kept members lean at 48k under
-    // the default pruning ladder; the owner raised every agent, members
-    // included, to 300k (2026-10-01, epic #2401), so long-running members
-    // can use watermark mode's 256k/70k marks. Lower it in config to bring
-    // back a lean member under default pruning.
+    // A swarm member's context ceiling. #2342 kept members lean at 48k; the
+    // owner raised every agent, members included, to 300k (2026-10-01, epic
+    // #2401), so long-running members use the 256k/70k watermark marks.
+    // Lower it in config for a lean member: the marks scale down with it.
     300_000
 }
 fn default_max_results() -> u32 {
@@ -438,9 +407,8 @@ impl Config {
     /// - `QUECTO_AGENTS_DEFAULTS_MAX_SESSION_MESSAGES` → agents.defaults.max_session_messages
     /// - `QUECTO_MAX_CONTEXT_TOKENS` → agents.defaults.max_context_tokens
     /// - `QUECTO_SWARM_MAX_CONTEXT_TOKENS` → agents.defaults.swarm_max_context_tokens
-    /// - `QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_TOKENS` and
-    ///   `QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_AFTER_TURNS` → the size-aware collapse (#2348)
-    /// - `QUECTO_CONTEXT_MODE`, `QUECTO_CONTEXT_{HIGH,LOW}_TOKENS` → the context mode (#2403)
+    /// - `QUECTO_CONTEXT_{HIGH,LOW}_TOKENS` → the watermark marks (#2403)
+    /// - the removed context overrides are refused (#2414)
     /// - `QUECTO_AGENTS_DEFAULTS_EFFORT` → agents.defaults.effort
     /// - `OPENAI_API_KEY` → providers.openai.api_key
     /// - `ANTHROPIC_API_KEY` → providers.anthropic.api_key
@@ -476,8 +444,8 @@ impl Config {
         {
             config.agents.defaults.swarm_max_context_tokens = n;
         }
-        large_results::apply_env_overrides(&mut config.agents.defaults, env);
-        context_mode::apply_env_overrides(&mut config.agents.defaults, env);
+        context_marks::apply_env_overrides(&mut config.agents.defaults, env);
+        removed_keys::apply_env_overrides(&mut config.agents.defaults, env);
         if let Some(v) = env.get("OPENAI_API_KEY") {
             config.providers.openai.api_key = v.clone();
         }
@@ -702,13 +670,11 @@ pub mod telemetry;
 pub use grep_tool::GrepToolConfig;
 pub mod loaders;
 pub mod mapping;
-// #2348: the size-aware collapse's dials.
-mod large_results;
-// #2403: the context mode and its marks.
-pub mod context_mode;
-// #2414: the removed context keys, refused at load.
+// #2403: the watermark marks.
+pub mod context_marks;
 pub mod persistence;
-mod removed_keys;
+// #2414: the removed context keys, refused at load.
+pub mod removed_keys;
 pub mod writer;
 
 #[cfg(test)]
@@ -727,9 +693,6 @@ mod container_slice2_tests;
 #[cfg(test)]
 #[path = "config_cov_tests.rs"]
 mod cov_tests;
-#[cfg(test)]
-#[path = "config_large_result_tests.rs"]
-mod large_result_tests;
 #[cfg(test)]
 #[path = "config_swarm_context_tests.rs"]
 mod swarm_context_tests;

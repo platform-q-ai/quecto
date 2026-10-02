@@ -217,15 +217,11 @@ async fn all_event_types_write_successfully() {
         },
         AuditEvent::ContextPruned {
             messages_dropped: 5,
-            tool_results_collapsed: 0,
             tokens_before: 100_000,
             tokens_after: 80_000,
             budget_unmet: false,
-            messages_collapsed: 1,
             ladder_stubbed: 2,
-            snapshots_superseded: 0,
             ceiling_tokens: 0,
-            large_results_collapsed: 0,
             watermark_fallback: false,
         },
         AuditEvent::SubagentSpawned {

@@ -664,28 +664,17 @@ configuration. `swarm_control` pause/resume/close/extend/status/usage_budget
 bypass the model queue and route through ancestors to the addressed member. Swarm creation and a
 general dashboard event API remain separate follow-on work.
 
-A member's own context is kept lean (#2342): once its process takes part in
-a swarm its pruning budget is capped at `agents.defaults.swarm_max_context_tokens`
+A member's context works as every agent's does (#2414): it only grows at the
+end until one cut at the high mark takes it down to the low mark, written to
+the event log as a `context_cut` record. Once its process takes part in a
+swarm its ceiling is capped at `agents.defaults.swarm_max_context_tokens`
 (default 300000, or `QUECTO_SWARM_MAX_CONTEXT_TOKENS`; it never disengages,
-and setting it at or above `max_context_tokens` switches it off), and each
-full `summary` answer supersedes the member's older
-ones, which collapse to recall stubs while the newest stays in full. A large
-tool result (a long bash output, a `docs` or `web_fetch` read) collapses to its
-recall stub once the member has seen it for 3 turns (#2348; on by default only
-for swarm members, and a `recall` answer or a result with images is exempt). Each prune
-that does any of these is visible in the event log's `context_pruned` record
-(`snapshots_superseded`, `large_results_collapsed`, `ceiling_tokens`), and each
-turn's `llm_turn_end` records the cached share of its input
-(`cached_input_tokens`) and the share written to the cache
-(`cache_write_tokens`); the moment the cap engages is a
-`quecto::swarm_board` tracing event. See
-[Sessions](sessions.md#context-management) for the dials. In watermark mode
-(`agents.defaults.context_mode = "watermark"`, which members inherit from the
-agent that launched them) none of these rules runs: the member's context only
-grows until one cut at the high mark, written to the event log as a
-`context_cut` record; the swarm cap, like any ceiling below the high mark,
-still lowers both marks (see
-[Watermark mode](sessions.md#watermark-mode-2401)).
+and setting it at or above `max_context_tokens` switches it off); like any
+ceiling below the high mark, the cap lowers both marks. The moment the cap
+engages is a `quecto::swarm_board` tracing event, and each turn's
+`llm_turn_end` records the cached share of its input (`cached_input_tokens`)
+and the share written to the cache (`cache_write_tokens`). See
+[Sessions](sessions.md#the-watermark-context).
 
 Every member request also carries the `swarm` tool definition, so its
 description (#2348) holds only the op grammar and what every member needs:

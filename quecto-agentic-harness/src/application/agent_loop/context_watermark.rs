@@ -1,5 +1,5 @@
-//! The watermark context's pass (#2403). In watermark mode no earlier
-//! message is edited in place: before a request the context either stays
+//! The watermark context's pass (#2403), the only context mode (#2414): no
+//! earlier message is edited in place: before a request the context either stays
 //! as it is, or, once it reaches the high mark, is cut once down to the low
 //! mark (`domain::conversation::watermark`), the cut messages archived to
 //! session memory under one index entry that `recall` reaches.
@@ -21,7 +21,6 @@ use crate::application::context_pruning;
 use crate::domain::audit::{
     AuditEvent, ContextCutRecord, ContextCutSkippedRecord, CutMarks, CutSkipReason,
 };
-use crate::domain::conversation::ContextMode;
 use crate::domain::conversation::watermark::{
     CutInput, CutPlan, CutTrigger, NoCut, RequestSize, Watermark, plan_cut,
 };
@@ -35,11 +34,26 @@ use std::sync::Mutex;
 /// The archive index's base id; later cuts are `archive:2`, `archive:3`...
 const ARCHIVE_ID: &str = "archive";
 
-/// The watermark mode's marks, and the last cut it made.
+/// The marks, and the last cut made.
 #[derive(Debug)]
 pub(crate) struct WatermarkState {
     marks: Watermark,
     last_cut: Mutex<Option<LastCut>>,
+}
+
+impl WatermarkState {
+    pub(crate) fn new(marks: Watermark) -> Self {
+        Self {
+            marks,
+            last_cut: Mutex::new(None),
+        }
+    }
+
+    /// The configured marks, before the ceiling scales them.
+    #[cfg(test)]
+    pub(crate) fn marks(&self) -> Watermark {
+        self.marks
+    }
 }
 
 /// What one watermark pass did (#2404): its plan, the event-log record of
@@ -75,27 +89,8 @@ struct LastCut {
 }
 
 impl ContextManager {
-    /// Switch the context mode (#2403); a switch forgets any previous cut.
-    pub fn set_context_mode(&mut self, mode: ContextMode) {
-        self.watermark = match mode {
-            ContextMode::Watermark(marks) => Some(WatermarkState {
-                marks,
-                last_cut: Mutex::new(None),
-            }),
-            ContextMode::Default => None,
-        };
-    }
-
-    /// The context mode in force.
-    pub fn context_mode(&self) -> ContextMode {
-        match &self.watermark {
-            Some(state) => ContextMode::Watermark(state.marks),
-            None => ContextMode::Default,
-        }
-    }
-
-    /// Refresh the spill manifest when the spill store changed (both
-    /// passes): whether the history shifted.
+    /// Refresh the spill manifest when the spill store changed: whether
+    /// the history shifted.
     pub(super) async fn refresh_spill_manifest(
         &self,
         messages: &mut Vec<Message>,
@@ -110,18 +105,17 @@ impl ContextManager {
         }
     }
 
-    /// The watermark pass when the mode is on; `None` in the default mode,
-    /// whose rules then apply. `tool_tokens` is the tool definitions'
-    /// estimate. Every await comes before the cut, which is made in one
-    /// step: a pass dropped while it archives leaves the conversation as
-    /// it was.
+    /// The watermark pass before a request. `tool_tokens` is the tool
+    /// definitions' estimate. Every await comes before the cut, which is
+    /// made in one step: a pass dropped while it archives leaves the
+    /// conversation as it was.
     pub async fn prepare_watermark_context(
         &self,
         messages: &mut Vec<Message>,
         (tool_tokens, message_budget): (usize, usize),
         spills_dirty: bool,
-    ) -> Option<WatermarkPass> {
-        let state = self.watermark.as_ref()?;
+    ) -> WatermarkPass {
+        let state = &self.watermark;
         // Stamps spill ids only, so every archived message is recallable.
         let message_spilled = self.spill_unspilled_conversation_messages(messages).await;
         let manifest_shifted = self
@@ -156,17 +150,17 @@ impl ContextManager {
         plan.over_budget |= over_ceiling(messages);
         let made = matches!(cut, Some(CutRecord::Made(_)));
         plan.durable_prefix_dirty |= manifest_shifted || made;
-        Some(WatermarkPass {
+        WatermarkPass {
             plan,
             cut,
             fallback,
-        })
+        }
     }
 
     /// The emergency fallback (#2403 final review L3): no cut brought the
-    /// request under the ceiling, so the default ladder (stub, then drop)
-    /// runs for this request, as the default mode would; it edits history
-    /// in place, a cache miss, and only ever over the ceiling.
+    /// request under the ceiling, so the ladder (stub, then drop) runs for
+    /// this request; it edits history in place, a cache miss, and only
+    /// ever over the ceiling.
     fn ladder_fallback(
         &self,
         messages: &mut Vec<Message>,
@@ -183,7 +177,7 @@ impl ContextManager {
             stubbed = outcome.collapsed_to_stubs,
             dropped = outcome.dropped,
             message_budget,
-            "watermark: no cut fits under the ceiling; the default ladder ran for this request"
+            "watermark: no cut fits under the ceiling; the emergency ladder ran for this request"
         );
         plan.ladder_stubbed = outcome.collapsed_to_stubs;
         plan.messages_dropped += outcome.dropped;

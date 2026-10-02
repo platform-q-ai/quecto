@@ -42,7 +42,7 @@ Feature: Append-only audit log
     Then it deserializes back to an identical WorkflowTransition event
 
   Scenario: AuditEvent ContextPruned round-trips through JSON
-    Given an [AuditEvent]::ContextPruned with messages_dropped 12 tool_results_collapsed 0 tokens_before 195000 tokens_after 142000
+    Given an [AuditEvent]::ContextPruned with messages_dropped 12 ladder_stubbed 3 tokens_before 195000 tokens_after 142000
     When the event is serialized to JSON
     Then it deserializes back to an identical ContextPruned event
 

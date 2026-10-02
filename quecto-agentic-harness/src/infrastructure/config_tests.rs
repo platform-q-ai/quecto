@@ -592,30 +592,6 @@ fn test_default_max_context_tokens() {
 }
 
 #[test]
-fn test_default_context_collapse_after_tool_calls_is_50() {
-    // #1017: collapse triggers after a configurable number of tool calls,
-    // default 50 — pin the default in code, not only in docs.
-    assert_eq!(default_context_collapse_after_tool_calls(), 50);
-    let config: Config = serde_json::from_str("{}").unwrap();
-    assert_eq!(config.agents.defaults.context_collapse_after_tool_calls, 50);
-    assert_eq!(
-        AgentDefaults::default().context_collapse_after_tool_calls,
-        50
-    );
-}
-
-#[test]
-fn test_context_collapse_legacy_turns_alias_deserializes() {
-    // Pre-#1017 config files used `context_collapse_after_turns`; the serde
-    // alias keeps them working.
-    let json = r#"{
-            "agents": { "defaults": { "context_collapse_after_turns": 12 } }
-        }"#;
-    let config: Config = serde_json::from_str(json).unwrap();
-    assert_eq!(config.agents.defaults.context_collapse_after_tool_calls, 12);
-}
-
-#[test]
 fn test_deserialize_max_session_messages_override() {
     let json = r#"{
             "agents": { "defaults": { "max_session_messages": 12 } }

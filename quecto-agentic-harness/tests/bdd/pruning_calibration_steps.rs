@@ -71,20 +71,24 @@ fn given_llm_tool_call_without_usage(world: &mut QuectoWorld, tool_name: String)
     push_tool_call(world, tool_name, None);
 }
 
+/// The pre-run messages no longer in context in full: archived by a cut,
+/// or stubbed or dropped by the emergency ladder (#2414).
 fn pre_run_stubs(world: &QuectoWorld) -> usize {
     world
         .watermark_pre_run
         .iter()
         .filter(|original| {
-            world
-                .watermark_post_run
-                .iter()
-                .any(|m| m.turn == original.turn && m.role == original.role && m.is_collapsed)
+            !world.watermark_post_run.iter().any(|m| {
+                m.turn == original.turn
+                    && m.role == original.role
+                    && m.content == original.content
+                    && !m.is_collapsed
+            })
         })
         .count()
 }
 
-#[then("some pre-run messages are collapsed to recall stubs")]
+#[then("some pre-run messages are archived or stubbed")]
 fn then_some_pre_run_stubbed(world: &mut QuectoWorld) {
     assert!(
         pre_run_stubs(world) > 0,
@@ -92,7 +96,7 @@ fn then_some_pre_run_stubbed(world: &mut QuectoWorld) {
     );
 }
 
-#[then("no pre-run message is collapsed to a recall stub")]
+#[then("no pre-run message is archived or stubbed")]
 fn then_no_pre_run_stubbed(world: &mut QuectoWorld) {
     assert_eq!(pre_run_stubs(world), 0, "the transcript fits the budget");
 }

@@ -4,9 +4,6 @@
 //! a result without its call (OpenAI chat completions rejects either).
 
 use super::*;
-use crate::application::context_pruning::collapse_tool_results_over_limit;
-use crate::application::context_pruning::messages::collapse_conversation_messages_over_limit;
-use crate::application::context_pruning::snapshots::collapse_superseded_snapshots;
 use crate::domain::message::{Message, Role, ToolCall};
 use std::collections::BTreeSet;
 
@@ -59,7 +56,6 @@ fn summary(turn: u32, id: &str) -> Message {
         true,
     );
     msg.tool_name = Some("swarm".to_string());
-    msg.snapshot_key = Some("swarm.summary");
     msg
 }
 
@@ -73,30 +69,30 @@ fn big(words: usize) -> String {
     "plain ".repeat(words)
 }
 
-/// The review's case: a parallel `[bash call-b, swarm call-1]` response. The
-/// newest summary pins its caller; the drop rung must keep `call-b`'s
-/// result with it rather than orphan the call.
+/// The review's case: a parallel `[bash call-b, swarm call-1]` response
+/// whose summary is in the pinned recent turn. The drop rung must keep
+/// `call-b`'s result with it rather than orphan the call.
 #[test]
-fn a_pinned_summarys_parallel_sibling_result_is_never_orphaned() {
+fn a_pinned_results_parallel_sibling_result_is_never_orphaned() {
     let mut messages = vec![
         Message::system("system"),
         Message::user("go"),
-        caller(1, vec![call("call-b", "bash"), call("call-1", "swarm")]),
-        result(1, "call-b", big(1_500), false),
-        summary(1, "call-1"),
-        caller(2, vec![call("call-c", "bash")]),
-        result(2, "call-c", big(800), false),
-        done(3),
+        caller(1, vec![call("call-c", "bash")]),
+        result(1, "call-c", big(800), false),
+        caller(2, vec![call("call-b", "bash"), call("call-1", "swarm")]),
+        result(2, "call-b", big(1_500), false),
+        summary(2, "call-1"),
+        done(2),
     ];
 
-    enforce_context_ceiling_ladder(&mut messages, 50, 0);
+    enforce_context_ceiling_ladder(&mut messages, 50, 1);
 
     assert_paired(&messages, "after the ladder");
     assert!(
         messages
             .iter()
-            .any(|m| m.snapshot_key.is_some() && !m.is_collapsed),
-        "the newest summary stays in full"
+            .any(|m| m.tool_call_id.as_deref() == Some("call-1")),
+        "the pinned turn's summary stays"
     );
 }
 
@@ -123,7 +119,7 @@ fn the_drop_rung_never_stops_inside_an_exchange() {
 }
 
 /// A mixed conversation: parallel calls, spilled and unspilled results,
-/// superseded and newest summaries, conversation text.
+/// conversation text.
 fn mixed_conversation() -> Vec<Message> {
     let mut messages = vec![Message::system("system prompt"), Message::user("run it")];
     for turn in 1..=12u32 {
@@ -154,7 +150,7 @@ fn mixed_conversation() -> Vec<Message> {
     messages
 }
 
-/// Every rung, every budget and pin: calls and results always pair.
+/// Both rungs, every budget and pin: calls and results always pair.
 #[test]
 fn every_rung_keeps_calls_and_results_paired_at_any_budget() {
     let total = crate::application::context_pruning::estimate_total_tokens(&mixed_conversation());
@@ -163,22 +159,8 @@ fn every_rung_keeps_calls_and_results_paired_at_any_budget() {
             let context = format!("pin {pin}, budget {budget}");
             let mut messages = mixed_conversation();
             assert_paired(&messages, &format!("{context}: the input"));
-            collapse_superseded_snapshots(&mut messages);
-            assert_paired(&messages, &format!("{context}: superseded snapshots"));
-            collapse_tool_results_over_limit(&mut messages, 5);
-            assert_paired(&messages, &format!("{context}: tool dial"));
-            collapse_conversation_messages_over_limit(&mut messages, 4, pin);
-            assert_paired(&messages, &format!("{context}: conversation dial"));
             enforce_context_ceiling_ladder(&mut messages, budget, pin);
             assert_paired(&messages, &format!("{context}: the ladder"));
-            assert!(
-                messages
-                    .iter()
-                    .filter(|m| m.snapshot_key.is_some() && !m.is_collapsed)
-                    .count()
-                    == 1,
-                "{context}: exactly the newest summary stays in full"
-            );
         }
     }
 }

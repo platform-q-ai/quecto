@@ -1,23 +1,22 @@
-// #1046: conversation-message lifecycle — creation-time spilling, count-based
-// collapse to recall stubs, and the demotion-ladder ceiling (stub → drop).
+// #1046: conversation-message lifecycle — creation-time spilling and the
+// emergency ladder's stubs (stub → drop, #2414: only when no watermark cut
+// can bring a request under the ceiling).
 //
-// Conversation (assistant/user) messages get the same lifecycle tool outputs
-// already have: written to the spill store at creation (single writer:
-// [`spill_conversation_message`]), proactively collapsed to inline `recall()`
-// stubs once `context_collapse_after_messages` live messages accumulate, and
-// demoted down the ladder (full → stub → removed) under token-budget pressure.
+// Conversation (assistant/user) messages are written to the spill store at
+// creation (single writer: [`spill_conversation_message`]), so a ladder
+// stub or drop stays recallable.
 //
 // Depends on: domain::message, application::sessions::use_cases (the narrow
 // retention writer, D9 #1978). Never imports infrastructure, never reaches
 // the retention store.
 
-use super::{COLLAPSE_DISABLED, estimate_tokens, truncate_utf8_safe};
+use super::{estimate_tokens, truncate_utf8_safe};
 use crate::application::sessions::use_cases::RetainContext;
 use crate::domain::message::{Message, Role};
 use crate::domain::session::SpillEntry;
 use crate::domain::turn_origin::latest_opener;
 
-// #2213: the demotion-ladder ceiling and its low-water mark.
+// #2213: the emergency ladder and its low-water mark.
 #[path = "context_pruning_ceiling.rs"]
 pub(super) mod ceiling;
 pub use ceiling::{CeilingLadderOutcome, enforce_context_ceiling_ladder};
@@ -57,7 +56,7 @@ fn is_conversation(msg: &Message) -> bool {
 /// become orphaned in the provider payload. Callers must pass the message's
 /// own `spill_id` — unspilled content (`spill_id == None`, e.g. after a
 /// spill-append failure) must never be stubbed, because its `recall()` would
-/// be unresolvable; the collapse/ladder call sites skip such messages.
+/// be unresolvable; the ladder skips such messages.
 fn collapse_conversation_message(msg: &mut Message, spill_id: &str) {
     let tokens = estimate_tokens(&msg.content);
     msg.content = message_collapse_stub(msg.role.as_str(), &msg.content, tokens, spill_id);
@@ -68,33 +67,24 @@ fn collapse_conversation_message(msg: &mut Message, spill_id: &str) {
     msg.thinking_blocks.clear();
 }
 
-/// Per-message exemption flags for the count trigger and the demotion ladder
-/// (#1046 AC3): pinned messages (system prompt, manifest), system messages,
-/// the newest snapshot of each state and its call (#2342),
-/// the in-flight user prompt (last turn-less user message), turn-less
-/// messages of the current prompt, and messages within the
-/// `pin_recent_turns` most recent distinct turns.
+/// Per-message exemption flags for the emergency ladder (#1046 AC3):
+/// pinned messages (system prompt, manifest), system messages, the
+/// in-flight user prompt (last turn-less user message), turn-less messages
+/// of the current prompt, and messages within the `pin_recent_turns` most
+/// recent distinct turns.
 ///
 /// Turn numbering restarts on every prompt, so the pinned tail is computed
 /// from the current prompt's region (everything from the in-flight prompt
-/// onward). With `tail_fallback` (the ladder), when the current prompt has
-/// produced no turns yet the tail falls back to the previous prompt's turns,
-/// so `pin_recent_turns` keeps protecting the most recent completed turns
-/// between prompts (#1045). NOTE: this fallback is a deliberate behaviour
-/// addition beyond #1044/#1045/#1046's literal ACs — the replaced
-/// `enforce_context_ceiling_spilling` could drop the previous prompt's tail
-/// when the current prompt had no turns yet; the ladder preserves the spirit
-/// of tail-pinning between prompts instead (pinned by
-/// `ceiling_ladder_tail_fallback_protects_previous_prompt_turns`).
-/// The count trigger does not use the fallback: it
-/// already keeps the most recent messages in full by construction, and its
-/// whole point is ageing out earlier prompts' prose.
-fn exempt_flags(messages: &[Message], pin_recent_turns: u32, tail_fallback: bool) -> Vec<bool> {
+/// onward). When the current prompt has produced no turns yet the tail
+/// falls back to the previous prompt's turns, so `pin_recent_turns` keeps
+/// protecting the most recent completed turns between prompts (#1045;
+/// pinned by `ceiling_ladder_tail_fallback_protects_previous_prompt_turns`).
+fn exempt_flags(messages: &[Message], pin_recent_turns: u32) -> Vec<bool> {
     let region_start = latest_opener(messages).unwrap_or(0);
     // The turn-bearing region: the current prompt's region, or — when it has
     // no turns yet — the previous prompt's region.
     let mut tail_start = region_start;
-    if tail_fallback && messages[region_start..].iter().all(|m| m.turn.is_none()) {
+    if messages[region_start..].iter().all(|m| m.turn.is_none()) {
         tail_start = latest_opener(&messages[..region_start]).unwrap_or(0);
     }
     let mut recent_turns: Vec<u32> = messages[tail_start..]
@@ -105,58 +95,16 @@ fn exempt_flags(messages: &[Message], pin_recent_turns: u32, tail_fallback: bool
     recent_turns.dedup();
     let keep_from = recent_turns.len().saturating_sub(pin_recent_turns as usize);
     let pinned_turns = &recent_turns[keep_from..];
-
-    // The newest snapshot of each state and its call (#2342): never demoted.
-    let newest = super::snapshots::newest_snapshots(messages);
     messages
         .iter()
         .enumerate()
         .map(|(i, m)| {
             m.is_pinned
-                || newest[i]
                 || m.role == Role::System
                 || (i >= region_start && m.turn.is_none())
                 || (i >= tail_start && m.turn.is_some_and(|t| pinned_turns.contains(&t)))
         })
         .collect()
-}
-
-/// Collapse the oldest live conversation (assistant + user, one combined
-/// count) messages to recall stubs once their number exceeds `max_messages`
-/// (#1046 AC2), down to its low-water mark in one batch (#2213). Exempt
-/// from the count and never collapsed: system prompt, manifest, the
-/// in-flight user prompt, and messages within the `pin_recent_turns` tail.
-/// Tool results are excluded — the tool dial (`context_collapse_after_tool_calls`)
-/// is independent. `max_messages == COLLAPSE_DISABLED` disables; returns the count.
-pub fn collapse_conversation_messages_over_limit(
-    messages: &mut [Message],
-    max_messages: u32,
-    pin_recent_turns: u32,
-) -> usize {
-    if max_messages == COLLAPSE_DISABLED {
-        return 0;
-    }
-    let exempt = exempt_flags(messages, pin_recent_turns, false);
-    let live: Vec<usize> = messages
-        .iter()
-        .enumerate()
-        .filter(|&(i, m)| {
-            // spill_id == None means the content never reached the spill
-            // store (append failure / missing store): stubbing it would mint
-            // an unresolvable recall(), so it is skipped entirely.
-            !exempt[i] && is_conversation(m) && !m.is_collapsed && m.spill_id.is_some()
-        })
-        .map(|(i, _)| i)
-        .collect();
-    let to_collapse = ceiling::count_to_collapse(live.len(), max_messages as usize);
-    for &i in &live[..to_collapse] {
-        // `live` filtered to spill_id.is_some(); skip defensively otherwise.
-        let Some(spill_id) = messages[i].spill_id.clone() else {
-            continue;
-        };
-        collapse_conversation_message(&mut messages[i], &spill_id);
-    }
-    to_collapse
 }
 
 /// Spill a conversation (assistant/user) message to the store at creation
@@ -166,10 +114,10 @@ pub fn collapse_conversation_messages_over_limit(
 /// capability with a `:{n}` suffix (`RetainContext::retain_deduplicated`,
 /// D9 #1978: highest existing suffix + 1, one pass over the index); the
 /// policy allocates the base id, sessions appends and issues the id it
-/// retained. The message's `spill_id` is stamped with that id so later
-/// collapse/demotion can reference it. Ephemeral sessions (empty key)
-/// deliberately persist too, matching tool-output spilling: collapse and the
-/// demotion ladder can fire within a single `--no-session` run, and their
+/// retained. The message's `spill_id` is stamped with that id so a later
+/// archive or ladder stub can reference it. Ephemeral sessions (empty key)
+/// deliberately persist too, matching tool-output spilling: a cut and the
+/// ladder can fire within a single `--no-session` run, and their
 /// `recall()` stubs must stay resolvable, so entries are written under the
 /// sanitized empty-key store path (PR #1048; see the NOTE in
 /// `agent_loop_spill.rs`). The privacy counterpart lives at the interface

@@ -65,17 +65,6 @@ impl ToolExecutor for ToolRegistryImpl {
                 .is_some_and(|tool| tool.overlaps_safely(arguments))
     }
 
-    /// A bundled tool's snapshot key (#2342); every other tool, an
-    /// extension included whatever it claims, names none: a key lets a
-    /// result collapse every older result of it.
-    fn snapshot_key(&self, name: &str, arguments: &str, content: &str) -> Option<&'static str> {
-        let registration = self.metadata.get(name)?;
-        match registration.source {
-            ToolSource::BundledNative => self.get(name)?.snapshot_key(arguments, content),
-            ToolSource::Uds | ToolSource::Runtime => None,
-        }
-    }
-
     /// Tell a bundled tool its result was collapsed (#2348 review M1); an
     /// extension answers from no delivery cache the harness owns.
     fn result_collapsed(&self, name: &str, arguments: &str) {

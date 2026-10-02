@@ -94,15 +94,13 @@ fn agent_with(
         temperature: 0.0,
         retention: spill_store.map(crate::composition::retention::context_retention_over),
         session_key: "test-1072".to_string(),
-        context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens,
         progress_callback: None,
         streaming: false,
         effort: None,
         audit_log: None,
         pin_recent_turns: 2,
-        context_collapse_after_messages: u32::MAX,
-        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
+        context_marks: Default::default(),
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
@@ -127,19 +125,20 @@ fn big_content() -> String {
 /// RED for #1072 finding 6: rung-1 demotion mutates messages IN PLACE — the
 /// UUID sequence of the durable prefix is unchanged, so an id-snapshot
 /// comparison misses it. The dirty signal must come from the ladder outcome
-/// (`collapsed_to_stubs > 0 || dropped > 0`) instead.
+/// (`collapsed_to_stubs > 0 || dropped > 0`) instead. (#2414: the emergency
+/// ladder, which runs only when no watermark cut fits: here the brief every
+/// cut keeps is alone over the ceiling, and a cut would save too little.)
 #[tokio::test]
 async fn in_place_stub_demotion_latches_durable_prefix_dirty() {
-    let big = big_content();
+    let mut brief = crate::domain::turn_origin::prompt(big_content());
+    brief.spill_id = Some("turn0:msg:user".to_string());
     let mut messages = vec![
-        spilled_history_message(1, &big),
-        spilled_history_message(2, &big),
-        spilled_history_message(3, "a small earlier reply"),
-        spilled_history_message(4, "another small earlier reply"),
+        brief,
+        spilled_history_message(1, "a small earlier reply"),
         Message::user("hi"),
     ];
-    // Budget forces rung 1 to stub turns 1–2; turns 3–4 are tail-pinned and
-    // the post-stub total fits, so NOTHING is dropped: identity is unchanged.
+    // Budget forces rung 1 to stub the brief; the post-stub total fits, so
+    // NOTHING is dropped: identity is unchanged.
     let mut agent = agent_with(
         MockProvider::new(vec![text_response("ok")]),
         MockRegistry::new(),
@@ -151,11 +150,13 @@ async fn in_place_stub_demotion_latches_durable_prefix_dirty() {
     // Positive control: the demotion really was in-place stubbing, no drops.
     assert!(
         messages[0].is_collapsed && messages[0].content.contains("recall("),
-        "scenario setup: turn 1 must be stub-demoted in place, got: {}",
+        "scenario setup: the brief must be stub-demoted in place, got: {}",
         messages[0].content
     );
     assert!(
-        messages.iter().filter(|m| m.turn == Some(2)).count() == 1,
+        messages
+            .iter()
+            .any(|m| m.content == "a small earlier reply"),
         "scenario setup: no message may be dropped in this stub-only scenario"
     );
 

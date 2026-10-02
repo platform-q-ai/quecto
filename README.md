@@ -13,7 +13,7 @@ Quecto runs as a small Rust binary with tools, workflows, and the subagent repli
 - **Built-in workflow engine:** steer agents through explicit feature, refactor, chore, bugfix, and adversarial-review processes with checkpoints, guard commands, and live workflow state.
 - **Workspace-aware tools:** give agents shell, file editing, search, docs, recall, workflow, and extension tools rooted in the active workspace and governed by repository hooks.
 - **Provider support:** use OpenAI, Anthropic, ChatGPT Codex, or OpenAI-compatible endpoints through the same provider abstraction and credential store.
-- **Ultra-long-running sessions:** keep sessions usable over extended work with a configurable, sliding, auto-pruning context window. Older tool results and transcript history collapse into recoverable stubs that the model can retrieve with `recall` when detail is needed again, meaning disruptive manual compaction cycles are no longer required.
+- **Ultra-long-running sessions:** keep sessions usable over extended work with an append-only context: it only grows at its end, and once it reaches a high mark one deep cut takes it down to a low mark, so nearly every request reuses the provider's prompt cache. What a cut drops is archived to session memory, where the model retrieves it with `recall` when detail is needed again, meaning disruptive manual compaction cycles are no longer required.
 - **Composable interfaces:** run `quecto` directly, use the TUI locally, expose a running agent through HTTP/WebSocket, or register external MCP tools over the UDS event bus.
 
 ## Principles

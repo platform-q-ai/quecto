@@ -88,58 +88,6 @@ fn a_ranked_grep_does_not_overlap() {
     assert!(!registry.overlaps_safely("grep", r#"{"pattern":"x","rank_by":"y"}"#));
 }
 
-/// A tool that names every result a snapshot (#2342).
-#[derive(Debug)]
-struct Snapshotting(&'static str);
-
-impl Tool for Snapshotting {
-    fn snapshot_key(&self, _arguments: &str, _content: &str) -> Option<&'static str> {
-        Some("state")
-    }
-    fn definition(&self) -> crate::domain::tool::ToolDefinition {
-        Named(self.0).definition()
-    }
-    fn execute(
-        &self,
-        _arguments: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
-        Box::pin(async { Err(DomainError::Tool("unused".into())) })
-    }
-}
-
-/// #2342: only a bundled tool's snapshot key counts: a runtime or UDS tool
-/// claiming one would let it collapse other results of that key.
-#[test]
-fn only_a_bundled_tool_names_a_snapshot() {
-    let mut registry = ToolRegistryImpl::new();
-    assert!(registry.register_runtime_tool(Arc::new(Snapshotting("extension_state"))));
-    assert!(registry.register_uds_tool(Arc::new(Snapshotting("uds_state"))));
-    assert!(registry.register(Arc::new(Named("bundled_plain"))));
-    assert!(registry.register(Arc::new(Snapshotting("bundled_state"))));
-    assert_eq!(registry.snapshot_key("extension_state", "{}", "x"), None);
-    assert_eq!(registry.snapshot_key("uds_state", "{}", "x"), None);
-    assert_eq!(registry.snapshot_key("bundled_plain", "{}", "x"), None);
-    assert_eq!(registry.snapshot_key("not-a-tool", "{}", "x"), None);
-    assert_eq!(
-        registry.snapshot_key("bundled_state", "{}", "x"),
-        Some("state")
-    );
-}
-
-/// #2342: the bundled `swarm` tool is registered with its snapshot key.
-#[test]
-fn the_registry_asks_the_swarm_tool_for_its_snapshot_key() {
-    let mut registry = ToolRegistryImpl::new();
-    assert!(registry.register(Arc::new(
-        crate::infrastructure::tools::swarm::SwarmTool::new()
-    )));
-    let summary = r#"{"run":{},"members":[],"tasks":[],"event_cursor":7}"#;
-    assert_eq!(
-        registry.snapshot_key("swarm", r#"{"op":"summary"}"#, summary),
-        Some(crate::infrastructure::tools::swarm::SUMMARY_SNAPSHOT)
-    );
-}
-
 /// A tool that records the collapses it is told of (#2348 review M1).
 #[derive(Debug, Default)]
 struct Forgetting(std::sync::Mutex<Vec<String>>);

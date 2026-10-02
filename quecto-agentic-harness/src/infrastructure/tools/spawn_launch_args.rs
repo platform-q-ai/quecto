@@ -168,9 +168,6 @@ pub(super) struct ChildLaunchSpec<'a> {
     /// Private sidecar carrying the launch-bound parent control credential
     /// (#1935). Only the path is forwarded; the material never reaches argv.
     pub parent_control_path: Option<&'a Path>,
-    /// The launching agent's context mode and marks (#2403), as
-    /// `--inherited-context-mode` takes them.
-    pub inherited_context_mode: &'a str,
 }
 
 /// Build the ordered CLI argument list for launching a child `quecto agent` in
@@ -187,7 +184,6 @@ pub(super) fn build_child_cli_args(spec: &ChildLaunchSpec<'_>) -> Vec<OsString> 
         workflow_spec_path,
         inherited_tool_policy_path,
         parent_control_path,
-        inherited_context_mode,
     } = *spec;
 
     let mut args: Vec<OsString> = vec!["agent".into(), "--mode".into(), "uds".into()];
@@ -233,13 +229,6 @@ pub(super) fn build_child_cli_args(spec: &ChildLaunchSpec<'_>) -> Vec<OsString> 
         args.push("--effort".into());
         args.push(effort.into());
     }
-
-    // The launching agent's context mode and marks (#2403): an argument,
-    // so it reaches a container member through the runtime's
-    // `-- <binary> <args>` contract unchanged; the child adopts what its own
-    // configuration leaves unset.
-    args.push("--inherited-context-mode".into());
-    args.push(inherited_context_mode.into());
 
     // Forward --config when a custom (or inherited runtime) config applies, so
     // children share the same tool isolation defaults as the parent.

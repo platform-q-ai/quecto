@@ -43,15 +43,13 @@ fn agent_sized(
         temperature: 0.7,
         retention: None,
         session_key: String::new(),
-        context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens,
         progress_callback: None,
         streaming,
         effort: None,
         audit_log: None,
         pin_recent_turns: 2,
-        context_collapse_after_messages: u32::MAX,
-        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
+        context_marks: Default::default(),
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
@@ -79,12 +77,11 @@ async fn a_reasoning_only_reply_at_the_limit_is_asked_again_not_accepted_as_empt
         asked,
         "the model is told why and how to answer: {messages:?}"
     );
-    let consecutive_user = messages
-        .windows(2)
-        .any(|w| w[0].role == Role::User && w[1].role == Role::User);
-    assert!(
-        !consecutive_user,
-        "feedback merges into the trailing user message"
+    // #2403/#2414: the feedback is its own message: the sent prompt is
+    // never edited.
+    assert_eq!(
+        messages[0].content, "question",
+        "the sent prompt is unchanged"
     );
 }
 
@@ -165,8 +162,8 @@ async fn the_retry_may_use_the_model_cap_and_later_requests_do_not() {
 
 #[tokio::test]
 async fn the_ledger_never_records_the_owners_prompt_as_run_added() {
-    // #1072: feedback merged into the owner's prompt is not a message the
-    // run added, so it must not appear in (or be duplicated into) the ledger.
+    // #1072: the owner's prompt is not a message the run added, so it never
+    // appears in the ledger; the feedback the run added does, once.
     let (mut agent, _) = agent(vec![
         Ok(reasoning_only_at_the_limit()),
         Ok(text_response("the answer")),
@@ -178,7 +175,15 @@ async fn the_ledger_never_records_the_owners_prompt_as_run_added() {
         .iter()
         .filter(|m| m.role == Role::User)
         .count();
-    assert_eq!(users, 0, "{:?}", result.appended_messages);
+    assert_eq!(users, 1, "{:?}", result.appended_messages);
+    assert!(
+        result
+            .appended_messages
+            .iter()
+            .all(|m| m.content != "question"),
+        "{:?}",
+        result.appended_messages
+    );
     assert_eq!(
         result.appended_messages.last().unwrap().content,
         "the answer"
@@ -283,7 +288,7 @@ async fn feedback_the_run_adds_after_tool_results_is_in_the_ledger_once() {
 }
 
 #[tokio::test]
-async fn feedback_merged_into_run_added_feedback_updates_that_ledger_entry() {
+async fn each_feedback_the_run_adds_is_in_the_ledger_once() {
     let (mut agent, _) = agent(vec![
         Ok(missing_tool_call()),
         Ok(reasoning_only_at_the_limit()),
@@ -295,10 +300,10 @@ async fn feedback_merged_into_run_added_feedback_updates_that_ledger_entry() {
     let mut messages = vec![Message::user("question")];
     let result = agent.run_loop(&mut messages).await.unwrap();
     let feedback = feedback_in_ledger(&result);
-    assert_eq!(feedback.len(), 1, "one run-added message: {feedback:?}");
+    assert_eq!(feedback.len(), 2, "two run-added messages: {feedback:?}");
     assert!(
-        feedback[0].contains("output limit") && feedback[0].contains("malformed"),
-        "the entry carries the merged text: {feedback:?}"
+        feedback[0].contains("output limit") && feedback[1].contains("malformed"),
+        "each in the order the run added it: {feedback:?}"
     );
 }
 

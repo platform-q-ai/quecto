@@ -1,9 +1,9 @@
 //! Format 1 of a raw session export (#1859): how each record and the
-//! manifest are encoded on disk. A message record carries the message in
-//! the shape UDS clients read it (stable id, ordinal, role, content, tool
-//! calls, tool result linkage, error and collapsed flags, display-safe
-//! thinking); a spill record carries one retention entry with its content.
-//! Values are built as JSON objects so keys are emitted in sorted order,
+//! manifest are encoded on disk. A message record carries the message as
+//! UDS clients read it (stable id, ordinal, role, content, tool calls, tool
+//! result linkage, error/collapsed flags, display-safe thinking, `turnOrigin`
+//! and `userKind`); a spill record carries one retention entry with its
+//! content. Values are JSON objects, so keys are emitted in sorted order,
 //! the same bytes whichever record built them.
 use crate::application::sessions::dto::{ExportManifest, ExportRecord};
 use crate::domain::message::{Message, ThinkingBlock};

@@ -200,14 +200,6 @@ impl ToolExecutor for MockRegistry {
             .any(|overlapping| overlapping == name)
     }
 
-    fn snapshot_key(&self, name: &str, arguments: &str, content: &str) -> Option<&'static str> {
-        let tool = self
-            .tools
-            .iter()
-            .find(|tool| tool.definition().name == name)?;
-        tool.snapshot_key(arguments, content)
-    }
-
     fn result_collapsed(&self, name: &str, arguments: &str) {
         if let Some(tool) = self
             .tools
@@ -281,15 +273,13 @@ pub(super) fn test_config(
         temperature: 0.7,
         retention: None,
         session_key: String::new(),
-        context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 190_000,
         progress_callback: None,
         streaming: false,
         effort: None,
         audit_log: None,
         pin_recent_turns: 2,
-        context_collapse_after_messages: u32::MAX,
-        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
+        context_marks: Default::default(),
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     }
@@ -691,15 +681,21 @@ fn new_threads_context_knobs_and_model_window_into_observable_budget() {
     let registry = MockRegistry::new();
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         pin_recent_turns: 7,
-        context_collapse_after_messages: 11,
-        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
+        context_marks: crate::domain::conversation::watermark::Watermark::new(50_000, 20_000)
+            .unwrap(),
         max_context_tokens: 10_000,
         model_context_window: Some(4_096),
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
         max_tokens: 512,
         ..test_config(provider, Box::new(registry))
     });
-    assert_eq!(agent.context_knob_snapshot(), (7, 11));
+    assert_eq!(
+        agent.context_knob_snapshot(),
+        (
+            7,
+            crate::domain::conversation::watermark::Watermark::new(50_000, 20_000).unwrap()
+        )
+    );
     // #2405: the window less the 512-token reply reserve.
     assert_eq!(agent.max_context_tokens(), 4_096 - 512);
     let debug = format!("{agent:?}");

@@ -1,8 +1,7 @@
 //! PR #1048 follow-up: unspilled conversation content (`spill_id == None`,
 //! the residue of a spill-append failure or a missing store at creation)
 //! must never be stubbed into an unresolvable `recall("unknown")` — the
-//! count trigger skips it, and the ladder lets it fall through to the second
-//! rung's plain drop, as the pre-#1046 ceiling did. Split from
+//! ladder lets it fall through to the second rung's plain drop, as the pre-#1046 ceiling did. Split from
 //! `context_pruning_message_tests.rs` for the 750-line source cap.
 
 use super::messages::*;
@@ -25,34 +24,6 @@ fn unspilled_msg(turn: u32) -> Message {
     let mut m = Message::user(format!("unspilled old question {}", "padding ".repeat(20)));
     m.turn = Some(turn);
     m
-}
-
-#[test]
-fn count_trigger_never_stubs_unspilled_messages() {
-    let mut messages = vec![unspilled_msg(1)];
-    for i in 2..=4u32 {
-        messages.push(spilled_msg(Role::Assistant, i, i));
-    }
-    messages.push(Message::user("current question"));
-
-    let collapsed = collapse_conversation_messages_over_limit(&mut messages, 0, 0);
-
-    assert!(
-        collapsed >= 1,
-        "positive control: spilled old messages must still collapse"
-    );
-    assert!(
-        !messages[0].is_collapsed && messages[0].content.starts_with("unspilled old question"),
-        "a message that never reached the spill store must not be stubbed \
-         (its recall() would be unresolvable); got: {}",
-        messages[0].content
-    );
-    assert!(
-        !messages
-            .iter()
-            .any(|m| m.content.contains("recall(\"unknown\")")),
-        "no message may ever be stubbed to recall(\"unknown\")"
-    );
 }
 
 #[test]

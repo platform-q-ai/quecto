@@ -53,8 +53,14 @@ async fn run_with_first_report(reported: Option<u32>) -> (AgentLoopImpl, Vec<Mes
     (agent, messages)
 }
 
+/// The messages a cut archived or the ladder stubbed: a cut leaves its
+/// archive stub, the ladder its recall stubs (#2414).
 fn stubbed(messages: &[Message]) -> usize {
-    messages.iter().filter(|m| m.is_collapsed).count()
+    use crate::domain::conversation::UserKind;
+    messages
+        .iter()
+        .filter(|m| m.is_collapsed || m.user_kind == UserKind::ArchiveStub)
+        .count()
 }
 
 #[tokio::test]
@@ -340,7 +346,8 @@ async fn tools_and_messages_fit_the_window_at_the_calibrated_size() {
         "{} calibrated tokens in a {window}-token window",
         scale.calibrated(total)
     );
-    assert_eq!(*audit.unmet.lock().unwrap(), vec![false]);
+    // A cut brought it under: no record says the budget was unmet.
+    assert!(audit.unmet.lock().unwrap().iter().all(|unmet| !unmet));
 }
 
 #[tokio::test]

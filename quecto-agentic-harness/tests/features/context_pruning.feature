@@ -1,15 +1,15 @@
 @done
-Feature: Context pruning via sliding window and tool-call collapse
+Feature: Context management: the watermark pass, the emergency ladder, spill and recall
 
-  Tool outputs remain in full context until either (a) the number of tool
-  calls in the session exceeds context_collapse_after_tool_calls (default
-  50), at which point the oldest tool results the model has seen are
-  collapsed to compact recall() stubs down to the dial's low-water mark
-  (75%, rounded up), or (b) they are dropped by the sliding window when the
-  conversation exceeds the token budget. The collapse trigger counts tool
-  calls cumulatively across prompts within a session rather than turns
-  elapsed. Collapse can be disabled entirely. Spill-to-disk still occurs at
-  creation time so recall() can retrieve collapsed or dropped outputs.
+  The watermark pass is the only context mode (#2414): the context only
+  grows at its end, and once a request reaches the high mark one cut takes
+  it down to the low mark, archiving what it drops to session memory. No
+  earlier message is edited in place between cuts. Only when no cut can
+  bring a request under the ceiling does the emergency ladder run: it stubs,
+  then drops, the oldest messages, never the system prompt, the spill
+  manifest, the in-flight prompt or the pinned recent turns. Every tool
+  result and conversation message is spilled at creation, so recall()
+  retrieves whatever was archived, stubbed or dropped.
 
   Background:
     Given a configured agent with context pruning enabled
@@ -39,45 +39,6 @@ Feature: Context pruning via sliding window and tool-call collapse
     Given provider truth reports 1000 context tokens at local estimate 100
     When the local context estimate changes to 80 tokens
     Then the user-facing context gauge reports 980 tokens
-
-  # --- Tool-result collapse triggers on tool-call count (#1017) ---
-
-  Scenario: Tool outputs collapse after the configured number of tool calls
-    Given context_collapse_after_tool_calls is set to 50
-    When the agent has executed 51 tool calls in the session
-    Then the oldest 13 tool results are collapsed to recall() stubs
-    And the 38 most recent tool results remain in full context
-
-  # #2213: a collapse rewrites the cached prompt prefix; collapsing down to
-  # the low-water mark leaves headroom, so the next tool calls rewrite nothing.
-  Scenario: The tool calls after a collapse land in the headroom
-    Given context_collapse_after_tool_calls is set to 50
-    When the agent has executed 51 tool calls in the session
-    And the agent executes 12 more tool calls in a later prompt
-    Then 0 tool results are collapsed to recall() stubs
-
-  # #2213: results the model has not seen yet are never collapsed, even when
-  # the batch down to the low-water mark would reach them.
-  Scenario: Tool results the model has not seen are never collapsed
-    Given context_collapse_after_tool_calls is set to 10
-    When the agent has run 2 tool calls then 9 unseen parallel tool calls
-    Then 2 tool results are collapsed to recall() stubs
-    And the 9 most recent tool results remain in full context
-
-  Scenario: Collapse count is cumulative across prompts within a session
-    Given context_collapse_after_tool_calls is set to 50
-    And the agent has already executed 30 tool calls in an earlier prompt
-    When the agent executes 25 more tool calls in a later prompt
-    Then 17 tool results are collapsed to recall() stubs
-
-  Scenario: Collapse can be disabled
-    Given context collapse is disabled
-    When the agent has executed 100 tool calls in the session
-    Then no tool results are collapsed
-
-  Scenario: Default collapse threshold is 50 tool calls
-    Given a default agent configuration
-    Then the context_collapse_after_tool_calls default is 50
 
   # --- Tool results stay in full context ---
 
@@ -267,7 +228,7 @@ Feature: Context pruning via sliding window and tool-call collapse
     When the spilling sliding window drops messages to fit budget
     Then the current user prompt remains in context
 
-  # --- #1046: spill conversation messages at creation + count-based collapse ---
+  # --- #1046: spill conversation messages at creation ---
 
   Scenario: Conversation messages are spilled at creation and immediately recallable
     When the agent completes a text-only prompt on turn 1
@@ -290,128 +251,38 @@ Feature: Context pruning via sliding window and tool-call collapse
     When the agent runs a bash tool
     Then the ephemeral session spill contains a recallable entry whose tool is "bash"
 
-  Scenario: Rewinding past collapsed conversation messages leaves no empty turns
-    Given context_collapse_after_messages is set to 0
-    And 4 old conversation messages
-    And an in-flight user prompt
-    And the old conversation messages have been collapsed to recall stubs
-    When the conversation is rewound to the in-flight user prompt
-    Then the collapsed conversation messages survive the rewind with non-empty content
-
-  Scenario: Oldest conversation messages collapse once the message count exceeds the threshold
-    Given context_collapse_after_messages is set to 3
-    And 4 old conversation messages
-    And an in-flight user prompt
-    When the agent trims old conversation messages
-    Then 1 conversation message is collapsed to a recall stub
-    And the oldest conversation message is a one-line recall stub
-
-  # #2213: at a dial of 50 the low-water mark (38) differs from the dial.
-  Scenario: Crossing the message dial collapses down to its low-water mark
-    Given context_collapse_after_messages is set to 50
-    And 51 old conversation messages
-    And an in-flight user prompt
-    When the agent trims old conversation messages
-    Then 13 conversation messages are collapsed to recall stubs
-
-  Scenario: Message collapse triggers at one past the threshold, not at it
-    Given context_collapse_after_messages is set to 3
-    And 3 old conversation messages
-    And an in-flight user prompt
-    When the agent trims old conversation messages
-    Then 0 conversation messages are collapsed to recall stubs
-
-  Scenario: Assistant and user messages share one combined collapse count
-    Given context_collapse_after_messages is set to 3
-    And 2 old assistant messages and 2 old user messages
-    And an in-flight user prompt
-    When the agent trims old conversation messages
-    Then 1 conversation message is collapsed to a recall stub
-
-  Scenario: Tool results are excluded from the message collapse count
-    Given context_collapse_after_messages is set to 3
-    And 3 old conversation messages
-    And an in-flight user prompt
-    And 10 un-collapsed tool results in the session
-    When the agent trims old conversation messages
-    Then 0 conversation messages are collapsed to recall stubs
-    And no tool results are collapsed by the message trigger
-
-  Scenario: Message collapse is cumulative across prompts
-    Given context_collapse_after_messages is set to 3
-    And 4 old conversation messages from an earlier prompt
-    And 4 old conversation messages
-    And an in-flight user prompt
-    When the agent trims old conversation messages
-    Then 5 conversation messages are collapsed to recall stubs
-
-  # The three AC3 exemption scenarios drive BOTH prune paths: the count
-  # trigger AND the demotion ladder under an unmeetable budget. The ladder's
-  # second rung drops any non-exempt message, so each protected message
-  # survives only because of its exemption — deleting the exemption fails the
-  # scenario (falsifiability, PR #1048 round-2 review).
+  # The three AC3 exemption scenarios drive the emergency ladder under an
+  # unmeetable budget. Its second rung drops any non-exempt message, so each
+  # protected message survives only because of its exemption — deleting the
+  # exemption fails the scenario (falsifiability, PR #1048 round-2 review).
   Scenario: The system prompt is never collapsed or dropped
-    Given context_collapse_after_messages is set to 0
-    And max_context_tokens is set to 5
+    Given max_context_tokens is set to 5
     And recent-turn pinning is set to 0 turns
     And a system prompt in the conversation
     And 2 old conversation messages
     And an in-flight user prompt
-    When the agent trims old conversation messages
-    And the agent enforces the context ceiling
+    When the agent enforces the context ceiling
     Then the system prompt is not collapsed
-    And at least 1 conversation message is collapsed to a recall stub
     And at least 1 message is removed from the conversation
 
   Scenario: The spill manifest is never collapsed or dropped
-    Given context_collapse_after_messages is set to 0
-    And max_context_tokens is set to 5
+    Given max_context_tokens is set to 5
     And recent-turn pinning is set to 0 turns
     And a pinned manifest message in the conversation
     And 2 old conversation messages
     And an in-flight user prompt
-    When the agent trims old conversation messages
-    And the agent enforces the context ceiling
+    When the agent enforces the context ceiling
     Then the manifest message is not collapsed
-    And at least 1 conversation message is collapsed to a recall stub
     And at least 1 message is removed from the conversation
 
   Scenario: The in-flight user prompt is never collapsed or dropped
-    Given context_collapse_after_messages is set to 0
-    And max_context_tokens is set to 5
+    Given max_context_tokens is set to 5
     And recent-turn pinning is set to 0 turns
     And 2 old conversation messages
     And an in-flight user prompt already spilled at creation
-    When the agent trims old conversation messages
-    And the agent enforces the context ceiling
+    When the agent enforces the context ceiling
     Then the in-flight user prompt is not collapsed
-    And at least 1 conversation message is collapsed to a recall stub
     And at least 1 message is removed from the conversation
-
-  Scenario: Messages within the pinned recent-turn tail are never collapsed by the message trigger
-    Given context_collapse_after_messages is set to 0
-    And recent-turn pinning is set to 1 turns
-    And 2 old conversation messages
-    And an in-flight user prompt
-    And a conversation message within the pinned recent-turn tail
-    When the agent trims old conversation messages
-    Then the tail-pinned conversation message is not collapsed
-    And at least 1 conversation message is collapsed to a recall stub
-
-  Scenario: Message collapse can be disabled with the sentinel
-    Given message collapse is disabled
-    And 100 old conversation messages
-    And an in-flight user prompt
-    When the agent trims old conversation messages
-    Then 0 conversation messages are collapsed to recall stubs
-
-  Scenario: Collapsed message stubs count toward the token budget
-    Given context_collapse_after_messages is set to 0
-    And 2 old conversation messages
-    And an in-flight user prompt
-    When the agent trims old conversation messages
-    Then each collapsed message stub has a nonzero token estimate
-    And the stub token estimate is below the original message estimate
 
   Scenario: Budget pressure collapses messages to stubs before dropping anything
     Given max_context_tokens is set to 150
@@ -449,10 +320,10 @@ Feature: Context pruning via sliding window and tool-call collapse
 
   # --- #1045: configurable pin_recent_turns ---
 
-  Scenario: pin_recent_turns defaults to 2 and message collapse defaults to 50
+  Scenario: pin_recent_turns defaults to 2 and the watermark marks to 256000 and 70000
     Given a default agent configuration
     Then the configured pin_recent_turns is 2
-    And the configured context_collapse_after_messages is 50
+    And the configured watermark marks cut at 256000 down to 70000
 
   Scenario: A non-default pin_recent_turns changes pinning behaviour
     Given max_context_tokens is set to 10
@@ -521,7 +392,7 @@ Feature: Context pruning via sliding window and tool-call collapse
     And the pruning agent context budget is 4000 tokens
     And the LLM returns a plain text response "final answer"
     When the user sends "go" through the pruning agent
-    Then some pre-run messages are collapsed to recall stubs
+    Then some pre-run messages are archived or stubbed
     And a flat four-characters-per-token count of the pre-run history fits the budget
 
   @issue-2212
@@ -533,7 +404,7 @@ Feature: Context pruning via sliding window and tool-call collapse
     And the tool "bulk" returns "tool-output-payload"
     And the LLM returns a plain text response "final answer"
     When the user sends "go" through the pruning agent
-    Then some pre-run messages are collapsed to recall stubs
+    Then some pre-run messages are archived or stubbed
 
   @issue-2212
   Scenario: Without provider usage prose that fits the budget is kept
@@ -544,7 +415,7 @@ Feature: Context pruning via sliding window and tool-call collapse
     And the tool "bulk" returns "tool-output-payload"
     And the LLM returns a plain text response "final answer"
     When the user sends "go" through the pruning agent
-    Then no pre-run message is collapsed to a recall stub
+    Then no pre-run message is archived or stubbed
 
   # --- Default max context tokens is 300,000 ---
 
@@ -594,10 +465,12 @@ Feature: Context pruning via sliding window and tool-call collapse
     And the run's appended messages are exactly the assistant tool call, the tool result and the final reply "final answer"
     And the agent result marks the durable prefix dirty
 
+  # #2414: the emergency ladder stubs in place only when no cut fits: the
+  # brief, which every cut keeps, is alone over the budget here.
   @issue-1072
   Scenario: In-place stub demotion alone marks the durable prefix dirty
     Given a configured agent with a mock LLM
-    And a spilled conversation history of 2 prior turns each exceeding the pruning budget
+    And a spilled brief exceeding the pruning budget
     And a spilled conversation history of 2 further small prior turns
     And the pruning agent context budget is 300 tokens
     And the LLM returns a plain text response "ok"
@@ -617,16 +490,7 @@ Feature: Context pruning via sliding window and tool-call collapse
     When the user sends "go" through the pruning agent
     Then the run's appended messages include the malformed-request feedback
 
-  # --- #2342: a swarm member's context ---
-
-  @issue-2342
-  Scenario: A newer board summary supersedes the older ones, which stay recallable
-    Given a configured agent with a mock LLM
-    And the member reads the board summary 3 times, then replies "done"
-    When the user sends "go" through the swarm member agent
-    Then only the newest board summary is in full context
-    And every older board summary is a recall stub of its full answer
-    And the prune records count 2 superseded summaries
+  # --- #2342: a swarm member's ceiling ---
 
   @issue-2342
   Scenario: A swarm member prunes its context at its swarm ceiling
@@ -635,19 +499,6 @@ Feature: Context pruning via sliding window and tool-call collapse
     And the member's swarm ceiling is 2000 tokens
     And the member reads the board summary 1 times, then replies "done"
     When the user sends "go" through the swarm member agent
-    Then some pre-run messages are collapsed to recall stubs
-    And the prune records name a ceiling of 2000 tokens
+    Then some pre-run messages are archived or stubbed
+    And the member's context is cut at its swarm ceiling of 2000 tokens
 
-  # --- #2348: the size-aware collapse ---
-
-  @issue-2348
-  Scenario: A large tool result the model has seen for its turns collapses to a recall stub
-    Given a configured agent with a mock LLM
-    And the member's large results collapse over 200 tokens once seen for 3 turns
-    And the member reads the board task list, then the board summary 3 times, then replies "done"
-    When the user sends "go" through the swarm member agent
-    Then the board task list is a recall stub of its full answer
-    And recalling the board task list answers it in full
-    And only the newest board summary is in full context
-    And the prune records count 1 collapsed large result
-    And the prune records count 2 superseded summaries

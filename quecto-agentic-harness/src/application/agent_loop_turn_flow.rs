@@ -429,8 +429,8 @@ impl AgentLoopImpl {
                 max = MAX_CUT_OFF_RETRIES,
                 "reply hit the output limit with nothing visible — asking again, concisely"
             );
-            let how = append_feedback(messages, feedback, current_turn, self.context_mode());
-            record_feedback(messages, appended_messages, how);
+            append_feedback(messages, feedback, current_turn);
+            record_feedback(messages, appended_messages);
             // The retry may use the model's cap, not repeat the same budget.
             self.output_boost
                 .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -458,10 +458,9 @@ impl AgentLoopImpl {
             error = %error,
             "provider rejected request as malformed — re-prompting with addressable feedback"
         );
-        let mode = self.context_mode();
-        let how = append_malformed_feedback(messages, error, current_turn, mode);
+        append_malformed_feedback(messages, error, current_turn);
         // Feedback the run added belongs in the ledger (#1072 review), once.
-        record_feedback(messages, appended_messages, how);
+        record_feedback(messages, appended_messages);
     }
 
     pub(super) async fn fail_provider_request(

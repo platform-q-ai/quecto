@@ -29,7 +29,6 @@ use crate::interface::cli::run_with_output;
 fn test_build_agent_from_config_no_config_file() {
     let tmp = tempfile::TempDir::new().unwrap();
     let flags = AgentFlags {
-        inherited_context_mode: None,
         session_name: None,
         no_session: false,
         message: Some("hi".into()),
@@ -87,7 +86,6 @@ fn test_build_agent_from_config_no_config_file() {
 fn test_build_agent_from_config_explicit_missing_errors() {
     let tmp = tempfile::TempDir::new().unwrap();
     let flags = AgentFlags {
-        inherited_context_mode: None,
         session_name: None,
         no_session: false,
         message: Some("hi".into()),
@@ -148,7 +146,6 @@ fn test_build_agent_from_config_invalid_json() {
     let tmp = tempfile::TempDir::new().unwrap();
     std::fs::write(tmp.path().join("config.json"), "not json at all").unwrap();
     let flags = AgentFlags {
-        inherited_context_mode: None,
         session_name: None,
         no_session: false,
         message: Some("hi".into()),
@@ -211,7 +208,6 @@ fn test_build_agent_from_config_no_providers() {
     )
     .unwrap();
     let flags = AgentFlags {
-        inherited_context_mode: None,
         session_name: None,
         no_session: false,
         message: Some("hi".into()),
@@ -274,7 +270,6 @@ fn test_build_agent_from_config_with_model_override() {
     )
     .unwrap();
     let flags = AgentFlags {
-        inherited_context_mode: None,
         session_name: None,
         no_session: false,
         message: Some("hi".into()),
@@ -366,7 +361,6 @@ mod container_selection_tests;
 
 fn admission_flags() -> AgentFlags {
     AgentFlags {
-        inherited_context_mode: None,
         session_name: None,
         no_session: true,
         message: None,

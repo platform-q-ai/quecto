@@ -6,31 +6,27 @@
 //!
 //! Invariants owned by this boundary:
 //!
-//! - pinned recent turns, system prompts, manifests, and the in-flight user
-//!   prompt are protected from count-collapse and ceiling demotion;
-//! - tool-call/tool-result coherence is preserved when messages are collapsed
-//!   or dropped, so provider payloads never orphan tool results;
+//! - the context only ever grows at its end: no earlier message is edited
+//!   in place, except by one watermark cut (#2403), or by the emergency
+//!   ladder when no cut can bring a request under the ceiling (#2414);
+//! - tool-call/tool-result coherence is preserved when messages are cut,
+//!   stubbed or dropped, so provider payloads never orphan tool results;
 //! - spill/recall promises are maintained by spilling conversation/tool output
 //!   before recall stubs are minted, and by avoiding stubs for unspilled
 //!   content;
 //! - provider-truth context gauges supersede local estimates, while subsequent
-//!   estimate-only pruning deltas carry that truth forward until the next
-//!   provider observation;
-//! - the ceiling decides on calibrated occupancy: the effective budget is
-//!   converted to estimate units at the last provider-observed ratio
-//!   (#2212), so the ladder's per-message sums stay consistent with it;
-//! - the newest whole snapshot of a state (a full swarm summary) stays in
-//!   full at every dial, and every older one it supersedes is collapsed to
-//!   its recall stub (#2342);
-//! - a large tool result the model has seen for a few turns collapses to
-//!   its recall stub whatever the count dials say (#2348); and
+//!   estimate-only deltas carry that truth forward until the next provider
+//!   observation;
+//! - the ceiling decides on calibrated occupancy: the marks and the ceiling
+//!   are converted to estimate units at the last provider-observed ratio
+//!   (#2212), so the per-message sums stay consistent with them; and
 //! - durable prefix dirty semantics are latched for every persisted-layout or
-//!   in-place history mutation, including manifest insert/remove, stub demotion,
-//!   and physical drops.
+//!   in-place history mutation, including manifest insert/remove, a cut,
+//!   stub demotion, and physical drops.
 
 use crate::application::context_pruning;
 use crate::application::sessions::use_cases::{ListRetainedContext, RetainContext};
-use crate::domain::large_result_collapse::LargeResultCollapse;
+use crate::domain::conversation::watermark::Watermark;
 use crate::domain::message::Message;
 use crate::domain::session_identity::SessionIdentity;
 use crate::domain::{catalogue::ModelWindow, context_calibration::EstimateScale};
@@ -44,10 +40,6 @@ use gauge::ContextGaugeCalibration;
 #[path = "context_ceiling_cap.rs"]
 mod ceiling_cap;
 pub use ceiling_cap::ContextCeilingCap;
-// #2348 review M1: a swarm member's size-aware collapse, engaged likewise.
-#[path = "context_large_result_switch.rs"]
-mod large_result_switch;
-pub use large_result_switch::LargeResultSwitch;
 // The spill writers (split out for the decrease-only line ceiling, #2342).
 #[path = "context_spill_writers.rs"]
 mod spill;
@@ -55,7 +47,8 @@ mod spill;
 #[path = "context_plan.rs"]
 mod plan;
 pub(crate) use plan::{ContextPlan, ToolMessageBuild};
-// #2403: the watermark context's pass, beside the agent loop.
+// #2403: the watermark context's pass, beside the agent loop: the only
+// context mode (#2414).
 #[path = "agent_loop/context_watermark.rs"]
 mod watermark;
 
@@ -80,26 +73,23 @@ impl std::fmt::Debug for ContextRetention {
 pub struct ContextManagerConfig {
     pub retention: Option<ContextRetention>,
     pub session_key: SessionIdentity,
-    pub context_collapse_after_tool_calls: u32,
     pub max_context_tokens: usize,
+    /// The emergency ladder's pinned recent turns (#1045).
     pub pin_recent_turns: u32,
-    pub context_collapse_after_messages: u32,
-    pub large_result_collapse: LargeResultCollapse,
+    /// The watermark marks (#2403), before the ceiling scales them.
+    pub context_marks: Watermark,
     pub model_context_window: Option<usize>,
 }
 
 pub(crate) struct ContextManager {
     retention: Option<ContextRetention>,
     session_key: SessionIdentity,
-    context_collapse_after_tool_calls: u32,
     max_context_tokens: usize,
     pin_recent_turns: u32,
-    context_collapse_after_messages: u32,
-    large_result_collapse: LargeResultSwitch,
     model_window: ModelWindow,
     ceiling_cap: ContextCeilingCap,
     gauge: Mutex<ContextGaugeCalibration>,
-    watermark: Option<watermark::WatermarkState>,
+    watermark: watermark::WatermarkState,
 }
 
 impl ContextManager {
@@ -107,18 +97,15 @@ impl ContextManager {
         Self {
             retention: config.retention,
             session_key: config.session_key,
-            context_collapse_after_tool_calls: config.context_collapse_after_tool_calls,
             max_context_tokens: config.max_context_tokens,
             pin_recent_turns: config.pin_recent_turns,
-            context_collapse_after_messages: config.context_collapse_after_messages,
-            large_result_collapse: LargeResultSwitch::new(config.large_result_collapse),
             model_window: ModelWindow {
                 window: config.model_context_window,
                 ..ModelWindow::default()
             },
             ceiling_cap: ContextCeilingCap::default(),
             gauge: Mutex::new(ContextGaugeCalibration::default()),
-            watermark: None,
+            watermark: watermark::WatermarkState::new(config.context_marks),
         }
     }
 
@@ -148,14 +135,11 @@ impl ContextManager {
         self.pin_recent_turns = pin_recent_turns;
     }
 
+    /// The config-threaded knobs `(pin_recent_turns, marks)`, for wiring
+    /// checks (#1045, #2414).
     #[cfg(test)]
-    pub fn set_context_collapse_after_messages(&mut self, max_messages: u32) {
-        self.context_collapse_after_messages = max_messages;
-    }
-
-    #[cfg(test)]
-    pub fn context_knob_snapshot(&self) -> (u32, u32) {
-        (self.pin_recent_turns, self.context_collapse_after_messages)
+    pub fn context_knob_snapshot(&self) -> (u32, Watermark) {
+        (self.pin_recent_turns, self.watermark.marks())
     }
 
     /// The budget clamped to the model's whole window, without a swarm cap or
@@ -172,7 +156,7 @@ impl ContextManager {
     }
 
     /// The effective budget in estimate units at the provider-observed
-    /// scale (#2212), so the ladder prunes on calibrated occupancy.
+    /// scale (#2212), so the cut and the ladder decide on calibrated occupancy.
     pub fn pruning_ceiling_in_estimate_units(&self) -> usize {
         let effective = self.effective_max_context_tokens();
         let ceiling = self.estimate_scale().in_estimate_units(effective);
@@ -232,63 +216,6 @@ impl ContextManager {
         tool_msg.invalidate_token_cache();
         tool_msg.is_error = args.is_error;
         tool_msg
-    }
-
-    pub async fn prepare_provider_context(
-        &self,
-        messages: &mut Vec<Message>,
-        message_budget: usize,
-        spills_dirty: bool,
-    ) -> ContextPlan {
-        let tokens_before = context_pruning::estimate_total_tokens(messages);
-        let message_spilled = self.spill_unspilled_conversation_messages(messages).await;
-        // Superseded snapshots go first (#2342): the dials then count and
-        // weigh only what is still current.
-        let superseded = context_pruning::snapshots::collapse_superseded_snapshots(messages);
-        // A large result the model has seen for a few turns goes to its
-        // stub whatever the count dials say (#2348).
-        let large = context_pruning::large_results::collapse_large_results(
-            messages,
-            self.large_result_collapse.dial(),
-        );
-        let collapsed = context_pruning::collapse_tool_results_over_limit(
-            messages,
-            self.context_collapse_after_tool_calls,
-        );
-        let msg_collapsed = context_pruning::messages::collapse_conversation_messages_over_limit(
-            messages,
-            self.context_collapse_after_messages,
-            self.pin_recent_turns,
-        );
-        let outcome = context_pruning::messages::enforce_context_ceiling_ladder(
-            messages,
-            message_budget,
-            self.pin_recent_turns,
-        );
-        let manifest_shifted = self
-            .refresh_spill_manifest(messages, spills_dirty || message_spilled)
-            .await;
-        let durable_prefix_dirty = manifest_shifted
-            || superseded
-                + large
-                + collapsed
-                + msg_collapsed
-                + outcome.collapsed_to_stubs
-                + outcome.dropped
-                > 0;
-        ContextPlan {
-            tokens_before,
-            total_tokens: context_pruning::estimate_total_tokens(messages),
-            tool_results_collapsed: collapsed,
-            messages_collapsed: msg_collapsed,
-            ladder_stubbed: outcome.collapsed_to_stubs,
-            messages_dropped: outcome.dropped,
-            dropped_calls: outcome.dropped_calls,
-            snapshots_superseded: superseded,
-            large_results_collapsed: large,
-            over_budget: outcome.over_budget,
-            durable_prefix_dirty,
-        }
     }
 }
 

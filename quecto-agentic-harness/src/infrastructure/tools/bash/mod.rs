@@ -352,8 +352,7 @@ fn build_shell_command(
         "QUECTO_SWARM_BOOTSTRAP",
         "QUECTO_SWARM_CONTAINER",
         "QUECTO_SWARM_HOST_PID_NS",
-        // The harness's context mode (#2403): a command decides its own.
-        "QUECTO_CONTEXT_MODE",
+        // The harness's watermark marks (#2403): a command decides its own.
         "QUECTO_CONTEXT_HIGH_TOKENS",
         "QUECTO_CONTEXT_LOW_TOKENS",
         "RUST_LOG",

@@ -184,16 +184,6 @@ impl AgentLoopImpl {
         self
     }
 
-    /// Test builder: conversation-message collapse threshold (#1046).
-    /// Production threads this through
-    /// `AgentLoopConfig::context_collapse_after_messages` at construction.
-    #[cfg(test)]
-    pub fn with_context_collapse_after_messages(mut self, max_messages: u32) -> Self {
-        self.context_manager
-            .set_context_collapse_after_messages(max_messages);
-        self
-    }
-
     /// Test builder: the model's known context window (#1044). Production
     /// threads this through `AgentLoopConfig::model_context_window` at
     /// construction; `apply_model` re-derives it on a model switch.
@@ -225,12 +215,6 @@ impl AgentLoopImpl {
     /// configured budget, the model's window and this cap.
     pub fn context_ceiling_cap(&self) -> crate::application::context::ContextCeilingCap {
         self.context_manager.ceiling_cap()
-    }
-
-    /// The size-aware collapse in force, which composition engages once the
-    /// process joins a swarm (#2348 review M1).
-    pub fn large_result_switch(&self) -> crate::application::context::LargeResultSwitch {
-        self.context_manager.large_result_switch()
     }
 }
 

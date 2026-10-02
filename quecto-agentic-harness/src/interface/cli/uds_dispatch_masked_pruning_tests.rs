@@ -184,15 +184,13 @@ fn budgeted_agent(
         temperature: 0.0,
         retention: None,
         session_key: "cli:test".into(),
-        context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens,
         progress_callback: None,
         streaming: false,
         effort: None,
         audit_log: None,
         pin_recent_turns: 2,
-        context_collapse_after_messages: u32::MAX,
-        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
+        context_marks: Default::default(),
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
@@ -207,8 +205,7 @@ fn spilled_history_message(turn: u32, content: &str) -> Message {
     msg
 }
 
-/// History whose turns 1–2 exceed a 300-token budget while turns 3–4 are
-/// small and tail-pinned: the ladder stubs 1–2 IN PLACE and drops nothing.
+/// History whose turns 1–2 are big while turns 3–4 are small.
 fn stub_demotable_history(big_chars: usize) -> Vec<Message> {
     let big = "z".repeat(big_chars);
     vec![
@@ -216,6 +213,19 @@ fn stub_demotable_history(big_chars: usize) -> Vec<Message> {
         spilled_history_message(2, &big),
         spilled_history_message(3, "small earlier reply"),
         spilled_history_message(4, "another small earlier reply"),
+    ]
+}
+
+/// #2414: history the emergency ladder stubs IN PLACE and drops nothing: a
+/// spilled brief over a 300-token budget, which every watermark cut keeps,
+/// and two small replies a cut would save too little by archiving.
+fn ladder_stubbable_history(big_chars: usize) -> Vec<Message> {
+    let mut brief = crate::domain::turn_origin::prompt("z".repeat(big_chars));
+    brief.spill_id = Some("turn0:msg:user".into());
+    vec![
+        brief,
+        spilled_history_message(1, "small earlier reply"),
+        spilled_history_message(2, "another small earlier reply"),
     ]
 }
 
@@ -278,7 +288,7 @@ async fn success_with_stub_only_demotion_reconciles_persistence() {
         crate::interface::test_support::make_stub_provider(),
         300,
     ));
-    fx.messages = stub_demotable_history(2400);
+    fx.messages = ladder_stubbable_history(2400);
     persist_baseline(&mut fx).await;
 
     {
@@ -286,20 +296,16 @@ async fn success_with_stub_only_demotion_reconciles_persistence() {
         assert!(!dispatch_command(prompt("hi"), &mut ctx).await);
     }
 
-    // Positive control: the turn stub-demoted turn 1 in place, dropped nothing.
+    // Positive control: the turn stub-demoted the brief in place, dropped
+    // nothing.
     assert!(
-        fx.messages[0].is_collapsed && fx.messages[0].content.contains("recall("),
-        "scenario setup: turn 1 must be stubbed in place, got: {}",
+        fx.messages[0].is_collapsed
+            && fx.messages[0]
+                .content
+                .contains("recall(\"turn0:msg:user\")"),
+        "scenario setup: the brief must be stubbed in place, got: {}",
         fx.messages[0].content
     );
-    for spill_id in ["turn1:msg:assistant", "turn2:msg:assistant"] {
-        assert!(
-            fx.messages
-                .iter()
-                .any(|m| m.is_collapsed && m.content.contains(spill_id)),
-            "scenario setup: the {spill_id} stub must survive in place"
-        );
-    }
     for small in ["small earlier reply", "another small earlier reply"] {
         assert!(
             fx.messages.iter().any(|m| m.content == small),
@@ -316,7 +322,7 @@ async fn success_with_stub_only_demotion_reconciles_persistence() {
 async fn error_outcome_still_reconciles_persistence_after_demotion() {
     let mut fx = Fixture::new();
     fx.set_agent(budgeted_agent(std::sync::Arc::new(FailingProvider), 300));
-    fx.messages = stub_demotable_history(2400);
+    fx.messages = ladder_stubbable_history(2400);
     persist_baseline(&mut fx).await;
 
     {
@@ -326,7 +332,7 @@ async fn error_outcome_still_reconciles_persistence_after_demotion() {
 
     assert!(
         fx.messages[0].is_collapsed,
-        "scenario setup: pruning must have stub-demoted turn 1 before the \
+        "scenario setup: pruning must have stub-demoted the brief before the \
          provider error"
     );
     assert_durable_matches_live(&fx).await;
@@ -340,7 +346,7 @@ async fn error_outcome_still_reconciles_persistence_after_demotion() {
 async fn cancelled_outcome_still_reconciles_persistence_after_demotion() {
     let mut fx = Fixture::new();
     fx.set_agent(budgeted_agent(std::sync::Arc::new(HangingProvider), 300));
-    fx.messages = stub_demotable_history(2400);
+    fx.messages = ladder_stubbable_history(2400);
     persist_baseline(&mut fx).await;
 
     let cancel = fx.cancel.clone();
@@ -355,11 +361,11 @@ async fn cancelled_outcome_still_reconciles_persistence_after_demotion() {
 
     assert!(
         fx.messages[0].is_collapsed,
-        "scenario setup: pruning must have stub-demoted turn 1 before the hang"
+        "scenario setup: pruning must have stub-demoted the brief before the hang"
     );
     assert_eq!(
         fx.messages.len(),
-        5,
+        4,
         "cancellation must preserve the interrupted prompt after demotion"
     );
     assert!(fx.messages.iter().any(|m| m.content == "hi"));
@@ -413,10 +419,10 @@ async fn cancellation_after_physical_drops_preserves_prompt_only() {
         "the interrupted prompt must be preserved at its logical boundary"
     );
     assert!(
-        fx.messages
-            .iter()
-            .all(|m| m.content == "hi" || (m.content.starts_with('z') && m.turn.is_some())),
-        "only pre-existing survivors plus the interrupted prompt may remain after abort"
+        fx.messages.iter().all(|m| m.content == "hi"
+            || m.user_kind == crate::domain::conversation::UserKind::ArchiveStub
+            || (m.content.starts_with('z') && m.turn.is_some())),
+        "only pre-existing survivors, a cut's stub and the interrupted prompt may remain after abort"
     );
     assert_durable_matches_live(&fx).await;
 }

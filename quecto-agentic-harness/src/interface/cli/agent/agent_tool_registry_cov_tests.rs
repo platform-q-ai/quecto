@@ -3,7 +3,6 @@ use crate::interface::cli::agent::flag_parse::AgentFlags;
 
 pub(super) fn flags() -> AgentFlags {
     AgentFlags {
-        inherited_context_mode: None,
         session_name: Some("dev".to_string()),
         no_session: false,
         message: None,

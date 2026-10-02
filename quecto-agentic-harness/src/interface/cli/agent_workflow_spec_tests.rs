@@ -7,7 +7,6 @@ use super::*;
 
 pub(super) fn uds_workflow_flags(workflow: bool, workflow_disabled: bool) -> AgentFlags {
     AgentFlags {
-        inherited_context_mode: None,
         session_name: None,
         no_session: false,
         message: None,

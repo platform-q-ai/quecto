@@ -1,31 +1,22 @@
-//! #2342 / #2349 review L1: a swarm member's context through the agent loop.
-//! A newer board summary supersedes the older ones, which collapse to recall
-//! stubs while the newest stays in full; a member's swarm ceiling prunes its
-//! context at that ceiling.
+//! #2342 / #2349 review L1: a swarm member's context through the agent loop:
+//! a member's swarm ceiling bounds its context.
 
 use super::*;
 use quecto::application::agent_loop::AgentLoopConfig;
 use quecto::application::audit::ports::AuditSink;
 use quecto::application::sessions::ports::{ContextSpillStore, SpillIndexList};
 use quecto::domain::audit::AuditEvent;
-use quecto::domain::large_result_collapse::LargeResultCollapse;
 use quecto::domain::session::{SpillEntry, SpillIndex};
 use quecto::domain::session_identity::{SessionIdentity, SpillId};
 
-const SUMMARY: &str = "swarm.summary";
-
-/// A board whose every `summary` answer is a whole snapshot of it (the
-/// swarm tool's rule, #2342), each read newer than the last.
+/// A board whose every `summary` answer is the whole board, each read newer
+/// than the last.
 #[derive(Debug, Default)]
 struct BoardSummaries {
     reads: Mutex<u32>,
 }
 
 impl Tool for BoardSummaries {
-    fn snapshot_key(&self, arguments: &str, content: &str) -> Option<&'static str> {
-        (arguments.contains("summary") && content.starts_with("{\"members\"")).then_some(SUMMARY)
-    }
-
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "board".into(),
@@ -130,52 +121,7 @@ impl AuditSink for MemberAudit {
 /// What a member's run left behind.
 #[derive(Debug)]
 pub struct MemberRun {
-    spill: Arc<MemberSpill>,
     audit: Arc<MemberAudit>,
-    messages: Vec<Message>,
-}
-
-impl MemberRun {
-    fn summaries(&self) -> Vec<&Message> {
-        self.messages
-            .iter()
-            .filter(|m| m.tool_name.as_deref() == Some("board"))
-            .collect()
-    }
-
-    fn pruned(&self) -> Vec<(usize, usize)> {
-        self.audit
-            .0
-            .lock()
-            .unwrap()
-            .iter()
-            .filter_map(|event| match event {
-                AuditEvent::ContextPruned {
-                    snapshots_superseded,
-                    ceiling_tokens,
-                    ..
-                } => Some((*snapshots_superseded, *ceiling_tokens)),
-                _ => None,
-            })
-            .collect()
-    }
-
-    /// The large results each prune record counts (#2348).
-    fn large_results_collapsed(&self) -> Vec<usize> {
-        self.audit
-            .0
-            .lock()
-            .unwrap()
-            .iter()
-            .filter_map(|event| match event {
-                AuditEvent::ContextPruned {
-                    large_results_collapsed,
-                    ..
-                } => Some(*large_results_collapsed),
-                _ => None,
-            })
-            .collect()
-    }
 }
 
 fn run(world: &QuectoWorld) -> &MemberRun {
@@ -207,60 +153,6 @@ fn given_member_reads_summaries(world: &mut QuectoWorld, reads: u32, reply: Stri
     });
 }
 
-/// #2348: the member reads a large, non-snapshot board answer first.
-#[given(
-    expr = "the member reads the board task list, then the board summary {int} times, then replies {string}"
-)]
-fn given_member_reads_tasks_then_summaries(world: &mut QuectoWorld, reads: u32, reply: String) {
-    let mock = super::agent_loop_steps::ensure_mock_llm(world);
-    mock.push_response(LlmResponse {
-        content: None,
-        tool_calls: vec![ToolCall {
-            id: "tasks-1".to_string(),
-            name: "board".to_string(),
-            arguments: r#"{"op":"tasks"}"#.to_string(),
-        }],
-        usage: None,
-        stop_reason: None,
-        thinking_blocks: vec![],
-    });
-    given_member_reads_summaries(world, reads, reply);
-}
-
-#[given(expr = "the member's large results collapse over {int} tokens once seen for {int} turns")]
-fn given_member_large_results(world: &mut QuectoWorld, over_tokens: usize, after_turns: u32) {
-    world.member_large_results = Some(LargeResultCollapse {
-        over_tokens,
-        after_turns,
-    });
-}
-
-#[then("the board task list is a recall stub of its full answer")]
-fn then_task_list_recallable(world: &mut QuectoWorld) {
-    let run = run(world);
-    let list = run
-        .messages
-        .iter()
-        .find(|m| m.tool_call_id.as_deref() == Some("tasks-1"))
-        .expect("the member read the task list");
-    let id = list.spill_id.as_deref().expect("the task list was spilled");
-    assert!(list.is_collapsed, "{}", list.content);
-    assert!(list.content.contains(&format!("recall(\"{id}\")")));
-    let retained = run.spill.0.lock().unwrap();
-    let entry = retained.iter().find(|e| e.id == id).expect("retained");
-    assert!(
-        entry.content.starts_with("{\"members\""),
-        "{}",
-        entry.content
-    );
-}
-
-#[then(expr = "the prune records count {int} collapsed large result(s)")]
-fn then_prune_records_large(world: &mut QuectoWorld, expected: usize) {
-    let large = run(world).large_results_collapsed();
-    assert_eq!(large.iter().sum::<usize>(), expected, "{large:?}");
-}
-
 #[given(expr = "the member's swarm ceiling is {int} tokens")]
 fn given_member_ceiling(world: &mut QuectoWorld, tokens: usize) {
     world.member_ceiling = Some(tokens);
@@ -283,17 +175,13 @@ fn when_user_sends_through_member(world: &mut QuectoWorld, text: String) {
             spill.clone(),
         )),
         session_key: "bdd-2342".to_string(),
-        context_collapse_after_tool_calls: 50,
         max_context_tokens: 190_000,
         progress_callback: None,
         streaming: false,
         effort: None,
         audit_log: Some(audit.clone() as Arc<dyn AuditSink>),
         pin_recent_turns: 2,
-        context_collapse_after_messages: 50,
-        large_result_collapse: world
-            .member_large_results
-            .unwrap_or(LargeResultCollapse::DISABLED),
+        context_marks: Default::default(),
         model_context_window: None,
         tool_profile_context: quecto::domain::tool::ToolProfileContext::Child,
     });
@@ -309,99 +197,32 @@ fn when_user_sends_through_member(world: &mut QuectoWorld, text: String) {
         .unwrap()
         .block_on(agent.process(&mut messages))
         .expect("agent process failed");
-    world.watermark_post_run = messages.clone();
-    world.member_run = Some(MemberRun {
-        spill,
-        audit,
-        messages,
-    });
+    world.watermark_post_run = messages;
+    world.member_run = Some(MemberRun { audit });
 }
 
-#[then("only the newest board summary is in full context")]
-fn then_only_newest_in_full(world: &mut QuectoWorld) {
-    let summaries = run(world).summaries();
-    let (newest, older) = summaries.split_last().expect("the member read the board");
-    assert!(!newest.is_collapsed, "the latest board state stays in full");
-    assert!(newest.content.starts_with("{\"members\""));
-    assert!(
-        older.iter().all(|m| m.is_collapsed),
-        "every superseded summary is a stub"
-    );
-}
-
-#[then("every older board summary is a recall stub of its full answer")]
-fn then_older_recallable(world: &mut QuectoWorld) {
-    let run = run(world);
-    let summaries = run.summaries();
-    let (_, older) = summaries.split_last().expect("the member read the board");
-    assert!(
-        !older.is_empty(),
-        "the member read the board more than once"
-    );
-    let retained = run.spill.0.lock().unwrap();
-    for stub in older {
-        let id = stub
-            .spill_id
-            .as_deref()
-            .expect("a superseded summary was spilled");
-        assert!(
-            stub.content.contains(&format!("recall(\"{id}\")")),
-            "{}",
-            stub.content
-        );
-        let entry = retained
-            .iter()
-            .find(|e| e.id == id)
-            .expect("its full answer is retained");
-        assert!(
-            entry.content.starts_with("{\"members\""),
-            "{}",
-            entry.content
-        );
-    }
-}
-
-#[then(expr = "the prune records count {int} superseded summaries")]
-fn then_prune_records_count(world: &mut QuectoWorld, expected: usize) {
-    let superseded: usize = run(world).pruned().iter().map(|(s, _)| s).sum();
-    assert_eq!(superseded, expected, "{:?}", run(world).pruned());
-}
-
-#[then(expr = "the prune records name a ceiling of {int} tokens")]
-fn then_prune_records_ceiling(world: &mut QuectoWorld, expected: usize) {
-    let pruned = run(world).pruned();
-    assert!(!pruned.is_empty(), "the member's context was pruned");
-    assert!(
-        pruned.iter().all(|&(_, ceiling)| ceiling == expected),
-        "{pruned:?}"
-    );
-}
-
-/// #2348 review L4: the stub's `recall` answers the full task list.
-#[then("recalling the board task list answers it in full")]
-fn then_recall_answers_task_list(world: &mut QuectoWorld) {
-    use quecto::application::tools::ports::Tool;
-    let run = run(world);
-    let id = run
-        .messages
-        .iter()
-        .find(|m| m.tool_call_id.as_deref() == Some("tasks-1"))
-        .and_then(|m| m.spill_id.clone())
-        .expect("the task list was spilled");
-    let recall = quecto::infrastructure::tools::recall::RecallTool::new(
-        quecto::composition::retention::retention_handles_over(run.spill.clone()).recall,
-        "bdd-2342".to_string(),
-    );
-    let answer = tokio::runtime::Runtime::new()
+/// #2414: the member's cut came at its swarm ceiling: both the ceiling and
+/// the high mark in force are the cap (no provider usage: estimate units
+/// are provider tokens).
+#[then(expr = "the member's context is cut at its swarm ceiling of {int} tokens")]
+fn then_cut_at_swarm_ceiling(world: &mut QuectoWorld, expected: usize) {
+    let marks: Vec<(usize, usize)> = run(world)
+        .audit
+        .0
+        .lock()
         .unwrap()
-        .block_on(recall.execute(&serde_json::json!({ "id": id }).to_string()))
-        .expect("recall answers");
-    assert!(!answer.is_error, "{}", answer.content);
+        .iter()
+        .filter_map(|event| match event {
+            AuditEvent::ContextCut(record) => Some((
+                record.marks.ceiling_estimate_tokens,
+                record.marks.high_tokens,
+            )),
+            _ => None,
+        })
+        .collect();
+    assert!(!marks.is_empty(), "the member's context was cut");
     assert!(
-        answer
-            .content
-            .contains(r#"{"id":39,"status":"claimed","read":1}"#),
-        "the whole list comes back: {}",
-        answer.content
+        marks.iter().all(|&marks| marks == (expected, expected)),
+        "{marks:?}"
     );
 }
