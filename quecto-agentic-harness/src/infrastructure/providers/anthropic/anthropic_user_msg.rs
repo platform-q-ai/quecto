@@ -1,33 +1,10 @@
 /// User message content block builder for the Anthropic API (#188).
 ///
 /// Handles structured content block arrays for user messages containing inline
-/// images, model capability filtering, and empty-content skipping.
+/// images, and empty-content skipping. Which images a model is sent is the
+/// application's decision (#2421, `domain::conversation::image_input`): every
+/// image a message carries here is sent.
 use crate::domain::message::Message;
-
-/// Returns `true` for models known to support image inputs.
-///
-/// Uses an allow-list approach (fail-closed): unknown models are assumed
-/// to NOT support vision. This avoids sending images to models that would
-/// reject them. When a new vision model family is released, add its
-/// lowercase prefix here.
-///
-/// Matching is case-insensitive for consistency with `domain::message::model_pricing`.
-/// If vision detection is ever needed for other providers, consider migrating
-/// this function to `domain::message` alongside `model_pricing`.
-pub(super) fn model_supports_vision(model: &str) -> bool {
-    // Lowercase prefixes for model families known to support vision (Claude 3+).
-    // All Claude 3.x IDs use dashes (e.g. `claude-3-opus-…`, `claude-3-5-sonnet-…`).
-    const VISION_PREFIXES: &[&str] = &[
-        "claude-3-",
-        "claude-sonnet-",
-        "claude-opus-",
-        "claude-haiku-",
-    ];
-    let model_lower = model.to_lowercase();
-    VISION_PREFIXES
-        .iter()
-        .any(|prefix| model_lower.starts_with(prefix))
-}
 
 /// Build the Anthropic API content value for a user message.
 ///
@@ -38,7 +15,7 @@ pub(super) fn model_supports_vision(model: &str) -> bool {
 ///   avoid sending an empty-content message that the Anthropic API rejects.
 ///   Note: callers are responsible for ensuring role alternation is maintained
 ///   when messages are dropped.
-pub(super) fn build_user_content(m: &Message, supports_vision: bool) -> Option<serde_json::Value> {
+pub(super) fn build_user_content(m: &Message) -> Option<serde_json::Value> {
     let has_images = !m.user_image_blocks.is_empty();
 
     if !has_images {
@@ -59,30 +36,29 @@ pub(super) fn build_user_content(m: &Message, supports_vision: bool) -> Option<s
         blocks.push(serde_json::json!({"type": "text", "text": text}));
     }
 
-    // Add image blocks, filtered by vision capability and MIME type allowlist.
+    // Add image blocks, filtered by the MIME type allowlist.
     // Anthropic only accepts these four MIME types; others are silently skipped.
     const ALLOWED_MIME: &[&str] = &["image/jpeg", "image/png", "image/gif", "image/webp"];
-    if supports_vision {
-        for img in &m.user_image_blocks {
-            if !ALLOWED_MIME.contains(&img.mime_type.as_str()) {
-                continue;
+    for img in m
+        .user_image_blocks
+        .iter()
+        .filter(|img| ALLOWED_MIME.contains(&img.mime_type.as_str()))
+    {
+        blocks.push(serde_json::json!({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": img.mime_type,
+                "data": img.data,
             }
-            blocks.push(serde_json::json!({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": img.mime_type,
-                    "data": img.data,
-                }
-            }));
-        }
+        }));
     }
 
     if blocks.is_empty() {
         None // All content filtered — skip this message
     } else if blocks.len() == 1 && blocks[0]["type"] == "text" {
-        // Only text remains after image filtering — use plain string for
-        // backward compatibility with non-vision model paths.
+        // Only text remains after MIME filtering — use plain string, as a
+        // message without images is sent.
         blocks[0]["text"]
             .as_str()
             .map(|t| serde_json::Value::String(t.to_string()))

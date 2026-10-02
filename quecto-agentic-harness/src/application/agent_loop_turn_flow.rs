@@ -68,10 +68,16 @@ impl AgentLoopImpl {
 
     pub(super) async fn request_provider_response(
         &self,
-        mut request: ChatRequest<'_>,
+        request: ChatRequest<'_>,
         turn: u32,
         estimate: usize,
     ) -> Result<LlmResponse, StreamProviderError> {
+        // #2421: the conversation as the active model is sent it.
+        let sent = self.messages_for_model(request.messages);
+        let mut request = ChatRequest {
+            messages: &sent,
+            ..request
+        };
         self.flush_request_accounting()
             .await
             .map_err(StreamProviderError::before_output)?;

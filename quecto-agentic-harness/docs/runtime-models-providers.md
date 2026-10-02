@@ -116,6 +116,8 @@ The `/model` selector surfaces auth as `[apiKey]` or `[oauth]` so the billing mo
 }
 ```
 
+`input` lists what the model takes. Images go to a model only when its entry declares `"image"` (`"input": ["text", "image"]`); a model that declares no image input, or has no catalogue entry, is sent a `[image not sent: <model> takes no image input]` marker in each image's place (#2421). The built-in Claude, GPT-5/GPT-6 (all but GPT-5.3 Codex Spark) and Grok entries declare `image`; a model added by `refresh_models` declares text only until `models.json` says otherwise. The session keeps its images, so a later switch to a model that takes them sends them.
+
 Supported wire protocols today:
 
 - `openai-completions`

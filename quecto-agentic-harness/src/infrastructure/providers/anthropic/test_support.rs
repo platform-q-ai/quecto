@@ -25,14 +25,7 @@ impl AnthropicProvider {
     }
 
     pub fn build_messages_public(messages: &[Message]) -> (Option<String>, Vec<serde_json::Value>) {
-        Self::build_messages(messages, "claude-opus-4-5", false)
-    }
-
-    pub fn build_messages_for_model_public(
-        messages: &[Message],
-        model: &str,
-    ) -> (Option<String>, Vec<serde_json::Value>) {
-        Self::build_messages(messages, model, false)
+        Self::build_messages(messages, false)
     }
 
     pub fn parse_sse_response_public(raw: &str) -> Result<LlmResponse, DomainError> {

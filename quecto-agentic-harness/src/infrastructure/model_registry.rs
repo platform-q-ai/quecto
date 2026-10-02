@@ -134,8 +134,11 @@ impl ModelRegistry {
             let mut record = ModelRecord::with_defaults(provider, id, Some(name), api);
             record.auth = auth;
             record.oauth_provider = oauth_provider.map(str::to_string);
-            if id == "claude-sonnet-5" {
+            // #2421: the built-in vision models declare image input.
+            if IMAGE_INPUT_IDS.contains(&id) {
                 record.input = vec!["text".to_string(), "image".to_string()];
+            }
+            if id == "claude-sonnet-5" {
                 record.context_window = 1_000_000;
                 record.context_window_explicit = true;
                 record.max_tokens = 128_000;
@@ -153,9 +156,6 @@ impl ModelRegistry {
                 // developers.openai.com/api/docs/models/gpt-6-astra, and
                 // developers.openai.com/api/docs/models/gpt-6.1-sol; Codex's
                 // window in `gpt_5_6_window`.
-                if id == "gpt-6.1-sol" {
-                    record.input = vec!["text".to_string(), "image".to_string()];
-                }
                 record.context_window = gpt_5_6_window(provider);
                 record.context_window_explicit = true;
                 record.max_tokens = 128_000;
@@ -175,7 +175,6 @@ impl ModelRegistry {
                 // xAI published specs: 500K context, image input, configurable
                 // reasoning, $2/M input and $6/M output
                 // (docs.x.ai/developers/grok-4-7).
-                record.input = vec!["text".to_string(), "image".to_string()];
                 record.context_window = 500_000;
                 record.context_window_explicit = true;
                 record.reasoning = true;
@@ -188,7 +187,6 @@ impl ModelRegistry {
             } else if id == "grok-4.6" {
                 // xAI published specs: 500K context, $2/M in, $6/M out,
                 // $0.50/M cached input (docs.x.ai/developers/models/grok-4.6).
-                record.input = vec!["text".to_string(), "image".to_string()];
                 record.context_window = 500_000;
                 record.context_window_explicit = true;
                 record.reasoning = true;
@@ -201,7 +199,6 @@ impl ModelRegistry {
             } else if id == "grok-4.5" {
                 // xAI published specs: 500K context, $2/M in, $6/M out
                 // (docs.x.ai/developers/grok-4-5).
-                record.input = vec!["text".to_string(), "image".to_string()];
                 record.context_window = 500_000;
                 record.context_window_explicit = true;
                 record.reasoning = true;
@@ -719,7 +716,7 @@ use file_format::RegistryFile;
 
 #[path = "model_registry_openai_tables.rs"]
 mod openai_tables;
-use openai_tables::{gpt_5_6_cost, gpt_5_6_window, openai_published_limits};
+use openai_tables::{IMAGE_INPUT_IDS, gpt_5_6_cost, gpt_5_6_window, openai_published_limits};
 
 #[cfg(test)]
 #[path = "model_registry_image_input_tests.rs"]

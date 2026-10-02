@@ -2944,7 +2944,7 @@ fn then_assistant_message_present(world: &mut QuectoWorld) {
 }
 
 // ===========================================================================
-// #188: User message content block support (inline images + capability filtering)
+// #188: User message content block support (inline images)
 // ===========================================================================
 
 // ---- Given steps -----------------------------------------------------------
@@ -2980,21 +2980,6 @@ fn given_user_message_with_two_images(world: &mut QuectoWorld, text: String, mim
         },
     ];
     world.context_messages = Some(vec![m]);
-}
-
-// ---- When step (model-aware) -----------------------------------------------
-
-#[when(expr = "I build Anthropic messages from that history for model {string}")]
-fn when_build_anthropic_messages_for_model(world: &mut QuectoWorld, model: String) {
-    let msgs = world.context_messages.as_ref().expect("no messages set");
-    let (_sys, api_msgs) =
-        quecto::infrastructure::providers::anthropic::AnthropicProvider::build_messages_for_model_public(
-            msgs, &model,
-        );
-    world.env_overrides.insert(
-        "_anthropic_msgs".into(),
-        serde_json::to_string(&api_msgs).unwrap(),
-    );
 }
 
 // ---- Then steps ------------------------------------------------------------

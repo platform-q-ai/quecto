@@ -18,8 +18,7 @@ fn test_build_messages_concatenates_system_messages_without_clobbering() {
         Message::system("[Session memory is available via recall()]"),
         Message::user("hello"),
     ];
-    let (sys, api_messages) =
-        AnthropicProvider::build_messages(&messages, "claude-opus-4-5", false);
+    let (sys, api_messages) = AnthropicProvider::build_messages(&messages, false);
     let sys = sys.expect("system prompt must survive a later system message");
     assert!(
         sys.contains("REAL SYSTEM PROMPT"),
@@ -61,8 +60,7 @@ fn test_subagent_note_reaches_wire_as_trailing_user_turn() {
         Message::assistant("on it", vec![]),
         note,
     ];
-    let (sys, api_messages) =
-        AnthropicProvider::build_messages(&messages, "claude-opus-4-5", false);
+    let (sys, api_messages) = AnthropicProvider::build_messages(&messages, false);
     assert_eq!(
         sys.as_deref(),
         Some("REAL SYSTEM PROMPT"),

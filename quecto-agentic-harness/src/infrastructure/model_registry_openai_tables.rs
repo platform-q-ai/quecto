@@ -1,7 +1,7 @@
 // Built-in OpenAI tables, split out of `model_registry.rs` to respect the
-// per-file line cap: GPT-5.6 tier pricing, and the published limits of the
+// per-file line cap: GPT-5.6 tier pricing, the published limits of the
 // OpenAI/Codex models the GPT-5.6+ enrichment does not cover (#2405,
-// checked 2026-10-01). They return infra types, so they live in the
+// checked 2026-10-01), and which built-in models take images (#2421). They return infra types, so they live in the
 // infrastructure layer next to the registry rather than in the domain.
 
 use super::ModelCost;
@@ -87,3 +87,35 @@ pub(super) fn openai_published_limits(provider: &str, id: &str) -> Option<Publis
         _ => None,
     }
 }
+
+/// The built-in models that take image input (#2421), by id: every Claude
+/// model, every GPT-5/GPT-6 tier but GPT-5.3 Codex Spark (text only:
+/// openai.com/index/introducing-gpt-5-3-codex-spark) and every Grok
+/// (docs.x.ai/developers/grok-4-7). A built-in not listed takes text only.
+pub(super) const IMAGE_INPUT_IDS: &[&str] = &[
+    "claude-fable-5-1",
+    "claude-fable-5",
+    "claude-opus-5",
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+    "claude-opus-4-5",
+    "claude-sonnet-5",
+    "claude-sonnet-4-6",
+    "claude-sonnet-4-5",
+    "gpt-6-astra",
+    "gpt-6-sol",
+    "gpt-6.1-sol",
+    "gpt-6-luna",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-5.5",
+    "gpt-5.5-mini",
+    "gpt-5.5-nano",
+    "gpt-5.3-codex",
+    "gpt-5.2-codex",
+    "grok-4.7",
+    "grok-4.6",
+    "grok-4.5",
+];

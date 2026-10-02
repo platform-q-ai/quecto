@@ -1,4 +1,6 @@
-//! #935: per-model output-cap clamp for the agent loop.
+//! #935: per-model output-cap clamp for the agent loop, and what else the
+//! active model declares: how its prompt is bounded (#2405) and whether it
+//! takes images (#2421).
 //!
 //! The configured `max_tokens` is a global default; a model whose real output
 //! limit is lower (e.g. Fireworks qwen3p7-plus = 65536) must never receive a
@@ -45,8 +47,25 @@ impl AgentLoopImpl {
     fn set_model_limits(&mut self, limits: ModelLimits) {
         self.model_max_tokens = limits.max_output_tokens;
         self.model_context_window = limits.context_window;
-        self.model_prompt_limit = limits.prompt_limit;
+        self.model_traits = ModelTraits {
+            prompt_limit: limits.prompt_limit,
+            takes_images: limits.takes_images,
+        };
         self.sync_context_limits();
+    }
+
+    /// The conversation as the active model is sent it (#2421): with its
+    /// images when the model takes them, a marker in each one's place when
+    /// it takes none. The conversation itself keeps every image.
+    pub(super) fn messages_for_model<'m>(
+        &self,
+        messages: &'m [crate::domain::message::Message],
+    ) -> std::borrow::Cow<'m, [crate::domain::message::Message]> {
+        crate::domain::conversation::image_input::for_model(
+            messages,
+            &self.model,
+            self.model_traits.takes_images,
+        )
     }
 
     /// Builder variant: the startup model's limits (#2405), which the
@@ -73,7 +92,7 @@ impl AgentLoopImpl {
         let tokens = |value: u32| usize::try_from(value).unwrap_or(usize::MAX);
         let window = ModelWindow::new(
             self.model_context_window,
-            self.model_prompt_limit,
+            self.model_traits.prompt_limit,
             self.model_max_tokens.map(tokens),
             tokens(self.effective_max_tokens()),
         );
@@ -216,6 +235,14 @@ impl AgentLoopImpl {
     pub fn context_ceiling_cap(&self) -> crate::application::context::ContextCeilingCap {
         self.context_manager.ceiling_cap()
     }
+}
+
+/// What the active model declares beside its token limits: how its
+/// provider bounds the prompt (#2405) and whether it takes images (#2421).
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct ModelTraits {
+    pub(super) prompt_limit: crate::domain::catalogue::PromptLimit,
+    pub(super) takes_images: bool,
 }
 
 /// Why the active model's window is worth a line in the log (#2405).

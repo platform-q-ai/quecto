@@ -6,6 +6,7 @@ pub mod codex;
 pub(crate) mod input_prefix;
 pub mod openai;
 pub mod openai_endpoint_router;
+mod openai_images;
 pub mod refresh_wiring;
 pub mod refreshable;
 pub mod retry;

@@ -130,8 +130,8 @@ pub struct AgentLoopImpl {
     session_key: String,
     /// #1044: the active model's known context window (None when unknown).
     pub(super) model_context_window: Option<usize>,
-    /// #2405: how the active model's provider bounds the prompt.
-    model_prompt_limit: crate::domain::catalogue::PromptLimit,
+    /// #2405, #2421: how the active model's prompt is bounded; if it takes images.
+    model_traits: agent_loop_clamp::ModelTraits,
     /// #2405: the window note awaiting the next request, once per model.
     context_notes: std::sync::Mutex<agent_loop_clamp::ContextNotes>,
     /// When true, use incremental streaming for LLM calls.
@@ -201,7 +201,7 @@ impl AgentLoopImpl {
             retains_context: config.retention.is_some(),
             session_key: config.session_key,
             model_context_window: config.model_context_window,
-            model_prompt_limit: Default::default(),
+            model_traits: Default::default(),
             context_notes: Default::default(),
             progress_callback: config.progress_callback,
             streaming: config.streaming,

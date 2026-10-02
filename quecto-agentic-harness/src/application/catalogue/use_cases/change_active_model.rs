@@ -223,7 +223,9 @@ impl ChangeActiveModel {
                 .context_window_explicit
                 .then_some(capabilities.context_window as usize),
             prompt_limit: capabilities.prompt_limit,
-            takes_images: false,
+            takes_images: crate::domain::conversation::image_input::takes_images(
+                &capabilities.input_modalities,
+            ),
         }
     }
 }

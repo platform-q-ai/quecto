@@ -2,6 +2,7 @@
 //! encrypted reasoning a turn carries back to its model (#2162).
 use super::CodexProvider;
 use crate::domain::message::{Message, Role, ThinkingBlock};
+use crate::infrastructure::providers::openai_images::{data_url, images};
 
 impl CodexProvider {
     /// `build_input` replaying no reasoning (tests of the rest of it).
@@ -62,6 +63,29 @@ impl CodexProvider {
         }
     }
 
+    /// What a user message's `content`, or a tool result's `output`,
+    /// becomes (#2421): the text alone, as a string, when the message
+    /// carries no image, which is every message's bytes before images
+    /// were sent; with images, an array of its text (when it has any) and
+    /// each image as an `input_image` data URL.
+    fn sent_content(msg: &Message) -> serde_json::Value {
+        let images = images(msg);
+        let text = match msg.content.is_empty() {
+            true => None,
+            false => Some(serde_json::json!({"type": "input_text", "text": msg.content})),
+        };
+        match images.is_empty() {
+            true => serde_json::Value::String(msg.content.clone()),
+            false => serde_json::Value::Array(
+                text.into_iter()
+                    .chain(images.iter().map(|(mime, data)| {
+                        serde_json::json!({"type": "input_image", "image_url": data_url(mime, data)})
+                    }))
+                    .collect(),
+            ),
+        }
+    }
+
     pub(super) fn build_input_for(
         messages: &[Message],
         origin: &str,
@@ -89,7 +113,9 @@ impl CodexProvider {
                     None => instructions = Some(msg.content.clone()),
                 },
                 Role::User => {
-                    input.push(serde_json::json!({ "role": "user", "content": msg.content }));
+                    input.push(
+                        serde_json::json!({ "role": "user", "content": Self::sent_content(msg) }),
+                    );
                 }
                 Role::Assistant => {
                     let phase = Self::phase(msg);
@@ -136,7 +162,7 @@ impl CodexProvider {
                             input.push(serde_json::json!({
                                 "type": "function_call_output",
                                 "call_id": call_id,
-                                "output": msg.content,
+                                "output": Self::sent_content(msg),
                             }));
                         }
                     }
