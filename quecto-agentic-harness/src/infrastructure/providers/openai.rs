@@ -672,6 +672,10 @@ pub(crate) mod openai_sse_parser;
 #[path = "openai_cov_tests.rs"]
 mod cov_tests;
 
+// #2414 review L7: consecutive user messages on the wire.
+#[cfg(test)]
+#[path = "openai_consecutive_user_tests.rs"]
+mod consecutive_user_tests;
 #[cfg(test)]
 #[path = "openai_effort_1996_tests.rs"]
 mod effort_1996_tests;

@@ -477,6 +477,9 @@ pub(crate) fn build_agent_from_config_in(
     // (bounds the budget) come from the change-active-model use case — the
     // same read a later set_model performs (#1847).
     let limits = catalogue.model.startup_limits(&model);
+    let context_marks = (config.agents.defaults.context_marks())
+        .map_err(|error| stderr.push_str(&format!("agent: {error}\n")))
+        .ok()?;
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
         tool_registry: Box::new(registry),
@@ -492,7 +495,7 @@ pub(crate) fn build_agent_from_config_in(
         audit_log: None,
         // #1045/#2414: constructor fields — config cannot be dropped.
         pin_recent_turns: config.agents.defaults.pin_recent_turns,
-        context_marks: config.agents.defaults.context_marks(),
+        context_marks,
         model_context_window: limits.context_window,
         tool_profile_context: if flags.spawned {
             crate::domain::tool::ToolProfileContext::Child

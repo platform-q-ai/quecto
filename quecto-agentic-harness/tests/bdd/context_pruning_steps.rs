@@ -1645,7 +1645,7 @@ fn then_configured_watermark_marks(world: &mut QuectoWorld, high: usize, low: us
         .context_agent_defaults
         .as_ref()
         .expect("a default agent configuration must have been established");
-    let marks = defaults.context_marks();
+    let marks = defaults.context_marks().expect("valid marks");
     assert_eq!(
         (marks.high(), marks.low()),
         (high, low),

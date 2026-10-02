@@ -323,7 +323,7 @@ async fn a_cut_then_a_ladder_that_stubs_counts_each_once() {
         cuts[0].tokens_after > 20_000,
         "the cut left it over: {cuts:?}"
     );
-    let pruned: Vec<(usize, usize, usize, bool)> = events(&sink)
+    let pruned: Vec<(usize, usize, usize, bool, usize)> = events(&sink)
         .into_iter()
         .filter_map(|event| match event {
             AuditEvent::ContextPruned {
@@ -331,19 +331,22 @@ async fn a_cut_then_a_ladder_that_stubs_counts_each_once() {
                 tokens_after,
                 ladder_stubbed,
                 watermark_fallback,
+                ceiling_tokens,
                 ..
             } => Some((
                 tokens_before,
                 tokens_after,
                 ladder_stubbed,
                 watermark_fallback,
+                ceiling_tokens,
             )),
             _ => None,
         })
         .collect();
     assert_eq!(pruned.len(), 1, "{pruned:?}");
-    let (before, after, stubbed, fallback) = pruned[0];
+    let (before, after, stubbed, fallback, ceiling) = pruned[0];
     assert!(fallback, "the ladder's record is marked");
+    assert_eq!(ceiling, 20_000, "the ceiling in force, in provider tokens");
     assert!(stubbed >= 1, "the ladder stubbed: {pruned:?}");
     assert_eq!(
         before, cuts[0].tokens_after,
@@ -415,4 +418,46 @@ async fn the_emergency_ladder_runs_in_a_loop_built_with_no_mode_set() {
     let sent = rig.pass(&mut messages).await;
     assert_eq!(prunes(&sink), [true], "{:?}", events(&sink));
     assert!(sent <= 20_000, "{sent} over the 20k ceiling");
+}
+
+/// #2414 review L3: tool definitions that take more than three quarters of
+/// the budget leave the messages the quarter floor (#2182), over the
+/// configured budget: the record says the budget is unmet, though no
+/// request goes over the ceiling and no ladder runs.
+#[tokio::test]
+async fn a_floor_over_the_budget_is_recorded_unmet_without_the_ladder() {
+    use crate::application::agent_loop::tests::{
+        MockProvider, MockRegistry, MockTool, test_config,
+    };
+    let mut registry = MockRegistry::new();
+    for i in 0..40 {
+        registry.register(Arc::new(MockTool::new(&format!("tool_{i}"), "ok")));
+    }
+    let tools: usize = registry
+        .cached_definitions
+        .iter()
+        .map(crate::domain::tool::ToolDefinition::estimated_tokens)
+        .sum();
+    let sink = Arc::new(CapturingAuditSink::default());
+    let agent = crate::application::agent_loop::AgentLoopImpl::new(
+        crate::application::agent_loop::AgentLoopConfig {
+            max_context_tokens: tools * 10 / 8,
+            audit_log: Some(sink.clone() as Arc<dyn AuditSink>),
+            ..test_config(Arc::new(MockProvider::new(vec![])), Box::new(registry))
+        },
+    );
+    let mut messages = vec![prompt("hi".into())];
+    agent.apply_context_pruning(&mut messages, 1, false).await;
+    let unmet: Vec<(bool, bool)> = events(&sink)
+        .into_iter()
+        .filter_map(|event| match event {
+            AuditEvent::ContextPruned {
+                budget_unmet,
+                watermark_fallback,
+                ..
+            } => Some((budget_unmet, watermark_fallback)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(unmet, [(true, false)], "{:?}", events(&sink));
 }

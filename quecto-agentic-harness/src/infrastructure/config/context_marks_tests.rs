@@ -32,18 +32,18 @@ fn marks(high: usize, low: usize) -> Watermark {
 #[test]
 fn the_marks_cut_at_256k_down_to_70k_unless_configured() {
     assert_eq!(
-        Config::default().agents.defaults.context_marks(),
+        Config::default().agents.defaults.context_marks().unwrap(),
         marks(256_000, 70_000)
     );
     assert_eq!(
-        load("{}").unwrap().agents.defaults.context_marks(),
+        load("{}").unwrap().agents.defaults.context_marks().unwrap(),
         marks(256_000, 70_000)
     );
     let defaults = load(r#"{"context_high_tokens":120000,"context_low_tokens":40000}"#)
         .unwrap()
         .agents
         .defaults;
-    assert_eq!(defaults.context_marks(), marks(120_000, 40_000));
+    assert_eq!(defaults.context_marks().unwrap(), marks(120_000, 40_000));
 }
 
 #[test]
@@ -54,12 +54,12 @@ fn the_environment_sets_the_marks() {
     ])
     .unwrap();
     assert_eq!(
-        config.agents.defaults.context_marks(),
+        config.agents.defaults.context_marks().unwrap(),
         marks(100_000, 30_000)
     );
     let config = load_env(&[("QUECTO_CONTEXT_HIGH_TOKENS", "300000")]).unwrap();
     assert_eq!(
-        config.agents.defaults.context_marks(),
+        config.agents.defaults.context_marks().unwrap(),
         marks(300_000, 70_000),
         "an unset mark is the owner's"
     );
@@ -136,7 +136,18 @@ fn the_environment_overrides_the_file_for_each_mark() {
     )
     .unwrap();
     assert_eq!(
-        config.agents.defaults.context_marks(),
+        config.agents.defaults.context_marks().unwrap(),
         marks(90_000, 20_000)
     );
+}
+
+/// #2414 review L6: marks a configuration built in code (never loaded)
+/// carries are refused, never replaced with others.
+#[test]
+fn invalid_marks_built_in_code_are_refused_not_replaced() {
+    let mut defaults = Config::default().agents.defaults;
+    defaults.context_marks.context_high_tokens = Some(50_000);
+    defaults.context_marks.context_low_tokens = Some(50_000);
+    let error = defaults.context_marks().expect_err("refused").to_string();
+    assert!(error.contains("below the high mark"), "{error}");
 }

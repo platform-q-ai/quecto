@@ -167,6 +167,11 @@ mod watermark_tests;
 #[path = "agent_loop/watermark_telemetry_tests.rs"]
 mod watermark_telemetry_tests;
 
+// #2414 review M2: a cut or the ladder tells the read tool what left.
+#[cfg(test)]
+#[path = "agent_loop/watermark_read_cache_tests.rs"]
+mod watermark_read_cache_tests;
+
 // #2403: every request extends the previous one, through the Codex serializer.
 #[cfg(test)]
 #[path = "agent_loop/watermark_sim_tests.rs"]

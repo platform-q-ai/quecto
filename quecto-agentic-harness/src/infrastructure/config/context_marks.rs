@@ -44,13 +44,11 @@ fn refused(reason: &str) -> ConfigError {
 }
 
 impl AgentDefaults {
-    /// The watermark marks the configuration sets. Validated at load, so
-    /// marks it refuses (only in a configuration built in code without
-    /// loading) fall back to the owner's.
-    pub fn context_marks(&self) -> Watermark {
-        let marks = self.context_marks.marks();
-        debug_assert!(marks.is_ok(), "the marks were validated at load: {marks:?}");
-        marks.unwrap_or_default()
+    /// The watermark marks the configuration sets, or why they are
+    /// refused. Every load refuses them already; a configuration built in
+    /// code without loading is refused here too, never given other marks.
+    pub fn context_marks(&self) -> Result<Watermark, ConfigError> {
+        self.context_marks.marks()
     }
 }
 

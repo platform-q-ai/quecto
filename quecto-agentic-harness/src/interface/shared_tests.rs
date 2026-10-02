@@ -564,7 +564,7 @@ mod context_settings {
             effort: None,
             audit_log: None,
             pin_recent_turns: defaults.pin_recent_turns,
-            context_marks: defaults.context_marks(),
+            context_marks: defaults.context_marks().unwrap(),
             model_context_window,
             tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
         })

@@ -129,7 +129,7 @@ fn the_kept_context_settings_still_load() {
     }}});
     let config = Config::from_document(document).expect("the kept keys load");
     let defaults = &config.agents.defaults;
-    let marks = defaults.context_marks();
+    let marks = defaults.context_marks().unwrap();
     assert_eq!((marks.high(), marks.low()), (120_000, 40_000));
     assert_eq!(defaults.max_context_tokens, 200_000);
     assert_eq!(defaults.swarm_max_context_tokens, 100_000);
@@ -149,6 +149,6 @@ fn the_kept_context_settings_still_load() {
         .with_env_overrides(&env)
         .expect("the kept overrides apply");
     assert_eq!(config.agents.defaults.max_context_tokens, 150_000);
-    let marks = config.agents.defaults.context_marks();
+    let marks = config.agents.defaults.context_marks().unwrap();
     assert_eq!((marks.high(), marks.low()), (100_000, 30_000));
 }

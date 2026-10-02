@@ -577,3 +577,29 @@ fn the_ceiling_keeps_the_reply_reserve_free_of_the_window() {
     assert_eq!(manager.effective_max_context_tokens(), 300_000);
     assert_eq!(manager.window_in_estimate_units(), None);
 }
+
+/// #2414 review L4: the configured `pin_recent_turns` reaches the
+/// emergency ladder. No cut can be made (no user message to keep), so the
+/// ladder runs and keeps the pinned turns in full: two by default, three
+/// when configured.
+#[tokio::test]
+async fn pin_recent_turns_reaches_the_emergency_ladder() {
+    async fn kept(pin_recent_turns: u32) -> Vec<u32> {
+        let manager = ContextManager::new(ContextManagerConfig {
+            pin_recent_turns,
+            ..config_for(10)
+        });
+        let mut messages: Vec<Message> = (1..=4).map(long_message).collect();
+        let pass = manager
+            .prepare_watermark_context(&mut messages, (0, 10), false)
+            .await;
+        assert!(pass.fallback, "no cut fits: the ladder ran");
+        messages
+            .iter()
+            .filter(|m| !m.is_collapsed)
+            .filter_map(|m| m.turn)
+            .collect()
+    }
+    assert_eq!(kept(2).await, [3, 4]);
+    assert_eq!(kept(3).await, [2, 3, 4]);
+}
