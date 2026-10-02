@@ -38,10 +38,10 @@ use crate::application::configuration::ports::{
     ConfigDocumentStore, ConfigDocumentWriter, ConfigValidator, OverlayDocument, OverlayTrust,
     OverlayTrustStore,
 };
-use crate::application::configuration::removed_keys::{
+use crate::application::configuration::use_cases::ResolveEffectiveConfig;
+use crate::domain::conversation::removed_keys::{
     WHY_REMOVED, removed_keys_set, without_removed_keys,
 };
-use crate::application::configuration::use_cases::ResolveEffectiveConfig;
 use crate::domain::tool_id::parse_stable_tool_id;
 
 pub struct PatchConfiguration {

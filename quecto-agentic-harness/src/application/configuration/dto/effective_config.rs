@@ -96,7 +96,7 @@ pub enum EffectiveConfigError {
     },
     /// The files still set keys #2414 removed: every one is named, with
     /// the command that removes it (review H1).
-    RemovedKeys(Vec<crate::application::configuration::removed_keys::RemovedKeysIn>),
+    RemovedKeys(Vec<crate::application::configuration::dto::removed_keys::RemovedKeysIn>),
     /// Each layer is valid but the overlay merged over the global file is
     /// not; both files are named because either may need the fix.
     InvalidMerge {
@@ -137,7 +137,7 @@ impl std::fmt::Display for EffectiveConfigError {
             Self::RemovedKeys(files) => write!(
                 f,
                 "failed to load config: {}",
-                crate::application::configuration::removed_keys::removed_keys_message(files)
+                crate::application::configuration::dto::removed_keys::removed_keys_message(files)
             ),
             Self::InvalidMerge {
                 global,

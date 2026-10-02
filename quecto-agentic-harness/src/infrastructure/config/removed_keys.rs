@@ -3,7 +3,7 @@
 //! naming the key: no silent ignore, no compatibility shim.
 
 use super::{AgentDefaults, ConfigError};
-use crate::application::configuration::removed_keys::{REMOVED_DEFAULTS_KEYS, WHY_REMOVED};
+use crate::domain::conversation::removed_keys::{REMOVED_DEFAULTS_KEYS, WHY_REMOVED};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 

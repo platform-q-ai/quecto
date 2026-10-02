@@ -13,5 +13,4 @@ pub mod dto;
 pub mod overlay_policy;
 pub mod ports;
 pub mod redaction;
-pub mod removed_keys;
 pub mod use_cases;

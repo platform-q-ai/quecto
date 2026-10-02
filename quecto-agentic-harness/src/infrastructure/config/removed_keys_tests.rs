@@ -19,7 +19,7 @@ const REMOVED_KEYS: [(&str, &str); 6] = [
 /// The schema refuses exactly the keys the application's policy names.
 #[test]
 fn the_refused_keys_are_the_policys() {
-    use crate::application::configuration::removed_keys::REMOVED_DEFAULTS_KEYS;
+    use crate::domain::conversation::removed_keys::REMOVED_DEFAULTS_KEYS;
     let keys: Vec<&str> = REMOVED_KEYS.iter().map(|(key, _)| *key).collect();
     assert_eq!(keys, REMOVED_DEFAULTS_KEYS);
 }

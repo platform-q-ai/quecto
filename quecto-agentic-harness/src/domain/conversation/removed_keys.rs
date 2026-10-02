@@ -1,12 +1,9 @@
 //! #2414: the `agents.defaults` keys the watermark context removed (the
-//! old pruning rules and the switch between the two modes). A
-//! configuration that still sets one is refused at load, naming every one
-//! it sets, the file and the command that removes each; and the patch
-//! cycle accepts a write that only takes them away, so they can be unset
-//! one at a time (review H1). Pure policy over the JSON document.
+//! old pruning rules and the switch between the two modes), as pure policy
+//! over a configuration's JSON document: which of them a document sets,
+//! and the document without them.
 
 use serde_json::{Map, Value};
-use std::path::Path;
 
 /// The removed keys, under `agents.defaults`, in the order they are named.
 pub const REMOVED_DEFAULTS_KEYS: [&str; 6] = [
@@ -52,47 +49,6 @@ pub fn without_removed_keys(document: &Map<String, Value>) -> Map<String, Value>
     }
     debug_assert!(removed_keys_set(&stripped).is_empty());
     stripped
-}
-
-/// One file's removed keys and the `quecto config unset` layer flag
-/// (`--global` or `--local`) that addresses it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RemovedKeysIn {
-    pub path: std::path::PathBuf,
-    pub flag: &'static str,
-    pub keys: Vec<&'static str>,
-}
-
-impl RemovedKeysIn {
-    /// `None` when `document` sets none.
-    pub fn of(path: &Path, flag: &'static str, document: &Map<String, Value>) -> Option<Self> {
-        let keys = removed_keys_set(document);
-        (!keys.is_empty()).then(|| Self {
-            path: path.to_path_buf(),
-            flag,
-            keys,
-        })
-    }
-}
-
-/// The message naming every removed key of every file, with the command
-/// that removes each.
-pub fn removed_keys_message(files: &[RemovedKeysIn]) -> String {
-    assert!(
-        files.iter().all(|file| !file.keys.is_empty()),
-        "a file is named only for keys it sets"
-    );
-    let mut message = format!("configuration keys were {WHY_REMOVED}; remove each one:");
-    for file in files {
-        message.push_str(&format!("\n  {}:", file.path.display()));
-        for key in &file.keys {
-            message.push_str(&format!(
-                "\n    quecto config unset agents.defaults.{key} {}",
-                file.flag
-            ));
-        }
-    }
-    message
 }
 
 #[cfg(test)]
