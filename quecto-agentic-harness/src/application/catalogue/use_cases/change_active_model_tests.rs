@@ -16,6 +16,7 @@ use crate::domain::catalogue::{
     AuthIdentity, Availability, CatalogueEntry, ModelCapabilities, ModelCost, ModelDescriptor,
     ModelId, ProviderDescriptor, ProviderId, SourceLayer, TransportKind, UnavailableReason,
 };
+use crate::domain::conversation::image_input::ImageInput;
 use crate::domain::provider::EffortLevel;
 
 fn entry(provider: &str, model: &str, explicit_limits: Option<(u32, u32)>) -> CatalogueEntry {
@@ -272,7 +273,7 @@ fn plan_reads_explicit_limits_from_the_generation_it_just_published() {
             max_output_tokens: Some(50),
             context_window: Some(1234),
             prompt_limit: Default::default(),
-            takes_images: false,
+            image_input: Default::default(),
         }
     );
     assert_eq!(rig.store.current().generation(), 1, "the plan published");
@@ -294,7 +295,7 @@ fn each_limit_clamps_only_when_declared_explicitly() {
             max_output_tokens: Some(50),
             context_window: None,
             prompt_limit: Default::default(),
-            takes_images: false,
+            image_input: Default::default(),
         }
     );
     assert_eq!(
@@ -303,7 +304,7 @@ fn each_limit_clamps_only_when_declared_explicitly() {
             max_output_tokens: None,
             context_window: Some(1234),
             prompt_limit: Default::default(),
-            takes_images: false,
+            image_input: Default::default(),
         }
     );
 }
@@ -316,20 +317,73 @@ fn synthesized_defaults_never_clamp() {
     assert_eq!(plan.verdict, ModelSelectionVerdict::NoRuntime);
 }
 
-/// #2421: a model takes images only when its entry declares `image`; a
-/// model the catalogue does not know takes none.
+/// #2421: what a model takes of a conversation's images, from its entry:
+/// none unless it declares `image`; every image over the Anthropic wire,
+/// still images only over the OpenAI one.
+fn seeing(provider: &str, model: &str, transport: TransportKind) -> CatalogueEntry {
+    let mut seeing = entry(provider, model, Some((50, 1234)));
+    seeing.model.capabilities.input_modalities = vec!["text".into(), "image".into()];
+    seeing.provider.transport = transport;
+    seeing
+}
+
 #[test]
 fn a_model_takes_images_only_when_its_entry_declares_image_input() {
-    let mut seeing = entry("acme", "seeing", None);
-    seeing.model.capabilities.input_modalities = vec!["text".into(), "image".into()];
     let rig = rig(
-        vec![seeing, entry("acme", "plain", None)],
+        vec![
+            seeing("acme", "seeing", TransportKind::OpenAiCompletions),
+            seeing("claude", "opus", TransportKind::AnthropicMessages),
+            entry("acme", "plain", None),
+        ],
         FakeRuntime::none(),
     );
-    assert!(rig.use_case.plan("acme/seeing").limits.takes_images);
-    assert!(!rig.use_case.plan("acme/plain").limits.takes_images);
-    assert!(!rig.use_case.plan("acme/unknown").limits.takes_images);
-    assert!(!rig.use_case.plan("seeing").limits.takes_images);
+    let input = |model: &str| rig.use_case.plan(model).limits.image_input;
+    assert_eq!(input("acme/seeing"), ImageInput::StillImages);
+    assert_eq!(input("claude/opus"), ImageInput::AllImages);
+    assert_eq!(input("acme/plain"), ImageInput::NoImages);
+    assert_eq!(input("acme/unknown"), ImageInput::NoImages);
+    assert_eq!(input("unknown"), ImageInput::NoImages);
+}
+
+/// #2421 review L2: the provider is matched whatever its case, as the
+/// router and `qualified` match it.
+#[test]
+fn a_provider_named_in_another_case_reads_the_same_entry() {
+    let rig = rig(
+        vec![seeing(
+            "openai-oauth",
+            "sol",
+            TransportKind::OpenAiCompletions,
+        )],
+        FakeRuntime::none(),
+    );
+    let limits = rig.use_case.plan("OpenAI-OAuth/sol").limits;
+    assert_eq!(limits.image_input, ImageInput::StillImages);
+    assert_eq!(limits.max_output_tokens, Some(50));
+}
+
+/// #2421 review L2: a bare id reads the entry the router would serve it
+/// from: the first runnable provider that lists it, else the first that
+/// lists it at all.
+#[test]
+fn a_bare_id_reads_the_first_provider_that_lists_it() {
+    let rig = rig(
+        vec![
+            entry("acme", "plain", None),
+            seeing("first", "shared", TransportKind::AnthropicMessages),
+            seeing("second", "shared", TransportKind::OpenAiCompletions),
+            seeing("only", "lonely", TransportKind::AnthropicMessages),
+        ],
+        FakeRuntime::none(),
+    );
+    let input = |model: &str| rig.use_case.plan(model).limits.image_input;
+    assert_eq!(input("plain"), ImageInput::NoImages);
+    assert_eq!(input("shared"), ImageInput::AllImages, "the first provider");
+    assert_eq!(input("lonely"), ImageInput::AllImages);
+    assert_eq!(
+        rig.use_case.plan("lonely").limits.max_output_tokens,
+        Some(50)
+    );
 }
 
 #[test]
@@ -347,7 +401,7 @@ fn a_model_added_since_the_last_read_is_switchable_without_a_refresh() {
             max_output_tokens: Some(10),
             context_window: Some(20),
             prompt_limit: Default::default(),
-            takes_images: false,
+            image_input: Default::default(),
         }
     );
     assert_eq!(*rig.loader.loads.lock().unwrap(), 2);

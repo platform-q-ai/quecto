@@ -494,6 +494,17 @@ Feature: LLM Providers
     And the block array should contain 1 image blocks
     And the block array should contain no text blocks
 
+  # --- #2421: images reach a model only when its catalogue entry declares image input ---
+  Scenario: A model without image input is sent a marker, and a vision model after a switch the kept image
+    Given a catalogue input defining model "acme/text-only" with no declared limits
+    And a catalogue input defining model "acme/seeing" that takes image input
+    And an agent recording its requests runs on "acme/text-only"
+    When the agent is prompted "what is this?" with a "image/png" image
+    Then the last request sent "what is this?" with the marker for "acme/text-only" and no image
+    When the agent's active model is changed to "acme/seeing"
+    And the agent is prompted "and now?"
+    Then the last request sent "what is this?" with its "image/png" image
+
   # --- #182: Abort/cancellation support via CancelFlag ---
 
   Scenario: Chat request is cancelled before it starts

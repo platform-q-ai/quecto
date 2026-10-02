@@ -269,6 +269,45 @@ fn reasoning_is_estimated_at_the_opaque_rate() {
     );
 }
 
+/// #2421 review L5: an image is costed as an image, not as the base64 text
+/// of its data URL: the item's text without its images, plus each image's
+/// estimate.
+#[test]
+fn an_items_images_are_estimated_as_images() {
+    let data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ".repeat(200);
+    let image = json!({
+        "type": "input_image",
+        "image_url": format!("data:image/png;base64,{data}"),
+        "detail": "high",
+    });
+    let prompt = json!({
+        "role": "user",
+        "content": [{"type": "input_text", "text": "look"}, image.clone(), image.clone()],
+    });
+    let result = json!({
+        "type": "function_call_output",
+        "call_id": "c1",
+        "output": [image],
+    });
+    let text_of = |item: Value| estimate_tokens(&serde_json::to_string(&item).unwrap());
+    let prompt_text = text_of(json!({
+        "role": "user",
+        "content": [{"type": "input_text", "text": "look"}],
+    }));
+    let result_text = text_of(json!({
+        "type": "function_call_output",
+        "call_id": "c1",
+        "output": [],
+    }));
+    let baseline = InputBaseline::default();
+    observe(&baseline, "s", &[prompt.clone(), result.clone()]);
+    let observed = observe(&baseline, "s", &[prompt, result, user("next")]);
+    assert_eq!(
+        observed.prefix_tokens_estimate,
+        prompt_text + 2 * IMAGE_TOKENS + result_text + IMAGE_TOKENS
+    );
+}
+
 /// A request compared but never accepted (a failed or cancelled send) does
 /// not become the baseline.
 #[test]

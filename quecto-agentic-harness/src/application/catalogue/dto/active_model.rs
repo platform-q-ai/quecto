@@ -2,6 +2,7 @@
 
 use crate::application::catalogue::dto::{DefaultScope, PersistedDefault};
 use crate::domain::catalogue::{ModelRef, PromptLimit, UnavailableReason};
+use crate::domain::conversation::image_input::ImageInput;
 
 /// The per-model limits the loop clamps to, each `None` unless the
 /// catalogue declared it explicitly (a synthesized default never clamps),
@@ -12,9 +13,10 @@ pub struct ModelLimits {
     pub context_window: Option<usize>,
     /// How the provider bounds the prompt inside the window (#2405).
     pub prompt_limit: PromptLimit,
-    /// Whether the model is sent images (#2421): only when its catalogue
-    /// entry declares `image` input. A model with no entry takes none.
-    pub takes_images: bool,
+    /// What the model takes of a conversation's images (#2421): none unless
+    /// its catalogue entry declares `image` input. A model with no entry
+    /// takes none.
+    pub image_input: ImageInput,
 }
 
 /// What the published runtime generation says about the requested model.

@@ -13,7 +13,60 @@
 
 use std::borrow::Cow;
 
+use crate::domain::catalogue::TransportKind;
 use crate::domain::message::Message;
+
+/// What a model takes of a conversation's images (#2421).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ImageInput {
+    /// No image: each is sent as a marker. A model with no catalogue entry.
+    #[default]
+    NoImages,
+    /// Every image but an animated GIF, which the OpenAI wires refuse.
+    StillImages,
+    /// Every image (the Anthropic Messages API).
+    AllImages,
+}
+
+impl ImageInput {
+    /// What a model whose entry declares `modalities`, reached over
+    /// `transport`, takes.
+    pub fn declared(modalities: &[String], _transport: &TransportKind) -> Self {
+        match takes_images(modalities) {
+            true => Self::AllImages,
+            false => Self::NoImages,
+        }
+    }
+}
+
+/// The text an animated GIF becomes for a model whose wire takes still
+/// images only.
+pub fn animated_gif_marker(model: &str) -> String {
+    format!("[image not sent: animated GIF not supported by {model}]")
+}
+
+/// Whether `data` (base64) is a GIF of more than one image frame.
+pub fn is_animated_gif(_mime_type: &str, _data: &str) -> bool {
+    false
+}
+
+/// The conversation as a model is sent it, for as long as this lives: each
+/// image the model does not take is out of its message, with a marker after
+/// the message's text in its place. Dropping it puts every message back.
+pub struct SentConversation<'m> {
+    messages: &'m mut [Message],
+}
+
+impl<'m> SentConversation<'m> {
+    pub fn new(messages: &'m mut [Message], _model: &str, _input: ImageInput) -> Self {
+        Self { messages }
+    }
+
+    /// The messages as they are sent.
+    pub fn messages(&self) -> &[Message] {
+        self.messages
+    }
+}
 
 /// The input modality a model declares to take images.
 const IMAGE_MODALITY: &str = "image";

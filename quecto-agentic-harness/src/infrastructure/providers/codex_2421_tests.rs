@@ -1,5 +1,6 @@
 //! #2421: images on the Responses wire. A user message with images is a
-//! content array of `input_text` and `input_image` parts; a tool result with
+//! content array of `input_text` and `input_image` parts (always with
+//! `"detail": "high"`, review D); a tool result with
 //! images is a `function_call_output` whose `output` is such an array. A
 //! message with no images goes exactly as before, so a conversation's cache
 //! prefix never changes.
@@ -68,8 +69,8 @@ fn a_user_message_with_images_is_text_then_each_image() {
             "role": "user",
             "content": [
                 {"type": "input_text", "text": "compare these"},
-                {"type": "input_image", "image_url": "data:image/png;base64,cG5n"},
-                {"type": "input_image", "image_url": "data:image/jpeg;base64,anBn"},
+                {"type": "input_image", "image_url": "data:image/png;base64,cG5n", "detail": "high"},
+                {"type": "input_image", "image_url": "data:image/jpeg;base64,anBn", "detail": "high"},
             ],
         })]
     );
@@ -82,7 +83,7 @@ fn a_user_message_with_images_and_no_text_has_no_text_part() {
     assert_eq!(
         input[0]["content"],
         serde_json::json!([
-            {"type": "input_image", "image_url": "data:image/webp;base64,d2Vi"},
+            {"type": "input_image", "image_url": "data:image/webp;base64,d2Vi", "detail": "high"},
         ])
     );
 }
@@ -102,7 +103,7 @@ fn a_tool_result_with_images_is_an_output_array() {
             "call_id": "call_1",
             "output": [
                 {"type": "input_text", "text": "Read image file a.png"},
-                {"type": "input_image", "image_url": "data:image/png;base64,cG5n"},
+                {"type": "input_image", "image_url": "data:image/png;base64,cG5n", "detail": "high"},
             ],
         })
     );
@@ -132,12 +133,12 @@ fn each_result_of_one_batch_carries_its_own_images() {
         vec![
             &serde_json::json!([
                 {"type": "input_text", "text": "one"},
-                {"type": "input_image", "image_url": "data:image/png;base64,b25l"},
+                {"type": "input_image", "image_url": "data:image/png;base64,b25l", "detail": "high"},
             ]),
             &serde_json::json!("two"),
             &serde_json::json!([
-                {"type": "input_image", "image_url": "data:image/gif;base64,Z2lm"},
-                {"type": "input_image", "image_url": "data:image/jpeg;base64,anBn"},
+                {"type": "input_image", "image_url": "data:image/gif;base64,Z2lm", "detail": "high"},
+                {"type": "input_image", "image_url": "data:image/jpeg;base64,anBn", "detail": "high"},
             ]),
         ]
     );
@@ -197,4 +198,23 @@ fn every_earlier_item_is_unchanged_as_the_conversation_grows() {
         }
         sent_before = input;
     }
+}
+
+/// #2421 review N2: a request that ends on a tool batch with images is sent
+/// unchanged at the head of the next one.
+#[test]
+fn a_request_ending_on_an_image_batch_is_the_next_requests_prefix() {
+    let mut history = vec![
+        Message::system("Be brief."),
+        Message::user("look"),
+        calls(&["call_1", "call_2"]),
+        tool_with_images("call_1", "img", &[("image/png", "cG5n")]),
+        tool_with_images("call_2", "", &[("image/jpeg", "anBn")]),
+    ];
+    let (_, before) = CodexProvider::build_input(&history);
+    history.push(Message::assistant("Seen both.", vec![]));
+    history.push(Message::user("next"));
+    let (_, after) = CodexProvider::build_input(&history);
+    assert_eq!(&after[..before.len()], &before[..]);
+    assert_eq!(after.len(), before.len() + 2);
 }

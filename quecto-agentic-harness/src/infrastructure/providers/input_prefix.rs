@@ -17,6 +17,10 @@ use crate::domain::request_observation::{
 use crate::domain::token_estimate::{estimate_opaque_tokens, estimate_tokens};
 use std::hash::Hasher;
 
+/// The estimate of one image item (#2421 review L5).
+#[cfg(test)]
+pub(crate) const IMAGE_TOKENS: usize = 4_784;
+
 /// A session's last accepted request, as its baseline keeps it.
 #[derive(Debug)]
 struct AcceptedInput {

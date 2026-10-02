@@ -67,7 +67,8 @@ fn tool_with_images(id: &str, name: &str, text: &str, images: &[(&'static str, &
 }
 
 fn image_part(url: &str) -> serde_json::Value {
-    serde_json::json!({"type": "image_url", "image_url": {"url": url}})
+    // Review D: every image goes at `"detail": "high"`.
+    serde_json::json!({"type": "image_url", "image_url": {"url": url, "detail": "high"}})
 }
 
 #[test]
@@ -244,4 +245,26 @@ fn every_earlier_message_is_unchanged_as_the_conversation_grows() {
         }
         sent_before = sent.clone();
     }
+}
+
+/// #2421 review N2: a request that ends on a tool batch with images (the
+/// trailing image message) is sent unchanged at the head of the next one.
+#[test]
+fn a_request_ending_on_an_image_batch_is_the_next_requests_prefix() {
+    let mut history = vec![
+        Message::system("Be brief."),
+        Message::user("look"),
+        calls(&[("call_1", "read"), ("call_2", "shot")]),
+        tool_with_images("call_1", "read", "img", &[("image/png", "cG5n")]),
+        tool_with_images("call_2", "shot", "", &[("image/jpeg", "anBn")]),
+    ];
+    let before = body(&history);
+    let before = before.as_array().unwrap();
+    assert_eq!(before.last().unwrap()["role"], "user", "ends on the images");
+    history.push(Message::assistant("Seen both.", vec![]));
+    history.push(Message::user("next"));
+    let after = body(&history);
+    let after = after.as_array().unwrap();
+    assert_eq!(&after[..before.len()], &before[..]);
+    assert_eq!(after.len(), before.len() + 2);
 }

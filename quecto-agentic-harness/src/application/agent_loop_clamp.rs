@@ -49,7 +49,7 @@ impl AgentLoopImpl {
         self.model_context_window = limits.context_window;
         self.model_traits = ModelTraits {
             prompt_limit: limits.prompt_limit,
-            takes_images: limits.takes_images,
+            image_input: limits.image_input,
         };
         self.sync_context_limits();
     }
@@ -64,7 +64,8 @@ impl AgentLoopImpl {
         crate::domain::conversation::image_input::for_model(
             messages,
             &self.model,
-            self.model_traits.takes_images,
+            self.model_traits.image_input
+                != crate::domain::conversation::image_input::ImageInput::NoImages,
         )
     }
 
@@ -242,7 +243,7 @@ impl AgentLoopImpl {
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct ModelTraits {
     pub(super) prompt_limit: crate::domain::catalogue::PromptLimit,
-    pub(super) takes_images: bool,
+    pub(super) image_input: crate::domain::conversation::image_input::ImageInput,
 }
 
 /// Why the active model's window is worth a line in the log (#2405).

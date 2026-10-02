@@ -279,7 +279,7 @@ async fn set_model_rederives_the_context_window_budget() {
             max_output_tokens: None,
             context_window: Some(1_000_000),
             prompt_limit: Default::default(),
-            takes_images: false,
+            image_input: Default::default(),
         },
     );
     assert_eq!(
@@ -295,7 +295,7 @@ async fn set_model_rederives_the_context_window_budget() {
             max_output_tokens: None,
             context_window: Some(32_768),
             prompt_limit: Default::default(),
-            takes_images: false,
+            image_input: Default::default(),
         },
     );
     assert_eq!(
@@ -311,7 +311,7 @@ async fn set_model_rederives_the_context_window_budget() {
             max_output_tokens: None,
             context_window: None,
             prompt_limit: Default::default(),
-            takes_images: false,
+            image_input: Default::default(),
         },
     );
     assert_eq!(
