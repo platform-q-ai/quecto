@@ -946,7 +946,8 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // before `agent_end` (711 → 698).
     ("src/interface/cli/uds.rs", 698),
     ("src/interface/cli/uds_session_history.rs", 205),
-    ("src/interface/cli/uds_session_message_range.rs", 290),
+    // #2404: the ranged builder's unused thinking switch went (290 → 283).
+    ("src/interface/cli/uds_session_message_range.rs", 283),
     ("src/interface/cli/uds_snapshots.rs", 256),
     ("src/interface/cli/uds_sync.rs", 135),
     ("src/interface/uds/sessions/controller.rs", 42),

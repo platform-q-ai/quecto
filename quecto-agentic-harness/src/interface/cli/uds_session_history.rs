@@ -36,6 +36,12 @@ pub(crate) fn history_page_json(page: HistoryPage) -> serde_json::Value {
         {
             value["turnOrigin"] = serde_json::json!(origin);
         }
+        // #2404: a watermark cut's archive stub is told from a prompt.
+        if let Some(kind) =
+            crate::infrastructure::turn_origin_names::user_kind_name(message.user_kind)
+        {
+            value["userKind"] = serde_json::json!(kind);
+        }
         let sz = serde_json::to_vec(&value)
             .map(|v| v.len())
             .unwrap_or(usize::MAX)

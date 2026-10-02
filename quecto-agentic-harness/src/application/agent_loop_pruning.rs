@@ -42,14 +42,21 @@ impl AgentLoopImpl {
             .context_manager
             .prepare_watermark_context(messages, (fixed_tokens, budget), spills_dirty)
             .await;
-        let mut plan = match watermark {
-            Some(plan) => plan,
+        let (mut plan, cut, watermark_fallback) = match watermark {
+            Some(pass) => (pass.plan, pass.cut, pass.fallback),
             None => {
-                self.context_manager
+                let plan = self
+                    .context_manager
                     .prepare_provider_context(messages, budget, spills_dirty)
-                    .await
+                    .await;
+                (plan, None, false)
             }
         };
+        // #2404: a due watermark cut's record, made or skipped. A cut is
+        // never a `context_pruned` record; the emergency ladder's is, marked.
+        if let Some(cut) = cut {
+            self.audit(current_turn, cut.into_event()).await;
+        }
         if plan.durable_prefix_dirty {
             self.report_collapsed_results(messages, &live_before, &plan.dropped_calls);
         }
@@ -72,7 +79,8 @@ impl AgentLoopImpl {
         if plan.durable_prefix_dirty {
             self.latch_durable_prefix_dirty();
         }
-        if plan.tool_results_collapsed > 0
+        if watermark_fallback
+            || plan.tool_results_collapsed > 0
             || plan.messages_collapsed > 0
             || plan.ladder_stubbed > 0
             || plan.messages_dropped > 0
@@ -91,6 +99,7 @@ impl AgentLoopImpl {
                 large_results_collapsed = plan.large_results_collapsed,
                 ceiling_tokens,
                 budget_unmet = plan.over_budget,
+                watermark_fallback,
                 estimate_scale_permille = self.context_manager.estimate_scale().permille(),
                 turn = current_turn,
                 total_tokens = plan.total_tokens,
@@ -110,7 +119,7 @@ impl AgentLoopImpl {
                     snapshots_superseded: plan.snapshots_superseded,
                     ceiling_tokens,
                     large_results_collapsed: plan.large_results_collapsed,
-                    watermark_fallback: plan.watermark_fallback,
+                    watermark_fallback,
                 },
             )
             .await;
