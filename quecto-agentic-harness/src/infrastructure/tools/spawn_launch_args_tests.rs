@@ -326,3 +326,14 @@ fn hands_the_child_the_launching_agents_context_mode() {
         .unwrap_or_else(|| panic!("the flag is passed: {strs:?}"));
     assert_eq!(strs[at + 1], "watermark:256000:70000");
 }
+
+/// #2414: watermark is the only context mode, so a child is handed none:
+/// it runs the watermark pass as every agent does.
+#[test]
+fn the_child_is_handed_no_context_mode() {
+    let strs = as_strings(&build_child_cli_args(&spec(&base_config())));
+    assert!(
+        !strs.iter().any(|arg| arg.contains("context-mode")),
+        "{strs:?}"
+    );
+}

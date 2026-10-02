@@ -5,7 +5,7 @@
 //! `watermark_fallback`. Every record holds counts, ids and kinds only.
 
 use super::ctx_mgmt_tests::CapturingAuditSink;
-use super::watermark_tests::{HIGH, LOW, Rig, agent_under, stubs, text, total};
+use super::watermark_tests::{HIGH, LOW, Rig, agent_under, default_agent, stubs, text, total};
 use crate::application::audit::ports::AuditSink;
 use crate::domain::audit::{AuditEvent, ContextCutRecord, ContextCutSkippedRecord, CutSkipReason};
 use crate::domain::conversation::ContextMode;
@@ -333,4 +333,28 @@ async fn the_records_name_their_reason_and_units_on_the_wire() {
         .expect("a cut");
     assert!(made["marks"]["ceiling_estimate_tokens"].is_u64(), "{made}");
     assert!(made["marks"].get("ceiling_tokens").is_none(), "{made}");
+}
+
+/// #2414: the emergency fallback stays. In a loop built with no mode
+/// switched on, a request no cut can bring under the ceiling (the pinned
+/// brief alone is over it) runs the ladder, logged as the watermark
+/// fallback, and is sent under the ceiling.
+#[tokio::test]
+async fn the_emergency_ladder_runs_in_a_loop_built_with_no_mode_set() {
+    let (mut rig, sink) = audited(Rig::new(None));
+    rig.agent = default_agent(rig.store.clone(), 20_000);
+    rig.agent
+        .set_audit_log(Some(sink.clone() as Arc<dyn AuditSink>));
+    let mut answer = Message::assistant(text("the first answer", 100), vec![]);
+    answer.turn = Some(1);
+    let mut messages = vec![
+        Message::system(text("system", 300)),
+        prompt(text("a brief over the ceiling", 30_000)),
+        answer,
+        prompt(text("latest", 100)),
+    ];
+    rig.exchange(&mut messages, 300).await;
+    let sent = rig.pass(&mut messages).await;
+    assert_eq!(prunes(&sink), [true], "{:?}", events(&sink));
+    assert!(sent <= 20_000, "{sent} over the 20k ceiling");
 }

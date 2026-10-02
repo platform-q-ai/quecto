@@ -287,3 +287,106 @@ fn joining_a_swarm_engages_the_size_aware_collapse() {
         "on at the swarm default from the moment the process joins"
     );
 }
+
+/// #2414: watermark is the only context mode. Every construction (a CLI
+/// run, a UDS parent, a sub-agent, a swarm member once it joins) runs the
+/// watermark pass at the configured marks: a context over the high mark is
+/// cut once, behind one archive stub, and nothing is collapsed in place.
+#[test]
+fn every_construction_runs_the_watermark_pass() {
+    use crate::domain::conversation::UserKind;
+    use crate::domain::message::Message;
+    use crate::domain::turn_origin::prompt;
+    use crate::infrastructure::tools::swarm_bridge::Participation;
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("config.json"),
+        r#"{"providers":{"fireworks":{"api_key":"k"}},"agents":{"defaults":{"context_high_tokens":20000,"context_low_tokens":6000}}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{"fireworks":{"api":"openai-completions","baseUrl":"https://e.example/v1","apiKey":"k","models":[{"id":"small-window","contextWindow":100000}]}}}"#,
+    )
+    .unwrap();
+    let cfg = tmp.path().join("config.json");
+    let prose = |tag: &str, tokens: usize| {
+        let mut text = format!("{tag} ");
+        while Message::estimate_tokens(&text) < tokens {
+            text.push_str("lorem ipsum dolor sit amet ");
+        }
+        text
+    };
+    let member = Participation::shared();
+    let constructions: [(&str, Box<dyn Fn(&mut AgentFlags)>); 4] = [
+        ("a CLI run", Box::new(|_| {})),
+        ("a UDS parent", Box::new(|flags| flags.uds_mode = true)),
+        (
+            "a sub-agent",
+            Box::new(|flags| {
+                flags.spawned = true;
+                flags.parent_id = Some("parent".into());
+            }),
+        ),
+        (
+            "a swarm member",
+            Box::new(|flags| flags.swarm_participation = member.clone()),
+        ),
+    ];
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    for (construction, adapt) in constructions {
+        let mut flags = flags_for_wiring_test();
+        adapt(&mut flags);
+        let mut stderr = String::new();
+        let built = build_agent_from_config(
+            tmp.path(),
+            &selection_for_test(&cfg, false),
+            &flags,
+            &mut stderr,
+            None,
+        )
+        .unwrap_or_else(|| panic!("{construction}: {stderr}"));
+        member.set(true);
+        let mut messages = vec![
+            Message::system(prose("system", 300)),
+            prompt(prose("brief", 200)),
+        ];
+        for n in 0..12 {
+            let mut answer = Message::assistant(prose(&format!("answer {n}"), 2_000), vec![]);
+            answer.turn = Some(1);
+            messages.push(answer);
+            messages.push(prompt(prose(&format!("prompt {n}"), 50)));
+        }
+        runtime.block_on(built.agent.prune_resumed_context(&mut messages));
+        let stubs = messages
+            .iter()
+            .filter(|m| m.user_kind == UserKind::ArchiveStub)
+            .count();
+        assert_eq!(stubs, 1, "{construction}: one cut, one stub");
+        assert!(
+            messages.iter().all(|m| !m.is_collapsed),
+            "{construction}: nothing was collapsed in place"
+        );
+    }
+}
+
+/// #2414: `--inherited-context-mode` is gone with the mode it handed down:
+/// an agent started with it is refused, the flag named.
+#[test]
+fn the_inherited_context_mode_flag_is_refused() {
+    let args = [
+        "-m".to_string(),
+        "hi".to_string(),
+        "--inherited-context-mode".to_string(),
+        "watermark:256000:70000".to_string(),
+    ];
+    let mut stderr = String::new();
+    assert!(parse_agent_flags(&args, &mut stderr).is_none(), "refused");
+    assert!(
+        stderr.contains("unknown flag '--inherited-context-mode'"),
+        "{stderr}"
+    );
+}

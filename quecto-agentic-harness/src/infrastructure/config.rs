@@ -706,7 +706,9 @@ pub mod mapping;
 mod large_results;
 // #2403: the context mode and its marks.
 pub mod context_mode;
+// #2414: the removed context keys, refused at load.
 pub mod persistence;
+mod removed_keys;
 pub mod writer;
 
 #[cfg(test)]

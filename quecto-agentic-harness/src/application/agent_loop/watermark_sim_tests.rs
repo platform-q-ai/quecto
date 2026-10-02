@@ -248,18 +248,31 @@ impl Tool for SimRead {
     }
 }
 
-async fn simulate(
-    high: usize,
-    low: usize,
-    requests: usize,
-    cut_off_every: Option<usize>,
-) -> Vec<Observed> {
-    let script = script(requests);
-    let provider = Arc::new(SimProvider::new(script.clone(), cut_off_every));
+/// The loop the simulation runs: `None` builds it as every composition
+/// does, with no context mode switched on, under `max_context_tokens`.
+fn sim_agent(
+    provider: Arc<SimProvider>,
+    marks: Option<(usize, usize)>,
+    max_context_tokens: usize,
+) -> AgentLoopImpl {
     let mut registry = MockRegistry::new();
     registry.register(Arc::new(SimRead));
+    let dials = match marks {
+        // Dials that edit history on nearly every request in the default
+        // mode: none may run in watermark mode.
+        Some(_) => (
+            3,
+            4,
+            LargeResultCollapse {
+                over_tokens: 1_000,
+                after_turns: 1,
+            },
+        ),
+        // The configured defaults'.
+        None => (50, 50, LargeResultCollapse::DISABLED),
+    };
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
-        provider: provider.clone(),
+        provider,
         tool_registry: Box::new(registry),
         model: "gpt-sim".to_string(),
         max_tokens: 1024,
@@ -268,24 +281,42 @@ async fn simulate(
             Arc::new(MemSpillStore::default()),
         )),
         session_key: "watermark-sim".to_string(),
-        // Dials that edit history on nearly every request in the default
-        // mode: none may run in watermark mode.
-        context_collapse_after_tool_calls: 3,
-        max_context_tokens: 1_000_000,
+        context_collapse_after_tool_calls: dials.0,
+        max_context_tokens,
         progress_callback: None,
         streaming: false,
         effort: None,
         audit_log: None,
         pin_recent_turns: 1,
-        context_collapse_after_messages: 4,
-        large_result_collapse: LargeResultCollapse {
-            over_tokens: 1_000,
-            after_turns: 1,
-        },
+        context_collapse_after_messages: dials.1,
+        large_result_collapse: dials.2,
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
-    agent.set_context_mode(ContextMode::Watermark(Watermark::new(high, low).unwrap()));
+    if let Some((high, low)) = marks {
+        agent.set_context_mode(ContextMode::Watermark(Watermark::new(high, low).unwrap()));
+    }
+    agent
+}
+
+async fn simulate(
+    high: usize,
+    low: usize,
+    requests: usize,
+    cut_off_every: Option<usize>,
+) -> Vec<Observed> {
+    simulate_on(Some((high, low)), 1_000_000, requests, cut_off_every).await
+}
+
+async fn simulate_on(
+    marks: Option<(usize, usize)>,
+    max_context_tokens: usize,
+    requests: usize,
+    cut_off_every: Option<usize>,
+) -> Vec<Observed> {
+    let script = script(requests);
+    let provider = Arc::new(SimProvider::new(script.clone(), cut_off_every));
+    let mut agent = sim_agent(provider.clone(), marks, max_context_tokens);
     let mut messages = vec![Message::system(prose(1, 2_000))];
     for (n, turn) in script.iter().enumerate() {
         messages.push(prompt(prose(SEED ^ (n as u64) << 8, turn.prompt_tokens)));
@@ -334,4 +365,13 @@ async fn every_request_extends_the_previous_one_except_right_after_a_cut() {
 #[tokio::test]
 async fn feedback_after_a_cut_off_reply_keeps_every_request_an_extension() {
     assert_append_only(&simulate(30_000, 12_000, 150, Some(5)).await);
+}
+
+/// #2414: watermark is the only context mode. Over a long session, a loop
+/// built with no mode switched on (the configured defaults' dials, the
+/// owner's marks scaled to a 40k ceiling) never edits an earlier message
+/// except at a cut: every other request extends the one before it.
+#[tokio::test]
+async fn a_loop_built_with_no_mode_set_edits_no_earlier_message_except_at_a_cut() {
+    assert_append_only(&simulate_on(None, 40_000, 200, Some(7)).await);
 }

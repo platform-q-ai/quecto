@@ -83,6 +83,35 @@ pub(super) fn agent_under(
     agent
 }
 
+/// #2414: a loop as every composition builds it, with no context mode
+/// switched on: the configured defaults' dials and the owner's marks,
+/// under `max_context_tokens`.
+pub(super) fn default_agent(
+    store: Arc<dyn ContextSpillStore>,
+    max_context_tokens: usize,
+) -> AgentLoopImpl {
+    AgentLoopImpl::new(AgentLoopConfig {
+        provider: Arc::new(MockProvider::new(vec![])),
+        tool_registry: Box::new(MockRegistry::new()),
+        model: "test-model".to_string(),
+        max_tokens: 1024,
+        temperature: 0.7,
+        retention: Some(crate::composition::retention::context_retention_over(store)),
+        session_key: SESSION.to_string(),
+        context_collapse_after_tool_calls: 50,
+        max_context_tokens,
+        progress_callback: None,
+        streaming: false,
+        effort: None,
+        audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: 50,
+        large_result_collapse: LargeResultCollapse::DISABLED,
+        model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+    })
+}
+
 pub(super) struct Rig {
     pub(super) agent: AgentLoopImpl,
     pub(super) store: Arc<MemSpillStore>,
@@ -563,4 +592,33 @@ async fn an_interrupted_pass_leaves_no_half_applied_cut() {
     assert!(interrupted.is_err(), "the pass waits on the archive");
     assert_eq!(snapshot(&messages), before, "nothing was cut");
     assert!(stubs(&messages).is_empty());
+}
+
+/// #2414: watermark is the only context mode. A loop built with no mode
+/// switched on runs the watermark pass: under its ceiling the owner's
+/// marks scale down to it, and a request over the high mark is cut once,
+/// down to the low mark, with nothing collapsed or stubbed in place.
+#[tokio::test]
+async fn a_loop_built_with_no_mode_set_runs_the_watermark_pass() {
+    let mut rig = Rig::new(None);
+    rig.agent = default_agent(rig.store.clone(), HIGH);
+    let mut messages = rig.opened().await;
+    let head = snapshot(&messages);
+    for _ in 0..10 {
+        rig.exchange(&mut messages, 2_000).await;
+    }
+    assert!(total(&messages) >= HIGH);
+    rig.pass(&mut messages).await;
+    assert_eq!(stubs(&messages).len(), 1, "one cut, one stub");
+    assert_eq!(
+        snapshot(&messages[..head.len()]),
+        head,
+        "the head is byte-identical"
+    );
+    assert!(
+        messages.iter().all(|m| !m.is_collapsed),
+        "nothing was collapsed in place"
+    );
+    // The owner's 256k/70k, scaled to the 20k ceiling.
+    assert!(total(&messages) <= 70_000 * HIGH / 256_000);
 }
