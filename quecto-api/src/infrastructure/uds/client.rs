@@ -250,10 +250,10 @@ fn command_to_json(cmd: AgentCommand, id: &str) -> serde_json::Value {
             obj
         }
         AgentCommand::Abort => serde_json::json!({"type": "abort", "id": id}),
-        AgentCommand::Steer { message } => {
+        AgentCommand::Steer { message, .. } => {
             serde_json::json!({"type": "steer", "id": id, "message": message})
         }
-        AgentCommand::FollowUp { message } => {
+        AgentCommand::FollowUp { message, .. } => {
             serde_json::json!({"type": "follow_up", "id": id, "message": message})
         }
         AgentCommand::GetState => serde_json::json!({"type": "get_state", "id": id}),

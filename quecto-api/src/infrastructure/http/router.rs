@@ -201,20 +201,24 @@ async fn prompt_handler<G: AgentGateway>(
 #[derive(Deserialize)]
 struct MessageRequest {
     message: String,
+    #[serde(default)]
+    images: Vec<quecto_image::ImagePayload>,
 }
 
 async fn steer_handler<G: AgentGateway>(
     State(state): State<Arc<AppState<G>>>,
     Json(body): Json<MessageRequest>,
 ) -> impl IntoResponse {
-    event_response(use_cases::steer::execute(&state.gateway, body.message).await)
+    let MessageRequest { message, images } = body;
+    event_response(use_cases::steer::execute(&state.gateway, message, images).await)
 }
 
 async fn follow_up_handler<G: AgentGateway>(
     State(state): State<Arc<AppState<G>>>,
     Json(body): Json<MessageRequest>,
 ) -> impl IntoResponse {
-    event_response(use_cases::follow_up::execute(&state.gateway, body.message).await)
+    let MessageRequest { message, images } = body;
+    event_response(use_cases::follow_up::execute(&state.gateway, message, images).await)
 }
 
 async fn abort_handler<G: AgentGateway>(

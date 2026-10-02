@@ -50,3 +50,27 @@ async fn a_command_past_the_frame_cap_is_refused_not_dropped() {
         );
     }
 }
+
+#[test]
+fn a_steer_and_a_follow_up_carry_their_images() {
+    let png = || {
+        quecto_image::ImageAttachment::new(quecto_image::ImagePayload::new("image/png", PNG))
+            .unwrap()
+    };
+    let wire = serde_json::json!([{"mimeType": "image/png", "data": PNG}]);
+    let steer = AgentCommand::Steer {
+        message: "go".into(),
+        images: vec![png()],
+    };
+    assert_eq!(command_to_json(steer, "s1")["images"], wire);
+    let follow_up = AgentCommand::FollowUp {
+        message: "later".into(),
+        images: vec![png()],
+    };
+    assert_eq!(command_to_json(follow_up, "f1")["images"], wire);
+    let text_only = AgentCommand::Steer {
+        message: "go".into(),
+        images: Vec::new(),
+    };
+    assert!(command_to_json(text_only, "s2").get("images").is_none());
+}

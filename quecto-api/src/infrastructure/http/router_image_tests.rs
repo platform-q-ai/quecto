@@ -148,3 +148,50 @@ async fn websocket_prompt_with_a_bad_image_gets_an_error_frame() {
     );
     assert!(gateway.commands.lock().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn http_steer_and_follow_up_carry_and_refuse_images() {
+    for path in ["steer", "follow_up"] {
+        let gateway = connected();
+        let addr = serve(gateway.clone()).await;
+        let client = reqwest::Client::new();
+        let good = serde_json::json!({
+            "message": "",
+            "images": [{"mimeType": "image/png", "data": PNG}],
+        });
+        let resp = client
+            .post(format!("http://{addr}/{path}"))
+            .json(&good)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 200, "{path}");
+        let sent = gateway.commands.lock().unwrap().clone();
+        assert!(
+            matches!(
+                sent.as_slice(),
+                [AgentCommand::Steer { images, .. } | AgentCommand::FollowUp { images, .. }]
+                    if images.len() == 1
+            ),
+            "{path}: {sent:?}"
+        );
+
+        let bad = serde_json::json!({
+            "message": "look",
+            "images": [{"mimeType": "image/png", "data": "iVBO RW0K"}],
+        });
+        let resp = client
+            .post(format!("http://{addr}/{path}"))
+            .json(&bad)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 400, "{path}");
+        let json: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(
+            json["error"],
+            "invalid request: images[0]: data is not valid standard base64"
+        );
+        assert_eq!(gateway.commands.lock().unwrap().len(), 1, "{path}");
+    }
+}

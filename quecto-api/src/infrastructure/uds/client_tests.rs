@@ -66,6 +66,7 @@ fn control_commands_serialize_to_wire() {
     let steer = command_to_json(
         AgentCommand::Steer {
             message: "go".into(),
+            images: Vec::new(),
         },
         "s1",
     );
@@ -76,6 +77,7 @@ fn control_commands_serialize_to_wire() {
     let follow = command_to_json(
         AgentCommand::FollowUp {
             message: "later".into(),
+            images: Vec::new(),
         },
         "f1",
     );
