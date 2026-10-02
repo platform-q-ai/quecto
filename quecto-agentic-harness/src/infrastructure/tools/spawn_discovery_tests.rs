@@ -330,8 +330,9 @@ fn the_spawn_and_swarm_descriptions_stay_within_the_budget() {
 /// came in for trimmed host-only wording, then from 3,463 when the
 /// coordinator's inbox rule replaced field types the schema already states,
 /// then from 3,446 when #2394 made every op answer what it changed (no
-/// "null for none"): it only shrinks.
-const SWARM_DESCRIPTION_BUDGET_BYTES: usize = 3_417;
+/// "null for none"), then from 3,417 when the get_messages rule replaced
+/// revoke's gloss: it only shrinks.
+const SWARM_DESCRIPTION_BUDGET_BYTES: usize = 3_410;
 
 #[test]
 fn the_swarm_descriptions_coordinator_prose_is_in_the_docs_page() {
@@ -432,4 +433,15 @@ fn the_swarm_description_sends_the_coordinator_to_its_inbox() {
     ] {
         assert!(description.contains(rule), "missing {rule:?}");
     }
+}
+
+/// The 2026-10-02 swarm test: the coordinator read its inbox but still
+/// made six `agent_cmd get_messages` calls, reading the workers'
+/// transcripts as well as their board messages. The findings arrive on the
+/// board, so the description points there.
+#[test]
+fn the_swarm_description_keeps_the_coordinator_off_worker_transcripts() {
+    let description = include_str!("swarm_assets/tool_description.txt");
+    let rule = "read your inbox and ack what you act on, not agent_cmd get_messages";
+    assert!(description.contains(rule), "missing {rule:?}");
 }
