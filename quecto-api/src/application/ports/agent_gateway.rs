@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 pub enum AgentCommand {
     Prompt {
         message: String,
+        /// Images admitted by `quecto_image` (#2422); empty for text only.
+        images: Vec<quecto_image::ImageAttachment>,
         streaming_behavior: Option<String>,
     },
     /// Interrupt after the current tool, then deliver this message.

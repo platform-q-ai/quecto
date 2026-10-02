@@ -234,6 +234,7 @@ fn command_to_json(cmd: AgentCommand, id: &str) -> serde_json::Value {
         AgentCommand::Prompt {
             message,
             streaming_behavior,
+            ..
         } => {
             let mut obj = serde_json::json!({
                 "type": "prompt",

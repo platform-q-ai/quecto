@@ -496,6 +496,7 @@ async fn dispatch_routes_steer() {
     let cmd = AgentCommand::Steer {
         id: None,
         message: "go".into(),
+        images: Vec::new(),
     };
     let mut ctx = fx.ctx();
     assert!(!dispatch_command(cmd, &mut ctx).await);
@@ -508,6 +509,7 @@ async fn dispatch_routes_prompt_runs_agent() {
         id: Some("p".into()),
         message: "hello".into(),
         streaming_behavior: None,
+        images: Vec::new(),
     };
     let mut ctx = fx.ctx();
     assert!(!dispatch_command(cmd, &mut ctx).await);
@@ -521,6 +523,7 @@ async fn prompt_persists_session_after_turn() {
         id: Some("p".into()),
         message: "remember this".into(),
         streaming_behavior: None,
+        images: Vec::new(),
     };
     {
         let mut ctx = fx.ctx();
@@ -543,6 +546,7 @@ async fn dispatch_routes_follow_up_runs_agent() {
     let cmd = AgentCommand::FollowUp {
         id: None,
         message: "more".into(),
+        images: Vec::new(),
     };
     let mut ctx = fx.ctx();
     assert!(!dispatch_command(cmd, &mut ctx).await);

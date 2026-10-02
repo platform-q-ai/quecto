@@ -447,3 +447,6 @@ async fn message_handler_forwards_range_query_to_gateway() {
 
 #[path = "router_handler_tests.rs"]
 mod handler_tests;
+
+#[path = "router_image_tests.rs"]
+mod image_tests;

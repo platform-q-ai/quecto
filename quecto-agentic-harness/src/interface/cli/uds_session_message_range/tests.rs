@@ -279,3 +279,18 @@ fn ranged_get_message_with_huge_thinking_still_makes_progress() {
     assert!(data["nextOffset"].as_u64().unwrap() > 0);
     assert_eq!(data["hasMoreContent"].as_bool(), Some(false));
 }
+
+/// #2422: a ranged read says how many images the message carried and of
+/// which types, never their base64.
+#[test]
+fn ranged_get_message_keeps_the_image_summary() {
+    let mut msg = Message::user("y".repeat(4096));
+    msg.user_image_blocks = vec![crate::domain::message::UserImageBlock {
+        mime_type: "image/webp".into(),
+        data: "UklGRiQAAABXRUJQVlA4IA==".into(),
+    }];
+    let data = message_to_json_range_for_response(&msg, Some(0), None, Some(16), None);
+    assert_eq!(data["imageCount"], 1, "{data}");
+    assert_eq!(data["imageMimeTypes"], serde_json::json!(["image/webp"]));
+    assert!(!data.to_string().contains("UklGRiQAAABXRUJQVlA4IA=="));
+}

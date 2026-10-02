@@ -90,6 +90,7 @@ async fn busy_prompt_with_steer_behavior_is_queued() {
                 id: Some("s".into()),
                 message: "say steered".into(),
                 streaming_behavior: Some(StreamingBehavior::Steer),
+                images: Vec::new(),
             },
             &mut ctx,
         )

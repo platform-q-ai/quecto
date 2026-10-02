@@ -8,6 +8,7 @@ members = [
     "quecto-runtime-manager",
     "quecto-line-io",
     "quecto-fail-fast",
+    "quecto-image",
 ]
 
 [profile.release]

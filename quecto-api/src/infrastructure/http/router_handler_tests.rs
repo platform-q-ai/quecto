@@ -45,6 +45,7 @@ async fn prompt_handler_rejects_empty_message() {
         state_for(connected_gw()),
         Json(PromptRequest {
             message: String::new(),
+            images: Vec::new(),
             streaming_behavior: None,
             wait_for_completion: true,
         }),
@@ -60,6 +61,7 @@ async fn prompt_handler_forwards_and_maps_error() {
         state_for(connected_gw()),
         Json(PromptRequest {
             message: "hi".into(),
+            images: Vec::new(),
             streaming_behavior: Some("steer".into()),
             wait_for_completion: true,
         }),
@@ -72,6 +74,7 @@ async fn prompt_handler_forwards_and_maps_error() {
         state_for(MockGateway::default()),
         Json(PromptRequest {
             message: "hi".into(),
+            images: Vec::new(),
             streaming_behavior: None,
             wait_for_completion: false,
         }),

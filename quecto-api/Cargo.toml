@@ -13,6 +13,9 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "tim
 # Shared bounded protocol reader (#1003)
 quecto-line-io = { version = "0.2.1", path = "../quecto-line-io" }
 
+# Image attachment validation shared with the agent (#2422)
+quecto-image = { version = "0.1.0", path = "../quecto-image" }
+
 # HTTP server
 axum = { version = "0.8", features = ["ws"] }
 tower-http = { version = "0.6", features = ["cors"] }
@@ -32,6 +35,7 @@ thiserror = "2"
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
+base64 = "0.22"
 cucumber = { version = "0.21", features = ["macros"] }
 futures = "0.3"
 # `default-features = false`: the default `native-tls` stack would otherwise be

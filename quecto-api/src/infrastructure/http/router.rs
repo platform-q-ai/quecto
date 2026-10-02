@@ -75,6 +75,9 @@ async fn health_handler<G: AgentGateway>(
 #[derive(Deserialize)]
 struct PromptRequest {
     message: String,
+    /// Images attached to the prompt (#2422).
+    #[serde(default)]
+    images: Vec<quecto_image::ImagePayload>,
     #[serde(rename = "streamingBehavior")]
     streaming_behavior: Option<String>,
     #[serde(rename = "waitForCompletion", default = "default_wait_for_completion")]
@@ -187,6 +190,7 @@ async fn prompt_handler<G: AgentGateway>(
 
     let input = use_cases::send_prompt::SendPromptInput {
         message: body.message,
+        images: body.images,
         streaming_behavior: body.streaming_behavior,
         wait_for_completion: body.wait_for_completion,
     };
@@ -613,6 +617,7 @@ async fn handle_ws<G: AgentGateway + Clone>(state: Arc<AppState<G>>, mut socket:
                     let result = gateway
                         .send(AgentCommand::Prompt {
                             message: req.message,
+                            images: Vec::new(),
                             streaming_behavior: req.streaming_behavior,
                         })
                         .await;

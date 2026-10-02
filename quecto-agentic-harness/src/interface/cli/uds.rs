@@ -688,6 +688,9 @@ mod parse_tests;
 #[path = "uds_pending_swarm_tests.rs"]
 mod pending_swarm_tests;
 #[cfg(test)]
+#[path = "uds_prompt_images_tests.rs"]
+mod prompt_images_tests;
+#[cfg(test)]
 #[path = "uds_swarm_feedback_tests.rs"]
 mod swarm_feedback_tests;
 #[cfg(test)]

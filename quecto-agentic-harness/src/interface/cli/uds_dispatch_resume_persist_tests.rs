@@ -30,6 +30,7 @@ fn prompt(message: &str) -> AgentCommand {
         id: None,
         message: message.into(),
         streaming_behavior: None,
+        images: Vec::new(),
     }
 }
 

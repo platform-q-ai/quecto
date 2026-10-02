@@ -4,6 +4,8 @@ use crate::domain::event::AgentEvent;
 
 pub struct SendPromptInput {
     pub message: String,
+    /// Images as the client sent them, not yet validated (#2422).
+    pub images: Vec<quecto_image::ImagePayload>,
     pub streaming_behavior: Option<String>,
     pub wait_for_completion: bool,
 }
@@ -17,6 +19,7 @@ pub async fn execute(
     }
     let command = AgentCommand::Prompt {
         message: input.message,
+        images: Vec::new(),
         streaming_behavior: input.streaming_behavior,
     };
 

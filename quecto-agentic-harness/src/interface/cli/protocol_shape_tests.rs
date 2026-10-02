@@ -177,6 +177,7 @@ fn streaming_behavior_serializes_as_camel_case() {
         id: None,
         message: "hi".into(),
         streaming_behavior: Some(StreamingBehavior::FollowUp),
+        images: Vec::new(),
     };
     let j = round_trip(&cmd);
     assert_eq!(j["streamingBehavior"], "followUp"); // camelCase value
@@ -189,6 +190,7 @@ fn steer_streaming_behavior_value() {
         id: None,
         message: "hi".into(),
         streaming_behavior: Some(StreamingBehavior::Steer),
+        images: Vec::new(),
     };
     let j = round_trip(&cmd);
     assert_eq!(j["streamingBehavior"], "steer");
@@ -200,6 +202,7 @@ fn follow_up_command_serializes_type_as_follow_up() {
     let cmd = AgentCommand::FollowUp {
         id: None,
         message: "also do this".into(),
+        images: Vec::new(),
     };
     let j = round_trip(&cmd);
     assert_eq!(j["type"], "follow_up");
@@ -569,7 +572,8 @@ fn core_command_type_names() {
     assert_eq!(
         AgentCommand::FollowUp {
             id: None,
-            message: "m".into()
+            message: "m".into(),
+            images: Vec::new(),
         }
         .type_name(),
         "follow_up"
@@ -577,7 +581,8 @@ fn core_command_type_names() {
     assert_eq!(
         AgentCommand::Steer {
             id: None,
-            message: "m".into()
+            message: "m".into(),
+            images: Vec::new(),
         }
         .type_name(),
         "steer"

@@ -1642,6 +1642,7 @@ dependencies = [
  "libc",
  "proc-macro2",
  "quecto-fail-fast",
+ "quecto-image",
  "quecto-line-io",
  "quecto-tui",
  "quote",
@@ -1675,9 +1676,11 @@ name = "quecto-api"
 version = "0.5.5"
 dependencies = [
  "axum 0.8.8",
+ "base64",
  "cucumber",
  "futures",
  "quecto-fail-fast",
+ "quecto-image",
  "quecto-line-io",
  "reqwest",
  "serde",
@@ -1695,6 +1698,15 @@ dependencies = [
 [[package]]
 name = "quecto-fail-fast"
 version = "0.1.0"
+
+[[package]]
+name = "quecto-image"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "quecto-line-io"

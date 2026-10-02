@@ -11,6 +11,7 @@ fn test_parse_prompt_command() {
             message,
             id,
             streaming_behavior,
+            images: _,
         } => {
             assert_eq!(message, "hello world");
             assert!(id.is_none());
