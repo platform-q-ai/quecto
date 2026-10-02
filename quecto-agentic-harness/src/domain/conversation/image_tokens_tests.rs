@@ -7,8 +7,9 @@ fn dims(width: u32, height: u32) -> Dimensions {
     Dimensions { width, height }
 }
 
-/// The long edge fits 2576 px, the aspect ratio kept; a smaller image is
-/// kept as it is.
+/// The long edge fits 2576 px, the aspect ratio kept (the short side
+/// rounded up, so the estimate errs high); a smaller image is kept as it
+/// is.
 #[test]
 fn scaling_fits_the_long_edge() {
     let cases = [
@@ -18,8 +19,9 @@ fn scaling_fits_the_long_edge() {
         ((2576, 2576), (2576, 2576)),
         ((4000, 3000), (2576, 1932)),
         ((3000, 4000), (1932, 2576)),
-        ((3000, 1000), (2576, 858)),
-        ((10_000, 10), (2576, 2)),
+        ((3000, 1000), (2576, 859)),
+        ((10_000, 10), (2576, 3)),
+        ((5000, 55), (2576, 29)),
         ((1, 65_535), (1, 2576)),
         ((16_777_216, 16_777_216), (2576, 2576)),
     ];
@@ -54,7 +56,7 @@ fn every_format_estimates_by_its_pixel_size() {
         ((1024, 768), 1049),
         ((1920, 1080), 2765),
         ((4000, 3000), 4784),
-        ((3000, 1000), 2947),
+        ((3000, 1000), 2951),
         ((10_000, 10), 92),
         ((5000, 400), 736),
         ((2576, 29), 184),
@@ -141,8 +143,12 @@ fn a_thin_image_costs_its_patches() {
     assert_eq!(
         estimate_image_tokens("image/png", &line),
         92,
-        "2576x2 is 92 patches"
+        "2576x3 is 92 patches"
     );
+    // Scaled to 2576x28.3: rounded up to 29 rows, two patch rows (184),
+    // not rounded down to 28 and one (97).
+    let scaled_strip = encode(&png(5000, 55));
+    assert_eq!(estimate_image_tokens("image/png", &scaled_strip), 184);
     let wide = encode(&png(1920, 1080));
     assert_eq!(
         estimate_image_tokens("image/png", &wide),
