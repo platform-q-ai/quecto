@@ -130,9 +130,9 @@ pub enum AuditEvent {
         /// The emergency ladder ran (#2404): no cut brought the request
         /// under the ceiling. A watermark cut is never a `context_pruned`
         /// record (it is a `context_cut`); false when only the budget was
-        /// unmet (the tool definitions take over three quarters of it, so
-        /// the messages keep the quarter floor), and in logs written
-        /// before it.
+        /// unmet (on every request while the tool definitions exceed three
+        /// quarters of it, so the messages keep the quarter floor), and in
+        /// logs written before it.
         #[serde(default)]
         watermark_fallback: bool,
     },

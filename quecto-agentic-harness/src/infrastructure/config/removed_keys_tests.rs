@@ -19,9 +19,27 @@ const REMOVED_KEYS: [(&str, &str); 6] = [
 /// The schema refuses exactly the keys the application's policy names.
 #[test]
 fn the_refused_keys_are_the_policys() {
-    use crate::domain::conversation::removed_keys::REMOVED_DEFAULTS_KEYS;
+    use crate::application::configuration::removed_keys::REMOVED_DEFAULTS_KEYS;
     let keys: Vec<&str> = REMOVED_KEYS.iter().map(|(key, _)| *key).collect();
     assert_eq!(keys, REMOVED_DEFAULTS_KEYS);
+    // The schema's own field names: a document setting every policy key is
+    // refused naming each, in the policy's order.
+    let mut defaults = serde_json::Map::new();
+    for key in REMOVED_DEFAULTS_KEYS {
+        defaults.insert(key.to_string(), 1.into());
+    }
+    let document = serde_json::json!({"agents": {"defaults": defaults}});
+    let error = Config::from_document(document).unwrap_err().to_string();
+    let at: Vec<usize> = REMOVED_DEFAULTS_KEYS
+        .iter()
+        .map(|key| {
+            error
+                .find(&format!("agents.defaults.{key},"))
+                .or_else(|| error.find(&format!("agents.defaults.{key} ")))
+                .unwrap_or_else(|| panic!("{key} named: {error}"))
+        })
+        .collect();
+    assert!(at.windows(2).all(|pair| pair[0] < pair[1]), "{error}");
 }
 
 /// Review H1: every removed key set is named, in one message, with what
@@ -38,10 +56,11 @@ fn every_removed_key_set_is_named_in_one_message() {
         "context_collapse_after_messages",
     ] {
         assert!(
-            error.contains(&format!("quecto config unset agents.defaults.{key}")),
+            error.contains(&format!("agents.defaults.{key}")),
             "{key}: {error}"
         );
     }
+    assert!(error.contains("quecto config unset"), "{error}");
 }
 
 /// Every removed environment override, with a value it used to take.

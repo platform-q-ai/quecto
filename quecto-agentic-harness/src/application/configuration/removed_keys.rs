@@ -1,7 +1,7 @@
 //! #2414: the `agents.defaults` keys the watermark context removed (the
 //! old pruning rules and the switch between the two modes), as pure policy
-//! over a configuration's JSON document: which of them a document sets,
-//! and the document without them.
+//! over a configuration's JSON document, beside the overlay policy's own
+//! key rules: which of them a document sets, and the document without them.
 
 use serde_json::{Map, Value};
 

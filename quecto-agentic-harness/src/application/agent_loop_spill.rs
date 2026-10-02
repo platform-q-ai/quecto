@@ -24,12 +24,12 @@ impl AgentLoopImpl {
     }
 
     // NOTE: tool-output spilling has no ephemeral-session (empty key) guard —
-    // deliberately. A watermark cut or the emergency ladder can fire within a
-    // single ephemeral run, and the archive and stubs they leave must stay
-    // recallable, so ephemeral tool spills persist under the sanitized
-    // empty-key store path for the duration of the run. Guarding here would
-    // break recall of archived or stubbed tool output in `--no-session` runs. Conversation-message spilling is
-    // symmetric since PR #1048; both symmetry sides are pinned by
+    // deliberately. A cut or the emergency ladder can fire in an ephemeral
+    // run, and what they archive or stub must stay recallable, so ephemeral
+    // tool spills persist under the sanitized empty-key store path for the
+    // run. Guarding here would break recall in `--no-session` runs.
+    // Conversation-message spilling is symmetric since PR #1048; both
+    // symmetry sides are pinned by
     // `ephemeral_session_spills_both_tool_output_and_conversation_messages`.
     // The privacy counterpart: ephemeral interface paths scrub the empty-key
     // namespace at run end through the sessions capability

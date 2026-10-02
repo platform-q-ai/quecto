@@ -60,7 +60,8 @@ and its old name `context_collapse_after_turns`,
 `QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_AFTER_TURNS` were removed: a
 configuration that still sets one is refused at load, naming every one with
 the command that removes it (`quecto config unset agents.defaults.<key>
---global`, or `--local` for a repo overlay); each can be unset on its own.
+--global`, or `--local` for a trusted repo overlay; an untrusted overlay is
+edited by hand, then `quecto config trust`); each can be unset on its own.
 
 The effective context budget is clamped to what the active model's declared context window leaves the prompt when known (OpenAI with a declared output cap: the window less the cap, less 5% headroom; other providers and OpenAI entries without a cap: the window less what a request asks for, never under half the window), and to `swarm_max_context_tokens` once the process takes part in a swarm (from then on for the life of the process).
 

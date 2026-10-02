@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use crate::application::configuration::dto::removed_keys::{RemovedKeysIn, Repair};
 use crate::application::configuration::dto::{OverlayTrustError, OverlayTrustRequest};
 use crate::application::configuration::overlay_policy::global_only_key;
 use crate::application::configuration::ports::{
@@ -66,6 +67,11 @@ impl TrustConfigOverlay {
         let Some(object) = value.as_object() else {
             return Err(OverlayTrustError::NotAnObject(path.to_path_buf()));
         };
+        // Review round 2 M1: an overlay that still sets keys #2414 removed
+        // is edited, then trusted; no command could write it untrusted.
+        if let Some(removed) = RemovedKeysIn::of(path, Repair::EditThenTrust, object) {
+            return Err(OverlayTrustError::RemovedKeys(removed));
+        }
         if let Some(key) = global_only_key(object) {
             return Err(OverlayTrustError::GlobalOnlyKey {
                 path: path.to_path_buf(),

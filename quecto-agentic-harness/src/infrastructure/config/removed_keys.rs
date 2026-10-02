@@ -3,9 +3,15 @@
 //! naming the key: no silent ignore, no compatibility shim.
 
 use super::{AgentDefaults, ConfigError};
-use crate::domain::conversation::removed_keys::{REMOVED_DEFAULTS_KEYS, WHY_REMOVED};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
+
+/// Why the keys went. The keys are the configuration capability's
+/// removed-key policy (`application::configuration::removed_keys`); the
+/// schema names its own fields, and its tests pin that they match.
+const WHY_REMOVED: &str = "removed in #2414: the watermark context is the only context mode \
+    (the context only grows at its end and is cut once at context_high_tokens down to \
+    context_low_tokens)";
 
 /// The removed `agents.defaults` keys, flattened into it: each records
 /// only whether it was set (to anything, null included). Never written.
@@ -67,10 +73,6 @@ impl RemovedContextKeys {
                 self.context_collapse_large_result_after_turns,
             ),
         ];
-        debug_assert!(
-            set.iter().map(|(key, _)| *key).eq(REMOVED_DEFAULTS_KEYS),
-            "one field per removed key, in the policy's order"
-        );
         set.into_iter()
             .filter_map(|(key, set)| set.then_some(key))
             .collect()
@@ -90,11 +92,17 @@ pub(super) fn apply_env_overrides(defaults: &mut AgentDefaults, env: &HashMap<St
 pub(super) fn validate(defaults: &AgentDefaults) -> Result<(), ConfigError> {
     let removed = &defaults.removed_context_keys;
     let keys = removed.set_keys();
-    let mut repairs: Vec<String> = keys
-        .iter()
-        .map(|key| format!("quecto config unset agents.defaults.{key} --global (or --local)"))
-        .collect();
-    repairs.extend(removed.env.iter().map(|key| format!("unset {key}")));
+    let mut repairs: Vec<&str> = Vec::new();
+    if !keys.is_empty() {
+        repairs.push(
+            "remove each key from the file that sets it: `quecto config unset \
+             agents.defaults.<key> --global` for the global file or `--local` for a trusted \
+             repo-local overlay; edit an untrusted overlay, then run `quecto config trust`",
+        );
+    }
+    if !removed.env.is_empty() {
+        repairs.push("unset each environment override");
+    }
     let named: Vec<String> = keys
         .iter()
         .map(|key| format!("agents.defaults.{key}"))
@@ -108,7 +116,7 @@ pub(super) fn validate(defaults: &AgentDefaults) -> Result<(), ConfigError> {
     match named.is_empty() {
         true => Ok(()),
         false => Err(ConfigError::RemovedKey(format!(
-            "{} {WHY_REMOVED}; remove each one: {}",
+            "{} {WHY_REMOVED}; {}",
             named.join(", "),
             repairs.join("; ")
         ))),

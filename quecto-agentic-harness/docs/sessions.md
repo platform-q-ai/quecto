@@ -701,10 +701,11 @@ provider tokens (1000 until the provider has reported a prompt size).
   `ladder_stubbed`, `messages_dropped`, `tokens_before` / `tokens_after`,
   `budget_unmet` and `ceiling_tokens` (the effective budget in force, in
   provider tokens). A `context_pruned` with `watermark_fallback: false` and
-  `budget_unmet: true` is written when the tool definitions take over three
-  quarters of the budget, so the messages keep the quarter floor above it,
-  though no request goes over the ceiling; it counts no cut. (Logs written before #2414 may
-  carry the removed rules' counts; they are ignored when read.)
+  `budget_unmet: true` is written on every request while the tool
+  definitions exceed three quarters of the budget (the messages keep the
+  quarter floor above it), though no request goes over the ceiling; it
+  counts no cut. (Logs written before #2414 may carry the removed rules'
+  counts; they are ignored when read.)
 
 ### The effective budget
 
@@ -867,9 +868,12 @@ quecto config unset agents.defaults.context_collapse_after_tool_calls --global
 quecto config unset agents.defaults.context_collapse_after_messages --global
 ```
 
-(`--local` for a repo-local overlay). Each can be unset on its own: a write
-that only takes removed keys away is accepted while others are still there,
-and a write that brings one in is refused.
+(`--local` for a repo-local overlay that is trusted). Each can be unset on
+its own: a write is accepted when it adds no removed key, though it may leave
+a file that still does not load until every removed key is gone; a write that
+brings one in is refused. An untrusted overlay is never written (a write
+records trust): remove the keys from it by editing it, then run
+`quecto config trust`, which refuses it until they are gone.
 
 ## See also
 

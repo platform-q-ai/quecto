@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use serde_json::{Map, Value};
 
-use crate::application::configuration::dto::removed_keys::RemovedKeysIn;
+use crate::application::configuration::dto::removed_keys::{RemovedKeysIn, Repair};
 use crate::application::configuration::dto::{
     ConfigLayer, ConfigSelection, ConfigSources, EffectiveConfig, EffectiveConfigError,
     OverlayReport, OverlayState,
@@ -29,7 +29,7 @@ use crate::application::configuration::overlay_policy::{
 use crate::application::configuration::ports::{
     ConfigDocumentStore, ConfigValidator, OverlayDocument, OverlayTrust, OverlayTrustStore,
 };
-use crate::domain::conversation::removed_keys::without_removed_keys;
+use crate::application::configuration::removed_keys::without_removed_keys;
 
 /// How a resolution checks the documents: a child's admission rules, and
 /// whether keys #2414 removed are let through (a patch that only takes
@@ -59,12 +59,12 @@ impl Check {
     fn refuse_removed(
         self,
         path: &Path,
-        flag: &'static str,
+        repair: Repair,
         document: &Map<String, Value>,
     ) -> Option<RemovedKeysIn> {
         match self.tolerate_removed_keys {
             true => None,
-            false => RemovedKeysIn::of(path, flag, document),
+            false => RemovedKeysIn::of(path, repair, document),
         }
     }
 }
@@ -171,7 +171,9 @@ impl ResolveEffectiveConfig {
                         self.resolved_object(path, &bytes)?
                     }
                 };
-                if let Some(removed) = check.refuse_removed(path, "--global", &document) {
+                if let Some(removed) =
+                    check.refuse_removed(path, Repair::Unset("--global"), &document)
+                {
                     return Err(EffectiveConfigError::RemovedKeys(vec![removed]));
                 }
                 self.validate(path, &document, check)?;
@@ -197,13 +199,18 @@ impl ResolveEffectiveConfig {
                         None => (Map::new(), false),
                     },
                 };
-                if let Some(removed) = check.refuse_removed(&layers.global, "--global", &global) {
+                let global_repair = Repair::Unset("--global");
+                if let Some(removed) = check.refuse_removed(&layers.global, global_repair, &global)
+                {
                     // Every file's removed keys in one message: the
-                    // overlay's too, read but never applied.
+                    // overlay's too, read but never applied (a substituted
+                    // one is about to be written and trusted).
                     let overlay = layers.overlay.as_deref().and_then(|path| {
-                        let substituted = substituted(ConfigLayer::Overlay);
-                        let document = substituted.or_else(|| self.peek_object(path))?;
-                        RemovedKeysIn::of(path, "--local", &document)
+                        let (document, repair) = match substituted(ConfigLayer::Overlay) {
+                            Some(document) => (document, Repair::Unset("--local")),
+                            None => self.peek_object(path)?,
+                        };
+                        RemovedKeysIn::of(path, repair, &document)
                     });
                     let files = std::iter::once(removed).chain(overlay).collect();
                     return Err(EffectiveConfigError::RemovedKeys(files));
@@ -214,7 +221,9 @@ impl ResolveEffectiveConfig {
                 let (document, overlay, overlay_document) =
                     match (&layers.overlay, substituted(ConfigLayer::Overlay)) {
                         (Some(path), Some(overlay)) => {
-                            let overlay = self.checked_overlay_object(path, overlay, check)?;
+                            let trusted = Repair::Unset("--local");
+                            let overlay =
+                                self.checked_overlay_object(path, overlay, check, trusted)?;
                             (
                                 merge_overlay(global, overlay.clone()),
                                 Some(OverlayReport {
@@ -302,9 +311,11 @@ impl ResolveEffectiveConfig {
         // file that would be refused anyway; the refusal travels with the
         // report.
         let overlay = match &trust {
-            OverlayTrust::Trusted => self.checked_overlay(path, &bytes, check)?,
+            OverlayTrust::Trusted => {
+                self.checked_overlay(path, &bytes, check, Repair::Unset("--local"))?
+            }
             OverlayTrust::Untrusted { fingerprint } => {
-                match self.checked_overlay(path, &bytes, check) {
+                match self.checked_overlay(path, &bytes, check, Repair::EditThenTrust) {
                     Ok(overlay) if self.trust.offer(path, fingerprint, &bytes) => overlay,
                     checked => {
                         // The withheld document's top-level keys travel with
@@ -352,21 +363,27 @@ impl ResolveEffectiveConfig {
         path: &Path,
         bytes: &[u8],
         check: Check,
+        repair: Repair,
     ) -> Result<Map<String, Value>, EffectiveConfigError> {
         let overlay = self.resolved_object(path, bytes)?;
-        self.checked_overlay_object(path, overlay, check)
+        self.checked_overlay_object(path, overlay, check, repair)
     }
 
-    /// The overlay at `path` as a JSON object, read but neither trusted
-    /// nor checked: only to name the removed keys it sets.
-    fn peek_object(&self, path: &Path) -> Option<Map<String, Value>> {
-        match self.store.read_overlay(path).ok()? {
-            OverlayDocument::Present(bytes) => match serde_json::from_slice(&bytes).ok()? {
-                Value::Object(object) => Some(object),
-                _ => None,
-            },
-            OverlayDocument::Absent | OverlayDocument::Refused { .. } => None,
-        }
+    /// The overlay at `path` as a JSON object, read but neither applied
+    /// nor checked: only to name the removed keys it sets, and how they
+    /// are taken out (an untrusted overlay is edited, never written).
+    fn peek_object(&self, path: &Path) -> Option<(Map<String, Value>, Repair)> {
+        let OverlayDocument::Present(bytes) = self.store.read_overlay(path).ok()? else {
+            return None;
+        };
+        let Value::Object(object) = serde_json::from_slice(&bytes).ok()? else {
+            return None;
+        };
+        let repair = match self.trust.decide(path, &bytes) {
+            OverlayTrust::Trusted => Repair::Unset("--local"),
+            OverlayTrust::Untrusted { .. } => Repair::EditThenTrust,
+        };
+        Some((object, repair))
     }
 
     /// An already-resolved overlay, free of global-only sections and valid
@@ -376,8 +393,9 @@ impl ResolveEffectiveConfig {
         path: &Path,
         overlay: Map<String, Value>,
         check: Check,
+        repair: Repair,
     ) -> Result<Map<String, Value>, EffectiveConfigError> {
-        if let Some(removed) = check.refuse_removed(path, "--local", &overlay) {
+        if let Some(removed) = check.refuse_removed(path, repair, &overlay) {
             return Err(EffectiveConfigError::RemovedKeys(vec![removed]));
         }
         if let Some(key) = global_only_key(&overlay) {

@@ -38,10 +38,10 @@ use crate::application::configuration::ports::{
     ConfigDocumentStore, ConfigDocumentWriter, ConfigValidator, OverlayDocument, OverlayTrust,
     OverlayTrustStore,
 };
-use crate::application::configuration::use_cases::ResolveEffectiveConfig;
-use crate::domain::conversation::removed_keys::{
+use crate::application::configuration::removed_keys::{
     WHY_REMOVED, removed_keys_set, without_removed_keys,
 };
+use crate::application::configuration::use_cases::ResolveEffectiveConfig;
 use crate::domain::tool_id::parse_stable_tool_id;
 
 pub struct PatchConfiguration {
@@ -164,8 +164,10 @@ impl PatchConfiguration {
             .map(removed_keys_set)
             .unwrap_or_default();
         mutate(&mut document, path)?;
-        // #2414 review H1: a write may take keys the watermark context
-        // removed away, one at a time, but never bring one in.
+        // #2414 review H1: a write is accepted when it adds no key the
+        // watermark context removed. It may leave a file that still does
+        // not load until every removed key is gone: that is how they are
+        // unset one at a time.
         let introduced: Vec<String> = document
             .as_object()
             .map(removed_keys_set)
@@ -268,7 +270,8 @@ impl PatchConfiguration {
     /// disk — a layer that is valid alone can still brick the merge (an
     /// overlay container config that leaves no default). Keys #2414
     /// removed that were already there are let through, in either layer
-    /// (the cycle refused any new one), so they can be unset one at a time.
+    /// (the cycle refused any new one): the written file may still not
+    /// load until every removed key is gone.
     fn check(
         &self,
         selection: &ConfigSelection,

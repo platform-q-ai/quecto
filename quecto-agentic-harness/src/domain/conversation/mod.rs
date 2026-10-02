@@ -1,6 +1,5 @@
 //! The conversation a model is sent, as pure policy over its messages.
 
-pub mod removed_keys;
 pub mod watermark;
 pub mod watermark_cut;
 
