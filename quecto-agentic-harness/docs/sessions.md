@@ -701,8 +701,9 @@ provider tokens (1000 until the provider has reported a prompt size).
   `ladder_stubbed`, `messages_dropped`, `tokens_before` / `tokens_after`,
   `budget_unmet` and `ceiling_tokens` (the effective budget in force, in
   provider tokens). A `context_pruned` with `watermark_fallback: false` and
-  `budget_unmet: true` is written when the tool definitions fill the budget
-  or the model's window; it counts no cut. (Logs written before #2414 may
+  `budget_unmet: true` is written when the tool definitions take over three
+  quarters of the budget, so the messages keep the quarter floor above it,
+  though no request goes over the ceiling; it counts no cut. (Logs written before #2414 may
   carry the removed rules' counts; they are ignored when read.)
 
 ### The effective budget
