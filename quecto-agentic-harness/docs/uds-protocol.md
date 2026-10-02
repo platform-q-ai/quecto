@@ -964,6 +964,32 @@ Return configured and built-in models from the runtime registry (`models.json` +
 
 ---
 
+### `refresh_models`
+
+Refresh the refreshable catalogue sources (every source, or one named source) and report each source's outcome. It is the only command that touches the network. It runs on a blocking worker thread, so the agent keeps answering other commands meanwhile.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"refresh_models"` | yes | |
+| `id` | string | no | Correlation ID |
+| `source` | string | no | Refresh only this catalogue source; omitted means all |
+
+**Response data:** `{"outcomes": [...], "generation": <number or null>}`. Each outcome is `{"source", "status", "models", "reason"}`:
+
+- `status` is `updated`, `unchanged`, `unsupported`, `failed` or `cancelled`;
+- `models` is the source's model count (`updated` and `unchanged` only, otherwise `null`);
+- `reason` explains `unsupported` and `failed` (otherwise `null`).
+
+`generation` is the newly published catalogue generation when the refresh minted one, else `null`. A failure of the refresh task itself is an error response (`refresh task failed: …`).
+
+**Example:**
+
+```json
+{"type":"refresh_models","id":"rm-1","source":"openai-api"}
+```
+
+---
+
 ### `new_session`
 
 Switch to a fresh user-chat session. The previous session is saved first. Rejected while the agent is streaming. Owner: `StartFreshConversation` (#1862, #1968).
@@ -1042,6 +1068,32 @@ Return the current list of spawned subagents and their live status (#524).
 
 ```json
 {"type":"get_subagents","id":"gs-1"}
+```
+
+---
+
+### `delete_all_subagents`
+
+Terminate and remove every tracked sub-agent: the operator's fleet teardown (reason `operator_request`, owner authority). It is answered while a turn is running as well as when idle. Every direct child is asked to end, its end is concluded, and the exited rows are pruned, so a later `get_subagents` returns an empty roster.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"delete_all_subagents"` | yes | |
+| `id` | string | no | Correlation ID |
+
+**Response data:** `{"removed": <count>, "joined": <bool>, "settled": [{"agent", "result"}], "unsettled": [{"agent", "detail"}]}`.
+
+- `removed` counts every row taken out of the roster (settled children and pruned tombstones).
+- `joined` is `true` when a teardown another trigger had already started was joined, rather than a new one started.
+- `settled` lists each direct child that ended and how.
+- `unsettled` lists any child whose end could not be confirmed in time, with the reason; its row stays live for a later teardown.
+
+A harness with no sub-agent registry answers with the error `no sub-agent registry available`. An interrupted teardown is also an error response.
+
+**Example:**
+
+```json
+{"type":"delete_all_subagents","id":"del-1"}
 ```
 
 ---
