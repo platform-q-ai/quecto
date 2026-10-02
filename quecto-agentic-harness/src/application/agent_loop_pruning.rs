@@ -110,6 +110,7 @@ impl AgentLoopImpl {
                     snapshots_superseded: plan.snapshots_superseded,
                     ceiling_tokens,
                     large_results_collapsed: plan.large_results_collapsed,
+                    watermark_fallback: plan.watermark_fallback,
                 },
             )
             .await;
@@ -191,6 +192,11 @@ mod snapshot_tests;
 #[cfg(test)]
 #[path = "agent_loop/watermark_tests.rs"]
 mod watermark_tests;
+
+// #2404: the watermark context's event-log records.
+#[cfg(test)]
+#[path = "agent_loop/watermark_telemetry_tests.rs"]
+mod watermark_telemetry_tests;
 
 // #2403: every request extends the previous one, through the Codex serializer.
 #[cfg(test)]

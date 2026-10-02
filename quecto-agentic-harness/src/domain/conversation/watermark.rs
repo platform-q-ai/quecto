@@ -218,8 +218,10 @@ pub struct CutInput<'a> {
     pub trigger: CutTrigger,
 }
 
-/// How the kept set compares with L.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// How the kept set compares with L; a cut's event-log record names it
+/// (#2404).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Fill {
     /// The kept set fits within L.
     WithinLow,

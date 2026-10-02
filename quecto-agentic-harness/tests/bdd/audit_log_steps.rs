@@ -170,6 +170,7 @@ fn given_context_pruned(
         snapshots_superseded: 0,
         ceiling_tokens: 0,
         large_results_collapsed: 0,
+        watermark_fallback: false,
     };
     world.audit_event = Some(event);
 }

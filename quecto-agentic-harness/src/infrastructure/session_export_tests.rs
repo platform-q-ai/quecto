@@ -72,7 +72,7 @@ async fn an_export_writes_records_and_manifest_under_the_root_and_returns_the_re
         "content": "thinking done",
         "toolCalls": [{"id":"call-1","name":"bash","arguments":"{\"command\":\"ls\"}"}],
         "toolCallId": null, "toolName": null, "isError": false, "collapsed": false,
-        "turnOrigin": null,
+        "turnOrigin": null, "userKind": null,
         "thinking": [{"kind":"text","text":"hmm"},{"kind":"redacted"}]
     }});
     assert_eq!(
@@ -179,4 +179,36 @@ fn an_export_over_the_size_bound_is_refused_and_its_directory_removed() {
     .unwrap_err();
     assert!(error.to_string().contains("exceeds 2 MiB"), "{error}");
     assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+}
+
+/// #2404 (W2 review L4): a message record names its user kind, so an
+/// export tells a watermark cut's archive stub from a prompt.
+#[tokio::test]
+async fn a_message_record_carries_its_user_kind() {
+    let directory = tempfile::tempdir().unwrap();
+    let exporter = FileSessionExport::new(directory.path().to_path_buf());
+    let records = vec![
+        ExportRecord::Message(Box::new(crate::domain::turn_origin::prompt(
+            "the brief".into(),
+        ))),
+        ExportRecord::Message(Box::new(
+            crate::domain::conversation::watermark_cut::archive_stub(3, Some("archive")),
+        )),
+        ExportRecord::Message(Box::new(Message::user("feedback"))),
+    ];
+    let receipt = exporter.write_export(records, manifest()).await.unwrap();
+    let lines = std::fs::read_to_string(&receipt.records_path).unwrap();
+    let kinds: Vec<serde_json::Value> = lines
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .map(|record| record["message"]["userKind"].clone())
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            serde_json::json!("prompt"),
+            serde_json::json!("archiveStub"),
+            serde_json::Value::Null
+        ]
+    );
 }

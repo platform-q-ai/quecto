@@ -20,16 +20,16 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-const HIGH: usize = 20_000;
-const LOW: usize = 6_000;
+pub(super) const HIGH: usize = 20_000;
+pub(super) const LOW: usize = 6_000;
 const SESSION: &str = "watermark-test";
 
-fn watermark() -> ContextMode {
+pub(super) fn watermark() -> ContextMode {
     ContextMode::Watermark(Watermark::new(HIGH, LOW).unwrap())
 }
 
 /// About `tokens` estimated tokens of prose, tagged.
-fn text(tag: &str, tokens: usize) -> String {
+pub(super) fn text(tag: &str, tokens: usize) -> String {
     let mut text = format!("{tag} ");
     while Message::estimate_tokens(&text) < tokens {
         text.push_str("lorem ipsum dolor sit amet ");
@@ -37,7 +37,7 @@ fn text(tag: &str, tokens: usize) -> String {
     text
 }
 
-fn total(messages: &[Message]) -> usize {
+pub(super) fn total(messages: &[Message]) -> usize {
     messages.iter().map(Message::estimated_tokens).sum()
 }
 
@@ -48,7 +48,7 @@ fn agent(store: Arc<dyn ContextSpillStore>, mode: Option<ContextMode>) -> AgentL
 }
 
 /// [`agent`] under a configured budget and a model window.
-fn agent_under(
+pub(super) fn agent_under(
     store: Arc<dyn ContextSpillStore>,
     mode: Option<ContextMode>,
     max_context_tokens: usize,
@@ -83,14 +83,14 @@ fn agent_under(
     agent
 }
 
-struct Rig {
-    agent: AgentLoopImpl,
-    store: Arc<MemSpillStore>,
+pub(super) struct Rig {
+    pub(super) agent: AgentLoopImpl,
+    pub(super) store: Arc<MemSpillStore>,
     calls: usize,
 }
 
 impl Rig {
-    fn new(mode: Option<ContextMode>) -> Self {
+    pub(super) fn new(mode: Option<ContextMode>) -> Self {
         let store = Arc::new(MemSpillStore::default());
         Self {
             agent: agent(store.clone(), mode),
@@ -99,13 +99,13 @@ impl Rig {
         }
     }
 
-    fn watermark() -> Self {
+    pub(super) fn watermark() -> Self {
         Self::new(Some(watermark()))
     }
 
     /// The system prompt and the brief, through a first request's pass
     /// (which puts the spill manifest in).
-    async fn opened(&self) -> Vec<Message> {
+    pub(super) async fn opened(&self) -> Vec<Message> {
         let mut messages = vec![
             Message::system(text("system", 300)),
             prompt(text("brief", 200)),
@@ -116,7 +116,7 @@ impl Rig {
 
     /// One exchange: a call, and its result of `tokens`, spilled at
     /// creation as the loop spills it.
-    async fn exchange(&mut self, messages: &mut Vec<Message>, tokens: usize) {
+    pub(super) async fn exchange(&mut self, messages: &mut Vec<Message>, tokens: usize) {
         let id = format!("c{}", self.calls);
         self.calls += 1;
         let mut answer = Message::assistant(
@@ -138,11 +138,11 @@ impl Rig {
         messages.push(result);
     }
 
-    async fn pass(&self, messages: &mut Vec<Message>) -> usize {
+    pub(super) async fn pass(&self, messages: &mut Vec<Message>) -> usize {
         self.agent.apply_context_pruning(messages, 1, true).await
     }
 
-    async fn recall(&self, id: &str) -> Option<SpillEntry> {
+    pub(super) async fn recall(&self, id: &str) -> Option<SpillEntry> {
         let recall = RecallContext::new(self.store.clone());
         let query = RecallQuery::parse(id).unwrap();
         match recall
@@ -156,7 +156,7 @@ impl Rig {
     }
 }
 
-fn stubs(messages: &[Message]) -> Vec<&Message> {
+pub(super) fn stubs(messages: &[Message]) -> Vec<&Message> {
     messages
         .iter()
         .filter(|m| m.user_kind == UserKind::ArchiveStub)

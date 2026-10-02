@@ -242,8 +242,7 @@ impl ContextManager {
     ) -> ContextPlan {
         let tokens_before = context_pruning::estimate_total_tokens(messages);
         let message_spilled = self.spill_unspilled_conversation_messages(messages).await;
-        // Superseded snapshots go first (#2342): the dials then count and
-        // weigh only what is still current.
+        // Superseded snapshots go first (#2342): the dials then weigh only what is current.
         let superseded = context_pruning::snapshots::collapse_superseded_snapshots(messages);
         // A large result the model has seen for a few turns goes to its
         // stub whatever the count dials say (#2348).
@@ -288,6 +287,7 @@ impl ContextManager {
             large_results_collapsed: large,
             over_budget: outcome.over_budget,
             durable_prefix_dirty,
+            ..ContextPlan::default() // no watermark cut in the default mode (#2404)
         }
     }
 }

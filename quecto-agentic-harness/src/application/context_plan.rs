@@ -20,6 +20,8 @@ pub(crate) struct ContextPlan {
     /// Calls the ladder removed with their results, moved out (#2348).
     pub dropped_calls: Vec<ToolCall>,
     pub durable_prefix_dirty: bool,
+    /// Whether the watermark mode's emergency ladder ran (#2404).
+    pub watermark_fallback: bool,
 }
 
 pub(crate) struct ToolMessageBuild<'a> {

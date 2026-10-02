@@ -226,6 +226,7 @@ async fn all_event_types_write_successfully() {
             snapshots_superseded: 0,
             ceiling_tokens: 0,
             large_results_collapsed: 0,
+            watermark_fallback: false,
         },
         AuditEvent::SubagentSpawned {
             agent_id: "reviewer".into(),
@@ -685,4 +686,55 @@ fn a_reservation_is_taken_whole_or_not_at_all() {
         u64::MAX
     ));
     assert_eq!(budget.load(std::sync::atomic::Ordering::Acquire), 20);
+}
+
+/// #2404: a watermark cut's records land in the event log as one line
+/// each, under the envelope, and read back whole.
+#[tokio::test]
+async fn context_cut_records_are_written_to_the_event_log() {
+    use crate::domain::audit::{
+        ContextCutRecord, ContextCutSkippedRecord, CutMarks, CutSkipReason,
+    };
+    let tmp = TempDir::new().unwrap();
+    let log = AuditLog::open(tmp.path(), "watermark").await.unwrap();
+    let marks = CutMarks {
+        high_tokens: 256_000,
+        low_tokens: 70_000,
+        ceiling_tokens: 300_000,
+        ceiling_lowered_marks: false,
+        estimate_scale_permille: 1_000,
+    };
+    let cut = AuditEvent::ContextCut(ContextCutRecord {
+        tokens_before: 257_000,
+        tokens_after: 69_000,
+        marks,
+        messages_archived: 300,
+        messages_kept: 20,
+        archive_id: Some("archive".into()),
+        fill: crate::domain::conversation::watermark::Fill::WithinLow,
+    });
+    let skipped = AuditEvent::ContextCutSkipped(ContextCutSkippedRecord {
+        tokens: 258_000,
+        marks,
+        reason: CutSkipReason::NoBoundary,
+        saving_tokens: None,
+        needed_tokens: None,
+    });
+    log.emit(4, cut.clone()).await.unwrap();
+    log.emit(5, skipped.clone()).await.unwrap();
+    let path = AuditLog::file_path(tmp.path(), "watermark");
+    let content = tokio::fs::read_to_string(&path).await.unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+    assert_eq!(lines.len(), 2, "{content}");
+    let envelopes: Vec<crate::domain::audit::AuditEnvelope> = lines
+        .iter()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(envelopes[0].event, cut);
+    assert_eq!(envelopes[0].turn, Some(4));
+    assert_eq!(envelopes[1].event, skipped);
+    let first: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+    assert_eq!(first["event"], "context_cut");
+    assert_eq!(first["archive_id"], "archive");
+    assert_eq!(first["fill"], "within_low");
 }
