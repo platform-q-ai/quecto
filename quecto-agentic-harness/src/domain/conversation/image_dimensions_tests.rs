@@ -233,3 +233,28 @@ fn unpadded_base64_is_read() {
         Some(800)
     );
 }
+
+/// A final group whose unused bits are set (a lax encoder) still decodes.
+#[test]
+fn non_canonical_trailing_bits_are_read() {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut chars = encode(&gif(800, 600)[..10]).into_bytes();
+    assert_eq!(&chars[14..], b"==");
+    let value = ALPHABET.iter().position(|c| *c == chars[13]).unwrap();
+    assert_eq!(value & 0x0F, 0, "canonical: the unused bits are clear");
+    chars[13] = ALPHABET[value | 1];
+    let lax = String::from_utf8(chars).unwrap();
+    assert_eq!(
+        image_dimensions("image/gif", &lax).map(|d| d.height),
+        Some(600)
+    );
+}
+
+/// VP8's top two bits of each side are an upscaling hint, not size.
+#[test]
+fn the_vp8_upscaling_bits_are_not_size() {
+    let mut bytes = webp_lossy(800, 600);
+    bytes[27] |= 0xC0;
+    bytes[29] |= 0x40;
+    assert_eq!(read("image/webp", &bytes), Some((800, 600)));
+}

@@ -48,9 +48,9 @@ pub fn estimate_tokens(text: &str) -> usize {
     tokens
 }
 
-/// Estimate an opaque payload (base64 image data): plain ASCII/4, since
-/// providers price images per image, not per character, and a denser rate
-/// would multiply an over-estimate that is already large.
+/// Estimate an opaque payload (replayed encrypted reasoning): plain
+/// ASCII/4, since its length says little about its tokens. Images are
+/// priced by their pixel size instead (`conversation::image_tokens`).
 pub fn estimate_opaque_tokens(text: &str) -> usize {
     let (ascii, non_ascii) = text.chars().fold((0usize, 0usize), |(a, n), c| {
         if c.is_ascii() { (a + 1, n) } else { (a, n + 1) }

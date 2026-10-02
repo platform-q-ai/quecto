@@ -16,10 +16,10 @@
 //!   Responses API replays encrypted reasoning (#2162), which the provider
 //!   counts but whose ciphertext length says nothing about its tokens. The
 //!   ratio carries it as residual.
-//! - Images are over-estimated: base64 at 4 characters a token is far more
-//!   than the per-image price providers charge. A transcript holding images
-//!   reports below its estimate, so its ratio floors at 1x and the estimate
-//!   (erring towards pruning) decides.
+//! - Images are estimated by their pixel size at the dearest current rate
+//!   (#2420), and an unreadable one at the most an image costs. A provider
+//!   that charges less reports below the estimate, so the ratio floors at
+//!   1x and the estimate (erring towards pruning) decides.
 //!
 //! The clamp stays 1x..4x. The floor keeps an over-estimate (images, a
 //! tokeniser packing prose tighter than 4 a token) from loosening the ceiling. The
