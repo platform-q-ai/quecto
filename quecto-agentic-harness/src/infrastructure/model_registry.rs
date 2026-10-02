@@ -722,6 +722,9 @@ mod openai_tables;
 use openai_tables::{gpt_5_6_cost, gpt_5_6_window, openai_published_limits};
 
 #[cfg(test)]
+#[path = "model_registry_image_input_tests.rs"]
+mod image_input_tests;
+#[cfg(test)]
 #[path = "model_registry_openai_limits_tests.rs"]
 mod openai_limits_tests;
 #[cfg(test)]

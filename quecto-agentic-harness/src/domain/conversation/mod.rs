@@ -1,6 +1,7 @@
 //! The conversation a model is sent, as pure policy over its messages.
 
 pub mod image_dimensions;
+pub mod image_input;
 pub mod image_tokens;
 pub mod watermark;
 pub mod watermark_cut;

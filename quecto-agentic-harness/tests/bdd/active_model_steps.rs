@@ -290,6 +290,7 @@ fn then_loop_runs_with_limits(world: &mut QuectoWorld, model: String, max: u32, 
             max_output_tokens: Some(max),
             context_window: Some(window),
             prompt_limit: Default::default(),
+            takes_images: false,
         }
     );
 }

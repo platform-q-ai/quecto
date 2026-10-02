@@ -26,6 +26,7 @@ fn limits(
         max_output_tokens,
         context_window,
         prompt_limit,
+        takes_images: false,
     }
 }
 

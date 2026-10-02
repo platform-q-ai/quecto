@@ -680,6 +680,9 @@ mod consecutive_user_tests;
 #[path = "openai_effort_1996_tests.rs"]
 mod effort_1996_tests;
 #[cfg(test)]
+#[path = "openai_2421_tests.rs"]
+mod images_2421_tests;
+#[cfg(test)]
 #[path = "openai_tests.rs"]
 mod tests;
 

@@ -272,6 +272,7 @@ fn plan_reads_explicit_limits_from_the_generation_it_just_published() {
             max_output_tokens: Some(50),
             context_window: Some(1234),
             prompt_limit: Default::default(),
+            takes_images: false,
         }
     );
     assert_eq!(rig.store.current().generation(), 1, "the plan published");
@@ -293,6 +294,7 @@ fn each_limit_clamps_only_when_declared_explicitly() {
             max_output_tokens: Some(50),
             context_window: None,
             prompt_limit: Default::default(),
+            takes_images: false,
         }
     );
     assert_eq!(
@@ -301,6 +303,7 @@ fn each_limit_clamps_only_when_declared_explicitly() {
             max_output_tokens: None,
             context_window: Some(1234),
             prompt_limit: Default::default(),
+            takes_images: false,
         }
     );
 }
@@ -311,6 +314,22 @@ fn synthesized_defaults_never_clamp() {
     let plan = rig.use_case.plan("acme/plain");
     assert_eq!(plan.limits, ModelLimits::default());
     assert_eq!(plan.verdict, ModelSelectionVerdict::NoRuntime);
+}
+
+/// #2421: a model takes images only when its entry declares `image`; a
+/// model the catalogue does not know takes none.
+#[test]
+fn a_model_takes_images_only_when_its_entry_declares_image_input() {
+    let mut seeing = entry("acme", "seeing", None);
+    seeing.model.capabilities.input_modalities = vec!["text".into(), "image".into()];
+    let rig = rig(
+        vec![seeing, entry("acme", "plain", None)],
+        FakeRuntime::none(),
+    );
+    assert!(rig.use_case.plan("acme/seeing").limits.takes_images);
+    assert!(!rig.use_case.plan("acme/plain").limits.takes_images);
+    assert!(!rig.use_case.plan("acme/unknown").limits.takes_images);
+    assert!(!rig.use_case.plan("seeing").limits.takes_images);
 }
 
 #[test]
@@ -328,6 +347,7 @@ fn a_model_added_since_the_last_read_is_switchable_without_a_refresh() {
             max_output_tokens: Some(10),
             context_window: Some(20),
             prompt_limit: Default::default(),
+            takes_images: false,
         }
     );
     assert_eq!(*rig.loader.loads.lock().unwrap(), 2);

@@ -658,6 +658,8 @@ mod clamp_max_tokens_tests;
 mod context_tokens_tests;
 #[path = "agent_loop_event_log_tests.rs"]
 mod event_log_tests;
+#[path = "agent_loop_2421_tests.rs"]
+mod image_input_tests;
 #[path = "agent_loop_2123_tests.rs"]
 mod invalid_tool_arguments_tests;
 #[path = "agent_loop_2210_tests.rs"]

@@ -138,3 +138,53 @@ fn images_only_no_text_no_vision() {
     // No text, no vision → everything filtered
     assert_eq!(content, None);
 }
+
+// --- #2421: the gate is the application's; the provider sends what it gets ---
+
+fn request_for<'a>(
+    model: &'a str,
+    messages: &'a [Message],
+) -> crate::application::providers::ports::ChatRequest<'a> {
+    crate::application::providers::ports::ChatRequest {
+        trace: None,
+        admission: None,
+        messages,
+        tools: &[],
+        model,
+        max_tokens: 256,
+        temperature: 0.2,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: None,
+    }
+}
+
+#[test]
+fn every_model_is_sent_the_images_its_request_carries() {
+    let mut m = Message::user("describe this");
+    m.user_image_blocks
+        .push(crate::domain::message::UserImageBlock {
+            mime_type: "image/png".to_string(),
+            data: "cG5n".to_string(),
+        });
+    let messages = [m];
+    for model in [
+        "unknown-future-model",
+        "claude-instant-1",
+        "claude-opus-4-8",
+    ] {
+        let (_, body) =
+            crate::infrastructure::providers::anthropic::AnthropicProvider::build_request_body_public(
+                &request_for(model, &messages),
+            );
+        let blocks = body["messages"][0]["content"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{model}: a content array"))
+            .clone();
+        assert_eq!(blocks[1]["type"], "image", "{model}");
+        assert_eq!(blocks[1]["source"]["data"], "cG5n", "{model}");
+    }
+}
