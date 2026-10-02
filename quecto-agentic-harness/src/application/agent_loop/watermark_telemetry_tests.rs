@@ -247,3 +247,85 @@ async fn the_ladder_fallback_is_a_context_pruned_record_marked_as_the_fallback()
         }
     }
 }
+
+/// Review M1: a cut that leaves the request over the ceiling, so the
+/// emergency ladder runs too, counts each step once: the ladder's
+/// `context_pruned` is measured from the size the cut left, not from the
+/// size before the cut.
+#[tokio::test]
+async fn a_cut_then_the_ladder_counts_each_once() {
+    let marks = ContextMode::Watermark(Watermark::new(100_000, 30_000).unwrap());
+    let (mut rig, sink) = audited(Rig::new(None));
+    rig.agent = agent_under(rig.store.clone(), Some(marks), 20_000, None);
+    rig.agent
+        .set_audit_log(Some(sink.clone() as Arc<dyn AuditSink>));
+    let mut messages = vec![
+        Message::system(text("system", 300)),
+        prompt(text("a brief that fills most of the ceiling", 15_000)),
+    ];
+    for tokens in [1_000, 1_000, 1_000, 6_000] {
+        rig.exchange(&mut messages, tokens).await;
+    }
+    rig.pass(&mut messages).await;
+    let cuts = cuts(&sink);
+    assert_eq!(cuts.len(), 1, "{:?}", events(&sink));
+    let pruned: Vec<(usize, usize, bool)> = events(&sink)
+        .into_iter()
+        .filter_map(|event| match event {
+            AuditEvent::ContextPruned {
+                tokens_before,
+                tokens_after,
+                watermark_fallback,
+                ..
+            } => Some((tokens_before, tokens_after, watermark_fallback)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(pruned.len(), 1, "{pruned:?}");
+    let (before, after, fallback) = pruned[0];
+    assert!(fallback, "the ladder's record is marked");
+    assert_eq!(
+        before, cuts[0].tokens_after,
+        "the ladder starts where the cut left the request"
+    );
+    assert!(after <= before, "{pruned:?}");
+}
+
+/// Review L4 and L5: a skip's reason carries its own numbers (adjacently
+/// tagged), and the cut's ceiling names its unit (estimate tokens), apart
+/// from `context_pruned.ceiling_tokens` (provider tokens).
+#[tokio::test]
+async fn the_records_name_their_reason_and_units_on_the_wire() {
+    let (mut rig, sink) = audited(Rig::watermark());
+    let mut messages = session(&mut rig, &[500, 20_000]).await;
+    rig.pass(&mut messages).await;
+    let mut more = session(&mut rig, &[]).await;
+    rig.exchange(&mut more, 21_000).await;
+    rig.pass(&mut more).await;
+    let mut cut = session(&mut rig, &[2_000; 10]).await;
+    rig.pass(&mut cut).await;
+    let written: Vec<serde_json::Value> = events(&sink)
+        .iter()
+        .map(|event| serde_json::to_value(event).unwrap())
+        .collect();
+    let skipped: Vec<&serde_json::Value> = written
+        .iter()
+        .filter(|json| json["event"] == "context_cut_skipped")
+        .collect();
+    assert_eq!(skipped.len(), 2, "{written:?}");
+    let saving = &skipped[0]["reason"];
+    assert_eq!(saving["kind"], "saving_too_small", "{saving}");
+    assert_eq!(saving["detail"]["needed_tokens"], HIGH / 10, "{saving}");
+    assert!(saving["detail"]["saving_tokens"].is_u64(), "{saving}");
+    assert!(skipped[0].get("saving_tokens").is_none(), "{}", skipped[0]);
+    assert_eq!(
+        skipped[1]["reason"],
+        serde_json::json!({"kind": "no_boundary"})
+    );
+    let made = written
+        .iter()
+        .find(|json| json["event"] == "context_cut")
+        .expect("a cut");
+    assert!(made["marks"]["ceiling_estimate_tokens"].is_u64(), "{made}");
+    assert!(made["marks"].get("ceiling_tokens").is_none(), "{made}");
+}

@@ -182,3 +182,31 @@ async fn a_report_past_the_budget_is_cut_with_a_notice_and_none_is_said_plainly(
     let none = data(&read(&ended, r#"{"command":"get_report","agent_id":"worker"}"#).await);
     assert_eq!(none["reportFound"], false, "{none}");
 }
+
+/// #2404 review M2: an ended child's messages name their user kind, as a
+/// live child's page does, so a supervisor tells a watermark cut's archive
+/// stub from a prompt; an unmarked message names none.
+#[tokio::test]
+async fn an_ended_childs_messages_name_their_user_kind() {
+    let brief = crate::domain::turn_origin::prompt("the brief".into());
+    let stub = crate::domain::conversation::watermark_cut::archive_stub(9, Some("archive"));
+    assert_eq!(wire_message(&brief)["userKind"], "prompt");
+    assert_eq!(wire_message(&stub)["userKind"], "archiveStub");
+    let unmarked = wire_message(&instruction("go"));
+    assert!(unmarked.get("userKind").is_none(), "{unmarked}");
+    let ended = ended_child(vec![brief, stub, answer("THE REPORT")]).await;
+    let page = data(
+        &read(
+            &ended,
+            r#"{"command":"get_messages","agent_id":"worker","count":5}"#,
+        )
+        .await,
+    );
+    let kinds: Vec<Option<&str>> = page["messages"]
+        .as_array()
+        .expect("a page")
+        .iter()
+        .map(|m| m.get("userKind").and_then(|v| v.as_str()))
+        .collect();
+    assert_eq!(kinds, [Some("prompt"), Some("archiveStub"), None], "{page}");
+}

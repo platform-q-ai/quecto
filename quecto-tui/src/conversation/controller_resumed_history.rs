@@ -123,3 +123,7 @@ impl App {
         });
     }
 }
+
+#[cfg(test)]
+#[path = "controller_resumed_history_tests.rs"]
+mod tests;
