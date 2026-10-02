@@ -16,6 +16,34 @@ const REMOVED_KEYS: [(&str, &str); 6] = [
     ("context_collapse_large_result_after_turns", "2"),
 ];
 
+/// The schema refuses exactly the keys the application's policy names.
+#[test]
+fn the_refused_keys_are_the_policys() {
+    use crate::application::configuration::removed_keys::REMOVED_DEFAULTS_KEYS;
+    let keys: Vec<&str> = REMOVED_KEYS.iter().map(|(key, _)| *key).collect();
+    assert_eq!(keys, REMOVED_DEFAULTS_KEYS);
+}
+
+/// Review H1: every removed key set is named, in one message, with what
+/// removes it.
+#[test]
+fn every_removed_key_set_is_named_in_one_message() {
+    let document = serde_json::json!({"agents": {"defaults": {
+        "context_collapse_after_tool_calls": 100,
+        "context_collapse_after_messages": 100,
+    }}});
+    let error = Config::from_document(document).unwrap_err().to_string();
+    for key in [
+        "context_collapse_after_tool_calls",
+        "context_collapse_after_messages",
+    ] {
+        assert!(
+            error.contains(&format!("quecto config unset agents.defaults.{key}")),
+            "{key}: {error}"
+        );
+    }
+}
+
 /// Every removed environment override, with a value it used to take.
 const REMOVED_ENV: [(&str, &str); 3] = [
     ("QUECTO_CONTEXT_MODE", "watermark"),
@@ -101,6 +129,8 @@ fn the_kept_context_settings_still_load() {
     }}});
     let config = Config::from_document(document).expect("the kept keys load");
     let defaults = &config.agents.defaults;
+    let marks = defaults.context_marks();
+    assert_eq!((marks.high(), marks.low()), (120_000, 40_000));
     assert_eq!(defaults.max_context_tokens, 200_000);
     assert_eq!(defaults.swarm_max_context_tokens, 100_000);
     assert_eq!(defaults.pin_recent_turns, 3);
@@ -119,4 +149,6 @@ fn the_kept_context_settings_still_load() {
         .with_env_overrides(&env)
         .expect("the kept overrides apply");
     assert_eq!(config.agents.defaults.max_context_tokens, 150_000);
+    let marks = config.agents.defaults.context_marks();
+    assert_eq!((marks.high(), marks.low()), (100_000, 30_000));
 }
