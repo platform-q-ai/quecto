@@ -362,7 +362,9 @@ them, allow for what the service does and the estimator does not know:
 So, with `previous_items` set and `first_changed_item` null, a cached share far
 below the expected one (beyond those allowances) means the provider missed
 its cache. With `first_changed_item` set, the harness changed that item, and
-nothing after it can be cached.
+nothing after it can be cached. In watermark mode a miss right after a
+`context_cut` record is expected; any other miss with `first_changed_item` set
+is a harness edit (see "Watermark mode" in [sessions.md](sessions.md#watermark-mode-2401)).
 
 The baseline is the session's: its agent loop keeps it and hands it to every
 request, so a provider rebuilt mid-session (an OAuth refresh) keeps
