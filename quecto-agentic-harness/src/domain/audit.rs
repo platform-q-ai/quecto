@@ -142,7 +142,18 @@ pub enum AuditEvent {
         /// from logs written before it, read as 0.
         #[serde(default)]
         large_results_collapsed: usize,
+        /// The watermark mode's emergency ladder made this prune (#2404):
+        /// no cut brought the request under the ceiling, so the default
+        /// ladder ran for it. A watermark cut is never a `context_pruned`
+        /// record (it is a `context_cut`); false in the default mode, and
+        /// in logs written before it.
+        #[serde(default)]
+        watermark_fallback: bool,
     },
+    /// A watermark cut (#2404).
+    ContextCut(ContextCutRecord),
+    /// A watermark cut was due but not made (#2404).
+    ContextCutSkipped(ContextCutSkippedRecord),
     #[cfg(any(test, feature = "test-support"))]
     SubagentSpawned {
         agent_id: String,
@@ -206,6 +217,77 @@ pub struct AuditEnvelope {
     pub turn: Option<u32>,
     #[serde(flatten)]
     pub event: AuditEvent,
+}
+
+/// The watermark marks a cut was planned under (#2404), in **estimate
+/// units**: the harness's own token estimate of the whole request
+/// (messages and tool definitions), the unit the planner works in. The
+/// configured marks and the ceiling are in provider tokens; they are
+/// converted to estimate units at the provider-observed scale
+/// (`estimate_scale_permille`), and a count here times that scale over
+/// 1000 is in provider tokens again. `high_tokens` and `low_tokens` are as
+/// the ceiling (`ceiling_estimate_tokens`) left them.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CutMarks {
+    pub high_tokens: usize,
+    pub low_tokens: usize,
+    /// The pruning ceiling in estimate units (unlike `context_pruned`'s
+    /// `ceiling_tokens`, which is in provider tokens).
+    pub ceiling_estimate_tokens: usize,
+    pub ceiling_lowered_marks: bool,
+    /// The provider-observed scale, per mille (1000: none observed).
+    pub estimate_scale_permille: u32,
+}
+
+/// What a watermark cut did (#2404): counts, ids and kinds, never content.
+/// Token counts are in estimate units, as [`CutMarks`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContextCutRecord {
+    pub tokens_before: usize,
+    pub tokens_after: usize,
+    pub marks: CutMarks,
+    /// The messages the cut archived, a previous cut's stub among them.
+    pub messages_archived: usize,
+    /// The messages it kept in place (its new stub not counted).
+    pub messages_kept: usize,
+    /// The archive index `recall` reaches (`archive`, `archive:2`...);
+    /// `null` when nothing retains context or the write failed.
+    pub archive_id: Option<String>,
+    /// How the kept set compares with the low mark: `within_low`,
+    /// `newest_exchange_over_low` (the newest exchange, kept whole, took
+    /// it over) or `head_over_low` (the pinned head alone is over it).
+    pub fill: super::conversation::watermark::Fill,
+}
+
+/// Why a due watermark cut was not made (#2404), adjacently tagged:
+/// `{"kind": "no_boundary"}`, or `{"kind": "saving_too_small", "detail":
+/// {"saving_tokens": .., "needed_tokens": ..}}`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", content = "detail", rename_all = "snake_case")]
+pub enum CutSkipReason {
+    /// The conversation has no user message: no head to keep.
+    NoUserMessage,
+    /// Everything is pinned or a previous stub.
+    NothingArchivable,
+    /// No exchange boundary falls after something archivable: a single
+    /// exchange follows the head (one huge result, or one batch of
+    /// parallel calls).
+    NoBoundary,
+    /// The cut would save `saving_tokens`, under the `needed_tokens` a cut
+    /// must save (estimate units).
+    SavingTooSmall {
+        saving_tokens: usize,
+        needed_tokens: usize,
+    },
+}
+
+/// A due watermark cut that was not made (#2404): the request's size (in
+/// estimate units), the marks and why; counts and kinds only.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContextCutSkippedRecord {
+    pub tokens: usize,
+    pub marks: CutMarks,
+    pub reason: CutSkipReason,
 }
 
 impl AuditEvent {

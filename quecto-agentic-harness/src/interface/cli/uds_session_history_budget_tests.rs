@@ -450,3 +450,24 @@ fn an_unmarked_report_names_no_turn_origin() {
     let reply = &page_messages(&page)[1];
     assert!(reply.get("turnOrigin").is_none(), "{page}");
 }
+
+/// #2404 (W2 review L4): every page message names its user kind, so the
+/// TUI and a supervisor render a watermark cut's archive stub as a stub,
+/// not as a prompt; an unmarked message names none, like `turnOrigin`.
+#[test]
+fn messages_carry_their_user_kind() {
+    let messages = vec![
+        crate::domain::turn_origin::prompt("the brief".into()),
+        crate::domain::conversation::watermark_cut::archive_stub(7, Some("archive:2")),
+        Message::user("feedback"),
+        Message::assistant("answer", vec![]),
+    ];
+    let page = messages_page_json(&messages, 4, None);
+    let kinds: Vec<Option<&str>> = page_messages(&page)
+        .iter()
+        .map(|m| m.get("userKind").and_then(|v| v.as_str()))
+        .collect();
+    assert_eq!(kinds, [Some("prompt"), Some("archiveStub"), None, None]);
+    let unmarked = &page_messages(&page)[2];
+    assert!(unmarked.get("userKind").is_none(), "{page}");
+}

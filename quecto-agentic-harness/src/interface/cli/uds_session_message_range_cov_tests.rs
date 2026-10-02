@@ -74,3 +74,19 @@ fn message_to_json_range_carries_the_turn_origin() {
     let json = message_to_json_range_for_response(&msg, Some(0), None, Some(2), None);
     assert_eq!(json["turnOrigin"], "progressNudge");
 }
+
+/// #2404 (W2 review L4): `get_message` names a user message's kind, so a
+/// reader tells a watermark cut's archive stub from a prompt the user
+/// sent; an unmarked message names none.
+#[test]
+fn message_to_json_range_carries_the_user_kind() {
+    let kind = |msg: &Message| message_to_json_range_for_response(msg, None, None, None, None);
+    let prompt = crate::domain::turn_origin::prompt("do the thing".into());
+    assert_eq!(kind(&prompt)["userKind"], "prompt");
+    let stub = crate::domain::conversation::watermark_cut::archive_stub(4, Some("archive"));
+    assert_eq!(kind(&stub)["userKind"], "archiveStub");
+    let json = kind(&Message::user("feedback"));
+    assert!(json["userKind"].is_null(), "{json}");
+    let json = message_to_json_range_for_response(&stub, Some(0), None, Some(2), None);
+    assert_eq!(json["userKind"], "archiveStub", "a ranged read too");
+}

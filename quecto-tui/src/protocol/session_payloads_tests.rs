@@ -313,3 +313,31 @@ fn discovery_metadata_is_safe_and_missing_admission_fails_closed() {
     assert!(rows[0].resume_eligible);
     assert!(!rows[1].resume_eligible);
 }
+
+/// #2404 review L3: a watermark cut's archive stub is a user message on
+/// the wire, marked `userKind: "archiveStub"`; it resumes as an archive
+/// notice, never as a prompt the user typed (nor a rewind target).
+#[test]
+fn an_archive_stub_does_not_resume_as_a_user_prompt() {
+    let messages = parse_resumed_messages(&json!({
+        "messages": [
+            {"role": "user", "content": "the brief", "id": "m1", "userKind": "prompt"},
+            {"role": "user", "content": "[Context archive] 4 earlier messages of this session were archived", "id": "m2", "userKind": "archiveStub"},
+            {"role": "assistant", "content": "done", "id": "m3"}
+        ]
+    }))
+    .expect("payload should parse");
+    let user_texts: Vec<&str> = messages
+        .iter()
+        .filter_map(|m| match m {
+            ResumedChatMessage::User { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(user_texts, vec!["the brief"]);
+    assert_eq!(
+        messages.len(),
+        3,
+        "the stub is kept, as a notice: {messages:?}"
+    );
+}

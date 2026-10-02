@@ -100,6 +100,7 @@ fn context_pruned_round_trip() {
         snapshots_superseded: 0,
         ceiling_tokens: 0,
         large_results_collapsed: 0,
+        watermark_fallback: false,
     };
     let json = serde_json::to_string(&event).unwrap();
     let back: AuditEvent = serde_json::from_str(&json).unwrap();
@@ -121,6 +122,7 @@ fn context_pruned_round_trip_preserves_unmet_budget() {
         snapshots_superseded: 0,
         ceiling_tokens: 0,
         large_results_collapsed: 0,
+        watermark_fallback: false,
     };
     let json = serde_json::to_string(&event).unwrap();
     assert!(json.contains("\"budget_unmet\":true"), "got: {json}");
@@ -144,6 +146,7 @@ fn context_pruned_records_the_messages_it_stubbed() {
         snapshots_superseded: 0,
         ceiling_tokens: 0,
         large_results_collapsed: 0,
+        watermark_fallback: false,
     };
     let json = serde_json::to_string(&event).unwrap();
     assert!(json.contains("\"messages_collapsed\":2"), "got: {json}");
@@ -169,6 +172,7 @@ fn a_context_pruned_record_from_before_2214_reads_as_nothing_stubbed() {
             snapshots_superseded: 0,
             ceiling_tokens: 0,
             large_results_collapsed: 0,
+            watermark_fallback: false,
         }
     );
 }
@@ -504,4 +508,104 @@ fn an_error_preview_at_its_edges() {
     assert_eq!(error_preview(ten, 0, 3), "\n[... 7 chars omitted ...]\n789");
     assert_eq!(error_preview(ten, 3, 0), "012\n[... 7 chars omitted ...]\n");
     assert_eq!(error_preview(ten, usize::MAX, 1), ten);
+}
+
+fn cut_marks() -> CutMarks {
+    CutMarks {
+        high_tokens: 256_000,
+        low_tokens: 70_000,
+        ceiling_estimate_tokens: 206_720,
+        ceiling_lowered_marks: false,
+        estimate_scale_permille: 1_250,
+    }
+}
+
+/// #2404: the `context_cut` record's shape, pinned: counts, ids and kinds.
+#[test]
+fn a_context_cut_record_pins_its_fields() {
+    let event = AuditEvent::ContextCut(ContextCutRecord {
+        tokens_before: 256_310,
+        tokens_after: 68_022,
+        marks: cut_marks(),
+        messages_archived: 412,
+        messages_kept: 23,
+        archive_id: Some("archive:2".into()),
+        fill: crate::domain::conversation::watermark::Fill::NewestExchangeOverLow,
+    });
+    let json = serde_json::to_value(&event).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({
+            "event": "context_cut",
+            "tokens_before": 256_310,
+            "tokens_after": 68_022,
+            "marks": {
+                "high_tokens": 256_000,
+                "low_tokens": 70_000,
+                "ceiling_estimate_tokens": 206_720,
+                "ceiling_lowered_marks": false,
+                "estimate_scale_permille": 1_250
+            },
+            "messages_archived": 412,
+            "messages_kept": 23,
+            "archive_id": "archive:2",
+            "fill": "newest_exchange_over_low"
+        })
+    );
+    let back: AuditEvent = serde_json::from_value(json).unwrap();
+    assert_eq!(back, event);
+}
+
+/// #2404 (review L4): the `context_cut_skipped` record names why, the
+/// reason adjacently tagged: only `saving_too_small` carries numbers, so
+/// no record can hold a saving without that reason.
+#[test]
+fn a_context_cut_skipped_record_pins_its_reason() {
+    let event = AuditEvent::ContextCutSkipped(ContextCutSkippedRecord {
+        tokens: 257_000,
+        marks: cut_marks(),
+        reason: CutSkipReason::SavingTooSmall {
+            saving_tokens: 9_000,
+            needed_tokens: 25_600,
+        },
+    });
+    let json = serde_json::to_value(&event).unwrap();
+    assert_eq!(json["event"], "context_cut_skipped");
+    assert_eq!(
+        json["reason"],
+        serde_json::json!({
+            "kind": "saving_too_small",
+            "detail": {"saving_tokens": 9_000, "needed_tokens": 25_600}
+        })
+    );
+    assert_eq!(serde_json::from_value::<AuditEvent>(json).unwrap(), event);
+    for (reason, name) in [
+        (CutSkipReason::NoBoundary, "no_boundary"),
+        (CutSkipReason::NoUserMessage, "no_user_message"),
+        (CutSkipReason::NothingArchivable, "nothing_archivable"),
+    ] {
+        let json = serde_json::to_value(reason).unwrap();
+        assert_eq!(json, serde_json::json!({ "kind": name }));
+        assert_eq!(
+            serde_json::from_value::<CutSkipReason>(json).unwrap(),
+            reason
+        );
+    }
+}
+
+/// #2404: the watermark mode's emergency ladder marks its `context_pruned`
+/// record; a record written before reads as no fallback.
+#[test]
+fn a_context_pruned_record_names_the_watermark_fallback() {
+    let old = r#"{"event":"context_pruned","messages_dropped":2,"tool_results_collapsed":1,"tokens_before":10,"tokens_after":5}"#;
+    match serde_json::from_str::<AuditEvent>(old).unwrap() {
+        AuditEvent::ContextPruned {
+            watermark_fallback, ..
+        } => assert!(!watermark_fallback),
+        other => panic!("{other:?}"),
+    }
+    let fallback = r#"{"event":"context_pruned","messages_dropped":2,"tool_results_collapsed":0,"tokens_before":10,"tokens_after":5,"watermark_fallback":true}"#;
+    let event: AuditEvent = serde_json::from_str(fallback).unwrap();
+    let json = serde_json::to_string(&event).unwrap();
+    assert!(json.contains("\"watermark_fallback\":true"), "{json}");
 }

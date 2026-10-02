@@ -716,6 +716,7 @@ Page metadata:
 | `before` | string \| null | Cursor for the adjacent older page (the oldest message included in this page); `null` when the beginning of history is reached |
 | `hasMoreBefore` | boolean | Whether older history exists before this page. Legacy corner: an explicit `count: 0` returns an empty page reporting `hasMoreBefore: false` with no cursor (an empty window has no oldest-included message to anchor one) |
 | `messages[].turnOrigin` | string \| absent | What opened the message's turn (#2226): `"instruction"` (a prompt, task, steer, queued control or the completion nudge) or `"progressNudge"` (a workflow auto-continue or template-selection nudge); absent on a message never stamped; `"unrecognised"` for a stamp the serving build did not know (a reader treats any name it does not know the same way). The report ranks an answer to an instruction first, an unmarked reply next, a progress turn's reply next, an unrecognised one last |
+| `messages[].userKind` | string \| absent | What kind of user message it is (#2403, #2404): `"prompt"` (a prompt the user sent) or `"archiveStub"` (the stub a watermark cut put in place of the messages it archived, see [sessions.md](sessions.md#watermark-mode-2401)); absent on every other message (the harness's own user messages, assistant and tool messages, and a session saved before #2403). A reader renders an archive stub as a stub, not as a prompt |
 | `report` | object \| null | The transcript's report wherever it lies (#2226): `id`, `ordinal`, `turnOrigin` (string \| absent: absent on a report never stamped, as on `messages[]`), `contentLength`; `null` when the agent has no substantive reply. `agent_cmd` reads it by id (`get_message`) on a first default read instead of paging back, falling back to paging when that read fails. A supervisor's default report adds `laterProgress` (the number of newer messages its next read brings) when it delivers the report alone |
 
 To page back to the beginning of the session (`request` = send the command,
@@ -763,8 +764,9 @@ ranged response is capped to fit the UDS frame limit (#1094).
 | `agent_id` | string | no | Forward the lookup to a spawned child agent |
 | `toolCallId` | string | no | When set, recover that tool call's arguments instead of the message body |
 
-**Response data:** the message fields above plus range metadata when `offset` or
-`limit` is present:
+**Response data:** the message fields above, with `turnOrigin` and `userKind`
+(as on `get_messages`, but `null` rather than absent when unmarked), plus range
+metadata when `offset` or `limit` is present:
 
 | Field | Type | Description |
 |---|---|---|

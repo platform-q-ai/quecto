@@ -35,6 +35,7 @@ fn message_json(message: &Message) -> Value {
         "isError": message.is_error,
         "collapsed": message.is_collapsed,
         "turnOrigin": crate::infrastructure::turn_origin_names::origin_name(message.turn_origin),
+        "userKind": crate::infrastructure::turn_origin_names::user_kind_name(message.user_kind),
     });
     if !message.thinking_blocks.is_empty() {
         value["thinking"] =

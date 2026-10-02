@@ -742,6 +742,120 @@ Codex `cached_tokens`) and `cache_write_tokens` (the share it wrote to the
 cache, Anthropic `cache_creation_input_tokens`: the signal of a rewritten
 prefix), each absent when the provider reports none (#2348).
 
+### Watermark mode (#2401)
+
+The rules above edit the middle of the history: a collapse, a superseded
+snapshot or a ladder stub rewrites an early message, and the provider's
+prompt cache misses from it on. **Watermark mode** never does. The context
+only grows at the end; when the request reaches a high mark (H), one deep cut
+takes it down to a low mark (L), and nothing earlier changes until the next
+cut. On a real 256k → 70k run the only cache miss was the cut itself (97.95%
+of the run's input cached, 98.54% after the cut). It is off by default.
+
+**Switching it on.** Set `agents.defaults.context_mode` to `"watermark"`:
+
+```bash
+quecto config set --global agents.defaults.context_mode '"watermark"'
+# or, for one process and the agents it launches:
+QUECTO_CONTEXT_MODE=watermark quecto-tui
+```
+
+| Key | Env | Default |
+|---|---|---|
+| `context_mode` | `QUECTO_CONTEXT_MODE` | `"default"` (the rules above); `"watermark"` |
+| `context_high_tokens` | `QUECTO_CONTEXT_HIGH_TOKENS` | `256000` |
+| `context_low_tokens` | `QUECTO_CONTEXT_LOW_TOKENS` | `70000` |
+
+The load refuses an unknown mode, a mark that is not a positive whole number,
+and marks with L not below H or closer than a tenth of H (a cut must save at
+least H/10, so L ≤ 0.9·H). The marks are checked in the default mode too. The
+mode in force and where it came from (own configuration, own environment,
+inherited, default) are logged under `context_prune` when the agent starts.
+
+**Sub-agents and swarm members.** Every agent the harness launches, locally or
+in a container, is started with `--inherited-context-mode` (`default`, or
+`watermark:<high>:<low>`): the launcher's mode and marks in force. The child's
+own configuration or environment wins, field by field: a child that sets its
+own mode keeps it, and one that sets only `context_low_tokens` keeps that mark
+and inherits the rest. Tool subprocesses (`bash`) get no context mode.
+
+**The ceiling still wins.** H is never above the effective budget (the lowest
+of `max_context_tokens`, default `300000`, what the model's window leaves the
+prompt, and a swarm member's `swarm_max_context_tokens`). When the budget is
+below H, H becomes the budget and L scales by the same ratio: under a 200k
+budget the marks are 200k and 54,687. The marks and the budget are set in
+provider tokens; the harness converts them to its own estimate units at the
+provider-observed scale and compares them with the request's raw estimate,
+tool definitions included.
+
+**The cut.** Before a request whose size reached H, the cut keeps in place
+every system message, the first user message (the brief), the latest prompt
+and the opener of the turn in flight; it puts one archive stub right after
+them, then keeps the newest whole exchanges that fit within L (the newest one
+whole even when it alone is over L). Cuts fall only between exchanges, so no
+tool call loses its result. Everything else is archived. After a cut, the
+next one waits until the messages have grown by (H − L)/2, so one exchange
+over H does not cut on every turn; over the ceiling that guard gives way. A
+cut that would save under H/10 is not made below the ceiling. If no cut can
+bring the request under the ceiling (the pinned brief alone is over it), the
+default ladder runs for that request, the one in-place edit the mode allows.
+
+**Archive and recall.** The cut's messages go to session memory under one
+index entry, `archive` (then `archive:2`, `archive:3`...). The stub names it:
+`recall("archive")` lists every archived message with a preview and its own
+recall id, and `recall("<id>")` reads one in full. Each index starts with the
+previous cut's stub, so the archives chain back to the first cut. The stub
+stays byte-identical until the next cut archives it. On the wire
+(`get_messages`, `get_message`, the export) it is a user message with
+`"userKind": "archiveStub"`; a prompt the user sent is `"userKind": "prompt"`.
+
+**Event-log records.** Records hold counts, ids and kinds, never content.
+Every token count in them is in raw estimate units: the harness's own
+estimate of the whole request (messages and tool definitions), the unit the
+cut is planned in. Multiply by `marks.estimate_scale_permille` / 1000 for
+provider tokens (1000 until the provider has reported a prompt size).
+
+- `context_cut`, once per cut: `tokens_before`, `tokens_after`; `marks`
+  (`high_tokens` and `low_tokens` in force, `ceiling_estimate_tokens` (the
+  ceiling in estimate units, unlike `context_pruned.ceiling_tokens`, which is
+  in provider tokens), `ceiling_lowered_marks`, `estimate_scale_permille`);
+  `messages_archived`
+  (a previous stub among them), `messages_kept`; `archive_id` (`null` when
+  nothing retains context or the write failed); `fill`: `within_low`,
+  `newest_exchange_over_low` (the newest exchange, kept whole, took the
+  context over L) or `head_over_low` (the pinned head alone is over L).
+- `context_cut_skipped`, when a cut was due but not made: `tokens`, `marks`
+  and `reason`, adjacently tagged: `{"kind": "saving_too_small", "detail":
+  {"saving_tokens", "needed_tokens"}}`, `{"kind": "no_boundary"}` (a single
+  exchange follows the head: one huge result, or one batch of parallel
+  calls), `{"kind": "nothing_archivable"}` or `{"kind": "no_user_message"}`.
+  It is written once per request while the cause holds, a short series: the
+  context has to grow by only about H/10 more (or a new exchange has to
+  open a boundary) before the cut saves enough and is made.
+- A cut is never a `context_pruned` record. The emergency ladder's is, with
+  `watermark_fallback: true`, measured from the size the cut (if any) left.
+  Watermark mode also writes `context_pruned` with `watermark_fallback: false`
+  and `budget_unmet: true` when the tool definitions fill the budget or the
+  model's window, as the default mode does; it counts no cut.
+
+**Reading the cache figures.** Pair each turn's `llm_turn_end`
+(`cached_input_tokens`) with its `request_observed` record's input diagnostic
+(#2400, see "Where a request's input changed" in
+[runtime-models-providers.md](runtime-models-providers.md)). Only Responses
+(`codex`) requests of a named session record that diagnostic; for other
+providers only the cached share in `llm_turn_end` is there to read. In watermark mode
+every request extends the previous one, so `first_changed_item` should be
+`null` and the cached share near
+`unchanged_prefix_tokens_estimate / request_tokens_estimate`. A miss right
+after a `context_cut` is expected: the cut's request shares only the head
+with the one before, so `first_changed_item` points just past the head and
+`prefix_tokens_estimate` is about the head's size; the request after it is
+cached again. Any other miss with `first_changed_item` set is a harness edit
+(a `context_pruned` with `watermark_fallback`, or a bug worth an issue). With
+`previous_items` set and `first_changed_item` null, a miss is the provider's,
+unless `unchanged_prefix_tokens_estimate` is `0`: then the instructions, the
+tool definitions or the model changed (tool-set changes are #2406).
+
 ### Spill and recall
 
 Retained content is appended to `<base_dir>/sessions/<sanitized key>/spill.jsonl`
@@ -826,6 +940,9 @@ Session behavior is configured in `config.json` under `agents.defaults`:
 | `context_collapse_large_result_after_turns` | unset (`3`) | How many model responses see a large result in full first. Alone it switches nothing on outside a swarm. Env: `QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_AFTER_TURNS`. `0` is refused |
 | `context_collapse_after_messages` | `50` | Collapse the oldest conversation (user/assistant) messages to recall stubs once the session exceeds N live messages. Set to `4294967295` (`u32::MAX`) to disable |
 | `pin_recent_turns` | `2` | How many most-recent turns the context ceiling never demotes or drops |
+| `context_mode` | `"default"` | `"watermark"`: append only, one cut at the high mark down to the low mark (see [Watermark mode](#watermark-mode-2401)). Env: `QUECTO_CONTEXT_MODE` |
+| `context_high_tokens` | `256000` | The watermark mode's high mark (H), lowered to the effective budget when that is lower. Env: `QUECTO_CONTEXT_HIGH_TOKENS` |
+| `context_low_tokens` | `70000` | The watermark mode's low mark (L): above 0 and at most 0.9·H; scales with H. Env: `QUECTO_CONTEXT_LOW_TOKENS` |
 
 ## See also
 

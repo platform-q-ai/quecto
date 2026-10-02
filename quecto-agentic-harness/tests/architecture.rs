@@ -3299,13 +3299,16 @@ const TUI_FEATURE_VIEW_RATCHET_ROOTS: &[&str] = &[
 // #2024 S2: `model_payloads.rs` reads every string field through one
 // `string_field` helper (five sites folded into one) while adding the
 // `persisted` mapper (one site): 127 → 122.
-const TUI_PROTOCOL_RAW_JSON_SITE_SEED: usize = 122;
+// #2404: a resumed message's role and user kind are read through one typed
+// `MessageKind` mapper: 122 → 121.
+const TUI_PROTOCOL_RAW_JSON_SITE_SEED: usize = 121;
 /// Measured with direct deserialization, key, indexed-value, and accessor-chain parsing all counted.
-const TUI_PHASE_6_PROTOCOL_RAW_JSON_TOTAL: usize = 122;
+const TUI_PHASE_6_PROTOCOL_RAW_JSON_TOTAL: usize = 121;
 /// Current combined feature/view + protocol ceiling. This prevents moving
 /// sites between buckets (and adjusting their individual seeds) from hiding
 /// growth in the total raw-JSON inventory; keep it exact when re-baselining.
-const TUI_RAW_JSON_COMBINED_CEILING: usize = 137;
+// #2404: the protocol bucket fell by one (122 → 121): 137 → 136.
+const TUI_RAW_JSON_COMBINED_CEILING: usize = 136;
 
 /// Seed: production feature/view *usages* of `protocol::client` wire DTOs.
 /// Lower this as call sites migrate behind mappers. Never raise it.

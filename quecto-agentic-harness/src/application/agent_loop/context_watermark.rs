@@ -18,9 +18,12 @@
 
 use super::{ContextManager, ContextPlan};
 use crate::application::context_pruning;
+use crate::domain::audit::{
+    AuditEvent, ContextCutRecord, ContextCutSkippedRecord, CutMarks, CutSkipReason,
+};
 use crate::domain::conversation::ContextMode;
 use crate::domain::conversation::watermark::{
-    CutInput, CutPlan, CutTrigger, RequestSize, Watermark, plan_cut,
+    CutInput, CutPlan, CutTrigger, NoCut, RequestSize, Watermark, plan_cut,
 };
 use crate::domain::conversation::watermark_cut::{
     apply_cut, archive_index, archive_stub, archived, plan_messages, stub_tokens_bound,
@@ -37,6 +40,31 @@ const ARCHIVE_ID: &str = "archive";
 pub(crate) struct WatermarkState {
     marks: Watermark,
     last_cut: Mutex<Option<LastCut>>,
+}
+
+/// What one watermark pass did (#2404): its plan, the event-log record of
+/// a cut that was due, and whether the emergency ladder ran.
+#[derive(Debug)]
+pub(crate) struct WatermarkPass {
+    pub plan: ContextPlan,
+    pub cut: Option<CutRecord>,
+    pub fallback: bool,
+}
+
+/// A due cut's event-log record: the cut made, or why it was not.
+#[derive(Debug)]
+pub(crate) enum CutRecord {
+    Made(ContextCutRecord),
+    Skipped(ContextCutSkippedRecord),
+}
+
+impl CutRecord {
+    pub(crate) fn into_event(self) -> AuditEvent {
+        match self {
+            Self::Made(record) => AuditEvent::ContextCut(record),
+            Self::Skipped(record) => AuditEvent::ContextCutSkipped(record),
+        }
+    }
 }
 
 /// The baseline a cut leaves the storm guard, and the stub that marks it.
@@ -92,38 +120,47 @@ impl ContextManager {
         messages: &mut Vec<Message>,
         (tool_tokens, message_budget): (usize, usize),
         spills_dirty: bool,
-    ) -> Option<ContextPlan> {
+    ) -> Option<WatermarkPass> {
         let state = self.watermark.as_ref()?;
-        let tokens_before = context_pruning::estimate_total_tokens(messages);
         // Stamps spill ids only, so every archived message is recallable.
         let message_spilled = self.spill_unspilled_conversation_messages(messages).await;
         let manifest_shifted = self
             .refresh_spill_manifest(messages, spills_dirty || message_spilled)
             .await;
-        let trigger = self.cut_trigger(state, messages);
+        let (trigger, marks) = self.cut_trigger(state, messages);
         let size = RequestSize {
             tool_tokens,
             message_tokens: context_pruning::estimate_total_tokens(messages),
         };
-        let mut plan = ContextPlan {
-            tokens_before,
-            ..ContextPlan::default()
+        let mut plan = ContextPlan::default();
+        let cut = match trigger.is_due(size) {
+            true => {
+                self.cut(state, (trigger, marks), messages, size, &mut plan)
+                    .await
+            }
+            false => None,
         };
-        if trigger.is_due(size) {
-            self.cut(state, trigger, messages, tool_tokens, &mut plan)
-                .await;
-        }
+        // Review M1: what follows (the emergency ladder, an unmet budget)
+        // is measured from the size the cut left, so the cut's saving is
+        // counted once, in its own `context_cut` record.
+        plan.tokens_before = context_pruning::estimate_total_tokens(messages);
         let over_ceiling = |messages: &[Message]| {
             context_pruning::estimate_total_tokens(messages).saturating_add(tool_tokens)
                 > trigger.ceiling
         };
-        if over_ceiling(messages) {
+        let fallback = over_ceiling(messages);
+        if fallback {
             self.ladder_fallback(messages, message_budget, &mut plan);
         }
         plan.total_tokens = context_pruning::estimate_total_tokens(messages);
         plan.over_budget |= over_ceiling(messages);
-        plan.durable_prefix_dirty |= manifest_shifted || plan.messages_dropped > 0;
-        Some(plan)
+        let made = matches!(cut, Some(CutRecord::Made(_)));
+        plan.durable_prefix_dirty |= manifest_shifted || made;
+        Some(WatermarkPass {
+            plan,
+            cut,
+            fallback,
+        })
     }
 
     /// The emergency fallback (#2403 final review L3): no cut brought the
@@ -157,8 +194,9 @@ impl ContextManager {
 
     /// The trigger in estimate units: the marks at the provider-observed
     /// scale under the ceiling, and the last cut's baseline while its stub
-    /// is still in the conversation (reset, and forgotten, once it is not).
-    fn cut_trigger(&self, state: &WatermarkState, messages: &[Message]) -> CutTrigger {
+    /// is still in the conversation (reset, and forgotten, once it is not);
+    /// and the marks for a record, at the same scale.
+    fn cut_trigger(&self, state: &WatermarkState, messages: &[Message]) -> (CutTrigger, CutMarks) {
         let scale = self.estimate_scale();
         let marks = state
             .marks
@@ -168,9 +206,10 @@ impl ContextManager {
             ceiling: self.pruning_ceiling_in_estimate_units(),
             after_last_cut: None,
         };
+        let marks = cut_marks(trigger, scale.permille());
         let mut last_cut = state.last_cut.lock().unwrap_or_else(|e| e.into_inner());
         let in_force = last_cut.filter(|cut| messages.iter().any(|m| m.id() == cut.stub));
-        match in_force {
+        let trigger = match in_force {
             Some(cut) => CutTrigger {
                 after_last_cut: Some(cut.message_tokens),
                 ..trigger
@@ -179,23 +218,25 @@ impl ContextManager {
                 *last_cut = None;
                 trigger.reset()
             }
-        }
+        };
+        (trigger, marks)
     }
 
     /// Plan the cut and, when there is one, archive what it drops and make
-    /// it; the outcome goes into `plan`.
+    /// it; the calls it drops go into `plan`. Its event-log record (#2404):
+    /// the cut made, or why it was not; none when it was not due after all.
     async fn cut(
         &self,
         state: &WatermarkState,
-        trigger: CutTrigger,
+        (trigger, marks): (CutTrigger, CutMarks),
         messages: &mut Vec<Message>,
-        tool_tokens: usize,
+        size: RequestSize,
         plan: &mut ContextPlan,
-    ) {
+    ) -> Option<CutRecord> {
         let view = plan_messages(messages);
         let input = CutInput {
             messages: &view,
-            tool_tokens,
+            tool_tokens: size.tool_tokens,
             stub_tokens: stub_tokens_bound(),
             trigger,
         };
@@ -203,7 +244,7 @@ impl ContextManager {
             Ok(cut) => cut,
             Err(reason) => {
                 tracing::debug!(target: "context_prune", %reason, "watermark cut not made");
-                return;
+                return skipped(reason, size, marks).map(CutRecord::Skipped);
             }
         };
         let index = archive_index(&archived(messages, &cut));
@@ -221,7 +262,18 @@ impl ContextManager {
             stub: stub_id,
             message_tokens: baseline(trigger, &cut),
         });
-        plan.messages_dropped = dropped.len();
+        let tokens_after =
+            context_pruning::estimate_total_tokens(messages).saturating_add(size.tool_tokens);
+        assert_eq!(dropped.len(), count, "the cut drops what it archives");
+        let record = CutRecord::Made(ContextCutRecord {
+            tokens_before: size.total(),
+            tokens_after,
+            marks,
+            messages_archived: dropped.len(),
+            messages_kept: cut.kept().len(),
+            archive_id: index_id.clone(),
+            fill: cut.fill(),
+        });
         plan.dropped_calls = dropped.into_iter().flat_map(|m| m.tool_calls).collect();
         tracing::info!(
             target: "context_prune",
@@ -233,6 +285,7 @@ impl ContextManager {
             fill = ?cut.fill(),
             "watermark cut"
         );
+        Some(record)
     }
 
     /// Write `index` to session memory: its id, or `None` when nothing
@@ -258,6 +311,39 @@ impl ContextManager {
             }
         }
     }
+}
+
+/// The marks `trigger` plans under, for an event-log record, with the
+/// scale they were converted at.
+fn cut_marks(trigger: CutTrigger, estimate_scale_permille: u32) -> CutMarks {
+    let effective = trigger.effective_marks();
+    CutMarks {
+        high_tokens: effective.high(),
+        low_tokens: effective.low(),
+        ceiling_estimate_tokens: trigger.ceiling,
+        ceiling_lowered_marks: effective.high() < trigger.marks.high(),
+        estimate_scale_permille,
+    }
+}
+
+/// The record of a due cut that was not made; none when it was not due
+/// after all (no skip).
+fn skipped(no_cut: NoCut, size: RequestSize, marks: CutMarks) -> Option<ContextCutSkippedRecord> {
+    let reason = match no_cut {
+        NoCut::NoUserMessage => CutSkipReason::NoUserMessage,
+        NoCut::NothingArchivable => CutSkipReason::NothingArchivable,
+        NoCut::NoBoundary => CutSkipReason::NoBoundary,
+        NoCut::SavingTooSmall { saving, needed } => CutSkipReason::SavingTooSmall {
+            saving_tokens: saving,
+            needed_tokens: needed,
+        },
+        NoCut::NotDue => return None,
+    };
+    Some(ContextCutSkippedRecord {
+        tokens: size.total(),
+        marks,
+        reason,
+    })
 }
 
 /// The storm guard's baseline after `cut`.

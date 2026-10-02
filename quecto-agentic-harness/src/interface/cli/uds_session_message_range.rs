@@ -10,9 +10,8 @@
 //! metadata so clients walk and reassemble content that exceeds the cap.
 use crate::application::sessions::dto::{RecoveredContent, Utf8Range};
 use crate::domain::message::{Message, ToolCall};
-use crate::domain::visible_thinking::{
-    has_visible_thinking, visible_thinking_len, visible_thinking_page,
-};
+use crate::domain::visible_thinking::{visible_thinking_len, visible_thinking_page};
+use crate::infrastructure::turn_origin_names::{origin_name, user_kind_name};
 use crate::interface::cli::protocol::AgentEvent;
 
 #[cfg(test)]
@@ -41,12 +40,9 @@ fn tool_calls_json(msg: &Message) -> serde_json::Value {
     )
 }
 
-fn message_to_json_with_content_and_thinking(
-    msg: &Message,
-    content: &str,
-    include_thinking: bool,
-) -> serde_json::Value {
-    let mut value = serde_json::json!({
+/// A ranged read's message, without its thinking (paged apart).
+fn message_to_json_with_content(msg: &Message, content: &str) -> serde_json::Value {
+    serde_json::json!({
         "id": msg.id().to_string(),
         "role": super::role_wire_name(&msg.role),
         "content": content,
@@ -55,13 +51,9 @@ fn message_to_json_with_content_and_thinking(
         "toolName": msg.tool_name,
         "isError": msg.is_error,
         "collapsed": msg.is_collapsed,
-        "turnOrigin": crate::infrastructure::turn_origin_names::origin_name(msg.turn_origin),
-    });
-    if include_thinking && has_visible_thinking(&msg.thinking_blocks) {
-        value["thinking"] =
-            super::uds_visible_thinking_wire::visible_thinking_blocks_json(&msg.thinking_blocks);
-    }
-    value
+        "turnOrigin": origin_name(msg.turn_origin),
+        "userKind": user_kind_name(msg.user_kind),
+    })
 }
 
 fn clear_thinking_page(value: &mut serde_json::Value) {
@@ -127,8 +119,7 @@ fn ranged_value(
     thinking_start: usize,
     request_id: Option<&str>,
 ) -> serde_json::Value {
-    let mut value =
-        message_to_json_with_content_and_thinking(msg, range.slice(&msg.content), false);
+    let mut value = message_to_json_with_content(msg, range.slice(&msg.content));
     add_bounded_thinking_page(&mut value, msg, thinking_start, request_id);
     value["offset"] = serde_json::json!(range.start);
     value["nextOffset"] = serde_json::json!(range.end);
@@ -172,7 +163,10 @@ fn message_range_json(
     request_id: Option<&str>,
 ) -> serde_json::Value {
     if !ranged {
-        let value = super::message_to_json(msg);
+        let mut value = super::message_to_json(msg);
+        // The same marks as a ranged read (#2226, #2404).
+        value["turnOrigin"] = serde_json::json!(origin_name(msg.turn_origin));
+        value["userKind"] = serde_json::json!(user_kind_name(msg.user_kind));
         if data_fits_frame(&value, request_id) {
             return value;
         }
