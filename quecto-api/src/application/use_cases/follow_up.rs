@@ -6,19 +6,14 @@ use crate::domain::event::AgentEvent;
 pub async fn execute(
     gateway: &dyn AgentGateway,
     message: String,
-    _images: Vec<quecto_image::ImagePayload>,
+    images: Vec<quecto_image::ImagePayload>,
 ) -> Result<AgentEvent, ApiError> {
     if !gateway.is_connected() {
         return Err(ApiError::AgentNotConnected);
     }
-    if message.is_empty() {
-        return Err(ApiError::InvalidRequest("message must not be empty".into()));
-    }
+    let images = super::admit_message(&message, images)?;
     gateway
-        .send(AgentCommand::FollowUp {
-            message,
-            images: Vec::new(),
-        })
+        .send(AgentCommand::FollowUp { message, images })
         .await
 }
 

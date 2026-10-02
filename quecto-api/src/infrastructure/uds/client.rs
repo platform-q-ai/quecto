@@ -236,26 +236,24 @@ fn command_to_json(cmd: AgentCommand, id: &str) -> serde_json::Value {
             images,
             streaming_behavior,
         } => {
-            let mut obj = serde_json::json!({
-                "type": "prompt",
-                "id": id,
-                "message": message,
-            });
-            if !images.is_empty() {
-                obj["images"] = serde_json::json!(images);
-            }
+            let mut obj = with_images(
+                serde_json::json!({"type": "prompt", "id": id, "message": message}),
+                images,
+            );
             if let Some(sb) = streaming_behavior {
                 obj["streamingBehavior"] = serde_json::Value::String(sb);
             }
             obj
         }
         AgentCommand::Abort => serde_json::json!({"type": "abort", "id": id}),
-        AgentCommand::Steer { message, .. } => {
-            serde_json::json!({"type": "steer", "id": id, "message": message})
-        }
-        AgentCommand::FollowUp { message, .. } => {
-            serde_json::json!({"type": "follow_up", "id": id, "message": message})
-        }
+        AgentCommand::Steer { message, images } => with_images(
+            serde_json::json!({"type": "steer", "id": id, "message": message}),
+            images,
+        ),
+        AgentCommand::FollowUp { message, images } => with_images(
+            serde_json::json!({"type": "follow_up", "id": id, "message": message}),
+            images,
+        ),
         AgentCommand::GetState => serde_json::json!({"type": "get_state", "id": id}),
         AgentCommand::GetMessages { before } => {
             let mut v = serde_json::json!({"type": "get_messages", "id": id});
@@ -352,6 +350,18 @@ fn command_to_json(cmd: AgentCommand, id: &str) -> serde_json::Value {
             obj
         }
     }
+}
+
+/// A message command's images (#2422), omitted when it carries none, so a
+/// text-only command is unchanged on the wire.
+fn with_images(
+    mut command: serde_json::Value,
+    images: Vec<quecto_image::ImageAttachment>,
+) -> serde_json::Value {
+    if !images.is_empty() {
+        command["images"] = serde_json::json!(images);
+    }
+    command
 }
 
 /// One command as the newline-terminated line the writer sends. A command

@@ -12,8 +12,8 @@ Version **0.5.4**.
 |--------|------|-------------|
 | `GET` | `/health` | Health check (`200` when the UDS agent is connected, `503` when not). Body: `{"healthy":bool,"agent_connected":bool}` |
 | `POST` | `/prompt` | Send a prompt. Body: `{"message":"..."}` plus optional `images` (see [Prompt body](#prompt-body)), `streamingBehavior` (`"steer"` / `"followUp"`) and `waitForCompletion` (default `true`). With `waitForCompletion: false`, the gateway enqueues and returns `{"accepted":true}` without waiting for the run |
-| `POST` | `/steer` | Interrupt after the current tool, then deliver a message. Body: `{"message":"..."}` (non-empty) |
-| `POST` | `/follow_up` | Queue a message for when the current run finishes. Body: `{"message":"..."}` |
+| `POST` | `/steer` | Interrupt after the current tool, then deliver a message. Body: `{"message":"..."}` plus optional `images` (as for `/prompt`); the message may be empty only when it carries images |
+| `POST` | `/follow_up` | Queue a message for when the current run finishes. Body: `{"message":"..."}` plus optional `images` (as for `/prompt`); the message may be empty only when it carries images |
 | `POST` | `/abort` | Cancel the current agent run (empty body) |
 | `POST` | `/model` | Switch the active model. Body: `{"model":"provider/id"}` **or** both `{"provider":"...","modelId":"..."}`. Blank/whitespace fields and partial split targets are rejected with `400` |
 | `POST` | `/effort` | Set session reasoning effort. Body: `{"effort":"..."}`. Accepted values (case/whitespace normalized): `none`, `low`, `medium`, `high`, `xhigh`, `max`. Unknown values → `400` |
