@@ -42,13 +42,14 @@ pub fn estimate_image_tokens(mime: &str, base64: &str) -> usize {
 }
 
 /// `dimensions` with the long edge scaled to at most [`MAX_LONG_EDGE`],
-/// the aspect ratio kept (each side rounded down, and at least 1).
+/// the aspect ratio kept (each side rounded up, so the estimate errs high;
+/// the long side lands exactly on the cap).
 pub fn scaled(dimensions: Dimensions) -> Dimensions {
     let long = dimensions.width.max(dimensions.height);
     let scaled = match long > MAX_LONG_EDGE {
         true => {
             let side = |value: u32| {
-                let value = u64::from(value) * u64::from(MAX_LONG_EDGE) / u64::from(long);
+                let value = (u64::from(value) * u64::from(MAX_LONG_EDGE)).div_ceil(u64::from(long));
                 u32::try_from(value)
                     .unwrap_or(MAX_LONG_EDGE)
                     .clamp(1, MAX_LONG_EDGE)

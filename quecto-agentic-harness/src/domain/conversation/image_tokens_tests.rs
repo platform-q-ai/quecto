@@ -37,11 +37,13 @@ fn scaled_sides_never_pass_the_cap_or_fall_to_zero() {
             let s = scaled(dims(w, h));
             assert!((1..=MAX_LONG_EDGE).contains(&s.width), "{w}x{h}: {s:?}");
             assert!((1..=MAX_LONG_EDGE).contains(&s.height), "{w}x{h}: {s:?}");
-            assert_eq!(
-                w >= h,
-                s.width >= s.height,
-                "{w}x{h}: the long edge stays long"
-            );
+            // Rounding up may make a near-square image square, never
+            // turn its long edge short.
+            let (long, short) = match w >= h {
+                true => (s.width, s.height),
+                false => (s.height, s.width),
+            };
+            assert!(long >= short, "{w}x{h}: the long edge stays long: {s:?}");
         }
     }
 }
@@ -111,8 +113,11 @@ fn a_one_megabyte_screenshot_estimates_under_five_thousand_tokens() {
     let small = encode(&png_with_body(1920, 1080, 64));
     let large = encode(&png_with_body(1920, 1080, 1 << 20));
     assert!(large.len() > 1_300_000);
-    assert_eq!(estimate_image_tokens("image/png", &large), 2765);
-    assert!(estimate_image_tokens("image/png", &large) < 5_000);
+    assert_eq!(
+        estimate_image_tokens("image/png", &large),
+        2765,
+        "under 5,000"
+    );
     assert_eq!(
         estimate_image_tokens("image/png", &small),
         estimate_image_tokens("image/png", &large)
