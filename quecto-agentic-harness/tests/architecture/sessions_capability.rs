@@ -865,7 +865,9 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // by scan generation in place of the `exists` sweep (110 → 124) — each a reviewed raise.
     ("src/infrastructure/persistence/session_record_read.rs", 71),
     ("src/infrastructure/session_export.rs", 110),
-    ("src/infrastructure/session_export_records.rs", 80),
+    // #2404: a message record names its user kind (`userKind`), a
+    // reviewed raise (80 → 81).
+    ("src/infrastructure/session_export_records.rs", 81),
     ("src/interface/cli/agent/run_session.rs", 123),
     ("src/interface/cli/uds_dispatch.rs", 500),
     // D10 #1979 hands the presenters the active session's key (was 190).

@@ -219,24 +219,28 @@ pub struct AuditEnvelope {
     pub event: AuditEvent,
 }
 
-/// The watermark marks a cut was planned under (#2404), in estimated
-/// tokens of the whole request (messages and tool definitions), the
-/// estimate scaled to the provider's observed count: `high_tokens` and
-/// `low_tokens` as the ceiling (`ceiling_tokens`) left them, and whether it
-/// lowered them.
+/// The watermark marks a cut was planned under (#2404), in **estimate
+/// units**: the harness's own token estimate of the whole request
+/// (messages and tool definitions), the unit the planner works in. The
+/// configured marks and the ceiling are in provider tokens; they are
+/// converted to estimate units at the provider-observed scale
+/// (`estimate_scale_permille`), and a count here times that scale over
+/// 1000 is in provider tokens again. `high_tokens` and `low_tokens` are as
+/// the ceiling (`ceiling_estimate_tokens`) left them.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CutMarks {
     pub high_tokens: usize,
     pub low_tokens: usize,
-    pub ceiling_tokens: usize,
+    /// The pruning ceiling in estimate units (unlike `context_pruned`'s
+    /// `ceiling_tokens`, which is in provider tokens).
+    pub ceiling_estimate_tokens: usize,
     pub ceiling_lowered_marks: bool,
-    /// The estimate's scale to the provider's count, per mille (1000: none
-    /// observed): a count here times it over 1000 is in provider tokens.
+    /// The provider-observed scale, per mille (1000: none observed).
     pub estimate_scale_permille: u32,
 }
 
 /// What a watermark cut did (#2404): counts, ids and kinds, never content.
-/// Token counts are estimates of the whole request, as [`CutMarks`].
+/// Token counts are in estimate units, as [`CutMarks`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContextCutRecord {
     pub tokens_before: usize,
@@ -255,33 +259,35 @@ pub struct ContextCutRecord {
     pub fill: super::conversation::watermark::Fill,
 }
 
-/// Why a due watermark cut was not made (#2404).
+/// Why a due watermark cut was not made (#2404), adjacently tagged:
+/// `{"kind": "no_boundary"}`, or `{"kind": "saving_too_small", "detail":
+/// {"saving_tokens": .., "needed_tokens": ..}}`.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
+#[serde(tag = "kind", content = "detail", rename_all = "snake_case")]
 pub enum CutSkipReason {
     /// The conversation has no user message: no head to keep.
     NoUserMessage,
     /// Everything is pinned or a previous stub.
     NothingArchivable,
-    /// No exchange boundary falls after something archivable.
+    /// No exchange boundary falls after something archivable: a single
+    /// exchange follows the head (one huge result, or one batch of
+    /// parallel calls).
     NoBoundary,
-    /// The cut would save under the least a cut must save.
-    SavingTooSmall,
+    /// The cut would save `saving_tokens`, under the `needed_tokens` a cut
+    /// must save (estimate units).
+    SavingTooSmall {
+        saving_tokens: usize,
+        needed_tokens: usize,
+    },
 }
 
-/// A due watermark cut that was not made (#2404): the request's size, the
-/// marks and why; counts and kinds only.
+/// A due watermark cut that was not made (#2404): the request's size (in
+/// estimate units), the marks and why; counts and kinds only.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContextCutSkippedRecord {
     pub tokens: usize,
     pub marks: CutMarks,
     pub reason: CutSkipReason,
-    /// What the cut would have saved, and the least it had to, for
-    /// `saving_too_small`; absent otherwise.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub saving_tokens: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub needed_tokens: Option<usize>,
 }
 
 impl AuditEvent {

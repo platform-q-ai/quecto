@@ -32,7 +32,8 @@ fn message_json(message: &Message) -> Value {
             .collect::<Vec<_>>(),
         "toolCallId": message.tool_call_id,
         "toolName": message.tool_name,
-        "isError": message.is_error, "collapsed": message.is_collapsed,
+        "isError": message.is_error,
+        "collapsed": message.is_collapsed,
         "turnOrigin": crate::infrastructure::turn_origin_names::origin_name(message.turn_origin),
         "userKind": crate::infrastructure::turn_origin_names::user_kind_name(message.user_kind),
     });

@@ -514,7 +514,7 @@ fn cut_marks() -> CutMarks {
     CutMarks {
         high_tokens: 256_000,
         low_tokens: 70_000,
-        ceiling_tokens: 258_400,
+        ceiling_estimate_tokens: 206_720,
         ceiling_lowered_marks: false,
         estimate_scale_permille: 1_250,
     }
@@ -542,7 +542,7 @@ fn a_context_cut_record_pins_its_fields() {
             "marks": {
                 "high_tokens": 256_000,
                 "low_tokens": 70_000,
-                "ceiling_tokens": 258_400,
+                "ceiling_estimate_tokens": 206_720,
                 "ceiling_lowered_marks": false,
                 "estimate_scale_permille": 1_250
             },
@@ -556,38 +556,40 @@ fn a_context_cut_record_pins_its_fields() {
     assert_eq!(back, event);
 }
 
-/// #2404: the `context_cut_skipped` record names why; the saving only for
-/// `saving_too_small`.
+/// #2404 (review L4): the `context_cut_skipped` record names why, the
+/// reason adjacently tagged: only `saving_too_small` carries numbers, so
+/// no record can hold a saving without that reason.
 #[test]
 fn a_context_cut_skipped_record_pins_its_reason() {
     let event = AuditEvent::ContextCutSkipped(ContextCutSkippedRecord {
         tokens: 257_000,
         marks: cut_marks(),
-        reason: CutSkipReason::SavingTooSmall,
-        saving_tokens: Some(9_000),
-        needed_tokens: Some(25_600),
+        reason: CutSkipReason::SavingTooSmall {
+            saving_tokens: 9_000,
+            needed_tokens: 25_600,
+        },
     });
     let json = serde_json::to_value(&event).unwrap();
     assert_eq!(json["event"], "context_cut_skipped");
-    assert_eq!(json["reason"], "saving_too_small");
-    assert_eq!(json["saving_tokens"], 9_000);
-    assert_eq!(json["needed_tokens"], 25_600);
+    assert_eq!(
+        json["reason"],
+        serde_json::json!({
+            "kind": "saving_too_small",
+            "detail": {"saving_tokens": 9_000, "needed_tokens": 25_600}
+        })
+    );
     assert_eq!(serde_json::from_value::<AuditEvent>(json).unwrap(), event);
-    let event = AuditEvent::ContextCutSkipped(ContextCutSkippedRecord {
-        reason: CutSkipReason::NoBoundary,
-        saving_tokens: None,
-        needed_tokens: None,
-        tokens: 1,
-        marks: cut_marks(),
-    });
-    let json = serde_json::to_value(&event).unwrap();
-    assert_eq!(json["reason"], "no_boundary");
-    assert!(json.get("saving_tokens").is_none(), "{json}");
     for (reason, name) in [
+        (CutSkipReason::NoBoundary, "no_boundary"),
         (CutSkipReason::NoUserMessage, "no_user_message"),
         (CutSkipReason::NothingArchivable, "nothing_archivable"),
     ] {
-        assert_eq!(serde_json::to_value(reason).unwrap(), name);
+        let json = serde_json::to_value(reason).unwrap();
+        assert_eq!(json, serde_json::json!({ "kind": name }));
+        assert_eq!(
+            serde_json::from_value::<CutSkipReason>(json).unwrap(),
+            reason
+        );
     }
 }
 

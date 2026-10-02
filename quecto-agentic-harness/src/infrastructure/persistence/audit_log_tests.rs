@@ -700,7 +700,7 @@ async fn context_cut_records_are_written_to_the_event_log() {
     let marks = CutMarks {
         high_tokens: 256_000,
         low_tokens: 70_000,
-        ceiling_tokens: 300_000,
+        ceiling_estimate_tokens: 300_000,
         ceiling_lowered_marks: false,
         estimate_scale_permille: 1_000,
     };
@@ -717,8 +717,6 @@ async fn context_cut_records_are_written_to_the_event_log() {
         tokens: 258_000,
         marks,
         reason: CutSkipReason::NoBoundary,
-        saving_tokens: None,
-        needed_tokens: None,
     });
     log.emit(4, cut.clone()).await.unwrap();
     log.emit(5, skipped.clone()).await.unwrap();

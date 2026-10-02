@@ -147,7 +147,7 @@ async fn a_cut_under_a_lower_ceiling_records_the_lowered_marks() {
     assert_eq!(records.len(), 1, "{records:?}");
     let marks = records[0].marks;
     assert!(marks.ceiling_lowered_marks, "{marks:?}");
-    assert_eq!(marks.ceiling_tokens, ceiling);
+    assert_eq!(marks.ceiling_estimate_tokens, ceiling);
     assert_eq!(marks.high_tokens, ceiling);
     assert_eq!(marks.low_tokens, 30_000 * ceiling / 100_000);
 }
@@ -181,9 +181,14 @@ async fn a_due_cut_that_saves_too_little_is_recorded_as_skipped() {
     let records = skips(&sink);
     assert_eq!(records.len(), 1, "{records:?}");
     let record = &records[0];
-    assert_eq!(record.reason, CutSkipReason::SavingTooSmall);
-    assert_eq!(record.needed_tokens, Some(HIGH / 10));
-    let saving = record.saving_tokens.expect("the saving is named");
+    let CutSkipReason::SavingTooSmall {
+        saving_tokens: saving,
+        needed_tokens,
+    } = record.reason
+    else {
+        panic!("{record:?}");
+    };
+    assert_eq!(needed_tokens, HIGH / 10);
     assert!(saving > 0 && saving < HIGH / 10, "{record:?}");
     assert!(record.tokens >= size, "{record:?}");
     assert_eq!(record.marks.high_tokens, HIGH);

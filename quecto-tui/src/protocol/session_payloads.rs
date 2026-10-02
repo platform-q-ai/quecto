@@ -69,6 +69,9 @@ pub enum ResumedChatMessage {
         content: String,
         is_error: bool,
     },
+    /// A watermark cut's archive stub (#2404): a user message on the wire
+    /// (`userKind: "archiveStub"`), shown as a notice, never as a prompt.
+    ArchiveNotice { text: String },
 }
 
 /// Why a resumed-session messages payload could not be used safely.
@@ -191,7 +194,8 @@ pub fn parse_resumed_messages(
     Ok(messages
         .iter()
         .flat_map(|message| {
-            let role = message.get("role").and_then(|v| v.as_str()).unwrap_or("");
+            let kind = MessageKind::of(message);
+            let role = kind.role.as_str();
             let content = message
                 .get("content")
                 .and_then(|v| v.as_str())
@@ -208,7 +212,9 @@ pub fn parse_resumed_messages(
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
             let content_len = optional_usize_field(message, "contentLength");
+            let archive_stub = kind.user_kind.as_deref() == Some("archiveStub");
             match role {
+                "user" if archive_stub => vec![ResumedChatMessage::ArchiveNotice { text: content }],
                 // Sub-agent notes are user-role turns on the wire but operator
                 // status in the UI; not part of the resumed transcript (#1338).
                 "user" if super::presentation_payloads::is_subagent_note(&content) => Vec::new(),
@@ -393,6 +399,31 @@ struct DiscoveryRow {
     repository_label: Option<String>,
     #[serde(default)]
     matched: Vec<Lenient<String>>,
+}
+
+/// A resumed message's role, and its user kind (#2404): a field that is
+/// absent or not a string reads as none.
+#[derive(serde::Deserialize, Default)]
+struct MessageKind {
+    #[serde(default, deserialize_with = "lenient_string")]
+    role: String,
+    #[serde(default, rename = "userKind", deserialize_with = "lenient_option")]
+    user_kind: Option<String>,
+}
+
+impl MessageKind {
+    fn of(message: &serde_json::Value) -> Self {
+        <Self as serde::Deserialize>::deserialize(message).unwrap_or_default()
+    }
+}
+
+fn lenient_option<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    let value = <Lenient<String> as serde::Deserialize>::deserialize(d)?;
+    Ok(value.known())
+}
+
+fn lenient_string<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    Ok(lenient_option(d)?.unwrap_or_default())
 }
 
 /// A value that is kept when it is what the protocol says and ignored —

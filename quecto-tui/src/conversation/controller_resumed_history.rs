@@ -32,6 +32,9 @@ impl App {
                     false,
                     content_len,
                 )),
+                ResumedChatMessage::ArchiveNotice { text } => entries.push(ChatEntry::Status {
+                    text: crate::components::ansi::sanitize_control_keep_newlines(&text),
+                }),
                 ResumedChatMessage::ToolCall {
                     tool_call_id,
                     tool_name,
