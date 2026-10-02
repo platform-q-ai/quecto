@@ -57,7 +57,8 @@ Send a user message to the agent. This is the primary command — it triggers an
 |---|---|---|---|
 | `type` | `"prompt"` | yes | |
 | `id` | string | no | Correlation ID |
-| `message` | string | yes | The user message |
+| `message` | string | yes | The user message; may be `""` when `images` has at least one image |
+| `images` | array of `{"mimeType", "data"}` | no | Images attached to the message (#2422); see [Image attachments](#image-attachments). Absent or empty for text only |
 | `streamingBehavior` | `"steer"` \| `"followUp"` | when agent is running | How to handle this prompt if the agent is already processing a previous one |
 
 **Behavior:**
@@ -88,6 +89,41 @@ After completion, any pending follow-up or steer messages are automatically proc
 {"type":"prompt","id":"p-1","message":"What files are in the current directory?"}
 ```
 
+#### Image attachments
+
+`prompt`, `steer` and `follow_up` take an optional `images` array (#2422).
+Each image is `{"mimeType": "<type>", "data": "<base64>"}`; the images become
+the user message's image blocks, sent to the model with its text, whether the
+message runs at once or waits in the pending queue (a queued steer or
+follow-up keeps its images). A message may be images-only: `"message": ""`
+with at least one image.
+
+Every image is checked before the command does anything else, and one refused
+image refuses the whole command: `response` with `success: false` and the
+exact `error` below, and nothing runs, queues or cancels (a refused `steer`
+never interrupts the running turn). The checks, in order:
+
+| Rule | `error` when it fails (examples) |
+|---|---|
+| at most 8 images per message | `too many images: 9; at most 8 per message` |
+| `mimeType` is exactly `image/png`, `image/jpeg`, `image/gif` or `image/webp` | `images[1]: mimeType "image/svg+xml" is not allowed; use image/png, image/jpeg, image/gif or image/webp` |
+| at most 5 MiB (5242880 bytes) decoded | `images[0]: image decodes to more than 5242880 bytes (5 MiB)` |
+| `data` is standard base64: padded, no whitespace or line breaks | `images[0]: data is not valid standard base64` |
+| the decoded bytes start with the declared type's signature | `images[0]: data does not start with the image/png signature` |
+
+The index is the failing image's position in `images`, from 0. The whole
+command is still one protocol message, so it must fit the 8 MiB frame cap:
+one 5 MiB image (about 7 MB of base64) fits, several large ones may not.
+
+History never carries the base64 back: a user message that carried images
+shows `imageCount` and `imageMimeTypes` in `get_messages`, `get_message` and
+`sync` (see [`get_messages`](#get_messages)). The images are not saved with
+the session: a resumed session has the text only.
+
+```json
+{"type":"prompt","id":"p-2","message":"What is in this screenshot?","images":[{"mimeType":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAA..."}]}
+```
+
 ---
 
 ### `steer`
@@ -98,7 +134,8 @@ Interrupt the current agent run and deliver a new message. If the agent is idle,
 |---|---|---|---|
 | `type` | `"steer"` | yes | |
 | `id` | string | no | Correlation ID |
-| `message` | string | yes | The new instruction |
+| `message` | string | yes | The new instruction; may be `""` when `images` has at least one image |
+| `images` | array of `{"mimeType", "data"}` | no | Images attached to the message; see [Image attachments](#image-attachments) |
 
 **Behavior:**
 - **Agent running:** Fires the cancellation signal (interrupts after the current tool completes), then prepends this message to the pending queue so it runs next
@@ -122,7 +159,8 @@ Queue a message that will be processed after the current (or next) agent run com
 |---|---|---|---|
 | `type` | `"follow_up"` | yes | |
 | `id` | string | no | Correlation ID |
-| `message` | string | yes | The follow-up message |
+| `message` | string | yes | The follow-up message; may be `""` when `images` has at least one image |
+| `images` | array of `{"mimeType", "data"}` | no | Images attached to the message; see [Image attachments](#image-attachments) |
 
 **Behavior:**
 - **Agent running:** Appends the message to the pending queue. When the current run completes (success, error, or cancellation), pending messages are drained and executed in order.
@@ -744,6 +782,8 @@ Each message contains:
 | `toolName` | string \| null | For `tool` messages: name of the tool that produced this result |
 | `isError` | boolean | Whether a `tool` message carries an error result |
 | `collapsed` | boolean | `true` when the context ladder demoted this message to a stub — recall the full body on demand via `get_message` with this `id` (#1061) |
+| `imageCount` | integer | Only on a user message that carried images (#2422): how many. The images themselves are never returned |
+| `imageMimeTypes` | array of string | Only with `imageCount`: each image's MIME type, in order |
 | `thinking` | array | Optional assistant-only display-safe thinking blocks, omitted when absent. Text blocks use `{ "kind": "text", "text": "..." }`; redacted/private provider blocks use `{ "kind": "redacted" }` and never expose signatures, encrypted reasoning, or redacted payload bytes. `content` remains answer-only. |
 
 ---

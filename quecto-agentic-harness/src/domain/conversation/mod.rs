@@ -3,6 +3,7 @@
 pub mod image_dimensions;
 pub mod image_input;
 pub mod image_tokens;
+pub mod user_images;
 pub mod watermark;
 pub mod watermark_cut;
 

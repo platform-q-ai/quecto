@@ -157,6 +157,7 @@ pub(crate) fn message_to_json_for_history_page(msg: &Message) -> serde_json::Val
         "truncated": true,
         "contentLength": msg.content.len(),
     });
+    super::add_image_summary(&mut summary, msg);
     if crate::domain::visible_thinking::has_visible_thinking(&msg.thinking_blocks) {
         let base_size = serde_json::to_vec(&summary)
             .map(|v| v.len())

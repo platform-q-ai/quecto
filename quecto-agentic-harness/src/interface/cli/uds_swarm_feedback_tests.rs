@@ -344,7 +344,7 @@ async fn an_idle_wake_is_unmarked_and_a_prompt_or_steer_is_a_prompt() {
             super::PromptCommand {
                 id: id.map(str::to_string),
                 type_name: type_name.into(),
-                message: text.clone(),
+                message: text.clone().into(),
                 streaming_behavior: None,
             },
         )

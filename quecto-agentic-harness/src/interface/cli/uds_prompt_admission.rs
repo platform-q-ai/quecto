@@ -1,5 +1,21 @@
 use super::*;
 
+/// A steer whose images dispatch will refuse (#2422) is not one: it must
+/// never cancel the running turn before it is refused.
+pub(in crate::interface::cli) fn is_steer_command(trimmed: &str) -> bool {
+    match serde_json::from_str::<AgentCommand>(trimmed) {
+        Ok(
+            AgentCommand::Steer { images, .. }
+            | AgentCommand::Prompt {
+                streaming_behavior: Some(StreamingBehavior::Steer),
+                images,
+                ..
+            },
+        ) => quecto_image::check_images(&images).is_ok(),
+        _ => false,
+    }
+}
+
 pub(super) async fn arm_prompt_cancel(
     ctx: &mut DispatchCtx<'_>,
     is_steer_prompt: bool,
@@ -48,7 +64,7 @@ pub(super) async fn handle_busy_prompt(
     ctx: &mut DispatchCtx<'_>,
     id: Option<&str>,
     type_name: &str,
-    message: String,
+    message: crate::interface::cli::uds_session::PromptBody,
     streaming_behavior: Option<StreamingBehavior>,
 ) {
     match streaming_behavior {
@@ -71,6 +87,72 @@ pub(super) async fn handle_busy_prompt(
             let msg = "agent is running; provide streamingBehavior";
             let ev = AgentEvent::err(id, type_name, msg);
             emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        }
+    }
+}
+
+/// Which message command `dispatch_message` runs.
+pub(super) enum MessageKind {
+    Prompt(Option<StreamingBehavior>),
+    Steer,
+    FollowUp,
+}
+
+/// Run a `prompt`, `steer` or `follow_up` once its images are admitted.
+pub(super) async fn dispatch_message(
+    ctx: &mut DispatchCtx<'_>,
+    id: Option<String>,
+    type_name: String,
+    (text, images): (String, Vec<quecto_image::ImagePayload>),
+    kind: MessageKind,
+) -> bool {
+    let Some(body) = admit_prompt_body(ctx, id.as_deref(), &type_name, text, images).await else {
+        return false;
+    };
+    match kind {
+        MessageKind::Prompt(streaming_behavior) => {
+            let cmd = PromptCommand {
+                id,
+                type_name,
+                message: body,
+                streaming_behavior,
+            };
+            super::handle_prompt(ctx, cmd).await
+        }
+        MessageKind::Steer => {
+            super::uds_dispatch::handle_steer(ctx, id.as_deref(), &type_name, body).await
+        }
+        MessageKind::FollowUp => {
+            super::uds_dispatch::handle_follow_up(ctx, id.as_deref(), &type_name, body).await
+        }
+    }
+}
+
+/// Admit a `prompt` / `steer` / `follow_up`'s images (#2422), before the
+/// command does anything else. `quecto_image` is the one place images are
+/// validated; any refused image refuses the whole command with its exact
+/// message, so nothing runs, queues or cancels, and `None` is returned.
+async fn admit_prompt_body(
+    ctx: &mut DispatchCtx<'_>,
+    id: Option<&str>,
+    type_name: &str,
+    text: String,
+    images: Vec<quecto_image::ImagePayload>,
+) -> Option<crate::interface::cli::uds_session::PromptBody> {
+    match quecto_image::validate_images(images) {
+        Ok(images) => Some(crate::interface::cli::uds_session::PromptBody {
+            text,
+            images: images.into_iter().map(Into::into).collect(),
+        }),
+        Err(refusal) => {
+            ctx.session.record_control(
+                id,
+                type_name,
+                crate::interface::cli::protocol::ControlStatus::Rejected,
+            );
+            let ev = AgentEvent::err(id, type_name, refusal.to_string());
+            emit_event_to_broadcast_or_writer(ctx, &ev).await;
+            None
         }
     }
 }

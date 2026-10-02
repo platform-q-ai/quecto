@@ -113,6 +113,7 @@ fn pending_messages_open_turns_of_their_known_origin() {
                 id: "c".into(),
                 command: "follow_up".into(),
                 content: "task".into(),
+                images: Vec::new(),
             },
         ];
         for pending in instructions {
@@ -147,6 +148,7 @@ fn only_an_instruction_from_a_sender_is_marked_a_prompt() {
             id: "c".into(),
             command: "follow_up".into(),
             content: "task".into(),
+            images: Vec::new(),
         },
     ];
     for pending in prompts {

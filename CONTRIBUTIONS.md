@@ -120,6 +120,7 @@ Quecto uses layered and feature-oriented boundaries in different crates. Preserv
 - Keep domain/application logic independent from transport and interface concerns where a crate enforces Clean Architecture boundaries.
 - Prefer ports/traits at application boundaries and concrete adapters in infrastructure/interface layers.
 - Keep the `quecto-line-io` protocol cap/framing behavior centralized rather than duplicating wire constants.
+- Validate images from outside only through `quecto-image` (`ImageAttachment::new` / `validate_images`), so every peer applies the same rules and refusal text.
 - Avoid adding production code paths solely for tests; use existing test-support features and test doubles.
 
 ### Harness layout ratchet (#2358)

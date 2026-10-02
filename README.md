@@ -38,6 +38,7 @@ Companion crate versions are declared in each package `Cargo.toml`.
 | [MCP bridge](quecto-mcp/) | `quecto-mcp` | A standalone UDS-driven extension that exposes remote MCP server tools as Quecto tools. | Alpha |
 | [Runtime manager](quecto-runtime-manager/) | `quecto-runtime-manager` | A small HTTP manager for per-session Quecto runtimes. | Alpha |
 | [Line/framing I/O](quecto-line-io/) | `quecto-line-io` | Shared bounded JSON/UDS reader and writer library. | Alpha |
+| [Image attachments](quecto-image/) | `quecto-image` | Shared validation for images sent to the agent. | Alpha |
 
 Package-specific source, tests, docs, and fixtures are colocated under each package root.
 
@@ -196,6 +197,7 @@ Some crates also have BDD test targets and package-specific quality scripts. Bef
 - MCP bridge: [quecto-mcp/README.md](quecto-mcp/README.md)
 - Runtime manager: [quecto-runtime-manager/README.md](quecto-runtime-manager/README.md)
 - Shared line/framing I/O: [quecto-line-io/README.md](quecto-line-io/README.md)
+- Image attachment validation: [quecto-image/README.md](quecto-image/README.md)
 - Docker harness for local TUI development: [docs/docker-harness.md](docs/docker-harness.md)
 - Container runtimes for subagents: [docs/container-runtimes.md](docs/container-runtimes.md) (canonical script set: [scripts/container-runtime/](scripts/container-runtime/)). A plain container child's box goes for good when its owner ends it — an `agent_cmd kill`, or a one-shot `quecto agent -m` parent whose run finishes (or hits `--max-time`) — while a failed run or a crashed or killed parent leaves it for `quecto container kill <ref>` (which also removes a `stopped` one) or `quecto container gc`; a swarm's box lives until its owner closes the run.
 

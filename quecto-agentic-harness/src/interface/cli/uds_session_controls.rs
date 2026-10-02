@@ -50,21 +50,27 @@ impl AgentSession {
         &mut self,
         id: Option<&str>,
         command: &str,
-        content: String,
+        body: super::PromptBody,
         steer: bool,
     ) -> bool {
         if self.pending.len() < Self::MAX_PENDING {
+            let super::PromptBody {
+                text: content,
+                images,
+            } = body;
             let message = match id {
                 Some(id) => PendingMessage::Control {
                     id: id.into(),
                     command: command.into(),
                     content,
+                    images,
                 },
-                // A harness nudge carries no id and no human intent.
+                // A harness nudge carries no id, no human intent, no images.
                 None if command == crate::interface::cli::uds_swarm_control::SWARM_WAKE => {
+                    assert!(images.is_empty(), "a swarm wake carries no images");
                     PendingMessage::Automatic(content)
                 }
-                None => PendingMessage::User(content),
+                None => PendingMessage::User { content, images },
             };
             if steer {
                 self.pending.push_front(message);

@@ -42,16 +42,7 @@ pub(super) fn is_abort_command(trimmed: &str) -> bool {
     command_type_is(trimmed, "abort")
 }
 
-pub(super) fn is_steer_command(trimmed: &str) -> bool {
-    matches!(
-        serde_json::from_str::<AgentCommand>(trimmed),
-        Ok(AgentCommand::Steer { .. }
-            | AgentCommand::Prompt {
-                streaming_behavior: Some(StreamingBehavior::Steer),
-                ..
-            })
-    )
-}
+pub(super) use prompt_admission::is_steer_command;
 
 fn command_type_is(trimmed: &str, expected: &str) -> bool {
     serde_json::from_str::<serde_json::Value>(trimmed)
@@ -279,7 +270,7 @@ use uds_dispatch_runtime::resolve_set_model_target;
 pub(super) struct PromptCommand {
     pub(super) id: Option<String>,
     pub(super) type_name: String,
-    pub(super) message: String,
+    pub(super) message: super::uds_session::PromptBody,
     pub(super) streaming_behavior: Option<StreamingBehavior>,
 }
 

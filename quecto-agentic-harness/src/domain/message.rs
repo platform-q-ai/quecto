@@ -149,7 +149,7 @@ impl ThinkingBlock {
 /// Unlike `crate::domain::tool::ImageBlock` (which uses `&'static str` for
 /// `mime_type`), this variant owns its strings to support runtime MIME types
 /// from user-provided files.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UserImageBlock {
     /// MIME type string, e.g. `"image/png"`, `"image/jpeg"`.
     pub mime_type: String,

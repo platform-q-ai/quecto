@@ -233,14 +233,17 @@ fn command_to_json(cmd: AgentCommand, id: &str) -> serde_json::Value {
     match cmd {
         AgentCommand::Prompt {
             message,
+            images,
             streaming_behavior,
-            ..
         } => {
             let mut obj = serde_json::json!({
                 "type": "prompt",
                 "id": id,
                 "message": message,
             });
+            if !images.is_empty() {
+                obj["images"] = serde_json::json!(images);
+            }
             if let Some(sb) = streaming_behavior {
                 obj["streamingBehavior"] = serde_json::Value::String(sb);
             }
@@ -351,6 +354,23 @@ fn command_to_json(cmd: AgentCommand, id: &str) -> serde_json::Value {
     }
 }
 
+/// One command as the newline-terminated line the writer sends. A command
+/// the agent's frame cap would refuse is refused here (#2422): the writer
+/// would drop it unsent, and a waiting `send` would time out.
+fn encode_line(json_value: &serde_json::Value) -> Result<String, ApiError> {
+    let mut line = serde_json::to_string(json_value)
+        .map_err(|e| ApiError::Internal(format!("serialization error: {e}")))?;
+    if line.len() >= MAX_LINE_BYTES {
+        return Err(ApiError::InvalidRequest(format!(
+            "command is {} bytes; the agent takes at most {} bytes per command",
+            line.len() + 1,
+            MAX_LINE_BYTES
+        )));
+    }
+    line.push('\n');
+    Ok(line)
+}
+
 impl AgentGateway for UdsGateway {
     fn send(
         &self,
@@ -364,10 +384,7 @@ impl AgentGateway for UdsGateway {
 
             let id = Uuid::new_v4().to_string();
             let json_value = command_to_json(cmd, &id);
-
-            let mut line = serde_json::to_string(&json_value)
-                .map_err(|e| ApiError::Internal(format!("serialization error: {e}")))?;
-            line.push('\n');
+            let line = encode_line(&json_value)?;
 
             let (response_tx, response_rx) = oneshot::channel();
             let command_name = json_value["type"].as_str().unwrap_or_default().to_owned();
@@ -411,9 +428,7 @@ impl AgentGateway for UdsGateway {
             let id = Uuid::new_v4().to_string();
             let json_value = command_to_json(cmd, &id);
             let command_name = json_value["type"].as_str().unwrap_or("command").to_string();
-            let mut line = serde_json::to_string(&json_value)
-                .map_err(|e| ApiError::Internal(format!("serialization error: {e}")))?;
-            line.push('\n');
+            let line = encode_line(&json_value)?;
             this.send_raw(line).await?;
 
             Ok(AgentEvent::Response {

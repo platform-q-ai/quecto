@@ -45,6 +45,11 @@ pub fn build_router<G: AgentGateway + Clone + 'static>(gateway: G) -> Router {
         .route("/stats", get(stats_handler::<G>))
         .route("/ws", get(ws_handler::<G>))
         .layer(CorsLayer::permissive())
+        // A 5 MiB image is a ~7 MB body (#2422): take up to the agent's
+        // frame cap, past axum's 2 MB default.
+        .layer(axum::extract::DefaultBodyLimit::max(
+            quecto_line_io::PROTOCOL_LINE_CAP_BYTES,
+        ))
         .with_state(state)
 }
 
@@ -180,14 +185,6 @@ async fn prompt_handler<G: AgentGateway>(
     State(state): State<Arc<AppState<G>>>,
     Json(body): Json<PromptRequest>,
 ) -> impl IntoResponse {
-    if body.message.is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": "invalid request: message must not be empty"})),
-        )
-            .into_response();
-    }
-
     let input = use_cases::send_prompt::SendPromptInput {
         message: body.message,
         images: body.images,
@@ -613,14 +610,14 @@ async fn handle_ws<G: AgentGateway + Clone>(state: Arc<AppState<G>>, mut socket:
                 }
             }
             if let Ok(req) = serde_json::from_str::<PromptRequest>(&text) {
-                if !req.message.is_empty() {
-                    let result = gateway
-                        .send(AgentCommand::Prompt {
-                            message: req.message,
-                            images: Vec::new(),
-                            streaming_behavior: req.streaming_behavior,
-                        })
-                        .await;
+                if !req.message.is_empty() || !req.images.is_empty() {
+                    let input = use_cases::send_prompt::SendPromptInput {
+                        message: req.message,
+                        images: req.images,
+                        streaming_behavior: req.streaming_behavior,
+                        wait_for_completion: true,
+                    };
+                    let result = use_cases::send_prompt::execute(&gateway, input).await;
                     let (event, suppress) = match result {
                         Ok(event) => {
                             let suppress = direct_response_id(&event)

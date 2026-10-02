@@ -10,12 +10,13 @@
 //! - extension `tool_result` images and MCP image passthrough (#2423);
 //! - the TUI's attachments (#2425).
 //!
-//! The rules are an allowlist. An image is admitted only when its MIME type
-//! is one of [`ImageMime`]'s four (exact, lowercase), its data is standard
-//! base64 (padded, no whitespace), it decodes to at most [`MAX_IMAGE_BYTES`],
-//! and its decoded bytes start with that type's file signature. A message
-//! carries at most [`MAX_IMAGES_PER_MESSAGE`]. Checks run in that order and
-//! the first that fails is the refusal.
+//! The rules are an allowlist, checked in this order; the first that fails
+//! is the refusal. A message carries at most [`MAX_IMAGES_PER_MESSAGE`]. An
+//! image is admitted only when its MIME type is one of [`ImageMime`]'s four
+//! (exact, lowercase), it decodes to at most [`MAX_IMAGE_BYTES`] (longer
+//! base64 is refused before it is decoded), its data is standard base64
+//! (padded, no whitespace), and its decoded bytes start with that type's file
+//! signature.
 
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
@@ -260,16 +261,35 @@ pub fn check_images(payloads: &[ImagePayload]) -> Result<(), ImagesRefusal> {
     Ok(())
 }
 
-fn check_count(_count: usize) -> Result<(), ImagesRefusal> {
-    Ok(()) // red (#2422): not yet bounded
+fn check_count(count: usize) -> Result<(), ImagesRefusal> {
+    if count <= MAX_IMAGES_PER_MESSAGE {
+        Ok(())
+    } else {
+        Err(ImagesRefusal::TooMany(count))
+    }
 }
 
-/// Red (#2422): admits every payload unchecked.
+/// The admitted type and decoded length of `payload`, checked in the order
+/// the crate documents.
 fn check(payload: &ImagePayload) -> Result<(ImageMime, usize), ImageRefusal> {
-    let _unused = (MIME_ECHO_CHARS, MAX_ENCODED_LEN);
-    let _unused = base64::engine::general_purpose::STANDARD.decode("");
-    let mime = ImageMime::parse(&payload.mime_type).unwrap_or(ImageMime::Png);
-    Ok((mime, payload.data.len()))
+    let Some(mime) = ImageMime::parse(&payload.mime_type) else {
+        let echoed = payload.mime_type.chars().take(MIME_ECHO_CHARS).collect();
+        return Err(ImageRefusal::UnsupportedMime(echoed));
+    };
+    if payload.data.len() > MAX_ENCODED_LEN {
+        return Err(ImageRefusal::TooLarge);
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&payload.data)
+        .map_err(|_| ImageRefusal::InvalidBase64)?;
+    if bytes.len() > MAX_IMAGE_BYTES {
+        return Err(ImageRefusal::TooLarge);
+    }
+    if mime.signature_matches(&bytes) {
+        Ok((mime, bytes.len()))
+    } else {
+        Err(ImageRefusal::SignatureMismatch(mime))
+    }
 }
 
 #[cfg(test)]

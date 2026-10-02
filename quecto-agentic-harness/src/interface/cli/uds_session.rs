@@ -53,11 +53,15 @@ pub use suspension::{SuspensionCause, TurnSuspension};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PendingMessage {
-    User(String),
+    User {
+        content: String,
+        images: Vec<crate::domain::message::UserImageBlock>,
+    },
     Control {
         id: String,
         command: String,
         content: String,
+        images: Vec<crate::domain::message::UserImageBlock>,
     },
     /// A harness-generated prompt (a swarm wake nudge parked behind a steer):
     /// runs like a user prompt but never re-arms a suspended member (#1712).
@@ -74,13 +78,14 @@ pub enum PendingMessage {
     /// A SINGLE informational note summarizing a batch of sub-agent completions
     /// that drained together at one idle boundary (#894). Built by
     /// [`coalesce_pending`]; the body already lists the agent names.
-    CoalescedSubagentNotification {
-        content: String,
-    },
+    CoalescedSubagentNotification { content: String },
 }
 impl PendingMessage {
     pub fn user(content: String) -> Self {
-        Self::User(content)
+        Self::User {
+            content,
+            images: Vec::new(),
+        }
     }
     pub fn subagent_notification(
         agent_id: String,
@@ -111,15 +116,15 @@ impl PendingMessage {
     /// sub-agent note, a swarm wake) opens a turn of the phase it lands in,
     /// that of `conversation` (#2226).
     pub fn into_message(self, conversation: &[Message]) -> Message {
-        use crate::domain::turn_origin::{harness_note, instruction, prompt};
+        use crate::domain::turn_origin::{harness_note, prompt};
         match self {
-            Self::User(content) => prompt(content),
+            Self::User { content, images } => prompt(content).with_user_images(images),
             Self::Control {
-                content, command, ..
-            } => match is_sent_command(&command) {
-                true => prompt(content),
-                false => instruction(content),
-            },
+                content,
+                command,
+                images,
+                ..
+            } => prompt_images::queued_instruction(&command, content, images),
             Self::Automatic(content) => harness_note(content, conversation),
             Self::SubagentNotification {
                 agent_id,
@@ -145,22 +150,6 @@ impl PendingMessage {
         }
     }
 }
-/// Whether `command` is one a user or a parent sends (#2403): what it
-/// carries is a prompt. Anything else (a swarm wake) is the harness's.
-pub(crate) fn is_sent_command(command: &str) -> bool {
-    matches!(command, "prompt" | "steer" | "follow_up")
-}
-
-/// The message a `command` puts in the conversation as it runs at once
-/// (#2403 review H1): a prompt for a command a user or a parent sends, a
-/// harness note (of the phase it lands in) for any other, an idle wake.
-pub(crate) fn command_message(command: &str, text: String, conversation: &[Message]) -> Message {
-    match is_sent_command(command) {
-        true => crate::domain::turn_origin::prompt(text),
-        false => crate::domain::turn_origin::harness_note(text, conversation),
-    }
-}
-
 /// Maximum number of agent names listed verbatim in a coalesced completion note
 /// before the remainder is summarized as a `(+M more)` tail (#894).
 const COALESCE_NAME_CAP: usize = 10;
@@ -547,7 +536,8 @@ impl serde::Serialize for MessageView<'_> {
         // (a demoted stub the client recalls by id; #1061 / ADR-0008 part 3).
         // Assistant thinking is an additive, display-safe recovery field (#1231).
         let thinking = has_visible_thinking(&msg.thinking_blocks);
-        let field_count = if thinking { 10 } else { 9 };
+        let images = usize::from(!msg.user_image_blocks.is_empty());
+        let field_count = 9 + usize::from(thinking) + 2 * images;
         let mut s = serializer.serialize_struct("Message", field_count)?;
         // Domain UUID as a round-trippable string key (AC6).
         s.serialize_field("id", &msg.id().to_string())?;
@@ -566,6 +556,7 @@ impl serde::Serialize for MessageView<'_> {
                 &uds_visible_thinking_wire::visible_thinking_blocks_json(&msg.thinking_blocks),
             )?;
         }
+        prompt_images::serialize_image_summary(&mut s, msg)?;
         s.end()
     }
 }
@@ -593,6 +584,8 @@ pub(crate) fn report_hint_json(
 pub fn message_to_json(msg: &Message) -> serde_json::Value {
     serde_json::to_value(MessageView(msg)).unwrap_or_default()
 }
+mod prompt_images;
+pub(crate) use prompt_images::{PromptBody, add_image_summary, command_message};
 #[path = "uds_session_message_range.rs"]
 mod uds_session_message_range;
 #[path = "uds_visible_thinking_wire.rs"]

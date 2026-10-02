@@ -57,9 +57,11 @@ pub(super) fn intercept_control_forward(line: &str) -> Option<AcceptedControl> {
     let raw_cmd_type = obj.get("type").and_then(|v| v.as_str())?;
     // Do not normalize malformed message/id fields into an accepted command.
     // The dispatch parser and eager-cancel classifier must agree on validity.
-    if matches!(raw_cmd_type, "prompt" | "steer" | "follow_up") {
-        serde_json::from_str::<super::protocol::AgentCommand>(line).ok()?;
-    }
+    let carries_message = matches!(raw_cmd_type, "prompt" | "steer" | "follow_up");
+    let command = match carries_message {
+        true => Some(serde_json::from_str::<super::protocol::AgentCommand>(line).ok()?),
+        false => None,
+    };
     let is_prompt_steer = raw_cmd_type == "prompt"
         && obj.get("streamingBehavior").and_then(|v| v.as_str()) == Some("steer");
     let cmd_type = if is_prompt_steer {
@@ -67,6 +69,9 @@ pub(super) fn intercept_control_forward(line: &str) -> Option<AcceptedControl> {
     } else {
         raw_cmd_type
     };
+    if let Some(refused) = command.as_ref().and_then(|c| refuse_images(c, cmd_type)) {
+        return Some(refused);
+    }
     // Echo the parent's stamped correlation id on the ack so its reader matches
     // this reply and never rides the timeout (#835). A forward with no id falls
     // back to a None id (first-response correlation on the parent).
@@ -100,11 +105,16 @@ pub(super) fn intercept_control_forward(line: &str) -> Option<AcceptedControl> {
     };
 
     let forward_line = forward_line.map(|line| {
-        if matches!(raw_cmd_type, "prompt" | "steer" | "follow_up") {
+        if carries_message {
             let mut forwarded: serde_json::Value =
                 serde_json::from_str(&line).expect("built control JSON");
             if let Some(id) = id {
                 forwarded["id"] = serde_json::json!(id);
+            }
+            // The images travel with their message (#2422): admitted above,
+            // validated again where dispatch builds the message.
+            if let Some(images) = obj.get("images") {
+                forwarded["images"] = images.clone();
             }
             forwarded.to_string()
         } else {
@@ -121,6 +131,29 @@ pub(super) fn intercept_control_forward(line: &str) -> Option<AcceptedControl> {
     Some(AcceptedControl {
         ack_line,
         forward_line,
+    })
+}
+
+/// A forwarded command whose images would be refused (#2422) is refused at
+/// once with the exact message dispatch would give, and never forwarded: a
+/// refused steer must not cancel the running turn.
+fn refuse_images(
+    command: &super::protocol::AgentCommand,
+    cmd_type: &str,
+) -> Option<AcceptedControl> {
+    use super::protocol::AgentCommand;
+    let images = match command {
+        AgentCommand::Prompt { images, .. }
+        | AgentCommand::Steer { images, .. }
+        | AgentCommand::FollowUp { images, .. } => images,
+        _ => return None,
+    };
+    let refusal = quecto_image::check_images(images).err()?;
+    let mut ack_line = AgentEvent::err(command.id(), cmd_type, refusal.to_string()).to_json_line();
+    ack_line.push('\n');
+    Some(AcceptedControl {
+        ack_line,
+        forward_line: None,
     })
 }
 

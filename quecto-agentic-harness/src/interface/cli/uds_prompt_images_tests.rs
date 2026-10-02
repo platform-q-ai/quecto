@@ -339,7 +339,7 @@ fn history_shows_how_many_images_a_message_carried_never_their_data() {
 #[test]
 fn an_oversized_history_entry_keeps_the_image_summary() {
     let mut message = with_images();
-    message.content = "x".repeat(2 * 1024 * 1024);
+    message.content = "x".repeat(crate::interface::cli::uds_session::HISTORY_PAGE_JSON_BUDGET + 1);
     let summary = crate::interface::cli::uds_session::message_to_json_for_history_page(&message);
     assert_eq!(summary["truncated"], true, "the fixture must be summarised");
     assert_eq!(summary["imageCount"], 2);

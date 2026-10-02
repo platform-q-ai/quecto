@@ -166,7 +166,7 @@ async fn steer_marker_is_obeyed_after_mid_turn_cancel() {
     // Now the steer command is dispatched (agent idle after the cancel unwind).
     {
         let mut ctx = env.ctx();
-        super::uds_dispatch::handle_steer(&mut ctx, Some("s"), "steer", MARKER.to_string()).await;
+        super::uds_dispatch::handle_steer(&mut ctx, Some("s"), "steer", MARKER.into()).await;
     }
 
     let obeyed = env
@@ -195,7 +195,8 @@ async fn follow_up_preserves_admitted_steer_gate() {
         vec![PendingMessage::Control {
             id: "f".into(),
             command: "follow_up".into(),
-            content: "work".into()
+            content: "work".into(),
+            images: Vec::new(),
         }]
     );
 }

@@ -1,5 +1,6 @@
 #[cfg(test)]
 pub(super) use super::persist_user_prompt_before_run;
+use super::prompt_admission::{MessageKind, dispatch_message};
 #[cfg(test)]
 pub(super) use super::uds_dispatch_forwarding::forward_subagent_get_messages;
 use super::uds_dispatch_forwarding::try_forward_subagent_targeted_command;
@@ -41,26 +42,19 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
     match cmd {
         AgentCommand::Prompt {
             message,
+            images,
             streaming_behavior,
             ..
         } => {
-            super::handle_prompt(
-                ctx,
-                super::PromptCommand {
-                    id,
-                    type_name,
-                    message,
-                    streaming_behavior,
-                },
-            )
-            .await
+            let kind = MessageKind::Prompt(streaming_behavior);
+            dispatch_message(ctx, id, type_name, (message, images), kind).await
         }
-        AgentCommand::Steer { message, .. } => {
-            handle_steer(ctx, id.as_deref(), &type_name, message).await
-        }
-        AgentCommand::FollowUp { message, .. } => {
-            handle_follow_up(ctx, id.as_deref(), &type_name, message).await
-        }
+        AgentCommand::Steer {
+            message, images, ..
+        } => dispatch_message(ctx, id, type_name, (message, images), MessageKind::Steer).await,
+        AgentCommand::FollowUp {
+            message, images, ..
+        } => dispatch_message(ctx, id, type_name, (message, images), MessageKind::FollowUp).await,
         AgentCommand::Abort { .. } => handle_abort(ctx, id.as_deref(), &type_name).await,
         AgentCommand::RewindTo {
             message_index,
@@ -322,7 +316,7 @@ pub(super) async fn handle_steer(
     ctx: &mut DispatchCtx<'_>,
     id: Option<&str>,
     type_name: &str,
-    message: String,
+    message: crate::interface::cli::uds_session::PromptBody,
 ) -> bool {
     // Acceptance is independent of the provider outcome. Keep the idle
     // control receipt even if the ensuing turn fails before completion.
@@ -350,7 +344,7 @@ pub(super) async fn handle_follow_up(
     ctx: &mut DispatchCtx<'_>,
     id: Option<&str>,
     type_name: &str,
-    message: String,
+    message: crate::interface::cli::uds_session::PromptBody,
 ) -> bool {
     // A retained follow-up cannot revoke a later admitted steer. Only that
     // steer's handler (or explicit abort) releases the priority gate.
