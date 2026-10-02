@@ -589,7 +589,13 @@ automatically, with one mechanism: the **watermark context** (#2401). It is
 the only context mode (#2414): the old pruning rules (the tool-call and
 message count dials, superseded swarm summaries, the size-aware collapse)
 and the `context_mode` switch are gone, and a configuration that still sets
-one of their keys is refused at load, naming it.
+one of their keys is refused at load, naming it (see
+[Configuration](#configuration)).
+
+**Upgrading.** Restart running sessions after installing a build with
+#2414: a session started by an older build hands every sub-agent it
+launches `--inherited-context-mode`, which this build refuses as an
+unknown flag.
 
 ### The watermark context
 
@@ -851,8 +857,18 @@ old name `context_collapse_after_turns`), `context_collapse_after_messages`,
 `context_collapse_large_result_tokens` and
 `context_collapse_large_result_after_turns`, and the removed overrides
 `QUECTO_CONTEXT_MODE`, `QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_TOKENS` and
-`QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_AFTER_TURNS`, are refused at load with
-a message naming the key (#2414).
+`QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_AFTER_TURNS`, are refused at load
+(#2414). The message names every one a file sets, the file, and the command
+that removes each, for example:
+
+```
+quecto config unset agents.defaults.context_collapse_after_tool_calls --global
+quecto config unset agents.defaults.context_collapse_after_messages --global
+```
+
+(`--local` for a repo-local overlay). Each can be unset on its own: a write
+that only takes removed keys away is accepted while others are still there,
+and a write that brings one in is refused.
 
 ## See also
 

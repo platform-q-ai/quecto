@@ -1,8 +1,9 @@
 //! PR #1048 follow-up: unspilled conversation content (`spill_id == None`,
 //! the residue of a spill-append failure or a missing store at creation)
 //! must never be stubbed into an unresolvable `recall("unknown")` — the
-//! ladder lets it fall through to the second rung's plain drop, as the pre-#1046 ceiling did. Split from
-//! `context_pruning_message_tests.rs` for the 750-line source cap.
+//! ladder lets it fall through to the second rung's plain drop, as the
+//! pre-#1046 ceiling did. Split from `context_pruning_message_tests.rs` for
+//! the 750-line source cap.
 
 use super::messages::*;
 use crate::domain::message::{Message, Role};

@@ -146,14 +146,6 @@ fn message_stub_contains_role_preview_tokens_and_recall_id() {
     assert!(!stub.contains('\n'), "stub must be a one-liner: {stub:?}");
 }
 
-// --- collapse trigger semantics (AC2, AC7: N+1 not N) ---
-
-// --- exemptions (AC3) ---
-
-// --- stubs count toward the budget (AC4) ---
-
-// --- independence of the two count triggers (AC7) ---
-
 // --- demotion ladder (AC6) ---
 
 /// Old conversation messages with spill ids (already on disk) + prompt.

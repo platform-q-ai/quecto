@@ -1463,10 +1463,7 @@ fn push_n_old_conv_messages(world: &mut QuectoWorld, n: usize) {
     }
 }
 
-// Both phrasings share one definition: turn numbering restarts on every
-// prompt, so a later batch reuses the same small turn numbers either way.
 #[given(expr = "{int} old conversation messages")]
-#[given(expr = "{int} old conversation messages from an earlier prompt")]
 fn given_old_conv_messages(world: &mut QuectoWorld, n: usize) {
     push_n_old_conv_messages(world, n);
 }

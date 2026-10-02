@@ -138,8 +138,6 @@ fn test_ceiling_ladder_accounts_for_image_blocks() {
     );
 }
 
-// --- #1017: collapse triggers on number of tool calls, default 50 ---
-
 // --- #305: Improved token estimation heuristic ---
 
 #[test]

@@ -64,9 +64,8 @@ pub fn collapse_stub(tool: &str, input_preview: &str, tokens: usize, spill_id: &
 }
 
 /// Replace a tool-result message's content with its compact `recall()` stub
-/// (the ladder's first rung),
-/// releasing the (spilled) full content and any image data. No-op if the
-/// message is not an un-collapsed tool result.
+/// (the ladder's first rung), releasing the (spilled) full content and any
+/// image data. No-op if the message is not an un-collapsed tool result.
 fn collapse_message(msg: &mut Message) {
     if msg.role != Role::Tool || msg.is_collapsed {
         return;

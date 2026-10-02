@@ -1,9 +1,13 @@
 // RecallTool: the `recall` tool's adapter over the sessions capability's
 // recall use case (D9 #1978).
 //
-// The model sees collapse stubs like:
+// The model's main pointer is a watermark cut's stub (#2403):
+//   [Context archive] 412 earlier messages of this session were archived …
+//   recall("archive") lists them with their recall ids …
+// `recall("archive")` (then `archive:2`, ...) lists what a cut archived,
+// each with its id; the rare emergency-ladder stub names its id inline:
 //   [bash: find ~/.local -type d (19156 tokens) — recall("turn20:bash:0")]
-// and can call this tool to retrieve the full output.
+// This tool retrieves the full content behind any of them.
 //
 // This adapter parses the tool's argument schema, formats the use case's
 // outcomes as the tool result the model has always seen, and keeps its
@@ -68,11 +72,13 @@ impl Tool for RecallTool {
         ToolDefinition {
             name: "recall".into(),
             description: "Retrieve spilled session memory by ID. \
+                A context archive stub names its index (recall(\"archive\"), then \
+                \"archive:2\"...), which lists the archived messages with their IDs. \
                 Use recall(\"list\") for the full session-memory index, then pass an ID \
-                from that result to retrieve its content. Collapse stubs also show IDs \
-                inline, for example: recall(\"turn20:bash:0\")."
+                from it to retrieve its content. A ladder stub shows its ID inline, for \
+                example: recall(\"turn20:bash:0\")."
                 .into(),
-            parameters_schema: r#"{"type":"object","properties":{"id":{"type":"string","description":"The spill ID from the collapse stub, or \"list\" for the full index"}},"required":["id"]}"#.into(),
+            parameters_schema: r#"{"type":"object","properties":{"id":{"type":"string","description":"An ID from an archive index, a stub or the list, or \"list\" for the full index"}},"required":["id"]}"#.into(),
         }
     }
 
