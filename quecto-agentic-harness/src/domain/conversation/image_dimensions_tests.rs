@@ -258,3 +258,26 @@ fn the_vp8_upscaling_bits_are_not_size() {
     bytes[29] |= 0x40;
     assert_eq!(read("image/webp", &bytes), Some((800, 600)));
 }
+
+/// The walk reads a frame header behind `MAX_JPEG_SEGMENTS - 1` segments
+/// (the frame's own marker is the last step) and gives up one later.
+#[test]
+fn the_jpeg_segment_bound_is_exact() {
+    // `jpeg` has two segments (APP0, DQT) before its frame header.
+    let behind = |segments: usize| {
+        let mut bytes = vec![0xFF, 0xD8];
+        for _ in 0..segments - 2 {
+            bytes.extend_from_slice(&[0xFF, 0xFE, 0x00, 0x03, b'c']);
+        }
+        bytes.extend_from_slice(&jpeg(640, 480)[2..]);
+        read("image/jpeg", &bytes)
+    };
+    assert!(
+        MAX_JPEG_SEGMENTS >= 256,
+        "room for a camera file and a split ICC profile"
+    );
+    assert_eq!(behind(255), Some((640, 480)));
+    assert_eq!(behind(MAX_JPEG_SEGMENTS - 1), Some((640, 480)));
+    assert_eq!(behind(MAX_JPEG_SEGMENTS), None);
+    assert_eq!(behind(MAX_JPEG_SEGMENTS + 1), None);
+}

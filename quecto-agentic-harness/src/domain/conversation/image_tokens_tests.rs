@@ -44,18 +44,20 @@ fn scaled_sides_never_pass_the_cap_or_fall_to_zero() {
     }
 }
 
-/// `ceil(w*h/750)` after scaling, at least 85 and at most 4784.
+/// After scaling, the larger of `ceil(w*h/750)` and Anthropic's 28 px
+/// patches `ceil(w/28)*ceil(h/28)`, at least 85 and at most 4784.
 #[test]
 fn every_format_estimates_by_its_pixel_size() {
-    let cases: [((u16, u16), usize); 8] = [
+    let cases: [((u16, u16), usize); 9] = [
         ((1, 1), 85),
         ((800, 600), 640),
         ((1024, 768), 1049),
         ((1920, 1080), 2765),
         ((4000, 3000), 4784),
         ((3000, 1000), 2947),
-        ((10_000, 10), 85),
-        ((5000, 400), 708),
+        ((10_000, 10), 92),
+        ((5000, 400), 736),
+        ((2576, 29), 184),
     ];
     for ((w, h), tokens) in cases {
         let (w32, h32) = (u32::from(w), u32::from(h));
@@ -127,4 +129,24 @@ fn every_estimate_is_within_the_floor_and_the_ceiling() {
             );
         }
     }
+}
+
+/// A thin strip is billed by 28 px patches, more than its area says:
+/// 2576x29 is 92x2 patches (184), not ceil(74,704/750) (100).
+#[test]
+fn a_thin_image_costs_its_patches() {
+    let strip = encode(&png(2576, 29));
+    assert_eq!(estimate_image_tokens("image/png", &strip), 184);
+    let line = encode(&png(10_000, 10));
+    assert_eq!(
+        estimate_image_tokens("image/png", &line),
+        92,
+        "2576x2 is 92 patches"
+    );
+    let wide = encode(&png(1920, 1080));
+    assert_eq!(
+        estimate_image_tokens("image/png", &wide),
+        2765,
+        "the area rate is larger"
+    );
 }
