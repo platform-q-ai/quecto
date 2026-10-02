@@ -24,46 +24,22 @@ pub fn wire_agent(agent: AgentLoopImpl, context: Option<SwarmContext>) -> AgentL
 }
 
 /// A built member: [`wire_agent`] over this process's swarm context, and
-/// its pruning ceiling lowered to `swarm_max_context_tokens` the moment the
-/// process takes part in a swarm (#2342), or at once if it already does.
-/// A process that never joins keeps its configured budget. Every agent
-/// runs in the configured context mode (#2403): a member loads the
-/// parent's configuration, so it inherits the parent's mode unless its own
-/// configuration sets one.
+/// its ceiling lowered to `swarm_max_context_tokens` the moment the process
+/// takes part in a swarm (#2342), or at once if it already does; the
+/// watermark marks scale down under it. A process that never joins keeps
+/// its configured budget.
 pub(super) fn wire_member(
-    mut agent: AgentLoopImpl,
+    agent: AgentLoopImpl,
     participation: &Participation,
     defaults: &crate::infrastructure::config::AgentDefaults,
 ) -> AgentLoopImpl {
-    let mode = defaults.context_mode();
-    agent.set_context_mode(mode);
-    let source = defaults.context_mode_source();
-    match mode {
-        crate::domain::conversation::ContextMode::Watermark(marks) => tracing::info!(
-            target: "context_prune",
-            high = marks.high(),
-            low = marks.low(),
-            ?source,
-            "context mode: watermark"
-        ),
-        crate::domain::conversation::ContextMode::Default => {
-            tracing::info!(target: "context_prune", ?source, "context mode: default")
-        }
-    }
     let swarm_ceiling_tokens = defaults.swarm_max_context_tokens;
-    let large_results = defaults.swarm_large_result_collapse();
     let cap = agent.context_ceiling_cap();
-    let switch = agent.large_result_switch();
     participation.on_participation(move || {
         cap.lower_to(swarm_ceiling_tokens);
-        // #2348 review M1: the size rule's evidence is swarm-only, so it is
-        // on by default only here.
-        switch.engage(large_results);
         tracing::info!(
             target: "quecto::swarm_board",
             ceiling_tokens = swarm_ceiling_tokens,
-            large_result_tokens = large_results.over_tokens,
-            large_result_after_turns = large_results.after_turns,
             "swarm member context ceiling engaged"
         );
     });

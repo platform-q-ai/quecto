@@ -1,14 +1,11 @@
-//! #2213: the low-water mark. Crossing a dial prunes down to the low-water
-//! mark, so the turns that follow append without rewriting the prompt
-//! prefix; below the dial nothing changes.
+//! #2213: the ladder's low-water mark. Crossing the ceiling prunes down to
+//! the low-water mark, so the turns that follow append without rewriting
+//! the prompt prefix; below the ceiling nothing changes.
 
 use super::*;
 use crate::application::context_pruning::estimate_message_tokens;
-use crate::application::context_pruning::messages::collapse_conversation_messages_over_limit;
-use crate::application::context_pruning::{
-    collapse_tool_results_over_limit, estimate_total_tokens,
-};
-use crate::domain::message::{Message, Role};
+use crate::application::context_pruning::estimate_total_tokens;
+use crate::domain::message::Message;
 
 /// A spilled assistant message of about 100 tokens in `turn`.
 fn turn_message(turn: u32) -> Message {
@@ -30,13 +27,6 @@ fn spilled_tool_result(i: u32) -> Message {
     msg.tool_name = Some("bash".to_string());
     msg.spill_id = Some(format!("turn{i}:bash:0"));
     msg
-}
-
-fn live_tool_results(messages: &[Message]) -> usize {
-    messages
-        .iter()
-        .filter(|m| m.role == Role::Tool && !m.is_collapsed)
-        .count()
 }
 
 /// True when a pass changed any message already in the list: the prompt
@@ -234,82 +224,6 @@ fn pinned_recent_turns_are_kept_when_they_dominate_the_budget() {
         .map(|m| m.content.clone())
         .collect();
     assert_eq!(kept, pinned, "the pinned tail is never demoted");
-}
-
-#[test]
-fn the_tool_count_dial_collapses_down_to_its_low_water_mark_when_crossed() {
-    let mut messages: Vec<Message> = (0..50).map(spilled_tool_result).collect();
-    assert_eq!(collapse_tool_results_over_limit(&mut messages, 50), 0);
-
-    messages.push(spilled_tool_result(50));
-    assert_eq!(collapse_tool_results_over_limit(&mut messages, 50), 13);
-    assert_eq!(live_tool_results(&messages), low_water(50));
-    assert!(
-        messages[..13].iter().all(|m| m.is_collapsed),
-        "oldest first"
-    );
-}
-
-#[test]
-fn two_consecutive_tool_results_over_the_count_dial_rewrite_the_prefix_once() {
-    let mut messages: Vec<Message> = (0..50).map(spilled_tool_result).collect();
-    let mut rewrites = 0;
-    for i in [50, 51] {
-        messages.push(spilled_tool_result(i));
-        let before = messages.clone();
-        collapse_tool_results_over_limit(&mut messages, 50);
-        rewrites += usize::from(rewrote_prefix(&before, &messages));
-    }
-    assert_eq!(rewrites, 1);
-}
-
-#[test]
-fn the_message_count_dial_collapses_down_to_its_low_water_mark_when_crossed() {
-    let mut messages = session(8);
-    assert_eq!(
-        collapse_conversation_messages_over_limit(&mut messages, 8, 0),
-        0
-    );
-
-    messages.push(turn_message(9));
-    assert_eq!(
-        collapse_conversation_messages_over_limit(&mut messages, 8, 0),
-        3
-    );
-    let live = messages
-        .iter()
-        .filter(|m| m.role == Role::Assistant && !m.is_collapsed)
-        .count();
-    assert_eq!(live, low_water(8));
-
-    messages.push(turn_message(10));
-    assert_eq!(
-        collapse_conversation_messages_over_limit(&mut messages, 8, 0),
-        0,
-        "the next message lands in the headroom"
-    );
-}
-
-/// An assistant turn that called `calls` tools, followed by their results.
-fn tool_turn(first: u32, calls: u32) -> Vec<Message> {
-    let mut turn = vec![Message::assistant("calling tools", vec![])];
-    turn.extend((first..first + calls).map(spilled_tool_result));
-    turn
-}
-
-#[test]
-fn the_tool_count_dial_never_collapses_results_the_model_has_not_seen() {
-    // Limit 10: two older results, then one turn returning nine in parallel.
-    // Crossing asks for 3 (11 down to 8), but only the two older results
-    // were seen by the model; the fresh nine stay in full.
-    let mut messages = tool_turn(0, 1);
-    messages.extend(tool_turn(1, 1));
-    messages.extend(tool_turn(2, 9));
-
-    assert_eq!(collapse_tool_results_over_limit(&mut messages, 10), 2);
-    let fresh = &messages[messages.len() - 9..];
-    assert!(fresh.iter().all(|m| !m.is_collapsed), "fresh results stay");
-    assert!(messages[1].is_collapsed && messages[3].is_collapsed);
 }
 
 /// The #2213 review probe: the prompt, an old seen result, the assistant's

@@ -1,6 +1,7 @@
 //! PR #1048 follow-up: the CLI build path (`build_agent_from_config`) must
-//! thread the context-management knobs (#1044/#1045/#1046) into the agent so
-//! non-default user config is never silently ignored at a construction site.
+//! thread the context-management knobs (#1044/#1045, the watermark marks of
+//! #2414) into the agent so non-default user config is never silently
+//! ignored at a construction site.
 //! Pattern mirrors `agent_935_clamp_tests.rs`. Kept in its own file for the
 //! 750-line source gate.
 
@@ -9,7 +10,6 @@ use super::*;
 
 fn flags_for_wiring_test() -> AgentFlags {
     AgentFlags {
-        inherited_context_mode: None,
         session_name: None,
         no_session: false,
         message: Some("hi".into()),
@@ -63,7 +63,7 @@ fn build_agent_from_config_threads_context_knobs_into_the_loop() {
     let tmp = tempfile::TempDir::new().unwrap();
     std::fs::write(
         tmp.path().join("config.json"),
-        r#"{"providers":{"fireworks":{"api_key":"k"}},"agents":{"defaults":{"max_context_tokens":200000,"pin_recent_turns":5,"context_collapse_after_messages":7}}}"#,
+        r#"{"providers":{"fireworks":{"api_key":"k"}},"agents":{"defaults":{"max_context_tokens":200000,"pin_recent_turns":5,"context_high_tokens":120000,"context_low_tokens":40000}}}"#,
     )
     .unwrap();
     std::fs::write(
@@ -88,14 +88,15 @@ fn build_agent_from_config_threads_context_knobs_into_the_loop() {
         100_000 - 8_192,
         "the model's declared window must bound the effective budget (#1044)"
     );
-    let (pin, collapse_after_messages) = result.agent.context_knob_snapshot();
+    let (pin, marks) = result.agent.context_knob_snapshot();
     assert_eq!(
         pin, 5,
         "a non-default pin_recent_turns in config must reach the loop (#1045)"
     );
     assert_eq!(
-        collapse_after_messages, 7,
-        "a non-default context_collapse_after_messages must reach the loop (#1046)"
+        marks,
+        crate::domain::conversation::watermark::Watermark::new(120_000, 40_000).unwrap(),
+        "the configured watermark marks must reach the loop (#2414)"
     );
 }
 
@@ -213,13 +214,20 @@ impl<'writer> tracing_subscriber::fmt::MakeWriter<'writer> for CapturedLog {
     }
 }
 
-/// #2348: the size-aware collapse's dials reach the built loop.
+/// #2414: watermark is the only context mode. Every construction (a CLI
+/// run, a UDS parent, a sub-agent, a swarm member once it joins) runs the
+/// watermark pass at the configured marks: a context over the high mark is
+/// cut once, behind one archive stub, and nothing is collapsed in place.
 #[test]
-fn build_agent_from_config_threads_the_size_aware_collapse_into_the_loop() {
+fn every_construction_runs_the_watermark_pass() {
+    use crate::domain::conversation::UserKind;
+    use crate::domain::message::Message;
+    use crate::domain::turn_origin::prompt;
+    use crate::infrastructure::tools::swarm_bridge::Participation;
     let tmp = tempfile::TempDir::new().unwrap();
     std::fs::write(
         tmp.path().join("config.json"),
-        r#"{"providers":{"fireworks":{"api_key":"k"}},"agents":{"defaults":{"context_collapse_large_result_tokens":4000,"context_collapse_large_result_after_turns":5}}}"#,
+        r#"{"providers":{"fireworks":{"api_key":"k"}},"agents":{"defaults":{"context_high_tokens":20000,"context_low_tokens":6000}}}"#,
     )
     .unwrap();
     std::fs::write(
@@ -227,63 +235,85 @@ fn build_agent_from_config_threads_the_size_aware_collapse_into_the_loop() {
         r#"{"providers":{"fireworks":{"api":"openai-completions","baseUrl":"https://e.example/v1","apiKey":"k","models":[{"id":"small-window","contextWindow":100000}]}}}"#,
     )
     .unwrap();
-    let flags = flags_for_wiring_test();
-    let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
-    let result = build_agent_from_config(
-        tmp.path(),
-        &selection_for_test(&cfg, false),
-        &flags,
-        &mut stderr,
-        None,
-    )
-    .expect("agent build should succeed");
-    assert_eq!(
-        result.agent.large_result_switch().dial(),
-        crate::domain::large_result_collapse::LargeResultCollapse {
-            over_tokens: 4_000,
-            after_turns: 5,
+    let prose = |tag: &str, tokens: usize| {
+        let mut text = format!("{tag} ");
+        while Message::estimate_tokens(&text) < tokens {
+            text.push_str("lorem ipsum dolor sit amet ");
         }
-    );
+        text
+    };
+    let member = Participation::shared();
+    type Adapt<'a> = Box<dyn Fn(&mut AgentFlags) + 'a>;
+    let constructions: [(&str, Adapt<'_>); 4] = [
+        ("a CLI run", Box::new(|_| {})),
+        ("a UDS parent", Box::new(|flags| flags.uds_mode = true)),
+        (
+            "a sub-agent",
+            Box::new(|flags| {
+                flags.spawned = true;
+                flags.parent_id = Some("parent".into());
+            }),
+        ),
+        (
+            "a swarm member",
+            Box::new(|flags| flags.swarm_participation = member.clone()),
+        ),
+    ];
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    for (construction, adapt) in constructions {
+        let mut flags = flags_for_wiring_test();
+        adapt(&mut flags);
+        let mut stderr = String::new();
+        let built = build_agent_from_config(
+            tmp.path(),
+            &selection_for_test(&cfg, false),
+            &flags,
+            &mut stderr,
+            None,
+        )
+        .unwrap_or_else(|| panic!("{construction}: {stderr}"));
+        member.set(true);
+        let mut messages = vec![
+            Message::system(prose("system", 300)),
+            prompt(prose("brief", 200)),
+        ];
+        for n in 0..12 {
+            let mut answer = Message::assistant(prose(&format!("answer {n}"), 2_000), vec![]);
+            answer.turn = Some(1);
+            messages.push(answer);
+            messages.push(prompt(prose(&format!("prompt {n}"), 50)));
+        }
+        runtime.block_on(built.agent.prune_resumed_context(&mut messages));
+        let stubs = messages
+            .iter()
+            .filter(|m| m.user_kind == UserKind::ArchiveStub)
+            .count();
+        assert_eq!(stubs, 1, "{construction}: one cut, one stub");
+        assert!(
+            messages.iter().all(|m| !m.is_collapsed),
+            "{construction}: nothing was collapsed in place"
+        );
+    }
 }
 
-/// #2348 review M1: unset, the size-aware collapse is off for an ordinary
-/// agent and engages, at the swarm default, when its process joins a swarm.
+/// #2414: `--inherited-context-mode` is gone with the mode it handed down:
+/// an agent started with it is refused, the flag named.
 #[test]
-fn joining_a_swarm_engages_the_size_aware_collapse() {
-    use crate::domain::large_result_collapse::LargeResultCollapse;
-    let tmp = tempfile::TempDir::new().unwrap();
-    std::fs::write(
-        tmp.path().join("config.json"),
-        r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#,
-    )
-    .unwrap();
-    let cfg = tmp.path().join("config.json");
-    let participation = crate::infrastructure::tools::swarm_bridge::Participation::shared();
-    let mut flags = flags_for_wiring_test();
-    flags.model_override = None;
-    flags.swarm_participation = participation.clone();
+fn the_inherited_context_mode_flag_is_refused() {
+    let args = [
+        "-m".to_string(),
+        "hi".to_string(),
+        "--inherited-context-mode".to_string(),
+        "watermark:256000:70000".to_string(),
+    ];
     let mut stderr = String::new();
-    let member = build_agent_from_config(
-        tmp.path(),
-        &selection_for_test(&cfg, false),
-        &flags,
-        &mut stderr,
-        None,
-    )
-    .expect("agent build should succeed");
-    assert_eq!(
-        member.agent.large_result_switch().dial(),
-        LargeResultCollapse::DISABLED,
-        "off for an agent that takes part in no swarm"
-    );
-    participation.set(true);
-    assert_eq!(
-        member.agent.large_result_switch().dial(),
-        LargeResultCollapse {
-            over_tokens: 2_000,
-            after_turns: 3,
-        },
-        "on at the swarm default from the moment the process joins"
+    assert!(parse_agent_flags(&args, &mut stderr).is_none(), "refused");
+    assert!(
+        stderr.contains("unknown flag '--inherited-context-mode'"),
+        "{stderr}"
     );
 }

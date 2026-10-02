@@ -105,48 +105,34 @@ pub enum AuditEvent {
         template_id: Option<String>,
         issue: Option<AuditIssue>,
     },
+    /// The emergency ladder's record (#2414): no watermark cut brought the
+    /// request under the ceiling, so the ladder stubbed, then dropped, the
+    /// oldest messages; or the pinned set alone is over the ceiling.
     ContextPruned {
         messages_dropped: usize,
-        tool_results_collapsed: usize,
         tokens_before: usize,
         tokens_after: usize,
         /// True when the ceiling could not be met — the pinned/exempt set
         /// alone exceeds the budget even after full demotion (#1044).
         #[serde(default)]
         budget_unmet: bool,
-        /// Conversation messages the count-based collapse
-        /// (`context_collapse_after_messages`) turned into recall stubs this
+        /// Messages the ladder's first rung collapsed to recall stubs this
         /// prune (#2214); absent from logs written before it, read as 0.
         #[serde(default)]
-        messages_collapsed: usize,
-        /// Messages the context-ceiling ladder's first rung collapsed to
-        /// recall stubs this prune (#2214); absent from logs written before
-        /// it, read as 0.
-        #[serde(default)]
         ladder_stubbed: usize,
-        /// Tool results a newer snapshot of the same state (a newer full
-        /// swarm `summary`) superseded this prune, turned into recall stubs
-        /// (#2342); absent from logs written before it, read as 0.
-        #[serde(default)]
-        snapshots_superseded: usize,
-        /// The pruning ceiling in force, in provider tokens (the unit of
+        /// The ceiling in force, in provider tokens (the unit of
         /// `max_context_tokens`, before the ladder converts it to estimate
         /// units at the observed scale): the lowest of the configured
         /// budget, the model's window and a swarm member's cap (#2342);
         /// absent from logs written before it, read as 0.
         #[serde(default)]
         ceiling_tokens: usize,
-        /// Tool results the size-aware rule collapsed this prune: each over
-        /// `context_collapse_large_result_tokens`, seen for
-        /// `context_collapse_large_result_after_turns` turns (#2348); absent
-        /// from logs written before it, read as 0.
-        #[serde(default)]
-        large_results_collapsed: usize,
-        /// The watermark mode's emergency ladder made this prune (#2404):
-        /// no cut brought the request under the ceiling, so the default
-        /// ladder ran for it. A watermark cut is never a `context_pruned`
-        /// record (it is a `context_cut`); false in the default mode, and
-        /// in logs written before it.
+        /// The emergency ladder ran (#2404): no cut brought the request
+        /// under the ceiling. A watermark cut is never a `context_pruned`
+        /// record (it is a `context_cut`); false when only the budget was
+        /// unmet (on every request while the tool definitions exceed three
+        /// quarters of it, so the messages keep the quarter floor), and in
+        /// logs written before it.
         #[serde(default)]
         watermark_fallback: bool,
     },

@@ -39,6 +39,15 @@ fn given_big_spilled_history(world: &mut QuectoWorld, count: usize) {
     push_history_turns(world, count, &big);
 }
 
+/// #2414: a spilled brief (the first user message, which every watermark
+/// cut keeps) over the small budgets these scenarios configure.
+#[given("a spilled brief exceeding the pruning budget")]
+fn given_spilled_brief(world: &mut QuectoWorld) {
+    let mut brief = quecto::domain::turn_origin::prompt("lorem ipsum dolor sit amet ".repeat(90));
+    brief.spill_id = Some("turn0:msg:user".to_string());
+    world.watermark_history.push(brief);
+}
+
 #[given(expr = "a spilled conversation history of {int} further small prior turns")]
 fn given_small_spilled_history(world: &mut QuectoWorld, count: usize) {
     push_history_turns(world, count, "a small earlier reply");
@@ -82,15 +91,13 @@ fn when_user_sends_through_pruning_agent(world: &mut QuectoWorld, text: String) 
         // manifest message, perturbing the prefix these scenarios pin.
         retention: None,
         session_key: "bdd-1072".to_string(),
-        context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: budget,
         progress_callback: None,
         streaming: false,
         effort: None,
         audit_log: None,
         pin_recent_turns: 2,
-        context_collapse_after_messages: u32::MAX,
-        large_result_collapse: quecto::domain::large_result_collapse::LargeResultCollapse::DISABLED,
+        context_marks: Default::default(),
         model_context_window: None,
         tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     });

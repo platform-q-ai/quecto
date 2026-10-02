@@ -1,38 +1,25 @@
-// Context pruning: tool-call collapse + sliding-window enforcement with spill-to-disk.
+// Context pruning: the emergency ladder, the recall stubs and the spill
+// manifest (#2414: the watermark pass is the only context mode; nothing
+// here runs on an ordinary request).
 //
-// Past `context_collapse_after_tool_calls` (default 50) tool results, the
-// oldest collapse to compact `recall(spill_id)` stubs; a large one the model
-// has seen for a few turns collapses whatever the count (#2348). Conversation
-// messages get the symmetric lifecycle in `messages` (#1046). All content
-// spills at creation, so `recall()` retrieves collapsed or dropped content.
+// The ladder (`messages::ceiling`) stubs, then drops, the oldest messages
+// only when no watermark cut can bring a request under the ceiling. All
+// content spills at creation, so `recall()` retrieves stubbed or dropped
+// content.
 //
 // Depends on: domain::message, application::sessions::use_cases (the narrow
 // retention reader, D9 #1978). Never imports infrastructure or the store.
 
-// #1046: conversation-message collapse, demotion ladder, creation-time spill.
+// #1046: the stub format, creation-time spill and the demotion ladder.
 #[path = "context_pruning_messages.rs"]
 pub mod messages;
-
-// #2342: superseded snapshots (a newer full swarm summary supersedes older).
-#[path = "context_pruning_snapshots.rs"]
-pub mod snapshots;
 
 // #2349 review M1: removal keeps call/result exchanges whole.
 #[path = "context_pruning_exchanges.rs"]
 mod exchanges;
 
-// #2348: a large result seen for a few turns collapses whatever the count.
-#[path = "context_pruning_large_results.rs"]
-pub mod large_results;
-
 use crate::application::sessions::use_cases::ListRetainedContext;
 use crate::domain::message::{Message, Role};
-
-/// Sentinel value indicating that tool-result collapse is disabled.
-/// When `context_collapse_after_tool_calls` is set to this value, collapse is
-/// short-circuited: a session would need `u32::MAX` tool-result messages before
-/// the count-based trigger could fire, which is unreachable in practice.
-pub const COLLAPSE_DISABLED: u32 = u32::MAX;
 
 /// Estimate token count from text content (#305, #2212).
 ///
@@ -46,7 +33,7 @@ pub const COLLAPSE_DISABLED: u32 = u32::MAX;
 /// - non-ASCII: ~1 token per codepoint (CJK, emoji).
 ///
 /// It replaced a byte-based `len/3`, which overcounted ASCII by ~33% and
-/// undercounted CJK (weakening pruning as a prompt-injection defence).
+/// undercounted CJK.
 /// Not exact: once a provider reports its prompt size, the ceiling is
 /// scaled by the observed residual (`domain::context_calibration`, 1x..4x).
 pub fn estimate_tokens(text: &str) -> usize {
@@ -76,9 +63,9 @@ pub fn collapse_stub(tool: &str, input_preview: &str, tokens: usize, spill_id: &
     format!("[{tool}: {preview} ({tokens} tokens) — recall(\"{spill_id}\")]")
 }
 
-/// Replace a tool-result message's content with its compact `recall()` stub,
-/// releasing the (spilled) full content and any image data. No-op if the
-/// message is not an un-collapsed tool result.
+/// Replace a tool-result message's content with its compact `recall()` stub
+/// (the ladder's first rung), releasing the (spilled) full content and any
+/// image data. No-op if the message is not an un-collapsed tool result.
 fn collapse_message(msg: &mut Message) {
     if msg.role != Role::Tool || msg.is_collapsed {
         return;
@@ -94,43 +81,8 @@ fn collapse_message(msg: &mut Message) {
     msg.image_blocks.clear();
 }
 
-/// Collapse the oldest tool results once the number of tool calls in the
-/// session exceeds `max_tool_calls` (#1017), down to its low-water mark in one
-/// batch so the next results append without a prefix rewrite (#2213).
-///
-/// The trigger is the cumulative **number of un-collapsed tool-result messages**
-/// in the conversation, so it accumulates across prompts within a session
-/// (message history persists) rather than resetting each `run_loop` invocation.
-/// Already-collapsed results are not counted (they no longer weigh on context),
-/// so the collapse front advances monotonically as new tool calls arrive.
-/// Results after the last assistant message are never collapsed.
-///
-/// `max_tool_calls == COLLAPSE_DISABLED` (`u32::MAX`) disables collapse.
-/// Returns the number of tool results collapsed.
-pub fn collapse_tool_results_over_limit(messages: &mut [Message], max_tool_calls: u32) -> usize {
-    if max_tool_calls == COLLAPSE_DISABLED {
-        return 0;
-    }
-    // Unspilled results and each newest snapshot (#2342) are not counted;
-    // results the model has not seen yet are never reached (#2213).
-    let (to_collapse, seen_end, collapsible) =
-        messages::ceiling::tool_results_to_collapse(messages, max_tool_calls as usize);
-    let mut collapsed = 0;
-    for (msg, _) in messages[..seen_end]
-        .iter_mut()
-        .zip(&collapsible)
-        .filter(|(_, collapsible)| **collapsible)
-        .take(to_collapse)
-    {
-        collapse_message(msg);
-        collapsed += 1;
-    }
-    debug_assert_eq!(collapsed, to_collapse, "the seen front holds every one");
-    collapsed
-}
-
-/// Default number of most-recent turns the demotion-ladder ceiling never
-/// demotes (#1045).
+/// Default number of most-recent turns the emergency ladder never demotes
+/// (#1045).
 pub const DEFAULT_PIN_RECENT_TURNS: u32 = 2;
 
 /// Build or update the pinned, constant-size spill guidance message.

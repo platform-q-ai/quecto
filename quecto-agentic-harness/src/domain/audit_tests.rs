@@ -91,15 +91,11 @@ fn workflow_transition_round_trip() {
 fn context_pruned_round_trip() {
     let event = AuditEvent::ContextPruned {
         messages_dropped: 12,
-        tool_results_collapsed: 0,
         tokens_before: 195_000,
         tokens_after: 142_000,
         budget_unmet: false,
-        messages_collapsed: 4,
         ladder_stubbed: 3,
-        snapshots_superseded: 0,
         ceiling_tokens: 0,
-        large_results_collapsed: 0,
         watermark_fallback: false,
     };
     let json = serde_json::to_string(&event).unwrap();
@@ -113,15 +109,11 @@ fn context_pruned_round_trip_preserves_unmet_budget() {
     // the `false` case (via #[serde(default)]); only `true` catches it.
     let event = AuditEvent::ContextPruned {
         messages_dropped: 0,
-        tool_results_collapsed: 0,
         tokens_before: 300,
         tokens_after: 300,
         budget_unmet: true,
-        messages_collapsed: 0,
         ladder_stubbed: 0,
-        snapshots_superseded: 0,
         ceiling_tokens: 0,
-        large_results_collapsed: 0,
         watermark_fallback: false,
     };
     let json = serde_json::to_string(&event).unwrap();
@@ -132,29 +124,25 @@ fn context_pruned_round_trip_preserves_unmet_budget() {
 
 #[test]
 fn context_pruned_records_the_messages_it_stubbed() {
-    // #2214: the count-based collapse and the ladder's first rung stub
-    // messages, each counted apart; a serializer that dropped a count would
-    // still round-trip 0 (via #[serde(default)]).
+    // #2214: the ladder's first rung stubs messages; a serializer that
+    // dropped the count would still round-trip 0 (via #[serde(default)]).
     let event = AuditEvent::ContextPruned {
         messages_dropped: 0,
-        tool_results_collapsed: 0,
         tokens_before: 252_433,
         tokens_after: 240_205,
         budget_unmet: false,
-        messages_collapsed: 2,
         ladder_stubbed: 1,
-        snapshots_superseded: 0,
         ceiling_tokens: 0,
-        large_results_collapsed: 0,
         watermark_fallback: false,
     };
     let json = serde_json::to_string(&event).unwrap();
-    assert!(json.contains("\"messages_collapsed\":2"), "got: {json}");
     assert!(json.contains("\"ladder_stubbed\":1"), "got: {json}");
     let back: AuditEvent = serde_json::from_str(&json).unwrap();
     assert_eq!(event, back);
 }
 
+/// A record written before #2214, or before #2414 removed the old rules'
+/// counts, reads as nothing stubbed: the removed counts are ignored.
 #[test]
 fn a_context_pruned_record_from_before_2214_reads_as_nothing_stubbed() {
     let old = r#"{"event":"context_pruned","messages_dropped":2,"tool_results_collapsed":1,"tokens_before":10,"tokens_after":5}"#;
@@ -163,15 +151,11 @@ fn a_context_pruned_record_from_before_2214_reads_as_nothing_stubbed() {
         event,
         AuditEvent::ContextPruned {
             messages_dropped: 2,
-            tool_results_collapsed: 1,
             tokens_before: 10,
             tokens_after: 5,
             budget_unmet: false,
-            messages_collapsed: 0,
             ladder_stubbed: 0,
-            snapshots_superseded: 0,
             ceiling_tokens: 0,
-            large_results_collapsed: 0,
             watermark_fallback: false,
         }
     );
@@ -593,8 +577,8 @@ fn a_context_cut_skipped_record_pins_its_reason() {
     }
 }
 
-/// #2404: the watermark mode's emergency ladder marks its `context_pruned`
-/// record; a record written before reads as no fallback.
+/// #2404: the emergency ladder marks its `context_pruned` record; a record
+/// written before reads as no fallback.
 #[test]
 fn a_context_pruned_record_names_the_watermark_fallback() {
     let old = r#"{"event":"context_pruned","messages_dropped":2,"tool_results_collapsed":1,"tokens_before":10,"tokens_after":5}"#;

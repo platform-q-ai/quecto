@@ -733,8 +733,8 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // #2348: the plan moved to its own module (the size-aware rule fits);
     // #2405: the window rule moved to the domain, the gauge poison to the
     // tests (→ 300); #2403: the manifest refresh moved beside the
-    // watermark pass (→ 297).
-    ("src/application/context.rs", 297),
+    // watermark pass (→ 297); #2414: the old rules' pass removed (→ 224).
+    ("src/application/context.rs", 224),
     // #2342: new modules (the swarm member's cap; the spill writers).
     ("src/application/context_ceiling_cap.rs", 30),
     ("src/application/context_spill_writers.rs", 70),
@@ -744,27 +744,27 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/domain/context_calibration.rs", 168),
     ("src/domain/token_estimate.rs", 207),
     // #2212: the estimate doc points at the per-class module (244 → 242);
-    // #2349 review M1: the drop moved to the exchanges module (→ 209).
-    ("src/application/context_pruning.rs", 209),
+    // #2349 review M1: the drop moved to the exchanges module (→ 209);
+    // #2414: the tool-count dial removed (→ 162).
+    ("src/application/context_pruning.rs", 162),
     // #2349 review M1: new module (removal keeps exchanges whole).
     ("src/application/context_pruning_exchanges.rs", 86),
-    // #2213: the demotion-ladder ceiling moved to its own module (304 → 217).
-    ("src/application/context_pruning_messages.rs", 217),
+    // #2213: the demotion-ladder ceiling moved to its own module (304 → 217);
+    // #2414: the message-count dial removed (→ 164).
+    ("src/application/context_pruning_messages.rs", 164),
     // #2213: new module (the ladder, the low-water mark and the dials' batch);
-    // #2342: the count dials' batch moved to its own module (203 → 186).
-    ("src/application/context_pruning_ceiling.rs", 186),
-    // #2342: new modules (the count dials' batch; superseded snapshots).
-    ("src/application/context_pruning_count_dial.rs", 41),
-    ("src/application/context_pruning_snapshots.rs", 88),
-    // #2348: new modules (the size-aware collapse; the plan, split from
-    // `context.rs` so it stays within its ceiling).
-    ("src/application/context_pruning_large_results.rs", 79),
-    // #2348 review M1: a swarm member's size-aware collapse.
-    ("src/application/context_large_result_switch.rs", 37),
-    ("src/application/context_plan.rs", 30),
+    // #2342: the count dials' batch moved to its own module (203 → 186);
+    // #2414: the ladder alone remains (→ 170).
+    ("src/application/context_pruning_ceiling.rs", 170),
+    // #2348: the plan, split from `context.rs` so it stays within its
+    // ceiling; #2414: the old rules' counts removed (→ 25). (#2342's count
+    // dials and superseded snapshots, #2348's size-aware collapse and its
+    // swarm switch were removed with the old rules, #2414.)
+    ("src/application/context_plan.rs", 25),
     ("src/application/agent_loop_spill.rs", 56),
-    // #2212: the gauge wrappers moved to their own module (749 → 703).
-    ("src/application/agent_loop.rs", 703),
+    // #2212: the gauge wrappers moved to their own module (749 → 703);
+    // #2414: the old rules' dials left the constructor (→ 682).
+    ("src/application/agent_loop.rs", 682),
     ("src/application/agent_loop_gauge.rs", 61),
     // D3 #1973, D4 #1974, D5 #1972, D6 #1975, D7 #1976 and D8 #1977 each
     // add use cases to this graph; the ceiling follows their merge (was 113
@@ -1812,14 +1812,13 @@ fn retained_context_has_exactly_one_owner_per_role() {
         .filter(|p| p.starts_with("src/application/sessions/"))
         .collect();
     for needle in [
-        "fn collapse_tool_results_over_limit(",
-        "fn collapse_conversation_messages_over_limit(",
+        "fn plan_cut(",
         "fn enforce_context_ceiling_ladder(",
         "fn exempt_flags(",
         "fn update_spill_manifest(",
         "fn estimate_tokens(",
         "pin_recent_turns",
-        "context_collapse_after",
+        "context_high_tokens",
         "turn{",
     ] {
         let owners: BTreeSet<String> = sessions_files

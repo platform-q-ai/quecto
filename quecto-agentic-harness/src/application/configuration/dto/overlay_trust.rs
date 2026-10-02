@@ -35,6 +35,8 @@ pub enum OverlayTrustError {
         path: PathBuf,
         reason: String,
     },
+    /// The overlay still sets keys #2414 removed (review round 2 M1).
+    RemovedKeys(crate::application::configuration::dto::removed_keys::RemovedKeysIn),
     Store {
         path: PathBuf,
         reason: String,
@@ -66,6 +68,14 @@ impl std::fmt::Display for OverlayTrustError {
                 f,
                 "refusing to trust {}: not a valid overlay: {reason}",
                 path.display()
+            ),
+            Self::RemovedKeys(removed) => write!(
+                f,
+                "refusing to trust {}: {}",
+                removed.path.display(),
+                crate::application::configuration::dto::removed_keys::removed_keys_message(
+                    std::slice::from_ref(removed)
+                )
             ),
             Self::Store { path, reason } => {
                 write!(f, "could not record trust for {}: {reason}", path.display())

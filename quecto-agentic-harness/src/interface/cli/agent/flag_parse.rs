@@ -88,10 +88,6 @@ pub(crate) struct AgentFlags {
     /// `--backend <quecto|claude-code>` (#2287): the member's brain; `None`
     /// when not given (quecto's own loop). Valid only with `--mode uds`.
     pub(crate) backend: Option<crate::domain::external_agent::backend::MemberBackend>,
-    /// `--inherited-context-mode <default|watermark:<high>:<low>>` (#2403):
-    /// the launching agent's context mode, adopted where this agent's own
-    /// configuration leaves the mode or a mark unset.
-    pub(crate) inherited_context_mode: Option<String>,
 }
 
 impl AgentFlags {

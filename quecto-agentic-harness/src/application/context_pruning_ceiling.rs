@@ -1,4 +1,5 @@
-// #1046 / #2213: the demotion-ladder context ceiling (full → stub → removed).
+// #1046 / #2213: the emergency ladder (full → stub → removed), which runs
+// only when no watermark cut can bring a request under the ceiling (#2414).
 // Split from `context_pruning_messages.rs` (line cap). Pure policy over the
 // message list: no retention handle, no store.
 
@@ -12,27 +13,15 @@ use crate::application::context_pruning::{
 use crate::domain::message::{Message, Role};
 use crate::domain::turn_origin::report_to_keep;
 
-/// The low-water mark of every pruning dial, in percent of the dial (#2213).
-///
-/// Crossing a dial (the token ceiling, the tool-result count, the
-/// conversation-message count) prunes down to this share of it, not just
-/// back under it. Each pruning pass rewrites a message early in the
-/// conversation, which invalidates the provider's prompt-cache prefix from
-/// there on. Pruning only the overflow let the next tool result cross again,
-/// so every turn missed the cache (QA: 0 cached tokens on a 471k request,
-/// about 7x the input cost). At 75 the quarter left as headroom takes about
-/// five 12k-token tool results (or recalls) on the QA session's 250k budget
-/// before the next pass, so the miss is paid once per batch, while three
-/// quarters of the working context stay in full and few stubs need a recall
-/// round-trip. A lower mark buys longer batches, a higher one more misses.
+/// The ladder's low-water mark, in percent of the ceiling (#2213): once
+/// crossed, it demotes down to this share of the ceiling, not just back
+/// under it, so the next requests append without another in-place edit.
 pub const LOW_WATER_PERCENT: usize = 75;
 
 const _: () = assert!(LOW_WATER_PERCENT > 0 && LOW_WATER_PERCENT < 100); // 0 empties; 100 is per-turn
 
-/// The low-water mark of a dial: [`LOW_WATER_PERCENT`] of `limit`, rounded
-/// up so a small count dial keeps at least its share (a one-item dial keeps
-/// its item). Never above `limit`; computed wide so no limit overflows.
-/// Count dials of 1 to 3 so get no hysteresis: they collapse every crossing.
+/// The low-water mark of `limit`: [`LOW_WATER_PERCENT`] of it, rounded up.
+/// Never above `limit`; computed wide so no limit overflows.
 pub fn low_water(limit: usize) -> usize {
     let wide = (limit as u128 * LOW_WATER_PERCENT as u128).div_ceil(100);
     let mark = usize::try_from(wide).map_or(limit, |mark| mark.min(limit));
@@ -44,20 +33,15 @@ pub fn low_water(limit: usize) -> usize {
 /// messages after its last assistant message yet (the results of that
 /// message's tool calls), and a tool-calling last assistant message must
 /// keep its results paired, so it is in flight too. With no assistant
-/// message nothing is in flight. Neither count dial nor ladder rung demotes
-/// an in-flight message: a stubbed unseen result would only be recalled.
-pub(in crate::application::context_pruning) fn in_flight_start(messages: &[Message]) -> usize {
+/// message nothing is in flight. No ladder rung demotes an in-flight
+/// message: a stubbed unseen result would only be recalled.
+fn in_flight_start(messages: &[Message]) -> usize {
     match messages.iter().rposition(|m| m.role == Role::Assistant) {
         Some(last) if messages[last].tool_calls.is_empty() => last + 1,
         Some(last) => last,
         None => messages.len(),
     }
 }
-
-// #2213 / #2342: the count dials' batch (split out for the line ceiling).
-#[path = "context_pruning_count_dial.rs"]
-mod count_dial;
-pub use count_dial::{count_to_collapse, tool_results_to_collapse};
 
 /// Outcome of one demotion-ladder ceiling pass (#1046 AC6, #1044 AC1).
 #[derive(Debug, Clone, Default)]
@@ -96,7 +80,7 @@ pub fn enforce_context_ceiling_ladder(
     // Crossed: demote down to the low-water mark, not just under the ceiling.
     let target = low_water(max_tokens);
     debug_assert!(target <= max_tokens);
-    let mut exempt = exempt_flags(messages, pin_recent_turns, true);
+    let mut exempt = exempt_flags(messages, pin_recent_turns);
     // Whatever the pinning, the in-flight exchange is exempt at both rungs.
     let in_flight = in_flight_start(messages);
     exempt[in_flight..].fill(true);

@@ -99,52 +99,6 @@ async fn execute_for_unknown_tool_signals_error() {
     );
 }
 
-/// A registered tool naming every result a whole snapshot of `state`.
-struct Snapshotting;
-
-impl Tool for Snapshotting {
-    fn snapshot_key(&self, _arguments: &str, _content: &str) -> Option<&'static str> {
-        Some("state")
-    }
-
-    fn definition(&self) -> ToolDefinition {
-        ToolDefinition {
-            name: Cow::Borrowed("snapshotting"),
-            description: Cow::Borrowed("snapshot"),
-            parameters_schema: Cow::Borrowed(r#"{"type":"object"}"#),
-        }
-    }
-
-    fn execute(
-        &self,
-        _arguments: &str,
-    ) -> Pin<
-        Box<
-            dyn Future<Output = Result<ToolResult, quecto::domain::error::DomainError>> + Send + '_,
-        >,
-    > {
-        Box::pin(async { Err(quecto::domain::error::DomainError::Tool("unused".into())) })
-    }
-}
-
-/// #2342: `snapshot_key(name, ..)` is the registered tool's own answer, and
-/// none for a tool that names none or a name that is not registered.
-#[test]
-fn snapshot_key_is_the_registered_tools_own_answer() {
-    let mut reg = ToolRegistryImpl::new();
-    reg.register(Arc::new(Echo {
-        name: Cow::Borrowed("alpha"),
-    }));
-    reg.register(Arc::new(Snapshotting));
-    let executor: Arc<dyn ToolExecutor> = Arc::new(reg);
-    assert_eq!(
-        executor.snapshot_key("snapshotting", "{}", "x"),
-        Some("state")
-    );
-    assert_eq!(executor.snapshot_key("alpha", "{}", "x"), None);
-    assert_eq!(executor.snapshot_key("nonexistent", "{}", "x"), None);
-}
-
 /// #2348 review M1: `result_collapsed(name, ..)` reaches the registered
 /// tool; an unknown name is ignored.
 #[tokio::test]

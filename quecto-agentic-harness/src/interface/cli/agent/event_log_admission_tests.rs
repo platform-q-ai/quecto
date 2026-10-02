@@ -203,42 +203,27 @@ fn the_admissions_calls_are_in_the_file_once_the_log_is_attached() {
     );
 }
 
-/// #2403 final review M3: an agent started with `--inherited-context-mode`
-/// (as a spawned member is) runs in the mode its launcher handed down,
-/// where its own configuration sets none; it runs in its own otherwise.
+/// #2414: an agent whose environment still sets the removed context-mode
+/// override is refused at build, the override named.
 #[test]
-fn a_member_built_with_an_inherited_context_mode_runs_in_it() {
-    use crate::domain::conversation::ContextMode;
-    use crate::domain::conversation::watermark::Watermark;
+fn an_agent_whose_environment_sets_the_removed_mode_is_refused() {
     let base = base(false);
     let cwd = tempfile::tempdir().unwrap();
-    let (ctx, _) = started(base.path(), cwd.path());
-    let args = [
-        "-m".to_string(),
-        "hi".to_string(),
-        "--inherited-context-mode".to_string(),
-        "watermark:120000:40000".to_string(),
-    ];
-    let mut stderr = String::new();
-    let mut flags = super::super::super::parse_agent_flags(&args, &mut stderr)
-        .unwrap_or_else(|| panic!("the flag parses: {stderr}"));
-    flags.adopt_context(&ctx);
+    let (ctx, mut flags) = started(base.path(), cwd.path());
     flags.model_override = Some("fireworks/some-model".into());
     let selection = ctx.config_selection().unwrap();
-    let mode = |env: &HashMap<String, String>| {
-        let mut stderr = String::new();
-        build_agent_from_config_in(&ctx.base_dir(), &selection, &flags, &mut stderr, None, env)
-            .unwrap_or_else(|| panic!("{stderr}"))
-            .agent
-            .context_mode()
-    };
-    assert_eq!(
-        mode(&HashMap::new()),
-        ContextMode::Watermark(Watermark::new(120_000, 40_000).unwrap())
+    let mut stderr = String::new();
+    let built = build_agent_from_config_in(
+        &ctx.base_dir(),
+        &selection,
+        &flags,
+        &mut stderr,
+        None,
+        &env(&[("QUECTO_CONTEXT_MODE", "watermark")]),
     );
-    assert_eq!(
-        mode(&env(&[("QUECTO_CONTEXT_MODE", "default")])),
-        ContextMode::Default,
-        "its own mode wins"
+    assert!(built.is_none(), "refused");
+    assert!(
+        stderr.contains("QUECTO_CONTEXT_MODE") && stderr.contains("removed"),
+        "{stderr}"
     );
 }

@@ -450,7 +450,6 @@ fn parse_agent_flags_covers_boolean_bundle_and_missing_values() {
 #[test]
 fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
     let flags = AgentFlags {
-        inherited_context_mode: None,
         session_name: None,
         no_session: false,
         message: None,
@@ -502,7 +501,6 @@ fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
     assert!(stderr.contains("socket path exceeds"), "{stderr}");
 
     let mut flags = AgentFlags {
-        inherited_context_mode: None,
         session_name: None,
         no_session: false,
         message: None,

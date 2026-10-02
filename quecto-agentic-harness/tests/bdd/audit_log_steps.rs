@@ -150,27 +150,23 @@ fn given_workflow_transition(
 }
 
 #[given(
-    expr = r"an AuditEvent::ContextPruned with messages_dropped {int} tool_results_collapsed {int} tokens_before {int} tokens_after {int}"
+    expr = r"an AuditEvent::ContextPruned with messages_dropped {int} ladder_stubbed {int} tokens_before {int} tokens_after {int}"
 )]
 fn given_context_pruned(
     world: &mut QuectoWorld,
     messages_dropped: usize,
-    tool_results_collapsed: usize,
+    ladder_stubbed: usize,
     tokens_before: usize,
     tokens_after: usize,
 ) {
     let event = AuditEvent::ContextPruned {
         messages_dropped,
-        tool_results_collapsed,
         tokens_before,
         tokens_after,
         budget_unmet: false,
-        messages_collapsed: 0,
-        ladder_stubbed: 0,
-        snapshots_superseded: 0,
+        ladder_stubbed,
         ceiling_tokens: 0,
-        large_results_collapsed: 0,
-        watermark_fallback: false,
+        watermark_fallback: true,
     };
     world.audit_event = Some(event);
 }
@@ -399,7 +395,6 @@ fn when_agent_processes_failing_turn(world: &mut QuectoWorld) {
         temperature: 0.0,
         retention: None,
         session_key: "bdd".into(),
-        context_collapse_after_tool_calls: 100,
         max_context_tokens: 100_000,
         progress_callback: None,
         streaming: false,
@@ -408,8 +403,7 @@ fn when_agent_processes_failing_turn(world: &mut QuectoWorld) {
             sink.clone() as std::sync::Arc<dyn quecto::application::audit::ports::AuditSink>
         ),
         pin_recent_turns: 2,
-        context_collapse_after_messages: u32::MAX,
-        large_result_collapse: quecto::domain::large_result_collapse::LargeResultCollapse::DISABLED,
+        context_marks: Default::default(),
         model_context_window: None,
         tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     });

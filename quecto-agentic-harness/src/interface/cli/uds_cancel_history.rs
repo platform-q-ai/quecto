@@ -34,15 +34,7 @@ impl FinalizedInterruptedTurn {
 pub(super) fn finalize_interrupted_turn(
     messages: &mut Vec<Message>,
     prompt_id: uuid::Uuid,
-    mode: crate::domain::conversation::ContextMode,
 ) -> FinalizedInterruptedTurn {
-    use crate::domain::conversation::ContextMode;
-    // Watermark mode never edits a message already sent (#2403): its text
-    // and reasoning stay, so the next request still extends the last.
-    let clears_sent = match mode {
-        ContextMode::Default => true,
-        ContextMode::Watermark(_) => false,
-    };
     let Some(index) = prompt_position(messages, prompt_id) else {
         return FinalizedInterruptedTurn {
             retained_tail: Vec::new(),
@@ -52,16 +44,11 @@ pub(super) fn finalize_interrupted_turn(
 
     let interrupted_tail = messages.split_off(index + 1);
     let mut retained_tail = Vec::new();
-    for mut message in interrupted_tail {
+    for message in interrupted_tail {
         match message.role {
-            Role::Assistant if !message.tool_calls.is_empty() => {
-                if clears_sent {
-                    message.content.clear();
-                    message.thinking_blocks.clear();
-                    message.invalidate_token_cache();
-                }
-                retained_tail.push(message);
-            }
+            // A message already sent is never edited (#2403): its text and
+            // reasoning stay, so the next request still extends the last.
+            Role::Assistant if !message.tool_calls.is_empty() => retained_tail.push(message),
             Role::Tool => retained_tail.push(message),
             // A watermark cut's stub stays where it is (#2403).
             Role::User if message.user_kind == UserKind::ArchiveStub => retained_tail.push(message),

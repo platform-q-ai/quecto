@@ -76,7 +76,6 @@ pub struct AgentLoopConfig {
     /// retention store; `None` retains nothing.
     pub retention: Option<crate::application::context::ContextRetention>,
     pub session_key: String,
-    pub context_collapse_after_tool_calls: u32,
     pub max_context_tokens: usize,
     /// Optional live progress events callback (REPL renderer); `None` = headless no-op.
     pub progress_callback: Option<ProgressCallback>,
@@ -88,17 +87,13 @@ pub struct AgentLoopConfig {
     /// (tool call, tool result, LLM turn, pruning, etc.) is written to a
     /// durable JSONL file. When `None`, no audit overhead.
     pub audit_log: Option<Arc<dyn AuditSink>>,
-    /// #1045: recent-turn tail-pin count for the pruning ceiling. A
+    /// #1045: recent-turn tail-pin count for the emergency ladder. A
     /// constructor field (not a post-construction builder) so no construction
     /// site can silently drop the user's configured value.
     pub pin_recent_turns: u32,
-    /// #1046: count-based conversation-message collapse threshold
-    /// (`u32::MAX` / `COLLAPSE_DISABLED` disables). Constructor field for the
-    /// same reason as `pin_recent_turns`.
-    pub context_collapse_after_messages: u32,
-    /// #2348: the size-aware collapse (`LargeResultCollapse::DISABLED`
-    /// switches it off). Constructor field for the same reason.
-    pub large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse,
+    /// #2403/#2414: the watermark marks (cut at the high, down to the low),
+    /// before the ceiling scales them. Constructor field for the same reason.
+    pub context_marks: crate::domain::conversation::watermark::Watermark,
     /// #1044: active model context window (`None` unknown); bounds pruning budget.
     pub model_context_window: Option<usize>,
     pub tool_profile_context: ToolProfileContext,
@@ -178,11 +173,9 @@ impl AgentLoopImpl {
             session_key: crate::domain::session_identity::SessionIdentity::from_persisted_key(
                 config.session_key.as_str(),
             ),
-            context_collapse_after_tool_calls: config.context_collapse_after_tool_calls,
             max_context_tokens: config.max_context_tokens,
             pin_recent_turns: config.pin_recent_turns,
-            context_collapse_after_messages: config.context_collapse_after_messages,
-            large_result_collapse: config.large_result_collapse,
+            context_marks: config.context_marks,
             model_context_window: config.model_context_window,
         });
         let mut agent = Self {
@@ -262,12 +255,14 @@ impl AgentLoopImpl {
         self.effective_max_context_tokens()
     }
     /// Snapshot of the config-threaded context knobs
-    /// `(pin_recent_turns, context_collapse_after_messages)` — observability
+    /// `(pin_recent_turns, context_marks)` — observability
     /// for wiring checks so construction sites that drop user config are
     /// detectable from outside the loop (#1045/#1046). Test-gated: it exists
     /// only for wiring tests and must not ship as public API surface.
     #[cfg(test)]
-    pub fn context_knob_snapshot(&self) -> (u32, u32) {
+    pub fn context_knob_snapshot(
+        &self,
+    ) -> (u32, crate::domain::conversation::watermark::Watermark) {
         self.context_manager.context_knob_snapshot()
     }
     /// Fire a progress event to the registered callback, if any. Takes a closure

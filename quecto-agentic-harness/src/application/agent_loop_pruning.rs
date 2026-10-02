@@ -37,21 +37,12 @@ impl AgentLoopImpl {
             );
         }
         let live_before = live_result_ids(messages);
-        // #2403: in watermark mode its pass replaces every pruning rule.
-        let watermark = self
+        // #2403/#2414: the watermark pass, the only context mode.
+        let pass = self
             .context_manager
             .prepare_watermark_context(messages, (fixed_tokens, budget), spills_dirty)
             .await;
-        let (mut plan, cut, watermark_fallback) = match watermark {
-            Some(pass) => (pass.plan, pass.cut, pass.fallback),
-            None => {
-                let plan = self
-                    .context_manager
-                    .prepare_provider_context(messages, budget, spills_dirty)
-                    .await;
-                (plan, None, false)
-            }
-        };
+        let (mut plan, cut, watermark_fallback) = (pass.plan, pass.cut, pass.fallback);
         // #2404: a due watermark cut's record, made or skipped. A cut is
         // never a `context_pruned` record; the emergency ladder's is, marked.
         if let Some(cut) = cut {
@@ -79,24 +70,13 @@ impl AgentLoopImpl {
         if plan.durable_prefix_dirty {
             self.latch_durable_prefix_dirty();
         }
-        if watermark_fallback
-            || plan.tool_results_collapsed > 0
-            || plan.messages_collapsed > 0
-            || plan.ladder_stubbed > 0
-            || plan.messages_dropped > 0
-            || plan.snapshots_superseded > 0
-            || plan.large_results_collapsed > 0
-            || plan.over_budget
-        {
+        // The emergency ladder's record (#2414), or an unmet budget's.
+        if watermark_fallback || plan.over_budget {
             let ceiling_tokens = self.context_manager.effective_max_context_tokens();
             tracing::info!(
                 target: "context_prune",
-                collapsed = plan.tool_results_collapsed,
-                messages_collapsed = plan.messages_collapsed,
                 ladder_stubbed = plan.ladder_stubbed,
                 dropped = plan.messages_dropped,
-                snapshots_superseded = plan.snapshots_superseded,
-                large_results_collapsed = plan.large_results_collapsed,
                 ceiling_tokens,
                 budget_unmet = plan.over_budget,
                 watermark_fallback,
@@ -109,16 +89,12 @@ impl AgentLoopImpl {
                 current_turn,
                 AuditEvent::ContextPruned {
                     messages_dropped: plan.messages_dropped,
-                    tool_results_collapsed: plan.tool_results_collapsed,
                     // Counted as the estimate is: with the tool definitions.
                     tokens_before: plan.tokens_before.saturating_add(fixed_tokens),
                     tokens_after: plan.total_tokens.saturating_add(fixed_tokens),
                     budget_unmet: plan.over_budget,
-                    messages_collapsed: plan.messages_collapsed,
                     ladder_stubbed: plan.ladder_stubbed,
-                    snapshots_superseded: plan.snapshots_superseded,
                     ceiling_tokens,
-                    large_results_collapsed: plan.large_results_collapsed,
                     watermark_fallback,
                 },
             )
@@ -127,9 +103,9 @@ impl AgentLoopImpl {
         plan.total_tokens.saturating_add(fixed_tokens)
     }
 
-    /// Tell each tool whose result a rule just collapsed or dropped (#2348
-    /// review M1, final review), so a tool answering repeats from what it
-    /// delivered (the read cache) forgets that delivery. Only result ids
+    /// Tell each tool whose result a cut or the ladder just took out of the
+    /// context (#2348 review M1, final review), so a tool answering repeats
+    /// from what it delivered (the read cache) forgets that delivery. Only result ids
     /// are recorded before the prune; a dropped result's call comes back
     /// from the ladder, moved out of its message, so no call is cloned (#993).
     fn report_collapsed_results(
@@ -157,17 +133,6 @@ impl AgentLoopImpl {
             .sum()
     }
 
-    /// Switch the context mode (#2403): the default pruning rules, or the
-    /// watermark context.
-    pub fn set_context_mode(&mut self, mode: crate::domain::conversation::ContextMode) {
-        self.context_manager.set_context_mode(mode);
-    }
-
-    /// The context mode in force.
-    pub fn context_mode(&self) -> crate::domain::conversation::ContextMode {
-        self.context_manager.context_mode()
-    }
-
     pub async fn prune_resumed_context(&self, messages: &mut Vec<Message>) -> usize {
         self.apply_context_pruning(messages, 0, true).await
     }
@@ -192,11 +157,6 @@ pub(super) mod ctx_mgmt_tests;
 #[path = "agent_loop_calibration_tests.rs"]
 mod calibration_tests;
 
-// #2342: a scripted coordinator's request tokens, before and after.
-#[cfg(test)]
-#[path = "agent_loop_snapshot_tests.rs"]
-mod snapshot_tests;
-
 // #2403: the watermark context's pass on the agent loop.
 #[cfg(test)]
 #[path = "agent_loop/watermark_tests.rs"]
@@ -207,12 +167,12 @@ mod watermark_tests;
 #[path = "agent_loop/watermark_telemetry_tests.rs"]
 mod watermark_telemetry_tests;
 
+// #2414 review M2: a cut or the ladder tells the read tool what left.
+#[cfg(test)]
+#[path = "agent_loop/watermark_read_cache_tests.rs"]
+mod watermark_read_cache_tests;
+
 // #2403: every request extends the previous one, through the Codex serializer.
 #[cfg(test)]
 #[path = "agent_loop/watermark_sim_tests.rs"]
 mod watermark_sim_tests;
-
-// #2348: the size-aware collapse on the same scripted coordinator.
-#[cfg(test)]
-#[path = "agent_loop_large_result_tests.rs"]
-mod large_result_tests;

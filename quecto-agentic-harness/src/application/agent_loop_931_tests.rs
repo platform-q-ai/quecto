@@ -118,15 +118,13 @@ async fn test_malformed_tool_call_api_rejection_is_addressable_not_fatal() {
         temperature: 0.7,
         retention: None,
         session_key: String::new(),
-        context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 190_000,
         progress_callback: None,
         streaming: false,
         effort: None,
         audit_log: None,
         pin_recent_turns: 2,
-        context_collapse_after_messages: u32::MAX,
-        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
+        context_marks: Default::default(),
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
@@ -150,16 +148,17 @@ async fn test_malformed_tool_call_api_rejection_is_addressable_not_fatal() {
          got {}",
         provider.request_count()
     );
-    // The malformed feedback must merge into the trailing user message rather
-    // than append a second consecutive `user` turn (which some providers reject
-    // as a 400, re-entering the branch forever).
-    let consecutive_user = messages.windows(2).any(|w| {
-        w[0].role == crate::domain::message::Role::User
-            && w[1].role == crate::domain::message::Role::User
-    });
+    // #2403/#2414: the malformed feedback goes in as its own message, so
+    // the prompt already sent is never edited (the Messages API combines
+    // consecutive user turns on the wire).
+    assert_eq!(
+        messages[0].content, "call a tool",
+        "the sent prompt is unchanged"
+    );
     assert!(
-        !consecutive_user,
-        "re-prompt must not create two consecutive user messages: {:?}",
+        messages[1].role == crate::domain::message::Role::User
+            && messages[1].content.contains("malformed"),
+        "the feedback follows the prompt: {:?}",
         messages.iter().map(|m| &m.role).collect::<Vec<_>>()
     );
 }
@@ -190,15 +189,13 @@ async fn test_terminal_auth_error_fails_the_turn_with_classified_message() {
         temperature: 0.7,
         retention: None,
         session_key: String::new(),
-        context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 190_000,
         progress_callback: None,
         streaming: false,
         effort: None,
         audit_log: None,
         pin_recent_turns: 2,
-        context_collapse_after_messages: u32::MAX,
-        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
+        context_marks: Default::default(),
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
@@ -234,15 +231,13 @@ async fn test_terminal_server_error_fails_the_turn_after_retries() {
         temperature: 0.7,
         retention: None,
         session_key: String::new(),
-        context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 190_000,
         progress_callback: None,
         streaming: false,
         effort: None,
         audit_log: None,
         pin_recent_turns: 2,
-        context_collapse_after_messages: u32::MAX,
-        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
+        context_marks: Default::default(),
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });

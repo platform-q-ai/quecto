@@ -57,14 +57,6 @@ pub trait Tool: Send + Sync {
         false
     }
 
-    /// The state a successful result of this call (`content`) is a whole
-    /// snapshot of (#2342), so a newer one with the same key supersedes it
-    /// in the conversation. `None` (the default) for any result that is not
-    /// a whole snapshot: only a tool that says so has one.
-    fn snapshot_key(&self, _arguments: &str, _content: &str) -> Option<&'static str> {
-        None
-    }
-
     /// The result of this call (with `arguments`) no longer stands in the
     /// conversation in full (#2348 review M1): a pruning rule collapsed it
     /// to its recall stub, or dropped it. A tool that answers repeats from
@@ -175,12 +167,6 @@ pub trait ToolExecutor: Send + Sync {
     /// says so.
     fn overlaps_safely(&self, _name: &str, _arguments: &str) -> bool {
         false
-    }
-
-    /// The snapshot key of a successful result of `name` (#2342): see
-    /// [`Tool::snapshot_key`]. None unless its registry says so.
-    fn snapshot_key(&self, _name: &str, _arguments: &str, _content: &str) -> Option<&'static str> {
-        None
     }
 
     /// A result of `name` with `arguments` no longer stands in the

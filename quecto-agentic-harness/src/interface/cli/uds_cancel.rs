@@ -410,7 +410,6 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
                 execution_state: &execution_state,
                 system_prompt,
                 sink,
-                mode: agent.context_mode(),
             })
             .await;
             PromptOutcome::Cancelled

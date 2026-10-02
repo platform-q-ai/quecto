@@ -8,16 +8,11 @@ use crate::domain::tool::ImageBlock;
 pub(crate) struct ContextPlan {
     pub tokens_before: usize,
     pub total_tokens: usize,
-    pub tool_results_collapsed: usize,
-    pub messages_collapsed: usize,
+    /// What the emergency ladder stubbed, then dropped (#2414).
     pub ladder_stubbed: usize,
     pub messages_dropped: usize,
-    /// Tool results a newer snapshot of the same state superseded (#2342).
-    pub snapshots_superseded: usize,
-    /// Large tool results the size-aware rule collapsed (#2348).
-    pub large_results_collapsed: usize,
     pub over_budget: bool,
-    /// Calls the ladder removed with their results, moved out (#2348).
+    /// Calls a cut or the ladder removed with their results, moved out (#2348).
     pub dropped_calls: Vec<ToolCall>,
     pub durable_prefix_dirty: bool,
 }

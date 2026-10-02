@@ -425,8 +425,6 @@ pub struct QuectoWorld {
     pub watermark_budget: usize,
     /// #2342: a swarm member's ceiling for the member agent, if it joined.
     pub member_ceiling: Option<usize>,
-    /// #2348: the member agent's size-aware collapse, if one is set.
-    pub member_large_results: Option<quecto::domain::large_result_collapse::LargeResultCollapse>,
     /// #2342: what the swarm member agent's run left behind.
     pub member_run: Option<pruning_snapshot_steps::MemberRun>,
     /// Session workspace path (for session scenarios)
@@ -670,16 +668,8 @@ pub struct QuectoWorld {
     pub context_original_message_content: Option<String>,
     /// Context pruning: saved current (in-flight) user prompt (#951)
     pub context_current_user_prompt: Option<String>,
-    /// Context pruning: tool-call collapse threshold under test (#1017)
-    pub context_collapse_after_tool_calls: Option<u32>,
-    /// Context pruning: number of tool results collapsed by the last trigger
-    pub context_collapsed_count: Option<usize>,
     /// Context pruning: temp dir for session persistence round-trip tests
     pub context_temp_dir: Option<TempDir>,
-    /// Context pruning: message-count collapse threshold under test (#1046)
-    pub context_collapse_after_messages: Option<u32>,
-    /// Context pruning: conversation messages collapsed by the last message trigger (#1046)
-    pub context_msg_collapsed_count: Option<usize>,
     /// Context pruning: outcome of the last demotion-ladder ceiling run (#1046/#1044)
     pub context_ladder_outcome:
         Option<quecto::application::context_pruning::messages::CeilingLadderOutcome>,
@@ -696,9 +686,6 @@ pub struct QuectoWorld {
     /// Context pruning: run the loop-driving steps with an empty session key
     /// (`--no-session` ephemeral run), set by "Given the session is ephemeral"
     pub context_ephemeral: bool,
-    /// Context pruning: collapsed-message count recorded before a rewind so
-    /// the survival assertion is not vacuous (PR #1048)
-    pub context_rewind_collapsed_before: Option<usize>,
     // --- Truncation BDD fields ---
     /// Input string for truncation scenarios
     pub truncation_input: Option<String>,

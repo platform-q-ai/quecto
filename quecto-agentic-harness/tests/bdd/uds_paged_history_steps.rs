@@ -36,7 +36,11 @@ use std::time::{Duration, Instant};
 use quecto::interface::cli::protocol::HISTORY_PAGE_SIZE as PAGE;
 pub(super) const PAGED_SESSION: &str = "paged-history";
 const STUB_SESSION: &str = "paged-stub";
-const STUB_FULL: &str = "the full demoted body recalled for paged history";
+/// The seeded reply: long enough that its recall stub is cheaper than it,
+/// so the emergency ladder stubs it in place (#2414).
+fn stub_full() -> String {
+    "the full demoted body recalled for paged history. ".repeat(50)
+}
 const STUB_SPILL_ID: &str = "turn1:msg:assistant";
 const HISTORY_RESPONSE_JSON_BUDGET: usize =
     quecto::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET / 2;
@@ -521,7 +525,8 @@ fn then_receive_full_content(world: &mut QuectoWorld) {
         .and_then(|c| c.as_str())
         .unwrap_or("");
     assert_eq!(
-        content, STUB_FULL,
+        content,
+        stub_full(),
         "recall must return the full demoted body, not the stub: {response}"
     );
     assert!(
@@ -683,7 +688,7 @@ impl LlmProvider for StubSeedProvider {
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
         Box::pin(async {
             Ok(LlmResponse {
-                content: Some(STUB_FULL.into()),
+                content: Some(stub_full()),
                 tool_calls: vec![],
                 usage: None,
                 stop_reason: None,
@@ -696,6 +701,8 @@ impl LlmProvider for StubSeedProvider {
 /// Produce a genuine ladder-collapsed message (with its full body spilled to the
 /// FILE store) via the real agent loop, then persist the session — mirrors the
 /// proven #1093 seeding so the served loop resolves recall against the spill.
+/// Under a 300-token ceiling no cut can be made (the reply is the newest
+/// exchange, kept whole), so the emergency ladder stubs it (#2414).
 fn seed_stub_session(world: &mut QuectoWorld) {
     ensure_temp_dir(world);
     ensure_query_only_provider_config(world);
@@ -719,22 +726,21 @@ fn seed_stub_session(world: &mut QuectoWorld) {
                 spill_store.clone(),
             )),
             session_key: session_key.clone(),
-            context_collapse_after_tool_calls: u32::MAX,
-            max_context_tokens: 190_000,
+            max_context_tokens: 300,
             progress_callback: None,
             streaming: false,
             effort: None,
             audit_log: None,
             pin_recent_turns: 0,
-            context_collapse_after_messages: 0,
-            large_result_collapse:
-                quecto::domain::large_result_collapse::LargeResultCollapse::DISABLED,
+            context_marks: Default::default(),
             model_context_window: None,
             tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
         });
         let mut messages = vec![Message::user("seed stub")];
         agent.process(&mut messages).await.expect("seed turn");
-        messages.push(Message::user("collapse the prior reply"));
+        // A second run with no new prompt: the reply is the only exchange
+        // after the brief and the newest, kept whole by any cut, so no cut
+        // can be made and the emergency ladder stubs it in place.
         agent.process(&mut messages).await.expect("collapse turn");
         let collapsed = messages
             .iter()
@@ -950,15 +956,13 @@ fn spawn_paged_agent(world: &mut QuectoWorld, base: &std::path::Path, session_na
         temperature: config.agents.defaults.temperature,
         retention: Some(retention.context.clone()),
         session_key: session_key.clone(),
-        context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: config.agents.defaults.max_context_tokens,
         progress_callback: None,
         streaming: false,
         effort: None,
         audit_log: None,
         pin_recent_turns: 2,
-        context_collapse_after_messages: u32::MAX,
-        large_result_collapse: quecto::domain::large_result_collapse::LargeResultCollapse::DISABLED,
+        context_marks: Default::default(),
         model_context_window: None,
         tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     });

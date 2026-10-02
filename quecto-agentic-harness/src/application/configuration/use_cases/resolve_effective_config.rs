@@ -18,6 +18,7 @@ use std::sync::Arc;
 
 use serde_json::{Map, Value};
 
+use crate::application::configuration::dto::removed_keys::{RemovedKeysIn, Repair};
 use crate::application::configuration::dto::{
     ConfigLayer, ConfigSelection, ConfigSources, EffectiveConfig, EffectiveConfigError,
     OverlayReport, OverlayState,
@@ -28,6 +29,45 @@ use crate::application::configuration::overlay_policy::{
 use crate::application::configuration::ports::{
     ConfigDocumentStore, ConfigValidator, OverlayDocument, OverlayTrust, OverlayTrustStore,
 };
+use crate::application::configuration::removed_keys::without_removed_keys;
+
+/// How a resolution checks the documents: a child's admission rules, and
+/// whether keys #2414 removed are let through (a patch that only takes
+/// them away, review H1) or refused, naming each.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Check {
+    inherited_child: bool,
+    tolerate_removed_keys: bool,
+}
+
+impl Check {
+    const LOAD: Self = Self {
+        inherited_child: false,
+        tolerate_removed_keys: false,
+    };
+
+    /// `document` as the validator sees it under this check.
+    fn validated(self, document: &Map<String, Value>) -> Value {
+        Value::Object(match self.tolerate_removed_keys {
+            true => without_removed_keys(document),
+            false => document.clone(),
+        })
+    }
+
+    /// The refusal of a file that still sets removed keys, unless they are
+    /// let through.
+    fn refuse_removed(
+        self,
+        path: &Path,
+        repair: Repair,
+        document: &Map<String, Value>,
+    ) -> Option<RemovedKeysIn> {
+        match self.tolerate_removed_keys {
+            true => None,
+            false => RemovedKeysIn::of(path, repair, document),
+        }
+    }
+}
 
 /// The merged document, the overlay's report, and the applied overlay's
 /// own document (`None` when it was not applied).
@@ -60,7 +100,7 @@ impl ResolveEffectiveConfig {
         &self,
         selection: &ConfigSelection,
     ) -> Result<EffectiveConfig, EffectiveConfigError> {
-        self.resolve(selection, None, false)
+        self.resolve(selection, None, Check::LOAD)
     }
 
     /// Child startup inherits the authority and must not validate its local
@@ -69,7 +109,14 @@ impl ResolveEffectiveConfig {
         &self,
         selection: &ConfigSelection,
     ) -> Result<EffectiveConfig, EffectiveConfigError> {
-        self.resolve(selection, None, true)
+        self.resolve(
+            selection,
+            None,
+            Check {
+                inherited_child: true,
+                ..Check::LOAD
+            },
+        )
     }
 
     /// The effective configuration `selection` would produce if `document`
@@ -83,14 +130,30 @@ impl ResolveEffectiveConfig {
         layer: ConfigLayer,
         document: &Map<String, Value>,
     ) -> Result<EffectiveConfig, EffectiveConfigError> {
-        self.resolve(selection, Some((layer, document)), false)
+        self.resolve(selection, Some((layer, document)), Check::LOAD)
+    }
+
+    /// [`Self::preview`] letting keys #2414 removed through, in either
+    /// layer, for a patch that introduces none (review H1): everything
+    /// else is checked as a load checks it.
+    pub fn preview_tolerating_removed_keys(
+        &self,
+        selection: &ConfigSelection,
+        layer: ConfigLayer,
+        document: &Map<String, Value>,
+    ) -> Result<EffectiveConfig, EffectiveConfigError> {
+        let check = Check {
+            tolerate_removed_keys: true,
+            ..Check::LOAD
+        };
+        self.resolve(selection, Some((layer, document)), check)
     }
 
     fn resolve(
         &self,
         selection: &ConfigSelection,
         substitute: Option<(ConfigLayer, &Map<String, Value>)>,
-        inherited_child: bool,
+        check: Check,
     ) -> Result<EffectiveConfig, EffectiveConfigError> {
         let substituted = |layer: ConfigLayer| {
             substitute
@@ -108,7 +171,12 @@ impl ResolveEffectiveConfig {
                         self.resolved_object(path, &bytes)?
                     }
                 };
-                self.validate(path, &document, inherited_child)?;
+                if let Some(removed) =
+                    check.refuse_removed(path, Repair::Unset("--global"), &document)
+                {
+                    return Err(EffectiveConfigError::RemovedKeys(vec![removed]));
+                }
+                self.validate(path, &document, check)?;
                 Ok(EffectiveConfig {
                     document: Value::Object(document),
                     sources: ConfigSources {
@@ -125,23 +193,37 @@ impl ResolveEffectiveConfig {
                 // overlay adds: the writer, tool-policy persistence and the
                 // admission broker all load it alone.
                 let (global, global_present) = match substituted(ConfigLayer::Global) {
-                    Some(global) => {
-                        self.validate(&layers.global, &global, inherited_child)?;
-                        (global, true)
-                    }
+                    Some(global) => (global, true),
                     None => match self.read(&layers.global)? {
-                        Some(bytes) => {
-                            let global = self.resolved_object(&layers.global, &bytes)?;
-                            self.validate(&layers.global, &global, inherited_child)?;
-                            (global, true)
-                        }
+                        Some(bytes) => (self.resolved_object(&layers.global, &bytes)?, true),
                         None => (Map::new(), false),
                     },
                 };
+                let global_repair = Repair::Unset("--global");
+                if let Some(removed) = check.refuse_removed(&layers.global, global_repair, &global)
+                {
+                    // Every file's removed keys in one message: the
+                    // overlay's too, read but never applied (a substituted
+                    // one is about to be written and trusted).
+                    let overlay = layers.overlay.as_deref().and_then(|path| {
+                        let (document, repair) = match substituted(ConfigLayer::Overlay) {
+                            Some(document) => (document, Repair::Unset("--local")),
+                            None => self.peek_object(path)?,
+                        };
+                        RemovedKeysIn::of(path, repair, &document)
+                    });
+                    let files = std::iter::once(removed).chain(overlay).collect();
+                    return Err(EffectiveConfigError::RemovedKeys(files));
+                }
+                if global_present {
+                    self.validate(&layers.global, &global, check)?;
+                }
                 let (document, overlay, overlay_document) =
                     match (&layers.overlay, substituted(ConfigLayer::Overlay)) {
                         (Some(path), Some(overlay)) => {
-                            let overlay = self.checked_overlay_object(path, overlay)?;
+                            let trusted = Repair::Unset("--local");
+                            let overlay =
+                                self.checked_overlay_object(path, overlay, check, trusted)?;
                             (
                                 merge_overlay(global, overlay.clone()),
                                 Some(OverlayReport {
@@ -151,25 +233,25 @@ impl ResolveEffectiveConfig {
                                 Some(overlay),
                             )
                         }
-                        (Some(path), None) => self.apply_overlay(global, path)?,
+                        (Some(path), None) => self.apply_overlay(global, path, check)?,
                         (None, _) => (global, None, None),
                     };
                 match overlay
                     .as_ref()
                     .filter(|report| report.state == OverlayState::Applied)
                 {
-                    Some(applied) => (if inherited_child {
+                    Some(applied) => (if check.inherited_child {
                         self.validator
-                            .validate_inherited_child(&Value::Object(document.clone()))
+                            .validate_inherited_child(&check.validated(&document))
                     } else {
-                        self.validator.validate(&Value::Object(document.clone()))
+                        self.validator.validate(&check.validated(&document))
                     })
                     .map_err(|reason| EffectiveConfigError::InvalidMerge {
                         global: global_present.then(|| layers.global.clone()),
                         overlay: applied.path.clone(),
                         reason,
                     })?,
-                    None => self.validate(layers.global.as_path(), &document, inherited_child)?,
+                    None => self.validate(layers.global.as_path(), &document, check)?,
                 }
                 let legacy_local = layers
                     .legacy_local
@@ -197,6 +279,7 @@ impl ResolveEffectiveConfig {
         &self,
         global: Map<String, Value>,
         path: &Path,
+        check: Check,
     ) -> Result<OverlaidDocument, EffectiveConfigError> {
         let report = |state| {
             Some(OverlayReport {
@@ -228,29 +311,33 @@ impl ResolveEffectiveConfig {
         // file that would be refused anyway; the refusal travels with the
         // report.
         let overlay = match &trust {
-            OverlayTrust::Trusted => self.checked_overlay(path, &bytes)?,
-            OverlayTrust::Untrusted { fingerprint } => match self.checked_overlay(path, &bytes) {
-                Ok(overlay) if self.trust.offer(path, fingerprint, &bytes) => overlay,
-                checked => {
-                    // The withheld document's top-level keys travel with
-                    // the report: a reader may learn what the overlay
-                    // declares without any of it being applied. A document
-                    // the checks refused declares nothing.
-                    let sections = checked
-                        .as_ref()
-                        .map(|overlay| overlay.keys().cloned().collect())
-                        .unwrap_or_default();
-                    return Ok((
-                        global,
-                        report(OverlayState::Untrusted {
-                            fingerprint: fingerprint.clone(),
-                            problem: checked.err().map(|error| error.to_string()),
-                            sections,
-                        }),
-                        None,
-                    ));
+            OverlayTrust::Trusted => {
+                self.checked_overlay(path, &bytes, check, Repair::Unset("--local"))?
+            }
+            OverlayTrust::Untrusted { fingerprint } => {
+                match self.checked_overlay(path, &bytes, check, Repair::EditThenTrust) {
+                    Ok(overlay) if self.trust.offer(path, fingerprint, &bytes) => overlay,
+                    checked => {
+                        // The withheld document's top-level keys travel with
+                        // the report: a reader may learn what the overlay
+                        // declares without any of it being applied. A document
+                        // the checks refused declares nothing.
+                        let sections = checked
+                            .as_ref()
+                            .map(|overlay| overlay.keys().cloned().collect())
+                            .unwrap_or_default();
+                        return Ok((
+                            global,
+                            report(OverlayState::Untrusted {
+                                fingerprint: fingerprint.clone(),
+                                problem: checked.err().map(|error| error.to_string()),
+                                sections,
+                            }),
+                            None,
+                        ));
+                    }
                 }
-            },
+            }
         };
         // Consent given at the prompt is recorded only now, after the same
         // checks `quecto config trust` applies.
@@ -275,9 +362,28 @@ impl ResolveEffectiveConfig {
         &self,
         path: &Path,
         bytes: &[u8],
+        check: Check,
+        repair: Repair,
     ) -> Result<Map<String, Value>, EffectiveConfigError> {
         let overlay = self.resolved_object(path, bytes)?;
-        self.checked_overlay_object(path, overlay)
+        self.checked_overlay_object(path, overlay, check, repair)
+    }
+
+    /// The overlay at `path` as a JSON object, read but neither applied
+    /// nor checked: only to name the removed keys it sets, and how they
+    /// are taken out (an untrusted overlay is edited, never written).
+    fn peek_object(&self, path: &Path) -> Option<(Map<String, Value>, Repair)> {
+        let OverlayDocument::Present(bytes) = self.store.read_overlay(path).ok()? else {
+            return None;
+        };
+        let Value::Object(object) = serde_json::from_slice(&bytes).ok()? else {
+            return None;
+        };
+        let repair = match self.trust.decide(path, &bytes) {
+            OverlayTrust::Trusted => Repair::Unset("--local"),
+            OverlayTrust::Untrusted { .. } => Repair::EditThenTrust,
+        };
+        Some((object, repair))
     }
 
     /// An already-resolved overlay, free of global-only sections and valid
@@ -286,7 +392,12 @@ impl ResolveEffectiveConfig {
         &self,
         path: &Path,
         overlay: Map<String, Value>,
+        check: Check,
+        repair: Repair,
     ) -> Result<Map<String, Value>, EffectiveConfigError> {
+        if let Some(removed) = check.refuse_removed(path, repair, &overlay) {
+            return Err(EffectiveConfigError::RemovedKeys(vec![removed]));
+        }
         if let Some(key) = global_only_key(&overlay) {
             return Err(EffectiveConfigError::GlobalOnlyKey {
                 path: path.to_path_buf(),
@@ -294,7 +405,7 @@ impl ResolveEffectiveConfig {
             });
         }
         self.validator
-            .validate_layer(&Value::Object(overlay.clone()))
+            .validate_layer(&check.validated(&overlay))
             .map_err(|reason| EffectiveConfigError::Invalid {
                 path: path.to_path_buf(),
                 reason,
@@ -352,13 +463,13 @@ impl ResolveEffectiveConfig {
         &self,
         path: &Path,
         document: &Map<String, Value>,
-        inherited_child: bool,
+        check: Check,
     ) -> Result<(), EffectiveConfigError> {
-        (if inherited_child {
+        (if check.inherited_child {
             self.validator
-                .validate_inherited_child(&Value::Object(document.clone()))
+                .validate_inherited_child(&check.validated(document))
         } else {
-            self.validator.validate(&Value::Object(document.clone()))
+            self.validator.validate(&check.validated(document))
         })
         .map_err(|reason| EffectiveConfigError::Invalid {
             path: path.to_path_buf(),

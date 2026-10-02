@@ -5,6 +5,7 @@ pub mod config_read;
 pub mod config_selection;
 pub mod effective_config;
 pub mod overlay_trust;
+pub mod removed_keys;
 
 pub use config_patch::{
     ConfigLayer, ConfigPatch, ConfigPatchError, ConfigPatchReceipt, ConfigUnset,

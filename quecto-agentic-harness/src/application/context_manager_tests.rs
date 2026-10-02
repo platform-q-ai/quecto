@@ -1,5 +1,8 @@
 use super::*;
 use crate::application::context_pruning;
+use crate::application::context_pruning::messages::{
+    CeilingLadderOutcome, enforce_context_ceiling_ladder,
+};
 use crate::application::sessions::ports::ContextSpillStore;
 use crate::domain::message::Message;
 use crate::domain::session::{SpillEntry, SpillIndex};
@@ -88,6 +91,16 @@ impl ContextSpillStore for MemSpillStore {
     }
 }
 
+/// The emergency ladder over `messages` at `budget`, with the manager's
+/// pinned turns, as the watermark pass runs it when no cut fits (#2414).
+fn ladder(
+    manager: &ContextManager,
+    messages: &mut Vec<Message>,
+    budget: usize,
+) -> CeilingLadderOutcome {
+    enforce_context_ceiling_ladder(messages, budget, manager.pin_recent_turns)
+}
+
 fn manager(max_context_tokens: usize) -> ContextManager {
     ContextManager::new(config_for(max_context_tokens))
 }
@@ -98,11 +111,9 @@ fn config_for(max_context_tokens: usize) -> ContextManagerConfig {
             Arc::new(MemSpillStore::default()),
         )),
         session_key: SessionIdentity::from_persisted_key("test-session"),
-        context_collapse_after_tool_calls: context_pruning::COLLAPSE_DISABLED,
         max_context_tokens,
         pin_recent_turns: 2,
-        context_collapse_after_messages: context_pruning::COLLAPSE_DISABLED,
-        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
+        context_marks: Default::default(),
         model_context_window: None,
     }
 }
@@ -133,9 +144,11 @@ async fn context_manager_plan_preserves_pinned_recent_turns() {
         Message::user("current prompt"),
     ];
 
-    let plan = manager
-        .prepare_provider_context(&mut messages, manager.effective_max_context_tokens(), false)
-        .await;
+    let plan = ladder(
+        &manager,
+        &mut messages,
+        manager.effective_max_context_tokens(),
+    );
 
     assert!(
         messages.iter().any(|m| m.turn == Some(3)),
@@ -150,7 +163,7 @@ async fn context_manager_plan_preserves_pinned_recent_turns() {
         "older turns should be dropped through the context-manager plan"
     );
     assert!(
-        plan.durable_prefix_dirty,
+        plan.dropped > 0,
         "dropping older persisted messages must request durable prefix reconciliation"
     );
 }
@@ -164,8 +177,9 @@ async fn context_manager_marks_dirty_when_manifest_layout_shifts() {
     let mut messages = vec![manifest];
 
     let plan = manager
-        .prepare_provider_context(&mut messages, manager.effective_max_context_tokens(), true)
-        .await;
+        .prepare_watermark_context(&mut messages, (0, 190_000), true)
+        .await
+        .plan;
 
     assert!(
         messages.iter().all(|m| !m.is_manifest),
@@ -197,7 +211,10 @@ fn context_manager_is_the_agent_loop_context_boundary() {
     assert_eq!(manager.effective_max_context_tokens(), 190_000);
     assert_eq!(
         manager.context_knob_snapshot(),
-        (2, context_pruning::COLLAPSE_DISABLED)
+        (
+            2,
+            crate::domain::conversation::watermark::Watermark::default()
+        )
     );
     let mut msg = Message::assistant("spill me", vec![]);
     tokio::runtime::Runtime::new()
@@ -223,16 +240,12 @@ async fn tokens_sent_with_every_request_shrink_the_message_budget() {
     let manager = manager(total + 10);
 
     let mut roomy = conversation();
-    manager
-        .prepare_provider_context(&mut roomy, total + 10, false)
-        .await;
+    ladder(&manager, &mut roomy, total + 10);
     assert!(roomy.iter().any(|m| m.turn == Some(1)), "everything fits");
 
     let mut tight = conversation();
     let budget = total + 10 - total / 2;
-    let plan = manager
-        .prepare_provider_context(&mut tight, budget, false)
-        .await;
+    let plan = ladder(&manager, &mut tight, budget);
     assert!(
         !tight.iter().any(|m| m.turn == Some(1)),
         "the oldest turn makes room for what every request carries"
@@ -259,11 +272,9 @@ async fn two_consecutive_over_ceiling_appends_latch_the_prefix_dirty_once() {
     let mut sent_after_turn_9: Vec<String> = Vec::new();
     for turn in [9, 10] {
         messages.push(long_message(turn));
-        let plan = manager
-            .prepare_provider_context(&mut messages, budget, false)
-            .await;
+        let plan = ladder(&manager, &mut messages, budget);
         assert!(!plan.over_budget);
-        latches += usize::from(plan.durable_prefix_dirty);
+        latches += usize::from(plan.collapsed_to_stubs + plan.dropped > 0);
         if turn == 9 {
             sent_after_turn_9 = messages.iter().map(|m| m.content.clone()).collect();
         }
@@ -304,18 +315,13 @@ async fn without_provider_usage_the_ceiling_decides_on_the_heuristic() {
     );
 
     let mut messages = digit_transcript();
-    let plan = manager
-        .prepare_provider_context(
-            &mut messages,
-            manager.pruning_ceiling_in_estimate_units(),
-            false,
-        )
-        .await;
-
-    assert_eq!(
-        plan.messages_collapsed + plan.ladder_stubbed + plan.messages_dropped,
-        0
+    let plan = ladder(
+        &manager,
+        &mut messages,
+        manager.pruning_ceiling_in_estimate_units(),
     );
+
+    assert_eq!(plan.collapsed_to_stubs + plan.dropped, 0);
 }
 
 #[tokio::test]
@@ -329,16 +335,14 @@ async fn with_provider_usage_the_ceiling_decides_on_calibrated_occupancy() {
     assert_eq!(manager.pruning_ceiling_in_estimate_units(), budget / 2);
 
     let mut messages = digit_transcript();
-    let plan = manager
-        .prepare_provider_context(
-            &mut messages,
-            manager.pruning_ceiling_in_estimate_units(),
-            false,
-        )
-        .await;
+    let plan = ladder(
+        &manager,
+        &mut messages,
+        manager.pruning_ceiling_in_estimate_units(),
+    );
 
     assert!(
-        plan.ladder_stubbed > 0,
+        plan.collapsed_to_stubs > 0,
         "calibrated occupancy (2x the estimate) is over the budget"
     );
     let kept = context_pruning::estimate_total_tokens(&messages);
@@ -438,16 +442,16 @@ fn prose_head_dense_tail(numbers: usize) -> Vec<Message> {
 
 /// Prune `messages` against 90% of their real size, with the provider's
 /// count observed; returns (real size after, budget, plan).
-async fn prune_at_ninety_percent(messages: &mut Vec<Message>) -> (usize, usize, ContextPlan) {
+async fn prune_at_ninety_percent(
+    messages: &mut Vec<Message>,
+) -> (usize, usize, CeilingLadderOutcome) {
     let est = context_pruning::estimate_total_tokens(messages);
     let real = probe_real(messages);
     let budget = real * 9 / 10;
     let manager = manager(budget);
     manager.observe_provider_context_gauge(real, est);
     let ceiling = manager.pruning_ceiling_in_estimate_units();
-    let plan = manager
-        .prepare_provider_context(messages, ceiling, false)
-        .await;
+    let plan = ladder(&manager, messages, ceiling);
     (probe_real(messages), budget, plan)
 }
 
@@ -460,8 +464,8 @@ async fn prune_at_ninety_percent(messages: &mut Vec<Message>) -> (usize, usize, 
 async fn a_dense_tail_does_not_erode_the_low_water_mark() {
     let mut messages = prose_head_dense_tail(800);
     let (real_after, budget, plan) = prune_at_ninety_percent(&mut messages).await;
-    assert!(plan.ladder_stubbed > 0);
-    assert_eq!(plan.messages_dropped, 0);
+    assert!(plan.collapsed_to_stubs > 0);
+    assert_eq!(plan.dropped, 0);
     assert!(
         real_after * 100 <= budget * 76,
         "pruned to {real_after} of {budget}: above the low-water mark"
@@ -483,84 +487,17 @@ async fn a_dense_tail_does_not_erode_the_low_water_mark() {
 async fn a_pinned_tail_near_the_low_water_mark_is_the_floor() {
     let mut messages = prose_head_dense_tail(1_200);
     let (real_after, budget, plan) = prune_at_ninety_percent(&mut messages).await;
-    assert_eq!(plan.ladder_stubbed, 6, "every unpinned message is a stub");
-    assert_eq!(plan.messages_dropped, 0);
+    assert_eq!(
+        plan.collapsed_to_stubs, 6,
+        "every unpinned message is a stub"
+    );
+    assert_eq!(plan.dropped, 0);
     assert!(!plan.over_budget);
     assert!(real_after <= budget);
     assert!(real_after * 100 <= budget * 78, "{real_after} of {budget}");
 }
 
-/// #2214: the count-based collapse (`context_collapse_after_messages`) and
-/// the ceiling ladder are counted apart: a collapse under a roomy budget
-/// stubs by count alone, and the ladder stubs nothing.
-#[tokio::test]
-async fn the_count_based_collapse_is_counted_apart_from_the_ladder() {
-    let manager = ContextManager::new(ContextManagerConfig {
-        retention: Some(crate::composition::retention::context_retention_over(
-            Arc::new(MemSpillStore::default()),
-        )),
-        session_key: SessionIdentity::from_persisted_key("test-session"),
-        context_collapse_after_tool_calls: context_pruning::COLLAPSE_DISABLED,
-        max_context_tokens: 190_000,
-        pin_recent_turns: 1,
-        context_collapse_after_messages: 1,
-        large_result_collapse: crate::domain::large_result_collapse::LargeResultCollapse::DISABLED,
-        model_context_window: None,
-    });
-    let mut messages = vec![
-        long_message(1),
-        long_message(2),
-        long_message(3),
-        long_message(4),
-        Message::user("current prompt"),
-    ];
-
-    let plan = manager
-        .prepare_provider_context(&mut messages, manager.effective_max_context_tokens(), false)
-        .await;
-
-    assert!(plan.messages_collapsed > 0, "{plan:?}");
-    assert_eq!(plan.ladder_stubbed, 0, "{plan:?}");
-    assert!(plan.durable_prefix_dirty);
-}
-
-// --- #2342: superseded snapshots and a swarm member's ceiling ---
-
-fn summary_result(turn: u32) -> Message {
-    let mut msg = Message::tool(
-        format!("call-{turn}"),
-        format!("summary {turn} {}", "y".repeat(800)),
-    );
-    msg.tool_name = Some("swarm".to_string());
-    msg.turn = Some(turn);
-    msg.spill_id = Some(format!("turn{turn}:swarm:0"));
-    msg.snapshot_key = Some("swarm.summary");
-    msg
-}
-
-#[tokio::test]
-async fn a_plan_supersedes_older_snapshots_and_latches_the_prefix_dirty() {
-    let manager = manager(1_000_000);
-    let mut messages = vec![Message::user("go"), summary_result(1), summary_result(2)];
-
-    let plan = manager
-        .prepare_provider_context(&mut messages, 1_000_000, false)
-        .await;
-
-    assert_eq!(plan.snapshots_superseded, 1);
-    let result = |id: &str| {
-        messages
-            .iter()
-            .find(|m| m.tool_call_id.as_deref() == Some(id))
-            .unwrap()
-    };
-    assert!(result("call-1").is_collapsed && !result("call-2").is_collapsed);
-    assert!(
-        plan.durable_prefix_dirty,
-        "an in-place rewrite is persisted"
-    );
-    assert!(plan.total_tokens < plan.tokens_before);
-}
+// --- #2342: a swarm member's ceiling ---
 
 #[test]
 fn a_ceiling_cap_lowers_the_budget_and_never_raises_it() {
@@ -641,51 +578,28 @@ fn the_ceiling_keeps_the_reply_reserve_free_of_the_window() {
     assert_eq!(manager.window_in_estimate_units(), None);
 }
 
-// --- #2348: the size-aware collapse ---
-
+/// #2414 review L4: the configured `pin_recent_turns` reaches the
+/// emergency ladder. No cut can be made (no user message to keep), so the
+/// ladder runs and keeps the pinned turns in full: two by default, three
+/// when configured.
 #[tokio::test]
-async fn a_plan_collapses_a_large_seen_result_and_latches_the_prefix_dirty() {
-    use crate::domain::large_result_collapse::LargeResultCollapse;
-    use crate::domain::message::ToolCall;
-    let manager = ContextManager::new(ContextManagerConfig {
-        large_result_collapse: LargeResultCollapse {
-            over_tokens: 2_000,
-            after_turns: 3,
-        },
-        ..config_for(1_000_000)
-    });
-    let mut large = Message::tool("call-1", "the quick brown fox ".repeat(2_000));
-    large.tool_name = Some("bash".to_string());
-    large.spill_id = Some("turn1:bash:0".to_string());
-    let call = ToolCall {
-        id: "call-1".to_string(),
-        name: "bash".to_string(),
-        arguments: "{}".to_string(),
-    };
-    let mut messages = vec![
-        Message::user("go"),
-        Message::assistant("", vec![call]),
-        large,
-    ];
-    for n in 0..3 {
-        messages.push(Message::assistant(format!("reply {n}"), vec![]));
-        messages.push(Message::user(format!("next {n}")));
+async fn pin_recent_turns_reaches_the_emergency_ladder() {
+    async fn kept(pin_recent_turns: u32) -> Vec<u32> {
+        let manager = ContextManager::new(ContextManagerConfig {
+            pin_recent_turns,
+            ..config_for(10)
+        });
+        let mut messages: Vec<Message> = (1..=4).map(long_message).collect();
+        let pass = manager
+            .prepare_watermark_context(&mut messages, (0, 10), false)
+            .await;
+        assert!(pass.fallback, "no cut fits: the ladder ran");
+        messages
+            .iter()
+            .filter(|m| !m.is_collapsed)
+            .filter_map(|m| m.turn)
+            .collect()
     }
-
-    let plan = manager
-        .prepare_provider_context(&mut messages, 1_000_000, false)
-        .await;
-
-    assert_eq!(plan.large_results_collapsed, 1);
-    assert_eq!(plan.tool_results_collapsed, 0, "not the count dial's");
-    let result = messages
-        .iter()
-        .find(|m| m.tool_call_id.as_deref() == Some("call-1"))
-        .unwrap();
-    assert!(result.is_collapsed, "{}", result.content);
-    assert!(
-        plan.durable_prefix_dirty,
-        "an in-place rewrite is persisted"
-    );
-    assert!(plan.total_tokens < plan.tokens_before);
+    assert_eq!(kept(2).await, [3, 4]);
+    assert_eq!(kept(3).await, [2, 3, 4]);
 }

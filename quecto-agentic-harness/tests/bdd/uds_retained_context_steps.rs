@@ -1,8 +1,8 @@
 //! Retained context over the real UDS agent loop (D9 #1978): a real
 //! `run_uds_loop` over the composed file retention store
 //! (`composition::sessions::build_retention_handles`), a scripted provider
-//! that drives an oversized stub tool past the collapse threshold and then
-//! recalls through the real `recall` tool; every assertion reads the
+//! that drives an oversized stub tool past the watermark's high mark (#2414)
+//! and then recalls through the real `recall` tool; every assertion reads the
 //! loop's own wire events and the on-disk `spill.jsonl`.
 use super::*;
 use quecto::application::agent_loop::AgentLoopConfig;
@@ -18,9 +18,9 @@ fn stub_content(n: u64) -> String {
     format!("STUB{n} ").repeat(STUB_BYTES / 6)
 }
 
-/// The provider script of the scenario: two stub results (the first
-/// collapses once the second lands, `context_collapse_after_tool_calls:
-/// 1`), then `recall("list")`, the known id, the unknown id, then text.
+/// The provider script of the scenario: two stub results (the second takes
+/// the request over a 1000-token high mark, so a cut archives the first),
+/// then `recall("list")`, the archived id, the unknown id, then text.
 #[derive(Debug)]
 struct RetainedContextProvider {
     script: Mutex<std::collections::VecDeque<LlmResponse>>,
@@ -92,7 +92,7 @@ impl Tool for OversizedStubTool {
 }
 
 #[given(
-    expr = "a real UDS agent for session {string} over the file retention store that collapses after one tool result"
+    expr = "a real UDS agent for session {string} over the file retention store that cuts after one tool result"
 )]
 fn given_real_retention_agent(world: &mut QuectoWorld, session_name: String) {
     let base = world
@@ -128,15 +128,14 @@ fn given_real_retention_agent(world: &mut QuectoWorld, session_name: String) {
         temperature: 0.0,
         retention: Some(retention.context.clone()),
         session_key: session_key.clone(),
-        context_collapse_after_tool_calls: 1,
         max_context_tokens: 190_000,
         progress_callback: None,
         streaming: false,
         effort: None,
         audit_log: None,
         pin_recent_turns: 0,
-        context_collapse_after_messages: u32::MAX,
-        large_result_collapse: quecto::domain::large_result_collapse::LargeResultCollapse::DISABLED,
+        context_marks: quecto::domain::conversation::watermark::Watermark::new(1_000, 300)
+            .expect("valid marks"),
         model_context_window: None,
         tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     });
@@ -149,7 +148,7 @@ fn given_real_retention_agent(world: &mut QuectoWorld, session_name: String) {
 }
 
 #[when(
-    "the model runs the stub tool twice, then recalls the index, the collapsed id and an unknown id"
+    "the model runs the stub tool twice, then recalls the index, the archived id and an unknown id"
 )]
 fn when_model_recalls(world: &mut QuectoWorld) {
     let base = world.cli_context.base_dir.clone().expect("base dir");
@@ -228,20 +227,24 @@ fn tool_result_text(world: &QuectoWorld, tool_call_id: &str) -> (String, bool) {
     (text, event["isError"].as_bool().unwrap_or(false))
 }
 
-#[then("the recall index answered exactly the user prompt and both stub results in append order")]
+#[then(
+    "the recall index answered the user prompt and both stub results in append order, then the cut's archive"
+)]
 fn then_index_exact(world: &mut QuectoWorld) {
     let (text, is_error) = tool_result_text(world, "c3");
     let prompt_tokens = Message::estimate_tokens(PROMPT);
     let stub_tokens = Message::estimate_tokens(&stub_content(1));
     let expected = format!(
-        "Spilled outputs (3 entries):\n  turn0:msg:user — {PROMPT} ({prompt_tokens} tokens)\n  \
-         turn1:stub:0 — {{\"n\":1}} ({stub_tokens} tokens)\n  turn2:stub:0 — {{\"n\":2}} ({stub_tokens} tokens)\n"
+        "Spilled outputs (4 entries):\n  turn0:msg:user — {PROMPT} ({prompt_tokens} tokens)\n  \
+         turn1:stub:0 — {{\"n\":1}} ({stub_tokens} tokens)\n  turn2:stub:0 — {{\"n\":2}} ({stub_tokens} tokens)\n  \
+         archive — "
     );
     assert!(!is_error);
-    assert_eq!(text, expected);
+    assert!(text.starts_with(&expected), "{text}");
+    assert!(text.ends_with(" tokens)\n"), "{text}");
 }
 
-#[then("the recall of the collapsed id answered the full stub output")]
+#[then("the recall of the archived id answered the full stub output")]
 fn then_known_recall(world: &mut QuectoWorld) {
     let (text, is_error) = tool_result_text(world, "c4");
     assert!(!is_error);
@@ -255,8 +258,8 @@ fn then_unknown_recall(world: &mut QuectoWorld, expected: String) {
     assert_eq!(text, expected);
 }
 
-#[then(expr = "the first stub result is shown collapsed to the recall stub for {string}")]
-fn then_collapsed_stub(world: &mut QuectoWorld, spill_id: String) {
+#[then(expr = "the first stub result is archived behind the cut's stub, which names {string}")]
+fn then_archived_behind_stub(world: &mut QuectoWorld, archive: String) {
     let run = world.retained_context_run.as_ref().expect("run");
     let response = run
         .events
@@ -264,30 +267,20 @@ fn then_collapsed_stub(world: &mut QuectoWorld, spill_id: String) {
         .find(|e| e["type"] == "response" && e["id"] == "m1")
         .expect("get_messages response");
     let messages = response["data"]["messages"].as_array().expect("messages");
-    let stub_tokens = Message::estimate_tokens(&stub_content(1));
-    let expected = quecto::application::context_pruning::collapse_stub(
-        "stub",
-        r#"{"n":1}"#,
-        stub_tokens,
-        &spill_id,
-    );
-    assert!(
-        messages
-            .iter()
-            .any(|m| m["collapsed"] == true && m["content"] == expected),
-        "no collapsed stub {expected:?} in {messages:#?}"
-    );
-    // `context_collapse_after_tool_calls: 1`: only the most recent tool
-    // result stays in full — the unknown-id refusal of the last recall.
-    let full: Vec<&serde_json::Value> = messages
+    // The first stub result left the context; its full text is there only
+    // as the answer of the recall that read it back.
+    let first = stub_content(1);
+    let copies = messages
         .iter()
-        .filter(|m| m["role"] == "tool" && m["collapsed"] == false)
-        .collect();
-    assert_eq!(full.len(), 1, "one live tool result: {full:#?}");
-    assert_eq!(
-        full[0]["content"],
-        "No spilled output found for id: turn9:stub:0. Use recall(\"list\") to see the ids \
-         this session has (they look like turn12:bash:0)."
+        .filter(|m| m["content"] == first.as_str())
+        .count();
+    assert_eq!(copies, 1, "only the recall's answer: {messages:#?}");
+    let named = format!("recall(\"{archive}");
+    assert!(
+        messages.iter().any(|m| m["content"]
+            .as_str()
+            .is_some_and(|text| text.starts_with("[Context archive]") && text.contains(&named))),
+        "one archive stub naming {archive:?} in {messages:#?}"
     );
 }
 

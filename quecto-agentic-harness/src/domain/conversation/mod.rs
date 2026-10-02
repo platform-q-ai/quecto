@@ -19,14 +19,3 @@ pub enum UserKind {
     /// The stub a watermark cut put in place of what it archived.
     ArchiveStub,
 }
-
-/// How the context is kept within its ceiling (#2403).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ContextMode {
-    /// The pruning rules that collapse, supersede and stub earlier
-    /// messages as the context grows.
-    #[default]
-    Default,
-    /// Append only; at the high mark one cut down to the low mark.
-    Watermark(watermark::Watermark),
-}

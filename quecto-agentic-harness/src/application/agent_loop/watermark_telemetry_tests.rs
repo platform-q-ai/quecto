@@ -5,10 +5,9 @@
 //! `watermark_fallback`. Every record holds counts, ids and kinds only.
 
 use super::ctx_mgmt_tests::CapturingAuditSink;
-use super::watermark_tests::{HIGH, LOW, Rig, agent_under, stubs, text, total};
+use super::watermark_tests::{HIGH, LOW, Rig, agent_under, default_agent, stubs, text, total};
 use crate::application::audit::ports::AuditSink;
 use crate::domain::audit::{AuditEvent, ContextCutRecord, ContextCutSkippedRecord, CutSkipReason};
-use crate::domain::conversation::ContextMode;
 use crate::domain::conversation::watermark::{Fill, Watermark};
 use crate::domain::message::Message;
 use crate::domain::turn_origin::prompt;
@@ -132,7 +131,7 @@ async fn the_cut_records_carry_no_content() {
 /// are the lowered ones.
 #[tokio::test]
 async fn a_cut_under_a_lower_ceiling_records_the_lowered_marks() {
-    let marks = ContextMode::Watermark(Watermark::new(100_000, 30_000).unwrap());
+    let marks = Watermark::new(100_000, 30_000).unwrap();
     let (mut rig, sink) = audited(Rig::watermark());
     rig.agent = agent_under(rig.store.clone(), Some(marks), 20_000, None);
     let sink_again = sink.clone() as Arc<dyn AuditSink>;
@@ -225,32 +224,25 @@ async fn below_the_high_mark_no_cut_record_is_written() {
 }
 
 /// The emergency ladder (final review L3 of #2403) writes a
-/// `context_pruned` record marked `watermark_fallback`; the default mode's
-/// ladder writes one unmarked, and the default mode writes no cut records.
+/// `context_pruned` record marked `watermark_fallback`.
 #[tokio::test]
 async fn the_ladder_fallback_is_a_context_pruned_record_marked_as_the_fallback() {
-    let marks = ContextMode::Watermark(Watermark::new(100_000, 30_000).unwrap());
-    for (mode, fallback) in [(Some(marks), true), (None, false)] {
-        let (mut rig, sink) = audited(Rig::new(None));
-        rig.agent = agent_under(rig.store.clone(), mode, 20_000, None);
-        rig.agent
-            .set_audit_log(Some(sink.clone() as Arc<dyn AuditSink>));
-        let mut answer = Message::assistant(text("the first answer", 100), vec![]);
-        answer.turn = Some(1);
-        let mut messages = vec![
-            Message::system(text("system", 300)),
-            prompt(text("a brief over the ceiling", 30_000)),
-            answer,
-            prompt(text("latest", 100)),
-        ];
-        rig.exchange(&mut messages, 300).await;
-        rig.pass(&mut messages).await;
-        assert_eq!(prunes(&sink), [fallback], "{mode:?}");
-        match mode {
-            Some(_) => {}
-            None => assert!(cuts(&sink).is_empty() && skips(&sink).is_empty()),
-        }
-    }
+    let marks = Watermark::new(100_000, 30_000).unwrap();
+    let (mut rig, sink) = audited(Rig::new(None));
+    rig.agent = agent_under(rig.store.clone(), Some(marks), 20_000, None);
+    rig.agent
+        .set_audit_log(Some(sink.clone() as Arc<dyn AuditSink>));
+    let mut answer = Message::assistant(text("the first answer", 100), vec![]);
+    answer.turn = Some(1);
+    let mut messages = vec![
+        Message::system(text("system", 300)),
+        prompt(text("a brief over the ceiling", 30_000)),
+        answer,
+        prompt(text("latest", 100)),
+    ];
+    rig.exchange(&mut messages, 300).await;
+    rig.pass(&mut messages).await;
+    assert_eq!(prunes(&sink), [true], "{:?}", events(&sink));
 }
 
 /// Review M1: a cut that leaves the request over the ceiling, so the
@@ -259,7 +251,7 @@ async fn the_ladder_fallback_is_a_context_pruned_record_marked_as_the_fallback()
 /// size before the cut.
 #[tokio::test]
 async fn a_cut_then_the_ladder_counts_each_once() {
-    let marks = ContextMode::Watermark(Watermark::new(100_000, 30_000).unwrap());
+    let marks = Watermark::new(100_000, 30_000).unwrap();
     let (mut rig, sink) = audited(Rig::new(None));
     rig.agent = agent_under(rig.store.clone(), Some(marks), 20_000, None);
     rig.agent
@@ -294,6 +286,75 @@ async fn a_cut_then_the_ladder_counts_each_once() {
         "the ladder starts where the cut left the request"
     );
     assert!(after <= before, "{pruned:?}");
+}
+
+/// #2413 carry-over: a cut whose kept set is still over the ceiling, where
+/// the ladder really edits: the brief is no longer in the current prompt's
+/// region, so the ladder stubs it. Each step is counted once: the ladder's
+/// `context_pruned` starts where the cut left the request.
+#[tokio::test]
+async fn a_cut_then_a_ladder_that_stubs_counts_each_once() {
+    let marks = Watermark::new(100_000, 30_000).unwrap();
+    let (mut rig, sink) = audited(Rig::new(None));
+    rig.agent = agent_under(rig.store.clone(), Some(marks), 20_000, None);
+    rig.agent
+        .set_audit_log(Some(sink.clone() as Arc<dyn AuditSink>));
+    let brief = prompt(text("a brief that fills most of the ceiling", 12_000));
+    let brief_id = brief.id();
+    let mut answer = Message::assistant(text("the first answer", 100), vec![]);
+    answer.turn = Some(1);
+    let mut messages = vec![
+        Message::system(text("system", 300)),
+        brief,
+        answer,
+        prompt(text("latest", 100)),
+    ];
+    for (turn, tokens) in [(1, 1_500), (2, 1_500), (3, 1_500), (4, 1_500), (5, 8_000)] {
+        rig.exchange(&mut messages, tokens).await;
+        let len = messages.len();
+        for message in &mut messages[len - 2..] {
+            message.turn = Some(turn);
+        }
+    }
+    rig.pass(&mut messages).await;
+    let cuts = cuts(&sink);
+    assert_eq!(cuts.len(), 1, "{:?}", events(&sink));
+    assert!(
+        cuts[0].tokens_after > 20_000,
+        "the cut left it over: {cuts:?}"
+    );
+    let pruned: Vec<(usize, usize, usize, bool, usize)> = events(&sink)
+        .into_iter()
+        .filter_map(|event| match event {
+            AuditEvent::ContextPruned {
+                tokens_before,
+                tokens_after,
+                ladder_stubbed,
+                watermark_fallback,
+                ceiling_tokens,
+                ..
+            } => Some((
+                tokens_before,
+                tokens_after,
+                ladder_stubbed,
+                watermark_fallback,
+                ceiling_tokens,
+            )),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(pruned.len(), 1, "{pruned:?}");
+    let (before, after, stubbed, fallback, ceiling) = pruned[0];
+    assert!(fallback, "the ladder's record is marked");
+    assert_eq!(ceiling, 20_000, "the ceiling in force, in provider tokens");
+    assert!(stubbed >= 1, "the ladder stubbed: {pruned:?}");
+    assert_eq!(
+        before, cuts[0].tokens_after,
+        "it starts where the cut left it"
+    );
+    assert!(after < before && after <= 20_000, "{pruned:?}");
+    let brief = messages.iter().find(|m| m.id() == brief_id).unwrap();
+    assert!(brief.is_collapsed, "the ladder stubbed the brief");
 }
 
 /// Review L4 and L5: a skip's reason carries its own numbers (adjacently
@@ -333,4 +394,70 @@ async fn the_records_name_their_reason_and_units_on_the_wire() {
         .expect("a cut");
     assert!(made["marks"]["ceiling_estimate_tokens"].is_u64(), "{made}");
     assert!(made["marks"].get("ceiling_tokens").is_none(), "{made}");
+}
+
+/// #2414: the emergency fallback stays. In a loop built with no mode
+/// switched on, a request no cut can bring under the ceiling (the pinned
+/// brief alone is over it) runs the ladder, logged as the watermark
+/// fallback, and is sent under the ceiling.
+#[tokio::test]
+async fn the_emergency_ladder_runs_in_a_loop_built_with_no_mode_set() {
+    let (mut rig, sink) = audited(Rig::new(None));
+    rig.agent = default_agent(rig.store.clone(), 20_000);
+    rig.agent
+        .set_audit_log(Some(sink.clone() as Arc<dyn AuditSink>));
+    let mut answer = Message::assistant(text("the first answer", 100), vec![]);
+    answer.turn = Some(1);
+    let mut messages = vec![
+        Message::system(text("system", 300)),
+        prompt(text("a brief over the ceiling", 30_000)),
+        answer,
+        prompt(text("latest", 100)),
+    ];
+    rig.exchange(&mut messages, 300).await;
+    let sent = rig.pass(&mut messages).await;
+    assert_eq!(prunes(&sink), [true], "{:?}", events(&sink));
+    assert!(sent <= 20_000, "{sent} over the 20k ceiling");
+}
+
+/// #2414 review L3: tool definitions that take more than three quarters of
+/// the budget leave the messages the quarter floor (#2182), over the
+/// configured budget: the record says the budget is unmet, though no
+/// request goes over the ceiling and no ladder runs.
+#[tokio::test]
+async fn a_floor_over_the_budget_is_recorded_unmet_without_the_ladder() {
+    use crate::application::agent_loop::tests::{
+        MockProvider, MockRegistry, MockTool, test_config,
+    };
+    let mut registry = MockRegistry::new();
+    for i in 0..40 {
+        registry.register(Arc::new(MockTool::new(&format!("tool_{i}"), "ok")));
+    }
+    let tools: usize = registry
+        .cached_definitions
+        .iter()
+        .map(crate::domain::tool::ToolDefinition::estimated_tokens)
+        .sum();
+    let sink = Arc::new(CapturingAuditSink::default());
+    let agent = crate::application::agent_loop::AgentLoopImpl::new(
+        crate::application::agent_loop::AgentLoopConfig {
+            max_context_tokens: tools * 10 / 8,
+            audit_log: Some(sink.clone() as Arc<dyn AuditSink>),
+            ..test_config(Arc::new(MockProvider::new(vec![])), Box::new(registry))
+        },
+    );
+    let mut messages = vec![prompt("hi".into())];
+    agent.apply_context_pruning(&mut messages, 1, false).await;
+    let unmet: Vec<(bool, bool)> = events(&sink)
+        .into_iter()
+        .filter_map(|event| match event {
+            AuditEvent::ContextPruned {
+                budget_unmet,
+                watermark_fallback,
+                ..
+            } => Some((budget_unmet, watermark_fallback)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(unmet, [(true, false)], "{:?}", events(&sink));
 }

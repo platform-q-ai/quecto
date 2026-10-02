@@ -38,6 +38,9 @@ use crate::application::configuration::ports::{
     ConfigDocumentStore, ConfigDocumentWriter, ConfigValidator, OverlayDocument, OverlayTrust,
     OverlayTrustStore,
 };
+use crate::application::configuration::removed_keys::{
+    WHY_REMOVED, removed_keys_set, without_removed_keys,
+};
 use crate::application::configuration::use_cases::ResolveEffectiveConfig;
 use crate::domain::tool_id::parse_stable_tool_id;
 
@@ -156,7 +159,29 @@ impl PatchConfiguration {
             .as_object()
             .map(global_only_values)
             .unwrap_or_default();
+        let removed_before = document
+            .as_object()
+            .map(removed_keys_set)
+            .unwrap_or_default();
         mutate(&mut document, path)?;
+        // #2414 review H1: a write is accepted when it adds no key the
+        // watermark context removed. It may leave a file that still does
+        // not load until every removed key is gone: that is how they are
+        // unset one at a time.
+        let introduced: Vec<String> = document
+            .as_object()
+            .map(removed_keys_set)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|key| !removed_before.contains(key))
+            .map(|key| format!("agents.defaults.{key}"))
+            .collect();
+        if !introduced.is_empty() {
+            return Err(ConfigPatchError::Invalid {
+                path: path.to_path_buf(),
+                reason: format!("{} {WHY_REMOVED}", introduced.join(", ")),
+            });
+        }
         // The write may not bring in or change a global-only setting
         // (directly or in a parent written whole); an overlay already
         // carrying one can still be repaired, or patched elsewhere.
@@ -243,7 +268,10 @@ impl PatchConfiguration {
     /// configuration, the overlay as one layer), then the effective
     /// configuration it produces with the other layer as it stands on
     /// disk — a layer that is valid alone can still brick the merge (an
-    /// overlay container config that leaves no default).
+    /// overlay container config that leaves no default). Keys #2414
+    /// removed that were already there are let through, in either layer
+    /// (the cycle refused any new one): the written file may still not
+    /// load until every removed key is gone.
     fn check(
         &self,
         selection: &ConfigSelection,
@@ -259,19 +287,20 @@ impl PatchConfiguration {
             .validator
             .resolve(document.clone(), path)
             .map_err(invalid)?;
-        match layer {
-            ConfigLayer::Global => self.validator.validate(&resolved),
-            ConfigLayer::Overlay => self.validator.validate_layer(&resolved),
-        }
-        .map_err(invalid)?;
         let Value::Object(resolved) = resolved else {
             return Err(ConfigPatchError::NotAnObject {
                 path: path.to_path_buf(),
                 at: String::new(),
             });
         };
+        let checked = Value::Object(without_removed_keys(&resolved));
+        match layer {
+            ConfigLayer::Global => self.validator.validate(&checked),
+            ConfigLayer::Overlay => self.validator.validate_layer(&checked),
+        }
+        .map_err(invalid)?;
         self.resolve
-            .preview(selection, layer, &resolved)
+            .preview_tolerating_removed_keys(selection, layer, &resolved)
             .map(|_| ())
             .map_err(|reason| ConfigPatchError::InvalidMerge {
                 path: path.to_path_buf(),

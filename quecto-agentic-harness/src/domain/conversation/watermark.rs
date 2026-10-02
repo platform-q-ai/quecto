@@ -54,6 +54,19 @@ impl std::fmt::Display for InvalidMarks {
 
 impl std::error::Error for InvalidMarks {}
 
+/// The owner's marks (#2401): cut at 256k, down to 70k. The ceiling
+/// (`max_context_tokens`, the model's window, a swarm member's cap) still
+/// wins: under a lower one both marks scale down with it.
+pub const DEFAULT_HIGH_TOKENS: usize = 256_000;
+pub const DEFAULT_LOW_TOKENS: usize = 70_000;
+
+impl Default for Watermark {
+    /// The owner's marks.
+    fn default() -> Self {
+        Self::new(DEFAULT_HIGH_TOKENS, DEFAULT_LOW_TOKENS).expect("the owner's marks are valid")
+    }
+}
+
 impl Watermark {
     /// The marks, or why they are refused: L must be above 0, below H, and
     /// at least `H / MIN_SAVING_DIVISOR` below it.

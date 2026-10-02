@@ -101,153 +101,6 @@ fn given_context_pruning_enabled(world: &mut QuectoWorld) {
     world.context_current_turn = Some(0);
 }
 
-// --- Tool-call collapse (#1017) ---
-
-/// Append `n` un-collapsed bash tool-result messages to the session under test.
-/// Turn numbers deliberately cycle over a small range so the trigger cannot be
-/// mistaken for a turns-elapsed check — collapse must count tool calls.
-fn append_tool_calls(world: &mut QuectoWorld, n: u32) {
-    let messages = world.context_messages.as_mut().unwrap();
-    for i in 0..n {
-        let seq = messages.iter().filter(|m| m.role == Role::Tool).count();
-        let mut msg = Message::tool(format!("call_{seq}"), format!("output {seq}"));
-        msg.turn = Some((i % 3) + 1);
-        msg.tool_name = Some("bash".to_string());
-        msg.input_preview = Some(format!("cmd {seq}"));
-        msg.spill_id = Some(format!("turn{seq}:bash:0"));
-        messages.push(msg);
-    }
-}
-
-/// Run the tool-call collapse trigger and record how many were collapsed.
-fn run_collapse(world: &mut QuectoWorld) {
-    let max = world
-        .context_collapse_after_tool_calls
-        .expect("collapse threshold should be set");
-    let messages = world.context_messages.as_mut().unwrap();
-    let collapsed = context_pruning::collapse_tool_results_over_limit(messages, max);
-    world.context_collapsed_count = Some(collapsed);
-}
-
-#[given(expr = "context_collapse_after_tool_calls is set to {int}")]
-fn given_collapse_threshold(world: &mut QuectoWorld, max: u32) {
-    world.context_collapse_after_tool_calls = Some(max);
-}
-
-#[given("context collapse is disabled")]
-fn given_collapse_disabled(world: &mut QuectoWorld) {
-    world.context_collapse_after_tool_calls = Some(context_pruning::COLLAPSE_DISABLED);
-}
-
-#[given(expr = "the agent has already executed {int} tool calls in an earlier prompt")]
-fn given_already_executed_tool_calls(world: &mut QuectoWorld, n: u32) {
-    append_tool_calls(world, n);
-}
-
-#[when(expr = "the agent has executed {int} tool calls in the session")]
-fn when_executed_tool_calls_in_session(world: &mut QuectoWorld, n: u32) {
-    append_tool_calls(world, n);
-    run_collapse(world);
-}
-
-/// #2213: `seen` results the model has read, then one assistant message
-/// calling `unseen` tools in parallel and their results, not yet seen.
-#[when(expr = "the agent has run {int} tool calls then {int} unseen parallel tool calls")]
-fn when_executed_seen_then_unseen_tool_calls(world: &mut QuectoWorld, seen: u32, unseen: u32) {
-    append_tool_calls(world, seen);
-    let calls = (0..unseen)
-        .map(|i| quecto::domain::message::ToolCall {
-            id: format!("parallel_{i}"),
-            name: "bash".to_string(),
-            arguments: "{}".to_string(),
-        })
-        .collect();
-    let messages = world.context_messages.as_mut().unwrap();
-    messages.push(Message::assistant("calling tools in parallel", calls));
-    append_tool_calls(world, unseen);
-    run_collapse(world);
-}
-
-#[when(expr = "the agent executes {int} more tool calls in a later prompt")]
-fn when_executes_more_tool_calls(world: &mut QuectoWorld, n: u32) {
-    append_tool_calls(world, n);
-    run_collapse(world);
-}
-
-#[then(expr = "the oldest {int} tool results are collapsed to recall\\(\\) stubs")]
-fn then_oldest_collapsed(world: &mut QuectoWorld, n: usize) {
-    assert_eq!(
-        world.context_collapsed_count,
-        Some(n),
-        "exactly the oldest {n} tool results should collapse"
-    );
-    let messages = world.context_messages.as_ref().unwrap();
-    let tools: Vec<&Message> = messages.iter().filter(|m| m.role == Role::Tool).collect();
-    assert!(tools.len() > n, "should have more than {n} tool results");
-    for oldest in &tools[..n] {
-        assert!(
-            oldest.is_collapsed && oldest.content.contains("recall(\""),
-            "the oldest tool results should be recall() stubs, got: {}",
-            oldest.content
-        );
-    }
-    assert!(!tools[n].is_collapsed, "the collapse front stops at {n}");
-}
-
-#[then(expr = "the {int} most recent tool results remain in full context")]
-fn then_most_recent_remain(world: &mut QuectoWorld, n: usize) {
-    let messages = world.context_messages.as_ref().unwrap();
-    let recent: Vec<&Message> = messages
-        .iter()
-        .filter(|m| m.role == Role::Tool)
-        .rev()
-        .take(n)
-        .collect();
-    assert_eq!(recent.len(), n, "should have at least {n} tool results");
-    for msg in recent {
-        assert!(
-            !msg.is_collapsed,
-            "the {n} most recent tool results must stay in full context"
-        );
-    }
-}
-
-#[then(expr = "{int} tool results are collapsed to recall\\(\\) stubs")]
-fn then_n_collapsed(world: &mut QuectoWorld, expected: usize) {
-    assert_eq!(
-        world.context_collapsed_count,
-        Some(expected),
-        "expected {expected} tool results to collapse"
-    );
-}
-
-#[then("no tool results are collapsed")]
-fn then_no_tool_results_collapsed(world: &mut QuectoWorld) {
-    assert_eq!(
-        world.context_collapsed_count,
-        Some(0),
-        "no tool results should collapse"
-    );
-    let messages = world.context_messages.as_ref().unwrap();
-    assert!(
-        messages
-            .iter()
-            .filter(|m| m.role == Role::Tool)
-            .all(|m| !m.is_collapsed),
-        "no tool result should be collapsed"
-    );
-}
-
-#[then(expr = "the context_collapse_after_tool_calls default is {int}")]
-fn then_collapse_default_is(world: &mut QuectoWorld, expected: u32) {
-    let config = quecto::infrastructure::config::Config::default();
-    assert_eq!(
-        config.agents.defaults.context_collapse_after_tool_calls, expected,
-        "default context_collapse_after_tool_calls should be {expected}"
-    );
-    let _ = world;
-}
-
 // --- When steps ---
 
 #[when("the agent executes a bash tool on turn 1")]
@@ -1526,15 +1379,13 @@ fn complete_text_only_prompt(world: &mut QuectoWorld, reply: &str) {
             store.0.clone(),
         )),
         session_key: session_key_under_test(world),
-        context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 100_000,
         progress_callback: None,
         streaming: false,
         effort: None,
         audit_log: None,
         pin_recent_turns: 2,
-        context_collapse_after_messages: u32::MAX,
-        large_result_collapse: quecto::domain::large_result_collapse::LargeResultCollapse::DISABLED,
+        context_marks: Default::default(),
         model_context_window: None,
         tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     });
@@ -1576,16 +1427,6 @@ fn then_spill_entry_matches_reply(world: &mut QuectoWorld, id: String) {
     );
 }
 
-#[given(expr = "context_collapse_after_messages is set to {int}")]
-fn given_message_collapse_threshold(world: &mut QuectoWorld, max: u32) {
-    world.context_collapse_after_messages = Some(max);
-}
-
-#[given("message collapse is disabled")]
-fn given_message_collapse_disabled(world: &mut QuectoWorld) {
-    world.context_collapse_after_messages = Some(context_pruning::COLLAPSE_DISABLED);
-}
-
 /// Append an old (previous-prompt) conversation message on `turn`, already
 /// spilled at creation per #1046 AC1 (spill_id stamped). Records the first
 /// message's token estimate so stub-vs-original assertions never have to
@@ -1622,10 +1463,7 @@ fn push_n_old_conv_messages(world: &mut QuectoWorld, n: usize) {
     }
 }
 
-// Both phrasings share one definition: turn numbering restarts on every
-// prompt, so a later batch reuses the same small turn numbers either way.
 #[given(expr = "{int} old conversation messages")]
-#[given(expr = "{int} old conversation messages from an earlier prompt")]
 fn given_old_conv_messages(world: &mut QuectoWorld, n: usize) {
     push_n_old_conv_messages(world, n);
 }
@@ -1647,104 +1485,12 @@ fn given_in_flight_user_prompt_spilled(world: &mut QuectoWorld) {
     world.context_messages.as_mut().unwrap().push(m);
 }
 
-#[given(expr = "{int} old assistant messages and {int} old user messages")]
-fn given_old_mixed_messages(world: &mut QuectoWorld, a: usize, u: usize) {
-    for i in 0..a {
-        push_old_conv_message(world, Role::Assistant, (i + 1) as u32, i + 1);
-    }
-    for i in 0..u {
-        push_old_conv_message(world, Role::User, (i + 1) as u32, a + i + 1);
-    }
-}
-
-#[given(expr = "{int} un-collapsed tool results in the session")]
-fn given_uncollapsed_tool_results(world: &mut QuectoWorld, n: u32) {
-    append_tool_calls(world, n);
-}
-
 #[given("a pinned manifest message in the conversation")]
 fn given_pinned_manifest_message(world: &mut QuectoWorld) {
     let mut manifest = Message::system("[Session memory: 1 spilled entries via recall()]");
     manifest.is_pinned = true;
     manifest.is_manifest = true;
     world.context_messages.as_mut().unwrap().insert(0, manifest);
-}
-
-#[given("a conversation message within the pinned recent-turn tail")]
-fn given_tail_pinned_conv_message(world: &mut QuectoWorld) {
-    // A turn-stamped message of the current prompt's most recent turn: it
-    // sits after the in-flight prompt, inside the pin_recent_turns tail.
-    // Spilled at creation (spill_id stamped) like every conversation message
-    // in production, so only the tail-pin exemption — not the spill_id
-    // filter — protects it from collapse (falsifiability, PR #1048 round 2).
-    let mut m = Message::assistant("tail-pinned recent answer", vec![]);
-    m.turn = Some(99);
-    m.spill_id = Some("turn99:msg:assistant".into());
-    world.context_messages.as_mut().unwrap().push(m);
-}
-
-#[when("the agent trims old conversation messages")]
-fn when_agent_trims_conversation(world: &mut QuectoWorld) {
-    let max = world
-        .context_collapse_after_messages
-        .expect("context_collapse_after_messages must be set");
-    // Scenarios that exercise the tail-pin set pinning explicitly; the rest
-    // opt out so the count trigger is observed in isolation.
-    let pin = world.context_pin_recent_turns.unwrap_or(0);
-    let messages = world.context_messages.as_mut().unwrap();
-    let collapsed = msg_pruning::collapse_conversation_messages_over_limit(messages, max, pin);
-    world.context_msg_collapsed_count = Some(collapsed);
-}
-
-#[then(expr = "{int} conversation message is collapsed to a recall stub")]
-#[then(expr = "{int} conversation messages are collapsed to recall stubs")]
-fn then_n_messages_collapsed(world: &mut QuectoWorld, expected: usize) {
-    assert_eq!(
-        world.context_msg_collapsed_count,
-        Some(expected),
-        "expected exactly {expected} conversation messages to collapse"
-    );
-}
-
-#[then(expr = "at least {int} conversation message is collapsed to a recall stub")]
-fn then_at_least_n_messages_collapsed(world: &mut QuectoWorld, min: usize) {
-    let got = world.context_msg_collapsed_count.unwrap_or(0);
-    assert!(
-        got >= min,
-        "expected at least {min} conversation messages to collapse, got {got}"
-    );
-}
-
-#[then("the oldest conversation message is a one-line recall stub")]
-fn then_oldest_message_is_stub(world: &mut QuectoWorld) {
-    let messages = world.context_messages.as_ref().unwrap();
-    let oldest = messages
-        .iter()
-        .find(|m| m.role == Role::User || m.role == Role::Assistant)
-        .expect("a conversation message must exist");
-    assert!(oldest.is_collapsed, "the oldest must be collapsed");
-    assert!(
-        oldest.content.contains("recall(\"") && !oldest.content.contains('\n'),
-        "the stub must be a one-line recall() stub, got: {}",
-        oldest.content
-    );
-    assert!(
-        oldest.content.contains("tokens"),
-        "the stub must carry the token count, got: {}",
-        oldest.content
-    );
-}
-
-#[then("no tool results are collapsed by the message trigger")]
-fn then_no_tool_results_collapsed_by_message_trigger(world: &mut QuectoWorld) {
-    let messages = world.context_messages.as_ref().unwrap();
-    assert!(
-        messages
-            .iter()
-            .filter(|m| m.role == Role::Tool)
-            .all(|m| !m.is_collapsed),
-        "the message trigger must never collapse tool results"
-    );
 }
 
 /// Find a surviving message and report `(is_collapsed_or_stubbed, content)`
@@ -1797,48 +1543,6 @@ fn then_inflight_prompt_not_collapsed(world: &mut QuectoWorld) {
     assert!(
         !collapsed,
         "the in-flight user prompt must keep its full content, got: {content}"
-    );
-}
-
-#[then("the tail-pinned conversation message is not collapsed")]
-fn then_tail_pinned_not_collapsed(world: &mut QuectoWorld) {
-    let (collapsed, content) = collapse_state(
-        world,
-        |m| m.content.contains("tail-pinned recent answer"),
-        "a message within the pin_recent_turns tail",
-    );
-    assert!(
-        !collapsed,
-        "the pin_recent_turns tail must keep its full content, got: {content}"
-    );
-}
-
-#[then("each collapsed message stub has a nonzero token estimate")]
-fn then_stubs_have_nonzero_tokens(world: &mut QuectoWorld) {
-    let messages = world.context_messages.as_ref().unwrap();
-    let stubs: Vec<&Message> = messages.iter().filter(|m| m.is_collapsed).collect();
-    assert!(!stubs.is_empty(), "positive control: stubs must exist");
-    for stub in stubs {
-        assert!(
-            context_pruning::estimate_message_tokens(stub) > 0,
-            "stubs must count toward the token budget"
-        );
-    }
-}
-
-#[then("the stub token estimate is below the original message estimate")]
-fn then_stub_cheaper_than_original(world: &mut QuectoWorld) {
-    let original_tokens = world
-        .context_original_tokens
-        .expect("the Given must have recorded the original message estimate");
-    let messages = world.context_messages.as_ref().unwrap();
-    let stub = messages
-        .iter()
-        .find(|m| m.is_collapsed)
-        .expect("a stub must exist");
-    assert!(
-        context_pruning::estimate_message_tokens(stub) < original_tokens,
-        "the stub must be cheaper than the message it replaced"
     );
 }
 
@@ -1931,15 +1635,18 @@ fn then_configured_pin_recent_turns(world: &mut QuectoWorld, expected: u32) {
     );
 }
 
-#[then(expr = "the configured context_collapse_after_messages is {int}")]
-fn then_configured_message_collapse(world: &mut QuectoWorld, expected: u32) {
+/// #2414: the watermark marks a default configuration cuts at.
+#[then(expr = "the configured watermark marks cut at {int} down to {int}")]
+fn then_configured_watermark_marks(world: &mut QuectoWorld, high: usize, low: usize) {
     let defaults = world
         .context_agent_defaults
         .as_ref()
         .expect("a default agent configuration must have been established");
+    let marks = defaults.context_marks().expect("valid marks");
     assert_eq!(
-        defaults.context_collapse_after_messages, expected,
-        "message collapse default must keep the most recent {expected} conversation messages"
+        (marks.high(), marks.low()),
+        (high, low),
+        "the default watermark marks"
     );
 }
 
@@ -1987,15 +1694,13 @@ fn when_agent_completes_over_budget_prompt(world: &mut QuectoWorld) {
         temperature: 0.0,
         retention: None,
         session_key: "test-session".into(),
-        context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens,
         progress_callback: None,
         streaming: false,
         effort: None,
         audit_log: Some(sink.clone() as Arc<dyn quecto::application::audit::ports::AuditSink>),
         pin_recent_turns: 2,
-        context_collapse_after_messages: u32::MAX,
-        large_result_collapse: quecto::domain::large_result_collapse::LargeResultCollapse::DISABLED,
+        context_marks: Default::default(),
         model_context_window: None,
         tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     });
@@ -2055,15 +1760,13 @@ fn when_agent_derives_effective_budget(world: &mut QuectoWorld) {
         temperature: 0.7,
         retention: None,
         session_key: String::new(),
-        context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: world.context_budget_config.expect("config budget set"),
         progress_callback: None,
         streaming: false,
         effort: None,
         audit_log: None,
         pin_recent_turns: 2,
-        context_collapse_after_messages: u32::MAX,
-        large_result_collapse: quecto::domain::large_result_collapse::LargeResultCollapse::DISABLED,
+        context_marks: Default::default(),
         model_context_window: world.context_model_window.expect("window declared"),
         tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     });
@@ -2125,15 +1828,13 @@ fn run_prompt_through_loop(
             store.0.clone(),
         )),
         session_key,
-        context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 100_000,
         progress_callback: None,
         streaming: false,
         effort: None,
         audit_log: None,
         pin_recent_turns: 2,
-        context_collapse_after_messages: u32::MAX,
-        large_result_collapse: quecto::domain::large_result_collapse::LargeResultCollapse::DISABLED,
+        context_marks: Default::default(),
         model_context_window: None,
         tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     });
@@ -2216,81 +1917,6 @@ fn then_ephemeral_spill_has_tool_entry(world: &mut QuectoWorld, tool: String) {
         "the ephemeral tool spill entry {} must be recallable",
         entry.id
     );
-}
-
-/// Given-phrased wrapper around the collapse trigger: the collapse is
-/// precondition state for the rewind scenario, not its action. Asserts the
-/// collapse actually happened (precondition, not the scenario's outcome) and
-/// records how many conversation messages are collapsed so the Then can
-/// verify they all survive the rewind.
-#[given("the old conversation messages have been collapsed to recall stubs")]
-fn given_old_messages_collapsed(world: &mut QuectoWorld) {
-    let max = world
-        .context_collapse_after_messages
-        .expect("context_collapse_after_messages must be set");
-    let pin = world.context_pin_recent_turns.unwrap_or(0);
-    let messages = world.context_messages.as_mut().unwrap();
-    let collapsed = msg_pruning::collapse_conversation_messages_over_limit(messages, max, pin);
-    assert!(
-        collapsed >= 1,
-        "precondition: at least one conversation message must collapse"
-    );
-    world.context_rewind_collapsed_before = Some(collapsed);
-}
-
-#[when("the conversation is rewound to the in-flight user prompt")]
-fn when_rewound_to_inflight_prompt(world: &mut QuectoWorld) {
-    let messages = world.context_messages.as_mut().unwrap();
-    let idx = messages
-        .iter()
-        .rposition(|m| m.role == Role::User && m.turn.is_none())
-        .expect("precondition: an in-flight user prompt must exist");
-    assert!(
-        quecto::application::sessions::use_cases::rewind_conversation::rewind_to_message_index_for_test(
-            messages, idx
-        ),
-        "precondition: rewind to a user-message boundary must succeed"
-    );
-}
-
-#[then("the collapsed conversation messages survive the rewind with non-empty content")]
-fn then_collapsed_messages_survive_rewind(world: &mut QuectoWorld) {
-    let collapsed_before = world
-        .context_rewind_collapsed_before
-        .expect("the collapse Given must have recorded its count");
-    let messages = world.context_messages.as_ref().unwrap();
-    let retained: Vec<&Message> = messages
-        .iter()
-        .filter(|m| m.role == Role::User || m.role == Role::Assistant)
-        .collect();
-    // Positive control: the rewind removed only the in-flight prompt — every
-    // previously collapsed conversation message must still be present (a fix
-    // that deletes collapsed turns outright must fail here).
-    assert_eq!(
-        retained.len(),
-        collapsed_before,
-        "all {collapsed_before} collapsed conversation messages must survive \
-         the rewind; retained: {:?}",
-        retained.iter().map(|m| &m.content).collect::<Vec<_>>()
-    );
-    for (i, m) in retained.iter().enumerate() {
-        assert!(
-            !m.content.is_empty(),
-            "rewind must not blank collapsed conversation messages into \
-             empty provider turns (message {i}, role {:?})",
-            m.role
-        );
-        assert!(
-            !m.content.contains("recall("),
-            "no dangling recall pointers may survive the rewind (the spill \
-             store is wiped); message {i}: {}",
-            m.content
-        );
-        assert!(
-            !m.is_collapsed,
-            "retained messages are no longer recall stubs after rewind"
-        );
-    }
 }
 
 #[when("the next provider context is prepared")]

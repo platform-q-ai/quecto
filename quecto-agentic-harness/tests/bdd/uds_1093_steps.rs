@@ -27,7 +27,11 @@ use std::time::{Duration, Instant};
 
 const ISSUE_1093_SESSION: &str = "issue-1093";
 const ISSUE_1093_SPILL_ID: &str = "turn1:msg:assistant";
-const ISSUE_1093_FULL: &str = "full spilled content for issue 1093";
+/// The seeded reply: long enough that its recall stub is cheaper than it,
+/// so the emergency ladder stubs it in place (#2414).
+fn issue_1093_full() -> String {
+    "full spilled content for issue 1093. ".repeat(60)
+}
 
 #[derive(Debug)]
 struct Issue1093SeedProvider;
@@ -43,7 +47,7 @@ impl LlmProvider for Issue1093SeedProvider {
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
         Box::pin(async {
             Ok(LlmResponse {
-                content: Some(ISSUE_1093_FULL.into()),
+                content: Some(issue_1093_full()),
                 tool_calls: vec![],
                 usage: None,
                 stop_reason: None,
@@ -123,7 +127,8 @@ fn then_get_message_carries_spilled_content(world: &mut QuectoWorld) {
         .and_then(|c| c.as_str())
         .unwrap_or("");
     assert_eq!(
-        content, ISSUE_1093_FULL,
+        content,
+        issue_1093_full(),
         "unexpected get_message content: {resp}"
     );
 }
@@ -191,9 +196,11 @@ fn seed_collapsed_session(world: &mut QuectoWorld, include_spill: bool) {
             .await
             .expect("clear prior spill");
 
-        // Run the real agent-loop spill + count-collapse path. No test-created
-        // spill id, entry, or collapsed shape: production assigns the id,
-        // persists the full content under the active key, and emits the stub.
+        // Run the real agent-loop spill + emergency-ladder path (#2414). No
+        // test-created spill id, entry, or collapsed shape: production
+        // assigns the id, persists the full content under the active key,
+        // and emits the stub. Under a 300-token ceiling no cut can be made
+        // (see below), so the emergency ladder stubs the reply in place.
         let mut agent = AgentLoopImpl::new(AgentLoopConfig {
             provider: Arc::new(Issue1093SeedProvider),
             tool_registry: Box::new(ToolRegistryImpl::new()),
@@ -204,16 +211,13 @@ fn seed_collapsed_session(world: &mut QuectoWorld, include_spill: bool) {
                 spill_store.clone(),
             )),
             session_key: session_key.clone(),
-            context_collapse_after_tool_calls: u32::MAX,
-            max_context_tokens: 190_000,
+            max_context_tokens: 300,
             progress_callback: None,
             streaming: false,
             effort: None,
             audit_log: None,
             pin_recent_turns: 0,
-            context_collapse_after_messages: 0,
-            large_result_collapse:
-                quecto::domain::large_result_collapse::LargeResultCollapse::DISABLED,
+            context_marks: Default::default(),
             model_context_window: None,
             tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
         });
@@ -222,9 +226,9 @@ fn seed_collapsed_session(world: &mut QuectoWorld, include_spill: bool) {
             .process(&mut messages)
             .await
             .expect("production seed turn");
-        // Collapse is applied before a provider request, so run a second turn
-        // to collapse the first turn's creation-time-spilled assistant reply.
-        messages.push(Message::user("collapse the prior reply"));
+        // A second run with no new prompt: the reply is the only exchange
+        // after the brief and the newest, kept whole by any cut, so no cut
+        // can be made and the emergency ladder stubs it in place.
         agent
             .process(&mut messages)
             .await
@@ -258,7 +262,7 @@ fn seed_collapsed_session(world: &mut QuectoWorld, include_spill: bool) {
     world._mc_persist = true;
     world.mc_mode = true;
     world.mc_connected_clients = vec![1];
-    world._bounded_expected_body = Some(ISSUE_1093_FULL.into());
+    world._bounded_expected_body = Some(issue_1093_full());
 }
 
 fn start_issue_1093_agent(world: &mut QuectoWorld) {
@@ -323,15 +327,13 @@ fn spawn_issue_1093_agent(world: &mut QuectoWorld, base: &std::path::Path) {
         temperature: config.agents.defaults.temperature,
         retention: Some(retention.context.clone()),
         session_key: session_key.clone(),
-        context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: config.agents.defaults.max_context_tokens,
         progress_callback: None,
         streaming: false,
         effort: None,
         audit_log: None,
         pin_recent_turns: 2,
-        context_collapse_after_messages: u32::MAX,
-        large_result_collapse: quecto::domain::large_result_collapse::LargeResultCollapse::DISABLED,
+        context_marks: Default::default(),
         model_context_window: None,
         tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     });

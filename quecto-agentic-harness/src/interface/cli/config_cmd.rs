@@ -267,3 +267,8 @@ fn cmd_trust(
 #[cfg(test)]
 #[path = "config_cmd_tests.rs"]
 mod tests;
+
+// #2414 review H1: a configuration that still sets removed keys.
+#[cfg(test)]
+#[path = "config_cmd_removed_keys_tests.rs"]
+mod removed_keys_tests;

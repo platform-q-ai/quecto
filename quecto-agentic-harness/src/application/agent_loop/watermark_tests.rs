@@ -1,7 +1,7 @@
-//! #2403: the watermark context's pass on the agent loop: no mid-history
-//! edit, one cut at the high mark with the head byte-identical, the
-//! archive and its recall, the chained archive, the storm guard and its
-//! reset, an interrupted pass, and the default mode unchanged.
+//! #2403: the watermark context's pass on the agent loop, the only context
+//! mode (#2414): no mid-history edit, one cut at the high mark with the
+//! head byte-identical, the archive and its recall, the chained archive,
+//! the storm guard and its reset, and an interrupted pass.
 
 use super::ctx_mgmt_tests::MemSpillStore;
 use crate::application::agent_loop::tests::{MockProvider, MockRegistry};
@@ -9,9 +9,8 @@ use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::sessions::dto::retained_context::{RecallOutcome, RecallQuery};
 use crate::application::sessions::ports::ContextSpillStore;
 use crate::application::sessions::use_cases::RecallContext;
+use crate::domain::conversation::UserKind;
 use crate::domain::conversation::watermark::Watermark;
-use crate::domain::conversation::{ContextMode, UserKind};
-use crate::domain::large_result_collapse::LargeResultCollapse;
 use crate::domain::message::{Message, ToolCall};
 use crate::domain::session::SpillEntry;
 use crate::domain::session_identity::{SessionIdentity, SpillId};
@@ -24,8 +23,8 @@ pub(super) const HIGH: usize = 20_000;
 pub(super) const LOW: usize = 6_000;
 const SESSION: &str = "watermark-test";
 
-pub(super) fn watermark() -> ContextMode {
-    ContextMode::Watermark(Watermark::new(HIGH, LOW).unwrap())
+pub(super) fn watermark() -> Watermark {
+    Watermark::new(HIGH, LOW).unwrap()
 }
 
 /// About `tokens` estimated tokens of prose, tagged.
@@ -41,20 +40,19 @@ pub(super) fn total(messages: &[Message]) -> usize {
     messages.iter().map(Message::estimated_tokens).sum()
 }
 
-/// An agent whose every mid-history rule fires at once in the default
-/// mode: two tool results, three messages, a 500-token result seen once.
-fn agent(store: Arc<dyn ContextSpillStore>, mode: Option<ContextMode>) -> AgentLoopImpl {
-    agent_under(store, mode, 1_000_000, None)
+/// An agent at `marks` (`None`: the owner's) under a 1M budget.
+fn agent(store: Arc<dyn ContextSpillStore>, marks: Option<Watermark>) -> AgentLoopImpl {
+    agent_under(store, marks, 1_000_000, None)
 }
 
 /// [`agent`] under a configured budget and a model window.
 pub(super) fn agent_under(
     store: Arc<dyn ContextSpillStore>,
-    mode: Option<ContextMode>,
+    marks: Option<Watermark>,
     max_context_tokens: usize,
     model_context_window: Option<usize>,
 ) -> AgentLoopImpl {
-    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+    AgentLoopImpl::new(AgentLoopConfig {
         provider: Arc::new(MockProvider::new(vec![])),
         tool_registry: Box::new(MockRegistry::new()),
         model: "test-model".to_string(),
@@ -62,25 +60,42 @@ pub(super) fn agent_under(
         temperature: 0.7,
         retention: Some(crate::composition::retention::context_retention_over(store)),
         session_key: SESSION.to_string(),
-        context_collapse_after_tool_calls: 2,
         max_context_tokens,
         progress_callback: None,
         streaming: false,
         effort: None,
         audit_log: None,
         pin_recent_turns: 1,
-        context_collapse_after_messages: 3,
-        large_result_collapse: LargeResultCollapse {
-            over_tokens: 500,
-            after_turns: 1,
-        },
+        context_marks: marks.unwrap_or_default(),
         model_context_window,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
-    });
-    if let Some(mode) = mode {
-        agent.set_context_mode(mode);
-    }
-    agent
+    })
+}
+
+/// #2414: a loop as every composition builds it by default: the owner's
+/// marks and the configured defaults, under `max_context_tokens`.
+pub(super) fn default_agent(
+    store: Arc<dyn ContextSpillStore>,
+    max_context_tokens: usize,
+) -> AgentLoopImpl {
+    AgentLoopImpl::new(AgentLoopConfig {
+        provider: Arc::new(MockProvider::new(vec![])),
+        tool_registry: Box::new(MockRegistry::new()),
+        model: "test-model".to_string(),
+        max_tokens: 1024,
+        temperature: 0.7,
+        retention: Some(crate::composition::retention::context_retention_over(store)),
+        session_key: SESSION.to_string(),
+        max_context_tokens,
+        progress_callback: None,
+        streaming: false,
+        effort: None,
+        audit_log: None,
+        pin_recent_turns: 2,
+        context_marks: Default::default(),
+        model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+    })
 }
 
 pub(super) struct Rig {
@@ -90,10 +105,10 @@ pub(super) struct Rig {
 }
 
 impl Rig {
-    pub(super) fn new(mode: Option<ContextMode>) -> Self {
+    pub(super) fn new(marks: Option<Watermark>) -> Self {
         let store = Arc::new(MemSpillStore::default());
         Self {
-            agent: agent(store.clone(), mode),
+            agent: agent(store.clone(), marks),
             store,
             calls: 0,
         }
@@ -206,7 +221,7 @@ async fn a_cut_at_the_high_mark_keeps_the_head_byte_identical_and_reaches_the_lo
 /// proportion, so the cut comes at the ceiling and frees the same share.
 #[tokio::test]
 async fn the_ceiling_lowers_both_marks() {
-    let marks = ContextMode::Watermark(Watermark::new(100_000, 30_000).unwrap());
+    let marks = Watermark::new(100_000, 30_000).unwrap();
     for (budget, window) in [(20_000, None), (1_000_000, Some(24_000))] {
         let mut rig = Rig::watermark();
         rig.agent = agent_under(rig.store.clone(), Some(marks), budget, window);
@@ -228,88 +243,46 @@ async fn the_ceiling_lowers_both_marks() {
 }
 
 /// Final review L3: where no cut can bring the request under the ceiling
-/// (here the pinned brief alone is over it), watermark mode falls back to
-/// the default ladder for that request: it never sends over the ceiling
-/// where the default mode would not.
+/// (here the pinned brief alone is over it), the emergency ladder runs for
+/// that request: nothing is sent over the ceiling.
 #[tokio::test]
-async fn watermark_mode_never_sends_over_the_ceiling_where_the_default_mode_would_not() {
-    let marks = ContextMode::Watermark(Watermark::new(100_000, 30_000).unwrap());
-    for mode in [Some(marks), None] {
-        let mut rig = Rig::new(None);
-        rig.agent = agent_under(rig.store.clone(), mode, 20_000, None);
-        let mut answer = Message::assistant(text("the first answer", 100), vec![]);
-        answer.turn = Some(1);
-        let mut messages = vec![
-            Message::system(text("system", 300)),
-            prompt(text("a brief over the ceiling", 30_000)),
-            answer,
-            prompt(text("latest", 100)),
-        ];
-        rig.exchange(&mut messages, 300).await;
-        let sent = rig.pass(&mut messages).await;
-        assert!(sent <= 20_000, "{mode:?}: {sent} over the 20k ceiling");
-    }
+async fn no_request_is_sent_over_the_ceiling() {
+    let mut rig = Rig::new(None);
+    rig.agent = agent_under(
+        rig.store.clone(),
+        Some(Watermark::new(100_000, 30_000).unwrap()),
+        20_000,
+        None,
+    );
+    let mut answer = Message::assistant(text("the first answer", 100), vec![]);
+    answer.turn = Some(1);
+    let mut messages = vec![
+        Message::system(text("system", 300)),
+        prompt(text("a brief over the ceiling", 30_000)),
+        answer,
+        prompt(text("latest", 100)),
+    ];
+    rig.exchange(&mut messages, 300).await;
+    let sent = rig.pass(&mut messages).await;
+    assert!(sent <= 20_000, "{sent} over the 20k ceiling");
 }
 
-/// No mid-history edit: below H nothing in the conversation changes in
-/// watermark mode, where the same dials collapse earlier results and
-/// messages in the default mode.
+/// No mid-history edit: below H nothing in the conversation changes, where
+/// the removed dials (#2414) collapsed earlier results and messages.
 #[tokio::test]
-async fn below_the_high_mark_watermark_mode_edits_nothing_the_default_rules_would() {
-    async fn session(rig: &mut Rig) -> Vec<Message> {
-        let mut messages = rig.opened().await;
-        for n in 0..6 {
-            rig.exchange(&mut messages, 800).await;
-            let mut answer = Message::assistant(text(&format!("answer {n}"), 100), vec![]);
-            answer.turn = Some(1);
-            messages.push(answer);
-        }
-        messages
-    }
+async fn below_the_high_mark_nothing_is_edited() {
     let mut rig = Rig::watermark();
-    let mut messages = session(&mut rig).await;
+    let mut messages = rig.opened().await;
+    for n in 0..6 {
+        rig.exchange(&mut messages, 800).await;
+        let mut answer = Message::assistant(text(&format!("answer {n}"), 100), vec![]);
+        answer.turn = Some(1);
+        messages.push(answer);
+    }
     let before = snapshot(&messages);
     assert!(total(&messages) < HIGH);
     rig.pass(&mut messages).await;
     assert_eq!(snapshot(&messages), before, "nothing is edited");
-
-    let mut default = Rig::new(None);
-    let mut messages = session(&mut default).await;
-    default.pass(&mut messages).await;
-    assert!(
-        messages.iter().filter(|m| m.is_collapsed).count() > 0,
-        "the default rules collapse on the same dials"
-    );
-}
-
-/// The default mode is unchanged: switching it on explicitly prunes
-/// exactly as an agent never switched does, and an agent starts in it.
-#[tokio::test]
-async fn the_default_mode_prunes_as_before() {
-    async fn pruned(mut rig: Rig) -> Vec<(bool, String)> {
-        let mut messages = rig.opened().await;
-        for n in 0..8 {
-            rig.exchange(&mut messages, 900).await;
-            let mut answer = Message::assistant(text(&format!("answer {n}"), 120), vec![]);
-            answer.turn = Some(1);
-            messages.push(answer);
-        }
-        rig.pass(&mut messages).await;
-        messages
-            .iter()
-            .map(|m| (m.is_collapsed, m.content.clone()))
-            .collect()
-    }
-    let never_switched = Rig::new(None);
-    assert_eq!(never_switched.agent.context_mode(), ContextMode::Default);
-    let unswitched = pruned(never_switched).await;
-    let switched = pruned(Rig::new(Some(ContextMode::Default))).await;
-    assert_eq!(unswitched, switched);
-    let collapsed = unswitched
-        .iter()
-        .filter(|(collapsed, _)| *collapsed)
-        .count();
-    assert_eq!(collapsed, 8, "the dials collapse as they always have");
 }
 
 #[tokio::test]
@@ -473,22 +446,14 @@ async fn a_rewind_after_the_stub_leaves_no_dangling_archive_and_resets_the_guard
 }
 
 /// Review L1: feedback after a reply cut off before anything visible goes
-/// in as its own message in watermark mode: the prompt already sent, and
-/// pinned, is never edited.
+/// in as its own message: the prompt already sent, and pinned, is never
+/// edited.
 #[tokio::test]
-async fn feedback_never_edits_a_sent_prompt_in_watermark_mode() {
-    use super::super::agent_loop_errors::{Feedback, append_feedback};
-    for (mode, expected) in [
-        (watermark(), Feedback::Added),
-        (ContextMode::Default, Feedback::Merged),
-    ] {
-        let mut messages = vec![prompt("the prompt".to_string())];
-        let how = append_feedback(&mut messages, "feedback".to_string(), 1, mode);
-        assert_eq!(how, expected, "{mode:?}");
-        assert_eq!(messages[0].user_kind, UserKind::Prompt);
-    }
+async fn feedback_never_edits_a_sent_prompt() {
+    use super::super::agent_loop_errors::append_feedback;
     let mut messages = vec![prompt("the prompt".to_string())];
-    append_feedback(&mut messages, "feedback".to_string(), 1, watermark());
+    append_feedback(&mut messages, "feedback".to_string(), 1);
+    assert_eq!(messages[0].user_kind, UserKind::Prompt);
     assert_eq!(
         messages[0].content, "the prompt",
         "the sent prompt is unchanged"
@@ -563,4 +528,33 @@ async fn an_interrupted_pass_leaves_no_half_applied_cut() {
     assert!(interrupted.is_err(), "the pass waits on the archive");
     assert_eq!(snapshot(&messages), before, "nothing was cut");
     assert!(stubs(&messages).is_empty());
+}
+
+/// #2414: watermark is the only context mode. A loop built with no mode
+/// switched on runs the watermark pass: under its ceiling the owner's
+/// marks scale down to it, and a request over the high mark is cut once,
+/// down to the low mark, with nothing collapsed or stubbed in place.
+#[tokio::test]
+async fn a_loop_built_with_no_mode_set_runs_the_watermark_pass() {
+    let mut rig = Rig::new(None);
+    rig.agent = default_agent(rig.store.clone(), HIGH);
+    let mut messages = rig.opened().await;
+    let head = snapshot(&messages);
+    for _ in 0..10 {
+        rig.exchange(&mut messages, 2_000).await;
+    }
+    assert!(total(&messages) >= HIGH);
+    rig.pass(&mut messages).await;
+    assert_eq!(stubs(&messages).len(), 1, "one cut, one stub");
+    assert_eq!(
+        snapshot(&messages[..head.len()]),
+        head,
+        "the head is byte-identical"
+    );
+    assert!(
+        messages.iter().all(|m| !m.is_collapsed),
+        "nothing was collapsed in place"
+    );
+    // The owner's 256k/70k, scaled to the 20k ceiling.
+    assert!(total(&messages) <= 70_000 * HIGH / 256_000);
 }

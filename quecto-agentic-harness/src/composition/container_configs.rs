@@ -174,6 +174,7 @@ fn resolve(
             }
             EffectiveConfigError::GlobalOnlyKey { .. }
             | EffectiveConfigError::Invalid { .. }
+            | EffectiveConfigError::RemovedKeys(_)
             | EffectiveConfigError::InvalidMerge { .. } => error.to_string(),
         })?;
     let diagnostics = effective.sources.diagnostics();

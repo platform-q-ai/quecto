@@ -584,200 +584,45 @@ an unavailable action.
 
 ## Context management
 
-As conversations grow, the agent manages context automatically:
+As conversations grow, the agent keeps its context within its ceiling
+automatically, with one mechanism: the **watermark context** (#2401). It is
+the only context mode (#2414): the old pruning rules (the tool-call and
+message count dials, superseded swarm summaries, the size-aware collapse)
+and the `context_mode` switch are gone, and a configuration that still sets
+one of their keys is refused at load, naming it (see
+[Configuration](#configuration)).
 
-### Context window
+**Upgrading.** Restart running sessions after installing a build with
+#2414: a session started by an older build hands every sub-agent it
+launches `--inherited-context-mode`, which this build refuses as an
+unknown flag.
 
-The agent tracks estimated token usage against an application-level context
-budget. When the conversation exceeds `max_context_tokens` (configurable,
-default `200000`), the agent applies context pruning. The estimate prices
-text by class: prose at about 4 characters a token, digit-bearing runs
-(numbers, hex, UUIDs, log columns) at about 2, long mixed-case runs with
-digits (base64, JWTs, keys) at about 1.4, and non-ASCII at 1 each. Once the
-provider reports the size of a prompt, the ceiling decides on that count:
-the budget is scaled by the provider's figure over the estimate (clamped to
-1x-4x) until the next report, a model or provider change, or a session
-switch.
+### The watermark context
 
-1. **Spilling at creation**: Tool outputs *and* conversation (user/assistant)
-   messages are written to the session's retention namespace when they are
-   created, so anything later collapsed or dropped can still be recovered with
-   the `recall` tool
-2. **Tool output collapsing**: Once the session accumulates more than
-   `context_collapse_after_tool_calls` tool calls, the oldest tool outputs are
-   replaced with compact recall stubs, down to the dial's low-water mark
-   (75%, rounded up: 38 of 50) in one batch. Results the model has not seen
-   yet (after the last assistant message) are never collapsed. Dials of 1 to
-   3 get no hysteresis: rounding up makes their mark the dial itself. The trigger counts tool calls
-   cumulatively across prompts within a session. Current config default: `50`.
-   Set it to `4294967295` (`u32::MAX`) to disable collapse.
-3. **Conversation message collapsing**: An independent dial,
-   `context_collapse_after_messages`, keeps the most recent N conversation
-   messages in full and replaces older ones with one-line recall stubs; once
-   N is exceeded it collapses down to the same 75% low-water mark.
-   Exempt: the system prompt, spill manifest, in-flight user prompt, and the
-   `pin_recent_turns` most recent turns. Defaults to 50 (mirroring the
-   tool-call collapse default); set to `4294967295` (`u32::MAX`) to disable.
-4. **Demotion ladder**: When the conversation still exceeds the effective
-   budget, messages are demoted down a ladder — full content is collapsed to
-   recall stubs first (oldest first), and only if the budget is still
-   exceeded are stubs removed entirely (their content stays on disk). Once
-   the budget is crossed, stubbing continues down to 75% of it, not just back
-   under it. Stubs are removed only when stubbing cannot meet the budget
-   itself, and then down to 75% when the pinned set leaves that reachable,
-   otherwise only down to the budget. Pinned
-   and tail-pinned (`pin_recent_turns`, default `2`) content is never
-   demoted; if the pinned set alone exceeds the budget, a
-   `context_prune` warning is logged and the `ContextPruned` audit event
-   records `budget_unmet`. Every `context_pruned` event counts what the
-   prune did: `messages_collapsed` (conversation messages the count-based
-   collapse, `context_collapse_after_messages`, turned into recall stubs),
-   `ladder_stubbed` (messages the ceiling ladder's first rung collapsed to
-   recall stubs), `messages_dropped`, `tool_results_collapsed`, and
-   `tokens_before` / `tokens_after`, `snapshots_superseded` and
-   `large_results_collapsed` (see below) and `ceiling_tokens` (the effective budget in force, in provider
-   tokens: the unit of `max_context_tokens`, before the ladder converts it
-   to estimate units at the observed scale); logs written before a count
-   existed read it as 0. The second rung removes whole exchanges only: an
-   assistant message with tool calls and all of its results go or stay
-   together, and a kept message keeps its exchange, so no request carries
-   a call without its result or a result without its call.
-5. **Superseded snapshots** (#2342): a tool result its tool marks as a
-   whole snapshot of some state (today only a full swarm `summary` answer)
-   is superseded by any newer one. Before the dials run, every older
-   snapshot collapses to its recall stub, and the newest one (with the call
-   that asked for it) is exempt from every dial, so the latest state always
-   stays in full. The cursor fast path's `unchanged` answer, an `inbox`
-   answer (it can hold the only copy of a message) and an error are never
-   snapshots. A superseded snapshot that was never spilled stays in full
-   (its stub could not be recalled), and one the model has not seen yet
-   (two summaries in one parallel batch) is superseded only once it has.
-   Only bundled tools can mark one. The mark is not persisted: a resumed
-   session supersedes nothing it loaded.
-6. **Large results** (#2348): a count dial is blind to size, so for a
-   **swarm member** a tool result over `context_collapse_large_result_tokens`
-   (`2000` estimated tokens unless set) collapses to its recall stub once
-   the model has seen it for `context_collapse_large_result_after_turns`
-   (`3` unless set) turns — three model responses have followed it —
-   whatever the count dials say. **For every other agent it is off unless
-   `context_collapse_large_result_tokens` is set**; set, it applies to every
-   agent. The evidence behind it is swarm-only: in a coding session the
-   model edits against whole-file reads well over 2k tokens, so the rule
-   should be reconsidered there once `llm_turn_end.cached_input_tokens`
-   and `cache_write_tokens` data exist. It engages when the process joins
-   a swarm, with the swarm ceiling. It runs after superseded snapshots and
-   before the dials, which then count only what is still in full. A
-   result the model has not seen, one never spilled, the newest snapshot
-   of a state, one whose stub would be no smaller, a `recall` answer (the
-   model asked for it back; collapsing it again would start a recall loop)
-   and a result carrying images (a stub drops them, and recall cannot
-   restore them) all stay in full. Only the result's content becomes a
-   stub: every call keeps its result. Each prune that collapses one counts
-   it in `context_pruned.large_results_collapsed`. Only this size rule is
-   swarm-only by default. **For every agent**, whenever any rule (a count
-   dial, the ladder, a superseded snapshot or the size rule) collapses or
-   drops a result, its tool is told: the `read` tool forgets that file's
-   cached delivery, so re-reading an unchanged file answers its content
-   again instead of the `[unchanged since read …]` marker (which itself
-   says to pass `force:true` if you no longer have its full content).
-   In the owner's swarm sessions (#2342) one 17k-token bash output was
-   31% of a coordinator's input and one 6k-token `docs` read 24% of
-   another's; simulated on those sessions at the shipped tool dial of 50,
-   the rule cuts their input by 25%, 17% and 33%, and the `docs` read's
-   share falls to 2.5%. 2000 marks the top 3-6% of their results; 1000
-   saved more (37-40%) but stubs the 1-2k reads a worker edits against
-   and doubles the prefix rewrites. Env:
-   `QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_TOKENS`,
-   `QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_AFTER_TURNS` (`0` is refused: an
-   unseen result is never stubbed). Set the size to
-   `18446744073709551615` to switch the rule off.
-
-The effective budget is the smaller of `max_context_tokens` and what the
-active model's context window leaves the prompt when the model registry
-declares a window (#2405). What the reply needs beside the prompt depends
-on how the provider bounds it:
-
-- OpenAI (`openai-api`, `openai-oauth`): the provider fixes the input limit
-  at the window less the declared output cap (the 400k Codex window is 272k
-  of input beside a 128k reply), and the ceiling keeps 5% of that limit
-  free for estimator drift, as Codex does (258,400 for Codex). An OpenAI
-  entry that declares no output cap (`gpt-5.3-codex-spark`) has no known
-  input limit and uses the shared rule below.
-- Every other provider (Anthropic, OpenAI-compatible endpoints, local
-  servers) checks the prompt plus the requested `max_tokens`, so the reply
-  reserves what a request can ask for: the effective `max_tokens`, or up to
-  twice it within the declared cap after an output-limit cut-off.
-
-Where the window is shared with the request, the prompt always keeps at
-least half the window: a declared cap that would leave less is clamped.
-Under a fixed input limit the ceiling stays the provider's limit, however
-small. Either way the log warns once for that model when the reply's
-reserve leaves the prompt under half the window. A model that
-declares no window keeps `max_context_tokens`, and the log says so once for
-that model, at its first request. Once the
-process takes part in a swarm (it created a run, or joined one), the budget
-is also capped at `swarm_max_context_tokens` (default `300000`; #2342 introduced it at `48000`): swarm
-members work at 30-90k tokens, where the 200k budget never engages, and
-one large tool output otherwise rides every later request until a count
-dial reaches it. The cap only lowers the budget; the same ladder and
-low-water batching apply, and everything stubbed stays recallable. The cap
-never disengages: participation in a swarm is never revoked, and neither a
-model switch, a new window, a new session nor a later configuration raises
-it for the life of the process. It bounds only what the member keeps: the
-room a raised output limit (#2124) may use is still computed from
-`max_context_tokens` and the model's window. Set it with
-`agents.defaults.swarm_max_context_tokens` or
-`QUECTO_SWARM_MAX_CONTEXT_TOKENS`; `0` is refused at load. To switch the cap
-off, set it at or above `max_context_tokens`.
-
-Every collapse or demotion rewrites a message early in the conversation, so
-the provider's prompt cache misses from that message on. Pruning down to the
-low-water mark (#2213) leaves a quarter of each dial as headroom: the turns
-that follow append without touching the prefix, and the cache miss is paid
-once per batch instead of on every turn. Below a dial nothing is pruned.
-To weigh a prune's saving against the miss it costs, each `llm_turn_end`
-event-log record carries `cached_input_tokens` (the share of `input_tokens`
-the provider's cache served: Anthropic `cache_read_input_tokens`, OpenAI and
-Codex `cached_tokens`) and `cache_write_tokens` (the share it wrote to the
-cache, Anthropic `cache_creation_input_tokens`: the signal of a rewritten
-prefix), each absent when the provider reports none (#2348).
-
-### Watermark mode (#2401)
-
-The rules above edit the middle of the history: a collapse, a superseded
-snapshot or a ladder stub rewrites an early message, and the provider's
-prompt cache misses from it on. **Watermark mode** never does. The context
-only grows at the end; when the request reaches a high mark (H), one deep cut
-takes it down to a low mark (L), and nothing earlier changes until the next
-cut. On a real 256k → 70k run the only cache miss was the cut itself (97.95%
-of the run's input cached, 98.54% after the cut). It is off by default.
-
-**Switching it on.** Set `agents.defaults.context_mode` to `"watermark"`:
-
-```bash
-quecto config set --global agents.defaults.context_mode '"watermark"'
-# or, for one process and the agents it launches:
-QUECTO_CONTEXT_MODE=watermark quecto-tui
-```
+A provider's prompt cache matches the longest identical prefix of a
+request, so the context only grows at the end. When the request reaches a
+high mark (H), one deep cut takes it down to a low mark (L), and nothing
+earlier changes until the next cut. On a real 256k → 70k run the only cache
+miss was the cut itself (97.2% of the run's input cached, 97.0% after the
+cut; #2407).
 
 | Key | Env | Default |
 |---|---|---|
-| `context_mode` | `QUECTO_CONTEXT_MODE` | `"default"` (the rules above); `"watermark"` |
 | `context_high_tokens` | `QUECTO_CONTEXT_HIGH_TOKENS` | `256000` |
 | `context_low_tokens` | `QUECTO_CONTEXT_LOW_TOKENS` | `70000` |
 
-The load refuses an unknown mode, a mark that is not a positive whole number,
-and marks with L not below H or closer than a tenth of H (a cut must save at
-least H/10, so L ≤ 0.9·H). The marks are checked in the default mode too. The
-mode in force and where it came from (own configuration, own environment,
-inherited, default) are logged under `context_prune` when the agent starts.
+The load refuses a mark that is not a positive whole number, and marks with
+L not below H or closer than a tenth of H (a cut must save at least H/10, so
+L ≤ 0.9·H). Every agent runs it the same way: a CLI run, a UDS parent, a
+sub-agent and a swarm member alike, each with its own configuration's marks.
 
-**Sub-agents and swarm members.** Every agent the harness launches, locally or
-in a container, is started with `--inherited-context-mode` (`default`, or
-`watermark:<high>:<low>`): the launcher's mode and marks in force. The child's
-own configuration or environment wins, field by field: a child that sets its
-own mode keeps it, and one that sets only `context_low_tokens` keeps that mark
-and inherits the rest. Tool subprocesses (`bash`) get no context mode.
+**Spilling at creation.** Tool outputs *and* conversation (user/assistant)
+messages are written to the session's retention namespace when they are
+created, so anything a cut archives, or the emergency ladder stubs or drops,
+can be recovered with the `recall` tool. Whatever is decided about a tool
+result (a tool bounding a large output, say) is decided once, when it is
+appended; nothing about it changes later except at a cut or by the
+emergency ladder.
 
 **The ceiling still wins.** H is never above the effective budget (the lowest
 of `max_context_tokens`, default `300000`, what the model's window leaves the
@@ -786,7 +631,13 @@ below H, H becomes the budget and L scales by the same ratio: under a 200k
 budget the marks are 200k and 54,687. The marks and the budget are set in
 provider tokens; the harness converts them to its own estimate units at the
 provider-observed scale and compares them with the request's raw estimate,
-tool definitions included.
+tool definitions included. The estimate prices text by class: prose at about
+4 characters a token, digit-bearing runs (numbers, hex, UUIDs, log columns)
+at about 2, long mixed-case runs with digits (base64, JWTs, keys) at about
+1.4, and non-ASCII at 1 each. Once the provider reports the size of a
+prompt, the scale is the provider's figure over the estimate (clamped to
+1x-4x) until the next report, a model or provider change, or a session
+switch.
 
 **The cut.** Before a request whose size reached H, the cut keeps in place
 every system message, the first user message (the brief), the latest prompt
@@ -796,9 +647,22 @@ whole even when it alone is over L). Cuts fall only between exchanges, so no
 tool call loses its result. Everything else is archived. After a cut, the
 next one waits until the messages have grown by (H − L)/2, so one exchange
 over H does not cut on every turn; over the ceiling that guard gives way. A
-cut that would save under H/10 is not made below the ceiling. If no cut can
-bring the request under the ceiling (the pinned brief alone is over it), the
-default ladder runs for that request, the one in-place edit the mode allows.
+cut that would save under H/10 is not made below the ceiling.
+
+**The emergency ladder.** If no cut can bring the request under the ceiling
+(the pinned brief alone is over it), the ladder runs for that request, the
+one in-place edit the harness makes outside a cut, logged under
+`context_prune` and recorded as `context_pruned` with `watermark_fallback`.
+Full content is collapsed to recall stubs first (oldest first), and only if
+the ceiling is still exceeded are stubs removed entirely (their content
+stays on disk); once crossed, stubbing continues down to 75% of the ceiling.
+The system prompt, the spill manifest, the in-flight prompt and the
+`pin_recent_turns` most recent turns (default `2`) are never demoted; if they
+alone exceed the ceiling, `budget_unmet` is recorded. The second rung removes
+whole exchanges only, so no request carries a call without its result or a
+result without its call. Whenever a cut or the ladder takes a result out of
+the context, its tool is told: the `read` tool forgets that file's cached
+delivery, so re-reading an unchanged file answers its content again.
 
 **Archive and recall.** The cut's messages go to session memory under one
 index entry, `archive` (then `archive:2`, `archive:3`...). The stub names it:
@@ -833,18 +697,68 @@ provider tokens (1000 until the provider has reported a prompt size).
   context has to grow by only about H/10 more (or a new exchange has to
   open a boundary) before the cut saves enough and is made.
 - A cut is never a `context_pruned` record. The emergency ladder's is, with
-  `watermark_fallback: true`, measured from the size the cut (if any) left.
-  Watermark mode also writes `context_pruned` with `watermark_fallback: false`
-  and `budget_unmet: true` when the tool definitions fill the budget or the
-  model's window, as the default mode does; it counts no cut.
+  `watermark_fallback: true`, measured from the size the cut (if any) left:
+  `ladder_stubbed`, `messages_dropped`, `tokens_before` / `tokens_after`,
+  `budget_unmet` and `ceiling_tokens` (the effective budget in force, in
+  provider tokens). A `context_pruned` with `watermark_fallback: false` and
+  `budget_unmet: true` is written on every request while the tool
+  definitions exceed three quarters of the budget (the messages keep the
+  quarter floor above it), though no request goes over the ceiling; it
+  counts no cut. (Logs written before #2414 may carry the removed rules'
+  counts; they are ignored when read.)
+
+### The effective budget
+
+The effective budget is the smaller of `max_context_tokens` and what the
+active model's context window leaves the prompt when the model registry
+declares a window (#2405). What the reply needs beside the prompt depends
+on how the provider bounds it:
+
+- OpenAI (`openai-api`, `openai-oauth`): the provider fixes the input limit
+  at the window less the declared output cap (the 400k Codex window is 272k
+  of input beside a 128k reply), and the ceiling keeps 5% of that limit
+  free for estimator drift, as Codex does (258,400 for Codex). An OpenAI
+  entry that declares no output cap (`gpt-5.3-codex-spark`) has no known
+  input limit and uses the shared rule below.
+- Every other provider (Anthropic, OpenAI-compatible endpoints, local
+  servers) checks the prompt plus the requested `max_tokens`, so the reply
+  reserves what a request can ask for: the effective `max_tokens`, or up to
+  twice it within the declared cap after an output-limit cut-off.
+
+Where the window is shared with the request, the prompt always keeps at
+least half the window: a declared cap that would leave less is clamped.
+Under a fixed input limit the ceiling stays the provider's limit, however
+small. Either way the log warns once for that model when the reply's
+reserve leaves the prompt under half the window. A model that
+declares no window keeps `max_context_tokens`, and the log says so once for
+that model, at its first request. Once the
+process takes part in a swarm (it created a run, or joined one), the budget
+is also capped at `swarm_max_context_tokens` (default `300000`; #2342
+introduced it at `48000`). The cap only lowers the budget, and the
+watermark marks scale down with it. The cap
+never disengages: participation in a swarm is never revoked, and neither a
+model switch, a new window, a new session nor a later configuration raises
+it for the life of the process. It bounds only what the member keeps: the
+room a raised output limit (#2124) may use is still computed from
+`max_context_tokens` and the model's window. Set it with
+`agents.defaults.swarm_max_context_tokens` or
+`QUECTO_SWARM_MAX_CONTEXT_TOKENS`; `0` is refused at load. To switch the cap
+off, set it at or above `max_context_tokens`.
+
+Each `llm_turn_end` event-log record carries `cached_input_tokens` (the
+share of `input_tokens` the provider's cache served: Anthropic
+`cache_read_input_tokens`, OpenAI and Codex `cached_tokens`) and
+`cache_write_tokens` (the share it wrote to the cache, Anthropic
+`cache_creation_input_tokens`: the signal of a rewritten prefix), each
+absent when the provider reports none (#2348).
 
 **Reading the cache figures.** Pair each turn's `llm_turn_end`
 (`cached_input_tokens`) with its `request_observed` record's input diagnostic
 (#2400, see "Where a request's input changed" in
 [runtime-models-providers.md](runtime-models-providers.md)). Only Responses
 (`codex`) requests of a named session record that diagnostic; for other
-providers only the cached share in `llm_turn_end` is there to read. In watermark mode
-every request extends the previous one, so `first_changed_item` should be
+providers only the cached share in `llm_turn_end` is there to read. Every
+request extends the previous one, so `first_changed_item` should be
 `null` and the cached share near
 `unchanged_prefix_tokens_estimate / request_tokens_estimate`. A miss right
 after a `context_cut` is expected: the cut's request shares only the head
@@ -867,7 +781,7 @@ spill count, IDs, or previews, so the provider-visible prompt prefix remains
 byte-identical as the spill set grows. `recall("list")` returns the complete
 live index on demand, and the `recall` tool description advertises that route.
 
-When a message is collapsed, the compact stub looks like:
+When the emergency ladder stubs a message, the compact stub looks like:
 
 ```
 [bash: ls -la (2450 tokens) — recall("turn5:bash:0")]
@@ -875,7 +789,7 @@ When a message is collapsed, the compact stub looks like:
 
 The agent can call `recall("turn5:bash:0")` to retrieve the original content
 from the retention namespace, even after the original message has been
-collapsed or dropped by the sliding window.
+archived by a cut or stubbed or dropped by the ladder.
 
 ## Inspecting sessions
 
@@ -925,7 +839,8 @@ Session behavior is configured in `config.json` under `agents.defaults`:
   "agents": {
     "defaults": {
       "max_context_tokens": 100000,
-      "context_collapse_after_tool_calls": 3
+      "context_high_tokens": 80000,
+      "context_low_tokens": 24000
     }
   }
 }
@@ -933,16 +848,32 @@ Session behavior is configured in `config.json` under `agents.defaults`:
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `max_context_tokens` | `300000` | Application-level token budget before context pruning (clamped down to what the model's declared context window leaves the prompt beside the reply, when known) |
+| `max_context_tokens` | `300000` | Application-level token budget (the ceiling the watermark marks scale under, and the emergency ladder's) (clamped down to what the model's declared context window leaves the prompt beside the reply, when known) |
 | `swarm_max_context_tokens` | `300000` | The budget once the process takes part in a swarm: the lower of it and `max_context_tokens` applies from then on, and never disengages. Env: `QUECTO_SWARM_MAX_CONTEXT_TOKENS`. `0` is refused; set it at or above `max_context_tokens` to switch it off |
-| `context_collapse_after_tool_calls` | `50` | Collapse the oldest tool outputs once the session exceeds N tool calls. Set to `4294967295` (`u32::MAX`) to disable. 50 stays the default beside the size-aware rule (#2348): on the owner's swarm sessions a dial of 100 sends 0-8% more input, and 25 saves another 3-21% but rewrites the cached prefix about 1.5 times as often; revisit it with `llm_turn_end.cached_input_tokens` |
-| `context_collapse_large_result_tokens` | unset (`2000` for a swarm member, off otherwise) | A tool result over this many estimated tokens collapses to its recall stub once seen for `context_collapse_large_result_after_turns` turns. Set, it applies to every agent. Env: `QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_TOKENS`. `18446744073709551615` switches it off everywhere |
-| `context_collapse_large_result_after_turns` | unset (`3`) | How many model responses see a large result in full first. Alone it switches nothing on outside a swarm. Env: `QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_AFTER_TURNS`. `0` is refused |
-| `context_collapse_after_messages` | `50` | Collapse the oldest conversation (user/assistant) messages to recall stubs once the session exceeds N live messages. Set to `4294967295` (`u32::MAX`) to disable |
-| `pin_recent_turns` | `2` | How many most-recent turns the context ceiling never demotes or drops |
-| `context_mode` | `"default"` | `"watermark"`: append only, one cut at the high mark down to the low mark (see [Watermark mode](#watermark-mode-2401)). Env: `QUECTO_CONTEXT_MODE` |
-| `context_high_tokens` | `256000` | The watermark mode's high mark (H), lowered to the effective budget when that is lower. Env: `QUECTO_CONTEXT_HIGH_TOKENS` |
-| `context_low_tokens` | `70000` | The watermark mode's low mark (L): above 0 and at most 0.9·H; scales with H. Env: `QUECTO_CONTEXT_LOW_TOKENS` |
+| `pin_recent_turns` | `2` | How many most-recent turns the emergency ladder never demotes or drops |
+| `context_high_tokens` | `256000` | The watermark's high mark (H), lowered to the effective budget when that is lower (see [The watermark context](#the-watermark-context)). Env: `QUECTO_CONTEXT_HIGH_TOKENS` |
+| `context_low_tokens` | `70000` | The watermark's low mark (L): above 0 and at most 0.9·H; scales with H. Env: `QUECTO_CONTEXT_LOW_TOKENS` |
+
+The removed keys `context_mode`, `context_collapse_after_tool_calls` (and its
+old name `context_collapse_after_turns`), `context_collapse_after_messages`,
+`context_collapse_large_result_tokens` and
+`context_collapse_large_result_after_turns`, and the removed overrides
+`QUECTO_CONTEXT_MODE`, `QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_TOKENS` and
+`QUECTO_CONTEXT_COLLAPSE_LARGE_RESULT_AFTER_TURNS`, are refused at load
+(#2414). The message names every one a file sets, the file, and the command
+that removes each, for example:
+
+```
+quecto config unset agents.defaults.context_collapse_after_tool_calls --global
+quecto config unset agents.defaults.context_collapse_after_messages --global
+```
+
+(`--local` for a repo-local overlay that is trusted). Each can be unset on
+its own: a write is accepted when it adds no removed key, though it may leave
+a file that still does not load until every removed key is gone; a write that
+brings one in is refused. An untrusted overlay is never written (a write
+records trust): remove the keys from it by editing it, then run
+`quecto config trust`, which refuses it until they are gone.
 
 ## See also
 

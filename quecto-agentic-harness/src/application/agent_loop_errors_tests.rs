@@ -1,5 +1,4 @@
-use super::{Feedback, append_feedback};
-use crate::domain::conversation::ContextMode;
+use super::append_feedback;
 use crate::domain::message::Message;
 use crate::domain::turn_origin::{TurnOrigin, instruction, progress_nudge};
 
@@ -12,26 +11,25 @@ fn pushed_feedback_takes_the_origin_of_the_open_turn() {
         (instruction("task".into()), TurnOrigin::Instruction),
     ] {
         let mut messages = vec![opener, Message::assistant("", vec![])];
-        assert_eq!(
-            append_feedback(&mut messages, "try again".into(), 3, ContextMode::Default),
-            Feedback::Added
-        );
+        append_feedback(&mut messages, "try again".into(), 3);
+        assert_eq!(messages.len(), 3, "added as its own message");
         let feedback = messages.last().unwrap();
         assert_eq!(feedback.turn_origin, origin);
         assert_eq!(feedback.turn, Some(3));
     }
     let mut unstamped = vec![Message::assistant("", vec![])];
-    append_feedback(&mut unstamped, "try again".into(), 1, ContextMode::Default);
+    append_feedback(&mut unstamped, "try again".into(), 1);
     assert_eq!(unstamped[1].turn_origin, TurnOrigin::Unknown);
 }
 
+/// #2403/#2414: feedback after a trailing user message is its own message
+/// too: the message already sent keeps its text and its origin.
 #[test]
-fn merged_feedback_keeps_the_trailing_messages_origin() {
+fn feedback_after_a_user_message_never_edits_it() {
     let mut messages = vec![progress_nudge("continue".into())];
-    assert_eq!(
-        append_feedback(&mut messages, "try again".into(), 1, ContextMode::Default),
-        Feedback::Merged
-    );
-    assert_eq!(messages.len(), 1);
+    append_feedback(&mut messages, "try again".into(), 1);
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0].content, "continue");
     assert_eq!(messages[0].turn_origin, TurnOrigin::ProgressNudge);
+    assert_eq!(messages[1].turn_origin, TurnOrigin::ProgressNudge);
 }

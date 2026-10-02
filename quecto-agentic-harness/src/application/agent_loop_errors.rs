@@ -40,54 +40,30 @@ pub(super) fn provider_failure_audit_event(provider: &str, err: &DomainError) ->
 /// model-malformed request becomes a correctable next turn rather than a fatal
 /// error (#931 AC2).
 ///
-/// The rejection happens before any assistant message is added this turn, so the
-/// trailing message is often already a user / tool-result. Appending a second
-/// consecutive `user` turn is itself rejected as a 400 by some providers
-/// (Anthropic), which would re-enter this branch and burn the retry budget
-/// without the model ever self-correcting. Merge into the trailing user message
-/// when there is one; otherwise push a fresh one.
-///
-/// A pushed feedback message is stamped with `current_turn`: the context
-/// pruner treats the *last turn-less user message* as the in-flight prompt
-/// (never dropped, marks the current-prompt boundary), and an unstamped
-/// mid-prompt feedback message would usurp that role — stripping tail-pin
-/// protection from the real prompt and the most recent turns. Merging keeps
-/// the trailing message's own stamp (turn-less when it is the real prompt).
+/// The feedback goes in as its own message (#2403): a message already sent
+/// is never edited, so the next request still extends the last one. It is
+/// stamped with `current_turn`: the context pruner treats the *last
+/// turn-less user message* as the in-flight prompt (never dropped, marks the
+/// current-prompt boundary), and an unstamped mid-prompt feedback message
+/// would usurp that role — stripping tail-pin protection from the real
+/// prompt and the most recent turns.
 pub(super) fn append_malformed_feedback(
     messages: &mut Vec<Message>,
     err: &DomainError,
     current_turn: u32,
-    mode: crate::domain::conversation::ContextMode,
-) -> Feedback {
+) {
     let feedback = format!(
         "Your previous request was rejected by the provider as malformed (not retryable): {err}\n\nPlease correct the request — for example fix any malformed tool call arguments or invalid fields — and try again.",
     );
-    append_feedback(messages, feedback, current_turn, mode)
+    append_feedback(messages, feedback, current_turn)
 }
 
-/// Whether `append_feedback` added a message or merged into the last one.
-#[derive(Debug, PartialEq, Eq)]
-pub(super) enum Feedback {
-    Added,
-    Merged,
-}
-
-/// Records feedback in the run ledger (#1072, #2124): a message the run added
-/// is appended once; feedback merged into a message the run itself added
-/// replaces that entry; feedback merged into the owner's own prompt adds
-/// nothing, since the run did not add that message.
-pub(super) fn record_feedback(messages: &[Message], ledger: &mut Vec<Message>, how: Feedback) {
-    let Some(last) = messages.last() else {
-        return;
-    };
-    match how {
-        Feedback::Added => ledger.push(last.clone()),
-        Feedback::Merged => {
-            if let Some(entry) = ledger.iter_mut().find(|entry| entry.id() == last.id()) {
-                *entry = last.clone();
-            }
-        }
-    }
+/// Records the feedback the run just added in its ledger (#1072, #2124):
+/// the run added that message, so it is appended once.
+pub(super) fn record_feedback(messages: &[Message], ledger: &mut Vec<Message>) {
+    let added = messages.last().expect("the feedback was just appended");
+    debug_assert_eq!(added.role, Role::User, "feedback is a user message");
+    ledger.push(added.clone());
 }
 
 /// Feedback for a reply that hit the output limit before anything visible
@@ -100,38 +76,14 @@ pub(super) fn output_limit_feedback(max_tokens: u32) -> String {
     )
 }
 
-/// Adds `feedback` for the model, merged into a trailing user message so two
-/// user turns never follow each other (some providers reject that); in
-/// watermark mode always its own message, since the trailing one was sent.
-pub(super) fn append_feedback(
-    messages: &mut Vec<Message>,
-    feedback: String,
-    current_turn: u32,
-    mode: crate::domain::conversation::ContextMode,
-) -> Feedback {
-    use crate::domain::conversation::ContextMode;
-    // In watermark mode a sent message is never edited (#2403): the
-    // feedback goes in as its own message.
-    let merges = match mode {
-        ContextMode::Default => true,
-        ContextMode::Watermark(_) => false,
-    };
-    match messages.last_mut() {
-        Some(last) if merges && last.role == Role::User => {
-            last.content.push_str("\n\n");
-            last.content.push_str(&feedback);
-            last.invalidate_token_cache();
-            Feedback::Merged
-        }
-        _ => {
-            let mut msg = Message::user(feedback);
-            msg.turn = Some(current_turn);
-            // The loop's own feedback continues the open turn (#2226).
-            msg.turn_origin = crate::domain::turn_origin::current_phase(messages);
-            messages.push(msg);
-            Feedback::Added
-        }
-    }
+/// Adds `feedback` for the model as its own message (#2403): a message
+/// already sent is never edited, so the next request extends the last one.
+pub(super) fn append_feedback(messages: &mut Vec<Message>, feedback: String, current_turn: u32) {
+    let mut msg = Message::user(feedback);
+    msg.turn = Some(current_turn);
+    // The loop's own feedback continues the open turn (#2226).
+    msg.turn_origin = crate::domain::turn_origin::current_phase(messages);
+    messages.push(msg);
 }
 
 pub(super) fn enhance_provider_error(err: DomainError) -> DomainError {
