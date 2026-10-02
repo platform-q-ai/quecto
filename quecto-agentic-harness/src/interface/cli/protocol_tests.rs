@@ -11,11 +11,10 @@ fn test_parse_prompt_command() {
             message,
             id,
             streaming_behavior,
-            images: _,
+            images,
         } => {
             assert_eq!(message, "hello world");
-            assert!(id.is_none());
-            assert!(streaming_behavior.is_none());
+            assert!(id.is_none() && streaming_behavior.is_none() && images.is_empty());
         }
         _ => panic!("expected Prompt"),
     }
