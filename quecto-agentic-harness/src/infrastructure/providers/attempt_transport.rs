@@ -76,6 +76,8 @@ impl Receipt {
 
     /// Record the attempt into its request's trace: once, when it ends.
     fn record(state: &mut State) {
+        // The record keeps the most frequent event types only (#2433).
+        state.diagnostics.event_types = state.diagnostics.event_types.top();
         state.diagnostics.finished_unix_ms = diagnostics::unix_ms();
         state.diagnostics.elapsed_ms =
             state.started.elapsed().as_millis().min(u64::MAX as u128) as u64;

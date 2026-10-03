@@ -27,7 +27,53 @@ pub struct AttemptDiagnostics {
     pub oversized_lines: u32,
     pub parse_errors: u32,
     pub unknown_events: u32,
+    /// The attempt's events by type (#2433): the [`MAX_EVENT_TYPES`] most
+    /// frequent, so a stall names the event that repeated.
+    #[serde(default, skip_serializing_if = "EventTypeCounts::is_empty")]
+    pub event_types: EventTypeCounts,
     pub termination: Termination,
+}
+
+/// How many event types an attempt's record keeps: the most frequent.
+pub const MAX_EVENT_TYPES: usize = 16;
+
+/// An attempt's events counted by type (#2433). The names are protocol
+/// vocabulary the harness knows (`response.output_text.delta`,
+/// `content_block_delta`, `chat.delta.content`, `(unknown)`), never text a
+/// provider chose, so a record holds no provider content.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct EventTypeCounts(std::collections::BTreeMap<String, u32>);
+
+impl EventTypeCounts {
+    /// One more event of type `kind`.
+    pub fn count(&mut self, kind: &str) {
+        let count = self.0.entry(kind.to_owned()).or_default();
+        *count = count.saturating_add(1);
+    }
+
+    /// The events counted of type `kind`.
+    pub fn get(&self, kind: &str) -> u32 {
+        self.0.get(kind).copied().unwrap_or_default()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// The [`MAX_EVENT_TYPES`] most frequent types, ties by name.
+    pub fn top(&self) -> Self {
+        let mut ranked: Vec<_> = self.0.iter().collect();
+        ranked.sort_by(|(a, x), (b, y)| y.cmp(x).then_with(|| a.cmp(b)));
+        let kept = ranked
+            .into_iter()
+            .take(MAX_EVENT_TYPES)
+            .map(|(kind, count)| (kind.clone(), *count))
+            .collect();
+        let top = Self(kept);
+        debug_assert!(top.0.len() <= MAX_EVENT_TYPES);
+        top
+    }
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SafeHeader {
@@ -97,6 +143,10 @@ pub enum Termination {
     /// or tool-call arguments over their size), or a reply it could not
     /// parse or accept (#2156 review).
     Rejected,
+    /// The provider kept sending events, but none carried output — no text,
+    /// reasoning or tool call — for the stream progress limit, and the
+    /// harness abandoned the attempt (#2433).
+    NoProgress,
     /// The provider sent no response head, or no SSE event, for the stream
     /// idle limit, and the harness abandoned the attempt (#2210). Bytes may
     /// have arrived: keep-alives (SSE comments, blank lines) are no event,

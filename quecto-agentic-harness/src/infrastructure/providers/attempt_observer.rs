@@ -92,6 +92,7 @@ impl ProtocolObserver {
         {
             self.terminal = true;
             let mut state = receipt.0.lock().unwrap();
+            count_kind(&mut state, "[DONE]");
             live(&state, 0);
             state.diagnostics.terminal_event = Some(TerminalEvent::Done);
             state.diagnostics.termination = Termination::Completed;
@@ -143,6 +144,8 @@ impl ProtocolObserver {
                         state.diagnostics.first_token_ms =
                             Some(u64::try_from(elapsed).unwrap_or(u64::MAX));
                     }
+                    let kind = attempt_events::event_kind(self.vendor, &self.event, &value);
+                    count_kind(&mut state, kind);
                     let event = if matches!(self.vendor, Vendor::Anthropic) {
                         self.event.as_str()
                     } else {
@@ -228,6 +231,15 @@ impl ProtocolObserver {
             }
             self.terminal = failed || completed;
         }
+    }
+}
+
+/// Count an event of type `kind` (#2433), in the attempt's record and in
+/// its request's trace, which an attempt cut off in flight is recorded from.
+fn count_kind(state: &mut State, kind: &str) {
+    state.diagnostics.event_types.count(kind);
+    if let Some(trace) = &state.trace {
+        trace.observe_event_kind(kind);
     }
 }
 

@@ -126,6 +126,9 @@ fn an_attempt_open_when_its_request_ends_is_recorded_as_interrupted() {
     trace.begin_attempt(3, start, 5_000);
     trace.observe_event(start + ms(20), 0, false);
     trace.observe_event(start + ms(40), 9, true);
+    // #2433: the record of an attempt cut off names its event types too.
+    trace.observe_event_kind("response.in_progress");
+    trace.observe_event_kind("response.output_text.delta");
     let records = trace.attempts_when_dropped(start + ms(100), Some(5_100));
     assert_eq!(records.len(), 1);
     let record = &records[0];
@@ -136,6 +139,8 @@ fn an_attempt_open_when_its_request_ends_is_recorded_as_interrupted() {
     assert_eq!(record.event_count, 2);
     assert_eq!(record.output_bytes, 9);
     assert_eq!(record.first_token_ms, Some(40));
+    assert_eq!(record.event_types.get("response.in_progress"), 1);
+    assert_eq!(record.event_types.get("response.output_text.delta"), 1);
     assert_eq!(record.termination, Termination::Interrupted);
 }
 

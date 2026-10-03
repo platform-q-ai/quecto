@@ -80,6 +80,8 @@ pub(super) struct LiveAttempt {
     output_bytes: u64,
     first_token: Option<Instant>,
     last_event: Option<Instant>,
+    /// Its events by type (#2433), for the record of an attempt cut off.
+    event_types: super::attempt_diagnostics::EventTypeCounts,
 }
 
 /// Milliseconds from `from` to `to`; none when the clock reads earlier.
@@ -123,6 +125,11 @@ impl RequestTrace {
         if token && live.first_token.is_none() {
             live.first_token = Some(at);
         }
+    }
+
+    /// An event of type `kind` arrived in the attempt in flight (#2433).
+    pub fn observe_event_kind(&self, kind: &str) {
+        self.live().event_types.count(kind);
     }
 
     /// The attempt in flight at `now`, if one is.
@@ -202,6 +209,7 @@ impl LiveAttempt {
             event_count: self.events,
             output_bytes: self.output_bytes,
             first_token_ms: self.first_token.map(|at| millis(started, at)),
+            event_types: self.event_types.top(),
             termination: Termination::Interrupted,
             ..AttemptDiagnostics::default()
         })
