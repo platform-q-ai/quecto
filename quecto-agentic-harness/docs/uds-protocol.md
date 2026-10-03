@@ -1717,8 +1717,8 @@ chunk, on the agent's own socket only: a parent's monitor does not forward a
 child's, so connect to the child's socket to count its requests.
 
 ```json
-{"type":"request_completed","model":"gpt-5.5","provider":"openai-oauth","inputTokens":1200,"cachedTokens":38000,"outputTokens":450,"durationMs":5321,"outcome":"ok","requestIndex":7,"attempt":1}
-{"type":"request_completed","model":"claude-sonnet-4-6","provider":"anthropic","inputTokens":100,"cachedTokens":1000,"cacheWriteTokens":5000,"outputTokens":80,"durationMs":2210,"queuedMs":340,"outcome":"ok","requestIndex":8,"attempt":1}
+{"type":"request_completed","model":"gpt-6.1-sol","provider":"openai-oauth","inputTokens":1200,"cachedTokens":38000,"outputTokens":450,"durationMs":5321,"outcome":"ok","requestIndex":7,"attempt":1}
+{"type":"request_completed","model":"claude-sonnet-5","provider":"anthropic","inputTokens":100,"cachedTokens":1000,"cacheWriteTokens":5000,"outputTokens":80,"durationMs":2210,"queuedMs":340,"outcome":"ok","requestIndex":8,"attempt":1}
 ```
 
 | Field | Type | Description |
