@@ -707,5 +707,9 @@ fn build_single_provider_with_admission(
 mod cov_tests;
 
 #[cfg(test)]
+#[path = "provider_runtime_stream_idle_tests.rs"]
+mod stream_idle_tests;
+
+#[cfg(test)]
 #[path = "provider_runtime_xai_tests.rs"]
 mod xai_tests;

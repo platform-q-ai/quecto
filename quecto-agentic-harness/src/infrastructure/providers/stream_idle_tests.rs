@@ -426,3 +426,21 @@ async fn a_whole_sse_body_that_keeps_sending_events_is_read_past_the_bound() {
     assert_eq!(read.unwrap(), events.concat());
     assert!(started.elapsed() > LIVE, "the total is not bounded");
 }
+
+/// #2433 review: an idle error says what was missing — nothing at all
+/// before a response head or in an error body, no event in an SSE body.
+#[tokio::test(start_paused = true)]
+async fn the_idle_errors_say_what_was_missing() {
+    let nothing =
+        "stream idle timeout: the provider sent nothing for 200 ms; the request was abandoned";
+    let no_event =
+        "stream idle timeout: the provider sent no event for 200 ms; the request was abandoned";
+    let bound = StreamIdle::new(SILENT);
+    let never = || std::future::pending::<Result<Option<&str>, ()>>();
+    let send = bound.within(never()).await.unwrap_err();
+    assert_eq!(send.to_string(), nothing, "the send");
+    let sse = EventIdle::events(bound).next(never()).await.unwrap_err();
+    assert_eq!(sse.to_string(), no_event, "an SSE body");
+    let body = EventIdle::reads(bound).next(never()).await.unwrap_err();
+    assert_eq!(body.to_string(), nothing, "an error body");
+}

@@ -440,3 +440,69 @@ async fn a_whole_reply_that_never_arrives_is_abandoned_at_the_total_limit() {
         }
     }
 }
+
+/// #2433 review: one rule says what an SSE event is — a line opening with
+/// `data:`, with or without one space after it, never one indented — so
+/// the idle bound, the attempt's event count and every parser agree. Each
+/// reply below sends an indented `data` line (no event: its `a` is never
+/// shown) and events written `data:{…}` (its `b` and terminal event).
+#[tokio::test]
+async fn every_path_reads_the_same_lines_as_events() {
+    let replies: [(Vendor, &[&str], u32); 3] = [
+        (
+            Vendor::Codex,
+            &[
+                " data: {\"type\":\"response.output_text.delta\",\"delta\":\"a\"}\n\n",
+                "data:{\"type\":\"response.output_text.delta\",\"delta\":\"b\"}\n\n",
+                "data:{\"type\":\"response.completed\",\"response\":{}}\n\n",
+            ],
+            2,
+        ),
+        (
+            Vendor::OpenAi,
+            &[
+                " data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"a\"}}]}\n\n",
+                "data:{\"choices\":[{\"index\":0,\"delta\":{\"content\":\"b\"},\"finish_reason\":\"stop\"}]}\n\n",
+                "data:[DONE]\n\n",
+            ],
+            2,
+        ),
+        (
+            Vendor::Anthropic,
+            &[
+                "event: content_block_start\ndata:{\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+                "event: content_block_delta\n data: {\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"a\"}}\n\n",
+                "event: content_block_delta\ndata:{\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"b\"}}\n\n",
+                "event: content_block_stop\ndata:{\"index\":0}\n\n",
+                "event: message_stop\ndata:{}\n\n",
+            ],
+            4,
+        ),
+    ];
+    for (vendor, events, counted) in replies {
+        for gated in [false, true] {
+            let url = servers::trickling(events).await;
+            let messages = vec![Message::system("sys"), Message::user("hi")];
+            let trace = traced();
+            let provider = vendor.provider(url.clone(), gated, LIVE);
+            let result = bounded(provider.chat_stream(request(&messages, &trace))).await;
+            let content = result.map(|r| r.content.unwrap_or_default());
+            assert_eq!(
+                content.ok().as_deref(),
+                Some("b"),
+                "{vendor:?} gated={gated}"
+            );
+            let counts: Vec<u32> = trace
+                .attempt_diagnostics()
+                .iter()
+                .map(|a| a.event_count)
+                .collect();
+            assert_eq!(counts, [counted], "{vendor:?} gated={gated}");
+            let (last, _) = incremental(&*vendor.provider(url, gated, LIVE)).await;
+            assert!(
+                matches!(&last, Some(StreamEvent::Done(r)) if r.content.as_deref() == Some("b")),
+                "{vendor:?} gated={gated}: {last:?}"
+            );
+        }
+    }
+}
