@@ -76,7 +76,27 @@ pub(crate) async fn forward_event(ev: AgentProgressEvent, sink: &mut EventSink<'
             })
             .await;
         }
+        AgentProgressEvent::RequestCompleted(completed) => {
+            sink.emit(&request_completed(completed)).await;
+        }
         _ => {}
+    }
+}
+
+/// The `request_completed` event of one ended provider request (#2436).
+fn request_completed(
+    completed: crate::domain::inference::request_completion::RequestCompleted,
+) -> AgentEvent {
+    AgentEvent::RequestCompleted {
+        model: completed.model,
+        provider: completed.provider,
+        input_tokens: completed.spend.map(|spend| spend.input_tokens),
+        cached_tokens: completed.spend.and_then(|spend| spend.cached_tokens),
+        output_tokens: completed.spend.map(|spend| spend.output_tokens),
+        duration_ms: completed.duration_ms,
+        outcome: completed.outcome,
+        request_index: completed.request_index,
+        attempt: completed.attempt,
     }
 }
 
@@ -87,7 +107,11 @@ pub(crate) async fn forward_settled_requests(
     progress: &mut tokio::sync::mpsc::Receiver<AgentProgressEvent>,
     sink: &mut EventSink<'_>,
 ) {
-    let _ = (progress, sink);
+    while let Ok(event) = progress.try_recv() {
+        if let AgentProgressEvent::RequestCompleted(completed) = event {
+            sink.emit(&request_completed(completed)).await;
+        }
+    }
 }
 
 async fn emit_tool_end(

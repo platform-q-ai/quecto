@@ -93,12 +93,14 @@ pub(super) const STATE: Shape = Shape {
         "admission",
         "admissionWarnings",
         "modelTurn",
+        "agentRequests",
     ],
     objects: &[
         ("progress", &PROGRESS),
         ("workflow", &WORKFLOW),
         ("admission", &ADMISSION),
         ("modelTurn", &MODEL_TURN),
+        ("agentRequests", &AGENT_REQUESTS),
     ],
     arrays: &[
         ("controlReceipts", &RECEIPT),

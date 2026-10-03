@@ -99,6 +99,8 @@ impl AgentLoopImpl {
             self.model_max_tokens,
             request.max_tokens,
         ));
+        // #2436: each attempt is counted and announced as it ends.
+        trace.on_attempt_end(self.request_completion_sink(request.model));
         request.trace = Some(trace.clone());
         let mut observation = super::super::request_observation::ObservationGuard::new(
             super::super::request_observation::ObservationSinks {
@@ -237,6 +239,10 @@ impl AgentLoopImpl {
             match result {
                 Ok(response) => return Ok(response),
                 Err(err) => {
+                    // The attempt ended here, before any back-off (#2436).
+                    if let Some(trace) = &request.trace {
+                        trace.end_attempt_failed();
+                    }
                     let class = classify_provider_error(&err);
                     if attempt == MAX_PROVIDER_ATTEMPTS
                         || !class.is_retryable()

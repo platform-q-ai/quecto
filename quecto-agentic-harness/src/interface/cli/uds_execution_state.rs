@@ -337,6 +337,9 @@ impl ExecutionState {
                 self.active_tools.clear();
                 self.touch();
             }
+            // A request that ended changed `agentRequests`: a transition the
+            // public cursor tracks (#2436).
+            AgentProgressEvent::RequestCompleted(_) => self.touch(),
             _ => {}
         }
     }
@@ -432,7 +435,11 @@ impl ExecutionState {
                 .model_turn
                 .as_ref()
                 .and_then(|request| request.snapshot(now)),
-            agent_requests: AgentRequestCounters::default(),
+            agent_requests: self
+                .request_tally
+                .as_ref()
+                .map(|tally| tally.counters())
+                .unwrap_or_default(),
         }
     }
 }

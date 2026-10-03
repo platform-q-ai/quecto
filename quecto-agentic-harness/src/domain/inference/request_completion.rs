@@ -10,6 +10,7 @@
 //!
 //! Measurements only: never prompt or output content.
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
@@ -56,8 +57,31 @@ impl RequestSpend {
     /// The sum of `reports`, each counted once; `None` when there are none:
     /// a provider that reported nothing spent nothing we know of.
     pub fn of<'a>(reports: impl IntoIterator<Item = &'a UsageInfo>) -> Option<Self> {
-        let _ = reports;
-        None
+        reports
+            .into_iter()
+            .fold(None, |spent: Option<Self>, usage| {
+                let cached = usage.cache_read_tokens.map(u64::from);
+                Some(match spent {
+                    None => Self {
+                        input_tokens: u64::from(usage.prompt_tokens),
+                        cached_tokens: cached,
+                        output_tokens: u64::from(usage.completion_tokens),
+                    },
+                    Some(spent) => Self {
+                        input_tokens: spent
+                            .input_tokens
+                            .saturating_add(u64::from(usage.prompt_tokens)),
+                        cached_tokens: match (spent.cached_tokens, cached) {
+                            (Some(before), Some(now)) => Some(before.saturating_add(now)),
+                            (Some(only), None) | (None, Some(only)) => Some(only),
+                            (None, None) => None,
+                        },
+                        output_tokens: spent
+                            .output_tokens
+                            .saturating_add(u64::from(usage.completion_tokens)),
+                    },
+                })
+            })
     }
 }
 
@@ -115,13 +139,27 @@ impl RequestTally {
     /// Count `ended`, a request to `provider` for `model`: its record,
     /// numbered next in this agent's sequence.
     pub fn record(&self, model: &str, provider: &str, ended: EndedAttempt) -> RequestCompleted {
+        let mut counters = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let before = counters.requests;
+        counters.requests = before.saturating_add(1);
+        if let Some(spend) = ended.spend {
+            counters.input_tokens = counters.input_tokens.saturating_add(spend.input_tokens);
+            counters.cached_tokens = counters
+                .cached_tokens
+                .saturating_add(spend.cached_tokens.unwrap_or(0));
+            counters.output_tokens = counters.output_tokens.saturating_add(spend.output_tokens);
+        }
+        debug_assert!(
+            counters.requests > before,
+            "every ended request takes the next index"
+        );
         RequestCompleted {
             model: model.into(),
             provider: provider.into(),
             spend: ended.spend,
             duration_ms: ended.duration_ms,
             outcome: ended.outcome,
-            request_index: 0,
+            request_index: counters.requests,
             attempt: ended.attempt,
         }
     }
@@ -150,7 +188,20 @@ impl std::fmt::Debug for AttemptEndHook {
 
 /// A request's attempt in flight: started and not yet ended.
 #[derive(Debug, Default)]
-pub(in crate::domain) struct AttemptClock;
+pub(in crate::domain) struct AttemptClock {
+    /// The highest attempt number started so far.
+    started: u32,
+    open: Option<OpenAttempt>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct OpenAttempt {
+    number: u32,
+    started: Instant,
+    /// The usage reports of cut-short attempts recorded before it started:
+    /// the ones after are its own.
+    usage_mark: usize,
+}
 
 impl RequestTrace {
     /// Report each attempt of this request to `sink` as it ends; the first
@@ -159,20 +210,81 @@ impl RequestTrace {
         let _ = self.attempt_end.0.set(sink);
     }
 
-    /// Attempt `number` started.
+    /// Attempt `number` started. One still open ended in error: it was
+    /// retried without saying it had ended. A number already started is
+    /// the same attempt.
     pub(in crate::domain) fn open_attempt(&self, number: u32) {
-        let _ = (number, &self.attempt_clock);
+        debug_assert!(number >= 1, "attempts are numbered from 1");
+        let ended = {
+            let mut clock = self.clock();
+            if number <= clock.started {
+                return;
+            }
+            clock.started = number;
+            let reported = self.unfinished_reports();
+            let previous = clock.open.replace(OpenAttempt {
+                number,
+                started: Instant::now(),
+                usage_mark: reported,
+            });
+            previous.map(|open| self.ended(open, RequestOutcome::Error, None))
+        };
+        if let Some(ended) = ended {
+            self.report(ended);
+        }
     }
 
-    /// The attempt in flight failed: it ends now, as an error.
+    /// The attempt in flight failed: it ends now, as an error, before any
+    /// back-off or refresh that precedes its retry.
     pub fn end_attempt_failed(&self) {
         self.end_attempt(RequestOutcome::Error, None);
     }
 
     /// The attempt in flight ended with `outcome`; `reply` is the usage its
-    /// reply reported.
+    /// reply reported. Nothing happens when no attempt is in flight: it has
+    /// already ended, or none started (admission refused the request).
     pub fn end_attempt(&self, outcome: RequestOutcome, reply: Option<&UsageInfo>) {
-        let _ = (outcome, reply);
+        let ended = {
+            let mut clock = self.clock();
+            clock
+                .open
+                .take()
+                .map(|open| self.ended(open, outcome, reply))
+        };
+        if let Some(ended) = ended {
+            self.report(ended);
+        }
+    }
+
+    fn ended(
+        &self,
+        open: OpenAttempt,
+        outcome: RequestOutcome,
+        reply: Option<&UsageInfo>,
+    ) -> EndedAttempt {
+        let reported = self.unfinished_usage();
+        let own = reported.get(open.usage_mark..).unwrap_or_default();
+        EndedAttempt {
+            attempt: open.number,
+            outcome,
+            duration_ms: open
+                .started
+                .elapsed()
+                .as_millis()
+                .try_into()
+                .unwrap_or(u64::MAX),
+            spend: RequestSpend::of(own.iter().chain(reply)),
+        }
+    }
+
+    fn report(&self, ended: EndedAttempt) {
+        if let Some(sink) = self.attempt_end.0.get() {
+            sink(ended);
+        }
+    }
+
+    fn clock(&self) -> std::sync::MutexGuard<'_, AttemptClock> {
+        self.attempt_clock.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
 

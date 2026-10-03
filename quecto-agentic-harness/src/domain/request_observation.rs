@@ -75,6 +75,13 @@ impl RequestTrace {
             .unwrap_or_else(|e| e.into_inner())
             .clone()
     }
+    /// How many usage reports cut-short attempts have recorded so far.
+    pub(super) fn unfinished_reports(&self) -> usize {
+        self.unfinished_usage
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .len()
+    }
     /// A token arrived at `at`; the earliest stays.
     pub fn mark_first_token(&self, at: std::time::Instant) {
         let mut first = self.first_token.lock().unwrap_or_else(|e| e.into_inner());

@@ -89,7 +89,11 @@ fn slim_state_snapshot(state: &SessionState) -> crate::domain::state_snapshot::S
         admission: state.execution.as_ref().and_then(|e| e.admission.clone()),
         admission_warnings: state.admission_warnings.clone(),
         model_turn: state.execution.as_ref().and_then(|e| e.model_turn.clone()),
-        agent_requests: Default::default(),
+        agent_requests: state
+            .execution
+            .as_ref()
+            .map(|e| e.agent_requests)
+            .unwrap_or_default(),
     }
 }
 
