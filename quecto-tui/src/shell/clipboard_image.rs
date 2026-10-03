@@ -7,8 +7,11 @@
 //! `wl-paste` (Wayland) and `xclip` (X11), each command under a timeout,
 //! and never anything else.
 
-use std::path::PathBuf;
-use std::time::Duration;
+use quecto_image::ImageMime;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 /// How long one clipboard command may run before it is killed.
 pub const CLIPBOARD_TIMEOUT: Duration = Duration::from_secs(2);
@@ -79,10 +82,58 @@ impl ClipboardTool {
 
     /// The tools a session can use, in the order they are tried: `wl-paste`
     /// in a Wayland session, `xclip` in an X11 one (XWayland included).
-    pub fn for_session(_wayland: bool, _x11: bool) -> Vec<Self> {
-        Vec::new()
+    pub fn for_session(wayland: bool, x11: bool) -> Vec<Self> {
+        [(Self::WlPaste, wayland), (Self::Xclip, x11)]
+            .into_iter()
+            .filter_map(|(tool, present)| present.then_some(tool))
+            .collect()
+    }
+
+    /// The arguments that list the types the clipboard offers.
+    fn list_args(self) -> Vec<String> {
+        match self {
+            Self::WlPaste => args(&["--list-types"]),
+            Self::Xclip => args(&["-selection", "clipboard", "-t", "TARGETS", "-o"]),
+        }
+    }
+
+    /// The arguments that read the clipboard as `mime`.
+    fn image_args(self, mime: ImageMime) -> Vec<String> {
+        let wanted = mime.as_str();
+        match self {
+            Self::WlPaste => args(&["--type", wanted]),
+            Self::Xclip => args(&["-selection", "clipboard", "-t", wanted, "-o"]),
+        }
+    }
+
+    /// The arguments that read the clipboard as text.
+    fn text_args(self) -> Vec<String> {
+        match self {
+            Self::WlPaste => args(&["--no-newline"]),
+            Self::Xclip => args(&["-selection", "clipboard", "-o"]),
+        }
     }
 }
+
+fn args(list: &[&str]) -> Vec<String> {
+    list.iter().map(|arg| arg.to_string()).collect()
+}
+
+/// The clipboard types that are text, as `wl-paste --list-types` and
+/// `xclip -t TARGETS` name them.
+const TEXT_TYPES: [&str; 5] = [
+    "text/plain;charset=utf-8",
+    "text/plain",
+    "UTF8_STRING",
+    "STRING",
+    "TEXT",
+];
+
+/// The most text one paste takes: 1 MiB.
+const MAX_TEXT_BYTES: usize = 1024 * 1024;
+
+/// The most a type listing may be.
+const MAX_LISTING_BYTES: usize = 64 * 1024;
 
 /// The system clipboard, read through the first tool of `tools` that runs.
 pub struct SystemClipboard {
@@ -94,7 +145,12 @@ impl SystemClipboard {
     /// The tools this session's environment names (`WAYLAND_DISPLAY`,
     /// `DISPLAY`), each found on `PATH`.
     pub fn from_env() -> Self {
-        Self::with_tools(Vec::new(), CLIPBOARD_TIMEOUT)
+        let set = |name| std::env::var_os(name).is_some_and(|value| !value.is_empty());
+        let tools = ClipboardTool::for_session(set("WAYLAND_DISPLAY"), set("DISPLAY"))
+            .into_iter()
+            .map(|tool| (tool, PathBuf::from(tool.program())))
+            .collect();
+        Self::with_tools(tools, CLIPBOARD_TIMEOUT)
     }
 
     /// `tools` run from the given program paths, each command limited to
@@ -102,13 +158,167 @@ impl SystemClipboard {
     pub fn with_tools(tools: Vec<(ClipboardTool, PathBuf)>, timeout: Duration) -> Self {
         Self { tools, timeout }
     }
+
+    /// Read what the listing `types` offers through `tool`: an admitted
+    /// image first (in [`ImageMime::ALL`]'s order), else text.
+    fn read_offered(&self, tool: ClipboardTool, program: &Path, types: &[&str]) -> ClipboardRead {
+        let image = ImageMime::ALL
+            .into_iter()
+            .find(|mime| types.contains(&mime.as_str()));
+        let text = types.iter().any(|kind| TEXT_TYPES.contains(kind));
+        let images_offered: Vec<&str> = types
+            .iter()
+            .copied()
+            .filter(|kind| kind.starts_with("image/"))
+            .collect();
+        match (image, text, images_offered.as_slice()) {
+            (Some(mime), _, _) => {
+                let read = run(
+                    program,
+                    &tool.image_args(mime),
+                    self.timeout,
+                    quecto_image::MAX_IMAGE_BYTES,
+                );
+                match read {
+                    Ok(bytes) => ClipboardRead::Image(bytes),
+                    Err(error) => {
+                        ClipboardRead::Failed(format!("{} {mime}: {error}", tool.program()))
+                    }
+                }
+            }
+            (None, true, _) => {
+                match run(program, &tool.text_args(), self.timeout, MAX_TEXT_BYTES) {
+                    Ok(bytes) if bytes.len() <= MAX_TEXT_BYTES => {
+                        ClipboardRead::Text(String::from_utf8_lossy(&bytes).into_owned())
+                    }
+                    Ok(_) => ClipboardRead::Failed(format!(
+                        "the clipboard text is over {} MiB",
+                        MAX_TEXT_BYTES / (1024 * 1024)
+                    )),
+                    Err(error) => {
+                        ClipboardRead::Failed(format!("{} text: {error}", tool.program()))
+                    }
+                }
+            }
+            (None, false, []) => ClipboardRead::Empty,
+            (None, false, offered) => ClipboardRead::UnsupportedImage(offered.join(", ")),
+        }
+    }
 }
 
 impl ClipboardReader for SystemClipboard {
     fn read(&self) -> ClipboardRead {
-        let _ = (&self.tools, self.timeout);
+        for (tool, program) in &self.tools {
+            match run(program, &tool.list_args(), self.timeout, MAX_LISTING_BYTES) {
+                Ok(listing) => {
+                    let listing = String::from_utf8_lossy(&listing);
+                    let types: Vec<&str> = listing.lines().map(str::trim).collect();
+                    return self.read_offered(*tool, program, &types);
+                }
+                // Not installed: the next tool of the allowlist.
+                Err(RunError::NotFound) => continue,
+                // Both tools exit non-zero when the clipboard holds nothing
+                // (`wl-paste`: "Nothing is copied"; `xclip`: no owner).
+                Err(RunError::Exit(_)) => return ClipboardRead::Empty,
+                Err(error) => {
+                    return ClipboardRead::Failed(format!("{}: {error}", tool.program()));
+                }
+            }
+        }
         ClipboardRead::NoTool
     }
+}
+
+/// Why a clipboard command gave no output.
+#[derive(Debug)]
+enum RunError {
+    /// The program is not there.
+    NotFound,
+    /// It could not be started, or its output not read.
+    Io(std::io::Error),
+    /// It ran past the timeout and was killed.
+    TimedOut(Duration),
+    /// It exited unsuccessfully.
+    Exit(std::process::ExitStatus),
+}
+
+impl std::fmt::Display for RunError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound => f.write_str("not found"),
+            Self::Io(error) => write!(f, "{error}"),
+            Self::TimedOut(after) => write!(f, "timed out after {} ms", after.as_millis()),
+            Self::Exit(status) => write!(f, "{status}"),
+        }
+    }
+}
+
+/// Run `program args` with no stdin and stderr discarded, and return its
+/// stdout: at most `cap + 1` bytes (one over says "too much"; the child is
+/// then killed), within `timeout` (the child is killed and reaped past it).
+fn run(
+    program: &Path,
+    args: &[String],
+    timeout: Duration,
+    cap: usize,
+) -> Result<Vec<u8>, RunError> {
+    let deadline = Instant::now() + timeout;
+    let mut child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| match error.kind() {
+            std::io::ErrorKind::NotFound => RunError::NotFound,
+            _ => RunError::Io(error),
+        })?;
+    let stdout = child.stdout.take().expect("stdout is piped");
+    let (tx, rx) = std::sync::mpsc::channel();
+    // A thread reads, so the wait below can give up at the deadline.
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let read = stdout.take(cap as u64 + 1).read_to_end(&mut bytes);
+        let _ = tx.send(read.map(|_| bytes));
+    });
+    let output = match rx.recv_timeout(timeout) {
+        Ok(Ok(bytes)) => bytes,
+        Ok(Err(error)) => {
+            end(&mut child);
+            return Err(RunError::Io(error));
+        }
+        Err(_) => {
+            end(&mut child);
+            return Err(RunError::TimedOut(timeout));
+        }
+    };
+    if output.len() > cap {
+        // Over the cap: the rest is not wanted, and the child may block
+        // writing it.
+        end(&mut child);
+        return Ok(output);
+    }
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Ok(output),
+            Ok(Some(status)) => return Err(RunError::Exit(status)),
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(5)),
+            Ok(None) => {
+                end(&mut child);
+                return Err(RunError::TimedOut(timeout));
+            }
+            Err(error) => {
+                end(&mut child);
+                return Err(RunError::Io(error));
+            }
+        }
+    }
+}
+
+/// Kill `child` (SIGKILL) and reap it.
+fn end(child: &mut std::process::Child) {
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 #[cfg(test)]

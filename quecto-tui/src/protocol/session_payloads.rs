@@ -226,7 +226,7 @@ pub fn parse_resumed_messages(
                     id,
                     stub,
                     content_len,
-                    image_count: 0,
+                    image_count: kind.image_count,
                 }],
                 "assistant" => {
                     parse_assistant_resume_messages(message, content, id, stub, content_len)
@@ -405,14 +405,17 @@ struct DiscoveryRow {
     matched: Vec<Lenient<String>>,
 }
 
-/// A resumed message's role, and its user kind (#2404): a field that is
-/// absent or not a string reads as none.
+/// A resumed message's role, its user kind (#2404) and how many images it
+/// carried (#2425): a field that is absent or of the wrong type reads as
+/// none.
 #[derive(serde::Deserialize, Default)]
 struct MessageKind {
     #[serde(default, deserialize_with = "lenient_string")]
     role: String,
     #[serde(default, rename = "userKind", deserialize_with = "lenient_option")]
     user_kind: Option<String>,
+    #[serde(default, rename = "imageCount", deserialize_with = "lenient_count")]
+    image_count: usize,
 }
 
 impl MessageKind {
@@ -428,6 +431,11 @@ fn lenient_option<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Strin
 
 fn lenient_string<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
     Ok(lenient_option(d)?.unwrap_or_default())
+}
+
+fn lenient_count<'de, D: serde::Deserializer<'de>>(d: D) -> Result<usize, D::Error> {
+    let value = <Lenient<usize> as serde::Deserialize>::deserialize(d)?;
+    Ok(value.known().unwrap_or_default())
 }
 
 /// A value that is kept when it is what the protocol says and ignored —

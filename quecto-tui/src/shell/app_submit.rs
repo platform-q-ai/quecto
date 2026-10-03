@@ -1,9 +1,11 @@
 use super::*;
+use crate::conversation::image_attachments::with_image_markers;
 
 impl App {
     pub(super) fn handle_submit(&mut self, text: &str) {
         let trimmed = text.trim();
-        if trimmed.is_empty() {
+        // Text, or images alone (#2425), makes a message.
+        if trimmed.is_empty() && self.attachments.pending.is_empty() {
             return;
         }
 
@@ -74,6 +76,13 @@ impl App {
                 _ if trimmed.starts_with("/effort") => {
                     let arg = trimmed["/effort".len()..].trim();
                     self.handle_effort_command(arg);
+                    return;
+                }
+                _ if trimmed.strip_prefix("/image").is_some_and(|rest| {
+                    rest.is_empty() || rest.starts_with(char::is_whitespace)
+                }) =>
+                {
+                    self.attach_image_file(&trimmed["/image".len()..]);
                     return;
                 }
                 "/refresh-models" => {
@@ -164,29 +173,31 @@ impl App {
                 self.note_subagent_undeliverable(&agent_id, &status);
                 return;
             }
+            let images = self.attachments.pending.attachments();
+            let shown = with_image_markers(text, images.len());
             let cmd = if self.active_subagent_running() {
                 Command::FollowUp {
                     id: None,
                     message: text.to_string(),
-                    images: Vec::new(),
+                    images,
                 }
             } else {
                 Command::Prompt {
                     id: None,
                     message: text.to_string(),
                     streaming_behavior: None,
-                    images: Vec::new(),
+                    images,
                 }
             };
             // Append to the sub-agent transcript ONLY when the route actually
             // enqueued it (#804 review): a failed route (no live sender / full
             // channel) never delivered the prompt, so a User entry would diverge
-            // UI from state.
+            // UI from state. The chips go with the message, and stay when it
+            // was not delivered (#2425).
             if self.send_to_active_subagent(cmd) {
+                self.attachments.pending.clear();
                 self.active_chat_mut()
-                    .add_entry_follow_tail(ChatEntry::User {
-                        text: text.to_string(),
-                    });
+                    .add_entry_follow_tail(ChatEntry::User { text: shown });
             } else {
                 // Failed route (no live sender / full channel): the user must
                 // see the message was not delivered (fix pass item 5).
@@ -198,21 +209,25 @@ impl App {
         // The composed text always lands in the chat (the editor was
         // already emptied by take_submit) — on a dead connection it is the
         // only surviving copy (#1470 r3/r6, single add site).
+        let images = self.attachments.pending.attachments();
         self.ac_mut()
             .master_session
             .chat
             .add_entry_follow_tail(ChatEntry::User {
-                text: text.to_string(),
+                text: with_image_markers(text, images.len()),
             });
         // Refuse when the connection is known dead (#1470): the writer
         // channel can outlive the stream, so an enqueue could "succeed" and
         // the message silently vanish. The persistent refusal Status line
         // keeps the undelivered message diagnosable after the toast expires.
+        // The chips stay for a later send (#2425).
         if !self.ac().agent_connected {
             self.note_disconnected_refusal();
             return;
         }
-        self.dispatch_master_user_text(text);
+        if self.dispatch_master_user_text(text, images) {
+            self.attachments.pending.clear();
+        }
     }
 
     /// Surface an undeliverable sub-agent message (#1466 fix pass item 5):
@@ -224,23 +239,28 @@ impl App {
         self.notify(&text, crate::components::notification::NotifyLevel::Warning);
     }
 
-    /// Send a master-session user message (Prompt or FollowUp) after connect.
-    pub(crate) fn dispatch_master_user_text(&mut self, text: &str) {
+    /// Send a master-session user message (Prompt or FollowUp) with its
+    /// `images` (#2425) after connect; whether it was enqueued.
+    pub(crate) fn dispatch_master_user_text(
+        &mut self,
+        text: &str,
+        images: Vec<quecto_image::ImageAttachment>,
+    ) -> bool {
         let cmd = if self.ac().agent_state.is_running() {
             Command::FollowUp {
                 id: None,
                 message: text.to_string(),
-                images: Vec::new(),
+                images,
             }
         } else {
             Command::Prompt {
                 id: None,
                 message: text.to_string(),
                 streaming_behavior: None,
-                images: Vec::new(),
+                images,
             }
         };
-        self.send_command(cmd);
+        self.send_command(cmd)
     }
 
     // ── Abort handling (bug fix) ──────────────────────────────────────

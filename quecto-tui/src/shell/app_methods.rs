@@ -65,9 +65,11 @@ impl App {
              \x20 Enter          Send message (idle) / queue follow-up (running)\n\
              \x20 Shift+Enter    Insert newline\n\
              \x20 Alt+Enter      Insert newline\n\
-             \x20 Escape         Abort/cancel running agent or clear editor\n\
+             \x20 Escape         Abort/cancel running agent or clear editor and images\n\
              \x20 Esc Esc        Choose a previous turn to go back to\n\
-             \x20 Ctrl+C         Clear editor first, abort if empty\n\
+             \x20 Ctrl+C         Clear editor and images first, abort if empty\n\
+             \x20 Ctrl+V         Attach the clipboard's image (pastes text if no image)\n\
+             \x20 Backspace      In an empty editor: remove the last image\n\
              \x20 Ctrl+D         Exit (persists, then lets owned agents settle their subagents)\n\
              \x20 Ctrl+G         Jump to latest conversation output\n\
              \x20 Ctrl+L         Open model selector\n\

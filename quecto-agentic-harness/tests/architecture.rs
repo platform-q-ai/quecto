@@ -2651,7 +2651,12 @@ fn tui_conversation_pure_policy_has_no_outer_layer_imports() {
         "super::interface",
         "super::protocol",
     ];
-    for rel in ["history_paging.rs", "turn_recovery.rs"] {
+    // #2425: the composer's image-attachment policy is pure too.
+    for rel in [
+        "history_paging.rs",
+        "turn_recovery.rs",
+        "image_attachments.rs",
+    ] {
         let path = Path::new(TUI_CONVERSATION).join(rel);
         let content = fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("read pure conversation policy {}: {e}", path.display()));

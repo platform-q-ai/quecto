@@ -53,26 +53,62 @@ pub(crate) enum AttachRefusal {
 }
 
 impl std::fmt::Display for AttachRefusal {
-    fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Ok(())
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TooMany => write!(f, "at most {MAX_IMAGES_PER_MESSAGE} images per message"),
+            Self::NotAnImage => {
+                let (last, first) = ImageMime::ALL.split_last().expect("four types");
+                let first: Vec<&str> = first.iter().map(|mime| mime.as_str()).collect();
+                write!(f, "not an {} or {last} file", first.join(", "))
+            }
+            Self::Refused(refusal) => write!(f, "{refusal}"),
+            Self::OverMessageBudget => write!(
+                f,
+                "one message's images may total {} MiB of base64, and this one would pass it",
+                MESSAGE_IMAGE_BUDGET / (1024 * 1024)
+            ),
+        }
     }
 }
 
 /// The one-line notice for an image `name` that was not attached.
-pub(crate) fn refusal_notice(_name: &str, _refusal: &AttachRefusal) -> String {
-    let _ = (CHIP_NAME_CHARS, IMAGE_MARKER, MESSAGE_IMAGE_BUDGET);
-    String::new()
+pub(crate) fn refusal_notice(name: &str, refusal: &AttachRefusal) -> String {
+    format!("Image not attached: {name}: {refusal}")
 }
 
 impl PendingImages {
-    /// Admit the image file `bytes` under `name`, or say why not.
-    pub(crate) fn admit(&mut self, _name: &str, bytes: &[u8]) -> Result<(), AttachRefusal> {
-        let _ = (MAX_IMAGES_PER_MESSAGE, ImageMime::sniff(bytes));
-        Err(AttachRefusal::NotAnImage)
+    /// Admit the image file `bytes` under `name`, or say why not. The type
+    /// is read from the bytes, never from the name.
+    pub(crate) fn admit(&mut self, name: &str, bytes: &[u8]) -> Result<(), AttachRefusal> {
+        match self.images.len() < MAX_IMAGES_PER_MESSAGE {
+            true => {}
+            false => return Err(AttachRefusal::TooMany),
+        }
+        let mime = ImageMime::sniff(bytes).ok_or(AttachRefusal::NotAnImage)?;
+        let attachment =
+            ImageAttachment::from_bytes(mime, bytes).map_err(AttachRefusal::Refused)?;
+        match self.encoded_len() + attachment.data().len() <= MESSAGE_IMAGE_BUDGET {
+            true => {}
+            false => return Err(AttachRefusal::OverMessageBudget),
+        }
+        self.images.push(PendingImage {
+            name: name.to_string(),
+            attachment,
+        });
+        assert!(
+            self.images.len() <= MAX_IMAGES_PER_MESSAGE
+                && self.encoded_len() <= MESSAGE_IMAGE_BUDGET,
+            "the pending images stay within one message's limits"
+        );
+        Ok(())
     }
 
-    pub(crate) fn len(&self) -> usize {
-        self.images.len()
+    /// The base64 the pending images total.
+    fn encoded_len(&self) -> usize {
+        self.images
+            .iter()
+            .map(|image| image.attachment.data().len())
+            .sum()
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -81,28 +117,73 @@ impl PendingImages {
 
     /// Drop the last image; whether there was one.
     pub(crate) fn remove_last(&mut self) -> bool {
-        false
+        self.images.pop().is_some()
     }
 
     /// Drop every image.
-    pub(crate) fn clear(&mut self) {}
+    pub(crate) fn clear(&mut self) {
+        self.images.clear();
+    }
 
     /// The images to send, in attach order.
     pub(crate) fn attachments(&self) -> Vec<ImageAttachment> {
-        Vec::new()
+        self.images
+            .iter()
+            .map(|image| image.attachment.clone())
+            .collect()
     }
 
     /// One chip per image: `[image 1: screenshot.png · 240 KB]`.
     pub(crate) fn chips(&self) -> Vec<String> {
-        let _ = self.images.iter().map(|i| (&i.name, &i.attachment)).count();
-        Vec::new()
+        self.images
+            .iter()
+            .enumerate()
+            .map(|(index, image)| {
+                format!(
+                    "[image {}: {} · {}]",
+                    index + 1,
+                    chip_name(&image.name),
+                    file_size(image.attachment.decoded_len())
+                )
+            })
+            .collect()
+    }
+}
+
+/// `name`, cut to [`CHIP_NAME_CHARS`] with an ellipsis.
+fn chip_name(name: &str) -> String {
+    match name.chars().count() <= CHIP_NAME_CHARS {
+        true => name.to_string(),
+        false => {
+            let kept: String = name.chars().take(CHIP_NAME_CHARS - 1).collect();
+            format!("{kept}…")
+        }
+    }
+}
+
+/// A file size as a chip shows it: `73 B`, `240 KB`, `1.5 MB` (binary units).
+fn file_size(bytes: usize) -> String {
+    const KIB: usize = 1024;
+    const MIB: usize = 1024 * 1024;
+    match bytes {
+        0..KIB => format!("{bytes} B"),
+        KIB..MIB => format!("{} KB", (bytes + KIB / 2) / KIB),
+        _ => {
+            let tenths = (bytes * 10 + MIB / 2) / MIB;
+            format!("{}.{} MB", tenths / 10, tenths % 10)
+        }
     }
 }
 
 /// A user message's text as the transcript shows it: one [`IMAGE_MARKER`]
 /// per image on a line of their own, above the text.
-pub(crate) fn with_image_markers(text: &str, _count: usize) -> String {
-    text.to_string()
+pub(crate) fn with_image_markers(text: &str, count: usize) -> String {
+    let markers = vec![IMAGE_MARKER; count].join(" ");
+    match (count, text.is_empty()) {
+        (0, _) => text.to_string(),
+        (_, true) => markers,
+        (_, false) => format!("{markers}\n{text}"),
+    }
 }
 
 /// Why a `/image` argument names no path.
@@ -115,29 +196,67 @@ pub(crate) enum ImagePathError {
 }
 
 impl std::fmt::Display for ImagePathError {
-    fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Ok(())
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Missing => {
+                f.write_str("Usage: /image <path> (absolute, ~/… or relative to the workspace)")
+            }
+            Self::NoHome => f.write_str("Image not attached: ~ names no home directory"),
+        }
     }
 }
 
 /// The file a `/image` argument names: absolute as given, `~` or `~/…`
-/// under `home`, anything else relative to `workspace`.
+/// under `home`, anything else relative to `workspace`. A path wrapped in
+/// one pair of matching quotes (as a terminal drops a file) is unquoted.
 pub(crate) fn resolve_image_path(
-    _arg: &str,
-    _home: Option<&Path>,
+    arg: &str,
+    home: Option<&Path>,
     workspace: &Path,
 ) -> Result<PathBuf, ImagePathError> {
-    Ok(workspace.to_path_buf())
+    let arg = unquote(arg.trim());
+    if arg.is_empty() {
+        return Err(ImagePathError::Missing);
+    }
+    let under_home = match arg {
+        "~" => Some(""),
+        _ => arg.strip_prefix("~/"),
+    };
+    match (under_home, home) {
+        (Some(rest), Some(home)) => Ok(home.join(rest)),
+        (Some(_), None) => Err(ImagePathError::NoHome),
+        (None, _) => Ok(workspace.join(arg)),
+    }
 }
 
-/// The name an image's chip shows when it came from `path`.
+/// `text` without one pair of matching surrounding quotes, `'…'` or `"…"`.
+fn unquote(text: &str) -> &str {
+    ['\'', '"']
+        .into_iter()
+        .find_map(|quote| {
+            text.strip_prefix(quote)
+                .and_then(|inner| inner.strip_suffix(quote))
+        })
+        .unwrap_or(text)
+}
+
+/// The name an image's chip shows when it came from `path`: its file name.
 pub(crate) fn file_label(path: &Path) -> String {
-    path.display().to_string()
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
 }
 
-/// The name a clipboard image's chip shows: `clipboard.<type>`.
-pub(crate) fn clipboard_label(_bytes: &[u8]) -> String {
-    String::new()
+/// The name a clipboard image's chip shows: `clipboard.<type>`, or
+/// `clipboard` when the bytes are no admitted image.
+pub(crate) fn clipboard_label(bytes: &[u8]) -> String {
+    match ImageMime::sniff(bytes) {
+        Some(mime) => {
+            let subtype = mime.as_str().trim_start_matches("image/");
+            format!("clipboard.{subtype}")
+        }
+        None => "clipboard".to_string(),
+    }
 }
 
 #[cfg(test)]

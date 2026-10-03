@@ -17,7 +17,7 @@ fn an_admitted_image_is_kept_with_its_name_and_sent_as_admitted() {
         .admit("shot.png", &png)
         .expect("a real PNG is admitted");
 
-    assert_eq!(pending.len(), 1);
+    assert_eq!(pending.chips().len(), 1);
     let sent = pending.attachments();
     assert_eq!(sent.len(), 1);
     assert_eq!(sent[0].mime_type(), "image/png");
@@ -99,7 +99,7 @@ fn a_message_holds_at_most_eight_images() {
         .expect_err("the ninth is refused");
     assert_eq!(refusal, AttachRefusal::TooMany);
     assert_eq!(refusal.to_string(), "at most 8 images per message");
-    assert_eq!(pending.len(), 8);
+    assert_eq!(pending.chips().len(), 8);
 }
 
 #[test]
@@ -113,7 +113,7 @@ fn a_message_s_images_must_fit_one_protocol_frame() {
         .admit("two.png", &large)
         .expect_err("a second large one would not fit the frame");
     assert_eq!(refusal, AttachRefusal::OverMessageBudget);
-    assert_eq!(pending.len(), 1);
+    assert_eq!(pending.chips().len(), 1);
     assert!(
         refusal.to_string().contains("7 MiB"),
         "names the budget: {refusal}"
@@ -164,7 +164,7 @@ fn remove_last_drops_the_newest_and_clear_drops_all() {
     pending.admit("a.png", &samples::png(1, 1)).unwrap();
     pending.admit("b.gif", &samples::gif(1, 1)).unwrap();
     assert!(pending.remove_last());
-    assert_eq!(pending.len(), 1);
+    assert_eq!(pending.chips().len(), 1);
     assert!(pending.chips()[0].contains("a.png"));
     pending.admit("c.png", &samples::png(1, 1)).unwrap();
     pending.clear();

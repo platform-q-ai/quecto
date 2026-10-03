@@ -545,9 +545,13 @@ impl App {
         match &key {
             Key::Ctrl('c') => {
                 let running = self.ac().agent_state.is_running() || self.active_subagent_running();
-                match ctrl_c_action(running, self.editor.text().is_empty()) {
+                // The composer is the text and its attached images (#2425).
+                let composer_empty =
+                    self.editor.text().is_empty() && self.attachments.pending.is_empty();
+                match ctrl_c_action(running, composer_empty) {
                     CtrlCAction::ClearEditor => {
                         self.editor.set_text("");
+                        self.attachments.pending.clear();
                         self.autocomplete.dismiss();
                     }
                     CtrlCAction::AbortAgent => {

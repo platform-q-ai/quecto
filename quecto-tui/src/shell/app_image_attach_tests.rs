@@ -376,3 +376,57 @@ async fn help_names_the_image_command_and_keys() {
     assert!(help.contains("Ctrl+V"), "{help}");
     assert!(help.contains("last image"), "{help}");
 }
+
+#[tokio::test]
+async fn a_focused_sub_agent_receives_the_images_on_its_own_connection() {
+    use super::tui_harness::{
+        drain_child_commands_until_quiet, spawn_subagent_socket_with_commands,
+        subagent_with_socket, subagents_changed,
+    };
+    let mut h = harness().await;
+    let (socket, mut child_commands) = spawn_subagent_socket_with_commands("worker");
+    h.event(subagents_changed(vec![subagent_with_socket(
+        "worker",
+        "idle",
+        None,
+        Some(socket),
+    )]));
+    h.select(Some("worker"));
+    let _ = drain_child_commands_until_quiet(&mut child_commands).await;
+    let (_dir, path) = image_file("shot.png", &samples::png(2, 2));
+    attach(&mut h, &path);
+    let _ = h.drain_commands().await;
+
+    h.submit("for the worker");
+
+    let child = drain_child_commands_until_quiet(&mut child_commands).await;
+    let prompts = sent(&child, "prompt");
+    assert_eq!(prompts.len(), 1, "{child:?}");
+    assert_eq!(prompts[0]["message"], "for the worker");
+    assert_eq!(prompts[0]["images"][0]["mimeType"], "image/png");
+    assert!(
+        sent(&h.drain_commands().await, "prompt").is_empty(),
+        "nothing goes to the master"
+    );
+    assert!(h.attachment_chips().is_empty());
+    assert_eq!(
+        h.active_user_entries().last().map(String::as_str),
+        Some("[image]\nfor the worker")
+    );
+}
+
+#[tokio::test]
+async fn a_message_refused_for_a_lost_connection_keeps_its_chips() {
+    let mut h = harness().await;
+    let (_dir, path) = image_file("shot.png", &samples::png(2, 2));
+    attach(&mut h, &path);
+    h.app_mut().ac_mut().agent_connected = false;
+
+    h.submit("are you there?");
+
+    assert_eq!(
+        h.attachment_chips().len(),
+        1,
+        "the images wait for a resend"
+    );
+}
