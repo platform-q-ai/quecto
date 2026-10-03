@@ -23,7 +23,9 @@ the TUI (#2425). It is a pure leaf crate: no I/O, only `base64` and `serde`.
   non-canonical trailing bits accepted.
 - Header parsing: `dimensions(mime, base64)` reads the pixel size from PNG
   IHDR, JPEG SOFn, the GIF screen descriptor and WebP VP8/VP8L/VP8X, decoding
-  only the bytes it reads.
+  only the bytes it reads; `is_animated_gif(base64)` says whether a GIF has
+  more than one frame (the harness caches the verdict and decides what a
+  model that takes still images only is sent).
 
 ## Admission (an allowlist)
 
