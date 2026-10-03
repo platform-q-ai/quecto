@@ -56,7 +56,7 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
                 }
                 let explicit = matches!(
                     pending_msg,
-                    PendingMessage::User(_) | PendingMessage::Control { .. }
+                    PendingMessage::User { .. } | PendingMessage::Control { .. }
                 );
                 let admission = match status {
                     Ok(receipt) => match receipt.status {
@@ -151,7 +151,7 @@ fn is_explicit(message: &crate::interface::cli::uds_session::PendingMessage) -> 
     use crate::interface::cli::uds_session::PendingMessage;
     matches!(
         message,
-        PendingMessage::User(_) | PendingMessage::Control { .. }
+        PendingMessage::User { .. } | PendingMessage::Control { .. }
     )
 }
 
@@ -160,7 +160,7 @@ pub(super) async fn queue_prompt(
     ctx: &mut DispatchCtx<'_>,
     id: Option<&str>,
     type_name: &str,
-    message: String,
+    message: crate::interface::cli::uds_session::PromptBody,
     steer: bool,
 ) -> bool {
     let type_name = if steer { "steer" } else { type_name };

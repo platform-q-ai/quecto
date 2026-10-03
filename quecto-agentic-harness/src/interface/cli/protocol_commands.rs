@@ -1,6 +1,10 @@
 use crate::domain::tool_descriptor::ProfileAvailabilityScope;
 use serde::{Deserialize, Deserializer, Serialize};
 
+/// One image on `prompt` / `steer` / `follow_up` as spelled on the wire
+/// (#2422): `{"mimeType", "data"}`, admitted by `quecto_image`.
+pub use quecto_image::ImagePayload;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct PresentJsonValue(Option<serde_json::Value>);
 
@@ -40,6 +44,14 @@ pub enum AgentCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         message: String,
+        /// Images attached to the message (#2422), validated at dispatch;
+        /// `null` is no images.
+        #[serde(
+            default,
+            deserialize_with = "quecto_image::images_or_null",
+            skip_serializing_if = "Vec::is_empty"
+        )]
+        images: Vec<ImagePayload>,
         /// Required when the agent is currently running.
         #[serde(rename = "streamingBehavior", skip_serializing_if = "Option::is_none")]
         streaming_behavior: Option<StreamingBehavior>,
@@ -49,12 +61,28 @@ pub enum AgentCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         message: String,
+        /// Images attached to the message (#2422), validated at dispatch;
+        /// `null` is no images.
+        #[serde(
+            default,
+            deserialize_with = "quecto_image::images_or_null",
+            skip_serializing_if = "Vec::is_empty"
+        )]
+        images: Vec<ImagePayload>,
     },
     /// Deliver this message when the agent finishes.
     FollowUp {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         message: String,
+        /// Images attached to the message (#2422), validated at dispatch;
+        /// `null` is no images.
+        #[serde(
+            default,
+            deserialize_with = "quecto_image::images_or_null",
+            skip_serializing_if = "Vec::is_empty"
+        )]
+        images: Vec<ImagePayload>,
     },
     /// Cancel the current agent run.
     Abort {

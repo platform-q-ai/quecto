@@ -183,42 +183,22 @@ impl Tool for ReadTool {
 
             // Read entire file once (up to 10 MiB cap, already checked above).
             // Peek magic bytes from the buffer — avoids TOCTOU and extra syscalls.
-            const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
             let raw_bytes = match tokio::fs::read(&resolved).await {
                 Ok(bytes) => bytes,
                 Err(error) => return read_failure(&resolved, path, &error).await,
             };
 
             // Magic-byte MIME detection. Extension-only fallback is intentionally
-            // absent — text files named .jpg should be read as text.
-            if let Some(orig_mime) = detect_mime_by_magic(&raw_bytes) {
-                if raw_bytes.len() > MAX_IMAGE_BYTES {
-                    let size = format_size(raw_bytes.len());
-                    return Ok(ToolResult {
-                        content: format!(
-                            "Image is {size} — too large to send inline (max 5 MiB for API). \
-                             Describe what you need from the image instead.",
-                        ),
-                        is_error: true,
-                        image_blocks: vec![],
-                        delivery_metadata: None,
-                    });
-                }
-                use base64::Engine as _;
-                let data = base64::engine::general_purpose::STANDARD.encode(&raw_bytes);
-                let size = format_size(raw_bytes.len());
-                let content = format!("Read image file [{}] ({size})", orig_mime);
-                return Ok(ToolResult {
-                    content,
-                    is_error: false,
-                    image_blocks: vec![crate::domain::tool::ImageBlock {
-                        mime_type: orig_mime,
-                        data,
-                    }],
-                    delivery_metadata: None,
-                });
+            // absent — text files named .jpg should be read as text. What an
+            // image is, and the limit, are `quecto_image`'s (#2422): a file is
+            // an image when its signature names a type and its header is
+            // readable. Anything else (a JPEG with stray bytes, an Apple CgBI
+            // PNG, text that starts "GIF89a") is read as text or binary below.
+            let image = quecto_image::ImageMime::sniff(&raw_bytes)
+                .filter(|mime| quecto_image::dimensions_of_bytes(*mime, &raw_bytes).is_some());
+            if let Some(mime) = image {
+                return Ok(image_result(mime, &raw_bytes));
             }
-
             // Not an image — interpret as UTF-8 text; anything else is named
             // as binary (#2166).
             let content = match String::from_utf8(raw_bytes) {
@@ -348,30 +328,37 @@ fn parse_optional_usize_arg(
     }
 }
 
-/// Detect supported image MIME type by file magic bytes.
-///
-/// Checks the first few bytes of the file content against known image signatures.
-/// Returns `None` if no known image signature is found.
-///
-/// Signatures checked:
-/// - PNG:  `\x89PNG\r\n\x1a\n` (8 bytes)
-/// - JPEG: `\xFF\xD8\xFF` (3 bytes)
-/// - GIF:  `GIF87a` or `GIF89a` (6 bytes)
-/// - WebP: `RIFF....WEBP` (12 bytes)
-fn detect_mime_by_magic(bytes: &[u8]) -> Option<&'static str> {
-    if bytes.len() >= 8 && bytes[..8] == [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A] {
-        return Some("image/png");
+/// The result of reading the `mime` file `bytes`: the image admitted as an
+/// attachment (#2422), or why it cannot be sent.
+fn image_result(mime: quecto_image::ImageMime, bytes: &[u8]) -> ToolResult {
+    let size = format_size(bytes.len());
+    // `from_bytes` makes the one size check.
+    match quecto_image::ImageAttachment::from_bytes(mime, bytes) {
+        Ok(image) => ToolResult {
+            content: format!("Read image file [{}] ({size})", image.mime_type()),
+            is_error: false,
+            image_blocks: vec![crate::domain::tool::ImageBlock {
+                mime_type: image.mime_type(),
+                data: image.into_data(),
+            }],
+            delivery_metadata: None,
+        },
+        Err(refusal @ quecto_image::ImageRefusal::TooLarge) => ToolResult {
+            content: format!(
+                "Image is {size} — too large to send inline: {refusal}. \
+                 Describe what you need from the image instead.",
+            ),
+            is_error: true,
+            image_blocks: vec![],
+            delivery_metadata: None,
+        },
+        Err(refusal) => ToolResult {
+            content: format!("Image file is {refusal}; it cannot be sent."),
+            is_error: true,
+            image_blocks: vec![],
+            delivery_metadata: None,
+        },
     }
-    if bytes.len() >= 3 && bytes[..3] == [0xFF, 0xD8, 0xFF] {
-        return Some("image/jpeg");
-    }
-    if bytes.len() >= 6 && (bytes[..6] == *b"GIF87a" || bytes[..6] == *b"GIF89a") {
-        return Some("image/gif");
-    }
-    if bytes.len() >= 12 && bytes[..4] == *b"RIFF" && bytes[8..12] == *b"WEBP" {
-        return Some("image/webp");
-    }
-    None
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {

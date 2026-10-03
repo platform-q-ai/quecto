@@ -589,9 +589,6 @@ const MINIMAL_PNG: &[u8] = &[
     0x00, 0x00, 0x02, 0x00, 0x01, 0xE2, 0x21, 0xBC, 0x33, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
     0x44, 0xAE, 0x42, 0x60, 0x82,
 ];
-const MINIMAL_JPEG: &[u8] = &[0xFF, 0xD8, 0xFF, 0xD9];
-const MINIMAL_GIF: &[u8] = b"GIF89a\x01\x00\x01\x00\x00\x00\x00\x3B";
-const MINIMAL_WEBP: &[u8] = b"RIFF\x24\x00\x00\x00WEBPVP8L";
 
 #[given(regex = r#"^a PNG image file "([^"]+)" exists in the workspace$"#)]
 fn given_png_file(world: &mut QuectoWorld, filename: String) {
@@ -608,7 +605,7 @@ fn given_jpeg_file(world: &mut QuectoWorld, filename: String) {
         .tool_workspace
         .as_ref()
         .expect("tool workspace not set");
-    std::fs::write(ws.join(&filename), MINIMAL_JPEG).expect("write JPEG");
+    std::fs::write(ws.join(&filename), quecto_image::samples::jpeg(1, 1)).expect("write JPEG");
 }
 
 #[given(regex = r#"^a GIF image file "([^"]+)" exists in the workspace$"#)]
@@ -617,7 +614,7 @@ fn given_gif_file(world: &mut QuectoWorld, filename: String) {
         .tool_workspace
         .as_ref()
         .expect("tool workspace not set");
-    std::fs::write(ws.join(&filename), MINIMAL_GIF).expect("write GIF");
+    std::fs::write(ws.join(&filename), quecto_image::samples::gif(1, 1)).expect("write GIF");
 }
 
 #[given(regex = r#"^a WebP image file "([^"]+)" exists in the workspace$"#)]
@@ -626,7 +623,11 @@ fn given_webp_file(world: &mut QuectoWorld, filename: String) {
         .tool_workspace
         .as_ref()
         .expect("tool workspace not set");
-    std::fs::write(ws.join(&filename), MINIMAL_WEBP).expect("write WebP");
+    std::fs::write(
+        ws.join(&filename),
+        quecto_image::samples::webp_lossless(1, 1),
+    )
+    .expect("write WebP");
 }
 
 #[then(regex = r#"^the tool result image blocks should contain a "([^"]+)" block$"#)]

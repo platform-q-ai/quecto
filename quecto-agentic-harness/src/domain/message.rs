@@ -1,4 +1,6 @@
-use crate::domain::conversation::image_tokens::estimate_image_tokens;
+use crate::domain::conversation::image_tokens::{
+    estimate_image_tokens, estimate_named_image_tokens,
+};
 #[cfg(any(test, feature = "test-support"))]
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -144,18 +146,9 @@ impl ThinkingBlock {
     }
 }
 
-/// An image block attached directly to a user message.
-///
-/// Unlike `crate::domain::tool::ImageBlock` (which uses `&'static str` for
-/// `mime_type`), this variant owns its strings to support runtime MIME types
-/// from user-provided files.
-#[derive(Debug, Clone)]
-pub struct UserImageBlock {
-    /// MIME type string, e.g. `"image/png"`, `"image/jpeg"`.
-    pub mime_type: String,
-    /// Base64-encoded image bytes (standard encoding, no line breaks).
-    pub data: String,
-}
+/// An image attached to a user message (#2422): defined, and only made,
+/// in `conversation::user_images`.
+pub use super::conversation::user_images::UserImageBlock;
 
 impl Clone for Message {
     fn clone(&self) -> Self {
@@ -270,12 +263,12 @@ impl Message {
             let user_image_tokens: usize = self
                 .user_image_blocks
                 .iter()
-                .map(|img| estimate_image_tokens(&img.mime_type, &img.data))
+                .map(|img| estimate_image_tokens(img.mime(), img.data()))
                 .sum();
             let image_tokens: usize = self
                 .image_blocks
                 .iter()
-                .map(|img| estimate_image_tokens(img.mime_type, &img.data))
+                .map(|img| estimate_named_image_tokens(img.mime_type, &img.data))
                 .sum();
             text_tokens + tool_call_tokens + tool_call_id_tokens + image_tokens + user_image_tokens
         })

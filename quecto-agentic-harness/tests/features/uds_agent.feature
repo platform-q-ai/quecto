@@ -121,6 +121,23 @@ Feature: UDS mode for headless agent operation
     And I close the UDS connection
     Then the agent output event "agent_end" should appear 2 times
 
+  @done @images-2422
+  Scenario: a prompt's image attachment reaches the model, and a bad image is refused with the exact message
+    Given a temp base directory
+    And a config file with an Anthropic provider pointing at a mock server
+    And the config default model is "anthropic-api/claude-sonnet-4-6"
+    And a capturing Anthropic mock LLM returning text "a small image"
+    When I start the UDS agent with no [session]
+    # The harness builds its loop without the startup catalogue read: the
+    # switch gives it the model's declared image input, as a client's would.
+    And I send set_model "anthropic-api/claude-sonnet-4-6"
+    And I send prompt "what is this?" with id "img-1" and an image declared "image/png" holding a "image/png" image
+    And I send prompt "and this?" with id "img-2" and an image declared "image/gif" holding a "image/png" image
+    And I close the UDS connection
+    Then the model should have been sent 1 request
+    And request 1 should carry the text "what is this?" and a "image/png" image
+    And the response with id "img-2" should carry the error "images[0]: data does not start with the image/gif signature"
+
   # ─── get_state command ──────────────────────────────────────────────────────
 
   @done

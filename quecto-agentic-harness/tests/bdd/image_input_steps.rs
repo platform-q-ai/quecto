@@ -35,7 +35,7 @@ impl LlmProvider for RequestRecorder {
                 let images = m
                     .user_image_blocks
                     .iter()
-                    .map(|image| image.mime_type.clone())
+                    .map(|image| image.mime_type().to_owned())
                     .chain(
                         m.image_blocks
                             .iter()
@@ -123,10 +123,10 @@ async fn prompt(world: &mut QuectoWorld, message: Message) {
 #[when(expr = "the agent is prompted {string} with a {string} image")]
 async fn when_prompted_with_image(world: &mut QuectoWorld, text: String, mime: String) {
     let mut message = Message::user(text);
-    message.user_image_blocks = vec![UserImageBlock {
-        mime_type: mime,
-        data: "cG5n".into(),
-    }];
+    message.user_image_blocks = vec![UserImageBlock::unchecked_for_tests(
+        quecto_image::ImageMime::parse_exact(&mime).expect("an admitted type"),
+        "cG5n",
+    )];
     prompt(world, message).await;
 }
 

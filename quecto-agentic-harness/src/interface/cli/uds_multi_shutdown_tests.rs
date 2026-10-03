@@ -9,6 +9,7 @@ async fn completed_shutdown_is_observed_before_pending_client_messages() {
         .send(ClientMessage::Command(super::ClientCommand {
             client_id: 1,
             line: r#"{"type":"get_state"}"#.to_string(),
+            admitted: None,
         }))
         .await
         .unwrap();

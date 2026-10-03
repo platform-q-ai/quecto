@@ -45,6 +45,7 @@ async fn prompt_handler_rejects_empty_message() {
         state_for(connected_gw()),
         Json(PromptRequest {
             message: String::new(),
+            images: Vec::new(),
             streaming_behavior: None,
             wait_for_completion: true,
         }),
@@ -60,6 +61,7 @@ async fn prompt_handler_forwards_and_maps_error() {
         state_for(connected_gw()),
         Json(PromptRequest {
             message: "hi".into(),
+            images: Vec::new(),
             streaming_behavior: Some("steer".into()),
             wait_for_completion: true,
         }),
@@ -72,6 +74,7 @@ async fn prompt_handler_forwards_and_maps_error() {
         state_for(MockGateway::default()),
         Json(PromptRequest {
             message: "hi".into(),
+            images: Vec::new(),
             streaming_behavior: None,
             wait_for_completion: false,
         }),
@@ -88,7 +91,8 @@ async fn steer_follow_up_abort_handlers_forward() {
             steer_handler(
                 state_for(connected_gw()),
                 Json(MessageRequest {
-                    message: "go".into()
+                    message: "go".into(),
+                    images: Vec::new(),
                 })
             )
             .await
@@ -102,7 +106,8 @@ async fn steer_follow_up_abort_handlers_forward() {
             follow_up_handler(
                 state_for(connected_gw()),
                 Json(MessageRequest {
-                    message: "later".into()
+                    message: "later".into(),
+                    images: Vec::new(),
                 })
             )
             .await
@@ -138,6 +143,7 @@ async fn steer_handler_maps_internal_error_to_500() {
         state_for(failing_gw()),
         Json(MessageRequest {
             message: "x".into(),
+            images: Vec::new(),
         }),
     )
     .await
@@ -574,7 +580,8 @@ async fn handlers_map_transport_failure_to_500() {
         follow_up_handler(
             state_for(failing_gw()),
             Json(MessageRequest {
-                message: "x".into()
+                message: "x".into(),
+                images: Vec::new(),
             })
         )
         .await

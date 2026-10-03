@@ -58,10 +58,13 @@ pub(super) async fn dispatch(ctx: ReaderDispatchCtx<'_>) -> bool {
             // Never acknowledge work before queue admission, or wait indefinitely
             // behind a full queue while the sender believes delivery succeeded.
             if let Ok(permit) = ctx.cmd_tx.try_reserve() {
-                cancel_for_admitted_steer(&ctx);
+                if ctrl.is_steer {
+                    mark_steer_and_cancel(&ctx);
+                }
                 permit.send(ClientMessage::Command(ClientCommand {
                     line,
                     client_id: ctx.client_id,
+                    admitted: ctrl.admitted.take(),
                 }));
             } else {
                 let request: serde_json::Value =
@@ -72,6 +75,11 @@ pub(super) async fn dispatch(ctx: ReaderDispatchCtx<'_>) -> bool {
                 ).to_json_line() + "\n";
             }
         }
+        // A refused control's receipt is recorded by dispatch (#2422); best
+        // effort: a full queue keeps the refusal ack, not the receipt.
+        if let Some(refused) = ctrl.refused.take() {
+            let _ = ctx.cmd_tx.try_send(ClientMessage::RejectedControl(refused));
+        }
         super::uds_ext_protocol::ack_accepted_control(ctx.registry, ctx.client_id, ctrl).await;
         // Keep the connection alive long enough for its writer to flush the reply.
         return true;
@@ -80,19 +88,22 @@ pub(super) async fn dispatch(ctx: ReaderDispatchCtx<'_>) -> bool {
     let Ok(permit) = ctx.cmd_tx.reserve().await else {
         return false;
     };
-    cancel_for_admitted_steer(&ctx);
+    // A steer's images are admitted once, here (#2422).
+    let admitted = super::uds::steer_images(&ctx.line);
+    if admitted.is_some() {
+        mark_steer_and_cancel(&ctx);
+    }
     permit.send(ClientMessage::Command(ClientCommand {
         line: ctx.line,
         client_id: ctx.client_id,
+        admitted,
     }));
     true
 }
 
-fn cancel_for_admitted_steer(ctx: &ReaderDispatchCtx<'_>) {
-    if super::uds::is_steer_command(&ctx.line) {
-        ctx.turn_control.mark_steer();
-        super::uds_cancel::fire_cancel(ctx.cancel_handle);
-    }
+fn mark_steer_and_cancel(ctx: &ReaderDispatchCtx<'_>) {
+    ctx.turn_control.mark_steer();
+    super::uds_cancel::fire_cancel(ctx.cancel_handle);
 }
 
 #[cfg(test)]

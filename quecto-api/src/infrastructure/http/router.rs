@@ -24,11 +24,14 @@ pub struct AppState<G: AgentGateway> {
 
 pub fn build_router<G: AgentGateway + Clone + 'static>(gateway: G) -> Router {
     let state = Arc::new(AppState { gateway });
+    // A body that may carry images (#2422) takes up to the agent's 8 MiB
+    // frame cap; every other route keeps axum's 2 MB default.
+    let images = || axum::extract::DefaultBodyLimit::max(quecto_line_io::PROTOCOL_LINE_CAP_BYTES);
     Router::new()
         .route("/health", get(health_handler::<G>))
-        .route("/prompt", post(prompt_handler::<G>))
-        .route("/steer", post(steer_handler::<G>))
-        .route("/follow_up", post(follow_up_handler::<G>))
+        .route("/prompt", post(prompt_handler::<G>).layer(images()))
+        .route("/steer", post(steer_handler::<G>).layer(images()))
+        .route("/follow_up", post(follow_up_handler::<G>).layer(images()))
         .route("/abort", post(abort_handler::<G>))
         .route("/model", post(set_model_handler::<G>))
         .route("/effort", post(set_effort_handler::<G>))
@@ -75,6 +78,9 @@ async fn health_handler<G: AgentGateway>(
 #[derive(Deserialize)]
 struct PromptRequest {
     message: String,
+    /// Images attached to the prompt (#2422).
+    #[serde(default, deserialize_with = "quecto_image::images_or_null")]
+    images: Vec<quecto_image::ImagePayload>,
     #[serde(rename = "streamingBehavior")]
     streaming_behavior: Option<String>,
     #[serde(rename = "waitForCompletion", default = "default_wait_for_completion")]
@@ -177,16 +183,9 @@ async fn prompt_handler<G: AgentGateway>(
     State(state): State<Arc<AppState<G>>>,
     Json(body): Json<PromptRequest>,
 ) -> impl IntoResponse {
-    if body.message.is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": "invalid request: message must not be empty"})),
-        )
-            .into_response();
-    }
-
     let input = use_cases::send_prompt::SendPromptInput {
         message: body.message,
+        images: body.images,
         streaming_behavior: body.streaming_behavior,
         wait_for_completion: body.wait_for_completion,
     };
@@ -200,20 +199,24 @@ async fn prompt_handler<G: AgentGateway>(
 #[derive(Deserialize)]
 struct MessageRequest {
     message: String,
+    #[serde(default, deserialize_with = "quecto_image::images_or_null")]
+    images: Vec<quecto_image::ImagePayload>,
 }
 
 async fn steer_handler<G: AgentGateway>(
     State(state): State<Arc<AppState<G>>>,
     Json(body): Json<MessageRequest>,
 ) -> impl IntoResponse {
-    event_response(use_cases::steer::execute(&state.gateway, body.message).await)
+    let MessageRequest { message, images } = body;
+    event_response(use_cases::steer::execute(&state.gateway, message, images).await)
 }
 
 async fn follow_up_handler<G: AgentGateway>(
     State(state): State<Arc<AppState<G>>>,
     Json(body): Json<MessageRequest>,
 ) -> impl IntoResponse {
-    event_response(use_cases::follow_up::execute(&state.gateway, body.message).await)
+    let MessageRequest { message, images } = body;
+    event_response(use_cases::follow_up::execute(&state.gateway, message, images).await)
 }
 
 async fn abort_handler<G: AgentGateway>(
@@ -609,13 +612,14 @@ async fn handle_ws<G: AgentGateway + Clone>(state: Arc<AppState<G>>, mut socket:
                 }
             }
             if let Ok(req) = serde_json::from_str::<PromptRequest>(&text) {
-                if !req.message.is_empty() {
-                    let result = gateway
-                        .send(AgentCommand::Prompt {
-                            message: req.message,
-                            streaming_behavior: req.streaming_behavior,
-                        })
-                        .await;
+                if !req.message.is_empty() || !req.images.is_empty() {
+                    let input = use_cases::send_prompt::SendPromptInput {
+                        message: req.message,
+                        images: req.images,
+                        streaming_behavior: req.streaming_behavior,
+                        wait_for_completion: true,
+                    };
+                    let result = use_cases::send_prompt::execute(&gateway, input).await;
                     let (event, suppress) = match result {
                         Ok(event) => {
                             let suppress = direct_response_id(&event)

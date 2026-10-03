@@ -11,7 +11,9 @@
 //! becomes it. The baseline holds digests only, never the items or the
 //! session key: what a request records is counts, indices, a kind and token
 //! estimates.
-use crate::domain::conversation::image_tokens::{UNREADABLE_IMAGE_TOKENS, estimate_image_tokens};
+use crate::domain::conversation::image_tokens::{
+    UNREADABLE_IMAGE_TOKENS, estimate_named_image_tokens,
+};
 use crate::domain::request_observation::{
     InputBaseline, InputItemKind, InputPrefix, InputPrefixParts, RequestTrace,
 };
@@ -152,7 +154,7 @@ fn image_part_tokens(part: &serde_json::Value) -> usize {
         .and_then(|url| url.strip_prefix("data:"))
         .and_then(|url| url.split_once(";base64,"))
         .map_or(UNREADABLE_IMAGE_TOKENS, |(mime, data)| {
-            estimate_image_tokens(mime, data)
+            estimate_named_image_tokens(mime, data)
         })
 }
 

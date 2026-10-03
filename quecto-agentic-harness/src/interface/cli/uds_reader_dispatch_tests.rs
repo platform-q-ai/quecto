@@ -19,6 +19,7 @@ async fn rejected_queue(closed: bool) {
         .send(ClientMessage::Command(ClientCommand {
             line: "occupied".into(),
             client_id: 1,
+            admitted: None,
         }))
         .await
         .unwrap();
@@ -137,6 +138,7 @@ async fn supervisor_pause_bypasses_full_turn_queue_and_returns_durable_receipt()
         .send(ClientMessage::Command(ClientCommand {
             line: "occupied".into(),
             client_id: 1,
+            admitted: None,
         }))
         .await
         .unwrap();
@@ -184,6 +186,7 @@ async fn targeted_pause_must_not_silently_pause_the_receiving_parent() {
         .send(ClientMessage::Command(ClientCommand {
             line: "occupied".into(),
             client_id: 1,
+            admitted: None,
         }))
         .await
         .unwrap();
@@ -508,3 +511,6 @@ async fn a_wake_without_a_generation_nudges_nothing() {
     assert_eq!(control.nudges.load(std::sync::atomic::Ordering::SeqCst), 0);
     assert!(queued.is_none(), "nothing reached the turn queue");
 }
+
+#[path = "uds_reader_dispatch_image_tests.rs"]
+mod image_tests;

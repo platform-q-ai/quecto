@@ -259,6 +259,7 @@ async fn rejected_socket_steer_does_not_cancel_but_explicit_abort_does() {
             crate::interface::cli::uds_multi::ClientCommand {
                 line: "occupied".into(),
                 client_id: 0,
+                admitted: None,
             },
         ))
         .await
@@ -344,7 +345,7 @@ async fn an_idle_wake_is_unmarked_and_a_prompt_or_steer_is_a_prompt() {
             super::PromptCommand {
                 id: id.map(str::to_string),
                 type_name: type_name.into(),
-                message: text.clone(),
+                message: text.clone().into(),
                 streaming_behavior: None,
             },
         )

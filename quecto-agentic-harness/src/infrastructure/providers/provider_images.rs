@@ -20,7 +20,7 @@ pub(super) fn images(message: &Message) -> Vec<(&str, &str)> {
     message
         .user_image_blocks
         .iter()
-        .map(|image| (image.mime_type.as_str(), image.data.as_str()))
+        .map(|image| (image.mime_type(), image.data()))
         .chain(
             message
                 .image_blocks

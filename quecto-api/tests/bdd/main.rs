@@ -68,11 +68,11 @@ impl AgentGateway for MockGateway {
             let mut data = serde_json::json!({"mock": true});
             let command_name = match cmd {
                 AgentCommand::Prompt { .. } => "prompt",
-                AgentCommand::Steer { message } => {
+                AgentCommand::Steer { message, .. } => {
                     data["messageEcho"] = serde_json::Value::String(message);
                     "steer"
                 }
-                AgentCommand::FollowUp { message } => {
+                AgentCommand::FollowUp { message, .. } => {
                     data["messageEcho"] = serde_json::Value::String(message);
                     "follow_up"
                 }

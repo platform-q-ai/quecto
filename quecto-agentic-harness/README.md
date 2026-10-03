@@ -98,6 +98,7 @@ to open a link in the browser — plain click selects text. Slash commands inclu
 | `quecto-mcp` | `quecto-mcp` | UDS extension that discovers MCP tools, registers them with Quecto, and proxies tool calls; see [`quecto-mcp/README.md`](../quecto-mcp/README.md) |
 | `quecto-runtime-manager` | `quecto-runtime-manager` | HTTP runtime manager for provisioning and supervising isolated Quecto runtimes |
 | *(library)* | `quecto-line-io` | Shared bounded length-prefixed / legacy-line UDS framing (8 MiB cap) |
+| *(library)* | `quecto-image` | What an image is, owned in one place and shared by the agent (UDS commands, `read`, the token estimate) and `quecto-api`: MIME allowlist, sniffing, size limit, base64, header parsing, admission |
 
 ## Architecture
 
@@ -269,9 +270,9 @@ socat - UNIX-CONNECT:/tmp/quecto-agent-<uuid>.sock
 
 | Type | Fields | Description |
 |---|---|---|
-| `prompt` | `message`, optional `id`, `streamingBehavior` | Send a user message. When agent is running, `streamingBehavior` (`"steer"` or `"followUp"`) is required |
-| `steer` | `message`, optional `id` | Interrupt after current tool, deliver this message next |
-| `follow_up` | `message`, optional `id` | Queue message for after current run completes; if idle, run it immediately |
+| `prompt` | `message`, optional `id`, `streamingBehavior`, `images` | Send a user message. When agent is running, `streamingBehavior` (`"steer"` or `"followUp"`) is required. `images` attaches up to 8 PNG/JPEG/GIF/WebP images (`{"mimeType","data"}`, strict base64, readable header, ≤ 3.75 MiB decoded each); a bad image refuses the command ([details](docs/uds-protocol.md#image-attachments)) |
+| `steer` | `message`, optional `id`, `images` | Interrupt after current tool, deliver this message (and its images) next |
+| `follow_up` | `message`, optional `id`, `images` | Queue message (and its images) for after current run completes; if idle, run it immediately |
 | `abort` | optional `id` | Cancel the current agent run |
 | `get_state` | optional `id` | Return live supervision state, including model, streaming, accurate in-flight message count, effort, context limit, execution phase/current tool/recent progress, and workflow snapshot when enabled |
 | `get_messages` | optional `count`, optional `before`, optional `agent_id`, optional `id` | Return stable committed transcript history (best used after the turn ends) as the newest bounded page; `count` requests an older-client newest slice, `before` pages backward, and `agent_id` targets a sub-agent. Responses include `messages`, `before`, and `hasMoreBefore` so older history is explicitly reachable. Oversized history entries are returned as recoverable summaries (`id`, role/tool metadata, preview `content`, `contentLength`, `collapsed: true`, `truncated: true`) and can be fetched deliberately with ranged `get_message`. |

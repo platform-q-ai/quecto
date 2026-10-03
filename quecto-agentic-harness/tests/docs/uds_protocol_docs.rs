@@ -47,3 +47,44 @@ fn every_accepted_command_type_has_a_section() {
         "docs/uds-protocol.md has no section for {missing:?}"
     );
 }
+
+/// The `### `name`` section of the reference: from its heading to the next.
+fn command_section<'a>(doc: &'a str, name: &str) -> &'a str {
+    let heading = format!("### `{name}`");
+    let start = doc
+        .find(&heading)
+        .unwrap_or_else(|| panic!("no section for {name}"));
+    let body = &doc[start + heading.len()..];
+    &body[..body.find("\n### ").unwrap_or(body.len())]
+}
+
+/// #2422: `prompt`, `steer` and `follow_up` document their `images` field,
+/// and the reference quotes every refusal exactly as `quecto_image` words it.
+#[test]
+fn image_attachments_are_documented_with_their_exact_refusals() {
+    use quecto_image::{ImageMime, ImageRefusal, ImagesRefusal};
+    let doc = read_repo_file("docs/uds-protocol.md");
+    for name in ["prompt", "steer", "follow_up"] {
+        assert!(
+            command_section(&doc, name).contains("| `images` |"),
+            "the {name} section has no `images` row"
+        );
+    }
+    let image = |index, refusal| ImagesRefusal::Image { index, refusal }.to_string();
+    let refusals = [
+        image(1, ImageRefusal::UnsupportedMime("image/svg+xml".into())),
+        image(0, ImageRefusal::InvalidBase64),
+        image(0, ImageRefusal::SignatureMismatch(ImageMime::Png)),
+        image(0, ImageRefusal::TooLarge),
+        image(0, ImageRefusal::Unreadable(ImageMime::Png)),
+        ImagesRefusal::TooMany(9).to_string(),
+    ];
+    let missing: Vec<&String> = refusals
+        .iter()
+        .filter(|text| !doc.contains(&format!("`{text}`")))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "docs/uds-protocol.md does not quote {missing:?}"
+    );
+}

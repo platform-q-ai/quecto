@@ -28,10 +28,10 @@ fn whitespace_only_returns_none() {
 fn text_with_images_vision_returns_array() {
     let mut m = Message::user("describe this");
     m.user_image_blocks
-        .push(crate::domain::message::UserImageBlock {
-            mime_type: "image/png".to_string(),
-            data: "base64data".to_string(),
-        });
+        .push(crate::domain::message::UserImageBlock::unchecked_for_tests(
+            quecto_image::ImageMime::Png,
+            "base64data",
+        ));
     let content = build_user_content(&m);
     assert!(content.is_some());
     let arr = content.unwrap();
@@ -42,30 +42,28 @@ fn text_with_images_vision_returns_array() {
     assert_eq!(blocks[1]["type"], "image");
 }
 
+/// A block carries its admitted type (#2422), the allowlist Anthropic
+/// takes (`ImageMime::parse_exact`): each is sent with its wire spelling.
 #[test]
-fn invalid_mime_filtered() {
-    let mut m = Message::user("describe");
-    m.user_image_blocks
-        .push(crate::domain::message::UserImageBlock {
-            mime_type: "image/bmp".to_string(),
-            data: "data".to_string(),
-        });
-    let content = build_user_content(&m);
-    // BMP is not in ALLOWED_MIME → filtered out, only text remains
-    assert_eq!(
-        content,
-        Some(serde_json::Value::String("describe".to_string()))
-    );
+fn every_admitted_type_is_sent_with_its_wire_spelling() {
+    for mime in quecto_image::ImageMime::ALL {
+        let block = crate::domain::message::UserImageBlock::sample(mime);
+        let data = block.data().to_owned();
+        let m = Message::user("describe").with_user_images(vec![block]);
+        let content = build_user_content(&m).expect("sent");
+        assert_eq!(content[1]["source"]["media_type"], mime.as_str());
+        assert_eq!(content[1]["source"]["data"], data);
+    }
 }
 
 #[test]
 fn images_only_no_text_vision() {
     let mut m = Message::user("");
     m.user_image_blocks
-        .push(crate::domain::message::UserImageBlock {
-            mime_type: "image/jpeg".to_string(),
-            data: "data".to_string(),
-        });
+        .push(crate::domain::message::UserImageBlock::unchecked_for_tests(
+            quecto_image::ImageMime::Jpeg,
+            "data",
+        ));
     let content = build_user_content(&m);
     assert!(content.is_some());
     let arr = content.unwrap();
@@ -100,10 +98,10 @@ fn request_for<'a>(
 fn every_model_is_sent_the_images_its_request_carries() {
     let mut m = Message::user("describe this");
     m.user_image_blocks
-        .push(crate::domain::message::UserImageBlock {
-            mime_type: "image/png".to_string(),
-            data: "cG5n".to_string(),
-        });
+        .push(crate::domain::message::UserImageBlock::unchecked_for_tests(
+            quecto_image::ImageMime::Png,
+            "cG5n",
+        ));
     let messages = [m];
     for model in [
         "unknown-future-model",

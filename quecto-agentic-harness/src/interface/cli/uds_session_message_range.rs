@@ -109,7 +109,6 @@ fn add_bounded_thinking_page(
             break;
         }
     }
-
     clear_thinking_page(value);
 }
 
@@ -120,6 +119,7 @@ fn ranged_value(
     request_id: Option<&str>,
 ) -> serde_json::Value {
     let mut value = message_to_json_with_content(msg, range.slice(&msg.content));
+    super::add_image_summary(&mut value, msg); // #2422: counted against the frame
     add_bounded_thinking_page(&mut value, msg, thinking_start, request_id);
     value["offset"] = serde_json::json!(range.start);
     value["nextOffset"] = serde_json::json!(range.end);

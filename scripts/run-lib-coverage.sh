@@ -2,7 +2,7 @@
 # run-lib-coverage.sh — per-package unit-test function coverage from ONE build.
 #
 # Usage: run-lib-coverage.sh [--build-only] <package>:<function-threshold> ...
-#   e.g. run-lib-coverage.sh quecto-agentic-harness:92 quecto-tui:95 quecto-api:95
+#   e.g. run-lib-coverage.sh quecto-agentic-harness:92 quecto-tui:95 quecto-api:95 quecto-image:95
 #
 # `cargo llvm-cov --lib -p <crate>` once per crate compiled three different
 # instrumented feature unifications (each `-p` shape resolves its own

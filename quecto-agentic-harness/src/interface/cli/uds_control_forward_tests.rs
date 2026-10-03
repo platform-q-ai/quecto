@@ -145,3 +145,61 @@ fn trial_accepted_instruction_retains_correlation_for_handling_response() {
     assert_eq!(forward["id"], "approval-42");
     assert_eq!(ack_json(&got.ack_line)["data"]["status"], "accepted");
 }
+
+/// A 2x2 PNG: signature, IHDR, IEND.
+const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAAElFTkSuQmCC";
+
+/// #2422: a forwarded prompt, steer or follow-up carries its images to the
+/// dispatch loop; dropping them would deliver the text alone.
+#[test]
+fn flagged_controls_forward_their_images() {
+    let images = format!(r#"[{{"mimeType":"image/png","data":"{PNG}"}}]"#);
+    for (kind, extra) in [
+        ("prompt", ""),
+        ("prompt", r#","streamingBehavior":"steer""#),
+        ("steer", ""),
+        ("follow_up", ""),
+    ] {
+        let line = format!(
+            r#"{{"type":"{kind}","message":"look","images":{images}{extra},"ack":"accept","id":"i1"}}"#
+        );
+        let got = intercept_control_forward(&line).expect("intercepted");
+        assert_eq!(ack_json(&got.ack_line)["success"], true, "{kind}{extra}");
+        let fwd: serde_json::Value = serde_json::from_str(&got.forward_line.unwrap()).unwrap();
+        assert_eq!(fwd["images"][0]["data"], PNG, "{kind}{extra}");
+        assert_eq!(fwd["images"][0]["mimeType"], "image/png");
+        let admitted = got.admitted.expect("admitted once, here");
+        assert_eq!(admitted.len(), 1, "{kind}{extra}");
+        assert_eq!(admitted[0].data(), PNG);
+        assert_eq!(got.is_steer, kind == "steer" || !extra.is_empty());
+        assert!(got.refused.is_none());
+    }
+}
+
+/// #2422: a forward whose images would be refused is refused at once, with
+/// the exact message, and nothing reaches dispatch (so a steer never cancels).
+#[test]
+fn flagged_controls_with_refused_images_are_refused_without_forwarding() {
+    let line = format!(
+        r#"{{"type":"steer","message":"look","images":[{{"mimeType":"image/gif","data":"{PNG}"}}],"ack":"accept","id":"i2"}}"#
+    );
+    let got = intercept_control_forward(&line).expect("intercepted");
+    assert!(
+        got.forward_line.is_none(),
+        "refused work is never forwarded"
+    );
+    let ack = ack_json(&got.ack_line);
+    assert_eq!(ack["success"], false);
+    assert_eq!(ack["id"], "i2");
+    assert_eq!(ack["command"], "steer");
+    assert_eq!(
+        ack["error"],
+        "images[0]: data does not start with the image/gif signature"
+    );
+    let refused = got.refused.expect("dispatch records the refusal's receipt");
+    assert_eq!(
+        (refused.id.as_str(), refused.command.as_str()),
+        ("i2", "steer")
+    );
+    assert!(got.admitted.is_none() && !got.is_steer);
+}

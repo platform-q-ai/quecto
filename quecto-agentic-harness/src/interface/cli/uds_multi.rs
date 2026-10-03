@@ -14,8 +14,7 @@ use crate::infrastructure::tools::owner_exit::OwnerExitFlag;
 
 use super::protocol::AgentEvent;
 use super::uds::{
-    DispatchCtx, LineResult, dispatch_command, emit_event_to_broadcast_or_writer,
-    inject_system_prompt, parse_line,
+    DispatchCtx, LineResult, emit_event_to_broadcast_or_writer, inject_system_prompt, parse_line,
 };
 use super::uds_cancel::{CancelHandle, CancelSlot};
 pub(super) use super::uds_multi_accept::{AcceptLoopArgs, spawn_accept_loop};
@@ -96,6 +95,8 @@ pub(crate) struct ClientCommand {
     pub(super) line: String,
     /// Unique client identifier for per-client tool routing (#352).
     pub(super) client_id: u64,
+    /// Images the reader admitted for this message command (#2422).
+    pub(super) admitted: Option<super::uds::AdmittedImages>,
 }
 
 /// Sentinel: a client disconnected.
@@ -106,9 +107,14 @@ pub(crate) struct ClientDisconnected {
 
 /// Messages from client reader tasks to the dispatch loop.
 pub(crate) enum ClientMessage {
-    SwarmWake { generation: u64 },
+    SwarmWake {
+        generation: u64,
+    },
     Command(ClientCommand),
     Disconnected(ClientDisconnected),
+    /// A control the reader refused itself (#2422): dispatch records its
+    /// `Rejected` receipt, as it does for one it refuses.
+    RejectedControl(super::uds_control_forward::RefusedControl),
 }
 
 /// RAII guard that decrements `live_clients` on drop (normal exit or panic).
@@ -533,11 +539,15 @@ async fn handle_client_msg(
                     emit_event_to_broadcast_or_writer(ctx, &ev).await;
                 }
                 LineResult::Command(parsed) => {
-                    if dispatch_command(parsed, ctx).await {
+                    if super::uds::dispatch_parsed(parsed, cmd.admitted, ctx).await {
                         return true;
                     }
                 }
             }
+            false
+        }
+        ClientMessage::RejectedControl(refused) => {
+            super::uds::record_rejected(ctx, &refused.id, &refused.command).await;
             false
         }
         ClientMessage::Disconnected(disc) => {

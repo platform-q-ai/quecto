@@ -1,6 +1,6 @@
 [package]
 name = "quecto-agentic-harness"
-version = "0.107.220"
+version = "0.107.221"
 edition = "2024"
 default-run = "quecto"
 description = "Ultra-lightweight personal AI assistant"
@@ -32,6 +32,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "tim
 # Shared bounded protocol reader (#1003)
 quecto-line-io = { version = "0.2.1", path = "../quecto-line-io" }
 quecto-fail-fast = { version = "0.1.0", path = "../quecto-fail-fast" }
+# Image attachment validation shared with quecto-api (#2422)
+quecto-image = { version = "0.1.0", path = "../quecto-image" }
 
 # HTTP-date parsing (already present transitively through hyper).
 httpdate = "1.0.3"
@@ -86,9 +88,11 @@ unicode-normalization = "0.1"
 
 [features]
 default = []
-test-support = []
+test-support = ["quecto-image/test-support"]
 
 [dev-dependencies]
+# Real minimal image files for image tests (#2422).
+quecto-image = { version = "0.1.0", path = "../quecto-image", features = ["test-support"] }
 syn = { version = "2", features = ["full", "visit", "visit-mut"] }
 # The architecture scanners render production tokens after stripping
 # `#[cfg(test)]` items (#1637).

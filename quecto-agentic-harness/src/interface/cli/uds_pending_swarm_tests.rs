@@ -674,7 +674,7 @@ fn wake_nudges_queue_as_automatic_messages() {
         session.drain_pending(),
         [
             PendingMessage::Automatic("Swarm work changed.".into()),
-            PendingMessage::User("do it".into())
+            PendingMessage::user("do it".into())
         ]
     );
 }

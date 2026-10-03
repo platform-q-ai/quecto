@@ -35,6 +35,19 @@ pub(super) struct AcceptedControl {
     /// mpsc command line). `None` for `abort`, which only needs the cancel that
     /// the reader already fired — there is nothing to enqueue.
     pub(super) forward_line: Option<String>,
+    /// Whether the forwarded work is a steer, which interrupts once admitted.
+    pub(super) is_steer: bool,
+    /// The images admitted here for the forwarded message (#2422), so
+    /// dispatch runs them without decoding them again.
+    pub(super) admitted: Option<super::uds::AdmittedImages>,
+    /// The control this reader refused (#2422), for its `Rejected` receipt.
+    pub(super) refused: Option<RefusedControl>,
+}
+
+/// A forwarded control refused before dispatch: its id and command name.
+pub(crate) struct RefusedControl {
+    pub(super) id: String,
+    pub(super) command: String,
 }
 
 /// Inspect a raw client line: if it is an `agent_cmd` control forward (carries
@@ -57,15 +70,23 @@ pub(super) fn intercept_control_forward(line: &str) -> Option<AcceptedControl> {
     let raw_cmd_type = obj.get("type").and_then(|v| v.as_str())?;
     // Do not normalize malformed message/id fields into an accepted command.
     // The dispatch parser and eager-cancel classifier must agree on validity.
-    if matches!(raw_cmd_type, "prompt" | "steer" | "follow_up") {
-        serde_json::from_str::<super::protocol::AgentCommand>(line).ok()?;
-    }
+    let carries_message = matches!(raw_cmd_type, "prompt" | "steer" | "follow_up");
     let is_prompt_steer = raw_cmd_type == "prompt"
         && obj.get("streamingBehavior").and_then(|v| v.as_str()) == Some("steer");
     let cmd_type = if is_prompt_steer {
         "steer"
     } else {
         raw_cmd_type
+    };
+    let admitted = match carries_message {
+        true => {
+            let command = serde_json::from_str::<super::protocol::AgentCommand>(line).ok()?;
+            match admit_forwarded_images(command, cmd_type) {
+                Ok(images) => Some(images),
+                Err(refused) => return Some(*refused),
+            }
+        }
+        false => None,
     };
     // Echo the parent's stamped correlation id on the ack so its reader matches
     // this reply and never rides the timeout (#835). A forward with no id falls
@@ -100,11 +121,15 @@ pub(super) fn intercept_control_forward(line: &str) -> Option<AcceptedControl> {
     };
 
     let forward_line = forward_line.map(|line| {
-        if matches!(raw_cmd_type, "prompt" | "steer" | "follow_up") {
+        if carries_message {
             let mut forwarded: serde_json::Value =
                 serde_json::from_str(&line).expect("built control JSON");
             if let Some(id) = id {
                 forwarded["id"] = serde_json::json!(id);
+            }
+            // The images travel with their message (#2422), admitted above.
+            if let Some(images) = obj.get("images") {
+                forwarded["images"] = images.clone();
             }
             forwarded.to_string()
         } else {
@@ -121,6 +146,45 @@ pub(super) fn intercept_control_forward(line: &str) -> Option<AcceptedControl> {
     Some(AcceptedControl {
         ack_line,
         forward_line,
+        is_steer: cmd_type == "steer",
+        admitted,
+        refused: None,
+    })
+}
+
+/// Admit a forwarded message's images (#2422), or refuse it at once with
+/// the exact message dispatch would give: it is never forwarded, so a
+/// refused steer never cancels the running turn, and dispatch records its
+/// `Rejected` receipt.
+fn admit_forwarded_images(
+    command: super::protocol::AgentCommand,
+    cmd_type: &str,
+) -> Result<super::uds::AdmittedImages, Box<AcceptedControl>> {
+    use super::protocol::AgentCommand;
+    let id = command.id().map(str::to_owned);
+    let images = match command {
+        AgentCommand::Prompt { images, .. }
+        | AgentCommand::Steer { images, .. }
+        | AgentCommand::FollowUp { images, .. } => images,
+        other => unreachable!(
+            "only a prompt, steer or follow_up reaches image admission, not {}",
+            other.type_name()
+        ),
+    };
+    super::uds::admit_images(images).map_err(|refusal| {
+        let mut ack_line =
+            AgentEvent::err(id.as_deref(), cmd_type, refusal.to_string()).to_json_line();
+        ack_line.push('\n');
+        Box::new(AcceptedControl {
+            ack_line,
+            forward_line: None,
+            is_steer: false,
+            admitted: None,
+            refused: id.map(|id| RefusedControl {
+                id,
+                command: cmd_type.to_owned(),
+            }),
+        })
     })
 }
 

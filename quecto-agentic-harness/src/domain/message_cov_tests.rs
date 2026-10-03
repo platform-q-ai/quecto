@@ -1,6 +1,6 @@
 use super::*;
-use crate::domain::conversation::image_headers::{encode, png, png_with_body};
-use crate::domain::conversation::image_tokens::estimate_image_tokens;
+use crate::domain::conversation::image_tokens::estimate_named_image_tokens;
+use quecto_image::samples::{encode, png, png_with_body};
 
 #[test]
 fn message_constructors_cover_user_assistant_and_tool_roles() {
@@ -52,17 +52,18 @@ fn estimated_tokens_counts_content_tool_calls_ids_and_images_once() {
         mime_type: "image/png",
         data: "12345".to_string(),
     });
-    msg.user_image_blocks.push(UserImageBlock {
-        mime_type: "image/jpeg".to_string(),
-        data: "abcdef".to_string(),
-    });
+    msg.user_image_blocks
+        .push(UserImageBlock::unchecked_for_tests(
+            quecto_image::ImageMime::Jpeg,
+            "abcdef",
+        ));
 
     let expected = Message::estimate_tokens("abcdé")
         + Message::estimate_tokens("tool")
         + Message::estimate_tokens("abcdefghi")
         + Message::estimate_tokens("callid")
-        + estimate_image_tokens("image/png", "12345")
-        + estimate_image_tokens("image/jpeg", "abcdef");
+        + estimate_named_image_tokens("image/png", "12345")
+        + estimate_named_image_tokens("image/jpeg", "abcdef");
 
     assert_eq!(msg.estimated_tokens(), expected);
     assert_eq!(msg.estimated_tokens(), expected);
@@ -106,10 +107,11 @@ fn image_data_is_estimated_by_the_image_size() {
     assert_eq!(msg.estimated_tokens(), 640);
 
     let mut msg = Message::user("");
-    msg.user_image_blocks.push(UserImageBlock {
-        mime_type: "image/png".to_string(),
-        data,
-    });
+    msg.user_image_blocks
+        .push(UserImageBlock::unchecked_for_tests(
+            quecto_image::ImageMime::Png,
+            data,
+        ));
     assert_eq!(msg.estimated_tokens(), 640);
 }
 
@@ -128,10 +130,11 @@ fn a_message_holding_a_one_megabyte_screenshot_estimates_under_five_thousand_tok
     assert!(tool.estimated_tokens() < 5_000);
 
     let mut user = Message::user("What is on screen?");
-    user.user_image_blocks.push(UserImageBlock {
-        mime_type: "image/png".to_string(),
-        data: screenshot,
-    });
+    user.user_image_blocks
+        .push(UserImageBlock::unchecked_for_tests(
+            quecto_image::ImageMime::Png,
+            screenshot,
+        ));
     let text = Message::estimate_tokens("What is on screen?");
     assert_eq!(user.estimated_tokens(), text + 2765);
 }

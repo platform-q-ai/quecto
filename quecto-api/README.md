@@ -4,16 +4,16 @@ HTTP/WebSocket gateway to a quecto agent over UDS.
 
 Connects to a running `quecto agent --mode uds` process via Unix domain socket
 and exposes its capabilities as a REST + WebSocket API for web applications.
-Version **0.5.4**.
+Version **0.5.6**.
 
 ## Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Health check (`200` when the UDS agent is connected, `503` when not). Body: `{"healthy":bool,"agent_connected":bool}` |
-| `POST` | `/prompt` | Send a prompt. Body: `{"message":"..."}` plus optional `streamingBehavior` (`"steer"` / `"followUp"`) and `waitForCompletion` (default `true`). With `waitForCompletion: false`, the gateway enqueues and returns `{"accepted":true}` without waiting for the run |
-| `POST` | `/steer` | Interrupt after the current tool, then deliver a message. Body: `{"message":"..."}` (non-empty) |
-| `POST` | `/follow_up` | Queue a message for when the current run finishes. Body: `{"message":"..."}` |
+| `POST` | `/prompt` | Send a prompt. Body: `{"message":"..."}` plus optional `images` (see [Prompt body](#prompt-body)), `streamingBehavior` (`"steer"` / `"followUp"`) and `waitForCompletion` (default `true`). With `waitForCompletion: false`, the gateway enqueues and returns `{"accepted":true}` without waiting for the run |
+| `POST` | `/steer` | Interrupt after the current tool, then deliver a message. Body: `{"message":"..."}` plus optional `images` (as for `/prompt`); the message may be empty only when it carries images |
+| `POST` | `/follow_up` | Queue a message for when the current run finishes. Body: `{"message":"..."}` plus optional `images` (as for `/prompt`); the message may be empty only when it carries images |
 | `POST` | `/abort` | Cancel the current agent run (empty body) |
 | `POST` | `/model` | Switch the active model. Body: `{"model":"provider/id"}` **or** both `{"provider":"...","modelId":"..."}`. Blank/whitespace fields and partial split targets are rejected with `400` |
 | `POST` | `/effort` | Set session reasoning effort. Body: `{"effort":"..."}`. Accepted values (case/whitespace normalized): `none`, `low`, `medium`, `high`, `xhigh`, `max`. Unknown values → `400` |
@@ -32,7 +32,7 @@ Successful control/query responses are the agent's UDS `response` (or correlated
 
 | Status | When |
 |--------|------|
-| `400` | Invalid request (empty message, unknown effort, incomplete model target, …) |
+| `400` | Invalid request (empty message, a refused image, a command past the agent's 8 MiB frame cap, unknown effort, incomplete model target, …) |
 | `409` | Agent busy without `streamingBehavior` (when the agent reports busy) |
 | `503` | Agent not connected |
 | `504` | Gateway timed out waiting for the correlated UDS response (120s) |
@@ -65,12 +65,23 @@ Unknown flags and missing `--socket` / `QUECTO_SOCKET` exit with a non-zero stat
 ```json
 {
   "message": "Summarize README.md",
+  "images": [{"mimeType": "image/png", "data": "iVBORw0KGgoAAAANSUhEUgAA..."}],
   "streamingBehavior": "steer",
   "waitForCompletion": true
 }
 ```
 
-- `message` — required, non-empty.
+- `message` — required; may be `""` only when `images` has at least one image.
+- `images` — optional (#2422; absent, `null` or `[]` is no images): up to 8 images, each `{"mimeType", "data"}` with
+  `mimeType` one of `image/png`, `image/jpeg`, `image/gif`, `image/webp` and
+  `data` strict standard base64 of at most 3.75 MiB decoded whose bytes match
+  the type and whose header is readable.
+  Validated here by `quecto-image`, the same rules and text as the agent's
+  [image attachments](../quecto-agentic-harness/docs/uds-protocol.md#image-attachments):
+  a refused image is a `400` such as
+  `{"error":"invalid request: images[0]: data is not valid standard base64"}`
+  and nothing is sent. `/prompt`, `/steer` and `/follow_up` take bodies up to
+8 MiB, the agent's frame cap; every other route keeps the 2 MB default.
 - `streamingBehavior` — optional; required by the agent when a run is already in progress (`"steer"` or `"followUp"`).
 - `waitForCompletion` — optional, default `true`. When `false`, the gateway uses fire-and-forget enqueue and returns acceptance immediately; follow the run on `/ws`.
 
@@ -80,7 +91,7 @@ On connect the gateway subscribes to the agent's broadcast event stream and forw
 
 **Client → gateway text frames:**
 
-1. **Prompt** (legacy shape): `{"message":"...","streamingBehavior":"...","waitForCompletion":...}` — empty messages are ignored. Enqueued as a UDS `prompt` (completion is observed via the event stream, not a correlated HTTP-style wait).
+1. **Prompt** (legacy shape): `{"message":"...","images":[...],"streamingBehavior":"...","waitForCompletion":...}` — a frame with an empty message and no images is ignored. `images` follows the [prompt body](#prompt-body) rules; a refused image gets an error frame (`{"type":"response","id":"<client id>","command":"prompt","success":false,"error":"invalid request: images[0]: …"}`) and nothing is sent. Sent as a UDS `prompt` (completion is observed via the event stream).
 2. **Direct `get_message`** (#1094):  
    `{"type":"get_message","id":"...","messageId":"...","agent_id":"...","toolCallId":"...","offset":0,"limit":65536}`  
    Correlated `response` is written back on the same socket with the client `id` echoed. Malformed `get_message` frames yield `success: false` with `command: "get_message"`.

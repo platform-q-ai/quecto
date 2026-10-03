@@ -66,6 +66,7 @@ fn control_commands_serialize_to_wire() {
     let steer = command_to_json(
         AgentCommand::Steer {
             message: "go".into(),
+            images: Vec::new(),
         },
         "s1",
     );
@@ -76,6 +77,7 @@ fn control_commands_serialize_to_wire() {
     let follow = command_to_json(
         AgentCommand::FollowUp {
             message: "later".into(),
+            images: Vec::new(),
         },
         "f1",
     );
@@ -354,6 +356,7 @@ async fn send_matches_uncorrelated_agent_error_for_prompt() {
     let event = gw
         .send(AgentCommand::Prompt {
             message: "hi".into(),
+            images: Vec::new(),
             streaming_behavior: None,
         })
         .await
@@ -378,6 +381,7 @@ async fn enqueue_returns_accepted_without_waiting() {
     let event = gw
         .enqueue(AgentCommand::Prompt {
             message: "hi".into(),
+            images: Vec::new(),
             streaming_behavior: None,
         })
         .await
@@ -471,6 +475,7 @@ fn prompt_command_serializes_streaming_behavior() {
     let with_sb = command_to_json(
         AgentCommand::Prompt {
             message: "hi".into(),
+            images: Vec::new(),
             streaming_behavior: Some("steer".into()),
         },
         "p1",
@@ -482,6 +487,7 @@ fn prompt_command_serializes_streaming_behavior() {
     let without = command_to_json(
         AgentCommand::Prompt {
             message: "hi".into(),
+            images: Vec::new(),
             streaming_behavior: None,
         },
         "p2",
@@ -563,3 +569,6 @@ async fn send_also_broadcasts_correlated_response_to_subscribers() {
         .expect("subscriber receives response");
     assert!(matches!(broadcast, AgentEvent::Response { command, .. } if command == "get_message"));
 }
+
+#[path = "client_image_tests.rs"]
+mod image_tests;

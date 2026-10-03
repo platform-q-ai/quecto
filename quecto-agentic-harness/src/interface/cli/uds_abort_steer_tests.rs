@@ -7,7 +7,6 @@
 
 use super::dispatch_test_env::{DispatchTestEnv as Env, make_dispatch_test_agent};
 use crate::application::providers::ports::LlmProvider;
-use crate::interface::cli::protocol::{AgentCommand, StreamingBehavior};
 use crate::interface::cli::uds_session::PendingMessage;
 use crate::interface::shared::WorkflowStateHandle;
 
@@ -86,11 +85,9 @@ async fn busy_prompt_with_steer_behavior_is_queued() {
     {
         let mut ctx = env.ctx();
         super::uds_dispatch::dispatch_command(
-            AgentCommand::Prompt {
-                id: Some("s".into()),
-                message: "say steered".into(),
-                streaming_behavior: Some(StreamingBehavior::Steer),
-            },
+            serde_json::from_value(serde_json::json!({"type": "prompt", "id": "s",
+                "message": "say steered", "streamingBehavior": "steer"}))
+            .unwrap(),
             &mut ctx,
         )
         .await;
@@ -165,7 +162,7 @@ async fn steer_marker_is_obeyed_after_mid_turn_cancel() {
     // Now the steer command is dispatched (agent idle after the cancel unwind).
     {
         let mut ctx = env.ctx();
-        super::uds_dispatch::handle_steer(&mut ctx, Some("s"), "steer", MARKER.to_string()).await;
+        super::uds_dispatch::handle_steer(&mut ctx, Some("s"), "steer", MARKER.into()).await;
     }
 
     let obeyed = env
@@ -194,7 +191,8 @@ async fn follow_up_preserves_admitted_steer_gate() {
         vec![PendingMessage::Control {
             id: "f".into(),
             command: "follow_up".into(),
-            content: "work".into()
+            content: "work".into(),
+            images: Vec::new(),
         }]
     );
 }

@@ -187,7 +187,7 @@ fn user_messages_are_preserved() {
         2,
         "one user msg + one coalesced note, got {out:?}"
     );
-    assert!(matches!(out[0], PendingMessage::User(_)));
+    assert!(matches!(out[0], PendingMessage::User { .. }));
     let content = out[1].clone().into_message(&[]).content;
     assert!(
         content.contains("2 sub-agents ended a turn (status: idle)"),

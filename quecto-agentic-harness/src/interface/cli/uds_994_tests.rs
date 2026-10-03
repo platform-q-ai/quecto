@@ -130,6 +130,7 @@ async fn multi_client_parse_error_text(line: &str) -> String {
         let msg = ClientMessage::Command(ClientCommand {
             line: line.to_string(),
             client_id: 0,
+            admitted: None,
         });
         let exit = handle_client_msg(
             &mut ctx,

@@ -143,7 +143,7 @@ pub(super) struct MessageRecordRef<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) ordinal: Option<u64>,
     pub(super) role: &'a str,
-    pub(super) content: &'a str,
+    pub(super) content: std::borrow::Cow<'a, str>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(super) tool_calls: Vec<ToolCallRecordRef<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
