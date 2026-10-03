@@ -5,6 +5,41 @@ An assistant stream that terminates without text, tools or thinking is classifie
 existing retry budget and no-replay guard. `max_tokens` remains the existing
 non-retryable output-limit path. Neither classification establishes overload.
 
+## An empty reply to tool results ends the turn (#2434)
+
+Whether an empty reply is an error depends on what it answers. The latest user
+message or tool result in the request decides; system messages and the model's
+own messages are not something to answer, so they are ignored:
+
+- **A user message** (a prompt, a steer, a follow-up, a harness note or the
+  loop's own feedback) must be answered. An empty reply to it is `empty_stream`,
+  retried, then an `agent_error`, as above.
+- **Tool results** may be answered with nothing: the model acted and has nothing
+  to add. For example, a background tool may say "started — end your turn now".
+  A completed reply with no text, no tool call and no visible thinking (encrypted
+  reasoning alone counts as nothing) that stopped at `end_turn` ends the turn at
+  once. There is no retry and no error, and the run ends with `agent_end`. It is
+  a final answer with no text. No empty assistant message is recorded (some
+  providers refuse an empty assistant message when the conversation is sent
+  again), so the conversation ends on the tool results, as it does at the tool
+  iteration limit.
+
+Only a clean stop ends the turn. After tool results, an empty reply stopped at
+`max_tokens` was cut off, so it keeps the `stop_reason=max_tokens` error.
+Reasoning alone at the output limit is still asked again once and then fails
+(#2124). An empty reply that names no stop reason is not known to have finished,
+so it stays `empty_stream` and is retried. A 200 body with no event at all is
+a transport failure, not a reply, and stays `empty_stream` whatever it answers.
+
+The request whose reply ended the turn this way is recorded with outcome
+`succeeded` and `"ended_empty_after_tools": true` on its `RequestObservation`
+(in `request_observed` audit records and the recent request diagnostics). The
+field is absent when false and in older records. The harness also logs
+`ended_empty_after_tools` at info level (target `agent_loop`). The rule applies
+to the streamed and the whole-reply paths of every provider: Codex/Responses,
+OpenAI chat, OpenAI-compatible and Anthropic each deliver such a reply as a
+whole reply with stop reason `end_turn`.
+
 Request observations add `started_unix_ms`, `finished_unix_ms` and bounded
 `attempt_diagnostics`. Existing audit/session observation and swarm `request_usage`
 JSON payloads carry these fields; no logging/configuration switch is changed.

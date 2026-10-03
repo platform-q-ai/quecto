@@ -297,7 +297,9 @@ short: the attempt fails with `… ended without completion: connection closed
 before …` (class `network`, retried before any output reached the caller) and
 is recorded as `CutShort`, on every path (streamed or read whole, gated or
 not); it is never taken as a whole answer. A 200 body with no event at all is
-an empty stream (class `empty_stream`, retried). Tokens a cut-short reply
+an empty stream (class `empty_stream`, retried). A *whole* reply with nothing in
+it is a different case: it is an empty stream when it answers a prompt, but it
+ends the turn when it answers tool results (#2434, `empty-stream-diagnostics.md`). Tokens a cut-short reply
 already reported (Anthropic's `message_start` usage, an OpenAI usage chunk, a
 Responses event's `usage`) are still counted, on a failed request and on one a
 retry completed.
