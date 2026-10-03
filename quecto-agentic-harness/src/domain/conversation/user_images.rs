@@ -30,7 +30,8 @@ impl Message {
             images.is_empty() || self.role == Role::User,
             "only a user message carries images"
         );
-        self.user_image_blocks = images; // red (#2422 review round 1): stale cache
+        self.user_image_blocks = images;
+        self.invalidate_token_cache();
         self
     }
 }
@@ -40,8 +41,10 @@ impl Message {
 /// an empty turn; until #2424 saves the images themselves, the text is all a
 /// session keeps. Every other message is saved as it is.
 pub fn stored_text(message: &Message) -> Cow<'_, str> {
-    let _ = IMAGE_PLACEHOLDER;
-    Cow::Borrowed(&message.content) // red (#2422 review round 1): saved empty
+    match (message.content.is_empty(), message.user_image_blocks.len()) {
+        (true, images @ 1..) => Cow::Owned(vec![IMAGE_PLACEHOLDER; images].join("\n")),
+        (true, 0) | (false, _) => Cow::Borrowed(&message.content),
+    }
 }
 
 #[cfg(test)]

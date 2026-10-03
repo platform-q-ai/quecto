@@ -178,10 +178,10 @@ fn admit_forwarded_images(
             forward_line: None,
             is_steer: false,
             admitted: None,
-            refused: id.filter(|_| false).map(|id| RefusedControl {
+            refused: id.map(|id| RefusedControl {
                 id,
                 command: cmd_type.to_owned(),
-            }), // red (#2422 review round 1): no receipt
+            }),
         })
     })
 }

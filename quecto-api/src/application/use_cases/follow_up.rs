@@ -8,10 +8,10 @@ pub async fn execute(
     message: String,
     images: Vec<quecto_image::ImagePayload>,
 ) -> Result<AgentEvent, ApiError> {
+    let images = super::admit_message(&message, images)?;
     if !gateway.is_connected() {
         return Err(ApiError::AgentNotConnected);
-    } // red (#2422 review round 1): connection first
-    let images = super::admit_message(&message, images)?;
+    }
     gateway
         .send(AgentCommand::FollowUp { message, images })
         .await

@@ -48,7 +48,7 @@ pub mod samples;
 /// The most bytes one image may decode to: 3.75 MiB (3,932,160 bytes), so
 /// its base64 is at most 5 MiB. Anthropic's 5 MB limit holds whether a
 /// provider applies it to the decoded or to the encoded size.
-pub const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024; // red (#2422 review round 1): not yet 3.75 MiB
+pub const MAX_IMAGE_BYTES: usize = 3 * 1024 * 1024 + 768 * 1024;
 
 /// The most images one message may carry.
 pub const MAX_IMAGES_PER_MESSAGE: usize = 8;
@@ -109,8 +109,9 @@ impl ImageMime {
 
     /// The admitted type whose file signature `bytes` start with.
     pub fn sniff(bytes: &[u8]) -> Option<Self> {
-        let _ = bytes;
-        None // red (#2422 review round 1): sniffs nothing
+        Self::ALL
+            .into_iter()
+            .find(|mime| mime.signature_matches(bytes))
     }
 
     /// Whether `bytes` start with this type's file signature.
@@ -206,11 +207,7 @@ impl ImageAttachment {
             (false, _) => return Err(ImageRefusal::TooLarge),
             (true, false) => return Err(ImageRefusal::SignatureMismatch(mime)),
         }
-        let one = Dimensions {
-            width: 1,
-            height: 1,
-        };
-        let dimensions = dimensions(mime, &data).unwrap_or(one); // red (#2422 review round 1): header unchecked
+        let dimensions = dimensions(mime, &data).ok_or(ImageRefusal::Unreadable(mime))?;
         assert!(
             dimensions.width > 0 && dimensions.height > 0,
             "an admitted image has a size"

@@ -64,7 +64,7 @@ pub(super) async fn dispatch(ctx: ReaderDispatchCtx<'_>) -> bool {
                 permit.send(ClientMessage::Command(ClientCommand {
                     line,
                     client_id: ctx.client_id,
-                    admitted: ctrl.admitted.take().filter(|_| false), // red (#2422 review round 1): decoded again
+                    admitted: ctrl.admitted.take(),
                 }));
             } else {
                 let request: serde_json::Value =
@@ -96,7 +96,7 @@ pub(super) async fn dispatch(ctx: ReaderDispatchCtx<'_>) -> bool {
     permit.send(ClientMessage::Command(ClientCommand {
         line: ctx.line,
         client_id: ctx.client_id,
-        admitted: admitted.filter(|_| false), // red (#2422 review round 1): decoded again
+        admitted,
     }));
     true
 }

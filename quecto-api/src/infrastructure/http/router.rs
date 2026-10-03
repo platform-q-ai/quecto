@@ -48,7 +48,6 @@ pub fn build_router<G: AgentGateway + Clone + 'static>(gateway: G) -> Router {
         .route("/stats", get(stats_handler::<G>))
         .route("/ws", get(ws_handler::<G>))
         .layer(CorsLayer::permissive())
-        .layer(images()) // red (#2422 review round 1): every route raised
         .with_state(state)
 }
 

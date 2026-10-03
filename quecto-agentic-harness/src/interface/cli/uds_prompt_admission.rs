@@ -42,7 +42,9 @@ pub(in crate::interface::cli) async fn record_rejected(
     id: &str,
     command: &str,
 ) {
-    let _ = (ctx, id, command); // red (#2422 review round 1): no receipt
+    let rejected = crate::interface::cli::protocol::ControlStatus::Rejected;
+    ctx.session.record_control(Some(id), command, rejected);
+    crate::interface::cli::uds_snapshots::refresh_busy_snapshots(ctx).await;
 }
 
 /// Run a parsed command, with the images its reader admitted, if any.
