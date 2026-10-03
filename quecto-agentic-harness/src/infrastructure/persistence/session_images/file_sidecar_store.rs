@@ -7,7 +7,10 @@
 //! link or blocking on a FIFO, only as a regular file of at most
 //! [`MAX_STORED_IMAGE_TEXT`] bytes, and only text that hashes to its name is
 //! returned. A sidecar this store wrote or read whole is remembered by its
-//! file stamp, so saving the same images again costs a `stat` each.
+//! file stamp, so saving the same images again costs a `stat` each, once the
+//! stamp has settled: a sidecar changed within the last 2 s (a rewrite in the
+//! same timestamp tick keeps its times) is read again, and one a read found
+//! corrupt is trusted no more.
 use std::collections::{BTreeSet, HashMap};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -29,6 +32,12 @@ const SIDECAR_MODE: u32 = 0o600;
 /// How old a temporary file must be before a collection takes it for one an
 /// interrupted write left (a write in flight is younger).
 const STALE_WRITE: Duration = Duration::from_secs(60);
+
+/// How long after a sidecar's last change a stamp of it can be trusted: a
+/// rewrite in place within one timestamp tick (coarse on some filesystems,
+/// up to 2 s) leaves the times as they were, so a stamp taken in that window
+/// proves nothing ("racy git": such a file is read again instead).
+const RACY_WINDOW_NS: i128 = 2_000_000_000;
 
 /// Which file a sidecar is, and its state: a rewrite in place changes the
 /// modification or status-change time, a replacement the inode.
@@ -52,14 +61,29 @@ impl Stamp {
             ctime_ns: ns(meta.ctime(), meta.ctime_nsec()),
         }
     }
+
+    /// Whether the file's last change was well before `at` (ns since the
+    /// epoch): a change in the same tick as `at` would show in its times.
+    fn settled_before(&self, at: i128) -> bool {
+        self.mtime_ns.max(self.ctime_ns) < at - RACY_WINDOW_NS
+    }
+}
+
+/// Now, in ns since the epoch.
+fn now_ns() -> i128 {
+    let since = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH);
+    since.map_or(0, |since| {
+        i128::try_from(since.as_nanos()).unwrap_or(i128::MAX)
+    })
 }
 
 /// Content-addressed image files beside each session's transcript.
 #[derive(Debug)]
 pub struct FileImageSidecarStore {
     layout: FlatSessionLayout,
-    /// The sidecars known to hold their image, as last written or read.
-    verified: Mutex<HashMap<PathBuf, Stamp>>,
+    /// The sidecars known to hold their image, as last written or read, and
+    /// when (ns since the epoch) that was verified.
+    verified: Mutex<HashMap<PathBuf, (Stamp, i128)>>,
 }
 
 impl FileImageSidecarStore {
@@ -80,17 +104,29 @@ impl FileImageSidecarStore {
         self.dir(identity).join(sha256)
     }
 
-    fn known(&self) -> std::sync::MutexGuard<'_, HashMap<PathBuf, Stamp>> {
+    fn known(&self) -> std::sync::MutexGuard<'_, HashMap<PathBuf, (Stamp, i128)>> {
         self.verified.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Whether the regular file at `path` is still the one last verified.
+    /// Whether the regular file at `path` is still the one last verified: the
+    /// same stamp, and one that had settled when it was verified (else a
+    /// same-length rewrite within the timestamp tick could hide behind it).
     fn still_verified(&self, path: &Path, meta: &std::fs::Metadata) -> bool {
-        self.known().get(path) == Some(&Stamp::of(meta))
+        let stamp = Stamp::of(meta);
+        match self.known().get(path) {
+            Some((known, at)) => *known == stamp && known.settled_before(*at),
+            None => false,
+        }
     }
 
     fn remember(&self, path: &Path, meta: &std::fs::Metadata) {
-        self.known().insert(path.to_path_buf(), Stamp::of(meta));
+        let verified = (Stamp::of(meta), now_ns());
+        self.known().insert(path.to_path_buf(), verified);
+    }
+
+    /// `path` is not (or no longer) its image: nothing about it is trusted.
+    fn forget(&self, path: &Path) {
+        self.known().remove(path);
     }
 
     /// Whether the sidecar at `path` holds exactly `text`, remembered if so.
@@ -104,12 +140,37 @@ impl FileImageSidecarStore {
         }
     }
 
+    /// The sidecar at `path` checked against `sha256`, remembered if it is it.
+    async fn read_checked(&self, path: &Path, sha256: &str) -> Result<SidecarRead, DomainError> {
+        let (bytes, meta) = match read_sidecar(path).await {
+            Ok(Some(read)) => read,
+            Ok(None) => return Ok(SidecarRead::Corrupt),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(SidecarRead::Missing);
+            }
+            Err(error) => return Err(failed("read")(error)),
+        };
+        let Ok(text) = String::from_utf8(bytes) else {
+            return Ok(SidecarRead::Corrupt);
+        };
+        let text = VerifiedText::of(text);
+        match text.sha256() == sha256 {
+            true => {
+                self.remember(path, &meta);
+                Ok(SidecarRead::Found(text))
+            }
+            false => Ok(SidecarRead::Corrupt),
+        }
+    }
+
     async fn write(
         &self,
         identity: &SessionIdentity,
         path: PathBuf,
         text: &str,
     ) -> Result<(), DomainError> {
+        // Nothing is vouched for until the write succeeds.
+        self.forget(&path);
         let dir = self.dir(identity);
         let bytes = text.as_bytes().to_vec();
         let target = path.clone();
@@ -120,11 +181,8 @@ impl FileImageSidecarStore {
         .await
         .map_err(|error| DomainError::Session(format!("image sidecar: write failed: {error}")))?
         .map_err(failed("write"))?;
-        match tokio::fs::symlink_metadata(&path).await {
-            Ok(meta) => self.remember(&path, &meta),
-            Err(_) => {
-                self.known().remove(&path);
-            }
+        if let Ok(meta) = tokio::fs::symlink_metadata(&path).await {
+            self.remember(&path, &meta);
         }
         Ok(())
     }
@@ -213,25 +271,14 @@ impl ImageSidecarStore for FileImageSidecarStore {
                 return Ok(SidecarRead::Corrupt);
             }
             let path = self.path(identity, sha256);
-            let (bytes, meta) = match read_sidecar(&path).await {
-                Ok(Some(read)) => read,
-                Ok(None) => return Ok(SidecarRead::Corrupt),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    return Ok(SidecarRead::Missing);
-                }
-                Err(error) => return Err(failed("read")(error)),
-            };
-            let Ok(text) = String::from_utf8(bytes) else {
-                return Ok(SidecarRead::Corrupt);
-            };
-            let text = VerifiedText::of(text);
-            match text.sha256() == sha256 {
-                true => {
-                    self.remember(&path, &meta);
-                    Ok(SidecarRead::Found(text))
-                }
-                false => Ok(SidecarRead::Corrupt),
+            let read = self.read_checked(&path, sha256).await;
+            match &read {
+                Ok(SidecarRead::Found(_)) => {}
+                // A sidecar seen missing, corrupt or unreadable is trusted no
+                // more: the next store of its image reads it again.
+                Ok(SidecarRead::Missing | SidecarRead::Corrupt) | Err(_) => self.forget(&path),
             }
+            read
         })
     }
 
@@ -293,7 +340,7 @@ impl FileImageSidecarStore {
             let name = entry.file_name();
             let picked = name.to_str().is_some_and(|name| chosen(name, age));
             if picked && meta.file_type().is_file() {
-                self.known().remove(&entry.path());
+                self.forget(&entry.path());
                 match tokio::fs::remove_file(entry.path()).await {
                     Ok(()) => {}
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}

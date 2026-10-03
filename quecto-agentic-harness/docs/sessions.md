@@ -41,7 +41,9 @@ a tool result, `"user_images"` for a user message, each
 stay small and an image several messages carry is stored once. A sidecar's
 write (atomic) is tried before any record names it; each image is hashed once in
 its life (a restored one not at all: its sidecar read verified it), and a
-sidecar already verified costs a `stat` on later saves. The sidecars are kept
+sidecar already verified costs a `stat` on later saves (one changed in the last
+2 s, or found corrupt, is read again: a same-length rewrite within a coarse
+timestamp tick keeps its times). The sidecars are kept
 by `FileImageSidecarStore` behind `ImageSidecarStore`, a seam inside
 persistence (not an application port) that composition wires into the file
 store.

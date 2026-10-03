@@ -67,6 +67,43 @@ async fn a_sidecar_whose_content_is_not_its_name_is_written_again() {
     );
 }
 
+/// The CI failure (#2424): a same-length rewrite within the timestamp tick
+/// of the store's own write leaves the file's stamp exactly as the store
+/// recorded it. A stamp that recent is never trusted unread, so an unchanged
+/// stat is not taken for a verified file.
+#[tokio::test]
+async fn a_stamp_taken_within_the_tick_of_a_change_is_not_trusted() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (store, dir) = store(tmp.path());
+    let text = "iVBORw0KGgoAAAA=";
+    store.put(&id(), &reference(text), text).await.unwrap();
+    let path = dir.join(&reference(text).sha256);
+    let unchanged = std::fs::metadata(&path).unwrap();
+    assert!(
+        !store.still_verified(&path, &unchanged),
+        "the same stamp, but too recent to vouch for the content"
+    );
+    let (stamp, at) = store.known()[&path];
+    assert!(!stamp.settled_before(at));
+    assert!(stamp.settled_before(at + super::RACY_WINDOW_NS + 1_000_000_000));
+}
+
+/// A read that finds a sidecar corrupt forgets it, whatever its times say:
+/// the next store of its image reads it again and repairs it.
+#[tokio::test]
+async fn a_sidecar_found_corrupt_is_trusted_no_more() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (store, dir) = store(tmp.path());
+    let text = "iVBORw0KGgoAAAA=";
+    store.put(&id(), &reference(text), text).await.unwrap();
+    let path = dir.join(&reference(text).sha256);
+    assert!(store.known().contains_key(&path));
+    std::fs::write(&path, "iVBORw0KGgoBBBB=").unwrap();
+    let read = store.get(&id(), &reference(text).sha256).await.unwrap();
+    assert_eq!(read, SidecarRead::Corrupt);
+    assert!(!store.known().contains_key(&path), "forgotten");
+}
+
 #[tokio::test]
 async fn a_link_a_fifo_or_an_oversized_file_is_never_read() {
     let tmp = tempfile::tempdir().unwrap();
