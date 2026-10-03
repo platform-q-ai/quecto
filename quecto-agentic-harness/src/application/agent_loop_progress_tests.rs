@@ -463,3 +463,6 @@ async fn test_progress_callback_tool_finished_preview_handles_mid_codepoint_cap(
 
 #[path = "agent_loop_retry_tests.rs"]
 mod retry_tests;
+
+#[path = "agent_loop_2434_tests.rs"]
+mod empty_reply_after_tools_tests;

@@ -710,6 +710,9 @@ mod issue_1060_tests;
 #[cfg(test)]
 #[path = "uds_1072_e2e_tests.rs"]
 mod issue_1072_e2e_tests;
+#[cfg(test)]
+#[path = "uds_empty_reply_2434_tests.rs"]
+mod issue_2434_tests;
 
 #[path = "uds_swarm_turn.rs"]
 mod swarm_turn;

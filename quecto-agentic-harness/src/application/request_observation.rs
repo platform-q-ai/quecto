@@ -105,6 +105,7 @@ impl<'a> ObservationGuard<'a> {
                 harness_prefix_sha256: prefix.sha256,
                 harness_prefix_bytes: prefix.bytes,
                 harness_prefix_unchanged: prefix.unchanged,
+                ended_empty_after_tools: false,
                 input_prefix: None,
             }),
         }

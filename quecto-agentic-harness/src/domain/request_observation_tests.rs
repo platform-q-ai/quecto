@@ -108,6 +108,7 @@ mod input_prefix_tests {
             harness_prefix_sha256: String::new(),
             harness_prefix_bytes: 0,
             harness_prefix_unchanged: None,
+            ended_empty_after_tools: false,
             input_prefix,
         }
     }
