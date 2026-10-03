@@ -140,14 +140,9 @@ pub struct ProviderEntry {
     /// do not convert ChatGPT OAuth JWTs from the credential store into Codex.
     #[serde(default)]
     pub disable_codex_routing: bool,
-    /// This provider's stream idle limit in seconds (#2433 review), within
-    /// 30–1800; unset is the default 300.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stream_idle_seconds: Option<u64>,
-    /// This provider's stream progress limit in seconds (#2433), within
-    /// 60–3600; unset is the default 300.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stream_progress_seconds: Option<u64>,
+    /// Its stream limits (#2433), flat in the entry.
+    #[serde(flatten)]
+    pub stream_limits: StreamLimitsConfig,
 }
 
 #[derive(Clone, Serialize, Deserialize, Default)]
@@ -166,31 +161,10 @@ pub struct OpenAiCompatibleEndpoint {
     pub api_base: String,
     #[serde(default)]
     pub allow_remote_http: bool,
-    /// This provider's stream idle limit in seconds (#2433 review), within
-    /// 30–1800; unset is the default 300.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stream_idle_seconds: Option<u64>,
-    /// This provider's stream progress limit in seconds (#2433), within
-    /// 60–3600; unset is the default 300.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stream_progress_seconds: Option<u64>,
+    /// Its stream limits (#2433), flat in the entry.
+    #[serde(flatten)]
+    pub stream_limits: StreamLimitsConfig,
 }
-
-/// The configured stream limits of a provider entry or endpoint (#2433).
-macro_rules! stream_limits {
-    ($($entry:ty),*) => {$(
-        impl $entry {
-            /// Its `stream_idle_seconds` and `stream_progress_seconds`.
-            pub fn stream_limits(&self) -> crate::infrastructure::providers::stream_idle::StreamLimits {
-                crate::infrastructure::providers::stream_idle::StreamLimits {
-                    idle_seconds: self.stream_idle_seconds,
-                    progress_seconds: self.stream_progress_seconds,
-                }
-            }
-        }
-    )*};
-}
-stream_limits!(ProviderEntry, OpenAiCompatibleEndpoint);
 
 impl std::fmt::Debug for ProviderEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -198,8 +172,7 @@ impl std::fmt::Debug for ProviderEntry {
             .field("api_key", &"[REDACTED]")
             .field("api_base", &self.api_base)
             .field("disable_codex_routing", &self.disable_codex_routing)
-            .field("stream_idle_seconds", &self.stream_idle_seconds)
-            .field("stream_progress_seconds", &self.stream_progress_seconds)
+            .field("stream_limits", &self.stream_limits)
             .finish()
     }
 }
@@ -219,8 +192,7 @@ impl std::fmt::Debug for OpenAiCompatibleEndpoint {
             .field("api_key", &"[REDACTED]")
             .field("api_base", &self.api_base)
             .field("allow_remote_http", &self.allow_remote_http)
-            .field("stream_idle_seconds", &self.stream_idle_seconds)
-            .field("stream_progress_seconds", &self.stream_progress_seconds)
+            .field("stream_limits", &self.stream_limits)
             .finish()
     }
 }
@@ -511,9 +483,13 @@ impl Config {
 // it reuses the private step-reference resolver below.
 #[path = "config_discovery.rs"]
 mod discovery;
+
+#[path = "config_stream_limits.rs"]
+mod stream_limits;
 pub use discovery::{
     WorkflowTemplateDiscovery, discover_workflow_templates, load_workflow_templates_from_dir,
 };
+pub use stream_limits::StreamLimitsConfig;
 
 const WORKFLOW_STEP_FIELDS: &[&str] = &["key", "label", "phase", "guidance"];
 

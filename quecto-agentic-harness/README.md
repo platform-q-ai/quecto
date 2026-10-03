@@ -712,7 +712,7 @@ Each endpoint registers an OpenAI-compatible provider named by `prefix`, so `spa
 
 For tailnet/LAN HTTP endpoints, set `allow_remote_http: true` on that endpoint or set `QUECTO_ALLOW_CUSTOM_PROVIDER_HOSTS=1`. HTTPS custom hosts are allowed for `openai_compatible` endpoints.
 
-A gateway that sends only SSE comment heartbeats while its model thinks is cut at the stream idle limit (300 s), and one that keeps sending events with no output (200 or more, such as empty deltas) at the stream progress limit (300 s); each is retried once. Raise them per provider with `stream_idle_seconds` (30–1800) and `stream_progress_seconds` (60–3600) on the endpoint, or on `providers.openai` / `providers.anthropic` (`streamIdleSeconds` / `streamProgressSeconds` on a `models.json` provider block). See "Stalled replies" in `docs/runtime-models-providers.md`.
+A gateway that sends only SSE comment heartbeats while its model thinks is cut at the stream idle limit (300 s), and one that keeps sending events with no output (200 or more, such as empty deltas) at the stream progress limit (300 s), or any trickle of them, pings included, at three times it (900 s); each is retried once. Raise them per provider with `stream_idle_seconds` (30–1800) and `stream_progress_seconds` (60–3600) on the endpoint, or on `providers.openai` / `providers.anthropic` (`streamIdleSeconds` / `streamProgressSeconds` on a `models.json` provider block). See "Stalled replies" in `docs/runtime-models-providers.md`.
 
 ### Runtime model/provider registry (`models.json`)
 

@@ -22,9 +22,13 @@
 //!
 //! An empty string or list is no output, so a stream of empty deltas makes
 //! no progress. Reasoning a model streams is output, so a model that keeps
-//! reasoning is never cut short by this bound; one that thinks silently, or
-//! sends only the odd `ping` while it does, is bounded by the idle bound
-//! instead ([`super::stream_idle::PROGRESS_EVENTS`]).
+//! reasoning is never cut short by this bound. One that thinks silently is
+//! bounded by the idle bound alone. One that sends only the odd event while
+//! it thinks — Anthropic's `ping`s — restarts the idle bound with each, so
+//! it is the progress bound's: its count rule would wait for
+//! [`super::stream_idle::PROGRESS_EVENTS`] of them (50 minutes of pings),
+//! and its backstop ([`super::stream_idle::PROGRESS_BACKSTOP_FACTOR`]
+//! progress limits) ends it first, at 15 minutes by default.
 use serde_json::Value;
 
 /// The events that end a reply: their arrival is completion.
@@ -117,25 +121,60 @@ fn chat_choice(choice: &Value) -> bool {
 const LONG_OUTPUT_SUFFIXES: &[&str] = &[".delta", "_delta", ".done"];
 
 /// Whether an event too long to read whole carries output, judged by the
-/// type the kept `start` of its data names (#2433 review): a delta, a
-/// finished part or a terminal event does; any other type does not, however
-/// long, so a padded `response.in_progress` is no progress. An OpenAI chat
-/// chunk has no type: one that long is a choice's content.
+/// kept `start` of its data (#2433 review). A Responses or Messages event
+/// names its own type first: a delta, a finished part or a terminal event
+/// carries output; any other type does not, however long, so a padded
+/// `response.in_progress` is no progress. An OpenAI chat chunk opens with
+/// its `choices` (a `"type"` inside them, such as a tool call's, is not
+/// the chunk's): one that long carries output when its choices hold
+/// content, reasoning, a refusal or a tool call.
 pub(crate) fn long_event_carries_output(start: &[u8]) -> bool {
-    let start = String::from_utf8_lossy(start);
-    match first_type(&start) {
-        Some(kind) => {
+    let start = within_characters(start);
+    let choices = start.find("\"choices\"");
+    let kind = start.find("\"type\"");
+    let chat = match (choices, kind) {
+        (Some(choices), Some(kind)) => choices < kind,
+        (Some(_), None) => true,
+        (None, _) => false,
+    };
+    match (chat, kind) {
+        (true, _) => CHAT_OUTPUT_FIELDS.iter().any(|field| start.contains(field)),
+        (false, Some(_)) => first_type(start).is_some_and(|kind| {
             TERMINAL_TYPES.contains(&kind)
                 || LONG_OUTPUT_SUFFIXES
                     .iter()
                     .any(|suffix| kind.ends_with(suffix))
+        }),
+        (false, None) => false,
+    }
+}
+
+/// The fields of a chat choice's delta that hold output, as a long chunk's
+/// start names them.
+const CHAT_OUTPUT_FIELDS: &[&str] = &[
+    "\"content\"",
+    "\"reasoning\"",
+    "\"reasoning_content\"",
+    "\"refusal\"",
+    "\"tool_calls\"",
+];
+
+/// The longest run of whole characters `bytes` starts with: a kept start
+/// cut inside a character (or one with an invalid byte) is read up to it,
+/// without a copy (#2433 review round 3).
+fn within_characters(bytes: &[u8]) -> &str {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(error) => {
+            let valid = &bytes[..error.valid_up_to()];
+            std::str::from_utf8(valid).expect("valid up to the first invalid byte")
         }
-        None => start.contains("\"choices\""),
     }
 }
 
 /// The first `"type"` string the start of an event's JSON names: its own
-/// type on every wire, which each sends first or close to it.
+/// type on the Responses and Messages wires, which send it first or close
+/// to it.
 fn first_type(start: &str) -> Option<&str> {
     let (_, after) = start.split_once("\"type\"")?;
     let value = after.trim_start().strip_prefix(':')?.trim_start();

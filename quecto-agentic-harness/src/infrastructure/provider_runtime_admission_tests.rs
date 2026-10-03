@@ -434,8 +434,7 @@ fn all_unbound_including_compatible_endpoint_starts_but_zero_usable_still_fails(
             api_key: "key".into(),
             api_base: "https://example.test/v1".into(),
             allow_remote_http: false,
-            stream_idle_seconds: None,
-            stream_progress_seconds: None,
+            stream_limits: Default::default(),
         },
     );
     let outcome = compose_agent_provider_inner_outcome(&config, &inputs, Some(&context)).unwrap();

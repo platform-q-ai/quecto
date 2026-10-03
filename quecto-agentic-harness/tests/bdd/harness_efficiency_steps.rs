@@ -104,8 +104,7 @@ fn then_config_loaded(world: &mut QuectoWorld) {
     // this exhaustive struct literal — if the field were reintroduced this
     // would fail to build.
     let _explicit = ProviderEntry {
-        stream_idle_seconds: None,
-        stream_progress_seconds: None,
+        stream_limits: Default::default(),
         api_key: "k".into(),
         api_base: "b".into(),
         disable_codex_routing: false,

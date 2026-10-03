@@ -236,3 +236,26 @@ fn a_progress_limit_out_of_range_fails_or_skips() {
     assert_eq!(skipped, ["slow"]);
     assert!(parsed.skipped[0].error.contains("streamProgressSeconds"));
 }
+
+/// #2433 review round 3: the limits live in their own module but stay flat
+/// in their entry, and an unset one is not written.
+#[test]
+fn the_limits_are_read_and_written_flat_in_their_entry() {
+    use crate::infrastructure::config::{OpenAiCompatibleEndpoint, ProviderEntry};
+    let entry: ProviderEntry = serde_json::from_value(serde_json::json!({
+        "api_key": "k", "stream_idle_seconds": 600, "stream_progress_seconds": 900,
+    }))
+    .unwrap();
+    assert_eq!(entry.stream_limits.stream_idle_seconds, Some(600));
+    assert_eq!(entry.stream_limits.stream_progress_seconds, Some(900));
+    let written = serde_json::to_value(&entry).unwrap();
+    assert_eq!(written["stream_idle_seconds"], 600);
+    assert_eq!(written["stream_progress_seconds"], 900);
+    assert!(written.get("stream_limits").is_none(), "{written}");
+    let unset = serde_json::to_value(OpenAiCompatibleEndpoint::default()).unwrap();
+    assert!(unset.get("stream_idle_seconds").is_none(), "{unset}");
+    assert!(unset.get("stream_progress_seconds").is_none(), "{unset}");
+    let bounds = entry.stream_limits.bounds("providers.openai").unwrap();
+    assert_eq!(bounds.limit(), std::time::Duration::from_secs(600));
+    assert_eq!(bounds.progress(), std::time::Duration::from_secs(900));
+}

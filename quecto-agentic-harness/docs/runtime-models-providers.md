@@ -282,10 +282,27 @@ output-less events a second for 15 minutes (~3,300 in 300 s), holding its turn
 until the admission attempt timeout (#2433). A model thinking makes few:
 Anthropic sends a `ping` about every 15 seconds while it thinks in hiding (~20
 in 300 s), and a Codex reply opens with about 3 events before a silent think.
-So a silent or ping-only think never trips the progress limit — it is the idle
-limit's alone, and raising `stream_idle_seconds` lets it run — and a model that
+So the count never cuts a think at the progress limit, and a model that
 streams its reasoning makes progress with every reasoning delta. The error is
 `stream progress timeout: the provider sent events but no output for …`.
+
+**The progress backstop** ends a reply that has sent no output for three
+progress limits (900 seconds by default, the admission attempt timeout of a
+typical setup) while events still come, however few: one within the last
+progress limit. It bounds a slow drip that neither the idle limit (each event
+restarts it) nor the count (it never reaches 200) would end, with or without
+admission. Its error names it: `… no output for 900 s (the progress backstop, 3
+times its 300 s limit) …`.
+
+Which limit governs a long think:
+
+- A think that is silent (no events at all, or none since its opening events
+  long ago) is the idle limit's alone: raise `stream_idle_seconds` to let it
+  run.
+- A think that sends only the odd event — Anthropic's `ping`s — restarts the
+  idle limit with each, so the idle limit never ends it; 200 pings would take
+  ~50 minutes, so the backstop ends it at 15 minutes by default. Raise
+  `stream_progress_seconds` to let it run (the backstop is three times it).
 
 The trade-offs:
 
@@ -295,9 +312,12 @@ The trade-offs:
 - A provider that sends output-less events fast (200 or more since its last
   output, such as empty deltas or a frequent `in_progress`) through a long
   hidden think is cut at the progress limit and retried once.
+- A think that sends only pings, or any slow drip of output-less events, and
+  runs past three progress limits (15 minutes by default) is cut by the
+  backstop and retried once.
 
-For either, raise that provider's limit: `stream_idle_seconds` (30–1800) or
-`stream_progress_seconds` (60–3600).
+For each, raise that provider's limit: `stream_idle_seconds` (30–1800) for the
+first, `stream_progress_seconds` (60–3600) for the other two.
 
 - `~/.quecto/config.json`: on `providers.openai`, `providers.anthropic`, or an
   `openai_compatible.endpoints` entry. A value out of range fails the runtime

@@ -67,9 +67,12 @@ pub const STREAM_PROGRESS_LIMIT: Duration = Duration::from_secs(300);
 /// second, ~3,300 in 300 s. A reply that is thinking makes few: Anthropic
 /// streams a `ping` about every 15 s (~20 in 300 s) while it thinks in
 /// hiding, and a Codex reply opens with about 3 before a silent think. Two
-/// hundred sits far from both, so a silent or ping-only think never trips
-/// the progress bound: silence is the idle bound's alone, and
-/// `stream_idle_seconds` stays its escape hatch.
+/// hundred sits far from both, so the count rule never cuts a think at the
+/// progress limit. A silent think is the idle bound's alone
+/// (`stream_idle_seconds`). A ping-only think is not: its pings are events,
+/// restarting the idle bound, and would reach 200 only after ~50 minutes;
+/// the backstop ([`PROGRESS_BACKSTOP_FACTOR`]) ends it at 15 minutes by
+/// default, and `stream_progress_seconds` is the setting that lets it run.
 pub const PROGRESS_EVENTS: u32 = 200;
 
 /// The stream progress limits, in seconds, a provider may be configured
@@ -306,9 +309,13 @@ struct Progress {
     bound: Duration,
     /// When output is due: the bound from the last output, or the start.
     deadline: tokio::time::Instant,
+    /// Since when output is awaited: the last output, or the start.
+    since: tokio::time::Instant,
     /// Events without output since the last output: at
     /// [`PROGRESS_EVENTS`] the body may be abandoned for making none.
     events_since: u32,
+    /// When the last of those arrived, if any did.
+    last_event: Option<tokio::time::Instant>,
     /// The data of the event line being read, up to [`EVENT_DATA_CAP`].
     data: Vec<u8>,
     /// Whether that line ran past the cap: then the type its kept start
@@ -348,7 +355,9 @@ impl EventIdle {
         let progress = line.map(|_| Progress {
             bound: bound.progress,
             deadline: now + bound.progress,
+            since: now,
             events_since: 0,
+            last_event: None,
             data: Vec::new(),
             long: false,
         });
@@ -363,18 +372,27 @@ impl EventIdle {
     /// When the next read is abandoned: the idle bound's deadline, or the
     /// progress bound's when it may fire and falls first.
     fn due(&self) -> tokio::time::Instant {
-        match self.stalling() {
-            Some(progress) => self.deadline.min(progress.deadline),
-            None => self.deadline,
-        }
+        self.fires().0
     }
 
-    /// The progress of a body that has sent enough events without output
-    /// for its progress bound to end it.
-    fn stalling(&self) -> Option<&Progress> {
-        self.progress
-            .as_ref()
-            .filter(|progress| progress.events_since >= PROGRESS_EVENTS)
+    /// The bound that fires first, and when: the idle bound, unless the
+    /// progress count rule or the backstop may fire and falls strictly
+    /// earlier (on a tie, the idle bound names the expiry).
+    fn fires(&self) -> (tokio::time::Instant, Fires) {
+        let idle = (self.deadline, Fires::Idle);
+        let Some(progress) = &self.progress else {
+            return idle;
+        };
+        [
+            progress.count_due().map(|at| (at, Fires::Count)),
+            progress.backstop_due().map(|at| (at, Fires::Backstop)),
+        ]
+        .into_iter()
+        .flatten()
+        .fold(idle, |first, next| match next.0 < first.0 {
+            true => next,
+            false => first,
+        })
     }
 
     /// Await one read of the body, abandoning it as [`Idle`] once the whole
@@ -387,14 +405,13 @@ impl EventIdle {
         let read = match tokio::time::timeout_at(self.due(), read).await {
             Ok(read) => read,
             Err(_elapsed) => {
-                // Named by the bound that fired: progress only when it may
-                // fire and fell first (on a tie, the idle bound).
-                return Err(match (&self.line, self.stalling()) {
-                    (_, Some(progress)) if progress.deadline < self.deadline => {
-                        Idle::no_output(progress.bound)
-                    }
-                    (Some(_), _) => Idle::no_event(self.bound),
-                    (None, _) => Idle::nothing(self.bound),
+                // Named by the bound that fired.
+                let progress = self.progress.as_ref().map(|p| p.bound);
+                return Err(match (self.fires().1, progress, &self.line) {
+                    (Fires::Count, Some(bound), _) => Idle::no_output(bound),
+                    (Fires::Backstop, Some(bound), _) => Idle::backstop(bound),
+                    (_, _, Some(_)) => Idle::no_event(self.bound),
+                    (_, _, None) => Idle::nothing(self.bound),
                 });
             }
         };
@@ -423,7 +440,38 @@ impl EventIdle {
     }
 }
 
+/// Which bound an expiry is named by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Fires {
+    Idle,
+    Count,
+    Backstop,
+}
+
+/// How many progress limits without output end a body that still sends
+/// events, however few (#2433 review round 3): three, 900 s by default —
+/// the admission attempt deadline of a typical setup — so a slow drip, or
+/// a ping-only think, is bounded where no admission bounds it.
+pub const PROGRESS_BACKSTOP_FACTOR: u32 = 3;
+
 impl Progress {
+    /// When the count rule ends the body: once [`PROGRESS_EVENTS`] events
+    /// without output came, at the progress bound from the last output.
+    fn count_due(&self) -> Option<tokio::time::Instant> {
+        (self.events_since >= PROGRESS_EVENTS).then_some(self.deadline)
+    }
+
+    /// When the backstop ends the body: at [`PROGRESS_BACKSTOP_FACTOR`]
+    /// progress bounds from the last output, provided an event without
+    /// output came within the last progress bound of it — events still
+    /// coming, however slowly. A body silent since is the idle bound's.
+    fn backstop_due(&self) -> Option<tokio::time::Instant> {
+        let backstop = self.since + self.bound * PROGRESS_BACKSTOP_FACTOR;
+        self.last_event
+            .filter(|last| *last + self.bound >= backstop)
+            .map(|_| backstop)
+    }
+
     /// `byte` of an SSE body moved its line from `before` to `after` at
     /// `now`: an event's data is kept, and judged when its line ends.
     fn read(&mut self, before: Line, after: Line, byte: u8, now: tokio::time::Instant) {
@@ -443,9 +491,14 @@ impl Progress {
                 match output {
                     true => {
                         self.deadline = now + self.bound;
+                        self.since = now;
                         self.events_since = 0;
+                        self.last_event = None;
                     }
-                    false => self.events_since = self.events_since.saturating_add(1),
+                    false => {
+                        self.events_since = self.events_since.saturating_add(1);
+                        self.last_event = Some(now);
+                    }
                 }
             }
             _ => {}
@@ -488,6 +541,8 @@ enum Missing {
     Event,
     /// Output: an SSE body kept sending events, none carrying output.
     Output,
+    /// Output, for the backstop: events kept coming, however few.
+    OutputBackstop,
 }
 
 impl std::fmt::Display for Idle {
@@ -496,6 +551,16 @@ impl std::fmt::Display for Idle {
             Missing::Bytes => (STREAM_IDLE_TIMEOUT, "nothing"),
             Missing::Event => (STREAM_IDLE_TIMEOUT, "no event"),
             Missing::Output => (STREAM_PROGRESS_TIMEOUT, "events but no output"),
+            Missing::OutputBackstop => {
+                return write!(
+                    f,
+                    "{STREAM_PROGRESS_TIMEOUT}the provider sent events but no output for {} \
+                     (the progress backstop, {PROGRESS_BACKSTOP_FACTOR} times its {} limit); \
+                     the request was abandoned",
+                    Span(self.bound * PROGRESS_BACKSTOP_FACTOR),
+                    Span(self.bound)
+                );
+            }
         };
         write!(
             f,
@@ -530,10 +595,19 @@ impl Idle {
         }
     }
 
+    /// Events, however few, but no output came for the backstop of a
+    /// progress bound of `bound` (#2433 review round 3).
+    pub(crate) fn backstop(bound: Duration) -> Self {
+        Self {
+            bound,
+            missing: Missing::OutputBackstop,
+        }
+    }
+
     /// Whether events kept coming, but no output (#2433): the attempt made
     /// no progress, rather than going idle.
     pub fn is_no_output(self) -> bool {
-        self.missing == Missing::Output
+        matches!(self.missing, Missing::Output | Missing::OutputBackstop)
     }
 
     /// What stands for an error body the provider stopped sending: the
