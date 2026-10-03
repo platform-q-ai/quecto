@@ -91,7 +91,7 @@ impl FileSessionStore {
             return self.delete_session_file_if_present(identity).await;
         }
         self.ensure_dir().await?;
-        self.images.store(identity, messages).await?;
+        self.images.store(identity, messages).await;
         let path = self.session_path(identity);
         let target = &path;
         let written = self
@@ -190,7 +190,7 @@ impl SessionStore for FileSessionStore {
                 return self.delete_session_file_if_present(&session.key).await;
             }
             self.ensure_dir().await?;
-            self.images.store(&session.key, &session.messages).await?;
+            self.images.store(&session.key, &session.messages).await;
             let written = self
                 .tracked(&path, |appendable| {
                     append_or_compact(&path, session, appendable)
@@ -215,7 +215,7 @@ impl SessionStore for FileSessionStore {
                 return self.delete_session_file_if_present(identity).await;
             }
             self.ensure_dir().await?;
-            self.images.store(identity, messages).await?;
+            self.images.store(identity, messages).await;
             let written = self
                 .tracked(&path, |appendable| {
                     append_known_delta(
@@ -273,8 +273,12 @@ impl SessionStore for FileSessionStore {
     }
 }
 
+/// The session `data` holds, its images named but not read (#2424).
 fn parse_session_data(data: &str) -> Result<Session, serde_json::Error> {
-    parse_session_records(data).map(|parsed| parsed.session)
+    let parsed = parse_session_records(data)?;
+    let mut session = parsed.session;
+    leave_unloaded(&mut session.messages, parsed.images);
+    Ok(session)
 }
 
 /// A transcript as read (#2424): the session, its messages' image
@@ -377,8 +381,11 @@ fn parse_session_records(data: &str) -> Result<ParsedSession, serde_json::Error>
     })
 }
 
+/// A snapshot's session, its images named but not read (the bounded read).
 fn session_from_file(file: SessionFile) -> Session {
-    session_from_file_and_images(file).0
+    let (mut session, images) = session_from_file_and_images(file);
+    leave_unloaded(&mut session.messages, images);
+    session
 }
 
 /// A snapshot's session, and its messages' image references by index.

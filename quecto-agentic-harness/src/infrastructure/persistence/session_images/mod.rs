@@ -26,7 +26,6 @@ use std::sync::{Arc, Mutex};
 use crate::domain::conversation::stored_images::{
     ImageRef, MessageImageRefs, is_storable, restore_images,
 };
-use crate::domain::error::DomainError;
 use crate::domain::message::Message;
 use crate::domain::session_identity::SessionIdentity;
 pub use sidecar_store::{ImageSidecarStore, SidecarFuture, SidecarRead};
@@ -75,6 +74,8 @@ pub(in crate::infrastructure::persistence) struct SessionImages {
     sidecars: Option<Arc<dyn ImageSidecarStore>>,
     /// The digests already warned about as not storable, once each.
     refused: Mutex<HashSet<String>>,
+    /// The digests whose sidecar write failed and was warned about.
+    failing: Mutex<HashSet<String>>,
 }
 
 impl std::fmt::Debug for SessionImages {
@@ -97,14 +98,18 @@ impl SessionImages {
 
     /// Store every loaded image `messages` carry, before a record names it.
     /// Each image is hashed once in its life, and a sidecar already verified
-    /// costs a `stat`, so a save stores them all.
+    /// costs a `stat`, so a save stores them all. Never a save failure: a
+    /// sidecar that cannot be written (the directory unreadable, say) is
+    /// warned about, the record still names the image, and the image is kept
+    /// in memory and stored again on the next save; a load before that keeps
+    /// the reference, unloaded.
     pub(in crate::infrastructure::persistence) async fn store(
         &self,
         identity: &SessionIdentity,
         messages: &[Message],
-    ) -> Result<(), DomainError> {
+    ) {
         let Some(sidecars) = self.sidecars.as_ref() else {
-            return Ok(());
+            return;
         };
         for message in messages {
             let tool = message
@@ -121,12 +126,42 @@ impl SessionImages {
                     mime_type: mime_type.to_string(),
                 };
                 match is_storable(mime_type, text) {
-                    true => sidecars.put(identity, &reference, text).await?,
+                    true => {
+                        self.put(sidecars.as_ref(), identity, &reference, text)
+                            .await
+                    }
                     false => self.refuse(&reference, text.len()),
                 }
             }
         }
-        Ok(())
+    }
+
+    /// Store one image; a failure only warns (once per image until it is
+    /// stored), as the record names the image whatever happens here.
+    async fn put(
+        &self,
+        sidecars: &dyn ImageSidecarStore,
+        identity: &SessionIdentity,
+        reference: &ImageRef,
+        text: &str,
+    ) {
+        let stored = sidecars.put(identity, reference, text).await;
+        let mut failing = self.failing.lock().unwrap_or_else(|e| e.into_inner());
+        match stored {
+            Ok(()) => {
+                failing.remove(&reference.sha256);
+            }
+            Err(error) => {
+                if failing.insert(reference.sha256.clone()) {
+                    tracing::warn!(
+                        session = identity.runtime_key(),
+                        sha256 = reference.sha256,
+                        %error,
+                        "an image sidecar was not written; the next save tries again"
+                    );
+                }
+            }
+        }
     }
 
     /// An image the store cannot keep: named in the record, warned once.

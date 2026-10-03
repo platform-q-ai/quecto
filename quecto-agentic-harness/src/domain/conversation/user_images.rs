@@ -56,6 +56,22 @@ impl UserImageBlock {
         quecto_image::ImageAttachment::new(payload).map(Self::from)
     }
 
+    /// [`Self::restore`] for text a sidecar read verified as `sha256`'s
+    /// (#2424): kept only when admission leaves it exactly as read, with the
+    /// digest known rather than computed again.
+    pub fn restore_verified(
+        mime: quecto_image::ImageMime,
+        data: String,
+        sha256: String,
+    ) -> Option<Self> {
+        let read = data.clone();
+        let block = Self::restore(mime, data).ok()?;
+        (block.data == read).then(|| Self {
+            digest: ImageDigest::verified(sha256),
+            ..block
+        })
+    }
+
     /// The admitted type.
     pub fn mime(&self) -> quecto_image::ImageMime {
         self.mime

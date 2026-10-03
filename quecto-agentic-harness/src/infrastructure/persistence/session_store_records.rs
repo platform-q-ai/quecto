@@ -484,10 +484,13 @@ pub(super) fn record_with_images(msg: &Message, images: &MessageImageRefs) -> Me
     }
 }
 
-/// The message a record holds, without its images (a reader that never
-/// restores them: the bounded read of another agent's transcript).
+/// The message a record holds, its images named but not read (a reader that
+/// never restores them: the bounded read of another agent's transcript,
+/// whose history still counts them, #2424).
 pub(super) fn record_to_message(rec: MessageRecord) -> Message {
-    record_to_message_and_images(rec).0
+    let (mut message, images) = record_to_message_and_images(rec);
+    message.unloaded_images = images.into_unloaded();
+    message
 }
 
 /// The message a record holds, and the references of its images, which the

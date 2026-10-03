@@ -44,6 +44,16 @@ impl ImageBlock {
         }
     }
 
+    /// A block a session restored, whose text its sidecar read verified as
+    /// `sha256`'s (#2424): the digest is known, not computed again.
+    pub fn restored(mime_type: &'static str, data: String, sha256: String) -> Self {
+        Self {
+            mime_type,
+            data,
+            digest: ImageDigest::verified(sha256),
+        }
+    }
+
     /// The image's base64.
     pub fn data(&self) -> &str {
         &self.data

@@ -87,6 +87,14 @@ impl Clone for ImageDigest {
 }
 
 impl ImageDigest {
+    /// A digest already known: what a sidecar read verified the text against.
+    pub fn verified(sha256: String) -> Self {
+        debug_assert!(is_sha256_hex(&sha256), "a digest");
+        let verified = Self::default();
+        assert!(verified.digest.set(sha256).is_ok(), "a new digest is unset");
+        verified
+    }
+
     /// The digest of `text`, the block's own text.
     pub fn of(&self, text: &str) -> &str {
         self.digest.get_or_init(|| {
@@ -282,8 +290,9 @@ pub fn release_images(message: &mut Message) {
 }
 
 /// Put back the images of a loaded `message`, by kind, each reference with
-/// its text if its sidecar was read. A tool result's image of an admitted
-/// type becomes its block again, the text verbatim; a user's is re-admitted
+/// its text if its sidecar was read (and verified against it). A tool
+/// result's image of an admitted type becomes its block again, the text
+/// verbatim; a user's is re-admitted
 /// by the strict rules ([`UserImageBlock::restore`]), which admit exactly
 /// what was stored. Any other stays on the message, unloaded, in its place.
 /// Returns how many stayed unloaded.
@@ -293,11 +302,13 @@ pub fn restore_images(
     user: Vec<(ImageRef, Option<String>)>,
 ) -> usize {
     let typed = |reference: &ImageRef| ImageMime::parse_exact(&reference.mime_type);
+    // A sidecar read verified each text against its reference, so a block's
+    // digest is the reference's: a load hashes no image a second time.
     for (position, (reference, text)) in tool.into_iter().enumerate() {
         match (typed(&reference), text) {
             (Some(mime), Some(text)) => {
-                let block = ImageBlock::new(mime.as_str(), text);
-                debug_assert_eq!(block.sha256(), reference.sha256, "a sidecar is its name");
+                debug_assert_eq!(sha256_hex(text.as_bytes()), reference.sha256);
+                let block = ImageBlock::restored(mime.as_str(), text, reference.sha256);
                 message.image_blocks.push(block);
             }
             (_, _) => message.unloaded_images.push(UnloadedImage {
@@ -310,10 +321,12 @@ pub fn restore_images(
     for (position, (reference, text)) in user.into_iter().enumerate() {
         // Admitted exactly as it was stored, or not at all.
         let restored = match (typed(&reference), text) {
-            (Some(mime), Some(text)) => UserImageBlock::restore(mime, text).ok(),
+            (Some(mime), Some(text)) => {
+                UserImageBlock::restore_verified(mime, text, reference.sha256.clone())
+            }
             (_, _) => None,
         };
-        match restored.filter(|block| block.sha256() == reference.sha256) {
+        match restored {
             Some(block) => message.user_image_blocks.push(block),
             None => message.unloaded_images.push(UnloadedImage {
                 kind: ImageKind::User,
