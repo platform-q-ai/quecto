@@ -391,10 +391,12 @@ fn a_result_whose_caller_has_gone_is_never_admitted() {
     assert!(registry.lock().unwrap()[&1].pending_results.is_empty());
 }
 
-/// M1: a list longer than the limit is refused by its length alone; none of
-/// its entries is read (the reviewer's 8 MiB `[0,0,…]` took 2.4 s).
+/// M1: on the tool_result intercept, a list longer than the limit is
+/// refused by its length: entries past the ninth are counted, never kept
+/// or admitted (the reviewer's 8 MiB `[0,0,…]` took 2.4 s). Other reader
+/// checks still parse the whole line, as before (#2432).
 #[test]
-fn a_huge_image_blocks_list_is_refused_by_its_length_alone() {
+fn the_tool_result_intercept_counts_a_huge_image_blocks_list_without_keeping_it() {
     let count = 1_000_000;
     let line = format!(
         r#"{{"type":"tool_result","toolCallId":"call-1","content":"","imageBlocks":[{}]}}"#,
@@ -435,4 +437,17 @@ async fn re_registering_a_tool_replaces_its_timeout() {
             "Extension timed out after 30s executing tool 'shot'",
         ]
     );
+}
+
+/// Review round 2 L3: an over-cap message fails the oldest call still
+/// waiting; one whose caller has gone is passed over.
+#[test]
+fn an_oversized_message_fails_the_oldest_call_still_waiting() {
+    let registry = new_client_tool_registry();
+    drop(park(&registry, "gone"));
+    std::thread::sleep(Duration::from_millis(2));
+    let mut waiting = park(&registry, "waiting");
+    let error = reject_oversized(&registry, 1, ("too big".into(), 9_000_000));
+    assert_eq!(error, "too big; failed the pending tool call 'waiting'");
+    assert!(waiting.try_recv().unwrap().is_error);
 }

@@ -306,3 +306,52 @@ fn a_line_is_measured_exactly_as_it_is_rendered() {
 fn mcp_image(data: &str) -> ImageAttachment {
     ImageAttachment::new(quecto_image::ImagePayload::new("image/png", data)).unwrap()
 }
+
+/// Review round 2 M1: a `result` that is not an object (a string, an
+/// array) is its JSON, as before; it never panics the bridge.
+#[test]
+fn a_result_that_is_not_an_object_is_its_json() {
+    for raw in [json!("done"), json!([1, "two"]), json!(7), Value::Null] {
+        let result = mcp_tool_result(raw.clone());
+        assert_eq!(result.content, serde_json::to_string_pretty(&raw).unwrap());
+        assert!(result.image_blocks.is_empty() && !result.is_error);
+    }
+}
+
+/// Review round 2 L1: a `content` that is not a list is kept as it came.
+#[test]
+fn a_content_that_is_not_a_list_is_kept_as_it_came() {
+    let raw = json!({"content": "hello", "isError": false});
+    let result = mcp_tool_result(raw.clone());
+    assert_eq!(result.content, serde_json::to_string_pretty(&raw).unwrap());
+}
+
+/// Review round 2 L1: with images, another item (a resource, a link) is
+/// never dropped silently: it is its JSON, in its place.
+#[test]
+fn with_images_another_item_is_its_json_in_its_place() {
+    let data = encode(&png(1, 1));
+    let resource = json!({"type": "resource", "resource": {"uri": "file:///a.txt", "text": "A"}});
+    let link = json!({"type": "resource_link", "uri": "https://e.example/b", "name": "b"});
+    let result = result_of(vec![
+        text_item("before"),
+        resource.clone(),
+        image_item("image/png", &data),
+        link.clone(),
+    ]);
+    assert_eq!(result.image_blocks.len(), 1);
+    assert_eq!(result.content, format!("before\n{resource}\n{link}"));
+}
+
+/// Review round 2 L1: an item too large to show is a marker naming it.
+#[test]
+fn with_images_a_large_other_item_is_a_marker_naming_it() {
+    let data = encode(&png(1, 1));
+    let blob = json!({"type": "resource", "resource": {"uri": "file:///big.bin", "blob": "A".repeat(100_000)}});
+    let size = blob.to_string().len();
+    let result = result_of(vec![blob, image_item("image/png", &data)]);
+    assert_eq!(
+        result.content,
+        format!("[content omitted: a \"resource\" item of {size} bytes]")
+    );
+}
