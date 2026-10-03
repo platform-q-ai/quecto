@@ -76,7 +76,43 @@ pub(crate) async fn forward_event(ev: AgentProgressEvent, sink: &mut EventSink<'
             })
             .await;
         }
+        AgentProgressEvent::RequestCompleted(completed) => {
+            sink.emit(&request_completed(completed)).await;
+        }
         _ => {}
+    }
+}
+
+/// The `request_completed` event of one ended provider request (#2436).
+fn request_completed(
+    completed: crate::domain::inference::request_completion::RequestCompleted,
+) -> AgentEvent {
+    AgentEvent::RequestCompleted {
+        model: completed.model,
+        provider: completed.provider,
+        input_tokens: completed.spend.map(|spend| spend.input_tokens),
+        cached_tokens: completed.spend.and_then(|spend| spend.cached_tokens),
+        cache_write_tokens: completed.spend.and_then(|spend| spend.cache_write_tokens),
+        output_tokens: completed.spend.map(|spend| spend.output_tokens),
+        duration_ms: completed.duration_ms,
+        queued_ms: completed.queued_ms,
+        outcome: completed.outcome,
+        request_index: completed.request_index,
+        attempt: completed.attempt,
+    }
+}
+
+/// Forward the requests that ended as a cancelled turn was dropped (#2436):
+/// its progress drain has stopped, so they are still queued. Only those:
+/// what else the dropped turn queued is presentation it no longer shows.
+pub(crate) async fn forward_settled_requests(
+    progress: &mut tokio::sync::mpsc::Receiver<AgentProgressEvent>,
+    sink: &mut EventSink<'_>,
+) {
+    while let Ok(event) = progress.try_recv() {
+        if let AgentProgressEvent::RequestCompleted(completed) = event {
+            sink.emit(&request_completed(completed)).await;
+        }
     }
 }
 
@@ -101,3 +137,7 @@ async fn emit_tool_end(
 fn to_json<T: serde::Serialize>(value: T) -> serde_json::Value {
     serde_json::to_value(value).unwrap_or_default()
 }
+
+#[cfg(test)]
+#[path = "uds_progress_forward_tests.rs"]
+mod tests;

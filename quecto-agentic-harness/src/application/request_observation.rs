@@ -3,6 +3,7 @@
 //! reports; dropped mid-attempt, it records that attempt as `Interrupted`
 //! and queues itself for its audit record (#2210).
 use crate::application::providers::ports::ChatRequest;
+use crate::domain::inference::request_completion::RequestOutcome;
 use crate::domain::message::UsageInfo;
 use crate::domain::{
     error::DomainError,
@@ -124,6 +125,12 @@ impl<'a> ObservationGuard<'a> {
         // usage (#2249 review), then the reply's own, each counted once —
         // as the billed totals count them.
         let mut spent = self.trace.unfinished_usage();
+        // #2436: the attempt in flight ends with the request.
+        let (ended, reply) = match result {
+            Ok(response) => (RequestOutcome::Ok, response.usage.as_ref()),
+            Err(_) => (RequestOutcome::Error, None),
+        };
+        self.trace.end_attempt(ended, reply);
         match result {
             Ok(response) => {
                 record.outcome = "succeeded".into();
@@ -153,6 +160,10 @@ impl<'a> ObservationGuard<'a> {
     /// or was dropped in flight.
     fn publish(&mut self, ending: Ending) -> Option<RequestObservation> {
         let mut record = self.record.take()?;
+        if let Ending::Dropped = ending {
+            // #2436: an attempt still in flight was cancelled with it.
+            self.trace.end_attempt(RequestOutcome::Cancelled, None);
+        }
         self.sinks.in_flight.end(&self.trace);
         record.duration_ms = self
             .started

@@ -462,11 +462,14 @@ async fn stub_provider_turn_has_same_event_sequence_through_each_sink() {
     assert_eq!(broadcast_message_roles, writer_message_roles);
     // #1060: non-streaming stub turns surface the assistant text once as a
     // Token before the ref-based turn_end / agent_end (no content re-carry).
+    // #2436: the provider request is announced as it ends, before its reply
+    // is shown.
     assert_eq!(
         writer_event_types,
         vec![
             "agent_start",
             "turn_start",
+            "request_completed",
             "token",
             "turn_end",
             "agent_end"

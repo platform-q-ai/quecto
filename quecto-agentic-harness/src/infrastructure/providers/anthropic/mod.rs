@@ -1,4 +1,5 @@
 use crate::infrastructure::providers::attempt_profile::{Profile, Surface, Vendor};
+use crate::infrastructure::providers::attempt_transport::queue_before_spawn;
 // Anthropic adapter: impl LlmProvider for AnthropicProvider.
 //
 // See gap analysis #437 for Anthropic API parity work.
@@ -685,6 +686,7 @@ impl LlmProvider for AnthropicProvider {
                     .await;
                 return rx;
             }
+            queue_before_spawn(provider.attempt_admission.as_ref(), trace.as_ref());
             tokio::spawn(async move {
                 if let Some(gate) = &provider.attempt_admission {
                     let builder =

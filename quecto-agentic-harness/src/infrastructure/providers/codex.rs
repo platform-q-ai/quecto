@@ -643,6 +643,10 @@ impl LlmProvider for CodexProvider {
         let provider = self.clone();
         Box::pin(async move {
             let (tx, rx) = tokio::sync::mpsc::channel(64);
+            super::attempt_transport::queue_before_spawn(
+                provider.attempt_admission.as_ref(),
+                call.trace.as_ref(),
+            );
             tokio::spawn(provider.stream(call, bodies, tx));
             rx
         })

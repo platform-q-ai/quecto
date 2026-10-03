@@ -61,6 +61,39 @@ impl AgentLoopImpl {
         self.in_flight_request.clone()
     }
 
+    /// This agent's own provider requests so far, which `get_state`
+    /// reports as `agentRequests` (#2436).
+    pub fn request_tally(&self) -> Arc<crate::domain::inference::request_completion::RequestTally> {
+        self.request_tally.clone()
+    }
+
+    /// Where each attempt of a request for `model` is reported as it ends
+    /// (#2436): counted in this agent's tally, then announced as
+    /// `request_completed` — under the provider the request is routed to
+    /// and the model id that provider is sent.
+    pub(super) fn request_completion_sink(
+        &self,
+        model: &str,
+    ) -> crate::domain::inference::request_completion::AttemptEndSink {
+        use crate::domain::provider::{ModelRoute, route_model};
+        let order = self.provider.route_order();
+        let names: Vec<&str> = order.iter().map(String::as_str).collect();
+        let (provider, model) = match route_model(model, &names) {
+            ModelRoute::To { provider, model } => (provider.to_string(), model.to_string()),
+            ModelRoute::UnknownProvider { .. } | ModelRoute::NoProviders => {
+                (self.provider.name().to_string(), model.to_string())
+            }
+        };
+        let tally = self.request_tally.clone();
+        let progress = self.progress_callback.clone();
+        Arc::new(move |ended| {
+            let completed = tally.record(&model, &provider, ended);
+            if let Some(progress) = &progress {
+                progress(AgentProgressEvent::RequestCompleted(completed));
+            }
+        })
+    }
+
     pub fn take_request_observations(
         &self,
     ) -> Vec<crate::domain::request_observation::RequestObservation> {

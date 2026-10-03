@@ -30,6 +30,7 @@ impl AgentLoopImpl {
         requirement: ReplyRequirement,
     ) -> Result<LlmResponse, StreamProviderError> {
         let mut emitted_event = false;
+        let trace = request.trace.clone();
         let mut rx = self.provider.chat_stream_incremental(request).await;
         while let Some(event) = rx.recv().await {
             match event {
@@ -48,10 +49,19 @@ impl AgentLoopImpl {
                     return match (empty, ends_turn_empty(&response, requirement)) {
                         // Output, or nothing where nothing ends the turn.
                         (false, _) | (true, true) => Ok(response),
-                        (true, false) => Err(StreamProviderError {
-                            error: DomainError::Provider(empty_stream_error_message(&response)),
-                            emitted_event,
-                        }),
+                        (true, false) => {
+                            // The empty reply's tokens were spent all the
+                            // same: its attempt reports them (#2436 review).
+                            // Only here: a reply that ends the turn reports
+                            // its usage as an `ok` reply.
+                            if let (Some(trace), Some(usage)) = (&trace, response.usage.clone()) {
+                                trace.record_unfinished_usage(usage);
+                            }
+                            Err(StreamProviderError {
+                                error: DomainError::Provider(empty_stream_error_message(&response)),
+                                emitted_event,
+                            })
+                        }
                     };
                 }
                 StreamEvent::Error(e) => {
@@ -99,6 +109,8 @@ impl AgentLoopImpl {
             self.model_max_tokens,
             request.max_tokens,
         ));
+        // #2436: each attempt is counted and announced as it ends.
+        trace.on_attempt_end(self.request_completion_sink(request.model));
         request.trace = Some(trace.clone());
         let mut observation = super::super::request_observation::ObservationGuard::new(
             super::super::request_observation::ObservationSinks {
@@ -237,6 +249,10 @@ impl AgentLoopImpl {
             match result {
                 Ok(response) => return Ok(response),
                 Err(err) => {
+                    // The attempt ended here, before any back-off (#2436).
+                    if let Some(trace) = &request.trace {
+                        trace.end_attempt_failed();
+                    }
                     let class = classify_provider_error(&err);
                     if attempt == MAX_PROVIDER_ATTEMPTS
                         || !class.is_retryable()

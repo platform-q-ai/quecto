@@ -26,7 +26,9 @@ fn full_json() -> serde_json::Value {
         "admissionWarnings": [{"slot": "s", "code": "c", "message": "m"}],
         "modelTurn": {"elapsedMs": 1, "outputCapBytes": 8,
                       "attempt": {"number": 1, "elapsedMs": 1, "events": 2, "outputBytes": 3,
-                                  "sinceLastEventMs": 4, "firstTokenMs": 5}}
+                                  "sinceLastEventMs": 4, "firstTokenMs": 5}},
+        "agentRequests": {"requests": 2, "inputTokens": 30, "cachedTokens": 20,
+                          "cacheWriteTokens": 50, "outputTokens": 4}
     })
 }
 
@@ -65,6 +67,7 @@ fn the_member_lists_are_the_projections_own() {
         ("/admissionWarnings/0", &reader::WARNING),
         ("/modelTurn", &reader::MODEL_TURN),
         ("/modelTurn/attempt", &reader::ATTEMPT),
+        ("/agentRequests", &reader::AGENT_REQUESTS),
     ] {
         assert_eq!(
             members(written.pointer(pointer).unwrap()),
@@ -248,4 +251,22 @@ fn anything_but_the_unchanged_marker_is_refused_as_one() {
     ] {
         assert!(UnchangedSnapshot::read(&data).is_none(), "{data}");
     }
+}
+
+/// #2436 review L4: a child built before `agentRequests` never sent it, so
+/// it is read as absent and a relay omits it — never invented zeros; a
+/// newer child's counters are relayed as read.
+#[test]
+fn agent_requests_read_from_older_and_newer_children() {
+    let mut older = full_json();
+    older.as_object_mut().unwrap().remove("agentRequests");
+    let read = StateSnapshot::read_forward_compatible(&older).expect("an older child reads");
+    assert_eq!(read.agent_requests, None);
+    let relayed = serde_json::to_value(&read).unwrap();
+    assert!(relayed.get("agentRequests").is_none(), "{relayed}");
+    let read = StateSnapshot::read_forward_compatible(&full_json()).expect("a current child");
+    let counters = read.agent_requests.expect("a current child sends them");
+    assert_eq!(counters.requests, 2);
+    assert_eq!(counters.cached_tokens, 20);
+    assert_eq!(counters.cache_write_tokens, 50);
 }

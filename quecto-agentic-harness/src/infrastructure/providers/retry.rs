@@ -189,6 +189,10 @@ impl LlmProvider for RetryingProvider {
                 match self.inner.chat(request.clone()).await {
                     Ok(response) => return Ok(response),
                     Err(err) => {
+                        // The attempt ended here, before any back-off (#2436).
+                        if let Some(trace) = &request.trace {
+                            trace.end_attempt_failed();
+                        }
                         let class = classify_provider_error(&err);
                         if !class.is_retryable()
                             || attempt >= self.config.max_attempts

@@ -157,6 +157,32 @@ pub enum AgentEvent {
     AdmissionStateChanged {
         admission: super::uds_admission_projection::AdmissionSnapshot,
     },
+    /// One provider request of this agent ended (#2436): every attempt,
+    /// retries included, whatever its provider. A token count the provider
+    /// did not report is omitted, never zero. Emitted on the agent's own
+    /// socket only: a parent's monitor never forwards a child's.
+    #[serde(rename_all = "camelCase")]
+    RequestCompleted {
+        model: String,
+        provider: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        input_tokens: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cached_tokens: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cache_write_tokens: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output_tokens: Option<u64>,
+        duration_ms: u64,
+        /// How long it waited to be admitted; omitted when it never waited.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        queued_ms: Option<u64>,
+        outcome: crate::domain::inference::request_completion::RequestOutcome,
+        /// This agent's requests so far, this one included.
+        request_index: u64,
+        /// Its number within its logical request, from 1.
+        attempt: u32,
+    },
     /// Emitted when an agent completes a turn, carrying the messages appended
     /// during that turn (assistant message + any tool results). A sub-agent
     /// emits this on its own stream with an empty `agent_id`; the parent's

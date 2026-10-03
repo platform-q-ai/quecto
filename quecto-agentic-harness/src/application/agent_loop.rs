@@ -106,6 +106,8 @@ pub struct AgentLoopImpl {
     request_observations: std::sync::Mutex<crate::domain::request_observation::RequestDiagnostics>,
     /// The request in flight, which `get_state` reports (#2210).
     in_flight_request: Arc<crate::domain::request_progress::InFlightRequest>,
+    /// This agent's own provider requests so far, for `get_state` (#2436).
+    request_tally: Arc<crate::domain::inference::request_completion::RequestTally>,
     /// Requests that ended in flight, awaiting their audit record (#2210).
     interrupted_requests: std::sync::Mutex<Vec<super::request_observation::InterruptedRequest>>,
     request_admission: Option<Arc<dyn crate::application::providers::ports::RequestAdmission>>,
@@ -183,6 +185,7 @@ impl AgentLoopImpl {
             unreported_usage: std::sync::Mutex::new(UsageTotals::default()),
             request_observations: std::sync::Mutex::new(Default::default()),
             in_flight_request: Arc::default(),
+            request_tally: Arc::default(),
             interrupted_requests: std::sync::Mutex::new(Vec::new()),
             request_accounting: None,
             accounting_outbox: std::sync::Mutex::new(Vec::new()),
@@ -356,15 +359,12 @@ impl AgentLoopImpl {
     pub(super) fn tool_catalog(&self) -> &dyn ToolCatalog {
         &*self.tool_registry
     }
-
     fn tool_executor(&self) -> &dyn ToolExecutor {
         &*self.tool_registry
     }
-
     pub(super) fn extension_tool_registry(&self) -> &dyn RuntimeToolLifecycleRegistry {
         &*self.tool_registry
     }
-
     fn extension_tool_registry_mut(&mut self) -> &mut dyn RuntimeToolLifecycleRegistry {
         &mut *self.tool_registry
     }

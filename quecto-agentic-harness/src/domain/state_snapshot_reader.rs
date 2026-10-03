@@ -75,6 +75,13 @@ pub(super) const MODEL_TURN: Shape = Shape {
     objects: &[("attempt", &ATTEMPT)],
     arrays: &[],
 };
+pub(super) const AGENT_REQUESTS: Shape = leaf(&[
+    "requests",
+    "inputTokens",
+    "cachedTokens",
+    "cacheWriteTokens",
+    "outputTokens",
+]);
 pub(super) const STATE: Shape = Shape {
     members: &[
         "state",
@@ -91,12 +98,14 @@ pub(super) const STATE: Shape = Shape {
         "admission",
         "admissionWarnings",
         "modelTurn",
+        "agentRequests",
     ],
     objects: &[
         ("progress", &PROGRESS),
         ("workflow", &WORKFLOW),
         ("admission", &ADMISSION),
         ("modelTurn", &MODEL_TURN),
+        ("agentRequests", &AGENT_REQUESTS),
     ],
     arrays: &[
         ("controlReceipts", &RECEIPT),

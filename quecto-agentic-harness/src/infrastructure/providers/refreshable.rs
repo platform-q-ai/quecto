@@ -302,6 +302,10 @@ impl RefreshableProvider {
             Err(err)
                 if Self::is_refreshable_auth_error(&err) && self.has_refreshable_credential() =>
             {
+                // The refused attempt ended here, before the refresh (#2436).
+                if let Some(trace) = &request.trace {
+                    trace.end_attempt_failed();
+                }
                 tracing::info!(
                     provider = self.provider_name.as_str(),
                     "401 from OAuth provider — attempting token refresh"
