@@ -1,6 +1,4 @@
-use crate::domain::conversation::image_tokens::{
-    estimate_image_tokens, estimate_named_image_tokens,
-};
+use crate::domain::conversation::image_tokens::estimate_image_tokens;
 use crate::domain::conversation::stored_images::UnloadedImage;
 #[cfg(any(test, feature = "test-support"))]
 use std::collections::HashMap;
@@ -272,7 +270,7 @@ impl Message {
             let image_tokens: usize = self
                 .image_blocks
                 .iter()
-                .map(|img| estimate_named_image_tokens(img.mime_type, img.data()))
+                .map(|img| estimate_image_tokens(img.mime(), img.data()))
                 .sum();
             text_tokens + tool_call_tokens + tool_call_id_tokens + image_tokens + user_image_tokens
         })

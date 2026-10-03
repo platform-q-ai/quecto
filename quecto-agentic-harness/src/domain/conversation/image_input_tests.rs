@@ -28,7 +28,10 @@ fn user_with_images(text: &str, count: usize) -> Message {
 fn tool_with_image(id: &str, text: &str) -> Message {
     let mut message = Message::tool(id, text);
     message.tool_name = Some("read".into());
-    message.image_blocks = vec![ImageBlock::new("image/jpeg", "anBn")];
+    message.image_blocks = vec![ImageBlock::unchecked_for_tests(
+        quecto_image::ImageMime::Jpeg,
+        "anBn",
+    )];
     message
 }
 
@@ -40,9 +43,9 @@ fn gif(frames: usize) -> String {
 fn tool_with_gif(id: &str, frames: usize) -> Message {
     let mut message = Message::tool(id, "Read image file a.gif");
     message.image_blocks = vec![
-        ImageBlock::new("image/png", "cG5n"),
-        ImageBlock::new("image/gif", gif(frames)),
-        ImageBlock::new("image/jpeg", "anBn"),
+        ImageBlock::unchecked_for_tests(quecto_image::ImageMime::Png, "cG5n"),
+        ImageBlock::unchecked_for_tests(quecto_image::ImageMime::Gif, gif(frames)),
+        ImageBlock::unchecked_for_tests(quecto_image::ImageMime::Jpeg, "anBn"),
     ];
     message
 }
@@ -99,16 +102,18 @@ fn the_markers_name_the_model() {
 }
 
 /// Whether a GIF is animated is `quecto_image`'s (#2422 review); the
-/// verdict asks it only of an image typed exactly `image/gif`, as the wire
-/// spells it.
+/// verdict asks it only of a block admitted as a GIF (#2423: the type is
+/// the block's, so a string spelling can no longer reach it).
 #[test]
-fn only_an_image_typed_exactly_image_gif_is_walked() {
+fn only_an_image_typed_as_a_gif_is_walked() {
     let verdicts = GifVerdicts::default();
-    assert!(verdicts.is_animated("image/gif", &gif(2)));
-    assert!(!verdicts.is_animated("image/gif", &gif(1)));
-    for mime in ["IMAGE/GIF", "image/Gif", "image/png"] {
-        assert!(!verdicts.is_animated(mime, &gif(2)), "{mime}");
+    let block = |mime, data| ImageBlock::unchecked_for_tests(mime, data);
+    assert!(verdicts.is_animated(&block(ImageMime::Gif, gif(2))));
+    assert!(!verdicts.is_animated(&block(ImageMime::Gif, gif(1))));
+    for mime in [ImageMime::Png, ImageMime::Jpeg, ImageMime::Webp] {
+        assert!(!verdicts.is_animated(&block(mime, gif(2))), "{mime}");
     }
+    assert_eq!(verdicts.walks(), 2, "only the GIFs were walked");
 }
 
 #[test]
@@ -205,7 +210,11 @@ fn a_still_image_model_is_sent_every_image_but_an_animated_gif() {
             animated.content,
             format!("Read image file a.gif\n{}", animated_gif_marker(MODEL))
         );
-        let kept: Vec<&str> = animated.image_blocks.iter().map(|i| i.mime_type).collect();
+        let kept: Vec<&str> = animated
+            .image_blocks
+            .iter()
+            .map(|i| i.mime_type())
+            .collect();
         assert_eq!(kept, ["image/png", "image/jpeg"]);
         let still = &sent.messages()[1];
         assert_eq!(still.content, "Read image file a.gif");
@@ -214,7 +223,7 @@ fn a_still_image_model_is_sent_every_image_but_an_animated_gif() {
     let restored: Vec<&str> = messages[0]
         .image_blocks
         .iter()
-        .map(|i| i.mime_type)
+        .map(|i| i.mime_type())
         .collect();
     assert_eq!(
         restored,
@@ -307,8 +316,15 @@ fn gifs_of_the_same_length_get_their_own_verdicts() {
     };
     assert_eq!(animated.len(), still.len());
     let verdicts = GifVerdicts::default();
-    assert!(verdicts.is_animated("image/gif", &animated));
-    assert!(!verdicts.is_animated("image/gif", &still));
-    assert!(verdicts.is_animated("image/gif", &animated));
+    let animated = ImageBlock::unchecked_for_tests(ImageMime::Gif, animated);
+    let still = ImageBlock::unchecked_for_tests(ImageMime::Gif, still);
+    assert!(verdicts.is_animated(&animated));
+    assert!(!verdicts.is_animated(&still));
+    assert!(verdicts.is_animated(&animated.clone()));
     assert_eq!(verdicts.walks(), 2);
+    assert_eq!(
+        animated.digest_builds_for_tests(),
+        1,
+        "#2423: the block's cached digest is the key, never hashed again"
+    );
 }

@@ -99,7 +99,10 @@ fn conversation_with_images() -> Vec<Message> {
     };
     let mut screenshot = Message::tool("call-1", "Read image file [image/png] (30 B)");
     screenshot.tool_name = Some("read".into());
-    screenshot.image_blocks = vec![ImageBlock::new("image/png", png())];
+    screenshot.image_blocks = vec![ImageBlock::unchecked_for_tests(
+        quecto_image::ImageMime::Png,
+        png(),
+    )];
     vec![
         photo,
         Message::assistant("a photo; let me read the screenshot", vec![call]),
@@ -152,7 +155,7 @@ async fn a_resumed_session_sends_its_images_in_the_next_provider_request() {
         .find(|m| m.role == Role::Tool)
         .expect("the resumed tool result is sent");
     assert_eq!(screenshot.image_blocks.len(), 1, "with its image");
-    assert_eq!(screenshot.image_blocks[0].mime_type, "image/png");
+    assert_eq!(screenshot.image_blocks[0].mime_type(), "image/png");
     assert_eq!(screenshot.image_blocks[0].data(), png());
 }
 

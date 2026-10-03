@@ -337,10 +337,7 @@ fn image_result(mime: quecto_image::ImageMime, bytes: &[u8]) -> ToolResult {
         Ok(image) => ToolResult {
             content: format!("Read image file [{}] ({size})", image.mime_type()),
             is_error: false,
-            image_blocks: vec![crate::domain::tool::ImageBlock::new(
-                image.mime_type(),
-                image.into_data(),
-            )],
+            image_blocks: vec![image.into()],
             delivery_metadata: None,
         },
         Err(refusal @ quecto_image::ImageRefusal::TooLarge) => ToolResult {

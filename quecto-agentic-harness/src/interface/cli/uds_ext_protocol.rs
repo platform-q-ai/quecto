@@ -14,20 +14,19 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use crate::application::extensions::ports::PendingToolInvocation;
+use crate::application::extensions::tool_result::{SentImageBlocks, extension_tool_result};
+use crate::domain::extension_tool::ExtensionToolTimeout;
 use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::extensions::uds_tool::create_uds_tool;
 
 use super::protocol::{AgentEvent, ToolRegistration};
-
-/// Default timeout for UDS extension tool execution (seconds).
-const DEFAULT_TOOL_TIMEOUT_SECS: u64 = 30;
 
 /// Handle to a spawned forwarder task. Stored alongside a
 /// cooperative shutdown `oneshot` so unregister / disconnect can ask
 /// the task to drain its inbound mpsc of any buffered
 /// `ToolInvocation`s — resolving their oneshots with an immediate
 /// error — instead of abort-killing the task and leaving those
-/// in-flight callers to wait out the 30-second UdsTool timeout.
+/// in-flight callers to wait out the UdsTool's timeout.
 #[derive(Debug)]
 pub struct ForwarderHandle {
     /// JoinHandle is kept so `Drop` detaches cleanly; we never
@@ -212,7 +211,20 @@ pub fn handle_register_tools(
         }
     }
 
-    let timeout = std::time::Duration::from_secs(DEFAULT_TOOL_TIMEOUT_SECS);
+    let timeouts = match tools
+        .iter()
+        .map(registered_timeout)
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(timeouts) => timeouts,
+        Err(refusal) => {
+            return (
+                false,
+                AgentEvent::err(id, "register_tools", refusal),
+                vec![],
+            );
+        }
+    };
     let mut new_tools: Vec<Arc<dyn crate::application::tools::ports::Tool>> = Vec::new();
     let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -234,7 +246,7 @@ pub fn handle_register_tools(
 
     let state = reg.entry(client_id).or_default();
 
-    for tool_reg in tools {
+    for (tool_reg, timeout) in tools.iter().zip(timeouts) {
         let def = ToolDefinition {
             name: tool_reg.name.clone().into(),
             description: tool_reg.description.clone().into(),
@@ -252,7 +264,7 @@ pub fn handle_register_tools(
             resolve_pending_for_tool(state, &tool_reg.name, "Tool re-registered");
         }
 
-        let (tool, rx) = create_uds_tool(def, timeout);
+        let (tool, rx) = create_uds_tool(def, timeout.duration());
         state.tool_names.insert(tool_reg.name.clone());
         state.tool_request_rxs.insert(tool_reg.name.clone(), rx);
         new_tools.push(tool);
@@ -265,6 +277,30 @@ pub fn handle_register_tools(
         Some(serde_json::json!({ "registered": registered })),
     );
     (true, ev, new_tools)
+}
+
+/// The timeout `tool` registered with (#2423): its `timeoutSeconds` when
+/// that is a whole number of seconds the domain allows, the default when it
+/// sent none (or `null`); any other value is the exact refusal, which
+/// refuses the whole batch.
+fn registered_timeout(tool: &ToolRegistration) -> Result<ExtensionToolTimeout, String> {
+    let sent = match &tool.timeout_seconds {
+        None | Some(serde_json::Value::Null) => return Ok(ExtensionToolTimeout::DEFAULT),
+        Some(sent) => sent,
+    };
+    sent.as_u64()
+        .and_then(ExtensionToolTimeout::from_seconds)
+        .ok_or_else(|| {
+            let allowed = ExtensionToolTimeout::ALLOWED_SECONDS;
+            // Echo at most 64 characters of what was sent.
+            let echoed: String = sent.to_string().chars().take(64).collect();
+            format!(
+                "tool '{}': timeoutSeconds must be a whole number of seconds from {} to {}, got {echoed}",
+                tool.name,
+                allowed.start(),
+                allowed.end()
+            )
+        })
 }
 
 /// Handle `unregister_tools` command from a client.
@@ -338,21 +374,40 @@ pub fn handle_tool_result(args: ToolResultArgs<'_>) {
         image_blocks,
         registry,
     } = args;
-    let _not_yet_admitted = image_blocks;
     let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(state) = reg.get_mut(&client_id) {
         if let Some(pending) = state.pending_results.remove(tool_call_id) {
-            let _ = pending.reply.send(ToolResult {
-                content: content.to_string(),
-                is_error,
-                image_blocks: vec![],
-                delivery_metadata: None,
-            });
+            // Admitted only for a call still waiting: a late or unknown
+            // result's images are never decoded.
+            let sent = sent_image_blocks(image_blocks);
+            let result = extension_tool_result(content.to_string(), is_error, sent);
+            let _ = pending.reply.send(result);
         }
         // Reclaim any other entries whose caller has already timed out — e.g.
         // this very result arriving late for a call `UdsTool::execute` gave up
         // on — so an idle client doesn't hold stale slots until its next call.
         state.sweep_expired_pending();
+    }
+}
+
+/// A `tool_result`'s `imageBlocks` as sent (#2423): absent or `null` is no
+/// images, a list is read entry by entry (one not shaped as an image is
+/// `None`, refused on admission), anything else is not a list.
+fn sent_image_blocks(field: Option<serde_json::Value>) -> SentImageBlocks {
+    match field {
+        None | Some(serde_json::Value::Null) => SentImageBlocks::default(),
+        Some(serde_json::Value::Array(entries)) => SentImageBlocks::Entries(
+            entries
+                .into_iter()
+                .map(|entry| serde_json::from_value(entry).ok())
+                .collect(),
+        ),
+        Some(
+            serde_json::Value::Bool(_)
+            | serde_json::Value::Number(_)
+            | serde_json::Value::String(_)
+            | serde_json::Value::Object(_),
+        ) => SentImageBlocks::NotAList,
     }
 }
 

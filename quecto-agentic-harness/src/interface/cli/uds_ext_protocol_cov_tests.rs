@@ -367,6 +367,7 @@ async fn handle_one_request_sends_execute_tool_and_tool_result_resolves_reply() 
                 arguments: r#"{"city":"Oslo"}"#.to_string(),
             },
             reply: reply_tx,
+            timeout: std::time::Duration::from_secs(30),
         },
         91,
         &registry,
@@ -412,6 +413,7 @@ async fn handle_one_request_without_writer_drops_pending_so_caller_fails_fast() 
                 arguments: "{}".to_string(),
             },
             reply: reply_tx,
+            timeout: std::time::Duration::from_secs(30),
         },
         92,
         &registry,
@@ -630,6 +632,7 @@ async fn forward_tool_requests_shutdown_drains_buffered_invocations_with_reason(
                 arguments: "{}".to_string(),
             },
             reply: reply_tx,
+            timeout: std::time::Duration::from_secs(30),
         },
     )
     .await
@@ -723,6 +726,7 @@ async fn poisoned_registry_lock_recovered_by_forwarder_paths() {
                 arguments: "{}".to_string(),
             },
             reply: reply_tx,
+            timeout: std::time::Duration::from_secs(30),
         },
         777,
         &registry,

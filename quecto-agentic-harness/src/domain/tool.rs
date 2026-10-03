@@ -6,7 +6,7 @@
 //! (`application::tools::ports`, #1960).
 use std::borrow::Cow;
 
-use super::conversation::stored_images::{ImageDigest, VerifiedText};
+use super::conversation::stored_images::{ImageDigest, VerifiedText, sha256_hex};
 use super::tool_descriptor::{ProfileAvailabilityScope, ToolAvailability, ToolCatalogueEntry};
 
 /// Metadata describing a tool for the LLM.
@@ -22,45 +22,96 @@ pub struct ToolDefinition {
     pub parameters_schema: Cow<'static, str>,
 }
 
-/// A base64-encoded image block returned by a tool (e.g. `read` on an image file).
-#[derive(Debug, Clone)]
+/// An image a message carries (#2423): a tool's result (e.g. `read` on an
+/// image file, or an extension's `imageBlocks`) or a user's attachment
+/// (`UserImageBlock`, #2422). Its fields are private, so a block is made
+/// only from an admitted image ([`quecto_image::ImageAttachment`], the
+/// normal path) or by [`ImageBlock::restore`], which re-admits what
+/// persistence kept: the type is the allowlist for every image a provider
+/// is sent. It carries the admitted type and keeps it; no step after
+/// admission can lose or forge it. `quecto_image` is a pure leaf crate (no
+/// I/O, depends only on base64 and serde), so the domain depends on it as
+/// it does on `base64`.
+#[derive(Clone)]
 pub struct ImageBlock {
-    /// MIME type: one of `"image/png"`, `"image/jpeg"`, `"image/gif"`, `"image/webp"`.
-    /// Always a static literal — avoids a heap allocation per image block.
-    pub mime_type: &'static str,
-    /// Base64-encoded image bytes (standard encoding, no line breaks).
-    /// Private, as is its digest (#2424): a block's text never changes.
+    mime: quecto_image::ImageMime,
+    /// Strict standard base64. Private, as is its digest (#2424): a
+    /// block's text never changes.
     data: String,
     /// The SHA-256 of `data`, once asked for (#2424: what a session stores it as).
     digest: ImageDigest,
 }
 
-impl ImageBlock {
-    pub fn new(mime_type: &'static str, data: impl Into<String>) -> Self {
+/// Blocks are equal when their images are: the cached digest is not part of it.
+impl PartialEq for ImageBlock {
+    fn eq(&self, other: &Self) -> bool {
+        (self.mime, &self.data) == (other.mime, &other.data)
+    }
+}
+
+impl Eq for ImageBlock {}
+
+/// The normal way to make a block: from an admitted image.
+impl From<quecto_image::ImageAttachment> for ImageBlock {
+    fn from(image: quecto_image::ImageAttachment) -> Self {
         Self {
-            mime_type,
-            data: data.into(),
+            mime: image.mime(),
+            data: image.into_data(),
             digest: ImageDigest::default(),
         }
     }
+}
 
-    /// A block a session restored from its sidecar's text, hashed when it
-    /// was read (#2424): the digest is known, not computed again.
-    pub(crate) fn restored(mime_type: &'static str, text: VerifiedText) -> Self {
-        let (sha256, data) = text.into_parts();
-        Self {
-            mime_type,
-            data,
-            digest: ImageDigest::verified(sha256),
-        }
+impl ImageBlock {
+    /// A block persistence kept (#2424 saves them): its type and base64
+    /// are re-admitted by the strict rules, never trusted, so a corrupt or
+    /// edited session file cannot carry an image admission would refuse.
+    pub fn restore(
+        mime: quecto_image::ImageMime,
+        data: String,
+    ) -> Result<Self, quecto_image::ImageRefusal> {
+        let payload = quecto_image::ImagePayload::new(mime.as_str(), data);
+        quecto_image::ImageAttachment::new(payload).map(Self::from)
     }
 
-    /// The image's base64.
+    /// [`Self::restore`] for a sidecar's text, hashed when it was read
+    /// (#2424), for either kind of image (#2423): kept only when admission
+    /// leaves it exactly as read, with the digest known rather than computed
+    /// again; `None` for one admission refuses (the session keeps it as an
+    /// unloaded reference). Admission hands the text back unchanged (the
+    /// same allocation), so the check costs no copy; were it ever to
+    /// rewrite it, the text is hashed once to tell.
+    pub(crate) fn restore_verified(
+        mime: quecto_image::ImageMime,
+        text: VerifiedText,
+    ) -> Option<Self> {
+        let (sha256, data) = text.into_parts();
+        let (at, len) = (data.as_ptr(), data.len());
+        let block = Self::restore(mime, data).ok()?;
+        let unchanged = std::ptr::eq(block.data.as_ptr(), at) && block.data.len() == len;
+        let same = unchanged || sha256_hex(block.data.as_bytes()) == sha256;
+        same.then(|| Self {
+            digest: ImageDigest::verified(sha256),
+            ..block
+        })
+    }
+
+    /// The admitted type.
+    pub fn mime(&self) -> quecto_image::ImageMime {
+        self.mime
+    }
+
+    /// The admitted type as the wire spells it.
+    pub fn mime_type(&self) -> &'static str {
+        self.mime.as_str()
+    }
+
+    /// The image's strict standard base64.
     pub fn data(&self) -> &str {
         &self.data
     }
 
-    /// The SHA-256 of the block's text, computed once.
+    /// The SHA-256 of the block's text, computed once (#2424).
     pub fn sha256(&self) -> &str {
         self.digest.of(&self.data)
     }
@@ -69,12 +120,36 @@ impl ImageBlock {
     pub fn digest_builds_for_tests(&self) -> usize {
         self.digest.builds_for_tests()
     }
+
+    /// A block whose `data` is not admitted, for tests of what is done
+    /// with a block (serializers, markers) that need short, known data.
+    /// Compiled only for tests: production blocks come from admission.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn unchecked_for_tests(mime: quecto_image::ImageMime, data: impl Into<String>) -> Self {
+        Self {
+            mime,
+            data: data.into(),
+            digest: ImageDigest::default(),
+        }
+    }
+
+    /// A 1x1 admitted image of `mime`, for tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn sample(mime: quecto_image::ImageMime) -> Self {
+        let bytes = quecto_image::samples::sample(mime);
+        quecto_image::ImageAttachment::from_bytes(mime, &bytes)
+            .expect("a sample is admitted")
+            .into()
+    }
 }
 
-impl ImageBlock {
-    /// The MIME type as the wire spells it.
-    pub fn mime_type(&self) -> &'static str {
-        self.mime_type
+/// Never prints the base64.
+impl std::fmt::Debug for ImageBlock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ImageBlock")
+            .field("mime", &self.mime)
+            .field("data_len", &self.data.len())
+            .finish()
     }
 }
 
@@ -83,8 +158,9 @@ impl ImageBlock {
 pub struct ToolResult {
     pub content: String,
     pub is_error: bool,
-    /// Optional image blocks (e.g. when `read` is called on an image file).
-    /// Empty for all non-image tools — zero-cost default.
+    /// Optional image blocks (e.g. when `read` is called on an image file,
+    /// or an extension's `tool_result` carries `imageBlocks`). Empty for
+    /// all non-image tools — zero-cost default.
     pub image_blocks: Vec<ImageBlock>,
     /// Internal delivery metadata passed to `Tool::result_delivered` after
     /// `content` has been appended. This is never surfaced to the model.

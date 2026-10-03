@@ -39,7 +39,7 @@ impl LlmProvider for RequestRecorder {
                     .chain(
                         m.image_blocks
                             .iter()
-                            .map(|image| image.mime_type.to_string()),
+                            .map(|image| image.mime_type().to_string()),
                     )
                     .collect();
                 (m.content.clone(), images)

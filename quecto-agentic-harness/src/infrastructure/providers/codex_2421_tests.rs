@@ -50,7 +50,12 @@ fn tool_with_images(id: &str, text: &str, images: &[(&'static str, &str)]) -> Me
     message.tool_name = Some("read".into());
     message.image_blocks = images
         .iter()
-        .map(|(mime, data)| ImageBlock::new(mime, data.to_string()))
+        .map(|(mime, data)| {
+            ImageBlock::unchecked_for_tests(
+                quecto_image::ImageMime::parse_exact(mime).expect("an admitted type"),
+                data.to_string(),
+            )
+        })
         .collect();
     message
 }

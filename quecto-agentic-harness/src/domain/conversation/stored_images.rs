@@ -8,8 +8,9 @@
 //! stays on its message as an [`UnloadedImage`], is saved again with it, and
 //! only a provider request shows it, as [`unavailable_marker`] (added where
 //! the request is built, `image_input::SentConversation`); the next load may
-//! bring it back. A user's image is re-admitted by the strict rules on
-//! restore (`UserImageBlock::restore`); one they refuse stays unloaded too.
+//! bring it back. Every image, a user's or a tool result's, is re-admitted
+//! by the strict rules on restore (`ImageBlock::restore`, #2423); one they
+//! refuse stays unloaded too.
 //! A message archived to session memory keeps its references there for
 //! information only: a recall stays text and names them
 //! ([`not_recalled_marker`]).
@@ -24,10 +25,8 @@ use sha2::{Digest, Sha256};
 
 use quecto_image::{ImageMime, MAX_ENCODED_LEN};
 
-use crate::domain::conversation::image_tokens::{
-    estimate_image_tokens, estimate_named_image_tokens,
-};
-use crate::domain::message::{Message, UserImageBlock};
+use crate::domain::conversation::image_tokens::estimate_image_tokens;
+use crate::domain::message::Message;
 use crate::domain::tool::ImageBlock;
 
 /// The hex digits of a digest a marker shows.
@@ -67,8 +66,8 @@ pub struct UnloadedImage {
 
 /// The SHA-256 of an image block's text, computed once (a save names every
 /// image in the transcript, so it must not hash them all each time). Kept by
-/// a clone, whose text is the same; a block whose text is replaced is a new
-/// block ([`ImageBlock::new`]).
+/// a clone, whose text is the same; a block's text never changes (its
+/// fields are private, [`ImageBlock`]).
 #[derive(Debug, Default)]
 pub struct ImageDigest {
     digest: OnceLock<String>,
@@ -170,7 +169,7 @@ impl MessageImageRefs {
         let tool = message
             .image_blocks
             .iter()
-            .map(|block| reference(block.sha256(), block.mime_type));
+            .map(|block| reference(block.sha256(), block.mime_type()));
         let user = message
             .user_image_blocks
             .iter()
@@ -309,15 +308,12 @@ pub fn not_recalled_marker(count: usize) -> String {
 
 /// The estimated tokens of `message`'s images, as its estimate counts them.
 pub fn image_tokens(message: &Message) -> usize {
-    let tool = message
+    message
         .image_blocks
         .iter()
-        .map(|block| estimate_named_image_tokens(block.mime_type, block.data()));
-    let user = message
-        .user_image_blocks
-        .iter()
-        .map(|block| estimate_image_tokens(block.mime(), block.data()));
-    tool.chain(user).sum()
+        .chain(&message.user_image_blocks)
+        .map(|block| estimate_image_tokens(block.mime(), block.data()))
+        .sum()
 }
 
 /// Whether `message` has a body to retain: text, or a user's image (#2424).
@@ -334,12 +330,13 @@ pub fn release_images(message: &mut Message) {
 }
 
 /// Put back the images of a loaded `message`, by kind, each reference with
-/// its text if its sidecar was read (and verified against it). A tool
-/// result's image of an admitted type becomes its block again, the text
-/// verbatim; a user's is re-admitted
-/// by the strict rules ([`UserImageBlock::restore`]), which admit exactly
-/// what was stored. Any other stays on the message, unloaded, in its place.
-/// Returns how many stayed unloaded.
+/// its text if its sidecar was read (and verified against it). Every image,
+/// a tool result's or a user's, is re-admitted by the strict rules
+/// ([`ImageBlock::restore`], #2423), which admit exactly what was stored:
+/// the text verbatim, its digest known. Any other (an unknown type, text
+/// that is not strict base64, an unreadable header) stays on the message,
+/// unloaded, in its place, and is sent as a marker. Returns how many stayed
+/// unloaded.
 pub fn restore_images(
     message: &mut Message,
     tool: Vec<(ImageRef, Option<VerifiedText>)>,
@@ -355,37 +352,29 @@ pub fn restore_images(
             "a sidecar read is its reference's"
         );
     };
-    for (position, (reference, text)) in tool.into_iter().enumerate() {
-        match (typed(&reference), text) {
-            (Some(mime), Some(text)) => {
-                read(&reference, &text);
-                message
-                    .image_blocks
-                    .push(ImageBlock::restored(mime.as_str(), text));
-            }
-            (_, _) => message.unloaded_images.push(UnloadedImage {
-                kind: ImageKind::Tool,
-                position,
-                reference,
-            }),
+    let restore = |reference: &ImageRef, text: Option<VerifiedText>| match (typed(reference), text)
+    {
+        (Some(mime), Some(text)) => {
+            read(reference, &text);
+            // Admitted exactly as it was stored, or not at all.
+            ImageBlock::restore_verified(mime, text)
         }
-    }
-    for (position, (reference, text)) in user.into_iter().enumerate() {
-        // Admitted exactly as it was stored, or not at all.
-        let restored = match (typed(&reference), text) {
-            (Some(mime), Some(text)) => {
-                read(&reference, &text);
-                UserImageBlock::restore_verified(mime, text)
+        (_, _) => None,
+    };
+    let lists = [
+        (ImageKind::Tool, tool, &mut message.image_blocks),
+        (ImageKind::User, user, &mut message.user_image_blocks),
+    ];
+    for (kind, references, blocks) in lists {
+        for (position, (reference, text)) in references.into_iter().enumerate() {
+            match restore(&reference, text) {
+                Some(block) => blocks.push(block),
+                None => message.unloaded_images.push(UnloadedImage {
+                    kind,
+                    position,
+                    reference,
+                }),
             }
-            (_, _) => None,
-        };
-        match restored {
-            Some(block) => message.user_image_blocks.push(block),
-            None => message.unloaded_images.push(UnloadedImage {
-                kind: ImageKind::User,
-                position,
-                reference,
-            }),
         }
     }
     message.invalidate_token_cache();

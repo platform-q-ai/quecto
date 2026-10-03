@@ -384,14 +384,20 @@ impl AnthropicProvider {
         let content_value = if m.image_blocks.is_empty() {
             serde_json::Value::String(sanitize_surrogates(&m.content).into_owned())
         } else {
-            let mut result_content: Vec<serde_json::Value> =
-                vec![serde_json::json!({"type": "text", "text": sanitize_surrogates(&m.content)})];
+            // An image-only result (an extension may send no text, #2423)
+            // has no text block: the API refuses an empty one.
+            let mut result_content: Vec<serde_json::Value> = match m.content.is_empty() {
+                true => Vec::new(),
+                false => vec![
+                    serde_json::json!({"type": "text", "text": sanitize_surrogates(&m.content)}),
+                ],
+            };
             for img in &m.image_blocks {
                 result_content.push(serde_json::json!({
                     "type": "image",
                     "source": {
                         "type": "base64",
-                        "media_type": img.mime_type,
+                        "media_type": img.mime_type(),
                         "data": img.data(),
                     }
                 }));

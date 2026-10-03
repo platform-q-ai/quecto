@@ -18,7 +18,6 @@
 //! every one back when it is dropped, however the request ends.
 
 use quecto_image::ImageMime;
-use sha2::Digest;
 
 use crate::domain::catalogue::TransportKind;
 use crate::domain::conversation::stored_images::unavailable_marker;
@@ -58,18 +57,13 @@ impl ImageInput {
         }
     }
 
-    /// The marker an image of `mime_type` and `data` is sent as, for
-    /// `model`; `None` when the image itself is sent.
-    fn withheld(
-        self,
-        (mime_type, data): (&str, &str),
-        model: &str,
-        verdicts: &GifVerdicts,
-    ) -> Option<String> {
+    /// The marker `image` is sent as, for `model`; `None` when the image
+    /// itself is sent.
+    fn withheld(self, image: &ImageBlock, model: &str, verdicts: &GifVerdicts) -> Option<String> {
         match self {
             Self::NoImages => Some(not_sent_marker(model)),
             Self::StillImages => verdicts
-                .is_animated(mime_type, data)
+                .is_animated(image)
                 .then(|| animated_gif_marker(model)),
             Self::AllImages => None,
         }
@@ -88,12 +82,13 @@ pub fn animated_gif_marker(model: &str) -> String {
 }
 
 /// What the animated-GIF walk found for each GIF already seen (#2421
-/// round 2 nit 1), keyed by a SHA-256 digest of its base64 (round 3 L3: a
-/// crafted collision cannot pass an animated GIF off as a still one), so a
-/// request walks a GIF of the history once, not on every request.
+/// round 2 nit 1), keyed by the SHA-256 of its base64 (round 3 L3: a
+/// crafted collision cannot pass an animated GIF off as a still one), the
+/// digest the block caches (#2423: never hashed again here), so a request
+/// walks a GIF of the history once, not on every request.
 #[derive(Debug, Default)]
 pub struct GifVerdicts {
-    known: std::sync::Mutex<std::collections::HashMap<[u8; 32], bool>>,
+    known: std::sync::Mutex<std::collections::HashMap<String, bool>>,
     #[cfg(any(test, feature = "test-support"))]
     walks: std::sync::atomic::AtomicUsize,
 }
@@ -102,27 +97,26 @@ pub struct GifVerdicts {
 pub const MAX_GIF_VERDICTS: usize = 1_024;
 
 impl GifVerdicts {
-    /// Whether the `mime_type` image `data` encodes is an animated GIF; a
-    /// GIF is walked the first time it is asked about. Only an image typed
-    /// exactly `image/gif` is walked; whether it is animated is
-    /// `quecto_image`'s format fact, cached here by digest.
-    pub fn is_animated(&self, mime_type: &str, data: &str) -> bool {
-        match ImageMime::parse_exact(mime_type) {
-            Some(ImageMime::Png | ImageMime::Jpeg | ImageMime::Webp) | None => false,
-            Some(ImageMime::Gif) => {
-                let key: [u8; 32] = sha2::Sha256::digest(data.as_bytes()).into();
+    /// Whether `image` is an animated GIF; a GIF is walked the first time
+    /// it is asked about. Only a GIF is walked; whether it is animated is
+    /// `quecto_image`'s format fact, cached here by the block's digest.
+    pub fn is_animated(&self, image: &ImageBlock) -> bool {
+        match image.mime() {
+            ImageMime::Png | ImageMime::Jpeg | ImageMime::Webp => false,
+            ImageMime::Gif => {
+                let key = image.sha256();
                 let mut known = self.known.lock().unwrap_or_else(|e| e.into_inner());
-                if let Some(verdict) = known.get(&key) {
+                if let Some(verdict) = known.get(key) {
                     return *verdict;
                 }
                 #[cfg(any(test, feature = "test-support"))]
                 self.walks
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                let verdict = quecto_image::is_animated_gif(data);
+                let verdict = quecto_image::is_animated_gif(image.data());
                 if known.len() >= MAX_GIF_VERDICTS {
                     known.clear();
                 }
-                known.insert(key, verdict);
+                known.insert(key.to_owned(), verdict);
                 verdict
             }
         }
@@ -205,13 +199,13 @@ fn withhold(
     let mut markers = Vec::new();
     let (kept, tool_images) = split(
         std::mem::take(&mut message.image_blocks),
-        |image| input.withheld((image.mime_type, image.data()), model, verdicts),
+        |image| input.withheld(image, model, verdicts),
         &mut markers,
     );
     message.image_blocks = kept;
     let (kept, user_images) = split(
         std::mem::take(&mut message.user_image_blocks),
-        |image| input.withheld((image.mime_type(), image.data()), model, verdicts),
+        |image| input.withheld(image, model, verdicts),
         &mut markers,
     );
     message.user_image_blocks = kept;

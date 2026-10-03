@@ -150,11 +150,16 @@ simplicity.
     {
       "name": "weather",
       "description": "Get current weather for a city",
-      "parametersSchema": "{\"type\":\"object\",\"properties\":{\"city\":{\"type\":\"string\"}},\"required\":[\"city\"]}"
+      "parametersSchema": "{\"type\":\"object\",\"properties\":{\"city\":{\"type\":\"string\"}},\"required\":[\"city\"]}",
+      "timeoutSeconds": 60
     }
   ]
 }
 ```
+
+`timeoutSeconds` (optional) is how long the agent waits for this tool's
+result, in whole seconds from 1 to 600; without it the tool gets 30 seconds.
+Browser and computer tools usually need longer.
 
 **Response:**
 
@@ -172,6 +177,7 @@ Other rejection cases (whole batch fails; nothing is registered):
 
 - Duplicate name in the same request: `"tool 'X' is registered more than once in this request"`
 - Name already owned by another connected client: `"tool 'X' is already registered by client <id>"`
+- A `timeoutSeconds` that is not a whole number from 1 to 600: `"tool 'X': timeoutSeconds must be a whole number of seconds from 1 to 600, got 0"`
 - Name on the process denylist (`--disable-tool`): the name cannot be reintroduced into the tool registry (registry registration rejects/no-ops). Prefer not registering disabled names; they will not appear to the LLM
 
 **Side effect (on success):** A `tool_catalogue_changed` event is broadcast to control/query clients. The event carries `changedTools`, `before`, `after`, and `reason` so clients can update from rich catalogue snapshots.
@@ -207,6 +213,25 @@ The extension process responds with `tool_result`:
 | `toolCallId` | string | Must match the `toolCallId` from `execute_tool` |
 | `content` | string | Result text returned to the LLM |
 | `isError` | boolean | `true` if the result represents an error |
+| `imageBlocks` | array of `{"mimeType", "data"}` | Optional images, e.g. a screenshot; `content` may be `""` when there are some |
+
+An extension tool can return images with its text: `imageBlocks` holds up to
+8 PNG, JPEG, GIF or WebP images as strict standard base64, each at most
+3.75 MiB decoded, checked by the same rules as a prompt's images (the
+`quecto-image` crate). They reach the model with the result, for a model that
+takes images. If any image is refused, the model gets an error result naming
+it instead, e.g. `Error: imageBlocks[1]: data is not valid standard base64`,
+followed by the result's text; the extension stays connected. The full list of
+refusals is in the UDS protocol reference (`tool_result`).
+
+```json
+{
+  "type": "tool_result",
+  "toolCallId": "uds-0000000abc-00000002",
+  "content": "The page after the click",
+  "imageBlocks": [{"mimeType": "image/png", "data": "iVBORw0KGgo..."}]
+}
+```
 
 #### Unregistering tools
 
@@ -229,7 +254,7 @@ The extension process responds with `tool_result`:
 - **Connect = available:** Tools are available as soon as `register_tools` succeeds
 - **Disconnect = auto-unregister:** When a client disconnects, all its tools are immediately removed and a `tool_catalogue_changed` event is broadcast
 - **Disconnect during execution:** If a client disconnects while a tool call is pending, the agent receives an error result: `"Extension disconnected during execution of tool '<name>'"`
-- **Timeout:** If a tool doesn't respond within **30 seconds**, the agent returns: `"Extension timed out after 30s executing tool '<name>'"`
+- **Timeout:** If a tool doesn't respond within its timeout (its `timeoutSeconds`, else **30 seconds**), the agent returns: `"Extension timed out after <n>s executing tool '<name>'"`
 - **Re-registration:** Sending `register_tools` for a tool already owned by **this** client updates its definition (idempotent). Ownership by another client is rejected (see above)
 - **Multiple clients:** Multiple extension processes can connect simultaneously, each registering different tools
 

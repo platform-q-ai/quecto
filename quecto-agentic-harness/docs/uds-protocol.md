@@ -113,8 +113,9 @@ never interrupts the running turn). The checks, in order:
 | the header is readable: its pixel size can be read (a bare signature or a truncated header is not an image) | `images[0]: not a readable image/png image` |
 
 The index is the failing image's position in `images`, from 0. The rules
-live in one place, the `quecto-image` crate, which `quecto-api` and the `read`
-tool use too. The whole command is still one protocol message, so it must fit
+live in one place, the `quecto-image` crate, which `quecto-api`, the `read`
+tool and extension tool results ([`tool_result`](#tool_result) `imageBlocks`)
+use too. The whole command is still one protocol message, so it must fit
 the 8 MiB frame cap: one image at the limit (5 MiB of base64) fits, several
 large ones may not.
 
@@ -1225,6 +1226,8 @@ Each tool object:
 | `name` | string | yes | Tool name (must not shadow a core tool) |
 | `description` | string | yes | Description shown to the LLM |
 | `parametersSchema` | string | no | JSON Schema for tool parameters. Default: `{"type":"object"}` |
+| `stableId` | string | no | Stable catalogue id for the tool |
+| `timeoutSeconds` | integer | no | How long the agent waits for this tool's `tool_result`, in whole seconds from 1 to 600 (#2423). Absent or `null`: 30. Browser and computer tools usually need longer |
 
 **Response:**
 
@@ -1234,7 +1237,11 @@ Each tool object:
 
 **Side effect:** Broadcasts `tool_catalogue_changed` to connected control/query clients with `changedTools`, `before`, `after`, and `reason`.
 
-**Failure:** Returns `success: false` if any tool shadows a core tool name. No tools from the batch are registered.
+**Failure:** Returns `success: false` if any tool shadows a core tool name, or
+sets a `timeoutSeconds` that is not a whole number from 1 to 600 (at most 64
+characters of the value are echoed), e.g.
+`tool 'shot': timeoutSeconds must be a whole number of seconds from 1 to 600, got 0`.
+No tools from the batch are registered.
 
 **Idempotent:** Re-registering an existing tool updates its definition.
 
@@ -1294,13 +1301,44 @@ Return the result of a tool execution request. Sent by an extension client in re
 | `toolCallId` | string | yes | Must match the `toolCallId` from the `execute_tool` event |
 | `content` | string | yes | Result text returned to the LLM |
 | `isError` | boolean | no | `true` if the result represents an error. Default: `false` |
+| `imageBlocks` | array of `{"mimeType", "data"}` | no | Images the tool returns, e.g. a screenshot (#2423). Absent, `null` or empty for text only. `content` may be `""` when there are images |
 
 **No response event.** The result is delivered directly to the agent loop.
+
+**Images.** Each image is admitted by the same rules as a prompt's
+[image attachments](#image-attachments) (the `quecto-image` crate): at most 8
+per result; `mimeType` exactly `image/png`, `image/jpeg`, `image/gif` or
+`image/webp`; at most 3.75 MiB decoded; strict standard base64; the type's
+signature; a readable header. The images reach the model with the result's
+text, for a model that takes images (else each is a short marker). The whole
+`tool_result` is still one protocol message within the 8 MiB frame cap.
+
+When any image is refused, the tool result becomes an **error result** (none
+of its images is sent) whose text is `Error: ` and the refusal, then a blank
+line and the result's own `content` when it has any; the model sees why. The
+extension's connection is not dropped. The refusals, in the order checked:
+
+| Rule | The result's text when it fails (examples) |
+|---|---|
+| `imageBlocks` is an array | `Error: imageBlocks: expected an array of {"mimeType", "data"} objects` |
+| at most 8 images | `Error: too many imageBlocks: 9; at most 8 per tool result` |
+| each entry is an object with string `mimeType` and `data` | `Error: imageBlocks[0]: expected an object with string "mimeType" and "data"` |
+| each image is admitted (any rule above) | `Error: imageBlocks[1]: data is not valid standard base64` |
+
+The index is the entry's position in `imageBlocks`, from 0, and an
+admission refusal is worded exactly as for a prompt's images (e.g.
+`imageBlocks[0]: image decodes to more than 3932160 bytes (3.75 MiB)`).
 
 **Example:**
 
 ```json
 {"type":"tool_result","toolCallId":"uds-0000000abc-00000001","content":"22°C, sunny","isError":false}
+```
+
+With an image:
+
+```json
+{"type":"tool_result","toolCallId":"uds-0000000abc-00000002","content":"The page after the click","imageBlocks":[{"mimeType":"image/png","data":"iVBORw0KGgo..."}]}
 ```
 
 ---
@@ -1540,7 +1578,7 @@ Sent to the specific extension client that registered a tool when the LLM calls 
 | `toolName` | string | Name of the tool being called |
 | `arguments` | string | JSON string of the tool arguments from the LLM |
 
-The extension must respond with a `tool_result` command containing the matching `toolCallId`. If no response arrives within 30 seconds, the agent returns a timeout error to the LLM.
+The extension must respond with a `tool_result` command containing the matching `toolCallId`. If no response arrives within the tool's timeout (its registered `timeoutSeconds`, else 30 seconds), the agent returns a timeout error to the LLM.
 
 ### `tool_catalogue_changed`
 

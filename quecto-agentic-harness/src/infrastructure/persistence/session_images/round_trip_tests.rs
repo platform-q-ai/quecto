@@ -67,7 +67,10 @@ fn read_image_exchange(text: &str) -> Vec<Message> {
     };
     let mut result = Message::tool("call-1", "Read image file [image/png] (30 B)");
     result.tool_name = Some("read".into());
-    result.image_blocks = vec![ImageBlock::new("image/png", text)];
+    result.image_blocks = vec![ImageBlock::unchecked_for_tests(
+        quecto_image::ImageMime::Png,
+        text,
+    )];
     vec![
         Message::user("look at the screenshot"),
         Message::assistant("", vec![call]),
@@ -125,7 +128,7 @@ async fn a_tool_result_image_survives_a_reload_and_the_record_holds_only_its_ref
     let loaded = reload(tmp.path()).await;
     let images = &loaded.messages[2].image_blocks;
     assert_eq!(images.len(), 1, "the tool result's image is back");
-    assert_eq!(images[0].mime_type, "image/png");
+    assert_eq!(images[0].mime_type(), "image/png");
     assert_eq!(images[0].data(), png);
     assert_eq!(
         loaded.messages[2].content,
@@ -164,22 +167,36 @@ async fn a_user_image_survives_a_reload() {
     assert_eq!(loaded.messages[0].content, "what is this?");
 }
 
+/// #2423: a stored tool result's image is re-admitted by the strict rules
+/// on restore, as a user's is. Strict base64 comes back byte for byte;
+/// unpadded or wrapped text, which admission refuses, stays an unloaded
+/// reference sent as a marker, never dropped.
 #[tokio::test]
-async fn a_reloaded_request_is_byte_identical_for_padded_unpadded_and_wrapped_images() {
+async fn a_reloaded_tool_image_is_byte_identical_when_strict_and_a_marker_when_not() {
     let padded = base64(&png_bytes());
     let unpadded = padded.trim_end_matches('=').to_string();
     let wrapped = format!("{}\r\n{}", &padded[..20], &padded[20..]);
     assert_ne!(padded, unpadded, "the image's base64 is padded");
     let strict = base64(&jpeg_bytes());
-    for text in [padded, unpadded, wrapped] {
+    let tmp = TempDir::new().unwrap();
+    let mut messages = read_image_exchange(&padded);
+    messages.push(user_with_image("and this?", "image/jpeg", &strict));
+    let before = request(&messages);
+    store(tmp.path()).save(&session(messages)).await.unwrap();
+    assert_eq!(request(&reload(tmp.path()).await.messages), before);
+    for text in [unpadded, wrapped] {
         let tmp = TempDir::new().unwrap();
-        // A tool result keeps any text; a user's image is strict base64.
-        let mut messages = read_image_exchange(&text);
-        messages.push(user_with_image("and this?", "image/jpeg", &strict));
-        let before = request(&messages);
+        let messages = read_image_exchange(&text);
         store(tmp.path()).save(&session(messages)).await.unwrap();
-        let after = request(&reload(tmp.path()).await.messages);
-        assert_eq!(after, before, "{text:?}");
+        let loaded = reload(tmp.path()).await;
+        let result = &loaded.messages[2];
+        assert!(result.image_blocks.is_empty(), "{text:?} is not admitted");
+        assert_eq!(result.unloaded_images.len(), 1, "never dropped");
+        assert_eq!(
+            sent_text(&loaded.messages)[2],
+            format!("Read image file [image/png] (30 B)\n{}", marker(&text)),
+            "{text:?}"
+        );
     }
 }
 
@@ -385,10 +402,15 @@ async fn a_corrupt_sidecar_keeps_its_reference_and_a_save_of_the_image_repairs_i
 #[tokio::test]
 async fn an_image_the_store_cannot_keep_is_named_and_sent_as_a_marker() {
     let tmp = TempDir::new().unwrap();
-    // A tool result's image of a type quecto does not admit (an extension's).
-    let svg = base64(b"<svg/>");
+    // A tool result's image longer than any image quecto admits (a typed
+    // block's type is always one it stores, #2423).
+    let oversized =
+        "A".repeat(crate::domain::conversation::stored_images::MAX_STORED_IMAGE_TEXT + 4);
     let mut drawn = Message::tool("call-1", "draw");
-    drawn.image_blocks = vec![ImageBlock::new("image/svg+xml", svg.clone())];
+    drawn.image_blocks = vec![ImageBlock::unchecked_for_tests(
+        ImageMime::Png,
+        oversized.clone(),
+    )];
     store(tmp.path())
         .save(&session(vec![drawn, Message::assistant("ok", vec![])]))
         .await
@@ -402,7 +424,7 @@ async fn an_image_the_store_cannot_keep_is_named_and_sent_as_a_marker() {
     );
     assert_eq!(
         sent_text(&loaded.messages)[0],
-        format!("draw\n{}", marker(&svg))
+        format!("draw\n{}", marker(&oversized))
     );
 }
 

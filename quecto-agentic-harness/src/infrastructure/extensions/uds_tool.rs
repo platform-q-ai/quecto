@@ -76,6 +76,7 @@ impl Tool for UdsExtensionTool {
                     arguments,
                 },
                 reply: result_tx,
+                timeout,
             };
 
             // Send the execution request to the client handler.

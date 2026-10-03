@@ -41,8 +41,8 @@ fn with_photo(text: &str) -> Message {
 
 fn with_screenshot() -> Message {
     let mut result = Message::tool("call-1", "Read image file");
-    result.image_blocks = vec![ImageBlock::new(
-        "image/jpeg",
+    result.image_blocks = vec![ImageBlock::unchecked_for_tests(
+        quecto_image::ImageMime::Jpeg,
         samples::encode(&samples::jpeg(2, 2)),
     )];
     result

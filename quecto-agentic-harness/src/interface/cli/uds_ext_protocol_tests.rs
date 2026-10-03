@@ -463,6 +463,7 @@ async fn forwarder_cleans_pending_when_writer_has_no_receiver() {
                     arguments: "{}".into(),
                 },
                 reply: reply_tx,
+                timeout: std::time::Duration::from_secs(30),
             },
         )
         .await
@@ -532,6 +533,7 @@ async fn forwarder_drains_buffered_requests_on_shutdown() {
                     arguments: "{}".into(),
                 },
                 reply: r1_tx,
+                timeout: std::time::Duration::from_secs(30),
             },
         )
         .await
@@ -545,6 +547,7 @@ async fn forwarder_drains_buffered_requests_on_shutdown() {
                     arguments: "{}".into(),
                 },
                 reply: r2_tx,
+                timeout: std::time::Duration::from_secs(30),
             },
         )
         .await
@@ -620,6 +623,7 @@ async fn forwarder_leaves_pending_when_writer_delivered() {
                     arguments: "{}".into(),
                 },
                 reply: reply_tx,
+                timeout: std::time::Duration::from_secs(30),
             },
         )
         .await

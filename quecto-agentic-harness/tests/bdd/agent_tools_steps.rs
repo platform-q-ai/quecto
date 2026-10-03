@@ -635,12 +635,14 @@ fn then_image_blocks_contain(world: &mut QuectoWorld, expected_mime: String) {
     let result = world.tool_result.as_ref().expect("no tool result");
     let tr = result.as_ref().expect("tool result was an error");
     assert!(
-        tr.image_blocks.iter().any(|b| b.mime_type == expected_mime),
+        tr.image_blocks
+            .iter()
+            .any(|b| b.mime_type() == expected_mime),
         "expected image block with mime_type {:?}, got blocks: {:?}",
         expected_mime,
         tr.image_blocks
             .iter()
-            .map(|b| &b.mime_type)
+            .map(|b| b.mime_type())
             .collect::<Vec<_>>()
     );
 }
@@ -654,7 +656,7 @@ fn then_image_blocks_empty(world: &mut QuectoWorld) {
         "expected no image blocks, got: {:?}",
         tr.image_blocks
             .iter()
-            .map(|b| &b.mime_type)
+            .map(|b| b.mime_type())
             .collect::<Vec<_>>()
     );
 }
