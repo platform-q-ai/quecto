@@ -268,24 +268,33 @@ send fails with `stream idle timeout: the provider sent nothing for …`; an SSE
 body with `… the provider sent no event for …`.
 
 **The stream progress limit** (300 seconds unless configured) ends a reply
-that keeps sending events none of which carries output, for that long since
-its last output (or its start). Output is a text, tool-call, refusal,
-reasoning or reasoning-summary delta, a finished part or output item that
-holds content, or completion; an empty delta is none. A Codex reply once sent
-~11 such events a second for 15 minutes, holding its turn until the admission
-attempt timeout (#2433). The error is `stream progress timeout: the provider
-sent events but no output for …`. A reply sending no events at all is the idle
-limit's alone, so a model that thinks silently is never cut by this one, and a
-model that streams its reasoning makes progress with every reasoning delta.
+that keeps sending events none of which carries output. It fires only when
+both hold since the reply's last output (or its start): no output for the
+limit, and at least 200 events without output. Output is a text, refusal,
+reasoning or reasoning-summary delta, a tool call that names its function or
+carries arguments, a finished part or output item that holds content, or
+completion; an empty delta, or a tool call just opened, is none. An event too
+long to read whole (over 64 KiB) is output only when its type is a delta, a
+finished part or a terminal event.
+
+The 200 events separate a stall from a think. A Codex reply once sent ~11
+output-less events a second for 15 minutes (~3,300 in 300 s), holding its turn
+until the admission attempt timeout (#2433). A model thinking makes few:
+Anthropic sends a `ping` about every 15 seconds while it thinks in hiding (~20
+in 300 s), and a Codex reply opens with about 3 events before a silent think.
+So a silent or ping-only think never trips the progress limit — it is the idle
+limit's alone, and raising `stream_idle_seconds` lets it run — and a model that
+streams its reasoning makes progress with every reasoning delta. The error is
+`stream progress timeout: the provider sent events but no output for …`.
 
 The trade-offs:
 
 - An OpenAI-compatible gateway that fills a long hidden-reasoning think with
   SSE comment heartbeats, sending no event until the model's first output, is
   cut at the idle limit and retried once.
-- A provider that sends events that carry no output (a periodic `in_progress`,
-  empty deltas, `ping`s) through a long hidden think is cut at the progress
-  limit and retried once.
+- A provider that sends output-less events fast (200 or more since its last
+  output, such as empty deltas or a frequent `in_progress`) through a long
+  hidden think is cut at the progress limit and retried once.
 
 For either, raise that provider's limit: `stream_idle_seconds` (30–1800) or
 `stream_progress_seconds` (60–3600).

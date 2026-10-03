@@ -55,9 +55,22 @@ pub const STREAM_IDLE_SECONDS: std::ops::RangeInclusive<u64> = 30..=1800;
 /// A Codex reply streamed ~11 recognised events a second for 15 minutes
 /// with no output: every event restarted the idle bound, so nothing ended
 /// it. Five minutes, as the idle bound: a model that reasons streams its
-/// reasoning, which is output, so only a reply that sends events but makes
-/// nothing of them reaches it.
+/// reasoning, which is output, and one that thinks in hiding sends too few
+/// events ([`PROGRESS_EVENTS`]), so only a reply that sends many events but
+/// makes nothing of them reaches it.
 pub const STREAM_PROGRESS_LIMIT: Duration = Duration::from_secs(300);
+
+/// How many events without output must come since the last output (or the
+/// body's start) before the progress bound may end a reply (#2433 review).
+///
+/// A stall makes progress-free events fast: the reported one ran at ~11 a
+/// second, ~3,300 in 300 s. A reply that is thinking makes few: Anthropic
+/// streams a `ping` about every 15 s (~20 in 300 s) while it thinks in
+/// hiding, and a Codex reply opens with about 3 before a silent think. Two
+/// hundred sits far from both, so a silent or ping-only think never trips
+/// the progress bound: silence is the idle bound's alone, and
+/// `stream_idle_seconds` stays its escape hatch.
+pub const PROGRESS_EVENTS: u32 = 200;
 
 /// The stream progress limits, in seconds, a provider may be configured
 /// with (`stream_progress_seconds`, #2433): from a minute to an hour.
@@ -270,11 +283,12 @@ const EVENT_LINE: &[u8] = super::sse_common::EVENT_FIELD.as_bytes();
 /// events (Anthropic's `ping` events included) is never cut short. For any
 /// other body (an error body), every read is progress.
 ///
-/// An SSE body also has a progress bound (#2433): once events arrive, one
-/// carrying output ([`super::sse_progress`]) must come within the
-/// provider's progress bound of the last (or of the body's start), or the
-/// body is abandoned as one that sends events but makes no progress. A
-/// body sending no events at all is the idle bound's alone.
+/// An SSE body also has a progress bound (#2433): it is abandoned as one
+/// that sends events but makes no progress when both hold — no event
+/// carrying output ([`super::sse_progress`]) for the provider's progress
+/// bound, and at least [`PROGRESS_EVENTS`] events without output, since the
+/// last output (or the body's start). A body that is silent, or sends a
+/// few events while it thinks, is the idle bound's alone.
 #[derive(Debug)]
 pub struct EventIdle {
     bound: Duration,
@@ -292,18 +306,19 @@ struct Progress {
     bound: Duration,
     /// When output is due: the bound from the last output, or the start.
     deadline: tokio::time::Instant,
-    /// Whether events came since the last output: only then can a body
-    /// be abandoned for making none.
-    events_since: bool,
+    /// Events without output since the last output: at
+    /// [`PROGRESS_EVENTS`] the body may be abandoned for making none.
+    events_since: u32,
     /// The data of the event line being read, up to [`EVENT_DATA_CAP`].
     data: Vec<u8>,
-    /// Whether that line ran past the cap: an event that long is output.
+    /// Whether that line ran past the cap: then the type its kept start
+    /// names decides whether it carried output.
     long: bool,
 }
 
 /// The longest event data the progress bound reads to classify: past it,
-/// an event is taken as output (deltas and finished parts are the long
-/// ones), so classifying never holds a second copy of a long line.
+/// an event is judged by the type its kept start names (#2433 review), so
+/// classifying never holds a second copy of a long line.
 const EVENT_DATA_CAP: usize = 64 * 1024;
 
 /// Where an SSE body's current line stands, as far as its start shows.
@@ -333,7 +348,7 @@ impl EventIdle {
         let progress = line.map(|_| Progress {
             bound: bound.progress,
             deadline: now + bound.progress,
-            events_since: false,
+            events_since: 0,
             data: Vec::new(),
             long: false,
         });
@@ -346,13 +361,20 @@ impl EventIdle {
     }
 
     /// When the next read is abandoned: the idle bound's deadline, or the
-    /// progress bound's when events without output came since the last
-    /// output and it falls first.
+    /// progress bound's when it may fire and falls first.
     fn due(&self) -> tokio::time::Instant {
-        match &self.progress {
-            Some(progress) if progress.events_since => self.deadline.min(progress.deadline),
-            _ => self.deadline,
+        match self.stalling() {
+            Some(progress) => self.deadline.min(progress.deadline),
+            None => self.deadline,
         }
+    }
+
+    /// The progress of a body that has sent enough events without output
+    /// for its progress bound to end it.
+    fn stalling(&self) -> Option<&Progress> {
+        self.progress
+            .as_ref()
+            .filter(|progress| progress.events_since >= PROGRESS_EVENTS)
     }
 
     /// Await one read of the body, abandoning it as [`Idle`] once the whole
@@ -365,7 +387,9 @@ impl EventIdle {
         let read = match tokio::time::timeout_at(self.due(), read).await {
             Ok(read) => read,
             Err(_elapsed) => {
-                return Err(match (&self.line, &self.progress) {
+                // Named by the bound that fired: progress only when it may
+                // fire and fell first (on a tie, the idle bound).
+                return Err(match (&self.line, self.stalling()) {
                     (_, Some(progress)) if progress.deadline < self.deadline => {
                         Idle::no_output(progress.bound)
                     }
@@ -407,16 +431,21 @@ impl Progress {
             (Line::Event, Line::Event) if self.data.len() < EVENT_DATA_CAP => self.data.push(byte),
             (Line::Event, Line::Event) => self.long = true,
             (Line::Event, _) => {
-                let data = String::from_utf8_lossy(&self.data);
-                let output = self.long || super::sse_progress::carries_output(data.trim_end());
+                let output = match self.long {
+                    true => super::sse_progress::long_event_carries_output(&self.data),
+                    false => {
+                        let data = String::from_utf8_lossy(&self.data);
+                        super::sse_progress::carries_output(data.trim_end())
+                    }
+                };
                 self.data.clear();
                 self.long = false;
                 match output {
                     true => {
                         self.deadline = now + self.bound;
-                        self.events_since = false;
+                        self.events_since = 0;
                     }
-                    false => self.events_since = true,
+                    false => self.events_since = self.events_since.saturating_add(1),
                 }
             }
             _ => {}

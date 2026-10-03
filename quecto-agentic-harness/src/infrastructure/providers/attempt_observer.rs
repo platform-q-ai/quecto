@@ -236,7 +236,7 @@ impl ProtocolObserver {
 
 /// Count an event of type `kind` (#2433), in the attempt's record and in
 /// its request's trace, which an attempt cut off in flight is recorded from.
-fn count_kind(state: &mut State, kind: &str) {
+fn count_kind(state: &mut State, kind: &'static str) {
     state.diagnostics.event_types.count(kind);
     if let Some(trace) = &state.trace {
         trace.observe_event_kind(kind);

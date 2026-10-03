@@ -40,8 +40,10 @@ pub fn compose_and_publish_runtime(
         base_dir: base_dir.to_path_buf(),
         http_client: http_client.clone(),
         refresh_fn: make_oauth_refresh_fn(),
-        // A rebuilt OpenAI OAuth provider keeps its configured stream idle
-        // limit (#2433 review); one out of range fails the composition itself.
+        // A rebuilt OpenAI OAuth provider keeps its configured stream limits
+        // (#2433 review). Out of range, the default here is never used: the
+        // composition below validates the same limits and fails with the
+        // error naming the setting before any provider is built.
         openai_oauth_factory: make_bounded_provider_factory(
             "openai",
             openai_api_base(config),

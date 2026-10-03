@@ -43,12 +43,13 @@ pub const MAX_EVENT_TYPES: usize = 16;
 /// provider chose, so a record holds no provider content.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(transparent)]
-pub struct EventTypeCounts(std::collections::BTreeMap<String, u32>);
+pub struct EventTypeCounts(std::collections::BTreeMap<std::borrow::Cow<'static, str>, u32>);
 
 impl EventTypeCounts {
-    /// One more event of type `kind`.
-    pub fn count(&mut self, kind: &str) {
-        let count = self.0.entry(kind.to_owned()).or_default();
+    /// One more event of type `kind`: a name the harness holds, so counting
+    /// never allocates one.
+    pub fn count(&mut self, kind: &'static str) {
+        let count = self.0.entry(std::borrow::Cow::Borrowed(kind)).or_default();
         *count = count.saturating_add(1);
     }
 

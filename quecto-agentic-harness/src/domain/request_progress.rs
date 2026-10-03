@@ -128,7 +128,7 @@ impl RequestTrace {
     }
 
     /// An event of type `kind` arrived in the attempt in flight (#2433).
-    pub fn observe_event_kind(&self, kind: &str) {
+    pub fn observe_event_kind(&self, kind: &'static str) {
         self.live().event_types.count(kind);
     }
 

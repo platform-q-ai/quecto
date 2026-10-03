@@ -11,7 +11,6 @@ fn responses_events_carry_output_by_what_they_hold() {
         r#"{"type":"response.reasoning_text.delta","delta":"hm"}"#,
         r#"{"type":"response.output_text.done","text":"ab"}"#,
         r#"{"type":"response.function_call_arguments.done","arguments":"{}"}"#,
-        r#"{"type":"response.output_item.added","item":{"type":"function_call","name":"f"}}"#,
         r#"{"type":"response.output_item.done","item":{"type":"message","content":[{"type":"output_text","text":"ab"}]}}"#,
         r#"{"type":"response.output_item.done","item":{"type":"reasoning","summary":[{"type":"summary_text","text":"hm"}]}}"#,
         r#"{"type":"response.content_part.done","part":{"type":"output_text","text":"ab"}}"#,
@@ -51,7 +50,6 @@ fn messages_events_carry_output_by_what_they_hold() {
         r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":"a"}}"#,
         r#"{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"hm"}}"#,
         r#"{"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"{"}}"#,
-        r#"{"type":"content_block_start","content_block":{"type":"tool_use","name":"f"}}"#,
         r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"}}"#,
         r#"{"type":"message_stop"}"#,
     ];
@@ -82,7 +80,10 @@ fn chat_chunks_carry_output_by_what_they_hold() {
         (r#"{"reasoning_content":"hm"}"#, "null"),
         (r#"{"reasoning":"hm"}"#, "null"),
         (r#"{"refusal":"no"}"#, "null"),
-        (r#"{"tool_calls":[{"index":0}]}"#, "null"),
+        (
+            r#"{"tool_calls":[{"index":0,"function":{"name":"f"}}]}"#,
+            "null",
+        ),
         ("{}", r#""stop""#),
     ] {
         assert!(carries_output(&chunk(delta, finish)), "{delta} {finish}");
@@ -121,5 +122,32 @@ fn an_empty_or_just_opened_tool_call_is_no_output() {
     ];
     for data in output {
         assert!(carries_output(data), "{data}");
+    }
+}
+
+/// #2433 review M4: a long event is output by its type alone.
+#[test]
+fn a_long_event_is_output_by_the_type_its_start_names() {
+    use super::long_event_carries_output as long;
+    let output = [
+        r#"{"type":"response.output_text.delta","delta":"xxxx"#,
+        r#"{"type":"response.output_item.done","item":{"content":[{"text":"xx"#,
+        r#"{"type":"response.completed","response":{"output":[{"xx"#,
+        r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"xx"#,
+        r#"{"index":0,"delta":{"type":"text_delta","text":"xx"#,
+        r#"{"choices":[{"index":0,"delta":{"content":"xx"#,
+    ];
+    for start in output {
+        assert!(long(start.as_bytes()), "{start}");
+    }
+    let none = [
+        r#"{"type":"response.in_progress","response":{"padding":"xx"#,
+        r#"{"type":"response.created","response":{"xx"#,
+        r#"{"type": "ping", "padding":"xx"#,
+        r#"{"padding":"xx"#,
+        "",
+    ];
+    for start in none {
+        assert!(!long(start.as_bytes()), "{start}");
     }
 }

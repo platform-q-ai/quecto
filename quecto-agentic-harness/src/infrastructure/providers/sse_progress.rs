@@ -13,17 +13,18 @@
 //!   choice's `content`, `refusal`, `reasoning`, `reasoning_content` or
 //!   `tool_calls`;
 //! - a finished part that carries content: a Responses `text`,
-//!   `arguments` or `refusal`, an output `item` that is a function call or
-//!   holds a content or summary part with text, a content `part` with
-//!   text; a Messages
-//!   `content_block` that opens a tool call or holds text;
+//!   `arguments` or `refusal`, an output `item` holding arguments or a
+//!   content or summary part with text, a content `part` with text; a
+//!   Messages `content_block` holding text — a tool call just opened, or an
+//!   OpenAI chat call naming no function and no arguments, is none yet;
 //! - completion: a terminal event, an OpenAI chat `finish_reason`, a
 //!   Messages `stop_reason`, or `[DONE]`.
 //!
 //! An empty string or list is no output, so a stream of empty deltas makes
 //! no progress. Reasoning a model streams is output, so a model that keeps
-//! reasoning is never cut short by this bound; one that thinks silently is
-//! bounded by the idle bound instead.
+//! reasoning is never cut short by this bound; one that thinks silently, or
+//! sends only the odd `ping` while it does, is bounded by the idle bound
+//! instead ([`super::stream_idle::PROGRESS_EVENTS`]).
 use serde_json::Value;
 
 /// The events that end a reply: their arrival is completion.
@@ -68,7 +69,6 @@ fn responses(value: &Value) -> bool {
     ["delta", "text", "arguments", "refusal"]
         .iter()
         .any(|field| value[*field].as_str().is_some_and(|text| !text.is_empty()))
-        || item["type"] == "function_call"
         || filled(&item["arguments"])
         || ["content", "summary"].iter().any(|field| {
             item[*field]
@@ -91,7 +91,6 @@ fn messages(value: &Value) -> bool {
         .iter()
         .any(|field| filled(&delta[*field]))
         || delta["stop_reason"].is_string()
-        || block["type"] == "tool_use"
         || ["text", "thinking"]
             .iter()
             .any(|field| filled(&block[*field]))
@@ -100,16 +99,47 @@ fn messages(value: &Value) -> bool {
 /// An OpenAI chat choice that carries output.
 fn chat_choice(choice: &Value) -> bool {
     let delta = &choice["delta"];
-    [
-        "content",
-        "refusal",
-        "reasoning",
-        "reasoning_content",
-        "tool_calls",
-    ]
-    .iter()
-    .any(|field| filled(&delta[*field]))
+    ["content", "refusal", "reasoning", "reasoning_content"]
+        .iter()
+        .any(|field| filled(&delta[*field]))
+        || delta["tool_calls"].as_array().is_some_and(|calls| {
+            calls.iter().any(|call| {
+                ["name", "arguments"]
+                    .iter()
+                    .any(|field| filled(&call["function"][*field]))
+            })
+        })
         || choice["finish_reason"].is_string()
+}
+
+/// The type suffixes of events that carry output when long: deltas and
+/// finished parts (#2433 review).
+const LONG_OUTPUT_SUFFIXES: &[&str] = &[".delta", "_delta", ".done"];
+
+/// Whether an event too long to read whole carries output, judged by the
+/// type the kept `start` of its data names (#2433 review): a delta, a
+/// finished part or a terminal event does; any other type does not, however
+/// long, so a padded `response.in_progress` is no progress. An OpenAI chat
+/// chunk has no type: one that long is a choice's content.
+pub(crate) fn long_event_carries_output(start: &[u8]) -> bool {
+    let start = String::from_utf8_lossy(start);
+    match first_type(&start) {
+        Some(kind) => {
+            TERMINAL_TYPES.contains(&kind)
+                || LONG_OUTPUT_SUFFIXES
+                    .iter()
+                    .any(|suffix| kind.ends_with(suffix))
+        }
+        None => start.contains("\"choices\""),
+    }
+}
+
+/// The first `"type"` string the start of an event's JSON names: its own
+/// type on every wire, which each sends first or close to it.
+fn first_type(start: &str) -> Option<&str> {
+    let (_, after) = start.split_once("\"type\"")?;
+    let value = after.trim_start().strip_prefix(':')?.trim_start();
+    value.strip_prefix('"')?.split('"').next()
 }
 
 #[cfg(test)]
