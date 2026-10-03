@@ -433,3 +433,23 @@ fn recovered_chat_entries_mark_user_images() {
         .collect();
     assert_eq!(users, ["[image]\nsee", "[image] [image] [image]"]);
 }
+
+/// Review round 1 (M1): a recovered hostile `imageCount` is clamped.
+#[test]
+fn recovered_chat_entries_clamp_a_hostile_image_count() {
+    use std::collections::HashMap;
+    let refs = vec!["u1".to_string()];
+    let mut responses: HashMap<String, serde_json::Value> = HashMap::new();
+    responses.insert(
+        "u1".into(),
+        serde_json::json!({"role":"user","content":"","imageCount":18446744073709551615_u64}),
+    );
+    let users: Vec<_> = recovered_chat_entries(&refs, &responses)
+        .into_iter()
+        .filter_map(|entry| match entry {
+            ChatEntry::User { text } => Some(text),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(users, ["[999 images]"]);
+}

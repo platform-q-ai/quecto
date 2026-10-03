@@ -26,6 +26,9 @@ pub enum ClipboardRead {
     /// An image of a type quecto does not admit, and no text; holds the
     /// types offered.
     UnsupportedImage(String),
+    /// Neither an image nor text: holds the types offered (e.g.
+    /// `text/uri-list` from a file manager).
+    NotPasteable(String),
     /// Nothing to paste.
     Empty,
     /// Neither clipboard tool is available.
@@ -41,6 +44,7 @@ impl std::fmt::Debug for ClipboardRead {
             Self::Image(bytes) => write!(f, "Image({} bytes)", bytes.len()),
             Self::Text(text) => write!(f, "Text({} chars)", text.chars().count()),
             Self::UnsupportedImage(types) => write!(f, "UnsupportedImage({types:?})"),
+            Self::NotPasteable(types) => write!(f, "NotPasteable({types:?})"),
             Self::Empty => f.write_str("Empty"),
             Self::NoTool => f.write_str("NoTool"),
             Self::Failed(reason) => write!(f, "Failed({reason:?})"),

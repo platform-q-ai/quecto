@@ -319,9 +319,9 @@ impl App {
                     self.finish_agent_stream_closed(detail);
                     self.render_and_note(&mut stream_render_coalescer);
                 }
-                // A `Ctrl+V` clipboard read finished off the loop (#2425).
-                Some(read) = self.attachments.clipboard_rx.recv() => {
-                    self.apply_clipboard_read(read);
+                // A `Ctrl+V` or `/image` read finished off the loop (#2425).
+                Some(read) = self.attachments.read_rx.recv() => {
+                    self.apply_attachment_read(read);
                     self.render_and_note(&mut stream_render_coalescer);
                 }
                 Some(failure) = self.command_send_failure_rx.recv() => {

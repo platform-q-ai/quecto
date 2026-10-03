@@ -257,3 +257,123 @@ fn reads_never_print_image_bytes() {
     let debug = format!("{:?}", ClipboardRead::Image(vec![0x89; 4096]));
     assert_eq!(debug, "Image(4096 bytes)");
 }
+
+/// Whether `pid` is gone: no `/proc` entry, or a zombie waiting for its reaper.
+fn process_gone(pid: &str) -> bool {
+    match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Err(_) => true,
+        Ok(stat) => stat
+            .rsplit(')')
+            .next()
+            .is_some_and(|rest| rest.trim_start().starts_with('Z')),
+    }
+}
+
+/// Review round 1 (M2): `wl-paste` forks a helper; the timeout ends the
+/// whole process group, so the helper does not outlive the read.
+#[test]
+fn a_timeout_ends_the_tool_s_children_too() {
+    let dir = tempfile::tempdir().unwrap();
+    let pid_file = dir.path().join("helper.pid");
+    let script = format!("sleep 30 & echo $! > '{}'; wait", pid_file.display());
+    let tool = fake_tool(dir.path(), "wl-paste", &[("--list-types", &script)]);
+    let clipboard = SystemClipboard::with_tools(
+        vec![(ClipboardTool::WlPaste, tool)],
+        Duration::from_millis(300),
+    );
+    assert!(matches!(clipboard.read(), ClipboardRead::Failed(_)));
+    let pid = std::fs::read_to_string(&pid_file).unwrap();
+    let pid = pid.trim();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !process_gone(pid) && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        process_gone(pid),
+        "the forked helper {pid} outlived the read"
+    );
+}
+
+/// Review round 1 (L3): a stale `WAYLAND_DISPLAY` makes `wl-paste` fail;
+/// the read falls through to `xclip`.
+#[test]
+fn a_failing_wl_paste_falls_through_to_xclip() {
+    let dir = tempfile::tempdir().unwrap();
+    let wl = fake_tool(
+        dir.path(),
+        "wl-paste",
+        &[(
+            "--list-types",
+            "echo 'Failed to connect to a Wayland server' >&2; exit 1",
+        )],
+    );
+    let xclip = fake_tool(
+        dir.path(),
+        "xclip",
+        &[
+            (
+                "-selection clipboard -t TARGETS -o",
+                "printf 'UTF8_STRING\\n'",
+            ),
+            ("-selection clipboard -o", "printf 'via x11'"),
+        ],
+    );
+    let both = SystemClipboard::with_tools(
+        vec![
+            (ClipboardTool::WlPaste, wl.clone()),
+            (ClipboardTool::Xclip, xclip),
+        ],
+        QUICK,
+    );
+    assert_eq!(both.read(), ClipboardRead::Text("via x11".into()));
+    // With no tool left to try, a listing that fails is an empty clipboard.
+    let alone = SystemClipboard::with_tools(vec![(ClipboardTool::WlPaste, wl)], QUICK);
+    assert_eq!(alone.read(), ClipboardRead::Empty);
+}
+
+/// Review round 1 (L4): text types match whatever their case.
+#[test]
+fn text_types_match_case_insensitively() {
+    let dir = tempfile::tempdir().unwrap();
+    let tool = fake_tool(
+        dir.path(),
+        "wl-paste",
+        &[
+            ("--list-types", "printf 'text/plain;charset=UTF-8\\n'"),
+            ("--no-newline", "printf 'upper'"),
+        ],
+    );
+    assert_eq!(wl_only(tool).read(), ClipboardRead::Text("upper".into()));
+}
+
+/// Review round 1 (L4): a clipboard of neither images nor text says so, and
+/// what it holds; X11's own bookkeeping targets are not named.
+#[test]
+fn a_clipboard_of_neither_image_nor_text_names_what_it_holds() {
+    let dir = tempfile::tempdir().unwrap();
+    let tool = fake_tool(
+        dir.path(),
+        "wl-paste",
+        &[(
+            "--list-types",
+            "printf 'text/uri-list\\nx-special/gnome-copied-files\\n'",
+        )],
+    );
+    assert_eq!(
+        wl_only(tool).read(),
+        ClipboardRead::NotPasteable("text/uri-list, x-special/gnome-copied-files".into())
+    );
+    let xclip = fake_tool(
+        dir.path(),
+        "xclip",
+        &[(
+            "-selection clipboard -t TARGETS -o",
+            "printf 'TARGETS\\nTIMESTAMP\\nMULTIPLE\\ntext/uri-list\\n'",
+        )],
+    );
+    let clipboard = SystemClipboard::with_tools(vec![(ClipboardTool::Xclip, xclip)], QUICK);
+    assert_eq!(
+        clipboard.read(),
+        ClipboardRead::NotPasteable("text/uri-list".into())
+    );
+}

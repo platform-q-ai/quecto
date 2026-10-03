@@ -2954,6 +2954,11 @@ fn tui_public_ports_have_contract_tests() {
     let mut files = Vec::new();
     collect_rs_files(Path::new(TUI_CONVERSATION), &mut files);
     collect_rs_files(Path::new(TUI_PROTOCOL), &mut files);
+    // #2425: the shell's clipboard port is a public port too.
+    files.push(
+        fs::read_to_string(Path::new(TUI_SHELL).join("clipboard_image.rs"))
+            .expect("read the TUI clipboard port"),
+    );
 
     let mut ports = BTreeSet::new();
     for file_content in &files {

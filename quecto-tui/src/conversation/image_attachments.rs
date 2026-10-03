@@ -193,6 +193,8 @@ pub(crate) enum ImagePathError {
     Missing,
     /// `~` with no home directory to expand it to.
     NoHome,
+    /// A `file://` URI naming another host.
+    NotLocal,
 }
 
 impl std::fmt::Display for ImagePathError {
@@ -202,6 +204,9 @@ impl std::fmt::Display for ImagePathError {
                 f.write_str("Usage: /image <path> (absolute, ~/… or relative to the workspace)")
             }
             Self::NoHome => f.write_str("Image not attached: ~ names no home directory"),
+            Self::NotLocal => {
+                f.write_str("Image not attached: a file:// URI must name a file on this machine")
+            }
         }
     }
 }

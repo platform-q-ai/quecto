@@ -364,3 +364,25 @@ fn parse_resumed_messages_carries_a_user_message_s_image_count() {
         .collect();
     assert_eq!(counts, [2, 0, 0]);
 }
+
+/// Review round 1 (M1): an `imageCount` past anything a message can carry
+/// is clamped where it is read, so no reader sizes work by it.
+#[test]
+fn parse_resumed_messages_clamps_a_hostile_image_count() {
+    let messages = parse_resumed_messages(&json!({
+        "messages": [
+            {"role": "user", "content": "a", "id": "u1", "imageCount": 18446744073709551615_u64},
+            {"role": "user", "content": "b", "id": "u2", "imageCount": 1_000_000_000_u64},
+            {"role": "user", "content": "c", "id": "u3", "imageCount": 8}
+        ]
+    }))
+    .expect("valid messages array should parse");
+    let counts: Vec<_> = messages
+        .iter()
+        .map(|message| match message {
+            ResumedChatMessage::User { image_count, .. } => *image_count,
+            other => panic!("expected a user message, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(counts, [999, 999, 8]);
+}

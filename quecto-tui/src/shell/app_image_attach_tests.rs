@@ -9,25 +9,27 @@ use super::*;
 use crate::shell::clipboard_image::ClipboardRead;
 use quecto_image::samples;
 
-async fn harness() -> TuiHarness {
+pub(super) async fn harness() -> TuiHarness {
     TuiHarness::new().await
 }
 
 /// Write `bytes` to `name` in a fresh directory; the directory lives as long
 /// as the returned guard.
-fn image_file(name: &str, bytes: &[u8]) -> (tempfile::TempDir, std::path::PathBuf) {
+pub(super) fn image_file(name: &str, bytes: &[u8]) -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(name);
     std::fs::write(&path, bytes).unwrap();
     (dir, path)
 }
 
-fn attach(h: &mut TuiHarness, path: &std::path::Path) {
+/// `/image <path>`, then deliver the file read the way the event loop does.
+pub(super) async fn attach(h: &mut TuiHarness, path: &std::path::Path) {
     h.submit(&format!("/image {}", path.display()));
+    h.settle_attachment_reads().await;
 }
 
 /// The commands of `type` among `lines`, parsed.
-fn sent(lines: &[String], kind: &str) -> Vec<serde_json::Value> {
+pub(super) fn sent(lines: &[String], kind: &str) -> Vec<serde_json::Value> {
     lines
         .iter()
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
@@ -39,7 +41,7 @@ fn sent(lines: &[String], kind: &str) -> Vec<serde_json::Value> {
 async fn slash_image_attaches_a_file_as_a_chip_above_the_composer() {
     let mut h = harness().await;
     let (_dir, path) = image_file("screenshot.png", &samples::png(4, 4));
-    attach(&mut h, &path);
+    attach(&mut h, &path).await;
 
     assert_eq!(h.attachment_chips().len(), 1);
     let bottom = h.last();
@@ -68,6 +70,7 @@ async fn slash_image_resolves_a_workspace_relative_path() {
     let (dir, _) = image_file("diagram.gif", &samples::gif(2, 2));
     h.set_workspace_root(dir.path().to_path_buf());
     h.submit("/image diagram.gif");
+    h.settle_attachment_reads().await;
     assert!(
         h.attachment_chips()[0].starts_with("[image 1: diagram.gif · "),
         "{:?}",
@@ -80,9 +83,9 @@ async fn enter_sends_the_images_with_the_prompt_and_clears_the_chips() {
     let mut h = harness().await;
     let png = samples::png(4, 4);
     let (_dir, path) = image_file("shot.png", &png);
-    attach(&mut h, &path);
+    attach(&mut h, &path).await;
     let (_dir2, path2) = image_file("photo.jpg", &samples::jpeg(2, 2));
-    attach(&mut h, &path2);
+    attach(&mut h, &path2).await;
     let _ = h.drain_commands().await;
 
     for ch in "what is this?".chars() {
@@ -112,7 +115,7 @@ async fn enter_sends_the_images_with_the_prompt_and_clears_the_chips() {
 async fn enter_with_only_chips_sends_an_images_only_prompt() {
     let mut h = harness().await;
     let (_dir, path) = image_file("shot.png", &samples::png(1, 1));
-    attach(&mut h, &path);
+    attach(&mut h, &path).await;
     let _ = h.drain_commands().await;
 
     h.press(Key::Enter);
@@ -143,7 +146,7 @@ async fn while_the_agent_runs_the_images_ride_the_follow_up() {
     let mut h = harness().await;
     h.event(Event::AgentStart);
     let (_dir, path) = image_file("shot.webp", &samples::webp_lossless(2, 2));
-    attach(&mut h, &path);
+    attach(&mut h, &path).await;
     let _ = h.drain_commands().await;
 
     h.submit("and this one");
@@ -160,14 +163,16 @@ async fn backspace_in_an_empty_composer_removes_the_last_chip() {
     let mut h = harness().await;
     let (_dir, a) = image_file("first.png", &samples::png(1, 1));
     let (_dir2, b) = image_file("second.png", &samples::png(2, 2));
-    attach(&mut h, &a);
-    attach(&mut h, &b);
+    attach(&mut h, &a).await;
+    attach(&mut h, &b).await;
 
     // With text in the editor, Backspace edits the text.
     h.type_char('x');
     h.press(Key::Backspace);
     assert_eq!(h.editor_text(), "");
     assert_eq!(h.attachment_chips().len(), 2);
+    // A fresh press, not the key repeat of the one that emptied the editor.
+    h.advance_clock(std::time::Duration::from_secs(1));
 
     h.press(Key::Backspace);
     let chips = h.attachment_chips();
@@ -184,8 +189,8 @@ async fn backspace_in_an_empty_composer_removes_the_last_chip() {
 async fn esc_clears_every_chip_and_the_text_when_idle() {
     let mut h = harness().await;
     let (_dir, a) = image_file("first.png", &samples::png(1, 1));
-    attach(&mut h, &a);
-    attach(&mut h, &a);
+    attach(&mut h, &a).await;
+    attach(&mut h, &a).await;
     h.type_char('x');
     assert_eq!(h.attachment_chips().len(), 2);
 
@@ -205,7 +210,7 @@ async fn esc_while_running_still_aborts_and_keeps_the_chips() {
     let mut h = harness().await;
     h.event(Event::AgentStart);
     let (_dir, a) = image_file("first.png", &samples::png(1, 1));
-    attach(&mut h, &a);
+    attach(&mut h, &a).await;
 
     h.press(Key::Escape);
 
@@ -218,7 +223,7 @@ async fn ctrl_c_clears_the_chips_with_the_editor() {
     let mut h = harness().await;
     h.event(Event::AgentStart);
     let (_dir, a) = image_file("first.png", &samples::png(1, 1));
-    attach(&mut h, &a);
+    attach(&mut h, &a).await;
 
     h.press(Key::Ctrl('c'));
 
@@ -234,7 +239,7 @@ async fn refusals_show_a_one_line_notice_and_attach_nothing() {
     let mut h = harness().await;
 
     let (_dir, text) = image_file("notes.txt", b"just words");
-    attach(&mut h, &text);
+    attach(&mut h, &text).await;
     assert_eq!(
         h.last_notification().as_deref(),
         Some(
@@ -244,14 +249,14 @@ async fn refusals_show_a_one_line_notice_and_attach_nothing() {
 
     let big = samples::png_with_body(4, 4, quecto_image::MAX_IMAGE_BYTES);
     let (_dir2, big) = image_file("huge.png", &big);
-    attach(&mut h, &big);
+    attach(&mut h, &big).await;
     assert_eq!(
         h.last_notification().as_deref(),
         Some("Image not attached: huge.png: image decodes to more than 3932160 bytes (3.75 MiB)")
     );
 
     let missing = std::path::Path::new("/nonexistent-2425/gone.png");
-    attach(&mut h, missing);
+    attach(&mut h, missing).await;
     let notice = h.last_notification().unwrap_or_default();
     assert!(
         notice.starts_with("Image not attached: gone.png: "),
@@ -272,7 +277,7 @@ async fn refusals_show_a_one_line_notice_and_attach_nothing() {
 async fn a_directory_is_not_an_image_file() {
     let mut h = harness().await;
     let dir = tempfile::tempdir().unwrap();
-    attach(&mut h, dir.path());
+    attach(&mut h, dir.path()).await;
     let notice = h.last_notification().unwrap_or_default();
     assert!(notice.starts_with("Image not attached: "), "{notice}");
     assert!(h.attachment_chips().is_empty());
@@ -321,10 +326,12 @@ async fn ctrl_v_refusals_and_failures_are_one_line_notices() {
 
     h.set_clipboard(ClipboardRead::UnsupportedImage("image/bmp".into()));
     h.paste_clipboard().await;
-    let notice = h.last_notification().unwrap_or_default();
-    assert!(
-        notice.starts_with("Clipboard image not attached: image/bmp"),
-        "{notice}"
+    assert_eq!(
+        h.last_notification().as_deref(),
+        Some(
+            "Image not attached: clipboard (image/bmp): not an image/png, image/jpeg, image/gif or image/webp file"
+        ),
+        "one wording for the admitted types"
     );
 
     h.set_clipboard(ClipboardRead::NoTool);
@@ -375,6 +382,10 @@ async fn help_names_the_image_command_and_keys() {
     assert!(help.contains("/image"), "{help}");
     assert!(help.contains("Ctrl+V"), "{help}");
     assert!(help.contains("last image"), "{help}");
+    assert!(
+        help.contains("images stay while a sub-agent is focused"),
+        "{help}"
+    );
 }
 
 #[tokio::test]
@@ -394,7 +405,7 @@ async fn a_focused_sub_agent_receives_the_images_on_its_own_connection() {
     h.select(Some("worker"));
     let _ = drain_child_commands_until_quiet(&mut child_commands).await;
     let (_dir, path) = image_file("shot.png", &samples::png(2, 2));
-    attach(&mut h, &path);
+    attach(&mut h, &path).await;
     let _ = h.drain_commands().await;
 
     h.submit("for the worker");
@@ -419,7 +430,7 @@ async fn a_focused_sub_agent_receives_the_images_on_its_own_connection() {
 async fn a_message_refused_for_a_lost_connection_keeps_its_chips() {
     let mut h = harness().await;
     let (_dir, path) = image_file("shot.png", &samples::png(2, 2));
-    attach(&mut h, &path);
+    attach(&mut h, &path).await;
     h.app_mut().ac_mut().agent_connected = false;
 
     h.submit("are you there?");

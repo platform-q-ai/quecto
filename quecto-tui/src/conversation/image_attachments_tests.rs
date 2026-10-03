@@ -226,3 +226,59 @@ fn labels_name_the_file_or_the_clipboard_type() {
     assert_eq!(clipboard_label(&samples::jpeg(1, 1)), "clipboard.jpeg");
     assert_eq!(clipboard_label(b"text"), "clipboard");
 }
+
+/// Review round 1 (M1): a count from the wire can be anything; past one
+/// message's limit it is one marker that names it, never a marker per image.
+#[test]
+fn a_count_past_the_message_limit_is_one_counted_marker() {
+    assert_eq!(
+        with_image_markers("look", quecto_image::MAX_IMAGES_PER_MESSAGE),
+        format!("{}\nlook", vec!["[image]"; 8].join(" "))
+    );
+    assert_eq!(with_image_markers("look", 9), "[9 images]\nlook");
+    let huge = with_image_markers("", usize::MAX);
+    assert_eq!(huge, format!("[{} images]", usize::MAX));
+}
+
+/// Review round 1 (nit): a path as a shell or a file manager writes it.
+#[test]
+fn an_image_path_may_be_shell_escaped_or_a_file_uri() {
+    let ws = Path::new("/work/repo");
+    let resolve = |arg| resolve_image_path(arg, Some(Path::new("/home/me")), ws);
+    assert_eq!(
+        resolve(r"/tmp/my\ shot.png"),
+        Ok(PathBuf::from("/tmp/my shot.png"))
+    );
+    assert_eq!(
+        resolve(r"shots/a\ b\\c.png"),
+        Ok(PathBuf::from(r"/work/repo/shots/a b\c.png"))
+    );
+    assert_eq!(
+        resolve("file:///tmp/my%20shot.png"),
+        Ok(PathBuf::from("/tmp/my shot.png"))
+    );
+    assert_eq!(
+        resolve("file://localhost/tmp/a.png"),
+        Ok(PathBuf::from("/tmp/a.png"))
+    );
+    assert_eq!(
+        resolve("'file:///tmp/%E2%9C%93.png'"),
+        Ok(PathBuf::from("/tmp/\u{2713}.png"))
+    );
+    assert_eq!(
+        resolve("file:///tmp/100%.png"),
+        Ok(PathBuf::from("/tmp/100%.png")),
+        "a bare % is kept"
+    );
+    assert_eq!(
+        resolve("file://server/share/a.png"),
+        Err(ImagePathError::NotLocal)
+    );
+    assert!(
+        ImagePathError::NotLocal
+            .to_string()
+            .starts_with("Image not attached: "),
+        "{}",
+        ImagePathError::NotLocal
+    );
+}

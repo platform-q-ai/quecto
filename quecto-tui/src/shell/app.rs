@@ -595,6 +595,9 @@ mod app_git_tests;
 #[path = "app_idle_efficiency_tests.rs"]
 mod app_idle_efficiency_tests;
 #[cfg(test)]
+#[path = "app_image_attach_review_tests.rs"]
+mod app_image_attach_review_tests;
+#[cfg(test)]
 #[path = "app_image_attach_tests.rs"]
 mod app_image_attach_tests;
 #[cfg(test)]

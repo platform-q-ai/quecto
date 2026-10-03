@@ -361,3 +361,20 @@ fn synced_user_images_render_as_markers() {
         .collect();
     assert_eq!(users, ["[image] [image]\nlook", "[image]"]);
 }
+
+/// Review round 1 (M1): a hostile `imageCount` neither panics nor allocates
+/// per image; it is clamped and shown as one counted marker.
+#[test]
+fn a_hostile_synced_image_count_is_one_clamped_marker() {
+    let mut t = LedgerTranscript::default();
+    let entries = t.apply_sync_delta(&delta(
+        vec![
+            json!({"id":"u1","role":"user","content":"look","imageCount":18446744073709551615_u64}),
+        ],
+        false,
+    ));
+    assert!(
+        matches!(&entries[0], LedgerEntry::User { text } if text == "[999 images]\nlook"),
+        "{entries:?}"
+    );
+}

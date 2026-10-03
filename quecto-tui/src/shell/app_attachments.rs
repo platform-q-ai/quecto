@@ -20,26 +20,36 @@ use crate::shell::clipboard_image::{ClipboardRead, ClipboardReader, NoClipboard}
 use std::io::Read;
 use std::sync::Arc;
 
+/// A finished read of an attachment source, run off the event loop.
+pub(super) enum AttachmentRead {
+    Clipboard(ClipboardRead),
+}
+
 /// The composer's attachments and the clipboard they can come from.
 pub(super) struct AttachmentFlow {
     pub(super) pending: PendingImages,
     clipboard: Arc<dyn ClipboardReader>,
     /// A clipboard read is running; a second `Ctrl+V` waits for it.
     read_in_flight: bool,
-    clipboard_tx: mpsc::Sender<ClipboardRead>,
-    pub(super) clipboard_rx: mpsc::Receiver<ClipboardRead>,
+    read_tx: mpsc::Sender<AttachmentRead>,
+    pub(super) read_rx: mpsc::Receiver<AttachmentRead>,
 }
 
 impl AttachmentFlow {
     pub(super) fn new() -> Self {
-        let (clipboard_tx, clipboard_rx) = mpsc::channel(1);
+        let (read_tx, read_rx) = mpsc::channel(1);
         Self {
             pending: PendingImages::default(),
             clipboard: Arc::new(NoClipboard),
             read_in_flight: false,
-            clipboard_tx,
-            clipboard_rx,
+            read_tx,
+            read_rx,
         }
+    }
+
+    /// Whether a read has been started and not yet applied.
+    pub(super) fn reads_in_flight(&self) -> bool {
+        self.read_in_flight
     }
 }
 
@@ -84,7 +94,7 @@ impl App {
     }
 
     /// `Ctrl+V`: read the clipboard off the event loop; the result comes back
-    /// through [`AttachmentFlow::clipboard_rx`]. A press while a read runs
+    /// through [`AttachmentFlow::read_rx`]. A press while a read runs
     /// waits for that read.
     pub(super) fn start_clipboard_read(&mut self) {
         match self.attachments.read_in_flight {
@@ -92,17 +102,24 @@ impl App {
             false => {
                 self.attachments.read_in_flight = true;
                 let reader = Arc::clone(&self.attachments.clipboard);
-                let tx = self.attachments.clipboard_tx.clone();
+                let tx = self.attachments.read_tx.clone();
                 tokio::task::spawn_blocking(move || {
-                    let _ = tx.blocking_send(reader.read());
+                    let _ = tx.blocking_send(AttachmentRead::Clipboard(reader.read()));
                 });
             }
         }
     }
 
+    /// Act on a finished attachment read.
+    pub(super) fn apply_attachment_read(&mut self, read: AttachmentRead) {
+        match read {
+            AttachmentRead::Clipboard(read) => self.apply_clipboard_read(read),
+        }
+    }
+
     /// Act on a finished clipboard read: attach an image, paste text, or say
     /// in one line why nothing was attached.
-    pub(super) fn apply_clipboard_read(&mut self, read: ClipboardRead) {
+    fn apply_clipboard_read(&mut self, read: ClipboardRead) {
         self.attachments.read_in_flight = false;
         match read {
             ClipboardRead::Image(bytes) => {
@@ -121,6 +138,13 @@ impl App {
                 );
                 self.notify(&notice, NotifyLevel::Error);
             }
+            ClipboardRead::NotPasteable(types) => self.notify(
+                &format!(
+                    "Nothing to paste: the clipboard holds only {}, neither an image nor text",
+                    sanitize_label(&types)
+                ),
+                NotifyLevel::Info,
+            ),
             ClipboardRead::Empty => self.notify(
                 "Nothing to paste: the clipboard is empty",
                 NotifyLevel::Info,

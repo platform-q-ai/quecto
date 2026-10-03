@@ -26,16 +26,29 @@ impl TuiHarness {
     /// loop's arm does, and capture the frame.
     pub async fn paste_clipboard(&mut self) -> &mut Self {
         self.app.handle_key(Key::Ctrl('v'));
-        let read = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            self.app.attachments.clipboard_rx.recv(),
-        )
-        .await
-        .expect("Ctrl+V reads the clipboard")
-        .expect("the clipboard channel is open");
-        self.app.apply_clipboard_read(read);
+        self.settle_attachment_reads().await
+    }
+
+    /// Deliver every attachment read in flight (clipboard and `/image`
+    /// files) the way the event loop's arm does, and capture the frame.
+    pub async fn settle_attachment_reads(&mut self) -> &mut Self {
+        while self.app.attachments.reads_in_flight() {
+            let read = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                self.app.attachments.read_rx.recv(),
+            )
+            .await
+            .expect("an attachment read in flight finishes")
+            .expect("the attachment channel is open");
+            self.app.apply_attachment_read(read);
+        }
         self.capture();
         self
+    }
+
+    /// Whether an attachment read is in flight (it has not been applied).
+    pub fn attachment_reads_in_flight(&self) -> bool {
+        self.app.attachments.reads_in_flight()
     }
 
     /// The pending attachments' chips, as the pending list words them.
