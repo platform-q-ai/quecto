@@ -257,12 +257,11 @@ fn config(uri: &str, key: &str) -> Config {
     config.providers.openai_compatible.endpoints = ["alpha", "beta", "gamma"]
         .into_iter()
         .map(|slot| OpenAiCompatibleEndpoint {
-            stream_idle_seconds: None,
-            stream_progress_seconds: None,
             prefix: slot.into(),
             api_key: key.into(),
             api_base: uri.into(),
             allow_remote_http: false,
+            ..Default::default()
         })
         .collect();
     config
