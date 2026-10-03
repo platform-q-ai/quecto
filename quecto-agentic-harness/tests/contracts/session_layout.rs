@@ -25,6 +25,7 @@ fn spill(id: &str) -> SpillEntry {
         input_preview: "ls".to_string(),
         tokens: 1,
         content: format!("content {id}"),
+        images: Vec::new(),
     }
 }
 

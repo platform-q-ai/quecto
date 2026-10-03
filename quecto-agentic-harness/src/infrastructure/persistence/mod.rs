@@ -6,6 +6,7 @@ pub mod ended_child_records;
 pub mod environment_registry_store;
 pub(crate) mod filename;
 pub mod fresh_session_identity;
+pub mod session_images;
 pub mod session_layout;
 pub mod session_ownership;
 pub mod session_record_read;

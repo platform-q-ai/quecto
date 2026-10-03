@@ -88,6 +88,7 @@ pub(crate) fn entry(id: &str, content: &str) -> SpillEntry {
         input_preview: format!("preview of {id}"),
         tokens: 7,
         content: content.to_string(),
+        images: Vec::new(),
     }
 }
 

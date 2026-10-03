@@ -1,7 +1,13 @@
-use crate::domain::message::ThinkingBlock;
+use crate::domain::conversation::stored_images::{ImageRef, MessageImageRefs};
+use crate::domain::message::{Message, Role, StopReason, ThinkingBlock, ToolCall};
 use crate::domain::session::PersistedSubagentRosterEntry;
 use crate::domain::workflow::WorkflowRunPersisted;
+use crate::infrastructure::persistence::session_images::ImageRefRecord;
+use crate::infrastructure::turn_origin_names::{self as names, origin_from_name, origin_name};
 use serde::Deserialize;
+use std::collections::BTreeSet;
+
+use super::{role_to_str, str_to_role};
 
 fn deserialize_subagent_roster_lossy<'de, D>(
     deserializer: D,
@@ -136,6 +142,12 @@ pub(super) struct MessageRecord {
     /// Extended thinking blocks from assistant messages (#437-5).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) thinking_blocks: Vec<ThinkingBlockRecord>,
+    /// A tool result's images, by reference to their sidecars (#2424).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) images: Vec<ImageRefRecord>,
+    /// A user message's images, by reference to their sidecars (#2424).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) user_images: Vec<ImageRefRecord>,
 }
 
 #[derive(serde::Serialize)]
@@ -143,7 +155,7 @@ pub(super) struct MessageRecordRef<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) ordinal: Option<u64>,
     pub(super) role: &'a str,
-    pub(super) content: std::borrow::Cow<'a, str>,
+    pub(super) content: &'a str,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(super) tool_calls: Vec<ToolCallRecordRef<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -172,6 +184,19 @@ pub(super) struct MessageRecordRef<'a> {
     pub(super) stop_reason: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(super) thinking_blocks: Vec<ThinkingBlockRecordRef<'a>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(super) images: Vec<ImageRefRecord>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(super) user_images: Vec<ImageRefRecord>,
+}
+
+/// The digests of the images `records` name.
+pub(super) fn record_digests(records: &[MessageRecordRef<'_>]) -> BTreeSet<String> {
+    records
+        .iter()
+        .flat_map(|record| record.images.iter().chain(&record.user_images))
+        .map(|image| image.sha256.clone())
+        .collect()
 }
 
 pub(super) fn skip_if_false(v: &bool) -> bool {
@@ -328,6 +353,179 @@ impl From<ThinkingBlockRecord> for ThinkingBlock {
             },
         }
     }
+}
+
+/// The title-and-count view of a transcript the list reads (#765).
+pub(super) fn parse_session_header(data: &str) -> Result<SessionHeader<'_>, serde_json::Error> {
+    if let Ok(header) = serde_json::from_str::<SessionHeader<'_>>(data) {
+        return Ok(header);
+    }
+
+    let mut key = std::borrow::Cow::Borrowed("");
+    let mut messages = Vec::new();
+    let mut parsed_any = false;
+    for line in data.lines().filter(|line| !line.trim().is_empty()) {
+        let record: SessionRecord = match serde_json::from_str(line) {
+            Ok(record) => record,
+            Err(err) if parsed_any => {
+                tracing::warn!(error = %err, "ignoring incomplete trailing session record");
+                break;
+            }
+            Err(err) => return Err(err),
+        };
+        parsed_any = true;
+        match record {
+            SessionRecord::Snapshot(file) => {
+                key = file.key.into();
+                messages = file
+                    .messages
+                    .into_iter()
+                    .map(|message| MessageHeader {
+                        role: message.role.into(),
+                        content: message.content.into(),
+                    })
+                    .collect();
+            }
+            SessionRecord::Append {
+                messages: added, ..
+            } => {
+                messages.extend(added.into_iter().map(|message| MessageHeader {
+                    role: message.role.into(),
+                    content: message.content.into(),
+                }));
+            }
+        }
+    }
+    Ok(SessionHeader { key, messages })
+}
+
+fn image_records(refs: &[ImageRef]) -> Vec<ImageRefRecord> {
+    refs.iter().map(ImageRefRecord::from).collect()
+}
+
+/// The record of `msg` as it is written: its images by reference (#2424).
+pub(super) fn message_to_record_ref(msg: &Message) -> MessageRecordRef<'_> {
+    let images = MessageImageRefs::of(msg);
+    MessageRecordRef {
+        ordinal: msg.ordinal,
+        role: role_to_str(&msg.role),
+        content: &msg.content,
+        tool_calls: msg
+            .tool_calls
+            .iter()
+            .map(|tc| ToolCallRecordRef {
+                id: &tc.id,
+                name: &tc.name,
+                arguments: &tc.arguments,
+            })
+            .collect(),
+        tool_call_id: msg.tool_call_id.as_deref(),
+        turn: msg.turn,
+        is_pinned: Some(msg.is_pinned),
+        is_manifest: msg.is_manifest,
+        is_collapsed: msg.is_collapsed,
+        turn_origin: origin_name(msg.turn_origin),
+        user_kind: names::user_kind_name(msg.user_kind),
+        tool_name: msg.tool_name.as_deref(),
+        input_preview: msg.input_preview.as_deref(),
+        spill_id: msg.spill_id.as_deref(),
+        is_error: msg.is_error,
+        stop_reason: msg.stop_reason.as_ref().map(|sr| sr.to_string()),
+        thinking_blocks: msg
+            .thinking_blocks
+            .iter()
+            .map(ThinkingBlockRecordRef::from)
+            .collect(),
+        images: image_records(&images.tool),
+        user_images: image_records(&images.user),
+    }
+}
+
+/// The owned record of a live message, its images hashed into references.
+pub(super) fn message_to_record(msg: &Message) -> MessageRecord {
+    record_with_images(msg, &MessageImageRefs::of(msg))
+}
+
+/// The owned record of `msg` naming `images`: what a message read back
+/// from a transcript was written as (its images are still references).
+pub(super) fn record_with_images(msg: &Message, images: &MessageImageRefs) -> MessageRecord {
+    MessageRecord {
+        ordinal: msg.ordinal,
+        role: role_to_str(&msg.role).to_string(),
+        content: msg.content.clone(),
+        tool_calls: msg
+            .tool_calls
+            .iter()
+            .map(|tc| ToolCallRecord {
+                id: tc.id.clone(),
+                name: tc.name.clone(),
+                arguments: tc.arguments.clone(),
+            })
+            .collect(),
+        tool_call_id: msg.tool_call_id.clone(),
+        turn: msg.turn,
+        is_pinned: Some(msg.is_pinned),
+        is_manifest: msg.is_manifest,
+        is_collapsed: msg.is_collapsed,
+        turn_origin: origin_name(msg.turn_origin).map(str::to_string),
+        user_kind: names::user_kind_name(msg.user_kind).map(str::to_string),
+        tool_name: msg.tool_name.clone(),
+        input_preview: msg.input_preview.clone(),
+        spill_id: msg.spill_id.clone(),
+        is_error: msg.is_error,
+        stop_reason: msg.stop_reason.as_ref().map(|sr| sr.to_string()),
+        thinking_blocks: msg
+            .thinking_blocks
+            .iter()
+            .map(ThinkingBlockRecord::from)
+            .collect(),
+        images: image_records(&images.tool),
+        user_images: image_records(&images.user),
+    }
+}
+
+/// The message a record holds, without its images (a reader that never
+/// restores them: the bounded read of another agent's transcript).
+pub(super) fn record_to_message(rec: MessageRecord) -> Message {
+    record_to_message_and_images(rec).0
+}
+
+/// The message a record holds, and the references of its images, which the
+/// load restores from their sidecars (#2424).
+pub(super) fn record_to_message_and_images(rec: MessageRecord) -> (Message, MessageImageRefs) {
+    let images = MessageImageRefs {
+        tool: rec.images.into_iter().map(Into::into).collect(),
+        user: rec.user_images.into_iter().map(Into::into).collect(),
+    };
+    let tool_calls = rec
+        .tool_calls
+        .into_iter()
+        .map(|tc| ToolCall {
+            id: tc.id,
+            name: tc.name,
+            arguments: tc.arguments,
+        })
+        .collect();
+    let mut msg = match str_to_role(&rec.role) {
+        Role::System => Message::system(rec.content),
+        Role::User => Message::user(rec.content),
+        Role::Assistant => Message::assistant(rec.content, tool_calls),
+        Role::Tool => Message::tool(rec.tool_call_id.unwrap_or_default(), rec.content),
+    };
+    msg.ordinal = rec.ordinal;
+    msg.turn = rec.turn;
+    msg.is_manifest = rec.is_manifest;
+    msg.is_collapsed = rec.is_collapsed;
+    msg.turn_origin = origin_from_name(rec.turn_origin.as_deref());
+    msg.user_kind = names::user_kind_from_name(rec.user_kind.as_deref());
+    msg.tool_name = rec.tool_name;
+    msg.input_preview = rec.input_preview;
+    msg.spill_id = rec.spill_id;
+    msg.is_error = rec.is_error;
+    msg.stop_reason = rec.stop_reason.as_deref().map(StopReason::parse);
+    msg.is_pinned = rec.is_pinned.unwrap_or(msg.is_pinned);
+    msg.thinking_blocks = rec.thinking_blocks.into_iter().map(Into::into).collect();
+    (msg, images)
 }
 
 #[path = "session_store_bounded.rs"]

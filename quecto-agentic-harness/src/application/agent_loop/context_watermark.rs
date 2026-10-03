@@ -292,6 +292,7 @@ impl ContextManager {
             input_preview: format!("{count} archived messages"),
             tokens: context_pruning::estimate_tokens(&index),
             content: index,
+            images: Vec::new(),
         };
         match retention
             .retain

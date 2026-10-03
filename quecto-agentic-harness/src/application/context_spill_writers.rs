@@ -23,6 +23,7 @@ impl ContextManager {
             input_preview: tool_msg.input_preview.clone().unwrap_or_default(),
             tokens: context_pruning::estimate_tokens(&content),
             content,
+            images: Vec::new(),
         };
         let result = retention.retain.retain(&self.session_key, &entry).await;
         tool_msg.content = entry.content;

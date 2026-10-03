@@ -241,6 +241,7 @@ async fn manifest_text_stays_static_across_tool_and_message_spills() {
                 input_preview: "echo hello".to_string(),
                 tokens: 100,
                 content: "hello".to_string(),
+                images: Vec::new(),
             },
         )
         .await
@@ -390,6 +391,7 @@ async fn mem_store_trait_surface_clear_empties_entries() {
         input_preview: "echo".into(),
         tokens: 2,
         content: "out".into(),
+        images: Vec::new(),
     };
     store.append(&id("s"), &entry).await.unwrap();
     assert_eq!(store.list_entries(&id("s")).await.unwrap().len(), 1);

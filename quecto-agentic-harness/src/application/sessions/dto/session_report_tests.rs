@@ -78,6 +78,7 @@ fn manifest_constants_are_the_format_one_statements() {
         input_preview: "ls".into(),
         tokens: 1,
         content: "out".into(),
+        images: Vec::new(),
     });
     assert!(format!("{record:?}").contains("Spill"));
 }

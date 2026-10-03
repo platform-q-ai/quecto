@@ -590,3 +590,6 @@ async fn e2e_without_a_fleet_teardown_live_delegated_rows_refuse_the_switch() {
     assert_ne!(fx.current_session_key(), "cli:test");
     assert!(registry.lock().unwrap().is_empty());
 }
+
+#[path = "uds_dispatch_resume_images_tests.rs"]
+mod images;

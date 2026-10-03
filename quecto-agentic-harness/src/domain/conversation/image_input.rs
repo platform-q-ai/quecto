@@ -199,7 +199,7 @@ fn withhold(
     let mut markers = Vec::new();
     let (kept, tool_images) = split(
         std::mem::take(&mut message.image_blocks),
-        |image| input.withheld((image.mime_type, &image.data), model, verdicts),
+        |image| input.withheld((image.mime_type, image.data()), model, verdicts),
         &mut markers,
     );
     message.image_blocks = kept;

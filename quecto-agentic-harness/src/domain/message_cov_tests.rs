@@ -48,10 +48,10 @@ fn estimated_tokens_counts_content_tool_calls_ids_and_images_once() {
         }],
     );
     msg.tool_call_id = Some("callid".to_string());
-    msg.image_blocks.push(crate::domain::tool::ImageBlock {
-        mime_type: "image/png",
-        data: "12345".to_string(),
-    });
+    msg.image_blocks.push(crate::domain::tool::ImageBlock::new(
+        "image/png",
+        "12345".to_string(),
+    ));
     msg.user_image_blocks
         .push(UserImageBlock::unchecked_for_tests(
             quecto_image::ImageMime::Jpeg,
@@ -100,10 +100,10 @@ fn token_cache_clone_directly_resets_once_lock() {
 fn image_data_is_estimated_by_the_image_size() {
     let data = encode(&png(800, 600));
     let mut msg = Message::user("");
-    msg.image_blocks.push(crate::domain::tool::ImageBlock {
-        mime_type: "image/png",
-        data: data.clone(),
-    });
+    msg.image_blocks.push(crate::domain::tool::ImageBlock::new(
+        "image/png",
+        data.clone(),
+    ));
     assert_eq!(msg.estimated_tokens(), 640);
 
     let mut msg = Message::user("");
@@ -121,10 +121,10 @@ fn image_data_is_estimated_by_the_image_size() {
 fn a_message_holding_a_one_megabyte_screenshot_estimates_under_five_thousand_tokens() {
     let screenshot = encode(&png_with_body(1920, 1080, 1 << 20));
     let mut tool = Message::tool("call-1", "Screenshot taken.");
-    tool.image_blocks.push(crate::domain::tool::ImageBlock {
-        mime_type: "image/png",
-        data: screenshot.clone(),
-    });
+    tool.image_blocks.push(crate::domain::tool::ImageBlock::new(
+        "image/png",
+        screenshot.clone(),
+    ));
     let text = Message::estimate_tokens("Screenshot taken.") + Message::estimate_tokens("call-1");
     assert_eq!(tool.estimated_tokens(), text + 2765);
     assert!(tool.estimated_tokens() < 5_000);

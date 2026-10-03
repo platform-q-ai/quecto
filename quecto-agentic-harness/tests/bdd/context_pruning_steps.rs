@@ -119,6 +119,7 @@ fn when_agent_executes_bash_turn_1(world: &mut QuectoWorld) {
         input_preview: input_preview.clone(),
         tokens: context_pruning::estimate_tokens(&content),
         content: content.clone(),
+        images: Vec::new(),
     };
     tokio::runtime::Runtime::new()
         .unwrap()
@@ -368,6 +369,7 @@ fn when_agent_executes_tools_turns_1_through_5(world: &mut QuectoWorld) {
             input_preview: format!("command {}", turn),
             tokens: context_pruning::estimate_tokens(&content),
             content: content.clone(),
+            images: Vec::new(),
         };
         tokio::runtime::Runtime::new()
             .unwrap()
@@ -422,6 +424,7 @@ fn given_spilled_tool_result(world: &mut QuectoWorld, id: String) {
         input_preview: "echo hello".to_string(),
         tokens: 100,
         content: "hello world original output".to_string(),
+        images: Vec::new(),
     };
     tokio::runtime::Runtime::new()
         .unwrap()
@@ -445,6 +448,7 @@ fn given_n_spilled_tool_results(world: &mut QuectoWorld, count: usize) {
             input_preview: format!("command {}", i + 1),
             tokens: 100 + i,
             content: format!("output from command {}", i + 1),
+            images: Vec::new(),
         };
         tokio::runtime::Runtime::new()
             .unwrap()
@@ -1250,6 +1254,7 @@ fn when_n_spill_entries_appended(world: &mut QuectoWorld, count: usize) {
             input_preview: "cmd-1".to_string(),
             tokens: 100,
             content: "output-1\n".to_string(),
+            images: Vec::new(),
         };
         store.append(&sid("cache-test"), &first).await.unwrap();
         let _ = store.list_entries(&sid("cache-test")).await.unwrap();
@@ -1261,6 +1266,7 @@ fn when_n_spill_entries_appended(world: &mut QuectoWorld, count: usize) {
                 input_preview: format!("cmd-{}", i + 1),
                 tokens: 100,
                 content: format!("output-{}\n", i + 1),
+                images: Vec::new(),
             };
             store.append(&sid("cache-test"), &entry).await.unwrap();
         }
@@ -1298,6 +1304,7 @@ fn when_recall_5th_in_10_entries(world: &mut QuectoWorld) {
                 input_preview: format!("cmd-{}", i + 1),
                 tokens: 100,
                 content: format!("output-{}\n", i + 1),
+                images: Vec::new(),
             };
             store.append(&sid("recall-test"), &entry).await.unwrap();
         }

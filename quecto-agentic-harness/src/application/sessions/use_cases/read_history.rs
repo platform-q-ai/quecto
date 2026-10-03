@@ -59,7 +59,7 @@ impl ReadHistory {
         let identity = SessionIdentity::from_persisted_key(key);
         let session = self
             .store
-            .load(&identity)
+            .load_transcript(&identity)
             .await
             .map_err(HistoryError::Store)?
             .ok_or(HistoryError::TranscriptNotFound)?;

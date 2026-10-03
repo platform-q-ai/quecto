@@ -533,6 +533,7 @@ async fn the_fakes_journal_and_fail_as_told() {
         input_preview: String::new(),
         tokens: 1,
         content: String::new(),
+        images: Vec::new(),
     };
     assert!(retention.append(&identity, &entry).await.is_ok());
     assert!(

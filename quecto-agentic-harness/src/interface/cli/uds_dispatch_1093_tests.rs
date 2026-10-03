@@ -228,6 +228,7 @@ fn spill_entry(id: &str, content: &str) -> SpillEntry {
         input_preview: String::new(),
         tokens: 4,
         content: content.into(),
+        images: Vec::new(),
     }
 }
 

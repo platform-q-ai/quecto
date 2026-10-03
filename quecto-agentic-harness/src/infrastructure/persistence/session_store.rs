@@ -1,15 +1,22 @@
 use crate::application::sessions::dto::SessionListQuery;
-use crate::application::sessions::ports::SessionStore;
-use crate::domain::message::{Message, Role, StopReason, ToolCall};
+use crate::application::sessions::ports::{SessionLoad, SessionStore};
+use crate::domain::conversation::stored_images::MessageImageRefs;
+use crate::domain::message::{Message, Role};
 use crate::domain::session::{Session, SessionSummary};
 use crate::domain::session_identity::SessionIdentity;
 use crate::domain::{error::DomainError, workflow::WorkflowRunPersisted};
-use crate::infrastructure::turn_origin_names::{self as names, origin_from_name, origin_name};
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 
+use super::session_images::ImageSidecarStore;
+use super::session_images::{SessionImages, Written};
 use super::session_layout::FlatSessionLayout;
+use std::sync::Arc;
+
+/// What a write returns: what it wrote, for the image sidecars (#2424).
+type WriteResult = Result<Written, DomainError>;
 
 /// The file-backed session store: JSON/JSONL records under the flat layout
 /// (`FlatSessionLayout` owns every path; this adapter owns the I/O).
@@ -19,6 +26,7 @@ pub struct FileSessionStore {
     ownership: super::session_ownership::SessionOwnershipRegistry,
     summaries: std::sync::Arc<std::sync::Mutex<session_store_list::SummaryCache>>,
     intact: session_store_write::IntactFiles,
+    images: SessionImages,
 }
 
 #[path = "session_store_catalogue.rs"]
@@ -43,11 +51,19 @@ impl FileSessionStore {
     /// A store over `layout`'s flat directory.
     pub fn new(layout: FlatSessionLayout) -> Self {
         Self {
+            images: SessionImages::default(),
             layout,
             summaries: Default::default(),
             ownership: super::session_ownership::SessionOwnershipRegistry::default(),
             intact: Default::default(),
         }
+    }
+
+    /// Keep the images of saved sessions with `sidecars` (#2424); without
+    /// them, images are named by reference only, and a reload sends markers.
+    pub fn with_image_sidecars(mut self, sidecars: Arc<dyn ImageSidecarStore>) -> Self {
+        self.images = SessionImages::over(sidecars);
+        self
     }
 
     #[cfg(feature = "test-support")]
@@ -75,25 +91,47 @@ impl FileSessionStore {
             return self.delete_session_file_if_present(identity).await;
         }
         self.ensure_dir().await?;
+        self.images.store(identity, messages).await?;
         let path = self.session_path(identity);
         let target = &path;
-        self.tracked(&path, |appendable| async move {
-            let must_compact = previously_persisted == 0
-                || !appendable
-                || previously_persisted > messages.len()
-                || !target.exists()
-                || !is_jsonl_session_file(target).await?;
-            compact_or_append_delta(
-                target,
-                identity,
-                messages,
-                previously_persisted,
-                workflow_run.as_ref(),
-                must_compact,
-            )
-            .await
-        })
-        .await
+        let written = self
+            .tracked(&path, |appendable| async move {
+                let must_compact = previously_persisted == 0
+                    || !appendable
+                    || previously_persisted > messages.len()
+                    || !target.exists()
+                    || !is_jsonl_session_file(target).await?;
+                compact_or_append_delta(
+                    target,
+                    identity,
+                    messages,
+                    previously_persisted,
+                    workflow_run.as_ref(),
+                    must_compact,
+                )
+                .await
+            })
+            .await?;
+        self.images.collect(identity, written).await;
+        Ok(())
+    }
+
+    /// The transcript stored for `identity`, as read; `None` when there is none.
+    async fn read_parsed(
+        &self,
+        identity: &SessionIdentity,
+    ) -> Result<Option<ParsedSession>, DomainError> {
+        let path = self.session_path(identity);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let (data, before) = self.intact.read(&path).await?;
+        let parsed = parse_session_records(&data)
+            .map_err(|e| DomainError::Session(format!("failed to parse session: {}", e)))?;
+        self.intact
+            .observe_read(&path, before, data.len(), parsed.intact)
+            .await;
+        Ok(Some(parsed))
     }
 
     async fn ensure_dir(&self) -> Result<(), DomainError> {
@@ -113,20 +151,15 @@ impl SessionStore for FileSessionStore {
         self.ownership.release(identity);
     }
 
-    fn load(
-        &self,
-        identity: &SessionIdentity,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<Session>, DomainError>> + Send + '_>> {
-        let path = self.session_path(identity);
+    fn load(&self, identity: &SessionIdentity) -> SessionLoad<'_> {
+        let identity = identity.clone();
         Box::pin(async move {
-            if !path.exists() {
+            let Some(parsed) = self.read_parsed(&identity).await? else {
                 return Ok(None);
-            }
-            let (data, before) = self.intact.read(&path).await?;
-            let (session, intact) = parse_session_records(&data)
-                .map_err(|e| DomainError::Session(format!("failed to parse session: {}", e)))?;
-            self.intact
-                .observe_read(&path, before, data.len(), intact)
+            };
+            let mut session = parsed.session;
+            self.images
+                .restore(&identity, &mut session.messages, parsed.images)
                 .await;
             Ok(Some(session))
         })
@@ -146,10 +179,14 @@ impl SessionStore for FileSessionStore {
                 return self.delete_session_file_if_present(&session.key).await;
             }
             self.ensure_dir().await?;
-            self.tracked(&path, |appendable| {
-                append_or_compact(&path, session, appendable)
-            })
-            .await
+            self.images.store(&session.key, &session.messages).await?;
+            let written = self
+                .tracked(&path, |appendable| {
+                    append_or_compact(&path, session, appendable)
+                })
+                .await?;
+            self.images.collect(&session.key, written).await;
+            Ok(())
         })
     }
 
@@ -167,17 +204,21 @@ impl SessionStore for FileSessionStore {
                 return self.delete_session_file_if_present(identity).await;
             }
             self.ensure_dir().await?;
-            self.tracked(&path, |appendable| {
-                append_known_delta(
-                    &path,
-                    identity,
-                    messages,
-                    previously_persisted,
-                    workflow_run.as_ref(),
-                    appendable,
-                )
-            })
-            .await
+            self.images.store(identity, messages).await?;
+            let written = self
+                .tracked(&path, |appendable| {
+                    append_known_delta(
+                        &path,
+                        identity,
+                        messages,
+                        previously_persisted,
+                        workflow_run.as_ref(),
+                        appendable,
+                    )
+                })
+                .await?;
+            self.images.collect(identity, written).await;
+            Ok(())
         })
     }
 
@@ -221,63 +262,45 @@ impl SessionStore for FileSessionStore {
     }
 }
 
-fn parse_session_header(data: &str) -> Result<SessionHeader<'_>, serde_json::Error> {
-    if let Ok(header) = serde_json::from_str::<SessionHeader<'_>>(data) {
-        return Ok(header);
-    }
-
-    let mut key = std::borrow::Cow::Borrowed("");
-    let mut messages = Vec::new();
-    let mut parsed_any = false;
-    for line in data.lines().filter(|line| !line.trim().is_empty()) {
-        let record: SessionRecord = match serde_json::from_str(line) {
-            Ok(record) => record,
-            Err(err) if parsed_any => {
-                tracing::warn!(error = %err, "ignoring incomplete trailing session record");
-                break;
-            }
-            Err(err) => return Err(err),
-        };
-        parsed_any = true;
-        match record {
-            SessionRecord::Snapshot(file) => {
-                key = file.key.into();
-                messages = file
-                    .messages
-                    .into_iter()
-                    .map(|message| MessageHeader {
-                        role: message.role.into(),
-                        content: message.content.into(),
-                    })
-                    .collect();
-            }
-            SessionRecord::Append {
-                messages: added, ..
-            } => {
-                messages.extend(added.into_iter().map(|message| MessageHeader {
-                    role: message.role.into(),
-                    content: message.content.into(),
-                }));
-            }
-        }
-    }
-    Ok(SessionHeader { key, messages })
-}
-
 fn parse_session_data(data: &str) -> Result<Session, serde_json::Error> {
-    parse_session_records(data).map(|(session, _)| session)
+    parse_session_records(data).map(|parsed| parsed.session)
 }
 
-/// The session `data` holds, and whether every record of it was read and
-/// the last one is terminated: an append may follow only an intact file.
-fn parse_session_records(data: &str) -> Result<(Session, bool), serde_json::Error> {
+/// A transcript as read (#2424): the session, its messages' image
+/// references by message index (restored from the sidecars on load), and
+/// whether every record was read and the last one is terminated: an append
+/// may follow only an intact file.
+struct ParsedSession {
+    session: Session,
+    images: BTreeMap<usize, MessageImageRefs>,
+    intact: bool,
+}
+
+impl ParsedSession {
+    /// The record the message at `index` was read from.
+    fn record_at(&self, index: usize) -> MessageRecord {
+        static NO_IMAGES: MessageImageRefs = MessageImageRefs::NONE;
+        let images = self.images.get(&index).unwrap_or(&NO_IMAGES);
+        record_with_images(&self.session.messages[index], images)
+    }
+}
+
+/// The session `data` holds; see [`ParsedSession`].
+fn parse_session_records(data: &str) -> Result<ParsedSession, serde_json::Error> {
     if let Ok(file) = serde_json::from_str::<SessionFile>(data) {
         // One snapshot line (a legacy plain-JSON file is compacted anyway).
-        return Ok((session_from_file(file), data.ends_with('\n')));
+        let (session, images) = session_from_file_and_images(file);
+        let intact = data.ends_with('\n');
+        return Ok(ParsedSession {
+            session,
+            images,
+            intact,
+        });
     }
     let mut intact = data.ends_with('\n');
 
     let mut session: Option<Session> = None;
+    let mut images = BTreeMap::new();
     let mut parsed_any = false;
     for line in data.lines().filter(|line| !line.trim().is_empty()) {
         let record: SessionRecord = match serde_json::from_str(line) {
@@ -291,7 +314,10 @@ fn parse_session_records(data: &str) -> Result<(Session, bool), serde_json::Erro
         };
         parsed_any = true;
         match record {
-            SessionRecord::Snapshot(file) => session = Some(session_from_file(file)),
+            SessionRecord::Snapshot(file) => {
+                let (read, read_images) = session_from_file_and_images(file);
+                (session, images) = (Some(read), read_images);
+            }
             SessionRecord::Append {
                 start_index,
                 messages,
@@ -311,9 +337,13 @@ fn parse_session_records(data: &str) -> Result<(Session, bool), serde_json::Erro
                             break;
                         }
                     }
-                    session
-                        .messages
-                        .extend(messages.into_iter().map(record_to_message));
+                    for record in messages {
+                        let (message, refs) = record_to_message_and_images(record);
+                        if !refs.is_empty() {
+                            images.insert(session.messages.len(), refs);
+                        }
+                        session.messages.push(message);
+                    }
                     if workflow_run_cleared {
                         session.workflow_run = None;
                     } else if workflow_run.is_some() {
@@ -329,18 +359,35 @@ fn parse_session_records(data: &str) -> Result<(Session, bool), serde_json::Erro
     let session = session
         .map(session_store_ordinals::with_assigned_ordinals)
         .unwrap_or_else(|| Session::new(SessionIdentity::ephemeral()));
-    Ok((session, intact))
+    Ok(ParsedSession {
+        session,
+        images,
+        intact,
+    })
 }
 
 fn session_from_file(file: SessionFile) -> Session {
-    let messages =
-        assign_missing_ordinals(file.messages.into_iter().map(record_to_message).collect());
-    Session {
+    session_from_file_and_images(file).0
+}
+
+/// A snapshot's session, and its messages' image references by index.
+fn session_from_file_and_images(file: SessionFile) -> (Session, BTreeMap<usize, MessageImageRefs>) {
+    let mut images = BTreeMap::new();
+    let mut messages = Vec::with_capacity(file.messages.len());
+    for (index, record) in file.messages.into_iter().enumerate() {
+        let (message, refs) = record_to_message_and_images(record);
+        if !refs.is_empty() {
+            images.insert(index, refs);
+        }
+        messages.push(message);
+    }
+    let session = Session {
         key: SessionIdentity::from_persisted_key(file.key),
-        messages,
+        messages: assign_missing_ordinals(messages),
         workflow_run: file.workflow_run,
         subagent_roster: file.subagent_roster,
-    }
+    };
+    (session, images)
 }
 
 async fn is_jsonl_session_file(path: &Path) -> Result<bool, DomainError> {
@@ -385,106 +432,6 @@ fn first_user_message(messages: &[MessageHeader<'_>]) -> String {
         .filter(|s| !s.is_empty())
         .map(|s| s.chars().take(TRANSPORT_CHAR_CAP).collect())
         .unwrap_or_default()
-}
-
-fn message_to_record_ref(msg: &Message) -> MessageRecordRef<'_> {
-    MessageRecordRef {
-        ordinal: msg.ordinal,
-        role: role_to_str(&msg.role),
-        content: crate::domain::conversation::user_images::stored_text(msg),
-        tool_calls: msg
-            .tool_calls
-            .iter()
-            .map(|tc| ToolCallRecordRef {
-                id: &tc.id,
-                name: &tc.name,
-                arguments: &tc.arguments,
-            })
-            .collect(),
-        tool_call_id: msg.tool_call_id.as_deref(),
-        turn: msg.turn,
-        is_pinned: Some(msg.is_pinned),
-        is_manifest: msg.is_manifest,
-        is_collapsed: msg.is_collapsed,
-        turn_origin: origin_name(msg.turn_origin),
-        user_kind: names::user_kind_name(msg.user_kind),
-        tool_name: msg.tool_name.as_deref(),
-        input_preview: msg.input_preview.as_deref(),
-        spill_id: msg.spill_id.as_deref(),
-        is_error: msg.is_error,
-        stop_reason: msg.stop_reason.as_ref().map(|sr| sr.to_string()),
-        thinking_blocks: msg
-            .thinking_blocks
-            .iter()
-            .map(ThinkingBlockRecordRef::from)
-            .collect(),
-    }
-}
-
-fn message_to_record(msg: &Message) -> MessageRecord {
-    MessageRecord {
-        ordinal: msg.ordinal,
-        role: role_to_str(&msg.role).to_string(),
-        content: crate::domain::conversation::user_images::stored_text(msg).into_owned(),
-        tool_calls: msg
-            .tool_calls
-            .iter()
-            .map(|tc| ToolCallRecord {
-                id: tc.id.clone(),
-                name: tc.name.clone(),
-                arguments: tc.arguments.clone(),
-            })
-            .collect(),
-        tool_call_id: msg.tool_call_id.clone(),
-        turn: msg.turn,
-        is_pinned: Some(msg.is_pinned),
-        is_manifest: msg.is_manifest,
-        is_collapsed: msg.is_collapsed,
-        turn_origin: origin_name(msg.turn_origin).map(str::to_string),
-        user_kind: names::user_kind_name(msg.user_kind).map(str::to_string),
-        tool_name: msg.tool_name.clone(),
-        input_preview: msg.input_preview.clone(),
-        spill_id: msg.spill_id.clone(),
-        is_error: msg.is_error,
-        stop_reason: msg.stop_reason.as_ref().map(|sr| sr.to_string()),
-        thinking_blocks: msg
-            .thinking_blocks
-            .iter()
-            .map(ThinkingBlockRecord::from)
-            .collect(),
-    }
-}
-
-fn record_to_message(rec: MessageRecord) -> Message {
-    let tool_calls = rec
-        .tool_calls
-        .into_iter()
-        .map(|tc| ToolCall {
-            id: tc.id,
-            name: tc.name,
-            arguments: tc.arguments,
-        })
-        .collect();
-    let mut msg = match str_to_role(&rec.role) {
-        Role::System => Message::system(rec.content),
-        Role::User => Message::user(rec.content),
-        Role::Assistant => Message::assistant(rec.content, tool_calls),
-        Role::Tool => Message::tool(rec.tool_call_id.unwrap_or_default(), rec.content),
-    };
-    msg.ordinal = rec.ordinal;
-    msg.turn = rec.turn;
-    msg.is_manifest = rec.is_manifest;
-    msg.is_collapsed = rec.is_collapsed;
-    msg.turn_origin = origin_from_name(rec.turn_origin.as_deref());
-    msg.user_kind = names::user_kind_from_name(rec.user_kind.as_deref());
-    msg.tool_name = rec.tool_name;
-    msg.input_preview = rec.input_preview;
-    msg.spill_id = rec.spill_id;
-    msg.is_error = rec.is_error;
-    msg.stop_reason = rec.stop_reason.as_deref().map(StopReason::parse);
-    msg.is_pinned = rec.is_pinned.unwrap_or(msg.is_pinned);
-    msg.thinking_blocks = rec.thinking_blocks.into_iter().map(Into::into).collect();
-    msg
 }
 
 #[cfg(test)]

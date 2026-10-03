@@ -1,5 +1,6 @@
 use super::*;
 use crate::application::sessions::dto::SessionListQuery;
+use crate::domain::message::ToolCall;
 use crate::domain::session_identity::SessionIdentity;
 use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
 use tempfile::TempDir;

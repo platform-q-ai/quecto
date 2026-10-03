@@ -447,6 +447,7 @@ async fn mock_spill_store_trait_surface_recalls_and_clears() {
         input_preview: "echo".into(),
         tokens: 2,
         content: "out".into(),
+        images: Vec::new(),
     };
     store.append(&id("s"), &entry).await.unwrap();
     assert_eq!(
@@ -482,3 +483,6 @@ async fn failing_spill_store_trait_surface_errors_on_recall_and_clear() {
     );
     assert!(store.clear(&id("s")).await.is_ok());
 }
+
+#[path = "agent_loop_spill_images_tests.rs"]
+mod images;

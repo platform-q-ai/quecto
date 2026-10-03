@@ -143,6 +143,7 @@ pub async fn spill_conversation_message(
         input_preview: truncate_utf8_safe(&content, 100).into_owned(),
         tokens: estimate_tokens(&content),
         content,
+        images: Vec::new(),
     };
     let result = retain.retain_deduplicated(session_key, &mut entry).await;
     // Restore content back into the message (entry is consumed here).

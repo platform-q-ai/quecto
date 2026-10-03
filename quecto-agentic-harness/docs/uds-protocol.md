@@ -120,9 +120,11 @@ large ones may not.
 
 History never carries the base64 back: a user message that carried images
 shows `imageCount` and `imageMimeTypes` in `get_messages`, `get_message` and
-`sync` (see [`get_messages`](#get_messages)). The images are not saved with
-the session yet (#2424): an images-only message is saved as one `[image]`
-line per image, so a resumed session never replays an empty turn.
+`sync` (see [`get_messages`](#get_messages)), counting an image a resumed
+session could not load too. The images are saved with the session (#2424, see
+the sessions guide) and restored on resume, re-admitted by the same rules; the
+message's text is saved exactly as sent, so a resumed session's request is
+the one before, byte for byte.
 
 ```json
 {"type":"prompt","id":"p-2","message":"What is in this screenshot?","images":[{"mimeType":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAA..."}]}

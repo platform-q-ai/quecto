@@ -6,6 +6,7 @@ use crate::application::sessions::ports::{FreshSessionIdentityGenerator, Session
 use crate::application::sessions::use_cases::ListSessions;
 use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
 use crate::infrastructure::persistence::fresh_session_identity::ProcessClockIdentityGenerator;
+use crate::infrastructure::persistence::session_images::FileImageSidecarStore;
 use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::interface::cli::retention_handles::RetentionHandles;
@@ -14,23 +15,23 @@ use std::sync::Arc;
 
 pub use crate::interface::cli::uds_session_handles::{SessionHandles, SessionLoopInputs};
 
-/// The generator of fresh user-chat identities (D7 #1976): the process
-/// clock and counter adapter, shared by the startup key of a chat run and
-/// by every fresh-session transaction of the process.
+/// The generator of fresh user-chat identities (D7 #1976): the process clock and counter adapter,
+/// shared by the startup key of a chat run and by every fresh-session transaction of the process.
 pub fn build_fresh_session_identity() -> Arc<dyn FreshSessionIdentityGenerator> {
     Arc::new(ProcessClockIdentityGenerator::new())
 }
 
 /// The file session store of one base directory: the one flat layout and
-/// the record adapter over it.
+/// the record adapter over it, with its image sidecars (#2424).
 pub fn build_file_session_store(base_dir: &std::path::Path) -> FileSessionStore {
-    FileSessionStore::new(FlatSessionLayout::new(base_dir))
+    let layout = FlatSessionLayout::new(base_dir);
+    let sidecars = Arc::new(FileImageSidecarStore::new(layout.clone()));
+    FileSessionStore::new(layout).with_image_sidecars(sidecars)
 }
 
-/// The retained-context handles of one run (D9 #1978): the file retention
-/// store of `base_dir`, over the same flat layout as the session store,
-/// and the recall/retain/list graph over it. Built once per run, before
-/// the tool registry and the agent loop that consume it.
+/// The retained-context handles of one run (D9 #1978): the file retention store of `base_dir`, over
+/// the same flat layout as the session store, and the recall/retain/list graph over it. Built once
+/// per run, before the tool registry and the agent loop that consume it.
 pub fn build_retention_handles(base_dir: &std::path::Path) -> RetentionHandles {
     super::retention::retention_handles_over(Arc::new(FileContextSpillStore::new(
         FlatSessionLayout::new(base_dir),
@@ -39,8 +40,7 @@ pub fn build_retention_handles(base_dir: &std::path::Path) -> RetentionHandles {
 
 /// The handles one loop holds, over the file store of `inputs.base_dir`.
 pub fn build_session_handles(inputs: SessionLoopInputs) -> SessionHandles {
-    let store = Arc::new(build_file_session_store(&inputs.base_dir));
-    build_session_handles_over(store, inputs)
+    build_session_handles_over(Arc::new(build_file_session_store(&inputs.base_dir)), inputs)
 }
 
 /// The handles one loop holds over `store` (a rig's own, or the one just

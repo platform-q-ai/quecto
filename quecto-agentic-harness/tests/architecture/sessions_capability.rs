@@ -189,6 +189,11 @@ const CANONICAL_FILES: &[&str] = &[
     "src/domain/conversation_edit.rs",
     "src/infrastructure/persistence/session_layout.rs",
     "src/domain/session_identity.rs",
+    // #2424: a saved session's image sidecars: the store's image steps, the
+    // seam inside persistence and its file adapter.
+    "src/infrastructure/persistence/session_images/sidecar_store.rs",
+    "src/infrastructure/persistence/session_images/mod.rs",
+    "src/infrastructure/persistence/session_images/file_sidecar_store.rs",
 ];
 
 /// The ports of the capability, each with its contract suite (R2 subset).
@@ -272,6 +277,8 @@ const COMPOSED_CONSTRUCTORS: &[(&str, &str)] = &[
         "src/composition/session_search.rs",
     ),
     ("FileSessionStore::new(", "src/composition/sessions.rs"),
+    // #2424: the image sidecars composition wires into the file store.
+    ("FileImageSidecarStore::new(", "src/composition/sessions.rs"),
     (
         "ActiveSessionState::new(",
         "src/composition/active_session.rs",
@@ -801,8 +808,11 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // removes (`session_store_home.rs`); the store is back at 687.
     // #2218: the writes, their fsync and the append-or-compact decisions
     // and the intactness record moved to `session_store_write.rs` (656 → 510).
-    ("src/infrastructure/persistence/session_store.rs", 510),
-    ("src/infrastructure/persistence/session_store_write.rs", 389),
+    // #2424: the message record conversions and the list's header parse moved
+    // beside the records they read (`session_store_records.rs`, 510 → 475);
+    // the image steps are `session_images/` (the write: 389 → 387).
+    ("src/infrastructure/persistence/session_store.rs", 475),
+    ("src/infrastructure/persistence/session_store_write.rs", 387),
     (
         "src/infrastructure/persistence/session_store_catalogue.rs",
         23,

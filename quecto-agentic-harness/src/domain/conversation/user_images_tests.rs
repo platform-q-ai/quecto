@@ -57,24 +57,6 @@ fn attaching_images_drops_the_cached_token_estimate() {
     assert!(message.estimated_tokens() > text_only);
 }
 
-#[test]
-fn an_images_only_message_is_saved_with_one_placeholder_per_image() {
-    let two = Message::user("").with_user_images(vec![block("image/png"), block("image/png")]);
-    assert_eq!(super::stored_text(&two), "[image]\n[image]");
-    let with_text = Message::user("look").with_user_images(vec![block("image/png")]);
-    assert_eq!(super::stored_text(&with_text), "look");
-    assert_eq!(super::stored_text(&Message::user("")), "");
-    assert_eq!(super::stored_text(&Message::user("hi")), "hi");
-}
-
-/// Whitespace with an image is an images-only message (#2422 review L4).
-#[test]
-fn whitespace_and_an_image_is_saved_with_the_placeholder() {
-    let spaced = Message::user("  \n\t ").with_user_images(vec![block("image/png")]);
-    assert_eq!(super::stored_text(&spaced), "[image]");
-    assert_eq!(super::stored_text(&Message::user("  ")), "  ");
-}
-
 /// What persistence kept is re-admitted, never trusted (#2422 review L1).
 #[test]
 fn a_restored_block_is_readmitted_by_the_strict_rules() {

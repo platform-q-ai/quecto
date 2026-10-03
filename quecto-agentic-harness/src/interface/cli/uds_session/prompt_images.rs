@@ -1,6 +1,7 @@
 //! What a `prompt`, `steer` or `follow_up` puts in the conversation (#2403,
 //! #2422): its text and the images admitted at dispatch, and what history
 //! says about those images (how many, of which types, never their base64).
+use crate::domain::conversation::stored_images::user_image_types;
 use crate::domain::message::{Message, UserImageBlock};
 use crate::domain::turn_origin::{harness_note, instruction, prompt};
 
@@ -67,32 +68,27 @@ impl From<&str> for PromptBody {
     }
 }
 
-/// The types of the images a user message carried, in order.
-fn image_mime_types(msg: &Message) -> Vec<&str> {
-    msg.user_image_blocks
-        .iter()
-        .map(|image| image.mime_type())
-        .collect()
-}
-
-/// `imageCount` / `imageMimeTypes` on a message that carried images; a
+/// `imageCount` / `imageMimeTypes` on a message that carried images, loaded
+/// or not (#2424: an image a session could not load still counts); a
 /// text-only message's fields are unchanged.
 pub(super) fn serialize_image_summary<S: serde::ser::SerializeStruct>(
     s: &mut S,
     msg: &Message,
 ) -> Result<(), S::Error> {
-    if msg.user_image_blocks.is_empty() {
+    let types = user_image_types(msg);
+    if types.is_empty() {
         return Ok(());
     }
-    s.serialize_field("imageCount", &msg.user_image_blocks.len())?;
-    s.serialize_field("imageMimeTypes", &image_mime_types(msg))
+    s.serialize_field("imageCount", &types.len())?;
+    s.serialize_field("imageMimeTypes", &types)
 }
 
 /// [`serialize_image_summary`] for a message already built as JSON.
 pub(crate) fn add_image_summary(value: &mut serde_json::Value, msg: &Message) {
-    if msg.user_image_blocks.is_empty() {
+    let types = user_image_types(msg);
+    if types.is_empty() {
         return;
     }
-    value["imageCount"] = serde_json::json!(msg.user_image_blocks.len());
-    value["imageMimeTypes"] = serde_json::json!(image_mime_types(msg));
+    value["imageCount"] = serde_json::json!(types.len());
+    value["imageMimeTypes"] = serde_json::json!(types);
 }

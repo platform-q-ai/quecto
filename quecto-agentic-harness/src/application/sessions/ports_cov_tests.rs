@@ -93,6 +93,7 @@ async fn context_spill_store_default_has_entries_reflects_list_entries() {
                 input_preview: "echo".to_string(),
                 tokens: 3,
                 content: "out".to_string(),
+                images: Vec::new(),
             },
         )
         .await
@@ -120,6 +121,7 @@ async fn context_spill_store_default_scrub_is_a_no_op_for_stores_without_durable
                 input_preview: "ls".to_string(),
                 tokens: 1,
                 content: "x".to_string(),
+                images: Vec::new(),
             },
         )
         .await
@@ -142,6 +144,7 @@ async fn in_memory_spill_store_trait_surface_recalls_and_clears() {
         input_preview: "needle".to_string(),
         tokens: 7,
         content: "haystack".to_string(),
+        images: Vec::new(),
     };
 
     store.append(&id("s"), &entry).await.expect("append");

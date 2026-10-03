@@ -195,6 +195,7 @@ async fn test_spill_store_clear_removes_entries_and_recall() {
         content: "ls output".into(),
         input_preview: r#"{"command": "ls"}"#.into(),
         tokens: 42,
+        images: Vec::new(),
     };
     store.append(key, &entry).await.unwrap();
     assert_eq!(store.list_entries(key).await.unwrap().len(), 1);

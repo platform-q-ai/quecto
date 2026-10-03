@@ -39,6 +39,7 @@ fn records() -> Vec<ExportRecord> {
             input_preview: "ls".into(),
             tokens: 2,
             content: "listing".into(),
+            images: Vec::new(),
         }),
     ]
 }

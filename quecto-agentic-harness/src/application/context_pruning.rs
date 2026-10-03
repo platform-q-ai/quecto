@@ -78,7 +78,7 @@ fn collapse_message(msg: &mut Message) {
     msg.invalidate_token_cache();
     msg.is_collapsed = true;
     // Release image data — no longer needed after collapse (spilled to disk).
-    msg.image_blocks.clear();
+    crate::domain::conversation::stored_images::release_images(msg);
 }
 
 /// Default number of most-recent turns the emergency ladder never demotes

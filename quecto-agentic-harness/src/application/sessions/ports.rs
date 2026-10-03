@@ -8,9 +8,7 @@
 //! operation is keyed by the typed [`SessionIdentity`], never by a raw
 //! string, filename or path.
 pub mod export;
-use std::future::Future;
-use std::pin::Pin;
-
+use std::{future::Future, pin::Pin};
 pub mod session_runtime;
 pub mod session_transition;
 pub use session_runtime::{DurablePrefixObservation, HistoricalRosterSource, WorkflowRunSource};
@@ -29,15 +27,16 @@ use crate::domain::workflow::WorkflowRunPersisted;
 pub type SpillIndexList<'a> =
     Pin<Box<dyn Future<Output = Result<SpillEntries, DomainError>> + Send + 'a>>;
 pub type SpillPresence<'a> = Pin<Box<dyn Future<Output = Result<bool, DomainError>> + Send + 'a>>;
+pub type SessionLoad<'a> =
+    Pin<Box<dyn Future<Output = Result<Option<Session>, DomainError>> + Send + 'a>>;
 
 /// Port: persistent storage for conversation sessions.
 pub trait SessionStore: Send + Sync {
-    /// Claim single-writer ownership of `identity` before opening or
-    /// resuming it for writing (#1460): a key owned by another live process
-    /// must be refused HERE, at open time, not only when the first turn is
-    /// saved — otherwise a whole paid turn can run before the conflict
-    /// surfaces. Default is a no-op for stores without cross-process shared
-    /// state.
+    /// Claim single-writer ownership of `identity` before opening or resuming it
+    /// for writing (#1460): a key owned by another live process must be refused
+    /// HERE, at open time, not only when the first turn is saved — otherwise a
+    /// whole paid turn can run before the conflict surfaces. Default is a no-op
+    /// for stores without cross-process shared state.
     fn claim(&self, _identity: &SessionIdentity) -> Result<(), DomainError> {
         Ok(())
     }
@@ -47,10 +46,12 @@ pub trait SessionStore: Send + Sync {
     fn release(&self, _identity: &SessionIdentity) {}
 
     /// Load a session by identity. Returns None if no session exists.
-    fn load(
-        &self,
-        identity: &SessionIdentity,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<Session>, DomainError>> + Send + '_>>;
+    fn load(&self, identity: &SessionIdentity) -> SessionLoad<'_>;
+
+    /// [`Self::load`] naming the images kept beside the records, reading none (#2424).
+    fn load_transcript<'a>(&'a self, identity: &'a SessionIdentity) -> SessionLoad<'a> {
+        self.load(identity)
+    }
 
     /// Save (create or update) a session under its own identity.
     fn save<'a>(
@@ -93,13 +94,12 @@ pub trait SessionStore: Send + Sync {
         identity: &SessionIdentity,
     ) -> Pin<Box<dyn Future<Output = Result<bool, DomainError>> + Send + '_>>;
 
-    /// List persisted sessions, newest first when modification times are
-    /// available. A [`SessionListQuery::ExistingKeyPrefix`] returns only the
-    /// sessions whose identity starts with the prefix; the adapter uses it
-    /// to skip non-matching files cheaply (without reading/parsing them).
-    /// A SUMMARY-ONLY view, not a load guarantee: summaries may come from a
-    /// lightweight projection, so a listed [`SessionSummary`] does not
-    /// guarantee [`Self::load`] succeeds; callers handle a load failure.
+    /// List persisted sessions, newest first when modification times are available. A
+    /// [`SessionListQuery::ExistingKeyPrefix`] returns only the sessions whose identity starts
+    /// with the prefix; the adapter uses it to skip non-matching files cheaply (without
+    /// reading/parsing them). A SUMMARY-ONLY view, not a load guarantee: summaries may come
+    /// from a lightweight projection, so a listed [`SessionSummary`] does not guarantee
+    /// [`Self::load`] succeeds; callers handle a load failure.
     fn list(
         &self,
         query: &SessionListQuery,

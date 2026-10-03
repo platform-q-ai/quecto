@@ -15,6 +15,7 @@ fn entry(id: &str) -> SpillEntry {
         input_preview: "echo hi".into(),
         tokens: 12,
         content: "hi\n".into(),
+        images: Vec::new(),
     }
 }
 
@@ -153,6 +154,7 @@ async fn w5_context_spill_cache_recall_and_clear_error_paths() {
         input_preview: "preview".into(),
         tokens: 1,
         content: "mentions target but id differs".into(),
+        images: Vec::new(),
     }))
     .unwrap();
     tokio::fs::write(&path, format!("\n{{bad json target\n{rec}\n"))

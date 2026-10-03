@@ -2,6 +2,7 @@
 
 pub mod image_input;
 pub mod image_tokens;
+pub mod stored_images;
 pub mod user_images;
 pub mod watermark;
 pub mod watermark_cut;

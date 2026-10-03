@@ -28,10 +28,7 @@ fn user_with_images(text: &str, count: usize) -> Message {
 fn tool_with_image(id: &str, text: &str) -> Message {
     let mut message = Message::tool(id, text);
     message.tool_name = Some("read".into());
-    message.image_blocks = vec![ImageBlock {
-        mime_type: "image/jpeg",
-        data: "anBn".into(),
-    }];
+    message.image_blocks = vec![ImageBlock::new("image/jpeg", "anBn")];
     message
 }
 
@@ -43,18 +40,9 @@ fn gif(frames: usize) -> String {
 fn tool_with_gif(id: &str, frames: usize) -> Message {
     let mut message = Message::tool(id, "Read image file a.gif");
     message.image_blocks = vec![
-        ImageBlock {
-            mime_type: "image/png",
-            data: "cG5n".into(),
-        },
-        ImageBlock {
-            mime_type: "image/gif",
-            data: gif(frames),
-        },
-        ImageBlock {
-            mime_type: "image/jpeg",
-            data: "anBn".into(),
-        },
+        ImageBlock::new("image/png", "cG5n"),
+        ImageBlock::new("image/gif", gif(frames)),
+        ImageBlock::new("image/jpeg", "anBn"),
     ];
     message
 }

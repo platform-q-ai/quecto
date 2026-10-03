@@ -79,6 +79,7 @@ impl ContextSpillStore for FakeSpill {
                     input_preview: "ls".into(),
                     tokens: 3,
                     content: format!("content of {id}"),
+                    images: Vec::new(),
                 })),
             }
         })

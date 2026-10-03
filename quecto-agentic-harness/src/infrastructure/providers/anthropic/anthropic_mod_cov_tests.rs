@@ -185,10 +185,8 @@ fn parse_response_ignores_unknown_block_type() {
 #[test]
 fn tool_result_block_with_images_uses_array_content() {
     let mut m = Message::tool("tc1", "see attached");
-    m.image_blocks.push(ImageBlock {
-        mime_type: "image/png",
-        data: "base64data".to_string(),
-    });
+    m.image_blocks
+        .push(ImageBlock::new("image/png", "base64data".to_string()));
     let json = AnthropicProvider::build_tool_result_message_public(&m);
     let block = &json["content"][0];
     let inner = block["content"].as_array().expect("array content");
