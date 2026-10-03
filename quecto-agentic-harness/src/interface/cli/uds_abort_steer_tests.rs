@@ -7,7 +7,6 @@
 
 use super::dispatch_test_env::{DispatchTestEnv as Env, make_dispatch_test_agent};
 use crate::application::providers::ports::LlmProvider;
-use crate::interface::cli::protocol::{AgentCommand, StreamingBehavior};
 use crate::interface::cli::uds_session::PendingMessage;
 use crate::interface::shared::WorkflowStateHandle;
 
@@ -86,12 +85,9 @@ async fn busy_prompt_with_steer_behavior_is_queued() {
     {
         let mut ctx = env.ctx();
         super::uds_dispatch::dispatch_command(
-            AgentCommand::Prompt {
-                id: Some("s".into()),
-                message: "say steered".into(),
-                streaming_behavior: Some(StreamingBehavior::Steer),
-                images: Vec::new(),
-            },
+            serde_json::from_value(serde_json::json!({"type": "prompt", "id": "s",
+                "message": "say steered", "streamingBehavior": "steer"}))
+            .unwrap(),
             &mut ctx,
         )
         .await;

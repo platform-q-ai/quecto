@@ -26,12 +26,7 @@ use crate::interface::cli::uds::{inject_system_prompt, remove_injected_system_pr
 use crate::interface::cli::uds_session::{HISTORY_PAGE_SIZE, messages_page_json};
 
 fn prompt(message: &str) -> AgentCommand {
-    AgentCommand::Prompt {
-        id: None,
-        message: message.into(),
-        streaming_behavior: None,
-        images: Vec::new(),
-    }
+    serde_json::from_value(serde_json::json!({"type": "prompt", "message": message})).unwrap()
 }
 
 fn durable_contents(messages: &[Message]) -> Vec<&str> {
