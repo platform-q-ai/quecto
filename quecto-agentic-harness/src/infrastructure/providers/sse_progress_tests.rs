@@ -98,3 +98,28 @@ fn chat_chunks_carry_output_by_what_they_hold() {
     }
     assert!(!carries_output(r#"{"choices":[]}"#));
 }
+
+/// #2433 review L5: a tool call is output once it names a function or
+/// carries arguments; an empty one, and a Responses or Messages call just
+/// opened, are not.
+#[test]
+fn an_empty_or_just_opened_tool_call_is_no_output() {
+    let none = [
+        r#"{"type":"response.output_item.added","item":{"type":"function_call","name":"f","arguments":""}}"#,
+        r#"{"type":"response.function_call_arguments.delta","delta":""}"#,
+        r#"{"type":"content_block_start","content_block":{"type":"tool_use","name":"f","input":{}}}"#,
+        r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0}]}}]}"#,
+        r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"","arguments":""}}]}}]}"#,
+    ];
+    for data in none {
+        assert!(!carries_output(data), "{data}");
+    }
+    let output = [
+        r#"{"type":"response.output_item.done","item":{"type":"function_call","name":"f","arguments":"{}"}}"#,
+        r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"f"}}]}}]}"#,
+        r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{"}}]}}]}"#,
+    ];
+    for data in output {
+        assert!(carries_output(data), "{data}");
+    }
+}

@@ -15,15 +15,18 @@ use crate::domain::provider_error::{ProviderErrorClass, classify_provider_error}
 
 /// The progress bound: well under the idle bound, well over the gaps.
 const PROGRESS: Duration = Duration::from_millis(500);
-/// The gap between events: ten a second, as in the reported stall.
-const EVERY: Duration = Duration::from_millis(100);
+/// The gap between events: fast enough that the events a stall needs
+/// ([`super::stream_idle::PROGRESS_EVENTS`]) come within the bound.
+const EVERY: Duration = Duration::from_millis(1);
 
 /// The vendor's event that carries no output, sent again and again.
 fn no_output(vendor: Vendor) -> &'static str {
     match vendor {
         Vendor::Codex => "data: {\"type\":\"response.in_progress\",\"response\":{}}\n\n",
         Vendor::OpenAi => "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\"}}]}\n\n",
-        Vendor::Anthropic => "event: ping\ndata: {\"type\":\"ping\"}\n\n",
+        Vendor::Anthropic => {
+            "event: content_block_delta\ndata: {\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"\"}}\n\n"
+        }
     }
 }
 
@@ -115,5 +118,33 @@ async fn output_among_the_events_keeps_a_reply_going() {
         };
         let outlived = tokio::time::timeout(PROGRESS * 4, reading).await;
         assert!(outlived.is_err(), "{vendor:?} ended early: {outlived:?}");
+    }
+}
+
+/// #2433 review H1: Anthropic's `ping`s while it thinks in hiding are no
+/// stall: a reply sending only them is not cut by the progress bound.
+#[tokio::test]
+async fn pings_alone_are_not_cut_by_the_progress_bound() {
+    let ping = "event: ping\ndata: {\"type\":\"ping\"}\n\n";
+    for gated in [false, true] {
+        let url = servers::repeating(ping, ping, Duration::from_millis(100)).await;
+        let provider = Vendor::Anthropic.bounded_provider(url, gated, bounds());
+        let messages = vec![
+            crate::domain::message::Message::system("sys"),
+            crate::domain::message::Message::user("hi"),
+        ];
+        let trace = super::stream_idle_provider_tests::traced();
+        let request = super::stream_idle_provider_tests::request(&messages, &trace);
+        let mut rx = provider.chat_stream_incremental(request).await;
+        let reading = async {
+            while let Some(event) = rx.recv().await {
+                if let StreamEvent::Error(error) = event {
+                    return Some(error);
+                }
+            }
+            None
+        };
+        let outlived = tokio::time::timeout(PROGRESS * 4, reading).await;
+        assert!(outlived.is_err(), "gated={gated}: {outlived:?}");
     }
 }
