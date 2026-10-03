@@ -522,3 +522,60 @@ async fn every_path_reads_the_same_lines_as_events() {
         }
     }
 }
+
+/// #2433: each attempt's record counts its events by type, so the next
+/// stall names the event that repeated.
+#[tokio::test]
+async fn each_attempt_counts_its_event_types() {
+    let replies: [(Vendor, &[&str], serde_json::Value); 3] = [
+        (
+            Vendor::Codex,
+            &[
+                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"a\"}\n\n",
+                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"b\"}\n\n",
+                "data: {\"type\":\"response.completed\",\"response\":{}}\n\n",
+            ],
+            serde_json::json!({"response.output_text.delta": 2, "response.completed": 1}),
+        ),
+        (
+            Vendor::OpenAi,
+            &[
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"a\"}}]}\n\n",
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"b\"},\"finish_reason\":\"stop\"}]}\n\n",
+                "data: [DONE]\n\n",
+            ],
+            serde_json::json!({"chat.delta.content": 2, "[DONE]": 1}),
+        ),
+        (
+            Vendor::Anthropic,
+            &[
+                "event: content_block_start\ndata: {\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+                "event: content_block_delta\ndata: {\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"a\"}}\n\n",
+                "event: content_block_delta\ndata: {\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"b\"}}\n\n",
+                "event: content_block_stop\ndata: {\"index\":0}\n\n",
+                "event: message_stop\ndata: {}\n\n",
+            ],
+            serde_json::json!({
+                "content_block_start": 1, "content_block_delta": 2,
+                "content_block_stop": 1, "message_stop": 1,
+            }),
+        ),
+    ];
+    for (vendor, events, expected) in replies {
+        for gated in [false, true] {
+            let url = servers::trickling(events).await;
+            let messages = vec![Message::system("sys"), Message::user("hi")];
+            let trace = traced();
+            let provider = vendor.provider(url, gated, LIVE);
+            bounded(provider.chat_stream(request(&messages, &trace)))
+                .await
+                .unwrap();
+            let records = trace.attempt_diagnostics();
+            let recorded = serde_json::to_value(&records[0]).unwrap();
+            assert_eq!(
+                recorded["event_types"], expected,
+                "{vendor:?} gated={gated}"
+            );
+        }
+    }
+}

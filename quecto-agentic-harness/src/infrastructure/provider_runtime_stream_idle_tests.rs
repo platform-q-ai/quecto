@@ -170,3 +170,38 @@ fn the_allowed_range_is_thirty_seconds_to_half_an_hour() {
         "providers.openai: stream_idle_seconds must be within 30–1800 seconds, got 5"
     );
 }
+
+/// #2433: the output progress limit is configured beside the idle limit,
+/// `stream_progress_seconds` / `streamProgressSeconds`, within 60–3600 s.
+#[test]
+fn a_progress_limit_out_of_range_fails_or_skips() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let entry = |seconds: u64| {
+        config(serde_json::json!({"openai": {
+            "api_key": "sk-test", "api_base": "http://127.0.0.1:9/v1",
+            "stream_progress_seconds": seconds,
+        }}))
+    };
+    for seconds in [0, 59, 3601] {
+        let err = compose(&entry(seconds), tmp.path()).unwrap_err();
+        assert!(err.contains("stream_progress_seconds"), "{seconds}: {err}");
+        assert!(err.contains("60") && err.contains("3600"), "{err}");
+    }
+    for seconds in [60, 3600] {
+        compose(&entry(seconds), tmp.path()).unwrap();
+    }
+    let path = tmp.path().join("models.json");
+    let block = |seconds: u64| {
+        serde_json::json!({
+            "baseUrl": "http://127.0.0.1:9/v1", "apiKey": "k",
+            "streamProgressSeconds": seconds, "models": [{"id": "m"}],
+        })
+    };
+    let file = serde_json::json!({"providers": {"slow": block(30), "fine": block(900)}});
+    std::fs::write(&path, file.to_string()).unwrap();
+    let parsed =
+        crate::infrastructure::model_registry::ModelRegistry::load_registry_config(&path).unwrap();
+    let skipped: Vec<_> = parsed.skipped.iter().map(|s| s.provider.as_str()).collect();
+    assert_eq!(skipped, ["slow"]);
+    assert!(parsed.skipped[0].error.contains("streamProgressSeconds"));
+}

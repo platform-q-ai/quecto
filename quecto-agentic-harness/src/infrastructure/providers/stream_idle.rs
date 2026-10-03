@@ -397,3 +397,7 @@ impl std::fmt::Display for BodyError {
 #[cfg(test)]
 #[path = "stream_idle_tests.rs"]
 pub(crate) mod tests;
+
+#[cfg(test)]
+#[path = "stream_progress_tests.rs"]
+mod progress_tests;
