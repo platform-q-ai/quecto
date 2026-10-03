@@ -79,41 +79,55 @@ impl Vendor {
         gated: bool,
         bound: std::time::Duration,
     ) -> Arc<dyn LlmProvider> {
+        let bounds = super::stream_idle::StreamIdle::new(bound).with_total(WHOLE);
+        self.bounded_provider(url, gated, bounds)
+    }
+
+    /// The vendor's provider at `url` bounded by `bounds`, gated when `gated`.
+    pub(crate) fn bounded_provider(
+        self,
+        url: String,
+        gated: bool,
+        bounds: super::stream_idle::StreamIdle,
+    ) -> Arc<dyn LlmProvider> {
         let client = reqwest::Client::new();
+        let gate = || (Arc::new(Grant), single_attempt());
         match (self, gated) {
             (Vendor::Codex, false) => Arc::new(
                 CodexProvider::with_client("k".into(), "acct".into(), Some(url), client)
-                    .with_stream_idle_limit(bound)
-                    .with_reply_total_limit(WHOLE),
+                    .with_stream_idle(bounds),
             ),
-            (Vendor::Codex, true) => Arc::new(
-                CodexProvider::with_client("k".into(), "acct".into(), Some(url), client)
-                    .with_stream_idle_limit(bound)
-                    .with_reply_total_limit(WHOLE)
-                    .with_attempt_admission(Arc::new(Grant), single_attempt()),
-            ),
+            (Vendor::Codex, true) => {
+                let (gate, client_once) = gate();
+                Arc::new(
+                    CodexProvider::with_client("k".into(), "acct".into(), Some(url), client)
+                        .with_stream_idle(bounds)
+                        .with_attempt_admission(gate, client_once),
+                )
+            }
             (Vendor::OpenAi, false) => Arc::new(
-                OpenAiProvider::with_client("k".into(), Some(url), client)
-                    .with_stream_idle_limit(bound)
-                    .with_reply_total_limit(WHOLE),
+                OpenAiProvider::with_client("k".into(), Some(url), client).with_stream_idle(bounds),
             ),
-            (Vendor::OpenAi, true) => Arc::new(
-                OpenAiProvider::with_client("k".into(), Some(url), client)
-                    .with_stream_idle_limit(bound)
-                    .with_reply_total_limit(WHOLE)
-                    .with_attempt_admission(Arc::new(Grant), single_attempt()),
-            ),
+            (Vendor::OpenAi, true) => {
+                let (gate, client_once) = gate();
+                Arc::new(
+                    OpenAiProvider::with_client("k".into(), Some(url), client)
+                        .with_stream_idle(bounds)
+                        .with_attempt_admission(gate, client_once),
+                )
+            }
             (Vendor::Anthropic, false) => Arc::new(
                 AnthropicProvider::with_client("k".into(), Some(url), client)
-                    .with_stream_idle_limit(bound)
-                    .with_reply_total_limit(WHOLE),
+                    .with_stream_idle(bounds),
             ),
-            (Vendor::Anthropic, true) => Arc::new(
-                AnthropicProvider::with_client("k".into(), Some(url), client)
-                    .with_stream_idle_limit(bound)
-                    .with_reply_total_limit(WHOLE)
-                    .with_attempt_admission(Arc::new(Grant), single_attempt()),
-            ),
+            (Vendor::Anthropic, true) => {
+                let (gate, client_once) = gate();
+                Arc::new(
+                    AnthropicProvider::with_client("k".into(), Some(url), client)
+                        .with_stream_idle(bounds)
+                        .with_attempt_admission(gate, client_once),
+                )
+            }
         }
     }
 }
@@ -143,7 +157,9 @@ pub(super) fn traced() -> Arc<RequestTrace> {
 }
 
 /// The last event of an incremental stream, and the attempts it recorded.
-async fn incremental(provider: &dyn LlmProvider) -> (Option<StreamEvent>, Vec<Termination>) {
+pub(super) async fn incremental(
+    provider: &dyn LlmProvider,
+) -> (Option<StreamEvent>, Vec<Termination>) {
     let messages = vec![Message::system("sys"), Message::user("hi")];
     let trace = traced();
     let last = bounded(async {
@@ -161,7 +177,9 @@ async fn incremental(provider: &dyn LlmProvider) -> (Option<StreamEvent>, Vec<Te
 }
 
 /// An assembled stream's result, and the attempts it recorded.
-async fn assembled(provider: &dyn LlmProvider) -> (Result<String, DomainError>, Vec<Termination>) {
+pub(super) async fn assembled(
+    provider: &dyn LlmProvider,
+) -> (Result<String, DomainError>, Vec<Termination>) {
     let messages = vec![Message::system("sys"), Message::user("hi")];
     let trace = traced();
     let result = bounded(provider.chat_stream(request(&messages, &trace))).await;
@@ -170,7 +188,9 @@ async fn assembled(provider: &dyn LlmProvider) -> (Result<String, DomainError>, 
 }
 
 /// Codex's `chat` reads its whole SSE body too.
-async fn codex_chat(provider: &dyn LlmProvider) -> (Result<String, DomainError>, Vec<Termination>) {
+pub(super) async fn codex_chat(
+    provider: &dyn LlmProvider,
+) -> (Result<String, DomainError>, Vec<Termination>) {
     let messages = vec![Message::system("sys"), Message::user("hi")];
     let trace = traced();
     let result = bounded(provider.chat(request(&messages, &trace))).await;
@@ -186,8 +206,13 @@ pub(super) fn terminations(trace: &RequestTrace) -> Vec<Termination> {
         .collect()
 }
 
-/// The idle error for the [`SILENT`] bound.
+/// The idle error of an SSE body for the [`SILENT`] bound: no event came.
 fn idle_message() -> String {
+    super::stream_idle::tests::no_event_message(SILENT)
+}
+
+/// The idle error of a send no response head answered: nothing came.
+fn send_idle_message() -> String {
     super::stream_idle::tests::idle_message(SILENT)
 }
 
@@ -197,6 +222,14 @@ fn is_idle_event(event: &Option<StreamEvent>) -> bool {
 
 fn is_idle_error(result: &Result<String, DomainError>) -> bool {
     matches!(result, Err(DomainError::Provider(message)) if *message == idle_message())
+}
+
+fn is_send_idle_event(event: &Option<StreamEvent>) -> bool {
+    matches!(event, Some(StreamEvent::Error(message)) if *message == send_idle_message())
+}
+
+fn is_send_idle_error(result: &Result<String, DomainError>) -> bool {
+    matches!(result, Err(DomainError::Provider(message)) if *message == send_idle_message())
 }
 
 /// Whether an attempt was recorded as idle: every streaming attempt of a
@@ -248,6 +281,40 @@ async fn codex_chat_that_goes_silent_mid_body_is_abandoned() {
     }
 }
 
+/// #2433: a reply held open with keep-alives alone — SSE comments and blank
+/// lines — after its last event makes no progress. It is abandoned at the
+/// idle bound measured from that event, on every streaming path, rather
+/// than held until an outer deadline (15 minutes in the reported stall).
+#[tokio::test]
+async fn a_stream_that_only_keeps_alive_is_abandoned() {
+    for vendor in Vendor::ALL {
+        for gated in [false, true] {
+            let url = servers::keeping_alive(vendor.event()).await;
+            let (last, recorded) = incremental(&*vendor.provider(url.clone(), gated, SILENT)).await;
+            assert!(is_idle_event(&last), "{vendor:?} gated={gated}: {last:?}");
+            assert!(
+                recorded_idle(&recorded),
+                "{vendor:?} gated={gated}: {recorded:?}"
+            );
+            let (result, recorded) = assembled(&*vendor.provider(url, gated, SILENT)).await;
+            assert!(
+                is_idle_error(&result),
+                "{vendor:?} gated={gated}: {result:?}"
+            );
+            assert!(
+                recorded_idle(&recorded),
+                "{vendor:?} gated={gated}: {recorded:?}"
+            );
+        }
+    }
+    for gated in [false, true] {
+        let url = servers::keeping_alive(CODEX_EVENT).await;
+        let (result, recorded) = codex_chat(&*Vendor::Codex.provider(url, gated, SILENT)).await;
+        assert!(is_idle_error(&result), "gated={gated}: {result:?}");
+        assert!(recorded_idle(&recorded), "gated={gated}: {recorded:?}");
+    }
+}
+
 /// The first byte is bounded from the send: a server that never answers.
 #[tokio::test]
 async fn a_request_no_response_head_answers_is_abandoned() {
@@ -258,14 +325,17 @@ async fn a_request_no_response_head_answers_is_abandoned() {
             let provider = vendor.provider(url.clone(), gated, SILENT);
             let (last, recorded) = incremental(&*provider).await;
             assert!(started.elapsed() >= SILENT, "{vendor:?} gated={gated}");
-            assert!(is_idle_event(&last), "{vendor:?} gated={gated}: {last:?}");
+            assert!(
+                is_send_idle_event(&last),
+                "{vendor:?} gated={gated}: {last:?}"
+            );
             assert!(
                 recorded_idle(&recorded),
                 "{vendor:?} gated={gated}: {recorded:?}"
             );
             let (result, recorded) = assembled(&*vendor.provider(url, gated, SILENT)).await;
             assert!(
-                is_idle_error(&result),
+                is_send_idle_error(&result),
                 "{vendor:?} gated={gated}: {result:?}"
             );
             assert!(
@@ -403,6 +473,129 @@ async fn a_whole_reply_that_never_arrives_is_abandoned_at_the_total_limit() {
                 true => assert_eq!(recorded, [Termination::TimedOut], "{vendor:?} {gated}"),
                 false => assert!(recorded.is_empty(), "{vendor:?} {gated}: {recorded:?}"),
             }
+        }
+    }
+}
+
+/// #2433 review: one rule says what an SSE event is — a line opening with
+/// `data:`, with or without one space after it, never one indented — so
+/// the idle bound, the attempt's event count and every parser agree. Each
+/// reply below sends an indented `data` line (no event: its `a` is never
+/// shown) and events written `data:{…}` (its `b` and terminal event).
+#[tokio::test]
+async fn every_path_reads_the_same_lines_as_events() {
+    let replies: [(Vendor, &[&str], u32); 3] = [
+        (
+            Vendor::Codex,
+            &[
+                " data: {\"type\":\"response.output_text.delta\",\"delta\":\"a\"}\n\n",
+                "data:{\"type\":\"response.output_text.delta\",\"delta\":\"b\"}\n\n",
+                "data:{\"type\":\"response.completed\",\"response\":{}}\n\n",
+            ],
+            2,
+        ),
+        (
+            Vendor::OpenAi,
+            &[
+                " data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"a\"}}]}\n\n",
+                "data:{\"choices\":[{\"index\":0,\"delta\":{\"content\":\"b\"},\"finish_reason\":\"stop\"}]}\n\n",
+                "data:[DONE]\n\n",
+            ],
+            2,
+        ),
+        (
+            Vendor::Anthropic,
+            &[
+                "event: content_block_start\ndata:{\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+                "event: content_block_delta\n data: {\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"a\"}}\n\n",
+                "event: content_block_delta\ndata:{\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"b\"}}\n\n",
+                "event: content_block_stop\ndata:{\"index\":0}\n\n",
+                "event: message_stop\ndata:{}\n\n",
+            ],
+            4,
+        ),
+    ];
+    for (vendor, events, counted) in replies {
+        for gated in [false, true] {
+            let url = servers::trickling(events).await;
+            let messages = vec![Message::system("sys"), Message::user("hi")];
+            let trace = traced();
+            let provider = vendor.provider(url.clone(), gated, LIVE);
+            let result = bounded(provider.chat_stream(request(&messages, &trace))).await;
+            let content = result.map(|r| r.content.unwrap_or_default());
+            assert_eq!(
+                content.ok().as_deref(),
+                Some("b"),
+                "{vendor:?} gated={gated}"
+            );
+            let counts: Vec<u32> = trace
+                .attempt_diagnostics()
+                .iter()
+                .map(|a| a.event_count)
+                .collect();
+            assert_eq!(counts, [counted], "{vendor:?} gated={gated}");
+            let (last, _) = incremental(&*vendor.provider(url, gated, LIVE)).await;
+            assert!(
+                matches!(&last, Some(StreamEvent::Done(r)) if r.content.as_deref() == Some("b")),
+                "{vendor:?} gated={gated}: {last:?}"
+            );
+        }
+    }
+}
+
+/// #2433: each attempt's record counts its events by type, so the next
+/// stall names the event that repeated.
+#[tokio::test]
+async fn each_attempt_counts_its_event_types() {
+    let replies: [(Vendor, &[&str], serde_json::Value); 3] = [
+        (
+            Vendor::Codex,
+            &[
+                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"a\"}\n\n",
+                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"b\"}\n\n",
+                "data: {\"type\":\"response.completed\",\"response\":{}}\n\n",
+            ],
+            serde_json::json!({"response.output_text.delta": 2, "response.completed": 1}),
+        ),
+        (
+            Vendor::OpenAi,
+            &[
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"a\"}}]}\n\n",
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"b\"},\"finish_reason\":\"stop\"}]}\n\n",
+                "data: [DONE]\n\n",
+            ],
+            serde_json::json!({"chat.delta.content": 2, "[DONE]": 1}),
+        ),
+        (
+            Vendor::Anthropic,
+            &[
+                "event: content_block_start\ndata: {\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+                "event: content_block_delta\ndata: {\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"a\"}}\n\n",
+                "event: content_block_delta\ndata: {\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"b\"}}\n\n",
+                "event: content_block_stop\ndata: {\"index\":0}\n\n",
+                "event: message_stop\ndata: {}\n\n",
+            ],
+            serde_json::json!({
+                "content_block_start": 1, "content_block_delta": 2,
+                "content_block_stop": 1, "message_stop": 1,
+            }),
+        ),
+    ];
+    for (vendor, events, expected) in replies {
+        for gated in [false, true] {
+            let url = servers::trickling(events).await;
+            let messages = vec![Message::system("sys"), Message::user("hi")];
+            let trace = traced();
+            let provider = vendor.provider(url, gated, LIVE);
+            bounded(provider.chat_stream(request(&messages, &trace)))
+                .await
+                .unwrap();
+            let records = trace.attempt_diagnostics();
+            let recorded = serde_json::to_value(&records[0]).unwrap();
+            assert_eq!(
+                recorded["event_types"], expected,
+                "{vendor:?} gated={gated}"
+            );
         }
     }
 }

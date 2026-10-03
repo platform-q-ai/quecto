@@ -20,7 +20,7 @@ impl Receipt {
     /// The provider went silent for the whole idle bound (#2210): the
     /// attempt ends as idle, failing with the idle error.
     pub(super) fn idle(&self, silent: super::super::stream_idle::Idle) -> DomainError {
-        self.termination(Termination::Idle);
+        self.termination(idle_termination(silent));
         DomainError::Provider(silent.to_string())
     }
 
@@ -52,6 +52,15 @@ impl Receipt {
         }
     }
 }
+/// How an attempt abandoned as `silent` ended: idle, or — events but no
+/// output — making no progress (#2433).
+pub(super) fn idle_termination(silent: super::super::stream_idle::Idle) -> Termination {
+    match silent.is_no_output() {
+        true => Termination::NoProgress,
+        false => Termination::Idle,
+    }
+}
+
 /// How a whole reply read and parsed as `parsed` ended: completed when
 /// accepted, cut short when its body ended before its terminal event, and
 /// rejected when refused for anything else.
@@ -75,9 +84,11 @@ pub(super) async fn pump_sse<H: SseHandler>(
     idle: StreamIdle,
 ) {
     let mut carry: Vec<u8> = Vec::new();
+    // Bounded from the body's last event, not its last bytes (#2433).
+    let mut idle = super::super::stream_idle::EventIdle::events(idle);
 
     loop {
-        let bytes = match idle.within(response.chunk()).await {
+        let bytes = match idle.next(response.chunk()).await {
             Ok(Ok(Some(b))) => b,
             Ok(Ok(None)) => break,
             Ok(Err(e)) => {
@@ -88,7 +99,7 @@ pub(super) async fn pump_sse<H: SseHandler>(
                 return;
             }
             Err(silent) => {
-                receipt.termination(Termination::Idle);
+                receipt.termination(idle_termination(silent));
                 let _ = tx.send(StreamEvent::Error(silent.to_string())).await;
                 return;
             }

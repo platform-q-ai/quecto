@@ -466,7 +466,7 @@ fn unknown_admission_messages_never_reach_the_keyword_paths() {
 fn an_abandoned_reply_is_a_stall_retried_at_most_once() {
     for message in [
         format!(
-            "{STREAM_IDLE_TIMEOUT}the provider sent nothing for 300 s; the request was abandoned"
+            "{STREAM_IDLE_TIMEOUT}the provider sent no event for 300 s; the request was abandoned"
         ),
         format!(
             "{REPLY_TIMEOUT}the provider sent no whole reply within 1200 s; the request was abandoned"

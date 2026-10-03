@@ -208,7 +208,7 @@ impl CodexProvider {
         }
         let raw = match &attempt {
             Some(attempt) => attempt.read_sse(resp, profile).await?,
-            None => idle.text(resp).await.map_err(|e| match e {
+            None => idle.sse_text(resp).await.map_err(|e| match e {
                 BodyError::Idle(silent) => DomainError::Provider(silent.to_string()),
                 BodyError::Read(e) => {
                     DomainError::Provider(format!("failed to read response: {e}"))

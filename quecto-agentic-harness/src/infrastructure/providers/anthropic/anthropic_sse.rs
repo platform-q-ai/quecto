@@ -325,6 +325,16 @@ pub(super) struct IncrementalStreamParams<'a> {
 }
 
 impl AnthropicProvider {
+    /// Bound its replies by `stream_idle`: a provider's configured stream
+    /// idle limit (#2433 review), or the defaults.
+    pub fn with_stream_idle(
+        mut self,
+        stream_idle: crate::infrastructure::providers::stream_idle::StreamIdle,
+    ) -> Self {
+        self.stream_idle = stream_idle;
+        self
+    }
+
     /// Send a streaming chat request with a pre-built JSON body.
     pub(super) async fn stream_chat_with_body(
         &self,
@@ -371,7 +381,7 @@ impl AnthropicProvider {
 
         let full = match &attempt {
             Some(attempt) => attempt.read_sse(response, profile).await?,
-            None => idle.text(response).await.map_err(|e| match e {
+            None => idle.sse_text(response).await.map_err(|e| match e {
                 BodyError::Idle(silent) => DomainError::Provider(silent.to_string()),
                 BodyError::Read(e) => {
                     DomainError::Provider(format!("failed to read stream: {}", e))
@@ -439,13 +449,14 @@ impl AnthropicProvider {
         let mut saw_event = false;
 
         for line in raw.lines() {
-            let line = line.trim();
+            // Only line ends are trimmed: an indented line is no event.
+            let line = line.trim_end();
             if let Some(event) = line.strip_prefix("event: ") {
                 saw_event = true;
                 current_event = event.to_string();
                 continue;
             }
-            let Some(data) = line.strip_prefix("data: ") else {
+            let Some(data) = crate::infrastructure::providers::sse_common::event_data(line) else {
                 continue;
             };
             saw_event = true;

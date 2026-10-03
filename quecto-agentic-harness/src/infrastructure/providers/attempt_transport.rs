@@ -76,6 +76,8 @@ impl Receipt {
 
     /// Record the attempt into its request's trace: once, when it ends.
     fn record(state: &mut State) {
+        // The record keeps the most frequent event types only (#2433).
+        state.diagnostics.event_types = state.diagnostics.event_types.top();
         state.diagnostics.finished_unix_ms = diagnostics::unix_ms();
         state.diagnostics.elapsed_ms =
             state.started.elapsed().as_millis().min(u64::MAX as u128) as u64;
@@ -337,8 +339,9 @@ pub(super) async fn assembled<T>(
         }
         let mut body = Vec::new();
         let mut observer = LineObserver::new(profile);
+        let mut idle = profile.event_idle();
         loop {
-            let bytes = match profile.within(response.chunk()).await {
+            let bytes = match idle.next(response.chunk()).await {
                 Ok(Ok(Some(bytes))) => bytes,
                 Ok(Ok(None)) => break,
                 Ok(Err(error)) => {

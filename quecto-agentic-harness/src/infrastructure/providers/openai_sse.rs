@@ -108,7 +108,7 @@ impl SseHandler for OpenAiSseHandler {
         line: &str,
         tx: &tokio::sync::mpsc::Sender<StreamEvent>,
     ) -> SseLineOutcome {
-        let Some(data) = line.strip_prefix("data: ") else {
+        let Some(data) = crate::infrastructure::providers::sse_common::event_data(line) else {
             return SseLineOutcome::Continue;
         };
         self.saw_event = true;

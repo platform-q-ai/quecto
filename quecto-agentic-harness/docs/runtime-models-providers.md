@@ -100,6 +100,8 @@ The `/model` selector surfaces auth as `[apiKey]` or `[oauth]` so the billing mo
       "baseUrl": "https://example.com/v1",
       "auth": { "mode": "apiKey", "apiKey": "$EXAMPLE_API_KEY" },
       "allowRemoteHttp": false,
+      "streamIdleSeconds": 300,
+      "streamProgressSeconds": 300,
       "models": [
         {
           "id": "provider/model/id",
@@ -252,17 +254,87 @@ applies to every session, not only swarm runs.
 ## Stalled replies
 
 No provider request has a total time limit while it streams: a long reply that
-keeps sending is never cut short. A streaming reply that sends *nothing* — no
-response head, no bytes, no SSE event or keep-alive — for 300 seconds is
-abandoned (the stream idle limit; the official Codex client allows the same,
-since a reasoning model can think silently for minutes). A non-streaming reply
-sends nothing until it is complete, so it has a 20 minute total limit instead.
-Either expiry fails the attempt with a `stream idle timeout: …` or
-`reply timeout: …` error of class `stalled`, recorded on the attempt as `Idle`
-or `TimedOut`. A stall is retried at most once per request (before any output
-reached the caller); an error status whose body stalls keeps its status class
-and shows `(error body abandoned: …)` in place of the body. Neither limit is
-configurable.
+keeps sending output is never cut short. Two limits end a streaming reply that
+stalls; both are per provider.
+
+**The stream idle limit** (300 seconds unless configured; the official Codex
+client allows the same, since a reasoning model can think silently for
+minutes) ends a reply that sends no response head, or no SSE event, for that
+long. Only an event restarts it: a line opening with `data:` (with or without a
+space after the colon, never indented), Anthropic's `ping` events included.
+Keep-alives alone — SSE comments, blank lines — show the connection is up, not
+that the reply is moving, so a reply held open by them is abandoned too. The
+send fails with `stream idle timeout: the provider sent nothing for …`; an SSE
+body with `… the provider sent no event for …`.
+
+**The stream progress limit** (300 seconds unless configured) ends a reply
+that keeps sending events none of which carries output. It fires only when
+both hold since the reply's last output (or its start): no output for the
+limit, and at least 200 events without output. Output is a text, refusal,
+reasoning or reasoning-summary delta, a tool call that names its function or
+carries arguments, a finished part or output item that holds content, or
+completion; an empty delta, or a tool call just opened, is none. An event too
+long to read whole (over 64 KiB) is output only when its type is a delta, a
+finished part or a terminal event.
+
+The 200 events separate a stall from a think. A Codex reply once sent ~11
+output-less events a second for 15 minutes (~3,300 in 300 s), holding its turn
+until the admission attempt timeout (#2433). A model thinking makes few:
+Anthropic sends a `ping` about every 15 seconds while it thinks in hiding (~20
+in 300 s), and a Codex reply opens with about 3 events before a silent think.
+So the count never cuts a think at the progress limit, and a model that
+streams its reasoning makes progress with every reasoning delta. The error is
+`stream progress timeout: the provider sent events but no output for …`.
+
+**The progress backstop** ends a reply that has sent no output for three
+progress limits (900 seconds by default, the admission attempt timeout of a
+typical setup) while events still come, however few: one within the last
+progress limit. It bounds a slow drip that neither the idle limit (each event
+restarts it) nor the count (it never reaches 200) would end, with or without
+admission. Its error names it: `… no output for 900 s (the progress backstop, 3
+times its 300 s limit) …`.
+
+Which limit governs a long think:
+
+- A think that is silent (no events at all, or none since its opening events
+  long ago) is the idle limit's alone: raise `stream_idle_seconds` to let it
+  run.
+- A think that sends only the odd event — Anthropic's `ping`s — restarts the
+  idle limit with each, so the idle limit never ends it; 200 pings would take
+  ~50 minutes, so the backstop ends it at 15 minutes by default. Raise
+  `stream_progress_seconds` to let it run (the backstop is three times it).
+
+The trade-offs:
+
+- An OpenAI-compatible gateway that fills a long hidden-reasoning think with
+  SSE comment heartbeats, sending no event until the model's first output, is
+  cut at the idle limit and retried once.
+- A provider that sends output-less events fast (200 or more since its last
+  output, such as empty deltas or a frequent `in_progress`) through a long
+  hidden think is cut at the progress limit and retried once.
+- A think that sends only pings, or any slow drip of output-less events, and
+  runs past three progress limits (15 minutes by default) is cut by the
+  backstop and retried once.
+
+For each, raise that provider's limit: `stream_idle_seconds` (30–1800) for the
+first, `stream_progress_seconds` (60–3600) for the other two.
+
+- `~/.quecto/config.json`: on `providers.openai`, `providers.anthropic`, or an
+  `openai_compatible.endpoints` entry. A value out of range fails the runtime
+  composition with an error naming the setting.
+- `~/.quecto/models.json`: `"streamIdleSeconds"` / `"streamProgressSeconds"`
+  on a provider block. A block with a value out of range is skipped with a
+  diagnostic, as an unknown auth mode is; its neighbours still load.
+
+A non-streaming reply sends nothing until it is complete, so it has a 20 minute
+total limit instead, which is not configurable. Each expiry fails the attempt
+with a `stream idle timeout: …`, `stream progress timeout: …` or `reply
+timeout: …` error of class `stalled`, recorded on the attempt as `Idle`,
+`NoProgress` or `TimedOut`. A stall is retried at most once per request (before
+any output reached the caller); an error status whose body stalls keeps its
+status class and shows `(error body abandoned: …)` in place of the body. Each
+attempt's record counts its events by type (`event_types`, the 16 most
+frequent), so a stall names the event that repeated.
 
 ## Runaway replies
 

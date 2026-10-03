@@ -69,12 +69,13 @@ impl SseHandler for AnthropicSseHandler {
         line: &str,
         tx: &tokio::sync::mpsc::Sender<StreamEvent>,
     ) -> SseLineOutcome {
-        if line.starts_with("event: ") || line.starts_with("data: ") {
+        let data = crate::infrastructure::providers::sse_common::event_data(line);
+        if line.starts_with("event: ") || data.is_some() {
             self.saw_event = true;
         }
         if let Some(event_type) = line.strip_prefix("event: ") {
             self.current_event = event_type.to_string();
-        } else if let Some(data) = line.strip_prefix("data: ") {
+        } else if let Some(data) = data {
             let chunk_val: serde_json::Value = serde_json::from_str(data).unwrap_or_default();
             if dispatch_sse_event(
                 &self.current_event,

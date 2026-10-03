@@ -46,6 +46,12 @@ impl Profile {
             false => Ok(step.await),
         }
     }
+    /// The idle bound of this reply's SSE body, measured from its last event
+    /// (#2433). Only a streaming reply has an SSE body read this way.
+    pub fn event_idle(self) -> super::stream_idle::EventIdle {
+        assert!(self.streams(), "only a streaming reply has an SSE body");
+        super::stream_idle::EventIdle::events(self.idle)
+    }
     /// Read a whole body: each read bounded when the reply streams.
     pub async fn text(self, response: reqwest::Response) -> Result<String, BodyError> {
         match self.streams() {

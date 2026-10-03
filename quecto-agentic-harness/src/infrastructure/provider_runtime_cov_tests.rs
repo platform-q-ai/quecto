@@ -32,6 +32,7 @@ fn test_inputs(base_dir: &std::path::Path, http_client: &reqwest::Client) -> Age
 
 fn model(provider: &str, api: ProviderApi, auth: AuthMode) -> ModelRecord {
     ModelRecord {
+        stream_limits: Default::default(),
         provider: provider.to_string(),
         id: "model-1".to_string(),
         display_name: None,
@@ -279,6 +280,7 @@ fn build_agent_provider_rejects_endpoint_over_limit_before_provider_creation() {
         api_key: "k".to_string(),
         api_base: "http://127.0.0.1:9/v1".to_string(),
         allow_remote_http: true,
+        ..Default::default()
     };
     config.providers.openai_compatible.endpoints = (0..33)
         .map(
@@ -302,6 +304,7 @@ fn endpoint(
         api_key: "k".to_string(),
         api_base: api_base.to_string(),
         allow_remote_http: true,
+        ..Default::default()
     }
 }
 
@@ -400,6 +403,7 @@ fn build_agent_provider_rejects_remote_http_endpoint_unless_opted_in() {
             api_key: "k".to_string(),
             api_base: "http://example.invalid/v1".to_string(),
             allow_remote_http: false,
+            ..Default::default()
         }];
 
     let err = build_agent_provider(&config, tmp.path(), &reqwest::Client::new())
@@ -693,6 +697,7 @@ fn build_agent_provider_skips_empty_openai_compatible_endpoint_keys() {
             api_key: "".to_string(),
             api_base: "".to_string(),
             allow_remote_http: false,
+            ..Default::default()
         }];
 
     let built = build_agent_provider(&config, tmp.path(), &reqwest::Client::new()).unwrap();

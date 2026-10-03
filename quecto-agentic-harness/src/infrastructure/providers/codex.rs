@@ -59,6 +59,13 @@ pub struct CodexProvider {
 }
 
 impl CodexProvider {
+    /// Bound its replies by `stream_idle`: a provider's configured stream
+    /// idle limit (#2433 review), or the defaults.
+    pub fn with_stream_idle(mut self, stream_idle: super::stream_idle::StreamIdle) -> Self {
+        self.stream_idle = stream_idle;
+        self
+    }
+
     /// Bind leaf attempts to an authenticated gate and explicit single-send client.
     ///
     /// The supplied safe client replaces the disabled transport intentionally;
@@ -403,8 +410,9 @@ impl CodexProvider {
         let mut saw_event = false;
 
         for line in raw.lines() {
-            let line = line.trim();
-            let Some(data) = line.strip_prefix("data: ") else {
+            // Only line ends are trimmed: an indented line is no event.
+            let line = line.trim_end();
+            let Some(data) = super::sse_common::event_data(line) else {
                 continue;
             };
             saw_event = true;

@@ -340,6 +340,7 @@ fn mixed_usable_slots_report_only_unbound_once_and_fallback_covers_them() {
     let context = AdmissionRuntimeContext::new(initial.clone(), gates(), client()).unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let record = |id: &str, key: Option<&str>| ModelRecord {
+        stream_limits: Default::default(),
         provider: "custom".into(),
         id: id.into(),
         display_name: None,
@@ -433,6 +434,7 @@ fn all_unbound_including_compatible_endpoint_starts_but_zero_usable_still_fails(
             api_key: "key".into(),
             api_base: "https://example.test/v1".into(),
             allow_remote_http: false,
+            stream_limits: Default::default(),
         },
     );
     let outcome = compose_agent_provider_inner_outcome(&config, &inputs, Some(&context)).unwrap();

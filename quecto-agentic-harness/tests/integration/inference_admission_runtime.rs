@@ -261,6 +261,7 @@ fn config(uri: &str, key: &str) -> Config {
             api_key: key.into(),
             api_base: uri.into(),
             allow_remote_http: false,
+            ..Default::default()
         })
         .collect();
     config
