@@ -367,3 +367,66 @@ async fn a_refused_reattempt_announces_only_the_attempt_before_it() {
     assert_eq!(seen, [(1, 1, RequestOutcome::Error)]);
     assert_eq!(agent.request_tally().counters().requests, 1);
 }
+
+/// #2434 x #2436: an empty reply after tool results ends the turn: it is
+/// one `ok` request carrying its own usage — never also counted as an
+/// empty stream's spend — and the billed totals agree with the counters.
+#[tokio::test]
+async fn an_empty_reply_after_tools_is_one_ok_request_with_its_usage() {
+    let mut call = reply(usage(20, 1, None, None));
+    call.content = None;
+    call.tool_calls = vec![ToolCall {
+        id: "call_background".into(),
+        name: "background".into(),
+        arguments: "{}".into(),
+    }];
+    call.stop_reason = Some(crate::domain::message::StopReason::ToolUse);
+    let empty_end = LlmResponse {
+        content: None,
+        tool_calls: vec![],
+        usage: Some(usage(70, 3, Some(9), None)),
+        stop_reason: Some(crate::domain::message::StopReason::EndTurn),
+        thinking_blocks: vec![],
+    };
+    let provider = Arc::new(MockStreamingProvider::new(vec![
+        vec![StreamEvent::Done(call)],
+        vec![StreamEvent::Done(empty_end)],
+    ]));
+    let mut registry = MockRegistry::new();
+    registry.register(Arc::new(MockTool::new("background", "started")));
+    let events: Events = Arc::default();
+    let kept = events.clone();
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        progress_callback: Some(Arc::new(move |event| kept.lock().unwrap().push(event))),
+        streaming: true,
+        ..test_config(provider.clone(), Box::new(registry))
+    });
+    agent
+        .run_loop(&mut vec![Message::user("start it")])
+        .await
+        .expect("the empty reply ends the turn");
+    let seen: Vec<_> = completed(&events)
+        .iter()
+        .map(|c| (c.request_index, c.attempt, c.outcome, c.spend))
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            (1, 1, RequestOutcome::Ok, spend(20, 1, None)),
+            (2, 1, RequestOutcome::Ok, spend(70, 3, Some(9))),
+        ]
+    );
+    let billed = agent.take_unreported_usage();
+    let counted = agent.request_tally().counters();
+    assert_eq!(billed.billed_input_tokens, 90);
+    assert_eq!(billed.billed_output_tokens, 4);
+    assert_eq!(billed.cache_read_tokens, 9);
+    assert_eq!(
+        (
+            counted.input_tokens,
+            counted.output_tokens,
+            counted.cached_tokens
+        ),
+        (90, 4, 9)
+    );
+}
