@@ -151,3 +151,21 @@ fn a_long_event_is_output_by_the_type_its_start_names() {
         assert!(!long(start.as_bytes()), "{start}");
     }
 }
+
+/// #2433 review round 3 (N1): a chat chunk too long to read whole is
+/// output when it carries content or a tool call, though a `"type"` comes
+/// later inside its choices.
+#[test]
+fn a_long_chat_chunk_is_output_by_what_its_choices_carry() {
+    use super::long_event_carries_output as long;
+    let call = format!(
+        r#"{{"choices":[{{"index":0,"delta":{{"tool_calls":[{{"index":0,"id":"c","type":"function","function":{{"name":"f","arguments":"{}"#,
+        "x".repeat(70 * 1024)
+    );
+    assert!(long(&call.as_bytes()[..64 * 1024]));
+    let padded = r#"{"choices":[{"index":0,"delta":{"role":"assistant","padding":"xxx"#;
+    assert!(!long(padded.as_bytes()));
+    // A start cut inside a character is read up to it.
+    let cut = "{\"type\":\"response.output_text.delta\",\"delta\":\"é".as_bytes();
+    assert!(long(&cut[..cut.len() - 1]));
+}

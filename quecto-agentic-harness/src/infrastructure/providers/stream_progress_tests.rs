@@ -83,16 +83,102 @@ async fn read_after(idle: &mut EventIdle, after: Duration, line: &'static str) -
     idle.next(arriving).await.map(|_| ())
 }
 
-/// #2433 review H1: Anthropic hidden thinking streams a `ping` every ~15 s
-/// and nothing else. Twenty minutes of it is never cut by the progress
-/// bound (the pings are events, so not by the idle bound either).
+/// Feed `idle` `line` every `every` until it ends, for at most `run`:
+/// when it ended and its error.
+async fn every(
+    idle: &mut EventIdle,
+    every: Duration,
+    line: &'static str,
+    run: Duration,
+) -> Option<(Duration, Idle)> {
+    let started = tokio::time::Instant::now();
+    while started.elapsed() < run {
+        if let Err(stalled) = read_after(idle, every, line).await {
+            return Some((started.elapsed(), stalled));
+        }
+    }
+    None
+}
+
+const PING: &str = "event: ping\ndata: {\"type\":\"ping\"}\n\n";
+
+/// #2433 review round 3 (L1, L2): pings are events, so they restart the
+/// idle bound, and 200 of them would take 50 minutes; the backstop ends a
+/// ping-only think at three times the progress limit, 900 s, not 3000 s.
 #[tokio::test(start_paused = true)]
-async fn pings_every_fifteen_seconds_for_twenty_minutes_are_not_cut() {
+async fn pings_every_fifteen_seconds_are_cut_by_the_backstop_at_fifteen_minutes() {
     let mut idle = EventIdle::events(StreamIdle::default());
-    let ping = "event: ping\ndata: {\"type\":\"ping\"}\n\n";
-    for _ in 0..(20 * 60 / 15) {
-        let read = read_after(&mut idle, Duration::from_secs(15), ping).await;
-        assert!(read.is_ok(), "{read:?}");
+    let ended = every(
+        &mut idle,
+        Duration::from_secs(15),
+        PING,
+        Duration::from_secs(3600),
+    )
+    .await;
+    let (at, stalled) = ended.expect("a ping-only reply was cut");
+    assert_eq!(at, Duration::from_secs(900));
+    assert!(stalled.is_no_output(), "{stalled}");
+    assert!(stalled.to_string().contains("backstop"), "{stalled}");
+}
+
+/// #2433 review round 3 (L2): a slow drip — an event every 299 s, never
+/// tripping the idle bound or the event count — is cut by the backstop.
+#[tokio::test(start_paused = true)]
+async fn an_event_every_299_seconds_is_cut_by_the_backstop() {
+    let mut idle = EventIdle::events(StreamIdle::default());
+    let ended = every(
+        &mut idle,
+        Duration::from_secs(299),
+        NO_OUTPUT,
+        Duration::from_secs(3600),
+    )
+    .await;
+    let (at, stalled) = ended.expect("the drip was cut");
+    assert_eq!(at, Duration::from_secs(900));
+    let message = stalled.to_string();
+    assert!(
+        message.starts_with("stream progress timeout: "),
+        "{message}"
+    );
+    assert!(
+        message.contains("900 s") && message.contains("backstop"),
+        "{message}"
+    );
+}
+
+/// Half an event a second reaches the event count at 400 s: the count rule
+/// cuts it then, named as the progress limit.
+#[tokio::test(start_paused = true)]
+async fn half_an_event_a_second_is_cut_by_the_count_at_400_seconds() {
+    let mut idle = EventIdle::events(StreamIdle::default());
+    let ended = every(
+        &mut idle,
+        Duration::from_secs(2),
+        NO_OUTPUT,
+        Duration::from_secs(3600),
+    )
+    .await;
+    let (at, stalled) = ended.expect("cut");
+    assert_eq!(at, Duration::from_secs(400));
+    assert_eq!(stalled, Idle::no_output(PROGRESS));
+}
+
+/// Silence stays the idle bound's: with the idle limit raised to 1800 s, a
+/// silence after output, or after the opening events, ends only there.
+#[tokio::test(start_paused = true)]
+async fn silence_is_still_the_idle_bounds() {
+    let idle_limit = Duration::from_secs(1800);
+    for first in [REASONING, NO_OUTPUT] {
+        let mut idle = EventIdle::events(StreamIdle::new(idle_limit));
+        let started = tokio::time::Instant::now();
+        read_after(&mut idle, Duration::ZERO, first).await.unwrap();
+        let silent = idle.next(std::future::pending::<Result<Option<&str>, ()>>());
+        assert_eq!(
+            silent.await.unwrap_err(),
+            Idle::no_event(idle_limit),
+            "{first}"
+        );
+        assert_eq!(started.elapsed(), idle_limit, "{first}");
     }
 }
 

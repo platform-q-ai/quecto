@@ -144,7 +144,8 @@ async fn pings_alone_are_not_cut_by_the_progress_bound() {
             }
             None
         };
-        let outlived = tokio::time::timeout(PROGRESS * 4, reading).await;
+        // Under the backstop (three times the progress bound).
+        let outlived = tokio::time::timeout(PROGRESS * 5 / 2, reading).await;
         assert!(outlived.is_err(), "gated={gated}: {outlived:?}");
     }
 }
