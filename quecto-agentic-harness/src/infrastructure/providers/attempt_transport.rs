@@ -253,6 +253,18 @@ impl AttemptError {
     }
 }
 
+/// An attempt that will wait in `gate` from a task of its own: marked as
+/// waiting before the task is spawned, so a turn dropped before the task
+/// first runs still finds it unsent and withdraws it (#2436).
+pub(in crate::infrastructure::providers) fn queue_before_spawn(
+    gate: Option<&Arc<dyn AttemptAdmission>>,
+    trace: Option<&Arc<RequestTrace>>,
+) {
+    if let (Some(_), Some(trace)) = (gate, trace) {
+        trace.queue_attempt();
+    }
+}
+
 async fn run<T, F: Future<Output = Result<T, DomainError>>>(
     gate: &Arc<dyn AttemptAdmission>,
     trace: Option<Arc<RequestTrace>>,
@@ -260,6 +272,11 @@ async fn run<T, F: Future<Output = Result<T, DomainError>>>(
     tx: Option<&Sender>,
     operation: impl FnOnce(Receipt) -> F,
 ) -> Result<T, AttemptError> {
+    // Not sent until admitted: an attempt that ends waiting — refused,
+    // cancelled, or dropped with its turn — is withdrawn (#2436).
+    if let Some(trace) = &trace {
+        trace.queue_attempt();
+    }
     let admitted = tokio::select! {
         biased;
         _ = cancelled(cancel) => Err(AttemptError::Stopped),
@@ -267,7 +284,12 @@ async fn run<T, F: Future<Output = Result<T, DomainError>>>(
         permit = gate.acquire() => permit.map_err(AttemptError::Failed),
     };
     let permit = match admitted {
-        Ok(permit) => permit,
+        Ok(permit) => {
+            if let Some(trace) = &trace {
+                trace.admit_attempt();
+            }
+            permit
+        }
         Err(unsent) => {
             // Never admitted, so never sent: no request to report (#2436).
             if let Some(trace) = &trace {
@@ -546,6 +568,9 @@ pub(super) async fn collect(
     })
 }
 
+#[cfg(test)]
+#[path = "attempt_transport_2436_tests.rs"]
+mod admission_wait_tests;
 #[cfg(test)]
 #[path = "attempt_transport_tests.rs"]
 mod tests;

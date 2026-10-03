@@ -224,6 +224,7 @@ fn the_agents_own_requests_ride_on_every_snapshot() {
             attempt: 1,
             outcome: RequestOutcome::Ok,
             duration_ms: 3,
+            queued_ms: None,
             spend: Some(RequestSpend {
                 input_tokens: 40,
                 cached_tokens: Some(10),

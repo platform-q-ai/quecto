@@ -652,6 +652,10 @@ impl LlmProvider for OpenAiProvider {
         let provider = self.clone();
         Box::pin(async move {
             let (tx, rx) = tokio::sync::mpsc::channel(64);
+            super::attempt_transport::queue_before_spawn(
+                provider.attempt_admission.as_ref(),
+                trace.as_ref(),
+            );
             tokio::spawn(async move {
                 if let Some(gate) = &provider.attempt_admission {
                     let builder =

@@ -105,8 +105,12 @@ pub struct EndedAttempt {
     /// retries.
     pub attempt: u32,
     pub outcome: RequestOutcome,
-    /// From when it started to when it ended.
+    /// From when it was admitted (when it started, if it never waited for
+    /// admission) to when it ended.
     pub duration_ms: u64,
+    /// How long it waited to be admitted; `None` when it never waited (no
+    /// admission authority gates its provider).
+    pub queued_ms: Option<u64>,
     /// `None` when its provider reported no usage for it.
     pub spend: Option<RequestSpend>,
 }
@@ -122,10 +126,12 @@ pub struct RequestCompleted {
     /// `None` when the provider reported no usage for it.
     pub spend: Option<RequestSpend>,
     pub duration_ms: u64,
+    pub queued_ms: Option<u64>,
     pub outcome: RequestOutcome,
     /// This agent's requests so far, this one included: 1, 2, 3, …
     pub request_index: u64,
-    /// Its number within its logical request, from 1.
+    /// Its number among the attempts of its logical request that were sent,
+    /// from 1: the first sent attempt of every request is 1.
     pub attempt: u32,
 }
 
@@ -176,6 +182,7 @@ impl RequestTally {
             provider: provider.into(),
             spend: ended.spend,
             duration_ms: ended.duration_ms,
+            queued_ms: ended.queued_ms,
             outcome: ended.outcome,
             request_index: counters.requests,
             attempt: ended.attempt,
@@ -207,18 +214,29 @@ impl std::fmt::Debug for AttemptEndHook {
 /// A request's attempt in flight: started and not yet ended.
 #[derive(Debug, Default)]
 pub(in crate::domain) struct AttemptClock {
-    /// The highest attempt number started so far.
+    /// The highest attempt number the trace started so far.
     started: u32,
+    /// Its attempts reported as sent so far; withdrawn ones are not.
+    sent: u32,
     open: Option<OpenAttempt>,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct OpenAttempt {
-    number: u32,
-    started: Instant,
+    /// When it started, or when it was admitted after waiting.
+    since: Instant,
+    /// When it began waiting for admission, while it waits: an attempt
+    /// that ends still waiting was never sent.
+    queued: Option<Instant>,
+    /// How long it waited, once admitted.
+    queued_ms: Option<u64>,
     /// The usage reports of cut-short attempts recorded before it started:
     /// the ones after are its own.
     usage_mark: usize,
+}
+
+fn millis(since: Instant) -> u64 {
+    since.elapsed().as_millis().try_into().unwrap_or(u64::MAX)
 }
 
 impl RequestTrace {
@@ -229,8 +247,9 @@ impl RequestTrace {
     }
 
     /// Attempt `number` started. One still open ended in error: it was
-    /// retried without saying it had ended. A number already started is
-    /// the same attempt.
+    /// retried without saying it had ended (or, still waiting for
+    /// admission, it was never sent). A number already started is the same
+    /// attempt.
     pub(in crate::domain) fn open_attempt(&self, number: u32) {
         debug_assert!(number >= 1, "attempts are numbered from 1");
         let ended = {
@@ -239,28 +258,40 @@ impl RequestTrace {
                 return;
             }
             clock.started = number;
-            let reported = self.unfinished_reports();
             let previous = clock.open.replace(OpenAttempt {
-                number,
-                started: Instant::now(),
-                usage_mark: reported,
+                since: Instant::now(),
+                queued: None,
+                queued_ms: None,
+                usage_mark: self.unfinished_reports(),
             });
-            previous.map(|open| self.ended(open, RequestOutcome::Error, None))
+            previous.and_then(|open| self.ended(&mut clock, open, RequestOutcome::Error, None))
         };
         if let Some(ended) = ended {
             self.report(ended);
         }
     }
 
+    /// The attempt in flight waits for admission: until it is admitted it
+    /// has not been sent, so it ends withdrawn — however it ends.
+    /// An attempt admitted once stays sent (a replay re-admits it).
+    pub fn queue_attempt(&self) {
+        drop(self.clock());
+    }
+
+    /// The attempt in flight was admitted: it is sent now, and its duration
+    /// runs from here; its wait is `queued_ms`.
+    pub fn admit_attempt(&self) {
+        drop(self.clock());
+    }
+
     /// The attempt in flight was never sent: admission refused it, or it was
     /// cancelled while it waited to be admitted. It is withdrawn, never
     /// reported: nothing reached a provider (#2436 review).
     pub fn withdraw_attempt(&self) {
-        let withdrawn = self.clock().open.take();
-        debug_assert!(
-            withdrawn.is_none_or(|open| open.number >= 1),
-            "only a started attempt is withdrawn"
-        );
+        let mut clock = self.clock();
+        if clock.open.take().is_some() {
+            clock.sent = clock.sent.saturating_add(1);
+        }
     }
 
     /// The attempt in flight failed: it ends now, as an error, before any
@@ -270,40 +301,42 @@ impl RequestTrace {
     }
 
     /// The attempt in flight ended with `outcome`; `reply` is the usage its
-    /// reply reported. Nothing happens when no attempt is in flight: it has
-    /// already ended, or none started (admission refused the request).
+    /// reply reported. Nothing is reported when no attempt is in flight (it
+    /// has already ended, or none started: admission refused the request),
+    /// or when it still waits for admission: it was never sent.
     pub fn end_attempt(&self, outcome: RequestOutcome, reply: Option<&UsageInfo>) {
         let ended = {
             let mut clock = self.clock();
-            clock
-                .open
-                .take()
-                .map(|open| self.ended(open, outcome, reply))
+            let open = clock.open.take();
+            open.and_then(|open| self.ended(&mut clock, open, outcome, reply))
         };
         if let Some(ended) = ended {
             self.report(ended);
         }
     }
 
+    /// `open`, ended: numbered next among the sent attempts; `None` when it
+    /// was still waiting for admission, so never sent.
     fn ended(
         &self,
+        clock: &mut AttemptClock,
         open: OpenAttempt,
         outcome: RequestOutcome,
         reply: Option<&UsageInfo>,
-    ) -> EndedAttempt {
+    ) -> Option<EndedAttempt> {
+        if open.queued.is_some() {
+            return None;
+        }
+        clock.sent = clock.sent.saturating_add(1);
         let reported = self.unfinished_usage();
         let own = reported.get(open.usage_mark..).unwrap_or_default();
-        EndedAttempt {
-            attempt: open.number,
+        Some(EndedAttempt {
+            attempt: clock.sent,
             outcome,
-            duration_ms: open
-                .started
-                .elapsed()
-                .as_millis()
-                .try_into()
-                .unwrap_or(u64::MAX),
+            duration_ms: millis(open.since),
+            queued_ms: open.queued_ms,
             spend: RequestSpend::of(own.iter().chain(reply)),
-        }
+        })
     }
 
     fn report(&self, ended: EndedAttempt) {

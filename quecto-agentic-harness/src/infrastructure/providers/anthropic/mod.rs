@@ -685,6 +685,10 @@ impl LlmProvider for AnthropicProvider {
                     .await;
                 return rx;
             }
+            crate::infrastructure::providers::attempt_transport::queue_before_spawn(
+                provider.attempt_admission.as_ref(),
+                trace.as_ref(),
+            );
             tokio::spawn(async move {
                 if let Some(gate) = &provider.attempt_admission {
                     let builder =

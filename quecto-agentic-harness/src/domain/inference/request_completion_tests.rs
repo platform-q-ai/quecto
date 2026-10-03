@@ -19,6 +19,7 @@ fn ended(outcome: RequestOutcome, spend: Option<RequestSpend>) -> EndedAttempt {
         attempt: 1,
         outcome,
         duration_ms: 5,
+        queued_ms: None,
         spend,
     }
 }
@@ -212,4 +213,59 @@ fn cache_writes_are_their_own_bucket() {
     let tally = RequestTally::default();
     tally.record("m", "anthropic", ended(RequestOutcome::Ok, Some(spend)));
     assert_eq!(tally.counters().cache_write_tokens, 5000);
+}
+
+/// #2436 review round 2 M1: an attempt that ends still waiting for
+/// admission — however it ends — was never sent: nothing is reported.
+#[test]
+fn an_attempt_ending_while_queued_is_never_reported() {
+    for end in [
+        RequestOutcome::Cancelled,
+        RequestOutcome::Error,
+        RequestOutcome::Ok,
+    ] {
+        let (trace, seen) = recorded_trace();
+        trace.start();
+        trace.queue_attempt();
+        trace.end_attempt(end, None);
+        assert!(seen.lock().unwrap().is_empty(), "{end:?}");
+    }
+    let (trace, seen) = recorded_trace();
+    trace.start();
+    trace.queue_attempt();
+    trace.retry();
+    trace.end_attempt(RequestOutcome::Ok, None);
+    let reported: Vec<_> = seen.lock().unwrap().iter().map(|e| e.attempt).collect();
+    assert_eq!(
+        reported,
+        [1],
+        "a queued attempt a retry replaced was not sent"
+    );
+}
+
+/// #2436 review round 2 L1/L2: only sent attempts are numbered, and an
+/// admitted attempt's wait is `queued_ms`, its duration from admission.
+#[test]
+fn sent_attempts_are_numbered_and_timed_from_admission() {
+    let (trace, seen) = recorded_trace();
+    trace.start();
+    trace.queue_attempt();
+    trace.withdraw_attempt();
+    trace.retry();
+    trace.queue_attempt();
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    trace.admit_attempt();
+    trace.end_attempt_failed();
+    trace.retry();
+    trace.end_attempt(RequestOutcome::Ok, None);
+    let seen = seen.lock().unwrap().clone();
+    let numbers: Vec<_> = seen.iter().map(|e| (e.attempt, e.outcome)).collect();
+    assert_eq!(
+        numbers,
+        [(1, RequestOutcome::Error), (2, RequestOutcome::Ok)]
+    );
+    let waited = seen[0].queued_ms.expect("it waited");
+    assert!(waited >= 30, "{waited}");
+    assert!(seen[0].duration_ms < 30, "{}", seen[0].duration_ms);
+    assert_eq!(seen[1].queued_ms, None, "it never waited");
 }

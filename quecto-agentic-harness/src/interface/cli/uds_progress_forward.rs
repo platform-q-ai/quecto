@@ -95,6 +95,7 @@ fn request_completed(
         cache_write_tokens: completed.spend.and_then(|spend| spend.cache_write_tokens),
         output_tokens: completed.spend.map(|spend| spend.output_tokens),
         duration_ms: completed.duration_ms,
+        queued_ms: None,
         outcome: completed.outcome,
         request_index: completed.request_index,
         attempt: completed.attempt,

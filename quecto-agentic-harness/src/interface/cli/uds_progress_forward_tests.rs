@@ -8,11 +8,20 @@ use crate::domain::inference::request_completion::{
 use serde_json::json;
 
 fn ended(spend: Option<RequestSpend>, outcome: RequestOutcome) -> AgentProgressEvent {
+    queued(spend, outcome, None)
+}
+
+fn queued(
+    spend: Option<RequestSpend>,
+    outcome: RequestOutcome,
+    queued_ms: Option<u64>,
+) -> AgentProgressEvent {
     AgentProgressEvent::RequestCompleted(RequestCompleted {
         model: "gpt-5.5".into(),
         provider: "openai-oauth".into(),
         spend,
         duration_ms: 1234,
+        queued_ms,
         outcome,
         request_index: 7,
         attempt: 2,
@@ -223,4 +232,21 @@ async fn an_aborted_turn_puts_a_cancelled_request_on_the_socket() {
     assert_eq!(completed[0]["outcome"], "cancelled");
     assert_eq!(completed[0]["requestIndex"], 1);
     assert_eq!(agent.request_tally().counters().requests, 1);
+}
+
+/// #2436 review round 2 L2: an attempt that waited for admission says how
+/// long; one that never waited omits it.
+#[tokio::test]
+async fn an_admission_wait_rides_as_queued_ms() {
+    let lines = written(
+        vec![
+            queued(None, RequestOutcome::Ok, Some(750)),
+            ended(None, RequestOutcome::Ok),
+        ],
+        false,
+    )
+    .await;
+    assert_eq!(lines[0]["queuedMs"], 750);
+    assert_eq!(lines[0]["durationMs"], 1234);
+    assert!(lines[1].get("queuedMs").is_none(), "{}", lines[1]);
 }

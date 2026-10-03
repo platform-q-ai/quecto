@@ -174,6 +174,9 @@ pub enum AgentEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         output_tokens: Option<u64>,
         duration_ms: u64,
+        /// How long it waited to be admitted; omitted when it never waited.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        queued_ms: Option<u64>,
         outcome: crate::domain::inference::request_completion::RequestOutcome,
         /// This agent's requests so far, this one included.
         request_index: u64,
