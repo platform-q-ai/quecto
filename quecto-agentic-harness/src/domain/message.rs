@@ -1,3 +1,4 @@
+use crate::domain::conversation::image_tokens::estimate_image_tokens;
 #[cfg(any(test, feature = "test-support"))]
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -269,12 +270,12 @@ impl Message {
             let user_image_tokens: usize = self
                 .user_image_blocks
                 .iter()
-                .map(|img| crate::domain::token_estimate::estimate_opaque_tokens(&img.data))
+                .map(|img| estimate_image_tokens(&img.mime_type, &img.data))
                 .sum();
             let image_tokens: usize = self
                 .image_blocks
                 .iter()
-                .map(|img| crate::domain::token_estimate::estimate_opaque_tokens(&img.data))
+                .map(|img| estimate_image_tokens(img.mime_type, &img.data))
                 .sum();
             text_tokens + tool_call_tokens + tool_call_id_tokens + image_tokens + user_image_tokens
         })

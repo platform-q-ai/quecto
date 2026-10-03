@@ -1,4 +1,6 @@
 use super::*;
+use crate::domain::conversation::image_headers::{encode, png, png_with_body};
+use crate::domain::conversation::image_tokens::estimate_image_tokens;
 
 #[test]
 fn message_constructors_cover_user_assistant_and_tool_roles() {
@@ -59,8 +61,8 @@ fn estimated_tokens_counts_content_tool_calls_ids_and_images_once() {
         + Message::estimate_tokens("tool")
         + Message::estimate_tokens("abcdefghi")
         + Message::estimate_tokens("callid")
-        + crate::domain::token_estimate::estimate_opaque_tokens("12345")
-        + crate::domain::token_estimate::estimate_opaque_tokens("abcdef");
+        + estimate_image_tokens("image/png", "12345")
+        + estimate_image_tokens("image/jpeg", "abcdef");
 
     assert_eq!(msg.estimated_tokens(), expected);
     assert_eq!(msg.estimated_tokens(), expected);
@@ -91,29 +93,45 @@ fn token_cache_clone_directly_resets_once_lock() {
     );
 }
 
-/// #2212: image data keeps the plain ASCII/4 rate although base64 carries
-/// digits; the dense rate would double an over-estimate that is already
-/// large (providers price images per image).
+/// #2420: an image is priced by its pixel size, not by its base64
+/// characters, in both kinds of image block.
 #[test]
-fn image_data_is_estimated_at_the_opaque_rate() {
-    let data = "iVBORw0KGgo1AAAANSUhEUg2AAAAEAAAAB3CAYAAAAf4FcSJAAAADUlEQVR42mNk".repeat(8);
-    let opaque = crate::domain::token_estimate::estimate_opaque_tokens(&data);
-    assert!(
-        Message::estimate_tokens(&data) > opaque,
-        "base64 reads as dense text"
-    );
-
+fn image_data_is_estimated_by_the_image_size() {
+    let data = encode(&png(800, 600));
     let mut msg = Message::user("");
     msg.image_blocks.push(crate::domain::tool::ImageBlock {
         mime_type: "image/png",
         data: data.clone(),
     });
-    assert_eq!(msg.estimated_tokens(), opaque);
+    assert_eq!(msg.estimated_tokens(), 640);
 
     let mut msg = Message::user("");
     msg.user_image_blocks.push(UserImageBlock {
         mime_type: "image/png".to_string(),
         data,
     });
-    assert_eq!(msg.estimated_tokens(), opaque);
+    assert_eq!(msg.estimated_tokens(), 640);
+}
+
+/// #2420: a message holding a 1 MB screenshot estimates under 5,000
+/// tokens (it was ~350k at ASCII/4); its text is estimated as before.
+#[test]
+fn a_message_holding_a_one_megabyte_screenshot_estimates_under_five_thousand_tokens() {
+    let screenshot = encode(&png_with_body(1920, 1080, 1 << 20));
+    let mut tool = Message::tool("call-1", "Screenshot taken.");
+    tool.image_blocks.push(crate::domain::tool::ImageBlock {
+        mime_type: "image/png",
+        data: screenshot.clone(),
+    });
+    let text = Message::estimate_tokens("Screenshot taken.") + Message::estimate_tokens("call-1");
+    assert_eq!(tool.estimated_tokens(), text + 2765);
+    assert!(tool.estimated_tokens() < 5_000);
+
+    let mut user = Message::user("What is on screen?");
+    user.user_image_blocks.push(UserImageBlock {
+        mime_type: "image/png".to_string(),
+        data: screenshot,
+    });
+    let text = Message::estimate_tokens("What is on screen?");
+    assert_eq!(user.estimated_tokens(), text + 2765);
 }

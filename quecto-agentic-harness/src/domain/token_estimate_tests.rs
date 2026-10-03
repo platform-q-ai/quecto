@@ -92,8 +92,8 @@ fn a_dense_run_ends_at_the_next_prose_word() {
 
 #[test]
 fn opaque_payloads_keep_the_plain_ascii_rate() {
-    // Base64 image data is priced per image by providers, not per character;
-    // the dense rate would double an already large over-estimate.
+    // Opaque payloads (replayed encrypted reasoning) stay at ASCII/4; images
+    // are priced by their pixel size instead (#2420).
     let base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk".repeat(10);
     assert_eq!(estimate_opaque_tokens(&base64), base64.len().div_ceil(4));
     assert_eq!(estimate_opaque_tokens("中中ab"), 3);

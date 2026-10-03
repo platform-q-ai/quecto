@@ -176,3 +176,8 @@ mod watermark_read_cache_tests;
 #[cfg(test)]
 #[path = "agent_loop/watermark_sim_tests.rs"]
 mod watermark_sim_tests;
+
+// #2420: screenshots priced by their pixel size trigger no cut.
+#[cfg(test)]
+#[path = "agent_loop/watermark_image_sim_tests.rs"]
+mod watermark_image_sim_tests;

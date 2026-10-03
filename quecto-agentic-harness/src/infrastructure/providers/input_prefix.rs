@@ -91,7 +91,7 @@ impl MeasuredInput {
                 let kind = kind(item);
                 let text = serialized(item, &mut bytes);
                 // Encrypted reasoning is opaque: estimated at the plain
-                // ASCII rate, as images are, not as dense high-entropy text.
+                // ASCII rate, not as dense high-entropy text.
                 let tokens = match kind {
                     Some(InputItemKind::Reasoning) => estimate_opaque_tokens(text),
                     Some(_) | None => estimate_tokens(text),

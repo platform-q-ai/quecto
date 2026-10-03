@@ -107,11 +107,11 @@ fn test_estimate_message_tokens_includes_image_blocks() {
     let mut msg = Message::tool("call_1", "abc"); // div_ceil(3,4)=1 token text
     msg.image_blocks = vec![ImageBlock {
         mime_type: "image/png",
-        data: "x".repeat(300), // div_ceil(300,4)=75 tokens image
+        data: "x".repeat(300), // no PNG header: the 4,784 an unreadable image costs (#2420)
     }];
-    // 1 text + 75 image + 3 for tool_call_id "call_1" ("call_" prose 2,
+    // 1 text + 4784 image + 3 for tool_call_id "call_1" ("call_" prose 2,
     // "1" dense 1: #2212)
-    assert_eq!(estimate_message_tokens(&msg), 79);
+    assert_eq!(estimate_message_tokens(&msg), 4788);
 }
 
 #[test]
@@ -123,11 +123,11 @@ fn test_ceiling_ladder_accounts_for_image_blocks() {
     msg1.spill_id = Some("turn1:tool:0".into());
     msg1.image_blocks = vec![ImageBlock {
         mime_type: "image/png",
-        data: "x".repeat(600), // 200 tokens
+        data: "x".repeat(600), // unreadable: 4,784 tokens (#2420)
     }];
     let msg2 = Message::user("y".repeat(300)); // 100 tokens
     let mut messages = vec![msg1, msg2];
-    // Budget of 150: total is ~301 tokens; the image-heavy tool result
+    // Budget of 150: total is ~4,888 tokens; the image-heavy tool result
     // must be demoted (its stub releases the image data) to fit.
     let outcome = messages::enforce_context_ceiling_ladder(&mut messages, 150, 2);
     assert_eq!(outcome.collapsed_to_stubs, 1);

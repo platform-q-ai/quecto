@@ -1,7 +1,13 @@
 //! The conversation a model is sent, as pure policy over its messages.
 
+pub mod image_dimensions;
+pub mod image_tokens;
 pub mod watermark;
 pub mod watermark_cut;
+
+#[cfg(test)]
+#[path = "image_headers_tests.rs"]
+pub(crate) mod image_headers;
 
 /// What a user-role message is to the watermark context (#2403), stamped
 /// when it is appended and saved with it, so a cut pins the latest prompt
