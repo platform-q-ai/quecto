@@ -4,6 +4,8 @@
 use super::*;
 use crate::application::catalogue::dto::CatalogueStanding;
 
+const HELD: std::time::Duration = std::time::Duration::from_secs(3600);
+
 const REASON: &str = "The 'mini' model is not supported when using Codex with a ChatGPT account.";
 
 fn refused_rig() -> Rig {
@@ -15,6 +17,7 @@ fn refused_rig() -> Rig {
     rig.store.record_refusal(
         &ModelRef::parse_qualified("openai-oauth/mini").unwrap(),
         REASON,
+        HELD,
     );
     rig
 }
@@ -64,6 +67,7 @@ fn a_refused_model_is_never_recorded_as_a_default() {
     rig.store.record_refusal(
         &ModelRef::parse_qualified("openai-oauth/mini").unwrap(),
         REASON,
+        HELD,
     );
     let mut runtime = FakeLoop::default();
     let error = rig
@@ -103,7 +107,17 @@ fn the_plan_says_where_the_model_stands() {
     );
     assert_eq!(
         standing("openai-oauth/gpt-5.5"),
-        CatalogueStanding::Unlisted
+        CatalogueStanding::Retired {
+            provider: "openai-oauth".into()
+        },
+        "a built-in #2435 retired"
+    );
+    assert_eq!(
+        standing("openai-oauth/gpt-typo"),
+        CatalogueStanding::Unlisted {
+            provider: "openai-oauth".into()
+        },
+        "any other id the provider does not list"
     );
     assert_eq!(
         standing("elsewhere/x"),
@@ -120,7 +134,10 @@ fn an_unlisted_model_still_switches() {
         .use_case
         .execute(&mut runtime, "openai-oauth/gpt-5.5")
         .unwrap();
-    assert_eq!(switched.plan.standing, CatalogueStanding::Unlisted);
+    assert!(matches!(
+        switched.plan.standing,
+        CatalogueStanding::Retired { .. }
+    ));
     assert_eq!(runtime.model, "openai-oauth/gpt-5.5");
 }
 
@@ -151,8 +168,32 @@ fn an_id_on_a_provider_that_lists_no_models_is_uncatalogued() {
         CatalogueStanding::UncataloguedProvider
     );
     assert_eq!(
-        rig.use_case.plan("gpt-5.5").standing,
-        CatalogueStanding::Unlisted,
+        rig.use_case.plan("gpt-typo").standing,
+        CatalogueStanding::Unlisted {
+            provider: "openai-oauth".into()
+        },
         "a bare id reaches the first provider, which lists other models"
     );
+}
+
+/// Review round 1 L7: a refusal recorded for a model the catalogue does not
+/// list (one an account was refused before it was ever listed, or a retired
+/// one) still makes the switch refuse, as the refusal's guidance says.
+#[test]
+fn a_refused_model_the_catalogue_does_not_list_is_refused_too() {
+    let rig = refused_rig();
+    rig.store.record_refusal(
+        &ModelRef::parse_qualified("openai-oauth/gpt-5.5").unwrap(),
+        REASON,
+        HELD,
+    );
+    assert_eq!(
+        rig.use_case.plan("openai-oauth/gpt-5.5").standing,
+        CatalogueStanding::RefusedForAccount(REASON.into())
+    );
+    let mut runtime = FakeLoop::default();
+    assert!(matches!(
+        rig.use_case.execute(&mut runtime, "openai-oauth/gpt-5.5"),
+        Err(ModelSwitchError::RefusedForAccount { .. })
+    ));
 }

@@ -51,6 +51,9 @@ pub struct GetStateSnapshot {
     pub admission_warnings: Vec<AdmissionBindingWarning>,
     /// A full warning list was supplied without malformed content.
     pub admission_warnings_authoritative: bool,
+    /// The warnings the agent's startup model drew (#2435, #2126),
+    /// sanitized; empty when absent.
+    pub startup_warnings: Vec<String>,
 }
 
 #[derive(serde::Deserialize, Default)]
@@ -144,6 +147,7 @@ pub fn parse_get_state(
         admission,
         admission_warnings,
         admission_warnings_authoritative,
+        startup_warnings: Vec::new(),
     }
 }
 

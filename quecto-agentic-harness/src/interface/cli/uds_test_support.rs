@@ -36,6 +36,7 @@ impl AdmissionStateProbe {
             execution,
             session: protocol::SessionState {
                 admission_warnings: Vec::new(),
+                startup_warnings: Vec::new(),
                 model: "probe".into(),
                 generation: 0,
                 is_streaming: false,

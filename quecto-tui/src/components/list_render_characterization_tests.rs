@@ -234,12 +234,14 @@ fn model_fixture() -> ModelSelector {
             provider: "ProvA".to_string(),
             auth: None,
             is_current: false,
+            unavailable: None,
         },
         ModelEntry {
             id: "model-bb-long".to_string(),
             provider: "ProvB".to_string(),
             auth: None,
             is_current: false,
+            unavailable: None,
         },
     ];
     ModelSelector::with_models(models, Some("model-bb-long"))

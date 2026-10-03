@@ -48,6 +48,8 @@ pub struct App {
     conn: connection_state::ConnectionState,
     /// Slots whose startup admission warning has already been shown in this TUI session.
     shown_admission_warning_slots: std::collections::BTreeSet<String>,
+    /// Startup warnings already shown (#2435): each is shown once.
+    shown_startup_warnings: std::collections::BTreeSet<String>,
     editor: Editor,
     /// Images attached to the composed message, shown as chips (#2425).
     attachments: app_attachments::AttachmentFlow,
@@ -154,6 +156,7 @@ impl App {
             inference: InferenceFlow::default(),
             subagents,
             shown_admission_warning_slots: Default::default(),
+            shown_startup_warnings: Default::default(),
             render_log_path: std::env::var("QUECTO_TUI_RENDER_LOG").ok(),
             #[cfg(any(test, feature = "test-harness"))]
             rendered_frames: 0,
@@ -717,6 +720,9 @@ mod tests;
 #[cfg(any(test, feature = "test-harness"))]
 #[path = "tui_harness.rs"]
 pub mod tui_harness;
+#[cfg(test)]
+#[path = "tui_harness_models_tests.rs"]
+mod tui_harness_models_tests;
 #[cfg(test)]
 #[path = "tui_harness_render_tests.rs"]
 mod tui_harness_render_tests;

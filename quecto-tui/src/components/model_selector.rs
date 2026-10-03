@@ -54,6 +54,7 @@ fn known_models() -> Vec<ModelEntry> {
             provider,
             auth: None,
             is_current: false,
+            unavailable: None,
         })
         .collect()
 }
@@ -69,6 +70,9 @@ pub struct ModelEntry {
     /// Human-readable auth label shown in the selector (e.g. "oauth" or "api").
     pub auth: Option<String>,
     pub is_current: bool,
+    /// Why the harness says the model cannot run now (#2435), e.g.
+    /// `refused-for-account: …`: shown on its row, which cannot be chosen.
+    pub unavailable: Option<String>,
 }
 
 /// Result of the model selector interaction — the shared list-interaction
@@ -194,6 +198,7 @@ impl ModelSelector {
                         provider: "Custom".to_string(),
                         auth: None,
                         is_current: true,
+                        unavailable: None,
                     },
                 );
             }
@@ -394,3 +399,6 @@ impl Component for ModelSelector {
 #[cfg(test)]
 #[path = "model_selector_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "model_selector_unavailable_tests.rs"]
+mod unavailable_tests;

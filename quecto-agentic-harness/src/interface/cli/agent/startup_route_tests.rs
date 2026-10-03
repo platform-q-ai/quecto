@@ -36,16 +36,31 @@ fn a_routable_model_proceeds_either_way() {
     }
 }
 
-/// #2435: a configured model the catalogue no longer lists (a retired
-/// built-in) starts with a warning naming the remedies, never a crash.
+/// #2435: a configured model its provider does not list starts with a
+/// neutral warning naming the remedies, never a crash; retirement is named
+/// only for a model #2435 retired (review round 1 L5).
 #[test]
 fn an_unlisted_startup_model_warns_with_the_remedies() {
+    let unlisted = CatalogueStanding::Unlisted {
+        provider: "openai-oauth".into(),
+    };
     assert_eq!(
-        standing_warning(&CatalogueStanding::Unlisted, "openai-oauth/gpt-5.5").as_deref(),
+        standing_warning(&unlisted, "openai-oauth/gpt-typo").as_deref(),
         Some(
-            "agent: warning: model `openai-oauth/gpt-5.5` is not in the model catalogue (older \
-             built-in models have been retired); it is sent as-is with no known limits. Declare \
-             it in models.json to keep it, or choose a listed model (list_models, /model)"
+            "agent: warning: provider `openai-oauth` does not list model \
+             `openai-oauth/gpt-typo`; it is sent as-is with no known limits. Declare it in \
+             models.json, or choose a listed model (list_models, /model)"
+        )
+    );
+    let retired = CatalogueStanding::Retired {
+        provider: "openai-oauth".into(),
+    };
+    assert_eq!(
+        standing_warning(&retired, "openai-oauth/gpt-5.5").as_deref(),
+        Some(
+            "agent: warning: model `openai-oauth/gpt-5.5` was retired from the built-in models \
+             of `openai-oauth` (#2435); it is sent as-is with no known limits. Declare it in \
+             models.json to keep it, or choose a listed model (list_models, /model)"
         )
     );
 }

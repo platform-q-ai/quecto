@@ -343,6 +343,7 @@ fn install_busy_state_snapshot_entry(
                 use std::io::Write;
                 let mut state = quecto::interface::cli::protocol::SessionState {
                     admission_warnings: vec![],
+                    startup_warnings: Vec::new(),
                     control_receipts: vec![],
                     automatic_turns_suspended: false,
                     repeated_failure_notifications: 0,

@@ -375,6 +375,7 @@ pub(crate) fn compose_agent_provider_inner_outcome(
     let router: Arc<dyn LlmProvider> = Arc::new(RefusalRecordingProvider::new(
         Arc::new(ProviderRouter::new(provider_list)),
         Arc::new(crate::infrastructure::catalogue_registry::snapshot_store_for(base_dir)),
+        config.providers.model_refusal_ttl(),
     ));
     Ok(ProviderRuntimeOutcome {
         provider: Arc::new(RetryingProvider::new(router, RetryConfig::default())),

@@ -15,6 +15,8 @@ pub use uds_session_notify::NotificationEnqueueOutcome;
 pub struct AgentSession {
     model: String,
     admission_warnings: Vec<crate::domain::state_snapshot::AdmissionBindingWarning>,
+    /// What the startup model drew (#2435, #2126), shown to every client.
+    startup_warnings: Vec<String>,
     runtime_store: Option<crate::application::ports::RuntimeSnapshotStore>,
     streaming: bool,
     pub(crate) automatic_turns_allowed: bool,
@@ -238,6 +240,7 @@ impl AgentSession {
         Self {
             model,
             admission_warnings: Vec::new(),
+            startup_warnings: Vec::new(),
             runtime_store: None,
             streaming: false,
             automatic_turns_allowed: true,
@@ -451,6 +454,7 @@ impl AgentSession {
         let effort = effort.into();
         SessionState {
             admission_warnings: self.current_admission_warnings(),
+            startup_warnings: self.startup_warnings.clone(),
             control_receipts: self.control_receipts.clone(),
             model: self.model.clone(),
             generation: self.generation,

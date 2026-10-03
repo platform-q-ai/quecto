@@ -550,6 +550,7 @@ fn test_response_without_id_omits_id_field() {
 fn test_session_state_serializes() {
     let state = SessionState {
         admission_warnings: Vec::new(),
+        startup_warnings: Vec::new(),
         control_receipts: Vec::new(),
         automatic_turns_suspended: false,
         repeated_failure_notifications: 0,
@@ -576,6 +577,7 @@ fn test_session_state_serializes() {
 fn test_session_state_with_workflow_serializes() {
     let state = SessionState {
         admission_warnings: Vec::new(),
+        startup_warnings: Vec::new(),
         control_receipts: Vec::new(),
         automatic_turns_suspended: false,
         repeated_failure_notifications: 0,
@@ -606,6 +608,7 @@ fn test_session_state_with_workflow_serializes() {
 fn test_session_state_without_workflow_omits_field() {
     let state = SessionState {
         admission_warnings: Vec::new(),
+        startup_warnings: Vec::new(),
         control_receipts: Vec::new(),
         automatic_turns_suspended: false,
         repeated_failure_notifications: 0,

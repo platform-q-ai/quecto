@@ -584,6 +584,8 @@ mod app_admission;
 #[cfg(test)]
 #[path = "app_events_test_support.rs"]
 pub(super) mod app_events_test_support;
+#[path = "app_startup_warnings.rs"]
+mod app_startup_warnings;
 #[path = "app_workflow_automation.rs"]
 mod app_workflow_automation;
 #[cfg(test)]

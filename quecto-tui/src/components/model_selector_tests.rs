@@ -396,12 +396,14 @@ fn with_models_accepts_custom_list() {
             provider: "ProviderA".to_string(),
             auth: None,
             is_current: false,
+            unavailable: None,
         },
         ModelEntry {
             id: "model-b".to_string(),
             provider: "ProviderB".to_string(),
             auth: None,
             is_current: false,
+            unavailable: None,
         },
     ];
     let mut sel = ModelSelector::with_models(models, Some("model-a"));
@@ -458,6 +460,7 @@ fn removed_fireworks_defaults_remain_selectable_when_user_configured() {
                 provider: "Fireworks".into(),
                 auth: None,
                 is_current: false,
+                unavailable: None,
             }],
             None,
         );

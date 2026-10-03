@@ -15,6 +15,7 @@ pub(super) fn parse_model_entries(data: &serde_json::Value) -> Vec<ModelEntry> {
         provider: entry.provider,
         auth: entry.auth,
         is_current: false,
+        unavailable: entry.unavailable,
     })
     .collect()
 }

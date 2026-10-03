@@ -37,6 +37,8 @@ pub struct ModelListEntry {
     pub id: String,
     pub provider: String,
     pub auth: Option<String>,
+    /// Why the model cannot run now (#2435), when the harness says so.
+    pub unavailable: Option<String>,
 }
 
 /// Map a `list_models` response payload into typed model entries.
@@ -80,7 +82,12 @@ fn parse_model_list_entry(
     let auth = string_field(model, "auth")
         .map(sanitize)
         .filter(|s| !s.is_empty());
-    Some(ModelListEntry { id, provider, auth })
+    Some(ModelListEntry {
+        id,
+        provider,
+        auth,
+        unavailable: None,
+    })
 }
 
 /// One string field of a JSON object: absent when the key is missing or

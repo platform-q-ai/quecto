@@ -288,6 +288,7 @@ fn a_refused_model_is_listed_as_not_runnable_with_the_reason() {
     store.record_refusal(
         &ModelRef::parse_qualified("openai-oauth/mini").unwrap(),
         "not supported with a ChatGPT account",
+        std::time::Duration::from_secs(3600),
     );
     let listed = match ListModels::new(loader, store).execute() {
         ModelListingOutcome::Listed(listed) => listed,

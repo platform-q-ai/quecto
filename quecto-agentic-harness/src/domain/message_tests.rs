@@ -222,3 +222,15 @@ fn only_json_whitespace_is_ignored_around_an_object() {
         ToolArguments::Object(spaced)
     );
 }
+
+/// #2435 review round 1 L4: the default model is costed, at the registry
+/// table's rates: $2 in, $10 out, $0.10 cached input (5% of input), cache
+/// writes at 1.25x input.
+#[test]
+fn the_default_gpt_6_1_sol_is_costed_at_its_published_rates() {
+    let pricing = model_pricing("gpt-6.1-sol").expect("gpt-6.1-sol is priced");
+    assert_eq!(pricing.input_micro_usd_per_million, 2_000_000);
+    assert_eq!(pricing.output_micro_usd_per_million, 10_000_000);
+    assert_eq!(pricing.cache_read_micro_usd_per_million, 100_000);
+    assert_eq!(pricing.cache_write_micro_usd_per_million, 2_500_000);
+}

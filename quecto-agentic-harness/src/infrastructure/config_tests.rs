@@ -709,3 +709,20 @@ fn test_load_config_io_error_reports_path() {
     assert!(text.contains("failed to read config file"), "{text}");
     assert!(text.contains(dir.path().to_str().unwrap()), "{text}");
 }
+
+/// #2435 review round 1 M3: a refused model is held for an hour unless
+/// `providers.model_refusal_ttl_secs` says otherwise.
+#[test]
+fn a_refused_model_is_held_an_hour_by_default_and_configurably() {
+    let config: Config = serde_json::from_str("{}").unwrap();
+    assert_eq!(
+        config.providers.model_refusal_ttl(),
+        std::time::Duration::from_secs(3600)
+    );
+    let config: Config =
+        serde_json::from_str(r#"{"providers":{"model_refusal_ttl_secs":600}}"#).unwrap();
+    assert_eq!(
+        config.providers.model_refusal_ttl(),
+        std::time::Duration::from_secs(600)
+    );
+}

@@ -9,10 +9,12 @@
 
 pub mod dto;
 pub mod ports;
+mod refusals;
 pub mod use_cases;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
 
 use crate::domain::catalogue::{
     Availability, AvailabilityStatus, CatalogueEntry, CatalogueSnapshot, ModelRef, RejectedEntry,
@@ -95,8 +97,8 @@ pub struct CatalogueSnapshotStore {
     /// Last-good raw entries per source id (pre-availability derivation).
     last_good_layers: Arc<Mutex<HashMap<String, Vec<CatalogueEntry>>>>,
     /// Models a provider refused for the account in use (#2435), with the
-    /// provider's reason: learned once, held for the rest of the process.
-    refusals: Arc<Mutex<HashMap<ModelRef, String>>>,
+    /// provider's reason, each held until it expires or is served again.
+    refusals: refusals::RefusalLedger,
 }
 
 impl CatalogueSnapshotStore {
@@ -104,35 +106,34 @@ impl CatalogueSnapshotStore {
         Self {
             current: Arc::new(RwLock::new(Arc::new(initial))),
             last_good_layers: Arc::new(Mutex::new(HashMap::new())),
-            refusals: Arc::new(Mutex::new(HashMap::new())),
+            refusals: refusals::RefusalLedger::default(),
         }
     }
 
-    /// Record that the provider refused `reference` for the account in use
-    /// (#2435). True when this is the first refusal recorded for it.
-    pub fn record_refusal(&self, reference: &ModelRef, reason: &str) -> bool {
+    /// Hold the provider's refusal of `reference` for the account in use
+    /// for `held_for` (#2435). True when it is new: a refusal already held
+    /// keeps its first reason and hold.
+    pub fn record_refusal(&self, reference: &ModelRef, reason: &str, held_for: Duration) -> bool {
         debug_assert!(!reason.trim().is_empty(), "a refusal says why");
-        let mut refusals = self
-            .refusals
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        match refusals.contains_key(reference) {
-            true => false,
-            false => {
-                refusals.insert(reference.clone(), reason.to_string());
-                true
-            }
-        }
+        self.refusals
+            .record(reference, reason, Instant::now(), held_for)
+    }
+
+    /// Release the refusal of `reference`: its provider served it (#2435).
+    /// True when one was held.
+    pub fn clear_refusal(&self, reference: &ModelRef) -> bool {
+        self.refusals.clear(reference)
     }
 
     /// The reason the provider refused `reference` for the account in use,
-    /// if it has (#2435).
+    /// while the refusal is held (#2435).
     pub fn refusal(&self, reference: &ModelRef) -> Option<String> {
-        self.refusals
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .get(reference)
-            .cloned()
+        self.refusal_at(reference, Instant::now())
+    }
+
+    /// [`Self::refusal`] at `now`.
+    pub fn refusal_at(&self, reference: &ModelRef, now: Instant) -> Option<String> {
+        self.refusals.reason_at(reference, now)
     }
 
     /// Remember one source's successfully loaded entries as its retention

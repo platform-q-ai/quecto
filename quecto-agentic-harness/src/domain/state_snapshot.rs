@@ -174,6 +174,10 @@ pub struct StateSnapshot {
     pub admission: Option<AdmissionSnapshot>,
     #[serde(default)]
     pub admission_warnings: Vec<AdmissionBindingWarning>,
+    /// The warnings the startup model drew (#2435, #2126): a model its
+    /// provider does not list, a refused one, an unconfigured provider.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub startup_warnings: Vec<String>,
     /// The model request in flight (#2210): present only while the agent
     /// waits on the model — thinking or streaming — and absent otherwise.
     #[serde(

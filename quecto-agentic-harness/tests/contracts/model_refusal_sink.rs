@@ -9,6 +9,8 @@ use quecto::application::catalogue::ports::ModelRefusalSink;
 use quecto::domain::catalogue::ModelRef;
 use quecto::infrastructure::catalogue_registry::snapshot_store_for;
 
+const HELD: std::time::Duration = std::time::Duration::from_secs(3600);
+
 const REASON: &str =
     "The 'gpt-6-luna' model is not supported when using Codex with a ChatGPT account.";
 
@@ -26,8 +28,14 @@ fn a_recorded_refusal_is_new_once_and_lists_the_model_as_refused() {
     let tmp = tempfile::tempdir().unwrap();
     let sink: Arc<dyn ModelRefusalSink> = Arc::new(snapshot_store_for(tmp.path()));
     let refused = ModelRef::parse_qualified("openai-oauth/gpt-6-luna").unwrap();
-    assert!(sink.record_refusal(&refused, REASON), "the first is new");
-    assert!(!sink.record_refusal(&refused, "again"), "a repeat is not");
+    assert!(
+        sink.record_refusal(&refused, REASON, HELD),
+        "the first is new"
+    );
+    assert!(
+        !sink.record_refusal(&refused, "again", HELD),
+        "a repeat is not"
+    );
 
     let wire = quecto::composition::catalogue::list_models_wire_for(tmp.path());
     let entry = listed(&wire, "openai-oauth/gpt-6-luna");

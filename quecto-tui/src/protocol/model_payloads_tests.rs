@@ -282,3 +282,32 @@ fn persisted_default_is_absent_for_in_memory_switches_and_malformed_objects() {
     .unwrap();
     assert_eq!(parsed.path, "/p");
 }
+
+/// #2435 review round 1 M2: a model the harness says cannot run carries why
+/// (`unavailable`, joined); a runnable one, and an older harness's entry
+/// with neither field, carry nothing; `configured: false` alone (an older
+/// harness) reads as not configured.
+#[test]
+fn a_listed_model_carries_why_it_cannot_run() {
+    let data = serde_json::json!({"models": [
+        {"model": "openai-oauth/mini", "configured": false,
+         "unavailable": ["refused-for-account: no \u{1b}ChatGPT", "missing-credential"]},
+        {"model": "openai-oauth/sol", "configured": true, "unavailable": []},
+        {"model": "legacy/m"},
+        {"model": "legacy/unconfigured", "configured": false},
+    ]});
+    let entries = parse_model_list(&data, &|s: &str| s.replace('\u{1b}', ""));
+    let unavailable: Vec<Option<&str>> = entries
+        .iter()
+        .map(|entry| entry.unavailable.as_deref())
+        .collect();
+    assert_eq!(
+        unavailable,
+        [
+            Some("refused-for-account: no ChatGPT; missing-credential"),
+            None,
+            None,
+            Some("not configured"),
+        ]
+    );
+}

@@ -8,6 +8,7 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::application::catalogue::ports::ModelRefusalSink;
 use crate::application::providers::ports::{ChatRequest, LlmProvider, RouteCheck};
@@ -21,11 +22,21 @@ use crate::domain::provider_error::model_refusal;
 pub struct RefusalRecordingProvider {
     inner: Arc<dyn LlmProvider>,
     sink: Arc<dyn ModelRefusalSink>,
+    /// How long a refusal is held (`providers.model_refusal_ttl_secs`).
+    held_for: Duration,
 }
 
 impl RefusalRecordingProvider {
-    pub fn new(inner: Arc<dyn LlmProvider>, sink: Arc<dyn ModelRefusalSink>) -> Self {
-        Self { inner, sink }
+    pub fn new(
+        inner: Arc<dyn LlmProvider>,
+        sink: Arc<dyn ModelRefusalSink>,
+        held_for: Duration,
+    ) -> Self {
+        Self {
+            inner,
+            sink,
+            held_for,
+        }
     }
 
     /// The provider and model a request for `model` goes to, by the
@@ -44,7 +55,7 @@ impl RefusalRecordingProvider {
     /// it is a definitive refusal; any other error records nothing.
     fn observe(&self, model: &str, error: &DomainError) {
         if let Some(reference) = self.reached(model) {
-            record(self.sink.as_ref(), &reference, error);
+            record(self.sink.as_ref(), &reference, error, self.held_for);
         }
     }
 
@@ -106,6 +117,7 @@ impl LlmProvider for RefusalRecordingProvider {
         // receiver still drops the provider's stream.
         let reached = self.reached(request.model);
         let sink = self.sink.clone();
+        let held_for = self.held_for;
         let stream = self.inner.chat_stream_incremental(request);
         Box::pin(async move {
             let mut events = stream.await;
@@ -117,7 +129,7 @@ impl LlmProvider for RefusalRecordingProvider {
                 while let Some(event) = events.recv().await {
                     if let StreamEvent::Error(message) = &event {
                         let error = DomainError::Provider(message.clone());
-                        record(sink.as_ref(), &reference, &error);
+                        record(sink.as_ref(), &reference, &error, held_for);
                     }
                     if tx.send(event).await.is_err() {
                         return;
@@ -133,9 +145,14 @@ impl LlmProvider for RefusalRecordingProvider {
 const RELAY_CAPACITY: usize = 32;
 
 /// Record `error` against `reference` when it is a definitive refusal.
-fn record(sink: &dyn ModelRefusalSink, reference: &ModelRef, error: &DomainError) {
+fn record(
+    sink: &dyn ModelRefusalSink,
+    reference: &ModelRef,
+    error: &DomainError,
+    held_for: Duration,
+) {
     if let Some(reason) = model_refusal(error) {
-        if sink.record_refusal(reference, &reason) {
+        if sink.record_refusal(reference, &reason, held_for) {
             tracing::warn!(
                 model = %reference.qualified_id(),
                 reason = %reason,

@@ -522,6 +522,9 @@ pub use crate::domain::state_snapshot::{ControlReceipt, ControlStatus};
 pub struct SessionState {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub admission_warnings: Vec<crate::domain::state_snapshot::AdmissionBindingWarning>,
+    /// The warnings the startup model drew (#2435, #2126).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub startup_warnings: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub control_receipts: Vec<ControlReceipt>,
     #[serde(default)]

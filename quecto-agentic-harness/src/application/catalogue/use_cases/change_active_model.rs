@@ -288,7 +288,9 @@ impl ChangeActiveModel {
     ) -> CatalogueStanding {
         let Some(entry) = entry else {
             return match provider_lists_models {
-                true => CatalogueStanding::Unlisted,
+                true => CatalogueStanding::Unlisted {
+                    provider: String::new(),
+                },
                 false => CatalogueStanding::UncataloguedProvider,
             };
         };

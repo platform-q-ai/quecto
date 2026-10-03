@@ -3,6 +3,7 @@
 //! through unchanged.
 
 use std::sync::Mutex;
+use std::time::Duration;
 
 use super::*;
 use crate::application::catalogue::CatalogueSnapshotStore;
@@ -12,6 +13,7 @@ use crate::infrastructure::providers::router::ProviderRouter;
 
 const REFUSAL: &str = r#"HTTP 400 from Codex: {"detail":"The 'mini' model is not supported when using Codex with a ChatGPT account."}"#;
 const DETAIL: &str = "The 'mini' model is not supported when using Codex with a ChatGPT account.";
+const HELD: Duration = Duration::from_secs(3600);
 
 /// A provider that fails every request with `error`.
 #[derive(Debug)]
@@ -41,15 +43,29 @@ impl LlmProvider for Failing {
 struct Counting {
     store: CatalogueSnapshotStore,
     calls: Mutex<Vec<(String, String)>>,
+    cleared: Mutex<Vec<String>>,
+}
+
+fn counting() -> Arc<Counting> {
+    Arc::new(Counting {
+        store: CatalogueSnapshotStore::empty(),
+        calls: Mutex::new(Vec::new()),
+        cleared: Mutex::new(Vec::new()),
+    })
 }
 
 impl ModelRefusalSink for Counting {
-    fn record_refusal(&self, reference: &ModelRef, reason: &str) -> bool {
+    fn record_refusal(&self, reference: &ModelRef, reason: &str, held_for: Duration) -> bool {
         self.calls
             .lock()
             .unwrap()
             .push((reference.qualified_id(), reason.to_string()));
-        self.store.record_refusal(reference, reason)
+        self.store.record_refusal(reference, reason, held_for)
+    }
+
+    fn clear_refusal(&self, reference: &ModelRef) -> bool {
+        self.cleared.lock().unwrap().push(reference.qualified_id());
+        self.store.clear_refusal(reference)
     }
 }
 
@@ -82,12 +98,9 @@ fn decorated(error: &'static str) -> (RefusalRecordingProvider, Arc<Counting>) {
             error: "HTTP 500 from OpenAI: overloaded",
         }),
     ]);
-    let sink = Arc::new(Counting {
-        store: CatalogueSnapshotStore::empty(),
-        calls: Mutex::new(Vec::new()),
-    });
+    let sink = counting();
     (
-        RefusalRecordingProvider::new(Arc::new(router), sink.clone()),
+        RefusalRecordingProvider::new(Arc::new(router), sink.clone(), HELD),
         sink,
     )
 }
@@ -152,7 +165,8 @@ async fn the_same_refusal_twice_is_recorded_once() {
     assert!(
         !sink.store.record_refusal(
             &ModelRef::parse_qualified("openai-oauth/mini").unwrap(),
-            "again"
+            "again",
+            HELD
         ),
         "already held"
     );
@@ -177,4 +191,153 @@ fn the_decorator_routes_as_its_router_does() {
         provider.route_check("elsewhere/x"),
         RouteCheck::UnknownProvider { .. }
     ));
+}
+
+// ── Review round 1 (#2435) ──────────────────────────────────────────────────
+
+/// A provider whose replies follow a script: each request takes the next
+/// one, and an incremental stream hands its sender to the test.
+#[derive(Debug)]
+struct Scripted {
+    replies: Mutex<std::collections::VecDeque<Result<&'static str, &'static str>>>,
+    senders: Arc<Mutex<Vec<tokio::sync::mpsc::Sender<StreamEvent>>>>,
+}
+
+impl Scripted {
+    fn new(replies: Vec<Result<&'static str, &'static str>>) -> Arc<Self> {
+        Arc::new(Self {
+            replies: Mutex::new(replies.into()),
+            senders: Arc::new(Mutex::new(Vec::new())),
+        })
+    }
+
+    fn next(&self) -> Result<LlmResponse, DomainError> {
+        match self
+            .replies
+            .lock()
+            .unwrap()
+            .pop_front()
+            .expect("a scripted reply")
+        {
+            Ok(text) => Ok(LlmResponse {
+                content: Some(text.to_string()),
+                tool_calls: vec![],
+                usage: None,
+                stop_reason: None,
+                thinking_blocks: vec![],
+            }),
+            Err(error) => Err(DomainError::Provider(error.to_string())),
+        }
+    }
+}
+
+impl LlmProvider for Scripted {
+    fn route_order(&self) -> Vec<String> {
+        vec!["openai-oauth".to_string()]
+    }
+    fn name(&self) -> &str {
+        "openai-oauth"
+    }
+    fn chat<'a>(
+        &'a self,
+        _request: ChatRequest<'a>,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + 'a>> {
+        let reply = self.next();
+        Box::pin(async move { reply })
+    }
+    fn chat_stream_incremental<'a>(
+        &'a self,
+        _request: ChatRequest<'a>,
+    ) -> Pin<Box<dyn Future<Output = tokio::sync::mpsc::Receiver<StreamEvent>> + Send + 'a>> {
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        self.senders.lock().unwrap().push(tx);
+        Box::pin(async move { rx })
+    }
+}
+
+/// M1: a caller that drops its stream must reach the provider: the relay
+/// lets go of the provider's stream at once, so the transport sees its
+/// receiver closed and stops (no admission permit, no billed request).
+#[tokio::test]
+async fn dropping_the_receiver_closes_the_providers_stream() {
+    let inner = Scripted::new(vec![]);
+    let provider = RefusalRecordingProvider::new(inner.clone(), counting(), HELD);
+    let messages = [Message::user("hi")];
+    let events = provider
+        .chat_stream_incremental(request(&messages, "openai-oauth/mini"))
+        .await;
+    let sender = inner.senders.lock().unwrap()[0].clone();
+    drop(events);
+    tokio::time::timeout(Duration::from_secs(2), sender.closed())
+        .await
+        .expect("the provider's stream is closed once its caller has gone");
+}
+
+/// M3: a reply the provider serves for the model releases its refusal.
+#[tokio::test]
+async fn a_served_reply_releases_the_refusal() {
+    let inner = Scripted::new(vec![Err(REFUSAL), Ok("served")]);
+    let sink = counting();
+    let provider = RefusalRecordingProvider::new(inner, sink.clone(), HELD);
+    let messages = [Message::user("hi")];
+    let _ = provider.chat(request(&messages, "openai-oauth/mini")).await;
+    assert_eq!(refused(&sink, "openai-oauth/mini").as_deref(), Some(DETAIL));
+    provider
+        .chat(request(&messages, "openai-oauth/mini"))
+        .await
+        .expect("served");
+    assert_eq!(refused(&sink, "openai-oauth/mini"), None, "released");
+    assert_eq!(
+        sink.cleared.lock().unwrap().as_slice(),
+        ["openai-oauth/mini"]
+    );
+}
+
+/// M3: a stream that completes releases the refusal too.
+#[tokio::test]
+async fn a_completed_stream_releases_the_refusal() {
+    let inner = Scripted::new(vec![]);
+    let sink = counting();
+    sink.store.record_refusal(
+        &ModelRef::parse_qualified("openai-oauth/mini").unwrap(),
+        DETAIL,
+        HELD,
+    );
+    let provider = RefusalRecordingProvider::new(inner.clone(), sink.clone(), HELD);
+    let messages = [Message::user("hi")];
+    let mut events = provider
+        .chat_stream_incremental(request(&messages, "openai-oauth/mini"))
+        .await;
+    let sender = inner.senders.lock().unwrap()[0].clone();
+    sender
+        .send(StreamEvent::Done(LlmResponse {
+            content: Some("served".into()),
+            tool_calls: vec![],
+            usage: None,
+            stop_reason: None,
+            thinking_blocks: vec![],
+        }))
+        .await
+        .unwrap();
+    drop(sender);
+    inner.senders.lock().unwrap().clear();
+    assert!(matches!(events.recv().await, Some(StreamEvent::Done(_))));
+    assert!(events.recv().await.is_none());
+    assert_eq!(refused(&sink, "openai-oauth/mini"), None, "released");
+}
+
+/// M3: a refusal is held for the configured time, no longer.
+#[tokio::test]
+async fn a_refusal_is_held_for_the_configured_time() {
+    let inner = Scripted::new(vec![Err(REFUSAL)]);
+    let sink = counting();
+    let provider = RefusalRecordingProvider::new(inner, sink.clone(), Duration::ZERO);
+    let messages = [Message::user("hi")];
+    let _ = provider.chat(request(&messages, "openai-oauth/mini")).await;
+    assert_eq!(sink.calls.lock().unwrap().len(), 1, "recorded");
+    assert_eq!(
+        refused(&sink, "openai-oauth/mini"),
+        None,
+        "a zero hold has already expired"
+    );
 }

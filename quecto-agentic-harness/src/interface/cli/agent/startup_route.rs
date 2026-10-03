@@ -68,7 +68,7 @@ pub(super) fn admit(
 pub(super) fn standing_warning(standing: &CatalogueStanding, model: &str) -> Option<String> {
     match standing {
         CatalogueStanding::Listed | CatalogueStanding::UncataloguedProvider => None,
-        CatalogueStanding::Unlisted => Some(format!(
+        CatalogueStanding::Unlisted { .. } | CatalogueStanding::Retired { .. } => Some(format!(
             "agent: warning: model `{model}` is not in the model catalogue (older built-in \
              models have been retired); it is sent as-is with no known limits. Declare it in \
              models.json to keep it, or choose a listed model (list_models, /model)"

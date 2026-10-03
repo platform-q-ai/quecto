@@ -25,6 +25,9 @@ use std::collections::HashMap;
 #[path = "catalogue/effort_vocabulary.rs"]
 mod effort_vocabulary;
 pub use effort_vocabulary::EffortVocabulary;
+#[path = "catalogue/retired.rs"]
+mod retired;
+pub use retired::retired_builtin;
 
 /// Stable provider identity. Serialized form is the exact string used by
 /// CLI/config/UDS today (e.g. `openai-api`).
@@ -51,7 +54,7 @@ impl std::fmt::Display for ProviderId {
     }
 }
 
-/// Stable model identity within a provider (e.g. `gpt-5`).
+/// Stable model identity within a provider (e.g. `gpt-6.1-sol`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ModelId(String);
 
