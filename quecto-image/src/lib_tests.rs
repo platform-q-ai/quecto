@@ -254,3 +254,12 @@ fn sniff_names_the_type_a_file_starts_with() {
         assert_eq!(ImageMime::sniff(bytes), None, "{bytes:x?}");
     }
 }
+
+#[test]
+fn every_sample_is_an_admitted_image_of_its_type() {
+    for mime in ImageMime::ALL {
+        let bytes = crate::samples::sample(mime);
+        assert_eq!(ImageMime::sniff(&bytes), Some(mime));
+        assert!(ImageAttachment::from_bytes(mime, &bytes).is_ok(), "{mime}");
+    }
+}
