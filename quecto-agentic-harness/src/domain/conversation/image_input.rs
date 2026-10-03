@@ -205,7 +205,7 @@ fn withhold(
     message.image_blocks = kept;
     let (kept, user_images) = split(
         std::mem::take(&mut message.user_image_blocks),
-        |image| input.withheld((&image.mime_type, &image.data), model, verdicts),
+        |image| input.withheld((image.mime_type(), image.data()), model, verdicts),
         &mut markers,
     );
     message.user_image_blocks = kept;

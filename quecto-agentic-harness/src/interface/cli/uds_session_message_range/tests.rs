@@ -285,10 +285,10 @@ fn ranged_get_message_with_huge_thinking_still_makes_progress() {
 #[test]
 fn ranged_get_message_keeps_the_image_summary() {
     let mut msg = Message::user("y".repeat(4096));
-    msg.user_image_blocks = vec![crate::domain::message::UserImageBlock {
-        mime_type: "image/webp".into(),
-        data: "UklGRiQAAABXRUJQVlA4IA==".into(),
-    }];
+    msg.user_image_blocks = vec![crate::domain::message::UserImageBlock::unchecked_for_tests(
+        quecto_image::ImageMime::Webp,
+        "UklGRiQAAABXRUJQVlA4IA==",
+    )];
     let data = message_to_json_range_for_response(&msg, Some(0), None, Some(16), None);
     assert_eq!(data["imageCount"], 1, "{data}");
     assert_eq!(data["imageMimeTypes"], serde_json::json!(["image/webp"]));

@@ -94,7 +94,7 @@ async fn an_admitted_busy_steer_interrupts_and_carries_its_admitted_images() {
         panic!("command expected")
     };
     let admitted = command.admitted.expect("decoded once, by the reader");
-    assert_eq!(admitted[0].data, PNG);
+    assert_eq!(admitted[0].data(), PNG);
 }
 
 #[tokio::test]
@@ -127,5 +127,5 @@ async fn an_admitted_forwarded_steer_carries_its_admitted_images() {
     let ClientMessage::Command(command) = reader.received.try_recv().unwrap() else {
         panic!("command expected")
     };
-    assert_eq!(command.admitted.expect("admitted once")[0].data, PNG);
+    assert_eq!(command.admitted.expect("admitted once")[0].data(), PNG);
 }

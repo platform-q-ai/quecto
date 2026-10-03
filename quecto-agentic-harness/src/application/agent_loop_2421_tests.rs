@@ -75,10 +75,10 @@ fn agent(takes_images: bool) -> (AgentLoopImpl, Arc<RecordingProvider>) {
 
 fn prompt_with_image() -> Message {
     let mut message = Message::user("what is this?");
-    message.user_image_blocks = vec![UserImageBlock {
-        mime_type: "image/png".into(),
-        data: "cG5n".into(),
-    }];
+    message.user_image_blocks = vec![UserImageBlock::unchecked_for_tests(
+        quecto_image::ImageMime::Png,
+        "cG5n",
+    )];
     message
 }
 

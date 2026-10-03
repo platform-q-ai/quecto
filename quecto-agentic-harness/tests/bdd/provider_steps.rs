@@ -2970,10 +2970,10 @@ fn given_user_message_text_only(world: &mut QuectoWorld, text: String) {
 fn given_user_message_with_one_image(world: &mut QuectoWorld, text: String, mime: String) {
     use quecto::domain::message::UserImageBlock;
     let mut m = Message::user(text);
-    m.user_image_blocks = vec![UserImageBlock {
-        mime_type: mime,
-        data: "aGVsbG8=".into(), // base64 "hello"
-    }];
+    m.user_image_blocks = vec![UserImageBlock::unchecked_for_tests(
+        quecto_image::ImageMime::parse_exact(&mime).expect("an admitted type"),
+        "aGVsbG8=",
+    )];
     world.context_messages = Some(vec![m]);
 }
 
@@ -2982,14 +2982,14 @@ fn given_user_message_with_two_images(world: &mut QuectoWorld, text: String, mim
     use quecto::domain::message::UserImageBlock;
     let mut m = Message::user(text);
     m.user_image_blocks = vec![
-        UserImageBlock {
-            mime_type: mime.clone(),
-            data: "aGVsbG8=".into(),
-        },
-        UserImageBlock {
-            mime_type: mime,
-            data: "d29ybGQ=".into(),
-        },
+        UserImageBlock::unchecked_for_tests(
+            quecto_image::ImageMime::parse_exact(&mime).expect("an admitted type"),
+            "aGVsbG8=",
+        ),
+        UserImageBlock::unchecked_for_tests(
+            quecto_image::ImageMime::parse_exact(&mime).expect("an admitted type"),
+            "d29ybGQ=",
+        ),
     ];
     world.context_messages = Some(vec![m]);
 }

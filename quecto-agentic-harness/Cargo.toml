@@ -88,7 +88,7 @@ unicode-normalization = "0.1"
 
 [features]
 default = []
-test-support = []
+test-support = ["quecto-image/test-support"]
 
 [dev-dependencies]
 # Real minimal image files for image tests (#2422).

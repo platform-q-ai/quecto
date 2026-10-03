@@ -7,10 +7,15 @@ fn an_admitted_attachment_becomes_the_block_providers_send() {
         "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAAElFTkSuQmCC",
     );
     let block = UserImageBlock::from(quecto_image::ImageAttachment::new(payload).unwrap());
-    assert_eq!(block.mime_type, "image/png");
+    assert_eq!(block.mime(), quecto_image::ImageMime::Png);
+    assert_eq!(block.mime_type(), "image/png");
     assert_eq!(
-        block.data,
+        block.data(),
         "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAAElFTkSuQmCC"
+    );
+    assert!(
+        !format!("{block:?}").contains(block.data()),
+        "Debug hides it"
     );
     let message = Message::user("look").with_user_images(vec![block]);
     assert_eq!(message.user_image_blocks.len(), 1);
@@ -19,17 +24,26 @@ fn an_admitted_attachment_becomes_the_block_providers_send() {
 #[test]
 #[should_panic(expected = "only a user message carries images")]
 fn only_a_user_message_carries_images() {
-    let block = UserImageBlock {
-        mime_type: "image/png".into(),
-        data: String::new(),
-    };
+    let block = UserImageBlock::unchecked_for_tests(quecto_image::ImageMime::Png, String::new());
     let _ = Message::assistant("no", vec![]).with_user_images(vec![block]);
 }
 
 fn block(mime: &str) -> UserImageBlock {
-    UserImageBlock {
-        mime_type: mime.into(),
-        data: "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAAElFTkSuQmCC".into(),
+    let mime = quecto_image::ImageMime::parse_exact(mime).expect("an admitted type");
+    UserImageBlock::sample(mime)
+}
+
+/// A sample is a real admitted image of its type.
+#[test]
+fn a_sample_block_is_an_admitted_image_of_its_type() {
+    for mime in quecto_image::ImageMime::ALL {
+        let block = UserImageBlock::sample(mime);
+        assert_eq!(block.mime(), mime);
+        let payload = quecto_image::ImagePayload::new(mime.as_str(), block.data());
+        assert!(
+            quecto_image::ImageAttachment::new(payload).is_ok(),
+            "{mime}"
+        );
     }
 }
 

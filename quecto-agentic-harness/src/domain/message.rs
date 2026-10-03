@@ -144,17 +144,15 @@ impl ThinkingBlock {
     }
 }
 
-/// An image block attached directly to a user message.
-///
-/// Unlike `crate::domain::tool::ImageBlock` (which uses `&'static str` for
-/// `mime_type`), this variant owns its strings to support runtime MIME types
-/// from user-provided files.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// An image attached to a user message. Only an admitted image makes one
+/// (#2422: `From<quecto_image::ImageAttachment>`, in `conversation::
+/// user_images`, with its accessors), so it carries the admitted type and
+/// keeps it: no step after admission can lose or forge it.
+#[derive(Clone, PartialEq, Eq)]
 pub struct UserImageBlock {
-    /// MIME type string, e.g. `"image/png"`, `"image/jpeg"`.
-    pub mime_type: String,
-    /// Base64-encoded image bytes (standard encoding, no line breaks).
-    pub data: String,
+    pub(in crate::domain) mime: quecto_image::ImageMime,
+    /// Strict standard base64.
+    pub(in crate::domain) data: String,
 }
 
 impl Clone for Message {
@@ -270,7 +268,7 @@ impl Message {
             let user_image_tokens: usize = self
                 .user_image_blocks
                 .iter()
-                .map(|img| estimate_image_tokens(&img.mime_type, &img.data))
+                .map(|img| estimate_image_tokens(img.mime_type(), img.data()))
                 .sum();
             let image_tokens: usize = self
                 .image_blocks

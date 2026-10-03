@@ -147,9 +147,11 @@ async fn an_images_only_prompt_is_saved_with_image_placeholders() {
     let tmp = TempDir::new().unwrap();
     let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
     let key = id("test:images");
-    let image = || UserImageBlock {
-        mime_type: "image/png".into(),
-        data: "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAAElFTkSuQmCC".into(),
+    let image = || {
+        UserImageBlock::unchecked_for_tests(
+            quecto_image::ImageMime::Png,
+            "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAAElFTkSuQmCC",
+        )
     };
     let mut session = Session::new(key.clone());
     session

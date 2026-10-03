@@ -14,12 +14,60 @@ use crate::domain::message::{Message, Role, UserImageBlock};
 /// What an image stands for in a saved message's text (#2422).
 pub const IMAGE_PLACEHOLDER: &str = "[image]";
 
+/// The only way to make a block: from an admitted image.
 impl From<quecto_image::ImageAttachment> for UserImageBlock {
     fn from(image: quecto_image::ImageAttachment) -> Self {
         Self {
-            mime_type: image.mime_type().to_owned(),
+            mime: image.mime(),
             data: image.into_data(),
         }
+    }
+}
+
+impl UserImageBlock {
+    /// The admitted type.
+    pub fn mime(&self) -> quecto_image::ImageMime {
+        self.mime
+    }
+
+    /// The admitted type as the wire spells it.
+    pub fn mime_type(&self) -> &'static str {
+        self.mime.as_str()
+    }
+
+    /// The image's strict standard base64.
+    pub fn data(&self) -> &str {
+        &self.data
+    }
+
+    /// A block whose `data` is not admitted, for tests of what is done
+    /// with a block (serializers, markers) that need short, known data.
+    /// Compiled only for tests: production blocks come from admission.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn unchecked_for_tests(mime: quecto_image::ImageMime, data: impl Into<String>) -> Self {
+        Self {
+            mime,
+            data: data.into(),
+        }
+    }
+
+    /// A 1x1 admitted image of `mime`, for tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn sample(mime: quecto_image::ImageMime) -> Self {
+        let bytes = quecto_image::samples::sample(mime);
+        quecto_image::ImageAttachment::from_bytes(mime, &bytes)
+            .expect("a sample is admitted")
+            .into()
+    }
+}
+
+/// Never prints the base64.
+impl std::fmt::Debug for UserImageBlock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UserImageBlock")
+            .field("mime", &self.mime)
+            .field("data_len", &self.data.len())
+            .finish()
     }
 }
 

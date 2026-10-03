@@ -53,7 +53,7 @@ impl LlmProvider for RecordingProvider {
             images: last_user
                 .user_image_blocks
                 .iter()
-                .map(|b| (b.mime_type.clone(), b.data.clone()))
+                .map(|b| (b.mime_type().to_owned(), b.data().to_owned()))
                 .collect(),
         });
         Box::pin(async {
@@ -333,14 +333,8 @@ fn only_a_steer_with_admissible_images_cancels_the_running_turn() {
 fn with_images() -> Message {
     let mut message = Message::user("see attached");
     message.user_image_blocks = vec![
-        UserImageBlock {
-            mime_type: "image/png".into(),
-            data: PNG.into(),
-        },
-        UserImageBlock {
-            mime_type: "image/jpeg".into(),
-            data: JPEG.into(),
-        },
+        UserImageBlock::unchecked_for_tests(quecto_image::ImageMime::Png, PNG),
+        UserImageBlock::unchecked_for_tests(quecto_image::ImageMime::Jpeg, JPEG),
     ];
     message
 }

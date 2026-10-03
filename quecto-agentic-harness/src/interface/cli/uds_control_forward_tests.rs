@@ -170,7 +170,7 @@ fn flagged_controls_forward_their_images() {
         assert_eq!(fwd["images"][0]["mimeType"], "image/png");
         let admitted = got.admitted.expect("admitted once, here");
         assert_eq!(admitted.len(), 1, "{kind}{extra}");
-        assert_eq!(admitted[0].data, PNG);
+        assert_eq!(admitted[0].data(), PNG);
         assert_eq!(got.is_steer, kind == "steer" || !extra.is_empty());
         assert!(got.refused.is_none());
     }

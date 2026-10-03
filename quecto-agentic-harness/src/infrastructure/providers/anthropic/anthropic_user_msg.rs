@@ -36,35 +36,25 @@ pub(super) fn build_user_content(m: &Message) -> Option<serde_json::Value> {
         blocks.push(serde_json::json!({"type": "text", "text": text}));
     }
 
-    // Add image blocks, filtered by the MIME type allowlist.
-    // Anthropic only accepts these four MIME types; others are silently skipped.
-    const ALLOWED_MIME: &[&str] = &["image/jpeg", "image/png", "image/gif", "image/webp"];
-    for img in m
-        .user_image_blocks
-        .iter()
-        .filter(|img| ALLOWED_MIME.contains(&img.mime_type.as_str()))
-    {
+    // Add image blocks. Anthropic accepts exactly the four types
+    // `quecto_image::ImageMime` admits (`ImageMime::parse_exact`, #2422), and
+    // a block carries its admitted type, so every one is sent.
+    for img in &m.user_image_blocks {
         blocks.push(serde_json::json!({
             "type": "image",
             "source": {
                 "type": "base64",
-                "media_type": img.mime_type,
-                "data": img.data,
+                "media_type": img.mime().as_str(),
+                "data": img.data(),
             }
         }));
     }
 
-    if blocks.is_empty() {
-        None // All content filtered — skip this message
-    } else if blocks.len() == 1 && blocks[0]["type"] == "text" {
-        // Only text remains after MIME filtering — use plain string, as a
-        // message without images is sent.
-        blocks[0]["text"]
-            .as_str()
-            .map(|t| serde_json::Value::String(t.to_string()))
-    } else {
-        Some(serde_json::Value::Array(blocks))
-    }
+    assert!(
+        blocks.iter().any(|block| block["type"] == "image"),
+        "a message with images sends them"
+    );
+    Some(serde_json::Value::Array(blocks))
 }
 
 #[cfg(test)]

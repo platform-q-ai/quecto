@@ -15,9 +15,11 @@ fn modalities(names: &[&str]) -> Vec<String> {
 fn user_with_images(text: &str, count: usize) -> Message {
     let mut message = Message::user(text);
     message.user_image_blocks = (0..count)
-        .map(|index| UserImageBlock {
-            mime_type: "image/png".into(),
-            data: format!("cG5n{index}"),
+        .map(|index| {
+            UserImageBlock::unchecked_for_tests(
+                quecto_image::ImageMime::Png,
+                format!("cG5n{index}"),
+            )
         })
         .collect();
     message

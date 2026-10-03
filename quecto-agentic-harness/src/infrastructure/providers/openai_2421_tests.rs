@@ -45,9 +45,11 @@ fn user_with_images(text: &str, images: &[(&str, &str)]) -> Message {
     let mut message = Message::user(text);
     message.user_image_blocks = images
         .iter()
-        .map(|(mime, data)| UserImageBlock {
-            mime_type: mime.to_string(),
-            data: data.to_string(),
+        .map(|(mime, data)| {
+            UserImageBlock::unchecked_for_tests(
+                quecto_image::ImageMime::parse_exact(mime).expect("an admitted type"),
+                data.to_string(),
+            )
         })
         .collect();
     message

@@ -71,7 +71,7 @@ impl From<&str> for PromptBody {
 fn image_mime_types(msg: &Message) -> Vec<&str> {
     msg.user_image_blocks
         .iter()
-        .map(|image| image.mime_type.as_str())
+        .map(|image| image.mime_type())
         .collect()
 }
 
