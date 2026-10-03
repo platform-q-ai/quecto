@@ -32,6 +32,9 @@ impl TestProvider {
 }
 
 impl LlmProvider for TestProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         &self.name
     }
@@ -198,6 +201,9 @@ impl TrackingProvider {
 }
 
 impl LlmProvider for TrackingProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         &self.name
     }
@@ -346,6 +352,9 @@ struct SlicePtrProvider {
 }
 
 impl LlmProvider for SlicePtrProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "test"
     }

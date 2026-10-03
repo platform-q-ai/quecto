@@ -26,6 +26,9 @@ fn response(content: impl Into<String>) -> LlmResponse {
 }
 
 impl LlmProvider for RecordingProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         self.name
     }

@@ -187,6 +187,9 @@ async fn durable_accounting_rejection_drops_the_record_without_blocking_turns() 
 #[derive(Debug)]
 struct PendingProvider;
 impl LlmProvider for PendingProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "pending"
     }
@@ -287,6 +290,9 @@ async fn mock_streaming_provider_trait_surface_chat_and_incremental() {
 #[derive(Debug)]
 struct CutShortAfterUsage;
 impl crate::application::providers::ports::LlmProvider for CutShortAfterUsage {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "cut-short"
     }
@@ -342,6 +348,9 @@ async fn usage_a_cut_short_reply_reported_is_accounted() {
 #[derive(Debug)]
 struct CutShortThenWhole;
 impl crate::application::providers::ports::LlmProvider for CutShortThenWhole {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "cut-short-then-whole"
     }
@@ -406,6 +415,9 @@ struct BaselineProvider {
 }
 
 impl LlmProvider for BaselineProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "baseline"
     }

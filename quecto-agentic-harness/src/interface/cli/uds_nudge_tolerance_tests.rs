@@ -115,6 +115,9 @@ async fn scripted_progress_provider_trait_surface_methods_are_invoked() {
 }
 
 impl crate::application::providers::ports::LlmProvider for ScriptedProgressProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "scripted-progress"
     }

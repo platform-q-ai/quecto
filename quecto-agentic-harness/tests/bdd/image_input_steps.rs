@@ -17,6 +17,9 @@ struct RequestRecorder {
 }
 
 impl LlmProvider for RequestRecorder {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "recorder"
     }

@@ -10,6 +10,9 @@ struct ApprovalProvider {
     started: Arc<tokio::sync::Notify>,
 }
 impl crate::application::providers::ports::LlmProvider for ApprovalProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "approval-test"
     }

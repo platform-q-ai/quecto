@@ -14,6 +14,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 struct ReadOnlyProvider;
 
 impl LlmProvider for ReadOnlyProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "read-only"
     }
@@ -346,6 +349,9 @@ fn publish_admission_slots(base: &std::path::Path, slots: &[&str]) {
     #[derive(Debug)]
     struct UnboundProvider;
     impl LlmProvider for UnboundProvider {
+        fn route_order(&self) -> Vec<String> {
+            vec![self.name().to_string()]
+        }
         fn name(&self) -> &str {
             "distinct-unbound-slot"
         }

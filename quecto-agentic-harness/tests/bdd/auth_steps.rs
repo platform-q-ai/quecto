@@ -1157,6 +1157,9 @@ impl BddMockRetryProvider {
 }
 
 impl LlmProvider for BddMockRetryProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "bdd-mock"
     }
@@ -1191,6 +1194,9 @@ impl LlmProvider for BddMockRetryProvider {
 struct BddMock500Provider;
 
 impl LlmProvider for BddMock500Provider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "bdd-mock-500"
     }
@@ -1212,6 +1218,9 @@ impl LlmProvider for BddMock500Provider {
 struct BddMockSuccessProvider;
 
 impl LlmProvider for BddMockSuccessProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "bdd-mock-ok"
     }

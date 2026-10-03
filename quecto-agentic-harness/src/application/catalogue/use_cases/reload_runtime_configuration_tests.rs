@@ -20,6 +20,9 @@ use crate::domain::tool_descriptor::ProfileAvailabilityScope;
 struct NamedProvider(&'static str);
 
 impl LlmProvider for NamedProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         self.0
     }

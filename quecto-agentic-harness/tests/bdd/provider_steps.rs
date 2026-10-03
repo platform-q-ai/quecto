@@ -202,6 +202,9 @@ impl BddTestProvider {
 }
 
 impl LlmProvider for BddTestProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         &self.provider_name
     }
@@ -286,6 +289,9 @@ struct BddCountingProvider {
 }
 
 impl LlmProvider for BddCountingProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "bdd-counting"
     }
@@ -750,6 +756,9 @@ impl RoutingTracker {
 }
 
 impl LlmProvider for RoutingTracker {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         &self.name
     }
@@ -803,6 +812,9 @@ struct SlicePtrBddProvider {
 }
 
 impl LlmProvider for SlicePtrBddProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "test"
     }

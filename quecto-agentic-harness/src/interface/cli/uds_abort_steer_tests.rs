@@ -277,6 +277,9 @@ impl std::fmt::Debug for AdvanceThenAbortProvider {
 }
 
 impl crate::application::providers::ports::LlmProvider for AdvanceThenAbortProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "advance-then-abort"
     }
@@ -434,6 +437,9 @@ impl std::fmt::Debug for SteerDuringPendingTurn {
     }
 }
 impl LlmProvider for SteerDuringPendingTurn {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "steer-during-pending-turn"
     }
@@ -565,6 +571,9 @@ async fn admitted_steer_burst_precedes_all_buffered_hints() {
 #[derive(Debug)]
 struct QuotaExhausted(std::sync::Arc<std::sync::atomic::AtomicUsize>);
 impl LlmProvider for QuotaExhausted {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "quota-exhausted"
     }

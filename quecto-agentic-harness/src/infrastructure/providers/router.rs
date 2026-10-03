@@ -53,12 +53,14 @@ impl ProviderRouter {
     ) -> Result<(&'a Arc<dyn LlmProvider>, &'b str), DomainError> {
         let names = self.provider_names();
         match route_model(model, &names) {
-            ModelRoute::To { provider, model } => self
-                .providers
-                .iter()
-                .find(|p| p.name() == provider)
-                .map(|p| (p, model))
-                .ok_or_else(|| DomainError::Provider(ERR_NO_PROVIDERS.to_string())),
+            ModelRoute::To { provider, model } => {
+                let routed = self
+                    .providers
+                    .iter()
+                    .find(|p| p.name() == provider)
+                    .expect("the rule routes to one of the names it was given");
+                Ok((routed, model))
+            }
             ModelRoute::UnknownProvider { prefix } => {
                 let truncated = truncate_prefix(prefix, MAX_PREFIX_IN_ERROR);
                 Err(DomainError::Provider(format!(

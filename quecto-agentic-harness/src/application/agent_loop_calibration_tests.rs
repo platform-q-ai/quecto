@@ -160,6 +160,9 @@ fn the_raised_output_limit_fits_beside_the_calibrated_prompt() {
 struct NamedProvider(&'static str);
 
 impl crate::application::providers::ports::LlmProvider for NamedProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         self.0
     }

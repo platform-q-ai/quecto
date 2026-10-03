@@ -17,6 +17,7 @@
 //! every one back when it is dropped, however the request ends.
 
 use base64::Engine;
+use sha2::Digest;
 
 use crate::domain::catalogue::TransportKind;
 use crate::domain::message::{Message, UserImageBlock};
@@ -142,11 +143,13 @@ fn skip_sub_blocks(bytes: &[u8], mut at: usize) -> Option<usize> {
 }
 
 /// What the animated-GIF walk found for each GIF already seen (#2421
-/// round 2 nit 1), keyed by the image's length and a hash of its base64,
-/// so a request walks a GIF of the history once, not on every request.
+/// round 2 nit 1), keyed by a SHA-256 digest of its base64 (round 3 L3: a
+/// crafted collision cannot pass an animated GIF off as a still one), so a
+/// request walks a GIF of the history once, not on every request.
 #[derive(Debug, Default)]
 pub struct GifVerdicts {
-    known: std::sync::Mutex<std::collections::HashMap<(usize, u64), bool>>,
+    known: std::sync::Mutex<std::collections::HashMap<[u8; 32], bool>>,
+    #[cfg(any(test, feature = "test-support"))]
     walks: std::sync::atomic::AtomicUsize,
 }
 
@@ -160,15 +163,12 @@ impl GifVerdicts {
         match mime_type.eq_ignore_ascii_case("image/gif") {
             false => false,
             true => {
-                let key = (data.len(), {
-                    let mut hasher = std::hash::DefaultHasher::new();
-                    std::hash::Hasher::write(&mut hasher, data.as_bytes());
-                    std::hash::Hasher::finish(&hasher)
-                });
+                let key: [u8; 32] = sha2::Sha256::digest(data.as_bytes()).into();
                 let mut known = self.known.lock().unwrap_or_else(|e| e.into_inner());
                 if let Some(verdict) = known.get(&key) {
                     return *verdict;
                 }
+                #[cfg(any(test, feature = "test-support"))]
                 self.walks
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let verdict = is_animated_gif(mime_type, data);
@@ -181,7 +181,8 @@ impl GifVerdicts {
         }
     }
 
-    /// How many GIFs have been walked.
+    /// How many GIFs have been walked (tests).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn walks(&self) -> usize {
         self.walks.load(std::sync::atomic::Ordering::Relaxed)
     }

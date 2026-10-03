@@ -678,6 +678,9 @@ fn seed_plain_session_with_body(world: &mut QuectoWorld, n: usize, body_len: usi
 struct StubSeedProvider;
 
 impl LlmProvider for StubSeedProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "paged-stub-seed"
     }

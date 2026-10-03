@@ -28,7 +28,9 @@ use crate::application::catalogue::{CatalogueSnapshotStore, ResolveCatalogueUseC
 use crate::application::provider_runtime::{SelectionError, select_in_runtime};
 use crate::domain::catalogue::{CatalogueEntry, CatalogueSnapshot, ModelRef};
 use crate::domain::conversation::image_input::ImageInput;
-use crate::domain::provider::{ModelRoute, route_model};
+use crate::domain::provider::{
+    ModelRoute, parse_qualified_model, provider_prefix_matches, route_model,
+};
 
 pub struct ChangeActiveModel {
     inputs: Arc<dyn CatalogueInputsLoader>,
@@ -66,11 +68,11 @@ impl ChangeActiveModel {
             &self.store,
         );
         let reference = ModelRef::parse_qualified(model).ok();
-        let limits = Self::limits_in(
-            &resolved.snapshot,
-            model,
-            &self.route_order(&resolved.snapshot),
-        );
+        let route_order = self
+            .runtime
+            .current_runtime()
+            .map(|runtime| runtime.provider.route_order());
+        let limits = Self::limits_in(&resolved.snapshot, model, route_order.as_deref());
         let verdict = match reference {
             Some(reference) => self.verdict(&reference),
             None => ModelSelectionVerdict::Unknown {
@@ -211,48 +213,46 @@ impl ChangeActiveModel {
         }
     }
 
-    /// The providers a request can reach, in routing order: the published
-    /// runtime's, or before one is composed the catalogue's, in its order.
-    fn route_order(&self, snapshot: &CatalogueSnapshot) -> Vec<String> {
-        match self.runtime.current_runtime() {
-            Some(runtime) => runtime.provider.route_order(),
-            None => snapshot
-                .entries()
-                .iter()
-                .map(|entry| entry.provider.id.as_str().to_string())
-                .fold(Vec::new(), |mut order, provider| {
-                    if !order.contains(&provider) {
-                        order.push(provider);
-                    }
-                    order
-                }),
-        }
-    }
-
     /// The entry of the model a request for `model` reaches (#2421 round 2
     /// L1): the routing rule the router sends by picks the provider among
-    /// `route_order` (a bare id goes to the first, whether or not it lists
-    /// it), and that provider's entry for the id is read. None when the
-    /// provider does not list it.
+    /// the published runtime's `route_order` (a bare id goes to the first,
+    /// whether or not it lists it), and that provider's entry for the id is
+    /// read. Before a runtime is published, a `provider/model` id reads the
+    /// provider its prefix names and a bare id reads none: no router yet
+    /// says where it goes (round 3 L2, fail closed). None when the provider
+    /// does not list the model.
     fn entry_for<'s>(
         snapshot: &'s CatalogueSnapshot,
         model: &str,
-        route_order: &[String],
+        route_order: Option<&[String]>,
     ) -> Option<&'s CatalogueEntry> {
-        let names: Vec<&str> = route_order.iter().map(String::as_str).collect();
-        match route_model(model, &names) {
-            ModelRoute::To { provider, model } => snapshot.entries().iter().find(|entry| {
-                entry.model.reference.model().as_str() == model
-                    && entry.provider.id.as_str().eq_ignore_ascii_case(provider)
-            }),
-            ModelRoute::UnknownProvider { .. } | ModelRoute::NoProviders => None,
+        let entries = snapshot.entries();
+        let listed = |provider: &str, id: &str| {
+            entries.iter().find(|entry| {
+                entry.model.reference.model().as_str() == id
+                    && provider_prefix_matches(provider, entry.provider.id.as_str())
+            })
+        };
+        match route_order {
+            Some(order) => {
+                let names: Vec<&str> = order.iter().map(String::as_str).collect();
+                match route_model(model, &names) {
+                    ModelRoute::To { provider, model } => listed(provider, model),
+                    ModelRoute::UnknownProvider { .. } | ModelRoute::NoProviders => None,
+                }
+            }
+            None => parse_qualified_model(model).and_then(|(prefix, id)| listed(prefix, id)),
         }
     }
 
     /// Only explicitly declared values clamp: a synthesized default is not a
     /// real limit. A model the catalogue does not hold has none, and takes
     /// no image.
-    fn limits_in(snapshot: &CatalogueSnapshot, model: &str, route_order: &[String]) -> ModelLimits {
+    fn limits_in(
+        snapshot: &CatalogueSnapshot,
+        model: &str,
+        route_order: Option<&[String]>,
+    ) -> ModelLimits {
         let Some(entry) = Self::entry_for(snapshot, model, route_order) else {
             return ModelLimits::default();
         };

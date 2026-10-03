@@ -71,6 +71,9 @@ use std::pin::Pin;
 struct FailingProvider;
 
 impl LlmProvider for FailingProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "failing"
     }
@@ -96,6 +99,9 @@ impl LlmProvider for FailingProvider {
 struct HangingProvider;
 
 impl LlmProvider for HangingProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "hanging"
     }

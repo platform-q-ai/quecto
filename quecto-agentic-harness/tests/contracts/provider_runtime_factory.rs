@@ -19,6 +19,9 @@ use quecto::domain::message::LlmResponse;
 struct Provider;
 
 impl LlmProvider for Provider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "runtime-factory-provider"
     }

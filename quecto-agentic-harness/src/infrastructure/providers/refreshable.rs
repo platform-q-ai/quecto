@@ -159,6 +159,9 @@ impl RefreshableProvider {
 }
 
 impl LlmProvider for RefreshableProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         &self.provider_name
     }

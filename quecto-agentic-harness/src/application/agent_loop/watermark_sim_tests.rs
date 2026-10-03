@@ -163,6 +163,9 @@ impl SimProvider {
 }
 
 impl LlmProvider for SimProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "watermark-sim"
     }

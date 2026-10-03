@@ -37,6 +37,9 @@ fn issue_1093_full() -> String {
 struct Issue1093SeedProvider;
 
 impl LlmProvider for Issue1093SeedProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "issue-1093-seed"
     }

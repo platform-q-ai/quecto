@@ -142,6 +142,9 @@ impl std::fmt::Debug for Probe {
 }
 
 impl LlmProvider for Probe {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "probe"
     }

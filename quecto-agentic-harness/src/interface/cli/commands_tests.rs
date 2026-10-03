@@ -299,6 +299,9 @@ fn status_reports_only_published_runtime_admission_warnings() {
     #[derive(Debug)]
     struct StubProvider;
     impl LlmProvider for StubProvider {
+        fn route_order(&self) -> Vec<String> {
+            vec![self.name().to_string()]
+        }
         fn name(&self) -> &str {
             "stub"
         }

@@ -99,6 +99,9 @@ impl CatalogueInputsLoader for Loader {
 struct SilentProvider;
 
 impl crate::application::providers::ports::LlmProvider for SilentProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "router"
     }

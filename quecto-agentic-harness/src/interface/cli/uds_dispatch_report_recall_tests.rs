@@ -25,6 +25,9 @@ use crate::infrastructure::tools::subagent_registry::SubagentEntry;
 struct Scripted(Mutex<VecDeque<Option<&'static str>>>);
 
 impl LlmProvider for Scripted {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "scripted"
     }

@@ -14,6 +14,9 @@ use crate::domain::message::LlmResponse;
 pub(crate) struct StubProvider;
 
 impl LlmProvider for StubProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "stub"
     }

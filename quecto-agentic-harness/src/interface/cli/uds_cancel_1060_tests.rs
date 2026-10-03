@@ -25,6 +25,9 @@ pub(super) struct ScriptedProvider {
 }
 
 impl LlmProvider for ScriptedProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "scripted-1060"
     }
@@ -54,6 +57,9 @@ pub(super) struct StreamingProvider {
 }
 
 impl LlmProvider for StreamingProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "streaming-1060"
     }

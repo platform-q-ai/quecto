@@ -39,6 +39,9 @@ impl CountingMockProvider {
 }
 
 impl LlmProvider for CountingMockProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "counting-mock"
     }
@@ -516,6 +519,9 @@ struct SequenceProvider {
 }
 
 impl LlmProvider for SequenceProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "sequence-mock"
     }

@@ -17,6 +17,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 struct NeverUsedProvider;
 
 impl LlmProvider for NeverUsedProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "never-used"
     }
