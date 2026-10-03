@@ -22,8 +22,9 @@ use crate::infrastructure::provider_runtime_admission::{
     AdmissionProviderRuntimeFactory, AdmissionRuntimeCandidate,
 };
 use crate::infrastructure::providers::refresh_wiring::{
-    make_oauth_refresh_fn, make_provider_factory,
+    make_bounded_provider_factory, make_oauth_refresh_fn,
 };
+use crate::infrastructure::providers::stream_idle::StreamIdle;
 
 /// Compose the concrete provider runtime for `base_dir` via the shared use
 /// case and publish runtime + catalogue as one coherent generation into the
@@ -39,9 +40,12 @@ pub fn compose_and_publish_runtime(
         base_dir: base_dir.to_path_buf(),
         http_client: http_client.clone(),
         refresh_fn: make_oauth_refresh_fn(),
-        openai_oauth_factory: make_provider_factory(
+        // A rebuilt OpenAI OAuth provider keeps its configured stream idle
+        // limit (#2433 review); one out of range fails the composition itself.
+        openai_oauth_factory: make_bounded_provider_factory(
             "openai",
             openai_api_base(config),
+            StreamIdle::configured(config.providers.openai.stream_idle_seconds).unwrap_or_default(),
             http_client.clone(),
         ),
         // Same on-disk read as the catalogue sources above: one compose never

@@ -140,6 +140,10 @@ pub struct ProviderEntry {
     /// do not convert ChatGPT OAuth JWTs from the credential store into Codex.
     #[serde(default)]
     pub disable_codex_routing: bool,
+    /// This provider's stream idle limit in seconds (#2433 review), within
+    /// 30–1800; unset is the default 300.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream_idle_seconds: Option<u64>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Default)]
@@ -158,6 +162,10 @@ pub struct OpenAiCompatibleEndpoint {
     pub api_base: String,
     #[serde(default)]
     pub allow_remote_http: bool,
+    /// This provider's stream idle limit in seconds (#2433 review), within
+    /// 30–1800; unset is the default 300.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream_idle_seconds: Option<u64>,
 }
 
 impl std::fmt::Debug for ProviderEntry {
@@ -166,6 +174,7 @@ impl std::fmt::Debug for ProviderEntry {
             .field("api_key", &"[REDACTED]")
             .field("api_base", &self.api_base)
             .field("disable_codex_routing", &self.disable_codex_routing)
+            .field("stream_idle_seconds", &self.stream_idle_seconds)
             .finish()
     }
 }
@@ -185,6 +194,7 @@ impl std::fmt::Debug for OpenAiCompatibleEndpoint {
             .field("api_key", &"[REDACTED]")
             .field("api_base", &self.api_base)
             .field("allow_remote_http", &self.allow_remote_http)
+            .field("stream_idle_seconds", &self.stream_idle_seconds)
             .finish()
     }
 }

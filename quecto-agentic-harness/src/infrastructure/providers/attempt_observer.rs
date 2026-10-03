@@ -38,7 +38,8 @@ impl LineObserver {
         }
         if !self.oversized {
             if let Ok(line) = std::str::from_utf8(&self.carry) {
-                self.protocol.observe(line.trim(), receipt);
+                // Only line ends are trimmed: an indented line is no event.
+                self.protocol.observe(line.trim_end(), receipt);
             }
         }
         self.carry.clear();
@@ -79,7 +80,7 @@ impl ProtocolObserver {
                 return;
             }
         }
-        let Some(data) = line.strip_prefix("data: ") else {
+        let Some(data) = super::super::sse_common::event_data(line) else {
             return;
         };
         {

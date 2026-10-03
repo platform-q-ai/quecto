@@ -24,7 +24,8 @@ use crate::infrastructure::providers::retry::{RetryConfig, RetryingProvider};
 use crate::infrastructure::providers::router::ProviderRouter;
 
 use super::provider_runtime_admission::AdmissionRuntimeContext;
-use crate::infrastructure::providers::AttemptTransportBinding;
+use crate::infrastructure::providers::stream_idle::StreamIdle;
+use crate::infrastructure::providers::{AttemptTransportBinding, ProviderBinding};
 
 const MAX_OPENAI_COMPATIBLE_ENDPOINTS: usize = 32;
 
@@ -114,6 +115,14 @@ pub(crate) fn compose_agent_provider_inner_outcome(
     // API-key auth. Users select `openai-api`, `openai-oauth`, `anthropic-api`,
     // or `anthropic-oauth` explicitly (or define their own keys in models.json).
     let openai_base = non_empty(config.providers.openai.api_base.clone());
+    let openai_idle = StreamIdle::configured_for(
+        "providers.openai",
+        config.providers.openai.stream_idle_seconds,
+    )?;
+    let anthropic_idle = StreamIdle::configured_for(
+        "providers.anthropic",
+        config.providers.anthropic.stream_idle_seconds,
+    )?;
     let openai_api_key = if !config.providers.openai.api_key.is_empty() {
         config.providers.openai.api_key.clone()
     } else {
@@ -136,7 +145,7 @@ pub(crate) fn compose_agent_provider_inner_outcome(
                 openai_base.clone(),
                 providers::ProviderTransportContext {
                     client: http_client.clone(),
-                    admission: bound_attempt_transport(admission, "openai-api")?,
+                    binding: bound(admission, "openai-api", openai_idle)?,
                 },
                 false,
                 model_registry
@@ -165,10 +174,10 @@ pub(crate) fn compose_agent_provider_inner_outcome(
                 &openai_base,
                 http_client,
                 false,
-                bound_attempt_transport(admission, "openai-oauth")?,
+                bound(admission, "openai-oauth", openai_idle)?,
             )?;
-            let factory = if let Some(context) = admission {
-                let binding = context.optional_binding("openai-oauth")?;
+            let factory = if admission.is_some() {
+                let binding = bound(admission, "openai-oauth", openai_idle)?;
                 let base = openai_base.clone();
                 let client = http_client.clone();
                 Arc::new(move |token: &str| {
@@ -219,7 +228,7 @@ pub(crate) fn compose_agent_provider_inner_outcome(
                 anthropic_base.clone(),
                 false,
                 http_client.clone(),
-                bound_attempt_transport(admission, "anthropic-api")?,
+                bound(admission, "anthropic-api", anthropic_idle)?,
             )
             .map_err(|e| format!("anthropic-api provider configuration error: {}", e))?,
         );
@@ -231,7 +240,7 @@ pub(crate) fn compose_agent_provider_inner_outcome(
                     config.providers.anthropic.api_key.clone(),
                     anthropic_base.clone(),
                     http_client.clone(),
-                    bound_attempt_transport(admission, "anthropic")?,
+                    bound(admission, "anthropic", anthropic_idle)?,
                 )
                 .map_err(|e| format!("anthropic provider configuration error: {}", e))?,
             );
@@ -253,7 +262,7 @@ pub(crate) fn compose_agent_provider_inner_outcome(
                 anthropic_base.clone(),
                 false,
                 http_client.clone(),
-                bound_attempt_transport(admission, "anthropic-oauth")?,
+                bound(admission, "anthropic-oauth", anthropic_idle)?,
             )
             .map_err(|e| format!("anthropic-oauth provider configuration error: {}", e))?;
             let factory = registry_provider_factory_with_admission(
@@ -262,7 +271,7 @@ pub(crate) fn compose_agent_provider_inner_outcome(
                 anthropic_base.clone(),
                 false,
                 http_client.clone(),
-                bound_attempt_transport(admission, "anthropic-oauth")?,
+                bound(admission, "anthropic-oauth", anthropic_idle)?,
             );
             provider_list.push(Arc::new(RefreshableProvider::new(RefreshableConfig {
                 inner,
@@ -327,13 +336,15 @@ pub(crate) fn compose_agent_provider_inner_outcome(
                 prefix
             ));
         }
+        let setting = format!("openai_compatible endpoint '{prefix}'");
+        let idle = StreamIdle::configured_for(&setting, endpoint.stream_idle_seconds)?;
         let provider = providers::create_openai_compatible_provider_and_admission(
             &endpoint.prefix,
             endpoint.api_key.clone(),
             endpoint.api_base.clone(),
             endpoint.allow_remote_http,
             http_client.clone(),
-            bound_attempt_transport(admission, &endpoint.prefix)?,
+            bound(admission, &endpoint.prefix, idle)?,
         )
         .map_err(|e| format!("openai_compatible provider configuration error: {}", e))?;
         provider_list.push(provider);
@@ -389,7 +400,7 @@ fn registry_provider_factory(
         base,
         allow_remote_http,
         client,
-        None,
+        ProviderBinding::default(),
     )
 }
 
@@ -399,7 +410,7 @@ fn registry_provider_factory_with_admission(
     base: Option<String>,
     allow_remote_http: bool,
     client: reqwest::Client,
-    binding: Option<AttemptTransportBinding>,
+    binding: ProviderBinding,
 ) -> crate::infrastructure::providers::refreshable::ProviderFactory {
     use crate::infrastructure::model_registry::ProviderApi;
     Arc::new(move |new_token: &str| -> Arc<dyn LlmProvider> {
@@ -559,7 +570,9 @@ fn build_registry_provider_with_admission(
         }
     };
 
-    let binding = bound_attempt_transport(admission, &model.provider)?;
+    let setting = format!("models.json provider '{}'", model.provider);
+    let idle = StreamIdle::configured_for(&setting, model.stream_idle_seconds)?;
+    let binding = bound(admission, &model.provider, idle)?;
     let inner: Arc<dyn LlmProvider> = match model.api {
         ProviderApi::OpenAiCompletions => {
             let Some(base) = api_base.clone().filter(|b| !b.trim().is_empty()) else {
@@ -619,6 +632,20 @@ fn build_registry_provider_with_admission(
     Ok(Some(inner))
 }
 
+/// The binding of the provider in admission slot `slot`, bounded by
+/// `stream_idle`, its configured stream idle limit (#2433 review).
+fn bound(
+    context: Option<&AdmissionRuntimeContext>,
+    slot: &str,
+    stream_idle: StreamIdle,
+) -> Result<ProviderBinding, String> {
+    let admission = bound_attempt_transport(context, slot)?;
+    Ok(ProviderBinding {
+        admission,
+        stream_idle,
+    })
+}
+
 fn bound_attempt_transport(
     context: Option<&AdmissionRuntimeContext>,
     slot: &str,
@@ -656,7 +683,7 @@ fn build_single_provider(
         api_base,
         http_client,
         disable_codex_routing,
-        None,
+        ProviderBinding::default(),
     )
 }
 
@@ -666,7 +693,7 @@ fn build_single_provider_with_admission(
     api_base: &Option<String>,
     http_client: &reqwest::Client,
     disable_codex_routing: bool,
-    binding: Option<AttemptTransportBinding>,
+    binding: ProviderBinding,
 ) -> Result<Arc<dyn LlmProvider>, String> {
     if name == "openai" && !disable_codex_routing {
         let account_id = crate::infrastructure::auth::oauth::extract_openai_account_id(api_key);

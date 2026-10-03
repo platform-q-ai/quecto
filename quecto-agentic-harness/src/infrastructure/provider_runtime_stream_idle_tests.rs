@@ -94,4 +94,79 @@ fn a_models_json_block_out_of_range_is_skipped() {
     );
     let loaded: Vec<_> = parsed.records.iter().map(|r| r.provider.as_str()).collect();
     assert_eq!(loaded, ["fine"]);
+    assert_eq!(parsed.records[0].stream_idle_seconds, Some(900));
+    let defaults: Vec<_> = parsed
+        .providers
+        .iter()
+        .map(|(key, d)| (key.as_str(), d.stream_idle_seconds))
+        .collect();
+    assert_eq!(defaults, [("fine", Some(900))]);
+}
+
+/// The bounds a provider was built with, as its debug form shows them.
+fn shows(provider: &dyn LlmProvider, seconds: u64) -> bool {
+    let idle = StreamIdle::new(std::time::Duration::from_secs(seconds));
+    format!("{provider:?}").contains(&format!("{idle:?}"))
+}
+
+/// A configured limit binds the providers built for it: a models.json
+/// block's, a config entry's, and an OpenAI OAuth provider rebuilt after a
+/// token refresh; an unset one keeps the default.
+#[test]
+fn a_configured_limit_binds_its_providers() {
+    use crate::infrastructure::model_registry::{ModelRecord, ProviderApi};
+    let tmp = tempfile::TempDir::new().unwrap();
+    let client = reqwest::Client::new();
+    let file = serde_json::json!({"providers": {"local": {
+        "baseUrl": "http://127.0.0.1:9/v1", "apiKey": "k", "streamIdleSeconds": 900,
+        "models": [{"id": "m"}],
+    }}});
+    let path = tmp.path().join("models.json");
+    std::fs::write(&path, file.to_string()).unwrap();
+    let records =
+        crate::infrastructure::model_registry::ModelRegistry::load_file_records(&path).unwrap();
+    let mut record: ModelRecord = records.into_iter().next().unwrap();
+    assert_eq!(record.api, ProviderApi::OpenAiCompletions);
+    let store = Arc::new(CredentialStore::new(tmp.path()));
+    let refresh = crate::infrastructure::providers::refresh_wiring::make_oauth_refresh_fn();
+    let built = build_registry_provider(&record, tmp.path(), &store, &refresh, &client)
+        .unwrap()
+        .unwrap();
+    assert!(shows(&*built, 900), "{built:?}");
+    record.stream_idle_seconds = None;
+    let built = build_registry_provider(&record, tmp.path(), &store, &refresh, &client)
+        .unwrap()
+        .unwrap();
+    assert!(shows(&*built, 300), "{built:?}");
+
+    let idle = StreamIdle::configured(Some(1200)).unwrap();
+    let base = Some("http://127.0.0.1:9".to_owned());
+    for name in ["openai", "anthropic"] {
+        let binding = bound(None, name, idle).unwrap();
+        let built = build_single_provider_with_admission(name, "sk", &base, &client, true, binding)
+            .unwrap();
+        assert!(shows(&*built, 1200), "{name}: {built:?}");
+    }
+    let rebuild = crate::infrastructure::providers::refresh_wiring::make_bounded_provider_factory(
+        "openai", None, idle, client,
+    );
+    let rebuilt = rebuild("plain-non-jwt-token");
+    assert!(shows(&*rebuilt, 1200), "{rebuilt:?}");
+}
+
+#[test]
+fn the_allowed_range_is_thirty_seconds_to_half_an_hour() {
+    for (seconds, allowed) in [(29, false), (30, true), (1800, true), (1801, false)] {
+        assert_eq!(
+            StreamIdle::configured(Some(seconds)).is_some(),
+            allowed,
+            "{seconds}"
+        );
+    }
+    assert_eq!(StreamIdle::configured(None), Some(StreamIdle::default()));
+    let err = StreamIdle::configured_for("providers.openai", Some(5)).unwrap_err();
+    assert_eq!(
+        err,
+        "providers.openai: stream_idle_seconds must be within 30–1800 seconds, got 5"
+    );
 }

@@ -97,8 +97,10 @@ pub enum Termination {
     /// or tool-call arguments over their size), or a reply it could not
     /// parse or accept (#2156 review).
     Rejected,
-    /// The provider sent nothing — no response head, byte or event — for
-    /// the stream idle limit, and the harness abandoned the attempt (#2210).
+    /// The provider sent no response head, or no SSE event, for the stream
+    /// idle limit, and the harness abandoned the attempt (#2210). Bytes may
+    /// have arrived: keep-alives (SSE comments, blank lines) are no event,
+    /// so a reply held open by them alone ends here too (#2433).
     Idle,
     /// A whole non-streaming reply did not arrive within the total reply
     /// bound, and the harness abandoned the attempt (#2210 review).

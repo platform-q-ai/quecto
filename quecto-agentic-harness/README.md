@@ -712,6 +712,8 @@ Each endpoint registers an OpenAI-compatible provider named by `prefix`, so `spa
 
 For tailnet/LAN HTTP endpoints, set `allow_remote_http: true` on that endpoint or set `QUECTO_ALLOW_CUSTOM_PROVIDER_HOSTS=1`. HTTPS custom hosts are allowed for `openai_compatible` endpoints.
 
+A gateway that sends only SSE comment heartbeats while its model thinks is cut at the stream idle limit (300 s) and retried once; raise it per provider with `stream_idle_seconds` (30–1800) on the endpoint, or on `providers.openai` / `providers.anthropic` (`streamIdleSeconds` on a `models.json` provider block). See "Stalled replies" in `docs/runtime-models-providers.md`.
+
 ### Runtime model/provider registry (`models.json`)
 
 Use `~/.quecto/models.json` for community-extensible providers and model metadata. The running agent watches both `config.json` and `models.json`; opening `/model`, changing model, or sending the next turn reloads changes without restarting quecto or quecto-tui.

@@ -161,11 +161,26 @@ pub fn make_provider_factory(
     api_base: Option<String>,
     http_client: reqwest::Client,
 ) -> crate::infrastructure::providers::refreshable::ProviderFactory {
+    make_bounded_provider_factory(provider_name, api_base, Default::default(), http_client)
+}
+
+/// [`make_provider_factory`] for a provider configured with its own stream
+/// idle bounds (#2433 review), which every rebuilt provider keeps.
+pub fn make_bounded_provider_factory(
+    provider_name: &str,
+    api_base: Option<String>,
+    stream_idle: crate::infrastructure::providers::stream_idle::StreamIdle,
+    http_client: reqwest::Client,
+) -> crate::infrastructure::providers::refreshable::ProviderFactory {
     use crate::infrastructure::providers;
     use std::sync::Arc;
 
     let name = provider_name.to_string();
     let base = api_base;
+    let binding = move || providers::ProviderBinding {
+        admission: None,
+        stream_idle,
+    };
     Arc::new(
         move |new_token: &str| -> Arc<dyn crate::application::providers::ports::LlmProvider> {
             if name == "openai" {
@@ -176,11 +191,12 @@ pub fn make_provider_factory(
                     // was constructed; an invalid base cannot appear here, but
                     // degrade to the hardwired ChatGPT backend rather than
                     // panic inside the refresh path.
-                    match providers::create_codex_provider_with_client(
+                    match providers::create_codex_provider_with_client_and_admission(
                         new_token.to_string(),
                         acct.clone(),
                         base.clone(),
                         http_client.clone(),
+                        binding(),
                     ) {
                         Ok(p) => return p,
                         Err(e) => {
@@ -188,22 +204,24 @@ pub fn make_provider_factory(
                                 error = %e,
                                 "invalid openai api_base at token refresh; using default backend"
                             );
-                            return providers::create_codex_provider_with_client(
+                            return providers::create_codex_provider_with_client_and_admission(
                                 new_token.to_string(),
                                 acct,
                                 None,
                                 http_client.clone(),
+                                binding(),
                             )
                             .expect("default Codex backend is always valid");
                         }
                     }
                 }
             }
-            match providers::create_provider_with_client(
+            match providers::create_provider_with_client_and_admission(
                 &name,
                 new_token.to_string(),
                 base.clone(),
                 http_client.clone(),
+                binding(),
             ) {
                 Ok(p) => p,
                 Err(e) => {
@@ -213,18 +231,20 @@ pub fn make_provider_factory(
                         "failed to rebuild provider after token refresh"
                     );
                     // Return a provider that will fail — better than panicking
-                    providers::create_provider_with_client(
+                    providers::create_provider_with_client_and_admission(
                         &name,
                         new_token.to_string(),
                         None,
                         http_client.clone(),
+                        binding(),
                     )
                     .unwrap_or_else(|_| {
                         Arc::new(
                             crate::infrastructure::providers::openai::OpenAiProvider::new(
                                 new_token.to_string(),
                                 None,
-                            ),
+                            )
+                            .with_stream_idle(stream_idle),
                         )
                     })
                 }

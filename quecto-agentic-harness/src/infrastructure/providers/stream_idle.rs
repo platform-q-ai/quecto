@@ -39,6 +39,12 @@ use crate::domain::provider_error::{REPLY_TIMEOUT, STREAM_IDLE_TIMEOUT};
 /// streams `ping` events, so there it only ever ends a stream that stopped.
 pub const STREAM_IDLE_LIMIT: Duration = Duration::from_secs(300);
 
+/// The stream idle limits, in seconds, a provider may be configured with
+/// (`stream_idle_seconds`, #2433 review): from half a minute — any shorter
+/// would cut an ordinary reasoning pause — to half an hour, beyond which a
+/// stall is held longer than the admission attempt timeout's default.
+pub const STREAM_IDLE_SECONDS: std::ops::RangeInclusive<u64> = 30..=1800;
+
 /// How long a whole non-streaming reply may take, from the send to its last
 /// byte, before its request is abandoned (#2210 review).
 ///
@@ -78,6 +84,32 @@ impl StreamIdle {
         }
     }
 
+    /// The bounds of a provider configured with `stream_idle_seconds`: the
+    /// default when unset, the idle bound it names when within
+    /// [`STREAM_IDLE_SECONDS`], and `None` when outside it.
+    pub fn configured(seconds: Option<u64>) -> Option<Self> {
+        match seconds {
+            None => Some(Self::default()),
+            Some(seconds) if STREAM_IDLE_SECONDS.contains(&seconds) => {
+                Some(Self::new(Duration::from_secs(seconds)))
+            }
+            Some(_) => None,
+        }
+    }
+
+    /// [`Self::configured`] for the provider setting named `setting`: the
+    /// error names it, and the allowed range, when it is out of range.
+    pub fn configured_for(setting: &str, seconds: Option<u64>) -> Result<Self, String> {
+        Self::configured(seconds).ok_or_else(|| {
+            format!(
+                "{setting}: stream_idle_seconds must be within {}–{} seconds, got {}",
+                STREAM_IDLE_SECONDS.start(),
+                STREAM_IDLE_SECONDS.end(),
+                seconds.unwrap_or_default()
+            )
+        })
+    }
+
     /// The same bounds with a total bound of `total`, more than zero.
     pub fn with_total(self, total: Duration) -> Self {
         assert!(!total.is_zero(), "a reply total limit is more than zero");
@@ -99,7 +131,7 @@ impl StreamIdle {
     pub async fn within<F: Future>(self, step: F) -> Result<F::Output, Idle> {
         match tokio::time::timeout(self.idle, step).await {
             Ok(output) => Ok(output),
-            Err(_elapsed) => Err(Idle(self.idle)),
+            Err(_elapsed) => Err(Idle::nothing(self.idle)),
         }
     }
 
@@ -143,8 +175,9 @@ async fn read_whole(
     }
 }
 
-/// The bytes that open an SSE event's data line (#2433).
-const EVENT_LINE: &[u8] = b"data:";
+/// The bytes that open an SSE event's data line (#2433): the field the
+/// shared event rule ([`super::sse_common::event_data`]) reads.
+const EVENT_LINE: &[u8] = super::sse_common::EVENT_FIELD.as_bytes();
 
 /// The idle bound of a response body, measured from its last progress
 /// (#2433).
@@ -205,7 +238,12 @@ impl EventIdle {
     ) -> Result<Result<Option<B>, E>, Idle> {
         let read = match tokio::time::timeout_at(self.deadline, read).await {
             Ok(read) => read,
-            Err(_elapsed) => return Err(Idle(self.bound)),
+            Err(_elapsed) => {
+                return Err(match self.line {
+                    Some(_) => Idle::no_event(self.bound),
+                    None => Idle::nothing(self.bound),
+                });
+            }
         };
         if let Ok(Some(bytes)) = &read {
             self.observe(bytes.as_ref());
@@ -245,27 +283,59 @@ impl Line {
     }
 }
 
-/// The provider sent no event (no response head, before one) for the bound
-/// it carries; the request was abandoned.
+/// The provider sent nothing, or no event, for the bound it carries; the
+/// request was abandoned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Idle(Duration);
+pub struct Idle {
+    bound: Duration,
+    missing: Missing,
+}
+
+/// What an idle exchange went without (#2433 review).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Missing {
+    /// Anything at all: no response head, no bytes of an error body.
+    Bytes,
+    /// An event: an SSE body may have kept alive, but sent no event.
+    Event,
+}
 
 impl std::fmt::Display for Idle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let missing = match self.missing {
+            Missing::Bytes => "nothing",
+            Missing::Event => "no event",
+        };
         write!(
             f,
-            "{STREAM_IDLE_TIMEOUT}the provider sent no event for {}; the request was abandoned",
-            Span(self.0)
+            "{STREAM_IDLE_TIMEOUT}the provider sent {missing} for {}; the request was abandoned",
+            Span(self.bound)
         )
     }
 }
 
 impl Idle {
+    /// Nothing at all came for `bound`.
+    pub(crate) fn nothing(bound: Duration) -> Self {
+        Self {
+            bound,
+            missing: Missing::Bytes,
+        }
+    }
+
+    /// No event of an SSE body came for `bound`.
+    pub(crate) fn no_event(bound: Duration) -> Self {
+        Self {
+            bound,
+            missing: Missing::Event,
+        }
+    }
+
     /// What stands for an error body the provider stopped sending: the
     /// status before it still decides the error's class.
     pub fn body_marker(self) -> String {
         let name = STREAM_IDLE_TIMEOUT.trim_end_matches(": ");
-        format!("(error body abandoned: {name} after {})", Span(self.0))
+        format!("(error body abandoned: {name} after {})", Span(self.bound))
     }
 }
 

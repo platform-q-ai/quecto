@@ -163,7 +163,12 @@ pub(crate) fn timed_out_message(total: Duration) -> String {
 
 /// The idle error for a `limit` bound.
 pub(crate) fn idle_message(limit: Duration) -> String {
-    Idle(limit).to_string()
+    Idle::nothing(limit).to_string()
+}
+
+/// The idle error of an SSE body for a `limit` bound (#2433 review).
+pub(crate) fn no_event_message(limit: Duration) -> String {
+    Idle::no_event(limit).to_string()
 }
 
 /// Await `step`, failing the test when nothing bounded it: an unbounded
@@ -176,10 +181,10 @@ pub(crate) async fn bounded<F: std::future::Future>(step: F) -> F::Output {
 
 #[test]
 fn an_expiry_reads_as_a_stall_retried_once() {
-    let message = Idle(STREAM_IDLE_LIMIT).to_string();
+    let message = Idle::nothing(STREAM_IDLE_LIMIT).to_string();
     assert_eq!(
         message,
-        "stream idle timeout: the provider sent no event for 300 s; the request was abandoned"
+        "stream idle timeout: the provider sent nothing for 300 s; the request was abandoned"
     );
     let late = TimedOut(REPLY_TOTAL_LIMIT).to_string();
     assert_eq!(
@@ -192,7 +197,7 @@ fn an_expiry_reads_as_a_stall_retried_once() {
         assert!(class.is_retryable());
         assert_eq!(class.max_failures(), Some(2));
     }
-    let short = Idle(SILENT);
+    let short = Idle::no_event(SILENT);
     assert_eq!(
         short.to_string(),
         "stream idle timeout: the provider sent no event for 200 ms; the request was abandoned"
@@ -219,9 +224,9 @@ fn a_provider_bound_is_the_limit_unless_chosen() {
 #[test]
 fn an_abandoned_error_body_is_marked_and_a_failed_one_is_empty() {
     let marker = "(error body abandoned: stream idle timeout after 300 s)";
-    assert_eq!(Idle(STREAM_IDLE_LIMIT).body_marker(), marker);
+    assert_eq!(Idle::nothing(STREAM_IDLE_LIMIT).body_marker(), marker);
     assert_eq!(
-        error_text(Err(BodyError::Idle(Idle(STREAM_IDLE_LIMIT)))),
+        error_text(Err(BodyError::Idle(Idle::nothing(STREAM_IDLE_LIMIT)))),
         marker
     );
     assert_eq!(error_text(Ok("{\"error\":1}".into())), "{\"error\":1}");
@@ -247,7 +252,7 @@ async fn a_step_that_waits_the_whole_bound_is_idle() {
     let idle = StreamIdle::default();
     let started = tokio::time::Instant::now();
     let silent = idle.within(std::future::pending::<()>()).await;
-    assert_eq!(silent, Err(Idle(STREAM_IDLE_LIMIT)));
+    assert_eq!(silent, Err(Idle::nothing(STREAM_IDLE_LIMIT)));
     assert_eq!(started.elapsed(), STREAM_IDLE_LIMIT);
     assert_eq!(idle.within(async { 7 }).await, Ok(7));
     let slow = async {
@@ -263,7 +268,7 @@ async fn a_whole_body_that_goes_silent_is_idle() {
     let response = reqwest::Client::new().get(url).send().await.unwrap();
     let read = bounded(StreamIdle::new(SILENT).text(response)).await;
     assert!(
-        matches!(read, Err(BodyError::Idle(Idle(SILENT)))),
+        matches!(read, Err(BodyError::Idle(idle)) if idle == Idle::nothing(SILENT)),
         "{read:?}"
     );
 }
@@ -313,7 +318,7 @@ async fn the_shared_pump_ends_a_silent_stream_with_the_idle_error() {
     .await;
     drop(tx);
     assert_eq!(handler.0, vec!["data: one".to_owned()]);
-    let expected = Idle(SILENT).to_string();
+    let expected = Idle::no_event(SILENT).to_string();
     assert!(
         matches!(rx.recv().await, Some(StreamEvent::Error(m)) if m == expected),
         "the stream fails with the idle error"
@@ -343,7 +348,7 @@ async fn a_send_no_response_head_answers_is_idle() {
     let started = std::time::Instant::now();
     let idle = StreamIdle::new(SILENT);
     let sent = bounded(idle.within(reqwest::Client::new().get(url).send())).await;
-    assert!(matches!(sent, Err(Idle(SILENT))));
+    assert_eq!(sent.unwrap_err(), Idle::nothing(SILENT));
     assert!(started.elapsed() >= SILENT);
 }
 
@@ -376,8 +381,10 @@ async fn an_sse_bound_restarts_at_events_only() {
         "da",
         "ta: 2",
         "\n",
-        ": keepalive\n",
+        // Counted, or the keep-alives after it outlast the bound from `2`.
         "data:3\n",
+        ": keepalive\n",
+        ": keepalive\n",
     ];
     assert!(within_after(&mut EventIdle::events(bound), &events).await);
     // `data` must open the line: inside a comment it is no event.
@@ -397,7 +404,7 @@ async fn an_sse_bound_runs_from_the_last_event() {
     let started = tokio::time::Instant::now();
     assert!(within_after(&mut idle, &["data: 1\n", ": a\n", ": b\n"]).await);
     let pending = idle.next(std::future::pending::<Result<Option<&str>, ()>>());
-    assert_eq!(pending.await, Err(Idle(GAP * 3)));
+    assert_eq!(pending.await, Err(Idle::no_event(GAP * 3)));
     assert_eq!(
         started.elapsed(),
         GAP + GAP * 3,
@@ -411,7 +418,7 @@ async fn a_whole_sse_body_that_only_keeps_alive_is_idle() {
     let response = reqwest::Client::new().get(url).send().await.unwrap();
     let read = bounded(StreamIdle::new(SILENT).sse_text(response)).await;
     assert!(
-        matches!(read, Err(BodyError::Idle(Idle(SILENT)))),
+        matches!(read, Err(BodyError::Idle(idle)) if idle == Idle::no_event(SILENT)),
         "{read:?}"
     );
 }
@@ -443,4 +450,39 @@ async fn the_idle_errors_say_what_was_missing() {
     assert_eq!(sse.to_string(), no_event, "an SSE body");
     let body = EventIdle::reads(bound).next(never()).await.unwrap_err();
     assert_eq!(body.to_string(), nothing, "an error body");
+}
+
+/// #2433 review: the idle bound reads events by the one rule the parsers
+/// and the event count use, [`super::super::sse_common::event_data`].
+#[tokio::test(start_paused = true)]
+async fn the_idle_bound_and_the_parsers_agree_on_events() {
+    let lines = [
+        "data: {}",
+        "data:{}",
+        "data:",
+        "data: [DONE]",
+        " data: x",
+        "\tdata: x",
+        ": data: x",
+        "event: ping",
+        "id: 1",
+        "",
+        "dat",
+        "datum: 1",
+        "DATA: 1",
+        "data :x",
+    ];
+    for line in lines {
+        let mut idle = EventIdle::events(StreamIdle::new(GAP));
+        tokio::time::sleep(GAP / 2).await;
+        let read = idle
+            .next(async { Ok::<_, ()>(Some(format!("{line}\n"))) })
+            .await;
+        assert!(read.is_ok(), "{line:?}");
+        tokio::time::sleep(GAP / 2 + Duration::from_millis(1)).await;
+        let event = super::super::sse_common::event_data(line).is_some();
+        let pending = idle.next(std::future::pending::<Result<Option<String>, ()>>());
+        let restarted = tokio::time::timeout(Duration::ZERO, pending).await.is_err();
+        assert_eq!(restarted, event, "{line:?}");
+    }
 }

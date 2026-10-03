@@ -121,6 +121,7 @@ fn provider_entry_loads_ignoring_dead_auth_method() {
     // known field). This exhaustive struct literal fails to build if the field
     // is reintroduced.
     let _explicit = ProviderEntry {
+        stream_idle_seconds: None,
         api_key: "k".into(),
         api_base: "b".into(),
         disable_codex_routing: false,

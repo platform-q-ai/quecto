@@ -62,6 +62,13 @@ pub struct OpenAiProvider {
 }
 
 impl OpenAiProvider {
+    /// Bound its replies by `stream_idle`: a provider's configured stream
+    /// idle limit (#2433 review), or the defaults.
+    pub fn with_stream_idle(mut self, stream_idle: StreamIdle) -> Self {
+        self.stream_idle = stream_idle;
+        self
+    }
+
     /// Bind leaf attempts to an authenticated gate and explicit single-send client.
     ///
     /// The supplied safe client replaces the disabled transport intentionally;

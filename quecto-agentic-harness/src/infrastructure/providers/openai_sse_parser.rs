@@ -60,8 +60,8 @@ pub(crate) fn parse_sse_response(raw: &str) -> Result<LlmResponse, DomainError> 
     let mut stop_reason = None;
 
     for line in raw.lines() {
-        let line = line.trim();
-        let Some(data) = line.strip_prefix("data: ") else {
+        let line = line.trim_end();
+        let Some(data) = crate::infrastructure::providers::sse_common::event_data(line) else {
             continue;
         };
         if crate::infrastructure::providers::sse_end::is_done_marker(data) {

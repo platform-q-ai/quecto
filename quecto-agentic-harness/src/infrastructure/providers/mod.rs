@@ -39,19 +39,29 @@ pub(crate) struct AttemptTransportBinding {
     pub client: SingleAttemptClient,
 }
 
-/// Shared HTTP connection pool and optional scope-bound attempt capability.
+/// What binds one provider's leaf transport: its admission capability, when
+/// a gate binds it, and its stream idle bounds — the provider's configured
+/// `stream_idle_seconds`, or the defaults (#2433 review).
+#[derive(Clone, Default)]
+pub(crate) struct ProviderBinding {
+    pub admission: Option<AttemptTransportBinding>,
+    pub stream_idle: stream_idle::StreamIdle,
+}
+
+/// Shared HTTP connection pool and the provider's binding.
 /// Both endpoint alternatives for a named provider use the same transport context.
 pub(crate) struct ProviderTransportContext {
     pub client: reqwest::Client,
-    pub admission: Option<AttemptTransportBinding>,
+    pub binding: ProviderBinding,
 }
 
-// Gate binding must happen before type erasure: a provider-level wrapper is not a leaf attempt gate.
+// Binding must happen before type erasure: a provider-level wrapper is not a leaf attempt gate.
 macro_rules! bind_attempt_admission {
-    ($provider:expr, $admission:expr) => {{
-        let provider = $provider;
-        match $admission {
-            Some(binding) => provider.with_attempt_admission(binding.gate, binding.client),
+    ($provider:expr, $binding:expr) => {{
+        let binding: ProviderBinding = $binding;
+        let provider = $provider.with_stream_idle(binding.stream_idle);
+        match binding.admission {
+            Some(admission) => provider.with_attempt_admission(admission.gate, admission.client),
             None => provider,
         }
     }};
@@ -178,7 +188,13 @@ pub fn create_provider_with_client(
     api_base: Option<String>,
     client: reqwest::Client,
 ) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
-    create_provider_with_client_and_admission(name, api_key, api_base, client, None)
+    create_provider_with_client_and_admission(
+        name,
+        api_key,
+        api_base,
+        client,
+        ProviderBinding::default(),
+    )
 }
 
 pub(crate) fn create_provider_with_client_and_admission(
@@ -186,7 +202,7 @@ pub(crate) fn create_provider_with_client_and_admission(
     api_key: String,
     api_base: Option<String>,
     client: reqwest::Client,
-    admission: Option<AttemptTransportBinding>,
+    binding: ProviderBinding,
 ) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
     match name {
         "openai" | "anthropic" => {}
@@ -200,11 +216,11 @@ pub(crate) fn create_provider_with_client_and_admission(
     match name {
         "openai" => Ok(Arc::new(bind_attempt_admission!(
             openai::OpenAiProvider::with_client(api_key, api_base, client,),
-            admission.clone()
+            binding.clone()
         ))),
         "anthropic" => Ok(Arc::new(bind_attempt_admission!(
             anthropic::AnthropicProvider::with_client(api_key, api_base, client,),
-            admission.clone()
+            binding.clone()
         ))),
         _ => unreachable!("provider name validated above"),
     }
@@ -232,7 +248,7 @@ pub fn create_named_openai_provider_with_client(
         api_base,
         ProviderTransportContext {
             client,
-            admission: None,
+            binding: ProviderBinding::default(),
         },
         include_oauth_headers,
         reasoning_model_ids,
@@ -247,7 +263,7 @@ pub(crate) fn create_named_openai_provider_with_client_and_admission(
     include_oauth_headers: bool,
     reasoning_model_ids: std::collections::HashSet<String>,
 ) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
-    let ProviderTransportContext { client, admission } = transport;
+    let ProviderTransportContext { client, binding } = transport;
     if let Some(ref base) = api_base {
         validate_provider_api_base("openai", base)?;
     }
@@ -259,14 +275,14 @@ pub(crate) fn create_named_openai_provider_with_client_and_admission(
             client.clone(),
             include_oauth_headers,
         ),
-        admission.clone()
+        binding.clone()
     ));
     if reasoning_model_ids.is_empty() {
         return Ok(chat_completions);
     }
     let responses: Arc<dyn LlmProvider> = Arc::new(bind_attempt_admission!(
         codex::CodexProvider::with_api_key(api_key, api_base, client,),
-        admission.clone()
+        binding.clone()
     ));
     Ok(Arc::new(openai_endpoint_router::OpenAiEndpointRouter::new(
         provider_name.to_string(),
@@ -288,7 +304,7 @@ pub fn create_openai_provider_with_client(
         api_base,
         client,
         include_oauth_headers,
-        None,
+        ProviderBinding::default(),
     )
 }
 
@@ -297,7 +313,7 @@ pub(crate) fn create_openai_provider_with_client_and_admission(
     api_base: Option<String>,
     client: reqwest::Client,
     include_oauth_headers: bool,
-    admission: Option<AttemptTransportBinding>,
+    binding: ProviderBinding,
 ) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
     if let Some(ref base) = api_base {
         validate_provider_api_base("openai", base)?;
@@ -310,7 +326,7 @@ pub(crate) fn create_openai_provider_with_client_and_admission(
             client,
             include_oauth_headers,
         ),
-        admission.clone()
+        binding.clone()
     )))
 }
 
@@ -331,7 +347,7 @@ pub fn create_openai_compatible_provider(
         api_base,
         allow_remote_http,
         client,
-        None,
+        ProviderBinding::default(),
     )
 }
 
@@ -341,7 +357,7 @@ pub(crate) fn create_openai_compatible_provider_and_admission(
     api_base: String,
     allow_remote_http: bool,
     client: reqwest::Client,
-    admission: Option<AttemptTransportBinding>,
+    binding: ProviderBinding,
 ) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
     let prefix = prefix.trim();
     if prefix.is_empty()
@@ -362,7 +378,7 @@ pub(crate) fn create_openai_compatible_provider_and_admission(
             client,
             false,
         ),
-        admission.clone()
+        binding.clone()
     )))
 }
 
@@ -384,7 +400,7 @@ pub fn create_anthropic_compatible_provider(
         api_base,
         allow_remote_http,
         client,
-        None,
+        ProviderBinding::default(),
     )
 }
 
@@ -394,7 +410,7 @@ pub(crate) fn create_anthropic_compatible_provider_and_admission(
     api_base: Option<String>,
     allow_remote_http: bool,
     client: reqwest::Client,
-    admission: Option<AttemptTransportBinding>,
+    binding: ProviderBinding,
 ) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
     let prefix = prefix.trim();
     if prefix.is_empty()
@@ -411,7 +427,7 @@ pub(crate) fn create_anthropic_compatible_provider_and_admission(
     }
     Ok(Arc::new(bind_attempt_admission!(
         anthropic::AnthropicProvider::with_client_and_name(api_key, api_base, client, prefix),
-        admission.clone()
+        binding.clone()
     )))
 }
 
@@ -426,7 +442,13 @@ pub fn create_codex_provider_with_client(
     api_base: Option<String>,
     client: reqwest::Client,
 ) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
-    create_codex_provider_with_client_and_admission(api_key, account_id, api_base, client, None)
+    create_codex_provider_with_client_and_admission(
+        api_key,
+        account_id,
+        api_base,
+        client,
+        ProviderBinding::default(),
+    )
 }
 
 pub(crate) fn create_codex_provider_with_client_and_admission(
@@ -434,7 +456,7 @@ pub(crate) fn create_codex_provider_with_client_and_admission(
     account_id: String,
     api_base: Option<String>,
     client: reqwest::Client,
-    admission: Option<AttemptTransportBinding>,
+    binding: ProviderBinding,
 ) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
     // A config-supplied `providers.openai.api_base` may redirect
     // OAuth-JWT-bearing requests only when it passes the same
@@ -446,7 +468,7 @@ pub(crate) fn create_codex_provider_with_client_and_admission(
     }
     Ok(Arc::new(bind_attempt_admission!(
         codex::CodexProvider::with_client(api_key, account_id, api_base, client,),
-        admission.clone()
+        binding.clone()
     )))
 }
 

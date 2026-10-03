@@ -186,8 +186,13 @@ pub(super) fn terminations(trace: &RequestTrace) -> Vec<Termination> {
         .collect()
 }
 
-/// The idle error for the [`SILENT`] bound.
+/// The idle error of an SSE body for the [`SILENT`] bound: no event came.
 fn idle_message() -> String {
+    super::stream_idle::tests::no_event_message(SILENT)
+}
+
+/// The idle error of a send no response head answered: nothing came.
+fn send_idle_message() -> String {
     super::stream_idle::tests::idle_message(SILENT)
 }
 
@@ -197,6 +202,14 @@ fn is_idle_event(event: &Option<StreamEvent>) -> bool {
 
 fn is_idle_error(result: &Result<String, DomainError>) -> bool {
     matches!(result, Err(DomainError::Provider(message)) if *message == idle_message())
+}
+
+fn is_send_idle_event(event: &Option<StreamEvent>) -> bool {
+    matches!(event, Some(StreamEvent::Error(message)) if *message == send_idle_message())
+}
+
+fn is_send_idle_error(result: &Result<String, DomainError>) -> bool {
+    matches!(result, Err(DomainError::Provider(message)) if *message == send_idle_message())
 }
 
 /// Whether an attempt was recorded as idle: every streaming attempt of a
@@ -292,14 +305,17 @@ async fn a_request_no_response_head_answers_is_abandoned() {
             let provider = vendor.provider(url.clone(), gated, SILENT);
             let (last, recorded) = incremental(&*provider).await;
             assert!(started.elapsed() >= SILENT, "{vendor:?} gated={gated}");
-            assert!(is_idle_event(&last), "{vendor:?} gated={gated}: {last:?}");
+            assert!(
+                is_send_idle_event(&last),
+                "{vendor:?} gated={gated}: {last:?}"
+            );
             assert!(
                 recorded_idle(&recorded),
                 "{vendor:?} gated={gated}: {recorded:?}"
             );
             let (result, recorded) = assembled(&*vendor.provider(url, gated, SILENT)).await;
             assert!(
-                is_idle_error(&result),
+                is_send_idle_error(&result),
                 "{vendor:?} gated={gated}: {result:?}"
             );
             assert!(

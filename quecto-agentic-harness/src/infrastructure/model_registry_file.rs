@@ -49,8 +49,29 @@ pub(super) struct RegistryProvider {
     pub(super) allow_remote_http: Option<bool>,
     #[serde(default)]
     pub(super) auth: Option<RegistryAuth>,
+    /// The provider's stream idle limit in seconds (#2433 review).
+    #[serde(default, alias = "stream_idle_seconds")]
+    pub(super) stream_idle_seconds: Option<u64>,
     #[serde(default)]
     pub(super) models: Vec<RegistryModel>,
+}
+
+/// The diagnostic for a provider block whose `streamIdleSeconds` is outside
+/// the allowed range: the block is skipped, as an unknown auth mode is.
+pub(super) fn stream_idle_out_of_range(
+    provider_key: &str,
+    seconds: Option<u64>,
+) -> super::SkippedProviderBlock {
+    let range = crate::infrastructure::providers::stream_idle::STREAM_IDLE_SECONDS;
+    super::SkippedProviderBlock {
+        provider: provider_key.to_owned(),
+        error: format!(
+            "provider '{provider_key}' declares streamIdleSeconds {}, outside {}–{} seconds; its models were skipped",
+            seconds.unwrap_or_default(),
+            range.start(),
+            range.end()
+        ),
+    }
 }
 
 /// Explicit auth declaration for a registry provider.

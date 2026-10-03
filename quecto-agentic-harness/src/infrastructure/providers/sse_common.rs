@@ -15,6 +15,21 @@ pub const MAX_SSE_LINE_BYTES: usize = 1024 * 1024; // 1 MiB
 /// unbounded memory usage on malformed or oversized error responses.
 pub const MAX_ERROR_BODY_BYTES: usize = 4096;
 
+/// The field that opens an SSE event's data line (#2433 review).
+pub(crate) const EVENT_FIELD: &str = "data:";
+
+/// The data of an SSE event line, or `None` when the line is no event: the
+/// one rule every reader of an SSE body shares (#2433 review), so the idle
+/// bound ([`super::stream_idle::EventIdle`]), the attempt's event count and
+/// the parsers agree. An event line opens with [`EVENT_FIELD`], with one
+/// optional space after it (`data:{…}` and `data: {…}`); a line is never
+/// trimmed first, so an indented `data` line is no event, as the SSE
+/// specification reads it.
+pub(crate) fn event_data(line: &str) -> Option<&str> {
+    let data = line.strip_prefix(EVENT_FIELD)?;
+    Some(data.strip_prefix(' ').unwrap_or(data))
+}
+
 /// Render a `reqwest` transport error together with its source chain.
 ///
 /// `reqwest::Error`'s `Display` only prints its top-level message
