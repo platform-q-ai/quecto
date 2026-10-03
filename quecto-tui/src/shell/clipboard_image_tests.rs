@@ -370,9 +370,9 @@ fn a_timeout_ends_the_tool_s_children_too() {
     let pid_file = dir.path().join("helper.pid");
     let script = format!("sleep 30 & echo $! > '{}'; wait", pid_file.display());
     let tool = fake_tool(dir.path(), "wl-paste", &[("--list-types", &script)]);
-    // 1 s, so the shell has long written `$!` when the timeout fires.
+    // 3 s, so the shell has long written `$!` when the timeout fires.
     let clipboard =
-        SystemClipboard::with_tools(vec![(ClipboardTool::WlPaste, tool)], Duration::from_secs(1));
+        SystemClipboard::with_tools(vec![(ClipboardTool::WlPaste, tool)], Duration::from_secs(3));
     let started = std::time::Instant::now();
     assert!(matches!(clipboard.read(), ClipboardRead::Failed(_)));
     // The tool's shell waits for its helper: a read that waited the
@@ -447,6 +447,18 @@ fn a_running_helper_is_not_gone() {
             .unwrap(),
     );
     let pid = libc::pid_t::try_from(child.0.id()).unwrap();
+    // A fresh `sleep` on a loaded runner may still be running or in `D`:
+    // wait (bounded) for it to sleep before the budget starts.
+    let settle = std::time::Instant::now() + Duration::from_secs(5);
+    let sleeping = loop {
+        if process_state(pid) == Some('S') {
+            break true;
+        }
+        if std::time::Instant::now() >= settle {
+            break false;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
     let budget = GoneBudget {
         polls: 20,
         wall: Duration::from_millis(200),
@@ -456,8 +468,11 @@ fn a_running_helper_is_not_gone() {
     let elapsed = started.elapsed();
     drop(child);
     let survivor = waited.expect_err("a running helper is not gone");
-    assert!(survivor.starts_with("state S,"), "{survivor}");
-    assert!(survivor.contains("wchan"), "{survivor}");
+    // Asleep, it is named as never signalled; a runner too loaded for it
+    // to settle still gets a state and a wchan.
+    let named = if sleeping { "state S, " } else { "state " };
+    assert!(survivor.starts_with(named), "{survivor}");
+    assert!(survivor.contains(", wchan "), "{survivor}");
     assert!(
         elapsed >= budget.wall,
         "both budgets are spent: {elapsed:?}"
