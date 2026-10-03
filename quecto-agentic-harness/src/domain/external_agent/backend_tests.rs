@@ -207,12 +207,12 @@ fn claude_code_refuses_every_field_it_would_ignore() {
         ),
         (
             "another provider's model",
-            with(|c| c.model = Some("openai/gpt-5.5".into())),
+            with(|c| c.model = Some("openai/gpt-6.1-sol".into())),
             "backend claude_code runs anthropic models only; omit model or name an anthropic/ model",
         ),
         (
             "a model without its provider",
-            with(|c| c.model = Some("claude-sonnet-4-5".into())),
+            with(|c| c.model = Some("claude-sonnet-5".into())),
             "backend claude_code runs anthropic models only; omit model or name an anthropic/ model",
         ),
     ];
@@ -239,14 +239,14 @@ fn claude_code_refuses_every_field_it_would_ignore() {
     // What it honours: a task, a label and an anthropic model.
     let accepted = with(|c| {
         c.task = Some("do the work".into());
-        c.model = Some("anthropic/claude-sonnet-4-5".into());
+        c.model = Some("anthropic/claude-sonnet-5".into());
     });
     validate_backend(&accepted, COORDINATOR).expect("a task, a label and an anthropic model");
     // quecto takes every field, as before.
     let mut quecto = with(|c| {
         c.read_only = true;
         c.system = Some("s".into());
-        c.model = Some("openai/gpt-5.5".into());
+        c.model = Some("openai/gpt-6.1-sol".into());
     });
     quecto.backend = MemberBackend::Quecto;
     validate_backend(&quecto, HOST).expect("quecto takes every field");

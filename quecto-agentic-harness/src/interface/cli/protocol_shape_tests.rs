@@ -109,10 +109,10 @@ fn response_error_matches_spec() {
 }
 #[test]
 fn get_state_data_matches_spec_shape() {
-    let state = crate::interface::cli::uds_session::AgentSession::new("claude-sonnet-4-6".into())
+    let state = crate::interface::cli::uds_session::AgentSession::new("claude-sonnet-5".into())
         .state_snapshot("cli:my-session", 12, None, 200_000, None);
     let j = round_trip(&state);
-    assert_eq!(j["model"], "claude-sonnet-4-6");
+    assert_eq!(j["model"], "claude-sonnet-5");
     assert_eq!(j["isStreaming"], false); // camelCase
     assert_eq!(j["sessionKey"], "cli:my-session"); // camelCase
     assert_eq!(j["messageCount"], 12); // camelCase

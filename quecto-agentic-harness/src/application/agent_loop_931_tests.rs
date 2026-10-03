@@ -262,3 +262,30 @@ fn synthetic_empty_stream_guidance_does_not_claim_http_failure_or_overload() {
     assert!(!out.contains("provider is overloaded"));
     assert!(!out.contains("HTTP 503"));
 }
+
+/// #2435: a model refused for the account says the catalogue now holds it
+/// unavailable and how to move on.
+#[test]
+fn a_model_refused_for_the_account_says_it_will_not_be_offered_again() {
+    let out = enhanced(
+        r#"HTTP 400 from Codex: {"detail":"The 'mini' model is not supported when using Codex with a ChatGPT account."}"#,
+    );
+    assert!(
+        out.ends_with(
+            "Model unavailable: the provider refused this model for the account or auth mode in \
+             use. While a refusal is held (providers.model_refusal_ttl_secs, an hour by default; \
+             0 holds none) the model is not offered, until the provider serves it again; choose \
+             another model (list_models, then set_model)."
+        ),
+        "{out}"
+    );
+}
+
+/// #2435 review round 1: the refusal guidance is appended once.
+#[test]
+fn the_refusal_guidance_is_appended_once() {
+    let once = enhanced(
+        r#"HTTP 400 from Codex: {"detail":"The 'mini' model is not supported when using Codex with a ChatGPT account."}"#,
+    );
+    assert_eq!(enhanced(&once), once);
+}

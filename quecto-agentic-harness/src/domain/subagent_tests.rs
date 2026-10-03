@@ -89,19 +89,19 @@ fn test_subagent_config_with_workflow() {
 
 #[test]
 fn test_parse_model_arg_full_string() {
-    let arg = parse_model_arg(Some("openai/gpt-5.5"), None, None)
+    let arg = parse_model_arg(Some("openai/gpt-6.1-sol"), None, None)
         .unwrap()
         .unwrap();
-    assert_eq!(arg, ModelArg::Full("openai/gpt-5.5".to_string()));
-    assert_eq!(arg.to_model_string(), "openai/gpt-5.5");
+    assert_eq!(arg, ModelArg::Full("openai/gpt-6.1-sol".to_string()));
+    assert_eq!(arg.to_model_string(), "openai/gpt-6.1-sol");
 }
 
 #[test]
 fn test_parse_model_arg_provider_model_id_pair() {
-    let arg = parse_model_arg(None, Some("openai"), Some("gpt-5.5"))
+    let arg = parse_model_arg(None, Some("openai"), Some("gpt-6.1-sol"))
         .unwrap()
         .unwrap();
-    assert_eq!(arg.to_model_string(), "openai/gpt-5.5");
+    assert_eq!(arg.to_model_string(), "openai/gpt-6.1-sol");
 }
 
 #[test]
@@ -119,13 +119,13 @@ fn test_parse_model_arg_provider_without_model_id_errors() {
 
 #[test]
 fn test_parse_model_arg_model_id_without_provider_errors() {
-    let err = parse_model_arg(None, None, Some("gpt-5.5")).unwrap_err();
+    let err = parse_model_arg(None, None, Some("gpt-6.1-sol")).unwrap_err();
     assert!(err.contains("provider"), "got: {err}");
 }
 
 #[test]
 fn test_parse_model_arg_full_takes_precedence_over_pair() {
-    let arg = parse_model_arg(Some("a/b"), Some("openai"), Some("gpt-5.5"))
+    let arg = parse_model_arg(Some("a/b"), Some("openai"), Some("gpt-6.1-sol"))
         .unwrap()
         .unwrap();
     assert_eq!(arg, ModelArg::Full("a/b".to_string()));

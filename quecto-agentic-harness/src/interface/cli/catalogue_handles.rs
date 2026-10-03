@@ -35,6 +35,10 @@ pub struct CatalogueHandles {
     /// The runtime snapshot published by composition; interface readers only
     /// receive this application port and never reach into infrastructure globals.
     pub runtime_store: crate::application::ports::RuntimeSnapshotStore,
+    /// The warnings the run's startup model drew (#2435, #2126): a model
+    /// its provider does not list, a refused one, an unconfigured
+    /// provider. Startup fills it; `get_state` carries it to clients.
+    pub startup_warnings: Vec<String>,
 }
 
 impl std::fmt::Debug for CatalogueHandles {

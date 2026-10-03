@@ -17,7 +17,7 @@ fn body_with_effort(effort: Option<EffortLevel>) -> serde_json::Value {
         admission: None,
         messages: &messages,
         tools: &[],
-        model: "claude-opus-4-6",
+        model: "claude-opus-5",
         max_tokens: 4_096,
         temperature: 1.0,
         session_id: None,

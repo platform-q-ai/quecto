@@ -4,7 +4,7 @@ use super::app_selection::{SelectionAnchor, TextSelection};
 use super::tui_harness::TuiHarness;
 use super::*;
 
-const MODEL_ID: &str = "anthropic/claude-opus-4-5";
+const MODEL_ID: &str = "anthropic/claude-opus-5";
 
 async fn harness() -> TuiHarness {
     TuiHarness::new().await
@@ -368,19 +368,19 @@ async fn model_selector_enter_selects_and_sets_model() {
     let a = h.app_mut();
     a.open_model_selector();
     a.handle_list_models(Some(serde_json::json!({
-        "models": [{ "id": "openai-api/gpt-5.5", "provider": "OpenAI API" }]
+        "models": [{ "id": "openai-api/gpt-6.1-sol", "provider": "OpenAI API" }]
     })));
     a.handle_model_selector_key(&Key::Enter);
     assert!(a.inference.model_selector.is_none());
     assert_eq!(
         a.ac().inference.current_model.as_deref(),
-        Some("openai-api/gpt-5.5")
+        Some("openai-api/gpt-6.1-sol")
     );
     let cmds = h.drain_commands().await;
     assert!(
         cmds.iter().any(|c| command_has_string_fields(
             c,
-            &[("type", "set_model"), ("model", "openai-api/gpt-5.5")]
+            &[("type", "set_model"), ("model", "openai-api/gpt-6.1-sol")]
         )),
         "Enter should send set_model for selected model: {cmds:?}"
     );
@@ -404,7 +404,7 @@ async fn model_selector_overlay_renders_with_theme_background() {
     a.open_model_selector();
     a.handle_list_models(Some(serde_json::json!({
         "models": [{
-            "id": "openai-api/gpt-5.5",
+            "id": "openai-api/gpt-6.1-sol",
             "provider": "OpenAI API",
             "auth": null
         }]
@@ -421,7 +421,7 @@ async fn model_selector_overlay_renders_with_theme_background() {
         "frame should contain the model selector title"
     );
     assert!(
-        joined.contains("gpt-5.5"),
+        joined.contains("gpt-6.1-sol"),
         "frame should contain a rendered model entry"
     );
     // The overlay region should be a contiguous block of same-width lines.
@@ -453,7 +453,7 @@ async fn overlays_follow_theme_background_not_black() {
     let a = h.app_mut();
     a.open_model_selector();
     a.handle_list_models(Some(serde_json::json!({
-        "models": [{ "id": "openai-api/gpt-5.5", "provider": "OpenAI API", "auth": null }]
+        "models": [{ "id": "openai-api/gpt-6.1-sol", "provider": "OpenAI API", "auth": null }]
     })));
     assert!(a.inference.model_selector.is_some());
 
@@ -612,11 +612,11 @@ async fn compose_frame_with_model_overlay() {
     let a = h.app_mut();
     a.open_model_selector();
     a.handle_list_models(Some(serde_json::json!({
-        "models": [{ "id": "openai-api/gpt-5.5", "provider": "OpenAI API" }]
+        "models": [{ "id": "openai-api/gpt-6.1-sol", "provider": "OpenAI API" }]
     })));
     let frame = a.compose_frame().join("\n");
     assert!(frame.contains("Select Model"));
-    assert!(frame.contains("gpt-5.5"));
+    assert!(frame.contains("gpt-6.1-sol"));
 }
 
 #[tokio::test]

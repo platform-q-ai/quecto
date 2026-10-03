@@ -75,7 +75,7 @@ fn openais_own_chat_completions_endpoint_never_transmits_reasoning_effort() {
     let messages = vec![Message::user("hi")];
     let body = body(
         "openai",
-        &request(&messages, "gpt-5.5", Some(EffortLevel::High)),
+        &request(&messages, "gpt-6.1-sol", Some(EffortLevel::High)),
     );
     assert!(body.get("reasoning_effort").is_none(), "{body}");
 }

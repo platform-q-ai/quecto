@@ -893,6 +893,21 @@ pub(crate) fn mount_auto_mock_responses_for_messages(world: &mut QuectoWorld, me
 ///
 /// Preserves any existing config fields (e.g. health, channels) by reading
 /// the current config, merging the provider/workspace fields, and writing back.
+/// The model an OpenAI mock workspace runs on unless its scenario picks one:
+/// an id the catalogue does not mark reasoning, so it stays on Chat
+/// Completions, which the mocks answer.
+const MOCK_CHAT_MODEL: &str = "gpt-4o-mini";
+
+/// Run an OpenAI mock workspace on [`MOCK_CHAT_MODEL`] unless the config
+/// already names a model: the OpenAI mocks answer Chat Completions, and the
+/// built-in default (a reasoning model, #2435) would go to the Responses
+/// API. A scenario's own model, set before or after, wins.
+pub(crate) fn pin_mock_chat_model(config: &mut serde_json::Value) {
+    if config["agents"]["defaults"]["model"].is_null() {
+        config["agents"]["defaults"]["model"] = serde_json::json!(MOCK_CHAT_MODEL);
+    }
+}
+
 pub(crate) fn rewrite_config_to_uri(world: &mut QuectoWorld, new_uri: &str) {
     rewrite_config_to_provider_uri(world, "openai", new_uri);
 }
@@ -920,6 +935,9 @@ pub(crate) fn rewrite_config_to_provider_uri(
     };
     config["providers"][provider]["api_key"] = serde_json::json!(api_key);
     config["providers"][provider]["api_base"] = serde_json::json!(new_uri);
+    if provider == "openai" {
+        pin_mock_chat_model(&mut config);
+    }
     config["agents"]["defaults"]["workspace"] = serde_json::json!(workspace.display().to_string());
 
     let config_json = serde_json::to_string_pretty(&config).expect("serialize config");
@@ -1984,6 +2002,7 @@ fn given_config_with_openai_custom_key(world: &mut QuectoWorld, api_key: String)
         },
         "agents": {
             "defaults": {
+                "model": MOCK_CHAT_MODEL,
                 "workspace": workspace.display().to_string()
             }
         }
@@ -2716,7 +2735,7 @@ fn when_run_anthropic_provider_smoke_agent(world: &mut QuectoWorld, message: Str
         "quecto".to_string(),
         "agent".to_string(),
         "--model".to_string(),
-        "anthropic-api/claude-sonnet-4-5".to_string(),
+        "anthropic-api/claude-sonnet-5".to_string(),
         "--max-iterations".to_string(),
         "1".to_string(),
         "--max-time".to_string(),
@@ -2738,7 +2757,7 @@ fn when_run_codex_provider_smoke_agent(world: &mut QuectoWorld, message: String)
         "quecto".to_string(),
         "agent".to_string(),
         "--model".to_string(),
-        "openai-oauth/gpt-5.3-codex".to_string(),
+        "openai-oauth/gpt-6.1-sol".to_string(),
         "--max-iterations".to_string(),
         "1".to_string(),
         "--max-time".to_string(),
@@ -2980,6 +2999,7 @@ fn given_config_at_custom_path(world: &mut QuectoWorld) {
         },
         "agents": {
             "defaults": {
+                "model": MOCK_CHAT_MODEL,
                 "workspace": workspace.display().to_string()
             }
         }

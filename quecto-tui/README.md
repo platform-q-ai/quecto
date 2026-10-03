@@ -2,7 +2,7 @@
 
 A lightweight terminal UI client for `quecto agent --mode uds`.
 
-**Version `0.77.39` (pre-1.0).** The TUI is a UDS bus client of the harness: the
+**Version `0.77.40` (pre-1.0).** The TUI is a UDS bus client of the harness: the
 wire protocol and session ownership live in `quecto`, so most breaking risk is
 upstream. This crate stays on `0.y` until feature-oriented presentation boundaries and
 public surface (flags, slash commands, attach/spawn) meet the bar for a deliberate
@@ -159,7 +159,7 @@ opens links natively, that help line is the single place to update first.
 
 | Command | Action |
 |---|---|
-| `/model` | Open the model selector; `Tab` cycles what `Enter` does: use for this session, use and pin as this repo's default (`./.quecto/config.json`), use and pin as the global default (`~/.quecto/config.json`, or the `--config` file the agent was started with) — the harness records it, the toast names the file and reminds you that live tool-policy overlays re-baseline on the next turn |
+| `/model` | Open the model selector; `Tab` cycles what `Enter` does: use for this session, use and pin as this repo's default (`./.quecto/config.json`), use and pin as the global default (`~/.quecto/config.json`, or the `--config` file the agent was started with) — the harness records it, the toast names the file and reminds you that live tool-policy overlays re-baseline on the next turn. A model the harness says cannot run now (`unavailable` in `list_models`, e.g. one the provider refused for your account) is dimmed with a short tag such as `(unavailable: refused for account)`, and `Enter` on it shows the full reason instead of switching. The fallback list used before the harness answers is the harness's built-in Anthropic/OpenAI models (`src/components/model_selector_builtin_models.txt`, kept level by a harness test) |
 | `/model <name>` | Switch to a model directly |
 | `/clear` | Clear the current conversation |
 | `/new` | Start a fresh conversation |

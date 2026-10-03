@@ -3,8 +3,7 @@
 
 use super::ModelRegistry;
 
-/// The built-in providers whose every model takes images, but the ones in
-/// [`TEXT_ONLY`].
+/// The built-in providers whose every model takes images.
 const VISION_PROVIDERS: [&str; 5] = [
     "anthropic-api",
     "anthropic-oauth",
@@ -12,9 +11,6 @@ const VISION_PROVIDERS: [&str; 5] = [
     "openai-oauth",
     "xai",
 ];
-
-/// GPT-5.3 Codex Spark takes text only (OpenAI, at launch).
-const TEXT_ONLY: [&str; 1] = ["gpt-5.3-codex-spark"];
 
 fn declares(input: &[String], modality: &str) -> bool {
     input.iter().any(|declared| declared == modality)
@@ -27,9 +23,13 @@ fn every_builtin_claude_gpt_and_grok_model_declares_image_input() {
         .models()
         .iter()
         .filter(|record| VISION_PROVIDERS.contains(&record.provider.as_str()))
-        .filter(|record| !TEXT_ONLY.contains(&record.id.as_str()))
         .collect();
     assert!(vision.len() >= 20, "the built-in vision models are listed");
+    assert_eq!(
+        vision.len(),
+        registry.models().len(),
+        "every built-in model takes images"
+    );
     for record in vision {
         assert!(
             declares(&record.input, "image") && declares(&record.input, "text"),
@@ -40,13 +40,16 @@ fn every_builtin_claude_gpt_and_grok_model_declares_image_input() {
     }
 }
 
+/// A model the built-in tables do not list (one `models.json` declares
+/// without `input`) takes text only.
 #[test]
-fn codex_spark_declares_text_input_only() {
-    let registry = ModelRegistry::builtin();
-    for provider in ["openai-api", "openai-oauth"] {
-        let spark = registry
-            .find(provider, "gpt-5.3-codex-spark")
-            .expect("spark is built in");
-        assert_eq!(spark.input, vec!["text".to_string()]);
-    }
+fn a_model_outside_the_builtin_tables_declares_text_input_only() {
+    assert_eq!(
+        super::builtin_input("acme", "seeing"),
+        vec!["text".to_string()]
+    );
+    assert_eq!(
+        super::builtin_input("anthropic-api", "claude-opus-4-8"),
+        vec!["text".to_string()]
+    );
 }

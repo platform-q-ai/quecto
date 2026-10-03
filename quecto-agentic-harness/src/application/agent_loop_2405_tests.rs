@@ -51,14 +51,14 @@ fn the_startup_ceiling_is_the_fixed_input_limit_less_the_headroom() {
 fn a_switch_recomputes_the_ceiling_for_each_kind_of_window() {
     let mut agent = agent(300_000, 8_192, None);
     agent.apply_model(
-        "openai-api/gpt-5.3-codex".into(),
+        "openai-oauth/gpt-6-sol".into(),
         limits(Some(128_000), Some(400_000), WindowLessOutputCap),
     );
     assert_eq!(agent.effective_max_context_tokens(), 258_400);
 
     // No declared cap: what a request asks for is the reserve.
     agent.apply_model(
-        "openai-api/gpt-5.3-codex-spark".into(),
+        "acme/uncapped".into(),
         limits(None, Some(128_000), WindowLessOutputCap),
     );
     assert_eq!(agent.effective_max_context_tokens(), 119_808);
@@ -73,7 +73,7 @@ fn a_switch_recomputes_the_ceiling_for_each_kind_of_window() {
 
     // A configured budget below the room wins.
     agent.apply_model(
-        "openai-api/gpt-5.5".into(),
+        "openai-api/gpt-6.1-sol".into(),
         limits(Some(128_000), Some(1_050_000), WindowLessOutputCap),
     );
     assert_eq!(agent.effective_max_context_tokens(), 300_000);

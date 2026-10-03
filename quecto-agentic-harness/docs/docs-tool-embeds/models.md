@@ -21,7 +21,7 @@ turn — never tell the user to restart.
 - `quecto version` works; `quecto status` exits 0 (its `Config:` line is the global file; `providers`, `credentials.json` and `models.json` all live in that base dir — `QUECTO_BASE_DIR` moves them; `Workspace:` does not move).
 - For a repo default: you are in the repository root and `quecto status` shows `Overlay: none` or `(trusted)` (see `docs {"name": "config"}` for `(untrusted)`).
 - The model id is qualified: `provider/model` (`openai-api/gpt-5.6-luna`, `anthropic-api/claude-…`, `<models.json key>/<id>`). The writer does not check the id against the catalogue, so prove it runs (Verify).
-- Reasoning effort is per model: OpenAI reasoning built-ins (`gpt-5.6-*`, `gpt-6-*`, every `openai-oauth` model) accept `none, low, medium, high, xhigh`; Anthropic built-ins `low, medium, high, max`; xAI Grok `low, medium, high` (`grok-4.6`: `xhigh` too); `openai-api` Chat Completions ids (`gpt-5.5`, mini/nano, codex) have no effort control (`set_effort` is refused); a `models.json` model has one only with `"reasoning": true`. The file validator (`config set … agents.defaults.effort`) accepts any of `none, low, medium, high, xhigh, max` for every model; only the model rejects an unsupported level, at run time. Read `get_state`'s `effortLevels`, never guess.
+- Reasoning effort is per model: OpenAI reasoning built-ins (`gpt-5.6-*`, `gpt-6-*`, every `openai-oauth` model) accept `none, low, medium, high, xhigh`; Anthropic built-ins `low, medium, high, max`; xAI Grok `low, medium, high` (`grok-4.6`: `xhigh` too); `openai-api` Chat Completions ids (a `models.json` model declared without `"reasoning": true`) have no effort control (`set_effort` is refused); a `models.json` model has one only with `"reasoning": true`. The file validator (`config set … agents.defaults.effort`) accepts any of `none, low, medium, high, xhigh, max` for every model; only the model rejects an unsupported level, at run time. Read `get_state`'s `effortLevels`, never guess.
 
 ## Do
 
@@ -62,7 +62,7 @@ From a running session the same record is `set_model {"model":"openai-api/gpt-5.
 - Add a model to an existing provider: append to its `models` array (`id`, optional `name`, `contextWindow`, `maxTokens`, `reasoning`).
 - Add a provider on a runnable transport: `"api": "openai-completions"` or `"anthropic-messages"`, `baseUrl`, `"auth": {"mode":"apiKey","apiKey":"$MY_KEY"}` (an `$ENV` reference — a literal secret in `overrides` is rejected) or `{"mode":"oauth","oauthProvider":"openai"|"anthropic"}`. `google-generative-ai` is recognised but not runnable in this build.
 - A compatible endpoint must end every streamed reply the way its protocol says: `anthropic-messages` with `message_stop`; `openai-completions` with `data: [DONE]` or a `finish_reason`. A stream that closes without it is a reply cut short (`… ended without completion: connection closed before …`), never taken as whole.
-- Fix stale metadata: top-level `"overrides": {"openai-api/gpt-5.5": {"contextWindow": 999000}}`.
+- Fix stale metadata: top-level `"overrides": {"openai-api/gpt-5.6-sol": {"contextWindow": 999000}}`.
 - Refresh a provider's model list from its OpenAI-compatible `/models` endpoint: `quecto models discover <provider-key>` — `<provider-key>` is a `models.json` provider with `"api": "openai-completions"` and a `baseUrl`; built-in slots are refused (`no refreshable catalogue source named 'openai-api'`). It rewrites only that provider's `models` array, atomically; `--watch --interval 3600` keeps it fresh.
 
 ## Verify

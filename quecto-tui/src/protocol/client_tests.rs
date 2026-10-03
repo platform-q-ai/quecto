@@ -380,12 +380,12 @@ fn command_set_model_with_provider() {
         id: None,
         model: None,
         provider: Some("anthropic".into()),
-        model_id: Some("claude-sonnet-4-6".into()),
+        model_id: Some("claude-sonnet-5".into()),
         persist: None,
     };
     let json = serde_json::to_string(&cmd).unwrap();
     assert!(json.contains("\"provider\":\"anthropic\""));
-    assert!(json.contains("\"modelId\":\"claude-sonnet-4-6\""));
+    assert!(json.contains("\"modelId\":\"claude-sonnet-5\""));
 }
 
 #[test]

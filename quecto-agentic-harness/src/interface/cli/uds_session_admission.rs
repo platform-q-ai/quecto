@@ -1,6 +1,22 @@
 use super::AgentSession;
 
 impl AgentSession {
+    /// The warnings the startup model drew (#2435, #2126): `get_state`
+    /// carries them, so a client that never saw the agent's stderr (the
+    /// TUI) can show them.
+    /// They are about the session's model when set (the startup model): a
+    /// later switch to another model clears them.
+    pub fn set_startup_warnings(&mut self, warnings: &[String]) {
+        let about: Vec<(String, String)> = warnings
+            .iter()
+            .map(|warning| (self.model.clone(), warning.clone()))
+            .collect();
+        if self.startup_warnings != about {
+            self.startup_warnings = about;
+            self.bump_visible_generation();
+        }
+    }
+
     /// Replace the advisory snapshot atomically with the composed runtime generation.
     pub fn set_admission_warnings(&mut self, slots: &[String]) {
         let mut unique = std::collections::BTreeSet::new();

@@ -65,7 +65,7 @@ checked-out repository cannot change your defaults behind your back:
 
 ```bash
 cd ~/src/app
-quecto config set agents.defaults.model '"openai-api/gpt-5.5"'   # writes and trusts ./.quecto/config.json
+quecto config set agents.defaults.model '"openai-api/gpt-6.1-sol"'   # writes and trusts ./.quecto/config.json
 quecto config trust           # approve an overlay someone else wrote, after reviewing it
 quecto config get --effective # what a run here will actually use
 quecto status                 # both files, and whether the overlay is trusted

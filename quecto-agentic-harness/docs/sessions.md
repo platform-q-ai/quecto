@@ -24,7 +24,7 @@ session's images. The file contains the full conversation
 history (system prompt excluded — it is injected at run time and never
 persisted; user messages, assistant responses, tool calls and results, the
 workflow run and the historical sub-agent roster). For thinking-capable models
-(Claude Sonnet 4.5+, Opus 4.5+), extended thinking blocks and their
+(Claude 5 models, and the Claude 4.5+ models a `models.json` may still declare), extended thinking blocks and their
 cryptographic signatures are also persisted, enabling correct multi-turn
 replay.
 
@@ -777,8 +777,8 @@ on how the provider bounds it:
   at the window less the declared output cap (the 400k Codex window is 272k
   of input beside a 128k reply), and the ceiling keeps 5% of that limit
   free for estimator drift, as Codex does (258,400 for Codex). An OpenAI
-  entry that declares no output cap (`gpt-5.3-codex-spark`) has no known
-  input limit and uses the shared rule below.
+  entry that declares no output cap (a `models.json` model without
+  `maxTokens`) has no known input limit and uses the shared rule below.
 - Every other provider (Anthropic, OpenAI-compatible endpoints, local
   servers) checks the prompt plus the requested `max_tokens`, so the reply
   reserves what a request can ask for: the effective `max_tokens`, or up to

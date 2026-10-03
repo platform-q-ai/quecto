@@ -138,14 +138,14 @@ fn a_qualified_id_goes_to_the_provider_its_prefix_names_in_any_case() {
         }
     );
     assert_eq!(
-        route_model("openai-codex/gpt-5.5", &ROUTED),
+        route_model("openai-codex/gpt-6.1-sol", &ROUTED),
         ModelRoute::To {
             provider: "codex",
-            model: "gpt-5.5"
+            model: "gpt-6.1-sol"
         }
     );
     assert_eq!(
-        route_model("openai/gpt-5.5", &ROUTED),
+        route_model("openai/gpt-6.1-sol", &ROUTED),
         ModelRoute::UnknownProvider { prefix: "openai" }
     );
 }

@@ -146,7 +146,7 @@ feature; it should now operate on a clean single-conversation session.
   (`QUECTO_COV_THRESHOLD` is 87; pre-push enforces it).
 - Pre-push also runs machete, deny, and the real-LLM suite (~140s; `QUECTO_SKIP_REAL_LLM=1` to skip).
 - If any BDD feature files describe the old single-`default` or `/resume` behavior, update them.
-- Use only current model ids (e.g. `claude-haiku-4-5`, `gpt-5.2`) in any test config.
+- Use only current model ids (e.g. `claude-sonnet-5`, `gpt-6.1-sol`) in any test config.
 
 ## Suggested file touch-list
 - `../quecto-agentic-harness/src/application/agent_loop.rs` (A: finalize + streaming finalize)

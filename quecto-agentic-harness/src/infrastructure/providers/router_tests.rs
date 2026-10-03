@@ -234,14 +234,11 @@ async fn test_explicit_prefix_routes_to_correct_provider() {
 
     let messages = test_messages();
     let resp = router
-        .chat(make_request(&messages, "anthropic/claude-opus-4-5"))
+        .chat(make_request(&messages, "anthropic/claude-opus-5"))
         .await
         .unwrap();
     assert_eq!(resp.content.unwrap(), "Anthropic");
-    assert_eq!(
-        anthropic.received_model().as_deref(),
-        Some("claude-opus-4-5")
-    );
+    assert_eq!(anthropic.received_model().as_deref(), Some("claude-opus-5"));
     assert!(!openai.was_called());
 }
 

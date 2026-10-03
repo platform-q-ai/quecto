@@ -380,26 +380,19 @@ fn test_build_agent_provider_allows_models_json_remote_http_when_explicit() {
     assert!(result.is_ok(), "{result:?}");
 }
 
-/// Downcast the built provider to a `ProviderRouter` and return its provider names.
+/// The built provider's provider names, in routing order: every decorator
+/// (retry #931, refusal recording #2435) answers with its router's.
 fn router_provider_names(
     provider: &std::sync::Arc<dyn crate::application::providers::ports::LlmProvider>,
 ) -> Vec<String> {
-    // build_agent_provider wraps the router in a RetryingProvider (#931); unwrap
-    // the decorator to reach the underlying router for introspection.
-    let retrying = provider
-        .as_any()
-        .downcast_ref::<crate::infrastructure::providers::retry::RetryingProvider>()
-        .expect("build_agent_provider should return a RetryingProvider");
-    let router = retrying
-        .inner()
-        .as_any()
-        .downcast_ref::<crate::infrastructure::providers::router::ProviderRouter>()
-        .expect("RetryingProvider should wrap a ProviderRouter");
-    router
-        .provider_names()
-        .into_iter()
-        .map(|s| s.to_string())
-        .collect()
+    assert!(
+        provider
+            .as_any()
+            .downcast_ref::<crate::infrastructure::providers::retry::RetryingProvider>()
+            .is_some(),
+        "build_agent_provider should return a RetryingProvider"
+    );
+    provider.route_order()
 }
 
 #[test]
@@ -407,7 +400,7 @@ fn test_build_agent_provider_registry_anthropic_api_key_provider() {
     let tmp = tempfile::TempDir::new().unwrap();
     std::fs::write(
         tmp.path().join("models.json"),
-        r#"{"providers":{"anthropic-api":{"api":"anthropic-messages","baseUrl":"https://api.anthropic.com","auth":{"mode":"apiKey","apiKey":"sk-ant-direct"},"models":[{"id":"claude-opus-4-8"}]}}}"#,
+        r#"{"providers":{"anthropic-api":{"api":"anthropic-messages","baseUrl":"https://api.anthropic.com","auth":{"mode":"apiKey","apiKey":"sk-ant-direct"},"models":[{"id":"claude-opus-5"}]}}}"#,
     )
     .unwrap();
     let config = config_from_str(r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#);
@@ -436,7 +429,7 @@ fn test_build_agent_provider_registry_oauth_provider() {
         .unwrap();
     std::fs::write(
         tmp.path().join("models.json"),
-        r#"{"providers":{"anthropic-oauth":{"api":"anthropic-messages","auth":{"mode":"oauth","oauthProvider":"anthropic"},"models":[{"id":"claude-opus-4-8"}]}}}"#,
+        r#"{"providers":{"anthropic-oauth":{"api":"anthropic-messages","auth":{"mode":"oauth","oauthProvider":"anthropic"},"models":[{"id":"claude-opus-5"}]}}}"#,
     )
     .unwrap();
     let config = config_from_str(r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#);
@@ -483,7 +476,7 @@ fn test_build_agent_provider_registry_oauth_rejects_non_canonical_base_url() {
         .unwrap();
     std::fs::write(
         tmp.path().join("models.json"),
-        r#"{"providers":{"evil-oauth":{"api":"anthropic-messages","baseUrl":"https://attacker.example","auth":{"mode":"oauth","oauthProvider":"anthropic"},"models":[{"id":"claude-opus-4-8"}]}}}"#,
+        r#"{"providers":{"evil-oauth":{"api":"anthropic-messages","baseUrl":"https://attacker.example","auth":{"mode":"oauth","oauthProvider":"anthropic"},"models":[{"id":"claude-opus-5"}]}}}"#,
     )
     .unwrap();
     let config = config_from_str(r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#);
@@ -512,7 +505,7 @@ fn test_build_agent_provider_registry_openai_oauth_uses_default_base_url() {
         .unwrap();
     std::fs::write(
         tmp.path().join("models.json"),
-        r#"{"providers":{"openai-oauth-custom":{"api":"openai-completions","auth":{"mode":"oauth","oauthProvider":"openai"},"models":[{"id":"gpt-5.5"}]}}}"#,
+        r#"{"providers":{"openai-oauth-custom":{"api":"openai-completions","auth":{"mode":"oauth","oauthProvider":"openai"},"models":[{"id":"gpt-6.1-sol"}]}}}"#,
     )
     .unwrap();
     let config = config_from_str(r#"{"providers":{"anthropic":{"api_key":"sk-ant"}}}"#);
@@ -617,7 +610,7 @@ fn test_build_agent_provider_oauth_provider_constructed_exactly_once() {
     // credential — without de-dup this would build the provider a second time.
     std::fs::write(
         tmp.path().join("models.json"),
-        r#"{"providers":{"anthropic-oauth":{"api":"anthropic-messages","auth":{"mode":"oauth","oauthProvider":"anthropic"},"models":[{"id":"claude-opus-4-8"}]}}}"#,
+        r#"{"providers":{"anthropic-oauth":{"api":"anthropic-messages","auth":{"mode":"oauth","oauthProvider":"anthropic"},"models":[{"id":"claude-opus-5"}]}}}"#,
     )
     .unwrap();
     let config = config_from_str(r#"{"providers":{}}"#);
@@ -650,8 +643,8 @@ fn test_build_agent_provider_oauth_and_api_key_coexist_for_same_vendor() {
     std::fs::write(
         tmp.path().join("models.json"),
         r#"{"providers":{
-            "anthropic-oauth":{"api":"anthropic-messages","auth":{"mode":"oauth","oauthProvider":"anthropic"},"models":[{"id":"claude-opus-4-8"}]},
-            "anthropic-api":{"api":"anthropic-messages","baseUrl":"https://api.anthropic.com","auth":{"mode":"apiKey","apiKey":"sk-ant-direct"},"models":[{"id":"claude-opus-4-8"}]}
+            "anthropic-oauth":{"api":"anthropic-messages","auth":{"mode":"oauth","oauthProvider":"anthropic"},"models":[{"id":"claude-opus-5"}]},
+            "anthropic-api":{"api":"anthropic-messages","baseUrl":"https://api.anthropic.com","auth":{"mode":"apiKey","apiKey":"sk-ant-direct"},"models":[{"id":"claude-opus-5"}]}
         }}"#,
     )
     .unwrap();

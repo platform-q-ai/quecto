@@ -25,7 +25,7 @@ fn test_deserialize_full_config() {
 #[test]
 fn test_deserialize_empty_uses_defaults() {
     let config: Config = serde_json::from_str("{}").unwrap();
-    assert_eq!(config.agents.defaults.model, "gpt-5.5");
+    assert_eq!(config.agents.defaults.model, "gpt-6.1-sol");
     assert_eq!(config.agents.defaults.max_tokens, 8192);
     assert!((config.agents.defaults.temperature - 0.7).abs() < f32::EPSILON);
     assert_eq!(config.agents.defaults.workspace, "~/.quecto/workspace");
@@ -440,11 +440,11 @@ fn test_load_from_file() {
     let mut tmp = tempfile::NamedTempFile::new().unwrap();
     write!(
         tmp,
-        r#"{{ "agents": {{ "defaults": {{ "model": "claude-opus-4-5" }} }} }}"#
+        r#"{{ "agents": {{ "defaults": {{ "model": "claude-opus-5" }} }} }}"#
     )
     .unwrap();
     let config = Config::load(tmp.path().to_str().unwrap()).unwrap();
-    assert_eq!(config.agents.defaults.model, "claude-opus-4-5");
+    assert_eq!(config.agents.defaults.model, "claude-opus-5");
     // defaults still applied for missing fields
     assert_eq!(config.agents.defaults.max_tokens, 8192);
 }
@@ -494,11 +494,11 @@ fn test_env_override_model() {
     let mut env = HashMap::new();
     env.insert(
         "QUECTO_AGENTS_DEFAULTS_MODEL".to_string(),
-        "claude-opus-4-5".to_string(),
+        "claude-opus-5".to_string(),
     );
 
     let config = Config::load_with_env(tmp.path().to_str().unwrap(), &env).unwrap();
-    assert_eq!(config.agents.defaults.model, "claude-opus-4-5");
+    assert_eq!(config.agents.defaults.model, "claude-opus-5");
 }
 
 #[test]
@@ -708,4 +708,21 @@ fn test_load_config_io_error_reports_path() {
     let text = err.to_string();
     assert!(text.contains("failed to read config file"), "{text}");
     assert!(text.contains(dir.path().to_str().unwrap()), "{text}");
+}
+
+/// #2435 review round 1 M3: a refused model is held for an hour unless
+/// `providers.model_refusal_ttl_secs` says otherwise.
+#[test]
+fn a_refused_model_is_held_an_hour_by_default_and_configurably() {
+    let config: Config = serde_json::from_str("{}").unwrap();
+    assert_eq!(
+        config.providers.model_refusal_ttl(),
+        std::time::Duration::from_secs(3600)
+    );
+    let config: Config =
+        serde_json::from_str(r#"{"providers":{"model_refusal_ttl_secs":600}}"#).unwrap();
+    assert_eq!(
+        config.providers.model_refusal_ttl(),
+        std::time::Duration::from_secs(600)
+    );
 }

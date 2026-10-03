@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn footer_shows_model() {
     let mut f = Footer::new();
-    f.set_model("claude-sonnet-4-6");
+    f.set_model("claude-sonnet-5");
     let lines = f.render(80);
     let joined = lines.join("\n");
     let plain: String = joined
@@ -11,7 +11,7 @@ fn footer_shows_model() {
         .filter(|c| !c.is_control() || *c == '\n')
         .collect();
     assert!(
-        plain.contains("claude-sonnet-4-6"),
+        plain.contains("claude-sonnet-5"),
         "should contain model: {}",
         plain
     );
@@ -164,7 +164,7 @@ fn footer_narrow_width_truncates() {
 #[test]
 fn footer_renders_streaming_indicator() {
     let mut f = Footer::new();
-    f.set_model("claude-sonnet-4-6");
+    f.set_model("claude-sonnet-5");
     f.set_streaming(true);
     let joined = f.render(80).join("\n");
     assert!(
@@ -176,7 +176,7 @@ fn footer_renders_streaming_indicator() {
 #[test]
 fn footer_hides_streaming_indicator_when_idle() {
     let mut f = Footer::new();
-    f.set_model("claude-sonnet-4-6");
+    f.set_model("claude-sonnet-5");
     f.set_streaming(false);
     let joined = f.render(80).join("\n");
     assert!(

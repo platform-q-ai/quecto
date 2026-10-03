@@ -204,6 +204,7 @@ fn busy_guard_sets_flag_for_its_scope_and_clears_on_drop() {
 fn build_get_state_line_serializes_status_snapshot() {
     let state = SessionState {
         admission_warnings: Vec::new(),
+        startup_warnings: Vec::new(),
         control_receipts: Vec::new(),
         automatic_turns_suspended: false,
         repeated_failure_notifications: 0,
@@ -246,6 +247,7 @@ fn build_get_state_line_serializes_status_snapshot() {
 fn busy_get_state_line_omits_snapshot_marker() {
     let state = SessionState {
         admission_warnings: Vec::new(),
+        startup_warnings: Vec::new(),
         control_receipts: Vec::new(),
         automatic_turns_suspended: false,
         repeated_failure_notifications: 0,
@@ -391,6 +393,7 @@ fn busy_get_state_reflects_live_workflow_progress_mid_turn() {
     frozen_wf["automation"] = serde_json::json!({"autoContinue": true, "completionNudge": false});
     let state = SessionState {
         admission_warnings: Vec::new(),
+        startup_warnings: Vec::new(),
         control_receipts: Vec::new(),
         automatic_turns_suspended: false,
         repeated_failure_notifications: 0,

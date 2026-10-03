@@ -17,7 +17,8 @@
 use std::sync::Arc;
 
 use crate::application::catalogue::dto::{
-    ModelLimits, ModelSelectionVerdict, ModelSwitchError, ModelSwitchPlan, ModelSwitched,
+    CatalogueStanding, ModelLimits, ModelSelectionVerdict, ModelSwitchError, ModelSwitchPlan,
+    ModelSwitched,
 };
 use crate::application::catalogue::ports::{
     CatalogueInputsLoader, DefaultScope, ModelDefaultPersistence, ModelRuntime, PersistedDefault,
@@ -26,7 +27,9 @@ use crate::application::catalogue::ports::{
 use crate::application::catalogue::use_cases::ChangeReasoningEffort;
 use crate::application::catalogue::{CatalogueSnapshotStore, ResolveCatalogueUseCase};
 use crate::application::provider_runtime::{SelectionError, select_in_runtime};
-use crate::domain::catalogue::{CatalogueEntry, CatalogueSnapshot, ModelRef};
+use crate::domain::catalogue::{
+    CatalogueEntry, CatalogueSnapshot, ModelRef, UnavailableReason, retired_builtin,
+};
 use crate::domain::conversation::image_input::ImageInput;
 use crate::domain::provider::{
     ModelRoute, parse_qualified_model, provider_prefix_matches, route_model,
@@ -72,7 +75,12 @@ impl ChangeActiveModel {
             .runtime
             .current_runtime()
             .map(|runtime| runtime.provider.route_order());
-        let limits = Self::limits_in(&resolved.snapshot, model, route_order.as_deref());
+        let route = Self::route(model, route_order.as_deref());
+        let reached = route
+            .as_ref()
+            .and_then(|(provider, id)| Self::listed(&resolved.snapshot, provider, id));
+        let limits = Self::limits_of(reached);
+        let standing = self.standing_of(&resolved.snapshot, route.as_ref(), reached);
         let verdict = match reference {
             Some(reference) => self.verdict(&reference),
             None => ModelSelectionVerdict::Unknown {
@@ -83,6 +91,7 @@ impl ChangeActiveModel {
             model: model.to_string(),
             limits,
             verdict,
+            standing,
         }
     }
 
@@ -122,6 +131,14 @@ impl ChangeActiveModel {
         persist: Option<DefaultScope>,
     ) -> Result<ModelSwitched, ModelSwitchError> {
         let plan = self.plan(model);
+        // A model the provider refused for the account in use fails every
+        // request: the session keeps its model (#2435).
+        if let CatalogueStanding::RefusedForAccount(reason) = &plan.standing {
+            return Err(ModelSwitchError::RefusedForAccount {
+                model: plan.model.clone(),
+                reason: reason.clone(),
+            });
+        }
         // Every switch, persisted or not, must land on a provider this
         // harness can reach, or the next request fails (#2126).
         if let crate::application::providers::ports::RouteCheck::UnknownProvider {
@@ -213,47 +230,92 @@ impl ChangeActiveModel {
         }
     }
 
-    /// The entry of the model a request for `model` reaches (#2421 round 2
-    /// L1): the routing rule the router sends by picks the provider among
-    /// the published runtime's `route_order` (a bare id goes to the first,
-    /// whether or not it lists it), and that provider's entry for the id is
-    /// read. Before a runtime is published, a `provider/model` id reads the
-    /// provider its prefix names and a bare id reads none: no router yet
-    /// says where it goes (round 3 L2, fail closed). None when the provider
-    /// does not list the model.
-    fn entry_for<'s>(
-        snapshot: &'s CatalogueSnapshot,
-        model: &str,
-        route_order: Option<&[String]>,
-    ) -> Option<&'s CatalogueEntry> {
-        let entries = snapshot.entries();
-        let listed = |provider: &str, id: &str| {
-            entries.iter().find(|entry| {
-                entry.model.reference.model().as_str() == id
-                    && provider_prefix_matches(provider, entry.provider.id.as_str())
-            })
-        };
+    /// The provider and model id a request for `model` reaches (#2421
+    /// round 2 L1): the routing rule the router sends by picks the provider
+    /// among the published runtime's `route_order` (a bare id goes to the
+    /// first, whether or not it lists it). Before a runtime is published, a
+    /// `provider/model` id reaches the provider its prefix names and a bare
+    /// id none: no router yet says where it goes (round 3 L2, fail closed).
+    fn route<'m>(model: &'m str, route_order: Option<&[String]>) -> Option<(String, &'m str)> {
         match route_order {
             Some(order) => {
                 let names: Vec<&str> = order.iter().map(String::as_str).collect();
                 match route_model(model, &names) {
-                    ModelRoute::To { provider, model } => listed(provider, model),
+                    ModelRoute::To { provider, model } => Some((provider.to_string(), model)),
                     ModelRoute::UnknownProvider { .. } | ModelRoute::NoProviders => None,
                 }
             }
-            None => parse_qualified_model(model).and_then(|(prefix, id)| listed(prefix, id)),
+            None => parse_qualified_model(model).map(|(prefix, id)| (prefix.to_string(), id)),
+        }
+    }
+
+    /// `provider`'s entry for model `id`, matched whatever the provider's
+    /// case. None when the provider does not list the model.
+    fn listed<'s>(
+        snapshot: &'s CatalogueSnapshot,
+        provider: &str,
+        id: &str,
+    ) -> Option<&'s CatalogueEntry> {
+        snapshot.entries().iter().find(|entry| {
+            entry.model.reference.model().as_str() == id
+                && provider_prefix_matches(provider, entry.provider.id.as_str())
+        })
+    }
+
+    /// Where the model a request reaches stands (#2435): refused for the
+    /// account in use while a refusal is held for it — listed or not
+    /// (review round 1 L7) — listed when it has an entry; without one,
+    /// retired or unlisted when its provider lists other models, else on
+    /// a provider the catalogue does not enumerate.
+    fn standing_of(
+        &self,
+        snapshot: &CatalogueSnapshot,
+        route: Option<&(String, &str)>,
+        entry: Option<&CatalogueEntry>,
+    ) -> CatalogueStanding {
+        if let Some(entry) = entry {
+            return entry
+                .model
+                .availability
+                .reasons()
+                .iter()
+                .find_map(|reason| match reason {
+                    UnavailableReason::RefusedForAccount(why) => {
+                        Some(CatalogueStanding::RefusedForAccount(why.clone()))
+                    }
+                    _ => None,
+                })
+                .unwrap_or(CatalogueStanding::Listed);
+        }
+        let Some((provider, id)) = route else {
+            return CatalogueStanding::UncataloguedProvider;
+        };
+        let held = ModelRef::parse(provider.clone(), *id)
+            .ok()
+            .and_then(|reference| self.store.refusal(&reference));
+        if let Some(reason) = held {
+            return CatalogueStanding::RefusedForAccount(reason);
+        }
+        let provider_lists_models = snapshot
+            .entries()
+            .iter()
+            .any(|entry| provider_prefix_matches(provider, entry.provider.id.as_str()));
+        match (provider_lists_models, retired_builtin(provider, id)) {
+            (true, true) => CatalogueStanding::Retired {
+                provider: provider.clone(),
+            },
+            (true, false) => CatalogueStanding::Unlisted {
+                provider: provider.clone(),
+            },
+            (false, _) => CatalogueStanding::UncataloguedProvider,
         }
     }
 
     /// Only explicitly declared values clamp: a synthesized default is not a
     /// real limit. A model the catalogue does not hold has none, and takes
     /// no image.
-    fn limits_in(
-        snapshot: &CatalogueSnapshot,
-        model: &str,
-        route_order: Option<&[String]>,
-    ) -> ModelLimits {
-        let Some(entry) = Self::entry_for(snapshot, model, route_order) else {
+    fn limits_of(entry: Option<&CatalogueEntry>) -> ModelLimits {
+        let Some(entry) = entry else {
             return ModelLimits::default();
         };
         let capabilities = &entry.model.capabilities;

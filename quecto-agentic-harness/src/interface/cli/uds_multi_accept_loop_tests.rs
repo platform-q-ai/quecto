@@ -51,6 +51,7 @@ pub(super) fn make_args(
         runtime_store: Default::default(),
         state_snapshot: Arc::new(tokio::sync::RwLock::new(SessionState {
             admission_warnings: Vec::new(),
+            startup_warnings: Vec::new(),
             control_receipts: Vec::new(),
             automatic_turns_suspended: false,
             repeated_failure_notifications: 0,

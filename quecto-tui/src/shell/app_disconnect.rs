@@ -140,6 +140,7 @@ impl App {
         }
         self.ac_mut().disconnect_refusal_notified = false;
         self.shown_admission_warning_slots.clear();
+        self.shown_startup_warnings.clear();
         self.surface_dropped_oversized_events();
         self.mark_agent_disconnected();
         let Some(watch) = self.ac().child_exit_watch.clone() else {

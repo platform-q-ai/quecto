@@ -128,6 +128,26 @@ pub struct ProvidersConfig {
     pub anthropic: ProviderEntry,
     #[serde(default)]
     pub openai_compatible: OpenAiCompatibleConfig,
+    /// How long, in seconds, a model a provider refused for the account is
+    /// held unavailable (#2435); a reply the provider serves for it releases
+    /// it sooner. Absent: [`DEFAULT_MODEL_REFUSAL_TTL_SECS`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_refusal_ttl_secs: Option<u64>,
+}
+
+/// The default hold of a refused model (#2435): an hour, so a transient
+/// refusal (a rollout's 404) never bans a model for long.
+pub const DEFAULT_MODEL_REFUSAL_TTL_SECS: u64 = 3600;
+
+impl ProvidersConfig {
+    /// How long a model a provider refused is held unavailable; `0` holds
+    /// none.
+    pub fn model_refusal_ttl(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(
+            self.model_refusal_ttl_secs
+                .unwrap_or(DEFAULT_MODEL_REFUSAL_TTL_SECS),
+        )
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, Default)]
@@ -288,7 +308,7 @@ fn default_workspace() -> String {
     "~/.quecto/workspace".to_string()
 }
 fn default_model() -> String {
-    "gpt-5.5".to_string()
+    "gpt-6.1-sol".to_string()
 }
 fn default_max_tokens() -> u32 {
     8192

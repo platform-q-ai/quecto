@@ -828,7 +828,7 @@ fn then_tui_keeps_workflow_bar_render_widget(_world: &mut QuectoWorld) {
 fn render_footer(streaming: bool) -> Vec<String> {
     use quecto_tui::components::footer::Footer;
     let mut footer = Footer::new();
-    footer.set_model("claude-sonnet-4-6");
+    footer.set_model("claude-sonnet-5");
     footer.set_streaming(streaming);
     footer.render(80)
 }

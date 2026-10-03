@@ -14,10 +14,10 @@ Feature: /setup submits the agent-executable setup walkthrough (#2024 S6)
     And the setup walkthrough prompt for "all areas" names the docs page "setup"
 
   Scenario: /setup model pins a model through the models runbook
-    When I submit the master prompt "/setup model openai-api/gpt-5.5"
-    Then the master transcript shows the setup walkthrough prompt for "model openai-api/gpt-5.5" as the user's turn
-    And a prompt command is sent carrying the setup walkthrough prompt for "model openai-api/gpt-5.5"
-    And the setup walkthrough prompt for "model openai-api/gpt-5.5" names the docs page "models"
+    When I submit the master prompt "/setup model openai-api/gpt-6.1-sol"
+    Then the master transcript shows the setup walkthrough prompt for "model openai-api/gpt-6.1-sol" as the user's turn
+    And a prompt command is sent carrying the setup walkthrough prompt for "model openai-api/gpt-6.1-sol"
+    And the setup walkthrough prompt for "model openai-api/gpt-6.1-sol" names the docs page "models"
 
   Scenario Outline: area variants name their runbook page
     When I submit the master prompt "/setup <variant>"

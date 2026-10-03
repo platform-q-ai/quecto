@@ -190,6 +190,7 @@ pub(super) async fn multi_client_loop(
 
     let mut agent_session = AgentSession::new(model);
     agent_session.set_admission_warnings(&admission_slots);
+    agent_session.set_startup_warnings(&catalogue.startup_warnings);
     agent_session.observe_runtime(catalogue.runtime_store.clone());
     let initial_state = agent_session.state_snapshot(
         &session_key,

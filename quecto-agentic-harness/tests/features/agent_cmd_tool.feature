@@ -305,7 +305,7 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
 
   Scenario: set_model command sends model
     Given an AgentCmdTool with a mock registry entry "w1"
-    When I execute agent_cmd with '{"agent_id":"w1","command":"set_model","model":"anthropic/claude-sonnet-4-6"}'
+    When I execute agent_cmd with '{"agent_id":"w1","command":"set_model","model":"anthropic/claude-sonnet-5"}'
     Then the agent_cmd should have sent command type "set_model"
 
   Scenario: A parent changes a running child's effort
@@ -569,7 +569,7 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
 
   Scenario: set_model against a busy child returns on acceptance
     Given an AgentCmdTool with a fast-ack busy registry entry "busy-set-model880"
-    When I execute agent_cmd with '{"agent_id":"busy-set-model880","command":"set_model","model":"anthropic/claude-sonnet-4-6"}'
+    When I execute agent_cmd with '{"agent_id":"busy-set-model880","command":"set_model","model":"anthropic/claude-sonnet-5"}'
     Then the agent_cmd result should not be an error
     And the agent_cmd result should contain "success"
     And the agent_cmd should have sent command type "set_model"

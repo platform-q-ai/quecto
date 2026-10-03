@@ -205,6 +205,87 @@ pub fn classify_provider_error(err: &DomainError) -> ProviderErrorClass {
     classify_keyword_paths(&lowered)
 }
 
+/// The most bytes of a provider's refusal reason kept (#2435).
+pub const MODEL_REFUSAL_REASON_MAX_BYTES: usize = 300;
+
+/// The known shapes of a provider refusing a model for the account or auth
+/// mode in use (#2435): the HTTP status, the vendor named in the error, and
+/// a phrase its body carries. An allowlist: any other failure — a
+/// malformed request, a credential, an outage — is never a refusal.
+const MODEL_REFUSALS: &[(u16, &str, &[&str])] = &[
+    // Codex behind a ChatGPT sign-in serves only some models.
+    (
+        400,
+        "Codex",
+        &["model is not supported when using Codex with a ChatGPT account"],
+    ),
+    // The OpenAI API: no such model for this key or organisation.
+    (404, "OpenAI", &["model_not_found"]),
+    // Anthropic: no such model for this key or plan.
+    (404, "Anthropic", &["not_found_error", "model:"]),
+];
+
+/// The provider's reason when `err` is a definitive refusal of the model
+/// for the account or auth mode in use (#2435), else `None`. The error must
+/// carry the providers' own `HTTP <status> from <vendor>: <body>` shape
+/// (possibly behind a relay's prefix) and match a [`MODEL_REFUSALS`] row.
+/// The reason is the body's own message (`detail`, or `error.message`),
+/// else the body, bounded to [`MODEL_REFUSAL_REASON_MAX_BYTES`].
+pub fn model_refusal(err: &DomainError) -> Option<String> {
+    let DomainError::Provider(message) = err else {
+        return None;
+    };
+    let (status, vendor, body) = http_failure(message)?;
+    let refused = MODEL_REFUSALS.iter().any(|(code, named, phrases)| {
+        *code == status && *named == vendor && phrases.iter().all(|p| body.contains(p))
+    });
+    if !refused {
+        return None;
+    }
+    let reason = refusal_message(body).unwrap_or_else(|| body.trim().to_string());
+    debug_assert!(!reason.is_empty(), "a matched refusal has a body");
+    Some(bounded(reason, MODEL_REFUSAL_REASON_MAX_BYTES))
+}
+
+/// `(status, vendor, body)` of the first `HTTP <status> from <vendor>:
+/// <body>` in `message`.
+fn http_failure(message: &str) -> Option<(u16, &str, &str)> {
+    let start = message.find("HTTP ")?;
+    let rest = &message[start + "HTTP ".len()..];
+    let (status, rest) = rest.split_once(" from ")?;
+    let status = status.parse::<u16>().ok()?;
+    let (vendor, body) = rest.split_once(": ")?;
+    Some((status, vendor, body))
+}
+
+/// The message a JSON error body carries: `detail` (Codex) or
+/// `error.message` (OpenAI, Anthropic). Text after the JSON value (a
+/// retry hint) is ignored.
+fn refusal_message(body: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::Deserializer::from_str(body.trim())
+        .into_iter()
+        .next()?
+        .ok()?;
+    value
+        .get("detail")
+        .or_else(|| value.get("error").and_then(|error| error.get("message")))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .filter(|message| !message.trim().is_empty())
+}
+
+/// `text` cut to at most `max` bytes, at a character boundary.
+fn bounded(mut text: String, max: usize) -> String {
+    if text.len() > max {
+        let mut end = max;
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        text.truncate(end);
+    }
+    text
+}
+
 /// Best-effort HTTP status extracted from a provider error, if the body
 /// encodes one (`HTTP 429`, `status: 500`, `provider error (400)`, ...).
 ///
@@ -442,6 +523,9 @@ fn parse_status_near(s: &str) -> Option<u16> {
     None
 }
 
+#[cfg(test)]
+#[path = "provider_error_refusal_tests.rs"]
+mod refusal_tests;
 #[cfg(test)]
 #[path = "provider_error_tests.rs"]
 mod tests;

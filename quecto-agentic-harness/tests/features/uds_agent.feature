@@ -125,12 +125,12 @@ Feature: UDS mode for headless agent operation
   Scenario: a prompt's image attachment reaches the model, and a bad image is refused with the exact message
     Given a temp base directory
     And a config file with an Anthropic provider pointing at a mock server
-    And the config default model is "anthropic-api/claude-sonnet-4-6"
+    And the config default model is "anthropic-api/claude-sonnet-5"
     And a capturing Anthropic mock LLM returning text "a small image"
     When I start the UDS agent with no [session]
     # The harness builds its loop without the startup catalogue read: the
     # switch gives it the model's declared image input, as a client's would.
-    And I send set_model "anthropic-api/claude-sonnet-4-6"
+    And I send set_model "anthropic-api/claude-sonnet-5"
     And I send prompt "what is this?" with id "img-1" and an image declared "image/png" holding a "image/png" image
     And I send prompt "and this?" with id "img-2" and an image declared "image/gif" holding a "image/png" image
     And I close the UDS connection
@@ -409,11 +409,11 @@ Feature: UDS mode for headless agent operation
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a text response "ok"
     When I start the UDS agent with no [session]
-    And I send set_model provider "openai-api" modelId "gpt-5.3-codex"
+    And I send set_model provider "openai-api" modelId "gpt-6-sol"
     And I send command "get_state" with id "sm-3"
     And I close the UDS connection
     Then the agent output should contain a response command "set_model" with success true
-    And the get_state response model should be "openai-api/gpt-5.3-codex"
+    And the get_state response model should be "openai-api/gpt-6-sol"
 
   # ─── set_effort command (#1067) ─────────────────────────────────────────────
 
@@ -421,8 +421,8 @@ Feature: UDS mode for headless agent operation
   Scenario: set_effort switches the session reasoning effort
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
-    # The default bare `gpt-5.5` has no effort control on openai-api (#1996);
-    # pin a reasoning model whose vocabulary is the OpenAI scale.
+    # The mock workspace's Chat Completions model has no effort control
+    # (#1996); pin a reasoning model whose vocabulary is the OpenAI scale.
     And the config default model is "openai-api/gpt-5.6-sol"
     When I start the UDS agent with no [session]
     And I send set_effort "xhigh"
@@ -435,13 +435,13 @@ Feature: UDS mode for headless agent operation
   Scenario: Switching models resets the effort to low
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
-    # The default bare `gpt-5.5` has no effort control on openai-api (#1996);
-    # pin a reasoning model whose vocabulary is the OpenAI scale.
+    # The mock workspace's Chat Completions model has no effort control
+    # (#1996); pin a reasoning model whose vocabulary is the OpenAI scale.
     And the config default model is "openai-api/gpt-5.6-sol"
     And the config also has an OpenAI-compatible provider "anthropic-api"
     When I start the UDS agent with no [session]
     And I send set_effort "xhigh"
-    And I send set_model "anthropic-api/claude-sonnet-4-6"
+    And I send set_model "anthropic-api/claude-sonnet-5"
     And I send command "get_state" with id "gs-1"
     And I close the UDS connection
     Then the get_state response effort should be "low"
@@ -450,12 +450,12 @@ Feature: UDS mode for headless agent operation
   Scenario: A switched effort is carried on the next LLM request
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
-    # The default bare `gpt-5.5` has no effort control on openai-api (#1996);
-    # pin a reasoning model whose vocabulary is the OpenAI scale.
+    # The mock workspace's Chat Completions model has no effort control
+    # (#1996); pin a reasoning model whose vocabulary is the OpenAI scale.
     And the config default model is "openai-api/gpt-5.6-sol"
     And a capturing Anthropic mock LLM returning text "ok"
     When I start the UDS agent with no [session]
-    And I send set_model "anthropic-api/claude-sonnet-4-6"
+    And I send set_model "anthropic-api/claude-sonnet-5"
     And I send prompt "before any override"
     And I send set_effort "high"
     And I send prompt "after the override"
@@ -467,8 +467,8 @@ Feature: UDS mode for headless agent operation
   Scenario: set_effort rejects an invalid level and keeps the previous setting
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
-    # The default bare `gpt-5.5` has no effort control on openai-api (#1996);
-    # pin a reasoning model whose vocabulary is the OpenAI scale.
+    # The mock workspace's Chat Completions model has no effort control
+    # (#1996); pin a reasoning model whose vocabulary is the OpenAI scale.
     And the config default model is "openai-api/gpt-5.6-sol"
     When I start the UDS agent with no [session]
     And I send set_effort "high"
@@ -482,8 +482,8 @@ Feature: UDS mode for headless agent operation
   Scenario: set_effort rejects a level outside the active provider's vocabulary
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
-    # The default bare `gpt-5.5` has no effort control on openai-api (#1996);
-    # pin a reasoning model whose vocabulary is the OpenAI scale.
+    # The mock workspace's Chat Completions model has no effort control
+    # (#1996); pin a reasoning model whose vocabulary is the OpenAI scale.
     And the config default model is "openai-api/gpt-5.6-sol"
     When I start the UDS agent with no [session]
     And I send set_effort "high"
@@ -497,8 +497,8 @@ Feature: UDS mode for headless agent operation
   Scenario: set_effort does not leak into a fresh session
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
-    # The default bare `gpt-5.5` has no effort control on openai-api (#1996);
-    # pin a reasoning model whose vocabulary is the OpenAI scale.
+    # The mock workspace's Chat Completions model has no effort control
+    # (#1996); pin a reasoning model whose vocabulary is the OpenAI scale.
     And the config default model is "openai-api/gpt-5.6-sol"
     When I start the UDS agent with no [session]
     And I send set_effort "xhigh"
@@ -511,8 +511,8 @@ Feature: UDS mode for headless agent operation
   Scenario: set_effort is session-scoped and survives client reconnect over the socket
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
-    # The default bare `gpt-5.5` has no effort control on openai-api (#1996);
-    # pin a reasoning model whose vocabulary is the OpenAI scale.
+    # The mock workspace's Chat Completions model has no effort control
+    # (#1996); pin a reasoning model whose vocabulary is the OpenAI scale.
     And the config default model is "openai-api/gpt-5.6-sol"
     And the mock LLM returns a text response "ok"
     When I start the multi-client UDS agent with persist

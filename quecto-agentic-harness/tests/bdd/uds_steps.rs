@@ -1418,11 +1418,23 @@ fn assert_slim_get_state_data(data: &serde_json::Value, workflow: bool) {
         .into_iter()
         .collect()
     };
+    // `startupWarnings` is present only when the startup model drew one
+    // (#2435): allowed ⊆ actual ⊆ allowed ∪ {startupWarnings}.
     let actual: std::collections::BTreeSet<&str> = obj.keys().map(String::as_str).collect();
-    assert_eq!(
-        actual, allowed,
+    let mut permitted = allowed.clone();
+    permitted.insert("startupWarnings");
+    assert!(
+        allowed.is_subset(&actual) && actual.is_subset(&permitted),
         "unexpected slim get_state keys in data: {data}"
     );
+    if let Some(warnings) = obj.get("startupWarnings") {
+        assert!(
+            warnings
+                .as_array()
+                .is_some_and(|list| list.iter().all(serde_json::Value::is_string)),
+            "startupWarnings is a list of strings: {data}"
+        );
+    }
     assert!(data["state"].is_string(), "state should be string: {data}");
     assert!(data["model"].is_string(), "model should be string: {data}");
     assert!(

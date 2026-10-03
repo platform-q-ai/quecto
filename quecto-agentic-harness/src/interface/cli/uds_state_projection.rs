@@ -88,6 +88,7 @@ fn slim_state_snapshot(state: &SessionState) -> crate::domain::state_snapshot::S
         repeated_failure_notifications: state.repeated_failure_notifications,
         admission: state.execution.as_ref().and_then(|e| e.admission.clone()),
         admission_warnings: state.admission_warnings.clone(),
+        startup_warnings: state.startup_warnings.clone(),
         model_turn: state.execution.as_ref().and_then(|e| e.model_turn.clone()),
         // This harness always reports its own (#2436): zero before any.
         agent_requests: Some(

@@ -15,7 +15,7 @@ fn body(messages: &[Message]) -> serde_json::Value {
         admission: None,
         messages,
         tools: &[],
-        model: "gpt-5.5",
+        model: "gpt-6.1-sol",
         max_tokens: 256,
         temperature: 0.2,
         session_id: None,

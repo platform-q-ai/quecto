@@ -392,6 +392,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/app_conversation_characterization_tests/mod.rs` | `shell` conversation characterization test module split for line budget (#1231) |
 | `shell/app_disconnect.rs` | `shell` runtime/disconnect coordination (relocated, #1257 Phase 6) |
 | `shell/app_admission.rs` | `shell` inference-admission label/spinner owner (#1679 P4) |
+| `shell/app_startup_warnings.rs` | `shell` startup-warning notices from `get_state` (#2435) |
 | `shell/app_attachments.rs` | `shell` edge of image attachments (#2425): reads the `/image` file and the clipboard off the event loop (a drop guard answers a read that panicked), drops the chips when their conversation ends, the chip lines above the editor, the `Ctrl+V` / `Backspace` / `Esc` / `Enter` keys while chips are pending, and the one-line refusal notices |
 | `shell/app_workflow_automation.rs` | `shell` workflow automation flag mirroring (split from `app_response.rs` for the 750-line cap, #1679 P4) |
 | `shell/app_event_loop.rs` | `shell` event loop (relocated, #1257 Phase 6) |

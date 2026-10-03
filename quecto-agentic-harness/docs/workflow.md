@@ -228,7 +228,7 @@ A repo-local config that uses OpenAI with the Quecto workflow template:
   },
   "agents": {
     "defaults": {
-      "model": "openai-api/gpt-5.5",
+      "model": "openai-api/gpt-6.1-sol",
       "max_context_tokens": 200000
     }
   },
@@ -652,7 +652,7 @@ When workflow is disabled with `--no-workflow`, no `workflow_state` events are e
     "openai": { "api_key": "" }
   },
   "agents": {
-    "defaults": { "model": "openai-api/gpt-5.5" }
+    "defaults": { "model": "openai-api/gpt-6.1-sol" }
   },
   "workflow": {}
 }
@@ -673,7 +673,7 @@ rules. The empty `workflow: {}` uses all defaults.
     "openai": { "api_key": "" }
   },
   "agents": {
-    "defaults": { "model": "openai-api/gpt-5.5" }
+    "defaults": { "model": "openai-api/gpt-6.1-sol" }
   },
   "workflow": {
     "auto_continue": true,

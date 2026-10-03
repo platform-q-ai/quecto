@@ -181,3 +181,19 @@ fn parse_set_model_id_reads_echoed_model() {
     );
     assert_eq!(parse_set_model_id(&json!({}), &sanitize), None);
 }
+
+/// #2435 review round 1 L6: the startup warnings are read, sanitized; none
+/// when absent.
+#[test]
+fn parse_get_state_reads_the_startup_warnings() {
+    let snap = parse_get_state(
+        &json!({"model": "m", "startupWarnings": ["agent: warning: \u{1b}[31mretired", 7, ""]}),
+        &sanitize,
+    );
+    assert_eq!(
+        snap.startup_warnings,
+        vec!["agent: warning: [31mretired".to_string()]
+    );
+    let snap = parse_get_state(&json!({"model": "m"}), &sanitize);
+    assert!(snap.startup_warnings.is_empty());
+}

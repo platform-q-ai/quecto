@@ -7,6 +7,7 @@ pub mod effort_default_persistence;
 pub mod effort_runtime;
 pub mod effort_vocabulary;
 pub mod model_default_persistence;
+pub mod model_refusals;
 pub mod model_runtime;
 pub mod refresh;
 pub mod refresh_inputs;
@@ -21,6 +22,7 @@ pub use effort_vocabulary::EffortVocabularySource;
 #[cfg(any(test, feature = "test-support"))]
 pub use model_default_persistence::RecordedDefaults;
 pub use model_default_persistence::{DefaultScope, ModelDefaultPersistence, PersistedDefault};
+pub use model_refusals::ModelRefusalSink;
 pub use model_runtime::ModelRuntime;
 #[cfg(any(test, feature = "test-support"))]
 pub use refresh::NoopRedaction;

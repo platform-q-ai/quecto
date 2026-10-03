@@ -222,7 +222,7 @@ impl CodexProvider {
     fn validate_request(&self, request: &ChatRequest<'_>) -> Result<(), DomainError> {
         if request.model.contains('/') {
             return Err(DomainError::Provider(
-                "codex provider expects a bare model id (e.g. 'gpt-5.3-codex'), not a provider-qualified name".to_string(),
+                "codex provider expects a bare model id (e.g. 'gpt-6.1-sol'), not a provider-qualified name".to_string(),
             ));
         }
 

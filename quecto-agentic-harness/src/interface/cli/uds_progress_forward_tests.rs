@@ -17,7 +17,7 @@ fn queued(
     queued_ms: Option<u64>,
 ) -> AgentProgressEvent {
     AgentProgressEvent::RequestCompleted(RequestCompleted {
-        model: "gpt-5.5".into(),
+        model: "gpt-6.1-sol".into(),
         provider: "openai-oauth".into(),
         spend,
         duration_ms: 1234,
@@ -67,7 +67,7 @@ async fn an_ended_request_is_one_request_completed_event() {
         lines,
         [json!({
             "type": "request_completed",
-            "model": "gpt-5.5",
+            "model": "gpt-6.1-sol",
             "provider": "openai-oauth",
             "inputTokens": 1200,
             "cachedTokens": 800,
@@ -87,7 +87,7 @@ async fn token_counts_a_provider_did_not_report_are_omitted() {
         lines,
         [json!({
             "type": "request_completed",
-            "model": "gpt-5.5",
+            "model": "gpt-6.1-sol",
             "provider": "openai-oauth",
             "durationMs": 1234,
             "outcome": "error",

@@ -1,8 +1,19 @@
 use std::path::Path;
 
 use crate::domain::catalogue::PromptLimit;
-use crate::domain::message::claude_sonnet_5_pricing;
+use crate::domain::message::{ModelPricing, model_pricing};
 use crate::infrastructure::providers::stream_idle::{StreamIdle, StreamLimits};
+
+/// The price of a Claude 5 built-in, `None` for any other id.
+fn claude_5_pricing(id: &str) -> Option<ModelPricing> {
+    const CLAUDE_5: [&str; 4] = [
+        "claude-fable-5-1",
+        "claude-fable-5",
+        "claude-opus-5",
+        "claude-sonnet-5",
+    ];
+    CLAUDE_5.contains(&id).then(|| model_pricing(id)).flatten()
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelRegistry {
@@ -112,15 +123,6 @@ impl std::fmt::Display for ModelRegistryError {
 
 impl std::error::Error for ModelRegistryError {}
 
-type BuiltinSpec = (
-    &'static str,
-    &'static str,
-    &'static str,
-    ProviderApi,
-    AuthMode,
-    Option<&'static str>,
-);
-
 impl ModelRegistry {
     /// The built-in model table, constructed once and shared. The ~30 records
     /// are identical on every call, so we build them a single time behind a
@@ -134,16 +136,19 @@ impl ModelRegistry {
 
     fn build_builtin() -> Self {
         let mut r = Self { models: Vec::new() };
-        for (provider, id, name, api, auth, oauth_provider) in Self::builtin_specs() {
-            let mut record = ModelRecord::with_defaults(provider, id, Some(name), api);
-            record.auth = auth;
-            record.oauth_provider = oauth_provider.map(str::to_string);
-            if id == "claude-sonnet-5" {
+        for spec in Self::builtin_specs() {
+            let (provider, id) = (spec.provider, spec.id);
+            let mut record = ModelRecord::with_defaults(provider, id, Some(&spec.name), spec.api);
+            record.auth = spec.auth;
+            record.oauth_provider = spec.oauth.map(str::to_string);
+            if let Some(pricing) = claude_5_pricing(id) {
+                // The Claude 5 built-ins publish a 1M window and a 128K
+                // output cap (Anthropic's model overview; #2435 review
+                // round 2), priced from `model_pricing`.
                 record.context_window = 1_000_000;
                 record.context_window_explicit = true;
                 record.max_tokens = 128_000;
                 record.max_tokens_explicit = true;
-                let pricing = claude_sonnet_5_pricing();
                 record.cost = ModelCost {
                     input: pricing.input_micro_usd_per_million as f64 / 1_000_000.0,
                     output: pricing.output_micro_usd_per_million as f64 / 1_000_000.0,
@@ -162,15 +167,6 @@ impl ModelRegistry {
                 record.max_tokens_explicit = true;
                 record.reasoning = true;
                 record.cost = cost;
-            } else if let Some(published) = openai_published_limits(provider, id) {
-                // #2405: the window the ceiling is computed from; sources in
-                // `model_registry_openai_tables.rs`.
-                record.context_window = published.context_window;
-                record.context_window_explicit = true;
-                if let Some(cap) = published.max_output_tokens {
-                    record.max_tokens = cap;
-                    record.max_tokens_explicit = true;
-                }
             } else if id == "grok-4.7" {
                 // xAI published specs: 500K context, image input, configurable
                 // reasoning, $2/M input and $6/M output
@@ -219,110 +215,9 @@ impl ModelRegistry {
         r
     }
 
-    /// The (provider, id, display_name, api, auth, oauth) rows for every
-    /// built-in model, grouped by their shared provider/auth so each model is
-    /// a single (id, name) line.
+    /// Every built-in model row (`model_registry_builtin_tables.rs`).
     fn builtin_specs() -> Vec<BuiltinSpec> {
-        let mut v: Vec<BuiltinSpec> = Vec::new();
-        let mut group = |provider,
-                         api,
-                         auth,
-                         oauth: Option<&'static str>,
-                         ids: &[(&'static str, &'static str)]| {
-            for &(id, name) in ids {
-                v.push((provider, id, name, api, auth, oauth));
-            }
-        };
-        group(
-            "anthropic-api",
-            ProviderApi::AnthropicMessages,
-            AuthMode::ApiKey,
-            None,
-            &[
-                ("claude-fable-5-1", "Claude Fable 5.1 (API key)"),
-                ("claude-fable-5", "Claude Fable 5 (API key)"),
-                ("claude-opus-5", "Claude Opus 5 (API key)"),
-                ("claude-opus-4-8", "Claude Opus 4.8 (API key)"),
-                ("claude-opus-4-7", "Claude Opus 4.7 (API key)"),
-                ("claude-opus-4-6", "Claude Opus 4.6 (API key)"),
-                ("claude-opus-4-5", "Claude Opus 4.5 (API key)"),
-                ("claude-sonnet-5", "Claude Sonnet 5 (API key)"),
-                ("claude-sonnet-4-6", "Claude Sonnet 4.6 (API key)"),
-                ("claude-sonnet-4-5", "Claude Sonnet 4.5 (API key)"),
-            ],
-        );
-        group(
-            "anthropic-oauth",
-            ProviderApi::AnthropicMessages,
-            AuthMode::OAuth,
-            Some("anthropic"),
-            &[
-                ("claude-fable-5-1", "Claude Fable 5.1 (OAuth)"),
-                ("claude-fable-5", "Claude Fable 5 (OAuth)"),
-                ("claude-opus-5", "Claude Opus 5 (OAuth)"),
-                ("claude-opus-4-8", "Claude Opus 4.8 (OAuth)"),
-                ("claude-opus-4-7", "Claude Opus 4.7 (OAuth)"),
-                ("claude-opus-4-6", "Claude Opus 4.6 (OAuth)"),
-                ("claude-opus-4-5", "Claude Opus 4.5 (OAuth)"),
-                ("claude-sonnet-5", "Claude Sonnet 5 (OAuth)"),
-                ("claude-sonnet-4-6", "Claude Sonnet 4.6 (OAuth)"),
-                ("claude-sonnet-4-5", "Claude Sonnet 4.5 (OAuth)"),
-            ],
-        );
-        group(
-            "openai-api",
-            ProviderApi::OpenAiCompletions,
-            AuthMode::ApiKey,
-            None,
-            &[
-                ("gpt-6-astra", "GPT 6 Astra (API key)"),
-                ("gpt-6-sol", "GPT 6 Sol (API key)"),
-                ("gpt-6.1-sol", "GPT 6.1 Sol (API key)"),
-                ("gpt-6-luna", "GPT 6 Luna (API key)"),
-                ("gpt-5.6-sol", "GPT 5.6 Sol (API key)"),
-                ("gpt-5.6-terra", "GPT 5.6 Terra (API key)"),
-                ("gpt-5.6-luna", "GPT 5.6 Luna (API key)"),
-                ("gpt-5.5", "GPT 5.5 (API key)"),
-                ("gpt-5.5-mini", "GPT 5.5 Mini (API key)"),
-                ("gpt-5.5-nano", "GPT 5.5 Nano (API key)"),
-                ("gpt-5.3-codex", "GPT 5.3 Codex (API key)"),
-                ("gpt-5.3-codex-spark", "GPT 5.3 Codex Spark (API key)"),
-                ("gpt-5.2-codex", "GPT 5.2 Codex (API key)"),
-            ],
-        );
-        group(
-            "openai-oauth",
-            ProviderApi::OpenAiCompletions,
-            AuthMode::OAuth,
-            Some("openai"),
-            &[
-                ("gpt-6-astra", "GPT 6 Astra (OAuth)"),
-                ("gpt-6-sol", "GPT 6 Sol (OAuth)"),
-                ("gpt-6.1-sol", "GPT 6.1 Sol (OAuth)"),
-                ("gpt-6-luna", "GPT 6 Luna (OAuth)"),
-                ("gpt-5.6-sol", "GPT 5.6 Sol (OAuth)"),
-                ("gpt-5.6-terra", "GPT 5.6 Terra (OAuth)"),
-                ("gpt-5.6-luna", "GPT 5.6 Luna (OAuth)"),
-                ("gpt-5.5", "GPT 5.5 (OAuth)"),
-                ("gpt-5.5-mini", "GPT 5.5 Mini (OAuth)"),
-                ("gpt-5.5-nano", "GPT 5.5 Nano (OAuth)"),
-                ("gpt-5.3-codex", "GPT 5.3 Codex (OAuth)"),
-                ("gpt-5.3-codex-spark", "GPT 5.3 Codex Spark (OAuth)"),
-                ("gpt-5.2-codex", "GPT 5.2 Codex (OAuth)"),
-            ],
-        );
-        group(
-            "xai",
-            ProviderApi::OpenAiCompletions,
-            AuthMode::OAuth,
-            Some("xai"),
-            &[
-                ("grok-4.7", "Grok 4.7 (SuperGrok OAuth)"),
-                ("grok-4.6", "Grok 4.6 (SuperGrok OAuth)"),
-                ("grok-4.5", "Grok 4.5 (SuperGrok OAuth)"),
-            ],
-        );
-        v
+        builtin_tables::builtin_specs()
     }
 
     pub fn load_from_path(path: &Path) -> Result<Self, ModelRegistryError> {
@@ -729,11 +624,14 @@ where
 mod file_format;
 use file_format::RegistryFile;
 
-#[path = "model_registry_openai_tables.rs"]
-mod openai_tables;
-pub(crate) use openai_tables::builtin_input;
-use openai_tables::{gpt_5_6_cost, gpt_5_6_window, openai_published_limits};
+#[path = "model_registry_builtin_tables.rs"]
+mod builtin_tables;
+pub(crate) use builtin_tables::builtin_input;
+use builtin_tables::{BuiltinSpec, gpt_5_6_cost, gpt_5_6_window};
 
+#[cfg(test)]
+#[path = "model_registry_catalogue_2435_tests.rs"]
+mod catalogue_2435_tests;
 #[cfg(test)]
 #[path = "model_registry_image_input_tests.rs"]
 mod image_input_tests;

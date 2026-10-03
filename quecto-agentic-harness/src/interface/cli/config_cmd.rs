@@ -178,7 +178,7 @@ fn cmd_set(ctx: &CliContext, args: &[String], stdout: &mut String) -> Result<Vec
         return Err(format!("set takes a path and a value\n{USAGE}"));
     };
     // Values are JSON; a bare word that is not valid JSON is taken as a
-    // string, so `set agents.defaults.model gpt-5.5` reads naturally.
+    // string, so `set agents.defaults.model openai-oauth/gpt-6.1-sol` reads naturally.
     let value = serde_json::from_str(raw_value)
         .unwrap_or_else(|_| serde_json::Value::String(raw_value.clone()));
     let selection = ctx.config_selection()?;

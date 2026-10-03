@@ -8,7 +8,7 @@
     "high",
     "xhigh"
   ],
-  "model": "openai-oauth/gpt-5.5",
+  "model": "openai-oauth/gpt-6.1-sol",
   "sessionKey": "cli:contract-worker",
   "progress": {
     "state": "quiet",

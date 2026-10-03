@@ -118,7 +118,7 @@ The `/model` selector surfaces auth as `[apiKey]` or `[oauth]` so the billing mo
 }
 ```
 
-`input` lists what the model takes. Images go to a model only when its entry declares `"image"` (`"input": ["text", "image"]`); a model that declares no image input, or has no catalogue entry, is sent a `[image not sent: <model> takes no image input]` marker in each image's place (#2421). Over the Anthropic wire every image goes; over the OpenAI wires (chat completions, Codex/Responses) an animated GIF (more than one frame) is sent as `[image not sent: animated GIF not supported by <model>]`, and every image goes as an inline `data:` URL with `"detail": "high"` (never unset or `original`), which caps one at about 3,000 tokens. The built-in Claude, GPT-5/GPT-6 (all but GPT-5.3 Codex Spark) and Grok entries declare `image`. A record that does not say — a `models.json` entry without `input`, or a model `refresh_models` discovered — keeps the built-in table's input for that `provider/model` (text only for a model the table does not know); only an explicit `input`, here or in an `overrides` entry, replaces it. So a custom provider of your own (say `my-anthropic` on `anthropic-messages`, listing `claude-opus-5`) sends no image unless its model sets `"input": ["text", "image"]`. A bare model id reads the provider the router sends it to (the first configured) and takes no image when that provider does not list it; a provider prefix matches whatever its case. The session keeps its images, so a later switch to a model that takes them sends them.
+`input` lists what the model takes. Images go to a model only when its entry declares `"image"` (`"input": ["text", "image"]`); a model that declares no image input, or has no catalogue entry, is sent a `[image not sent: <model> takes no image input]` marker in each image's place (#2421). Over the Anthropic wire every image goes; over the OpenAI wires (chat completions, Codex/Responses) an animated GIF (more than one frame) is sent as `[image not sent: animated GIF not supported by <model>]`, and every image goes as an inline `data:` URL with `"detail": "high"` (never unset or `original`), which caps one at about 3,000 tokens. The built-in Claude 5, GPT-5.6/GPT-6 and Grok entries declare `image` (#2435 retired the older ones). A record that does not say — a `models.json` entry without `input`, or a model `refresh_models` discovered — keeps the built-in table's input for that `provider/model` (text only for a model the table does not know); only an explicit `input`, here or in an `overrides` entry, replaces it. So a custom provider of your own (say `my-anthropic` on `anthropic-messages`, listing `claude-opus-5`) sends no image unless its model sets `"input": ["text", "image"]`. A bare model id reads the provider the router sends it to (the first configured) and takes no image when that provider does not list it; a provider prefix matches whatever its case. The session keeps its images, so a later switch to a model that takes them sends them.
 
 Supported wire protocols today:
 
@@ -165,7 +165,7 @@ OAuth stays kernel-owned. Community data may reference only kernel-known OAuth i
       "api": "anthropic-messages",
       "auth": { "mode": "oauth", "oauthProvider": "anthropic" },
       "models": [
-        { "id": "claude-opus-4-8", "name": "Claude Opus 4.8 (OAuth)" }
+        { "id": "claude-opus-5", "name": "Claude Opus 5 (OAuth)" }
       ]
     }
   }
@@ -181,7 +181,7 @@ quecto auth login --provider anthropic --token sk-ant-…   # or --oauth at a te
 Then select:
 
 ```text
-/model anthropic-oauth/claude-opus-4-8
+/model anthropic-oauth/claude-opus-5
 ```
 
 ## Same vendor, both billing modes
@@ -193,12 +193,12 @@ Then select:
       "api": "anthropic-messages",
       "baseUrl": "https://api.anthropic.com",
       "auth": { "mode": "apiKey", "apiKey": "$ANTHROPIC_API_KEY" },
-      "models": [{ "id": "claude-opus-4-8", "name": "Claude Opus 4.8 (API)" }]
+      "models": [{ "id": "claude-opus-5", "name": "Claude Opus 5 (API)" }]
     },
     "anthropic-oauth": {
       "api": "anthropic-messages",
       "auth": { "mode": "oauth", "oauthProvider": "anthropic" },
-      "models": [{ "id": "claude-opus-4-8", "name": "Claude Opus 4.8 (OAuth)" }]
+      "models": [{ "id": "claude-opus-5", "name": "Claude Opus 5 (OAuth)" }]
     }
   }
 }

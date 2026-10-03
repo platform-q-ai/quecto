@@ -419,7 +419,7 @@ pub(crate) fn build_agent_from_config_in(
         provider_runtime: build_provider,
         configuration: build_configuration,
     };
-    let catalogue = build_catalogue(base_dir, Some(&runtime_inputs));
+    let mut catalogue = build_catalogue(base_dir, Some(&runtime_inputs));
     // The container-config handles (#2024 S4a, S4c) are composed over this
     // run's own selection: the working directory's trusted overlay, never
     // the base directory, decides `container: true`, and the same layers
@@ -461,7 +461,8 @@ pub(crate) fn build_agent_from_config_in(
         }
     };
     let effort = startup_effort::admit(&catalogue.effort, flags.effort, &config, &model, stderr)?;
-    startup_route::admit(provider.route_check(&model), &model, flags.spawned, stderr)?;
+    let route = provider.route_check(&model);
+    startup_route::admit(route, &model, flags.spawned, &mut catalogue, stderr)?;
     // #1113: an explicit `--workflow` session arms the idle-boundary template
     // selector nudge — the selector reaches the model through the nudge
     // channel and the workflow tool description, never through the system
@@ -472,11 +473,7 @@ pub(crate) fn build_agent_from_config_in(
         }
     }
     let wf_config = workflow_state.as_ref().map(|_| config.workflow.clone());
-    // #935/#1044: the startup model's declared output cap (clamps max_tokens
-    // so low-limit models never get a larger value) and context window
-    // (bounds the budget) come from the change-active-model use case — the
-    // same read a later set_model performs (#1847).
-    let limits = catalogue.model.startup_limits(&model);
+    let limits = startup_route::startup_limits(&mut catalogue, &model, stderr);
     let context_marks = (config.agents.defaults.context_marks())
         .map_err(|error| stderr.push_str(&format!("agent: {error}\n")))
         .ok()?;

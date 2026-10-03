@@ -147,7 +147,7 @@ impl AnthropicProvider {
     /// Returns `true` for models that use adaptive thinking.
     ///
     /// These models require adaptive thinking and reject deprecated sampling /
-    /// budget-thinking parameters.
+    /// budget-thinking parameters (Claude 4 ids: `models.json` only, #2435).
     fn model_uses_adaptive_thinking(model: &str) -> bool {
         use crate::domain::message::starts_with_ci;
         starts_with_ci(model, "claude-opus-4-6")

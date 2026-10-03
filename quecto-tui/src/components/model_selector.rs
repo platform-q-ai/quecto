@@ -17,52 +17,50 @@ use crate::components::utils::{truncate_to_width, visible_width};
 use crate::shell::keys::Key;
 
 /// Well-known fallback models, used when the caller doesn't supply a model
-/// list: every Anthropic/OpenAI model is offered through both its `api` and
-/// `oauth` provider.
+/// list: the harness's built-in Anthropic/OpenAI rows, each under the auth
+/// modes that offer it (#2435), as `model_selector_builtin_models.txt`
+/// lists them — a harness test keeps that file level with its tables.
 fn known_models() -> Vec<ModelEntry> {
-    const ANTHROPIC: &[&str] = &[
-        "claude-fable-5-1",
-        "claude-fable-5",
-        "claude-opus-5",
-        "claude-opus-4-8",
-        "claude-opus-4-7",
-        "claude-opus-4-6",
-        "claude-opus-4-5",
-        "claude-sonnet-4-6",
-        "claude-sonnet-4-5",
-    ];
-    const OPENAI: &[&str] = &[
-        "gpt-6-astra",
-        "gpt-5.6-sol",
-        "gpt-5.6-terra",
-        "gpt-5.6-luna",
-        "gpt-5.5",
-        "gpt-5.5-mini",
-        "gpt-5.5-nano",
-        "gpt-5.3-codex",
-        "gpt-5.3-codex-spark",
-        "gpt-5.2-codex",
-    ];
-    let mut pairs: Vec<(String, String)> = Vec::new();
-    for (vendor, brand, ids) in [
-        ("anthropic", "Anthropic", ANTHROPIC),
-        ("openai", "OpenAI", OPENAI),
-    ] {
-        for id in ids {
-            for (auth, label) in [("api", "API"), ("oauth", "OAuth")] {
-                pairs.push((format!("{vendor}-{auth}/{id}"), format!("{brand} {label}")));
-            }
-        }
-    }
-    pairs
-        .into_iter()
-        .map(|(id, provider)| ModelEntry {
-            id,
-            provider,
+    include_str!("model_selector_builtin_models.txt")
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(|id| ModelEntry {
+            id: id.to_string(),
+            provider: provider_label(id),
             auth: None,
             is_current: false,
+            unavailable: None,
         })
         .collect()
+}
+
+/// The provider column of a fallback row: its vendor and auth mode.
+fn provider_label(id: &str) -> String {
+    let provider = id.split_once('/').map_or(id, |(provider, _)| provider);
+    match provider {
+        "anthropic-api" => "Anthropic API",
+        "anthropic-oauth" => "Anthropic OAuth",
+        "openai-api" => "OpenAI API",
+        "openai-oauth" => "OpenAI OAuth",
+        _ => "Model",
+    }
+    .to_string()
+}
+
+/// The short tag a row shows for `reason` (#2435 review round 2): each
+/// reason's kind, before any `: detail`.
+fn unavailable_tag(reason: &str) -> String {
+    reason
+        .split("; ")
+        .map(|one| {
+            one.split_once(':')
+                .map_or(one, |(kind, _)| kind)
+                .trim()
+                .replace('-', " ")
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Maximum query length to prevent unbounded growth.
@@ -76,6 +74,9 @@ pub struct ModelEntry {
     /// Human-readable auth label shown in the selector (e.g. "oauth" or "api").
     pub auth: Option<String>,
     pub is_current: bool,
+    /// Why the harness says the model cannot run now (#2435), e.g.
+    /// `refused-for-account: …`: shown on its row, which cannot be chosen.
+    pub unavailable: Option<String>,
 }
 
 /// Result of the model selector interaction — the shared list-interaction
@@ -164,6 +165,9 @@ pub struct ModelSelector {
     cached_max_label_width: usize,
     /// What Enter does besides switching the session.
     action: ModelDefaultAction,
+    /// Why the last Enter chose nothing (#2435): the model it was on is
+    /// unavailable. Cleared by the next key.
+    refused: Option<String>,
 }
 
 impl ModelSelector {
@@ -201,6 +205,7 @@ impl ModelSelector {
                         provider: "Custom".to_string(),
                         auth: None,
                         is_current: true,
+                        unavailable: None,
                     },
                 );
             }
@@ -218,6 +223,7 @@ impl ModelSelector {
             result: ModelSelectorResult::Pending,
             cached_max_label_width: cached_width,
             action: ModelDefaultAction::default(),
+            refused: None,
         }
     }
 
@@ -269,10 +275,15 @@ impl ModelSelector {
 /// display label); the description is the dim provider column (with the auth
 /// suffix, if any).
 fn to_suggestion(m: &ModelEntry) -> Suggestion {
-    let description = match m.auth.as_deref() {
+    let mut description = match m.auth.as_deref() {
         Some(auth) if !auth.is_empty() => format!("{} [{}]", m.provider, auth),
         _ => m.provider.clone(),
     };
+    if let Some(reason) = &m.unavailable {
+        // A short tag, first so a narrow column keeps it; the full reason
+        // when Enter refuses the row.
+        description = format!("(unavailable: {}) {description}", unavailable_tag(reason));
+    }
     Suggestion {
         value: m.id.clone(),
         description,
@@ -283,6 +294,9 @@ impl ModelSelector {
     /// The key line under the list: the action Enter applies and how to
     /// change it. Letters go to the filter, so the cycle key is Tab.
     fn footer(&self) -> String {
+        if let Some(refused) = &self.refused {
+            return format!("  {}", theme::bold(refused));
+        }
         format!(
             "  {} {}",
             theme::bold(self.action.label()),
@@ -353,11 +367,19 @@ impl Component for ModelSelector {
             .iter()
             .find(|m| m.is_current)
             .map(|m| m.id.as_str());
+        // The unavailable ids, once per frame too (#2435): their rows dim.
+        let unavailable: Vec<&str> = self
+            .all_models
+            .iter()
+            .filter(|m| m.unavailable.is_some())
+            .map(|m| m.id.as_str())
+            .collect();
         lines.extend(self.list.render_rows(width, "  ", mode, |s| {
             let is_current = current_id == Some(s.value.as_str());
             ListRow {
                 description: Some(s.description.clone()),
                 marker: if is_current { " ●" } else { "" },
+                dim_label: unavailable.contains(&s.value.as_str()),
                 ..ListRow::plain(s.value.clone())
             }
         }));
@@ -367,17 +389,29 @@ impl Component for ModelSelector {
     }
 
     fn handle_input(&mut self, key: &Key) -> bool {
+        self.refused = None;
         match key {
             Key::Up => self.list.move_previous(),
             Key::Down => self.list.move_next(),
             Key::Tab => self.action = self.action.next(),
             Key::BackTab => self.action = self.action.previous(),
             Key::Enter => {
-                // With no matches, Enter cancels.
-                self.result = match self.selected_model() {
-                    Some(model) => ModelSelectorResult::Selected(model.id.clone()),
-                    None => ModelSelectorResult::Dismissed,
+                // With no matches, Enter cancels; on a model the harness
+                // says cannot run, it chooses nothing and says why (#2435).
+                let (result, refused) = match self.selected_model() {
+                    Some(ModelEntry {
+                        id,
+                        unavailable: Some(reason),
+                        ..
+                    }) => (
+                        ModelSelectorResult::Pending,
+                        Some(format!("{id} is unavailable: {reason}")),
+                    ),
+                    Some(model) => (ModelSelectorResult::Selected(model.id.clone()), None),
+                    None => (ModelSelectorResult::Dismissed, None),
                 };
+                self.result = result;
+                self.refused = refused;
             }
             Key::Escape => self.result = ModelSelectorResult::Dismissed,
             Key::Backspace => {
@@ -401,3 +435,6 @@ impl Component for ModelSelector {
 #[cfg(test)]
 #[path = "model_selector_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "model_selector_unavailable_tests.rs"]
+mod unavailable_tests;

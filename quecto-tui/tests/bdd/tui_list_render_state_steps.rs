@@ -190,12 +190,14 @@ fn marker_fixture() -> ModelSelector {
             provider: "ProvA".to_string(),
             auth: None,
             is_current: false,
+            unavailable: None,
         },
         ModelEntry {
             id: "model-bb-long".to_string(),
             provider: "ProvB".to_string(),
             auth: None,
             is_current: false,
+            unavailable: None,
         },
     ];
     ModelSelector::with_models(models, Some("model-bb-long"))
@@ -215,6 +217,7 @@ fn model_selector_fixture(world: &mut TuiWorld) {
             provider: "Fixture".to_string(),
             auth: None,
             is_current: false,
+            unavailable: None,
         })
         .collect();
     world.tui_list_model_selector = Some(crate::DebugModelSelector(ModelSelector::with_models(

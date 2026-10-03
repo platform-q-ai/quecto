@@ -24,7 +24,7 @@ async fn set_effort_accepts_provider_vocabulary_and_rejects_invalid() {
         assert_eq!(ctx.agent.effort().unwrap().as_str(), "xhigh");
     }
     fx.session
-        .set_model("anthropic-api/claude-opus-4-6".to_string());
+        .set_model("anthropic-api/claude-opus-5".to_string());
     {
         let mut ctx = fx.ctx();
         assert!(

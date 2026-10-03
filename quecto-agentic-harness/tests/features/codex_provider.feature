@@ -1,24 +1,24 @@
 @done @providers
 Feature: Codex Responses API Provider
-  As a user using GPT-5.3-codex via OAuth
+  As a user of a GPT model via Codex OAuth (e.g. gpt-6-sol)
   I want the Codex provider to correctly format Responses API requests
   So that tool calls work even when reasoning items precede function calls
 
   # --- Request body formation ---
 
   Scenario: Codex request body includes tool_choice auto
-    Given a Codex request body for model "gpt-5.3-codex" with tools
+    Given a Codex request body for model "gpt-6-sol" with tools
     Then the request body should contain "tool_choice" set to "auto"
 
   Scenario: Codex request body includes parallel_tool_calls
-    Given a Codex request body for model "gpt-5.3-codex" with tools
+    Given a Codex request body for model "gpt-6-sol" with tools
     Then the request body should contain "parallel_tool_calls" set to true
 
   @issue-1066
   Scenario: Responses request omits reasoning effort when none is configured
     # Issue #1066: when no effort is configured the server default applies;
     # the kernel must not invent a "medium" fallback.
-    Given an OpenAI reasoning model "gpt-5.3-codex" with function tools
+    Given an OpenAI reasoning model "gpt-6-sol" with function tools
     And no reasoning effort is configured
     When the provider builds the Responses request
     Then the request body should contain a "reasoning" object without "effort"
@@ -42,21 +42,21 @@ Feature: Codex Responses API Provider
       | xhigh  |
 
   Scenario: Codex request body includes reasoning encrypted content
-    Given a Codex request body for model "gpt-5.3-codex" with tools
+    Given a Codex request body for model "gpt-6-sol" with tools
     Then the request body should contain "include" with "reasoning.encrypted_content"
 
   # #1066: no configured effort means no harness-invented verbosity — the
   # request omits `text` entirely so OpenAI's server default applies.
   Scenario: Codex request body omits text verbosity when no effort is configured
-    Given a Codex request body for model "gpt-5.3-codex" with tools
+    Given a Codex request body for model "gpt-6-sol" with tools
     Then the request body should not contain "text"
 
   Scenario: Codex request body does not include max_completion_tokens
-    Given a Codex request body for model "gpt-5.3-codex" with tools
+    Given a Codex request body for model "gpt-6-sol" with tools
     Then the request body should not contain "max_completion_tokens"
 
   Scenario: Codex tool definitions include strict false
-    Given a Codex request body for model "gpt-5.3-codex" with tools
+    Given a Codex request body for model "gpt-6-sol" with tools
     Then each tool definition should have "strict" set to false
 
   # --- SSE parsing with reasoning items ---
@@ -85,11 +85,11 @@ Feature: Codex Responses API Provider
   # --- prompt_cache_key (session-based prompt caching) ---
 
   Scenario: Codex request body includes prompt_cache_key when session ID is set
-    Given a Codex request body for model "gpt-5.3-codex" with [session] ID "cli:default"
+    Given a Codex request body for model "gpt-6-sol" with [session] ID "cli:default"
     Then the request body should contain a sanitized "prompt_cache_key" with prefix "cli"
 
   Scenario: Codex request body omits prompt_cache_key when no session ID is set
-    Given a Codex request body for model "gpt-5.3-codex" without a [session] ID
+    Given a Codex request body for model "gpt-6-sol" without a [session] ID
     Then the request body should not contain "prompt_cache_key"
 
   # --- Issue #192: orphaned function_call/function_call_output repair ---

@@ -397,7 +397,7 @@ mod effort_vocabulary {
                 levels(
                     "anthropic-api",
                     TransportKind::AnthropicMessages,
-                    "claude-opus-4-8",
+                    "claude-opus-5",
                     reasoning
                 ),
                 vec![Low, Medium, High, Max]
@@ -412,7 +412,7 @@ mod effort_vocabulary {
                 levels(
                     "openai-oauth",
                     TransportKind::OpenAiCompletions,
-                    "gpt-5.3-codex",
+                    "gpt-6-sol",
                     reasoning
                 ),
                 vec![None, Low, Medium, High, XHigh]
@@ -427,13 +427,14 @@ mod effort_vocabulary {
             ),
             vec![None, Low, Medium, High, XHigh]
         );
-        // gpt-5.5 stays on Chat Completions, where reasoning_effort + tools is
-        // rejected: no vocabulary is offered rather than one that 400s.
+        // A non-reasoning id stays on Chat Completions, where
+        // reasoning_effort + tools is rejected: no vocabulary is offered
+        // rather than one that 400s.
         assert!(
             levels(
                 "openai-api",
                 TransportKind::OpenAiCompletions,
-                "gpt-5.5",
+                "my-chat-model",
                 false
             )
             .is_empty()

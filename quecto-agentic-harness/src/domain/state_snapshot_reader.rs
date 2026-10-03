@@ -97,6 +97,7 @@ pub(super) const STATE: Shape = Shape {
         "repeatedFailureNotifications",
         "admission",
         "admissionWarnings",
+        "startupWarnings",
         "modelTurn",
         "agentRequests",
     ],

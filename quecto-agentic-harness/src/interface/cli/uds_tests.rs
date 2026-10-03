@@ -251,7 +251,7 @@ fn test_parse_set_model_command() {
 
 #[test]
 fn test_parse_set_model_provider_and_model_id_command() {
-    let line = r#"{"type":"set_model","provider":"openai-codex","modelId":"gpt-5.3-codex"}"#;
+    let line = r#"{"type":"set_model","provider":"openai-codex","modelId":"gpt-6-sol"}"#;
     let cmd = parse_command_line(line).unwrap();
     match cmd {
         AgentCommand::SetModel {
@@ -262,7 +262,7 @@ fn test_parse_set_model_provider_and_model_id_command() {
         } => {
             assert!(model.is_none());
             assert_eq!(provider.as_deref(), Some("openai-codex"));
-            assert_eq!(model_id.as_deref(), Some("gpt-5.3-codex"));
+            assert_eq!(model_id.as_deref(), Some("gpt-6-sol"));
         }
         _ => panic!("expected SetModel"),
     }
@@ -335,22 +335,19 @@ fn test_resolve_set_model_target_from_legacy_model_field() {
 
 #[test]
 fn test_resolve_set_model_target_from_provider_and_model_id() {
-    let model = resolve_set_model_target(
-        None,
-        Some("openai-codex".into()),
-        Some("gpt-5.3-codex".into()),
-    )
-    .unwrap();
-    assert_eq!(model, "openai-codex/gpt-5.3-codex");
+    let model =
+        resolve_set_model_target(None, Some("openai-codex".into()), Some("gpt-6-sol".into()))
+            .unwrap();
+    assert_eq!(model, "openai-codex/gpt-6-sol");
 }
 
 #[test]
 fn test_set_model_is_reflected_in_state_snapshot() {
     let mut session = AgentSession::new("gpt-4".into());
     let before = session.state_snapshot("cli:test", 0, None, 0, None);
-    session.set_model("claude-opus-4-5".into());
+    session.set_model("claude-opus-5".into());
     let snap = session.state_snapshot("cli:test", 0, None, 0, None);
-    assert_eq!(snap.model, "claude-opus-4-5");
+    assert_eq!(snap.model, "claude-opus-5");
     assert!(
         snap.generation > before.generation,
         "idle get_state(since) cursor must advance when visible model changes"

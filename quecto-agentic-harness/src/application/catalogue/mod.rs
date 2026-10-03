@@ -9,13 +9,15 @@
 
 pub mod dto;
 pub mod ports;
+mod refusals;
 pub mod use_cases;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
 
 use crate::domain::catalogue::{
-    Availability, AvailabilityStatus, CatalogueEntry, CatalogueSnapshot, RejectedEntry,
+    Availability, AvailabilityStatus, CatalogueEntry, CatalogueSnapshot, ModelRef, RejectedEntry,
     SourceLayer, TransportKind, UnavailableReason, resolve_catalogue,
 };
 
@@ -94,6 +96,9 @@ pub struct CatalogueSnapshotStore {
     current: Arc<RwLock<Arc<CatalogueSnapshot>>>,
     /// Last-good raw entries per source id (pre-availability derivation).
     last_good_layers: Arc<Mutex<HashMap<String, Vec<CatalogueEntry>>>>,
+    /// Models a provider refused for the account in use (#2435), with the
+    /// provider's reason, each held until it expires or is served again.
+    refusals: refusals::RefusalLedger,
 }
 
 impl CatalogueSnapshotStore {
@@ -101,7 +106,34 @@ impl CatalogueSnapshotStore {
         Self {
             current: Arc::new(RwLock::new(Arc::new(initial))),
             last_good_layers: Arc::new(Mutex::new(HashMap::new())),
+            refusals: refusals::RefusalLedger::default(),
         }
+    }
+
+    /// Hold the provider's refusal of `reference` for the account in use
+    /// for `held_for` (#2435). True when it is new: a refusal already held
+    /// keeps its first reason and hold.
+    pub fn record_refusal(&self, reference: &ModelRef, reason: &str, held_for: Duration) -> bool {
+        debug_assert!(!reason.trim().is_empty(), "a refusal says why");
+        self.refusals
+            .record(reference, reason, Instant::now(), held_for)
+    }
+
+    /// Release the refusal of `reference`: its provider served it (#2435).
+    /// True when one was held.
+    pub fn clear_refusal(&self, reference: &ModelRef) -> bool {
+        self.refusals.clear(reference)
+    }
+
+    /// The reason the provider refused `reference` for the account in use,
+    /// while the refusal is held (#2435).
+    pub fn refusal(&self, reference: &ModelRef) -> Option<String> {
+        self.refusal_at(reference, Instant::now())
+    }
+
+    /// [`Self::refusal`] at `now`.
+    pub fn refusal_at(&self, reference: &ModelRef, now: Instant) -> Option<String> {
+        self.refusals.reason_at(reference, now)
     }
 
     /// Remember one source's successfully loaded entries as its retention
@@ -236,6 +268,12 @@ impl ResolveCatalogueUseCase {
                     transport_has_adapter(&entry.provider.transport),
                     credential_available,
                 );
+                // #2435: a model the provider refused for the account in
+                // use stays unavailable while the refusal is held.
+                if let Some(reason) = store.refusal(entry.reference()) {
+                    entry.model.availability =
+                        refused_availability(&entry.model.availability, reason);
+                }
             }
         }
         // Read-increment-resolve-publish happens under one write lock so a
@@ -287,6 +325,17 @@ pub fn derive_availability(
     };
     Availability::unavailable(status, reasons)
         .expect("non-runnable status with at least one reason is always constructible")
+}
+
+/// `availability` with the provider's refusal of the model for the account
+/// in use added (#2435): never runnable, at most `Available`, every earlier
+/// reason kept.
+fn refused_availability(availability: &Availability, reason: String) -> Availability {
+    let status = availability.status().min(AvailabilityStatus::Available);
+    let mut reasons = availability.reasons().to_vec();
+    reasons.push(UnavailableReason::RefusedForAccount(reason));
+    Availability::unavailable(status, reasons)
+        .expect("a non-runnable status with at least one reason is always constructible")
 }
 
 #[cfg(test)]

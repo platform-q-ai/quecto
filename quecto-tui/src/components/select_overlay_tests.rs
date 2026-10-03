@@ -123,6 +123,7 @@ fn model_overlay_lines_span_full_width() {
             provider: "Custom".to_string(),
             auth: None,
             is_current: false,
+            unavailable: None,
         }],
         None,
     );
@@ -148,6 +149,7 @@ fn model_overlay_uses_opaque_background() {
             provider: "Custom".to_string(),
             auth: None,
             is_current: false,
+            unavailable: None,
         }],
         None,
     );
@@ -173,6 +175,7 @@ fn model_overlay_contains_selector_items() {
             provider: "Custom".to_string(),
             auth: None,
             is_current: false,
+            unavailable: None,
         }],
         None,
     );

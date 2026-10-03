@@ -53,7 +53,7 @@ fn builtin_commands_include_effort() {
 #[test]
 fn footer_apply_get_state_shows_effort_level() {
     let mut f = Footer::new();
-    f.apply_get_state(&serde_json::json!({ "model": "openai-api/gpt-5.5", "effort": "high" }));
+    f.apply_get_state(&serde_json::json!({ "model": "openai-api/gpt-6.1-sol", "effort": "high" }));
     let lines = crate::components::component::Component::render(&mut f, 120).join("\n");
     let stripped = super::app_methods::strip_ansi(&lines);
     assert!(
@@ -65,7 +65,7 @@ fn footer_apply_get_state_shows_effort_level() {
 #[test]
 fn footer_shows_default_effort_when_never_set() {
     let mut f = Footer::new();
-    f.apply_get_state(&serde_json::json!({ "model": "openai-api/gpt-5.5" }));
+    f.apply_get_state(&serde_json::json!({ "model": "openai-api/gpt-6.1-sol" }));
     let lines = crate::components::component::Component::render(&mut f, 120).join("\n");
     let stripped = super::app_methods::strip_ansi(&lines);
     assert!(
@@ -80,7 +80,7 @@ fn footer_shows_default_effort_for_explicit_null() {
     // `"effort": null`; it must render identically to a missing key.
     let mut f = Footer::new();
     f.apply_get_state(
-        &serde_json::json!({ "model": "openai-api/gpt-5.5", "effort": serde_json::Value::Null }),
+        &serde_json::json!({ "model": "openai-api/gpt-6.1-sol", "effort": serde_json::Value::Null }),
     );
     let lines = crate::components::component::Component::render(&mut f, 120).join("\n");
     let stripped = super::app_methods::strip_ansi(&lines);
@@ -93,7 +93,7 @@ fn footer_shows_default_effort_for_explicit_null() {
 #[tokio::test]
 async fn footer_updates_when_effort_changes() {
     let mut h = harness().await;
-    h.event(get_state_event("openai-api/gpt-5.5", Some("medium")));
+    h.event(get_state_event("openai-api/gpt-6.1-sol", Some("medium")));
     assert!(
         h.full_frame().contains("effort: medium"),
         "footer should show initial effort"
@@ -118,7 +118,7 @@ async fn footer_updates_when_effort_changes() {
 #[tokio::test]
 async fn effort_command_with_valid_level_sends_set_effort() {
     let mut h = harness().await;
-    h.event(get_state_event("openai-api/gpt-5.5", Some("medium")));
+    h.event(get_state_event("openai-api/gpt-6.1-sol", Some("medium")));
     h.submit("/effort high");
     let commands = h.drain_commands().await;
     let cmd = command_of_type(&commands, "set_effort")
@@ -129,7 +129,7 @@ async fn effort_command_with_valid_level_sends_set_effort() {
 #[tokio::test]
 async fn effort_command_with_invalid_level_is_rejected_listing_valid_levels() {
     let mut h = harness().await;
-    h.event(get_state_event("openai-api/gpt-5.5", Some("medium")));
+    h.event(get_state_event("openai-api/gpt-6.1-sol", Some("medium")));
     h.submit("/effort turbo");
     let commands = h.drain_commands().await;
     assert!(
@@ -156,7 +156,7 @@ async fn effort_command_with_invalid_level_is_rejected_listing_valid_levels() {
 #[tokio::test]
 async fn effort_selector_lists_openai_vocabulary() {
     let mut h = harness().await;
-    h.event(get_state_event("openai-api/gpt-5.5", Some("medium")));
+    h.event(get_state_event("openai-api/gpt-6.1-sol", Some("medium")));
     h.submit("/effort");
     // Entry-based assertion: frame substrings can't distinguish "high" from
     // "xhigh" and the footer also names a level.
@@ -193,7 +193,7 @@ async fn effort_selector_lists_anthropic_vocabulary() {
 #[tokio::test]
 async fn failed_set_effort_response_keeps_previous_footer_value() {
     let mut h = harness().await;
-    h.event(get_state_event("openai-api/gpt-5.5", Some("medium")));
+    h.event(get_state_event("openai-api/gpt-6.1-sol", Some("medium")));
     h.submit("/effort high");
     h.event(Event::Response {
         id: None,
@@ -230,7 +230,7 @@ async fn new_session_refetches_state_so_effort_display_cannot_go_stale() {
     // The agent resets its session-scoped effort override on new_session;
     // the TUI must re-fetch state or the footer/selector show a stale level.
     let mut h = harness().await;
-    h.event(get_state_event("openai-api/gpt-5.5", Some("xhigh")));
+    h.event(get_state_event("openai-api/gpt-6.1-sol", Some("xhigh")));
     h.drain_commands().await;
     h.submit("/new");
     let commands = h.drain_commands().await;
@@ -245,7 +245,7 @@ async fn set_model_success_refetches_state_for_new_vocabulary() {
     // A model switch can change the provider's effort vocabulary; the TUI
     // must re-sync from the agent rather than re-derive it locally.
     let mut h = harness().await;
-    h.event(get_state_event("openai-api/gpt-5.5", Some("high")));
+    h.event(get_state_event("openai-api/gpt-6.1-sol", Some("high")));
     h.drain_commands().await;
     h.event(Event::Response {
         id: None,
@@ -274,7 +274,7 @@ async fn effort_validation_uses_agent_reported_vocabulary_not_a_local_copy() {
         command: "get_state".into(),
         success: true,
         data: Some(serde_json::json!({
-            "model": "openai-api/gpt-5.5",
+            "model": "openai-api/gpt-6.1-sol",
             "effort": "low",
             "effortLevels": ["low", "ultra"],
         })),
@@ -302,7 +302,7 @@ async fn effort_validation_uses_agent_reported_vocabulary_not_a_local_copy() {
 #[tokio::test]
 async fn late_master_get_state_does_not_replace_focused_child_effort_state() {
     let mut h = harness().await;
-    h.event(get_state_event("openai-api/gpt-5.5", Some("medium")));
+    h.event(get_state_event("openai-api/gpt-6.1-sol", Some("medium")));
     h.event(super::tui_harness::spawn_start("child"));
     h.event(super::tui_harness::subagents_changed(vec![
         super::tui_harness::subagent("child", "idle", None),
@@ -324,7 +324,7 @@ async fn late_master_get_state_does_not_replace_focused_child_effort_state() {
     );
 
     // A delayed master response must update only master's retained footer.
-    h.event(get_state_event("openai-api/gpt-5.5", Some("xhigh")));
+    h.event(get_state_event("openai-api/gpt-6.1-sol", Some("xhigh")));
     h.submit("/effort");
     assert_eq!(
         h.effort_selector_entries().expect("selector should open"),
@@ -336,7 +336,7 @@ async fn late_master_get_state_does_not_replace_focused_child_effort_state() {
 #[tokio::test]
 async fn late_master_set_effort_success_does_not_replace_focused_child_effort() {
     let mut h = harness().await;
-    h.event(get_state_event("openai-api/gpt-5.5", Some("medium")));
+    h.event(get_state_event("openai-api/gpt-6.1-sol", Some("medium")));
     h.event(super::tui_harness::spawn_start("child"));
     h.event(super::tui_harness::subagents_changed(vec![
         super::tui_harness::subagent("child", "idle", None),

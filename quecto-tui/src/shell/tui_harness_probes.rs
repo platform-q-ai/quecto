@@ -44,6 +44,12 @@ impl TuiHarness {
             .handle_list_models(Some(serde_json::json!({ "models": models })));
     }
 
+    /// Deliver a real `list_models` response carrying `models` as given.
+    pub fn deliver_list_models_json(&mut self, models: serde_json::Value) {
+        self.app
+            .handle_list_models(Some(serde_json::json!({ "models": models })));
+    }
+
     /// Model-registry owner group (#997): `(entry count, open pending)`.
     pub fn model_registry_group(&self) -> (usize, bool) {
         (

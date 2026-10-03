@@ -52,7 +52,12 @@ fn renders_model_list() {
 #[test]
 fn known_models_include_latest_anthropic_models() {
     let known_ids: Vec<String> = known_ids();
-    for id in ["claude-fable-5-1", "claude-fable-5", "claude-opus-5"] {
+    for id in [
+        "claude-fable-5-1",
+        "claude-fable-5",
+        "claude-opus-5",
+        "claude-sonnet-5",
+    ] {
         for auth in ["api", "oauth"] {
             let full = format!("anthropic-{auth}/{id}");
             assert!(
@@ -62,19 +67,26 @@ fn known_models_include_latest_anthropic_models() {
             );
         }
     }
-    assert!(
-        known_ids
-            .iter()
-            .any(|id| id == "anthropic-api/claude-opus-4-8"),
-        "known models should include Opus 4.8: {:?}",
-        known_ids
-    );
-    assert!(
-        known_ids
-            .iter()
-            .any(|id| id == "anthropic-api/claude-opus-4-7"),
-        "known models should include Opus 4.7: {:?}",
-        known_ids
+}
+
+/// #2435: the fallback list offers only the harness's current built-ins,
+/// never a retired model.
+#[test]
+fn known_models_offer_no_retired_model() {
+    for id in known_ids() {
+        let model = id.split_once('/').map_or(id.as_str(), |(_, model)| model);
+        assert!(
+            model.starts_with("claude-fable-5")
+                || ["claude-opus-5", "claude-sonnet-5"].contains(&model)
+                || model.starts_with("gpt-6")
+                || model.starts_with("gpt-5.6-"),
+            "a retired model is offered: {id}"
+        );
+    }
+    assert_eq!(
+        known_ids().len(),
+        22,
+        "eleven models through two auth modes"
     );
 }
 
@@ -83,6 +95,9 @@ fn known_models_include_latest_openai_reasoning_models_for_both_auth_modes() {
     let known_ids: Vec<String> = known_ids();
     for id in [
         "gpt-6-astra",
+        "gpt-6-sol",
+        "gpt-6.1-sol",
+        "gpt-6-luna",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
         "gpt-5.6-luna",
@@ -231,7 +246,7 @@ fn no_match_shows_empty_state() {
 
 #[test]
 fn current_model_marked() {
-    let mut sel = ModelSelector::new(Some("claude-sonnet-4-6"));
+    let mut sel = ModelSelector::new(Some("claude-sonnet-5"));
     let lines = sel.render(60);
     let plain: String = lines
         .iter()
@@ -268,7 +283,7 @@ fn custom_model_added_when_not_in_known() {
 
 #[test]
 fn respects_width() {
-    let mut sel = ModelSelector::new(Some("claude-sonnet-4-6"));
+    let mut sel = ModelSelector::new(Some("claude-sonnet-5"));
     let lines = sel.render(40);
     for line in &lines {
         assert!(
@@ -381,12 +396,14 @@ fn with_models_accepts_custom_list() {
             provider: "ProviderA".to_string(),
             auth: None,
             is_current: false,
+            unavailable: None,
         },
         ModelEntry {
             id: "model-b".to_string(),
             provider: "ProviderB".to_string(),
             auth: None,
             is_current: false,
+            unavailable: None,
         },
     ];
     let mut sel = ModelSelector::with_models(models, Some("model-a"));
@@ -443,6 +460,7 @@ fn removed_fireworks_defaults_remain_selectable_when_user_configured() {
                 provider: "Fireworks".into(),
                 auth: None,
                 is_current: false,
+                unavailable: None,
             }],
             None,
         );

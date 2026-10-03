@@ -289,9 +289,9 @@ async fn execute_with_invalid_args_is_error() {
 fn test_parse_model_full_string() {
     let tool = SpawnTool::new(vec![]);
     let cfg = tool
-        .parse_args(r#"{"task":"work","model":"openai/gpt-5.5"}"#)
+        .parse_args(r#"{"task":"work","model":"openai/gpt-6.1-sol"}"#)
         .unwrap();
-    assert_eq!(cfg.model.as_deref(), Some("openai/gpt-5.5"));
+    assert_eq!(cfg.model.as_deref(), Some("openai/gpt-6.1-sol"));
 }
 
 #[test]

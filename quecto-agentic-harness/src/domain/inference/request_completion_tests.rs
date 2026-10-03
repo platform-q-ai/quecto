@@ -42,10 +42,14 @@ fn the_tally_numbers_each_request_and_sums_what_was_reported() {
         cache_write_tokens: None,
         output_tokens: 7,
     };
-    let first = tally.record("gpt-5.5", "codex", ended(RequestOutcome::Ok, Some(spend)));
-    let second = tally.record("gpt-5.5", "codex", ended(RequestOutcome::Error, None));
+    let first = tally.record(
+        "gpt-6.1-sol",
+        "codex",
+        ended(RequestOutcome::Ok, Some(spend)),
+    );
+    let second = tally.record("gpt-6.1-sol", "codex", ended(RequestOutcome::Error, None));
     let third = tally.record(
-        "gpt-5.5",
+        "gpt-6.1-sol",
         "codex",
         ended(
             RequestOutcome::Ok,
@@ -66,7 +70,7 @@ fn the_tally_numbers_each_request_and_sums_what_was_reported() {
     );
     assert_eq!(
         (first.model.as_str(), first.provider.as_str()),
-        ("gpt-5.5", "codex")
+        ("gpt-6.1-sol", "codex")
     );
     assert_eq!(second.spend, None, "nothing reported stays unknown");
     assert_eq!(

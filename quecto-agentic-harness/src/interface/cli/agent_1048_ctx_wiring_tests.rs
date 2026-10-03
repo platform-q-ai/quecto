@@ -102,19 +102,19 @@ fn build_agent_from_config_threads_context_knobs_into_the_loop() {
 
 /// #2405 final review L2: a built-in OpenAI model's fixed input limit is
 /// carried from the registry through the published catalogue to the loop:
-/// gpt-5.3-codex's 400k window less its 128k output, less 5% headroom.
-/// Under the shared rule (the record's or the catalogue's prompt limit lost
-/// on the way) the ceiling would be 300,000.
+/// gpt-6.1-sol's 1,050,000 window on the API less its 128k output, less 5%
+/// headroom. Under the shared rule (the record's or the catalogue's prompt
+/// limit lost on the way) the ceiling would be 1,033,616.
 #[test]
 fn build_agent_from_config_carries_an_openai_fixed_input_limit_to_the_loop() {
     let tmp = tempfile::TempDir::new().unwrap();
     std::fs::write(
         tmp.path().join("config.json"),
-        r#"{"providers":{"openai":{"api_key":"sk-test"}},"agents":{"defaults":{"max_context_tokens":300000}}}"#,
+        r#"{"providers":{"openai":{"api_key":"sk-test"}},"agents":{"defaults":{"max_context_tokens":2000000}}}"#,
     )
     .unwrap();
     let mut flags = flags_for_wiring_test();
-    flags.model_override = Some("openai-api/gpt-5.3-codex".into());
+    flags.model_override = Some("openai-api/gpt-6.1-sol".into());
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
     let result = build_agent_from_config(
@@ -125,10 +125,10 @@ fn build_agent_from_config_carries_an_openai_fixed_input_limit_to_the_loop() {
         None,
     )
     .expect("agent build should succeed");
-    assert_eq!(result.agent.model(), "openai-api/gpt-5.3-codex");
+    assert_eq!(result.agent.model(), "openai-api/gpt-6.1-sol");
     assert_eq!(
         result.agent.effective_max_context_tokens(),
-        258_400,
+        875_900,
         "{stderr}"
     );
 }
@@ -316,4 +316,49 @@ fn the_inherited_context_mode_flag_is_refused() {
         stderr.contains("unknown flag '--inherited-context-mode'"),
         "{stderr}"
     );
+}
+
+/// #2435 review round 1 L6: the warnings the startup model draws are kept
+/// on the run's catalogue handles beside stderr, so `get_state` can carry
+/// them to a client that never sees stderr: a retired built-in, and a
+/// provider this harness has not configured (#2126).
+#[test]
+fn build_agent_from_config_keeps_the_startup_warnings_for_clients() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("config.json"),
+        r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#,
+    )
+    .unwrap();
+    let cfg = tmp.path().join("config.json");
+    let build = |model: &str| {
+        let mut flags = flags_for_wiring_test();
+        flags.model_override = Some(model.into());
+        let mut stderr = String::new();
+        let result = build_agent_from_config(
+            tmp.path(),
+            &selection_for_test(&cfg, false),
+            &flags,
+            &mut stderr,
+            None,
+        )
+        .expect("agent build should succeed");
+        (result.catalogue.startup_warnings, stderr)
+    };
+    let (warnings, stderr) = build("openai-api/gpt-5.5");
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("was retired"), "{warnings:?}");
+    assert!(
+        stderr.contains(&warnings[0]),
+        "stderr keeps it too: {stderr}"
+    );
+    let (warnings, _) = build("nowhere/x");
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.contains("provider `nowhere` is not configured")),
+        "{warnings:?}"
+    );
+    let (warnings, _) = build("openai-api/gpt-6.1-sol");
+    assert!(warnings.is_empty(), "{warnings:?}");
 }

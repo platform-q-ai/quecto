@@ -117,7 +117,7 @@ Feature: LLM Providers
 
   Scenario: Explicit anthropic/ prefix routes to Anthropic provider
     Given a provider router with OpenAI first and Anthropic second
-    When I send a chat request with model "anthropic/claude-opus-4-5"
+    When I send a chat request with model "anthropic/claude-opus-5"
     Then the request should be handled by the "anthropic" provider
 
   Scenario: Explicit openai/ prefix routes to OpenAI provider
@@ -139,7 +139,7 @@ Feature: LLM Providers
 
   Scenario: Bare model name goes to first provider in order
     Given a provider router with OpenAI first and Anthropic second
-    When I send a chat request with model "claude-opus-4-5"
+    When I send a chat request with model "claude-opus-5"
     Then the request should be handled by the "openai" provider
 
   Scenario: Unknown model goes to first provider in order

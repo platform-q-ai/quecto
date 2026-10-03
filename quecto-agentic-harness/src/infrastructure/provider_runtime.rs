@@ -19,6 +19,7 @@ use crate::application::providers::ports::LlmProvider;
 use crate::infrastructure::auth::credential_store::CredentialStore;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::providers;
+use crate::infrastructure::providers::model_refusal::RefusalRecordingProvider;
 use crate::infrastructure::providers::refreshable::{RefreshableConfig, RefreshableProvider};
 use crate::infrastructure::providers::retry::{RetryConfig, RetryingProvider};
 use crate::infrastructure::providers::router::ProviderRouter;
@@ -368,7 +369,14 @@ pub(crate) fn compose_agent_provider_inner_outcome(
             }
         }
     }
-    let router: Arc<dyn LlmProvider> = Arc::new(ProviderRouter::new(provider_list));
+    // #2435: a provider's definitive refusal of a model for this account
+    // is recorded in the base directory's catalogue store, so the
+    // catalogue stops offering it while the refusal is held.
+    let router: Arc<dyn LlmProvider> = Arc::new(RefusalRecordingProvider::new(
+        Arc::new(ProviderRouter::new(provider_list)),
+        Arc::new(crate::infrastructure::catalogue_registry::snapshot_store_for(base_dir)),
+        config.providers.model_refusal_ttl(),
+    ));
     Ok(ProviderRuntimeOutcome {
         provider: Arc::new(RetryingProvider::new(router, RetryConfig::default())),
         admission_binding_diagnostic: AdmissionBindingDiagnostic {

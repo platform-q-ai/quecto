@@ -24,6 +24,7 @@ fn full_json() -> serde_json::Value {
                       "hidden": 0, "revision": 1, "directory": "/d", "epoch": 1,
                       "connected": true, "authorityStatus": "connected"},
         "admissionWarnings": [{"slot": "s", "code": "c", "message": "m"}],
+        "startupWarnings": ["agent: warning: w"],
         "modelTurn": {"elapsedMs": 1, "outputCapBytes": 8,
                       "attempt": {"number": 1, "elapsedMs": 1, "events": 2, "outputBytes": 3,
                                   "sinceLastEventMs": 4, "firstTokenMs": 5}},

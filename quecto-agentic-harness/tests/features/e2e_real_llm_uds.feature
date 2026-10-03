@@ -105,7 +105,7 @@ Feature: E2E Real LLM UDS Agent
     When I start the real LLM UDS agent
     And I send set_model "anthropic/claude-haiku-4-5"
     And I send prompt "Reply with exactly UDS_SWITCH_A"
-    And I send set_model "anthropic/claude-opus-4-6"
+    And I send set_model "anthropic/claude-opus-5"
     And I send prompt "Reply with exactly UDS_SWITCH_B"
     And I close the UDS connection
     Then the UDS agent exits with code 0

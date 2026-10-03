@@ -83,6 +83,20 @@ fn provider_failure_transitions_to_terminal_when_not_addressable() {
 }
 
 #[test]
+fn a_model_refused_for_the_account_is_terminal_not_repaired_as_malformed() {
+    // #2435: no repair of the request makes the provider accept a model
+    // the account cannot use; the turn ends at once with the refusal.
+    let err = DomainError::Provider(
+        r#"HTTP 400 from Codex: {"detail":"The 'mini' model is not supported when using Codex with a ChatGPT account."}"#
+            .to_string(),
+    );
+    assert_eq!(
+        classify_provider_failure(&err, Output::NotShown, 0, 3),
+        ProviderFailureTransition::Terminal(ProviderErrorClass::Client)
+    );
+}
+
+#[test]
 fn admission_refusal_is_terminal_not_repaired_as_malformed() {
     // A refused admission is not a malformed request: the loop must not
     // spend its malformed-recovery budget re-sending it (#2024 S3).

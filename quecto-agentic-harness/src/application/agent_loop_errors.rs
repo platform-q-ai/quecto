@@ -8,8 +8,16 @@ use crate::domain::audit::AuditEvent;
 use crate::domain::error::DomainError;
 use crate::domain::message::{Message, Role};
 use crate::domain::provider_error::{
-    ProviderErrorClass, classify_provider_error, provider_http_status,
+    ProviderErrorClass, classify_provider_error, model_refusal, provider_http_status,
 };
+
+/// The guidance a model refused for the account or auth mode ends with
+/// (#2435). The loop does not know the hold, so the guidance says what a
+/// hold does without claiming one: with `model_refusal_ttl_secs = 0` none is.
+const MODEL_REFUSED_GUIDANCE: &str = "Model unavailable: the provider refused this model for \
+     the account or auth mode in use. While a refusal is held (providers.model_refusal_ttl_secs, \
+     an hour by default; 0 holds none) the model is not offered, until the provider serves it \
+     again; choose another model (list_models, then set_model).";
 
 /// Build the audit event that persists a terminal provider failure (#937).
 ///
@@ -99,6 +107,15 @@ pub(super) fn enhance_provider_error(err: DomainError) -> DomainError {
         return DomainError::Provider(format!(
             "{message}\n\nContext/output limit: the provider rejected the request because the prompt plus requested output appears to exceed a model limit. Try reducing prompt history, lowering max output tokens, or enabling/prioritizing context pruning before retrying."
         ));
+    }
+
+    if model_refusal(&DomainError::Provider(message.clone())).is_some() {
+        // Enhanced once: a message that already ends with the guidance is
+        // returned as it is.
+        if message.ends_with(MODEL_REFUSED_GUIDANCE) {
+            return DomainError::Provider(message);
+        }
+        return DomainError::Provider(format!("{message}\n\n{MODEL_REFUSED_GUIDANCE}"));
     }
 
     // Class-specific, actionable guidance for terminal failures (#931). After

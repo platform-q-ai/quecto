@@ -187,16 +187,16 @@ Feature: Configuration
       {}
       """
     When I load the config
-    Then the model should be "gpt-5.5"
+    Then the model should be "gpt-6.1-sol"
     And the max_tokens should be 8192
     And the temperature should be 0.7
     And the workspace should be "~/.quecto/workspace"
 
   Scenario: Environment variables override config
-    Given an environment variable "QUECTO_AGENTS_DEFAULTS_MODEL" set to "claude-opus-4-5"
+    Given an environment variable "QUECTO_AGENTS_DEFAULTS_MODEL" set to "claude-opus-5"
     And a config file with model "gpt-4"
     When I load the config
-    Then the model should be "claude-opus-4-5"
+    Then the model should be "claude-opus-5"
 
   Scenario: Workspace path expands tilde
     Given a config with workspace "~/.quecto/workspace"

@@ -89,7 +89,7 @@ fn a_bare_word_value_is_taken_as_a_string_and_json_values_as_json() {
         "set",
         "--global",
         "agents.defaults.model",
-        "gpt-5.5",
+        "gpt-6.1-sol",
     ]);
     assert_eq!(code, 0, "{stderr}");
     let (code, _, stderr) = rig.run(&[
@@ -114,7 +114,7 @@ fn a_bare_word_value_is_taken_as_a_string_and_json_values_as_json() {
     let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(
         value,
-        serde_json::json!({"agents":{"defaults":{"model":"gpt-5.5","max_tokens":42,"temperature":-1}},"custom":-2})
+        serde_json::json!({"agents":{"defaults":{"model":"gpt-6.1-sol","max_tokens":42,"temperature":-1}},"custom":-2})
     );
     assert!(
         !rig.overlay().exists(),

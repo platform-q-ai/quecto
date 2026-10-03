@@ -1,5 +1,5 @@
 use super::*;
-use crate::application::catalogue::dto::{ModelLimits, ModelSwitchPlan};
+use crate::application::catalogue::dto::{CatalogueStanding, ModelLimits, ModelSwitchPlan};
 use crate::domain::catalogue::{ModelRef, TransportKind};
 
 fn switched(verdict: ModelSelectionVerdict) -> ModelSwitched {
@@ -8,6 +8,7 @@ fn switched(verdict: ModelSelectionVerdict) -> ModelSwitched {
             model: "acme/m".into(),
             limits: ModelLimits::default(),
             verdict,
+            standing: CatalogueStanding::Listed,
         },
         effort_changed: false,
         persisted: None,
@@ -92,5 +93,22 @@ fn a_recorded_default_is_rendered_beside_the_selection_and_alone_without_a_runti
         Some(serde_json::json!({
             "persisted": { "scope": "global", "path": "/home/u/.quecto/config.json" }
         }))
+    );
+}
+
+/// #2435: a refused model's verdict names the provider's reason.
+#[test]
+fn a_refused_model_renders_its_reason() {
+    let reference = ModelRef::parse_qualified("openai-oauth/mini").unwrap();
+    assert_eq!(
+        render_switch(&switched(ModelSelectionVerdict::NotRunnable {
+            reference,
+            reasons: vec![UnavailableReason::RefusedForAccount("no ChatGPT".into())],
+        })),
+        Some(serde_json::json!({"selection": {
+            "status": "not_runnable",
+            "model": "openai-oauth/mini",
+            "reasons": ["refused-for-account: no ChatGPT"],
+        }}))
     );
 }

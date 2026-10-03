@@ -4,6 +4,7 @@ pub(crate) mod attempt_profile;
 pub(crate) mod attempt_transport;
 pub mod codex;
 pub(crate) mod input_prefix;
+pub mod model_refusal;
 pub mod openai;
 pub mod openai_endpoint_router;
 mod openai_images;

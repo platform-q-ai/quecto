@@ -37,6 +37,8 @@ pub struct ModelListEntry {
     pub id: String,
     pub provider: String,
     pub auth: Option<String>,
+    /// Why the model cannot run now (#2435), when the harness says so.
+    pub unavailable: Option<String>,
 }
 
 /// Map a `list_models` response payload into typed model entries.
@@ -80,7 +82,37 @@ fn parse_model_list_entry(
     let auth = string_field(model, "auth")
         .map(sanitize)
         .filter(|s| !s.is_empty());
-    Some(ModelListEntry { id, provider, auth })
+    let unavailable = unavailable(model, sanitize);
+    Some(ModelListEntry {
+        id,
+        provider,
+        auth,
+        unavailable,
+    })
+}
+
+/// Why a listed model cannot run (#2435): its `unavailable` reasons,
+/// sanitized and joined; else, from an older harness that sends only
+/// `configured`, `not configured` when that is `false`. `None` for a model
+/// that can run, or one the payload says nothing of.
+fn unavailable(model: &serde_json::Value, sanitize: &dyn Fn(&str) -> String) -> Option<String> {
+    /// The availability fields of one listed model, typed.
+    #[derive(serde::Deserialize, Default)]
+    #[serde(default)]
+    struct RawAvailability {
+        unavailable: Option<serde_json::Value>,
+        configured: Option<serde_json::Value>,
+    }
+    use serde::Deserialize;
+    let raw = RawAvailability::deserialize(model).unwrap_or_default();
+    let reasons =
+        crate::protocol::presentation_payloads::string_items(raw.unavailable.as_ref(), sanitize);
+    let unconfigured = matches!(raw.configured, Some(serde_json::Value::Bool(false)));
+    match (reasons.is_empty(), unconfigured) {
+        (false, _) => Some(reasons.join("; ")),
+        (true, true) => Some("not configured".to_string()),
+        (true, false) => None,
+    }
 }
 
 /// One string field of a JSON object: absent when the key is missing or

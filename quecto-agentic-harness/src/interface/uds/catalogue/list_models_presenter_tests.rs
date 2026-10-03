@@ -124,3 +124,41 @@ fn a_failed_source_renders_no_models_and_the_error() {
         serde_json::json!({ "models": [], "error": "expected value at line 1" })
     );
 }
+
+/// #2435: each listed model names why it cannot run; a model the provider
+/// refused for the account says so with the provider's reason.
+#[test]
+fn renders_why_a_listed_model_cannot_run() {
+    let mut refused = entry(true);
+    refused.model.availability = Availability::unavailable(
+        crate::domain::catalogue::AvailabilityStatus::Available,
+        vec![
+            crate::domain::catalogue::UnavailableReason::RefusedForAccount(
+                "not supported with a ChatGPT account".into(),
+            ),
+        ],
+    )
+    .unwrap();
+    let listing = ModelCatalogueListing {
+        generation: 1,
+        models: vec![
+            ListedModel {
+                entry: refused,
+                runnable: false,
+            },
+            ListedModel {
+                entry: entry(false),
+                runnable: true,
+            },
+        ],
+        rejected: vec![],
+    };
+    let json = render(&ModelListingOutcome::Listed(listing));
+    assert_eq!(json["models"][0]["configured"], false);
+    assert_eq!(
+        json["models"][0]["unavailable"],
+        serde_json::json!(["refused-for-account: not supported with a ChatGPT account"])
+    );
+    assert_eq!(json["models"][1]["configured"], true);
+    assert_eq!(json["models"][1]["unavailable"], serde_json::json!([]));
+}

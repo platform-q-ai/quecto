@@ -93,6 +93,7 @@ pub fn build_catalogue_handles(
         refresh,
         reload,
         runtime_store: runtime_store_for(base_dir),
+        startup_warnings: Vec::new(),
     }
 }
 

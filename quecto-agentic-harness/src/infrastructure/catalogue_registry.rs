@@ -515,7 +515,7 @@ mod tests;
 /// first configured provider) is looked up across the *runnable* providers
 /// serving that id, since only a runnable provider can be the one the
 /// router picks: when they all seed the same vocabulary that vocabulary is
-/// the answer (an OAuth-only user's bare `gpt-5.5` is openai-oauth's); when
+/// the answer (an OAuth-only user's bare `gpt-6.1-sol` is openai-oauth's); when
 /// they disagree the id is ambiguous and no vocabulary is affirmed; when
 /// none is runnable nothing is known.
 #[derive(Debug)]
