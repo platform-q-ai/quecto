@@ -16,7 +16,7 @@
 //! withheld images out of their messages for as long as it lives and puts
 //! every one back when it is dropped, however the request ends.
 
-use base64::Engine;
+use quecto_image::ImageMime;
 use sha2::Digest;
 
 use crate::domain::catalogue::TransportKind;
@@ -85,63 +85,6 @@ pub fn animated_gif_marker(model: &str) -> String {
     format!("[image not sent: animated GIF not supported by {model}]")
 }
 
-/// Whether `data` (base64) is a GIF of more than one image frame: a walk of
-/// its blocks that stops at the second image descriptor. Anything that is
-/// not a well-formed GIF up to there is not an animated one.
-pub fn is_animated_gif(mime_type: &str, data: &str) -> bool {
-    mime_type.eq_ignore_ascii_case("image/gif")
-        && base64::engine::general_purpose::STANDARD
-            .decode(data)
-            .is_ok_and(|bytes| gif_frames(&bytes) > 1)
-}
-
-/// The image frames of `bytes` (a GIF), counted up to 2.
-fn gif_frames(bytes: &[u8]) -> usize {
-    const HEADER: usize = 13; // "GIF8?a" and the logical screen descriptor
-    let mut frames = 0;
-    let Some(flags) = bytes.get(10).filter(|_| bytes.starts_with(b"GIF8")) else {
-        return frames;
-    };
-    let mut at = HEADER + colour_table(*flags);
-    while frames < 2 {
-        let next = match bytes.get(at) {
-            Some(0x2C) => {
-                frames += 1;
-                // The descriptor's 9 bytes, its colour table, the LZW size.
-                let local = bytes.get(at + 9).copied().map_or(0, colour_table);
-                skip_sub_blocks(bytes, at + 10 + local + 1)
-            }
-            Some(0x21) => skip_sub_blocks(bytes, at + 2),
-            Some(_) | None => None,
-        };
-        match next {
-            Some(after) => at = after,
-            None => break,
-        }
-    }
-    frames
-}
-
-/// The bytes of the colour table a GIF `flags` byte declares.
-fn colour_table(flags: u8) -> usize {
-    match flags & 0x80 {
-        0 => 0,
-        _ => 3 << ((flags & 0x07) + 1),
-    }
-}
-
-/// Where the data sub-blocks starting at `at` end (past their terminator).
-fn skip_sub_blocks(bytes: &[u8], mut at: usize) -> Option<usize> {
-    loop {
-        let size = usize::from(*bytes.get(at)?);
-        at += 1;
-        match size {
-            0 => return Some(at),
-            _ => at += size,
-        }
-    }
-}
-
 /// What the animated-GIF walk found for each GIF already seen (#2421
 /// round 2 nit 1), keyed by a SHA-256 digest of its base64 (round 3 L3: a
 /// crafted collision cannot pass an animated GIF off as a still one), so a
@@ -158,11 +101,13 @@ pub const MAX_GIF_VERDICTS: usize = 1_024;
 
 impl GifVerdicts {
     /// Whether the `mime_type` image `data` encodes is an animated GIF; a
-    /// GIF is walked the first time it is asked about.
+    /// GIF is walked the first time it is asked about. Only an image typed
+    /// exactly `image/gif` is walked; whether it is animated is
+    /// `quecto_image`'s format fact, cached here by digest.
     pub fn is_animated(&self, mime_type: &str, data: &str) -> bool {
-        match mime_type.eq_ignore_ascii_case("image/gif") {
-            false => false,
-            true => {
+        match ImageMime::parse_exact(mime_type) {
+            Some(ImageMime::Png | ImageMime::Jpeg | ImageMime::Webp) | None => false,
+            Some(ImageMime::Gif) => {
                 let key: [u8; 32] = sha2::Sha256::digest(data.as_bytes()).into();
                 let mut known = self.known.lock().unwrap_or_else(|e| e.into_inner());
                 if let Some(verdict) = known.get(&key) {
@@ -171,7 +116,7 @@ impl GifVerdicts {
                 #[cfg(any(test, feature = "test-support"))]
                 self.walks
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                let verdict = is_animated_gif(mime_type, data);
+                let verdict = quecto_image::is_animated_gif(data);
                 if known.len() >= MAX_GIF_VERDICTS {
                     known.clear();
                 }
