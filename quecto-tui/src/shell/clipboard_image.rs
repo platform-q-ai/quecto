@@ -385,7 +385,13 @@ fn end(child: &mut std::process::Child) {
     let group = libc::pid_t::try_from(child.id()).expect("a pid fits pid_t");
     assert!(group > 0, "a child's process group is never 0 or negative");
     // SAFETY: killpg only sends a signal; `child` leads its own group (`process_group(0)`) and is unreaped, so its id names no other group.
-    unsafe { libc::killpg(group, libc::SIGKILL) };
+    let killed = unsafe { libc::killpg(group, libc::SIGKILL) };
+    if killed != 0 {
+        // Impossible while `child` is unreaped: its group has a member.
+        let error = std::io::Error::last_os_error();
+        tracing::warn!("killpg({group}) of a clipboard tool failed: {error}");
+        debug_assert_eq!(killed, 0, "killpg({group}): {error}");
+    }
     let _ = child.wait();
 }
 
