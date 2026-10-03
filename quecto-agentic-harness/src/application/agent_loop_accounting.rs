@@ -61,6 +61,12 @@ impl AgentLoopImpl {
         self.in_flight_request.clone()
     }
 
+    /// This agent's own provider requests so far, which `get_state`
+    /// reports as `agentRequests` (#2436).
+    pub fn request_tally(&self) -> Arc<crate::domain::inference::request_completion::RequestTally> {
+        self.request_tally.clone()
+    }
+
     pub fn take_request_observations(
         &self,
     ) -> Vec<crate::domain::request_observation::RequestObservation> {

@@ -17,5 +17,11 @@
   "generation": 12,
   "automaticTurnsSuspended": false,
   "repeatedFailureNotifications": 0,
-  "admissionWarnings": []
+  "admissionWarnings": [],
+  "agentRequests": {
+    "requests": 0,
+    "inputTokens": 0,
+    "cachedTokens": 0,
+    "outputTokens": 0
+  }
 }

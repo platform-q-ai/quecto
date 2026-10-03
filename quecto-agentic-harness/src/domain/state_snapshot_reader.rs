@@ -75,6 +75,8 @@ pub(super) const MODEL_TURN: Shape = Shape {
     objects: &[("attempt", &ATTEMPT)],
     arrays: &[],
 };
+pub(super) const AGENT_REQUESTS: Shape =
+    leaf(&["requests", "inputTokens", "cachedTokens", "outputTokens"]);
 pub(super) const STATE: Shape = Shape {
     members: &[
         "state",

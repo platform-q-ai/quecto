@@ -3,6 +3,7 @@ use super::uds_admission_projection::{
 };
 use crate::application::ports::AdmissionObservation;
 use crate::domain::agent::AgentProgressEvent;
+use crate::domain::inference::request_completion::{AgentRequestCounters, RequestTally};
 use crate::domain::inference_admission::AdmissionActivity;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -29,6 +30,9 @@ pub struct ExecutionSnapshot {
     /// The model request in flight (#2210); absent when there is none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_turn: Option<crate::domain::state_snapshot::ModelTurnSnapshot>,
+    /// This agent's own provider requests so far (#2436).
+    #[serde(default)]
+    pub agent_requests: AgentRequestCounters,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,6 +73,8 @@ pub struct ExecutionState {
     authority: Option<AuthorityProbe>,
     /// The agent's model request in flight, read on every snapshot (#2210).
     model_turn: Option<Arc<crate::domain::request_progress::InFlightRequest>>,
+    /// The agent's own requests so far, read on every snapshot (#2436).
+    request_tally: Option<Arc<RequestTally>>,
     /// Last admission revision folded into `visible_generation`.
     observed_admission_revision: u64,
     observed_binding_warnings: Option<Vec<crate::domain::state_snapshot::AdmissionBindingWarning>>,
@@ -142,6 +148,7 @@ impl Default for ExecutionState {
             admission: None,
             authority: None,
             model_turn: None,
+            request_tally: None,
             observed_admission_revision: 0,
             observed_binding_warnings: None,
             visible_generation: 1,
@@ -187,6 +194,12 @@ impl ExecutionState {
         source: Arc<crate::domain::request_progress::InFlightRequest>,
     ) {
         self.model_turn = Some(source);
+    }
+
+    /// Attach the agent's request tally (#2436): every snapshot reports it
+    /// as `agentRequests`.
+    pub(crate) fn set_request_tally_source(&mut self, source: Arc<RequestTally>) {
+        self.request_tally = Some(source);
     }
 
     fn admission_activity(&self) -> Option<AdmissionActivity> {
@@ -419,6 +432,7 @@ impl ExecutionState {
                 .model_turn
                 .as_ref()
                 .and_then(|request| request.snapshot(now)),
+            agent_requests: AgentRequestCounters::default(),
         }
     }
 }

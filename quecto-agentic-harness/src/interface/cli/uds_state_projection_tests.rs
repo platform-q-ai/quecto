@@ -34,6 +34,7 @@ fn state_with_execution(activity_generation: u64, progress_state: &str) -> Sessi
             },
             admission: None,
             model_turn: None,
+            agent_requests: Default::default(),
         }),
         sync: 0,
     }
@@ -348,4 +349,32 @@ fn a_since_poll_sees_a_model_turn_in_flight() {
     let full = slim_state_response_data(&state, Some(generation - 1));
     assert_eq!(full["state"], "runningTool", "{full}");
     assert_eq!(full["modelTurn"]["elapsedMs"], 9);
+}
+
+/// #2436: `get_state` carries the agent's own request counters beside the
+/// admission view, zero before any request and without an execution view.
+#[test]
+fn the_agents_own_request_counters_are_always_reported() {
+    use crate::domain::inference::request_completion::AgentRequestCounters;
+    let mut state = state_with_execution(7, "quiet");
+    let execution = state.execution.as_mut().unwrap();
+    execution.agent_requests = AgentRequestCounters {
+        requests: 3,
+        input_tokens: 900,
+        cached_tokens: 600,
+        output_tokens: 30,
+    };
+    assert_eq!(
+        slim_state_projection(&state)["agentRequests"],
+        serde_json::json!({
+            "requests": 3, "inputTokens": 900, "cachedTokens": 600, "outputTokens": 30
+        })
+    );
+    state.execution = None;
+    assert_eq!(
+        slim_state_projection(&state)["agentRequests"],
+        serde_json::json!({
+            "requests": 0, "inputTokens": 0, "cachedTokens": 0, "outputTokens": 0
+        })
+    );
 }

@@ -200,3 +200,47 @@ fn the_request_in_flight_rides_on_every_snapshot() {
             .is_none()
     );
 }
+
+/// #2436: every snapshot reports the agent's own request tally, zero before
+/// one is attached; a request that ended advances the public cursor.
+#[test]
+fn the_agents_own_requests_ride_on_every_snapshot() {
+    use crate::domain::inference::request_completion::{
+        AgentRequestCounters, EndedAttempt, RequestOutcome, RequestSpend, RequestTally,
+    };
+    use std::sync::Arc;
+    let mut state = ExecutionState::default();
+    assert_eq!(
+        state.snapshot().agent_requests,
+        AgentRequestCounters::default()
+    );
+    let tally = Arc::new(RequestTally::default());
+    state.set_request_tally_source(tally.clone());
+    let before = state.snapshot().activity_generation;
+    let completed = tally.record(
+        "m",
+        "p",
+        EndedAttempt {
+            attempt: 1,
+            outcome: RequestOutcome::Ok,
+            duration_ms: 3,
+            spend: Some(RequestSpend {
+                input_tokens: 40,
+                cached_tokens: Some(10),
+                output_tokens: 2,
+            }),
+        },
+    );
+    state.observe(&AgentProgressEvent::RequestCompleted(completed));
+    let after = state.snapshot();
+    assert!(after.activity_generation > before, "a transition");
+    assert_eq!(
+        after.agent_requests,
+        AgentRequestCounters {
+            requests: 1,
+            input_tokens: 40,
+            cached_tokens: 10,
+            output_tokens: 2,
+        }
+    );
+}

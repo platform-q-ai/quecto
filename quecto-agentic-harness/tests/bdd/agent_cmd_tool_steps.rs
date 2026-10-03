@@ -1151,7 +1151,8 @@ fn then_agent_cmd_response_slim_state(world: &mut QuectoWorld, command: String) 
             "generation",
             "automaticTurnsSuspended",
             "repeatedFailureNotifications",
-            "admissionWarnings"
+            "admissionWarnings",
+            "agentRequests"
         ]
         .into_iter()
         .collect(),

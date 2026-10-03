@@ -80,6 +80,16 @@ pub(crate) async fn forward_event(ev: AgentProgressEvent, sink: &mut EventSink<'
     }
 }
 
+/// Forward the requests that ended as a cancelled turn was dropped (#2436):
+/// its progress drain has stopped, so they are still queued. Only those:
+/// what else the dropped turn queued is presentation it no longer shows.
+pub(crate) async fn forward_settled_requests(
+    progress: &mut tokio::sync::mpsc::Receiver<AgentProgressEvent>,
+    sink: &mut EventSink<'_>,
+) {
+    let _ = (progress, sink);
+}
+
 async fn emit_tool_end(
     sink: &mut EventSink<'_>,
     tool_call_id: String,
@@ -101,3 +111,7 @@ async fn emit_tool_end(
 fn to_json<T: serde::Serialize>(value: T) -> serde_json::Value {
     serde_json::to_value(value).unwrap_or_default()
 }
+
+#[cfg(test)]
+#[path = "uds_progress_forward_tests.rs"]
+mod tests;

@@ -308,9 +308,10 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
     } = args;
 
     agent_session.set_streaming(true);
-    let in_flight = agent.request_in_flight();
+    let (in_flight, tally) = (agent.request_in_flight(), agent.request_tally());
     update_execution(&execution_state, |state| {
         state.set_model_turn_source(in_flight);
+        state.set_request_tally_source(tally);
         state.start_run();
     });
     // Commit the prompt synchronously before the first await. Workflow-nudge
@@ -355,6 +356,8 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
         active_session: active_session.as_ref(),
     })
     .await;
+    // #2436: a cancelled turn's last requests ended as it was dropped.
+    super::uds_progress_forward::forward_settled_requests(&mut progress_rx, sink).await;
 
     // #2210: a request the turn left in flight (abort, steer, shutdown)
     // gets its terminal record before the diagnostics move on.

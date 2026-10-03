@@ -32,6 +32,10 @@ pub struct RequestTrace {
     input_prefix: Mutex<Option<InputPrefix>>,
     /// The session's input baseline the provider compares with (#2398).
     input_baseline: std::sync::OnceLock<InputBaseline>,
+    /// The attempt in flight, until it ends and is reported (#2436).
+    pub(super) attempt_clock: Mutex<super::inference::request_completion::AttemptClock>,
+    /// Where each attempt is reported as it ends (#2436).
+    pub(super) attempt_end: super::inference::request_completion::AttemptEndHook,
 }
 impl RequestTrace {
     /// The provider serialized the request's input (#2398). The first
@@ -105,11 +109,18 @@ impl RequestTrace {
             .clone()
     }
 
+    /// The request's first attempt started.
     pub fn start(&self) {
         self.attempts.fetch_max(1, Ordering::Relaxed);
+        self.open_attempt(self.attempts());
     }
+    /// Another attempt started: the one before it has ended (#2436).
     pub fn retry(&self) {
-        self.attempts.fetch_add(1, Ordering::Relaxed);
+        let number = self
+            .attempts
+            .fetch_add(1, Ordering::Relaxed)
+            .saturating_add(1);
+        self.open_attempt(number);
     }
     pub fn oauth_retry(&self) {
         self.oauth_retries.fetch_add(1, Ordering::Relaxed);

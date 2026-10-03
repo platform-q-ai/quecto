@@ -182,6 +182,11 @@ pub struct StateSnapshot {
         deserialize_with = "present_optional"
     )]
     pub model_turn: Option<ModelTurnSnapshot>,
+    /// This agent's own provider requests so far (#2436), retries included:
+    /// not `admission.counters`, which count every attempt of the process's
+    /// admission binding. Zero before its first request.
+    #[serde(default)]
+    pub agent_requests: super::inference::request_completion::AgentRequestCounters,
 }
 
 /// The members of the projection that are live measurements rather than
