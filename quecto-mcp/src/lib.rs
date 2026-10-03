@@ -11,7 +11,7 @@ mod config;
 mod content;
 mod model;
 pub use config::Config;
-pub use content::{McpToolResult, mcp_tool_result};
+pub use content::{McpToolResult, mcp_tool_result, tool_result_line};
 pub use model::{McpTool, QuectoToolRegistration, RegisteredMcpTools};
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -47,7 +47,10 @@ pub enum QuectoMcpError {
 
 pub type Result<T> = std::result::Result<T, QuectoMcpError>;
 
-const MAX_MCP_RESPONSE_BYTES: usize = 1024 * 1024;
+/// The largest MCP response read (#2423): two UDS lines, so a result with
+/// more image data than one line holds is still read, and the images that
+/// do not fit become markers rather than failing the call.
+const MAX_MCP_RESPONSE_BYTES: usize = 2 * quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
 const MAX_UDS_LINE_BYTES: usize = 1024 * 1024;
 const MAX_CONCURRENT_TOOL_CALLS: usize = 8;
 
@@ -257,16 +260,16 @@ impl McpClient {
             .collect()
     }
 
-    pub async fn call_tool(&self, name: &str, arguments: Value) -> Result<String> {
+    pub async fn call_tool(&self, name: &str, arguments: Value) -> Result<McpToolResult> {
         let params = serde_json::json!({"name": name, "arguments": arguments});
         match self.post_json_rpc("tools/call", params.clone()).await {
-            Ok((body, _)) => Ok(format_mcp_result(body.get("result").unwrap_or(&body))),
+            Ok((body, _)) => Ok(mcp_tool_result(body.get("result").unwrap_or(&body))),
             Err(err) if is_recoverable_session_error(&err) => {
                 if let Some(server_name) = self.server_name.lock().await.clone() {
                     *self.session_id.lock().await = None;
                     self.initialize(&server_name).await?;
                     let (body, _) = self.post_json_rpc("tools/call", params).await?;
-                    Ok(format_mcp_result(body.get("result").unwrap_or(&body)))
+                    Ok(mcp_tool_result(body.get("result").unwrap_or(&body)))
                 } else {
                     Err(err)
                 }
@@ -335,20 +338,6 @@ async fn read_limited_response_text(resp: reqwest::Response, max_bytes: usize) -
 fn is_recoverable_session_error(err: &QuectoMcpError) -> bool {
     let message = err.to_string();
     message.contains("HTTP 401") || message.contains("HTTP 404") || message.contains("session")
-}
-
-fn format_mcp_result(result: &Value) -> String {
-    if let Some(content) = result.get("content").and_then(Value::as_array) {
-        let text = content
-            .iter()
-            .filter_map(|item| item.get("text").and_then(Value::as_str))
-            .collect::<Vec<_>>()
-            .join("\n");
-        if !text.is_empty() {
-            return text;
-        }
-    }
-    serde_json::to_string_pretty(result).unwrap_or_else(|_| result.to_string())
 }
 
 #[derive(Debug, Deserialize)]
@@ -438,11 +427,11 @@ pub async fn serve_uds_extension(
             QuectoMcpError::Quecto("timed out connecting to Quecto UDS socket".into())
         })??;
     let (read_half, write_half) = stream.into_split();
-    let (result_tx, mut result_rx) = tokio::sync::mpsc::channel::<Value>(64);
+    let (result_tx, mut result_rx) = tokio::sync::mpsc::channel::<String>(64);
     let writer_task = tokio::spawn(async move {
         let mut write_half = write_half;
-        while let Some(value) = result_rx.recv().await {
-            if let Err(err) = write_json_line(&mut write_half, &value).await {
+        while let Some(line) = result_rx.recv().await {
+            if let Err(err) = write_line(&mut write_half, line).await {
                 tracing::warn!(error = %err, "failed to write Quecto tool_result");
                 break;
             }
@@ -451,7 +440,7 @@ pub async fn serve_uds_extension(
 
     let register = serde_json::json!({"type": "register_tools", "id": "quecto-mcp-register", "tools": tools.registrations});
     result_tx
-        .send(register)
+        .send(register.to_string())
         .await
         .map_err(|_| QuectoMcpError::Quecto("UDS writer task stopped".into()))?;
 
@@ -489,14 +478,14 @@ pub async fn serve_uds_extension(
                 let Ok(_permit) = semaphore.acquire_owned().await else {
                     return;
                 };
-                let (content, is_error) = match mcp_name {
+                let (result, is_error) = match mcp_name {
                     Some(mcp_name) => match arguments_to_json(arguments) {
                         Ok(args) => {
                             let start = std::time::Instant::now();
                             tracing::info!(quecto_tool = %tool_name, mcp_tool = %mcp_name, "executing MCP-backed tool");
                             let result = match mcp.call_tool(&mcp_name, args).await {
-                                Ok(content) => (content, false),
-                                Err(err) => (redact(&err.to_string()), true),
+                                Ok(result) => (result, false),
+                                Err(err) => (McpToolResult::text(redact(&err.to_string())), true),
                             };
                             tracing::info!(
                                 quecto_tool = %tool_name,
@@ -507,12 +496,15 @@ pub async fn serve_uds_extension(
                             );
                             result
                         }
-                        Err(err) => (err, true),
+                        Err(err) => (McpToolResult::text(err), true),
                     },
-                    None => (format!("Unknown MCP-backed tool: {tool_name}"), true),
+                    None => (
+                        McpToolResult::text(format!("Unknown MCP-backed tool: {tool_name}")),
+                        true,
+                    ),
                 };
-                let result = serde_json::json!({"type": "tool_result", "toolCallId": tool_call_id, "content": content, "isError": is_error});
-                let _ = result_tx.send(result).await;
+                let line = tool_result_line(&tool_call_id, &result, is_error);
+                let _ = result_tx.send(line).await;
             });
         }
     }
@@ -608,11 +600,7 @@ where
     Ok(Some(String::from_utf8_lossy(&buf).into_owned()))
 }
 
-async fn write_json_line(
-    writer: &mut tokio::net::unix::OwnedWriteHalf,
-    value: &Value,
-) -> Result<()> {
-    let mut line = serde_json::to_string(value)?;
+async fn write_line(writer: &mut tokio::net::unix::OwnedWriteHalf, mut line: String) -> Result<()> {
     line.push('\n');
     writer.write_all(line.as_bytes()).await?;
     writer.flush().await?;

@@ -69,6 +69,15 @@ Collisions, duplicate MCP names, invalid MCP names, and invalid final names afte
 
 Quecto UDS messages are newline-delimited JSON. For `execute_tool`, `arguments` is expected to be a JSON string containing the MCP argument object. Malformed JSON or non-string `arguments` values produce a deterministic `tool_result` with `isError: true` when the tool call id and tool name can be read.
 
+## Tool results
+
+An MCP `tools/call` result becomes one Quecto `tool_result`:
+
+- `text` items are joined with newlines into `content`.
+- `image` items (`{"type":"image","data","mimeType"}`) become `imageBlocks`, admitted by the `quecto-image` crate with the rules the agent applies: PNG, JPEG, GIF or WebP; strict standard base64; at most 3.75 MiB decoded; the type's signature; a readable header. At most 8 are sent.
+- An image that cannot be sent is a marker in `content` in its place, `[image omitted: <reason>]`: the refusal text (e.g. `[image omitted: mimeType "image/svg+xml" is not allowed; use image/png, image/jpeg, image/gif or image/webp]`), a malformed item, the ninth image onwards, or an image the 8 MiB UDS line has no room for.
+- A result with neither text nor images (only `resource` items, say) is sent as its JSON, as before. MCP responses are read up to 16 MiB; a result whose text alone cannot fit the UDS line is an error result saying so.
+
 ## Security model
 
 Run one `quecto-mcp` process per Quecto community agent. The MCP token should be agent-scoped and least-privilege. `quecto-mcp` never accepts actor identity from model-controlled tool arguments.
