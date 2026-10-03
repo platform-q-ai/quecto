@@ -111,3 +111,52 @@ fn tool_choice_specific() {
     assert_eq!(tc, ToolChoice::Specific("bash".to_string()));
     assert_ne!(tc, ToolChoice::Specific("read".to_string()));
 }
+
+// --- #2421 review L1: the routing rule the router and the catalogue share ---
+
+const ROUTED: [&str; 3] = ["anthropic-oauth", "openai-api", "codex"];
+
+#[test]
+fn a_bare_id_goes_to_the_first_provider_whether_or_not_it_lists_it() {
+    assert_eq!(
+        route_model("gpt-6.1-sol", &ROUTED),
+        ModelRoute::To {
+            provider: "anthropic-oauth",
+            model: "gpt-6.1-sol"
+        }
+    );
+    assert_eq!(route_model("gpt-6.1-sol", &[]), ModelRoute::NoProviders);
+}
+
+#[test]
+fn a_qualified_id_goes_to_the_provider_its_prefix_names_in_any_case() {
+    assert_eq!(
+        route_model("OpenAI-API/accounts/x/models/y", &ROUTED),
+        ModelRoute::To {
+            provider: "openai-api",
+            model: "accounts/x/models/y"
+        }
+    );
+    assert_eq!(
+        route_model("openai-codex/gpt-5.5", &ROUTED),
+        ModelRoute::To {
+            provider: "codex",
+            model: "gpt-5.5"
+        }
+    );
+    assert_eq!(
+        route_model("openai/gpt-5.5", &ROUTED),
+        ModelRoute::UnknownProvider { prefix: "openai" }
+    );
+}
+
+#[test]
+fn an_empty_side_of_the_slash_is_a_bare_id() {
+    assert_eq!(
+        route_model("/gpt", &ROUTED),
+        ModelRoute::To {
+            provider: "anthropic-oauth",
+            model: "/gpt"
+        }
+    );
+}

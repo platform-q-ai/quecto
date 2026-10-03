@@ -362,28 +362,90 @@ fn a_provider_named_in_another_case_reads_the_same_entry() {
     assert_eq!(limits.max_output_tokens, Some(50));
 }
 
-/// #2421 review L2: a bare id reads the entry the router would serve it
-/// from: the first runnable provider that lists it, else the first that
-/// lists it at all.
+/// A router over providers named in `order`, which is where it sends a
+/// request (#2421 round 2 L1).
+#[derive(Debug)]
+struct OrderedRouter(Vec<&'static str>);
+
+impl crate::application::providers::ports::LlmProvider for OrderedRouter {
+    fn name(&self) -> &str {
+        "router"
+    }
+    fn route_order(&self) -> Vec<String> {
+        self.0.iter().map(|name| name.to_string()).collect()
+    }
+    fn chat<'a>(
+        &'a self,
+        request: crate::application::providers::ports::ChatRequest<'a>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<
+                        crate::domain::message::LlmResponse,
+                        crate::domain::error::DomainError,
+                    >,
+                > + Send
+                + 'a,
+        >,
+    > {
+        SilentProvider.chat(request)
+    }
+}
+
+fn routed_over(entries: Vec<CatalogueEntry>, order: Vec<&'static str>) -> Arc<FakeRuntime> {
+    let catalogue =
+        crate::domain::catalogue::resolve_catalogue(1, vec![(SourceLayer::BuiltIn, entries)])
+            .snapshot;
+    Arc::new(FakeRuntime(Some(Arc::new(
+        crate::application::provider_runtime::CatalogueRuntimeSnapshot {
+            catalogue: Arc::new(catalogue),
+            provider: Arc::new(OrderedRouter(order)),
+            admission_binding_diagnostic: Default::default(),
+        },
+    ))))
+}
+
+/// #2421 round 2 L1: a bare id reads the entry of the provider the router
+/// sends it to, its first, whether or not that provider lists it; one that
+/// does not gives no entry, so no image goes (fail closed). This is where
+/// the two used to differ: the catalogue read the first provider listing
+/// the id while the request went to the router's first.
 #[test]
-fn a_bare_id_reads_the_first_provider_that_lists_it() {
+fn a_bare_id_reads_the_routers_first_provider_only() {
+    let entries = vec![
+        entry("first", "plain", None),
+        seeing("second", "sol", TransportKind::OpenAiCompletions),
+    ];
+    let first_first = rig(
+        entries.clone(),
+        routed_over(entries.clone(), vec!["first", "second"]),
+    );
+    let plan = |model: &str| first_first.use_case.plan(model).limits;
+    assert_eq!(plan("sol"), ModelLimits::default());
+    assert_eq!(plan("second/sol").image_input, ImageInput::StillImages);
+    let second_first = rig(
+        entries.clone(),
+        routed_over(entries, vec!["second", "first"]),
+    );
+    let limits = second_first.use_case.plan("sol").limits;
+    assert_eq!(limits.image_input, ImageInput::StillImages);
+    assert_eq!(limits.max_output_tokens, Some(50));
+}
+
+/// Before a runtime is composed, the providers are the catalogue's, in its
+/// order: a bare id reads the first of them.
+#[test]
+fn a_bare_id_without_a_runtime_reads_the_first_catalogue_provider() {
     let rig = rig(
         vec![
-            entry("acme", "plain", None),
-            seeing("first", "shared", TransportKind::AnthropicMessages),
-            seeing("second", "shared", TransportKind::OpenAiCompletions),
             seeing("only", "lonely", TransportKind::AnthropicMessages),
+            seeing("acme", "plain", TransportKind::OpenAiCompletions),
         ],
         FakeRuntime::none(),
     );
     let input = |model: &str| rig.use_case.plan(model).limits.image_input;
-    assert_eq!(input("plain"), ImageInput::NoImages);
-    assert_eq!(input("shared"), ImageInput::AllImages, "the first provider");
     assert_eq!(input("lonely"), ImageInput::AllImages);
-    assert_eq!(
-        rig.use_case.plan("lonely").limits.max_output_tokens,
-        Some(50)
-    );
+    assert_eq!(input("plain"), ImageInput::NoImages, "not on the first");
 }
 
 #[test]

@@ -57,12 +57,17 @@ impl ImageInput {
 
     /// The marker an image of `mime_type` and `data` is sent as, for
     /// `model`; `None` when the image itself is sent.
-    fn withheld(self, mime_type: &str, data: &str, model: &str) -> Option<String> {
+    fn withheld(
+        self,
+        (mime_type, data): (&str, &str),
+        model: &str,
+        verdicts: &GifVerdicts,
+    ) -> Option<String> {
         match self {
             Self::NoImages => Some(not_sent_marker(model)),
-            Self::StillImages => {
-                is_animated_gif(mime_type, data).then(|| animated_gif_marker(model))
-            }
+            Self::StillImages => verdicts
+                .is_animated(mime_type, data)
+                .then(|| animated_gif_marker(model)),
             Self::AllImages => None,
         }
     }
@@ -136,6 +141,28 @@ fn skip_sub_blocks(bytes: &[u8], mut at: usize) -> Option<usize> {
     }
 }
 
+/// What the animated-GIF walk found for each GIF already seen (#2421
+/// round 2 nit 1), so a request walks a GIF of the history once, not on
+/// every request.
+#[derive(Debug, Default)]
+pub struct GifVerdicts {
+    walks: std::sync::atomic::AtomicUsize,
+}
+
+impl GifVerdicts {
+    /// Whether the `mime_type` image `data` encodes is an animated GIF.
+    pub fn is_animated(&self, mime_type: &str, data: &str) -> bool {
+        self.walks
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        is_animated_gif(mime_type, data)
+    }
+
+    /// How many GIFs have been walked.
+    pub fn walks(&self) -> usize {
+        self.walks.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
 /// What one message lent the request: where its text ended, and each
 /// withheld image with the place it came from.
 struct Withheld {
@@ -154,13 +181,18 @@ pub struct SentConversation<'m> {
 }
 
 impl<'m> SentConversation<'m> {
-    pub fn new(messages: &'m mut [Message], model: &str, input: ImageInput) -> Self {
+    pub fn new(
+        messages: &'m mut [Message],
+        model: &str,
+        input: ImageInput,
+        verdicts: &GifVerdicts,
+    ) -> Self {
         let withheld = match input {
             ImageInput::AllImages => Vec::new(),
             ImageInput::NoImages | ImageInput::StillImages => messages
                 .iter_mut()
                 .enumerate()
-                .filter_map(|(index, message)| withhold(index, message, model, input))
+                .filter_map(|(index, message)| withhold(index, message, (model, input), verdicts))
                 .collect(),
         };
         Self { messages, withheld }
@@ -191,19 +223,19 @@ impl Drop for SentConversation<'_> {
 fn withhold(
     index: usize,
     message: &mut Message,
-    model: &str,
-    input: ImageInput,
+    (model, input): (&str, ImageInput),
+    verdicts: &GifVerdicts,
 ) -> Option<Withheld> {
     let mut markers = Vec::new();
     let (kept, tool_images) = split(
         std::mem::take(&mut message.image_blocks),
-        |image| input.withheld(image.mime_type, &image.data, model),
+        |image| input.withheld((image.mime_type, &image.data), model, verdicts),
         &mut markers,
     );
     message.image_blocks = kept;
     let (kept, user_images) = split(
         std::mem::take(&mut message.user_image_blocks),
-        |image| input.withheld(&image.mime_type, &image.data, model),
+        |image| input.withheld((&image.mime_type, &image.data), model, verdicts),
         &mut markers,
     );
     message.user_image_blocks = kept;

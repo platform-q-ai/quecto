@@ -157,6 +157,59 @@ pub enum RequestAttempt {
     Reattempt,
 }
 
+/// Where a request for a model goes (#2421 review L1): the one rule the
+/// provider router sends by and the catalogue reads a model's entry by, so
+/// what the catalogue says a model takes is what the request reaches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelRoute<'p, 'm> {
+    /// To `provider`, which is sent the bare `model` id.
+    To { provider: &'p str, model: &'m str },
+    /// A `provider/model` id whose provider is none of those configured.
+    UnknownProvider { prefix: &'m str },
+    /// No provider is configured.
+    NoProviders,
+}
+
+/// Where a request for `model` goes among `providers`, in routing order: a
+/// `provider/model` id to the provider its prefix names (whatever its
+/// case), a bare id to the first provider, whether or not that provider
+/// lists the model. The split is at the first slash; the model id is
+/// opaque and may hold slashes of its own.
+pub fn route_model<'p, 'm>(model: &'m str, providers: &[&'p str]) -> ModelRoute<'p, 'm> {
+    let qualified = model
+        .split_once('/')
+        .map(|(prefix, id)| (prefix.trim(), id.trim()))
+        .filter(|(prefix, id)| !prefix.is_empty() && !id.is_empty());
+    match qualified {
+        Some((prefix, id)) => providers
+            .iter()
+            .find(|name| provider_prefix_matches(prefix, name))
+            .map_or(ModelRoute::UnknownProvider { prefix }, |provider| {
+                ModelRoute::To {
+                    provider,
+                    model: id,
+                }
+            }),
+        None => providers
+            .first()
+            .map_or(ModelRoute::NoProviders, |provider| ModelRoute::To {
+                provider,
+                model,
+            }),
+    }
+}
+
+/// Whether `prefix` names the provider called `provider_name`: the same
+/// name in any case, or the historical `openai-codex` alias of `codex`.
+/// OAuth/API billing modes are explicit (`openai-api`, `openai-oauth`,
+/// `anthropic-api`, `anthropic-oauth`); a bare vendor prefix is aliased to
+/// neither, which could silently select the other billing mode.
+pub fn provider_prefix_matches(prefix: &str, provider_name: &str) -> bool {
+    prefix.eq_ignore_ascii_case(provider_name)
+        || (prefix.eq_ignore_ascii_case("openai-codex")
+            && provider_name.eq_ignore_ascii_case("codex"))
+}
+
 #[cfg(test)]
 #[path = "provider_tests.rs"]
 mod tests;

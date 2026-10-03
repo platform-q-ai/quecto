@@ -140,7 +140,12 @@ fn only_a_well_formed_gif_is_animated() {
 fn a_model_that_takes_every_image_is_sent_the_conversation_as_it_is() {
     let mut messages = vec![user_with_images("look", 1), tool_with_gif("c1", 2)];
     let stored = messages.as_ptr();
-    let sent = SentConversation::new(&mut messages, MODEL, ImageInput::AllImages);
+    let sent = SentConversation::new(
+        &mut messages,
+        MODEL,
+        ImageInput::AllImages,
+        &GifVerdicts::default(),
+    );
     assert_eq!(sent.messages().as_ptr(), stored, "nothing is copied");
     assert_eq!(sent.messages()[0].user_image_blocks.len(), 1);
     assert_eq!(sent.messages()[1].image_blocks.len(), 3);
@@ -151,7 +156,12 @@ fn each_user_image_becomes_a_marker_after_the_text() {
     let mut messages = vec![user_with_images("compare these", 2)];
     let marker = not_sent_marker(MODEL);
     {
-        let sent = SentConversation::new(&mut messages, MODEL, ImageInput::NoImages);
+        let sent = SentConversation::new(
+            &mut messages,
+            MODEL,
+            ImageInput::NoImages,
+            &GifVerdicts::default(),
+        );
         assert_eq!(
             sent.messages()[0].content,
             format!("compare these\n{marker}\n{marker}")
@@ -166,7 +176,12 @@ fn each_user_image_becomes_a_marker_after_the_text() {
 #[test]
 fn an_image_with_no_text_becomes_the_marker_alone() {
     let mut messages = vec![user_with_images("", 1)];
-    let sent = SentConversation::new(&mut messages, MODEL, ImageInput::NoImages);
+    let sent = SentConversation::new(
+        &mut messages,
+        MODEL,
+        ImageInput::NoImages,
+        &GifVerdicts::default(),
+    );
     assert_eq!(sent.messages()[0].content, not_sent_marker(MODEL));
 }
 
@@ -179,7 +194,12 @@ fn messages_without_images_are_neither_copied_nor_changed() {
     ];
     let stored = messages.as_ptr();
     let texts = [messages[0].content.as_ptr(), messages[2].content.as_ptr()];
-    let sent = SentConversation::new(&mut messages, MODEL, ImageInput::NoImages);
+    let sent = SentConversation::new(
+        &mut messages,
+        MODEL,
+        ImageInput::NoImages,
+        &GifVerdicts::default(),
+    );
     assert_eq!(
         sent.messages().as_ptr(),
         stored,
@@ -199,7 +219,12 @@ fn messages_without_images_are_neither_copied_nor_changed() {
 fn a_still_image_model_is_sent_every_image_but_an_animated_gif() {
     let mut messages = vec![tool_with_gif("c1", 2), tool_with_gif("c2", 1)];
     {
-        let sent = SentConversation::new(&mut messages, MODEL, ImageInput::StillImages);
+        let sent = SentConversation::new(
+            &mut messages,
+            MODEL,
+            ImageInput::StillImages,
+            &GifVerdicts::default(),
+        );
         let animated = &sent.messages()[0];
         assert_eq!(
             animated.content,
@@ -229,7 +254,12 @@ fn the_token_estimate_is_the_conversations_again_afterwards() {
     let mut messages = vec![user_with_images("look", 2)];
     let before = messages[0].estimated_tokens();
     {
-        let sent = SentConversation::new(&mut messages, MODEL, ImageInput::NoImages);
+        let sent = SentConversation::new(
+            &mut messages,
+            MODEL,
+            ImageInput::NoImages,
+            &GifVerdicts::default(),
+        );
         assert_ne!(sent.messages()[0].estimated_tokens(), before);
     }
     assert_eq!(messages[0].estimated_tokens(), before);
@@ -241,11 +271,41 @@ fn a_message_is_marked_the_same_whatever_follows_it() {
     let mut later = earlier.clone();
     later.push(Message::assistant("seen", vec![]));
     later.push(tool_with_image("c1", "more"));
-    let first = SentConversation::new(&mut earlier, MODEL, ImageInput::NoImages).messages()[0]
+    let first = SentConversation::new(
+        &mut earlier,
+        MODEL,
+        ImageInput::NoImages,
+        &GifVerdicts::default(),
+    )
+    .messages()[0]
         .content
         .clone();
-    let second = SentConversation::new(&mut later, MODEL, ImageInput::NoImages).messages()[0]
+    let second = SentConversation::new(
+        &mut later,
+        MODEL,
+        ImageInput::NoImages,
+        &GifVerdicts::default(),
+    )
+    .messages()[0]
         .content
         .clone();
     assert_eq!(first, second);
+}
+
+/// #2421 round 2 nit 1: a GIF is walked once, however many requests send
+/// the conversation that holds it.
+#[test]
+fn a_gif_is_walked_once_across_requests() {
+    let verdicts = GifVerdicts::default();
+    let mut messages = vec![tool_with_gif("c1", 2), tool_with_gif("c2", 1)];
+    for _ in 0..3 {
+        let sent = SentConversation::new(&mut messages, MODEL, ImageInput::StillImages, &verdicts);
+        assert_eq!(
+            sent.messages()[0].image_blocks.len(),
+            2,
+            "animated: withheld"
+        );
+        assert_eq!(sent.messages()[1].image_blocks.len(), 3, "still: sent");
+    }
+    assert_eq!(verdicts.walks(), 2, "each GIF once");
 }
