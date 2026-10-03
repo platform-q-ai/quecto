@@ -49,6 +49,8 @@ pub struct App {
     /// Slots whose startup admission warning has already been shown in this TUI session.
     shown_admission_warning_slots: std::collections::BTreeSet<String>,
     editor: Editor,
+    /// Images attached to the composed message, shown as chips (#2425).
+    attachments: app_attachments::AttachmentFlow,
     autocomplete: Autocomplete,
     workspace: WorkspaceFlow,
     notifications: NotificationStack,
@@ -140,6 +142,7 @@ impl App {
                 SessionView::with_footer(footer),
             ),
             editor: Editor::new(),
+            attachments: app_attachments::AttachmentFlow::new(),
             autocomplete: Autocomplete::new(builtin_commands().to_vec(), 8),
             workspace: WorkspaceFlow::new(git_branch, git_repo),
             notifications: NotificationStack::new(),
@@ -245,6 +248,9 @@ impl App {
 
 #[path = "connection_state.rs"]
 mod connection_state;
+
+#[path = "app_attachments.rs"]
+mod app_attachments;
 
 #[path = "app_disconnect.rs"]
 mod app_disconnect;
@@ -588,6 +594,12 @@ mod app_git_tests;
 #[cfg(test)]
 #[path = "app_idle_efficiency_tests.rs"]
 mod app_idle_efficiency_tests;
+#[cfg(test)]
+#[path = "app_image_attach_review_tests.rs"]
+mod app_image_attach_review_tests;
+#[cfg(test)]
+#[path = "app_image_attach_tests.rs"]
+mod app_image_attach_tests;
 #[cfg(test)]
 #[path = "app_input_paste_tests.rs"]
 mod app_input_paste_tests;

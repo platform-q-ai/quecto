@@ -21,6 +21,7 @@ fn command_serializes_to_json_lines() {
         id: Some("p-1".into()),
         message: "hello".into(),
         streaming_behavior: None,
+        images: Vec::new(),
     };
     let json = serde_json::to_string(&cmd).unwrap();
     assert!(json.contains("\"type\":\"prompt\""));
@@ -35,6 +36,7 @@ fn command_prompt_with_streaming_behavior() {
         id: None,
         message: "hi".into(),
         streaming_behavior: Some("steer".into()),
+        images: Vec::new(),
     };
     let json = serde_json::to_string(&cmd).unwrap();
     assert!(json.contains("\"streamingBehavior\":\"steer\""));
@@ -276,6 +278,7 @@ fn command_steer_serializes() {
     let cmd = Command::Steer {
         id: Some("s-1".into()),
         message: "go left".into(),
+        images: Vec::new(),
     };
     let json = serde_json::to_string(&cmd).unwrap();
     assert!(json.contains("\"type\":\"steer\""));
@@ -287,6 +290,7 @@ fn command_follow_up_serializes() {
     let cmd = Command::FollowUp {
         id: None,
         message: "also do this".into(),
+        images: Vec::new(),
     };
     let json = serde_json::to_string(&cmd).unwrap();
     assert!(json.contains("\"type\":\"follow_up\""));

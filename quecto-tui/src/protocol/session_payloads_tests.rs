@@ -1,8 +1,8 @@
 use serde_json::json;
 
 use super::{
-    ResumeMessagesError, ResumeSessionSummary, ResumedChatMessage, parse_resumed_messages,
-    parse_session_stats,
+    ResumeMessagesError, ResumeSessionSummary, ResumedChatMessage, message_image_count,
+    parse_resumed_messages, parse_session_stats,
 };
 
 /// The shell passes the terminal sanitizer; the tests pass the same one.
@@ -123,6 +123,7 @@ fn parse_resumed_messages_keeps_only_displayable_chat_messages() {
                 id: Some("u1".to_string()),
                 stub: false,
                 content_len: None,
+                image_count: 0,
             },
             ResumedChatMessage::Assistant {
                 text: "world".to_string(),
@@ -340,4 +341,57 @@ fn an_archive_stub_does_not_resume_as_a_user_prompt() {
         3,
         "the stub is kept, as a notice: {messages:?}"
     );
+}
+
+/// #2425: `imageCount` on a user message is carried; a wrong-typed one reads
+/// as none and never hides the message.
+#[test]
+fn parse_resumed_messages_carries_a_user_message_s_image_count() {
+    let messages = parse_resumed_messages(&json!({
+        "messages": [
+            {"role": "user", "content": "look", "id": "u1", "imageCount": 2},
+            {"role": "user", "content": "plain", "id": "u2"},
+            {"role": "user", "content": "odd", "id": "u3", "imageCount": "many"}
+        ]
+    }))
+    .expect("valid messages array should parse");
+    let counts: Vec<_> = messages
+        .iter()
+        .map(|message| match message {
+            ResumedChatMessage::User { image_count, .. } => *image_count,
+            other => panic!("expected a user message, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(counts, [2, 0, 0]);
+}
+
+/// Review round 1 (M1): an `imageCount` past anything a message can carry
+/// is clamped where it is read, so no reader sizes work by it.
+#[test]
+fn parse_resumed_messages_clamps_a_hostile_image_count() {
+    let messages = parse_resumed_messages(&json!({
+        "messages": [
+            {"role": "user", "content": "a", "id": "u1", "imageCount": 18446744073709551615_u64},
+            {"role": "user", "content": "b", "id": "u2", "imageCount": 1_000_000_000_u64},
+            {"role": "user", "content": "c", "id": "u3", "imageCount": 8}
+        ]
+    }))
+    .expect("valid messages array should parse");
+    let counts: Vec<_> = messages
+        .iter()
+        .map(|message| match message {
+            ResumedChatMessage::User { image_count, .. } => *image_count,
+            other => panic!("expected a user message, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(counts, [999, 999, 8]);
+}
+
+#[test]
+fn a_message_s_image_count_is_read_in_place_and_clamped() {
+    assert_eq!(message_image_count(&json!({"imageCount": 3})), 3);
+    assert_eq!(message_image_count(&json!({"imageCount": u64::MAX})), 999);
+    assert_eq!(message_image_count(&json!({"imageCount": "x"})), 0);
+    assert_eq!(message_image_count(&json!({"content": "no images"})), 0);
+    assert_eq!(message_image_count(&json!(["not", "an", "object"])), 0);
 }

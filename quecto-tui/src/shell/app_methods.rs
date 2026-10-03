@@ -65,9 +65,13 @@ impl App {
              \x20 Enter          Send message (idle) / queue follow-up (running)\n\
              \x20 Shift+Enter    Insert newline\n\
              \x20 Alt+Enter      Insert newline\n\
-             \x20 Escape         Abort/cancel running agent or clear editor\n\
+             \x20 Escape         Abort/cancel running agent or clear editor and images\n\
+             \x20                (images stay while a sub-agent is focused)\n\
              \x20 Esc Esc        Choose a previous turn to go back to\n\
-             \x20 Ctrl+C         Clear editor first, abort if empty\n\
+             \x20 Ctrl+C         Clear editor and images first, abort if empty\n\
+             \x20 Ctrl+V         Attach the clipboard's image (pastes text if no image)\n\
+             \x20 Backspace      In an empty editor: remove the last image (a held\n\
+             \x20                Backspace stops at the text's start, removes one)\n\
              \x20 Ctrl+D         Exit (persists, then lets owned agents settle their subagents)\n\
              \x20 Ctrl+G         Jump to latest conversation output\n\
              \x20 Ctrl+L         Open model selector\n\
@@ -318,6 +322,8 @@ impl App {
             }
         }
 
+        // Attached-image chips, just above the composer (#2425).
+        bottom.extend(self.attachment_chip_lines(width));
         // Autocomplete dropdown (slash commands, then @files — only one active).
         bottom.extend(self.autocomplete.render(width));
         bottom.extend(self.workspace.files_autocomplete.render(width));
@@ -687,6 +693,8 @@ impl App {
                 NotifyLevel::Warning,
             );
         }
+        // Attached images belong to the conversation just ended (#2425).
+        self.drop_pending_images();
     }
 
     /// Request a fresh agent session; false when the connection is dead (#1470).

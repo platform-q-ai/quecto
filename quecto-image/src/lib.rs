@@ -17,8 +17,9 @@
 //! [`validate_images`] (a message's list) or [`ImageAttachment::from_bytes`]
 //! (a file it read), and refuses with the [`ImageRefusal`] / [`ImagesRefusal`]
 //! text when it fails: today the agent's UDS `prompt` / `steer` /
-//! `follow_up` and the `read` tool, and `quecto-api` (#2422). Extension and
-//! MCP tool results (#2423) and the TUI (#2425) will admit theirs here too.
+//! `follow_up` and the `read` tool, `quecto-api` (#2422), and the TUI's
+//! attached images (#2425). Extension and MCP tool results (#2423) will
+//! admit theirs here too.
 //!
 //! The rules are an allowlist, checked in this order; the first that fails
 //! is the refusal. A message carries at most [`MAX_IMAGES_PER_MESSAGE`]. An

@@ -51,6 +51,9 @@ pub enum ResumedChatMessage {
         id: Option<String>,
         stub: bool,
         content_len: Option<usize>,
+        /// How many images the message carried (`imageCount`, #2425); the
+        /// images themselves never come back.
+        image_count: usize,
     },
     Assistant {
         text: String,
@@ -223,6 +226,7 @@ pub fn parse_resumed_messages(
                     id,
                     stub,
                     content_len,
+                    image_count: kind.image_count,
                 }],
                 "assistant" => {
                     parse_assistant_resume_messages(message, content, id, stub, content_len)
@@ -401,14 +405,17 @@ struct DiscoveryRow {
     matched: Vec<Lenient<String>>,
 }
 
-/// A resumed message's role, and its user kind (#2404): a field that is
-/// absent or not a string reads as none.
+/// A resumed message's role, its user kind (#2404) and how many images it
+/// carried (#2425): a field that is absent or of the wrong type reads as
+/// none.
 #[derive(serde::Deserialize, Default)]
 struct MessageKind {
     #[serde(default, deserialize_with = "lenient_string")]
     role: String,
     #[serde(default, rename = "userKind", deserialize_with = "lenient_option")]
     user_kind: Option<String>,
+    #[serde(default, rename = "imageCount", deserialize_with = "lenient_count")]
+    image_count: usize,
 }
 
 impl MessageKind {
@@ -424,6 +431,32 @@ fn lenient_option<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Strin
 
 fn lenient_string<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
     Ok(lenient_option(d)?.unwrap_or_default())
+}
+
+fn lenient_count<'de, D: serde::Deserializer<'de>>(d: D) -> Result<usize, D::Error> {
+    let value = <Lenient<usize> as serde::Deserialize>::deserialize(d)?;
+    Ok(clamp_image_count(value.known().unwrap_or_default()))
+}
+
+/// The largest `imageCount` a reader takes from the wire (#2425). The harness
+/// admits at most 8 images per message; a larger count is a peer's bad data,
+/// clamped where it is read so nothing sizes work by it.
+pub(crate) const IMAGE_COUNT_CEILING: usize = 999;
+
+/// A message's `imageCount` (#2425), clamped; read in place, never cloning
+/// the message (a `get_message` page can be large).
+pub fn message_image_count(message: &serde_json::Value) -> usize {
+    #[derive(serde::Deserialize)]
+    struct ImageCount {
+        #[serde(default, rename = "imageCount", deserialize_with = "lenient_count")]
+        image_count: usize,
+    }
+    <ImageCount as serde::Deserialize>::deserialize(message).map_or(0, |count| count.image_count)
+}
+
+/// `count` from the wire, clamped to [`IMAGE_COUNT_CEILING`].
+pub(crate) fn clamp_image_count(count: usize) -> usize {
+    count.min(IMAGE_COUNT_CEILING)
 }
 
 /// A value that is kept when it is what the protocol says and ignored —

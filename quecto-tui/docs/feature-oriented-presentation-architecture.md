@@ -347,6 +347,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `conversation/controller_rewind.rs` | `conversation` rewind flow owner (relocated, #1257 Phase 3) |
 | `conversation/controller_rewind_state.rs` | `conversation` (relocated, #1257 Phase 3) |
 | `conversation/history_paging.rs` | `conversation` history cursors, page correlation and backfill latch (#1221; relocated, #1257 Phase 3) |
+| `conversation/image_attachments.rs` | `conversation` pure policy for the images attached to the composed message (#2425): the per-message count and one-frame budget, the chips' wording, the `/image` path rule and the transcript's `[image]` markers; every image check is `quecto-image`'s (`ImageMime::sniff`, `ImageAttachment::from_bytes`) |
 | `conversation/mod.rs` | `conversation` (relocated, #1257 Phase 3) |
 | `conversation/turn_recovery.rs` | `conversation` end-of-turn recovery trigger and batch atomicity (#1221; relocated, #1257 Phase 3) |
 | `inference/controller_effort.rs` | `inference` (relocated, #1257 Phase 5) |
@@ -391,6 +392,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/app_conversation_characterization_tests/mod.rs` | `shell` conversation characterization test module split for line budget (#1231) |
 | `shell/app_disconnect.rs` | `shell` runtime/disconnect coordination (relocated, #1257 Phase 6) |
 | `shell/app_admission.rs` | `shell` inference-admission label/spinner owner (#1679 P4) |
+| `shell/app_attachments.rs` | `shell` edge of image attachments (#2425): reads the `/image` file and the clipboard off the event loop (a drop guard answers a read that panicked), drops the chips when their conversation ends, the chip lines above the editor, the `Ctrl+V` / `Backspace` / `Esc` / `Enter` keys while chips are pending, and the one-line refusal notices |
 | `shell/app_workflow_automation.rs` | `shell` workflow automation flag mirroring (split from `app_response.rs` for the 750-line cap, #1679 P4) |
 | `shell/app_event_loop.rs` | `shell` event loop (relocated, #1257 Phase 6) |
 | `shell/app_events.rs` | `shell` top-level event routing (relocated, #1257 Phase 6) |
@@ -414,6 +416,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/cli.rs` | `shell` CLI entry (relocated, #1257 Phase 1) |
 | `shell/cli_termination.rs` | `shell` why a spawn stopped on a termination signal and what an exit on one did (#2053) |
 | `shell/cli_startup_exit.rs` | `shell` startup-failure leader-only agent termination with a stderr notice (#1956) |
+| `shell/clipboard_image.rs` | `shell` clipboard port (`ClipboardReader`) and its adapter (#2425): an allowlist of two tools, `wl-paste` (Wayland) and `xclip` (X11), each command in its own process group, killed whole at a 2 s timeout, its output capped; a failing listing falls through to the next tool; tests use fake executables or a fake reader, and `tests/contracts/tui_clipboard_reader.rs` is the port's contract |
 | `shell/connection.rs` | `shell` master-connection feed task and `SourcedEvent` channel seam (#1462; one connection since #2044) |
 | `shell/connection_state.rs` | `shell` state of the one owned connection behind the `active_conn()` seam (#1463, #2044) |
 | `shell/keys.rs` | `shell` input mapping primitive (relocated, #1257 Phase 1) |
@@ -434,6 +437,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/tui_harness_layout.rs` | `shell` harness layout probes split for line budget (#1465) |
 | `shell/tui_harness_sourced.rs` | `shell` fan-in/feed-task harness drivers for the #1462 seam |
 | `shell/tui_harness_tool_policy.rs` | `shell` tool policy test-harness event helpers (#1334 PR 4) |
+| `shell/tui_harness_attachments.rs` | `shell` harness drivers for image attachments: a fake clipboard, the `Ctrl+V` round trip, the chips (#2425) |
 | `shell/tui_harness_disconnect.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
 | `shell/tui_harness_drivers.rs` | `shell` harness clock, overlay-close, frame and sub-agent delivery drivers (#1466, #2044) |
 | `shell/tui_harness_exit.rs` | `shell` test harness support for the leader-only ordinary exit (#1956) |

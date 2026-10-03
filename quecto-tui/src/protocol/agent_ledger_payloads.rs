@@ -53,6 +53,7 @@ pub struct LedgerMessage {
     #[serde(alias = "is_error")]
     is_error: Lenient<bool>,
     thinking: Lenient<Vec<LedgerThinkingBlock>>,
+    image_count: Lenient<usize>,
 }
 
 impl LedgerMessage {
@@ -66,6 +67,11 @@ impl LedgerMessage {
 
     pub fn content(&self) -> &str {
         self.content.0.as_deref().unwrap_or("")
+    }
+
+    /// How many images a user message carried (`imageCount`, #2425).
+    pub fn image_count(&self) -> usize {
+        super::session_payloads::clamp_image_count(self.image_count.0)
     }
 
     pub fn tool_calls(&self) -> &[LedgerToolCall] {

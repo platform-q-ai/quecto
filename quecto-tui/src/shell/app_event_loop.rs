@@ -319,6 +319,11 @@ impl App {
                     self.finish_agent_stream_closed(detail);
                     self.render_and_note(&mut stream_render_coalescer);
                 }
+                // A `Ctrl+V` or `/image` read finished off the loop (#2425).
+                Some(read) = self.attachments.read_rx.recv() => {
+                    self.apply_attachment_read(read);
+                    self.render_and_note(&mut stream_render_coalescer);
+                }
                 Some(failure) = self.command_send_failure_rx.recv() => {
                     self.handle_command_send_failure(failure);
                     self.render_and_note(&mut stream_render_coalescer);
@@ -529,14 +534,24 @@ impl App {
             return;
         }
 
+        // Image attachments (#2425): Ctrl+V, and Backspace / Esc / Enter
+        // while chips are pending.
+        if self.handle_attachment_key(&key) {
+            return;
+        }
+
         // Global key handlers.
         // Note: Ctrl+D is handled at the top of handle_key (unconditional exit).
         match &key {
             Key::Ctrl('c') => {
                 let running = self.ac().agent_state.is_running() || self.active_subagent_running();
-                match ctrl_c_action(running, self.editor.text().is_empty()) {
+                // The composer is the text and its attached images (#2425).
+                let composer_empty =
+                    self.editor.text().is_empty() && self.attachments.pending.is_empty();
+                match ctrl_c_action(running, composer_empty) {
                     CtrlCAction::ClearEditor => {
                         self.editor.set_text("");
+                        self.attachments.pending.clear();
                         self.autocomplete.dismiss();
                     }
                     CtrlCAction::AbortAgent => {

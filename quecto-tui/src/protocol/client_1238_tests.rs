@@ -48,6 +48,7 @@ async fn user_follow_up_survives_background_filled_to_reserve() {
     let follow_up = Command::FollowUp {
         id: None,
         message: "keep going".into(),
+        images: Vec::new(),
     };
     let background_budget = COMMAND_WRITER_QUEUE_CAPACITY - COMMAND_WRITER_USER_RESERVED;
 
@@ -73,6 +74,7 @@ async fn fully_full_queue_rejects_user_commands_too() {
     let follow_up = Command::FollowUp {
         id: None,
         message: "x".into(),
+        images: Vec::new(),
     };
 
     // Fill every slot with interactive commands (they may use the reserve).
@@ -127,6 +129,7 @@ fn interactive_user_command_kinds() {
             id: None,
             message: "hi".into(),
             streaming_behavior: None,
+            images: Vec::new(),
         }
         .is_interactive_user()
     );
@@ -134,6 +137,7 @@ fn interactive_user_command_kinds() {
         Command::Steer {
             id: None,
             message: "nudge".into(),
+            images: Vec::new(),
         }
         .is_interactive_user()
     );
@@ -141,6 +145,7 @@ fn interactive_user_command_kinds() {
         Command::FollowUp {
             id: None,
             message: "more".into(),
+            images: Vec::new(),
         }
         .is_interactive_user()
     );
@@ -277,6 +282,7 @@ fn feed_liveness_command_kinds() {
             id: None,
             message: "hi".into(),
             streaming_behavior: None,
+            images: Vec::new(),
         }
         .is_feed_liveness()
     );

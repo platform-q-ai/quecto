@@ -80,6 +80,10 @@ static BUILTIN_COMMANDS: LazyLock<Vec<SlashCommand>> = LazyLock::new(|| {
             name: "workflow-nudge".into(),
             description: "Toggle workflow completion nudge".into(),
         },
+        SlashCommand {
+            name: "image".into(),
+            description: "Attach an image file to the next message (absolute, ~/… or workspace path)".into(),
+        },
     ]
 });
 

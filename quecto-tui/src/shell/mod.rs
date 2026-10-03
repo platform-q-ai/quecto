@@ -9,6 +9,7 @@ pub mod app;
 mod app_session_stats_text;
 pub mod child_watch;
 pub mod cli;
+pub mod clipboard_image;
 pub(crate) mod connection;
 pub mod keys;
 pub mod parent_death_signal;

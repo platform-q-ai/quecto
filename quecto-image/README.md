@@ -5,9 +5,9 @@ What an image is, in one place (#2422).
 Every quecto peer that handles an image uses this crate and keeps no copy of
 its facts: today the agent (UDS `prompt` / `steer` / `follow_up`, the `read`
 tool, the image token estimate) and `quecto-api` (`/prompt`, `/steer`,
-`/follow_up`, WebSocket prompt frames). Extension / MCP tool results (#2423)
-and the TUI (#2425) will use it too. It is a pure leaf crate: no I/O, only
-`base64` and `serde`.
+`/follow_up`, WebSocket prompt frames) and the TUI (images attached with
+`/image` or `Ctrl+V`, #2425). Extension / MCP tool results (#2423) will use it
+too. It is a pure leaf crate: no I/O, only `base64` and `serde`.
 
 ## What it owns
 

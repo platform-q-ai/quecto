@@ -2651,7 +2651,12 @@ fn tui_conversation_pure_policy_has_no_outer_layer_imports() {
         "super::interface",
         "super::protocol",
     ];
-    for rel in ["history_paging.rs", "turn_recovery.rs"] {
+    // #2425: the composer's image-attachment policy is pure too.
+    for rel in [
+        "history_paging.rs",
+        "turn_recovery.rs",
+        "image_attachments.rs",
+    ] {
         let path = Path::new(TUI_CONVERSATION).join(rel);
         let content = fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("read pure conversation policy {}: {e}", path.display()));
@@ -2949,6 +2954,11 @@ fn tui_public_ports_have_contract_tests() {
     let mut files = Vec::new();
     collect_rs_files(Path::new(TUI_CONVERSATION), &mut files);
     collect_rs_files(Path::new(TUI_PROTOCOL), &mut files);
+    // #2425: the shell's clipboard port is a public port too.
+    files.push(
+        fs::read_to_string(Path::new(TUI_SHELL).join("clipboard_image.rs"))
+            .expect("read the TUI clipboard port"),
+    );
 
     let mut ports = BTreeSet::new();
     for file_content in &files {

@@ -27,6 +27,9 @@ pub(crate) struct RewindFlow {
     /// Content of the selected user message, staged for the editor if rewind
     /// succeeds.
     pub(super) pending_apply_text: Option<String>,
+    /// How many images the selected message carried: a rewind restores its
+    /// text only, and says so (#2425).
+    pub(super) pending_apply_images: usize,
     /// Monotonic client-local sequence for rewind correlation ids.
     pub(super) request_seq: u64,
 }

@@ -377,15 +377,19 @@ pub(crate) fn recovered_chat_entries(
         let message = data.recovered_message();
         let role = message.role();
         let content = message.content();
+        let images = message.image_count();
         match role {
             // Sub-agent notes are user-role turns on the wire but operator
-            // status in the UI; the live event path already renders them (#1338).
+            // status in the UI; the live event path already renders them
+            // (#1338). An images-only message shows its markers (#2425).
             "user"
-                if !content.is_empty()
+                if (!content.is_empty() || images > 0)
                     && !crate::protocol::presentation_payloads::is_subagent_note(content) =>
             {
                 entries.push(ChatEntry::User {
-                    text: content.to_string(),
+                    text: crate::conversation::image_attachments::with_image_markers(
+                        content, images,
+                    ),
                 })
             }
             "assistant" => {

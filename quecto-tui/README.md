@@ -2,7 +2,7 @@
 
 A lightweight terminal UI client for `quecto agent --mode uds`.
 
-**Version `0.77.37` (pre-1.0).** The TUI is a UDS bus client of the harness: the
+**Version `0.77.38` (pre-1.0).** The TUI is a UDS bus client of the harness: the
 wire protocol and session ownership live in `quecto`, so most breaking risk is
 upstream. This crate stays on `0.y` until feature-oriented presentation boundaries and
 public surface (flags, slash commands, attach/spawn) meet the bar for a deliberate
@@ -118,8 +118,10 @@ the 30s deadline instead.
 |---|---|
 | `Enter` | Send message |
 | `Shift+Enter` or `Alt+Enter` | Insert newline |
-| `Escape` | Abort the active agent run, or clear the editor if idle |
-| `Ctrl+C` | Clear the editor first; if the editor is empty, abort the active run |
+| `Escape` | Abort the active agent run, or clear the editor and its attached images if idle |
+| `Ctrl+C` | Clear the editor and its attached images first; if both are empty, abort the active run |
+| `Ctrl+V` | Attach the clipboard's image to the next message; with no image on the clipboard, paste its text (see "Image attachments") |
+| `Backspace` | In an empty editor with images attached: remove the last image |
 | `Ctrl+D` | Exit: persist, then ask each owned agent to settle its subagents and exit |
 | `Ctrl+G` | Jump to the latest conversation output |
 | `Ctrl+L` | Open model selector |
@@ -162,6 +164,7 @@ opens links natively, that help line is the single place to update first.
 | `/clear` | Clear the current conversation |
 | `/new` | Start a fresh conversation |
 | `/resume` | Open the session picker (`/resume <key>` resumes a key directly). `Tab` moves between **Sessions**, **Scope** (Local Folder / All Folders) and **Search**. The search box asks the harness as you type and matches **the words you type, in any order, literally** — in a session's title, its folder path and its repository name (in Local Folder: the title and the path below the repository root, since every local session shares the rest); a full session ID (key) matches exactly; case is ignored. A word of three or more characters that occurs nowhere literally may still match a **title** as an in-order subsequence (`fxbg` finds "fix bug", not "bug fix"), ranked below every literal match and shown as `matched: title (fuzzy)`; folder paths, repository names and keys are never matched that way. A paste goes to the search box whichever section has the focus: its first line only (the picker says so when more lines were dropped), up to 256 characters — a longer one is refused whole; typing and pasting accept the same characters (anything visible; control, bidi and zero-width characters are dropped; any whitespace — a tab, a no-break space, a Unicode line separator — becomes a space, and a pasted run of it one space, so `fix⇥bug` searches `fix bug`). In a picker too small to have a notice row (e.g. 40×12 beside the agents pane) the `Paste refused…` / `Pasted the first line only` notice is not shown; the box simply keeps its text. `Sessions · Searching…` means the rows still belong to older text: `Enter` then waits for the answer and opens its top match, and the header says so while it waits (`Searching… ⏎ will open the top match`; in a narrower panel `Sessions · ⏎ Searching…`, then `⏎ Sessions…`, down to a bare `⏎` — the `⏎` is on screen at any width the header is). Any other key or click — `Tab`, a cursor move, typing, a paste, a scope change, `Esc` — withdraws that Enter, as do a lost connection and the clock: an Enter is paid only within 5 s of the keypress — a search that is not answered in time is retried once, and text typed ahead of an answer is searched next, but an Enter older than 5 s opens nothing. An Enter is only ever owed to a search of text you typed: while a listing loads (`Sessions · Loading…`, e.g. `/resume` `Enter` `Enter`) it does nothing. `Sessions · No answer` means the search was given up — edit the text or change Scope to retry; `Sessions · Disconnected` means the connection was lost while rows were awaited — the TUI does not reconnect, so restart `quecto-tui` to resume a session (a `/resume <key>` typed while disconnected is refused, not queued). A row saved elsewhere is hinted as **In another folder**. A session only resumes in the folder it was saved in: selecting (or typing the key of) one that belongs elsewhere opens a plain notice — what is wrong in plain words, the title you picked, the folder, the harness's detail (e.g. `Permission denied`), then **how to open it**: `cd '<folder>' && quecto-tui` (shown whole, wrapped, never shortened) and, since `quecto-tui` takes no session flag, the second step to type there: `/resume <key>`. A folder whose name could not be shown exactly as it would run (control or invisible characters, not UTF-8) gets no command, only the step; a command too long for the terminal is never cut — the notice falls back to the step alone, then to a plain sentence. Only a session that lives in another folder is told to go there: one whose folder is missing, has changed, can't be read or was never recorded is told why it can't be resumed, with no command and no step. `Enter`, `Esc` or `Ctrl-C` closes the notice; it offers nothing and sends nothing, and your current session is untouched. A row's detail line shows its folder, time, what `Enter` does, its `ID`, its repository and which fields matched; "Showing 200 of 5,200 — keep typing to narrow" means the list was cut. Against an older harness (one that rejects the search command itself) the TUI says so once and filters the listed sessions of the scope on screen itself — by title, full session ID and folder path; in Local Folder only the path below the folder all listed sessions share, which stands in for the repository root the listing does not name. It differs from the harness's rule in three cases: a linked worktree outside the repository (their common parent stands in, so the repository's name matches again), every listed session in one single folder (nothing lies below it, so the whole path is matched — more rows than the harness would find, never fewer), and sessions spread only over sub-folders of one sub-folder (that sub-folder's own name matches none of them) |
+| `/image <path>` | Attach an image file to the next message: an absolute path, `~/…`, or a path relative to the workspace (a path in one pair of quotes, as a terminal drops a file, is unquoted). See "Image attachments" |
 | `/session` | Show session statistics |
 | `/setup` | Ask the agent to walk through quecto setup for this folder/machine (credential, repo overlay, default model, admission broker, container): it submits a walkthrough prompt as your turn; the agent reads the `setup` docs page, reports each area's state, proposes the runbook commands and asks before writing anything. Variants: `/setup model <model-id>`, `/setup admission`, `/setup podman` (alias `container`), `/setup auth`. Master-session only: with a sub-agent focused it refuses with a toast (Esc back to the master, then `/setup` again) and sends nothing to the child |
 | `/workflow-auto` | Toggle core workflow auto-continue |
@@ -171,6 +174,63 @@ opens links natively, that help line is the single place to update first.
 
 Autocomplete includes the built-in slash commands, including `/hotkeys` as an
 alias for `/help`.
+
+## Image attachments
+
+A message can carry images (#2425): the TUI sends them in the `images` field
+of `prompt`, or of `follow_up` while the agent runs (see the harness's
+[UDS protocol](../quecto-agentic-harness/docs/uds-protocol.md#image-attachments)).
+
+- **`Ctrl+V`** reads the system clipboard with `wl-paste` in a Wayland session
+  or `xclip` in an X11 one: those two tools only, in that order (a `wl-paste`
+  that cannot reach a Wayland server falls through to `xclip`; a tool that
+  cannot run is reported as such, and only a tool that says so on stderr
+  makes the clipboard "empty"). Each command
+  runs in its own process group, killed whole after 2 s. An image of an
+  admitted type is attached; with no image, the clipboard's text (any
+  `text/plain` spelling) is pasted into the editor as if typed; a clipboard
+  of anything else (e.g. copied files, `text/uri-list`) says what it holds.
+  The read runs off the event loop, so a slow clipboard never freezes the
+  screen; a second `Ctrl+V` while one runs is ignored, with a notice. Your
+  terminal's own paste (often `Ctrl+Shift+V`) still pastes text as before.
+- **`/image <path>`** attaches a file: absolute, `~/…` or relative to the
+  workspace; a quoted, shell-escaped (`my\ shot.png`) or `file://` path (as a
+  terminal or file manager drops one) works too, read as a shell would
+  (nothing is escaped inside single quotes; a URI's `?query#fragment` is
+  dropped). Another user's home (`~bob/…`) is refused: give the full path.
+  The file is read off the event loop, and only a regular file is read (a
+  symlink to one is followed; a FIFO or directory is refused, never waited
+  on). A message sent while an image is still being read is held back,
+  its text kept in the editor: send it again once the chip appears.
+- Pending images show as chips above the editor, e.g.
+  `[image 1: screenshot.png · 240 KB]`. `Backspace` in an empty editor removes
+  the last one. A held `Backspace` stops at the start of the text and
+  removes at most one chip: a press within 0.7 s of one that deleted text
+  or removed a chip counts as its key repeat (a one-time hint says so).
+  Only editing keys end the hold; the wheel and the mouse do not. `Esc` clears
+  them all, with the editor text, on the master session when no run is
+  active; otherwise `Esc` keeps its meaning (abort the run, or leave a
+  focused sub-agent) and the chips stay. `Ctrl+C` clears the editor and the
+  chips first, then aborts. `Enter` sends them with the text, or alone when
+  the editor is empty; the chips go with the message. A message that could
+  not be sent (no connection, an unreachable sub-agent) keeps its chips.
+  Chips belong to their conversation: `/clear`, `/new` and a resume drop
+  them, with a notice (an image still being read then is not attached
+  either); `/setup`'s own prompt never takes them.
+- The checks are the harness's own (the `quecto-image` crate): an image is a
+  PNG, JPEG, GIF or WebP by its bytes (never its name), at most 3.75 MiB, with
+  a readable header; at most 8 per message. The TUI also keeps one message's
+  images within 7 MiB of base64, and refuses a message whose command would
+  pass the protocol's 8 MiB frame (its text goes back to the editor, its
+  chips stay) rather than let it be dropped unseen. An image that fails, an
+  unreadable file or a failed clipboard read shows a one-line notice, such
+  as `Image not attached: notes.txt: not an image/png, image/jpeg, image/gif
+  or image/webp file`, and nothing is attached.
+- The conversation shows a user message's images as `[image]` markers above
+  its text, live and in history (from `imageCount`), also when a collapsed
+  message is expanded; past 8 (a peer's bad data) one `[N images]` marker
+  stands for them. Rewinding to a message restores its text only and says
+  how many images were not restored.
 
 ## Notes
 

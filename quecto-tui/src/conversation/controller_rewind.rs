@@ -59,7 +59,10 @@ impl App {
         let mut items = Vec::new();
         for message in messages.iter().rev() {
             let ResumedChatMessage::User {
-                text, id: Some(id), ..
+                text,
+                id: Some(id),
+                image_count,
+                ..
             } = message
             else {
                 continue;
@@ -69,7 +72,10 @@ impl App {
             // array index here is not a valid index into the full server
             // conversation and could truncate the wrong turn (destructive). Messages
             // without an id (older harness) are not selectable rewind targets.
-            let preview = rewind_preview(text);
+            // An images-only turn previews as its markers (#2425).
+            let shown =
+                crate::conversation::image_attachments::with_image_markers(text, *image_count);
+            let preview = rewind_preview(&shown);
             let turn_no = items.len() + 1;
             let label = if turn_no == 1 {
                 format!("Previous turn: {preview}")
@@ -88,6 +94,19 @@ impl App {
             return;
         }
         self.ac_mut().rewind.selector = Some(SelectList::new(items, 10));
+    }
+
+    /// A rewind restores the selected message's text, never its images:
+    /// say how many were left behind (#2425).
+    pub(super) fn note_rewind_images_not_restored(&mut self) {
+        match std::mem::take(&mut self.ac_mut().rewind.pending_apply_images) {
+            0 => {}
+            count => {
+                let phrase = crate::conversation::image_attachments::image_count_phrase(count);
+                let notice = format!("{phrase} not restored: attach them again to send them");
+                self.notify(&notice, NotifyLevel::Info);
+            }
+        }
     }
 
     pub(super) fn handle_rewind_selector_key(&mut self, key: &Key) {

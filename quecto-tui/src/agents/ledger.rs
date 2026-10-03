@@ -1,3 +1,4 @@
+use crate::conversation::image_attachments::with_image_markers;
 use crate::conversation::turn_recovery::ordered_by_refs;
 use crate::protocol::agent_ledger_payloads::{LedgerMessage, SyncDelta};
 use std::collections::HashMap;
@@ -103,15 +104,17 @@ fn ledger_entries(refs: &[String], responses: &HashMap<String, LedgerMessage>) -
     // never arrival/map order.
     for message in ordered_by_refs(refs, responses) {
         let content = message.content();
+        let images = message.image_count();
         match message.role() {
             // Sub-agent notes are user-role turns on the wire but operator
-            // status in the UI; the live event path already renders them (#1338).
+            // status in the UI; the live event path already renders them
+            // (#1338). An images-only message shows its markers (#2425).
             "user"
-                if !content.is_empty()
+                if (!content.is_empty() || images > 0)
                     && !crate::protocol::presentation_payloads::is_subagent_note(content) =>
             {
                 entries.push(LedgerEntry::User {
-                    text: content.to_string(),
+                    text: with_image_markers(content, images),
                 });
             }
             "assistant" => {
