@@ -23,7 +23,7 @@ fn call(id: &str) -> Message {
 }
 
 fn build(messages: &[Message]) -> Vec<serde_json::Value> {
-    AnthropicProvider::build_messages(messages, "claude-opus-4-5", false).1
+    AnthropicProvider::build_messages(messages, false).1
 }
 
 #[test]

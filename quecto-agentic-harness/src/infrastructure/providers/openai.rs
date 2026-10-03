@@ -6,9 +6,10 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+use super::openai_images;
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::error::DomainError;
-use crate::domain::message::{LlmResponse, Role, ToolCall};
+use crate::domain::message::{LlmResponse, Message, Role, ToolCall};
 use crate::domain::provider::StreamEvent;
 use crate::domain::visible_thinking::append_visible_thinking;
 
@@ -152,7 +153,7 @@ impl OpenAiProvider {
             );
         }
         let is_paired = |id: &str| paired.contains(id);
-        let msgs: Vec<serde_json::Value> = messages
+        let sent: Vec<(&Message, serde_json::Value)> = messages
             .iter()
             .filter(|m| match (&m.role, m.tool_call_id.as_deref()) {
                 (Role::Tool, Some(id)) => is_paired(id),
@@ -185,6 +186,10 @@ impl OpenAiProvider {
                     "role": role,
                     "content": content,
                 });
+                // #2421: a user message's images are content parts.
+                if let (Role::User, Some(parts)) = (&m.role, openai_images::user_content(m)) {
+                    obj["content"] = parts;
+                }
                 if m.tool_calls.iter().any(|tc| is_paired(&tc.id)) {
                     let tcs: Vec<serde_json::Value> = m
                         .tool_calls
@@ -206,12 +211,11 @@ impl OpenAiProvider {
                 if let Some(ref id) = m.tool_call_id {
                     obj["tool_call_id"] = serde_json::Value::String(id.clone());
                 }
-                // image_blocks: OpenAI tool results only support string content;
-                // image blocks from `read` on image files are not forwarded here.
-                // Use Anthropic provider for image-aware tool results.
-                obj
+                (m, obj)
             })
             .collect();
+        // #2421: a tool message carries text only; a batch's images follow it.
+        let msgs = openai_images::with_tool_images(sent);
 
         let mut body = serde_json::json!({
             "model": model,
@@ -485,6 +489,9 @@ impl OpenAiProvider {
 }
 
 impl LlmProvider for OpenAiProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         &self.provider_name
     }
@@ -679,6 +686,9 @@ mod consecutive_user_tests;
 #[cfg(test)]
 #[path = "openai_effort_1996_tests.rs"]
 mod effort_1996_tests;
+#[cfg(test)]
+#[path = "openai_2421_tests.rs"]
+mod images_2421_tests;
 #[cfg(test)]
 #[path = "openai_tests.rs"]
 mod tests;

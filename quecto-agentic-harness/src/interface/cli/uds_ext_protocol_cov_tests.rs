@@ -6,6 +6,9 @@ use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 struct CovProvider;
 
 impl LlmProvider for CovProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "cov"
     }

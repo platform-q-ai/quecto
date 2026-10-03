@@ -26,7 +26,11 @@ use crate::application::catalogue::ports::{
 use crate::application::catalogue::use_cases::ChangeReasoningEffort;
 use crate::application::catalogue::{CatalogueSnapshotStore, ResolveCatalogueUseCase};
 use crate::application::provider_runtime::{SelectionError, select_in_runtime};
-use crate::domain::catalogue::{CatalogueSnapshot, ModelRef};
+use crate::domain::catalogue::{CatalogueEntry, CatalogueSnapshot, ModelRef};
+use crate::domain::conversation::image_input::ImageInput;
+use crate::domain::provider::{
+    ModelRoute, parse_qualified_model, provider_prefix_matches, route_model,
+};
 
 pub struct ChangeActiveModel {
     inputs: Arc<dyn CatalogueInputsLoader>,
@@ -64,10 +68,11 @@ impl ChangeActiveModel {
             &self.store,
         );
         let reference = ModelRef::parse_qualified(model).ok();
-        let limits = reference
-            .as_ref()
-            .map(|reference| Self::limits_in(&resolved.snapshot, reference))
-            .unwrap_or_default();
+        let route_order = self
+            .runtime
+            .current_runtime()
+            .map(|runtime| runtime.provider.route_order());
+        let limits = Self::limits_in(&resolved.snapshot, model, route_order.as_deref());
         let verdict = match reference {
             Some(reference) => self.verdict(&reference),
             None => ModelSelectionVerdict::Unknown {
@@ -208,10 +213,47 @@ impl ChangeActiveModel {
         }
     }
 
+    /// The entry of the model a request for `model` reaches (#2421 round 2
+    /// L1): the routing rule the router sends by picks the provider among
+    /// the published runtime's `route_order` (a bare id goes to the first,
+    /// whether or not it lists it), and that provider's entry for the id is
+    /// read. Before a runtime is published, a `provider/model` id reads the
+    /// provider its prefix names and a bare id reads none: no router yet
+    /// says where it goes (round 3 L2, fail closed). None when the provider
+    /// does not list the model.
+    fn entry_for<'s>(
+        snapshot: &'s CatalogueSnapshot,
+        model: &str,
+        route_order: Option<&[String]>,
+    ) -> Option<&'s CatalogueEntry> {
+        let entries = snapshot.entries();
+        let listed = |provider: &str, id: &str| {
+            entries.iter().find(|entry| {
+                entry.model.reference.model().as_str() == id
+                    && provider_prefix_matches(provider, entry.provider.id.as_str())
+            })
+        };
+        match route_order {
+            Some(order) => {
+                let names: Vec<&str> = order.iter().map(String::as_str).collect();
+                match route_model(model, &names) {
+                    ModelRoute::To { provider, model } => listed(provider, model),
+                    ModelRoute::UnknownProvider { .. } | ModelRoute::NoProviders => None,
+                }
+            }
+            None => parse_qualified_model(model).and_then(|(prefix, id)| listed(prefix, id)),
+        }
+    }
+
     /// Only explicitly declared values clamp: a synthesized default is not a
-    /// real limit.
-    fn limits_in(snapshot: &CatalogueSnapshot, reference: &ModelRef) -> ModelLimits {
-        let Some(entry) = snapshot.find(reference) else {
+    /// real limit. A model the catalogue does not hold has none, and takes
+    /// no image.
+    fn limits_in(
+        snapshot: &CatalogueSnapshot,
+        model: &str,
+        route_order: Option<&[String]>,
+    ) -> ModelLimits {
+        let Some(entry) = Self::entry_for(snapshot, model, route_order) else {
             return ModelLimits::default();
         };
         let capabilities = &entry.model.capabilities;
@@ -223,6 +265,10 @@ impl ChangeActiveModel {
                 .context_window_explicit
                 .then_some(capabilities.context_window as usize),
             prompt_limit: capabilities.prompt_limit,
+            image_input: ImageInput::declared(
+                &capabilities.input_modalities,
+                &entry.provider.transport,
+            ),
         }
     }
 }

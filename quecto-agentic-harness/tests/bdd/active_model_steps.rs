@@ -119,12 +119,16 @@ impl RuntimeSnapshotSource for AmRuntime {
     }
 }
 
+/// A router over the inputs' providers, in order.
 #[derive(Debug)]
-struct AmProvider;
+struct AmProvider(Vec<String>);
 
 impl quecto::application::providers::ports::LlmProvider for AmProvider {
     fn name(&self) -> &str {
         "router"
+    }
+    fn route_order(&self) -> Vec<String> {
+        self.0.clone()
     }
     fn chat<'a>(
         &'a self,
@@ -218,6 +222,14 @@ fn given_input_without_limits(world: &mut QuectoWorld, qualified: String) {
     world.active_model.entries.push(am_entry(&qualified, None));
 }
 
+/// #2421: an OpenAI-wire model whose entry declares image input.
+#[given(expr = "a catalogue input defining model {string} that takes image input")]
+fn given_input_taking_images(world: &mut QuectoWorld, qualified: String) {
+    let mut entry = am_entry(&qualified, None);
+    entry.model.capabilities.input_modalities = vec!["text".into(), "image".into()];
+    world.active_model.entries.push(entry);
+}
+
 #[when(
     expr = "the catalogue input additionally defines model {string} with max tokens {int} and context window {int}"
 )]
@@ -238,6 +250,13 @@ fn given_no_credential_for(world: &mut QuectoWorld, qualified: String) {
 fn given_runtime_over_inputs(world: &mut QuectoWorld) {
     let entries = world.active_model.entries.clone();
     let denied = world.active_model.denied.clone();
+    let mut order: Vec<String> = Vec::new();
+    for entry in &entries {
+        let provider = entry.provider.id.as_str().to_string();
+        if !order.contains(&provider) {
+            order.push(provider);
+        }
+    }
     let resolved = quecto::application::catalogue::ResolveCatalogueUseCase.resolve_and_publish(
         &[&AmSource(entries)],
         &AmCredentials(denied),
@@ -245,7 +264,7 @@ fn given_runtime_over_inputs(world: &mut QuectoWorld) {
     );
     world.active_model.runtime = Some(Arc::new(CatalogueRuntimeSnapshot {
         catalogue: resolved.snapshot,
-        provider: Arc::new(AmProvider),
+        provider: Arc::new(AmProvider(order)),
         admission_binding_diagnostic: Default::default(),
     }));
 }
@@ -255,25 +274,30 @@ fn given_loop_effort(world: &mut QuectoWorld, level: String) {
     world.active_model.loop_effort = EffortLevel::parse(&level);
 }
 
-#[when(expr = "the active model is changed to {string}")]
-fn when_active_model_changed(world: &mut QuectoWorld, model: String) {
-    let store = am_store(&mut world.active_model);
+/// The change-active-model use case over the world's catalogue inputs.
+pub(super) fn change_active_model_use_case(state: &mut ActiveModelState) -> ChangeActiveModel {
+    let store = am_store(state);
     let inputs = Arc::new(AmLoader(Arc::new(Mutex::new((
-        world.active_model.entries.clone(),
-        world.active_model.denied.clone(),
+        state.entries.clone(),
+        state.denied.clone(),
     )))));
     let defaults = Arc::new(quecto::application::catalogue::ports::RecordedDefaults::default());
     let effort = Arc::new(ChangeReasoningEffort::new(
         Arc::new(AmStoreVocabulary(store.clone())),
         defaults.clone(),
     ));
-    let use_case = ChangeActiveModel::new(
+    ChangeActiveModel::new(
         inputs,
         store,
-        Arc::new(AmRuntime(world.active_model.runtime.clone())),
+        Arc::new(AmRuntime(state.runtime.clone())),
         effort,
         defaults,
-    );
+    )
+}
+
+#[when(expr = "the active model is changed to {string}")]
+fn when_active_model_changed(world: &mut QuectoWorld, model: String) {
+    let use_case = change_active_model_use_case(&mut world.active_model);
     // AmLoop routes every model, so these catalogue switches always apply.
     let switched = use_case
         .execute(&mut AmLoop(&mut world.active_model), &model)
@@ -290,6 +314,7 @@ fn then_loop_runs_with_limits(world: &mut QuectoWorld, model: String, max: u32, 
             max_output_tokens: Some(max),
             context_window: Some(window),
             prompt_limit: Default::default(),
+            image_input: Default::default(),
         }
     );
 }

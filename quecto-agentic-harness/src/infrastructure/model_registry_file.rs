@@ -27,6 +27,9 @@ pub(super) struct RegistryOverride {
     /// Credential reference (`$ENV`); literals are rejected downstream.
     #[serde(default)]
     pub(super) api_key: Option<String>,
+    /// Input modalities, e.g. `["text"]` to send a model no image (#2421).
+    #[serde(default)]
+    pub(super) input: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]

@@ -16,6 +16,9 @@ fn advisory_is_read_from_published_runtime_and_deduplicated() {
     #[derive(Debug)]
     struct Stub;
     impl LlmProvider for Stub {
+        fn route_order(&self) -> Vec<String> {
+            vec![self.name().to_string()]
+        }
         fn name(&self) -> &str {
             "stub"
         }

@@ -22,6 +22,9 @@ use super::switch_runtime_fixture::runtime;
 struct Swapped;
 
 impl LlmProvider for Swapped {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "swapped"
     }

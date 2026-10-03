@@ -79,6 +79,15 @@ pub trait LlmProvider: Send + Sync + std::fmt::Debug {
         RouteCheck::Routable
     }
 
+    /// The providers a request can reach, by name, in routing order
+    /// (#2421 round 2 L1): what the shared routing rule
+    /// (`domain::provider::route_model`) picks among. A single provider is
+    /// the only one; a router lists the providers it holds, and every
+    /// decorator around one forwards it. No default (round 3 L1): a wrapper
+    /// that did not forward it would silently cost qualified ids their
+    /// catalogue entry.
+    fn route_order(&self) -> Vec<String>;
+
     /// Downcast support for introspection (e.g. recovering a concrete
     /// `ProviderRouter` for diagnostics and tests). Implementors that need to be
     /// downcast override this to return `self`; the default returns a reference

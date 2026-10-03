@@ -22,6 +22,9 @@ type Reply = Result<LlmResponse, DomainError>;
 struct Scripted(Mutex<Vec<Reply>>);
 
 impl LlmProvider for Scripted {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "scripted"
     }

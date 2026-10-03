@@ -37,6 +37,9 @@ fn create_openai_compatible_provider_accepts_loopback_http_and_names_provider() 
 struct DowncastInnerProvider;
 
 impl LlmProvider for DowncastInnerProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "inner"
     }

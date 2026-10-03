@@ -88,6 +88,9 @@ impl MockLlmProvider {
 }
 
 impl LlmProvider for MockLlmProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "mock"
     }
@@ -334,6 +337,8 @@ pub struct QuectoWorld {
     /// #1572 catalogue application slice state (sources, store, resolution).
     pub catalogue_application: catalogue_application_steps::CatalogueApplicationState,
     pub active_model: active_model_steps::ActiveModelState,
+    /// #2421 an agent whose model's catalogue entry decides its images.
+    pub image_input: image_input_steps::ImageInputState,
     /// #1573 catalogue runtime slice state (factory, stores, composition, selection).
     pub catalogue_runtime: catalogue_runtime_steps::CatalogueRuntimeState,
     /// #1576 convergence slice state (builtin-only base dir, UDS listing).
@@ -1456,6 +1461,7 @@ mod fleet_entry_point_steps;
 mod fleet_teardown_steps;
 mod grep_steps;
 mod harness_efficiency_steps;
+mod image_input_steps;
 mod ls_steps;
 mod model_discovery_steps;
 mod model_turn_progress_steps;

@@ -99,6 +99,9 @@ impl CatalogueInputsLoader for Loader {
 struct SilentProvider;
 
 impl crate::application::providers::ports::LlmProvider for SilentProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "router"
     }
@@ -124,7 +127,15 @@ impl crate::application::providers::ports::LlmProvider for SilentProvider {
 struct FakeRuntime(Option<Arc<crate::application::provider_runtime::CatalogueRuntimeSnapshot>>);
 
 impl FakeRuntime {
+    /// A runtime whose router holds the entries' providers, in order.
     fn over(entries: Vec<CatalogueEntry>, generation: u64) -> Arc<Self> {
+        let mut order: Vec<String> = Vec::new();
+        for entry in &entries {
+            let provider = entry.provider.id.as_str().to_string();
+            if !order.contains(&provider) {
+                order.push(provider);
+            }
+        }
         let catalogue = crate::domain::catalogue::resolve_catalogue(
             generation,
             vec![(SourceLayer::BuiltIn, entries)],
@@ -133,7 +144,7 @@ impl FakeRuntime {
         Arc::new(Self(Some(Arc::new(
             crate::application::provider_runtime::CatalogueRuntimeSnapshot {
                 catalogue: Arc::new(catalogue),
-                provider: Arc::new(SilentProvider),
+                provider: Arc::new(OrderedRouter(order)),
                 admission_binding_diagnostic: Default::default(),
             },
         ))))
@@ -272,6 +283,7 @@ fn plan_reads_explicit_limits_from_the_generation_it_just_published() {
             max_output_tokens: Some(50),
             context_window: Some(1234),
             prompt_limit: Default::default(),
+            image_input: Default::default(),
         }
     );
     assert_eq!(rig.store.current().generation(), 1, "the plan published");
@@ -293,6 +305,7 @@ fn each_limit_clamps_only_when_declared_explicitly() {
             max_output_tokens: Some(50),
             context_window: None,
             prompt_limit: Default::default(),
+            image_input: Default::default(),
         }
     );
     assert_eq!(
@@ -301,6 +314,7 @@ fn each_limit_clamps_only_when_declared_explicitly() {
             max_output_tokens: None,
             context_window: Some(1234),
             prompt_limit: Default::default(),
+            image_input: Default::default(),
         }
     );
 }
@@ -311,6 +325,36 @@ fn synthesized_defaults_never_clamp() {
     let plan = rig.use_case.plan("acme/plain");
     assert_eq!(plan.limits, ModelLimits::default());
     assert_eq!(plan.verdict, ModelSelectionVerdict::NoRuntime);
+}
+
+/// A router over providers named in `order`, which is where it sends a
+/// request (#2421 round 2 L1).
+#[derive(Debug)]
+struct OrderedRouter(Vec<String>);
+
+impl crate::application::providers::ports::LlmProvider for OrderedRouter {
+    fn name(&self) -> &str {
+        "router"
+    }
+    fn route_order(&self) -> Vec<String> {
+        self.0.clone()
+    }
+    fn chat<'a>(
+        &'a self,
+        request: crate::application::providers::ports::ChatRequest<'a>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<
+                        crate::domain::message::LlmResponse,
+                        crate::domain::error::DomainError,
+                    >,
+                > + Send
+                + 'a,
+        >,
+    > {
+        SilentProvider.chat(request)
+    }
 }
 
 #[test]
@@ -328,6 +372,7 @@ fn a_model_added_since_the_last_read_is_switchable_without_a_refresh() {
             max_output_tokens: Some(10),
             context_window: Some(20),
             prompt_limit: Default::default(),
+            image_input: Default::default(),
         }
     );
     assert_eq!(*rig.loader.loads.lock().unwrap(), 2);
@@ -641,3 +686,6 @@ fn a_bare_or_routable_model_still_switches() {
         assert_eq!(runtime.model, model);
     }
 }
+
+#[path = "change_active_model_2421_tests.rs"]
+mod image_input_tests;

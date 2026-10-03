@@ -3,6 +3,7 @@
 //! (#935/#1044, #1847), through the composition helpers rigs share.
 
 use crate::composition::catalogue::{published_model_limits_for, resolve_catalogue_for};
+use crate::domain::conversation::image_input::ImageInput;
 use crate::infrastructure::catalogue_inputs::CatalogueInputs;
 use crate::infrastructure::catalogue_registry::snapshot_store_for;
 
@@ -412,5 +413,116 @@ fn override_patches_an_unsupported_transport_entry() {
             .any(|(_, s)| s.record == "wsprov/m2"),
         "the override must apply, not be rejected: {:?}",
         resolved.skipped
+    );
+}
+
+/// #2421: what the change-active-model use case reads a model takes of a
+/// conversation's images, over the real inputs in `dir`.
+fn image_input(dir: &std::path::Path, model: &str) -> ImageInput {
+    published_model_limits_for(dir, model).image_input
+}
+
+/// #2421: the built-in vision models take images: every image over the
+/// Anthropic wire, still images over the OpenAI one; Codex Spark none.
+#[test]
+fn builtin_vision_models_take_images() {
+    let tmp = tempfile::tempdir().unwrap();
+    assert_eq!(
+        image_input(tmp.path(), "anthropic-api/claude-opus-5"),
+        ImageInput::AllImages
+    );
+    assert_eq!(
+        image_input(tmp.path(), "openai-oauth/gpt-6.1-sol"),
+        ImageInput::StillImages
+    );
+    assert_eq!(
+        image_input(tmp.path(), "openai-oauth/gpt-5.3-codex-spark"),
+        ImageInput::NoImages
+    );
+}
+
+/// #2421 review M1: an override's `input` turns images off, or on, for a
+/// built-in model without redeclaring its provider.
+#[test]
+fn an_override_patches_a_builtin_models_input() {
+    let tmp = tempfile::tempdir().unwrap();
+    slice5_write(
+        &tmp,
+        r#"{"overrides":{
+            "openai-oauth/gpt-6.1-sol":{"input":["text"]},
+            "openai-oauth/gpt-5.3-codex-spark":{"input":["text","image"]}
+        }}"#,
+    );
+    assert_eq!(
+        image_input(tmp.path(), "openai-oauth/gpt-6.1-sol"),
+        ImageInput::NoImages
+    );
+    assert_eq!(
+        image_input(tmp.path(), "openai-oauth/gpt-5.3-codex-spark"),
+        ImageInput::StillImages
+    );
+    assert_eq!(
+        image_input(tmp.path(), "openai-api/gpt-6.1-sol"),
+        ImageInput::StillImages,
+        "only the overridden id changes"
+    );
+}
+
+/// #2421 review L1: a discovered listing says nothing of a model's input,
+/// so a built-in model it lists keeps the built-in input.
+#[test]
+fn a_discovered_builtin_model_keeps_its_builtin_input() {
+    let tmp = tempfile::tempdir().unwrap();
+    crate::infrastructure::catalogue_discovery::DiscoverySourceCache::new(
+        &crate::infrastructure::catalogue_discovery::discovery_cache_dir(tmp.path()),
+        "openai-api",
+    )
+    .store_models_response(r#"{"data":[{"id":"gpt-6.1-sol"},{"id":"gpt-new"}]}"#)
+    .unwrap();
+    assert_eq!(
+        image_input(tmp.path(), "openai-api/gpt-6.1-sol"),
+        ImageInput::StillImages
+    );
+    assert_eq!(
+        image_input(tmp.path(), "openai-api/gpt-new"),
+        ImageInput::NoImages,
+        "a model the built-in table does not know declares text only"
+    );
+}
+
+/// #2421 review L1: a models.json block listing a built-in model without
+/// `input` keeps the built-in input; an explicit `input` wins.
+#[test]
+fn a_user_listed_builtin_model_without_input_keeps_its_builtin_input() {
+    let tmp = tempfile::tempdir().unwrap();
+    slice5_write(
+        &tmp,
+        r#"{"providers":{"anthropic-api":{"api":"anthropic-messages","apiKey":"$ANTHROPIC_API_KEY",
+            "models":[{"id":"claude-opus-5"},{"id":"claude-opus-4-8","input":["text"]}]}}}"#,
+    );
+    assert_eq!(
+        image_input(tmp.path(), "anthropic-api/claude-opus-5"),
+        ImageInput::AllImages
+    );
+    assert_eq!(
+        image_input(tmp.path(), "anthropic-api/claude-opus-4-8"),
+        ImageInput::NoImages
+    );
+}
+
+/// #2421 review L2: the provider is matched whatever its case. Here no
+/// runtime is published, so no router says where a bare id goes: a bare id
+/// reads no entry and takes no image (round 3 L2, fail closed).
+#[test]
+fn a_model_in_another_case_reads_its_builtin_input_and_a_bare_one_none() {
+    let tmp = tempfile::tempdir().unwrap();
+    assert_eq!(
+        image_input(tmp.path(), "OpenAI-OAuth/gpt-6.1-sol"),
+        ImageInput::StillImages
+    );
+    assert_eq!(image_input(tmp.path(), "gpt-6.1-sol"), ImageInput::NoImages);
+    assert_eq!(
+        image_input(tmp.path(), "claude-opus-5"),
+        ImageInput::NoImages
     );
 }

@@ -151,6 +151,10 @@ impl LlmProvider for RetryingProvider {
         self.inner.route_check(model)
     }
 
+    fn route_order(&self) -> Vec<String> {
+        self.inner.route_order()
+    }
+
     fn name(&self) -> &str {
         self.inner.name()
     }

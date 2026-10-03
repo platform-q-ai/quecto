@@ -1,4 +1,6 @@
-//! #935: per-model output-cap clamp for the agent loop.
+//! #935: per-model output-cap clamp for the agent loop, and what else the
+//! active model declares: how its prompt is bounded (#2405) and whether it
+//! takes images (#2421).
 //!
 //! The configured `max_tokens` is a global default; a model whose real output
 //! limit is lower (e.g. Fireworks qwen3p7-plus = 65536) must never receive a
@@ -11,6 +13,7 @@ use super::AgentLoopImpl;
 use crate::application::catalogue::dto::ModelLimits;
 use crate::application::catalogue::ports::ModelRuntime;
 use crate::domain::catalogue::ModelWindow;
+use crate::domain::conversation::image_input::{GifVerdicts, ImageInput, SentConversation};
 
 /// Tokens kept free of the context window when a retry raises the output limit.
 const OUTPUT_ROOM_MARGIN: usize = 1024;
@@ -45,8 +48,24 @@ impl AgentLoopImpl {
     fn set_model_limits(&mut self, limits: ModelLimits) {
         self.model_max_tokens = limits.max_output_tokens;
         self.model_context_window = limits.context_window;
-        self.model_prompt_limit = limits.prompt_limit;
+        self.model_traits.prompt_limit = limits.prompt_limit;
+        self.model_traits.image_input = limits.image_input;
         self.sync_context_limits();
+    }
+
+    /// The conversation as the active model is sent it (#2421), while the
+    /// result lives: each image the model does not take is a marker in its
+    /// message. Dropping it gives the conversation every image back.
+    pub(super) fn conversation_for_model<'m>(
+        &self,
+        messages: &'m mut [crate::domain::message::Message],
+    ) -> SentConversation<'m> {
+        SentConversation::new(
+            messages,
+            &self.model,
+            self.model_traits.image_input,
+            &self.model_traits.gif_verdicts,
+        )
     }
 
     /// Builder variant: the startup model's limits (#2405), which the
@@ -73,7 +92,7 @@ impl AgentLoopImpl {
         let tokens = |value: u32| usize::try_from(value).unwrap_or(usize::MAX);
         let window = ModelWindow::new(
             self.model_context_window,
-            self.model_prompt_limit,
+            self.model_traits.prompt_limit,
             self.model_max_tokens.map(tokens),
             tokens(self.effective_max_tokens()),
         );
@@ -216,6 +235,17 @@ impl AgentLoopImpl {
     pub fn context_ceiling_cap(&self) -> crate::application::context::ContextCeilingCap {
         self.context_manager.ceiling_cap()
     }
+}
+
+/// What the active model declares beside its token limits: how its
+/// provider bounds the prompt (#2405) and whether it takes images, with
+/// the animated-GIF verdicts kept across requests (#2421).
+#[derive(Debug, Default)]
+pub(super) struct ModelTraits {
+    pub(super) prompt_limit: crate::domain::catalogue::PromptLimit,
+    pub(super) image_input: ImageInput,
+    /// Which GIFs already seen are animated, kept across model switches.
+    pub(super) gif_verdicts: GifVerdicts,
 }
 
 /// Why the active model's window is worth a line in the log (#2405).

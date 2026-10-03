@@ -22,6 +22,7 @@ fn model_and_limits_switch_together_and_reclamp() {
             max_output_tokens: Some(8),
             context_window: Some(2_048),
             prompt_limit: Default::default(),
+            image_input: Default::default(),
         },
     );
     assert_eq!(ModelRuntime::model(&rt.agent), "acme/limited");

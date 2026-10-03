@@ -24,6 +24,9 @@ use quecto::interface::shared::WorkflowStateHandle;
 struct SilentProvider;
 
 impl LlmProvider for SilentProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "silent"
     }

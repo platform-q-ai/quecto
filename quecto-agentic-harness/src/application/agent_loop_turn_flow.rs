@@ -1,4 +1,5 @@
 use super::*;
+use crate::application::providers::ports::ChatRequest;
 
 /// Retries for a reply cut off at the output limit with nothing visible.
 pub(super) const MAX_CUT_OFF_RETRIES: u32 = 1;
@@ -258,9 +259,38 @@ impl AgentLoopImpl {
         )))
     }
 
+    pub(super) fn build_chat_request<'a>(
+        &'a self,
+        messages: &'a [Message],
+        tool_defs: &'a [crate::domain::tool::ToolDefinition],
+    ) -> ChatRequest<'a> {
+        // Pass session_key as session_id so providers that support prompt
+        // caching (e.g. Codex prompt_cache_key) can use it.
+        let session_id = if self.session_key.is_empty() {
+            None
+        } else {
+            Some(self.session_key.as_str())
+        };
+        ChatRequest {
+            trace: None,
+            admission: self.request_admission.clone(),
+            messages,
+            tools: tool_defs,
+            model: &self.model,
+            max_tokens: self.effective_max_tokens(),
+            temperature: self.temperature,
+            session_id,
+            tool_choice: None,
+            metadata: None,
+            thinking_level: None,
+            cancel_flag: None,
+            effort: self.effort,
+        }
+    }
+
     pub(super) fn prepare_provider_request_transition<'a>(
         &'a self,
-        messages: &'a Vec<Message>,
+        messages: &'a [Message],
         tool_defs: &'a [crate::domain::tool::ToolDefinition],
         estimated_context_tokens: usize,
     ) -> ChatRequest<'a> {

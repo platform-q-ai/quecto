@@ -25,6 +25,9 @@ impl MockRetryProvider {
 }
 
 impl LlmProvider for MockRetryProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "mock"
     }
@@ -57,6 +60,9 @@ impl LlmProvider for MockRetryProvider {
 struct MockServerErrorProvider;
 
 impl LlmProvider for MockServerErrorProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "mock-500"
     }
@@ -78,6 +84,9 @@ impl LlmProvider for MockServerErrorProvider {
 struct MockSuccessProvider;
 
 impl LlmProvider for MockSuccessProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "mock-ok"
     }
@@ -302,6 +311,9 @@ struct MockPtrCaptureProvider {
 }
 
 impl LlmProvider for MockPtrCaptureProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "mock-ptr"
     }
@@ -628,6 +640,9 @@ fn wave3_refreshable_debug_names_decorator() {
 struct MockStreamingProvider;
 
 impl LlmProvider for MockStreamingProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "mock-stream"
     }

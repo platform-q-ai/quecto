@@ -594,6 +594,9 @@ impl CodexProvider {
 }
 
 impl LlmProvider for CodexProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "codex"
     }
@@ -697,3 +700,7 @@ mod stream_end_tests;
 #[cfg(test)]
 #[path = "codex_2398_tests.rs"]
 mod issue_2398_tests;
+
+#[cfg(test)]
+#[path = "codex_2421_tests.rs"]
+mod issue_2421_tests;

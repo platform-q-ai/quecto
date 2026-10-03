@@ -135,7 +135,6 @@ impl ModelRegistry {
             record.auth = auth;
             record.oauth_provider = oauth_provider.map(str::to_string);
             if id == "claude-sonnet-5" {
-                record.input = vec!["text".to_string(), "image".to_string()];
                 record.context_window = 1_000_000;
                 record.context_window_explicit = true;
                 record.max_tokens = 128_000;
@@ -153,9 +152,6 @@ impl ModelRegistry {
                 // developers.openai.com/api/docs/models/gpt-6-astra, and
                 // developers.openai.com/api/docs/models/gpt-6.1-sol; Codex's
                 // window in `gpt_5_6_window`.
-                if id == "gpt-6.1-sol" {
-                    record.input = vec!["text".to_string(), "image".to_string()];
-                }
                 record.context_window = gpt_5_6_window(provider);
                 record.context_window_explicit = true;
                 record.max_tokens = 128_000;
@@ -175,7 +171,6 @@ impl ModelRegistry {
                 // xAI published specs: 500K context, image input, configurable
                 // reasoning, $2/M input and $6/M output
                 // (docs.x.ai/developers/grok-4-7).
-                record.input = vec!["text".to_string(), "image".to_string()];
                 record.context_window = 500_000;
                 record.context_window_explicit = true;
                 record.reasoning = true;
@@ -188,7 +183,6 @@ impl ModelRegistry {
             } else if id == "grok-4.6" {
                 // xAI published specs: 500K context, $2/M in, $6/M out,
                 // $0.50/M cached input (docs.x.ai/developers/models/grok-4.6).
-                record.input = vec!["text".to_string(), "image".to_string()];
                 record.context_window = 500_000;
                 record.context_window_explicit = true;
                 record.reasoning = true;
@@ -201,7 +195,6 @@ impl ModelRegistry {
             } else if id == "grok-4.5" {
                 // xAI published specs: 500K context, $2/M in, $6/M out
                 // (docs.x.ai/developers/grok-4-5).
-                record.input = vec!["text".to_string(), "image".to_string()];
                 record.context_window = 500_000;
                 record.context_window_explicit = true;
                 record.reasoning = true;
@@ -489,6 +482,7 @@ impl ModelRegistry {
                         context_window: patch.context_window,
                         max_tokens: patch.max_tokens,
                         api_key: patch.api_key,
+                        input: patch.input,
                     },
                 )
             })
@@ -563,7 +557,9 @@ impl ModelRecord {
             api_key: None,
             auth_header: true,
             allow_remote_http: false,
-            input: vec!["text".to_string()],
+            // #2421: what the built-in table declares for the model, so a
+            // record that says nothing keeps it (review L1).
+            input: builtin_input(provider, id),
             context_window: DEFAULT_CONTEXT_WINDOW,
             max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
             max_tokens_explicit: false,
@@ -658,6 +654,8 @@ pub struct ModelOverride {
     pub context_window: Option<u32>,
     pub max_tokens: Option<u32>,
     pub api_key: Option<String>,
+    /// The input modalities (#2421 review M1): `["text"]` turns images off.
+    pub input: Option<Vec<String>>,
 }
 
 /// A provider block whose declared transport this build cannot run, kept so
@@ -719,8 +717,12 @@ use file_format::RegistryFile;
 
 #[path = "model_registry_openai_tables.rs"]
 mod openai_tables;
+pub(crate) use openai_tables::builtin_input;
 use openai_tables::{gpt_5_6_cost, gpt_5_6_window, openai_published_limits};
 
+#[cfg(test)]
+#[path = "model_registry_image_input_tests.rs"]
+mod image_input_tests;
 #[cfg(test)]
 #[path = "model_registry_openai_limits_tests.rs"]
 mod openai_limits_tests;

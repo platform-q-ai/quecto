@@ -31,6 +31,9 @@ struct TextProvider {
     reply: String,
 }
 impl LlmProvider for TextProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "text"
     }
@@ -106,6 +109,9 @@ struct FailingProvider {
     body: String,
 }
 impl LlmProvider for FailingProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "failprov"
     }

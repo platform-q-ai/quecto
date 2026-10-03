@@ -239,8 +239,7 @@ impl AnthropicProvider {
         request: &ChatRequest<'_>,
         is_oauth: bool,
     ) -> (Option<String>, serde_json::Value) {
-        let (system_prompt, mut api_messages) =
-            Self::build_messages(request.messages, request.model, is_oauth);
+        let (system_prompt, mut api_messages) = Self::build_messages(request.messages, is_oauth);
         let mut body = serde_json::json!({
             "model": request.model,
             "messages": [],
@@ -318,12 +317,13 @@ impl AnthropicProvider {
         normalize::normalize_messages(messages)
     }
 
+    /// The conversation as the Messages API takes it. Which images a model
+    /// is sent is the application's decision (#2421): every image here is
+    /// sent.
     fn build_messages(
         messages: &[Message],
-        model: &str,
         is_oauth: bool,
     ) -> (Option<String>, Vec<serde_json::Value>) {
-        let supports_vision = anthropic_user_msg::model_supports_vision(model);
         let normalized = Self::normalize_messages(messages);
         let mut system_prompt: Option<String> = None;
         let mut api_messages: Vec<serde_json::Value> = Vec::new();
@@ -353,9 +353,7 @@ impl AnthropicProvider {
                     i += 1;
                 }
                 Role::User => {
-                    if let Some(content) =
-                        anthropic_user_msg::build_user_content(m, supports_vision)
-                    {
+                    if let Some(content) = anthropic_user_msg::build_user_content(m) {
                         api_messages.push(serde_json::json!({"role": "user", "content": content}));
                     }
                     i += 1;
@@ -530,6 +528,9 @@ impl AnthropicProvider {
 // ---------------------------------------------------------------------------
 
 impl LlmProvider for AnthropicProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         &self.router_name
     }

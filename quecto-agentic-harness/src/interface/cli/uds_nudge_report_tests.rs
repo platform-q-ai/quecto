@@ -77,6 +77,9 @@ impl AnswerThenStatus {
 }
 
 impl LlmProvider for AnswerThenStatus {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "answer-then-status"
     }

@@ -269,6 +269,7 @@ fn model_getter_and_setter_roundtrip() {
             max_output_tokens: None,
             context_window: None,
             prompt_limit: Default::default(),
+            image_input: Default::default(),
         },
     );
     assert_eq!(agent.model(), "claude-haiku-4-5");

@@ -4,6 +4,9 @@ use super::*;
 struct DummyProvider;
 
 impl LlmProvider for DummyProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "dummy"
     }
@@ -22,6 +25,9 @@ impl LlmProvider for DummyProvider {
 struct OkProvider;
 
 impl LlmProvider for OkProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "ok"
     }
@@ -124,6 +130,9 @@ async fn default_incremental_stream_emits_done_for_successful_chat_stream() {
 struct DefaultProvider;
 
 impl LlmProvider for DefaultProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "default-provider"
     }

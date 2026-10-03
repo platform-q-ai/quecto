@@ -41,6 +41,9 @@ fn call(id: &str, name: &str, args: &str) -> LlmResponse {
 }
 
 impl LlmProvider for RetainedContextProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "retained-context-script"
     }

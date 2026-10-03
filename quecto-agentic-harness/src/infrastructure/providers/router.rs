@@ -12,6 +12,7 @@ use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::error::DomainError;
 use crate::domain::message::LlmResponse;
 use crate::domain::provider::StreamEvent;
+use crate::domain::provider::{ModelRoute, route_model};
 
 /// A provider that routes requests to the correct underlying provider
 /// based on `provider/model` syntax. Bare model names (no `/`) are
@@ -39,14 +40,6 @@ impl ProviderRouter {
         self.providers.iter().map(|p| p.name()).collect()
     }
 
-    /// The configured provider a `provider/` prefix names, if any: the one
-    /// rule `resolve` and `route_check` share, so they cannot drift apart.
-    fn provider_for(&self, prefix: &str) -> Option<&Arc<dyn LlmProvider>> {
-        self.providers
-            .iter()
-            .find(|p| provider_prefix_matches(prefix, p.name()))
-    }
-
     /// Resolve which provider and effective model to use for a request.
     ///
     /// - `provider/model` syntax → match by provider name, strip prefix
@@ -58,24 +51,27 @@ impl ProviderRouter {
         &'a self,
         model: &'b str,
     ) -> Result<(&'a Arc<dyn LlmProvider>, &'b str), DomainError> {
-        if let Some((prefix, bare_model)) = parse_qualified_model(model) {
-            if let Some(p) = self.provider_for(prefix) {
-                return Ok((p, bare_model));
+        let names = self.provider_names();
+        match route_model(model, &names) {
+            ModelRoute::To { provider, model } => {
+                let routed = self
+                    .providers
+                    .iter()
+                    .find(|p| p.name() == provider)
+                    .expect("the rule routes to one of the names it was given");
+                Ok((routed, model))
             }
-            let truncated = truncate_prefix(prefix, MAX_PREFIX_IN_ERROR);
-            return Err(DomainError::Provider(format!(
-                "no configured provider '{}'; configured providers: {}. Switch the model \
-                 to one of them as provider/model",
-                truncated,
-                self.provider_names().join(", ")
-            )));
+            ModelRoute::UnknownProvider { prefix } => {
+                let truncated = truncate_prefix(prefix, MAX_PREFIX_IN_ERROR);
+                Err(DomainError::Provider(format!(
+                    "no configured provider '{}'; configured providers: {}. Switch the model \
+                     to one of them as provider/model",
+                    truncated,
+                    names.join(", ")
+                )))
+            }
+            ModelRoute::NoProviders => Err(DomainError::Provider(ERR_NO_PROVIDERS.to_string())),
         }
-
-        // Bare model → first provider
-        self.providers
-            .first()
-            .map(|p| (p, model))
-            .ok_or_else(|| DomainError::Provider(ERR_NO_PROVIDERS.to_string()))
     }
 }
 
@@ -110,9 +106,8 @@ impl ProviderRouter {
 impl LlmProvider for ProviderRouter {
     fn route_check(&self, model: &str) -> crate::application::providers::ports::RouteCheck {
         use crate::application::providers::ports::RouteCheck;
-        match parse_qualified_model(model) {
-            Some((prefix, _)) if self.provider_for(prefix).is_some() => RouteCheck::Routable,
-            Some((prefix, _)) => RouteCheck::UnknownProvider {
+        match route_model(model, &self.provider_names()) {
+            ModelRoute::UnknownProvider { prefix } => RouteCheck::UnknownProvider {
                 provider: truncate_prefix(prefix, MAX_PREFIX_IN_ERROR).to_string(),
                 configured: self
                     .provider_names()
@@ -120,9 +115,17 @@ impl LlmProvider for ProviderRouter {
                     .map(str::to_string)
                     .collect(),
             },
-            // A bare id goes to the first provider.
-            None => RouteCheck::Routable,
+            // A bare id goes to the first provider; none configured is
+            // reported when a request is sent.
+            ModelRoute::To { .. } | ModelRoute::NoProviders => RouteCheck::Routable,
         }
+    }
+
+    fn route_order(&self) -> Vec<String> {
+        self.provider_names()
+            .into_iter()
+            .map(str::to_string)
+            .collect()
     }
 
     fn name(&self) -> &str {
@@ -169,38 +172,6 @@ impl LlmProvider for ProviderRouter {
             provider.chat_stream_incremental(req).await
         })
     }
-}
-
-/// Parse a UI/CLI `provider/model-id` string into provider and model id.
-///
-/// Returns `None` for bare model names (no `/`) or malformed inputs. The split
-/// happens exactly once at the first slash: the provider is a routing key, while
-/// the model id is opaque and may itself contain slashes (for example Fireworks
-/// serverless ids like `accounts/fireworks/models/glm-5p2`).
-fn parse_qualified_model(model: &str) -> Option<(&str, &str)> {
-    let (provider, model_id) = model.split_once('/')?;
-    let provider = provider.trim();
-    let model_id = model_id.trim();
-    if provider.is_empty() || model_id.is_empty() {
-        return None;
-    }
-    Some((provider, model_id))
-}
-
-/// Returns `true` when `prefix` names the same provider as `provider_name`.
-///
-/// Supports well-known aliases:
-/// - `"openai"` and `"openai-codex"` both resolve to the `"codex"` provider
-///   (ChatGPT OAuth token path).
-fn provider_prefix_matches(prefix: &str, provider_name: &str) -> bool {
-    if prefix.eq_ignore_ascii_case(provider_name) {
-        return true;
-    }
-    // OAuth/API billing modes are explicit (`openai-api`, `openai-oauth`,
-    // `anthropic-api`, `anthropic-oauth`). Do not alias bare vendor prefixes to
-    // either mode: that can silently select token-billed API when the user meant
-    // OAuth, or vice versa. Keep only the historical Codex self-alias.
-    prefix.eq_ignore_ascii_case("openai-codex") && provider_name.eq_ignore_ascii_case("codex")
 }
 
 /// Maximum length of a provider prefix included in error messages.

@@ -457,65 +457,53 @@ Feature: LLM Providers
     When I build Anthropic messages from that history
     Then the assistant [message] is present in the API payload
 
-  # --- #188: User message content block support (inline images + capability filtering) ---
+  # --- #188: User message content block support (inline images) ---
+  # Which images a model is sent is decided before the request (#2421).
 
   # Plain text user messages — backward compat (no image blocks)
   Scenario: Plain text user message is sent as a simple string
     Given a user [message] with text "hello world" and no image blocks
-    When I build Anthropic messages from that history for model "claude-opus-4-5"
+    When I build Anthropic messages from that history
     Then the user [message] content should be the string "hello world"
 
   # User message with image blocks — structured content array
   Scenario: User message with one image block is sent as a content block array
     Given a user [message] with text "look at this" and one image block of type "image/png"
-    When I build Anthropic messages from that history for model "claude-opus-4-5"
+    When I build Anthropic messages from that history
     Then the user [message] content should be a block array
     And the block array should contain a text block "look at this"
     And the block array should contain an image block of media_type "image/png"
 
   Scenario: User message with multiple image blocks emits one text block and multiple image blocks
     Given a user [message] with text "compare these" and two image blocks of type "image/jpeg"
-    When I build Anthropic messages from that history for model "claude-opus-4-5"
+    When I build Anthropic messages from that history
     Then the user [message] content should be a block array
     And the block array should contain a text block "compare these"
     And the block array should contain 2 image blocks
 
-  # Vision capability filtering
-  Scenario: Image blocks are filtered out for non-vision models
-    Given a user [message] with text "look at this" and one image block of type "image/png"
-    When I build Anthropic messages from that history for model "claude-instant-1"
-    Then the user [message] content should be the string "look at this"
-
-  Scenario: Image blocks are kept for vision-capable models
-    Given a user [message] with text "look at this" and one image block of type "image/png"
-    When I build Anthropic messages from that history for model "claude-3-opus-20240229"
-    Then the user [message] content should be a block array
-    And the block array should contain an image block of media_type "image/png"
-
-  # --- #310: Vision allow-list (fail-closed for unknown models) ---
-
-  Scenario: Unknown model is treated as non-vision (fail-closed)
-    Given a user [message] with text "look at this" and one image block of type "image/png"
-    When I build Anthropic messages from that history for model "unknown-future-model"
-    Then the user [message] content should be the string "look at this"
-
   # Empty content filtering
   Scenario: User message with only whitespace text and no images is skipped
     Given a user [message] with text "   " and no image blocks
-    When I build Anthropic messages from that history for model "claude-opus-4-5"
+    When I build Anthropic messages from that history
     Then the Anthropic payload should contain no user messages
 
   Scenario: User message with image but empty text emits only the image block
     Given a user [message] with text "" and one image block of type "image/webp"
-    When I build Anthropic messages from that history for model "claude-opus-4-5"
+    When I build Anthropic messages from that history
     Then the user [message] content should be a block array
     And the block array should contain 1 image blocks
     And the block array should contain no text blocks
 
-  Scenario: User message filtered to empty after removing images for non-vision model is skipped
-    Given a user [message] with text "" and one image block of type "image/png"
-    When I build Anthropic messages from that history for model "claude-instant-1"
-    Then the Anthropic payload should contain no user messages
+  # --- #2421: images reach a model only when its catalogue entry declares image input ---
+  Scenario: A model without image input is sent a marker, and a vision model after a switch the kept image
+    Given a catalogue input defining model "acme/text-only" with no declared limits
+    And a catalogue input defining model "acme/seeing" that takes image input
+    And an agent recording its requests runs on "acme/text-only"
+    When the agent is prompted "what is this?" with a "image/png" image
+    Then the last request sent "what is this?" with the marker for "acme/text-only" and no image
+    When the agent's active model is changed to "acme/seeing"
+    And the agent is prompted "and now?"
+    Then the last request sent "what is this?" with its "image/png" image
 
   # --- #182: Abort/cancellation support via CancelFlag ---
 

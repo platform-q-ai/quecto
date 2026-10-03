@@ -1,4 +1,5 @@
 use super::*;
+use crate::application::providers::ports::ChatRequest;
 use crate::application::tools::ports::{Tool, ToolCatalog, ToolExecutor, ToolRegistry};
 use crate::domain::message::{LlmResponse, Role, ToolCall, UsageInfo};
 use crate::domain::tool::{ToolDefinition, ToolResult};
@@ -66,6 +67,9 @@ impl MockStreamingProvider {
 }
 
 impl LlmProvider for MockStreamingProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "mock-streaming"
     }
@@ -112,10 +116,12 @@ impl LlmProvider for MockStreamingProvider {
 }
 
 impl LlmProvider for MockProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
     fn name(&self) -> &str {
         "mock"
     }
-
     fn chat(
         &self,
         request: ChatRequest<'_>,
@@ -658,6 +664,8 @@ mod clamp_max_tokens_tests;
 mod context_tokens_tests;
 #[path = "agent_loop_event_log_tests.rs"]
 mod event_log_tests;
+#[path = "agent_loop_2421_tests.rs"]
+mod image_input_tests;
 #[path = "agent_loop_2123_tests.rs"]
 mod invalid_tool_arguments_tests;
 #[path = "agent_loop_2210_tests.rs"]

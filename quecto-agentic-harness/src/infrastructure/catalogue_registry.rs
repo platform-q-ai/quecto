@@ -417,6 +417,9 @@ pub(crate) fn apply_overrides(
                 record.max_tokens = cap;
                 record.max_tokens_explicit = true;
             }
+            if let Some(input) = &patch.input {
+                record.input = input.clone();
+            }
             if let Some(key) = resolved_key {
                 record.api_key = Some(key);
             }
@@ -452,6 +455,9 @@ pub(crate) fn apply_overrides(
                     if let Some(cap) = patch.max_tokens {
                         entry.model.capabilities.max_output_tokens = cap;
                         entry.model.capabilities.max_output_tokens_explicit = true;
+                    }
+                    if let Some(input) = &patch.input {
+                        entry.model.capabilities.input_modalities = input.clone();
                     }
                     applied.unsupported_entries.push(entry);
                 }
