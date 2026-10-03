@@ -17,6 +17,14 @@ pub enum AgentEvent {
         /// Preserved so WS/API clients can resolve them via `get_message`.
         #[serde(rename = "messageRefs", default)]
         message_refs: Vec<String>,
+        /// #2434: byte length of the run's reply text, 0 when the run
+        /// recorded no reply; absent from older harnesses, and then not sent.
+        #[serde(
+            rename = "contentLength",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        content_length: Option<u64>,
     },
     Token {
         token: String,

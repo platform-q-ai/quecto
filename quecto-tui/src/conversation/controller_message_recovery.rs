@@ -51,7 +51,7 @@ impl App {
                     refs,
                     assistant_text: &assistant_text,
                     tools_this_turn,
-                    tool_batch_refs: 0,
+                    tool_batch_refs: self.ac().master_session.tool_batch_refs,
                     open_tool_calls,
                     expected_content_len,
                 }

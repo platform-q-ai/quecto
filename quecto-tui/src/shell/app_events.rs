@@ -73,7 +73,10 @@ impl App {
             Event::SubagentNotification {
                 agent_id, message, ..
             } => self.handle_subagent_notification(agent_id, message),
-            Event::SubagentMessagesAppended { .. } => {}
+            ev @ Event::SubagentMessagesAppended { .. } => {
+                let refs = crate::protocol::presentation_payloads::own_tool_batch_refs(&ev);
+                self.ac_mut().master_session.note_tool_batch(refs);
+            }
             Event::WorkflowState {
                 agent_id,
                 steps,
@@ -157,8 +160,7 @@ impl App {
         // current session. Resume from the frozen duration so a new user message
         // or wake does not restart the counter (#1726); idle time stays excluded.
         self.ac_mut().start_coordinator_clock(now);
-        self.ac_mut().master_session.tools_this_turn = 0;
-        self.ac_mut().master_session.open_tool_calls = 0;
+        self.ac_mut().master_session.reset_turn_counts();
         self.ac_mut().running_tools.clear();
         let _ = self
             .ac_mut()

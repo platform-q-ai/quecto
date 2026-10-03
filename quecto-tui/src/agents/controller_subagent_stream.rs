@@ -210,6 +210,9 @@ impl App {
             return;
         };
         let was_running = session.running;
+        session.note_tool_batch(crate::protocol::presentation_payloads::own_tool_batch_refs(
+            &ev,
+        ));
         match &ev {
             Event::AgentStart | Event::TurnStart => {
                 if !session.running {
@@ -217,8 +220,7 @@ impl App {
                     session.active_turn_start = session.chat.entry_count();
                     // New turn: reset the per-turn tool count that drives
                     // end-of-turn ref-cardinality recovery (#1060 review, F2).
-                    session.tools_this_turn = 0;
-                    session.open_tool_calls = 0;
+                    session.reset_turn_counts();
                     // Fresh in-flight buffer for this turn (#1259).
                     session.live_inflight.clear();
                 }
@@ -457,7 +459,7 @@ impl App {
             refs,
             assistant_text: &assistant_text,
             tools_this_turn: tools,
-            tool_batch_refs: 0,
+            tool_batch_refs: session.tool_batch_refs,
             open_tool_calls: session.open_tool_calls,
             expected_content_len,
         })

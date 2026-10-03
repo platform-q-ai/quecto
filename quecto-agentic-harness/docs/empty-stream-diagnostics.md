@@ -15,7 +15,7 @@ own messages are not something to answer, so they are ignored:
   loop's own feedback) must be answered. An empty reply to it is `empty_stream`,
   retried, then an `agent_error`, as above.
 - **Tool results** may be answered with nothing: the model acted and has nothing
-  to add. Text of whitespace alone counts as nothing. For example, a background tool may say "started — end your turn now".
+  to add. For example, a background tool may say "started — end your turn now".
   A completed reply with no text, no tool call and no visible thinking (encrypted
   reasoning alone counts as nothing) that stopped at `end_turn` ends the turn at
   once. There is no retry and no error, and the run ends with `agent_end`. It is
@@ -23,6 +23,11 @@ own messages are not something to answer, so they are ignored:
   providers refuse an empty assistant message when the conversation is sent
   again), so the conversation ends on the tool results, as it does at the tool
   iteration limit.
+
+Text of whitespace alone counts as nothing, in both cases. Whitespace a stream
+already sent is not output shown either: a blank reply to a user message is
+still asked again, as an empty one is. Only a failure after text that is not
+whitespace is never retried, since the user already saw part of a reply.
 
 A reply after tool results may hold visible reasoning (Anthropic thinking, a
 Codex summary, OpenAI-compatible `reasoning_content`) and no text. That is not
@@ -34,6 +39,24 @@ sent empty assistant text:
 - OpenAI chat leaves out an assistant entry with no text and no call.
 - Codex/Responses sends no empty answer and no reasoning item that leads to
   nothing.
+
+Codex/Responses no longer replays the reasoning of a final answer that has no
+text, since that reasoning leads to no item.
+
+**One-time cache miss for existing sessions.** A session saved before this
+change may hold an assistant message that is empty or whitespace alone. That
+happens with an empty final answer on the whole-reply path or a reasoning-only
+answer. On Anthropic, whitespace text beside a tool call counts too. The first request after the
+upgrade sends that history without it, so the request differs from the last one
+at that message and the provider's prompt cache misses there once. Later
+requests hit the cache again. The affected providers are:
+
+- Anthropic: the message or its text part is left out;
+- OpenAI chat and OpenAI-compatible providers: the entry is left out;
+- Codex/Responses: the empty answer item is left out, with the reasoning that
+  led to it.
+
+A session that holds no such message is not affected.
 
 A prompt after a turn that ended with no reply follows the tool results as its
 own user turn. On Anthropic that is a second consecutive user turn, which the

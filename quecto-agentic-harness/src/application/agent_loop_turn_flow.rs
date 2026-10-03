@@ -34,7 +34,9 @@ impl AgentLoopImpl {
         while let Some(event) = rx.recv().await {
             match event {
                 StreamEvent::TextDelta(t) => {
-                    emitted_event = true;
+                    // Whitespace alone is no output (#2434 review): a blank
+                    // reply is an empty stream, asked again as before.
+                    emitted_event |= t.chars().any(|c| !c.is_whitespace());
                     self.notify(|| AgentProgressEvent::Token(t));
                 }
                 StreamEvent::ThinkingDelta(t) => {

@@ -80,6 +80,21 @@ pub struct TurnEndPayload {
     pub max_context_tokens: Option<usize>,
 }
 
+/// The refs of one of a session's own tool batches (#2434 review): a
+/// `subagent_messages_appended` with no agent id is the stream's own (a call
+/// message and its results); a descendant's carries the descendant's id and
+/// counts 0, as every other event does.
+pub fn own_tool_batch_refs(event: &crate::protocol::client::Event) -> usize {
+    match event {
+        crate::protocol::client::Event::SubagentMessagesAppended {
+            agent_id,
+            message_refs,
+            ..
+        } if agent_id.is_empty() => message_refs.len(),
+        _ => 0,
+    }
+}
+
 pub fn parse_turn_end(value: &Value) -> TurnEndPayload {
     TurnEndPayload {
         message_refs: message_refs(value),

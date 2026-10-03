@@ -312,6 +312,9 @@ pub(crate) struct SessionView {
     pub(crate) tools_this_turn: usize,
     /// Child tool starts not yet ended; forces recovery on a dropped end (review 3).
     pub(crate) open_tool_calls: usize,
+    /// Refs of this run's own tool batches, as the stream reported them
+    /// (#2434 review): what end-of-turn recovery expects besides the reply.
+    pub(crate) tool_batch_refs: usize,
 }
 
 impl SessionView {
@@ -336,7 +339,21 @@ impl SessionView {
             active_turn_start: 0,
             tools_this_turn: 0,
             open_tool_calls: 0,
+            tool_batch_refs: 0,
         }
+    }
+
+    /// A new run: reset the per-run counts end-of-turn recovery reads.
+    pub(crate) fn reset_turn_counts(&mut self) {
+        self.tools_this_turn = 0;
+        self.open_tool_calls = 0;
+        self.tool_batch_refs = 0;
+    }
+
+    /// Count the refs of one of this session's own tool batches (#2434
+    /// review): its call message and their results.
+    pub(crate) fn note_tool_batch(&mut self, refs: usize) {
+        self.tool_batch_refs = self.tool_batch_refs.saturating_add(refs);
     }
 
     /// Rebuild `chat` from committed ledger entries (#1259).
