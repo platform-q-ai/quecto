@@ -300,3 +300,125 @@ async fn a_reasoning_only_reply_to_tool_results_at_the_limit_twice_fails_the_tur
     );
     assert_eq!(provider.request_count(), 3);
 }
+
+/// Streams each scripted reply as its `Done` event and keeps the roles of
+/// every conversation it was sent.
+#[derive(Debug)]
+struct Recorder {
+    replies: std::sync::Mutex<Vec<LlmResponse>>,
+    sent: std::sync::Mutex<Vec<Vec<Role>>>,
+}
+
+impl Recorder {
+    fn new(replies: Vec<LlmResponse>) -> Self {
+        Self {
+            replies: std::sync::Mutex::new(replies),
+            sent: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    fn sent(&self) -> Vec<Vec<Role>> {
+        self.sent.lock().unwrap().clone()
+    }
+}
+
+impl LlmProvider for Recorder {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
+    fn name(&self) -> &str {
+        "recorder-2434"
+    }
+    fn chat(
+        &self,
+        _request: ChatRequest<'_>,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<LlmResponse, DomainError>> + Send + '_>>
+    {
+        Box::pin(async { Err(DomainError::Provider("streamed only".into())) })
+    }
+    fn chat_stream_incremental(
+        &self,
+        request: ChatRequest<'_>,
+    ) -> Pin<
+        Box<dyn std::future::Future<Output = tokio::sync::mpsc::Receiver<StreamEvent>> + Send + '_>,
+    > {
+        let roles = request.messages.iter().map(|m| m.role.clone()).collect();
+        self.sent.lock().unwrap().push(roles);
+        let reply = self.replies.lock().unwrap().remove(0);
+        Box::pin(async move {
+            let (tx, rx) = tokio::sync::mpsc::channel(4);
+            let _ = tx.send(StreamEvent::Done(reply)).await;
+            rx
+        })
+    }
+}
+
+/// Review round 1 (L2): after a turn that ended empty, the next prompt is
+/// sent after the tool results, with no empty reply between them, and its
+/// own empty first reply is still an empty stream.
+#[tokio::test]
+async fn the_prompt_after_an_empty_end_follows_the_tool_results_and_must_be_answered() {
+    let empty = || empty_reply(Some(StopReason::EndTurn));
+    let provider = Arc::new(Recorder::new(vec![
+        background_call(),
+        empty(),
+        empty(),
+        empty(),
+        empty(),
+    ]));
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        streaming: true,
+        ..test_config(provider.clone(), Box::new(registry()))
+    });
+    let mut messages = vec![Message::user("start the job")];
+    agent
+        .process(&mut messages)
+        .await
+        .expect("the first prompt's turn ends empty");
+    messages.push(Message::user("is it done?"));
+    let error = agent
+        .process(&mut messages)
+        .await
+        .expect_err("a prompt must be answered");
+    assert_eq!(
+        classify_provider_error(&error),
+        ProviderErrorClass::EmptyStream,
+        "{error}"
+    );
+    let sent = provider.sent();
+    assert_eq!(sent.len(), 5, "two for the first prompt, three attempts");
+    let expected = vec![Role::User, Role::Assistant, Role::Tool, Role::User];
+    for attempt in &sent[2..] {
+        assert_eq!(attempt, &expected);
+    }
+}
+
+/// Review round 1: a reply of whitespace alone has nothing in it.
+#[tokio::test]
+async fn a_whitespace_reply_to_tool_results_ends_the_turn() {
+    let blank = LlmResponse {
+        content: Some(" \n\t ".into()),
+        ..empty_reply(Some(StopReason::EndTurn))
+    };
+    let (mut agent, provider) = streaming(vec![done(background_call()), done(blank)]);
+    let mut messages = vec![Message::user("start the job")];
+    let result = agent.process(&mut messages).await.expect("the turn ends");
+    assert_ended_on_the_tool_result(&messages, &result);
+    assert_eq!(provider.request_count(), 2);
+}
+
+#[tokio::test]
+async fn a_whitespace_first_reply_to_a_prompt_is_retried() {
+    let blank = LlmResponse {
+        content: Some("\n\n".into()),
+        ..empty_reply(Some(StopReason::EndTurn))
+    };
+    let (mut agent, provider) = streaming(vec![done(blank), done(text_response("the answer"))]);
+    let mut messages = vec![Message::user("question")];
+    let result = agent
+        .process(&mut messages)
+        .await
+        .expect("the retry answers");
+    assert_eq!(result.response, "the answer");
+    assert_eq!(provider.request_count(), 2);
+}

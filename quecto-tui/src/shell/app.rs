@@ -583,6 +583,9 @@ mod app_events_1060_lifecycle_tests;
 #[path = "app_events_1060_tests.rs"]
 mod app_events_1060_tests;
 #[cfg(test)]
+#[path = "app_events_2434_tests.rs"]
+mod app_events_2434_tests;
+#[cfg(test)]
 #[path = "app_fix_pass_1466_tests.rs"]
 mod app_fix_pass_1466_tests;
 #[cfg(test)]

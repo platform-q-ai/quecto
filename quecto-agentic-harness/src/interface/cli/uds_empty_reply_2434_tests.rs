@@ -122,6 +122,14 @@ fn reasoning_only_at_the_limit() -> LlmResponse {
 
 /// One streamed prompt run: its outcome, its events and the requests made.
 async fn run(replies: Vec<LlmResponse>) -> (PromptOutcome, Vec<serde_json::Value>, usize) {
+    run_limited(replies, u32::MAX).await
+}
+
+/// [`run`] with a tool iteration limit.
+async fn run_limited(
+    replies: Vec<LlmResponse>,
+    max_tool_iterations: u32,
+) -> (PromptOutcome, Vec<serde_json::Value>, usize) {
     let provider = Arc::new(ScriptedStream {
         replies: Mutex::new(replies),
         requests: Mutex::new(0),
@@ -145,7 +153,8 @@ async fn run(replies: Vec<LlmResponse>) -> (PromptOutcome, Vec<serde_json::Value
         context_marks: Default::default(),
         model_context_window: None,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
-    });
+    })
+    .with_max_tool_iterations(max_tool_iterations);
     let mut messages: Vec<Message> = vec![];
     let mut session = AgentSession::new("stub".into());
     let (_cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
@@ -224,4 +233,43 @@ async fn a_reasoning_only_reply_at_the_limit_after_tools_ends_the_run_with_agent
     let error = agent_error(&events).expect("agent_error");
     assert!(error.contains("stop_reason=max_tokens"), "{error}");
     assert_eq!(requests, 3, "asked again once, as #2124 does");
+}
+
+/// The byte length of the run's reply text, as `turn_end` and `agent_end`
+/// report it.
+fn content_lengths(events: &[serde_json::Value]) -> (Option<u64>, Option<u64>) {
+    let of = |kind: &str| events.iter().find(|event| event["type"] == kind);
+    (
+        of("turn_end").and_then(|event| event["message"]["contentLength"].as_u64()),
+        of("agent_end").and_then(|event| event["contentLength"].as_u64()),
+    )
+}
+
+/// Review round 1 (L1): a run that recorded no reply reports a reply of no
+/// text on both end events, so a client never rebuilds a reply that does
+/// not exist.
+#[tokio::test]
+async fn a_run_ended_by_an_empty_reply_reports_no_reply_text() {
+    let (_, events, _) = run(vec![background_call(), empty_reply(StopReason::EndTurn)]).await;
+    assert_eq!(content_lengths(&events), (Some(0), Some(0)), "{events:?}");
+}
+
+/// The tool iteration limit records no reply either: its notice is the
+/// run's response, not a message the run recorded.
+#[tokio::test]
+async fn a_run_stopped_at_the_tool_iteration_limit_reports_no_reply_text() {
+    let (outcome, events, requests) = run_limited(vec![background_call()], 1).await;
+    assert!(matches!(outcome, PromptOutcome::Success), "{events:?}");
+    assert_eq!(requests, 1);
+    assert_eq!(content_lengths(&events), (Some(0), Some(0)), "{events:?}");
+}
+
+#[tokio::test]
+async fn a_run_with_a_reply_reports_its_text_length_on_both_end_events() {
+    let reply = LlmResponse {
+        content: Some("done".into()),
+        ..empty_reply(StopReason::EndTurn)
+    };
+    let (_, events, _) = run(vec![background_call(), reply]).await;
+    assert_eq!(content_lengths(&events), (Some(4), Some(4)), "{events:?}");
 }
