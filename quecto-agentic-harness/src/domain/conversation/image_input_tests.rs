@@ -309,3 +309,31 @@ fn a_gif_is_walked_once_across_requests() {
     }
     assert_eq!(verdicts.walks(), 2, "each GIF once");
 }
+
+/// #2421 round 3 L3: verdicts are kept by a digest of the image, so two
+/// different GIFs of the same length, one animated and one still, each get
+/// their own.
+#[test]
+fn gifs_of_the_same_length_get_their_own_verdicts() {
+    let animated = gif(2);
+    let still = {
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(gif(1))
+            .unwrap();
+        let (body, trailer) = bytes.split_at(bytes.len() - 1);
+        let mut padded = body.to_vec();
+        // A comment as long as the second frame (graphic control, image
+        // descriptor and data: 23 bytes).
+        padded.extend([0x21, 0xFE, 19]);
+        padded.extend([b'x'; 19]);
+        padded.push(0);
+        padded.extend(trailer);
+        base64::engine::general_purpose::STANDARD.encode(padded)
+    };
+    assert_eq!(animated.len(), still.len());
+    let verdicts = GifVerdicts::default();
+    assert!(verdicts.is_animated("image/gif", &animated));
+    assert!(!verdicts.is_animated("image/gif", &still));
+    assert!(verdicts.is_animated("image/gif", &animated));
+    assert_eq!(verdicts.walks(), 2);
+}

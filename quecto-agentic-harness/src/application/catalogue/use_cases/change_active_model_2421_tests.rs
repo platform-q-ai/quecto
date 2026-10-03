@@ -92,10 +92,11 @@ fn a_bare_id_reads_the_routers_first_provider_only() {
     assert_eq!(limits.max_output_tokens, Some(50));
 }
 
-/// Before a runtime is composed, the providers are the catalogue's, in its
-/// order: a bare id reads the first of them.
+/// #2421 round 3 L2: before a runtime is published, no router says where a
+/// bare id goes, so it reads no entry and takes no image (fail closed); a
+/// `provider/model` id still reads the provider its prefix names.
 #[test]
-fn a_bare_id_without_a_runtime_reads_the_first_catalogue_provider() {
+fn a_bare_id_without_a_runtime_reads_no_entry() {
     let rig = rig(
         vec![
             seeing("only", "lonely", TransportKind::AnthropicMessages),
@@ -103,7 +104,10 @@ fn a_bare_id_without_a_runtime_reads_the_first_catalogue_provider() {
         ],
         FakeRuntime::none(),
     );
-    let input = |model: &str| rig.use_case.plan(model).limits.image_input;
-    assert_eq!(input("lonely"), ImageInput::AllImages);
-    assert_eq!(input("plain"), ImageInput::NoImages, "not on the first");
+    assert_eq!(rig.use_case.plan("lonely").limits, ModelLimits::default());
+    assert_eq!(rig.use_case.plan("plain").limits, ModelLimits::default());
+    assert_eq!(
+        rig.use_case.plan("ONLY/lonely").limits.image_input,
+        ImageInput::AllImages
+    );
 }

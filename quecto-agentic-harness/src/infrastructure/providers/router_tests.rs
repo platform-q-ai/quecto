@@ -609,6 +609,26 @@ fn the_retry_decorator_forwards_the_route_check_to_the_router() {
     ));
 }
 
+/// #2421 round 3 L1: the retry decorator forwards the router's provider
+/// names, in order, which the catalogue routes a model id over.
+#[test]
+fn the_retry_decorator_forwards_the_route_order_to_the_router() {
+    use crate::infrastructure::providers::retry::{RetryConfig, RetryingProvider};
+    let router = ProviderRouter::new(vec![
+        TestProvider::succeeding("fireworks", "x") as Arc<dyn LlmProvider>,
+        TestProvider::succeeding("openai-oauth", "x"),
+    ]);
+    let names: Vec<String> = router
+        .provider_names()
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(router.route_order(), names);
+    let wrapped = RetryingProvider::new(Arc::new(router), RetryConfig::no_delay(1));
+    assert_eq!(wrapped.route_order(), names);
+    assert_eq!(names, ["fireworks", "openai-oauth"]);
+}
+
 #[tokio::test]
 async fn an_unconfigured_provider_is_refused_naming_the_configured_ones_and_never_as_auth() {
     // #2126: `openai-oauth` in the list must not make the refusal an Auth

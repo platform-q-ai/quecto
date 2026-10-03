@@ -510,13 +510,11 @@ fn a_user_listed_builtin_model_without_input_keeps_its_builtin_input() {
     );
 }
 
-/// #2421 review L2: the provider is matched whatever its case, and a bare
-/// id (a sub-agent's `--model`) reads the provider the router sends it to:
-/// the first (here, with no runtime composed, the catalogue's first,
-/// `anthropic-api`). A bare `gpt-6.1-sol` goes there, which does not list
-/// it, so it takes no image (round 2 L1; it used to read `openai-api`).
+/// #2421 review L2: the provider is matched whatever its case. Here no
+/// runtime is published, so no router says where a bare id goes: a bare id
+/// reads no entry and takes no image (round 3 L2, fail closed).
 #[test]
-fn a_model_in_another_case_or_bare_reads_its_builtin_input() {
+fn a_model_in_another_case_reads_its_builtin_input_and_a_bare_one_none() {
     let tmp = tempfile::tempdir().unwrap();
     assert_eq!(
         image_input(tmp.path(), "OpenAI-OAuth/gpt-6.1-sol"),
@@ -525,6 +523,6 @@ fn a_model_in_another_case_or_bare_reads_its_builtin_input() {
     assert_eq!(image_input(tmp.path(), "gpt-6.1-sol"), ImageInput::NoImages);
     assert_eq!(
         image_input(tmp.path(), "claude-opus-5"),
-        ImageInput::AllImages
+        ImageInput::NoImages
     );
 }
