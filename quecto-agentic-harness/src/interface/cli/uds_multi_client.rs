@@ -282,3 +282,8 @@ async fn write_line(
     let mut writer = writer.lock().await;
     super::super::uds_wire::write_event_line(&mut *writer, line, mode).await
 }
+
+// #2433: driven through the whole loop, which this connection serves.
+#[cfg(test)]
+#[path = "uds_multi_followup_2433_tests.rs"]
+mod followup_2433_tests;

@@ -609,9 +609,6 @@ mod cov2_tests;
 #[path = "uds_multi_cov_tests.rs"]
 mod cov_tests;
 #[cfg(test)]
-#[path = "uds_multi_followup_2433_tests.rs"]
-mod followup_2433_tests;
-#[cfg(test)]
 #[path = "uds_multi_interception_tests.rs"]
 mod interception_tests;
 #[cfg(test)]
