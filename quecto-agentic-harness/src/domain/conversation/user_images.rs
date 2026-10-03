@@ -44,7 +44,8 @@ impl UserImageBlock {
         mime: quecto_image::ImageMime,
         data: String,
     ) -> Result<Self, quecto_image::ImageRefusal> {
-        Ok(Self { mime, data }) // red (#2422 review round 2): trusted, not re-admitted
+        let payload = quecto_image::ImagePayload::new(mime.as_str(), data);
+        quecto_image::ImageAttachment::new(payload).map(Self::from)
     }
 
     /// The admitted type.
@@ -113,7 +114,7 @@ impl Message {
 /// is saved as it is.
 pub fn stored_text(message: &Message) -> Cow<'_, str> {
     match (
-        message.content.is_empty(), // red (#2422 review round 2): whitespace counts as text
+        message.content.trim().is_empty(),
         message.user_image_blocks.len(),
     ) {
         (true, images @ 1..) => Cow::Owned(vec![IMAGE_PLACEHOLDER; images].join("\n")),

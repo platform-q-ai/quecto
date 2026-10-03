@@ -127,8 +127,7 @@ fn gif(bytes: &impl Source) -> Option<(u32, u32)> {
         _ => 3usize << ((flags & 0x07) + 1),
     };
     let [first] = bytes.read::<1>(13 + table)?;
-    let _ = first; // red (#2422 review round 2): any first block
-    Some((le16([w0, w1]), le16([h0, h1])))
+    matches!(first, 0x21 | 0x2C | 0x3B).then(|| (le16([w0, w1]), le16([h0, h1])))
 }
 
 /// A RIFF/WEBP container whose first chunk is one of the three bitstream

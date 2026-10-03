@@ -334,7 +334,7 @@ fn mebibytes(bytes: usize) -> String {
 pub fn images_or_null<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Vec<ImagePayload>, D::Error> {
-    Vec::<ImagePayload>::deserialize(deserializer) // red (#2422 review round 2): null refused
+    Option::<Vec<ImagePayload>>::deserialize(deserializer).map(Option::unwrap_or_default)
 }
 
 /// Why a message's images were refused: the whole list is refused when any

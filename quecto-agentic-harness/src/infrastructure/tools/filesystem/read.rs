@@ -194,7 +194,8 @@ impl Tool for ReadTool {
             // an image when its signature names a type and its header is
             // readable. Anything else (a JPEG with stray bytes, an Apple CgBI
             // PNG, text that starts "GIF89a") is read as text or binary below.
-            let image = quecto_image::ImageMime::sniff(&raw_bytes); // red (#2422 review round 2): no fallback
+            let image = quecto_image::ImageMime::sniff(&raw_bytes)
+                .filter(|mime| quecto_image::dimensions_of_bytes(*mime, &raw_bytes).is_some());
             if let Some(mime) = image {
                 return Ok(image_result(mime, &raw_bytes));
             }
