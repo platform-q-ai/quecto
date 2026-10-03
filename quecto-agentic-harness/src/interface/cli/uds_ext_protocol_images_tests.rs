@@ -51,7 +51,11 @@ fn park(
     rx
 }
 
-fn deliver(registry: &ClientToolRegistry, call_id: &str, args: (&str, bool, Option<Value>)) {
+fn deliver(
+    registry: &ClientToolRegistry,
+    call_id: &str,
+    args: (&str, bool, Option<WireImageBlocks>),
+) {
     let (content, is_error, image_blocks) = args;
     handle_tool_result(ToolResultArgs {
         client_id: 1,
@@ -63,8 +67,22 @@ fn deliver(registry: &ClientToolRegistry, call_id: &str, args: (&str, bool, Opti
     });
 }
 
+/// `blocks` as a `tool_result`'s `imageBlocks` field reads it off the wire.
+fn wire(blocks: Value) -> Option<WireImageBlocks> {
+    serde_json::from_value(json!({ "imageBlocks": blocks }))
+        .map(|field: ImageBlocksField| field.image_blocks)
+        .expect("any JSON is an imageBlocks field")
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ImageBlocksField {
+    #[serde(default)]
+    image_blocks: Option<WireImageBlocks>,
+}
+
 /// The result one `tool_result` with `content` and `image_blocks` gives.
-fn result_of(content: &str, image_blocks: Option<Value>) -> ToolResult {
+fn result_of(content: &str, image_blocks: Option<WireImageBlocks>) -> ToolResult {
     let registry = new_client_tool_registry();
     let mut rx = park(&registry, "call-1");
     deliver(&registry, "call-1", (content, false, image_blocks));
@@ -87,7 +105,7 @@ fn an_extensions_images_reach_the_tool_result() {
         {"mimeType": "image/png", "data": first},
         {"mimeType": "image/webp", "data": second},
     ]);
-    let result = result_of("two screenshots", Some(blocks));
+    let result = result_of("two screenshots", wire(blocks));
     assert!(!result.is_error);
     assert_eq!(result.content, "two screenshots");
     assert_eq!(
@@ -101,7 +119,7 @@ fn an_extensions_images_reach_the_tool_result() {
 
 #[test]
 fn no_image_blocks_or_null_is_todays_text_result() {
-    for blocks in [None, Some(Value::Null), Some(json!([]))] {
+    for blocks in [None, wire(Value::Null), wire(json!([]))] {
         let result = result_of("22°C, sunny", blocks);
         assert_eq!(result.content, "22°C, sunny");
         assert!(!result.is_error);
@@ -118,7 +136,7 @@ fn an_error_result_keeps_its_images() {
     deliver(
         &registry,
         "call-1",
-        ("button not found", true, Some(blocks)),
+        ("button not found", true, wire(blocks)),
     );
     let result = rx.try_recv().unwrap();
     assert!(result.is_error);
@@ -133,7 +151,7 @@ fn a_refused_image_makes_the_result_an_error_naming_it_and_keeps_the_text() {
         {"mimeType": "image/png", "data": good},
         {"mimeType": "image/png", "data": "not base64!"},
     ]);
-    let result = result_of("shot", Some(blocks));
+    let result = result_of("shot", wire(blocks));
     assert!(result.is_error);
     assert!(result.image_blocks.is_empty(), "no image of a refused list");
     assert_eq!(
@@ -164,7 +182,7 @@ fn every_admission_refusal_is_named_exactly() {
         ),
     ];
     for (block, refusal) in cases {
-        let result = result_of("", Some(json!([block])));
+        let result = result_of("", wire(json!([block])));
         assert!(result.is_error);
         assert!(result.image_blocks.is_empty());
         assert!(
@@ -200,7 +218,7 @@ fn malformed_image_blocks_are_named_exactly() {
         ),
     ];
     for (blocks, expected) in cases {
-        let result = result_of("", Some(blocks));
+        let result = result_of("", wire(blocks));
         assert!(result.is_error);
         assert!(result.image_blocks.is_empty());
         assert_eq!(result.content, expected);
@@ -212,7 +230,7 @@ fn a_refused_result_leaves_the_extension_connected() {
     let registry = new_client_tool_registry();
     let mut first = park(&registry, "call-1");
     let mut second = park(&registry, "call-2");
-    deliver(&registry, "call-1", ("", false, Some(json!("nope"))));
+    deliver(&registry, "call-1", ("", false, wire(json!("nope"))));
     assert!(first.try_recv().unwrap().is_error);
     assert!(registry.lock().unwrap().contains_key(&1), "still connected");
     deliver(&registry, "call-2", ("fine", false, None));
@@ -334,4 +352,87 @@ async fn a_forwarded_calls_pending_slot_lives_as_long_as_its_timeout() {
         "the slot outlives a 30 s default"
     );
     call.abort();
+}
+
+// ─── review round 1 ───────────────────────────────────────────────────────
+
+/// M1: images are admitted with the shared registry unlocked, so a large
+/// result never stalls every other client's tool traffic.
+#[test]
+fn admission_runs_with_the_registry_unlocked() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+    let registry = new_client_tool_registry();
+    let mut rx = park(&registry, "call-1");
+    let unlocked = Rc::new(Cell::new(None));
+    let seen = Rc::clone(&unlocked);
+    admission_probe::set(move |registry| seen.set(Some(registry.try_lock().is_ok())));
+    let blocks = json!([{"mimeType": "image/png", "data": encode(&png(1, 1))}]);
+    deliver(&registry, "call-1", ("shot", false, wire(blocks)));
+    admission_probe::clear();
+    assert_eq!(unlocked.get(), Some(true), "admitted with the lock free");
+    assert_eq!(rx.try_recv().unwrap().image_blocks.len(), 1);
+}
+
+/// Nit: a result whose caller has already given up is never admitted.
+#[test]
+fn a_result_whose_caller_has_gone_is_never_admitted() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+    let registry = new_client_tool_registry();
+    drop(park(&registry, "call-1"));
+    let admitted = Rc::new(Cell::new(false));
+    let seen = Rc::clone(&admitted);
+    admission_probe::set(move |_| seen.set(true));
+    let blocks = json!([{"mimeType": "image/png", "data": encode(&png(1, 1))}]);
+    deliver(&registry, "call-1", ("late", false, wire(blocks)));
+    admission_probe::clear();
+    assert!(!admitted.get());
+    assert!(registry.lock().unwrap()[&1].pending_results.is_empty());
+}
+
+/// M1: a list longer than the limit is refused by its length alone; none of
+/// its entries is read (the reviewer's 8 MiB `[0,0,…]` took 2.4 s).
+#[test]
+fn a_huge_image_blocks_list_is_refused_by_its_length_alone() {
+    let count = 1_000_000;
+    let line = format!(
+        r#"{{"type":"tool_result","toolCallId":"call-1","content":"","imageBlocks":[{}]}}"#,
+        vec!["0"; count].join(",")
+    );
+    let parsed = super::super::uds_tool_intercept::try_intercept_tool_result(&line)
+        .expect("a tool_result line is intercepted");
+    assert_eq!(
+        sent_image_blocks(parsed.image_blocks.clone()),
+        SentImageBlocks::TooMany(count)
+    );
+    let registry = new_client_tool_registry();
+    let mut rx = park(&registry, "call-1");
+    deliver(&registry, "call-1", ("", false, parsed.image_blocks));
+    assert_eq!(
+        rx.try_recv().unwrap().content,
+        "Error: too many imageBlocks: 1000000; at most 8 per tool result"
+    );
+}
+
+/// Low: re-registering a tool replaces its timeout, and registering it
+/// again without one restores the default.
+#[tokio::test(start_paused = true)]
+async fn re_registering_a_tool_replaces_its_timeout() {
+    let registry = new_client_tool_registry();
+    let mut messages = Vec::new();
+    for timeout in [Some(json!(120)), Some(json!(5)), None] {
+        let (ok, _, tools) = register(&registry, &[tool_reg("shot", timeout)]);
+        assert!(ok);
+        let result = tools[0].execute("{}").await.unwrap();
+        messages.push(result.content);
+    }
+    assert_eq!(
+        messages,
+        [
+            "Extension timed out after 120s executing tool 'shot'",
+            "Extension timed out after 5s executing tool 'shot'",
+            "Extension timed out after 30s executing tool 'shot'",
+        ]
+    );
 }

@@ -121,7 +121,7 @@ async fn answer_once(
         tool_call_id: call_id,
         content: "took a screenshot",
         is_error: false,
-        image_blocks: Some(image_blocks),
+        image_blocks: serde_json::from_value(image_blocks).ok(),
         registry: &client_registry,
     });
 }

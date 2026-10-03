@@ -344,7 +344,7 @@ pub(in crate::interface::cli) fn dispatch_tool_result(
     ctx: &mut crate::interface::cli::uds::DispatchCtx<'_>,
     tool_call_id: &str,
     (content, is_error): (&str, bool),
-    image_blocks: Option<serde_json::Value>,
+    image_blocks: Option<WireImageBlocks>,
 ) {
     handle_tool_result(ToolResultArgs {
         client_id: ctx.current_client_id,

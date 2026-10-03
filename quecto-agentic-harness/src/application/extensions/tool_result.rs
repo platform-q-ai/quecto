@@ -19,6 +19,9 @@ use crate::domain::tool::{ImageBlock, ToolResult};
 pub enum SentImageBlocks {
     /// The field is not a list.
     NotAList,
+    /// A list longer than [`MAX_IMAGES_PER_MESSAGE`]: its length alone,
+    /// none of its entries read.
+    TooMany(usize),
     /// The list's entries, in order. Empty when the field is absent.
     Entries(Vec<Option<ImagePayload>>),
 }
@@ -88,6 +91,7 @@ fn admit(sent: SentImageBlocks) -> Result<Vec<ImageBlock>, ToolImagesRefusal> {
     let entries = match sent {
         SentImageBlocks::Entries(entries) => entries,
         SentImageBlocks::NotAList => return Err(ToolImagesRefusal::NotAList),
+        SentImageBlocks::TooMany(count) => return Err(ToolImagesRefusal::TooMany(count)),
     };
     match entries.len() <= MAX_IMAGES_PER_MESSAGE {
         true => entries

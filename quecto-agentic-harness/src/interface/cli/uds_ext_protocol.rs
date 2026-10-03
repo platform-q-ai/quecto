@@ -19,7 +19,7 @@ use crate::domain::extension_tool::ExtensionToolTimeout;
 use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::extensions::uds_tool::create_uds_tool;
 
-use super::protocol::{AgentEvent, ToolRegistration};
+use super::protocol::{AgentEvent, ToolRegistration, WireImageBlocks};
 
 /// Handle to a spawned forwarder task. Stored alongside a
 /// cooperative shutdown `oneshot` so unregister / disconnect can ask
@@ -360,7 +360,7 @@ pub struct ToolResultArgs<'a> {
     pub content: &'a str,
     pub is_error: bool,
     /// The `imageBlocks` field as sent (#2423).
-    pub image_blocks: Option<serde_json::Value>,
+    pub image_blocks: Option<WireImageBlocks>,
     pub registry: &'a ClientToolRegistry,
 }
 
@@ -380,6 +380,8 @@ pub fn handle_tool_result(args: ToolResultArgs<'_>) {
             // Admitted only for a call still waiting: a late or unknown
             // result's images are never decoded.
             let sent = sent_image_blocks(image_blocks);
+            #[cfg(test)]
+            admission_probe::fire(registry);
             let result = extension_tool_result(content.to_string(), is_error, sent);
             let _ = pending.reply.send(result);
         }
@@ -393,7 +395,7 @@ pub fn handle_tool_result(args: ToolResultArgs<'_>) {
 /// A `tool_result`'s `imageBlocks` as sent (#2423): absent or `null` is no
 /// images, a list is read entry by entry (one not shaped as an image is
 /// `None`, refused on admission), anything else is not a list.
-fn sent_image_blocks(field: Option<serde_json::Value>) -> SentImageBlocks {
+fn sent_image_blocks(field: Option<WireImageBlocks>) -> SentImageBlocks {
     match field {
         None | Some(serde_json::Value::Null) => SentImageBlocks::default(),
         Some(serde_json::Value::Array(entries)) => SentImageBlocks::Entries(
@@ -488,6 +490,36 @@ fn resolve_pending_for_tool(state: &mut ClientToolState, tool_name: &str, reason
                 delivery_metadata: None,
             });
         }
+    }
+}
+
+/// A test's look at the registry just before a result's images are
+/// admitted (#2423 review M1): admission must never hold the shared lock.
+#[cfg(test)]
+pub(super) mod admission_probe {
+    use super::ClientToolRegistry;
+    use std::cell::RefCell;
+
+    thread_local! {
+        static PROBE: RefCell<Option<Box<dyn FnMut(&ClientToolRegistry)>>> =
+            const { RefCell::new(None) };
+    }
+
+    /// Run `probe` before each admission on this thread.
+    pub(in crate::interface::cli) fn set(probe: impl FnMut(&ClientToolRegistry) + 'static) {
+        PROBE.with(|slot| *slot.borrow_mut() = Some(Box::new(probe)));
+    }
+
+    pub(in crate::interface::cli) fn clear() {
+        PROBE.with(|slot| *slot.borrow_mut() = None);
+    }
+
+    pub(super) fn fire(registry: &ClientToolRegistry) {
+        PROBE.with(|slot| {
+            if let Some(probe) = slot.borrow_mut().as_mut() {
+                probe(registry);
+            }
+        });
     }
 }
 

@@ -32,6 +32,8 @@ pub struct McpToolResult {
     pub content: String,
     /// The images, each admitted by `quecto_image`.
     pub image_blocks: Vec<ImageAttachment>,
+    /// Whether the tool failed.
+    pub is_error: bool,
 }
 
 impl McpToolResult {
@@ -40,12 +42,22 @@ impl McpToolResult {
         Self {
             content: content.into(),
             image_blocks: Vec::new(),
+            is_error: false,
+        }
+    }
+
+    /// An error result of `content` alone.
+    pub fn error(content: impl Into<String>) -> Self {
+        Self {
+            is_error: true,
+            ..Self::text(content)
         }
     }
 }
 
 /// The `tool_result` an MCP `result` becomes.
-pub fn mcp_tool_result(result: &Value) -> McpToolResult {
+pub fn mcp_tool_result(result: Value) -> McpToolResult {
+    let result = &result;
     let items = result
         .get("content")
         .and_then(Value::as_array)
@@ -71,6 +83,7 @@ pub fn mcp_tool_result(result: &Value) -> McpToolResult {
     fit_to_line(McpToolResult {
         content,
         image_blocks,
+        is_error: false,
     })
 }
 
@@ -115,7 +128,8 @@ fn fits(line: &str) -> bool {
 /// The `tool_result` line for `result`, without its newline: always one
 /// the agent reads. A result whose line would pass the UDS line limit (its
 /// text alone is too long) is an error result saying so.
-pub fn tool_result_line(tool_call_id: &str, result: &McpToolResult, is_error: bool) -> String {
+pub fn tool_result_line(tool_call_id: &str, result: &McpToolResult) -> String {
+    let is_error = result.is_error;
     let line = render(tool_call_id, result, is_error);
     match fits(&line) {
         true => line,

@@ -313,7 +313,7 @@ pub enum AgentCommand {
             default,
             skip_serializing_if = "Option::is_none"
         )]
-        image_blocks: Option<serde_json::Value>,
+        image_blocks: Option<WireImageBlocks>,
     },
     /// Clear conversation history in-place without restarting the agent.
     ClearHistory {
@@ -389,6 +389,9 @@ pub enum AgentCommand {
         limit: Option<usize>,
     },
 }
+/// A `tool_result`'s `imageBlocks` as read off the wire (#2423).
+pub type WireImageBlocks = serde_json::Value;
+
 /// Tool registration payload for `register_tools`.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ToolRegistration {

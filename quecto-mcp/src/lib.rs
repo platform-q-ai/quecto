@@ -12,7 +12,7 @@ mod content;
 mod model;
 pub use config::Config;
 pub use content::{McpToolResult, mcp_tool_result, tool_result_line};
-pub use model::{McpTool, QuectoToolRegistration, RegisteredMcpTools};
+pub use model::{McpTool, QuectoToolRegistration, RegisteredMcpTools, with_tool_timeout};
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -159,6 +159,7 @@ pub fn build_registration_with_name_prefix(
         } else {
             tool.description.clone()
         },
+        timeout_seconds: None,
         parameters_schema: serde_json::to_string(&tool.input_schema)?,
     })
 }
@@ -263,13 +264,13 @@ impl McpClient {
     pub async fn call_tool(&self, name: &str, arguments: Value) -> Result<McpToolResult> {
         let params = serde_json::json!({"name": name, "arguments": arguments});
         match self.post_json_rpc("tools/call", params.clone()).await {
-            Ok((body, _)) => Ok(mcp_tool_result(body.get("result").unwrap_or(&body))),
+            Ok((body, _)) => Ok(mcp_tool_result(result_of(body))),
             Err(err) if is_recoverable_session_error(&err) => {
                 if let Some(server_name) = self.server_name.lock().await.clone() {
                     *self.session_id.lock().await = None;
                     self.initialize(&server_name).await?;
                     let (body, _) = self.post_json_rpc("tools/call", params).await?;
-                    Ok(mcp_tool_result(body.get("result").unwrap_or(&body)))
+                    Ok(mcp_tool_result(result_of(body)))
                 } else {
                     Err(err)
                 }
@@ -310,6 +311,15 @@ impl McpClient {
             return Err(QuectoMcpError::Mcp(redact(&error.to_string())));
         }
         Ok((body, session))
+    }
+}
+
+/// A JSON-RPC response's `result`, moved out; the whole body when it has
+/// none.
+fn result_of(mut body: Value) -> Value {
+    match body.get_mut("result").map(Value::take) {
+        Some(result) => result,
+        None => body,
     }
 }
 
@@ -395,7 +405,10 @@ pub async fn run_extension(config: Config) -> Result<()> {
         &config.tool_denylist,
     )?;
     let mapping = build_mapping_with_name_prefix(&filtered, &config.name_prefix)?;
-    let registrations = build_registrations_with_name_prefix(&filtered, &config.name_prefix)?;
+    let registrations = with_tool_timeout(
+        build_registrations_with_name_prefix(&filtered, &config.name_prefix)?,
+        config.timeout,
+    );
 
     tracing::info!(
         discovered = discovered.len(),
@@ -478,32 +491,29 @@ pub async fn serve_uds_extension(
                 let Ok(_permit) = semaphore.acquire_owned().await else {
                     return;
                 };
-                let (result, is_error) = match mcp_name {
+                let result = match mcp_name {
                     Some(mcp_name) => match arguments_to_json(arguments) {
                         Ok(args) => {
                             let start = std::time::Instant::now();
                             tracing::info!(quecto_tool = %tool_name, mcp_tool = %mcp_name, "executing MCP-backed tool");
                             let result = match mcp.call_tool(&mcp_name, args).await {
-                                Ok(result) => (result, false),
-                                Err(err) => (McpToolResult::text(redact(&err.to_string())), true),
+                                Ok(result) => result,
+                                Err(err) => McpToolResult::error(redact(&err.to_string())),
                             };
                             tracing::info!(
                                 quecto_tool = %tool_name,
                                 mcp_tool = %mcp_name,
                                 elapsed_ms = start.elapsed().as_millis() as u64,
-                                is_error = result.1,
+                                is_error = result.is_error,
                                 "finished MCP-backed tool"
                             );
                             result
                         }
-                        Err(err) => (McpToolResult::text(err), true),
+                        Err(err) => McpToolResult::error(err),
                     },
-                    None => (
-                        McpToolResult::text(format!("Unknown MCP-backed tool: {tool_name}")),
-                        true,
-                    ),
+                    None => McpToolResult::error(format!("Unknown MCP-backed tool: {tool_name}")),
                 };
-                let line = tool_result_line(&tool_call_id, &result, is_error);
+                let line = tool_result_line(&tool_call_id, &result);
                 let _ = result_tx.send(line).await;
             });
         }

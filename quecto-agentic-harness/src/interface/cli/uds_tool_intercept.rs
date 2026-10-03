@@ -7,7 +7,7 @@ pub(super) struct ParsedToolResult {
     pub(super) content: String,
     pub(super) is_error: bool,
     /// The `imageBlocks` field as sent (#2423), admitted on delivery.
-    pub(super) image_blocks: Option<serde_json::Value>,
+    pub(super) image_blocks: Option<super::protocol::WireImageBlocks>,
 }
 
 /// Intercept a raw client line that carries a `tool_result` so it can

@@ -25,7 +25,7 @@ mod protocol_search_rescue;
 pub use protocol_commands::{
     AgentCommand, ImagePayload, SessionListScopeCommand, StreamingBehavior,
     ToolPolicyApplyModeCommand, ToolPolicyMutationCommand, ToolPolicyOperationCommand,
-    ToolRegistration,
+    ToolRegistration, WireImageBlocks,
 };
 
 // ─── Events (stdout) ─────────────────────────────────────────────────────────

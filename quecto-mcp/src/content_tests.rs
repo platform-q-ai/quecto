@@ -14,7 +14,7 @@ fn text_item(text: &str) -> Value {
 }
 
 fn result_of(items: Vec<Value>) -> McpToolResult {
-    mcp_tool_result(&json!({ "content": items }))
+    mcp_tool_result(json!({ "content": items }))
 }
 
 fn marker(refusal: ImageRefusal) -> String {
@@ -31,7 +31,7 @@ fn text_only_results_are_joined_as_before() {
 #[test]
 fn a_result_with_neither_text_nor_images_is_its_json_as_before() {
     let raw = json!({"content": [{"type": "resource", "resource": {"uri": "x://y"}}]});
-    let result = mcp_tool_result(&raw);
+    let result = mcp_tool_result(raw.clone());
     assert_eq!(result.content, serde_json::to_string_pretty(&raw).unwrap());
     assert!(result.image_blocks.is_empty());
 }
@@ -147,7 +147,7 @@ fn images_that_would_pass_the_uds_line_limit_are_markers() {
         result.content,
         format!("three screenshots\n{LINE_LIMIT_MARKER}\n{LINE_LIMIT_MARKER}")
     );
-    let line = tool_result_line("uds-1", &result, false);
+    let line = tool_result_line("uds-1", &result);
     assert!(line.len() <= quecto_line_io::PROTOCOL_LINE_CAP_BYTES);
 }
 
@@ -155,7 +155,7 @@ fn images_that_would_pass_the_uds_line_limit_are_markers() {
 fn the_tool_result_line_carries_image_blocks_only_when_there_are_some() {
     let data = encode(&png(1, 1));
     let with = result_of(vec![text_item("t"), image_item("image/png", &data)]);
-    let value: Value = serde_json::from_str(&tool_result_line("uds-1", &with, false)).unwrap();
+    let value: Value = serde_json::from_str(&tool_result_line("uds-1", &with)).unwrap();
     assert_eq!(
         value,
         json!({
@@ -166,8 +166,8 @@ fn the_tool_result_line_carries_image_blocks_only_when_there_are_some() {
             "imageBlocks": [{"mimeType": "image/png", "data": data}]
         })
     );
-    let without = result_of(vec![text_item("t")]);
-    let value: Value = serde_json::from_str(&tool_result_line("uds-1", &without, true)).unwrap();
+    let without = McpToolResult::error("t");
+    let value: Value = serde_json::from_str(&tool_result_line("uds-1", &without)).unwrap();
     assert_eq!(
         value,
         json!({"type": "tool_result", "toolCallId": "uds-1", "content": "t", "isError": true})
@@ -176,11 +176,8 @@ fn the_tool_result_line_carries_image_blocks_only_when_there_are_some() {
 
 #[test]
 fn a_text_too_long_for_the_line_is_an_error_result() {
-    let huge = McpToolResult {
-        content: "\"".repeat(quecto_line_io::PROTOCOL_LINE_CAP_BYTES / 2),
-        image_blocks: Vec::new(),
-    };
-    let value: Value = serde_json::from_str(&tool_result_line("uds-9", &huge, false)).unwrap();
+    let huge = McpToolResult::text("\"".repeat(quecto_line_io::PROTOCOL_LINE_CAP_BYTES / 2));
+    let value: Value = serde_json::from_str(&tool_result_line("uds-9", &huge)).unwrap();
     assert_eq!(value["isError"], true);
     assert_eq!(value["toolCallId"], "uds-9");
     let content = value["content"].as_str().unwrap();
@@ -188,6 +185,21 @@ fn a_text_too_long_for_the_line_is_an_error_result() {
         content.starts_with("MCP result too large for the Quecto UDS line limit"),
         "{content}"
     );
+}
+
+/// Review low: an MCP tool error (`result.isError`) is an error result,
+/// with its text and images as for any result.
+#[test]
+fn an_mcp_tool_error_is_an_error_tool_result() {
+    let failed = mcp_tool_result(json!({"content": [text_item("no such page")], "isError": true}));
+    assert!(failed.is_error);
+    assert_eq!(failed.content, "no such page");
+    let line: Value = serde_json::from_str(&tool_result_line("uds-1", &failed)).unwrap();
+    assert_eq!(line["isError"], true);
+    for flag in [json!(false), json!("true"), Value::Null] {
+        let result = mcp_tool_result(json!({"content": [text_item("ok")], "isError": flag}));
+        assert!(!result.is_error, "only a JSON true is an error");
+    }
 }
 
 /// End to end: an MCP server's image reaches quecto's UDS socket as an
