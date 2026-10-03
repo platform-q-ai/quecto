@@ -275,23 +275,29 @@ impl RequestTrace {
     /// has not been sent, so it ends withdrawn — however it ends.
     /// An attempt admitted once stays sent (a replay re-admits it).
     pub fn queue_attempt(&self) {
-        drop(self.clock());
+        if let Some(open) = self.clock().open.as_mut()
+            && open.queued_ms.is_none()
+        {
+            open.queued.get_or_insert_with(Instant::now);
+        }
     }
 
     /// The attempt in flight was admitted: it is sent now, and its duration
     /// runs from here; its wait is `queued_ms`.
     pub fn admit_attempt(&self) {
-        drop(self.clock());
+        if let Some(open) = self.clock().open.as_mut()
+            && let Some(queued) = open.queued.take()
+        {
+            open.queued_ms = Some(millis(queued));
+            open.since = Instant::now();
+        }
     }
 
     /// The attempt in flight was never sent: admission refused it, or it was
     /// cancelled while it waited to be admitted. It is withdrawn, never
     /// reported: nothing reached a provider (#2436 review).
     pub fn withdraw_attempt(&self) {
-        let mut clock = self.clock();
-        if clock.open.take().is_some() {
-            clock.sent = clock.sent.saturating_add(1);
-        }
+        self.clock().open = None;
     }
 
     /// The attempt in flight failed: it ends now, as an error, before any

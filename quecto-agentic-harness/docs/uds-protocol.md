@@ -1715,7 +1715,7 @@ child's, so connect to the child's socket to count its requests.
 
 ```json
 {"type":"request_completed","model":"gpt-5.5","provider":"openai-oauth","inputTokens":1200,"cachedTokens":38000,"outputTokens":450,"durationMs":5321,"outcome":"ok","requestIndex":7,"attempt":1}
-{"type":"request_completed","model":"claude-sonnet-4-6","provider":"anthropic","inputTokens":100,"cachedTokens":1000,"cacheWriteTokens":5000,"outputTokens":80,"durationMs":2210,"outcome":"ok","requestIndex":8,"attempt":1}
+{"type":"request_completed","model":"claude-sonnet-4-6","provider":"anthropic","inputTokens":100,"cachedTokens":1000,"cacheWriteTokens":5000,"outputTokens":80,"durationMs":2210,"queuedMs":340,"outcome":"ok","requestIndex":8,"attempt":1}
 ```
 
 | Field | Type | Description |
@@ -1726,10 +1726,11 @@ child's, so connect to the child's socket to count its requests.
 | `cachedTokens` | integer \| omitted | Input tokens served from the provider's prompt cache; omitted when the provider did not report them |
 | `cacheWriteTokens` | integer \| omitted | Input tokens written to the provider's prompt cache (Anthropic's cache creation); omitted when the provider did not report them (OpenAI and Codex never do) |
 | `outputTokens` | integer \| omitted | Output tokens; omitted when the provider reported no usage |
-| `durationMs` | integer | From when the attempt started to when it ended (a retry's back-off is not part of either attempt) |
+| `durationMs` | integer | From when the attempt was sent to when it ended: from its admission when it waited for the inference authority, else from its start. Neither the admission wait nor a retry's back-off is part of it |
+| `queuedMs` | integer \| omitted | How long the attempt waited for the inference authority to admit it; omitted when it never waited (no authority gates its provider) |
 | `outcome` | string | `ok` (a reply), `error` (a provider or transport error; a retry, if any, follows as its own event) or `cancelled` (dropped while it ran: `abort`, `steer`, a run deadline, a shutdown) |
 | `requestIndex` | integer | This agent's requests so far, this one included: 1, 2, 3, … Equal to `get_state` `agentRequests.requests` once announced |
-| `attempt` | integer | Its number within its logical request, from 1; 2 and above are retries |
+| `attempt` | integer | Its number among the attempts of its logical request that were sent, from 1; 2 and above are retries. An attempt admission withdrew is not numbered, so the first sent attempt of every logical request is `1`: count events with `attempt: 1` to count logical requests |
 
 A token count the provider did not report is omitted, never zero: a count of
 `0` is one the provider reported. A request's whole input is the sum of its
@@ -1738,8 +1739,9 @@ with nothing visible (`empty_stream`) still reports the tokens its provider
 counted, as an `error`. An attempt that admission refused — the loop's check
 before a first attempt or a reattempt, or the inference authority's permit —
 or that was cancelled while it waited to be admitted sent nothing and is not
-announced. One refused or cancelled at the authority had already taken its
-`attempt` number, so it leaves a gap there — never in `requestIndex`. `requestIndex` has no gaps
+announced, numbered or counted — including one still waiting when its turn
+is dropped (`abort`, `steer`, a deadline): it ends withdrawn, not
+`cancelled`. `cancelled` is only ever an attempt that was sent. `requestIndex` has no gaps
 unless the client lagged (see [`error`](#error-lagged-client)), so a client
 that sees one can read `get_state` `agentRequests` for the totals.
 
