@@ -44,6 +44,23 @@ pub struct ModelSwitchPlan {
     pub model: String,
     pub limits: ModelLimits,
     pub verdict: ModelSelectionVerdict,
+    /// Where the model stands in the generation just published (#2435).
+    pub standing: CatalogueStanding,
+}
+
+/// Where a requested model stands in the published catalogue (#2435): the
+/// entry a request for it reaches — through the router's routing rule —
+/// lists it, refuses it for the account in use, or does not exist.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CatalogueStanding {
+    /// The provider the request reaches lists the model.
+    Listed,
+    /// The provider refused the model for the account in use, for this
+    /// reason, earlier in this process.
+    RefusedForAccount(String),
+    /// No catalogue entry: a retired built-in, a typo, or an id an
+    /// open-router prefix accepts that the catalogue cannot list.
+    Unlisted,
 }
 
 /// The switch as applied.
@@ -79,6 +96,10 @@ pub enum ModelSwitchError {
         provider: String,
         configured: Vec<String>,
     },
+    /// The provider refused the model for the account in use earlier in
+    /// this process (#2435): switching would fail every request, so the
+    /// session keeps its model.
+    RefusedForAccount { model: String, reason: String },
     /// The persistence adapter refused or failed; `reason` names the
     /// remedy.
     Persist {
@@ -112,6 +133,11 @@ impl std::fmt::Display for ModelSwitchError {
                 "cannot switch to `{model}`: provider `{provider}` is not configured in this \
                  harness; configured providers: {}. Choose one of them as provider/model",
                 configured.join(", ")
+            ),
+            Self::RefusedForAccount { model, reason } => write!(
+                f,
+                "cannot switch to `{model}`: the provider refused it for this account or auth \
+                 mode earlier in this process ({reason}). Choose another model from list_models"
             ),
             Self::Persist {
                 model,

@@ -2,6 +2,7 @@
 //! child with an unroutable model fails at once with the configured
 //! providers named, instead of failing its first prompt; the root harness
 //! still starts, with a warning, so a bad default never locks the owner out.
+use crate::application::catalogue::dto::CatalogueStanding;
 use crate::application::providers::ports::RouteCheck;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -57,6 +58,13 @@ pub(super) fn admit(
             None
         }
     }
+}
+
+/// #2435: the warning a startup model earns from where it stands in the
+/// catalogue, if any.
+pub(super) fn standing_warning(standing: &CatalogueStanding, model: &str) -> Option<String> {
+    let _ = (standing, model);
+    None
 }
 
 #[cfg(test)]

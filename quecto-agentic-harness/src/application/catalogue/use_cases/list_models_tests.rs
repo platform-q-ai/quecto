@@ -271,3 +271,37 @@ fn debug_does_not_expose_the_ports() {
         "ListModels { .. }"
     );
 }
+
+/// #2435: a model the provider refused for the account is listed as not
+/// runnable, with the reason on its entry.
+#[test]
+fn a_refused_model_is_listed_as_not_runnable_with_the_reason() {
+    let loader = FakeLoader::answering(vec![(
+        Ok(vec![
+            entry("openai-oauth", "mini", "Mini"),
+            entry("openai-oauth", "sol", "Sol"),
+        ]
+        .into()),
+        vec!["openai-oauth"],
+    )]);
+    let store = CatalogueSnapshotStore::empty();
+    store.record_refusal(
+        &ModelRef::parse_qualified("openai-oauth/mini").unwrap(),
+        "not supported with a ChatGPT account",
+    );
+    let listed = match ListModels::new(loader, store).execute() {
+        ModelListingOutcome::Listed(listed) => listed,
+        other => panic!("expected a listing, got {other:?}"),
+    };
+    let mini = &listed.models[0];
+    assert!(!mini.runnable);
+    assert_eq!(
+        mini.entry.model.availability.reasons(),
+        &[
+            crate::domain::catalogue::UnavailableReason::RefusedForAccount(
+                "not supported with a ChatGPT account".into()
+            )
+        ]
+    );
+    assert!(listed.models[1].runnable);
+}

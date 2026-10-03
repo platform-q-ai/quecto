@@ -205,6 +205,16 @@ pub fn classify_provider_error(err: &DomainError) -> ProviderErrorClass {
     classify_keyword_paths(&lowered)
 }
 
+/// The most bytes of a provider's refusal reason kept (#2435).
+pub const MODEL_REFUSAL_REASON_MAX_BYTES: usize = 300;
+
+/// The provider's reason when `err` is a definitive refusal of the model
+/// for the account or auth mode in use (#2435), else `None`.
+pub fn model_refusal(err: &DomainError) -> Option<String> {
+    let _ = err;
+    None
+}
+
 /// Best-effort HTTP status extracted from a provider error, if the body
 /// encodes one (`HTTP 429`, `status: 500`, `provider error (400)`, ...).
 ///
@@ -442,6 +452,9 @@ fn parse_status_near(s: &str) -> Option<u16> {
     None
 }
 
+#[cfg(test)]
+#[path = "provider_error_refusal_tests.rs"]
+mod refusal_tests;
 #[cfg(test)]
 #[path = "provider_error_tests.rs"]
 mod tests;

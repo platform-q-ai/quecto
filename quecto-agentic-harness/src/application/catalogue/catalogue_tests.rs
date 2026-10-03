@@ -429,3 +429,6 @@ fn a_failed_source_keeps_its_last_good_layer_without_freezing_other_updates() {
     );
     assert!(snapshot.generation() > 1, "a new generation was published");
 }
+
+#[path = "catalogue_refusal_tests.rs"]
+mod refusal_tests;

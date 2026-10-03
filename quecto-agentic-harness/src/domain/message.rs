@@ -637,7 +637,7 @@ pub(crate) fn starts_with_ci(model: &str, prefix: &str) -> bool {
 ///     Opus 4.6 / 4.5: $5 in / $25 out / $6.25 cache-write / $0.50 cache-read per MTok
 ///     Sonnet 4.6 / 4.5 / 4: $3 in / $15 out / $3.75 cache-write / $0.30 cache-read per MTok
 ///     Haiku 4.5: $1 in / $5 out / $1.25 cache-write / $0.10 cache-read per MTok
-///   OpenAI GPT-5.6 tiers mirror the registry pricing in `model_registry_gpt56_pricing.rs`:
+///   OpenAI GPT-5.6 tiers mirror the registry pricing in `model_registry_builtin_tables.rs`:
 ///     Sol: $5 in / $30 out / $6.25 cache-write / $0.50 cache-read per MTok
 ///     Terra: $2.50 in / $15 out / $3.125 cache-write / $0.25 cache-read per MTok
 ///     Luna: $1 in / $6 out / $1.25 cache-write / $0.10 cache-read per MTok

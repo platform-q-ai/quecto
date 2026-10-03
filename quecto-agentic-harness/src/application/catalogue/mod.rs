@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
 use crate::domain::catalogue::{
-    Availability, AvailabilityStatus, CatalogueEntry, CatalogueSnapshot, RejectedEntry,
+    Availability, AvailabilityStatus, CatalogueEntry, CatalogueSnapshot, ModelRef, RejectedEntry,
     SourceLayer, TransportKind, UnavailableReason, resolve_catalogue,
 };
 
@@ -94,6 +94,9 @@ pub struct CatalogueSnapshotStore {
     current: Arc<RwLock<Arc<CatalogueSnapshot>>>,
     /// Last-good raw entries per source id (pre-availability derivation).
     last_good_layers: Arc<Mutex<HashMap<String, Vec<CatalogueEntry>>>>,
+    /// Models a provider refused for the account in use (#2435), with the
+    /// provider's reason: learned once, held for the rest of the process.
+    refusals: Arc<Mutex<HashMap<ModelRef, String>>>,
 }
 
 impl CatalogueSnapshotStore {
@@ -101,7 +104,22 @@ impl CatalogueSnapshotStore {
         Self {
             current: Arc::new(RwLock::new(Arc::new(initial))),
             last_good_layers: Arc::new(Mutex::new(HashMap::new())),
+            refusals: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Record that the provider refused `reference` for the account in use
+    /// (#2435). True when this is the first refusal recorded for it.
+    pub fn record_refusal(&self, reference: &ModelRef, reason: &str) -> bool {
+        let _ = (reference, reason, &self.refusals);
+        false
+    }
+
+    /// The reason the provider refused `reference` for the account in use,
+    /// if it has (#2435).
+    pub fn refusal(&self, reference: &ModelRef) -> Option<String> {
+        let _ = reference;
+        None
     }
 
     /// Remember one source's successfully loaded entries as its retention

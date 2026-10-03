@@ -10,7 +10,8 @@ pub mod refresh;
 pub mod reload;
 
 pub use active_model::{
-    ModelLimits, ModelSelectionVerdict, ModelSwitchError, ModelSwitchPlan, ModelSwitched,
+    CatalogueStanding, ModelLimits, ModelSelectionVerdict, ModelSwitchError, ModelSwitchPlan,
+    ModelSwitched,
 };
 pub use default_persistence::{DefaultScope, PersistedDefault};
 pub use effort::{EffortChangeError, EffortChangeOutcome, EffortChangeRequest};

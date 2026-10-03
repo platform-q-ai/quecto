@@ -689,3 +689,6 @@ fn a_bare_or_routable_model_still_switches() {
 
 #[path = "change_active_model_2421_tests.rs"]
 mod image_input_tests;
+
+#[path = "change_active_model_2435_tests.rs"]
+mod refusal_tests;

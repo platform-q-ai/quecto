@@ -17,7 +17,8 @@
 use std::sync::Arc;
 
 use crate::application::catalogue::dto::{
-    ModelLimits, ModelSelectionVerdict, ModelSwitchError, ModelSwitchPlan, ModelSwitched,
+    CatalogueStanding, ModelLimits, ModelSelectionVerdict, ModelSwitchError, ModelSwitchPlan,
+    ModelSwitched,
 };
 use crate::application::catalogue::ports::{
     CatalogueInputsLoader, DefaultScope, ModelDefaultPersistence, ModelRuntime, PersistedDefault,
@@ -83,6 +84,7 @@ impl ChangeActiveModel {
             model: model.to_string(),
             limits,
             verdict,
+            standing: CatalogueStanding::Listed,
         }
     }
 
