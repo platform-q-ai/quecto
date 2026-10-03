@@ -8,7 +8,8 @@
 //! - the size limit, [`MAX_IMAGE_BYTES`], and the count limit,
 //!   [`MAX_IMAGES_PER_MESSAGE`];
 //! - base64 (see below);
-//! - header parsing: an image's pixel size, [`dimensions`].
+//! - header parsing: an image's pixel size, [`dimensions`], and whether a
+//!   GIF is animated, [`is_animated_gif`].
 //!
 //! Every peer that accepts an image from outside admits it as an
 //! [`ImageAttachment`] with [`ImageAttachment::new`] (one image),
@@ -37,7 +38,9 @@ use base64::Engine as _;
 use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
 use serde::{Deserialize, Serialize};
 
+mod gif;
 mod header;
+pub use gif::is_animated_gif;
 pub use header::{Dimensions, MAX_JPEG_SEGMENTS, dimensions};
 
 /// Real minimal image files (PNG, JPEG, GIF, WebP) for tests here and in

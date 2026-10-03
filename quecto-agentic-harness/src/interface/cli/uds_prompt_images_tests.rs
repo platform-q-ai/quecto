@@ -34,6 +34,10 @@ impl LlmProvider for RecordingProvider {
         "recording"
     }
 
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_owned()]
+    }
+
     fn chat<'a>(
         &'a self,
         request: ChatRequest<'a>,
@@ -64,9 +68,19 @@ impl LlmProvider for RecordingProvider {
     }
 }
 
+/// A dispatch env whose model takes every image (#2421: a model with no
+/// declared image input is sent markers instead).
 fn recording_env() -> (Env, Arc<RecordingProvider>) {
+    use crate::application::catalogue::dto::ModelLimits;
+    use crate::application::catalogue::ports::ModelRuntime as _;
+    use crate::domain::conversation::image_input::ImageInput;
     let provider = Arc::new(RecordingProvider::default());
-    let env = Env::new(super::dispatch_test_env::make_workflow(), provider.clone());
+    let mut env = Env::new(super::dispatch_test_env::make_workflow(), provider.clone());
+    let limits = ModelLimits {
+        image_input: ImageInput::AllImages,
+        ..ModelLimits::default()
+    };
+    env.agent.apply_model("stub".to_owned(), limits);
     (env, provider)
 }
 

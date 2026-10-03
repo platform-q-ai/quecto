@@ -33,20 +33,9 @@ fn tool_with_image(id: &str, text: &str) -> Message {
     message
 }
 
-/// A GIF of `frames` 1x1 frames, each after a graphic control extension,
-/// with a global colour table and a comment extension, as base64.
+/// A GIF of `frames` 1x1 frames, as base64.
 fn gif(frames: usize) -> String {
-    let mut bytes = b"GIF89a".to_vec();
-    bytes.extend([1, 0, 1, 0, 0x80, 0, 0]); // 1x1, a 2-colour global table
-    bytes.extend([0, 0, 0, 255, 255, 255]);
-    bytes.extend([0x21, 0xFE, 3, b'h', b'e', b'y', 0]); // comment
-    for _ in 0..frames {
-        bytes.extend([0x21, 0xF9, 4, 0, 10, 0, 0, 0]); // graphic control
-        bytes.extend([0x2C, 0, 0, 0, 0, 1, 0, 1, 0, 0]); // image descriptor
-        bytes.extend([2, 2, 0x4C, 0x01, 0]); // LZW size, one sub-block, end
-    }
-    bytes.push(0x3B);
-    base64::engine::general_purpose::STANDARD.encode(bytes)
+    quecto_image::encode(&quecto_image::samples::animated_gif(frames))
 }
 
 fn tool_with_gif(id: &str, frames: usize) -> Message {
@@ -119,21 +108,17 @@ fn the_markers_name_the_model() {
     );
 }
 
+/// Whether a GIF is animated is `quecto_image`'s (#2422 review); the
+/// verdict asks it only of an image typed exactly `image/gif`, as the wire
+/// spells it.
 #[test]
-fn a_gif_of_more_than_one_frame_is_animated() {
-    assert!(!is_animated_gif("image/gif", &gif(1)));
-    assert!(is_animated_gif("image/gif", &gif(2)));
-    assert!(is_animated_gif("IMAGE/GIF", &gif(3)));
-}
-
-#[test]
-fn only_a_well_formed_gif_is_animated() {
-    assert!(!is_animated_gif("image/png", &gif(2)), "not a GIF by type");
-    assert!(!is_animated_gif("image/gif", "cG5n"), "not a GIF by header");
-    assert!(!is_animated_gif("image/gif", "!!!not base64!!!"));
-    assert!(!is_animated_gif("image/gif", ""));
-    let truncated = &gif(2)[..40];
-    assert!(!is_animated_gif("image/gif", truncated), "one frame read");
+fn only_an_image_typed_exactly_image_gif_is_walked() {
+    let verdicts = GifVerdicts::default();
+    assert!(verdicts.is_animated("image/gif", &gif(2)));
+    assert!(!verdicts.is_animated("image/gif", &gif(1)));
+    for mime in ["IMAGE/GIF", "image/Gif", "image/png"] {
+        assert!(!verdicts.is_animated(mime, &gif(2)), "{mime}");
+    }
 }
 
 #[test]

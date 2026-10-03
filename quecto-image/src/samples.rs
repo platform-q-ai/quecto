@@ -172,3 +172,30 @@ pub fn webp_extended(width: u32, height: u32) -> Vec<u8> {
     chunks.extend(vp8l(width.min(16_384), height.min(16_384)));
     riff_webp(&chunks)
 }
+
+/// A GIF89a of `frames` 1x1 frames, each after a graphic control extension,
+/// with a global colour table and a comment extension (#2421): animated
+/// when `frames` is more than one.
+pub fn animated_gif(frames: usize) -> Vec<u8> {
+    let mut bytes = b"GIF89a".to_vec();
+    bytes.extend([1, 0, 1, 0, 0x80, 0, 0]); // 1x1, a 2-colour global table
+    bytes.extend([0, 0, 0, 255, 255, 255]);
+    bytes.extend([0x21, 0xFE, 3, b'h', b'e', b'y', 0]); // comment
+    for _ in 0..frames {
+        bytes.extend([0x21, 0xF9, 4, 0, 10, 0, 0, 0]); // graphic control
+        bytes.extend([0x2C, 0, 0, 0, 0, 1, 0, 1, 0, 0]); // image descriptor
+        bytes.extend([2, 2, 0x4C, 0x01, 0]); // LZW size, one sub-block, end
+    }
+    bytes.push(0x3B);
+    bytes
+}
+
+/// A 1x1 image of `mime`.
+pub fn sample(mime: crate::ImageMime) -> Vec<u8> {
+    match mime {
+        crate::ImageMime::Png => png(1, 1),
+        crate::ImageMime::Jpeg => jpeg(1, 1),
+        crate::ImageMime::Gif => gif(1, 1),
+        crate::ImageMime::Webp => webp_lossless(1, 1),
+    }
+}
