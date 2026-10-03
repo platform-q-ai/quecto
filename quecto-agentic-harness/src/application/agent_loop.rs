@@ -9,7 +9,7 @@ pub use crate::application::agent_usage::UsageTotals;
 use crate::application::audit::ports::AuditSink;
 use crate::application::context::{ContextManager, ContextManagerConfig};
 use crate::application::context_pruning;
-use crate::application::providers::ports::{ChatRequest, LlmProvider};
+use crate::application::providers::ports::LlmProvider;
 use crate::application::tools::ports::{
     RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog, ToolExecutor, ToolRegistry,
 };
@@ -410,35 +410,6 @@ impl AgentLoopImpl {
         }
     }
 
-    fn build_chat_request<'a>(
-        &'a self,
-        messages: &'a Vec<Message>,
-        tool_defs: &'a [crate::domain::tool::ToolDefinition],
-    ) -> ChatRequest<'a> {
-        // Pass session_key as session_id so providers that support prompt
-        // caching (e.g. Codex prompt_cache_key) can use it.
-        let session_id = if self.session_key.is_empty() {
-            None
-        } else {
-            Some(self.session_key.as_str())
-        };
-        ChatRequest {
-            trace: None,
-            admission: self.request_admission.clone(),
-            messages,
-            tools: tool_defs,
-            model: &self.model,
-            max_tokens: self.effective_max_tokens(),
-            temperature: self.temperature,
-            session_id,
-            tool_choice: None,
-            metadata: None,
-            thinking_level: None,
-            cancel_flag: None,
-            effort: self.effort,
-        }
-    }
-
     async fn finalize_text_response(
         &self,
         messages: &mut Vec<Message>,
@@ -528,16 +499,19 @@ impl AgentLoopImpl {
                 messages: messages.clone().into(),
             });
 
+            // #2421: the conversation as the active model is sent it.
+            let sent = self.conversation_for_model(messages);
             let request = self.prepare_provider_request_transition(
-                messages,
+                sent.messages(),
                 &tool_defs,
                 estimated_context_tokens,
             );
             let _state = TurnState::AwaitProviderResponse;
+            let message_count = sent.messages().len();
             self.audit_provider_request_start(
                 current_turn,
                 estimated_context_tokens,
-                messages.len(),
+                message_count,
             )
             .await;
 
@@ -554,6 +528,7 @@ impl AgentLoopImpl {
                     Output::from_emitted(failure.emitted_event),
                 ),
             };
+            drop(sent);
 
             let llm_duration_ms = llm_start.elapsed().as_millis() as u64;
             // Every response is audited and counted, including one dropped below.

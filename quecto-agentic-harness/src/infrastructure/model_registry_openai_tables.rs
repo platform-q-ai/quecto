@@ -1,8 +1,9 @@
 // Built-in OpenAI tables, split out of `model_registry.rs` to respect the
 // per-file line cap: GPT-5.6 tier pricing, the published limits of the
 // OpenAI/Codex models the GPT-5.6+ enrichment does not cover (#2405,
-// checked 2026-10-01), and which built-in models take images (#2421). They return infra types, so they live in the
-// infrastructure layer next to the registry rather than in the domain.
+// checked 2026-10-01), and which built-in models take images (#2421).
+// They return infra types, so they live in the infrastructure layer next
+// to the registry rather than in the domain.
 
 use super::ModelCost;
 
@@ -92,7 +93,7 @@ pub(super) fn openai_published_limits(provider: &str, id: &str) -> Option<Publis
 /// model, every GPT-5/GPT-6 tier but GPT-5.3 Codex Spark (text only:
 /// openai.com/index/introducing-gpt-5-3-codex-spark) and every Grok
 /// (docs.x.ai/developers/grok-4-7). A built-in not listed takes text only.
-pub(super) const IMAGE_INPUT_IDS: &[&str] = &[
+const IMAGE_INPUT_IDS: &[&str] = &[
     "claude-fable-5-1",
     "claude-fable-5",
     "claude-opus-5",
@@ -119,3 +120,18 @@ pub(super) const IMAGE_INPUT_IDS: &[&str] = &[
     "grok-4.6",
     "grok-4.5",
 ];
+
+/// The input a built-in model declares (#2421): text and image for one in
+/// [`IMAGE_INPUT_IDS`] under a built-in provider, text only for any other
+/// model. Every record starts from it, so a discovered listing or a
+/// `models.json` entry that says nothing of its input keeps the built-in
+/// one; only an explicit `input` replaces it (review L1).
+pub(crate) fn builtin_input(provider: &str, id: &str) -> Vec<String> {
+    let built_in = super::ModelRegistry::builtin_specs()
+        .iter()
+        .any(|spec| spec.0 == provider && spec.1 == id);
+    match built_in && IMAGE_INPUT_IDS.contains(&id) {
+        true => vec!["text".to_string(), "image".to_string()],
+        false => vec!["text".to_string()],
+    }
+}

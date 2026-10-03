@@ -116,7 +116,7 @@ The top-level `overrides` section patches an existing entry — built-in, discov
   "apiKey": "$MY_OPENAI_KEY"}}}
 ```
 
-Supported override fields: `name`, `contextWindow`, `maxTokens`, `apiKey` (credential reference only). An override whose `apiKey` is a literal secret, or whose target is not a known model, is rejected with a per-record diagnostic; the rest of the catalogue still publishes.
+Supported override fields: `name`, `contextWindow`, `maxTokens`, `apiKey` (credential reference only), and `input` (the input modalities, #2421: `{"input": ["text"]}` stops a built-in vision model being sent images, `["text", "image"]` sends them to one that declares none). An override whose `apiKey` is a literal secret, or whose target is not a known model, is rejected with a per-record diagnostic; the rest of the catalogue still publishes.
 
 ### Secrets
 

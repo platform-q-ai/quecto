@@ -1,6 +1,9 @@
 //! #2398: where each request's input first differs from its session's
 //! previous accepted request.
 use super::*;
+use crate::domain::conversation::image_tokens::{
+    MIN_IMAGE_TOKENS, UNREADABLE_IMAGE_TOKENS, estimate_image_tokens,
+};
 use crate::domain::request_observation::{
     InputBaseline, InputItemKind, InputPrefixParts, RequestTrace,
 };
@@ -269,25 +272,28 @@ fn reasoning_is_estimated_at_the_opaque_rate() {
     );
 }
 
-/// #2421 review L5: an image is costed as an image, not as the base64 text
-/// of its data URL: the item's text without its images, plus each image's
-/// estimate.
+/// #2421 review L5: an image is costed from its pixel size (#2420), not as
+/// the base64 text of its data URL: the item's text without its images,
+/// plus each image's estimate; an image whose URL is not inline data costs
+/// the most an image can.
 #[test]
-fn an_items_images_are_estimated_as_images() {
+fn an_items_images_are_estimated_from_their_pixel_size() {
+    // A 1x1 PNG's header, then padding: the floor, far under its text.
     let data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ".repeat(200);
     let image = json!({
         "type": "input_image",
         "image_url": format!("data:image/png;base64,{data}"),
         "detail": "high",
     });
+    let remote = json!({"type": "input_image", "image_url": "https://e.example/a.png"});
     let prompt = json!({
         "role": "user",
-        "content": [{"type": "input_text", "text": "look"}, image.clone(), image.clone()],
+        "content": [{"type": "input_text", "text": "look"}, image.clone(), image],
     });
     let result = json!({
         "type": "function_call_output",
         "call_id": "c1",
-        "output": [image],
+        "output": [remote],
     });
     let text_of = |item: Value| estimate_tokens(&serde_json::to_string(&item).unwrap());
     let prompt_text = text_of(json!({
@@ -299,12 +305,14 @@ fn an_items_images_are_estimated_as_images() {
         "call_id": "c1",
         "output": [],
     }));
+    let one_pixel = estimate_image_tokens("image/png", &data);
+    assert_eq!(one_pixel, MIN_IMAGE_TOKENS);
     let baseline = InputBaseline::default();
     observe(&baseline, "s", &[prompt.clone(), result.clone()]);
     let observed = observe(&baseline, "s", &[prompt, result, user("next")]);
     assert_eq!(
         observed.prefix_tokens_estimate,
-        prompt_text + 2 * IMAGE_TOKENS + result_text + IMAGE_TOKENS
+        prompt_text + 2 * one_pixel + result_text + UNREADABLE_IMAGE_TOKENS
     );
 }
 

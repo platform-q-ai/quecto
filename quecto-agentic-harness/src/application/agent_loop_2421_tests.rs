@@ -198,18 +198,16 @@ async fn a_tool_results_image_reaches_the_request_only_for_a_model_that_takes_it
     let (mut agent, provider) = agent_with_screenshot(ImageInput::StillImages);
     let mut messages = vec![Message::user("look at the screen")];
     agent.run_loop(&mut messages).await.unwrap();
-    let requests = provider.requests.lock().unwrap();
-    let result = requests[1].last().unwrap();
-    assert_eq!(result, &("Took a screenshot".to_string(), 1));
+    let result = provider.requests.lock().unwrap()[1].last().unwrap().clone();
+    assert_eq!(result, ("Took a screenshot".to_string(), 1));
 
     let (mut agent, provider) = agent_with_screenshot(ImageInput::NoImages);
     let mut messages = vec![Message::user("look at the screen")];
     agent.run_loop(&mut messages).await.unwrap();
-    let requests = provider.requests.lock().unwrap();
-    let result = requests[1].last().unwrap();
+    let result = provider.requests.lock().unwrap()[1].last().unwrap().clone();
     assert_eq!(
         result,
-        &(format!("Took a screenshot\n{}", not_sent_marker(MODEL)), 0)
+        (format!("Took a screenshot\n{}", not_sent_marker(MODEL)), 0)
     );
     let stored = messages.iter().find(|m| m.tool_call_id.is_some()).unwrap();
     assert_eq!(stored.image_blocks.len(), 1, "the conversation keeps it");

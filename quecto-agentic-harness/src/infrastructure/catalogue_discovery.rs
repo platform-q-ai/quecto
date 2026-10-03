@@ -216,8 +216,15 @@ fn cached_entry(provider: &str, model: &CachedModel) -> Result<CatalogueEntry, S
             reference,
             display_name: Some(model.name.clone()),
             // A discovered model declares no reasoning capability, so it
-            // carries no effort vocabulary until the user's record says so.
-            capabilities: crate::infrastructure::catalogue_registry::default_capabilities(),
+            // carries no effort vocabulary until the user's record says so;
+            // a listing says nothing of its input, so a built-in model keeps
+            // the built-in table's (#2421 review L1).
+            capabilities: crate::domain::catalogue::ModelCapabilities {
+                input_modalities: crate::infrastructure::model_registry::builtin_input(
+                    provider, &model.id,
+                ),
+                ..crate::infrastructure::catalogue_registry::default_capabilities()
+            },
             availability: Availability::runnable(),
         },
     })

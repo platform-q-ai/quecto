@@ -1,4 +1,5 @@
 use super::*;
+use crate::application::providers::ports::ChatRequest;
 use crate::application::tools::ports::{Tool, ToolCatalog, ToolExecutor, ToolRegistry};
 use crate::domain::message::{LlmResponse, Role, ToolCall, UsageInfo};
 use crate::domain::tool::{ToolDefinition, ToolResult};

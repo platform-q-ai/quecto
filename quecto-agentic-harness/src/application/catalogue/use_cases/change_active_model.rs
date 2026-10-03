@@ -26,7 +26,8 @@ use crate::application::catalogue::ports::{
 use crate::application::catalogue::use_cases::ChangeReasoningEffort;
 use crate::application::catalogue::{CatalogueSnapshotStore, ResolveCatalogueUseCase};
 use crate::application::provider_runtime::{SelectionError, select_in_runtime};
-use crate::domain::catalogue::{CatalogueSnapshot, ModelRef};
+use crate::domain::catalogue::{CatalogueEntry, CatalogueSnapshot, ModelRef};
+use crate::domain::conversation::image_input::ImageInput;
 
 pub struct ChangeActiveModel {
     inputs: Arc<dyn CatalogueInputsLoader>,
@@ -64,10 +65,7 @@ impl ChangeActiveModel {
             &self.store,
         );
         let reference = ModelRef::parse_qualified(model).ok();
-        let limits = reference
-            .as_ref()
-            .map(|reference| Self::limits_in(&resolved.snapshot, reference))
-            .unwrap_or_default();
+        let limits = Self::limits_in(&resolved.snapshot, model);
         let verdict = match reference {
             Some(reference) => self.verdict(&reference),
             None => ModelSelectionVerdict::Unknown {
@@ -208,10 +206,30 @@ impl ChangeActiveModel {
         }
     }
 
+    /// The entry `model` names (#2421 review L2): a `provider/model` id
+    /// matches its provider whatever the case, as the router does; a bare
+    /// id is the one the router serves it from, the first runnable provider
+    /// that lists it, else the first that lists it at all.
+    fn entry_for<'s>(snapshot: &'s CatalogueSnapshot, model: &str) -> Option<&'s CatalogueEntry> {
+        let entries = snapshot.entries();
+        let lists =
+            |entry: &&CatalogueEntry, id: &str| entry.model.reference.model().as_str() == id;
+        match model.split_once('/') {
+            Some((provider, id)) => entries.iter().find(|entry| {
+                lists(entry, id) && entry.provider.id.as_str().eq_ignore_ascii_case(provider)
+            }),
+            None => entries
+                .iter()
+                .find(|entry| lists(entry, model) && entry.model.availability.is_runnable())
+                .or_else(|| entries.iter().find(|entry| lists(entry, model))),
+        }
+    }
+
     /// Only explicitly declared values clamp: a synthesized default is not a
-    /// real limit.
-    fn limits_in(snapshot: &CatalogueSnapshot, reference: &ModelRef) -> ModelLimits {
-        let Some(entry) = snapshot.find(reference) else {
+    /// real limit. A model the catalogue does not hold has none, and takes
+    /// no image.
+    fn limits_in(snapshot: &CatalogueSnapshot, model: &str) -> ModelLimits {
+        let Some(entry) = Self::entry_for(snapshot, model) else {
             return ModelLimits::default();
         };
         let capabilities = &entry.model.capabilities;
@@ -223,7 +241,7 @@ impl ChangeActiveModel {
                 .context_window_explicit
                 .then_some(capabilities.context_window as usize),
             prompt_limit: capabilities.prompt_limit,
-            image_input: crate::domain::conversation::image_input::ImageInput::declared(
+            image_input: ImageInput::declared(
                 &capabilities.input_modalities,
                 &entry.provider.transport,
             ),

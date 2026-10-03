@@ -134,10 +134,6 @@ impl ModelRegistry {
             let mut record = ModelRecord::with_defaults(provider, id, Some(name), api);
             record.auth = auth;
             record.oauth_provider = oauth_provider.map(str::to_string);
-            // #2421: the built-in vision models declare image input.
-            if IMAGE_INPUT_IDS.contains(&id) {
-                record.input = vec!["text".to_string(), "image".to_string()];
-            }
             if id == "claude-sonnet-5" {
                 record.context_window = 1_000_000;
                 record.context_window_explicit = true;
@@ -486,6 +482,7 @@ impl ModelRegistry {
                         context_window: patch.context_window,
                         max_tokens: patch.max_tokens,
                         api_key: patch.api_key,
+                        input: patch.input,
                     },
                 )
             })
@@ -560,7 +557,9 @@ impl ModelRecord {
             api_key: None,
             auth_header: true,
             allow_remote_http: false,
-            input: vec!["text".to_string()],
+            // #2421: what the built-in table declares for the model, so a
+            // record that says nothing keeps it (review L1).
+            input: builtin_input(provider, id),
             context_window: DEFAULT_CONTEXT_WINDOW,
             max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
             max_tokens_explicit: false,
@@ -655,6 +654,8 @@ pub struct ModelOverride {
     pub context_window: Option<u32>,
     pub max_tokens: Option<u32>,
     pub api_key: Option<String>,
+    /// The input modalities (#2421 review M1): `["text"]` turns images off.
+    pub input: Option<Vec<String>>,
 }
 
 /// A provider block whose declared transport this build cannot run, kept so
@@ -716,7 +717,8 @@ use file_format::RegistryFile;
 
 #[path = "model_registry_openai_tables.rs"]
 mod openai_tables;
-use openai_tables::{IMAGE_INPUT_IDS, gpt_5_6_cost, gpt_5_6_window, openai_published_limits};
+pub(crate) use openai_tables::builtin_input;
+use openai_tables::{gpt_5_6_cost, gpt_5_6_window, openai_published_limits};
 
 #[cfg(test)]
 #[path = "model_registry_image_input_tests.rs"]

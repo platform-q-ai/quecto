@@ -1,6 +1,6 @@
-//! Images on the OpenAI wires (#2421): a `data:` URL per image, the
-//! chat-completions content parts a user message's images become, and the
-//! user message that carries a tool batch's images.
+//! Images on the chat-completions wire (#2421): the content parts a user
+//! message's images become, and the user message that carries a tool
+//! batch's images.
 //!
 //! Which images a model is sent is the application's decision
 //! (`domain::conversation::image_input`): these functions serialize every
@@ -9,35 +9,18 @@
 
 use std::collections::HashMap;
 
+use super::provider_images::{DETAIL, data_url, images};
 use crate::domain::message::{Message, Role};
-
-/// An image as both OpenAI wires take it inline.
-pub(super) fn data_url(mime_type: &str, data: &str) -> String {
-    format!("data:{mime_type};base64,{data}")
-}
-
-/// Every image `message` carries, as (MIME type, base64 data): a user's and
-/// a tool result's alike, so none is left out whichever it is.
-pub(super) fn images(message: &Message) -> Vec<(&str, &str)> {
-    message
-        .user_image_blocks
-        .iter()
-        .map(|image| (image.mime_type.as_str(), image.data.as_str()))
-        .chain(
-            message
-                .image_blocks
-                .iter()
-                .map(|image| (image.mime_type, image.data.as_str())),
-        )
-        .collect()
-}
 
 fn text_part(text: &str) -> serde_json::Value {
     serde_json::json!({"type": "text", "text": text})
 }
 
 fn image_part(mime_type: &str, data: &str) -> serde_json::Value {
-    serde_json::json!({"type": "image_url", "image_url": {"url": data_url(mime_type, data)}})
+    serde_json::json!({
+        "type": "image_url",
+        "image_url": {"url": data_url(mime_type, data), "detail": DETAIL},
+    })
 }
 
 /// A user message's content parts when it carries images: its text (when it

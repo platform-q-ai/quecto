@@ -2,7 +2,7 @@
 //! encrypted reasoning a turn carries back to its model (#2162).
 use super::CodexProvider;
 use crate::domain::message::{Message, Role, ThinkingBlock};
-use crate::infrastructure::providers::openai_images::{data_url, images};
+use crate::infrastructure::providers::provider_images::{DETAIL, data_url, images};
 
 impl CodexProvider {
     /// `build_input` replaying no reasoning (tests of the rest of it).
@@ -67,7 +67,7 @@ impl CodexProvider {
     /// becomes (#2421): the text alone, as a string, when the message
     /// carries no image, which is every message's bytes before images
     /// were sent; with images, an array of its text (when it has any) and
-    /// each image as an `input_image` data URL.
+    /// each image as an `input_image` data URL at `"detail": "high"`.
     fn sent_content(msg: &Message) -> serde_json::Value {
         let images = images(msg);
         let text = match msg.content.is_empty() {
@@ -79,7 +79,11 @@ impl CodexProvider {
             false => serde_json::Value::Array(
                 text.into_iter()
                     .chain(images.iter().map(|(mime, data)| {
-                        serde_json::json!({"type": "input_image", "image_url": data_url(mime, data)})
+                        serde_json::json!({
+                            "type": "input_image",
+                            "image_url": data_url(mime, data),
+                            "detail": DETAIL,
+                        })
                     }))
                     .collect(),
             ),

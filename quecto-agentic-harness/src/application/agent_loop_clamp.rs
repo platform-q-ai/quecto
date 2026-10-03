@@ -13,6 +13,7 @@ use super::AgentLoopImpl;
 use crate::application::catalogue::dto::ModelLimits;
 use crate::application::catalogue::ports::ModelRuntime;
 use crate::domain::catalogue::ModelWindow;
+use crate::domain::conversation::image_input::{ImageInput, SentConversation};
 
 /// Tokens kept free of the context window when a retry raises the output limit.
 const OUTPUT_ROOM_MARGIN: usize = 1024;
@@ -54,19 +55,14 @@ impl AgentLoopImpl {
         self.sync_context_limits();
     }
 
-    /// The conversation as the active model is sent it (#2421): with its
-    /// images when the model takes them, a marker in each one's place when
-    /// it takes none. The conversation itself keeps every image.
-    pub(super) fn messages_for_model<'m>(
+    /// The conversation as the active model is sent it (#2421), while the
+    /// result lives: each image the model does not take is a marker in its
+    /// message. Dropping it gives the conversation every image back.
+    pub(super) fn conversation_for_model<'m>(
         &self,
-        messages: &'m [crate::domain::message::Message],
-    ) -> std::borrow::Cow<'m, [crate::domain::message::Message]> {
-        crate::domain::conversation::image_input::for_model(
-            messages,
-            &self.model,
-            self.model_traits.image_input
-                != crate::domain::conversation::image_input::ImageInput::NoImages,
-        )
+        messages: &'m mut [crate::domain::message::Message],
+    ) -> SentConversation<'m> {
+        SentConversation::new(messages, &self.model, self.model_traits.image_input)
     }
 
     /// Builder variant: the startup model's limits (#2405), which the
@@ -243,7 +239,7 @@ impl AgentLoopImpl {
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct ModelTraits {
     pub(super) prompt_limit: crate::domain::catalogue::PromptLimit,
-    pub(super) image_input: crate::domain::conversation::image_input::ImageInput,
+    pub(super) image_input: ImageInput,
 }
 
 /// Why the active model's window is worth a line in the log (#2405).
