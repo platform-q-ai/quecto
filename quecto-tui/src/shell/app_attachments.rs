@@ -73,7 +73,9 @@ impl AttachmentFlow {
         }
     }
 
-    /// Whether a read has been started and not yet applied.
+    /// Whether a read has been started and not yet applied (the harness
+    /// delivers reads the way the event loop's arm does).
+    #[cfg(any(test, feature = "test-harness"))]
     pub(super) fn reads_in_flight(&self) -> bool {
         self.clipboard_reading || self.file_reads > 0
     }
