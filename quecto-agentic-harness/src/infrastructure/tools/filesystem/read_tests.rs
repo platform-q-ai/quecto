@@ -308,52 +308,18 @@ async fn test_read_text_file_has_no_image_blocks() {
     assert!(result.content.contains("hello world"));
 }
 
-// --- Magic-byte MIME detection ---
-
-#[test]
-fn test_detect_mime_by_magic_png() {
-    const PNG: &[u8] = &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0];
-    assert_eq!(detect_mime_by_magic(PNG), Some("image/png"));
-}
-
-#[test]
-fn test_detect_mime_by_magic_jpeg() {
-    const JPEG: &[u8] = &[0xFF, 0xD8, 0xFF, 0xD9];
-    assert_eq!(detect_mime_by_magic(JPEG), Some("image/jpeg"));
-}
-
-#[test]
-fn test_detect_mime_by_magic_gif89a() {
-    assert_eq!(detect_mime_by_magic(b"GIF89a\x01"), Some("image/gif"));
-}
-
-#[test]
-fn test_detect_mime_by_magic_gif87a() {
-    assert_eq!(detect_mime_by_magic(b"GIF87a\x01"), Some("image/gif"));
-}
-
-#[test]
-fn test_detect_mime_by_magic_webp() {
-    let webp = b"RIFF\x20\x00\x00\x00WEBPVP8L";
-    assert_eq!(detect_mime_by_magic(webp), Some("image/webp"));
-}
-
-#[test]
-fn test_detect_mime_by_magic_text() {
-    assert_eq!(detect_mime_by_magic(b"hello world"), None);
-    assert_eq!(detect_mime_by_magic(b""), None);
-}
+// --- Magic-byte MIME detection (`quecto_image::ImageMime::sniff`) ---
 
 #[tokio::test]
 async fn test_magic_bytes_detect_png_no_extension() {
     let (ws, sb, tmp) = test_tools();
     let tool = ReadTool::new(ws, sb);
-    // Valid PNG magic bytes but no file extension
-    let png_bytes: &[u8] = &[
-        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
-        0x52,
-    ];
-    std::fs::write(tmp.path().join("screenshot"), png_bytes).unwrap();
+    // A PNG with no file extension
+    std::fs::write(
+        tmp.path().join("screenshot"),
+        quecto_image::samples::png(2, 2),
+    )
+    .unwrap();
     let result = tool.execute(r#"{"path": "screenshot"}"#).await.unwrap();
     assert!(
         !result.is_error,
@@ -373,8 +339,11 @@ async fn test_magic_bytes_detect_jpeg_wrong_extension() {
     let (ws, sb, tmp) = test_tools();
     let tool = ReadTool::new(ws, sb);
     // JPEG magic bytes with .dat extension
-    let jpeg_bytes: &[u8] = &[0xFF, 0xD8, 0xFF, 0xD9];
-    std::fs::write(tmp.path().join("photo.dat"), jpeg_bytes).unwrap();
+    std::fs::write(
+        tmp.path().join("photo.dat"),
+        quecto_image::samples::jpeg(2, 2),
+    )
+    .unwrap();
     let result = tool.execute(r#"{"path": "photo.dat"}"#).await.unwrap();
     assert!(
         !result.is_error,
@@ -505,31 +474,54 @@ async fn test_read_rejects_file_over_10mib_limit() {
     assert!(result.content.contains("too large to read directly"));
 }
 
+/// The limit is `quecto_image::MAX_IMAGE_BYTES` (3.75 MiB): its base64 is
+/// at most 5 MiB, Anthropic's limit (#2422).
 #[tokio::test]
-async fn test_read_allows_image_at_5mib_limit() {
+async fn test_read_allows_image_at_the_limit() {
     let (ws, sb, tmp) = test_tools();
     let tool = ReadTool::new(ws, sb);
-    let mut bytes = vec![0_u8; 5 * 1024 * 1024];
-    bytes[..8].copy_from_slice(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+    let bytes = quecto_image::samples::png_with_body(2, 2, quecto_image::MAX_IMAGE_BYTES - 57);
+    assert_eq!(bytes.len(), quecto_image::MAX_IMAGE_BYTES);
     std::fs::write(tmp.path().join("max-image.bin"), bytes).unwrap();
     let result = tool.execute(r#"{"path":"max-image.bin"}"#).await.unwrap();
-    assert!(!result.is_error);
+    assert!(!result.is_error, "{}", result.content);
     assert_eq!(result.image_blocks.len(), 1);
+    assert_eq!(result.image_blocks[0].data.len(), 5 * 1024 * 1024);
 }
 
 #[tokio::test]
-async fn test_read_rejects_image_over_5mib_limit() {
+async fn test_read_rejects_image_over_the_limit() {
     let (ws, sb, tmp) = test_tools();
     let tool = ReadTool::new(ws, sb);
-    let mut bytes = vec![0_u8; 5 * 1024 * 1024 + 1];
-    bytes[..8].copy_from_slice(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+    let bytes = quecto_image::samples::png_with_body(2, 2, quecto_image::MAX_IMAGE_BYTES - 56);
     std::fs::write(tmp.path().join("too-large-image.bin"), bytes).unwrap();
     let result = tool
         .execute(r#"{"path":"too-large-image.bin"}"#)
         .await
         .unwrap();
     assert!(result.is_error);
-    assert!(result.content.contains("too large to send inline"));
+    assert!(
+        result
+            .content
+            .contains("too large to send inline (max 3.75 MiB)")
+    );
+    assert!(result.image_blocks.is_empty());
+}
+
+/// A file with an image's signature but no readable header is not sent
+/// (#2422): it says why instead.
+#[tokio::test]
+async fn test_read_refuses_an_image_whose_header_is_unreadable() {
+    let (ws, sb, tmp) = test_tools();
+    let tool = ReadTool::new(ws, sb);
+    std::fs::write(tmp.path().join("bare.png"), b"\x89PNG\r\n\x1a\n").unwrap();
+    let result = tool.execute(r#"{"path":"bare.png"}"#).await.unwrap();
+    assert!(result.is_error);
+    assert_eq!(
+        result.content,
+        "Image file is not a readable image/png image; it cannot be sent."
+    );
+    assert!(result.image_blocks.is_empty());
 }
 
 #[tokio::test]

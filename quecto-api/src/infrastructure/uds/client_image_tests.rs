@@ -1,7 +1,8 @@
 //! #2422: a prompt's images on the wire, and the frame cap they can reach.
 use super::*;
 
-const PNG: &str = "iVBORw0KGgoAAAANSUhEUg==";
+/// A 2x2 PNG: signature, IHDR, IEND.
+const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAAElFTkSuQmCC";
 
 fn prompt(message: String, images: Vec<quecto_image::ImageAttachment>) -> AgentCommand {
     AgentCommand::Prompt {

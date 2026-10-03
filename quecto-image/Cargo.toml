@@ -11,3 +11,7 @@ serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 serde_json = "1"
+
+[features]
+# Real minimal image files (`quecto_image::samples`) for other crates' tests.
+test-support = []

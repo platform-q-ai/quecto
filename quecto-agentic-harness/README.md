@@ -98,7 +98,7 @@ to open a link in the browser — plain click selects text. Slash commands inclu
 | `quecto-mcp` | `quecto-mcp` | UDS extension that discovers MCP tools, registers them with Quecto, and proxies tool calls; see [`quecto-mcp/README.md`](../quecto-mcp/README.md) |
 | `quecto-runtime-manager` | `quecto-runtime-manager` | HTTP runtime manager for provisioning and supervising isolated Quecto runtimes |
 | *(library)* | `quecto-line-io` | Shared bounded length-prefixed / legacy-line UDS framing (8 MiB cap) |
-| *(library)* | `quecto-image` | Image attachment validation shared by the agent and `quecto-api` (MIME allowlist, base64, signature, size, count) |
+| *(library)* | `quecto-image` | What an image is, owned in one place and shared by the agent (UDS commands, `read`, the token estimate) and `quecto-api`: MIME allowlist, sniffing, size limit, base64, header parsing, admission |
 
 ## Architecture
 
@@ -270,7 +270,7 @@ socat - UNIX-CONNECT:/tmp/quecto-agent-<uuid>.sock
 
 | Type | Fields | Description |
 |---|---|---|
-| `prompt` | `message`, optional `id`, `streamingBehavior`, `images` | Send a user message. When agent is running, `streamingBehavior` (`"steer"` or `"followUp"`) is required. `images` attaches up to 8 PNG/JPEG/GIF/WebP images (`{"mimeType","data"}`, base64, ≤ 5 MiB each); a bad image refuses the command ([details](docs/uds-protocol.md#image-attachments)) |
+| `prompt` | `message`, optional `id`, `streamingBehavior`, `images` | Send a user message. When agent is running, `streamingBehavior` (`"steer"` or `"followUp"`) is required. `images` attaches up to 8 PNG/JPEG/GIF/WebP images (`{"mimeType","data"}`, strict base64, readable header, ≤ 3.75 MiB decoded each); a bad image refuses the command ([details](docs/uds-protocol.md#image-attachments)) |
 | `steer` | `message`, optional `id`, `images` | Interrupt after current tool, deliver this message (and its images) next |
 | `follow_up` | `message`, optional `id`, `images` | Queue message (and its images) for after current run completes; if idle, run it immediately |
 | `abort` | optional `id` | Cancel the current agent run |

@@ -74,12 +74,14 @@ Unknown flags and missing `--socket` / `QUECTO_SOCKET` exit with a non-zero stat
 - `message` — required; may be `""` only when `images` has at least one image.
 - `images` — optional (#2422): up to 8 images, each `{"mimeType", "data"}` with
   `mimeType` one of `image/png`, `image/jpeg`, `image/gif`, `image/webp` and
-  `data` standard base64 of at most 5 MiB decoded whose bytes match the type.
+  `data` strict standard base64 of at most 3.75 MiB decoded whose bytes match
+  the type and whose header is readable.
   Validated here by `quecto-image`, the same rules and text as the agent's
   [image attachments](../quecto-agentic-harness/docs/uds-protocol.md#image-attachments):
   a refused image is a `400` such as
   `{"error":"invalid request: images[0]: data is not valid standard base64"}`
-  and nothing is sent. Request bodies may be up to 8 MiB, the agent's frame cap.
+  and nothing is sent. `/prompt`, `/steer` and `/follow_up` take bodies up to
+8 MiB, the agent's frame cap; every other route keeps the 2 MB default.
 - `streamingBehavior` — optional; required by the agent when a run is already in progress (`"steer"` or `"followUp"`).
 - `waitForCompletion` — optional, default `true`. When `false`, the gateway uses fire-and-forget enqueue and returns acceptance immediately; follow the run on `/ws`.
 

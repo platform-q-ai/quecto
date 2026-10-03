@@ -10,7 +10,7 @@ pub async fn execute(
 ) -> Result<AgentEvent, ApiError> {
     if !gateway.is_connected() {
         return Err(ApiError::AgentNotConnected);
-    }
+    } // red (#2422 review round 1): connection first
     let images = super::admit_message(&message, images)?;
     gateway
         .send(AgentCommand::FollowUp { message, images })

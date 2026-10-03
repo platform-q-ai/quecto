@@ -391,7 +391,7 @@ fn message_to_record_ref(msg: &Message) -> MessageRecordRef<'_> {
     MessageRecordRef {
         ordinal: msg.ordinal,
         role: role_to_str(&msg.role),
-        content: &msg.content,
+        content: crate::domain::conversation::user_images::stored_text(msg),
         tool_calls: msg
             .tool_calls
             .iter()
@@ -425,7 +425,7 @@ fn message_to_record(msg: &Message) -> MessageRecord {
     MessageRecord {
         ordinal: msg.ordinal,
         role: role_to_str(&msg.role).to_string(),
-        content: msg.content.clone(),
+        content: crate::domain::conversation::user_images::stored_text(msg).into_owned(),
         tool_calls: msg
             .tool_calls
             .iter()

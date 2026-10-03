@@ -91,6 +91,8 @@ default = []
 test-support = []
 
 [dev-dependencies]
+# Real minimal image files for image tests (#2422).
+quecto-image = { version = "0.1.0", path = "../quecto-image", features = ["test-support"] }
 syn = { version = "2", features = ["full", "visit", "visit-mut"] }
 # The architecture scanners render production tokens after stripping
 # `#[cfg(test)]` items (#1637).

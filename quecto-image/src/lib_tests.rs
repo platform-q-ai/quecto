@@ -1,17 +1,8 @@
 use super::*;
-
-const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
-const JPEG: &[u8] = &[0xFF, 0xD8, 0xFF, 0xE0, 0, 0x10, b'J', b'F', b'I', b'F'];
-const GIF87: &[u8] = b"GIF87a\x01\0\x01\0";
-const GIF89: &[u8] = b"GIF89a\x01\0\x01\0";
-const WEBP: &[u8] = b"RIFF\x24\0\0\0WEBPVP8 ";
-
-fn b64(bytes: &[u8]) -> String {
-    base64::engine::general_purpose::STANDARD.encode(bytes)
-}
+use crate::samples::{gif, jpeg, png, png_with_body, webp_extended, webp_lossless, webp_lossy};
 
 fn payload(mime: &str, bytes: &[u8]) -> ImagePayload {
-    ImagePayload::new(mime, b64(bytes))
+    ImagePayload::new(mime, encode(bytes))
 }
 
 fn refusal(payload: ImagePayload) -> String {
@@ -19,32 +10,49 @@ fn refusal(payload: ImagePayload) -> String {
 }
 
 #[test]
-fn admits_each_allowed_type_with_its_signature() {
+fn admits_each_allowed_type_with_a_readable_header() {
+    let gif87 = {
+        let mut bytes = gif(5, 6);
+        bytes[..6].copy_from_slice(b"GIF87a");
+        bytes
+    };
     for (mime, bytes) in [
-        ("image/png", PNG),
-        ("image/jpeg", JPEG),
-        ("image/gif", GIF87),
-        ("image/gif", GIF89),
-        ("image/webp", WEBP),
+        ("image/png", png(3, 4)),
+        ("image/jpeg", jpeg(3, 4)),
+        ("image/gif", gif(3, 4)),
+        ("image/gif", gif87),
+        ("image/webp", webp_lossy(3, 4)),
+        ("image/webp", webp_lossless(3, 4)),
+        ("image/webp", webp_extended(3, 4)),
     ] {
-        let image = ImageAttachment::new(payload(mime, bytes)).expect(mime);
+        let image = ImageAttachment::new(payload(mime, &bytes)).expect(mime);
         assert_eq!(image.mime_type(), mime);
+        assert_eq!(image.mime(), ImageMime::parse_exact(mime).unwrap());
         assert_eq!(image.decoded_len(), bytes.len());
-        assert_eq!(image.data(), b64(bytes));
+        assert_eq!(image.data(), encode(&bytes));
+        assert!(image.dimensions().width > 0, "{mime}");
     }
+    let image = ImageAttachment::new(payload("image/png", &png(3, 4))).unwrap();
+    assert_eq!(
+        image.dimensions(),
+        Dimensions {
+            width: 3,
+            height: 4
+        }
+    );
 }
 
 #[test]
 fn refuses_a_type_off_the_allowlist_with_its_exact_message() {
     assert_eq!(
-        refusal(payload("image/svg+xml", PNG)),
+        refusal(payload("image/svg+xml", &png(1, 1))),
         "mimeType \"image/svg+xml\" is not allowed; use image/png, image/jpeg, image/gif or image/webp"
     );
     // The match is exact: no case folding, no parameters.
     for declared in ["IMAGE/PNG", "image/png; charset=binary", " image/png", ""] {
         assert!(
             matches!(
-                ImageAttachment::new(payload(declared, PNG)),
+                ImageAttachment::new(payload(declared, &png(1, 1))),
                 Err(ImageRefusal::UnsupportedMime(_))
             ),
             "{declared:?} must be refused"
@@ -56,21 +64,27 @@ fn refuses_a_type_off_the_allowlist_with_its_exact_message() {
 fn an_unsupported_type_is_echoed_cut_and_escaped() {
     let declared = format!("image/{}\n", "x".repeat(200));
     let ImageRefusal::UnsupportedMime(echoed) =
-        ImageAttachment::new(payload(&declared, PNG)).unwrap_err()
+        ImageAttachment::new(payload(&declared, &png(1, 1))).unwrap_err()
     else {
         panic!("expected an unsupported type");
     };
     assert_eq!(echoed.chars().count(), 64);
-    assert!(!refusal(payload("image/a\nb", PNG)).contains('\n'));
+    assert!(!refusal(payload("image/a\nb", &png(1, 1))).contains('\n'));
 }
 
 #[test]
-fn refuses_data_that_is_not_standard_base64() {
-    let mut wrapped = b64(PNG);
+fn refuses_data_that_is_not_strict_standard_base64() {
+    let bytes = png(800, 600);
+    let mut wrapped = encode(&bytes);
     wrapped.insert(4, '\n');
-    let url_safe = b64(&[0xFB, 0xFF, 0xFE]).replace('+', "-").replace('/', "_");
-    let unpadded = b64(PNG).trim_end_matches('=').to_string();
-    assert!(b64(PNG).ends_with('='), "the fixture must need padding");
+    let url_safe = encode(&[0xFB, 0xFF, 0xFE])
+        .replace('+', "-")
+        .replace('/', "_");
+    let unpadded = encode(&bytes).trim_end_matches('=').to_string();
+    assert!(
+        encode(&bytes).ends_with('='),
+        "the fixture must need padding"
+    );
     for data in [wrapped, url_safe, unpadded, "not base64!".to_string()] {
         assert_eq!(
             refusal(ImagePayload::new("image/png", data.clone())),
@@ -83,7 +97,7 @@ fn refuses_data_that_is_not_standard_base64() {
 #[test]
 fn refuses_bytes_that_are_not_the_declared_type() {
     assert_eq!(
-        refusal(payload("image/png", JPEG)),
+        refusal(payload("image/png", &jpeg(2, 2))),
         "data does not start with the image/png signature"
     );
     assert_eq!(
@@ -96,20 +110,42 @@ fn refuses_bytes_that_are_not_the_declared_type() {
     );
 }
 
+/// A signature alone is not an image: its header must give a pixel size.
+#[test]
+fn refuses_a_bare_signature_or_a_broken_header_as_unreadable() {
+    let mut truncated = png(800, 600);
+    truncated.truncate(20);
+    let mut zero_side = gif(0, 4);
+    zero_side.truncate(30);
+    for (mime, bytes) in [
+        ("image/png", b"\x89PNG\r\n\x1a\n".to_vec()),
+        ("image/webp", b"RIFF\x04\0\0\0WEBP".to_vec()),
+        ("image/jpeg", vec![0xFF, 0xD8, 0xFF]),
+        ("image/gif", b"GIF89a".to_vec()),
+        ("image/png", truncated),
+        ("image/gif", zero_side),
+    ] {
+        assert_eq!(
+            refusal(payload(mime, &bytes)),
+            format!("not a readable {mime} image"),
+            "{bytes:x?}"
+        );
+    }
+}
+
 #[test]
 fn admits_exactly_the_size_limit_and_refuses_one_byte_more() {
-    let mut at_limit = PNG.to_vec();
-    at_limit.resize(MAX_IMAGE_BYTES, 0);
+    assert_eq!(MAX_IMAGE_BYTES, 3_932_160, "3.75 MiB");
+    assert_eq!(MAX_ENCODED_LEN, 5 * 1024 * 1024, "its base64 is 5 MiB");
+    let at_limit = png_with_body(2, 2, MAX_IMAGE_BYTES - 57);
+    assert_eq!(at_limit.len(), MAX_IMAGE_BYTES);
+    let image = ImageAttachment::new(payload("image/png", &at_limit)).unwrap();
+    assert_eq!(image.decoded_len(), MAX_IMAGE_BYTES);
+    assert_eq!(image.data().len(), MAX_ENCODED_LEN);
+    let over = png_with_body(2, 2, MAX_IMAGE_BYTES - 56);
     assert_eq!(
-        ImageAttachment::new(payload("image/png", &at_limit))
-            .unwrap()
-            .decoded_len(),
-        MAX_IMAGE_BYTES
-    );
-    at_limit.push(0);
-    assert_eq!(
-        refusal(payload("image/png", &at_limit)),
-        "image decodes to more than 5242880 bytes (5 MiB)"
+        refusal(payload("image/png", &over)),
+        "image decodes to more than 3932160 bytes (3.75 MiB)"
     );
 }
 
@@ -124,29 +160,48 @@ fn refuses_oversized_text_before_decoding_it() {
 }
 
 #[test]
-fn a_message_takes_at_most_eight_images() {
-    let eight = vec![payload("image/png", PNG); MAX_IMAGES_PER_MESSAGE];
-    assert_eq!(validate_images(eight.clone()).unwrap().len(), 8);
-    assert!(check_images(&eight).is_ok());
-    let nine = vec![payload("image/png", PNG); 9];
-    let expected = "too many images: 9; at most 8 per message";
+fn a_file_read_from_disk_is_admitted_from_its_bytes() {
+    let bytes = jpeg(640, 480);
+    let image = ImageAttachment::from_bytes(ImageMime::Jpeg, &bytes).unwrap();
+    assert_eq!(image.data(), encode(&bytes));
+    assert_eq!(image.dimensions().width, 640);
     assert_eq!(
-        validate_images(nine.clone()).unwrap_err().to_string(),
-        expected
+        ImageAttachment::from_bytes(ImageMime::Png, &[0x89, b'P', b'N', b'G']).unwrap_err(),
+        ImageRefusal::SignatureMismatch(ImageMime::Png)
     );
-    assert_eq!(check_images(&nine).unwrap_err().to_string(), expected);
+    assert_eq!(
+        ImageAttachment::from_bytes(ImageMime::Png, b"\x89PNG\r\n\x1a\n").unwrap_err(),
+        ImageRefusal::Unreadable(ImageMime::Png)
+    );
+    let too_big = png_with_body(2, 2, MAX_IMAGE_BYTES);
+    assert_eq!(
+        ImageAttachment::from_bytes(ImageMime::Png, &too_big).unwrap_err(),
+        ImageRefusal::TooLarge
+    );
+}
+
+#[test]
+fn a_message_takes_at_most_eight_images() {
+    let eight = vec![payload("image/png", &png(1, 1)); MAX_IMAGES_PER_MESSAGE];
+    assert_eq!(validate_images(eight).unwrap().len(), 8);
+    let nine = vec![payload("image/png", &png(1, 1)); 9];
+    assert_eq!(
+        validate_images(nine).unwrap_err().to_string(),
+        "too many images: 9; at most 8 per message"
+    );
 }
 
 #[test]
 fn a_refusal_names_the_failing_image_and_refuses_the_whole_list() {
     let images = vec![
-        payload("image/png", PNG),
-        payload("image/jpeg", PNG),
+        payload("image/png", &png(1, 1)),
+        payload("image/jpeg", &png(1, 1)),
         payload("image/gif", b"GIF"),
     ];
-    let expected = "images[1]: data does not start with the image/jpeg signature";
-    assert_eq!(check_images(&images).unwrap_err().to_string(), expected);
-    assert_eq!(validate_images(images).unwrap_err().to_string(), expected);
+    assert_eq!(
+        validate_images(images).unwrap_err().to_string(),
+        "images[1]: data does not start with the image/jpeg signature"
+    );
     assert_eq!(validate_images(Vec::new()).unwrap(), Vec::new());
 }
 
@@ -160,7 +215,7 @@ fn the_payload_round_trips_in_its_wire_shape() {
 
 #[test]
 fn an_attachment_serialises_as_the_payload_it_came_from() {
-    let sent = payload("image/webp", WEBP);
+    let sent = payload("image/webp", &webp_lossy(2, 2));
     let image = ImageAttachment::new(sent.clone()).unwrap();
     assert_eq!(
         serde_json::to_value(&image).unwrap(),
@@ -171,7 +226,7 @@ fn an_attachment_serialises_as_the_payload_it_came_from() {
 
 #[test]
 fn debug_output_never_carries_the_base64() {
-    let sent = payload("image/png", PNG);
+    let sent = payload("image/png", &png(1, 1));
     let image = ImageAttachment::new(sent.clone()).unwrap();
     for shown in [format!("{sent:?}"), format!("{image:?}")] {
         assert!(!shown.contains(&sent.data), "{shown}");
@@ -179,10 +234,23 @@ fn debug_output_never_carries_the_base64() {
 }
 
 #[test]
-fn every_type_parses_from_its_own_name_only() {
+fn every_type_parses_from_its_exact_name_only() {
     for mime in ImageMime::ALL {
-        assert_eq!(ImageMime::parse(mime.as_str()), Some(mime));
+        assert_eq!(ImageMime::parse_exact(mime.as_str()), Some(mime));
+        assert_eq!(ImageMime::parse_exact(&mime.as_str().to_uppercase()), None);
         assert_eq!(mime.to_string(), mime.as_str());
     }
-    assert_eq!(ImageMime::parse("image/bmp"), None);
+    assert_eq!(ImageMime::parse_exact("image/bmp"), None);
+}
+
+#[test]
+fn sniff_names_the_type_a_file_starts_with() {
+    assert_eq!(ImageMime::sniff(&png(1, 1)), Some(ImageMime::Png));
+    assert_eq!(ImageMime::sniff(&jpeg(1, 1)), Some(ImageMime::Jpeg));
+    assert_eq!(ImageMime::sniff(b"GIF87a\x01"), Some(ImageMime::Gif));
+    assert_eq!(ImageMime::sniff(&gif(1, 1)), Some(ImageMime::Gif));
+    assert_eq!(ImageMime::sniff(&webp_lossy(1, 1)), Some(ImageMime::Webp));
+    for bytes in [&b"hello world"[..], b"", b"RIFF\0\0\0\0WAVE", b"\x89PN"] {
+        assert_eq!(ImageMime::sniff(bytes), None, "{bytes:x?}");
+    }
 }

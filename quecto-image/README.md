@@ -1,33 +1,50 @@
 # quecto-image
 
-Validated image attachments for Quecto's UDS protocol (#2422).
+What an image is, in one place (#2422).
 
-The one place Quecto decides whether an image from outside may enter a
-conversation. Used by `quecto-agentic-harness` (UDS `prompt` / `steer` /
-`follow_up`) and `quecto-api` (`/prompt`, WebSocket prompt frames), so both
-apply the same rules and refuse with the same text. Extension and MCP tool
-result images (#2423) and TUI attachments (#2425) are meant to use it too.
+Every quecto peer that handles an image uses this crate and keeps no copy of
+its facts: the agent (UDS `prompt` / `steer` / `follow_up`, the `read` tool,
+the image token estimate), `quecto-api` (`/prompt`, `/steer`, `/follow_up`,
+WebSocket prompt frames), and later extension / MCP tool results (#2423) and
+the TUI (#2425). It is a pure leaf crate: no I/O, only `base64` and `serde`.
 
-## Rules (an allowlist)
+## What it owns
 
-Checked in this order; the first that fails is the refusal.
+- `ImageMime`: the allowlist (`image/png`, `image/jpeg`, `image/gif`,
+  `image/webp`) and its wire spelling. `ImageMime::parse_exact` matches the
+  lowercase wire spelling exactly; `ImageMime::sniff` names the type a file's
+  bytes start with.
+- `MAX_IMAGE_BYTES`: 3.75 MiB (3,932,160 bytes) decoded, so the base64 is at
+  most 5 MiB and Anthropic's 5 MB limit holds whether it is applied to the
+  decoded or the encoded size. `MAX_IMAGES_PER_MESSAGE`: 8.
+- Base64: images from outside must be strict standard base64 (padded,
+  canonical, no whitespace); `encode` writes it. Reading the header of an
+  image already held (`dimensions`) is lenient: padding optional,
+  non-canonical trailing bits accepted.
+- Header parsing: `dimensions(mime, base64)` reads the pixel size from PNG
+  IHDR, JPEG SOFn, the GIF screen descriptor and WebP VP8/VP8L/VP8X, decoding
+  only the bytes it reads.
 
-1. At most `MAX_IMAGES_PER_MESSAGE` (8) images per message.
-2. `mimeType` is exactly `image/png`, `image/jpeg`, `image/gif` or `image/webp`.
-3. At most `MAX_IMAGE_BYTES` (5 MiB) decoded; longer base64 is refused before
-   it is decoded.
-4. `data` is standard base64: padded, no whitespace or line breaks.
-5. The decoded bytes start with the declared type's file signature.
+## Admission (an allowlist)
 
-## API
+`ImageAttachment::new(payload)` (wire), `ImageAttachment::from_bytes(mime,
+bytes)` (a file read) and `validate_images(payloads)` (a message's list)
+check, in order, and refuse with the first failure:
 
-- `ImagePayload` — the wire shape `{"mimeType", "data"}`, unvalidated.
-- `ImageAttachment::new(payload)` — admits one image or returns an
-  `ImageRefusal`; holding an `ImageAttachment` proves it passed. It
-  serialises back to the wire shape.
-- `validate_images(payloads)` — admits a message's list or returns an
-  `ImagesRefusal` naming the failing index (`images[1]: …`).
-- `check_images(&payloads)` — the same decision without taking the payloads.
+1. At most 8 images per message: `too many images: 9; at most 8 per message`.
+2. `mimeType` exactly one of the four: `mimeType "image/svg+xml" is not
+   allowed; use image/png, image/jpeg, image/gif or image/webp`.
+3. At most `MAX_IMAGE_BYTES` decoded (longer base64 is refused before it is
+   decoded): `image decodes to more than 3932160 bytes (3.75 MiB)`.
+4. Strict standard base64: `data is not valid standard base64`.
+5. The bytes start with the type's signature: `data does not start with the
+   image/png signature`.
+6. The header is readable: `not a readable image/png image`.
 
-`Display` on a refusal is the exact error text clients see. `Debug` never
-prints the base64.
+A list's refusal names the image: `images[1]: …`. `Display` on a refusal is
+the exact text clients see; `Debug` never prints the base64. An admitted
+`ImageAttachment` keeps its base64 and the pixel size its header gave, and
+serialises back to the wire shape `{"mimeType", "data"}`.
+
+The `test-support` feature exposes `samples`: real minimal PNG, JPEG, GIF and
+WebP files for other crates' tests.

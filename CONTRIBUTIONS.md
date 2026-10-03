@@ -120,7 +120,7 @@ Quecto uses layered and feature-oriented boundaries in different crates. Preserv
 - Keep domain/application logic independent from transport and interface concerns where a crate enforces Clean Architecture boundaries.
 - Prefer ports/traits at application boundaries and concrete adapters in infrastructure/interface layers.
 - Keep the `quecto-line-io` protocol cap/framing behavior centralized rather than duplicating wire constants.
-- Validate images from outside only through `quecto-image` (`ImageAttachment::new` / `validate_images`), so every peer applies the same rules and refusal text.
+- `quecto-image` owns what an image is: the MIME allowlist and its wire spelling (`ImageMime::parse_exact`), signature sniffing (`ImageMime::sniff`), the size limit (`MAX_IMAGE_BYTES`), base64 (strict for images from outside, lenient only for reading headers of images already held) and header parsing (`dimensions`). Admit images from outside only as an `ImageAttachment` (`new`, `from_bytes`, `validate_images`); never keep a second copy of any of these. It is a pure leaf crate (base64 and serde only), so the harness domain may depend on it as it does on `base64`.
 - Avoid adding production code paths solely for tests; use existing test-support features and test doubles.
 
 ### Harness layout ratchet (#2358)

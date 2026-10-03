@@ -28,7 +28,8 @@ async fn forwards_follow_up_command() {
 
 // ── #2422: image attachments ──────────────────────────────────────────────────
 
-const PNG: &str = "iVBORw0KGgoAAAANSUhEUg==";
+/// A 2x2 PNG: signature, IHDR, IEND.
+const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAAElFTkSuQmCC";
 
 fn png() -> quecto_image::ImagePayload {
     quecto_image::ImagePayload::new("image/png", PNG)
@@ -61,4 +62,14 @@ async fn a_refused_image_refuses_the_command_with_the_exact_message() {
         "invalid request: images[0]: data does not start with the image/webp signature"
     );
     assert!(gw.commands().is_empty());
+}
+
+/// Validate first, then check the connection, as `send_prompt` does: a bad
+/// request is a 400 whether or not the agent is connected.
+#[tokio::test]
+async fn a_refused_image_is_refused_before_the_connection_is_checked() {
+    let gw = MockGateway::disconnected();
+    let bad = quecto_image::ImagePayload::new("image/gif", PNG);
+    let err = execute(&gw, "look".into(), vec![bad]).await.unwrap_err();
+    assert!(matches!(err, ApiError::InvalidRequest(_)), "{err}");
 }

@@ -2,7 +2,8 @@
 //! of the router test module, so it shares its gateway double.
 use super::*;
 
-const PNG: &str = "iVBORw0KGgoAAAANSUhEUg==";
+/// A 2x2 PNG: signature, IHDR, IEND.
+const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAAElFTkSuQmCC";
 
 fn connected() -> MockGateway {
     MockGateway {
@@ -91,22 +92,42 @@ async fn http_prompt_refuses_a_bad_image_with_400_and_the_exact_message() {
     assert!(gateway.commands.lock().unwrap().is_empty());
 }
 
-/// A 5 MiB image is a ~7 MB body: past axum's 2 MB default, inside the
-/// agent's 8 MiB frame cap.
+/// A 3.75 MiB image is a 5 MiB base64 body: past axum's 2 MB default,
+/// inside the agent's 8 MiB frame cap, on every route that takes images.
 #[tokio::test]
-async fn http_prompt_takes_a_body_up_to_the_frame_cap() {
-    use base64::Engine as _;
-    let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
-    bytes.resize(quecto_image::MAX_IMAGE_BYTES, 0);
-    let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
-    let gateway = connected();
-    let body = serde_json::json!({
-        "message": "big",
-        "images": [{"mimeType": "image/png", "data": data}],
-    });
-    let (status, json) = post_prompt(gateway.clone(), body).await;
-    assert_eq!(status, StatusCode::OK, "{json}");
-    assert_eq!(prompt_images(&gateway).len(), 1);
+async fn image_routes_take_a_body_up_to_the_frame_cap() {
+    let bytes = quecto_image::samples::png_with_body(2, 2, quecto_image::MAX_IMAGE_BYTES - 57);
+    let data = quecto_image::encode(&bytes);
+    for path in ["prompt", "steer", "follow_up"] {
+        let gateway = connected();
+        let addr = serve(gateway.clone()).await;
+        let body = serde_json::json!({
+            "message": "big",
+            "images": [{"mimeType": "image/png", "data": data}],
+        });
+        let resp = reqwest::Client::new()
+            .post(format!("http://{addr}/{path}"))
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 200, "{path}");
+        assert_eq!(gateway.commands.lock().unwrap().len(), 1, "{path}");
+    }
+}
+
+/// Only the image routes are raised: any other keeps axum's 2 MB default.
+#[tokio::test]
+async fn other_routes_keep_the_default_body_limit() {
+    let addr = serve(connected()).await;
+    let body = serde_json::json!({"model": "x".repeat(3 * 1024 * 1024)});
+    let resp = reqwest::Client::new()
+        .post(format!("http://{addr}/model"))
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 413);
 }
 
 #[tokio::test]

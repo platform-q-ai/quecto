@@ -1,41 +1,84 @@
-//! Validated image attachments (#2422): the one place quecto decides whether
-//! an image from outside may enter a conversation.
+//! Images in quecto (#2422): the one owner of what an image is.
 //!
-//! Every peer that accepts an image builds an [`ImageAttachment`] with
-//! [`ImageAttachment::new`] (one image) or [`validate_images`] (a message's
-//! list) and refuses with the [`ImageRefusal`] / [`ImagesRefusal`] message
-//! when it fails:
-//! - the agent's UDS `prompt`, `steer` and `follow_up` (#2422);
-//! - `quecto-api`'s `/prompt` and its WebSocket prompt frame (#2422);
-//! - extension `tool_result` images and MCP image passthrough (#2423);
-//! - the TUI's attachments (#2425).
+//! This crate owns the format facts every peer shares, so no other crate
+//! keeps its own copy:
+//! - the allowlist and its wire spelling, [`ImageMime`] (exact, lowercase:
+//!   [`ImageMime::parse_exact`]), and file-signature sniffing
+//!   ([`ImageMime::sniff`]);
+//! - the size limit, [`MAX_IMAGE_BYTES`], and the count limit,
+//!   [`MAX_IMAGES_PER_MESSAGE`];
+//! - base64 (see below);
+//! - header parsing: an image's pixel size, [`dimensions`].
+//!
+//! Every peer that accepts an image from outside admits it as an
+//! [`ImageAttachment`] with [`ImageAttachment::new`] (one image),
+//! [`validate_images`] (a message's list) or [`ImageAttachment::from_bytes`]
+//! (a file it read), and refuses with the [`ImageRefusal`] / [`ImagesRefusal`]
+//! text when it fails: the agent's UDS `prompt` / `steer` / `follow_up` and
+//! the `read` tool (#2422), `quecto-api` (#2422), extension and MCP tool
+//! results (#2423), the TUI (#2425).
 //!
 //! The rules are an allowlist, checked in this order; the first that fails
 //! is the refusal. A message carries at most [`MAX_IMAGES_PER_MESSAGE`]. An
-//! image is admitted only when its MIME type is one of [`ImageMime`]'s four
-//! (exact, lowercase), it decodes to at most [`MAX_IMAGE_BYTES`] (longer
-//! base64 is refused before it is decoded), its data is standard base64
-//! (padded, no whitespace), and its decoded bytes start with that type's file
-//! signature.
+//! image is admitted only when its MIME type is one of [`ImageMime`]'s four,
+//! it decodes to at most [`MAX_IMAGE_BYTES`] (longer base64 is refused before
+//! it is decoded), its data is strict standard base64, its bytes start with
+//! that type's file signature, and its header is readable (its pixel size
+//! can be read).
+//!
+//! **Base64, in one place.** An image from outside must be strict standard
+//! base64: padded, canonical, no whitespace or line breaks; [`encode`]
+//! writes that. Reading the header of an image already held ([`dimensions`],
+//! e.g. a tool result's) is lenient: padding optional and non-canonical
+//! trailing bits accepted, as some encoders produce them. Nothing else in
+//! quecto decodes image base64.
 
 use base64::Engine as _;
+use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
 use serde::{Deserialize, Serialize};
 
-/// The most bytes one image may decode to: 5 MiB.
-pub const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
+mod header;
+pub use header::{Dimensions, MAX_JPEG_SEGMENTS, dimensions};
+
+/// Real minimal image files (PNG, JPEG, GIF, WebP) for tests here and in
+/// the crates that use this one (`test-support` feature).
+#[cfg(any(test, feature = "test-support"))]
+pub mod samples;
+
+/// The most bytes one image may decode to: 3.75 MiB (3,932,160 bytes), so
+/// its base64 is at most 5 MiB. Anthropic's 5 MB limit holds whether a
+/// provider applies it to the decoded or to the encoded size.
+pub const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024; // red (#2422 review round 1): not yet 3.75 MiB
 
 /// The most images one message may carry.
 pub const MAX_IMAGES_PER_MESSAGE: usize = 8;
 
-/// The longest base64 text that can decode to [`MAX_IMAGE_BYTES`]: anything
-/// longer is refused before it is decoded.
+/// The longest base64 text that can decode to [`MAX_IMAGE_BYTES`] (exactly
+/// 5 MiB): anything longer is refused before it is decoded.
 const MAX_ENCODED_LEN: usize = MAX_IMAGE_BYTES.div_ceil(3) * 4;
 
 /// How many characters of an unsupported MIME type a refusal echoes back.
 const MIME_ECHO_CHARS: usize = 64;
 
-/// An image type the harness admits, and the only ones it admits.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Strict standard base64, for images from outside.
+const STRICT: GeneralPurpose = base64::engine::general_purpose::STANDARD;
+
+/// Lenient standard base64, for reading the header of an image already
+/// held: padding optional, non-canonical trailing bits accepted.
+const LENIENT: GeneralPurpose = GeneralPurpose::new(
+    &base64::alphabet::STANDARD,
+    GeneralPurposeConfig::new()
+        .with_decode_padding_mode(DecodePaddingMode::Indifferent)
+        .with_decode_allow_trailing_bits(true),
+);
+
+/// `bytes` as strict standard base64, the form an image travels in.
+pub fn encode(bytes: &[u8]) -> String {
+    STRICT.encode(bytes)
+}
+
+/// An image type quecto admits, and the only ones it admits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ImageMime {
     Png,
     Jpeg,
@@ -57,9 +100,17 @@ impl ImageMime {
         }
     }
 
-    /// The admitted type `declared` names exactly; `None` for anything else.
-    pub fn parse(declared: &str) -> Option<Self> {
+    /// The admitted type `declared` spells exactly as the wire does
+    /// (lowercase, no parameters); `None` for anything else, including
+    /// another case of an admitted type.
+    pub fn parse_exact(declared: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|mime| mime.as_str() == declared)
+    }
+
+    /// The admitted type whose file signature `bytes` start with.
+    pub fn sniff(bytes: &[u8]) -> Option<Self> {
+        let _ = bytes;
+        None // red (#2422 review round 1): sniffs nothing
     }
 
     /// Whether `bytes` start with this type's file signature.
@@ -109,28 +160,66 @@ impl std::fmt::Debug for ImagePayload {
     }
 }
 
-/// An image the rules admitted. Only [`ImageAttachment::new`] makes one, so
-/// holding one is proof it passed every check. It keeps the base64 text it
-/// was given, which is what providers send.
+/// An image the rules admitted. Only [`ImageAttachment::new`] and
+/// [`ImageAttachment::from_bytes`] make one, so holding one is proof it
+/// passed every check. It keeps the base64 text, which is what providers
+/// send, and the pixel size its header gave.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ImageAttachment {
     mime: ImageMime,
     data: String,
     decoded_len: usize,
+    dimensions: Dimensions,
 }
 
 impl ImageAttachment {
     /// Admit `payload`, or say why not.
     pub fn new(payload: ImagePayload) -> Result<Self, ImageRefusal> {
-        let (mime, decoded_len) = check(&payload)?;
+        let Some(mime) = ImageMime::parse_exact(&payload.mime_type) else {
+            let echoed = payload.mime_type.chars().take(MIME_ECHO_CHARS).collect();
+            return Err(ImageRefusal::UnsupportedMime(echoed));
+        };
+        let bytes = match payload.data.len() <= MAX_ENCODED_LEN {
+            true => STRICT
+                .decode(&payload.data)
+                .map_err(|_| ImageRefusal::InvalidBase64)?,
+            false => return Err(ImageRefusal::TooLarge),
+        };
+        Self::admit(mime, &bytes, payload.data)
+    }
+
+    /// Admit the `mime` file `bytes` (a file read from disk), encoding it.
+    pub fn from_bytes(mime: ImageMime, bytes: &[u8]) -> Result<Self, ImageRefusal> {
+        match bytes.len() <= MAX_IMAGE_BYTES {
+            true => Self::admit(mime, bytes, encode(bytes)),
+            false => Err(ImageRefusal::TooLarge),
+        }
+    }
+
+    /// The checks after decoding: size, signature, readable header.
+    fn admit(mime: ImageMime, bytes: &[u8], data: String) -> Result<Self, ImageRefusal> {
+        match (
+            bytes.len() <= MAX_IMAGE_BYTES,
+            mime.signature_matches(bytes),
+        ) {
+            (true, true) => {}
+            (false, _) => return Err(ImageRefusal::TooLarge),
+            (true, false) => return Err(ImageRefusal::SignatureMismatch(mime)),
+        }
+        let one = Dimensions {
+            width: 1,
+            height: 1,
+        };
+        let dimensions = dimensions(mime, &data).unwrap_or(one); // red (#2422 review round 1): header unchecked
         assert!(
-            decoded_len <= MAX_IMAGE_BYTES,
-            "admitted an oversized image"
+            dimensions.width > 0 && dimensions.height > 0,
+            "an admitted image has a size"
         );
         Ok(Self {
             mime,
-            data: payload.data,
-            decoded_len,
+            data,
+            decoded_len: bytes.len(),
+            dimensions,
         })
     }
 
@@ -142,7 +231,7 @@ impl ImageAttachment {
         self.mime.as_str()
     }
 
-    /// The image's standard base64 text.
+    /// The image's strict standard base64 text.
     pub fn data(&self) -> &str {
         &self.data
     }
@@ -150,6 +239,11 @@ impl ImageAttachment {
     /// How many bytes the image decodes to.
     pub fn decoded_len(&self) -> usize {
         self.decoded_len
+    }
+
+    /// The pixel size its header gave.
+    pub fn dimensions(&self) -> Dimensions {
+        self.dimensions
     }
 
     pub fn into_data(self) -> String {
@@ -163,6 +257,7 @@ impl std::fmt::Debug for ImageAttachment {
         f.debug_struct("ImageAttachment")
             .field("mime", &self.mime)
             .field("decoded_len", &self.decoded_len)
+            .field("dimensions", &self.dimensions)
             .finish()
     }
 }
@@ -185,12 +280,15 @@ pub enum ImageRefusal {
     /// The declared MIME type is not one of [`ImageMime::ALL`]; holds the
     /// declared type, cut to its first 64 characters.
     UnsupportedMime(String),
-    /// The data is not standard (padded, whitespace-free) base64.
+    /// The data is not strict standard base64.
     InvalidBase64,
-    /// The data decodes to more than [`MAX_IMAGE_BYTES`].
+    /// The image decodes to more than [`MAX_IMAGE_BYTES`].
     TooLarge,
     /// The decoded bytes do not start with the declared type's signature.
     SignatureMismatch(ImageMime),
+    /// The signature is right but the header is not readable: its pixel
+    /// size cannot be read (a bare signature, a truncated or corrupt file).
+    Unreadable(ImageMime),
 }
 
 impl std::fmt::Display for ImageRefusal {
@@ -203,11 +301,12 @@ impl std::fmt::Display for ImageRefusal {
             Self::InvalidBase64 => f.write_str("data is not valid standard base64"),
             Self::TooLarge => write!(
                 f,
-                "image decodes to more than {MAX_IMAGE_BYTES} bytes (5 MiB)"
+                "image decodes to more than {MAX_IMAGE_BYTES} bytes (3.75 MiB)"
             ),
             Self::SignatureMismatch(mime) => {
                 write!(f, "data does not start with the {mime} signature")
             }
+            Self::Unreadable(mime) => write!(f, "not a readable {mime} image"),
         }
     }
 }
@@ -241,54 +340,16 @@ impl std::error::Error for ImagesRefusal {}
 /// Admit every image of one message, or refuse them all with the first
 /// failure.
 pub fn validate_images(payloads: Vec<ImagePayload>) -> Result<Vec<ImageAttachment>, ImagesRefusal> {
-    check_count(payloads.len())?;
-    payloads
-        .into_iter()
-        .enumerate()
-        .map(|(index, payload)| {
-            ImageAttachment::new(payload).map_err(|refusal| ImagesRefusal::Image { index, refusal })
-        })
-        .collect()
-}
-
-/// [`validate_images`] without taking the payloads: for a peer that only
-/// decides whether to act on a command it forwards whole.
-pub fn check_images(payloads: &[ImagePayload]) -> Result<(), ImagesRefusal> {
-    check_count(payloads.len())?;
-    for (index, payload) in payloads.iter().enumerate() {
-        check(payload).map_err(|refusal| ImagesRefusal::Image { index, refusal })?;
-    }
-    Ok(())
-}
-
-fn check_count(count: usize) -> Result<(), ImagesRefusal> {
-    if count <= MAX_IMAGES_PER_MESSAGE {
-        Ok(())
-    } else {
-        Err(ImagesRefusal::TooMany(count))
-    }
-}
-
-/// The admitted type and decoded length of `payload`, checked in the order
-/// the crate documents.
-fn check(payload: &ImagePayload) -> Result<(ImageMime, usize), ImageRefusal> {
-    let Some(mime) = ImageMime::parse(&payload.mime_type) else {
-        let echoed = payload.mime_type.chars().take(MIME_ECHO_CHARS).collect();
-        return Err(ImageRefusal::UnsupportedMime(echoed));
-    };
-    if payload.data.len() > MAX_ENCODED_LEN {
-        return Err(ImageRefusal::TooLarge);
-    }
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(&payload.data)
-        .map_err(|_| ImageRefusal::InvalidBase64)?;
-    if bytes.len() > MAX_IMAGE_BYTES {
-        return Err(ImageRefusal::TooLarge);
-    }
-    if mime.signature_matches(&bytes) {
-        Ok((mime, bytes.len()))
-    } else {
-        Err(ImageRefusal::SignatureMismatch(mime))
+    match payloads.len() <= MAX_IMAGES_PER_MESSAGE {
+        true => payloads
+            .into_iter()
+            .enumerate()
+            .map(|(index, payload)| {
+                ImageAttachment::new(payload)
+                    .map_err(|refusal| ImagesRefusal::Image { index, refusal })
+            })
+            .collect(),
+        false => Err(ImagesRefusal::TooMany(payloads.len())),
     }
 }
 

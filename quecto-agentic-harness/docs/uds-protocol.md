@@ -107,18 +107,22 @@ never interrupts the running turn). The checks, in order:
 |---|---|
 | at most 8 images per message | `too many images: 9; at most 8 per message` |
 | `mimeType` is exactly `image/png`, `image/jpeg`, `image/gif` or `image/webp` | `images[1]: mimeType "image/svg+xml" is not allowed; use image/png, image/jpeg, image/gif or image/webp` |
-| at most 5 MiB (5242880 bytes) decoded | `images[0]: image decodes to more than 5242880 bytes (5 MiB)` |
-| `data` is standard base64: padded, no whitespace or line breaks | `images[0]: data is not valid standard base64` |
+| at most 3.75 MiB (3932160 bytes) decoded, so the base64 is at most 5 MiB (Anthropic's 5 MB limit holds either way) | `images[0]: image decodes to more than 3932160 bytes (3.75 MiB)` |
+| `data` is strict standard base64: padded, no whitespace or line breaks | `images[0]: data is not valid standard base64` |
 | the decoded bytes start with the declared type's signature | `images[0]: data does not start with the image/png signature` |
+| the header is readable: its pixel size can be read (a bare signature or a truncated header is not an image) | `images[0]: not a readable image/png image` |
 
-The index is the failing image's position in `images`, from 0. The whole
-command is still one protocol message, so it must fit the 8 MiB frame cap:
-one 5 MiB image (about 7 MB of base64) fits, several large ones may not.
+The index is the failing image's position in `images`, from 0. The rules
+live in one place, the `quecto-image` crate, which `quecto-api` and the `read`
+tool use too. The whole command is still one protocol message, so it must fit
+the 8 MiB frame cap: one image at the limit (5 MiB of base64) fits, several
+large ones may not.
 
 History never carries the base64 back: a user message that carried images
 shows `imageCount` and `imageMimeTypes` in `get_messages`, `get_message` and
 `sync` (see [`get_messages`](#get_messages)). The images are not saved with
-the session: a resumed session has the text only.
+the session yet (#2424): an images-only message is saved as one `[image]`
+line per image, so a resumed session never replays an empty turn.
 
 ```json
 {"type":"prompt","id":"p-2","message":"What is in this screenshot?","images":[{"mimeType":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAA..."}]}

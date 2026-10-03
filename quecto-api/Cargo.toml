@@ -35,7 +35,8 @@ thiserror = "2"
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
-base64 = "0.22"
+# Real minimal image files for image tests (#2422).
+quecto-image = { version = "0.1.0", path = "../quecto-image", features = ["test-support"] }
 cucumber = { version = "0.21", features = ["macros"] }
 futures = "0.3"
 # `default-features = false`: the default `native-tls` stack would otherwise be

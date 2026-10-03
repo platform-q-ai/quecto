@@ -88,6 +88,7 @@ async fn disconnect_sentinels_never_consume_command_capacity() {
             ClientMessage::SwarmWake { .. } => "wake",
             ClientMessage::Disconnected(_) => "disconnect",
             ClientMessage::Command(_) => "command",
+            ClientMessage::RejectedControl(_) => "rejected",
         });
         if order.len() == 301 {
             break;
@@ -115,6 +116,7 @@ async fn recv_next_message_prefers_client_message_when_ready() {
         .send(ClientMessage::Command(ClientCommand {
             line: r#"{"type":"get_state"}"#.to_string(),
             client_id: 9,
+            admitted: None,
         }))
         .await
         .unwrap();
@@ -194,17 +196,22 @@ fn client_message_variants_carry_client_ids() {
     let cmd = ClientMessage::Command(ClientCommand {
         line: "line".to_string(),
         client_id: 11,
+        admitted: None,
     });
     let disc = ClientMessage::Disconnected(ClientDisconnected { client_id: 12 });
     match cmd {
         ClientMessage::Command(command) => assert_eq!(command.client_id, 11),
-        ClientMessage::Disconnected(_) | ClientMessage::SwarmWake { .. } => {
+        ClientMessage::Disconnected(_)
+        | ClientMessage::SwarmWake { .. }
+        | ClientMessage::RejectedControl(_) => {
             panic!("expected command")
         }
     }
     match disc {
         ClientMessage::Disconnected(disconnected) => assert_eq!(disconnected.client_id, 12),
-        ClientMessage::Command(_) | ClientMessage::SwarmWake { .. } => {
+        ClientMessage::Command(_)
+        | ClientMessage::SwarmWake { .. }
+        | ClientMessage::RejectedControl(_) => {
             panic!("expected disconnect")
         }
     }
@@ -277,14 +284,18 @@ async fn handle_client_routes_broadcast_targeted_lag_and_reader_commands() {
             assert_eq!(command.client_id, 77);
             assert!(command.line.contains("abort"));
         }
-        ClientMessage::Disconnected(_) | ClientMessage::SwarmWake { .. } => {
+        ClientMessage::Disconnected(_)
+        | ClientMessage::SwarmWake { .. }
+        | ClientMessage::RejectedControl(_) => {
             panic!("expected abort command first")
         }
     }
     assert!(turn_control.is_abort_pending());
     match cmd_rx.recv().await.unwrap() {
         ClientMessage::Command(command) => assert!(command.line.contains("get_state")),
-        ClientMessage::Disconnected(_) | ClientMessage::SwarmWake { .. } => {
+        ClientMessage::Disconnected(_)
+        | ClientMessage::SwarmWake { .. }
+        | ClientMessage::RejectedControl(_) => {
             panic!("expected get_state command second")
         }
     }

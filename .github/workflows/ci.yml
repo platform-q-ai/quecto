@@ -223,9 +223,9 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/fd" --version
       # One instrumented workspace-shape build; each package's lib tests run
-      # and report alone (the same per-package numbers as three `cargo llvm-cov
+      # and report alone (the same per-package numbers as four `cargo llvm-cov
       # --lib -p` runs, which each compiled their own feature unification).
-      - run: bash scripts/run-lib-coverage.sh quecto-agentic-harness:92 quecto-tui:95 quecto-api:95
+      - run: bash scripts/run-lib-coverage.sh quecto-agentic-harness:92 quecto-tui:95 quecto-api:95 quecto-image:95
 
   dependency-policy:
     if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'merge-requested'

@@ -12,8 +12,10 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
-const PNG: &str = "iVBORw0KGgoAAAANSUhEUg=="; // the PNG signature + an IHDR length
-const JPEG: &str = "/9j/4AAQSkZJRg=="; // FF D8 FF E0 … JFIF
+/// A 2x2 PNG: signature, IHDR, IEND.
+const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAAElFTkSuQmCC";
+/// A 2x2 JPEG: SOI, APP0 JFIF, SOF0, EOI.
+const JPEG: &str = "/9j/4AAQSkZJRgABAQAAAQABAAD/wAALCAACAAIBAREA/9k=";
 
 /// What one provider request carried as its latest user message.
 #[derive(Debug, Clone, PartialEq)]
@@ -246,7 +248,11 @@ async fn every_refusal_refuses_the_whole_command_with_its_exact_message() {
         ),
         (
             vec![image("image/png", &too_large)],
-            "images[0]: image decodes to more than 5242880 bytes (5 MiB)",
+            "images[0]: image decodes to more than 3932160 bytes (3.75 MiB)",
+        ),
+        (
+            vec![image("image/png", "iVBORw0KGgo=")],
+            "images[0]: not a readable image/png image",
         ),
         (
             vec![image("image/png", PNG); 9],
@@ -261,6 +267,11 @@ async fn every_refusal_refuses_the_whole_command_with_its_exact_message() {
             assert_eq!(refused["success"], false, "{kind}: {events:?}");
             assert_eq!(refused["error"], *expected, "{kind}");
             assert_eq!(refused["command"], kind);
+            assert_eq!(
+                env.session.control_receipt_status(&format!("{kind}-1")),
+                Some(crate::interface::cli::protocol::ControlStatus::Rejected),
+                "{kind}: a refusal leaves its receipt"
+            );
             assert!(provider.seen.lock().unwrap().is_empty(), "{kind} ran");
             assert!(env.messages.is_empty(), "{kind} appended a message");
             assert!(env.session.drain_pending().is_empty(), "{kind} queued");
@@ -348,4 +359,39 @@ fn an_oversized_history_entry_keeps_the_image_summary() {
         serde_json::json!(["image/png", "image/jpeg"])
     );
     assert!(!summary.to_string().contains(PNG));
+}
+
+/// A control the reader refused (#2422) gets the same `Rejected` receipt
+/// a dispatch refusal records.
+#[tokio::test]
+async fn a_control_the_reader_refused_records_its_rejected_receipt() {
+    let (mut env, _provider) = recording_env();
+    {
+        let mut ctx = env.ctx();
+        super::record_rejected(&mut ctx, "fwd-1", "steer").await;
+    }
+    assert_eq!(
+        env.session.control_receipt_status("fwd-1"),
+        Some(crate::interface::cli::protocol::ControlStatus::Rejected)
+    );
+}
+
+/// Images a reader admitted run as admitted (#2422): dispatch does not
+/// decode them again, and they reach the provider on their message.
+#[tokio::test]
+async fn a_steer_the_reader_admitted_runs_with_its_admitted_images() {
+    let (mut env, provider) = recording_env();
+    let line = format!(
+        r#"{{"type":"steer","id":"s-9","message":"look","images":[{{"mimeType":"image/png","data":"{PNG}"}}]}}"#
+    );
+    let admitted = super::steer_images(&line).expect("an admissible steer");
+    let cmd: AgentCommand = serde_json::from_str(&line).unwrap();
+    {
+        let mut ctx = env.ctx();
+        super::dispatch_parsed(cmd, Some(admitted), &mut ctx).await;
+    }
+    assert_eq!(
+        provider.seen.lock().unwrap().as_slice(),
+        [seen("look", &[("image/png", PNG)])]
+    );
 }

@@ -33,6 +33,7 @@ pub use super::uds_lifecycle::{UdsLoopArgs, run_uds_loop};
 #[doc(hidden)]
 pub use super::uds_socket::reap_stale_sockets;
 pub(super) const MAX_FRAME_PAYLOAD_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
+#[cfg(test)]
 pub(super) fn is_cancel_command(trimmed: &str) -> bool {
     is_abort_command(trimmed) || is_steer_command(trimmed)
 }
@@ -42,7 +43,10 @@ pub(super) fn is_abort_command(trimmed: &str) -> bool {
     command_type_is(trimmed, "abort")
 }
 
+#[cfg(test)]
 pub(super) use prompt_admission::is_steer_command;
+pub(super) use prompt_admission::{AdmittedImages, admit_images, dispatch_parsed};
+pub(super) use prompt_admission::{record_rejected, steer_images};
 
 fn command_type_is(trimmed: &str, expected: &str) -> bool {
     serde_json::from_str::<serde_json::Value>(trimmed)
@@ -86,7 +90,7 @@ pub(super) async fn run_command_loop(
 
     loop {
         let raw = match rx.recv().await {
-            Some(Some(ReaderMessage::Message(l))) => l,
+            Some(Some(ReaderMessage::Message(l, admitted))) => (l, admitted),
             Some(Some(ReaderMessage::ProtocolError(msg))) => {
                 tracing::warn!("UDS protocol error: {msg}");
                 let ev = AgentEvent::err(None, "protocol_error", msg);
@@ -96,6 +100,7 @@ pub(super) async fn run_command_loop(
             _ => break,
         };
 
+        let (raw, admitted) = raw;
         match parse_line(&raw) {
             LineResult::ParseError(e) if e.is_empty() => {}
             LineResult::ParseError(e) => {
@@ -103,7 +108,7 @@ pub(super) async fn run_command_loop(
                 emit_event_to_broadcast_or_writer(ctx, &ev).await;
             }
             LineResult::Command(cmd) => {
-                if dispatch_command(cmd, ctx).await {
+                if dispatch_parsed(cmd, admitted, ctx).await {
                     break;
                 }
             }

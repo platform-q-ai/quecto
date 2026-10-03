@@ -76,6 +76,7 @@ fn image_attachments_are_documented_with_their_exact_refusals() {
         image(0, ImageRefusal::InvalidBase64),
         image(0, ImageRefusal::SignatureMismatch(ImageMime::Png)),
         image(0, ImageRefusal::TooLarge),
+        image(0, ImageRefusal::Unreadable(ImageMime::Png)),
         ImagesRefusal::TooMany(9).to_string(),
     ];
     let missing: Vec<&String> = refusals

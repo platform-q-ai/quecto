@@ -40,8 +40,10 @@ async fn rejects_when_disconnected() {
 
 // ── #2422: image attachments ──────────────────────────────────────────────────
 
-const PNG: &str = "iVBORw0KGgoAAAANSUhEUg==";
-const JPEG: &str = "/9j/4AAQSkZJRg==";
+/// A 2x2 PNG: signature, IHDR, IEND.
+const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAAElFTkSuQmCC";
+/// A 2x2 JPEG: SOI, APP0 JFIF, SOF0, EOI.
+const JPEG: &str = "/9j/4AAQSkZJRgABAQAAAQABAAD/wAALCAACAAIBAREA/9k=";
 
 fn with_images(message: &str, images: Vec<quecto_image::ImagePayload>) -> SendPromptInput {
     SendPromptInput {
@@ -116,4 +118,14 @@ async fn a_refused_image_refuses_the_prompt_with_the_exact_message() {
         );
         assert!(gw.commands().is_empty() && gw.enqueued().is_empty());
     }
+}
+
+#[tokio::test]
+async fn a_refused_image_is_refused_before_the_connection_is_checked() {
+    let gw = MockGateway::disconnected();
+    let bad = quecto_image::ImagePayload::new("image/gif", PNG);
+    let err = execute(&gw, with_images("look", vec![bad]))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, ApiError::InvalidRequest(_)), "{err}");
 }

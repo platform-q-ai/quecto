@@ -288,6 +288,9 @@ async fn client_writer_tx_returns_clone_and_ack_accepted_control_forwards_option
         super::super::uds_control_forward::AcceptedControl {
             ack_line: "ack\n".to_string(),
             forward_line: Some("work".to_string()),
+            is_steer: false,
+            admitted: None,
+            refused: None,
         },
     )
     .await;
@@ -300,6 +303,9 @@ async fn client_writer_tx_returns_clone_and_ack_accepted_control_forwards_option
         super::super::uds_control_forward::AcceptedControl {
             ack_line: "lost\n".to_string(),
             forward_line: None,
+            is_steer: false,
+            admitted: None,
+            refused: None,
         },
     )
     .await;

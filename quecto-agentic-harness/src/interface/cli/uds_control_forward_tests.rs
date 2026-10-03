@@ -146,7 +146,8 @@ fn trial_accepted_instruction_retains_correlation_for_handling_response() {
     assert_eq!(ack_json(&got.ack_line)["data"]["status"], "accepted");
 }
 
-const PNG: &str = "iVBORw0KGgoAAAANSUhEUg==";
+/// A 2x2 PNG: signature, IHDR, IEND.
+const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAAElFTkSuQmCC";
 
 /// #2422: a forwarded prompt, steer or follow-up carries its images to the
 /// dispatch loop; dropping them would deliver the text alone.
@@ -167,6 +168,11 @@ fn flagged_controls_forward_their_images() {
         let fwd: serde_json::Value = serde_json::from_str(&got.forward_line.unwrap()).unwrap();
         assert_eq!(fwd["images"][0]["data"], PNG, "{kind}{extra}");
         assert_eq!(fwd["images"][0]["mimeType"], "image/png");
+        let admitted = got.admitted.expect("admitted once, here");
+        assert_eq!(admitted.len(), 1, "{kind}{extra}");
+        assert_eq!(admitted[0].data, PNG);
+        assert_eq!(got.is_steer, kind == "steer" || !extra.is_empty());
+        assert!(got.refused.is_none());
     }
 }
 
@@ -190,4 +196,10 @@ fn flagged_controls_with_refused_images_are_refused_without_forwarding() {
         ack["error"],
         "images[0]: data does not start with the image/gif signature"
     );
+    let refused = got.refused.expect("dispatch records the refusal's receipt");
+    assert_eq!(
+        (refused.id.as_str(), refused.command.as_str()),
+        ("i2", "steer")
+    );
+    assert!(got.admitted.is_none() && !got.is_steer);
 }

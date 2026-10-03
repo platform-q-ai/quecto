@@ -15,7 +15,7 @@
 //!   ([`ReaderMessage::ProtocolError`] then EOF — never a hang).
 
 use super::uds::MAX_FRAME_PAYLOAD_BYTES;
-use super::uds::{is_abort_command, is_cancel_command, is_steer_command};
+use super::uds::{is_abort_command, steer_images};
 use super::uds_cancel::{CancelHandle, TurnControlHandle, fire_cancel};
 use super::uds_wire::ConnectionWireMode;
 use quecto_line_io::{FrameError, Incoming, WireMode};
@@ -24,8 +24,9 @@ use tokio::sync::mpsc;
 
 /// A message delivered from the reader task to the command loop.
 pub(super) enum ReaderMessage {
-    /// A complete message within the byte cap.
-    Message(String),
+    /// A complete message within the byte cap, with the images the reader
+    /// admitted for a steer (#2422), run by dispatch without decoding again.
+    Message(String, Option<super::uds::AdmittedImages>),
     /// A protocol violation to surface to the client as an error event: an
     /// over-cap frame/line (recoverable — more messages may follow) or a
     /// version mismatch (the reader closes right after).
@@ -65,18 +66,20 @@ pub(super) fn spawn_reader_task(
                     let line = String::from_utf8(bytes)
                         .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
                     let trimmed = line.trim();
-                    if is_cancel_command(trimmed) {
-                        // Record operator intent BEFORE firing the cancel so the
-                        // post-cancel idle drain cannot observe the cancel and
-                        // run a nudge before the abort/steer flag lands (#895/#896).
-                        if is_abort_command(trimmed) {
-                            control_for_reader.mark_abort();
-                        } else if is_steer_command(trimmed) {
-                            control_for_reader.mark_steer();
-                        }
+                    // A steer's images are admitted once, here (#2422).
+                    let steer = steer_images(trimmed);
+                    // Record operator intent BEFORE firing the cancel so the
+                    // post-cancel idle drain cannot observe the cancel and
+                    // run a nudge before the abort/steer flag lands (#895/#896).
+                    if is_abort_command(trimmed) {
+                        control_for_reader.mark_abort();
+                        fire_cancel(&cancel_for_reader);
+                    } else if steer.is_some() {
+                        control_for_reader.mark_steer();
                         fire_cancel(&cancel_for_reader);
                     }
-                    if tx.send(Some(ReaderMessage::Message(line))).await.is_err() {
+                    let message = ReaderMessage::Message(line, steer);
+                    if tx.send(Some(message)).await.is_err() {
                         break;
                     }
                 }

@@ -24,11 +24,14 @@ pub struct AppState<G: AgentGateway> {
 
 pub fn build_router<G: AgentGateway + Clone + 'static>(gateway: G) -> Router {
     let state = Arc::new(AppState { gateway });
+    // A body that may carry images (#2422) takes up to the agent's 8 MiB
+    // frame cap; every other route keeps axum's 2 MB default.
+    let images = || axum::extract::DefaultBodyLimit::max(quecto_line_io::PROTOCOL_LINE_CAP_BYTES);
     Router::new()
         .route("/health", get(health_handler::<G>))
-        .route("/prompt", post(prompt_handler::<G>))
-        .route("/steer", post(steer_handler::<G>))
-        .route("/follow_up", post(follow_up_handler::<G>))
+        .route("/prompt", post(prompt_handler::<G>).layer(images()))
+        .route("/steer", post(steer_handler::<G>).layer(images()))
+        .route("/follow_up", post(follow_up_handler::<G>).layer(images()))
         .route("/abort", post(abort_handler::<G>))
         .route("/model", post(set_model_handler::<G>))
         .route("/effort", post(set_effort_handler::<G>))
@@ -45,11 +48,7 @@ pub fn build_router<G: AgentGateway + Clone + 'static>(gateway: G) -> Router {
         .route("/stats", get(stats_handler::<G>))
         .route("/ws", get(ws_handler::<G>))
         .layer(CorsLayer::permissive())
-        // A 5 MiB image is a ~7 MB body (#2422): take up to the agent's
-        // frame cap, past axum's 2 MB default.
-        .layer(axum::extract::DefaultBodyLimit::max(
-            quecto_line_io::PROTOCOL_LINE_CAP_BYTES,
-        ))
+        .layer(images()) // red (#2422 review round 1): every route raised
         .with_state(state)
 }
 

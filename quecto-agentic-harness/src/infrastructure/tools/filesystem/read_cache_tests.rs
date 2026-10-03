@@ -131,8 +131,7 @@ async fn test_read_different_ranges_do_not_cross_hit() {
 async fn test_repeated_image_read_is_not_short_circuited() {
     let (ws, sb, tmp) = test_tools();
     let tool = ReadTool::new(ws, sb);
-    let png_bytes: &[u8] = &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00];
-    std::fs::write(tmp.path().join("img.png"), png_bytes).unwrap();
+    std::fs::write(tmp.path().join("img.png"), quecto_image::samples::png(2, 2)).unwrap();
 
     let first = tool.execute(r#"{"path":"img.png"}"#).await.unwrap();
     let second = tool.execute(r#"{"path":"img.png"}"#).await.unwrap();
