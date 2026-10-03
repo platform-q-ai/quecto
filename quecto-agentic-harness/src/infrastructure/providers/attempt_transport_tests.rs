@@ -549,3 +549,74 @@ async fn an_error_chunk_of_either_shape_ends_an_admitted_stream_as_an_error() {
         assert_eq!(state.diagnostics.terminal_event, Some(TerminalEvent::Error));
     }
 }
+
+/// A gate that refuses every attempt.
+#[derive(Debug)]
+struct Refuse;
+impl AttemptAdmission for Refuse {
+    fn acquire(&self) -> crate::application::ports::AttemptAcquisition<'_> {
+        Box::pin(async { Err(DomainError::Provider("admission refused".into())) })
+    }
+}
+
+/// #2436 review: an attempt admission refused, or one cancelled while it
+/// waited, was never sent: it is withdrawn, so its request reports no
+/// attempt for it; an admitted one that fails is reported.
+#[tokio::test]
+async fn an_attempt_never_admitted_is_never_reported() {
+    use crate::domain::inference::request_completion::EndedAttempt;
+    let traced = || {
+        let trace = Arc::new(RequestTrace::default());
+        let seen: Arc<Mutex<Vec<EndedAttempt>>> = Arc::default();
+        let sink = seen.clone();
+        trace.on_attempt_end(Arc::new(move |ended| sink.lock().unwrap().push(ended)));
+        trace.start();
+        (trace, seen)
+    };
+    let refused: Arc<dyn AttemptAdmission> = Arc::new(Refuse);
+    let (trace, seen) = traced();
+    let result = run(&refused, Some(trace.clone()), None, None, |_| async {
+        Ok::<(), DomainError>(())
+    })
+    .await;
+    assert!(matches!(result, Err(AttemptError::Failed(_))));
+    trace.end_attempt_failed();
+    assert!(
+        seen.lock().unwrap().is_empty(),
+        "a refused attempt sent nothing"
+    );
+
+    let queued: Arc<dyn AttemptAdmission> = Arc::new(Grant(Mutex::new(None)));
+    let (trace, seen) = traced();
+    let flag = CancelFlag::new();
+    flag.cancel();
+    let result = run(&queued, Some(trace.clone()), Some(&flag), None, |_| async {
+        Ok::<(), DomainError>(())
+    })
+    .await;
+    assert!(matches!(result, Err(AttemptError::Stopped)));
+    trace.end_attempt(
+        crate::domain::inference::request_completion::RequestOutcome::Cancelled,
+        None,
+    );
+    assert!(
+        seen.lock().unwrap().is_empty(),
+        "a queued attempt sent nothing"
+    );
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let granted: Arc<dyn AttemptAdmission> =
+        Arc::new(Grant(Mutex::new(Some(Box::new(Permit(events))))));
+    let (trace, seen) = traced();
+    let result = run(&granted, Some(trace.clone()), None, None, |_| async {
+        Err::<(), DomainError>(DomainError::Provider("HTTP 503".into()))
+    })
+    .await;
+    assert!(matches!(result, Err(AttemptError::Failed(_))));
+    trace.end_attempt_failed();
+    assert_eq!(
+        seen.lock().unwrap().len(),
+        1,
+        "an admitted attempt was sent"
+    );
+}

@@ -22,6 +22,7 @@
     "requests": 0,
     "inputTokens": 0,
     "cachedTokens": 0,
+    "cacheWriteTokens": 0,
     "outputTokens": 0
   }
 }

@@ -466,5 +466,7 @@ mod retry_tests;
 
 #[path = "agent_loop_2434_tests.rs"]
 mod empty_reply_after_tools_tests;
+#[path = "agent_loop_2436_paths_tests.rs"]
+mod request_completed_paths_tests;
 #[path = "agent_loop_2436_tests.rs"]
 mod request_completed_tests;

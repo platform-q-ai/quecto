@@ -38,6 +38,7 @@ fn the_tally_numbers_each_request_and_sums_what_was_reported() {
     let spend = RequestSpend {
         input_tokens: 100,
         cached_tokens: Some(40),
+        cache_write_tokens: None,
         output_tokens: 7,
     };
     let first = tally.record("gpt-5.5", "codex", ended(RequestOutcome::Ok, Some(spend)));
@@ -49,6 +50,7 @@ fn the_tally_numbers_each_request_and_sums_what_was_reported() {
             RequestOutcome::Ok,
             Some(RequestSpend {
                 cached_tokens: None,
+                cache_write_tokens: None,
                 ..spend
             }),
         ),
@@ -72,6 +74,7 @@ fn the_tally_numbers_each_request_and_sums_what_was_reported() {
             requests: 3,
             input_tokens: 200,
             cached_tokens: 40,
+            cache_write_tokens: 0,
             output_tokens: 14,
         }
     );
@@ -98,6 +101,7 @@ fn a_spend_is_known_only_from_a_report() {
         Some(RequestSpend {
             input_tokens: 30,
             cached_tokens: Some(5),
+            cache_write_tokens: None,
             output_tokens: 3,
         })
     );
@@ -129,6 +133,7 @@ fn each_attempt_is_reported_once_with_its_own_usage() {
         Some(RequestSpend {
             input_tokens: 300,
             cached_tokens: Some(100),
+            cache_write_tokens: None,
             output_tokens: 4,
         }),
         "the cut-short attempt's usage is its own"
@@ -139,6 +144,7 @@ fn each_attempt_is_reported_once_with_its_own_usage() {
         Some(RequestSpend {
             input_tokens: 50,
             cached_tokens: Some(250),
+            cache_write_tokens: None,
             output_tokens: 9,
         }),
         "the retry reports its reply's usage, not its predecessor's"
@@ -182,4 +188,28 @@ fn outcomes_have_their_wire_names() {
         );
     }
     assert_eq!(RequestOutcome::Cancelled.as_str(), "cancelled");
+}
+
+/// #2436 review M2: cache writes are a bucket of their own, summed only
+/// from reports that carry them.
+#[test]
+fn cache_writes_are_their_own_bucket() {
+    let reports = [usage(100, Some(1000), 8), {
+        let mut written = usage(0, None, 0);
+        written.cache_write_tokens = Some(5000);
+        written
+    }];
+    let spend = RequestSpend::of(&reports).unwrap();
+    assert_eq!(spend.cache_write_tokens, Some(5000));
+    assert_eq!(spend.cached_tokens, Some(1000));
+    assert_eq!(spend.input_tokens, 100);
+    assert_eq!(
+        RequestSpend::of(&[usage(1, None, 1)])
+            .unwrap()
+            .cache_write_tokens,
+        None
+    );
+    let tally = RequestTally::default();
+    tally.record("m", "anthropic", ended(RequestOutcome::Ok, Some(spend)));
+    assert_eq!(tally.counters().cache_write_tokens, 5000);
 }

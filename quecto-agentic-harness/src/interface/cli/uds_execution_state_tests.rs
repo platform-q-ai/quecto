@@ -227,6 +227,7 @@ fn the_agents_own_requests_ride_on_every_snapshot() {
             spend: Some(RequestSpend {
                 input_tokens: 40,
                 cached_tokens: Some(10),
+                cache_write_tokens: None,
                 output_tokens: 2,
             }),
         },
@@ -240,6 +241,7 @@ fn the_agents_own_requests_ride_on_every_snapshot() {
             requests: 1,
             input_tokens: 40,
             cached_tokens: 10,
+            cache_write_tokens: 0,
             output_tokens: 2,
         }
     );

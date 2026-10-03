@@ -362,19 +362,22 @@ fn the_agents_own_request_counters_are_always_reported() {
         requests: 3,
         input_tokens: 900,
         cached_tokens: 600,
+        cache_write_tokens: 0,
         output_tokens: 30,
     };
     assert_eq!(
         slim_state_projection(&state)["agentRequests"],
         serde_json::json!({
-            "requests": 3, "inputTokens": 900, "cachedTokens": 600, "outputTokens": 30
+            "requests": 3, "inputTokens": 900, "cachedTokens": 600, "cacheWriteTokens": 0,
+            "outputTokens": 30
         })
     );
     state.execution = None;
     assert_eq!(
         slim_state_projection(&state)["agentRequests"],
         serde_json::json!({
-            "requests": 0, "inputTokens": 0, "cachedTokens": 0, "outputTokens": 0
+            "requests": 0, "inputTokens": 0, "cachedTokens": 0, "cacheWriteTokens": 0,
+            "outputTokens": 0
         })
     );
 }

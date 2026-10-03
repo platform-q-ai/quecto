@@ -28,7 +28,7 @@ fn full_json() -> serde_json::Value {
                       "attempt": {"number": 1, "elapsedMs": 1, "events": 2, "outputBytes": 3,
                                   "sinceLastEventMs": 4, "firstTokenMs": 5}},
         "agentRequests": {"requests": 2, "inputTokens": 30, "cachedTokens": 20,
-                          "outputTokens": 4}
+                          "cacheWriteTokens": 50, "outputTokens": 4}
     })
 }
 
@@ -253,15 +253,20 @@ fn anything_but_the_unchanged_marker_is_refused_as_one() {
     }
 }
 
-/// #2436: a child built before `agentRequests` is read as having counted
-/// nothing; a newer child's counters are relayed as read.
+/// #2436 review L4: a child built before `agentRequests` never sent it, so
+/// it is read as absent and a relay omits it — never invented zeros; a
+/// newer child's counters are relayed as read.
 #[test]
 fn agent_requests_read_from_older_and_newer_children() {
     let mut older = full_json();
     older.as_object_mut().unwrap().remove("agentRequests");
     let read = StateSnapshot::read_forward_compatible(&older).expect("an older child reads");
-    assert_eq!(read.agent_requests, Default::default());
+    assert_eq!(read.agent_requests, None);
+    let relayed = serde_json::to_value(&read).unwrap();
+    assert!(relayed.get("agentRequests").is_none(), "{relayed}");
     let read = StateSnapshot::read_forward_compatible(&full_json()).expect("a current child");
-    assert_eq!(read.agent_requests.requests, 2);
-    assert_eq!(read.agent_requests.cached_tokens, 20);
+    let counters = read.agent_requests.expect("a current child sends them");
+    assert_eq!(counters.requests, 2);
+    assert_eq!(counters.cached_tokens, 20);
+    assert_eq!(counters.cache_write_tokens, 50);
 }

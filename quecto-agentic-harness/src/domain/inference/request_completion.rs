@@ -1,10 +1,11 @@
 //! One agent's own LLM requests (#2436).
 //!
-//! `admission.counters` count every admission attempt made through the
-//! process's admission binding, so a supervisor could not tell one agent's
-//! requests from another's. Each provider request — an attempt: a retry is
-//! a request of its own — is therefore reported once when it ends, by the
-//! agent that sent it: what it spent as its provider reported it, how long
+//! `admission.counters` count admission attempts — every one this process
+//! made across its quota groups, retries and refusals included — and only
+//! for a process bound to an admission authority, so they are no record of
+//! an agent's LLM requests or what they spent. Each provider request — an
+//! attempt: a retry is a request of its own — is therefore reported once
+//! when it ends, by the agent that sent it: what it spent as its provider reported it, how long
 //! it took, how it ended, and its number in the agent's own sequence. The
 //! agent keeps running totals of the same requests ([`RequestTally`]).
 //!
@@ -41,16 +42,31 @@ impl RequestOutcome {
     }
 }
 
-/// What one request spent, as its provider reported it.
+/// What one request spent, as its provider reported it. The input buckets
+/// do not overlap: every adapter normalizes `input_tokens` to the input
+/// billed at the full price, so a request's whole input is `input_tokens`
+/// plus the cache buckets its provider reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RequestSpend {
-    /// Input tokens at the full price: prompt-cache reads are not included.
+    /// Input tokens at the full price: neither cache reads nor cache writes.
     pub input_tokens: u64,
     /// Input tokens served from the provider's prompt cache; `None` when the
     /// provider did not say.
     pub cached_tokens: Option<u64>,
+    /// Input tokens written to the provider's prompt cache (Anthropic's
+    /// cache creation); `None` when the provider did not say.
+    pub cache_write_tokens: Option<u64>,
     /// Output tokens.
     pub output_tokens: u64,
+}
+
+/// The sum of two optional counts: known when either is.
+fn either(before: Option<u64>, now: Option<u64>) -> Option<u64> {
+    match (before, now) {
+        (Some(before), Some(now)) => Some(before.saturating_add(now)),
+        (Some(only), None) | (None, Some(only)) => Some(only),
+        (None, None) => None,
+    }
 }
 
 impl RequestSpend {
@@ -60,25 +76,22 @@ impl RequestSpend {
         reports
             .into_iter()
             .fold(None, |spent: Option<Self>, usage| {
-                let cached = usage.cache_read_tokens.map(u64::from);
+                let report = Self {
+                    input_tokens: u64::from(usage.prompt_tokens),
+                    cached_tokens: usage.cache_read_tokens.map(u64::from),
+                    cache_write_tokens: None,
+                    output_tokens: u64::from(usage.completion_tokens),
+                };
                 Some(match spent {
-                    None => Self {
-                        input_tokens: u64::from(usage.prompt_tokens),
-                        cached_tokens: cached,
-                        output_tokens: u64::from(usage.completion_tokens),
-                    },
+                    None => report,
                     Some(spent) => Self {
-                        input_tokens: spent
-                            .input_tokens
-                            .saturating_add(u64::from(usage.prompt_tokens)),
-                        cached_tokens: match (spent.cached_tokens, cached) {
-                            (Some(before), Some(now)) => Some(before.saturating_add(now)),
-                            (Some(only), None) | (None, Some(only)) => Some(only),
-                            (None, None) => None,
-                        },
-                        output_tokens: spent
-                            .output_tokens
-                            .saturating_add(u64::from(usage.completion_tokens)),
+                        input_tokens: spent.input_tokens.saturating_add(report.input_tokens),
+                        cached_tokens: either(spent.cached_tokens, report.cached_tokens),
+                        cache_write_tokens: either(
+                            spent.cache_write_tokens,
+                            report.cache_write_tokens,
+                        ),
+                        output_tokens: spent.output_tokens.saturating_add(report.output_tokens),
                     },
                 })
             })
@@ -117,9 +130,10 @@ pub struct RequestCompleted {
 }
 
 /// This agent's own LLM requests so far and what they spent, as `get_state`
-/// reports them (`agentRequests`): not the admission binding's counters,
-/// which every agent of the process shares. A token count sums what the
-/// providers reported; a request that reported nothing adds nothing.
+/// reports them (`agentRequests`): not `admission.counters`, which count
+/// admission attempts (refusals included) and only when the process is
+/// bound to an admission authority. A token count sums what the providers
+/// reported; a request that reported nothing adds nothing.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentRequestCounters {
@@ -127,6 +141,7 @@ pub struct AgentRequestCounters {
     pub requests: u64,
     pub input_tokens: u64,
     pub cached_tokens: u64,
+    pub cache_write_tokens: u64,
     pub output_tokens: u64,
 }
 
@@ -232,6 +247,13 @@ impl RequestTrace {
         if let Some(ended) = ended {
             self.report(ended);
         }
+    }
+
+    /// The attempt in flight was never sent: admission refused it, or it was
+    /// cancelled while it waited to be admitted. It is withdrawn, never
+    /// reported: nothing reached a provider (#2436 review).
+    pub fn withdraw_attempt(&self) {
+        drop(self.clock());
     }
 
     /// The attempt in flight failed: it ends now, as an error, before any

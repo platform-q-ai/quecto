@@ -170,6 +170,8 @@ pub enum AgentEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cached_tokens: Option<u64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        cache_write_tokens: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         output_tokens: Option<u64>,
         duration_ms: u64,
         outcome: crate::domain::inference::request_completion::RequestOutcome,

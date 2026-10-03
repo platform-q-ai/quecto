@@ -183,10 +183,12 @@ pub struct StateSnapshot {
     )]
     pub model_turn: Option<ModelTurnSnapshot>,
     /// This agent's own provider requests so far (#2436), retries included:
-    /// not `admission.counters`, which count every attempt of the process's
-    /// admission binding. Zero before its first request.
+    /// not `admission.counters`, which count this process's admission
+    /// attempts, refusals included. Always written by this harness (zero
+    /// before the first request); `None` when read from an older child that
+    /// never sent it, so a relay omits it rather than invent zeros.
     #[serde(default)]
-    pub agent_requests: super::inference::request_completion::AgentRequestCounters,
+    pub agent_requests: Option<super::inference::request_completion::AgentRequestCounters>,
 }
 
 /// The members of the projection that are live measurements rather than

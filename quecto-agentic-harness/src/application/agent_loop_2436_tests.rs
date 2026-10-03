@@ -90,6 +90,7 @@ async fn each_attempt_of_a_retried_request_is_its_own_event() {
         Some(RequestSpend {
             input_tokens: 120,
             cached_tokens: Some(80),
+            cache_write_tokens: None,
             output_tokens: 9,
         })
     );
@@ -149,6 +150,7 @@ async fn the_counters_accumulate_across_turns() {
             requests: 2,
             input_tokens: 300,
             cached_tokens: 60,
+            cache_write_tokens: 0,
             output_tokens: 12,
         }
     );
@@ -213,7 +215,7 @@ async fn a_dropped_request_is_a_cancelled_event() {
     assert_eq!(agent.request_tally().counters().requests, 1);
 }
 
-/// One admission group shared by two agents: it counts every check.
+/// One admission gate shared by two loops: it counts every check.
 #[derive(Debug, Default)]
 struct SharedGroup {
     checks: Mutex<u64>,
@@ -228,10 +230,13 @@ impl crate::application::providers::ports::RequestAdmission for SharedGroup {
     }
 }
 
-/// Two agents behind one admission group: each counts only its own
-/// requests, however many the other sends.
+/// Each agent runs in its own process with its own loop and tally; agents
+/// in different processes may still share one quota group at the broker.
+/// Two loops behind one admission gate — the unit-level stand-in for that
+/// — each count only the requests their own loop sent, whatever the gate
+/// saw.
 #[tokio::test]
-async fn an_agent_never_counts_another_agents_requests_in_its_group() {
+async fn each_loop_counts_only_its_own_requests_behind_a_shared_gate() {
     let group = Arc::new(SharedGroup::default());
     let busy = Arc::new(MockProvider::new(vec![reply(10, None, 1); 3]));
     let quiet = Arc::new(MockProvider::new(vec![reply(5, None, 1)]));
@@ -250,11 +255,7 @@ async fn an_agent_never_counts_another_agents_requests_in_its_group() {
         .run_loop(&mut vec![Message::user("once")])
         .await
         .unwrap();
-    assert_eq!(
-        *group.checks.lock().unwrap(),
-        4,
-        "the group saw both agents"
-    );
+    assert_eq!(*group.checks.lock().unwrap(), 4, "the gate saw both loops");
     assert_eq!(busy.request_tally().counters().requests, 3);
     assert_eq!(
         quiet.request_tally().counters(),
@@ -262,6 +263,7 @@ async fn an_agent_never_counts_another_agents_requests_in_its_group() {
             requests: 1,
             input_tokens: 5,
             cached_tokens: 0,
+            cache_write_tokens: 0,
             output_tokens: 1,
         }
     );
