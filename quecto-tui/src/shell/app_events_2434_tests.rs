@@ -87,3 +87,70 @@ async fn a_sub_agent_run_that_recorded_no_reply_is_not_recovered() {
         "a child run with no reply has nothing to rebuild: {cmds:?}"
     );
 }
+
+/// Review round 2 (N1): two parallel calls in one assistant message, their
+/// results and the reply are four refs, as the batch's own
+/// `subagent_messages_appended` said; the run is complete.
+fn parallel_run_events() -> Vec<Event> {
+    let refs = ["call-msg", "result-1", "result-2", "reply"].map(|r| format!("bbbbbbbb-{r}"));
+    let mut events = vec![Event::AgentStart];
+    for id in ["c1", "c2"] {
+        events.push(Event::ToolExecutionStart {
+            tool_call_id: id.into(),
+            tool_name: "read".into(),
+            args: serde_json::json!({}),
+        });
+    }
+    for id in ["c1", "c2"] {
+        events.push(Event::ToolExecutionEnd {
+            tool_call_id: id.into(),
+            tool_name: "read".into(),
+            result: serde_json::json!("ok"),
+            is_error: false,
+        });
+    }
+    events.push(Event::SubagentMessagesAppended {
+        agent_id: String::new(),
+        messages: vec![],
+        message_refs: refs[..3].to_vec(),
+    });
+    events.push(Event::Token {
+        token: "done".into(),
+    });
+    events.push(Event::TurnEnd {
+        message: serde_json::json!({
+            "role": "assistant", "content": "", "messageRefs": refs, "contentLength": 4,
+        }),
+    });
+    let agent_end = serde_json::json!({
+        "type": "agent_end", "messages": [], "messageRefs": refs, "contentLength": 4,
+    });
+    events.push(serde_json::from_value(agent_end).expect("agent_end"));
+    events
+}
+
+#[tokio::test]
+async fn a_master_run_with_a_parallel_batch_is_not_recovered() {
+    let mut h = TuiHarness::new().await;
+    for event in parallel_run_events() {
+        h.event(event);
+    }
+    let cmds = h.drain_commands().await;
+    assert!(!cmds.iter().any(|l| is_get_message(l)), "{cmds:?}");
+}
+
+#[tokio::test]
+async fn a_sub_agent_run_with_a_parallel_batch_is_not_recovered() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(vec![subagent(
+        "worker",
+        "running",
+        Some(("active", 1, 3)),
+    )]));
+    for event in parallel_run_events() {
+        h.route("worker", event);
+    }
+    let cmds = h.drain_commands().await;
+    assert!(!cmds.iter().any(|l| is_get_message(l)), "{cmds:?}");
+}

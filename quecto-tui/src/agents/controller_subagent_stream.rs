@@ -457,6 +457,7 @@ impl App {
             refs,
             assistant_text: &assistant_text,
             tools_this_turn: tools,
+            tool_batch_refs: 0,
             open_tool_calls: session.open_tool_calls,
             expected_content_len,
         })

@@ -407,13 +407,22 @@ async fn a_whitespace_reply_to_tool_results_ends_the_turn() {
     assert_eq!(provider.request_count(), 2);
 }
 
+/// Review round 2 (M1): a real stream sends the whitespace as a text delta
+/// before it ends. Whitespace shown is no output, so the reply is still
+/// asked again rather than failing as output already shown.
 #[tokio::test]
 async fn a_whitespace_first_reply_to_a_prompt_is_retried() {
     let blank = LlmResponse {
         content: Some("\n\n".into()),
         ..empty_reply(Some(StopReason::EndTurn))
     };
-    let (mut agent, provider) = streaming(vec![done(blank), done(text_response("the answer"))]);
+    let (mut agent, provider) = streaming(vec![
+        vec![
+            StreamEvent::TextDelta("\n\n".into()),
+            StreamEvent::Done(blank),
+        ],
+        done(text_response("the answer")),
+    ]);
     let mut messages = vec![Message::user("question")];
     let result = agent
         .process(&mut messages)
@@ -421,4 +430,23 @@ async fn a_whitespace_first_reply_to_a_prompt_is_retried() {
         .expect("the retry answers");
     assert_eq!(result.response, "the answer");
     assert_eq!(provider.request_count(), 2);
+}
+
+/// Text that is not whitespace is output shown: never sent again (#2155).
+#[tokio::test]
+async fn a_failure_after_visible_text_is_still_not_retried() {
+    let (mut agent, provider) = streaming(vec![
+        vec![
+            StreamEvent::TextDelta("\n".into()),
+            StreamEvent::TextDelta("Hal".into()),
+            StreamEvent::Error("connection reset by peer".into()),
+        ],
+        done(text_response("unused")),
+    ]);
+    let mut messages = vec![Message::user("question")];
+    agent
+        .process(&mut messages)
+        .await
+        .expect_err("output was shown");
+    assert_eq!(provider.request_count(), 1);
 }

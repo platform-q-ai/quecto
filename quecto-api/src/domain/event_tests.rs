@@ -32,3 +32,23 @@ fn future_ledger_events_preserve_payload() {
         assert!(json.get("epoch").is_some(), "epoch preserved in {json}");
     }
 }
+
+/// #2434: `agent_end` forwards the run's reply text length, 0 when the run
+/// recorded no reply, so a WS client can tell there is nothing to rebuild.
+#[test]
+fn agent_end_forwards_its_content_length() {
+    let wire = r#"{"type":"agent_end","messages":[],"messageRefs":["a","b"],"contentLength":0}"#;
+    let event: AgentEvent = serde_json::from_str(wire).expect("agent_end parses");
+    let json = serde_json::to_value(event).expect("serializes");
+    assert_eq!(json["contentLength"], 0, "{json}");
+    assert_eq!(json["messageRefs"], serde_json::json!(["a", "b"]));
+}
+
+/// An older harness sends none, and none is forwarded.
+#[test]
+fn agent_end_without_a_content_length_forwards_none() {
+    let wire = r#"{"type":"agent_end","messages":[],"messageRefs":[]}"#;
+    let event: AgentEvent = serde_json::from_str(wire).expect("agent_end parses");
+    let json = serde_json::to_value(event).expect("serializes");
+    assert!(json.get("contentLength").is_none(), "{json}");
+}

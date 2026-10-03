@@ -14,6 +14,7 @@ fn outcome<'a>(refs: &'a [String], text: &'a str, tools: usize) -> TurnOutcome<'
         refs,
         assistant_text: text,
         tools_this_turn: tools,
+        tool_batch_refs: 0,
         open_tool_calls: 0,
         expected_content_len: None,
     }
@@ -226,4 +227,27 @@ fn a_run_with_advertised_text_or_a_missing_ref_still_triggers_recovery() {
     let mut o = outcome(&r, "", 2);
     o.expected_content_len = Some(0);
     assert!(o.needs_recovery(), "two tools with three refs lost one");
+}
+
+/// Review round 2 (N1): parallel calls share one assistant message, so a
+/// batch of two calls appends three messages, not four. The run's expected
+/// refs come from the batches the stream reported, not from 2 x tools.
+#[test]
+fn a_parallel_batch_is_counted_by_its_messages_not_two_per_tool() {
+    // One message with two calls, their two results, then the reply.
+    let r = refs(4);
+    let mut o = outcome(&r, "a complete body", 2);
+    o.tool_batch_refs = 3;
+    assert!(!o.needs_recovery(), "a parallel batch and its reply");
+    // The same batch and no reply.
+    let r = refs(3);
+    let mut o = outcome(&r, "", 2);
+    o.tool_batch_refs = 3;
+    o.expected_content_len = Some(0);
+    assert!(!o.needs_recovery(), "a parallel batch and no reply");
+    // A ref beyond what the batches and the reply account for.
+    let r = refs(5);
+    let mut o = outcome(&r, "a complete body", 2);
+    o.tool_batch_refs = 3;
+    assert!(o.needs_recovery(), "one ref more than the run appended");
 }

@@ -51,6 +51,7 @@ impl App {
                     refs,
                     assistant_text: &assistant_text,
                     tools_this_turn,
+                    tool_batch_refs: 0,
                     open_tool_calls,
                     expected_content_len,
                 }

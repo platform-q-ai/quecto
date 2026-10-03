@@ -16,6 +16,10 @@ pub struct TurnOutcome<'a> {
     pub assistant_text: &'a str,
     /// Tool boxes observed since this turn's `AgentStart`.
     pub tools_this_turn: usize,
+    /// Refs of the run's own tool batches, as the stream reported each one
+    /// (`subagent_messages_appended`): each call message and its results.
+    /// 0 when the stream reported none.
+    pub tool_batch_refs: usize,
     /// Tool starts not yet matched by an end.
     pub open_tool_calls: usize,
     /// Content length the server advertised for the assistant body, if any.
