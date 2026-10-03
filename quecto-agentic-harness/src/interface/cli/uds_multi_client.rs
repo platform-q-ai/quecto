@@ -135,6 +135,16 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
         let line = match read_line(&mut reader, &wire_mode, client_id).await {
             Read::Line(line) => line,
             Read::Skip => continue,
+            Read::Oversized(over_cap) => {
+                reject_oversized(
+                    &client_tool_registry,
+                    client_id,
+                    (&writer, &wire_mode),
+                    over_cap,
+                )
+                .await;
+                continue;
+            }
             Read::Closed => break,
         };
         if let Some(teardown) = teardown.as_deref() {
@@ -199,9 +209,27 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
 
 enum Read {
     Line(String),
-    /// Over-cap message rejected, or an empty hello frame: keep reading.
+    /// An empty hello frame: keep reading.
     Skip,
+    /// An over-cap message, dropped unread: its error text and declared
+    /// size. Keep reading once the client is told.
+    Oversized((String, usize)),
     Closed,
+}
+
+/// A message over the cap was dropped (#2423 review M2): fail the client's
+/// oldest pending extension call at once (it may have been that call's
+/// result) and send the client a `protocol_error` saying so.
+async fn reject_oversized(
+    registry: &super::super::uds_ext_protocol::ClientToolRegistry,
+    client_id: u64,
+    (writer, mode): (&SharedWriter, &super::super::uds_wire::ConnectionWireMode),
+    over_cap: (String, usize),
+) {
+    let error = super::super::uds_ext_protocol::reject_oversized(registry, client_id, over_cap);
+    tracing::warn!(client_id, "dropping over-cap message from client: {error}");
+    let event = super::super::protocol::AgentEvent::err(None, "protocol_error", error);
+    let _ = write_line(writer, &format!("{}\n", event.to_json_line()), mode).await;
 }
 
 /// Read one message in the deprecation-window framing, recording the
@@ -218,9 +246,8 @@ where
         match quecto_line_io::read_frame_or_legacy_line(reader, MAX_FRAME_PAYLOAD_BYTES).await {
             Ok(Some(incoming)) => incoming,
             Ok(None) => return Read::Closed,
-            Err(e @ quecto_line_io::FrameError::Oversized { .. }) => {
-                tracing::warn!(client_id, "dropping over-cap message from client: {e}");
-                return Read::Skip;
+            Err(e @ quecto_line_io::FrameError::Oversized { declared, .. }) => {
+                return Read::Oversized((e.to_string(), declared));
             }
             Err(e @ quecto_line_io::FrameError::VersionMismatch { .. }) => {
                 tracing::warn!(client_id, "closing client connection: {e}");

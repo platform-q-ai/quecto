@@ -10,9 +10,10 @@
 //! misparsed or buffered unbounded:
 //!
 //! - an over-cap frame/line is rejected while the connection stays usable
-//!   ([`ReaderMessage::ProtocolError`] then keep reading);
+//!   ([`Violation::Oversized`], which also fails the client's oldest
+//!   pending extension call, #2423, then keep reading);
 //! - a peer speaking neither framing is an explicit version mismatch
-//!   ([`ReaderMessage::ProtocolError`] then EOF — never a hang).
+//!   ([`Violation::ProtocolError`] then EOF — never a hang).
 
 use super::uds::MAX_FRAME_PAYLOAD_BYTES;
 use super::uds::{is_abort_command, steer_images};
@@ -27,10 +28,38 @@ pub(super) enum ReaderMessage {
     /// A complete message within the byte cap, with the images the reader
     /// admitted for a steer (#2422), run by dispatch without decoding again.
     Message(String, Option<super::uds::AdmittedImages>),
-    /// A protocol violation to surface to the client as an error event: an
-    /// over-cap frame/line (recoverable — more messages may follow) or a
-    /// version mismatch (the reader closes right after).
+    /// A protocol violation to surface to the client as an error event.
+    Violation(Violation),
+}
+
+/// A protocol violation the reader met.
+pub(super) enum Violation {
+    /// A version mismatch (the reader closes right after).
     ProtocolError(String),
+    /// An over-cap frame/line, dropped unread (recoverable — more messages
+    /// may follow): its error text and declared size (#2423 review M2).
+    Oversized((String, usize)),
+}
+
+/// Tell the client about a protocol violation its reader met: a
+/// `protocol_error` response. A message over the cap may have been an
+/// extension's result (#2423 review M2), so the client's oldest pending
+/// call fails now, not at its timeout.
+pub(super) async fn report_protocol_error(
+    ctx: &mut super::uds::DispatchCtx<'_>,
+    violation: Violation,
+) {
+    let message = match violation {
+        Violation::ProtocolError(message) => message,
+        Violation::Oversized(over_cap) => super::uds_ext_protocol::reject_oversized(
+            &ctx.client_tool_registry,
+            ctx.current_client_id,
+            over_cap,
+        ),
+    };
+    tracing::warn!("UDS protocol error: {message}");
+    let event = super::protocol::AgentEvent::err(None, "protocol_error", message);
+    super::uds::emit_event_to_broadcast_or_writer(ctx, &event).await;
 }
 
 /// Spawn the bounded reader task. Returns its [`JoinHandle`] (for abort on
@@ -83,11 +112,14 @@ pub(super) fn spawn_reader_task(
                         break;
                     }
                 }
-                Err(err @ FrameError::Oversized { .. }) => {
+                Err(err @ FrameError::Oversized { declared, .. }) => {
                     // Clean rejection: the declared payload was consumed, so
                     // subsequent frames on this connection still parse.
+                    let over_cap = (err.to_string(), declared);
                     if tx
-                        .send(Some(ReaderMessage::ProtocolError(err.to_string())))
+                        .send(Some(ReaderMessage::Violation(Violation::Oversized(
+                            over_cap,
+                        ))))
                         .await
                         .is_err()
                     {
@@ -99,7 +131,9 @@ pub(super) fn spawn_reader_task(
                     // a hang. The connection is unusable; close after
                     // surfacing the error.
                     let _ = tx
-                        .send(Some(ReaderMessage::ProtocolError(err.to_string())))
+                        .send(Some(ReaderMessage::Violation(Violation::ProtocolError(
+                            err.to_string(),
+                        ))))
                         .await;
                     let _ = tx.send(None).await;
                     break;

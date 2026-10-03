@@ -389,8 +389,107 @@ pub enum AgentCommand {
         limit: Option<usize>,
     },
 }
-/// A `tool_result`'s `imageBlocks` as read off the wire (#2423).
-pub type WireImageBlocks = serde_json::Value;
+/// A `tool_result`'s `imageBlocks` as read off the wire (#2423), bounded
+/// (review M1): a list keeps at most one entry past
+/// [`quecto_image::MAX_IMAGES_PER_MESSAGE`], enough to refuse it, and
+/// only counts the rest, skipping them unread; anything else but `null`
+/// (absent) is not a list. Admitted when the result is delivered.
+#[derive(Debug, Clone, PartialEq)]
+pub enum WireImageBlocks {
+    /// A list: its first entries and how many it had.
+    List {
+        kept: Vec<serde_json::Value>,
+        len: usize,
+    },
+    /// Any value that is not a list.
+    NotAList,
+}
+
+impl<'de> Deserialize<'de> for WireImageBlocks {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(WireImageBlocksVisitor)
+    }
+}
+
+struct WireImageBlocksVisitor;
+
+impl WireImageBlocksVisitor {
+    fn not_a_list<E>(self) -> Result<WireImageBlocks, E> {
+        Ok(WireImageBlocks::NotAList)
+    }
+}
+
+impl<'de> serde::de::Visitor<'de> for WireImageBlocksVisitor {
+    type Value = WireImageBlocks;
+
+    fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("any JSON value")
+    }
+
+    fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+        let mut kept = Vec::new();
+        while kept.len() <= quecto_image::MAX_IMAGES_PER_MESSAGE {
+            match seq.next_element::<serde_json::Value>()? {
+                Some(entry) => kept.push(entry),
+                None => {
+                    let len = kept.len();
+                    return Ok(WireImageBlocks::List { kept, len });
+                }
+            }
+        }
+        let mut len = kept.len();
+        while seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+            len += 1;
+        }
+        Ok(WireImageBlocks::List { kept, len })
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+        while map
+            .next_entry::<serde::de::IgnoredAny, serde::de::IgnoredAny>()?
+            .is_some()
+        {}
+        self.not_a_list()
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E> {
+        Ok(WireImageBlocks::List {
+            kept: Vec::new(),
+            len: 0,
+        })
+    }
+
+    fn visit_bool<E>(self, _: bool) -> Result<Self::Value, E> {
+        self.not_a_list()
+    }
+
+    fn visit_i64<E>(self, _: i64) -> Result<Self::Value, E> {
+        self.not_a_list()
+    }
+
+    fn visit_u64<E>(self, _: u64) -> Result<Self::Value, E> {
+        self.not_a_list()
+    }
+
+    fn visit_f64<E>(self, _: f64) -> Result<Self::Value, E> {
+        self.not_a_list()
+    }
+
+    fn visit_str<E>(self, _: &str) -> Result<Self::Value, E> {
+        self.not_a_list()
+    }
+}
+
+/// Writes the entries kept (all of a list within the limit); a value that
+/// was not a list is written as `{}`, which reads back as not a list.
+impl Serialize for WireImageBlocks {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::List { kept, .. } => kept.serialize(serializer),
+            Self::NotAList => serde_json::Map::new().serialize(serializer),
+        }
+    }
+}
 
 /// Tool registration payload for `register_tools`.
 #[derive(Debug, Clone, Deserialize, Serialize)]

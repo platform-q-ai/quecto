@@ -271,3 +271,38 @@ async fn an_mcp_image_reaches_the_uds_tool_result() {
     .unwrap();
     server_task.await.unwrap();
 }
+
+/// Review low: a line is measured without rendering it; the measure is
+/// exactly the rendering's, escapes included.
+#[test]
+fn a_line_is_measured_exactly_as_it_is_rendered() {
+    let data = encode(&png(1, 1));
+    let texts = [
+        "",
+        "plain",
+        "quote \" slash \\ tab \t nl \n",
+        "\u{1} bell \u{7f} é ✓",
+    ];
+    for text in texts {
+        for images in [0, 1, 3] {
+            for is_error in [false, true] {
+                let result = McpToolResult {
+                    content: text.to_owned(),
+                    image_blocks: (0..images).map(|_| mcp_image(&data)).collect(),
+                    is_error,
+                };
+                let line = tool_result_line("uds-\"7\"", &result);
+                let measured = line_len(
+                    "uds-\"7\"",
+                    (json_str_len(text), is_error),
+                    &result.image_blocks,
+                );
+                assert_eq!(line.len(), measured, "{text:?} {images} {is_error}");
+            }
+        }
+    }
+}
+
+fn mcp_image(data: &str) -> ImageAttachment {
+    ImageAttachment::new(quecto_image::ImagePayload::new("image/png", data)).unwrap()
+}

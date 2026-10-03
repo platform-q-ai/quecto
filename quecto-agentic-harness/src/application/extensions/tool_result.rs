@@ -8,7 +8,9 @@
 //! naming that image and the exact refusal, followed by the extension's
 //! text, so the model sees why and what the tool said; it never carries
 //! part of a refused list. The extension itself stays connected.
-use quecto_image::{ImageAttachment, ImagePayload, ImageRefusal, MAX_IMAGES_PER_MESSAGE};
+use quecto_image::{
+    ImagePayload, ImageRefusal, ImagesRefusal, MAX_IMAGES_PER_MESSAGE, validate_images,
+};
 
 use crate::domain::tool::{ImageBlock, ToolResult};
 
@@ -86,7 +88,8 @@ pub fn extension_tool_result(content: String, is_error: bool, sent: SentImageBlo
 }
 
 /// Admit every image, or refuse them all with the first failure: the list,
-/// then the count, then each entry's shape and admission in order.
+/// then the count, then each entry in order, its shape and then its
+/// admission (`quecto_image::validate_images`, the one validator).
 fn admit(sent: SentImageBlocks) -> Result<Vec<ImageBlock>, ToolImagesRefusal> {
     let entries = match sent {
         SentImageBlocks::Entries(entries) => entries,
@@ -94,17 +97,20 @@ fn admit(sent: SentImageBlocks) -> Result<Vec<ImageBlock>, ToolImagesRefusal> {
         SentImageBlocks::TooMany(count) => return Err(ToolImagesRefusal::TooMany(count)),
     };
     match entries.len() <= MAX_IMAGES_PER_MESSAGE {
-        true => entries
-            .into_iter()
-            .enumerate()
-            .map(|(index, entry)| {
-                let payload = entry.ok_or(ToolImagesRefusal::Malformed(index))?;
-                ImageAttachment::new(payload)
-                    .map(ImageBlock::from)
-                    .map_err(|refusal| ToolImagesRefusal::Image { index, refusal })
-            })
-            .collect(),
-        false => Err(ToolImagesRefusal::TooMany(entries.len())),
+        true => {}
+        false => return Err(ToolImagesRefusal::TooMany(entries.len())),
+    }
+    // The images before the first malformed entry are admitted first, so a
+    // refusal names the first failing entry whichever kind it is.
+    let malformed = entries.iter().position(Option::is_none);
+    let shaped: Vec<ImagePayload> = entries.into_iter().map_while(|entry| entry).collect();
+    match (validate_images(shaped), malformed) {
+        (Ok(images), None) => Ok(images.into_iter().map(ImageBlock::from).collect()),
+        (Ok(_), Some(index)) => Err(ToolImagesRefusal::Malformed(index)),
+        (Err(ImagesRefusal::Image { index, refusal }), _) => {
+            Err(ToolImagesRefusal::Image { index, refusal })
+        }
+        (Err(ImagesRefusal::TooMany(count)), _) => Err(ToolImagesRefusal::TooMany(count)),
     }
 }
 

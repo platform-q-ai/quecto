@@ -63,3 +63,27 @@ fn a_refused_result_without_text_is_the_refusal_alone() {
         r#"Error: imageBlocks: expected an array of {"mimeType", "data"} objects"#
     );
 }
+
+#[test]
+fn an_image_refused_before_a_malformed_entry_is_the_one_named() {
+    let bad = Some(ImagePayload::new("image/gif", encode(&png(1, 1))));
+    let sent = SentImageBlocks::Entries(vec![Some(png_payload()), bad, None]);
+    assert_eq!(
+        admit(sent).unwrap_err(),
+        ToolImagesRefusal::Image {
+            index: 1,
+            refusal: ImageRefusal::SignatureMismatch(ImageMime::Gif)
+        }
+    );
+    let sent = SentImageBlocks::Entries(vec![Some(png_payload()), None, Some(png_payload())]);
+    assert_eq!(admit(sent).unwrap_err(), ToolImagesRefusal::Malformed(1));
+}
+
+#[test]
+fn a_list_counted_past_the_limit_is_refused_unread() {
+    let sent = SentImageBlocks::TooMany(1_000_000);
+    assert_eq!(
+        admit(sent).unwrap_err().to_string(),
+        "too many imageBlocks: 1000000; at most 8 per tool result"
+    );
+}

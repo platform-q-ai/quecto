@@ -1,4 +1,4 @@
-use crate::interface::cli::{protocol, uds};
+use crate::interface::cli::protocol;
 
 /// Parsed representation of a client-sent `tool_result` command, ready
 /// for `handle_tool_result` to consume.
@@ -25,30 +25,42 @@ pub(super) struct ParsedToolResult {
 ///    needle is tight enough to avoid false positives on, say, a
 ///    prompt that literally discusses tool results.
 ///
-///  * **Canonical parser reuse.**  Once the gate passes, we defer to
-///    the same `parse_line` → `AgentCommand` path used by the main
-///    dispatcher.  If `AgentCommand::ToolResult` ever gains a field,
-///    the intercept path picks it up automatically and stays in sync
-///    with the rest of the protocol surface — no hand-rolled JSON
-///    extraction to drift.
+///  * **Read straight into the fields (#2423 review M1).**  The line is
+///    read into [`ToolResultLine`], not through the internally tagged
+///    `AgentCommand`, which buffers the whole value before it looks at
+///    the tag: read directly, `imageBlocks` streams, so a list past the
+///    image limit is counted, never held. The fields mirror
+///    `AgentCommand::ToolResult`'s (its wire names and defaults; unknown
+///    fields ignored alike), and a test checks both readings agree.
 pub(super) fn try_intercept_tool_result(line: &str) -> Option<ParsedToolResult> {
     if !line.contains(r#""tool_result""#) {
         return None;
     }
-    match uds::parse_line(line) {
-        uds::LineResult::Command(protocol::AgentCommand::ToolResult {
-            tool_call_id,
-            content,
-            is_error,
-            image_blocks,
-        }) => Some(ParsedToolResult {
-            tool_call_id,
-            content,
-            is_error,
-            image_blocks,
+    let parsed: ToolResultLine = serde_json::from_str(line.trim()).ok()?;
+    match parsed.kind.as_str() {
+        "tool_result" => Some(ParsedToolResult {
+            tool_call_id: parsed.tool_call_id,
+            content: parsed.content,
+            is_error: parsed.is_error,
+            image_blocks: parsed.image_blocks,
         }),
         _ => None,
     }
+}
+
+/// A `tool_result` command's fields as the wire spells them (see
+/// `AgentCommand::ToolResult`), with its `type`.
+#[derive(serde::Deserialize)]
+struct ToolResultLine {
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(rename = "toolCallId")]
+    tool_call_id: String,
+    content: String,
+    #[serde(rename = "isError", default)]
+    is_error: bool,
+    #[serde(rename = "imageBlocks", default)]
+    image_blocks: Option<protocol::WireImageBlocks>,
 }
 
 #[cfg(test)]

@@ -236,6 +236,7 @@ async fn tool_result_for_pending_sender_delivers_and_sweeps_expired_entries() {
             "expired".to_string(),
             PendingResult {
                 reply: expired_tx,
+                since: std::time::Instant::now(),
                 tool_name: "tool".to_string(),
                 deadline: std::time::Instant::now() - std::time::Duration::from_millis(1),
             },
@@ -252,8 +253,7 @@ async fn tool_result_for_pending_sender_delivers_and_sweeps_expired_entries() {
     });
 
     let result = rx.await.expect("live result delivered");
-    assert_eq!(result.content, "done");
-    assert!(!result.is_error);
+    assert_eq!((result.content.as_str(), result.is_error), ("done", false));
     assert!(expired_rx.await.is_err(), "expired sender was dropped");
     assert!(registry.lock().unwrap()[&5].pending_results.is_empty());
 }

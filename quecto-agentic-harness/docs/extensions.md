@@ -224,6 +224,14 @@ it instead, e.g. `Error: imageBlocks[1]: data is not valid standard base64`,
 followed by the result's text; the extension stays connected. The full list of
 refusals is in the UDS protocol reference (`tool_result`).
 
+The whole `tool_result` must fit the 8 MiB frame cap. One larger is dropped
+unread: the agent fails the extension's oldest pending call at once with
+`Error: extension result exceeded the 8 MiB frame limit (<n> bytes) and was
+dropped; return fewer or smaller images`, and sends the extension a
+`protocol_error` response naming the call. Several images near the 3.75 MiB
+limit do not fit one result: return fewer or smaller ones (downscale or
+compress a screenshot; JPEG or WebP are usually far smaller than PNG).
+
 ```json
 {
   "type": "tool_result",

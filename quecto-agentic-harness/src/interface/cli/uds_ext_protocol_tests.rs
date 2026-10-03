@@ -355,6 +355,7 @@ fn insert_pending_sweeps_expired_entries() {
             "stale-call".into(),
             PendingResult {
                 reply: stale_tx,
+                since: std::time::Instant::now(),
                 tool_name: "tool".to_string(),
                 deadline: std::time::Instant::now() - std::time::Duration::from_secs(1),
             },
@@ -403,6 +404,7 @@ fn tool_result_sweeps_expired_entries_on_idle_client() {
             "timed-out-call".into(),
             PendingResult {
                 reply: timed_out_tx,
+                since: std::time::Instant::now(),
                 tool_name: "tool".to_string(),
                 deadline: std::time::Instant::now() - std::time::Duration::from_secs(1),
             },

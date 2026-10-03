@@ -55,43 +55,55 @@ impl McpToolResult {
     }
 }
 
-/// The `tool_result` an MCP `result` becomes.
-pub fn mcp_tool_result(result: Value) -> McpToolResult {
-    let result = &result;
-    let items = result
-        .get("content")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default();
+/// The `tool_result` an MCP `result` becomes. Its strings are moved out,
+/// not copied: an image's base64 is megabytes.
+pub fn mcp_tool_result(mut result: Value) -> McpToolResult {
+    let is_error = matches!(result.get("isError"), Some(Value::Bool(true)));
+    let mut items = match result.get_mut("content") {
+        Some(Value::Array(items)) => std::mem::take(items),
+        _ => Vec::new(),
+    };
     let mut lines: Vec<String> = Vec::new();
     let mut image_blocks = Vec::new();
-    for item in items {
+    for item in &mut items {
         match item.get("type").and_then(Value::as_str) {
             Some("image") => match admit(item, image_blocks.len()) {
                 Ok(image) => image_blocks.push(image),
                 Err(marker) => lines.push(marker),
             },
             // Every other item keeps its handling: its text, if it has any.
-            _ => lines.extend(item.get("text").and_then(Value::as_str).map(str::to_owned)),
+            _ => lines.extend(take_str(item, "text")),
         }
     }
     let content = lines.join("\n");
     let content = match (content.is_empty(), image_blocks.is_empty()) {
-        (true, true) => serde_json::to_string_pretty(result).unwrap_or_else(|_| result.to_string()),
+        // No image item was read and every text taken was empty, so the
+        // items are as they came: the result is its JSON, as before.
+        (true, true) => {
+            result["content"] = Value::Array(items);
+            serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string())
+        }
         (true, false) | (false, _) => content,
     };
     fit_to_line(McpToolResult {
         content,
         image_blocks,
-        is_error: false,
+        is_error,
     })
+}
+
+/// The string at `key` of `item`, moved out.
+fn take_str(item: &mut Value, key: &str) -> Option<String> {
+    match item.get_mut(key)? {
+        Value::String(text) => Some(std::mem::take(text)),
+        _ => None,
+    }
 }
 
 /// The image `item` carries, admitted, while fewer than the limit are;
 /// else the marker in its place.
-fn admit(item: &Value, admitted: usize) -> Result<ImageAttachment, String> {
-    let field = |name| item.get(name).and_then(Value::as_str);
-    let (Some(mime_type), Some(data)) = (field("mimeType"), field("data")) else {
+fn admit(item: &mut Value, admitted: usize) -> Result<ImageAttachment, String> {
+    let (Some(mime_type), Some(data)) = (take_str(item, "mimeType"), take_str(item, "data")) else {
         return Err(MALFORMED_IMAGE_MARKER.to_owned());
     };
     match admitted < MAX_IMAGES_PER_MESSAGE {
@@ -101,17 +113,26 @@ fn admit(item: &Value, admitted: usize) -> Result<ImageAttachment, String> {
     }
 }
 
-/// `result` with its last images replaced by markers until its line fits.
+/// `result` with its last images replaced by markers until its line fits,
+/// measured without rendering it.
 fn fit_to_line(mut result: McpToolResult) -> McpToolResult {
-    while !fits(&render(LONGEST_CALL_ID, &result, false)) {
+    let mut content_len = json_str_len(&result.content);
+    // `isError` counted as `false`, the longer.
+    while line_len(LONGEST_CALL_ID, (content_len, false), &result.image_blocks)
+        >= PROTOCOL_LINE_CAP_BYTES
+    {
         let Some(_) = result.image_blocks.pop() else {
             break;
         };
         match result.content.is_empty() {
             true => {}
-            false => result.content.push('\n'),
+            false => {
+                result.content.push('\n');
+                content_len += 2;
+            }
         }
         result.content.push_str(LINE_LIMIT_MARKER);
+        content_len += LINE_LIMIT_MARKER.len();
     }
     result
 }
@@ -120,45 +141,98 @@ fn fit_to_line(mut result: McpToolResult) -> McpToolResult {
 const LONGEST_CALL_ID: &str =
     "uds-0000000000000000000000000000000000000000000000000000000000000000";
 
-/// Whether `line` and its newline fit the UDS line limit.
-fn fits(line: &str) -> bool {
-    line.len() < PROTOCOL_LINE_CAP_BYTES
-}
-
 /// The `tool_result` line for `result`, without its newline: always one
-/// the agent reads. A result whose line would pass the UDS line limit (its
-/// text alone is too long) is an error result saying so.
+/// the agent reads, rendered once. A result whose line would pass the UDS
+/// line limit (its text alone is too long) is an error result saying so.
 pub fn tool_result_line(tool_call_id: &str, result: &McpToolResult) -> String {
-    let is_error = result.is_error;
-    let line = render(tool_call_id, result, is_error);
-    match fits(&line) {
-        true => line,
+    let content_len = json_str_len(&result.content);
+    let len = line_len(
+        tool_call_id,
+        (content_len, result.is_error),
+        &result.image_blocks,
+    );
+    let (line, expected) = match len < PROTOCOL_LINE_CAP_BYTES {
+        true => (render(tool_call_id, result), len),
         false => {
-            let too_large = McpToolResult::text(format!(
+            let too_large = McpToolResult::error(format!(
                 "MCP result too large for the Quecto UDS line limit: {} bytes; the limit is {PROTOCOL_LINE_CAP_BYTES}",
-                line.len() + 1
+                len + 1
             ));
-            let line = render(tool_call_id, &too_large, true);
-            assert!(fits(&line), "the too-large result fits the line");
-            line
+            let expected = line_len(tool_call_id, (json_str_len(&too_large.content), true), &[]);
+            (render(tool_call_id, &too_large), expected)
         }
-    }
+    };
+    assert!(line.len() < PROTOCOL_LINE_CAP_BYTES, "the line fits");
+    debug_assert_eq!(line.len(), expected, "the measure is the rendering's");
+    line
 }
 
-/// The `tool_result` JSON for `result`: `imageBlocks` only when it has
-/// images, so a text result's line is as before.
-fn render(tool_call_id: &str, result: &McpToolResult, is_error: bool) -> String {
-    let mut value = serde_json::json!({
-        "type": "tool_result",
-        "toolCallId": tool_call_id,
-        "content": result.content,
-        "isError": is_error,
-    });
-    match result.image_blocks.is_empty() {
-        true => {}
-        false => value["imageBlocks"] = serde_json::json!(result.image_blocks),
-    }
-    value.to_string()
+/// A `tool_result` line's fields, in the order they are written.
+#[derive(serde::Serialize)]
+struct Line<'a> {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    #[serde(rename = "toolCallId")]
+    tool_call_id: &'a str,
+    content: &'a str,
+    #[serde(rename = "isError")]
+    is_error: bool,
+    /// Only when there are images, so a text result's line is as before.
+    #[serde(rename = "imageBlocks", skip_serializing_if = "<[_]>::is_empty")]
+    image_blocks: &'a [ImageAttachment],
+}
+
+fn render(tool_call_id: &str, result: &McpToolResult) -> String {
+    serde_json::to_string(&Line {
+        kind: "tool_result",
+        tool_call_id,
+        content: &result.content,
+        is_error: result.is_error,
+        image_blocks: &result.image_blocks,
+    })
+    .expect("a tool_result line serializes")
+}
+
+/// The bytes of a line with `content_len` bytes of JSON content and
+/// `is_error`, as [`render`] writes it.
+fn line_len(
+    tool_call_id: &str,
+    (content_len, is_error): (usize, bool),
+    images: &[ImageAttachment],
+) -> usize {
+    let images_len = match images.len() {
+        0 => 0,
+        count => {
+            r#","imageBlocks":[]"#.len()
+                + (count - 1)
+                + images
+                    .iter()
+                    .map(|image| {
+                        r#"{"mimeType":,"data":}"#.len()
+                            + json_str_len(image.mime_type())
+                            + json_str_len(image.data())
+                    })
+                    .sum::<usize>()
+        }
+    };
+    r#"{"type":"tool_result","toolCallId":,"content":,"isError":false}"#.len()
+        + json_str_len(tool_call_id)
+        + content_len
+        + images_len
+        - usize::from(is_error)
+}
+
+/// The bytes `text` takes as a JSON string, quotes and escapes included,
+/// as `serde_json` writes it.
+fn json_str_len(text: &str) -> usize {
+    2 + text
+        .bytes()
+        .map(|byte| match byte {
+            b'"' | b'\\' | b'\n' | b'\r' | b'\t' | 0x08 | 0x0c => 2,
+            0x00..=0x1f => 6,
+            _ => 1,
+        })
+        .sum::<usize>()
 }
 
 #[cfg(test)]

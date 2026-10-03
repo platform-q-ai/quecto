@@ -58,6 +58,9 @@ pub struct PendingResult {
     pub reply: tokio::sync::oneshot::Sender<ToolResult>,
     pub deadline: std::time::Instant,
     pub tool_name: String,
+    /// When the call was forwarded: the oldest pending call is the one an
+    /// over-cap message from its client fails (#2423 review M2).
+    pub since: std::time::Instant,
 }
 
 impl ClientToolState {
@@ -73,7 +76,8 @@ impl ClientToolState {
         reply: tokio::sync::oneshot::Sender<ToolResult>,
         timeout: std::time::Duration,
     ) {
-        let deadline = std::time::Instant::now() + timeout;
+        let since = std::time::Instant::now();
+        let deadline = since + timeout;
         self.sweep_expired_pending();
         self.pending_results.insert(
             tool_call_id,
@@ -81,6 +85,7 @@ impl ClientToolState {
                 reply,
                 deadline,
                 tool_name,
+                since,
             },
         );
     }
@@ -374,42 +379,102 @@ pub fn handle_tool_result(args: ToolResultArgs<'_>) {
         image_blocks,
         registry,
     } = args;
-    let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(state) = reg.get_mut(&client_id) {
-        if let Some(pending) = state.pending_results.remove(tool_call_id) {
-            // Admitted only for a call still waiting: a late or unknown
-            // result's images are never decoded.
-            let sent = sent_image_blocks(image_blocks);
-            #[cfg(test)]
-            admission_probe::fire(registry);
-            let result = extension_tool_result(content.to_string(), is_error, sent);
-            let _ = pending.reply.send(result);
-        }
+    // Take the call out under the lock, then let it go: admitting images
+    // (decoding up to 8 of them) never holds the registry every client's
+    // tool traffic shares (#2423 review M1).
+    let pending = {
+        let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(state) = reg.get_mut(&client_id) else {
+            return;
+        };
+        let pending = state.pending_results.remove(tool_call_id);
         // Reclaim any other entries whose caller has already timed out — e.g.
         // this very result arriving late for a call `UdsTool::execute` gave up
         // on — so an idle client doesn't hold stale slots until its next call.
         state.sweep_expired_pending();
+        pending
+    };
+    // Admitted only for a call still waiting: an unknown result's images,
+    // or a late one's whose caller has gone, are never decoded.
+    let Some(pending) = pending else {
+        return;
+    };
+    match pending.reply.is_closed() {
+        true => {}
+        false => {
+            #[cfg(test)]
+            admission_probe::fire(registry);
+            let sent = sent_image_blocks(image_blocks);
+            let result = extension_tool_result(content.to_string(), is_error, sent);
+            let _ = pending.reply.send(result);
+        }
+    }
+}
+
+/// What the model reads for a call whose result went over the frame cap.
+fn oversized_result_error(declared: usize) -> String {
+    let mib = quecto_line_io::PROTOCOL_LINE_CAP_BYTES / (1024 * 1024);
+    format!(
+        "extension result exceeded the {mib} MiB frame limit ({declared} bytes) and was \
+         dropped; return fewer or smaller images"
+    )
+}
+
+/// A message from `client_id` went over the frame cap and was dropped
+/// unread (#2423 review M2); `error` says why. The reader discards an
+/// over-cap message without buffering it (ADR-0008), so which call it
+/// answered cannot be read: the client's oldest pending call, the one an
+/// extension most likely answered, is failed now rather than at its
+/// timeout (up to 600 s). Returns the `protocol_error` text for the client,
+/// naming the call it failed.
+pub fn reject_oversized(
+    registry: &ClientToolRegistry,
+    client_id: u64,
+    (error, declared): (String, usize),
+) -> String {
+    let oldest = {
+        let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
+        reg.get_mut(&client_id).and_then(|state| {
+            state.sweep_expired_pending();
+            let id = state
+                .pending_results
+                .iter()
+                .min_by_key(|(_, pending)| pending.since)
+                .map(|(id, _)| id.clone())?;
+            state.pending_results.remove_entry(&id)
+        })
+    };
+    match oldest {
+        Some((id, pending)) => {
+            let message = oversized_result_error(declared);
+            tracing::warn!(client_id, tool = %pending.tool_name, call = %id, "{message}");
+            let _ = pending.reply.send(ToolResult::from_error(&message));
+            format!("{error}; failed the pending tool call '{id}'")
+        }
+        None => error,
     }
 }
 
 /// A `tool_result`'s `imageBlocks` as sent (#2423): absent or `null` is no
-/// images, a list is read entry by entry (one not shaped as an image is
-/// `None`, refused on admission), anything else is not a list.
+/// images; a list past the limit is refused by its length alone, none of
+/// its entries read (review M1); a list within it is read entry by entry
+/// (one not shaped as an image is `None`, refused on admission); anything
+/// else is not a list.
 fn sent_image_blocks(field: Option<WireImageBlocks>) -> SentImageBlocks {
     match field {
-        None | Some(serde_json::Value::Null) => SentImageBlocks::default(),
-        Some(serde_json::Value::Array(entries)) => SentImageBlocks::Entries(
-            entries
-                .into_iter()
-                .map(|entry| serde_json::from_value(entry).ok())
-                .collect(),
-        ),
-        Some(
-            serde_json::Value::Bool(_)
-            | serde_json::Value::Number(_)
-            | serde_json::Value::String(_)
-            | serde_json::Value::Object(_),
-        ) => SentImageBlocks::NotAList,
+        None => SentImageBlocks::default(),
+        Some(WireImageBlocks::List { len, .. }) if len > quecto_image::MAX_IMAGES_PER_MESSAGE => {
+            SentImageBlocks::TooMany(len)
+        }
+        Some(WireImageBlocks::List { kept, len }) => {
+            assert_eq!(kept.len(), len, "a list within the limit is kept whole");
+            SentImageBlocks::Entries(
+                kept.into_iter()
+                    .map(|entry| serde_json::from_value(entry).ok())
+                    .collect(),
+            )
+        }
+        Some(WireImageBlocks::NotAList) => SentImageBlocks::NotAList,
     }
 }
 
@@ -500,9 +565,10 @@ pub(super) mod admission_probe {
     use super::ClientToolRegistry;
     use std::cell::RefCell;
 
+    type Probe = Box<dyn FnMut(&ClientToolRegistry)>;
+
     thread_local! {
-        static PROBE: RefCell<Option<Box<dyn FnMut(&ClientToolRegistry)>>> =
-            const { RefCell::new(None) };
+        static PROBE: RefCell<Option<Probe>> = const { RefCell::new(None) };
     }
 
     /// Run `probe` before each admission on this thread.

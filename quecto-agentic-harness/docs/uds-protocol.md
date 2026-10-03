@@ -1327,7 +1327,19 @@ extension's connection is not dropped. The refusals, in the order checked:
 
 The index is the entry's position in `imageBlocks`, from 0, and an
 admission refusal is worded exactly as for a prompt's images (e.g.
-`imageBlocks[0]: image decodes to more than 3932160 bytes (3.75 MiB)`).
+`imageBlocks[0]: image decodes to more than 3932160 bytes (3.75 MiB)`). A
+list longer than 8 is refused by its length alone; its entries are not read.
+
+**Over the frame cap.** A `tool_result` larger than the 8 MiB frame cap is
+dropped unread (its `toolCallId` cannot be read without buffering it). The
+agent then fails that client's **oldest pending call** at once, rather than at
+its timeout, with the error result
+`Error: extension result exceeded the 8 MiB frame limit (<n> bytes) and was dropped; return fewer or smaller images`, and
+sends the client `response` with `command: "protocol_error"`, `success: false`
+and an `error` naming the frame size and the call it failed (`…; failed the
+pending tool call '<toolCallId>'`). Keep each result within the cap: several
+images near the 3.75 MiB limit do not fit one message, so send fewer or
+smaller ones (one at the limit, 5 MiB of base64, fits).
 
 **Example:**
 
@@ -1660,7 +1672,7 @@ Sent when a client falls behind on the broadcast channel (buffer overflow). The 
 
 - **Malformed JSON:** Returns `response` with `command: "parse_error"` and `success: false`. The `error` text preserves the detailed serde parse error in both single-client and multi-client modes; clients that previously string-matched the old generic `"invalid JSON command"` text should switch to the structured `command: "parse_error"` / `success: false` fields.
 - **Unknown command type:** Returns `response` with `success: false`
-- **Line/frame too long:** Oversized inbound messages are rejected against the shared **8 MiB** protocol cap (`quecto-line-io`); clients should recover large content via ranged `get_message` rather than a single oversized frame
+- **Line/frame too long:** Oversized inbound messages are rejected against the shared **8 MiB** protocol cap (`quecto-line-io`): the sender gets `response` with `command: "protocol_error"` and the connection stays usable. When the sender has a pending extension tool call, its oldest one is failed at once (see [`tool_result`](#tool_result)). Clients should recover large content via ranged `get_message` rather than a single oversized frame
 - **Agent error during prompt:** Returns `response` with `command: "agent_error"`. The agent stays alive — subsequent commands are processed normally
 - **Unroutable model:** If `set_model` was set to a provider that doesn't exist, the next `prompt` returns an `agent_error` with `"no configured provider matches model prefix 'X'"`. Use `set_model` to switch to a valid model and retry
 
