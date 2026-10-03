@@ -48,7 +48,10 @@ impl Tool for ReadImage {
             Ok(ToolResult {
                 content: "Read image file [image/png] (30 B)".into(),
                 is_error: false,
-                image_blocks: vec![ImageBlock::new("image/png", base64(PNG))],
+                image_blocks: vec![ImageBlock::unchecked_for_tests(
+                    quecto_image::ImageMime::Png,
+                    base64(PNG),
+                )],
                 delivery_metadata: None,
             })
         })

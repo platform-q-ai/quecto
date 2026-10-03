@@ -51,6 +51,21 @@ async fn oversized_line_reports_parse_error_but_does_not_block_the_next_valid_co
     let initial_stats =
         crate::interface::cli::uds_session::compute_session_stats(&session_key, &messages);
     let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel::<String>(1024);
+    // #2423 review M2: an extension call is waiting on this client; the
+    // dropped message may be its result, so it fails now, not at its timeout.
+    let client_tool_registry = new_client_tool_registry();
+    let (reply_tx, mut reply_rx) = tokio::sync::oneshot::channel();
+    client_tool_registry
+        .lock()
+        .unwrap()
+        .entry(0)
+        .or_default()
+        .insert_pending(
+            "uds-1".into(),
+            "shot".into(),
+            reply_tx,
+            std::time::Duration::from_secs(600),
+        );
 
     let save_session =
         crate::interface::cli::uds::dispatch_session_roster_tests::save_handle_for(&session_key);
@@ -80,7 +95,7 @@ async fn oversized_line_reports_parse_error_but_does_not_block_the_next_valid_co
         turn_control: std::sync::Arc::default(),
         broadcast_tx: Some(broadcast_tx),
         _ext_registry: None,
-        client_tool_registry: new_client_tool_registry(),
+        client_tool_registry: client_tool_registry.clone(),
         current_client_id: 0,
         subagent_registry: None,
         notification_rx: None,
@@ -151,6 +166,17 @@ async fn oversized_line_reports_parse_error_but_does_not_block_the_next_valid_co
     assert!(
         saw_state,
         "the valid command sent after the oversized line must still be dispatched"
+    );
+    let failed = reply_rx
+        .try_recv()
+        .expect("the pending call is failed at once");
+    assert!(failed.is_error);
+    assert!(
+        failed
+            .content
+            .starts_with("Error: extension result exceeded the 8 MiB frame limit"),
+        "{}",
+        failed.content
     );
 }
 

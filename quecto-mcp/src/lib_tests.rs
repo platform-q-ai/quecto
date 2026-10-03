@@ -175,7 +175,7 @@ async fn mcp_client_lists_tools_and_calls_tool() {
         .call_tool("community.feed.list", serde_json::json!({"limit": 1}))
         .await
         .unwrap();
-    assert_eq!(result, "feed item");
+    assert_eq!(result, McpToolResult::text("feed item"));
 }
 
 #[tokio::test]

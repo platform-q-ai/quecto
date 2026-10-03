@@ -6,11 +6,41 @@ fn tool_result_and_image_block_construct() {
     let r = ToolResult {
         content: "ok".into(),
         is_error: false,
-        image_blocks: vec![ImageBlock::new("image/png", "AAAA")],
+        image_blocks: vec![ImageBlock::unchecked_for_tests(
+            quecto_image::ImageMime::Png,
+            "AAAA",
+        )],
         delivery_metadata: None,
     };
     assert!(!r.is_error);
-    assert_eq!(r.image_blocks[0].mime_type, "image/png");
+    assert_eq!(r.image_blocks[0].mime_type(), "image/png");
+}
+
+/// #2423: a tool result's block is made from an admitted image, keeps its
+/// type and data, and a restored block is re-admitted, never trusted.
+#[test]
+fn an_image_block_comes_from_admission_and_restore_re_admits() {
+    use quecto_image::{ImageAttachment, ImageMime, ImagePayload, ImageRefusal};
+    let data = quecto_image::encode(&quecto_image::samples::png(2, 2));
+    let admitted = ImageAttachment::new(ImagePayload::new("image/png", data.clone())).unwrap();
+    let block = ImageBlock::from(admitted);
+    assert_eq!(
+        (block.mime(), block.data()),
+        (ImageMime::Png, data.as_str())
+    );
+    assert_eq!(
+        ImageBlock::restore(ImageMime::Png, data.clone()),
+        Ok(block.clone())
+    );
+    assert_eq!(
+        ImageBlock::restore(ImageMime::Gif, data),
+        Err(ImageRefusal::SignatureMismatch(ImageMime::Gif))
+    );
+    let shown = format!("{block:?}");
+    assert!(
+        shown.contains("data_len") && !shown.contains("iVBOR"),
+        "{shown}"
+    );
 }
 
 #[test]

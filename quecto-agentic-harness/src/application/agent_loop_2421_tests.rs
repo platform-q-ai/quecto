@@ -161,7 +161,10 @@ impl crate::application::tools::ports::Tool for Screenshot {
             Ok(ToolResult {
                 content: "Took a screenshot".into(),
                 is_error: false,
-                image_blocks: vec![crate::domain::tool::ImageBlock::new("image/png", "cG5n")],
+                image_blocks: vec![crate::domain::tool::ImageBlock::unchecked_for_tests(
+                    quecto_image::ImageMime::Png,
+                    "cG5n",
+                )],
                 delivery_metadata: None,
             })
         })

@@ -43,16 +43,6 @@ pub fn estimate_image_tokens(mime: ImageMime, base64: &str) -> usize {
     tokens
 }
 
-/// [`estimate_image_tokens`] for an image whose type is still a string (a
-/// tool result's block, until #2423 types it): a type off the allowlist is
-/// unreadable and costs the ceiling.
-pub fn estimate_named_image_tokens(mime: &str, base64: &str) -> usize {
-    match ImageMime::parse_exact(mime) {
-        Some(mime) => estimate_image_tokens(mime, base64),
-        None => UNREADABLE_IMAGE_TOKENS,
-    }
-}
-
 /// `dimensions` with the long edge scaled to at most [`MAX_LONG_EDGE`],
 /// the aspect ratio kept (each side rounded up, so the estimate errs high;
 /// the long side lands exactly on the cap).

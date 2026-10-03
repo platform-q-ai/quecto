@@ -13,6 +13,7 @@ fn tool_reg(name: &str, desc: &str) -> ToolRegistration {
         description: desc.into(),
         parameters_schema: r#"{"type":"object"}"#.into(),
         stable_id: None,
+        timeout_seconds: None,
     }
 }
 
@@ -270,6 +271,7 @@ fn test_handle_tool_result_delivers() {
         tool_call_id: "call-1",
         content: "22°C, sunny",
         is_error: false,
+        image_blocks: None,
         registry: &r,
     });
     let result = rx.try_recv().unwrap();
@@ -285,6 +287,7 @@ fn test_handle_tool_result_unknown_call_id_is_noop() {
         tool_call_id: "nonexistent",
         content: "data",
         is_error: false,
+        image_blocks: None,
         registry: &r,
     });
 }
@@ -352,6 +355,7 @@ fn insert_pending_sweeps_expired_entries() {
             "stale-call".into(),
             PendingResult {
                 reply: stale_tx,
+                since: std::time::Instant::now(),
                 tool_name: "tool".to_string(),
                 deadline: std::time::Instant::now() - std::time::Duration::from_secs(1),
             },
@@ -400,6 +404,7 @@ fn tool_result_sweeps_expired_entries_on_idle_client() {
             "timed-out-call".into(),
             PendingResult {
                 reply: timed_out_tx,
+                since: std::time::Instant::now(),
                 tool_name: "tool".to_string(),
                 deadline: std::time::Instant::now() - std::time::Duration::from_secs(1),
             },
@@ -412,6 +417,7 @@ fn tool_result_sweeps_expired_entries_on_idle_client() {
         tool_call_id: "some-other-call",
         content: "late",
         is_error: false,
+        image_blocks: None,
         registry: &registry,
     });
 
@@ -459,6 +465,7 @@ async fn forwarder_cleans_pending_when_writer_has_no_receiver() {
                     arguments: "{}".into(),
                 },
                 reply: reply_tx,
+                timeout: std::time::Duration::from_secs(30),
             },
         )
         .await
@@ -528,6 +535,7 @@ async fn forwarder_drains_buffered_requests_on_shutdown() {
                     arguments: "{}".into(),
                 },
                 reply: r1_tx,
+                timeout: std::time::Duration::from_secs(30),
             },
         )
         .await
@@ -541,6 +549,7 @@ async fn forwarder_drains_buffered_requests_on_shutdown() {
                     arguments: "{}".into(),
                 },
                 reply: r2_tx,
+                timeout: std::time::Duration::from_secs(30),
             },
         )
         .await
@@ -616,6 +625,7 @@ async fn forwarder_leaves_pending_when_writer_delivered() {
                     arguments: "{}".into(),
                 },
                 reply: reply_tx,
+                timeout: std::time::Duration::from_secs(30),
             },
         )
         .await

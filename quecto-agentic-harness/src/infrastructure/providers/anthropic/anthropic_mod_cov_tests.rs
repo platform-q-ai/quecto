@@ -185,8 +185,10 @@ fn parse_response_ignores_unknown_block_type() {
 #[test]
 fn tool_result_block_with_images_uses_array_content() {
     let mut m = Message::tool("tc1", "see attached");
-    m.image_blocks
-        .push(ImageBlock::new("image/png", "base64data".to_string()));
+    m.image_blocks.push(ImageBlock::unchecked_for_tests(
+        quecto_image::ImageMime::Png,
+        "base64data".to_string(),
+    ));
     let json = AnthropicProvider::build_tool_result_message_public(&m);
     let block = &json["content"][0];
     let inner = block["content"].as_array().expect("array content");
@@ -194,6 +196,21 @@ fn tool_result_block_with_images_uses_array_content() {
     assert_eq!(inner[1]["type"], "image");
     assert_eq!(inner[1]["source"]["media_type"], "image/png");
     assert_eq!(inner[1]["source"]["data"], "base64data");
+}
+
+/// #2423: an extension may return images with no text; the API refuses an
+/// empty text block, so an image-only result is its images alone.
+#[test]
+fn an_image_only_tool_result_has_no_empty_text_block() {
+    let mut m = Message::tool("tc1", "");
+    m.image_blocks
+        .push(ImageBlock::sample(quecto_image::ImageMime::Png));
+    let json = AnthropicProvider::build_tool_result_message_public(&m);
+    let inner = json["content"][0]["content"]
+        .as_array()
+        .expect("array content");
+    assert_eq!(inner.len(), 1);
+    assert_eq!(inner[0]["type"], "image");
 }
 
 // --- cache control: array branch & no-user branch ----------------------------

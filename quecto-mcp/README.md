@@ -47,7 +47,7 @@ Optional:
 - `--tool-allowlist`, comma-separated MCP tool names. When present without `--tool-prefix`, it disables the default `community.` prefix filter.
 - `--tool-denylist`, comma-separated MCP tool names; denylist wins over allowlist and prefix matches.
 - `--name-prefix`, prefix for registered Quecto tool names; the final registered names must still be Quecto-safe
-- `--timeout`, MCP HTTP timeout in seconds
+- `--timeout`, MCP HTTP timeout in seconds (default 30, or `QUECTO_MCP_TIMEOUT_SECONDS`). Each tool registers with Quecto with `timeoutSeconds` of this plus 5 seconds, within Quecto's 1 to 600, so Quecto waits as long as an MCP call may take. A call that has to re-initialize the MCP session and retry can take longer than that.
 - `--register-timeout`, Quecto `register_tools` timeout in seconds
 - `--refresh-interval` is reserved for deployment compatibility but is not implemented. `quecto-mcp` rejects this option; restart `quecto-mcp` to refresh tool registrations.
 
@@ -68,6 +68,17 @@ Collisions, duplicate MCP names, invalid MCP names, and invalid final names afte
 `quecto-mcp` uses JSON-RPC over HTTP for MCP requests. It sends an `Accept: application/json, text/event-stream` compatibility header, but this bridge currently expects JSON response bodies and does not implement SSE stream parsing.
 
 Quecto UDS messages are newline-delimited JSON. For `execute_tool`, `arguments` is expected to be a JSON string containing the MCP argument object. Malformed JSON or non-string `arguments` values produce a deterministic `tool_result` with `isError: true` when the tool call id and tool name can be read.
+
+## Tool results
+
+An MCP `tools/call` result becomes one Quecto `tool_result`:
+
+- `text` items are joined with newlines into `content`.
+- `image` items (`{"type":"image","data","mimeType"}`) become `imageBlocks`, admitted by the `quecto-image` crate with the rules the agent applies: PNG, JPEG, GIF or WebP; strict standard base64; at most 3.75 MiB decoded; the type's signature; a readable header. At most 8 are sent.
+- An image that cannot be sent is a marker in `content` in its place, `[image omitted: <reason>]`: the refusal text (e.g. `[image omitted: mimeType "image/svg+xml" is not allowed; use image/png, image/jpeg, image/gif or image/webp]`), a malformed item, the ninth image onwards, or an image the 8 MiB UDS line has no room for.
+- A result with `isError: true` (an MCP tool error) is an error `tool_result`, with its text and images as for any result.
+- Beside images, any other item (`resource`, `resource_link`, …) is shown in its place as its JSON, or as `[content omitted: a "<type>" item of <n> bytes]` when its JSON is over 16 KiB, so nothing is dropped silently. Without images, other items keep their handling (their `text`, if any).
+- A result with neither text nor images (only `resource` items, say), or one that is not an object or whose `content` is not a list, is sent as its JSON, as before. MCP responses are read up to 16 MiB; a result whose text alone cannot fit the UDS line is an error result saying so.
 
 ## Security model
 

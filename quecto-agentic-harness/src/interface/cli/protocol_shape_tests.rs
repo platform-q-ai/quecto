@@ -293,7 +293,9 @@ fn tool_result_command_parses() {
             tool_call_id,
             content,
             is_error,
+            image_blocks,
         } => {
+            assert!(image_blocks.is_none(), "no imageBlocks is no images");
             assert_eq!(tool_call_id, "call-1");
             assert_eq!(content, "22°C");
             assert!(!is_error);

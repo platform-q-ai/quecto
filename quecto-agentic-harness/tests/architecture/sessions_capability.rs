@@ -957,7 +957,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // #2218: the idle drain's test hooks moved to `uds_turn_test_hooks.rs`
     // and every turn ends with the one routine save, run by the turn itself
     // before `agent_end` (711 → 698).
-    ("src/interface/cli/uds.rs", 698),
+    ("src/interface/cli/uds.rs", 695),
     ("src/interface/cli/uds_session_history.rs", 205),
     // #2404: the ranged builder's unused thinking switch went (290 → 283).
     ("src/interface/cli/uds_session_message_range.rs", 283),

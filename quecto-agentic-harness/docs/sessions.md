@@ -61,8 +61,11 @@ store.
   again with it and is read again on the next load, and a provider request
   shows it as the text `[image unavailable: <first 12 hex digits>]` (with a
   warning in the log). The marker is never written into the transcript.
-- A user's image is re-admitted on restore by the same strict rules as when
-  it was sent (`quecto-image`); one they refuse stays unloaded like the rest.
+- Every image, a user's or a tool result's, is re-admitted on restore by the
+  same strict rules as when it was admitted (`quecto-image`; #2423: `read`
+  and extension tool results admit theirs too, so a session quecto wrote
+  always passes); one they refuse (base64 that is unpadded or wrapped, say,
+  from an edited file) stays unloaded like the rest.
   A message's text is saved exactly as sent, an images-only prompt's too.
 - An image of a type quecto does not admit (other than PNG, JPEG, GIF and
   WebP, spelled exactly) or whose base64 is longer than 5 MiB is still named

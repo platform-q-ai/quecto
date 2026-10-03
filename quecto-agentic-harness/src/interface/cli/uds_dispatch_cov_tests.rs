@@ -161,6 +161,7 @@ pub(super) fn tool_reg(name: &str) -> ToolRegistration {
         description: "desc".into(),
         parameters_schema: r#"{"type":"object"}"#.into(),
         stable_id: None,
+        timeout_seconds: None,
     }
 }
 
@@ -671,6 +672,7 @@ async fn dispatch_tool_result_unknown_is_noop() {
         tool_call_id: "no-such".into(),
         content: "data".into(),
         is_error: false,
+        image_blocks: None,
     };
     let mut ctx = fx.ctx();
     assert!(!dispatch_command(cmd, &mut ctx).await);

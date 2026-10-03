@@ -88,3 +88,48 @@ fn image_attachments_are_documented_with_their_exact_refusals() {
         "docs/uds-protocol.md does not quote {missing:?}"
     );
 }
+
+/// #2423: `tool_result` documents `imageBlocks` and quotes each refusal
+/// exactly as `ToolImagesRefusal` words it; `register_tools` documents
+/// `timeoutSeconds` and its refusal; both guides say what happens to a
+/// result over the frame cap (review M2).
+#[test]
+fn extension_images_and_tool_timeouts_are_documented_exactly() {
+    use quecto::application::extensions::tool_result::ToolImagesRefusal;
+    use quecto_image::ImageRefusal;
+    let doc = read_repo_file("docs/uds-protocol.md");
+    let tool_result = command_section(&doc, "tool_result");
+    assert!(
+        tool_result.contains("| `imageBlocks` |"),
+        "the tool_result section has no `imageBlocks` row"
+    );
+    let refusals = [
+        ToolImagesRefusal::Image {
+            index: 1,
+            refusal: ImageRefusal::InvalidBase64,
+        },
+        ToolImagesRefusal::TooMany(9),
+        ToolImagesRefusal::NotAList,
+        ToolImagesRefusal::Malformed(0),
+    ]
+    .map(|refusal| format!("`Error: {refusal}`"));
+    let missing: Vec<&String> = refusals
+        .iter()
+        .filter(|text| !tool_result.contains(text.as_str()))
+        .collect();
+    assert!(missing.is_empty(), "tool_result does not quote {missing:?}");
+    let register = command_section(&doc, "register_tools");
+    assert!(register.contains("| `timeoutSeconds` |"));
+    assert!(register.contains(
+        "`tool 'shot': timeoutSeconds must be a whole number of seconds from 1 to 600, got 0`"
+    ));
+    let oversized = "extension result exceeded the 8 MiB frame limit";
+    assert!(
+        tool_result.contains(oversized),
+        "tool_result never says {oversized:?}"
+    );
+    let guide = read_repo_file("docs/extensions.md");
+    for text in ["`imageBlocks`", "`timeoutSeconds`", oversized] {
+        assert!(guide.contains(text), "docs/extensions.md never says {text}");
+    }
+}

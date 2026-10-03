@@ -14,20 +14,19 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use crate::application::extensions::ports::PendingToolInvocation;
+use crate::application::extensions::tool_result::{SentImageBlocks, extension_tool_result};
+use crate::domain::extension_tool::ExtensionToolTimeout;
 use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::extensions::uds_tool::create_uds_tool;
 
-use super::protocol::{AgentEvent, ToolRegistration};
-
-/// Default timeout for UDS extension tool execution (seconds).
-const DEFAULT_TOOL_TIMEOUT_SECS: u64 = 30;
+use super::protocol::{AgentEvent, ToolRegistration, WireImageBlocks};
 
 /// Handle to a spawned forwarder task. Stored alongside a
 /// cooperative shutdown `oneshot` so unregister / disconnect can ask
 /// the task to drain its inbound mpsc of any buffered
 /// `ToolInvocation`s — resolving their oneshots with an immediate
 /// error — instead of abort-killing the task and leaving those
-/// in-flight callers to wait out the 30-second UdsTool timeout.
+/// in-flight callers to wait out the UdsTool's timeout.
 #[derive(Debug)]
 pub struct ForwarderHandle {
     /// JoinHandle is kept so `Drop` detaches cleanly; we never
@@ -59,6 +58,9 @@ pub struct PendingResult {
     pub reply: tokio::sync::oneshot::Sender<ToolResult>,
     pub deadline: std::time::Instant,
     pub tool_name: String,
+    /// When the call was forwarded: the oldest pending call is the one an
+    /// over-cap message from its client fails (#2423 review M2).
+    pub since: std::time::Instant,
 }
 
 impl ClientToolState {
@@ -74,7 +76,8 @@ impl ClientToolState {
         reply: tokio::sync::oneshot::Sender<ToolResult>,
         timeout: std::time::Duration,
     ) {
-        let deadline = std::time::Instant::now() + timeout;
+        let since = std::time::Instant::now();
+        let deadline = since + timeout;
         self.sweep_expired_pending();
         self.pending_results.insert(
             tool_call_id,
@@ -82,6 +85,7 @@ impl ClientToolState {
                 reply,
                 deadline,
                 tool_name,
+                since,
             },
         );
     }
@@ -212,7 +216,20 @@ pub fn handle_register_tools(
         }
     }
 
-    let timeout = std::time::Duration::from_secs(DEFAULT_TOOL_TIMEOUT_SECS);
+    let timeouts = match tools
+        .iter()
+        .map(registered_timeout)
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(timeouts) => timeouts,
+        Err(refusal) => {
+            return (
+                false,
+                AgentEvent::err(id, "register_tools", refusal),
+                vec![],
+            );
+        }
+    };
     let mut new_tools: Vec<Arc<dyn crate::application::tools::ports::Tool>> = Vec::new();
     let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -234,7 +251,7 @@ pub fn handle_register_tools(
 
     let state = reg.entry(client_id).or_default();
 
-    for tool_reg in tools {
+    for (tool_reg, timeout) in tools.iter().zip(timeouts) {
         let def = ToolDefinition {
             name: tool_reg.name.clone().into(),
             description: tool_reg.description.clone().into(),
@@ -252,7 +269,7 @@ pub fn handle_register_tools(
             resolve_pending_for_tool(state, &tool_reg.name, "Tool re-registered");
         }
 
-        let (tool, rx) = create_uds_tool(def, timeout);
+        let (tool, rx) = create_uds_tool(def, timeout.duration());
         state.tool_names.insert(tool_reg.name.clone());
         state.tool_request_rxs.insert(tool_reg.name.clone(), rx);
         new_tools.push(tool);
@@ -265,6 +282,30 @@ pub fn handle_register_tools(
         Some(serde_json::json!({ "registered": registered })),
     );
     (true, ev, new_tools)
+}
+
+/// The timeout `tool` registered with (#2423): its `timeoutSeconds` when
+/// that is a whole number of seconds the domain allows, the default when it
+/// sent none (or `null`); any other value is the exact refusal, which
+/// refuses the whole batch.
+fn registered_timeout(tool: &ToolRegistration) -> Result<ExtensionToolTimeout, String> {
+    let sent = match &tool.timeout_seconds {
+        None | Some(serde_json::Value::Null) => return Ok(ExtensionToolTimeout::DEFAULT),
+        Some(sent) => sent,
+    };
+    sent.as_u64()
+        .and_then(ExtensionToolTimeout::from_seconds)
+        .ok_or_else(|| {
+            let allowed = ExtensionToolTimeout::ALLOWED_SECONDS;
+            // Echo at most 64 characters of what was sent.
+            let echoed: String = sent.to_string().chars().take(64).collect();
+            format!(
+                "tool '{}': timeoutSeconds must be a whole number of seconds from {} to {}, got {echoed}",
+                tool.name,
+                allowed.start(),
+                allowed.end()
+            )
+        })
 }
 
 /// Handle `unregister_tools` command from a client.
@@ -323,6 +364,8 @@ pub struct ToolResultArgs<'a> {
     pub tool_call_id: &'a str,
     pub content: &'a str,
     pub is_error: bool,
+    /// The `imageBlocks` field as sent (#2423).
+    pub image_blocks: Option<WireImageBlocks>,
     pub registry: &'a ClientToolRegistry,
 }
 
@@ -333,22 +376,108 @@ pub fn handle_tool_result(args: ToolResultArgs<'_>) {
         tool_call_id,
         content,
         is_error,
+        image_blocks,
         registry,
     } = args;
-    let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(state) = reg.get_mut(&client_id) {
-        if let Some(pending) = state.pending_results.remove(tool_call_id) {
-            let _ = pending.reply.send(ToolResult {
-                content: content.to_string(),
-                is_error,
-                image_blocks: vec![],
-                delivery_metadata: None,
-            });
-        }
+    // Take the call out under the lock, then let it go: admitting images
+    // (decoding up to 8 of them) never holds the registry every client's
+    // tool traffic shares (#2423 review M1).
+    let pending = {
+        let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(state) = reg.get_mut(&client_id) else {
+            return;
+        };
+        let pending = state.pending_results.remove(tool_call_id);
         // Reclaim any other entries whose caller has already timed out — e.g.
         // this very result arriving late for a call `UdsTool::execute` gave up
         // on — so an idle client doesn't hold stale slots until its next call.
         state.sweep_expired_pending();
+        pending
+    };
+    // Admitted only for a call still waiting: an unknown result's images,
+    // or a late one's whose caller has gone, are never decoded.
+    let Some(pending) = pending else {
+        return;
+    };
+    match pending.reply.is_closed() {
+        true => {}
+        false => {
+            #[cfg(test)]
+            admission_probe::fire(registry);
+            let sent = sent_image_blocks(image_blocks);
+            let result = extension_tool_result(content.to_string(), is_error, sent);
+            let _ = pending.reply.send(result);
+        }
+    }
+}
+
+/// What the model reads for a call whose result went over the frame cap.
+fn oversized_result_error(declared: usize) -> String {
+    let mib = quecto_line_io::PROTOCOL_LINE_CAP_BYTES / (1024 * 1024);
+    format!(
+        "extension result exceeded the {mib} MiB frame limit ({declared} bytes) and was \
+         dropped; return fewer or smaller images"
+    )
+}
+
+/// A message from `client_id` went over the frame cap and was dropped
+/// unread (#2423 review M2); `error` says why. The reader discards an
+/// over-cap message without buffering it (ADR-0008), so which call it
+/// answered cannot be read: the client's oldest pending call whose caller
+/// still waits, the one an extension most likely answered, is failed now
+/// rather than at its timeout (up to 600 s). Returns the `protocol_error` text for the client,
+/// naming the call it failed.
+pub fn reject_oversized(
+    registry: &ClientToolRegistry,
+    client_id: u64,
+    (error, declared): (String, usize),
+) -> String {
+    let oldest = {
+        let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
+        reg.get_mut(&client_id).and_then(|state| {
+            state.sweep_expired_pending();
+            // The oldest call still waiting: one whose caller has gone
+            // (its reply closed) has nothing to fail (review round 2 L3).
+            let id = state
+                .pending_results
+                .iter()
+                .filter(|(_, pending)| !pending.reply.is_closed())
+                .min_by_key(|(_, pending)| pending.since)
+                .map(|(id, _)| id.clone())?;
+            state.pending_results.remove_entry(&id)
+        })
+    };
+    match oldest {
+        Some((id, pending)) => {
+            let message = oversized_result_error(declared);
+            tracing::warn!(client_id, tool = %pending.tool_name, call = %id, "{message}");
+            let _ = pending.reply.send(ToolResult::from_error(&message));
+            format!("{error}; failed the pending tool call '{id}'")
+        }
+        None => error,
+    }
+}
+
+/// A `tool_result`'s `imageBlocks` as sent (#2423): absent or `null` is no
+/// images; a list past the limit is refused by its length, none of its
+/// entries admitted (review M1); a list within it is read entry by entry
+/// (one not shaped as an image is `None`, refused on admission); anything
+/// else is not a list.
+fn sent_image_blocks(field: Option<WireImageBlocks>) -> SentImageBlocks {
+    match field {
+        None => SentImageBlocks::default(),
+        Some(WireImageBlocks::List { len, .. }) if len > quecto_image::MAX_IMAGES_PER_MESSAGE => {
+            SentImageBlocks::TooMany(len)
+        }
+        Some(WireImageBlocks::List { kept, len }) => {
+            assert_eq!(kept.len(), len, "a list within the limit is kept whole");
+            SentImageBlocks::Entries(
+                kept.into_iter()
+                    .map(|entry| serde_json::from_value(entry).ok())
+                    .collect(),
+            )
+        }
+        Some(WireImageBlocks::NotAList) => SentImageBlocks::NotAList,
     }
 }
 
@@ -432,6 +561,37 @@ fn resolve_pending_for_tool(state: &mut ClientToolState, tool_name: &str, reason
     }
 }
 
+/// A test's look at the registry just before a result's images are
+/// admitted (#2423 review M1): admission must never hold the shared lock.
+#[cfg(test)]
+pub(super) mod admission_probe {
+    use super::ClientToolRegistry;
+    use std::cell::RefCell;
+
+    type Probe = Box<dyn FnMut(&ClientToolRegistry)>;
+
+    thread_local! {
+        static PROBE: RefCell<Option<Probe>> = const { RefCell::new(None) };
+    }
+
+    /// Run `probe` before each admission on this thread.
+    pub(in crate::interface::cli) fn set(probe: impl FnMut(&ClientToolRegistry) + 'static) {
+        PROBE.with(|slot| *slot.borrow_mut() = Some(Box::new(probe)));
+    }
+
+    pub(in crate::interface::cli) fn clear() {
+        PROBE.with(|slot| *slot.borrow_mut() = None);
+    }
+
+    pub(super) fn fire(registry: &ClientToolRegistry) {
+        PROBE.with(|slot| {
+            if let Some(probe) = slot.borrow_mut().as_mut() {
+                probe(registry);
+            }
+        });
+    }
+}
+
 // Re-export dispatch helpers into this module for existing call sites.
 #[path = "uds_ext_protocol_dispatch.rs"]
 mod dispatch;
@@ -452,3 +612,11 @@ mod dispatch_cov_tests;
 #[cfg(test)]
 #[path = "uds_ext_protocol_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "uds_ext_protocol_images_tests.rs"]
+mod images_tests;
+
+#[cfg(test)]
+#[path = "uds_ext_images_e2e_tests.rs"]
+mod images_e2e_tests;

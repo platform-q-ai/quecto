@@ -292,7 +292,7 @@ async fn test_read_png_returns_image_block() {
     let result = tool.execute(r#"{"path": "img.png"}"#).await.unwrap();
     assert!(!result.is_error);
     assert_eq!(result.image_blocks.len(), 1);
-    assert_eq!(result.image_blocks[0].mime_type, "image/png");
+    assert_eq!(result.image_blocks[0].mime_type(), "image/png");
     assert!(!result.image_blocks[0].data().is_empty());
     assert!(result.content.contains("image/png"));
 }
@@ -330,7 +330,7 @@ async fn test_magic_bytes_detect_png_no_extension() {
         result
             .image_blocks
             .iter()
-            .any(|b| b.mime_type == "image/png")
+            .any(|b| b.mime_type() == "image/png")
     );
 }
 
@@ -354,7 +354,7 @@ async fn test_magic_bytes_detect_jpeg_wrong_extension() {
         result
             .image_blocks
             .iter()
-            .any(|b| b.mime_type == "image/jpeg")
+            .any(|b| b.mime_type() == "image/jpeg")
     );
 }
 

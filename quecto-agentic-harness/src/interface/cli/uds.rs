@@ -91,10 +91,8 @@ pub(super) async fn run_command_loop(
     loop {
         let raw = match rx.recv().await {
             Some(Some(ReaderMessage::Message(l, admitted))) => (l, admitted),
-            Some(Some(ReaderMessage::ProtocolError(msg))) => {
-                tracing::warn!("UDS protocol error: {msg}");
-                let ev = AgentEvent::err(None, "protocol_error", msg);
-                emit_event_to_broadcast_or_writer(ctx, &ev).await;
+            Some(Some(ReaderMessage::Violation(violation))) => {
+                super::uds_reader::report_protocol_error(ctx, violation).await;
                 continue;
             }
             _ => break,

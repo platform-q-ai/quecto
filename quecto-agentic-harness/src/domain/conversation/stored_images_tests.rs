@@ -46,7 +46,7 @@ fn the_digest_is_lowercase_hex_sha256_of_the_text() {
         sha256_hex(b"abc"),
         "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
     );
-    let block = ImageBlock::new("image/png", PNG);
+    let block = ImageBlock::unchecked_for_tests(quecto_image::ImageMime::Png, PNG);
     assert_eq!(block.sha256(), sha256_hex(PNG.as_bytes()));
     let user = user_image(ImageMime::Gif, &gif());
     assert_eq!(user.sha256(), sha256_hex(gif().as_bytes()));
@@ -54,7 +54,7 @@ fn the_digest_is_lowercase_hex_sha256_of_the_text() {
 
 #[test]
 fn a_block_is_hashed_once_and_its_clone_keeps_the_digest() {
-    let block = ImageBlock::new("image/png", PNG);
+    let block = ImageBlock::unchecked_for_tests(quecto_image::ImageMime::Png, PNG);
     block.sha256();
     block.sha256();
     assert_eq!(block.digest_builds_for_tests(), 1);
@@ -113,7 +113,10 @@ fn a_text_only_message_has_no_references() {
 #[test]
 fn the_references_keep_every_image_in_its_place_loaded_or_not() {
     let mut message = Message::tool("c", "x");
-    message.image_blocks = vec![ImageBlock::new("image/png", PNG)];
+    message.image_blocks = vec![ImageBlock::unchecked_for_tests(
+        quecto_image::ImageMime::Png,
+        PNG,
+    )];
     message.user_image_blocks = vec![user_image(ImageMime::Gif, &gif())];
     message.unloaded_images = vec![
         unloaded(ImageKind::Tool, 0, "first"),
@@ -140,19 +143,29 @@ fn the_references_keep_every_image_in_its_place_loaded_or_not() {
     assert_eq!(refs.into_all().len(), 5);
 }
 
+/// #2423: every image, a tool result's as well as a user's, is re-admitted
+/// by the strict rules on restore: what they admit comes back verbatim, and
+/// what they refuse is kept unloaded in its place, never dropped.
 #[test]
-fn restoring_puts_text_back_verbatim_and_keeps_the_rest_unloaded_in_place() {
+fn restoring_re_admits_every_image_and_keeps_the_rest_unloaded_in_place() {
     let mut message = Message::user("look");
-    let wrapped = format!("{}\n{}", &PNG[..10], &PNG[10..]);
+    let png = samples::encode(&samples::png(2, 3));
+    let wrapped = format!("{}\n{}", &png[..10], &png[10..]);
     let gif = gif();
     // Stored as text no admission would take (a session file edited, say).
     let unadmitted = samples::encode(b"GIF89a but no header");
     let unloaded_count = restore_images(
         &mut message,
-        vec![(
-            reference(&wrapped, "image/png"),
-            Some(VerifiedText::of(wrapped.clone())),
-        )],
+        vec![
+            (
+                reference(&wrapped, "image/png"),
+                Some(VerifiedText::of(wrapped.clone())),
+            ),
+            (
+                reference(&png, "image/png"),
+                Some(VerifiedText::of(png.clone())),
+            ),
+        ],
         vec![
             (reference(&gif, "image/gif"), None),
             (
@@ -169,9 +182,15 @@ fn restoring_puts_text_back_verbatim_and_keeps_the_rest_unloaded_in_place() {
             ),
         ],
     );
-    assert_eq!(unloaded_count, 3);
+    assert_eq!(unloaded_count, 4);
     assert_eq!(message.content, "look", "nothing is written into the text");
-    assert_eq!(message.image_blocks[0].data(), wrapped, "verbatim");
+    assert_eq!(message.image_blocks.len(), 1, "only the strict text");
+    assert_eq!(message.image_blocks[0].data(), png, "verbatim");
+    assert_eq!(
+        message.image_blocks[0].digest_builds_for_tests(),
+        0,
+        "its digest is the read's"
+    );
     assert_eq!(message.user_image_blocks.len(), 1);
     assert_eq!(message.user_image_blocks[0].mime_type(), "image/gif");
     assert_eq!(
@@ -187,6 +206,11 @@ fn restoring_puts_text_back_verbatim_and_keeps_the_rest_unloaded_in_place() {
     assert_eq!(
         message.unloaded_images,
         vec![
+            UnloadedImage {
+                kind: ImageKind::Tool,
+                position: 0,
+                reference: reference(&wrapped, "image/png"),
+            },
             place(0, reference(&gif, "image/gif")),
             place(2, reference(&gif, "text/html")),
             place(3, reference(&unadmitted, "image/gif")),

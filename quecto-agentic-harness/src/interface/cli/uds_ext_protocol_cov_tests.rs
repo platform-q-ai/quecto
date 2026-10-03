@@ -135,6 +135,7 @@ pub(super) fn tool_reg(name: &str) -> ToolRegistration {
         description: format!("{name} description"),
         parameters_schema: r#"{"type":"object"}"#.to_string(),
         stable_id: None,
+        timeout_seconds: None,
     }
 }
 
@@ -235,6 +236,7 @@ async fn tool_result_for_pending_sender_delivers_and_sweeps_expired_entries() {
             "expired".to_string(),
             PendingResult {
                 reply: expired_tx,
+                since: std::time::Instant::now(),
                 tool_name: "tool".to_string(),
                 deadline: std::time::Instant::now() - std::time::Duration::from_millis(1),
             },
@@ -246,12 +248,12 @@ async fn tool_result_for_pending_sender_delivers_and_sweeps_expired_entries() {
         tool_call_id: "live",
         content: "done",
         is_error: false,
+        image_blocks: None,
         registry: &registry,
     });
 
     let result = rx.await.expect("live result delivered");
-    assert_eq!(result.content, "done");
-    assert!(!result.is_error);
+    assert_eq!((result.content.as_str(), result.is_error), ("done", false));
     assert!(expired_rx.await.is_err(), "expired sender was dropped");
     assert!(registry.lock().unwrap()[&5].pending_results.is_empty());
 }
@@ -265,6 +267,7 @@ fn tool_result_for_unknown_client_does_not_panic_or_create_state() {
         tool_call_id: "missing-call",
         content: "late result",
         is_error: false,
+        image_blocks: None,
         registry: &registry,
     });
 
@@ -364,6 +367,7 @@ async fn handle_one_request_sends_execute_tool_and_tool_result_resolves_reply() 
                 arguments: r#"{"city":"Oslo"}"#.to_string(),
             },
             reply: reply_tx,
+            timeout: std::time::Duration::from_secs(30),
         },
         91,
         &registry,
@@ -385,6 +389,7 @@ async fn handle_one_request_sends_execute_tool_and_tool_result_resolves_reply() 
         tool_call_id: "call-1",
         content: "snow",
         is_error: false,
+        image_blocks: None,
         registry: &registry,
     });
     let result = reply_rx.await.expect("tool result delivered");
@@ -408,6 +413,7 @@ async fn handle_one_request_without_writer_drops_pending_so_caller_fails_fast() 
                 arguments: "{}".to_string(),
             },
             reply: reply_tx,
+            timeout: std::time::Duration::from_secs(30),
         },
         92,
         &registry,
@@ -626,6 +632,7 @@ async fn forward_tool_requests_shutdown_drains_buffered_invocations_with_reason(
                 arguments: "{}".to_string(),
             },
             reply: reply_tx,
+            timeout: std::time::Duration::from_secs(30),
         },
     )
     .await
@@ -679,6 +686,7 @@ fn poisoned_client_tool_registry_locks_recover_across_public_handlers() {
         tool_call_id: "poison-call",
         content: "ok after poison",
         is_error: false,
+        image_blocks: None,
         registry: &registry,
     });
     let result = reply_rx.blocking_recv().expect("reply survives poison");
@@ -718,6 +726,7 @@ async fn poisoned_registry_lock_recovered_by_forwarder_paths() {
                 arguments: "{}".to_string(),
             },
             reply: reply_tx,
+            timeout: std::time::Duration::from_secs(30),
         },
         777,
         &registry,

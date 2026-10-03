@@ -18,6 +18,9 @@ pub struct PendingToolInvocation {
     pub invocation: ToolInvocation,
     /// Deliver the `ToolResult` here.
     pub reply: ToolReply,
+    /// How long the caller waits for the reply (#2423): the tool's
+    /// registered timeout. A transport keeps the call no longer.
+    pub timeout: std::time::Duration,
 }
 
 /// An extension contributes tools and optional system prompt context.

@@ -130,15 +130,11 @@ impl SessionImages {
             return;
         };
         for message in messages {
-            let tool = message
+            let images = message
                 .image_blocks
                 .iter()
-                .map(|b| (b.sha256(), b.mime_type, b.data()));
-            let user = message
-                .user_image_blocks
-                .iter()
-                .map(|b| (b.sha256(), b.mime_type(), b.data()));
-            for (sha256, mime_type, text) in tool.chain(user) {
+                .chain(&message.user_image_blocks);
+            for (sha256, mime_type, text) in images.map(|b| (b.sha256(), b.mime_type(), b.data())) {
                 let reference = ImageRef {
                     sha256: sha256.to_string(),
                     mime_type: mime_type.to_string(),

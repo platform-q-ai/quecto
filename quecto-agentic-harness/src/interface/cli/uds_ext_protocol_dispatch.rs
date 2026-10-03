@@ -222,8 +222,8 @@ pub(crate) async fn forward_tool_requests(
     };
 
     // Drain: any request already in the mpsc queue gets an immediate
-    // error instead of sitting forever (would be 30s timeout from
-    // UdsTool::execute). The drain is bounded by the mpsc buffer size.
+    // error instead of sitting out the tool's timeout in
+    // UdsTool::execute. The drain is bounded by the mpsc buffer size.
     let drain_reason = shutdown_reason.unwrap_or("Extension disconnected");
     rx.close();
     while let Ok(req) = rx.try_recv() {
@@ -254,6 +254,7 @@ pub(crate) async fn handle_one_request(
                 arguments,
             },
         reply,
+        timeout,
     } = req;
 
     // Dispatch bugs would show up here as a mismatch between the tool
@@ -275,12 +276,7 @@ pub(crate) async fn handle_one_request(
         let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
         match reg.get_mut(&client_id) {
             Some(state) => {
-                state.insert_pending(
-                    tool_call_id.clone(),
-                    tool_name.to_string(),
-                    reply,
-                    std::time::Duration::from_secs(DEFAULT_TOOL_TIMEOUT_SECS),
-                );
+                state.insert_pending(tool_call_id.clone(), tool_name.to_string(), reply, timeout);
             }
             None => {
                 // Client gone — drop the request; the UdsTool's
@@ -303,7 +299,7 @@ pub(crate) async fn handle_one_request(
     // harness that set up the state without one) or the send fails
     // (receiver dropped), proactively remove the pending entry so
     // `UdsTool::execute` fails fast with "Extension disconnected"
-    // rather than waiting out the 30-second tool timeout.
+    // rather than waiting out the tool's timeout.
     let delivered = match writer_tx {
         Some(tx) => {
             let mut line = ev.to_json_line();
@@ -347,14 +343,15 @@ pub(in crate::interface::cli) async fn dispatch_unregister_tools(
 pub(in crate::interface::cli) fn dispatch_tool_result(
     ctx: &mut crate::interface::cli::uds::DispatchCtx<'_>,
     tool_call_id: &str,
-    content: &str,
-    is_error: bool,
+    (content, is_error): (&str, bool),
+    image_blocks: Option<WireImageBlocks>,
 ) {
     handle_tool_result(ToolResultArgs {
         client_id: ctx.current_client_id,
         tool_call_id,
         content,
         is_error,
+        image_blocks,
         registry: &ctx.client_tool_registry,
     });
 }

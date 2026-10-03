@@ -2,7 +2,7 @@
 //! previous accepted request.
 use super::*;
 use crate::domain::conversation::image_tokens::{
-    MIN_IMAGE_TOKENS, UNREADABLE_IMAGE_TOKENS, estimate_named_image_tokens,
+    MIN_IMAGE_TOKENS, UNREADABLE_IMAGE_TOKENS, estimate_image_tokens,
 };
 use crate::domain::request_observation::{
     InputBaseline, InputItemKind, InputPrefixParts, RequestTrace,
@@ -305,7 +305,7 @@ fn an_items_images_are_estimated_from_their_pixel_size() {
         "call_id": "c1",
         "output": [],
     }));
-    let one_pixel = estimate_named_image_tokens("image/png", &data);
+    let one_pixel = estimate_image_tokens(quecto_image::ImageMime::Png, &data);
     assert_eq!(one_pixel, MIN_IMAGE_TOKENS);
     let baseline = InputBaseline::default();
     observe(&baseline, "s", &[prompt.clone(), result.clone()]);
@@ -314,6 +314,24 @@ fn an_items_images_are_estimated_from_their_pixel_size() {
         observed.prefix_tokens_estimate,
         prompt_text + 2 * one_pixel + result_text + UNREADABLE_IMAGE_TOKENS
     );
+}
+
+/// #2423: the wire's type is read exactly; one off the allowlist (another
+/// case, or another format) costs the most an image can, whatever its data.
+#[test]
+fn an_image_url_typed_off_the_allowlist_costs_the_ceiling() {
+    let data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ".repeat(200);
+    for mime in ["image/png", "IMAGE/PNG", "image/bmp"] {
+        let part = json!({
+            "type": "input_image",
+            "image_url": format!("data:{mime};base64,{data}"),
+        });
+        let expected = match mime {
+            "image/png" => MIN_IMAGE_TOKENS,
+            _ => UNREADABLE_IMAGE_TOKENS,
+        };
+        assert_eq!(image_part_tokens(&part), expected, "{mime}");
+    }
 }
 
 /// A request compared but never accepted (a failed or cancelled send) does

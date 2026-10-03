@@ -54,3 +54,41 @@ fn does_not_intercept_line_that_only_mentions_the_literal_in_a_string() {
     let line = r#"{"type":"prompt","message":"explain what tool_result means"}"#;
     assert!(try_intercept_tool_result(line).is_none());
 }
+
+/// #2423 review M1: the intercept reads a `tool_result` straight into its
+/// fields; it must read every line exactly as the canonical
+/// `AgentCommand` parse does.
+#[test]
+fn the_intercept_reads_a_tool_result_as_the_canonical_parse_does() {
+    use crate::interface::cli::protocol::AgentCommand;
+    let lines = [
+        r#"{"type":"tool_result","toolCallId":"a","content":"x"}"#,
+        r#"{"type":"tool_result","toolCallId":"b","content":"","isError":true,"imageBlocks":null}"#,
+        r#"{"type":"tool_result","toolCallId":"c","content":"y","imageBlocks":[{"mimeType":"image/png","data":"AA=="},7]}"#,
+        r#"{"type":"tool_result","toolCallId":"d","content":"z","imageBlocks":"no"}"#,
+        r#"{"type":"tool_result","toolCallId":"e","content":"w","imageBlocks":[0,0,0,0,0,0,0,0,0,0,0]}"#,
+        r#"{"type":"tool_result","content":"no id"}"#,
+        r#"{"type":"tool_result","toolCallId":"f","content":7}"#,
+        r#"{"type":"prompt","message":"tool_result","toolCallId":"g","content":"v"}"#,
+    ];
+    for line in lines {
+        let canonical = match serde_json::from_str::<AgentCommand>(line) {
+            Ok(AgentCommand::ToolResult {
+                tool_call_id,
+                content,
+                is_error,
+                image_blocks,
+            }) => Some((tool_call_id, content, is_error, image_blocks)),
+            _ => None,
+        };
+        let intercepted = try_intercept_tool_result(line).map(|got| {
+            (
+                got.tool_call_id,
+                got.content,
+                got.is_error,
+                got.image_blocks,
+            )
+        });
+        assert_eq!(intercepted, canonical, "{line}");
+    }
+}
