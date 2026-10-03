@@ -101,6 +101,7 @@ The `/model` selector surfaces auth as `[apiKey]` or `[oauth]` so the billing mo
       "auth": { "mode": "apiKey", "apiKey": "$EXAMPLE_API_KEY" },
       "allowRemoteHttp": false,
       "streamIdleSeconds": 300,
+      "streamProgressSeconds": 300,
       "models": [
         {
           "id": "provider/model/id",
@@ -253,38 +254,58 @@ applies to every session, not only swarm runs.
 ## Stalled replies
 
 No provider request has a total time limit while it streams: a long reply that
-keeps sending events is never cut short. A streaming reply that sends no
-response head, or no SSE event, for the stream idle limit (300 seconds unless
-configured; the official Codex client allows the same, since a reasoning model
-can think silently for minutes) is abandoned. Only an event restarts the limit:
-a line opening with `data:` (with or without a space after the colon, never
-indented), Anthropic's `ping` events included. Keep-alives alone — SSE
-comments, blank lines — show the connection is up, not that the reply is
-moving, so a reply held open by them is abandoned too, rather than waiting for
-an outer deadline such as the admission attempt timeout (#2433). The send
-fails with `stream idle timeout: the provider sent nothing for …`; an SSE body
-with `… the provider sent no event for …`.
+keeps sending output is never cut short. Two limits end a streaming reply that
+stalls; both are per provider.
 
-The trade-off: an OpenAI-compatible gateway that fills a long hidden-reasoning
-think with SSE comment heartbeats, sending no event until the model's first
-output, is now cut at the limit and retried once. For such a gateway, raise its
-limit with `stream_idle_seconds` (30–1800):
+**The stream idle limit** (300 seconds unless configured; the official Codex
+client allows the same, since a reasoning model can think silently for
+minutes) ends a reply that sends no response head, or no SSE event, for that
+long. Only an event restarts it: a line opening with `data:` (with or without a
+space after the colon, never indented), Anthropic's `ping` events included.
+Keep-alives alone — SSE comments, blank lines — show the connection is up, not
+that the reply is moving, so a reply held open by them is abandoned too. The
+send fails with `stream idle timeout: the provider sent nothing for …`; an SSE
+body with `… the provider sent no event for …`.
 
-- `~/.quecto/config.json`: `providers.openai.stream_idle_seconds`,
-  `providers.anthropic.stream_idle_seconds`, or `stream_idle_seconds` on an
+**The stream progress limit** (300 seconds unless configured) ends a reply
+that keeps sending events none of which carries output, for that long since
+its last output (or its start). Output is a text, tool-call, refusal,
+reasoning or reasoning-summary delta, a finished part or output item that
+holds content, or completion; an empty delta is none. A Codex reply once sent
+~11 such events a second for 15 minutes, holding its turn until the admission
+attempt timeout (#2433). The error is `stream progress timeout: the provider
+sent events but no output for …`. A reply sending no events at all is the idle
+limit's alone, so a model that thinks silently is never cut by this one, and a
+model that streams its reasoning makes progress with every reasoning delta.
+
+The trade-offs:
+
+- An OpenAI-compatible gateway that fills a long hidden-reasoning think with
+  SSE comment heartbeats, sending no event until the model's first output, is
+  cut at the idle limit and retried once.
+- A provider that sends events that carry no output (a periodic `in_progress`,
+  empty deltas, `ping`s) through a long hidden think is cut at the progress
+  limit and retried once.
+
+For either, raise that provider's limit: `stream_idle_seconds` (30–1800) or
+`stream_progress_seconds` (60–3600).
+
+- `~/.quecto/config.json`: on `providers.openai`, `providers.anthropic`, or an
   `openai_compatible.endpoints` entry. A value out of range fails the runtime
   composition with an error naming the setting.
-- `~/.quecto/models.json`: `"streamIdleSeconds"` on a provider block. A block
-  whose value is out of range is skipped with a diagnostic, as an unknown auth
-  mode is; its neighbours still load.
+- `~/.quecto/models.json`: `"streamIdleSeconds"` / `"streamProgressSeconds"`
+  on a provider block. A block with a value out of range is skipped with a
+  diagnostic, as an unknown auth mode is; its neighbours still load.
 
 A non-streaming reply sends nothing until it is complete, so it has a 20 minute
-total limit instead, which is not configurable. Either expiry fails the attempt
-with a `stream idle timeout: …` or `reply timeout: …` error of class `stalled`,
-recorded on the attempt as `Idle` or `TimedOut`. A stall is retried at most
-once per request (before any output reached the caller); an error status whose
-body stalls keeps its status class and shows `(error body abandoned: …)` in
-place of the body.
+total limit instead, which is not configurable. Each expiry fails the attempt
+with a `stream idle timeout: …`, `stream progress timeout: …` or `reply
+timeout: …` error of class `stalled`, recorded on the attempt as `Idle`,
+`NoProgress` or `TimedOut`. A stall is retried at most once per request (before
+any output reached the caller); an error status whose body stalls keeps its
+status class and shows `(error body abandoned: …)` in place of the body. Each
+attempt's record counts its events by type (`event_types`, the 16 most
+frequent), so a stall names the event that repeated.
 
 ## Runaway replies
 

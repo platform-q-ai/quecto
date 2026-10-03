@@ -52,24 +52,36 @@ pub(super) struct RegistryProvider {
     /// The provider's stream idle limit in seconds (#2433 review).
     #[serde(default, alias = "stream_idle_seconds")]
     pub(super) stream_idle_seconds: Option<u64>,
+    /// The provider's stream progress limit in seconds (#2433).
+    #[serde(default, alias = "stream_progress_seconds")]
+    pub(super) stream_progress_seconds: Option<u64>,
     #[serde(default)]
     pub(super) models: Vec<RegistryModel>,
 }
 
-/// The diagnostic for a provider block whose `streamIdleSeconds` is outside
-/// the allowed range: the block is skipped, as an unknown auth mode is.
-pub(super) fn stream_idle_out_of_range(
+impl RegistryProvider {
+    /// Its `streamIdleSeconds` and `streamProgressSeconds` (#2433).
+    pub(super) fn stream_limits(
+        &self,
+    ) -> crate::infrastructure::providers::stream_idle::StreamLimits {
+        crate::infrastructure::providers::stream_idle::StreamLimits {
+            idle_seconds: self.stream_idle_seconds,
+            progress_seconds: self.stream_progress_seconds,
+        }
+    }
+}
+
+/// The diagnostic for a provider block whose stream limit is outside its
+/// range: the block is skipped, as an unknown auth mode is.
+pub(super) fn stream_limit_out_of_range(
     provider_key: &str,
-    seconds: Option<u64>,
+    error: crate::infrastructure::providers::stream_idle::StreamLimitError,
 ) -> super::SkippedProviderBlock {
-    let range = crate::infrastructure::providers::stream_idle::STREAM_IDLE_SECONDS;
     super::SkippedProviderBlock {
         provider: provider_key.to_owned(),
         error: format!(
-            "provider '{provider_key}' declares streamIdleSeconds {}, outside {}–{} seconds; its models were skipped",
-            seconds.unwrap_or_default(),
-            range.start(),
-            range.end()
+            "provider '{provider_key}' declares {} out of range ({error}); its models were skipped",
+            error.json_name()
         ),
     }
 }

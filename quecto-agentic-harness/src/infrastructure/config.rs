@@ -144,6 +144,10 @@ pub struct ProviderEntry {
     /// 30–1800; unset is the default 300.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream_idle_seconds: Option<u64>,
+    /// This provider's stream progress limit in seconds (#2433), within
+    /// 60–3600; unset is the default 300.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream_progress_seconds: Option<u64>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Default)]
@@ -166,7 +170,27 @@ pub struct OpenAiCompatibleEndpoint {
     /// 30–1800; unset is the default 300.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream_idle_seconds: Option<u64>,
+    /// This provider's stream progress limit in seconds (#2433), within
+    /// 60–3600; unset is the default 300.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream_progress_seconds: Option<u64>,
 }
+
+/// The configured stream limits of a provider entry or endpoint (#2433).
+macro_rules! stream_limits {
+    ($($entry:ty),*) => {$(
+        impl $entry {
+            /// Its `stream_idle_seconds` and `stream_progress_seconds`.
+            pub fn stream_limits(&self) -> crate::infrastructure::providers::stream_idle::StreamLimits {
+                crate::infrastructure::providers::stream_idle::StreamLimits {
+                    idle_seconds: self.stream_idle_seconds,
+                    progress_seconds: self.stream_progress_seconds,
+                }
+            }
+        }
+    )*};
+}
+stream_limits!(ProviderEntry, OpenAiCompatibleEndpoint);
 
 impl std::fmt::Debug for ProviderEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -175,6 +199,7 @@ impl std::fmt::Debug for ProviderEntry {
             .field("api_base", &self.api_base)
             .field("disable_codex_routing", &self.disable_codex_routing)
             .field("stream_idle_seconds", &self.stream_idle_seconds)
+            .field("stream_progress_seconds", &self.stream_progress_seconds)
             .finish()
     }
 }
@@ -195,6 +220,7 @@ impl std::fmt::Debug for OpenAiCompatibleEndpoint {
             .field("api_base", &self.api_base)
             .field("allow_remote_http", &self.allow_remote_http)
             .field("stream_idle_seconds", &self.stream_idle_seconds)
+            .field("stream_progress_seconds", &self.stream_progress_seconds)
             .finish()
     }
 }

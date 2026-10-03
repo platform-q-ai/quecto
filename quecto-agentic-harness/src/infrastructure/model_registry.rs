@@ -2,6 +2,7 @@ use std::path::Path;
 
 use crate::domain::catalogue::PromptLimit;
 use crate::domain::message::claude_sonnet_5_pricing;
+use crate::infrastructure::providers::stream_idle::{StreamIdle, StreamLimits};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelRegistry {
@@ -43,9 +44,9 @@ pub struct ModelRecord {
     /// For `AuthMode::OAuth`, the kernel-known OAuth provider identity to resolve
     /// the credential against (e.g. "anthropic", "openai"). `None` for ApiKey.
     pub oauth_provider: Option<String>,
-    /// The provider block's `streamIdleSeconds` (#2433 review), within the
-    /// allowed range when set (a block out of it is skipped).
-    pub stream_idle_seconds: Option<u64>,
+    /// The provider block's `streamIdleSeconds` and `streamProgressSeconds`
+    /// (#2433), within range when set (a block out of it is skipped).
+    pub stream_limits: StreamLimits,
 }
 
 /// Authentication mode for a registry provider.
@@ -388,15 +389,9 @@ impl ModelRegistry {
                 Err(error) => return Err(error),
             };
 
-            if crate::infrastructure::providers::stream_idle::StreamIdle::configured(
-                provider.stream_idle_seconds,
-            )
-            .is_none()
-            {
-                skipped.push(file_format::stream_idle_out_of_range(
-                    &provider_key,
-                    provider.stream_idle_seconds,
-                ));
+            let stream_limits = provider.stream_limits();
+            if let Err(error) = StreamIdle::configured(stream_limits) {
+                skipped.push(file_format::stream_limit_out_of_range(&provider_key, error));
                 continue;
             }
             // Resolve the auth mode. An explicit `auth` block wins; otherwise we
@@ -445,7 +440,7 @@ impl ModelRegistry {
                 api_key: api_key.clone(),
                 auth_header,
                 allow_remote_http,
-                stream_idle_seconds: provider.stream_idle_seconds,
+                stream_limits,
             };
             for model in provider.models {
                 let mut record = ModelRecord::with_defaults(
@@ -460,7 +455,7 @@ impl ModelRegistry {
                 record.allow_remote_http = allow_remote_http;
                 record.auth = auth;
                 record.oauth_provider = oauth_provider.clone();
-                record.stream_idle_seconds = provider.stream_idle_seconds;
+                record.stream_limits = stream_limits;
                 if let Some(input) = model.input {
                     record.input = input;
                 }
@@ -585,7 +580,7 @@ impl ModelRecord {
             reasoning: false,
             auth: AuthMode::ApiKey,
             oauth_provider: None,
-            stream_idle_seconds: None,
+            stream_limits: StreamLimits::default(),
         }
     }
 
@@ -609,7 +604,7 @@ pub struct ProviderDefaults {
     pub api_key: Option<String>,
     pub auth_header: bool,
     pub allow_remote_http: bool,
-    pub stream_idle_seconds: Option<u64>,
+    pub stream_limits: StreamLimits,
 }
 
 impl ProviderDefaults {
@@ -626,7 +621,7 @@ impl ProviderDefaults {
         record.allow_remote_http = self.allow_remote_http;
         record.auth = self.auth;
         record.oauth_provider = self.oauth_provider.clone();
-        record.stream_idle_seconds = self.stream_idle_seconds;
+        record.stream_limits = self.stream_limits;
         record
     }
 }

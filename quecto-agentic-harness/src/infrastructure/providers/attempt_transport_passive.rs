@@ -126,7 +126,9 @@ impl PassiveAttempt {
                     return Err(profile.read_error(&error));
                 }
                 Err(silent) => {
-                    self.idle();
+                    self.receipt.fail();
+                    let ended = super::diagnostic_sse::idle_termination(silent);
+                    self.receipt.termination(ended);
                     return Err(DomainError::Provider(silent.to_string()));
                 }
             }

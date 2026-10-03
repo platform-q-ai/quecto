@@ -79,41 +79,55 @@ impl Vendor {
         gated: bool,
         bound: std::time::Duration,
     ) -> Arc<dyn LlmProvider> {
+        let bounds = super::stream_idle::StreamIdle::new(bound).with_total(WHOLE);
+        self.bounded_provider(url, gated, bounds)
+    }
+
+    /// The vendor's provider at `url` bounded by `bounds`, gated when `gated`.
+    pub(crate) fn bounded_provider(
+        self,
+        url: String,
+        gated: bool,
+        bounds: super::stream_idle::StreamIdle,
+    ) -> Arc<dyn LlmProvider> {
         let client = reqwest::Client::new();
+        let gate = || (Arc::new(Grant), single_attempt());
         match (self, gated) {
             (Vendor::Codex, false) => Arc::new(
                 CodexProvider::with_client("k".into(), "acct".into(), Some(url), client)
-                    .with_stream_idle_limit(bound)
-                    .with_reply_total_limit(WHOLE),
+                    .with_stream_idle(bounds),
             ),
-            (Vendor::Codex, true) => Arc::new(
-                CodexProvider::with_client("k".into(), "acct".into(), Some(url), client)
-                    .with_stream_idle_limit(bound)
-                    .with_reply_total_limit(WHOLE)
-                    .with_attempt_admission(Arc::new(Grant), single_attempt()),
-            ),
+            (Vendor::Codex, true) => {
+                let (gate, client_once) = gate();
+                Arc::new(
+                    CodexProvider::with_client("k".into(), "acct".into(), Some(url), client)
+                        .with_stream_idle(bounds)
+                        .with_attempt_admission(gate, client_once),
+                )
+            }
             (Vendor::OpenAi, false) => Arc::new(
-                OpenAiProvider::with_client("k".into(), Some(url), client)
-                    .with_stream_idle_limit(bound)
-                    .with_reply_total_limit(WHOLE),
+                OpenAiProvider::with_client("k".into(), Some(url), client).with_stream_idle(bounds),
             ),
-            (Vendor::OpenAi, true) => Arc::new(
-                OpenAiProvider::with_client("k".into(), Some(url), client)
-                    .with_stream_idle_limit(bound)
-                    .with_reply_total_limit(WHOLE)
-                    .with_attempt_admission(Arc::new(Grant), single_attempt()),
-            ),
+            (Vendor::OpenAi, true) => {
+                let (gate, client_once) = gate();
+                Arc::new(
+                    OpenAiProvider::with_client("k".into(), Some(url), client)
+                        .with_stream_idle(bounds)
+                        .with_attempt_admission(gate, client_once),
+                )
+            }
             (Vendor::Anthropic, false) => Arc::new(
                 AnthropicProvider::with_client("k".into(), Some(url), client)
-                    .with_stream_idle_limit(bound)
-                    .with_reply_total_limit(WHOLE),
+                    .with_stream_idle(bounds),
             ),
-            (Vendor::Anthropic, true) => Arc::new(
-                AnthropicProvider::with_client("k".into(), Some(url), client)
-                    .with_stream_idle_limit(bound)
-                    .with_reply_total_limit(WHOLE)
-                    .with_attempt_admission(Arc::new(Grant), single_attempt()),
-            ),
+            (Vendor::Anthropic, true) => {
+                let (gate, client_once) = gate();
+                Arc::new(
+                    AnthropicProvider::with_client("k".into(), Some(url), client)
+                        .with_stream_idle(bounds)
+                        .with_attempt_admission(gate, client_once),
+                )
+            }
         }
     }
 }
@@ -143,7 +157,9 @@ pub(super) fn traced() -> Arc<RequestTrace> {
 }
 
 /// The last event of an incremental stream, and the attempts it recorded.
-async fn incremental(provider: &dyn LlmProvider) -> (Option<StreamEvent>, Vec<Termination>) {
+pub(super) async fn incremental(
+    provider: &dyn LlmProvider,
+) -> (Option<StreamEvent>, Vec<Termination>) {
     let messages = vec![Message::system("sys"), Message::user("hi")];
     let trace = traced();
     let last = bounded(async {
@@ -161,7 +177,9 @@ async fn incremental(provider: &dyn LlmProvider) -> (Option<StreamEvent>, Vec<Te
 }
 
 /// An assembled stream's result, and the attempts it recorded.
-async fn assembled(provider: &dyn LlmProvider) -> (Result<String, DomainError>, Vec<Termination>) {
+pub(super) async fn assembled(
+    provider: &dyn LlmProvider,
+) -> (Result<String, DomainError>, Vec<Termination>) {
     let messages = vec![Message::system("sys"), Message::user("hi")];
     let trace = traced();
     let result = bounded(provider.chat_stream(request(&messages, &trace))).await;
@@ -170,7 +188,9 @@ async fn assembled(provider: &dyn LlmProvider) -> (Result<String, DomainError>, 
 }
 
 /// Codex's `chat` reads its whole SSE body too.
-async fn codex_chat(provider: &dyn LlmProvider) -> (Result<String, DomainError>, Vec<Termination>) {
+pub(super) async fn codex_chat(
+    provider: &dyn LlmProvider,
+) -> (Result<String, DomainError>, Vec<Termination>) {
     let messages = vec![Message::system("sys"), Message::user("hi")];
     let trace = traced();
     let result = bounded(provider.chat(request(&messages, &trace))).await;

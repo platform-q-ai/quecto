@@ -45,7 +45,7 @@ pub fn compose_and_publish_runtime(
         openai_oauth_factory: make_bounded_provider_factory(
             "openai",
             openai_api_base(config),
-            StreamIdle::configured(config.providers.openai.stream_idle_seconds).unwrap_or_default(),
+            StreamIdle::configured(config.providers.openai.stream_limits()).unwrap_or_default(),
             http_client.clone(),
         ),
         // Same on-disk read as the catalogue sources above: one compose never

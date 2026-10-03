@@ -121,7 +121,13 @@ the harness abandoned because the provider stopped sending. So are two
 `attempt_diagnostics.termination` values: `Idle`, a streaming reply that sent
 no event (keep-alives are none, #2433) for the stream idle limit (300 s), and
 `TimedOut`, a non-streaming reply that did not arrive within the reply total
-limit (20 min). Both limits are
+limit (20 min). #2433 adds `NoProgress`: a streaming reply that kept sending
+events, none carrying output, for the stream progress limit (300 s), whose
+error begins `stream progress timeout: ` and is `stalled` too; and
+`attempt_diagnostics.event_types`, the attempt's 16 most frequent event types
+with their counts (a known Responses or Messages event name, an OpenAI chat
+chunk named by what it carries such as `chat.delta.content`, `[DONE]`, or
+`(unknown)`), omitted when empty. The limits are
 described under "Stalled replies" in `runtime-models-providers.md`. Stop reasons are mapped
 to a closed enum; unknown provider reasons retain only `Unknown`, never their text.
 

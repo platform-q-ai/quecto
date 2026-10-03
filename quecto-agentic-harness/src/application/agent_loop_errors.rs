@@ -127,7 +127,7 @@ fn terminal_class_guidance(err: &DomainError) -> Option<&'static str> {
             "Server/overload: the provider is overloaded or returned a 5xx error. It was retried and still failed — retry later.",
         ),
         ProviderErrorClass::Stalled => Some(
-            "Stalled: the provider stopped sending (the limit is in the error above) and the reply was abandoned. Retry later.",
+            "Stalled: the provider stopped sending, or kept sending events with no output (the limit is in the error above), and the reply was abandoned. Retry later.",
         ),
         ProviderErrorClass::OutputCapped => Some(
             "Output cap: the reply kept streaming past its output cap (the cap is in the error above), the mark of a runaway such as a repetition loop, and was abandoned. It was not retried: resending the same request tends to repeat it. Narrow or rephrase the request before trying again.",

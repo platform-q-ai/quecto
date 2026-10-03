@@ -17,6 +17,7 @@ pub use single_attempt_client::{CONNECT_TIMEOUT, SingleAttemptClient, default_cl
 pub mod sse_common;
 pub(crate) mod sse_end;
 pub(crate) mod sse_limits;
+pub(crate) mod sse_progress;
 pub mod stream_idle;
 pub mod usage;
 
@@ -483,6 +484,10 @@ mod attempt_observation_tests;
 #[cfg(test)]
 #[path = "stream_idle_provider_tests.rs"]
 pub(crate) mod stream_idle_provider_tests;
+
+#[cfg(test)]
+#[path = "stream_progress_provider_tests.rs"]
+mod stream_progress_provider_tests;
 
 #[cfg(test)]
 #[path = "output_cap_provider_tests.rs"]

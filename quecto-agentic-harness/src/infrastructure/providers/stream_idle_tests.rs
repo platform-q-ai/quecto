@@ -115,6 +115,31 @@ pub(crate) mod servers {
         format!("http://{address}")
     }
 
+    /// Answers with a head and `first`, then sends `repeated` every
+    /// `every` for as long as the client reads: a reply that keeps sending
+    /// the same event (#2433).
+    pub(crate) async fn repeating(first: &str, repeated: &str, every: Duration) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (head, repeated) = (format!("{HEAD}{}", chunk(first)), chunk(repeated));
+        tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let (head, repeated) = (head.clone(), repeated.clone());
+                tokio::spawn(async move {
+                    let mut request = vec![0u8; 64 * 1024];
+                    let _ = socket.read(&mut request).await;
+                    let mut sent = socket.write_all(head.as_bytes()).await;
+                    while sent.is_ok() {
+                        tokio::time::sleep(every).await;
+                        sent = socket.write_all(repeated.as_bytes()).await;
+                    }
+                });
+            }
+        });
+        format!("http://{address}")
+    }
+
     /// Sends `first`, then `repeated` again and again as fast as it is read,
     /// until the client goes away: a runaway reply (#2210).
     pub(crate) async fn endless(first: &str, repeated: &str) -> String {

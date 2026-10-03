@@ -114,6 +114,9 @@ impl std::fmt::Display for ProviderErrorClass {
 /// How an abandoned silent stream's error begins (#2210): the provider sent
 /// nothing for the stream's idle bound.
 pub const STREAM_IDLE_TIMEOUT: &str = "stream idle timeout: ";
+/// How the error of a reply abandoned for making no progress begins
+/// (#2433): it kept sending events, none carrying output.
+pub const STREAM_PROGRESS_TIMEOUT: &str = "stream progress timeout: ";
 /// How an abandoned whole reply's error begins (#2210 review): a
 /// non-streaming reply did not arrive within its total bound.
 pub const REPLY_TIMEOUT: &str = "reply timeout: ";
@@ -136,7 +139,7 @@ pub fn classify_provider_error(err: &DomainError) -> ProviderErrorClass {
         return ProviderErrorClass::EmptyStream;
     }
 
-    if [STREAM_IDLE_TIMEOUT, REPLY_TIMEOUT]
+    if [STREAM_IDLE_TIMEOUT, STREAM_PROGRESS_TIMEOUT, REPLY_TIMEOUT]
         .iter()
         .any(|prefix| msg.starts_with(prefix))
     {

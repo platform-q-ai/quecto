@@ -8,21 +8,24 @@
 //! each read of the body after it — is therefore bounded by
 //! [`STREAM_IDLE_LIMIT`]. The send is bounded from the send; an SSE body
 //! from its last *event* ([`EventIdle`], #2433), so keep-alives alone never
-//! hold a reply open; any other body from its last bytes. A long reply that
-//! keeps sending events is never cut short.
+//! hold a reply open; any other body from its last bytes. An SSE body that
+//! keeps sending events none of which carries output is bounded by
+//! [`STREAM_PROGRESS_LIMIT`] from its last output (#2433). A long reply
+//! that keeps sending output is never cut short.
 //!
 //! A whole non-streaming reply sends nothing until complete, so it has a
 //! total bound instead, [`REPLY_TOTAL_LIMIT`].
 //!
-//! An expiry is [`Idle`] (a stream idle timeout, `Termination::Idle`) or
-//! [`TimedOut`] (a reply timeout, `Termination::TimedOut`); the retry
-//! classifier treats either as `Stalled`, retried at most once. Each
+//! An expiry is [`Idle`] (a stream idle timeout, `Termination::Idle`; or a
+//! stream progress timeout, `Termination::NoProgress`) or [`TimedOut`] (a
+//! reply timeout, `Termination::TimedOut`); the retry classifier treats
+//! each as `Stalled`, retried at most once. Each
 //! provider carries its [`StreamIdle`] bounds, so tests can shorten them
 //! without a global.
 use std::future::Future;
 use std::time::Duration;
 
-use crate::domain::provider_error::{REPLY_TIMEOUT, STREAM_IDLE_TIMEOUT};
+use crate::domain::provider_error::{REPLY_TIMEOUT, STREAM_IDLE_TIMEOUT, STREAM_PROGRESS_TIMEOUT};
 
 /// How long a streaming reply may send nothing — no response head, no SSE
 /// event (a keep-alive is no event, #2433) — before its request is abandoned.
@@ -45,6 +48,65 @@ pub const STREAM_IDLE_LIMIT: Duration = Duration::from_secs(300);
 /// stall is held longer than the admission attempt timeout's default.
 pub const STREAM_IDLE_SECONDS: std::ops::RangeInclusive<u64> = 30..=1800;
 
+/// How long a streaming reply may keep sending events none of which carries
+/// output — no text, reasoning, tool call or completion
+/// ([`super::sse_progress`]) — before its request is abandoned (#2433).
+///
+/// A Codex reply streamed ~11 recognised events a second for 15 minutes
+/// with no output: every event restarted the idle bound, so nothing ended
+/// it. Five minutes, as the idle bound: a model that reasons streams its
+/// reasoning, which is output, so only a reply that sends events but makes
+/// nothing of them reaches it.
+pub const STREAM_PROGRESS_LIMIT: Duration = Duration::from_secs(300);
+
+/// The stream progress limits, in seconds, a provider may be configured
+/// with (`stream_progress_seconds`, #2433): from a minute to an hour.
+pub const STREAM_PROGRESS_SECONDS: std::ops::RangeInclusive<u64> = 60..=3600;
+
+/// One provider's configured stream limits, in seconds: unset is the
+/// default (#2433 review).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StreamLimits {
+    /// `stream_idle_seconds`, within [`STREAM_IDLE_SECONDS`].
+    pub idle_seconds: Option<u64>,
+    /// `stream_progress_seconds`, within [`STREAM_PROGRESS_SECONDS`].
+    pub progress_seconds: Option<u64>,
+}
+
+/// A configured stream limit outside its allowed range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamLimitError {
+    /// `stream_idle_seconds` was this.
+    Idle(u64),
+    /// `stream_progress_seconds` was this.
+    Progress(u64),
+}
+
+impl StreamLimitError {
+    /// The setting out of range, in `models.json`'s spelling.
+    pub fn json_name(self) -> &'static str {
+        match self {
+            Self::Idle(_) => "streamIdleSeconds",
+            Self::Progress(_) => "streamProgressSeconds",
+        }
+    }
+}
+
+impl std::fmt::Display for StreamLimitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (name, range, got) = match *self {
+            Self::Idle(got) => ("stream_idle_seconds", STREAM_IDLE_SECONDS, got),
+            Self::Progress(got) => ("stream_progress_seconds", STREAM_PROGRESS_SECONDS, got),
+        };
+        write!(
+            f,
+            "{name} must be within {}–{} seconds, got {got}",
+            range.start(),
+            range.end()
+        )
+    }
+}
+
 /// How long a whole non-streaming reply may take, from the send to its last
 /// byte, before its request is abandoned (#2210 review).
 ///
@@ -56,12 +118,14 @@ pub const STREAM_IDLE_SECONDS: std::ops::RangeInclusive<u64> = 30..=1800;
 pub const REPLY_TOTAL_LIMIT: Duration = Duration::from_secs(20 * 60);
 
 /// The bounds one provider applies to its replies: [`STREAM_IDLE_LIMIT`]
-/// between the bytes of a streaming reply, and [`REPLY_TOTAL_LIMIT`] over a
-/// whole non-streaming one, unless shorter ones were chosen (tests).
+/// between the events of a streaming reply, [`STREAM_PROGRESS_LIMIT`]
+/// between its events that carry output, and [`REPLY_TOTAL_LIMIT`] over a
+/// whole non-streaming one, unless others were configured or chosen (tests).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StreamIdle {
     idle: Duration,
     total: Duration,
+    progress: Duration,
 }
 
 impl Default for StreamIdle {
@@ -69,6 +133,7 @@ impl Default for StreamIdle {
         Self {
             idle: STREAM_IDLE_LIMIT,
             total: REPLY_TOTAL_LIMIT,
+            progress: STREAM_PROGRESS_LIMIT,
         }
     }
 }
@@ -84,30 +149,44 @@ impl StreamIdle {
         }
     }
 
-    /// The bounds of a provider configured with `stream_idle_seconds`: the
-    /// default when unset, the idle bound it names when within
-    /// [`STREAM_IDLE_SECONDS`], and `None` when outside it.
-    pub fn configured(seconds: Option<u64>) -> Option<Self> {
-        match seconds {
-            None => Some(Self::default()),
-            Some(seconds) if STREAM_IDLE_SECONDS.contains(&seconds) => {
-                Some(Self::new(Duration::from_secs(seconds)))
+    /// The bounds of a provider configured with `limits`: each default when
+    /// unset, the one it names when within its range, and the error naming
+    /// the first out of range otherwise.
+    pub fn configured(limits: StreamLimits) -> Result<Self, StreamLimitError> {
+        let mut bounds = Self::default();
+        if let Some(seconds) = limits.idle_seconds {
+            match STREAM_IDLE_SECONDS.contains(&seconds) {
+                true => bounds.idle = Duration::from_secs(seconds),
+                false => return Err(StreamLimitError::Idle(seconds)),
             }
-            Some(_) => None,
         }
+        if let Some(seconds) = limits.progress_seconds {
+            match STREAM_PROGRESS_SECONDS.contains(&seconds) {
+                true => bounds.progress = Duration::from_secs(seconds),
+                false => return Err(StreamLimitError::Progress(seconds)),
+            }
+        }
+        Ok(bounds)
     }
 
-    /// [`Self::configured`] for the provider setting named `setting`: the
-    /// error names it, and the allowed range, when it is out of range.
-    pub fn configured_for(setting: &str, seconds: Option<u64>) -> Result<Self, String> {
-        Self::configured(seconds).ok_or_else(|| {
-            format!(
-                "{setting}: stream_idle_seconds must be within {}–{} seconds, got {}",
-                STREAM_IDLE_SECONDS.start(),
-                STREAM_IDLE_SECONDS.end(),
-                seconds.unwrap_or_default()
-            )
-        })
+    /// [`Self::configured`] for the provider setting named `setting`, whose
+    /// error names it.
+    pub fn configured_for(setting: &str, limits: StreamLimits) -> Result<Self, String> {
+        Self::configured(limits).map_err(|error| format!("{setting}: {error}"))
+    }
+
+    /// The same bounds with a progress bound of `progress`, more than zero.
+    pub fn with_progress(self, progress: Duration) -> Self {
+        assert!(
+            !progress.is_zero(),
+            "a stream progress limit is more than zero"
+        );
+        Self { progress, ..self }
+    }
+
+    /// The progress bound.
+    pub fn progress(self) -> Duration {
+        self.progress
     }
 
     /// The same bounds with a total bound of `total`, more than zero.
@@ -190,6 +269,12 @@ const EVENT_LINE: &[u8] = super::sse_common::EVENT_FIELD.as_bytes();
 /// client's idle timeout runs between events; a reply that keeps sending
 /// events (Anthropic's `ping` events included) is never cut short. For any
 /// other body (an error body), every read is progress.
+///
+/// An SSE body also has a progress bound (#2433): once events arrive, one
+/// carrying output ([`super::sse_progress`]) must come within the
+/// provider's progress bound of the last (or of the body's start), or the
+/// body is abandoned as one that sends events but makes no progress. A
+/// body sending no events at all is the idle bound's alone.
 #[derive(Debug)]
 pub struct EventIdle {
     bound: Duration,
@@ -197,7 +282,29 @@ pub struct EventIdle {
     /// `None` when every read is progress; otherwise where the body's
     /// current line stands.
     line: Option<Line>,
+    /// The output progress of an SSE body; `None` for any other body.
+    progress: Option<Progress>,
 }
+
+/// How far an SSE body's output has come (#2433).
+#[derive(Debug)]
+struct Progress {
+    bound: Duration,
+    /// When output is due: the bound from the last output, or the start.
+    deadline: tokio::time::Instant,
+    /// Whether events came since the last output: only then can a body
+    /// be abandoned for making none.
+    events_since: bool,
+    /// The data of the event line being read, up to [`EVENT_DATA_CAP`].
+    data: Vec<u8>,
+    /// Whether that line ran past the cap: an event that long is output.
+    long: bool,
+}
+
+/// The longest event data the progress bound reads to classify: past it,
+/// an event is taken as output (deltas and finished parts are the long
+/// ones), so classifying never holds a second copy of a long line.
+const EVENT_DATA_CAP: usize = 64 * 1024;
 
 /// Where an SSE body's current line stands, as far as its start shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -222,10 +329,29 @@ impl EventIdle {
     }
 
     fn starting(bound: StreamIdle, line: Option<Line>) -> Self {
+        let now = tokio::time::Instant::now();
+        let progress = line.map(|_| Progress {
+            bound: bound.progress,
+            deadline: now + bound.progress,
+            events_since: false,
+            data: Vec::new(),
+            long: false,
+        });
         Self {
             bound: bound.idle,
-            deadline: tokio::time::Instant::now() + bound.idle,
+            deadline: now + bound.idle,
             line,
+            progress,
+        }
+    }
+
+    /// When the next read is abandoned: the idle bound's deadline, or the
+    /// progress bound's when events without output came since the last
+    /// output and it falls first.
+    fn due(&self) -> tokio::time::Instant {
+        match &self.progress {
+            Some(progress) if progress.events_since => self.deadline.min(progress.deadline),
+            _ => self.deadline,
         }
     }
 
@@ -236,12 +362,15 @@ impl EventIdle {
         &mut self,
         read: impl Future<Output = Result<Option<B>, E>>,
     ) -> Result<Result<Option<B>, E>, Idle> {
-        let read = match tokio::time::timeout_at(self.deadline, read).await {
+        let read = match tokio::time::timeout_at(self.due(), read).await {
             Ok(read) => read,
             Err(_elapsed) => {
-                return Err(match self.line {
-                    Some(_) => Idle::no_event(self.bound),
-                    None => Idle::nothing(self.bound),
+                return Err(match (&self.line, &self.progress) {
+                    (_, Some(progress)) if progress.deadline < self.deadline => {
+                        Idle::no_output(progress.bound)
+                    }
+                    (Some(_), _) => Idle::no_event(self.bound),
+                    (None, _) => Idle::nothing(self.bound),
                 });
             }
         };
@@ -251,18 +380,48 @@ impl EventIdle {
         Ok(read)
     }
 
-    /// Bytes of the body arrived: progress restarts the bound.
+    /// Bytes of the body arrived: an event restarts the idle bound, and an
+    /// event carrying output the progress bound.
     fn observe(&mut self, bytes: &[u8]) {
-        let progress = match &mut self.line {
-            None => true,
-            Some(line) => bytes.iter().fold(false, |progress, &byte| {
+        let now = tokio::time::Instant::now();
+        let event = match (&mut self.line, &mut self.progress) {
+            (Some(line), Some(progress)) => bytes.iter().fold(false, |event, &byte| {
+                let before = *line;
                 *line = line.after(byte);
-                progress || *line == Line::Event
+                progress.read(before, *line, byte, now);
+                event || *line == Line::Event
             }),
+            _ => true,
         };
-        if progress {
-            self.deadline = tokio::time::Instant::now() + self.bound;
+        if event {
+            self.deadline = now + self.bound;
         }
+    }
+}
+
+impl Progress {
+    /// `byte` of an SSE body moved its line from `before` to `after` at
+    /// `now`: an event's data is kept, and judged when its line ends.
+    fn read(&mut self, before: Line, after: Line, byte: u8, now: tokio::time::Instant) {
+        match (before, after) {
+            (Line::Event, Line::Event) if self.data.len() < EVENT_DATA_CAP => self.data.push(byte),
+            (Line::Event, Line::Event) => self.long = true,
+            (Line::Event, _) => {
+                let data = String::from_utf8_lossy(&self.data);
+                let output = self.long || super::sse_progress::carries_output(data.trim_end());
+                self.data.clear();
+                self.long = false;
+                match output {
+                    true => {
+                        self.deadline = now + self.bound;
+                        self.events_since = false;
+                    }
+                    false => self.events_since = true,
+                }
+            }
+            _ => {}
+        }
+        debug_assert!(self.data.len() <= EVENT_DATA_CAP);
     }
 }
 
@@ -298,17 +457,20 @@ enum Missing {
     Bytes,
     /// An event: an SSE body may have kept alive, but sent no event.
     Event,
+    /// Output: an SSE body kept sending events, none carrying output.
+    Output,
 }
 
 impl std::fmt::Display for Idle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let missing = match self.missing {
-            Missing::Bytes => "nothing",
-            Missing::Event => "no event",
+        let (timeout, missing) = match self.missing {
+            Missing::Bytes => (STREAM_IDLE_TIMEOUT, "nothing"),
+            Missing::Event => (STREAM_IDLE_TIMEOUT, "no event"),
+            Missing::Output => (STREAM_PROGRESS_TIMEOUT, "events but no output"),
         };
         write!(
             f,
-            "{STREAM_IDLE_TIMEOUT}the provider sent {missing} for {}; the request was abandoned",
+            "{timeout}the provider sent {missing} for {}; the request was abandoned",
             Span(self.bound)
         )
     }
@@ -329,6 +491,20 @@ impl Idle {
             bound,
             missing: Missing::Event,
         }
+    }
+
+    /// Events but no output came for `bound` (#2433).
+    pub(crate) fn no_output(bound: Duration) -> Self {
+        Self {
+            bound,
+            missing: Missing::Output,
+        }
+    }
+
+    /// Whether events kept coming, but no output (#2433): the attempt made
+    /// no progress, rather than going idle.
+    pub fn is_no_output(self) -> bool {
+        self.missing == Missing::Output
     }
 
     /// What stands for an error body the provider stopped sending: the

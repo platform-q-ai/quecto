@@ -122,6 +122,7 @@ fn provider_entry_loads_ignoring_dead_auth_method() {
     // is reintroduced.
     let _explicit = ProviderEntry {
         stream_idle_seconds: None,
+        stream_progress_seconds: None,
         api_key: "k".into(),
         api_base: "b".into(),
         disable_codex_routing: false,

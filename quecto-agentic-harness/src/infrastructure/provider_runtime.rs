@@ -115,14 +115,10 @@ pub(crate) fn compose_agent_provider_inner_outcome(
     // API-key auth. Users select `openai-api`, `openai-oauth`, `anthropic-api`,
     // or `anthropic-oauth` explicitly (or define their own keys in models.json).
     let openai_base = non_empty(config.providers.openai.api_base.clone());
-    let openai_idle = StreamIdle::configured_for(
-        "providers.openai",
-        config.providers.openai.stream_idle_seconds,
-    )?;
-    let anthropic_idle = StreamIdle::configured_for(
-        "providers.anthropic",
-        config.providers.anthropic.stream_idle_seconds,
-    )?;
+    let openai_limits = config.providers.openai.stream_limits();
+    let openai_idle = StreamIdle::configured_for("providers.openai", openai_limits)?;
+    let anthropic_limits = config.providers.anthropic.stream_limits();
+    let anthropic_idle = StreamIdle::configured_for("providers.anthropic", anthropic_limits)?;
     let openai_api_key = if !config.providers.openai.api_key.is_empty() {
         config.providers.openai.api_key.clone()
     } else {
@@ -337,7 +333,7 @@ pub(crate) fn compose_agent_provider_inner_outcome(
             ));
         }
         let setting = format!("openai_compatible endpoint '{prefix}'");
-        let idle = StreamIdle::configured_for(&setting, endpoint.stream_idle_seconds)?;
+        let idle = StreamIdle::configured_for(&setting, endpoint.stream_limits())?;
         let provider = providers::create_openai_compatible_provider_and_admission(
             &endpoint.prefix,
             endpoint.api_key.clone(),
@@ -571,7 +567,7 @@ fn build_registry_provider_with_admission(
     };
 
     let setting = format!("models.json provider '{}'", model.provider);
-    let idle = StreamIdle::configured_for(&setting, model.stream_idle_seconds)?;
+    let idle = StreamIdle::configured_for(&setting, model.stream_limits)?;
     let binding = bound(admission, &model.provider, idle)?;
     let inner: Arc<dyn LlmProvider> = match model.api {
         ProviderApi::OpenAiCompletions => {

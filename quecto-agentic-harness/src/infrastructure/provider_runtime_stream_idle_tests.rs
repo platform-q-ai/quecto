@@ -94,19 +94,27 @@ fn a_models_json_block_out_of_range_is_skipped() {
     );
     let loaded: Vec<_> = parsed.records.iter().map(|r| r.provider.as_str()).collect();
     assert_eq!(loaded, ["fine"]);
-    assert_eq!(parsed.records[0].stream_idle_seconds, Some(900));
+    assert_eq!(parsed.records[0].stream_limits.idle_seconds, Some(900));
     let defaults: Vec<_> = parsed
         .providers
         .iter()
-        .map(|(key, d)| (key.as_str(), d.stream_idle_seconds))
+        .map(|(key, d)| (key.as_str(), d.stream_limits.idle_seconds))
         .collect();
     assert_eq!(defaults, [("fine", Some(900))]);
 }
 
-/// The bounds a provider was built with, as its debug form shows them.
+/// Whether a provider was built with an idle bound of `idle` and a
+/// progress bound of `progress` seconds, as its debug form shows them.
+fn shows_bounds(provider: &dyn LlmProvider, idle: u64, progress: u64) -> bool {
+    let secs = std::time::Duration::from_secs;
+    let bounds = StreamIdle::new(secs(idle)).with_progress(secs(progress));
+    format!("{provider:?}").contains(&format!("{bounds:?}"))
+}
+
+/// Whether a provider was built with an idle bound of `seconds` and the
+/// default progress bound.
 fn shows(provider: &dyn LlmProvider, seconds: u64) -> bool {
-    let idle = StreamIdle::new(std::time::Duration::from_secs(seconds));
-    format!("{provider:?}").contains(&format!("{idle:?}"))
+    shows_bounds(provider, seconds, 300)
 }
 
 /// A configured limit binds the providers built for it: a models.json
@@ -119,7 +127,7 @@ fn a_configured_limit_binds_its_providers() {
     let client = reqwest::Client::new();
     let file = serde_json::json!({"providers": {"local": {
         "baseUrl": "http://127.0.0.1:9/v1", "apiKey": "k", "streamIdleSeconds": 900,
-        "models": [{"id": "m"}],
+        "streamProgressSeconds": 1200, "models": [{"id": "m"}],
     }}});
     let path = tmp.path().join("models.json");
     std::fs::write(&path, file.to_string()).unwrap();
@@ -132,14 +140,18 @@ fn a_configured_limit_binds_its_providers() {
     let built = build_registry_provider(&record, tmp.path(), &store, &refresh, &client)
         .unwrap()
         .unwrap();
-    assert!(shows(&*built, 900), "{built:?}");
-    record.stream_idle_seconds = None;
+    assert!(shows_bounds(&*built, 900, 1200), "{built:?}");
+    record.stream_limits = Default::default();
     let built = build_registry_provider(&record, tmp.path(), &store, &refresh, &client)
         .unwrap()
         .unwrap();
     assert!(shows(&*built, 300), "{built:?}");
 
-    let idle = StreamIdle::configured(Some(1200)).unwrap();
+    let limits = crate::infrastructure::providers::stream_idle::StreamLimits {
+        idle_seconds: Some(1200),
+        progress_seconds: None,
+    };
+    let idle = StreamIdle::configured(limits).unwrap();
     let base = Some("http://127.0.0.1:9".to_owned());
     for name in ["openai", "anthropic"] {
         let binding = bound(None, name, idle).unwrap();
@@ -155,19 +167,38 @@ fn a_configured_limit_binds_its_providers() {
 }
 
 #[test]
-fn the_allowed_range_is_thirty_seconds_to_half_an_hour() {
+fn the_allowed_ranges_are_half_a_minute_to_half_an_hour_and_a_minute_to_an_hour() {
+    use crate::infrastructure::providers::stream_idle::StreamLimits;
+    let idle = |seconds| StreamLimits {
+        idle_seconds: Some(seconds),
+        progress_seconds: None,
+    };
+    let progress = |seconds| StreamLimits {
+        idle_seconds: None,
+        progress_seconds: Some(seconds),
+    };
     for (seconds, allowed) in [(29, false), (30, true), (1800, true), (1801, false)] {
         assert_eq!(
-            StreamIdle::configured(Some(seconds)).is_some(),
+            StreamIdle::configured(idle(seconds)).is_ok(),
             allowed,
             "{seconds}"
         );
     }
-    assert_eq!(StreamIdle::configured(None), Some(StreamIdle::default()));
-    let err = StreamIdle::configured_for("providers.openai", Some(5)).unwrap_err();
+    for (seconds, allowed) in [(59, false), (60, true), (3600, true), (3601, false)] {
+        let configured = StreamIdle::configured(progress(seconds));
+        assert_eq!(configured.is_ok(), allowed, "{seconds}");
+    }
+    let unset = StreamIdle::configured(StreamLimits::default());
+    assert_eq!(unset, Ok(StreamIdle::default()));
+    let err = StreamIdle::configured_for("providers.openai", idle(5)).unwrap_err();
     assert_eq!(
         err,
         "providers.openai: stream_idle_seconds must be within 30–1800 seconds, got 5"
+    );
+    let err = StreamIdle::configured_for("providers.openai", progress(5)).unwrap_err();
+    assert_eq!(
+        err,
+        "providers.openai: stream_progress_seconds must be within 60–3600 seconds, got 5"
     );
 }
 

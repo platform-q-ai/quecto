@@ -572,6 +572,7 @@ fn test_env_override_invalid_number_ignored() {
 fn test_provider_entry_debug_redacts_api_key() {
     let entry = ProviderEntry {
         stream_idle_seconds: None,
+        stream_progress_seconds: None,
         api_key: "sk-secret-key-12345".to_string(),
         api_base: "https://api.openai.com/v1".to_string(),
         disable_codex_routing: false,

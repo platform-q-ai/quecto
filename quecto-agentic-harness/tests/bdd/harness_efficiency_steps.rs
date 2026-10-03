@@ -105,6 +105,7 @@ fn then_config_loaded(world: &mut QuectoWorld) {
     // would fail to build.
     let _explicit = ProviderEntry {
         stream_idle_seconds: None,
+        stream_progress_seconds: None,
         api_key: "k".into(),
         api_base: "b".into(),
         disable_codex_routing: false,

@@ -32,7 +32,7 @@ fn test_inputs(base_dir: &std::path::Path, http_client: &reqwest::Client) -> Age
 
 fn model(provider: &str, api: ProviderApi, auth: AuthMode) -> ModelRecord {
     ModelRecord {
-        stream_idle_seconds: None,
+        stream_limits: Default::default(),
         provider: provider.to_string(),
         id: "model-1".to_string(),
         display_name: None,
@@ -277,6 +277,7 @@ fn build_agent_provider_rejects_endpoint_over_limit_before_provider_creation() {
     let mut config = Config::default();
     let template = crate::infrastructure::config::OpenAiCompatibleEndpoint {
         stream_idle_seconds: None,
+        stream_progress_seconds: None,
         prefix: "p".to_string(),
         api_key: "k".to_string(),
         api_base: "http://127.0.0.1:9/v1".to_string(),
@@ -286,6 +287,7 @@ fn build_agent_provider_rejects_endpoint_over_limit_before_provider_creation() {
         .map(
             |idx| crate::infrastructure::config::OpenAiCompatibleEndpoint {
                 stream_idle_seconds: None,
+                stream_progress_seconds: None,
                 prefix: format!("p{idx}"),
                 ..template.clone()
             },
@@ -302,6 +304,7 @@ fn endpoint(
 ) -> crate::infrastructure::config::OpenAiCompatibleEndpoint {
     crate::infrastructure::config::OpenAiCompatibleEndpoint {
         stream_idle_seconds: None,
+        stream_progress_seconds: None,
         prefix: prefix.to_string(),
         api_key: "k".to_string(),
         api_base: api_base.to_string(),
@@ -401,6 +404,7 @@ fn build_agent_provider_rejects_remote_http_endpoint_unless_opted_in() {
     config.providers.openai_compatible.endpoints =
         vec![crate::infrastructure::config::OpenAiCompatibleEndpoint {
             stream_idle_seconds: None,
+            stream_progress_seconds: None,
             prefix: "remote".to_string(),
             api_key: "k".to_string(),
             api_base: "http://example.invalid/v1".to_string(),
@@ -695,6 +699,7 @@ fn build_agent_provider_skips_empty_openai_compatible_endpoint_keys() {
     config.providers.openai_compatible.endpoints =
         vec![crate::infrastructure::config::OpenAiCompatibleEndpoint {
             stream_idle_seconds: None,
+            stream_progress_seconds: None,
             prefix: "".to_string(),
             api_key: "".to_string(),
             api_base: "".to_string(),
