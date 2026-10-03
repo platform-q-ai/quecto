@@ -6,12 +6,12 @@
 // creation (single writer: [`spill_conversation_message`]), so a ladder
 // stub or drop stays recallable.
 //
-// Depends on: domain::message, application::sessions::use_cases (the narrow
-// retention writer, D9 #1978). Never imports infrastructure, never reaches
-// the retention store.
+// Depends on: domain, application::sessions::use_cases (the narrow retention writer, D9 #1978).
+// Never imports infrastructure, never reaches the retention store.
 
 use super::{estimate_tokens, truncate_utf8_safe};
 use crate::application::sessions::use_cases::RetainContext;
+use crate::domain::conversation::stored_images::{MessageImageRefs, image_tokens, release_images};
 use crate::domain::message::{Message, Role};
 use crate::domain::session::SpillEntry;
 use crate::domain::turn_origin::latest_opener;
@@ -62,8 +62,7 @@ fn collapse_conversation_message(msg: &mut Message, spill_id: &str) {
     msg.content = message_collapse_stub(msg.role.as_str(), &msg.content, tokens, spill_id);
     msg.invalidate_token_cache();
     msg.is_collapsed = true;
-    msg.image_blocks.clear();
-    msg.user_image_blocks.clear();
+    release_images(msg);
     msg.thinking_blocks.clear();
 }
 
@@ -107,43 +106,43 @@ fn exempt_flags(messages: &[Message], pin_recent_turns: u32) -> Vec<bool> {
         .collect()
 }
 
-/// Spill a conversation (assistant/user) message to the store at creation
-/// time (#1046 AC1) under `turn{N}:msg:{role}` — the single spill writer for
-/// conversation content. Turn numbering restarts each prompt while the store
-/// persists for the session, so the base id is de-duplicated by the sessions
-/// capability with a `:{n}` suffix (`RetainContext::retain_deduplicated`,
-/// D9 #1978: highest existing suffix + 1, one pass over the index); the
-/// policy allocates the base id, sessions appends and issues the id it
-/// retained. The message's `spill_id` is stamped with that id so a later
-/// archive or ladder stub can reference it. Ephemeral sessions (empty key)
-/// deliberately persist too, matching tool-output spilling: a cut and the
-/// ladder can fire within a single `--no-session` run, and their
-/// `recall()` stubs must stay resolvable, so entries are written under the
-/// sanitized empty-key store path (PR #1048; see the NOTE in
-/// `agent_loop_spill.rs`). The privacy counterpart lives at the interface
-/// layer: ephemeral run paths scrub the empty-key spill file at run end.
-/// Returns true when an entry was written (the manifest needs a refresh).
+/// Spill a conversation (assistant/user) message with text or a user's image (#2424: kept by
+/// reference, previewed `[image]` when it has no text) to the store at creation time (#1046 AC1)
+/// under `turn{N}:msg:{role}` — the single spill writer for conversation content. Turn numbering
+/// restarts each prompt while the store persists for the session, so the base id is de-duplicated
+/// by the sessions capability with a `:{n}` suffix (`RetainContext::retain_deduplicated`, D9 #1978:
+/// highest existing suffix + 1, one pass over the index); the policy allocates the base id,
+/// sessions appends and issues the id it retained. The message's `spill_id` is stamped with that id
+/// so a later archive or ladder stub can reference it. Ephemeral sessions (empty key) deliberately
+/// persist too, matching tool-output spilling: a cut and the ladder can fire within a single
+/// `--no-session` run, and their `recall()` stubs must stay resolvable (PR #1048; see the NOTE in
+/// `agent_loop_spill.rs`); the interface scrubs the empty-key spill file at run end. Returns true
+/// when an entry was written (the manifest needs a refresh).
 pub async fn spill_conversation_message(
     msg: &mut Message,
     retain: &RetainContext,
     session_key: &crate::domain::session_identity::SessionIdentity,
 ) -> bool {
-    if !is_conversation(msg) || msg.is_collapsed || msg.content.is_empty() {
+    let has_body = !msg.content.is_empty() || !msg.user_image_blocks.is_empty();
+    if !is_conversation(msg) || msg.is_collapsed || !has_body {
         return false;
     }
     let role = msg.role.as_str();
     let base = format!("turn{}:msg:{role}", msg.turn.unwrap_or(0));
-    // Move (not clone) the content into the SpillEntry for the borrowing
-    // append, then move it back — avoids copying large message bodies on the
-    // per-turn hot path (same pattern as the tool-output spill writer).
+    // Move (not clone) the content into the SpillEntry for the borrowing append, then move it
+    // back — no copy of a large body on the per-turn hot path (as the tool-output spill writer).
     let content = std::mem::take(&mut msg.content);
+    let preview = match content.is_empty() {
+        true => "[image]".to_string(),
+        false => truncate_utf8_safe(&content, 100).into_owned(),
+    };
     let mut entry = SpillEntry {
         id: base,
         tool: role.to_string(),
-        input_preview: truncate_utf8_safe(&content, 100).into_owned(),
-        tokens: estimate_tokens(&content),
+        input_preview: preview,
+        tokens: estimate_tokens(&content) + image_tokens(msg),
         content,
-        images: Vec::new(),
+        images: MessageImageRefs::of(msg).into_all(),
     };
     let result = retain.retain_deduplicated(session_key, &mut entry).await;
     // Restore content back into the message (entry is consumed here).

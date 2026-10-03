@@ -4,15 +4,14 @@
 
 use super::ContextManager;
 use crate::application::context_pruning;
-use crate::domain::message::Message;
-use crate::domain::session::SpillEntry;
+use crate::domain::conversation::stored_images::MessageImageRefs;
+use crate::domain::{message::Message, session::SpillEntry};
 
 impl ContextManager {
     pub async fn spill_tool_message(&self, tool_msg: &mut Message, spill_id: String) {
         let Some(retention) = self.retention.as_ref() else {
             return;
         };
-
         let content = std::mem::take(&mut tool_msg.content);
         let entry = SpillEntry {
             id: spill_id,
@@ -23,7 +22,7 @@ impl ContextManager {
             input_preview: tool_msg.input_preview.clone().unwrap_or_default(),
             tokens: context_pruning::estimate_tokens(&content),
             content,
-            images: Vec::new(),
+            images: MessageImageRefs::of(tool_msg).into_all(),
         };
         let result = retention.retain.retain(&self.session_key, &entry).await;
         tool_msg.content = entry.content;

@@ -27,7 +27,11 @@ use quecto_image::{ImageMime, MAX_ENCODED_LEN};
 use crate::domain::conversation::image_tokens::{
     estimate_image_tokens, estimate_named_image_tokens,
 };
-use crate::domain::message::Message;
+use crate::domain::message::{Message, UserImageBlock};
+use crate::domain::tool::ImageBlock;
+
+/// The hex digits of a digest a marker shows.
+const MARKER_DIGITS: usize = 12;
 
 /// The longest image text stored: the base64 of the largest image quecto
 /// admits ([`quecto_image::MAX_ENCODED_LEN`]).
@@ -211,11 +215,14 @@ fn in_place<'m, T>(
 /// The types of the images a user message carries, loaded or not, in order
 /// (what a history view shows of them; nothing is read or hashed).
 pub fn user_image_types(message: &Message) -> Vec<&str> {
-    message
+    let loaded = message
         .user_image_blocks
         .iter()
-        .map(|block| block.mime_type())
-        .collect()
+        .map(|block| block.mime_type());
+    let unloaded = &message.unloaded_images;
+    in_place(loaded.collect(), unloaded, ImageKind::User, |gap| {
+        gap.reference.mime_type.as_str()
+    })
 }
 
 /// The lowercase hex SHA-256 of `bytes`.
@@ -241,8 +248,11 @@ pub fn is_storable(mime_type: &str, text: &str) -> bool {
 
 /// The text a request shows for an image it cannot send; a reference that
 /// is no digest is not echoed.
-pub fn unavailable_marker(_sha256: &str) -> String {
-    "[image unavailable]".to_string()
+pub fn unavailable_marker(sha256: &str) -> String {
+    match is_sha256_hex(sha256) {
+        true => format!("[image unavailable: {}]", &sha256[..MARKER_DIGITS]),
+        false => "[image unavailable]".to_string(),
+    }
 }
 
 /// The line a recall adds for the `count` images it does not bring back.
@@ -278,11 +288,42 @@ pub fn release_images(message: &mut Message) {
 /// what was stored. Any other stays on the message, unloaded, in its place.
 /// Returns how many stayed unloaded.
 pub fn restore_images(
-    _message: &mut Message,
-    _tool: Vec<(ImageRef, Option<String>)>,
-    _user: Vec<(ImageRef, Option<String>)>,
+    message: &mut Message,
+    tool: Vec<(ImageRef, Option<String>)>,
+    user: Vec<(ImageRef, Option<String>)>,
 ) -> usize {
-    0
+    let typed = |reference: &ImageRef| ImageMime::parse_exact(&reference.mime_type);
+    for (position, (reference, text)) in tool.into_iter().enumerate() {
+        match (typed(&reference), text) {
+            (Some(mime), Some(text)) => {
+                let block = ImageBlock::new(mime.as_str(), text);
+                debug_assert_eq!(block.sha256(), reference.sha256, "a sidecar is its name");
+                message.image_blocks.push(block);
+            }
+            (_, _) => message.unloaded_images.push(UnloadedImage {
+                kind: ImageKind::Tool,
+                position,
+                reference,
+            }),
+        }
+    }
+    for (position, (reference, text)) in user.into_iter().enumerate() {
+        // Admitted exactly as it was stored, or not at all.
+        let restored = match (typed(&reference), text) {
+            (Some(mime), Some(text)) => UserImageBlock::restore(mime, text).ok(),
+            (_, _) => None,
+        };
+        match restored.filter(|block| block.sha256() == reference.sha256) {
+            Some(block) => message.user_image_blocks.push(block),
+            None => message.unloaded_images.push(UnloadedImage {
+                kind: ImageKind::User,
+                position,
+                reference,
+            }),
+        }
+    }
+    message.invalidate_token_cache();
+    message.unloaded_images.len()
 }
 
 #[cfg(test)]

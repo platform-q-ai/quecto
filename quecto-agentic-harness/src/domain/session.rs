@@ -6,7 +6,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use super::conversation::stored_images::ImageRef;
+use super::conversation::stored_images::{ImageRef, not_recalled_marker};
 use super::message::Message;
 use super::session_identity::SessionIdentity;
 
@@ -189,7 +189,11 @@ impl SpillEntry {
     /// What a recall of this entry returns: its text, and a line naming the
     /// images it does not bring back.
     pub fn recalled_text(self) -> String {
-        self.content
+        match self.images.len() {
+            0 => self.content,
+            count if self.content.is_empty() => not_recalled_marker(count),
+            count => format!("{}\n{}", self.content, not_recalled_marker(count)),
+        }
     }
 }
 

@@ -23,7 +23,9 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::{Arc, Mutex};
 
-use crate::domain::conversation::stored_images::{ImageRef, MessageImageRefs, is_storable};
+use crate::domain::conversation::stored_images::{
+    ImageRef, MessageImageRefs, is_storable, restore_images,
+};
 use crate::domain::error::DomainError;
 use crate::domain::message::Message;
 use crate::domain::session_identity::SessionIdentity;
@@ -140,29 +142,112 @@ impl SessionImages {
         }
     }
 
-    /// Put back the images of loaded `messages` from their references: not
-    /// yet (#2424), so a reload has none.
+    /// Put back the images of loaded `messages` from their references, by
+    /// message index: each sidecar read is its block again, verbatim; each
+    /// one not read stays on its message, unloaded, with a warning.
     pub(in crate::infrastructure::persistence) async fn restore(
         &self,
-        _identity: &SessionIdentity,
-        _messages: &mut [Message],
-        _references: BTreeMap<usize, MessageImageRefs>,
+        identity: &SessionIdentity,
+        messages: &mut [Message],
+        references: BTreeMap<usize, MessageImageRefs>,
     ) {
+        let mut read = BTreeMap::new();
+        for (index, refs) in references {
+            assert!(
+                index < messages.len(),
+                "a reference belongs to a message read"
+            );
+            let tool = self.resolve(identity, refs.tool, &mut read).await;
+            let user = self.resolve(identity, refs.user, &mut read).await;
+            let unloaded = restore_images(&mut messages[index], tool, user);
+            if unloaded > 0 {
+                tracing::warn!(
+                    session = identity.runtime_key(),
+                    index,
+                    unloaded,
+                    "a saved image could not be read; it is kept, and sent as a marker"
+                );
+            }
+        }
     }
 
-    /// After a save: nothing is collected yet (#2424).
+    /// The text of each reference; `read` keeps what was read, so an image
+    /// several messages carry is read once.
+    async fn resolve(
+        &self,
+        identity: &SessionIdentity,
+        references: Vec<ImageRef>,
+        read: &mut BTreeMap<String, Option<String>>,
+    ) -> Vec<(ImageRef, Option<String>)> {
+        let mut resolved = Vec::with_capacity(references.len());
+        for reference in references {
+            let text = match read.get(&reference.sha256) {
+                Some(text) => text.clone(),
+                None => {
+                    let text = self.read(identity, &reference.sha256).await;
+                    read.insert(reference.sha256.clone(), text.clone());
+                    text
+                }
+            };
+            resolved.push((reference, text));
+        }
+        resolved
+    }
+
+    async fn read(&self, identity: &SessionIdentity, sha256: &str) -> Option<String> {
+        let sidecars = self.sidecars.as_ref()?;
+        let reason = match sidecars.get(identity, sha256).await {
+            Ok(SidecarRead::Found(text)) => return Some(text),
+            Ok(SidecarRead::Missing) => "missing".to_string(),
+            Ok(SidecarRead::Corrupt) => "corrupt (not the image its name is)".to_string(),
+            Err(error) => format!("unreadable: {error}"),
+        };
+        tracing::warn!(session = identity.runtime_key(), sha256, %reason, "image sidecar");
+        None
+    }
+
+    /// After a save: once a compaction rewrote the transcript, remove the
+    /// sidecars it no longer names. Best effort: a failure only warns.
     pub(in crate::infrastructure::persistence) async fn collect(
         &self,
-        _identity: &SessionIdentity,
-        _written: Written,
+        identity: &SessionIdentity,
+        written: Written,
     ) {
+        let (Some(sidecars), Written::Compacted(live)) = (self.sidecars.as_ref(), written) else {
+            return;
+        };
+        if let Err(error) = sidecars.retain_only(identity, &live).await {
+            tracing::warn!(%error, "image sidecars not collected");
+        }
     }
 
-    /// The session's transcript was deleted: its sidecars are not yet (#2424).
+    /// The session's transcript was deleted: so are its sidecars. A failure
+    /// only warns; the key's next save collects what is left.
     pub(in crate::infrastructure::persistence) async fn remove_all(
         &self,
-        _identity: &SessionIdentity,
+        identity: &SessionIdentity,
     ) {
+        let Some(sidecars) = self.sidecars.as_ref() else {
+            return;
+        };
+        if let Err(error) = sidecars.remove_all(identity).await {
+            tracing::warn!(%error, "image sidecars not removed; the next save collects them");
+        }
+    }
+}
+
+/// The messages of a transcript only shown, not resumed (#2424): each image
+/// reference stays on its message unloaded, and no sidecar is read.
+pub(in crate::infrastructure::persistence) fn leave_unloaded(
+    messages: &mut [Message],
+    references: BTreeMap<usize, MessageImageRefs>,
+) {
+    for (index, refs) in references {
+        assert!(
+            index < messages.len(),
+            "a reference belongs to a message read"
+        );
+        messages[index].unloaded_images.extend(refs.into_unloaded());
     }
 }
 

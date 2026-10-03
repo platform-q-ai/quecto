@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 
 use super::session_images::ImageSidecarStore;
-use super::session_images::{SessionImages, Written};
+use super::session_images::{SessionImages, Written, leave_unloaded};
 use super::session_layout::FlatSessionLayout;
 use std::sync::Arc;
 
@@ -161,6 +161,17 @@ impl SessionStore for FileSessionStore {
             self.images
                 .restore(&identity, &mut session.messages, parsed.images)
                 .await;
+            Ok(Some(session))
+        })
+    }
+
+    fn load_transcript<'a>(&'a self, identity: &'a SessionIdentity) -> SessionLoad<'a> {
+        Box::pin(async move {
+            let Some(parsed) = self.read_parsed(identity).await? else {
+                return Ok(None);
+            };
+            let mut session = parsed.session;
+            leave_unloaded(&mut session.messages, parsed.images);
             Ok(Some(session))
         })
     }
