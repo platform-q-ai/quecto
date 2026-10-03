@@ -11,7 +11,9 @@
 //! costs its patches), within [85, 4784]. The provider's own count comes
 //! back with the usage anyway (`domain::context_calibration`).
 
-use super::image_dimensions::{Dimensions, image_dimensions};
+// What an image is, and how its header is read, is `quecto_image`'s
+// (#2422); how much a pixel size costs is this module's policy.
+use quecto_image::{Dimensions, ImageMime};
 
 /// The longest edge an image is priced at; a longer one is scaled down.
 pub const MAX_LONG_EDGE: u32 = 2_576;
@@ -30,7 +32,8 @@ pub const UNREADABLE_IMAGE_TOKENS: usize = MAX_IMAGE_TOKENS;
 /// Estimate the tokens of the `mime` image that `base64` encodes, from the
 /// pixel size in its header. Never panics.
 pub fn estimate_image_tokens(mime: &str, base64: &str) -> usize {
-    let tokens = match image_dimensions(mime, base64) {
+    let read = ImageMime::parse_exact(mime).and_then(|mime| quecto_image::dimensions(mime, base64));
+    let tokens = match read {
         Some(dimensions) => tokens_at(scaled(dimensions)),
         None => UNREADABLE_IMAGE_TOKENS,
     };

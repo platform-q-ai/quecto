@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::conversation::image_headers::{
+use quecto_image::samples::{
     encode, gif, jpeg, png, png_with_body, webp_extended, webp_lossless, webp_lossy,
 };
 

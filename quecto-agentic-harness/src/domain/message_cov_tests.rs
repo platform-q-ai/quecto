@@ -1,6 +1,6 @@
 use super::*;
-use crate::domain::conversation::image_headers::{encode, png, png_with_body};
 use crate::domain::conversation::image_tokens::estimate_image_tokens;
+use quecto_image::samples::{encode, png, png_with_body};
 
 #[test]
 fn message_constructors_cover_user_assistant_and_tool_roles() {
