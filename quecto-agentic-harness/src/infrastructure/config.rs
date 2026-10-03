@@ -484,7 +484,7 @@ impl Config {
 #[path = "config_discovery.rs"]
 mod discovery;
 
-#[path = "config_stream_limits.rs"]
+// #2433: a provider's stream limits, in their own module for the line cap.
 mod stream_limits;
 pub use discovery::{
     WorkflowTemplateDiscovery, discover_workflow_templates, load_workflow_templates_from_dir,
