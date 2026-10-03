@@ -371,7 +371,7 @@ impl AnthropicProvider {
 
         let full = match &attempt {
             Some(attempt) => attempt.read_sse(response, profile).await?,
-            None => idle.text(response).await.map_err(|e| match e {
+            None => idle.sse_text(response).await.map_err(|e| match e {
                 BodyError::Idle(silent) => DomainError::Provider(silent.to_string()),
                 BodyError::Read(e) => {
                     DomainError::Provider(format!("failed to read stream: {}", e))

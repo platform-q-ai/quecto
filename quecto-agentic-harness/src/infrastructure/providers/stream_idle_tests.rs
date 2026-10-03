@@ -179,7 +179,7 @@ fn an_expiry_reads_as_a_stall_retried_once() {
     let message = Idle(STREAM_IDLE_LIMIT).to_string();
     assert_eq!(
         message,
-        "stream idle timeout: the provider sent nothing for 300 s; the request was abandoned"
+        "stream idle timeout: the provider sent no event for 300 s; the request was abandoned"
     );
     let late = TimedOut(REPLY_TOTAL_LIMIT).to_string();
     assert_eq!(
@@ -195,7 +195,7 @@ fn an_expiry_reads_as_a_stall_retried_once() {
     let short = Idle(SILENT);
     assert_eq!(
         short.to_string(),
-        "stream idle timeout: the provider sent nothing for 200 ms; the request was abandoned"
+        "stream idle timeout: the provider sent no event for 200 ms; the request was abandoned"
     );
     assert_eq!(BodyError::Idle(short).to_string(), short.to_string());
 }
@@ -345,4 +345,84 @@ async fn a_send_no_response_head_answers_is_idle() {
     let sent = bounded(idle.within(reqwest::Client::new().get(url).send())).await;
     assert!(matches!(sent, Err(Idle(SILENT))));
     assert!(started.elapsed() >= SILENT);
+}
+
+/// Read `chunks` through `idle`, each arriving [`GAP`] after the last (a
+/// paused clock): whether every read came within the bound.
+async fn within_after(idle: &mut EventIdle, chunks: &[&str]) -> bool {
+    for chunk in chunks {
+        let arriving = async {
+            tokio::time::sleep(GAP).await;
+            Ok::<_, ()>(Some(*chunk))
+        };
+        if idle.next(arriving).await.is_err() {
+            return false;
+        }
+    }
+    true
+}
+
+/// #2433: an SSE body's bound restarts at the bytes of an event — a `data:`
+/// line, however the transport splits it — and at nothing else.
+#[tokio::test(start_paused = true)]
+async fn an_sse_bound_restarts_at_events_only() {
+    let bound = StreamIdle::new(GAP * 3);
+    // Keep-alives alone: comments, blank lines, other fields, empty chunks.
+    let keep_alives = [": keepalive\n", "\n", "", "event: ping\n", "\r\n", ": x"];
+    assert!(!within_after(&mut EventIdle::events(bound), &keep_alives).await);
+    // Each event restarts it, split across reads or not.
+    let events = [
+        "data: 1\n\n",
+        "da",
+        "ta: 2",
+        "\n",
+        ": keepalive\n",
+        "data:3\n",
+    ];
+    assert!(within_after(&mut EventIdle::events(bound), &events).await);
+    // `data` must open the line: inside a comment it is no event.
+    let inside = [": data: 1\n", " data: 2\n", "\n", "x"];
+    assert!(!within_after(&mut EventIdle::events(bound), &inside).await);
+    // A long event line still arriving is progress.
+    let long = ["data: {", "\"a\":", "1", "}", "\n"];
+    assert!(within_after(&mut EventIdle::events(bound), &long).await);
+    // Any other body: every read restarts it.
+    assert!(within_after(&mut EventIdle::reads(bound), &keep_alives).await);
+}
+
+/// The whole bound passes from the last event however the reads go on.
+#[tokio::test(start_paused = true)]
+async fn an_sse_bound_runs_from_the_last_event() {
+    let mut idle = EventIdle::events(StreamIdle::new(GAP * 3));
+    let started = tokio::time::Instant::now();
+    assert!(within_after(&mut idle, &["data: 1\n", ": a\n", ": b\n"]).await);
+    let pending = idle.next(std::future::pending::<Result<Option<&str>, ()>>());
+    assert_eq!(pending.await, Err(Idle(GAP * 3)));
+    assert_eq!(
+        started.elapsed(),
+        GAP + GAP * 3,
+        "from the event, not the keep-alives"
+    );
+}
+
+#[tokio::test]
+async fn a_whole_sse_body_that_only_keeps_alive_is_idle() {
+    let url = servers::keeping_alive("data: one\n\n").await;
+    let response = reqwest::Client::new().get(url).send().await.unwrap();
+    let read = bounded(StreamIdle::new(SILENT).sse_text(response)).await;
+    assert!(
+        matches!(read, Err(BodyError::Idle(Idle(SILENT)))),
+        "{read:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_whole_sse_body_that_keeps_sending_events_is_read_past_the_bound() {
+    let events = ["data: 1\n"; 16];
+    let url = servers::trickling(&events).await;
+    let started = std::time::Instant::now();
+    let response = reqwest::Client::new().get(url).send().await.unwrap();
+    let read = bounded(StreamIdle::new(LIVE).sse_text(response)).await;
+    assert_eq!(read.unwrap(), events.concat());
+    assert!(started.elapsed() > LIVE, "the total is not bounded");
 }

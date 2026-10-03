@@ -337,8 +337,9 @@ pub(super) async fn assembled<T>(
         }
         let mut body = Vec::new();
         let mut observer = LineObserver::new(profile);
+        let mut idle = profile.event_idle();
         loop {
-            let bytes = match profile.within(response.chunk()).await {
+            let bytes = match idle.next(response.chunk()).await {
                 Ok(Ok(Some(bytes))) => bytes,
                 Ok(Ok(None)) => break,
                 Ok(Err(error)) => {

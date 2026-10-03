@@ -98,7 +98,7 @@ impl PassiveAttempt {
         self.receipt.termination(Termination::Completed);
     }
 
-    /// Read a whole SSE body (#2210), each read bounded by the idle bound,
+    /// Read a whole SSE body (#2210), bounded from its last event (#2433),
     /// observing its lines as they arrive, so the attempt is followed live
     /// and its output cap ends a runaway. The body is decoded as lossy
     /// UTF-8; a failed or silent read ends the attempt as the unobserved
@@ -110,8 +110,9 @@ impl PassiveAttempt {
     ) -> Result<String, DomainError> {
         let mut body = Vec::new();
         let mut lines = LineObserver::new(profile);
+        let mut idle = profile.event_idle();
         loop {
-            match profile.idle.within(response.chunk()).await {
+            match idle.next(response.chunk()).await {
                 Ok(Ok(Some(bytes))) => {
                     lines.push(&bytes, &self.receipt);
                     if let Some(capped) = self.receipt.capped() {

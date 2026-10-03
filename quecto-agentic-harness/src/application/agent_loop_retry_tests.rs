@@ -402,7 +402,7 @@ async fn a_stalled_stream_is_retried_once_with_its_own_guidance() {
     use crate::domain::provider::StreamEvent;
     use crate::domain::provider_error::STREAM_IDLE_TIMEOUT;
     let stall = format!(
-        "{STREAM_IDLE_TIMEOUT}the provider sent nothing for 300 s; the request was abandoned"
+        "{STREAM_IDLE_TIMEOUT}the provider sent no event for 300 s; the request was abandoned"
     );
     let provider = Arc::new(MockStreamingProvider::new(vec![
         vec![StreamEvent::Error(stall.clone())],
@@ -472,7 +472,7 @@ fn streaming_agent(provider: Arc<MockStreamingProvider>) -> AgentLoopImpl {
 async fn a_stall_after_output_is_not_retried_and_claims_no_retry() {
     use crate::domain::provider::StreamEvent;
     use crate::domain::provider_error::STREAM_IDLE_TIMEOUT;
-    let stall = format!("{STREAM_IDLE_TIMEOUT}the provider sent nothing for 300 s");
+    let stall = format!("{STREAM_IDLE_TIMEOUT}the provider sent no event for 300 s");
     let provider = Arc::new(MockStreamingProvider::new(vec![vec![
         StreamEvent::TextDelta("partial".to_string()),
         StreamEvent::Error(stall.clone()),
@@ -497,7 +497,7 @@ async fn a_stall_after_output_is_not_retried_and_claims_no_retry() {
 async fn a_stall_after_a_network_failure_is_still_retried_once() {
     use crate::domain::provider::StreamEvent;
     use crate::domain::provider_error::STREAM_IDLE_TIMEOUT;
-    let stall = format!("{STREAM_IDLE_TIMEOUT}the provider sent nothing for 300 s");
+    let stall = format!("{STREAM_IDLE_TIMEOUT}the provider sent no event for 300 s");
     let provider = Arc::new(MockStreamingProvider::new(vec![
         vec![StreamEvent::Error("connection reset by peer".to_string())],
         vec![StreamEvent::Error(stall)],

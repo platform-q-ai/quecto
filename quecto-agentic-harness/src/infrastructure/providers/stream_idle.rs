@@ -6,8 +6,10 @@
 //! turn for 8+ minutes with the parent seeing only `thinking`. Every step
 //! of a streaming exchange — the send, until the response head arrives, and
 //! each read of the body after it — is therefore bounded by
-//! [`STREAM_IDLE_LIMIT`], measured from the last bytes received (from the
-//! send for the first). A long reply that keeps sending is never cut short.
+//! [`STREAM_IDLE_LIMIT`]. The send is bounded from the send; an SSE body
+//! from its last *event* ([`EventIdle`], #2433), so keep-alives alone never
+//! hold a reply open; any other body from its last bytes. A long reply that
+//! keeps sending events is never cut short.
 //!
 //! A whole non-streaming reply sends nothing until complete, so it has a
 //! total bound instead, [`REPLY_TOTAL_LIMIT`].
@@ -22,8 +24,8 @@ use std::time::Duration;
 
 use crate::domain::provider_error::{REPLY_TIMEOUT, STREAM_IDLE_TIMEOUT};
 
-/// How long a streaming reply may send nothing — no response head, no body
-/// bytes, no SSE event or keep-alive — before its request is abandoned.
+/// How long a streaming reply may send nothing — no response head, no SSE
+/// event (a keep-alive is no event, #2433) — before its request is abandoned.
 ///
 /// Five minutes: the default stream idle timeout of the official Codex
 /// client against the same Responses backend. That backend documents no
@@ -110,25 +112,141 @@ impl StreamIdle {
         }
     }
 
-    /// Read a whole response body as text, each read bounded. The bytes are
-    /// decoded as UTF-8, lossily, whatever charset the response names: the
-    /// bodies read here are SSE streams and error bodies, which are shown
-    /// as lossy UTF-8.
-    pub async fn text(self, mut response: reqwest::Response) -> Result<String, BodyError> {
-        let mut body = Vec::new();
-        loop {
-            match self.within(response.chunk()).await {
-                Ok(Ok(Some(bytes))) => body.extend_from_slice(&bytes),
-                Ok(Ok(None)) => return Ok(String::from_utf8_lossy(&body).into_owned()),
-                Ok(Err(error)) => return Err(BodyError::Read(error)),
-                Err(idle) => return Err(BodyError::Idle(idle)),
-            }
+    /// Read a whole response body as text, each read bounded from the last.
+    /// The bytes are decoded as UTF-8, lossily, whatever charset the
+    /// response names: the bodies read here are error bodies, shown as lossy
+    /// UTF-8; an SSE body is read by [`Self::sse_text`].
+    pub async fn text(self, response: reqwest::Response) -> Result<String, BodyError> {
+        read_whole(response, EventIdle::reads(self)).await
+    }
+
+    /// Read a whole SSE body as text, bounded from its last event
+    /// ([`EventIdle`], #2433): a body that only keeps alive is idle.
+    pub async fn sse_text(self, response: reqwest::Response) -> Result<String, BodyError> {
+        read_whole(response, EventIdle::events(self)).await
+    }
+}
+
+/// Read a whole body as lossy UTF-8, each read bounded by `idle`.
+async fn read_whole(
+    mut response: reqwest::Response,
+    mut idle: EventIdle,
+) -> Result<String, BodyError> {
+    let mut body = Vec::new();
+    loop {
+        match idle.next(response.chunk()).await {
+            Ok(Ok(Some(bytes))) => body.extend_from_slice(&bytes),
+            Ok(Ok(None)) => return Ok(String::from_utf8_lossy(&body).into_owned()),
+            Ok(Err(error)) => return Err(BodyError::Read(error)),
+            Err(idle) => return Err(BodyError::Idle(idle)),
         }
     }
 }
 
-/// The provider sent nothing for the bound it carries; the request was
-/// abandoned.
+/// The bytes that open an SSE event's data line (#2433).
+const EVENT_LINE: &[u8] = b"data:";
+
+/// The idle bound of a response body, measured from its last progress
+/// (#2433).
+///
+/// For an SSE body, progress is an event: the bytes of a `data:` line. A
+/// keep-alive — an SSE comment, a blank line, an empty chunk — shows the
+/// connection is up, not that the reply is moving. A Codex reply showed no
+/// progress for 15 minutes, its body still being read, and a bound that any
+/// bytes restarted never ended it. Only events restart the bound, as the official Codex
+/// client's idle timeout runs between events; a reply that keeps sending
+/// events (Anthropic's `ping` events included) is never cut short. For any
+/// other body (an error body), every read is progress.
+#[derive(Debug)]
+pub struct EventIdle {
+    bound: Duration,
+    deadline: tokio::time::Instant,
+    /// `None` when every read is progress; otherwise where the body's
+    /// current line stands.
+    line: Option<Line>,
+}
+
+/// Where an SSE body's current line stands, as far as its start shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Line {
+    /// Its first `n` bytes open [`EVENT_LINE`].
+    Opening(usize),
+    /// An event's data line.
+    Event,
+    /// Any other line: a comment, another field, a blank line.
+    Other,
+}
+
+impl EventIdle {
+    /// The bound of an SSE body starting now: restarted by its events.
+    pub fn events(bound: StreamIdle) -> Self {
+        Self::starting(bound, Some(Line::Opening(0)))
+    }
+
+    /// The bound of any other body starting now: restarted by every read.
+    pub fn reads(bound: StreamIdle) -> Self {
+        Self::starting(bound, None)
+    }
+
+    fn starting(bound: StreamIdle, line: Option<Line>) -> Self {
+        Self {
+            bound: bound.idle,
+            deadline: tokio::time::Instant::now() + bound.idle,
+            line,
+        }
+    }
+
+    /// Await one read of the body, abandoning it as [`Idle`] once the whole
+    /// bound has passed since the body's last progress (or its start), and
+    /// observe what it read.
+    pub async fn next<B: AsRef<[u8]>, E>(
+        &mut self,
+        read: impl Future<Output = Result<Option<B>, E>>,
+    ) -> Result<Result<Option<B>, E>, Idle> {
+        let read = match tokio::time::timeout_at(self.deadline, read).await {
+            Ok(read) => read,
+            Err(_elapsed) => return Err(Idle(self.bound)),
+        };
+        if let Ok(Some(bytes)) = &read {
+            self.observe(bytes.as_ref());
+        }
+        Ok(read)
+    }
+
+    /// Bytes of the body arrived: progress restarts the bound.
+    fn observe(&mut self, bytes: &[u8]) {
+        let progress = match &mut self.line {
+            None => true,
+            Some(line) => bytes.iter().fold(false, |progress, &byte| {
+                *line = line.after(byte);
+                progress || *line == Line::Event
+            }),
+        };
+        if progress {
+            self.deadline = tokio::time::Instant::now() + self.bound;
+        }
+    }
+}
+
+impl Line {
+    /// Where the line stands after `byte`; a newline starts the next line.
+    fn after(self, byte: u8) -> Self {
+        match (self, byte) {
+            (_, b'\n') => Self::Opening(0),
+            (Self::Opening(opened), byte) if byte == EVENT_LINE[opened] => {
+                match opened + 1 == EVENT_LINE.len() {
+                    true => Self::Event,
+                    false => Self::Opening(opened + 1),
+                }
+            }
+            (Self::Opening(_), _) => Self::Other,
+            (line @ (Self::Event | Self::Other), _) => line,
+        }
+    }
+}
+
+/// The provider sent no event (no response head, before one) for the bound
+/// it carries; the request was abandoned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Idle(Duration);
 
@@ -136,7 +254,7 @@ impl std::fmt::Display for Idle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{STREAM_IDLE_TIMEOUT}the provider sent nothing for {}; the request was abandoned",
+            "{STREAM_IDLE_TIMEOUT}the provider sent no event for {}; the request was abandoned",
             Span(self.0)
         )
     }

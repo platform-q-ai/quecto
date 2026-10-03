@@ -75,9 +75,11 @@ pub(super) async fn pump_sse<H: SseHandler>(
     idle: StreamIdle,
 ) {
     let mut carry: Vec<u8> = Vec::new();
+    // Bounded from the body's last event, not its last bytes (#2433).
+    let mut idle = super::super::stream_idle::EventIdle::events(idle);
 
     loop {
-        let bytes = match idle.within(response.chunk()).await {
+        let bytes = match idle.next(response.chunk()).await {
             Ok(Ok(Some(b))) => b,
             Ok(Ok(None)) => break,
             Ok(Err(e)) => {

@@ -252,10 +252,14 @@ applies to every session, not only swarm runs.
 ## Stalled replies
 
 No provider request has a total time limit while it streams: a long reply that
-keeps sending is never cut short. A streaming reply that sends *nothing* — no
-response head, no bytes, no SSE event or keep-alive — for 300 seconds is
-abandoned (the stream idle limit; the official Codex client allows the same,
-since a reasoning model can think silently for minutes). A non-streaming reply
+keeps sending events is never cut short. A streaming reply that sends no
+response head, or no SSE event, for 300 seconds is abandoned (the stream idle
+limit; the official Codex client allows the same, since a reasoning model can
+think silently for minutes). Only an event — a `data:` line, Anthropic's `ping`
+events included — restarts the limit: keep-alives alone (SSE comments, blank
+lines) show the connection is up, not that the reply is moving, so a reply held
+open by them is abandoned too, rather than waiting for an outer deadline such as
+the admission attempt timeout (#2433). A non-streaming reply
 sends nothing until it is complete, so it has a 20 minute total limit instead.
 Either expiry fails the attempt with a `stream idle timeout: …` or
 `reply timeout: …` error of class `stalled`, recorded on the attempt as `Idle`

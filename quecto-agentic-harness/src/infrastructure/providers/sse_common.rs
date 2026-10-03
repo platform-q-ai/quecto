@@ -139,8 +139,8 @@ pub trait SseHandler: Send {
 /// - Guard against unbounded line growth ([`MAX_SSE_LINE_BYTES`])
 /// - UTF-8 decoding of complete lines (skipping malformed lines)
 /// - Stream read errors (emitted as `StreamEvent::Error`)
-/// - A stream silent for the whole `idle` bound (emitted as the idle error,
-///   #2210): each read waits at most that long for the next bytes
+/// - A stream with no event for the whole `idle` bound (emitted as the idle
+///   error, #2210): keep-alives alone do not restart the bound (#2433)
 /// - A last line with no newline (handed to the handler as a line)
 /// - Clean EOF (delegates to `handler.on_eof()`)
 ///
@@ -154,9 +154,11 @@ pub async fn pump_sse<H: SseHandler>(
     idle: super::stream_idle::StreamIdle,
 ) {
     let mut carry: Vec<u8> = Vec::new();
+    // Bounded from the body's last event, not its last bytes (#2433).
+    let mut idle = super::stream_idle::EventIdle::events(idle);
 
     loop {
-        let bytes = match idle.within(response.chunk()).await {
+        let bytes = match idle.next(response.chunk()).await {
             Ok(Ok(Some(b))) => b,
             Ok(Ok(None)) => break,
             Ok(Err(e)) => {
