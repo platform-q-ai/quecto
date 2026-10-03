@@ -430,3 +430,40 @@ async fn an_empty_reply_after_tools_is_one_ok_request_with_its_usage() {
         (90, 4, 9)
     );
 }
+
+/// #2433 x #2436: a reply abandoned for making no progress (events, no
+/// output: `Termination::NoProgress`) is retried once; each attempt is
+/// exactly one `error` event, and the retry cap leaves no third.
+#[tokio::test]
+async fn each_no_progress_attempt_is_one_error_event() {
+    use crate::domain::provider_error::STREAM_PROGRESS_TIMEOUT;
+    let stall = format!(
+        "{STREAM_PROGRESS_TIMEOUT}the provider sent events but no output for 300 s; \
+         the request was abandoned"
+    );
+    let provider = Arc::new(MockStreamingProvider::new(vec![
+        vec![StreamEvent::Error(stall.clone())],
+        vec![StreamEvent::Error(stall)],
+        vec![StreamEvent::Done(text_response("too late"))],
+    ]));
+    let (mut agent, events) = agent_on(provider.clone(), true);
+    assert!(
+        agent
+            .run_loop(&mut vec![Message::user("hi")])
+            .await
+            .is_err()
+    );
+    assert_eq!(provider.request_count(), 2);
+    let seen: Vec<_> = completed(&events)
+        .iter()
+        .map(|c| (c.request_index, c.attempt, c.outcome, c.spend))
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            (1, 1, RequestOutcome::Error, None),
+            (2, 2, RequestOutcome::Error, None),
+        ]
+    );
+    assert_eq!(agent.request_tally().counters().requests, 2);
+}
