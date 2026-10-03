@@ -392,8 +392,10 @@ pub enum AgentCommand {
 /// A `tool_result`'s `imageBlocks` as read off the wire (#2423), bounded
 /// (review M1): a list keeps at most one entry past
 /// [`quecto_image::MAX_IMAGES_PER_MESSAGE`], enough to refuse it, and
-/// only counts the rest, skipping them unread; anything else but `null`
-/// (absent) is not a list. Admitted when the result is delivered.
+/// only counts the rest without keeping them; anything else but `null`
+/// (absent) is not a list. Admitted when the result is delivered. Read
+/// straight from the line (the tool_result intercept), the list streams;
+/// through the tagged `AgentCommand` the line is buffered first (#2432).
 #[derive(Debug, Clone, PartialEq)]
 pub enum WireImageBlocks {
     /// A list: its first entries and how many it had.

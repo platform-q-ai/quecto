@@ -423,9 +423,9 @@ fn oversized_result_error(declared: usize) -> String {
 /// A message from `client_id` went over the frame cap and was dropped
 /// unread (#2423 review M2); `error` says why. The reader discards an
 /// over-cap message without buffering it (ADR-0008), so which call it
-/// answered cannot be read: the client's oldest pending call, the one an
-/// extension most likely answered, is failed now rather than at its
-/// timeout (up to 600 s). Returns the `protocol_error` text for the client,
+/// answered cannot be read: the client's oldest pending call whose caller
+/// still waits, the one an extension most likely answered, is failed now
+/// rather than at its timeout (up to 600 s). Returns the `protocol_error` text for the client,
 /// naming the call it failed.
 pub fn reject_oversized(
     registry: &ClientToolRegistry,
@@ -436,9 +436,12 @@ pub fn reject_oversized(
         let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
         reg.get_mut(&client_id).and_then(|state| {
             state.sweep_expired_pending();
+            // The oldest call still waiting: one whose caller has gone
+            // (its reply closed) has nothing to fail (review round 2 L3).
             let id = state
                 .pending_results
                 .iter()
+                .filter(|(_, pending)| !pending.reply.is_closed())
                 .min_by_key(|(_, pending)| pending.since)
                 .map(|(id, _)| id.clone())?;
             state.pending_results.remove_entry(&id)
@@ -456,8 +459,8 @@ pub fn reject_oversized(
 }
 
 /// A `tool_result`'s `imageBlocks` as sent (#2423): absent or `null` is no
-/// images; a list past the limit is refused by its length alone, none of
-/// its entries read (review M1); a list within it is read entry by entry
+/// images; a list past the limit is refused by its length, none of its
+/// entries admitted (review M1); a list within it is read entry by entry
 /// (one not shaped as an image is `None`, refused on admission); anything
 /// else is not a list.
 fn sent_image_blocks(field: Option<WireImageBlocks>) -> SentImageBlocks {

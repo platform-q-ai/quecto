@@ -77,7 +77,8 @@ An MCP `tools/call` result becomes one Quecto `tool_result`:
 - `image` items (`{"type":"image","data","mimeType"}`) become `imageBlocks`, admitted by the `quecto-image` crate with the rules the agent applies: PNG, JPEG, GIF or WebP; strict standard base64; at most 3.75 MiB decoded; the type's signature; a readable header. At most 8 are sent.
 - An image that cannot be sent is a marker in `content` in its place, `[image omitted: <reason>]`: the refusal text (e.g. `[image omitted: mimeType "image/svg+xml" is not allowed; use image/png, image/jpeg, image/gif or image/webp]`), a malformed item, the ninth image onwards, or an image the 8 MiB UDS line has no room for.
 - A result with `isError: true` (an MCP tool error) is an error `tool_result`, with its text and images as for any result.
-- A result with neither text nor images (only `resource` items, say) is sent as its JSON, as before. MCP responses are read up to 16 MiB; a result whose text alone cannot fit the UDS line is an error result saying so.
+- Beside images, any other item (`resource`, `resource_link`, …) is shown in its place as its JSON, or as `[content omitted: a "<type>" item of <n> bytes]` when its JSON is over 16 KiB, so nothing is dropped silently. Without images, other items keep their handling (their `text`, if any).
+- A result with neither text nor images (only `resource` items, say), or one that is not an object or whose `content` is not a list, is sent as its JSON, as before. MCP responses are read up to 16 MiB; a result whose text alone cannot fit the UDS line is an error result saying so.
 
 ## Security model
 

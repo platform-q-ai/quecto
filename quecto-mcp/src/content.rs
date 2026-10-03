@@ -7,8 +7,10 @@
 //! image that cannot be sent is a text marker in its place,
 //! `[image omitted: <reason>]`, so the model knows it was there. At most
 //! [`quecto_image::MAX_IMAGES_PER_MESSAGE`] images are sent, and only as
-//! many as fit one UDS line with the text. A result with neither text nor
-//! images (only resources, say) is its JSON, as before.
+//! many as fit one UDS line with the text. Beside images, another item (a
+//! resource, a link) is its JSON in its place, so nothing is dropped
+//! silently. A result with neither text nor images (only resources, say,
+//! or one that is not an object at all) is its JSON, as before.
 use quecto_image::{ImageAttachment, ImagePayload, MAX_IMAGES_PER_MESSAGE};
 use quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
 use serde_json::Value;
@@ -55,41 +57,88 @@ impl McpToolResult {
     }
 }
 
+/// The largest other item (a resource, a link) shown as its JSON beside
+/// images; a larger one is a marker naming it.
+pub const INLINE_ITEM_BYTES: usize = 16 * 1024;
+
+/// One line of a result's text, by what it came from.
+enum Part {
+    /// A text item's text, or an image's marker.
+    Text(String),
+    /// Another item (a resource, a link), as its JSON or a marker naming
+    /// it: shown only beside images, where nothing else would show it.
+    Other(String),
+}
+
 /// The `tool_result` an MCP `result` becomes. Its strings are moved out,
 /// not copied: an image's base64 is megabytes.
 pub fn mcp_tool_result(mut result: Value) -> McpToolResult {
     let is_error = matches!(result.get("isError"), Some(Value::Bool(true)));
+    // Only an object's list of items is read; any other result, or content,
+    // is left as it came (review round 2).
     let mut items = match result.get_mut("content") {
-        Some(Value::Array(items)) => std::mem::take(items),
-        _ => Vec::new(),
+        Some(Value::Array(items)) => Some(std::mem::take(items)),
+        _ => None,
     };
-    let mut lines: Vec<String> = Vec::new();
+    let mut parts = Vec::new();
     let mut image_blocks = Vec::new();
-    for item in &mut items {
+    for item in items.iter_mut().flatten() {
         match item.get("type").and_then(Value::as_str) {
             Some("image") => match admit(item, image_blocks.len()) {
                 Ok(image) => image_blocks.push(image),
-                Err(marker) => lines.push(marker),
+                Err(marker) => parts.push(Part::Text(marker)),
             },
-            // Every other item keeps its handling: its text, if it has any.
-            _ => lines.extend(take_str(item, "text")),
+            Some("text") => parts.extend(take_str(item, "text").map(Part::Text)),
+            // Every other item keeps its handling: its text, if it has any;
+            // else, beside images, its JSON.
+            _ => parts.push(match take_str(item, "text") {
+                Some(text) => Part::Text(text),
+                None => Part::Other(shown(item)),
+            }),
         }
     }
-    let content = lines.join("\n");
-    let content = match (content.is_empty(), image_blocks.is_empty()) {
+    let with_images = !image_blocks.is_empty();
+    let content = parts
+        .into_iter()
+        .filter_map(|part| match part {
+            Part::Text(text) => Some(text),
+            Part::Other(shown) => with_images.then_some(shown),
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let content = match (content.is_empty(), with_images) {
         // No image item was read and every text taken was empty, so the
         // items are as they came: the result is its JSON, as before.
-        (true, true) => {
-            result["content"] = Value::Array(items);
+        (true, false) => {
+            if let (Some(items), Some(slot)) = (items, result.get_mut("content")) {
+                *slot = Value::Array(items);
+            }
             serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string())
         }
-        (true, false) | (false, _) => content,
+        (true, true) | (false, _) => content,
     };
     fit_to_line(McpToolResult {
         content,
         image_blocks,
         is_error,
     })
+}
+
+/// `item` as a result's text shows it beside images: its JSON, or a marker
+/// naming its type and size when that is over [`INLINE_ITEM_BYTES`].
+fn shown(item: &Value) -> String {
+    let json = item.to_string();
+    match json.len() <= INLINE_ITEM_BYTES {
+        true => json,
+        false => {
+            let kind = item
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("untyped");
+            let kind: String = kind.chars().take(64).collect();
+            format!("[content omitted: a {kind:?} item of {} bytes]", json.len())
+        }
+    }
 }
 
 /// The string at `key` of `item`, moved out.

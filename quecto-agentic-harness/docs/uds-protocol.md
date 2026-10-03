@@ -1328,7 +1328,10 @@ extension's connection is not dropped. The refusals, in the order checked:
 The index is the entry's position in `imageBlocks`, from 0, and an
 admission refusal is worded exactly as for a prompt's images (e.g.
 `imageBlocks[0]: image decodes to more than 3932160 bytes (3.75 MiB)`). A
-list longer than 8 is refused by its length alone; its entries are not read.
+list longer than 8 is refused by its length: no image of it is admitted, and
+the reader that delivers a `tool_result` counts the entries past the ninth
+without keeping them. (The reader's earlier checks of each line, for an
+abort or a steer, still parse the whole line, as they always have; #2432.)
 
 **Over the frame cap.** A `tool_result` larger than the 8 MiB frame cap is
 dropped unread (its `toolCallId` cannot be read without buffering it). The

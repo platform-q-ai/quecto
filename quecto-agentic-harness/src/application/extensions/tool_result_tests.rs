@@ -80,7 +80,7 @@ fn an_image_refused_before_a_malformed_entry_is_the_one_named() {
 }
 
 #[test]
-fn a_list_counted_past_the_limit_is_refused_unread() {
+fn a_list_counted_past_the_limit_is_refused_by_its_length() {
     let sent = SentImageBlocks::TooMany(1_000_000);
     assert_eq!(
         admit(sent).unwrap_err().to_string(),
