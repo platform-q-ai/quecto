@@ -105,7 +105,11 @@ fn the_plan_says_where_the_model_stands() {
         standing("openai-oauth/gpt-5.5"),
         CatalogueStanding::Unlisted
     );
-    assert_eq!(standing("elsewhere/x"), CatalogueStanding::Unlisted);
+    assert_eq!(
+        standing("elsewhere/x"),
+        CatalogueStanding::UncataloguedProvider,
+        "a provider the router does not reach lists nothing"
+    );
 }
 
 #[test]
@@ -118,4 +122,37 @@ fn an_unlisted_model_still_switches() {
         .unwrap();
     assert_eq!(switched.plan.standing, CatalogueStanding::Unlisted);
     assert_eq!(runtime.model, "openai-oauth/gpt-5.5");
+}
+
+/// A provider the catalogue lists no models for (an open-router endpoint)
+/// says nothing of the ids it serves.
+#[test]
+fn an_id_on_a_provider_that_lists_no_models_is_uncatalogued() {
+    let entries = vec![entry("openai-oauth", "sol", None)];
+    let runtime = Arc::new(FakeRuntime(Some(Arc::new(
+        crate::application::provider_runtime::CatalogueRuntimeSnapshot {
+            catalogue: Arc::new(
+                crate::domain::catalogue::resolve_catalogue(
+                    1,
+                    vec![(SourceLayer::BuiltIn, entries.clone())],
+                )
+                .snapshot,
+            ),
+            provider: Arc::new(OrderedRouter(vec![
+                "openai-oauth".into(),
+                "openrouter".into(),
+            ])),
+            admission_binding_diagnostic: Default::default(),
+        },
+    ))));
+    let rig = rig(entries, runtime);
+    assert_eq!(
+        rig.use_case.plan("openrouter/some/model").standing,
+        CatalogueStanding::UncataloguedProvider
+    );
+    assert_eq!(
+        rig.use_case.plan("gpt-5.5").standing,
+        CatalogueStanding::Unlisted,
+        "a bare id reaches the first provider, which lists other models"
+    );
 }

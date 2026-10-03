@@ -102,7 +102,7 @@ fn flagged_prompt_without_message_is_not_intercepted() {
 fn flagged_remaining_queueable_commands_ack_and_forward_without_marker() {
     for (line, command) in [
         (
-            r#"{"type":"set_model","model":"anthropic/claude-sonnet-4-6","ack":"accept","id":"m1"}"#,
+            r#"{"type":"set_model","model":"anthropic/claude-sonnet-5","ack":"accept","id":"m1"}"#,
             "set_model",
         ),
         (

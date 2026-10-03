@@ -46,8 +46,8 @@ fn build_provider(world: &mut QuectoWorld) {
     }
 }
 
-/// Downcast a built provider (RetryingProvider wrapping a ProviderRouter) to its
-/// list of registered provider names.
+/// A built provider's (RetryingProvider over the router) registered provider
+/// names, in routing order.
 fn built_router_names(world: &QuectoWorld) -> Vec<String> {
     let provider = world.provider.as_ref().unwrap_or_else(|| {
         panic!(
@@ -55,27 +55,23 @@ fn built_router_names(world: &QuectoWorld) -> Vec<String> {
             world.provider_build_error
         )
     });
-    let retrying = provider
-        .as_any()
-        .downcast_ref::<RetryingProvider>()
-        .expect("build_agent_provider should return a RetryingProvider");
-    let router = retrying
-        .inner()
-        .as_any()
-        .downcast_ref::<ProviderRouter>()
-        .expect("RetryingProvider should wrap a ProviderRouter");
-    router
-        .provider_names()
-        .into_iter()
-        .map(|s| s.to_string())
-        .collect()
+    assert!(
+        provider
+            .as_any()
+            .downcast_ref::<RetryingProvider>()
+            .is_some(),
+        "build_agent_provider should return a RetryingProvider"
+    );
+    // Every decorator (refusal recording, #2435) answers with its router's
+    // provider names, in routing order.
+    provider.route_order()
 }
 
 fn anthropic_oauth_provider() -> serde_json::Value {
     serde_json::json!({
         "api": "anthropic-messages",
         "auth": { "mode": "oauth", "oauthProvider": "anthropic" },
-        "models": [{ "id": "claude-opus-4-8" }]
+        "models": [{ "id": "claude-opus-5" }]
     })
 }
 
@@ -84,7 +80,7 @@ fn anthropic_api_provider() -> serde_json::Value {
         "api": "anthropic-messages",
         "baseUrl": "https://api.anthropic.com",
         "auth": { "mode": "apiKey", "apiKey": "sk-ant-direct" },
-        "models": [{ "id": "claude-opus-4-8" }]
+        "models": [{ "id": "claude-opus-5" }]
     })
 }
 
@@ -132,7 +128,7 @@ fn given_registry_anthropic_api(world: &mut QuectoWorld, api_key: String) {
                     "api": "anthropic-messages",
                     "baseUrl": "https://api.anthropic.com",
                     "auth": { "mode": "apiKey", "apiKey": api_key },
-                    "models": [{ "id": "claude-opus-4-8" }]
+                    "models": [{ "id": "claude-opus-5" }]
                 }
             }
         }),
@@ -150,7 +146,7 @@ fn given_registry_anthropic_oauth(world: &mut QuectoWorld, oauth_provider: Strin
                 "anthropic-oauth": {
                     "api": "anthropic-messages",
                     "auth": { "mode": "oauth", "oauthProvider": oauth_provider },
-                    "models": [{ "id": "claude-opus-4-8" }]
+                    "models": [{ "id": "claude-opus-5" }]
                 }
             }
         }),

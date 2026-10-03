@@ -46,7 +46,7 @@ impl Rig {
 }
 
 /// The owner's real configuration: both count dials at 100, and a model.
-const OWNERS: &str = r#"{"agents":{"defaults":{"model":"gpt-5.5","context_collapse_after_tool_calls":100,"context_collapse_after_messages":100}}}"#;
+const OWNERS: &str = r#"{"agents":{"defaults":{"model":"gpt-6.1-sol","context_collapse_after_tool_calls":100,"context_collapse_after_messages":100}}}"#;
 
 #[test]
 fn config_get_names_every_removed_key_the_file_and_the_command_for_each() {
@@ -79,7 +79,7 @@ fn each_removed_key_can_be_unset_on_its_own() {
     assert_eq!(code, 0, "the second unset: {stderr}");
     let (code, stdout, stderr) = rig.run(&["config", "get", "agents.defaults.model"]);
     assert_eq!(code, 0, "the configuration loads again: {stderr}");
-    assert_eq!(stdout.trim(), "\"gpt-5.5\"");
+    assert_eq!(stdout.trim(), "\"gpt-6.1-sol\"");
 }
 
 /// The repair never lets a removed key in: a write that sets one is

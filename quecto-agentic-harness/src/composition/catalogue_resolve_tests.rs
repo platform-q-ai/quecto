@@ -233,7 +233,7 @@ fn unsupported_transport_entry_is_not_runnable_with_structured_reason() {
 }
 
 const SLICE5_OVERRIDE: &str =
-    r#"{"overrides":{"openai-api/gpt-5.5":{"name":"My 5.5","contextWindow":999000}}}"#;
+    r#"{"overrides":{"openai-api/gpt-5.6-sol":{"name":"My 5.6 Sol","contextWindow":999000}}}"#;
 
 /// AC1 (part): a stable-ID override replaces the built-in display name.
 #[test]
@@ -242,11 +242,11 @@ fn stable_id_override_replaces_builtin_display_name() {
     let tmp = tempfile::tempdir().unwrap();
     slice5_write(&tmp, SLICE5_OVERRIDE);
     let resolved = resolve_catalogue_for(tmp.path());
-    let reference = ModelRef::parse_qualified("openai-api/gpt-5.5").unwrap();
+    let reference = ModelRef::parse_qualified("openai-api/gpt-5.6-sol").unwrap();
     let entry = resolved.snapshot.find(&reference).expect("builtin entry");
     assert_eq!(
         entry.model.display_name.as_deref(),
-        Some("My 5.5"),
+        Some("My 5.6 Sol"),
         "override by stable ID must replace the built-in display name"
     );
 }
@@ -258,7 +258,7 @@ fn stable_id_override_replaces_builtin_context_window() {
     let tmp = tempfile::tempdir().unwrap();
     slice5_write(&tmp, SLICE5_OVERRIDE);
     let resolved = resolve_catalogue_for(tmp.path());
-    let reference = ModelRef::parse_qualified("openai-api/gpt-5.5").unwrap();
+    let reference = ModelRef::parse_qualified("openai-api/gpt-5.6-sol").unwrap();
     let entry = resolved.snapshot.find(&reference).expect("builtin entry");
     assert_eq!(
         entry.model.capabilities.context_window, 999_000,
@@ -274,7 +274,7 @@ fn literal_secret_in_override_surface_is_rejected_with_structured_error() {
     let tmp = tempfile::tempdir().unwrap();
     slice5_write(
         &tmp,
-        r#"{"overrides":{"openai-api/gpt-5.5":{"apiKey":"sk-live-secret123"}}}"#,
+        r#"{"overrides":{"openai-api/gpt-5.6-sol":{"apiKey":"sk-live-secret123"}}}"#,
     );
     let resolved = resolve_catalogue_for(tmp.path());
     let mentions = |text: &str| text.contains("credential reference");
@@ -295,12 +295,12 @@ fn user_file_model_add_on_existing_provider_is_published() {
     let tmp = tempfile::tempdir().unwrap();
     slice5_write(
         &tmp,
-        r#"{"providers":{"openai-api":{"api":"openai-completions","models":[{"id":"gpt-5.5-preview","name":"GPT 5.5 Preview"}]}}}"#,
+        r#"{"providers":{"openai-api":{"api":"openai-completions","models":[{"id":"gpt-6.2-preview","name":"GPT 6.2 Preview"}]}}}"#,
     );
     let resolved = resolve_catalogue_for(tmp.path());
-    let added = ModelRef::parse_qualified("openai-api/gpt-5.5-preview").unwrap();
+    let added = ModelRef::parse_qualified("openai-api/gpt-6.2-preview").unwrap();
     let entry = resolved.snapshot.find(&added).expect("added model listed");
-    assert_eq!(entry.model.display_name.as_deref(), Some("GPT 5.5 Preview"));
+    assert_eq!(entry.model.display_name.as_deref(), Some("GPT 6.2 Preview"));
 }
 
 /// AC2: a data-only provider add on an existing transport reaches runnable
@@ -371,12 +371,12 @@ fn override_referencing_unset_env_var_is_rejected_and_keeps_base_credential() {
     let tmp = tempfile::tempdir().unwrap();
     slice5_write(
         &tmp,
-        r#"{"overrides":{"openai-api/gpt-5.5":{"apiKey":"$QUECTO_TEST_DEFINITELY_UNSET_VAR"}}}"#,
+        r#"{"overrides":{"openai-api/gpt-5.6-sol":{"apiKey":"$QUECTO_TEST_DEFINITELY_UNSET_VAR"}}}"#,
     );
     let resolved = resolve_catalogue_for(tmp.path());
     assert!(
         resolved.skipped.iter().any(|(_, s)| {
-            s.record == "openai-api/gpt-5.5" && s.error.contains("unset or empty")
+            s.record == "openai-api/gpt-5.6-sol" && s.error.contains("unset or empty")
         }),
         "an unset credential reference must surface as a diagnostic, got {:?}",
         resolved.skipped
@@ -423,7 +423,8 @@ fn image_input(dir: &std::path::Path, model: &str) -> ImageInput {
 }
 
 /// #2421: the built-in vision models take images: every image over the
-/// Anthropic wire, still images over the OpenAI one; Codex Spark none.
+/// Anthropic wire, still images over the OpenAI one; a model the catalogue
+/// does not list (Codex Spark, retired in #2435) none.
 #[test]
 fn builtin_vision_models_take_images() {
     let tmp = tempfile::tempdir().unwrap();
@@ -441,14 +442,17 @@ fn builtin_vision_models_take_images() {
     );
 }
 
-/// #2421 review M1: an override's `input` turns images off, or on, for a
-/// built-in model without redeclaring its provider.
+/// #2421 review M1: an override's `input` turns images off for a built-in
+/// model without redeclaring its provider, or on for a model the user's
+/// file declares text-only (a retired built-in, #2435).
 #[test]
 fn an_override_patches_a_builtin_models_input() {
     let tmp = tempfile::tempdir().unwrap();
     slice5_write(
         &tmp,
-        r#"{"overrides":{
+        r#"{"providers":{"openai-oauth":{"auth":{"mode":"oauth","oauthProvider":"openai"},
+              "models":[{"id":"gpt-5.3-codex-spark"}]}},
+            "overrides":{
             "openai-oauth/gpt-6.1-sol":{"input":["text"]},
             "openai-oauth/gpt-5.3-codex-spark":{"input":["text","image"]}
         }}"#,

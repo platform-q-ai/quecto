@@ -4,7 +4,7 @@ use crate::domain::conversation::reply_requirement::ReplyRequirement;
 use crate::domain::error::DomainError;
 use crate::domain::message::LlmResponse;
 use crate::domain::provider_error::{
-    ProviderErrorClass, classify_provider_error, provider_http_status,
+    ProviderErrorClass, classify_provider_error, model_refusal, provider_http_status,
 };
 
 /// Internal vocabulary for the agent turn lifecycle.
@@ -85,10 +85,13 @@ pub(super) fn classify_provider_failure(
     max_malformed_retries: u32,
 ) -> ProviderFailureTransition {
     let class = classify_provider_error(error);
+    // A model the provider refused for the account (#2435) is no
+    // malformed request: no repair makes the provider accept it.
     let is_malformed_request = matches!(error, DomainError::Provider(message)
         if class == ProviderErrorClass::Client
             && matches!(provider_http_status(error), Some(400 | 422 | 500..=599))
-            && !is_context_or_output_limit_error(message));
+            && !is_context_or_output_limit_error(message)
+            && model_refusal(error).is_none());
 
     if is_malformed_request
         && output == Output::NotShown

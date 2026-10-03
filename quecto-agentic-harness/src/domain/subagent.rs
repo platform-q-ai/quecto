@@ -130,9 +130,9 @@ pub enum ContainerSelection {
 /// `spawn` tool and `agent_cmd set_model` cannot diverge (#881).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModelArg {
-    /// A full `provider/model` string (e.g. `openai/gpt-5.5`).
+    /// A full `provider/model` string (e.g. `openai-oauth/gpt-6.1-sol`).
     Full(String),
-    /// A separate provider + model id pair (e.g. `openai` + `gpt-5.5`).
+    /// A separate provider + model id pair (e.g. `openai-oauth` + `gpt-6.1-sol`).
     Pair { provider: String, model_id: String },
 }
 

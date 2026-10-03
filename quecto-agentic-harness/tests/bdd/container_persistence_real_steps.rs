@@ -145,6 +145,7 @@ fn provider_for_real_agents(world: &mut QuectoWorld) -> Arc<Mutex<Vec<String>>> 
     let mut config: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
     config["providers"]["openai"]["api_base"] = serde_json::json!(uri);
+    super::e2e_steps::pin_mock_chat_model(&mut config);
     std::fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap()).unwrap();
     seen
 }

@@ -288,7 +288,7 @@ fn default_workspace() -> String {
     "~/.quecto/workspace".to_string()
 }
 fn default_model() -> String {
-    "gpt-5.5".to_string()
+    "gpt-6.1-sol".to_string()
 }
 fn default_max_tokens() -> u32 {
     8192

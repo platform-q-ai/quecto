@@ -248,16 +248,13 @@ fn listing_and_session_state_surfaces_report_the_snapshot_effort_vocabulary() {
             .unwrap_or_default()
     };
     assert_eq!(
-        vocab("anthropic-api/claude-opus-4-6"),
+        vocab("anthropic-api/claude-opus-5"),
         "low, medium, high, max"
     );
     assert_eq!(
         vocab("openai-api/gpt-5.6-sol"),
         "none, low, medium, high, xhigh"
     );
-    // gpt-5.5 on openai-api runs on Chat Completions (no reasoning route),
-    // which rejects reasoning_effort with tools: no vocabulary (#1996).
-    assert_eq!(vocab("openai-api/gpt-5.5"), "");
     assert_eq!(vocab("xai/grok-4.5"), "low, medium, high");
 
     // The get_state/session projection for a selected model must publish the
@@ -265,11 +262,7 @@ fn listing_and_session_state_surfaces_report_the_snapshot_effort_vocabulary() {
     // view the dispatch loop presents comes from the composed use case over
     // the same published snapshot (#1848).
     let handles = quecto::composition::catalogue::build_catalogue_handles(tmp.path(), None);
-    for qualified in [
-        "anthropic-api/claude-opus-4-6",
-        "openai-api/gpt-5.6-sol",
-        "openai-api/gpt-5.5",
-    ] {
+    for qualified in ["anthropic-api/claude-opus-5", "openai-api/gpt-5.6-sol"] {
         let view = quecto::interface::uds::catalogue::effort_presenter::EffortStateView::new(
             None,
             &handles.effort.choices(qualified),

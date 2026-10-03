@@ -165,7 +165,7 @@ OAuth stays kernel-owned. Community data may reference only kernel-known OAuth i
       "api": "anthropic-messages",
       "auth": { "mode": "oauth", "oauthProvider": "anthropic" },
       "models": [
-        { "id": "claude-opus-4-8", "name": "Claude Opus 4.8 (OAuth)" }
+        { "id": "claude-opus-5", "name": "Claude Opus 5 (OAuth)" }
       ]
     }
   }
@@ -181,7 +181,7 @@ quecto auth login --provider anthropic --token sk-ant-…   # or --oauth at a te
 Then select:
 
 ```text
-/model anthropic-oauth/claude-opus-4-8
+/model anthropic-oauth/claude-opus-5
 ```
 
 ## Same vendor, both billing modes
@@ -193,12 +193,12 @@ Then select:
       "api": "anthropic-messages",
       "baseUrl": "https://api.anthropic.com",
       "auth": { "mode": "apiKey", "apiKey": "$ANTHROPIC_API_KEY" },
-      "models": [{ "id": "claude-opus-4-8", "name": "Claude Opus 4.8 (API)" }]
+      "models": [{ "id": "claude-opus-5", "name": "Claude Opus 5 (API)" }]
     },
     "anthropic-oauth": {
       "api": "anthropic-messages",
       "auth": { "mode": "oauth", "oauthProvider": "anthropic" },
-      "models": [{ "id": "claude-opus-4-8", "name": "Claude Opus 4.8 (OAuth)" }]
+      "models": [{ "id": "claude-opus-5", "name": "Claude Opus 5 (OAuth)" }]
     }
   }
 }

@@ -476,7 +476,7 @@ pub(crate) fn build_agent_from_config_in(
     // so low-limit models never get a larger value) and context window
     // (bounds the budget) come from the change-active-model use case — the
     // same read a later set_model performs (#1847).
-    let limits = catalogue.model.startup_limits(&model);
+    let limits = startup_route::startup_limits(&catalogue.model, &model, stderr);
     let context_marks = (config.agents.defaults.context_marks())
         .map_err(|error| stderr.push_str(&format!("agent: {error}\n")))
         .ok()?;

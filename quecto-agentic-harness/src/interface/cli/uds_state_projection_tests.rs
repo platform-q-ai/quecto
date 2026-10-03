@@ -71,7 +71,7 @@ fn missing_binding_warning_is_typed_visible_and_absent_when_all_bound() {
 #[test]
 fn get_state_effort_contract_fixture_matches_real_projection() {
     let mut state = state_with_execution(7, "quiet");
-    state.model = "openai-oauth/gpt-5.5".into();
+    state.model = "openai-oauth/gpt-6.1-sol".into();
     state.is_streaming = false;
     state.session_key = "cli:contract-worker".into();
     state.effort = Some("high".into());

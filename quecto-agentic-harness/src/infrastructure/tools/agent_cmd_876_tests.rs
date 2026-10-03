@@ -35,7 +35,7 @@ fn control_commands_carry_accept_marker() {
         ),
         (r#"{"agent_id":"w1","command":"abort"}"#, "abort"),
         (
-            r#"{"agent_id":"w1","command":"set_model","model":"anthropic/claude-sonnet-4-6"}"#,
+            r#"{"agent_id":"w1","command":"set_model","model":"anthropic/claude-sonnet-5"}"#,
             "set_model",
         ),
         (
@@ -221,7 +221,7 @@ async fn busy_child_steer_abort_follow_up_return_promptly() {
 #[tokio::test]
 async fn busy_child_set_model_clear_history_return_promptly_without_starting_run() {
     for (cmd, body) in [
-        ("set_model", r#","model":"anthropic/claude-sonnet-4-6""#),
+        ("set_model", r#","model":"anthropic/claude-sonnet-5""#),
         ("clear_history", ""),
     ] {
         let id = format!("busy-{cmd}");

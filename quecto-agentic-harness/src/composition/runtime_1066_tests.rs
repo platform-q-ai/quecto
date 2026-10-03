@@ -117,7 +117,9 @@ async fn openai_api_key_reasoning_models_with_tools_use_responses_api_1066() {
 }
 
 /// AC (#1066, guard): non-reasoning openai-completions models keep Chat
-/// Completions behaviour exactly as today over API-key auth.
+/// Completions behaviour exactly as today over API-key auth. A model the
+/// built-in tables do not list (gpt-5.5, retired in #2435) is non-reasoning
+/// unless models.json says otherwise.
 #[tokio::test]
 async fn openai_api_key_non_reasoning_models_stay_on_chat_completions_1066() {
     let server = MockServer::start().await;

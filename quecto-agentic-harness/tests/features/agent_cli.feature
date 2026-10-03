@@ -156,9 +156,8 @@ Feature: Agent CLI — Headless One-Shot Mode
     Given a temp base directory
     And a config file with an Anthropic provider pointing at a mock server
     And a capturing Anthropic mock LLM returning text "effort accepted"
-    # The default bare `gpt-5.5` has no effort control (#1996); pin a
-    # model whose vocabulary accepts the flag.
-    And the config default model is "anthropic-api/claude-sonnet-4-6"
+    # Pin a model whose vocabulary accepts the flag (#1996).
+    And the config default model is "anthropic-api/claude-sonnet-5"
     When I run quecto agent --effort medium -m "hello"
     Then the exit code should be 0
     And stdout should contain "effort accepted"

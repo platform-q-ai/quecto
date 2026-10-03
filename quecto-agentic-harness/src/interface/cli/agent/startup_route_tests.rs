@@ -58,6 +58,14 @@ fn a_listed_startup_model_starts_quietly_and_a_refused_one_names_the_reason() {
     );
     assert_eq!(
         standing_warning(
+            &CatalogueStanding::UncataloguedProvider,
+            "openrouter/some/model"
+        ),
+        None,
+        "an endpoint the catalogue cannot enumerate is no reason to warn"
+    );
+    assert_eq!(
+        standing_warning(
             &CatalogueStanding::RefusedForAccount("no ChatGPT".into()),
             "openai-oauth/mini"
         )

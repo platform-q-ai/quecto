@@ -17,31 +17,24 @@ use crate::components::utils::{truncate_to_width, visible_width};
 use crate::shell::keys::Key;
 
 /// Well-known fallback models, used when the caller doesn't supply a model
-/// list: every Anthropic/OpenAI model is offered through both its `api` and
-/// `oauth` provider.
+/// list: the harness's built-in Anthropic/OpenAI models (Claude 5 and
+/// GPT-5.6 on, #2435), each offered through both its `api` and `oauth`
+/// provider.
 fn known_models() -> Vec<ModelEntry> {
     const ANTHROPIC: &[&str] = &[
         "claude-fable-5-1",
         "claude-fable-5",
         "claude-opus-5",
-        "claude-opus-4-8",
-        "claude-opus-4-7",
-        "claude-opus-4-6",
-        "claude-opus-4-5",
-        "claude-sonnet-4-6",
-        "claude-sonnet-4-5",
+        "claude-sonnet-5",
     ];
     const OPENAI: &[&str] = &[
         "gpt-6-astra",
+        "gpt-6-sol",
+        "gpt-6.1-sol",
+        "gpt-6-luna",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
         "gpt-5.6-luna",
-        "gpt-5.5",
-        "gpt-5.5-mini",
-        "gpt-5.5-nano",
-        "gpt-5.3-codex",
-        "gpt-5.3-codex-spark",
-        "gpt-5.2-codex",
     ];
     let mut pairs: Vec<(String, String)> = Vec::new();
     for (vendor, brand, ids) in [

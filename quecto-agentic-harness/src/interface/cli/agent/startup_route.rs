@@ -2,7 +2,10 @@
 //! child with an unroutable model fails at once with the configured
 //! providers named, instead of failing its first prompt; the root harness
 //! still starts, with a warning, so a bad default never locks the owner out.
-use crate::application::catalogue::dto::CatalogueStanding;
+//! #2435: a startup model the catalogue no longer lists (a retired
+//! built-in) or one refused for the account starts with a warning too.
+use crate::application::catalogue::dto::{CatalogueStanding, ModelLimits};
+use crate::application::catalogue::use_cases::ChangeActiveModel;
 use crate::application::providers::ports::RouteCheck;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -63,8 +66,33 @@ pub(super) fn admit(
 /// #2435: the warning a startup model earns from where it stands in the
 /// catalogue, if any.
 pub(super) fn standing_warning(standing: &CatalogueStanding, model: &str) -> Option<String> {
-    let _ = (standing, model);
-    None
+    match standing {
+        CatalogueStanding::Listed | CatalogueStanding::UncataloguedProvider => None,
+        CatalogueStanding::Unlisted => Some(format!(
+            "agent: warning: model `{model}` is not in the model catalogue (older built-in \
+             models have been retired); it is sent as-is with no known limits. Declare it in \
+             models.json to keep it, or choose a listed model (list_models, /model)"
+        )),
+        CatalogueStanding::RefusedForAccount(reason) => Some(format!(
+            "agent: warning: model `{model}` was refused for this account or auth mode \
+             ({reason}); choose a listed model (list_models, /model)"
+        )),
+    }
+}
+
+/// The startup model's limits (#935/#1044), read as a later `set_model`
+/// reads them (#1847); where the model stands in the catalogue joins the
+/// startup report when it deserves a warning (#2435).
+pub(super) fn startup_limits(
+    model_use_case: &ChangeActiveModel,
+    model: &str,
+    stderr: &mut String,
+) -> ModelLimits {
+    let plan = model_use_case.plan(model);
+    if let Some(warning) = standing_warning(&plan.standing, model) {
+        stderr.push_str(&format!("{warning}\n"));
+    }
+    plan.limits
 }
 
 #[cfg(test)]

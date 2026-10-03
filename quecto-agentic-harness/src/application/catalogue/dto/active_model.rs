@@ -58,9 +58,13 @@ pub enum CatalogueStanding {
     /// The provider refused the model for the account in use, for this
     /// reason, earlier in this process.
     RefusedForAccount(String),
-    /// No catalogue entry: a retired built-in, a typo, or an id an
-    /// open-router prefix accepts that the catalogue cannot list.
+    /// The provider the request reaches lists other models but not this
+    /// one: a retired built-in, or a typo.
     Unlisted,
+    /// The request reaches no provider the catalogue lists models for: an
+    /// endpoint whose models it cannot enumerate (an open-router prefix, an
+    /// `openai_compatible` endpoint), or no provider at all.
+    UncataloguedProvider,
 }
 
 /// The switch as applied.

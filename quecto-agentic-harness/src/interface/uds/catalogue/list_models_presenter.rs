@@ -1,7 +1,8 @@
 //! Wire rendering of the `list_models` outcome (#1845): the legacy response
 //! shape the CLI, UDS clients and the TUI model list all read. Identity,
 //! transport, auth and capability metadata come straight from the listed
-//! domain entries; `configured` is the use case's runnable verdict.
+//! domain entries; `configured` is the use case's runnable verdict and
+//! `unavailable` the structured reasons it is not runnable (#2435).
 
 use crate::application::catalogue::dto::{ModelCatalogueListing, ModelListingOutcome};
 use crate::domain::catalogue::AuthIdentity;
@@ -55,6 +56,14 @@ fn render_listing(listing: &ModelCatalogueListing) -> serde_json::Value {
                 "reasoning": entry.model.capabilities.reasoning,
                 "effortLevels": entry.model.capabilities.effort_levels,
                 "configured": listed.runnable,
+                // #2435: why the model cannot run, empty when it can.
+                "unavailable": entry
+                    .model
+                    .availability
+                    .reasons()
+                    .iter()
+                    .map(super::model_presenter::render_reason)
+                    .collect::<Vec<_>>(),
             })
         }).collect::<Vec<_>>()
     })

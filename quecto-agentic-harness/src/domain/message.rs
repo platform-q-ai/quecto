@@ -626,7 +626,8 @@ pub(crate) fn starts_with_ci(model: &str, prefix: &str) -> bool {
 /// **Allowlist**: only `claude-sonnet-5`, `claude-sonnet-4`, `claude-opus-4`,
 /// and `claude-haiku-4` families are recognised. Any other model string returns
 /// `None`, preventing a spoofed model name from silently matching unintended
-/// pricing.
+/// pricing. The Claude 4 families are no longer built in (#2435); their rates
+/// stay so a model declared in `models.json` is still costed.
 ///
 /// Rates are expressed as micro-USD per million tokens (integer arithmetic, no f64 drift).
 /// Cache write = 1.25× base input (5-minute TTL). Cache read = 0.1× base input.

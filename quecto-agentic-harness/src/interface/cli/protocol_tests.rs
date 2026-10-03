@@ -236,7 +236,7 @@ fn test_parse_set_model_command() {
 
 #[test]
 fn test_parse_set_model_provider_and_model_id_command() {
-    let json = r#"{"type":"set_model","provider":"openai-codex","modelId":"gpt-5.3-codex"}"#;
+    let json = r#"{"type":"set_model","provider":"openai-codex","modelId":"gpt-6-sol"}"#;
     let cmd: AgentCommand = serde_json::from_str(json).unwrap();
     match cmd {
         AgentCommand::SetModel {
@@ -247,7 +247,7 @@ fn test_parse_set_model_provider_and_model_id_command() {
         } => {
             assert!(model.is_none());
             assert_eq!(provider.as_deref(), Some("openai-codex"));
-            assert_eq!(model_id.as_deref(), Some("gpt-5.3-codex"));
+            assert_eq!(model_id.as_deref(), Some("gpt-6-sol"));
         }
         _ => panic!("expected SetModel"),
     }

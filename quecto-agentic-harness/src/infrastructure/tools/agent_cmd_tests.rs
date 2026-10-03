@@ -480,24 +480,24 @@ fn test_parse_set_model_with_model() {
     let tool = empty_tool();
     let (_, cmd, _) = tool
         .parse_and_build(
-            r#"{"agent_id":"w1","command":"set_model","model":"anthropic/claude-sonnet-4-6"}"#,
+            r#"{"agent_id":"w1","command":"set_model","model":"anthropic/claude-sonnet-5"}"#,
         )
         .unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
     assert_eq!(parsed["type"], "set_model");
-    assert_eq!(parsed["model"], "anthropic/claude-sonnet-4-6");
+    assert_eq!(parsed["model"], "anthropic/claude-sonnet-5");
 }
 
 #[test]
 fn test_parse_set_model_with_provider_and_model_id() {
     let tool = empty_tool();
     let (_, cmd, _) = tool
-            .parse_and_build(r#"{"agent_id":"w1","command":"set_model","provider":"anthropic","model_id":"claude-sonnet-4-6"}"#)
+            .parse_and_build(r#"{"agent_id":"w1","command":"set_model","provider":"anthropic","model_id":"claude-sonnet-5"}"#)
             .unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
     assert_eq!(parsed["type"], "set_model");
     assert_eq!(parsed["provider"], "anthropic");
-    assert_eq!(parsed["modelId"], "claude-sonnet-4-6");
+    assert_eq!(parsed["modelId"], "claude-sonnet-5");
 }
 
 #[test]
@@ -555,9 +555,8 @@ fn test_parse_set_model_provider_without_model_id() {
 #[test]
 fn test_parse_set_model_model_id_without_provider() {
     let tool = empty_tool();
-    let result = tool.parse_and_build(
-        r#"{"agent_id":"w1","command":"set_model","model_id":"claude-sonnet-4-6"}"#,
-    );
+    let result = tool
+        .parse_and_build(r#"{"agent_id":"w1","command":"set_model","model_id":"claude-sonnet-5"}"#);
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("provider"));
 }

@@ -228,10 +228,9 @@ async fn set_model_resets_the_session_effort_to_low() {
     let mut fx = EffortFx::new(Some(EffortLevel::XHigh));
     {
         let mut ctx = fx.ctx();
-        let cmd: AgentCommand = serde_json::from_str(
-            r#"{"type":"set_model","model":"anthropic-api/claude-sonnet-4-6"}"#,
-        )
-        .expect("set_model parses");
+        let cmd: AgentCommand =
+            serde_json::from_str(r#"{"type":"set_model","model":"anthropic-api/claude-sonnet-5"}"#)
+                .expect("set_model parses");
         crate::interface::cli::uds::uds_dispatch::dispatch_command(cmd, &mut ctx).await;
     }
     assert_eq!(

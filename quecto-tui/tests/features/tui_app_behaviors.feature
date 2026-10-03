@@ -45,7 +45,7 @@ Feature: TUI app event routing and command behaviours
   Scenario: Model selector opens from a fresh list and submits the filtered choice
     Given a fresh TUI app harness
     When I request the model selector
-    And the model list response contains "openai-api/gpt-5.5" and "anthropic-api/claude-fable-5"
+    And the model list response contains "openai-api/gpt-6.1-sol" and "anthropic-api/claude-fable-5"
     And I filter the model selector with "fable"
     And I accept the selected model
     Then a set model command is sent for "anthropic-api/claude-fable-5"
@@ -88,7 +88,7 @@ Feature: TUI app event routing and command behaviours
   @model-selector
   Scenario: A selected sub-agent receives the chosen model
     Given a TUI viewing sub-agent "a1"
-    And sub-agent "a1" uses model "openai-api/gpt-5.5" with effort "medium"
+    And sub-agent "a1" uses model "openai-api/gpt-6.1-sol" with effort "medium"
     When I choose model "anthropic-api/claude-fable-5" from the model selector
     Then sub-agent "a1" receives model "anthropic-api/claude-fable-5"
     And no set model command is sent to the master
@@ -96,7 +96,7 @@ Feature: TUI app event routing and command behaviours
   @model-selector
   Scenario: Explicit /model while a sub-agent is focused targets that sub-agent
     Given a TUI viewing sub-agent "a1"
-    And sub-agent "a1" uses model "openai-api/gpt-5.5" with effort "medium"
+    And sub-agent "a1" uses model "openai-api/gpt-6.1-sol" with effort "medium"
     When I submit the master prompt "/model anthropic-api/claude-fable-5"
     Then sub-agent "a1" receives model "anthropic-api/claude-fable-5"
     And no set model command is sent to the master
@@ -104,27 +104,27 @@ Feature: TUI app event routing and command behaviours
   @model-selector
   Scenario: /model without a focused sub-agent still targets the master
     Given a fresh TUI app harness
-    When I submit the master prompt "/model openai-api/gpt-5.5"
-    Then a set model command is sent for "openai-api/gpt-5.5"
-    And the footer shows the master model "openai-api/gpt-5.5"
+    When I submit the master prompt "/model openai-api/gpt-6.1-sol"
+    Then a set model command is sent for "openai-api/gpt-6.1-sol"
+    And the footer shows the master model "openai-api/gpt-6.1-sol"
 
   @model-selector
   Scenario: Successful sub-agent model switch updates only that session footer
     Given a TUI viewing sub-agent "a1"
-    And the master uses model "openai-api/gpt-5.5"
-    And sub-agent "a1" uses model "anthropic-api/claude-sonnet-4-6" with effort "high"
+    And the master uses model "openai-api/gpt-6.1-sol"
+    And sub-agent "a1" uses model "anthropic-api/claude-sonnet-5" with effort "high"
     And I have submitted the master prompt "/model anthropic-api/claude-fable-5"
     When sub-agent "a1" acknowledges and reports model "anthropic-api/claude-fable-5"
     Then the footer shows the sub-agent model "anthropic-api/claude-fable-5"
-    And the master session still shows model "openai-api/gpt-5.5"
+    And the master session still shows model "openai-api/gpt-6.1-sol"
 
   @model-selector
   Scenario: Late master model switch does not clobber a focused sub-agent footer
     Given a TUI viewing sub-agent "a1"
-    And the master uses model "openai-api/gpt-5.5"
-    And sub-agent "a1" uses model "anthropic-api/claude-sonnet-4-6" with effort "high"
-    When a master model switch succeeds for "openai-api/gpt-5.4"
-    Then the footer shows the sub-agent model "anthropic-api/claude-sonnet-4-6"
+    And the master uses model "openai-api/gpt-6.1-sol"
+    And sub-agent "a1" uses model "anthropic-api/claude-sonnet-5" with effort "high"
+    When a master model switch succeeds for "openai-api/gpt-5.6-terra"
+    Then the footer shows the sub-agent model "anthropic-api/claude-sonnet-5"
     And the app notification does not include "Model switched"
 
   @model-selector
@@ -137,26 +137,26 @@ Feature: TUI app event routing and command behaviours
   @effort
   Scenario: Footer shows the active effort level from agent state
     Given a fresh TUI app harness
-    When a get_state response arrives with model "openai-api/gpt-5.5" and effort "medium"
+    When a get_state response arrives with model "openai-api/gpt-6.1-sol" and effort "medium"
     Then the footer shows effort level "medium"
 
   @effort
   Scenario: Footer shows the effective default effort when the agent reports none set
     Given a fresh TUI app harness
-    When a get_state response arrives with model "openai-api/gpt-5.5" and a null effort
+    When a get_state response arrives with model "openai-api/gpt-6.1-sol" and a null effort
     Then the footer shows the effective default effort
 
   @effort
   Scenario: Explicit /effort level sends set_effort
     Given a fresh TUI app harness
-    And the agent reports model "openai-api/gpt-5.5" with effort "medium"
+    And the agent reports model "openai-api/gpt-6.1-sol" with effort "medium"
     When I submit the master prompt "/effort high"
     Then a set effort command is sent for "high"
 
   @effort
   Scenario: Successful effort switch updates the footer
     Given a fresh TUI app harness
-    And the agent reports model "openai-api/gpt-5.5" with effort "medium"
+    And the agent reports model "openai-api/gpt-6.1-sol" with effort "medium"
     And I have submitted the master prompt "/effort high"
     When the set effort response succeeds with effort "high"
     Then the footer shows effort level "high"
@@ -164,7 +164,7 @@ Feature: TUI app event routing and command behaviours
   @effort
   Scenario: Invalid /effort level is rejected and the previous setting stays
     Given a fresh TUI app harness
-    And the agent reports model "openai-api/gpt-5.5" with effort "medium"
+    And the agent reports model "openai-api/gpt-6.1-sol" with effort "medium"
     When I submit the master prompt "/effort turbo" expecting no agent command
     Then the app reports an invalid effort level listing "none, low, medium, high, xhigh"
     And no set effort command is sent
@@ -173,7 +173,7 @@ Feature: TUI app event routing and command behaviours
   @effort
   Scenario: An effort level from another provider's vocabulary is rejected
     Given a fresh TUI app harness
-    And the agent reports model "openai-api/gpt-5.5" with effort "medium"
+    And the agent reports model "openai-api/gpt-6.1-sol" with effort "medium"
     When I submit the master prompt "/effort max" expecting no agent command
     Then the app reports an invalid effort level listing "none, low, medium, high, xhigh"
     And no set effort command is sent
@@ -182,7 +182,7 @@ Feature: TUI app event routing and command behaviours
   @effort @issue-1996
   Scenario: A model with no effort control replaces the vocabulary and the selector says so
     Given a fresh TUI app harness
-    And the agent reports model "openai-api/gpt-5.5" with effort "medium"
+    And the agent reports model "openai-api/gpt-6.1-sol" with effort "medium"
     When a get_state response arrives with model "fireworks/plain" and no effort control
     And I open the effort selector via the /effort prompt
     Then the effort selector is not visible
@@ -191,7 +191,7 @@ Feature: TUI app event routing and command behaviours
   @effort @issue-1996
   Scenario: /effort on a model with no effort control is refused locally
     Given a fresh TUI app harness
-    And the agent reports model "openai-api/gpt-5.5" with effort "medium"
+    And the agent reports model "openai-api/gpt-6.1-sol" with effort "medium"
     And a get_state response arrives with model "fireworks/plain" and no effort control
     When I submit the master prompt "/effort high" expecting no agent command
     Then the app notification includes "offers no reasoning-effort levels"
@@ -200,7 +200,7 @@ Feature: TUI app event routing and command behaviours
   @effort @effort-selector
   Scenario: /effort opens a selector with the OpenAI effort vocabulary
     Given a fresh TUI app harness
-    And the agent reports model "openai-api/gpt-5.5" with effort "medium"
+    And the agent reports model "openai-api/gpt-6.1-sol" with effort "medium"
     When I open the effort selector via the /effort prompt
     Then the effort selector is visible
     And the effort selector lists exactly "none, low, medium, high, xhigh"
@@ -216,7 +216,7 @@ Feature: TUI app event routing and command behaviours
   @effort @effort-selector
   Scenario: Accepting an effort selector entry sends set_effort
     Given a fresh TUI app harness
-    And the agent reports model "openai-api/gpt-5.5" with effort "medium"
+    And the agent reports model "openai-api/gpt-6.1-sol" with effort "medium"
     And I have opened the effort selector via the /effort prompt
     When I filter the effort selector with "xh"
     And I accept the selected effort
@@ -225,7 +225,7 @@ Feature: TUI app event routing and command behaviours
   @effort @effort-selector
   Scenario: A selected sub-agent receives the chosen effort level
     Given a TUI viewing sub-agent "a1"
-    And sub-agent "a1" uses model "openai-api/gpt-5.5" with effort "medium"
+    And sub-agent "a1" uses model "openai-api/gpt-6.1-sol" with effort "medium"
     When I choose effort "high" from the effort selector
     Then sub-agent "a1" receives effort "high"
     And no set effort command is sent to the master
@@ -241,7 +241,7 @@ Feature: TUI app event routing and command behaviours
   @effort
   Scenario: Failed effort switch is notified and the footer keeps the previous level
     Given a fresh TUI app harness
-    And the agent reports model "openai-api/gpt-5.5" with effort "medium"
+    And the agent reports model "openai-api/gpt-6.1-sol" with effort "medium"
     And I have submitted the master prompt "/effort high"
     When the set effort response fails with "agent busy"
     Then the app notification includes "Effort switch failed: agent busy"

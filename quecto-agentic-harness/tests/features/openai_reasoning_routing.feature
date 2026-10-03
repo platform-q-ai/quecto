@@ -43,6 +43,8 @@ Feature: OpenAI endpoint and reasoning-effort rules (both auth modes)
     And the Responses request should carry the ChatGPT account identity
 
   Scenario: Non-reasoning model with tools over API-key auth stays on Chat Completions
+    # gpt-5.5 is a retired built-in (#2435): a model the catalogue does not
+    # mark reasoning stays on Chat Completions.
     Given a temp base directory
     And OpenAI's Chat Completions endpoint accepts agent turns with tools
     And an agent provider configured with an OpenAI API key

@@ -515,7 +515,7 @@ history inspection remain the job of `get_messages`.
 {
   "state": "runningTool",
   "effort": "low",
-  "model": "anthropic/claude-sonnet-4-6",
+  "model": "anthropic-api/claude-sonnet-5",
   "progress": {
     "state": "advancing",
     "reason": "4 tools completed in the last 120 seconds"
@@ -969,7 +969,7 @@ Switch the active model at runtime. The new model takes effect on the next promp
 |---|---|---|---|
 | `type` | `"set_model"` | yes | |
 | `id` | string | no | Correlation ID |
-| `model` | string | option A | Qualified model name, e.g. `"anthropic/claude-sonnet-4-6"` |
+| `model` | string | option A | Qualified model name, e.g. `"anthropic-api/claude-sonnet-5"` |
 | `provider` | string | option B | Provider name (used with `modelId`) |
 | `modelId` | string | option B | Model ID within the provider |
 | `persist` | `"local"` \| `"global"` | no | Also record the model as the configured default of that layer (#2024 S2): `"local"` writes `agents.defaults.model` in the repository overlay `<cwd>/.quecto/config.json` (created if absent, trust recorded), `"global"` in the run's global layer — `<base_dir>/config.json`, or the `--config` file when the run was started with one. Absent: the switch is in-memory, as before. |
@@ -988,16 +988,16 @@ You must provide either `model` OR both `provider` + `modelId`. Providing neithe
 {"selection":{"status":"ok","provider":"openai-api","generation":3},"persisted":{"scope":"local","path":"/work/app/.quecto/config.json"}}
 ```
 
-> **Important:** `set_model` only swaps a string — it performs no validation against the provider. Errors surface on the next `prompt`.
+> **Important:** `set_model` performs no request to the provider; errors surface on the next `prompt`. The one exception is a model the provider has already refused for this account or auth mode in this process (#2435): the switch is refused with `success: false` — `cannot switch to \`<model>\`: the provider refused it for this account or auth mode earlier in this process (<reason>). Choose another model from list_models` — and the session keeps its model. A not-runnable verdict for another reason names it in `selection.reasons` (`missing-credential`, `unsupported-transport: …`, `refused-for-account: …`).
 
 **Examples:**
 
 ```json
-{"type":"set_model","id":"sm-1","model":"anthropic/claude-sonnet-4-6"}
+{"type":"set_model","id":"sm-1","model":"anthropic-api/claude-sonnet-5"}
 ```
 
 ```json
-{"type":"set_model","id":"sm-2","provider":"anthropic","modelId":"claude-sonnet-4-6"}
+{"type":"set_model","id":"sm-2","provider":"anthropic-api","modelId":"claude-sonnet-5"}
 ```
 
 ```json
@@ -1043,6 +1043,8 @@ Return configured and built-in models from the runtime registry (`models.json` +
 |---|---|---|---|
 | `type` | `"list_models"` | yes | |
 | `id` | string | no | Correlation ID |
+
+**Response data:** `{"generation", "rejected": [{"model", "reason"}], "models": [...]}`. Each model carries `provider`, `id`, `model` (`provider/id`), `name`, `api`, `auth` (`apiKey`/`oauth`), `oauthProvider`, `contextWindow`, `maxTokens`, `input`, `cost`, `reasoning`, `effortLevels`, `configured` (whether it can run now) and `unavailable`: why it cannot, empty when it can — `missing-credential`, `unsupported-transport: <transport>`, `invalid-configuration: …`, `policy-denied: …`, or `refused-for-account: <provider's reason>` for a model the provider refused for this account or auth mode earlier in this process (#2435; such a model is listed, never switched to). When a catalogue source fails to load, the data is `{"models": [], "error": "<first failure>"}`.
 
 ---
 

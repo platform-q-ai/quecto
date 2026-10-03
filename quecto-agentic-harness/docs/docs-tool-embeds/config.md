@@ -16,7 +16,7 @@ when no command can express the change (and then `quecto config trust`).
 
 - You are in the repository root (`pwd` = the directory the agent was started in): the overlay is discovered there only.
 - `quecto status` exits 0. Read its `Overlay:` line: `none` (no overlay yet), `(trusted)`, `(untrusted)` or `(refused)`. With `(untrusted)` review the file (`quecto config get --local`) and run `quecto config trust` before any `config set`, which refuses to patch an untrusted overlay.
-- Values are JSON: quote strings (`'"openai-api/gpt-5.5"'`); a bare word that is not JSON is taken as a string; numbers, `true`, objects as written.
+- Values are JSON: quote strings (`'"openai-api/gpt-6.1-sol"'`); a bare word that is not JSON is taken as a string; numbers, `true`, objects as written.
 
 ## Do
 

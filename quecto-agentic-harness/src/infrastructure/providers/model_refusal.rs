@@ -11,9 +11,11 @@ use std::sync::Arc;
 
 use crate::application::catalogue::ports::ModelRefusalSink;
 use crate::application::providers::ports::{ChatRequest, LlmProvider, RouteCheck};
+use crate::domain::catalogue::ModelRef;
 use crate::domain::error::DomainError;
 use crate::domain::message::LlmResponse;
-use crate::domain::provider::StreamEvent;
+use crate::domain::provider::{ModelRoute, StreamEvent, route_model};
+use crate::domain::provider_error::model_refusal;
 
 #[derive(Debug)]
 pub struct RefusalRecordingProvider {
@@ -24,6 +26,41 @@ pub struct RefusalRecordingProvider {
 impl RefusalRecordingProvider {
     pub fn new(inner: Arc<dyn LlmProvider>, sink: Arc<dyn ModelRefusalSink>) -> Self {
         Self { inner, sink }
+    }
+
+    /// The provider and model a request for `model` goes to, by the
+    /// router's own routing rule over its providers; `None` when it routes
+    /// nowhere.
+    fn reached(&self, model: &str) -> Option<ModelRef> {
+        let order = self.inner.route_order();
+        let names: Vec<&str> = order.iter().map(String::as_str).collect();
+        match route_model(model, &names) {
+            ModelRoute::To { provider, model } => ModelRef::parse(provider, model).ok(),
+            ModelRoute::UnknownProvider { .. } | ModelRoute::NoProviders => None,
+        }
+    }
+
+    /// Record `error` against the model a request for `model` reached when
+    /// it is a definitive refusal; any other error records nothing.
+    fn observe(&self, model: &str, error: &DomainError) {
+        if let Some(reference) = self.reached(model) {
+            record(self.sink.as_ref(), &reference, error);
+        }
+    }
+
+    /// Wrap a reply future so a refusal it ends with is observed.
+    fn observed<'a>(
+        &'a self,
+        model: &'a str,
+        reply: Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + 'a>>,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + 'a>> {
+        Box::pin(async move {
+            let result = reply.await;
+            if let Err(error) = &result {
+                self.observe(model, error);
+            }
+            result
+        })
     }
 }
 
@@ -48,22 +85,63 @@ impl LlmProvider for RefusalRecordingProvider {
         &'a self,
         request: ChatRequest<'a>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + 'a>> {
-        let _ = &self.sink;
-        self.inner.chat(request)
+        let model = request.model;
+        self.observed(model, self.inner.chat(request))
     }
 
     fn chat_stream<'a>(
         &'a self,
         request: ChatRequest<'a>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + 'a>> {
-        self.inner.chat_stream(request)
+        let model = request.model;
+        self.observed(model, self.inner.chat_stream(request))
     }
 
     fn chat_stream_incremental<'a>(
         &'a self,
         request: ChatRequest<'a>,
     ) -> Pin<Box<dyn Future<Output = tokio::sync::mpsc::Receiver<StreamEvent>> + Send + 'a>> {
-        self.inner.chat_stream_incremental(request)
+        // The events are relayed as they come; only a terminal error is
+        // looked at. The relay ends when either side does, so dropping the
+        // receiver still drops the provider's stream.
+        let reached = self.reached(request.model);
+        let sink = self.sink.clone();
+        let stream = self.inner.chat_stream_incremental(request);
+        Box::pin(async move {
+            let mut events = stream.await;
+            let Some(reference) = reached else {
+                return events;
+            };
+            let (tx, rx) = tokio::sync::mpsc::channel(RELAY_CAPACITY);
+            tokio::spawn(async move {
+                while let Some(event) = events.recv().await {
+                    if let StreamEvent::Error(message) = &event {
+                        let error = DomainError::Provider(message.clone());
+                        record(sink.as_ref(), &reference, &error);
+                    }
+                    if tx.send(event).await.is_err() {
+                        return;
+                    }
+                }
+            });
+            rx
+        })
+    }
+}
+
+/// The relay's buffer: the providers' own stream channels hold 32 events.
+const RELAY_CAPACITY: usize = 32;
+
+/// Record `error` against `reference` when it is a definitive refusal.
+fn record(sink: &dyn ModelRefusalSink, reference: &ModelRef, error: &DomainError) {
+    if let Some(reason) = model_refusal(error) {
+        if sink.record_refusal(reference, &reason) {
+            tracing::warn!(
+                model = %reference.qualified_id(),
+                reason = %reason,
+                "provider refused the model for this account; it is no longer offered"
+            );
+        }
     }
 }
 

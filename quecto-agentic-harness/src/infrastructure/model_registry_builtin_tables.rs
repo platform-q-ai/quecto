@@ -1,8 +1,9 @@
 // Built-in tables, split out of `model_registry.rs` to respect the
 // per-file line cap: the built-in models and the auth modes each is offered
-// under (#2435), GPT-5.6 tier pricing, the published limits of the
-// OpenAI/Codex models the GPT-5.6+ enrichment does not cover (#2405,
-// checked 2026-10-01), and which built-in models take images (#2421).
+// under (#2435), GPT-5.6 tier pricing and windows (#2405), and which
+// built-in models take images (#2421). Models older than GPT-5.6 and
+// Claude 5 are retired from the tables (#2435); `models.json` can still
+// declare one.
 // They return infra types, so they live in the infrastructure layer next
 // to the registry rather than in the domain.
 
@@ -24,17 +25,24 @@ pub(super) struct BuiltinSpec {
 /// sign-in that Codex serves only some models to, say) never lists it, so
 /// the catalogue never offers a combination known to fail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Offered {
-    Both,
-    ApiKeyOnly,
-    OAuthOnly,
+pub(super) struct Offered {
+    pub(super) api_key: bool,
+    pub(super) oauth: bool,
 }
 
 impl Offered {
+    /// Offered under every auth mode of its vendor.
+    pub(super) const BOTH: Self = Self {
+        api_key: true,
+        oauth: true,
+    };
+
     /// Whether a provider authenticating with `auth` offers the model.
     pub(super) fn includes(self, auth: AuthMode) -> bool {
-        let _ = auth;
-        true
+        match auth {
+            AuthMode::ApiKey => self.api_key,
+            AuthMode::OAuth => self.oauth,
+        }
     }
 }
 
@@ -62,6 +70,12 @@ pub(super) fn vendor_specs(
     providers: &[BuiltinProvider],
     models: &[BuiltinModel],
 ) -> Vec<BuiltinSpec> {
+    debug_assert!(
+        models
+            .iter()
+            .all(|model| model.offered.api_key || model.offered.oauth),
+        "every built-in model is offered under some auth mode"
+    );
     let mut rows = Vec::new();
     for provider in providers {
         for model in models
@@ -86,7 +100,7 @@ const fn builtin(id: &'static str, name: &'static str) -> BuiltinModel {
     BuiltinModel {
         id,
         name,
-        offered: Offered::Both,
+        offered: Offered::BOTH,
     }
 }
 
@@ -97,13 +111,7 @@ pub(super) fn builtin_specs() -> Vec<BuiltinSpec> {
         builtin("claude-fable-5-1", "Claude Fable 5.1"),
         builtin("claude-fable-5", "Claude Fable 5"),
         builtin("claude-opus-5", "Claude Opus 5"),
-        builtin("claude-opus-4-8", "Claude Opus 4.8"),
-        builtin("claude-opus-4-7", "Claude Opus 4.7"),
-        builtin("claude-opus-4-6", "Claude Opus 4.6"),
-        builtin("claude-opus-4-5", "Claude Opus 4.5"),
         builtin("claude-sonnet-5", "Claude Sonnet 5"),
-        builtin("claude-sonnet-4-6", "Claude Sonnet 4.6"),
-        builtin("claude-sonnet-4-5", "Claude Sonnet 4.5"),
     ];
     const OPENAI: &[BuiltinModel] = &[
         builtin("gpt-6-astra", "GPT 6 Astra"),
@@ -113,12 +121,6 @@ pub(super) fn builtin_specs() -> Vec<BuiltinSpec> {
         builtin("gpt-5.6-sol", "GPT 5.6 Sol"),
         builtin("gpt-5.6-terra", "GPT 5.6 Terra"),
         builtin("gpt-5.6-luna", "GPT 5.6 Luna"),
-        builtin("gpt-5.5", "GPT 5.5"),
-        builtin("gpt-5.5-mini", "GPT 5.5 Mini"),
-        builtin("gpt-5.5-nano", "GPT 5.5 Nano"),
-        builtin("gpt-5.3-codex", "GPT 5.3 Codex"),
-        builtin("gpt-5.3-codex-spark", "GPT 5.3 Codex Spark"),
-        builtin("gpt-5.2-codex", "GPT 5.2 Codex"),
     ];
     const XAI: &[BuiltinModel] = &[
         builtin("grok-4.7", "Grok 4.7"),
@@ -210,61 +212,14 @@ pub(super) fn gpt_5_6_window(provider: &str) -> u32 {
     }
 }
 
-/// A model's published limits: its context window (input and output
-/// together) and, when the provider publishes one, its output cap.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct PublishedLimits {
-    pub(super) context_window: u32,
-    pub(super) max_output_tokens: Option<u32>,
-}
-
-const fn limits(context_window: u32, max_output_tokens: Option<u32>) -> PublishedLimits {
-    PublishedLimits {
-        context_window,
-        max_output_tokens,
-    }
-}
-
-/// The published limits of a built-in OpenAI/Codex model listed under
-/// `provider`, or `None` when no value could be confirmed: `gpt-5.5-mini`
-/// and `gpt-5.5-nano` have no model page, so they keep the configured
-/// budget. Sources:
-/// - gpt-5.5 (API): developers.openai.com/api/docs/models/gpt-5.5
-///   (1,050,000 window, 128,000 output).
-/// - gpt-5.5 in Codex (ChatGPT sign-in): openai.com/index/introducing-gpt-5-5
-///   (a 400K window in Codex; Codex's `models.json` gives 272000 of input,
-///   openai/codex@b1e72963); the output cap is the model's 128,000.
-/// - gpt-5.3-codex, gpt-5.2-codex: developers.openai.com/api/docs/models/{id}
-///   (400,000 window, 128,000 output).
-/// - gpt-5.3-codex-spark: openai.com/index/introducing-gpt-5-3-codex-spark
-///   (a 128k window; no published output cap).
-pub(super) fn openai_published_limits(provider: &str, id: &str) -> Option<PublishedLimits> {
-    match (provider, id) {
-        ("openai-api", "gpt-5.5") => Some(limits(1_050_000, Some(128_000))),
-        ("openai-oauth", "gpt-5.5") => Some(limits(400_000, Some(128_000))),
-        ("openai-api" | "openai-oauth", "gpt-5.3-codex" | "gpt-5.2-codex") => {
-            Some(limits(400_000, Some(128_000)))
-        }
-        ("openai-api" | "openai-oauth", "gpt-5.3-codex-spark") => Some(limits(128_000, None)),
-        _ => None,
-    }
-}
-
 /// The built-in models that take image input (#2421), by id: every Claude
-/// model, every GPT-5/GPT-6 tier but GPT-5.3 Codex Spark (text only:
-/// openai.com/index/introducing-gpt-5-3-codex-spark) and every Grok
+/// model, every GPT-5.6/GPT-6 tier and every Grok
 /// (docs.x.ai/developers/grok-4-7). A built-in not listed takes text only.
 const IMAGE_INPUT_IDS: &[&str] = &[
     "claude-fable-5-1",
     "claude-fable-5",
     "claude-opus-5",
-    "claude-opus-4-8",
-    "claude-opus-4-7",
-    "claude-opus-4-6",
-    "claude-opus-4-5",
     "claude-sonnet-5",
-    "claude-sonnet-4-6",
-    "claude-sonnet-4-5",
     "gpt-6-astra",
     "gpt-6-sol",
     "gpt-6.1-sol",
@@ -272,11 +227,6 @@ const IMAGE_INPUT_IDS: &[&str] = &[
     "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
-    "gpt-5.5",
-    "gpt-5.5-mini",
-    "gpt-5.5-nano",
-    "gpt-5.3-codex",
-    "gpt-5.2-codex",
     "grok-4.7",
     "grok-4.6",
     "grok-4.5",

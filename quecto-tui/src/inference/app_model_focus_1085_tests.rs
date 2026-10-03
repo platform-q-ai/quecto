@@ -41,7 +41,7 @@ fn command_of_type(commands: &[String], ty: &str) -> Option<serde_json::Value> {
 #[tokio::test]
 async fn late_master_set_model_success_does_not_clobber_focused_child_model() {
     let mut h = harness().await;
-    h.event(get_state_event("openai-api/gpt-5.5", Some("medium")));
+    h.event(get_state_event("openai-api/gpt-6.1-sol", Some("medium")));
     h.event(super::tui_harness::spawn_start("child"));
     let (socket, mut child_rx) = super::tui_harness::spawn_subagent_socket_with_commands("child");
     h.event(super::tui_harness::subagents_changed(vec![
@@ -71,7 +71,7 @@ async fn late_master_set_model_success_does_not_clobber_focused_child_model() {
         id: None,
         command: "set_model".into(),
         success: true,
-        data: Some(serde_json::json!({ "model": "openai-api/gpt-5.4" })),
+        data: Some(serde_json::json!({ "model": "openai-api/gpt-5.6-terra" })),
         error: None,
     });
 
@@ -89,7 +89,7 @@ async fn late_master_set_model_success_does_not_clobber_focused_child_model() {
     // Late master ack may update the master's retained footer without
     // clobbering the focused child's display (#1085).
     assert!(
-        h.master_footer_text().contains("openai-api/gpt-5.4"),
+        h.master_footer_text().contains("openai-api/gpt-5.6-terra"),
         "late master set_model must update master retained footer: {}",
         h.master_footer_text()
     );
@@ -104,7 +104,7 @@ async fn late_master_set_model_success_does_not_clobber_focused_child_model() {
 #[tokio::test]
 async fn model_command_with_focused_child_routes_to_child_connection() {
     let mut h = harness().await;
-    h.event(get_state_event("openai-api/gpt-5.5", Some("medium")));
+    h.event(get_state_event("openai-api/gpt-6.1-sol", Some("medium")));
     h.event(super::tui_harness::spawn_start("child"));
     let (socket, mut child_rx) = super::tui_harness::spawn_subagent_socket_with_commands("child");
     h.event(super::tui_harness::subagents_changed(vec![
@@ -141,7 +141,7 @@ async fn model_command_with_focused_child_routes_to_child_connection() {
 #[tokio::test]
 async fn model_command_without_focus_still_targets_master() {
     let mut h = harness().await;
-    h.event(get_state_event("openai-api/gpt-5.5", Some("medium")));
+    h.event(get_state_event("openai-api/gpt-6.1-sol", Some("medium")));
     h.submit("/model anthropic-api/claude-fable-5");
     let commands = h.drain_commands().await;
     let cmd = command_of_type(&commands, "set_model")
@@ -156,7 +156,7 @@ async fn model_command_without_focus_still_targets_master() {
 #[tokio::test]
 async fn model_change_refused_when_focused_child_connection_not_ready() {
     let mut h = harness().await;
-    h.event(get_state_event("openai-api/gpt-5.5", Some("medium")));
+    h.event(get_state_event("openai-api/gpt-6.1-sol", Some("medium")));
     h.event(super::tui_harness::spawn_start("child"));
     // No socket path → no child-feed command channel is installed.
     h.event(super::tui_harness::subagents_changed(vec![
@@ -181,7 +181,7 @@ async fn model_change_refused_when_focused_child_connection_not_ready() {
 #[tokio::test]
 async fn child_set_model_success_updates_only_child_footer_and_resyncs() {
     let mut h = harness().await;
-    h.event(get_state_event("openai-api/gpt-5.5", Some("medium")));
+    h.event(get_state_event("openai-api/gpt-6.1-sol", Some("medium")));
     h.event(super::tui_harness::spawn_start("child"));
     let (socket, mut child_rx) = super::tui_harness::spawn_subagent_socket_with_commands("child");
     h.event(super::tui_harness::subagents_changed(vec![
@@ -199,7 +199,7 @@ async fn child_set_model_success_updates_only_child_footer_and_resyncs() {
             command: "get_state".into(),
             success: true,
             data: Some(serde_json::json!({
-                "model": "anthropic-api/claude-sonnet-4-6",
+                "model": "anthropic-api/claude-sonnet-5",
                 "effort": "high",
                 "effortLevels": ["low", "medium", "high", "max"],
             })),
@@ -241,17 +241,17 @@ async fn child_set_model_success_updates_only_child_footer_and_resyncs() {
         h.notification_messages()
     );
     assert!(
-        h.full_frame().contains("anthropic-api/claude-sonnet-4-6"),
+        h.full_frame().contains("anthropic-api/claude-sonnet-5"),
         "bare ack must retain the previous child model until get_state, frame:\n{}",
         h.full_frame()
     );
     assert_eq!(
         h.current_model().as_deref(),
-        Some("anthropic-api/claude-sonnet-4-6"),
+        Some("anthropic-api/claude-sonnet-5"),
         "bare ack must retain the authoritative selector marker"
     );
     assert!(
-        h.master_footer_text().contains("openai-api/gpt-5.5"),
+        h.master_footer_text().contains("openai-api/gpt-6.1-sol"),
         "master retained footer must not be clobbered: {}",
         h.master_footer_text()
     );
@@ -305,7 +305,7 @@ async fn child_set_model_success_updates_only_child_footer_and_resyncs() {
 #[tokio::test]
 async fn failed_child_set_model_keeps_previous_authoritative_model() {
     let mut h = harness().await;
-    h.event(get_state_event("openai-api/gpt-5.5", Some("medium")));
+    h.event(get_state_event("openai-api/gpt-6.1-sol", Some("medium")));
     h.event(super::tui_harness::spawn_start("child"));
     let (socket, mut child_rx) = super::tui_harness::spawn_subagent_socket_with_commands("child");
     h.event(super::tui_harness::subagents_changed(vec![
@@ -323,7 +323,7 @@ async fn failed_child_set_model_keeps_previous_authoritative_model() {
             command: "get_state".into(),
             success: true,
             data: Some(serde_json::json!({
-                "model": "anthropic-api/claude-sonnet-4-6",
+                "model": "anthropic-api/claude-sonnet-5",
                 "effort": "high",
                 "effortLevels": ["low", "medium", "high", "max"],
             })),
@@ -333,12 +333,12 @@ async fn failed_child_set_model_keeps_previous_authoritative_model() {
 
     h.submit("/model anthropic-api/claude-fable-5");
     assert!(
-        h.full_frame().contains("anthropic-api/claude-sonnet-4-6"),
+        h.full_frame().contains("anthropic-api/claude-sonnet-5"),
         "submission must not optimistically replace the child model"
     );
     assert_eq!(
         h.current_model().as_deref(),
-        Some("anthropic-api/claude-sonnet-4-6")
+        Some("anthropic-api/claude-sonnet-5")
     );
 
     h.route(
@@ -359,13 +359,13 @@ async fn failed_child_set_model_keeps_previous_authoritative_model() {
         "active child failure must be reported"
     );
     assert!(
-        h.full_frame().contains("anthropic-api/claude-sonnet-4-6"),
+        h.full_frame().contains("anthropic-api/claude-sonnet-5"),
         "failed switch must retain the previous child footer, frame:\n{}",
         h.full_frame()
     );
     assert_eq!(
         h.current_model().as_deref(),
-        Some("anthropic-api/claude-sonnet-4-6"),
+        Some("anthropic-api/claude-sonnet-5"),
         "failed switch must retain the previous selector marker"
     );
 }
@@ -373,7 +373,7 @@ async fn failed_child_set_model_keeps_previous_authoritative_model() {
 #[tokio::test]
 async fn late_master_set_model_failure_does_not_toast_over_focused_child() {
     let mut h = harness().await;
-    h.event(get_state_event("openai-api/gpt-5.5", Some("medium")));
+    h.event(get_state_event("openai-api/gpt-6.1-sol", Some("medium")));
     h.event(super::tui_harness::spawn_start("child"));
     let (socket, mut child_rx) = super::tui_harness::spawn_subagent_socket_with_commands("child");
     h.event(super::tui_harness::subagents_changed(vec![
@@ -419,7 +419,7 @@ async fn late_master_set_model_failure_does_not_toast_over_focused_child() {
 #[tokio::test]
 async fn select_agent_restores_current_model_from_session_footer() {
     let mut h = harness().await;
-    h.event(get_state_event("openai-api/gpt-5.5", Some("medium")));
+    h.event(get_state_event("openai-api/gpt-6.1-sol", Some("medium")));
     h.event(super::tui_harness::spawn_start("child"));
     let (socket, mut child_rx) = super::tui_harness::spawn_subagent_socket_with_commands("child");
     h.event(super::tui_harness::subagents_changed(vec![
@@ -453,7 +453,7 @@ async fn select_agent_restores_current_model_from_session_footer() {
     h.select(None);
     assert_eq!(
         h.current_model().as_deref(),
-        Some("openai-api/gpt-5.5"),
+        Some("openai-api/gpt-6.1-sol"),
         "select_agent(None) must restore master current_model from footer"
     );
 }
@@ -464,7 +464,7 @@ async fn select_agent_restores_current_model_from_session_footer() {
 async fn a_pin_with_a_focused_child_sends_nothing_and_says_where_to_pin_from() {
     use crate::shell::keys::Key;
     let mut h = harness().await;
-    h.event(get_state_event("openai-api/gpt-5.5", Some("medium")));
+    h.event(get_state_event("openai-api/gpt-6.1-sol", Some("medium")));
     h.event(super::tui_harness::spawn_start("child"));
     let (socket, mut child_rx) = super::tui_harness::spawn_subagent_socket_with_commands("child");
     h.event(super::tui_harness::subagents_changed(vec![

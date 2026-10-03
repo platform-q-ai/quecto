@@ -27,7 +27,7 @@ Feature: Reasoning effort is a per-model capability that reaches the wire
   Scenario: OpenAI's own chat-completions endpoint never carries reasoning_effort
     # OpenAI rejects reasoning_effort with function tools on Chat Completions;
     # its reasoning ids are routed to the Responses API instead.
-    Given a chat-completions request for model "gpt-5.5" with effort "high"
+    Given a chat-completions request for model "gpt-6.1-sol" with effort "high"
     When the "openai" OpenAI-compatible provider builds the chat-completions request
     Then the chat-completions body should not contain "reasoning_effort"
 

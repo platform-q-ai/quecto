@@ -111,15 +111,28 @@ impl CatalogueSnapshotStore {
     /// Record that the provider refused `reference` for the account in use
     /// (#2435). True when this is the first refusal recorded for it.
     pub fn record_refusal(&self, reference: &ModelRef, reason: &str) -> bool {
-        let _ = (reference, reason, &self.refusals);
-        false
+        debug_assert!(!reason.trim().is_empty(), "a refusal says why");
+        let mut refusals = self
+            .refusals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match refusals.contains_key(reference) {
+            true => false,
+            false => {
+                refusals.insert(reference.clone(), reason.to_string());
+                true
+            }
+        }
     }
 
     /// The reason the provider refused `reference` for the account in use,
     /// if it has (#2435).
     pub fn refusal(&self, reference: &ModelRef) -> Option<String> {
-        let _ = reference;
-        None
+        self.refusals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(reference)
+            .cloned()
     }
 
     /// Remember one source's successfully loaded entries as its retention
@@ -254,6 +267,12 @@ impl ResolveCatalogueUseCase {
                     transport_has_adapter(&entry.provider.transport),
                     credential_available,
                 );
+                // #2435: a model the provider refused for the account in
+                // use stays unavailable for the rest of the process.
+                if let Some(reason) = store.refusal(entry.reference()) {
+                    entry.model.availability =
+                        refused_availability(&entry.model.availability, reason);
+                }
             }
         }
         // Read-increment-resolve-publish happens under one write lock so a
@@ -305,6 +324,17 @@ pub fn derive_availability(
     };
     Availability::unavailable(status, reasons)
         .expect("non-runnable status with at least one reason is always constructible")
+}
+
+/// `availability` with the provider's refusal of the model for the account
+/// in use added (#2435): never runnable, at most `Available`, every earlier
+/// reason kept.
+fn refused_availability(availability: &Availability, reason: String) -> Availability {
+    let status = availability.status().min(AvailabilityStatus::Available);
+    let mut reasons = availability.reasons().to_vec();
+    reasons.push(UnavailableReason::RefusedForAccount(reason));
+    Availability::unavailable(status, reasons)
+        .expect("a non-runnable status with at least one reason is always constructible")
 }
 
 #[cfg(test)]

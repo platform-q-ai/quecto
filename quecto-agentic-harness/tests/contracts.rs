@@ -260,6 +260,8 @@ mod ended_child_records;
 mod fetch_web_content;
 #[path = "contracts/model_default_persistence.rs"]
 mod model_default_persistence;
+#[path = "contracts/model_refusal_sink.rs"]
+mod model_refusal_sink;
 #[path = "contracts/model_runtime.rs"]
 mod model_runtime;
 #[path = "contracts/owned_child_termination.rs"]

@@ -90,12 +90,12 @@ fn registry_custom_models_override_builtin_by_provider_and_id() {
     let path = tmp.path().join("models.json");
     std::fs::write(
         &path,
-        r#"{"providers":{"openai-api":{"api":"openai-completions","models":[{"id":"gpt-5.5","name":"Custom GPT","contextWindow":42}]}}}"#,
+        r#"{"providers":{"openai-api":{"api":"openai-completions","models":[{"id":"gpt-5.6-sol","name":"Custom GPT","contextWindow":42}]}}}"#,
     )
     .unwrap();
 
     let registry = ModelRegistry::load_from_path(&path).unwrap();
-    let model = registry.find("openai-api", "gpt-5.5").unwrap();
+    let model = registry.find("openai-api", "gpt-5.6-sol").unwrap();
     assert_eq!(model.display_name.as_deref(), Some("Custom GPT"));
     assert_eq!(model.context_window, 42);
 }
@@ -119,10 +119,10 @@ fn registry_missing_file_returns_builtin_models() {
     assert!(registry.find("openai-oauth", "gpt-6-astra").is_some());
     assert_eq!(
         registry
-            .find("openai-api", "gpt-5.5-mini")
+            .find("openai-api", "gpt-5.6-luna")
             .unwrap()
             .qualified_id(),
-        "openai-api/gpt-5.5-mini"
+        "openai-api/gpt-5.6-luna"
     );
 }
 
@@ -287,22 +287,24 @@ fn every_builtin_gpt_5_6_id_has_pricing_and_enriched_limits() {
 }
 
 #[test]
-fn builtin_claude_sonnet_5_is_ordered_before_sonnet_4_6_for_each_auth_mode() {
+fn builtin_claude_models_keep_their_table_order_for_each_auth_mode() {
     let registry = ModelRegistry::builtin();
     for provider in ["anthropic-api", "anthropic-oauth"] {
-        let sonnet_5 = registry
+        let ids: Vec<&str> = registry
             .models()
             .iter()
-            .position(|m| m.provider == provider && m.id == "claude-sonnet-5")
-            .expect("missing claude-sonnet-5");
-        let sonnet_4_6 = registry
-            .models()
-            .iter()
-            .position(|m| m.provider == provider && m.id == "claude-sonnet-4-6")
-            .expect("missing claude-sonnet-4-6");
-        assert!(
-            sonnet_5 < sonnet_4_6,
-            "{provider}/claude-sonnet-5 should appear before claude-sonnet-4-6"
+            .filter(|m| m.provider == provider)
+            .map(|m| m.id.as_str())
+            .collect();
+        assert_eq!(
+            ids,
+            [
+                "claude-fable-5-1",
+                "claude-fable-5",
+                "claude-opus-5",
+                "claude-sonnet-5"
+            ],
+            "{provider}"
         );
     }
 }
@@ -447,7 +449,7 @@ fn registry_parses_explicit_oauth_auth_block() {
             "anthropic-oauth": {
               "api": "anthropic-messages",
               "auth": { "mode": "oauth", "oauthProvider": "anthropic" },
-              "models": [{ "id": "claude-opus-4-8" }]
+              "models": [{ "id": "claude-opus-5" }]
             }
           }
         }"#,
@@ -455,7 +457,7 @@ fn registry_parses_explicit_oauth_auth_block() {
     .unwrap();
 
     let registry = ModelRegistry::load_from_path(&path).unwrap();
-    let model = registry.find("anthropic-oauth", "claude-opus-4-8").unwrap();
+    let model = registry.find("anthropic-oauth", "claude-opus-5").unwrap();
     assert_eq!(model.auth, AuthMode::OAuth);
     assert_eq!(model.oauth_provider.as_deref(), Some("anthropic"));
 }
@@ -472,7 +474,7 @@ fn registry_parses_explicit_api_key_auth_block() {
               "api": "anthropic-messages",
               "baseUrl": "https://api.anthropic.com",
               "auth": { "mode": "apiKey", "apiKey": "sk-ant-direct" },
-              "models": [{ "id": "claude-opus-4-8" }]
+              "models": [{ "id": "claude-opus-5" }]
             }
           }
         }"#,
@@ -480,7 +482,7 @@ fn registry_parses_explicit_api_key_auth_block() {
     .unwrap();
 
     let registry = ModelRegistry::load_from_path(&path).unwrap();
-    let model = registry.find("anthropic-api", "claude-opus-4-8").unwrap();
+    let model = registry.find("anthropic-api", "claude-opus-5").unwrap();
     assert_eq!(model.auth, AuthMode::ApiKey);
     assert_eq!(model.api_key.as_deref(), Some("sk-ant-direct"));
     assert!(model.oauth_provider.is_none());
@@ -632,7 +634,7 @@ fn context_window_for_returns_declared_windows_only() {
     // A model whose window is only the synthesized default is "unknown":
     // it must not clamp the configured budget.
     assert_eq!(
-        registry.context_window_for("anthropic-api/claude-opus-4-8"),
+        registry.context_window_for("anthropic-api/claude-opus-5"),
         None
     );
     // Unknown models and non-qualified ids are unknown.

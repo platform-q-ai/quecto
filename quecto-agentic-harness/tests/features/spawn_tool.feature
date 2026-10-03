@@ -299,15 +299,15 @@ Feature: SpawnTool — child agent process spawning
 
   Scenario: Parse a request with an explicit model string
     Given a SpawnTool with empty allowlist
-    When I parse spawn arguments '{"task":"work","model":"openai/gpt-5.5"}'
+    When I parse spawn arguments '{"task":"work","model":"openai/gpt-6.1-sol"}'
     Then the spawn result should not be an error
-    And the parsed spawn config should have model "openai/gpt-5.5"
+    And the parsed spawn config should have model "openai/gpt-6.1-sol"
 
   Scenario: Parse a request with provider and model_id pair
     Given a SpawnTool with empty allowlist
-    When I parse spawn arguments '{"task":"work","provider":"openai","model_id":"gpt-5.5"}'
+    When I parse spawn arguments '{"task":"work","provider":"openai","model_id":"gpt-6.1-sol"}'
     Then the spawn result should not be an error
-    And the parsed spawn config should have model "openai/gpt-5.5"
+    And the parsed spawn config should have model "openai/gpt-6.1-sol"
 
   Scenario: Parse a request without a model has no model override
     Given a SpawnTool with empty allowlist

@@ -24,6 +24,6 @@ Feature: E2E Mock LLM Agent Matrix
   Scenario: Mocked Anthropic agent returns sentinel token
     Given a mocked Anthropic workspace is configured
     And the mock provider returns a text response "ANTHROPIC_MOCK_OK"
-    When I run quecto agent --model "anthropic-api/claude-sonnet-4-6" -s - -m "Reply with ANTHROPIC_MOCK_OK"
+    When I run quecto agent --model "anthropic-api/claude-sonnet-5" -s - -m "Reply with ANTHROPIC_MOCK_OK"
     Then the exit code should be 0
     And stdout should contain "ANTHROPIC_MOCK_OK"

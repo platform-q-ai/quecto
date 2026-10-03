@@ -35,8 +35,8 @@ fn area_variants_parse_and_container_aliases_podman() {
 #[test]
 fn model_variant_takes_exactly_one_plain_id() {
     assert_eq!(
-        SetupCommand::parse("model openai-api/gpt-5.5"),
-        SetupCommand::Walkthrough(SetupArea::Model("openai-api/gpt-5.5".into()))
+        SetupCommand::parse("model openai-api/gpt-6.1-sol"),
+        SetupCommand::Walkthrough(SetupArea::Model("openai-api/gpt-6.1-sol".into()))
     );
     assert_eq!(
         SetupCommand::parse("model anthropic/claude-opus-5:latest_v1.2"),

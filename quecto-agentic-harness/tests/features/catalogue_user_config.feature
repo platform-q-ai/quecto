@@ -7,24 +7,24 @@ Feature: User-owned catalogue extension surface and hot reload (epic #1193, slic
   # AC1a — data-only model add on an existing provider
   @done
   Scenario: Adding a model to an existing provider through the user catalogue file
-    Given a user catalogue file adding model "gpt-5.5-preview" named "GPT 5.5 Preview" to provider "openai-api"
+    Given a user catalogue file adding model "gpt-6.2-preview" named "GPT 6.2 Preview" to provider "openai-api"
     When the effective catalogue is resolved from the user's configuration
-    Then the published snapshot lists model "openai-api/gpt-5.5-preview" named "GPT 5.5 Preview"
+    Then the published snapshot lists model "openai-api/gpt-6.2-preview" named "GPT 6.2 Preview"
 
   # AC1b — stable-ID metadata override of a built-in entry
   @done
   Scenario: Overriding a built-in model's metadata by stable ID
-    Given a user catalogue file overriding model "openai-api/gpt-5.5" with name "My 5.5" and context window 999000
+    Given a user catalogue file overriding model "openai-api/gpt-5.6-sol" with name "My 5.6 Sol" and context window 999000
     When the effective catalogue is resolved from the user's configuration
-    Then the published snapshot lists model "openai-api/gpt-5.5" named "My 5.5"
-    And the published model "openai-api/gpt-5.5" has context window 999000
+    Then the published snapshot lists model "openai-api/gpt-5.6-sol" named "My 5.6 Sol"
+    And the published model "openai-api/gpt-5.6-sol" has context window 999000
 
   # AC1b — an override replaces the built-in entry, never duplicates it
   @done
   Scenario: An override never duplicates the built-in entry
-    Given a user catalogue file overriding model "openai-api/gpt-5.5" with name "My 5.5" and context window 999000
+    Given a user catalogue file overriding model "openai-api/gpt-5.6-sol" with name "My 5.6 Sol" and context window 999000
     When the effective catalogue is resolved from the user's configuration
-    Then the published snapshot lists model "openai-api/gpt-5.5" exactly once
+    Then the published snapshot lists model "openai-api/gpt-5.6-sol" exactly once
 
   # AC2 — data-only provider add on an existing transport reaches runnable
   @done
@@ -76,10 +76,10 @@ Feature: User-owned catalogue extension surface and hot reload (epic #1193, slic
   # AC5 — no literal secrets in the override surface
   @done
   Scenario: A literal secret in the override surface is rejected with a structured error
-    Given a user catalogue file overriding model "openai-api/gpt-5.5" with a literal secret "sk-live-secret123"
+    Given a user catalogue file overriding model "openai-api/gpt-5.6-sol" with a literal secret "sk-live-secret123"
     When the effective catalogue is resolved from the user's configuration
     Then the resolution reports a user catalogue error mentioning "credential reference"
-    And the published model "openai-api/gpt-5.5" keeps its built-in name
+    And the published model "openai-api/gpt-5.6-sol" keeps its built-in name
 
   # AC5/AC6 boundary — the legacy provider-level apiKey stays accepted for
   # compatibility (documented); only the new override surface is reference-only.

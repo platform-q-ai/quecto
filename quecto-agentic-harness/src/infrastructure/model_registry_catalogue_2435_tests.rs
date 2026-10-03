@@ -82,17 +82,23 @@ fn a_known_per_auth_exclusion_is_never_listed() {
         BuiltinModel {
             id: "everywhere",
             name: "Everywhere",
-            offered: Offered::Both,
+            offered: Offered::BOTH,
         },
         BuiltinModel {
             id: "api-only",
             name: "API only",
-            offered: Offered::ApiKeyOnly,
+            offered: Offered {
+                api_key: true,
+                oauth: false,
+            },
         },
         BuiltinModel {
             id: "oauth-only",
             name: "OAuth only",
-            offered: Offered::OAuthOnly,
+            offered: Offered {
+                api_key: false,
+                oauth: true,
+            },
         },
     ];
     let rows: Vec<(&str, &str, String)> = vendor_specs(&providers, &models)
@@ -124,12 +130,20 @@ fn a_known_per_auth_exclusion_is_never_listed() {
 
 #[test]
 fn offered_names_exactly_the_auth_modes_it_allows() {
-    assert!(Offered::Both.includes(AuthMode::ApiKey));
-    assert!(Offered::Both.includes(AuthMode::OAuth));
-    assert!(Offered::ApiKeyOnly.includes(AuthMode::ApiKey));
-    assert!(!Offered::ApiKeyOnly.includes(AuthMode::OAuth));
-    assert!(Offered::OAuthOnly.includes(AuthMode::OAuth));
-    assert!(!Offered::OAuthOnly.includes(AuthMode::ApiKey));
+    let api_only = Offered {
+        api_key: true,
+        oauth: false,
+    };
+    let oauth_only = Offered {
+        api_key: false,
+        oauth: true,
+    };
+    assert!(Offered::BOTH.includes(AuthMode::ApiKey));
+    assert!(Offered::BOTH.includes(AuthMode::OAuth));
+    assert!(api_only.includes(AuthMode::ApiKey));
+    assert!(!api_only.includes(AuthMode::OAuth));
+    assert!(oauth_only.includes(AuthMode::OAuth));
+    assert!(!oauth_only.includes(AuthMode::ApiKey));
 }
 
 /// A retired built-in stays usable: `models.json` declares it under the

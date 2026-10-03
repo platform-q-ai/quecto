@@ -316,10 +316,10 @@ fn ucfg_then_error_mentions(world: &mut QuectoWorld, fragment: String) {
 #[then(expr = "the published model {string} keeps its built-in name")]
 fn ucfg_then_keeps_builtin_name(world: &mut QuectoWorld, qualified: String) {
     let entry = ucfg_find(ucfg_resolved(world), &qualified);
-    // The built-in display name for openai-api/gpt-5.5 in the registry table.
+    // The built-in display name for openai-api/gpt-5.6-sol in the registry table.
     assert_eq!(
         entry.model.display_name.as_deref(),
-        Some("GPT 5.5 (API key)"),
+        Some("GPT 5.6 Sol (API key)"),
         "a rejected override must leave the built-in metadata untouched"
     );
 }

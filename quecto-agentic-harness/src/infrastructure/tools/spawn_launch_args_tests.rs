@@ -45,14 +45,14 @@ fn as_strings(args: &[OsString]) -> Vec<String> {
 #[test]
 fn includes_model_flag_when_set() {
     let mut cfg = base_config();
-    cfg.model = Some("openai/gpt-5.5".into());
+    cfg.model = Some("openai/gpt-6.1-sol".into());
     let args = build_child_cli_args(&spec(&cfg));
     let strs = as_strings(&args);
     let pos = strs
         .iter()
         .position(|a| a == "--model")
         .expect("--model should be forwarded");
-    assert_eq!(strs[pos + 1], "openai/gpt-5.5");
+    assert_eq!(strs[pos + 1], "openai/gpt-6.1-sol");
 }
 
 #[test]
@@ -121,7 +121,7 @@ fn omits_disable_tool_when_empty() {
 fn forwards_existing_flags_alongside_model() {
     let mut cfg = base_config();
     cfg.system = Some("be terse".into());
-    cfg.model = Some("anthropic/claude-sonnet-4-6".into());
+    cfg.model = Some("anthropic/claude-sonnet-5".into());
     cfg.workflow = true;
     cfg.workflow_guards = true;
     let s = ChildLaunchSpec {

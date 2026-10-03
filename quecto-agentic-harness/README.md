@@ -222,7 +222,7 @@ quecto agent -m "Write a Python script that generates primes"
 | `-s` / `--session` | No | Session name for persistence. Omit for `cli:default`. Use `-` for ephemeral |
 | `--no-session` | No | Ephemeral mode — nothing saved or loaded (mutually exclusive with `-s`) |
 | `--system` | No | System prompt prepended to conversation |
-| `--model` | No | Override model. Accepts bare id (`gpt-5.3-codex`) or provider-qualified (`openai/gpt-4o`). Default: `gpt-5.5` |
+| `--model` | No | Override model. Accepts bare id (`gpt-6.1-sol`) or provider-qualified (`openai-oauth/gpt-6.1-sol`). Default: `gpt-6.1-sol` |
 | `--max-iterations` | No | Max tool call rounds before stopping |
 | `--max-time` | No | Wall-clock timeout in seconds (exit code 2 on timeout). At the deadline the run is stopped: an in-flight model request is abandoned, a running bash command's process group is killed, and the unfinished request and the reason are written to the event log and pending request accounting flushed (waiting at most 5 s); blocking work already under way (a DNS lookup, a container teardown script, a swarm board write) may still finish before the process exits (#2168). A named session first saves its transcript, each tool call the stop cut short answered with an error saying so. Then a sub-agent launch the stop cancelled is rolled back: a container create still running is sent SIGTERM to remove what it made (see the create contract in docs/container-runtimes.md), and one already made is cleaned up. The process waits at most 5 s for this, as every harness exit does (#2173) |
 | `--mode` | No | Operation mode: default one-shot, or `uds` for UDS event bus |
@@ -278,11 +278,11 @@ socat - UNIX-CONNECT:/tmp/quecto-agent-<uuid>.sock
 | `get_messages` | optional `count`, optional `before`, optional `agent_id`, optional `id` | Return stable committed transcript history (best used after the turn ends) as the newest bounded page; `count` requests an older-client newest slice, `before` pages backward, and `agent_id` targets a sub-agent. Responses include `messages`, `before`, and `hasMoreBefore` so older history is explicitly reachable. Oversized history entries are returned as recoverable summaries (`id`, role/tool metadata, preview `content`, `contentLength`, `collapsed: true`, `truncated: true`) and can be fetched deliberately with ranged `get_message`. |
 | `get_message` | `messageId`, optional `offset`, optional `limit`, optional `agent_id`, optional `toolCallId`, optional `id` | Return one stable message by id. With `offset`/`limit`, returns a bounded content byte range plus `nextOffset`, `contentLength`, and `hasMoreContent` so oversized messages can be paged without exceeding the frame cap; `agent_id` targets a sub-agent; `toolCallId` recovers tool-call arguments instead of message content |
 | `get_session_stats` | optional `id` | Return normalized token/cache usage, `costMicroUsd`, `cacheHitRatio`, and context occupancy (`contextTokens` / `maxContextTokens`); legacy float `cost` remains hidden from serialization |
-| `list_models` | optional `id` | Return configured and built-in models from the runtime registry |
+| `list_models` | optional `id` | Return configured and built-in models from the runtime registry; each says whether it can run (`configured`) and, if not, why (`unavailable`, e.g. `refused-for-account: …` for a model the provider refused for this account earlier in this process, #2435) |
 | `list_sessions` | optional `id` | Return every persisted session available for resume, newest first (`key`, `title`, `messageCount`, `updatedUnixSecs`) |
 | `new_session` | optional `id` | Switch to a fresh user-chat session (idle only) |
 | `resume_session` | `session`, optional `id` | Switch the active UDS conversation to a persisted session (a listed `chat-…` key, a `cli:<name>` key, or a bare CLI session name) |
-| `set_model` | `model` or `provider`+`modelId`, optional `id` | Switch model at runtime |
+| `set_model` | `model` or `provider`+`modelId`, optional `id` | Switch model at runtime; refused for a model the provider refused for this account earlier in this process (#2435) |
 | `set_effort` | `effort`, optional `id` | Set session reasoning effort (`none`/`low`/`medium`/`high`/`xhigh`/`max`, validated against the active model's catalogue vocabulary — the `effortLevels` `get_state` reports; a model with none refuses every level) |
 | `get_tool_catalogue` / `list_tools` | optional `id` | Return the rich `ToolCatalogueEntry` snapshot for control/query clients in `data.tools` (bundled-native and UDS tools, policy/effective availability, source/owner/lifecycle/health) |
 | `reload` | optional `id` | Force a provider/model config reload |
@@ -360,14 +360,14 @@ quecto status
 quecto config get                                  # the effective (merged) document
 quecto config get agents.defaults.model            # one value, as JSON
 quecto config get --global tools.policy.entries    # one layer as written (--local for the overlay)
-quecto config set agents.defaults.model '"openai-api/gpt-5.5"'   # writes ./.quecto/config.json
+quecto config set agents.defaults.model '"openai-api/gpt-6.1-sol"'   # writes ./.quecto/config.json
 quecto config set --global agents.defaults.effort '"high"'       # writes ~/.quecto/config.json
 quecto config unset agents.defaults.model          # remove a key (--global for the global file)
 quecto config trust                                # approve ./.quecto/config.json's current content
 ```
 
 Values are JSON; a bare word that is not valid JSON is taken as a string, so
-`quecto config set agents.defaults.model openai-api/gpt-5.5` reads naturally (store the qualified `provider/model` id). `set` and
+`quecto config set agents.defaults.model openai-api/gpt-6.1-sol` reads naturally (store the qualified `provider/model` id). `set` and
 `unset` default to the repo-local overlay and refuse the global-only sections
 (`providers`, `admission`) there; they also refuse to patch an overlay whose
 current content is not trusted. `unset` of a key the layer does not set is an
@@ -484,7 +484,7 @@ quecto Status
   Config:    /home/me/.quecto/config.json
   Overlay:   /home/me/src/app/.quecto/config.json (trusted)
   Workspace: /home/me/.quecto/workspace
-  Model:     openai-api/gpt-5.5
+  Model:     openai-api/gpt-6.1-sol
   Effort:    default
   ...
 ```
@@ -616,7 +616,7 @@ the file untouched.
 {
   "agents": {
     "defaults": {
-      "model": "gpt-5.5",
+      "model": "gpt-6.1-sol",
       "workspace": "~/Documents/quecto-workspace",
       "max_tokens": 8192,
       "max_tool_iterations": 999999,
@@ -737,14 +737,14 @@ Example: Anthropic API key alongside Anthropic OAuth:
       "baseUrl": "https://api.anthropic.com",
       "auth": { "mode": "apiKey", "apiKey": "$ANTHROPIC_API_KEY" },
       "models": [
-        { "id": "claude-opus-4-8", "name": "Claude Opus 4.8 (API)" }
+        { "id": "claude-opus-5", "name": "Claude Opus 5 (API)" }
       ]
     },
     "anthropic-oauth": {
       "api": "anthropic-messages",
       "auth": { "mode": "oauth", "oauthProvider": "anthropic" },
       "models": [
-        { "id": "claude-opus-4-8", "name": "Claude Opus 4.8 (OAuth)" }
+        { "id": "claude-opus-5", "name": "Claude Opus 5 (OAuth)" }
       ]
     }
   }
@@ -770,7 +770,7 @@ Example: OpenAI-compatible API provider with slashful model IDs:
 
 Supported provider fields: `api` (`openai-completions` or `anthropic-messages`), `baseUrl`/`apiBase`, `auth`, `authHeader`, `allowRemoteHttp`, and `models`. API keys support `$ENV` and `${ENV}` interpolation. Supported model fields include `id`, `name`, `reasoning`, `input`, `contextWindow`, `maxTokens`, and `cost` (`input`, `output`, `cacheRead`, `cacheWrite`). A model is sent images only when its `input` includes `"image"`; otherwise each image becomes a `[image not sent: <model> takes no image input]` marker (#2421). An `overrides` entry may set `input` to turn images off or on for a built-in model; a record without `input` keeps the built-in one, so a custom provider of your own (for example one listing `claude-opus-5` on `anthropic-messages`) must set `"input": ["text", "image"]` to send images. A bare model id reads the router's first provider, and takes no image when that provider does not list it.
 
-To use an OAuth-backed registry provider, first run `quecto auth login --provider openai --oauth` or `quecto auth login --provider anthropic --oauth` (a human at a terminal; an agent stores an API key with `--token <key>` instead), then select the registry provider key (for example `/model anthropic-oauth/claude-opus-4-8`). The `/model` selector shows `[apiKey]` or `[oauth]` so the billing/auth mode is visible before selection.
+To use an OAuth-backed registry provider, first run `quecto auth login --provider openai --oauth` or `quecto auth login --provider anthropic --oauth` (a human at a terminal; an agent stores an API key with `--token <key>` instead), then select the registry provider key (for example `/model anthropic-oauth/claude-opus-5`). The `/model` selector shows `[apiKey]` or `[oauth]` so the billing/auth mode is visible before selection.
 
 `providers.openai_compatible.endpoints` remains supported for OpenAI-compatible API-key endpoints, but `models.json` is preferred when you want those models to appear in `/model`.
 
@@ -861,7 +861,7 @@ If multiple providers are configured, automatic fallback applies:
 - Authentication errors (wrong API key) do not trigger fallback
 - Providers enter a cooldown period after failures
 - Classification is provider-scoped (`DomainError::Provider`), using extracted HTTP status codes first, then semantic message matching
-- Model routing: use `provider/model` syntax (e.g. `anthropic/claude-sonnet-4-6`) to target a specific provider
+- Model routing: use `provider/model` syntax (e.g. `anthropic-api/claude-sonnet-5`) to target a specific provider
 
 ### ChatGPT Codex provider
 

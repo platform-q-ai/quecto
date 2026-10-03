@@ -341,7 +341,7 @@ fn respond(
 async fn response_get_state_populates_model_and_agent_id() {
     let mut h = harness().await;
     let data = serde_json::json!({
-        "model": "anthropic/claude-opus-4-5",
+        "model": "anthropic/claude-opus-5",
         "maxContextTokens": 200000,
         "sessionKey": "cli:worker",
         "workflow": {
@@ -354,7 +354,7 @@ async fn response_get_state_populates_model_and_agent_id() {
     respond(a, None, "get_state", true, Some(data), None);
     assert_eq!(
         a.ac().inference.current_model.as_deref(),
-        Some("anthropic/claude-opus-4-5")
+        Some("anthropic/claude-opus-5")
     );
     assert_eq!(a.ac().connected_agent_id.as_deref(), Some("worker"));
     assert!(a.ac().workflow.auto_continue);

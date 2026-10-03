@@ -57,7 +57,7 @@ pub fn render_verdict(verdict: &ModelSelectionVerdict) -> Option<serde_json::Val
 
 /// One structured reason as its wire string, shared by the `set_model`
 /// verdict and the `list_models` listing.
-pub(crate) fn render_reason(reason: &UnavailableReason) -> String {
+pub fn render_reason(reason: &UnavailableReason) -> String {
     match reason {
         UnavailableReason::MissingCredential => "missing-credential".to_string(),
         UnavailableReason::UnsupportedTransport { transport } => {

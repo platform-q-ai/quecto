@@ -154,15 +154,6 @@ impl ModelRegistry {
                 record.max_tokens_explicit = true;
                 record.reasoning = true;
                 record.cost = cost;
-            } else if let Some(published) = openai_published_limits(provider, id) {
-                // #2405: the window the ceiling is computed from; sources in
-                // `model_registry_builtin_tables.rs`.
-                record.context_window = published.context_window;
-                record.context_window_explicit = true;
-                if let Some(cap) = published.max_output_tokens {
-                    record.max_tokens = cap;
-                    record.max_tokens_explicit = true;
-                }
             } else if id == "grok-4.7" {
                 // xAI published specs: 500K context, image input, configurable
                 // reasoning, $2/M input and $6/M output
@@ -623,7 +614,7 @@ use file_format::RegistryFile;
 #[path = "model_registry_builtin_tables.rs"]
 mod builtin_tables;
 pub(crate) use builtin_tables::builtin_input;
-use builtin_tables::{BuiltinSpec, gpt_5_6_cost, gpt_5_6_window, openai_published_limits};
+use builtin_tables::{BuiltinSpec, gpt_5_6_cost, gpt_5_6_window};
 
 #[cfg(test)]
 #[path = "model_registry_catalogue_2435_tests.rs"]
