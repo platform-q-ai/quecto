@@ -293,8 +293,13 @@ async fn a_follow_up_sent_mid_reply_waits_for_the_run_and_leaves_the_reply_strea
 
     drop(writer);
     drop(lines);
-    let code = tokio::time::timeout(STEP, async move { harness.join().unwrap() })
+    // Joined off the runtime, so a loop that never ends fails the test at
+    // the bound rather than blocking it for ever.
+    let joined = tokio::task::spawn_blocking(move || harness.join());
+    let code = tokio::time::timeout(STEP, joined)
         .await
-        .expect("the loop ends once the last client leaves");
+        .expect("the loop ends once the last client leaves")
+        .expect("the join task ran")
+        .expect("the loop did not panic");
     assert_eq!(code, 0);
 }

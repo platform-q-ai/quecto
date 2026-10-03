@@ -285,5 +285,5 @@ async fn write_line(
 
 // #2433: driven through the whole loop, which this connection serves.
 #[cfg(test)]
-#[path = "uds_multi_followup_2433_tests.rs"]
+#[path = "uds_multi_client_followup_2433_tests.rs"]
 mod followup_2433_tests;
