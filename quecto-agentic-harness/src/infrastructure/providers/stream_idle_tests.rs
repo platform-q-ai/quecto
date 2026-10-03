@@ -15,6 +15,10 @@ pub(crate) const SILENT: Duration = Duration::from_millis(200);
 pub(crate) const LIVE: Duration = Duration::from_millis(1500);
 /// A gap between the events of a stream that keeps sending.
 pub(crate) const GAP: Duration = Duration::from_millis(100);
+/// A gap between the keep-alives of a reply held open (#2433): far shorter
+/// than [`SILENT`], so only an idle bound that keep-alives do not restart
+/// ever ends it.
+pub(crate) const KEEP_ALIVE: Duration = Duration::from_millis(20);
 
 /// Local HTTP servers that misbehave in time, for the idle-bound tests.
 pub(crate) mod servers {
@@ -80,6 +84,35 @@ pub(crate) mod servers {
         let mut steps: Vec<_> = events.iter().map(|e| (GAP, chunk(e))).collect();
         steps.push((Duration::ZERO, "0\r\n\r\n".into()));
         serve(Duration::ZERO, Some(HEAD.into()), steps, false).await
+    }
+
+    /// Answers with a head and the event `first`, then sends only
+    /// keep-alives — an SSE comment, then a blank line, each [`KEEP_ALIVE`]
+    /// after the last — for as long as the client reads: a reply held open
+    /// that makes no progress (#2433).
+    pub(crate) async fn keeping_alive(first: &str) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let head = format!("{HEAD}{}", chunk(first));
+        tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let head = head.clone();
+                tokio::spawn(async move {
+                    let mut request = vec![0u8; 64 * 1024];
+                    let _ = socket.read(&mut request).await;
+                    let mut sent = socket.write_all(head.as_bytes()).await;
+                    for keep_alive in [": keepalive\n", "\n"].iter().cycle() {
+                        tokio::time::sleep(KEEP_ALIVE).await;
+                        if sent.is_err() {
+                            break;
+                        }
+                        sent = socket.write_all(chunk(keep_alive).as_bytes()).await;
+                    }
+                });
+            }
+        });
+        format!("http://{address}")
     }
 
     /// Sends `first`, then `repeated` again and again as fast as it is read,

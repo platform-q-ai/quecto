@@ -248,6 +248,40 @@ async fn codex_chat_that_goes_silent_mid_body_is_abandoned() {
     }
 }
 
+/// #2433: a reply held open with keep-alives alone — SSE comments and blank
+/// lines — after its last event makes no progress. It is abandoned at the
+/// idle bound measured from that event, on every streaming path, rather
+/// than held until an outer deadline (15 minutes in the reported stall).
+#[tokio::test]
+async fn a_stream_that_only_keeps_alive_is_abandoned() {
+    for vendor in Vendor::ALL {
+        for gated in [false, true] {
+            let url = servers::keeping_alive(vendor.event()).await;
+            let (last, recorded) = incremental(&*vendor.provider(url.clone(), gated, SILENT)).await;
+            assert!(is_idle_event(&last), "{vendor:?} gated={gated}: {last:?}");
+            assert!(
+                recorded_idle(&recorded),
+                "{vendor:?} gated={gated}: {recorded:?}"
+            );
+            let (result, recorded) = assembled(&*vendor.provider(url, gated, SILENT)).await;
+            assert!(
+                is_idle_error(&result),
+                "{vendor:?} gated={gated}: {result:?}"
+            );
+            assert!(
+                recorded_idle(&recorded),
+                "{vendor:?} gated={gated}: {recorded:?}"
+            );
+        }
+    }
+    for gated in [false, true] {
+        let url = servers::keeping_alive(CODEX_EVENT).await;
+        let (result, recorded) = codex_chat(&*Vendor::Codex.provider(url, gated, SILENT)).await;
+        assert!(is_idle_error(&result), "gated={gated}: {result:?}");
+        assert!(recorded_idle(&recorded), "gated={gated}: {recorded:?}");
+    }
+}
+
 /// The first byte is bounded from the send: a server that never answers.
 #[tokio::test]
 async fn a_request_no_response_head_answers_is_abandoned() {
