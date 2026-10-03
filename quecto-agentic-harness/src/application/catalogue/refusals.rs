@@ -25,7 +25,8 @@ pub(super) struct RefusalLedger {
 
 impl RefusalLedger {
     /// Hold a refusal of `reference` for `held_for` from `now`. True when it
-    /// is new: one already held keeps its first reason and hold.
+    /// is new: one already held keeps its first reason and hold; one whose
+    /// hold has ended is replaced.
     pub(super) fn record(
         &self,
         reference: &ModelRef,
@@ -33,36 +34,44 @@ impl RefusalLedger {
         now: Instant,
         held_for: Duration,
     ) -> bool {
-        let mut held = self.held.lock().unwrap_or_else(|p| p.into_inner());
-        match held.contains_key(reference) {
-            true => false,
-            false => {
-                held.insert(
-                    reference.clone(),
-                    Refusal {
-                        reason: reason.to_string(),
-                        until: now + held_for,
-                    },
-                );
-                true
-            }
+        let mut held = self.lock();
+        if held
+            .get(reference)
+            .is_some_and(|refusal| now < refusal.until)
+        {
+            return false;
         }
+        held.insert(
+            reference.clone(),
+            Refusal {
+                reason: reason.to_string(),
+                // A hold too long to represent is held for as long as the
+                // clock goes: never shorter than asked.
+                until: now
+                    .checked_add(held_for)
+                    .unwrap_or(now + Duration::from_secs(u32::MAX.into())),
+            },
+        );
+        true
     }
 
     /// Release the refusal of `reference`, if one is held: the provider has
     /// served the model. True when one was held.
     pub(super) fn clear(&self, reference: &ModelRef) -> bool {
-        let _ = reference;
-        false
+        self.lock().remove(reference).is_some()
     }
 
     /// The reason `reference` is refused at `now`, if a hold covers it.
     pub(super) fn reason_at(&self, reference: &ModelRef, now: Instant) -> Option<String> {
-        let _ = now;
+        self.lock()
+            .get(reference)
+            .filter(|refusal| now < refusal.until)
+            .map(|refusal| refusal.reason.clone())
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<ModelRef, Refusal>> {
         self.held
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .get(reference)
-            .map(|refusal| (refusal.reason.clone(), refusal.until).0)
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }

@@ -269,7 +269,7 @@ impl ResolveCatalogueUseCase {
                     credential_available,
                 );
                 // #2435: a model the provider refused for the account in
-                // use stays unavailable for the rest of the process.
+                // use stays unavailable while the refusal is held.
                 if let Some(reason) = store.refusal(entry.reference()) {
                     entry.model.availability =
                         refused_availability(&entry.model.availability, reason);

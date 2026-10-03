@@ -5,7 +5,10 @@ impl AgentSession {
     /// carries them, so a client that never saw the agent's stderr (the
     /// TUI) can show them.
     pub fn set_startup_warnings(&mut self, warnings: &[String]) {
-        let _ = (warnings, &self.startup_warnings);
+        if self.startup_warnings != warnings {
+            self.startup_warnings = warnings.to_vec();
+            self.bump_visible_generation();
+        }
     }
 
     /// Replace the advisory snapshot atomically with the composed runtime generation.

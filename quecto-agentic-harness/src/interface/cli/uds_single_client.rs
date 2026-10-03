@@ -62,6 +62,7 @@ pub(super) async fn single_client_loop(
 
     let mut agent_session = AgentSession::new(model);
     agent_session.set_admission_warnings(&admission_slots);
+    agent_session.set_startup_warnings(&catalogue.startup_warnings);
     agent_session.observe_runtime(catalogue.runtime_store.clone());
     let effort = catalogue.effort_view(agent.effort(), agent_session.model());
     let initial_state =

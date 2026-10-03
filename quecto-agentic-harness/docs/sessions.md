@@ -24,7 +24,7 @@ session's images. The file contains the full conversation
 history (system prompt excluded — it is injected at run time and never
 persisted; user messages, assistant responses, tool calls and results, the
 workflow run and the historical sub-agent roster). For thinking-capable models
-(Claude Sonnet 4.5+, Opus 4.5+), extended thinking blocks and their
+(Claude 5 models, and the Claude 4.5+ models a `models.json` may still declare), extended thinking blocks and their
 cryptographic signatures are also persisted, enabling correct multi-turn
 replay.
 

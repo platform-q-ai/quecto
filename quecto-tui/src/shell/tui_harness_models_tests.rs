@@ -21,10 +21,10 @@ async fn an_unavailable_model_is_marked_and_cannot_be_chosen() {
     h.request_model_selector_open();
     h.deliver_list_models_json(models());
     h.capture();
-    let frame = h.last();
+    let frame = h.dump_full();
     assert!(
-        frame.contains("(unavailable: refused-for-account: not supported with a ChatGPT"),
-        "the row says why: {frame}"
+        frame.contains("openai-oauth/gpt-5.5-mini  openai-oauth [oauth] (unavailable: refused-fo"),
+        "the row says why, as far as the overlay is wide: {frame}"
     );
     let _ = h.try_drain_commands();
     h.press(Key::Enter);
@@ -34,10 +34,11 @@ async fn an_unavailable_model_is_marked_and_cannot_be_chosen() {
         "no switch is sent for an unavailable model: {sent:?}"
     );
     h.capture();
+    let frames = h.dump_full();
+    let last = frames.rsplit("=== full frame").next().unwrap_or_default();
     assert!(
-        h.last().contains("is unavailable"),
-        "the selector says why it stayed open: {}",
-        h.last()
+        last.contains("is unavailable"),
+        "the selector says why it stayed open: {last}"
     );
     h.press(Key::Down);
     h.press(Key::Enter);

@@ -27,7 +27,9 @@ use crate::application::catalogue::ports::{
 use crate::application::catalogue::use_cases::ChangeReasoningEffort;
 use crate::application::catalogue::{CatalogueSnapshotStore, ResolveCatalogueUseCase};
 use crate::application::provider_runtime::{SelectionError, select_in_runtime};
-use crate::domain::catalogue::{CatalogueEntry, CatalogueSnapshot, ModelRef, UnavailableReason};
+use crate::domain::catalogue::{
+    CatalogueEntry, CatalogueSnapshot, ModelRef, UnavailableReason, retired_builtin,
+};
 use crate::domain::conversation::image_input::ImageInput;
 use crate::domain::provider::{
     ModelRoute, parse_qualified_model, provider_prefix_matches, route_model,
@@ -73,12 +75,12 @@ impl ChangeActiveModel {
             .runtime
             .current_runtime()
             .map(|runtime| runtime.provider.route_order());
-        let reached = Self::entry_for(&resolved.snapshot, model, route_order.as_deref());
+        let route = Self::route(model, route_order.as_deref());
+        let reached = route
+            .as_ref()
+            .and_then(|(provider, id)| Self::listed(&resolved.snapshot, provider, id));
         let limits = Self::limits_of(reached);
-        let standing = Self::standing_of(
-            reached,
-            Self::provider_lists_models(&resolved.snapshot, model, route_order.as_deref()),
-        );
+        let standing = self.standing_of(&resolved.snapshot, route.as_ref(), reached);
         let verdict = match reference {
             Some(reference) => self.verdict(&reference),
             None => ModelSelectionVerdict::Unknown {
@@ -247,65 +249,66 @@ impl ChangeActiveModel {
         }
     }
 
-    /// The entry of the model a request for `model` reaches: that
-    /// provider's entry for the id. None when the provider does not list
-    /// the model.
-    fn entry_for<'s>(
+    /// `provider`'s entry for model `id`, matched whatever the provider's
+    /// case. None when the provider does not list the model.
+    fn listed<'s>(
         snapshot: &'s CatalogueSnapshot,
-        model: &str,
-        route_order: Option<&[String]>,
+        provider: &str,
+        id: &str,
     ) -> Option<&'s CatalogueEntry> {
-        let (provider, id) = Self::route(model, route_order)?;
         snapshot.entries().iter().find(|entry| {
             entry.model.reference.model().as_str() == id
-                && provider_prefix_matches(&provider, entry.provider.id.as_str())
-        })
-    }
-
-    /// Whether the provider a request for `model` reaches lists any model
-    /// (#2435): one that lists none (an endpoint the catalogue cannot
-    /// enumerate) says nothing of a model it does not list.
-    fn provider_lists_models(
-        snapshot: &CatalogueSnapshot,
-        model: &str,
-        route_order: Option<&[String]>,
-    ) -> bool {
-        Self::route(model, route_order).is_some_and(|(provider, _)| {
-            snapshot
-                .entries()
-                .iter()
-                .any(|entry| provider_prefix_matches(&provider, entry.provider.id.as_str()))
+                && provider_prefix_matches(provider, entry.provider.id.as_str())
         })
     }
 
     /// Where the model a request reaches stands (#2435): refused for the
-    /// account in use when its entry carries that reason, listed when it
-    /// has an entry; without one, unlisted when its provider lists other
-    /// models, else on a provider the catalogue does not enumerate.
+    /// account in use while a refusal is held for it — listed or not
+    /// (review round 1 L7) — listed when it has an entry; without one,
+    /// retired or unlisted when its provider lists other models, else on
+    /// a provider the catalogue does not enumerate.
     fn standing_of(
+        &self,
+        snapshot: &CatalogueSnapshot,
+        route: Option<&(String, &str)>,
         entry: Option<&CatalogueEntry>,
-        provider_lists_models: bool,
     ) -> CatalogueStanding {
-        let Some(entry) = entry else {
-            return match provider_lists_models {
-                true => CatalogueStanding::Unlisted {
-                    provider: String::new(),
-                },
-                false => CatalogueStanding::UncataloguedProvider,
-            };
+        if let Some(entry) = entry {
+            return entry
+                .model
+                .availability
+                .reasons()
+                .iter()
+                .find_map(|reason| match reason {
+                    UnavailableReason::RefusedForAccount(why) => {
+                        Some(CatalogueStanding::RefusedForAccount(why.clone()))
+                    }
+                    _ => None,
+                })
+                .unwrap_or(CatalogueStanding::Listed);
+        }
+        let Some((provider, id)) = route else {
+            return CatalogueStanding::UncataloguedProvider;
         };
-        entry
-            .model
-            .availability
-            .reasons()
+        let held = ModelRef::parse(provider.clone(), *id)
+            .ok()
+            .and_then(|reference| self.store.refusal(&reference));
+        if let Some(reason) = held {
+            return CatalogueStanding::RefusedForAccount(reason);
+        }
+        let provider_lists_models = snapshot
+            .entries()
             .iter()
-            .find_map(|reason| match reason {
-                UnavailableReason::RefusedForAccount(why) => {
-                    Some(CatalogueStanding::RefusedForAccount(why.clone()))
-                }
-                _ => None,
-            })
-            .unwrap_or(CatalogueStanding::Listed)
+            .any(|entry| provider_prefix_matches(provider, entry.provider.id.as_str()));
+        match (provider_lists_models, retired_builtin(provider, id)) {
+            (true, true) => CatalogueStanding::Retired {
+                provider: provider.clone(),
+            },
+            (true, false) => CatalogueStanding::Unlisted {
+                provider: provider.clone(),
+            },
+            (false, _) => CatalogueStanding::UncataloguedProvider,
+        }
     }
 
     /// Only explicitly declared values clamp: a synthesized default is not a

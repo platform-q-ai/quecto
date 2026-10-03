@@ -260,3 +260,28 @@ const SUBAGENT_NOTE_TAG: &str = "<subagent_notification";
 #[cfg(test)]
 #[path = "presentation_payloads_tests.rs"]
 mod tests;
+
+/// One item of a list of strings: a string, or anything else (skipped).
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum StringItem {
+    Text(String),
+    Other(serde::de::IgnoredAny),
+}
+
+/// The strings of a JSON list, in order, sanitized; items that are not
+/// strings or are empty after sanitizing are skipped, and anything but a
+/// list yields none (#2435).
+pub fn string_items(value: Option<&Value>, sanitize: &dyn Fn(&str) -> String) -> Vec<String> {
+    use serde::Deserialize;
+    value
+        .and_then(|list| Vec::<StringItem>::deserialize(list).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|item| match item {
+            StringItem::Text(text) => Some(sanitize(&text)),
+            StringItem::Other(_) => None,
+        })
+        .filter(|text| !text.is_empty())
+        .collect()
+}

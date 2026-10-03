@@ -159,7 +159,7 @@ opens links natively, that help line is the single place to update first.
 
 | Command | Action |
 |---|---|
-| `/model` | Open the model selector; `Tab` cycles what `Enter` does: use for this session, use and pin as this repo's default (`./.quecto/config.json`), use and pin as the global default (`~/.quecto/config.json`, or the `--config` file the agent was started with) — the harness records it, the toast names the file and reminds you that live tool-policy overlays re-baseline on the next turn |
+| `/model` | Open the model selector; `Tab` cycles what `Enter` does: use for this session, use and pin as this repo's default (`./.quecto/config.json`), use and pin as the global default (`~/.quecto/config.json`, or the `--config` file the agent was started with) — the harness records it, the toast names the file and reminds you that live tool-policy overlays re-baseline on the next turn. A model the harness says cannot run now (`unavailable` in `list_models`, e.g. one the provider refused for your account) is dimmed with `(unavailable: <reason>)` and `Enter` on it says why instead of switching |
 | `/model <name>` | Switch to a model directly |
 | `/clear` | Clear the current conversation |
 | `/new` | Start a fresh conversation |

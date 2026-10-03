@@ -45,7 +45,8 @@ fn a_switch_to_a_refused_model_is_refused_with_the_reason_and_changes_nothing() 
         error.to_string(),
         format!(
             "cannot switch to `openai-oauth/mini`: the provider refused it for this account or \
-             auth mode earlier in this process ({REASON}). Choose another model from list_models"
+             auth mode ({REASON}); it is held unavailable for now. Choose another model from \
+             list_models"
         )
     );
     assert_eq!(

@@ -557,6 +557,7 @@ While a model request is in flight the marker also carries `modelTurn`
 | `workflow` | object \| omitted | Slim selected-workflow identity and current step only |
 | `admission` | object \| omitted | Bounded inference-admission view (#1679); present only when the process joined an admission authority |
 | `admissionWarnings` | array | Advisory usable provider slots with no effective admission binding; always present (empty when all usable slots are bound). Each item has `slot`, `code` (`admission_binding_missing`) and an actionable `message`. These slots remain usable but their requests are not broker-gated. |
+| `startupWarnings` | array of strings | The warnings the startup model drew (#2435, #2126): a model its provider does not list (or a retired built-in), one refused for the account, or a provider this harness has not configured. Absent when there are none. The same lines go to the agent's stderr; the TUI shows each once as a notice. |
 | `modelTurn` | object \| omitted | The model request in flight (#2210): present only while the agent waits on the model — thinking or streaming — and omitted otherwise |
 | `agentRequests` | object | This agent's own provider requests so far (#2436), retries included; always present. Not `admission.counters`, which count admission attempts — see [Agent requests](#agent-requests) below |
 
@@ -988,7 +989,7 @@ You must provide either `model` OR both `provider` + `modelId`. Providing neithe
 {"selection":{"status":"ok","provider":"openai-api","generation":3},"persisted":{"scope":"local","path":"/work/app/.quecto/config.json"}}
 ```
 
-> **Important:** `set_model` performs no request to the provider; errors surface on the next `prompt`. The one exception is a model the provider has already refused for this account or auth mode in this process (#2435): the switch is refused with `success: false` — `cannot switch to \`<model>\`: the provider refused it for this account or auth mode earlier in this process (<reason>). Choose another model from list_models` — and the session keeps its model. A not-runnable verdict for another reason names it in `selection.reasons` (`missing-credential`, `unsupported-transport: …`, `refused-for-account: …`).
+> **Important:** `set_model` performs no request to the provider; errors surface on the next `prompt`. The one exception is a model the provider refused for this account or auth mode while that refusal is held (#2435; an hour by default, `providers.model_refusal_ttl_secs`, or until the provider serves the model again): the switch is refused with `success: false` — `cannot switch to \`<model>\`: the provider refused it for this account or auth mode (<reason>); it is held unavailable for now. Choose another model from list_models` — and the session keeps its model. A not-runnable verdict for another reason names it in `selection.reasons` (`missing-credential`, `unsupported-transport: …`, `refused-for-account: …`).
 
 **Examples:**
 
@@ -1044,7 +1045,7 @@ Return configured and built-in models from the runtime registry (`models.json` +
 | `type` | `"list_models"` | yes | |
 | `id` | string | no | Correlation ID |
 
-**Response data:** `{"generation", "rejected": [{"model", "reason"}], "models": [...]}`. Each model carries `provider`, `id`, `model` (`provider/id`), `name`, `api`, `auth` (`apiKey`/`oauth`), `oauthProvider`, `contextWindow`, `maxTokens`, `input`, `cost`, `reasoning`, `effortLevels`, `configured` (whether it can run now) and `unavailable`: why it cannot, empty when it can — `missing-credential`, `unsupported-transport: <transport>`, `invalid-configuration: …`, `policy-denied: …`, or `refused-for-account: <provider's reason>` for a model the provider refused for this account or auth mode earlier in this process (#2435; such a model is listed, never switched to). When a catalogue source fails to load, the data is `{"models": [], "error": "<first failure>"}`.
+**Response data:** `{"generation", "rejected": [{"model", "reason"}], "models": [...]}`. Each model carries `provider`, `id`, `model` (`provider/id`), `name`, `api`, `auth` (`apiKey`/`oauth`), `oauthProvider`, `contextWindow`, `maxTokens`, `input`, `cost`, `reasoning`, `effortLevels`, `configured` (whether it can run now) and `unavailable`: why it cannot, empty when it can — `missing-credential`, `unsupported-transport: <transport>`, `invalid-configuration: …`, `policy-denied: …`, or `refused-for-account: <provider's reason>` for a model the provider refused for this account or auth mode while the refusal is held (#2435; such a model is listed, never switched to). When a catalogue source fails to load, the data is `{"models": [], "error": "<first failure>"}`.
 
 ---
 

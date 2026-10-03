@@ -7,7 +7,15 @@ use super::*;
 impl App {
     /// Show the startup warnings not shown yet.
     pub(in crate::shell) fn show_startup_warnings(&mut self, warnings: Vec<String>) {
-        let _ = (warnings, &self.shown_startup_warnings);
+        for warning in warnings {
+            if self.shown_startup_warnings.insert(warning.clone()) {
+                self.notify(&warning, NotifyLevel::Warning);
+                self.ac_mut()
+                    .master_session
+                    .chat
+                    .add_entry(crate::components::chat::ChatEntry::Status { text: warning });
+            }
+        }
     }
 }
 

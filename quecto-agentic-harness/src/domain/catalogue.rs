@@ -380,7 +380,7 @@ pub enum UnavailableReason {
     PolicyDenied(String),
     /// The provider refused the model for the account or auth mode in use
     /// (#2435), with the provider's own words: learned from a definitive
-    /// refusal, it holds for the rest of the process.
+    /// refusal, it holds until it expires or the provider serves the model.
     RefusedForAccount(String),
 }
 

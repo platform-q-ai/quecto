@@ -2,8 +2,8 @@
 //! the account or auth mode in use. It wraps the router: a request whose
 //! reply is a definitive refusal (`model_refusal`) is recorded against
 //! the provider and model the router sent it to, so the catalogue stops
-//! offering that model for the rest of the process. Every reply passes
-//! through unchanged.
+//! offering that model while the refusal is held; a reply the provider
+//! serves for it releases it. Every reply passes through unchanged.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -59,7 +59,16 @@ impl RefusalRecordingProvider {
         }
     }
 
-    /// Wrap a reply future so a refusal it ends with is observed.
+    /// Release the refusal of the model a request for `model` reached: the
+    /// provider served it.
+    fn release(&self, model: &str) {
+        if let Some(reference) = self.reached(model) {
+            release(self.sink.as_ref(), &reference);
+        }
+    }
+
+    /// Wrap a reply future so a refusal it ends with is observed, and a
+    /// reply it serves releases one.
     fn observed<'a>(
         &'a self,
         model: &'a str,
@@ -67,8 +76,9 @@ impl RefusalRecordingProvider {
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + 'a>> {
         Box::pin(async move {
             let result = reply.await;
-            if let Err(error) = &result {
-                self.observe(model, error);
+            match &result {
+                Ok(_) => self.release(model),
+                Err(error) => self.observe(model, error),
             }
             result
         })
@@ -112,9 +122,10 @@ impl LlmProvider for RefusalRecordingProvider {
         &'a self,
         request: ChatRequest<'a>,
     ) -> Pin<Box<dyn Future<Output = tokio::sync::mpsc::Receiver<StreamEvent>> + Send + 'a>> {
-        // The events are relayed as they come; only a terminal error is
-        // looked at. The relay ends when either side does, so dropping the
-        // receiver still drops the provider's stream.
+        // The events are relayed as they come; only the terminal ones are
+        // looked at. The relay ends as soon as either side does: a caller
+        // that drops its receiver drops the provider's stream with it, so
+        // the transport sees it gone and stops (review round 1 M1).
         let reached = self.reached(request.model);
         let sink = self.sink.clone();
         let held_for = self.held_for;
@@ -126,10 +137,14 @@ impl LlmProvider for RefusalRecordingProvider {
             };
             let (tx, rx) = tokio::sync::mpsc::channel(RELAY_CAPACITY);
             tokio::spawn(async move {
-                while let Some(event) = events.recv().await {
-                    if let StreamEvent::Error(message) = &event {
-                        let error = DomainError::Provider(message.clone());
-                        record(sink.as_ref(), &reference, &error, held_for);
+                while let Some(event) = next_event(&mut events, &tx).await {
+                    match &event {
+                        StreamEvent::Error(message) => {
+                            let error = DomainError::Provider(message.clone());
+                            record(sink.as_ref(), &reference, &error, held_for);
+                        }
+                        StreamEvent::Done(_) => release(sink.as_ref(), &reference),
+                        _ => {}
                     }
                     if tx.send(event).await.is_err() {
                         return;
@@ -143,6 +158,28 @@ impl LlmProvider for RefusalRecordingProvider {
 
 /// The relay's buffer: the providers' own stream channels hold 32 events.
 const RELAY_CAPACITY: usize = 32;
+
+/// The provider's next event, or `None` once either the provider or the
+/// caller has gone (as `codex_replay::next_event` relays).
+async fn next_event(
+    events: &mut tokio::sync::mpsc::Receiver<StreamEvent>,
+    tx: &tokio::sync::mpsc::Sender<StreamEvent>,
+) -> Option<StreamEvent> {
+    tokio::select! {
+        event = events.recv() => event,
+        () = tx.closed() => None,
+    }
+}
+
+/// Release the refusal of `reference`, if one is held: it was served.
+fn release(sink: &dyn ModelRefusalSink, reference: &ModelRef) {
+    if sink.clear_refusal(reference) {
+        tracing::info!(
+            model = %reference.qualified_id(),
+            "provider served a model it had refused; it is offered again"
+        );
+    }
+}
 
 /// Record `error` against `reference` when it is a definitive refusal.
 fn record(

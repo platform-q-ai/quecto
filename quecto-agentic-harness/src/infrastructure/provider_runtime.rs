@@ -371,7 +371,7 @@ pub(crate) fn compose_agent_provider_inner_outcome(
     }
     // #2435: a provider's definitive refusal of a model for this account
     // is recorded in the base directory's catalogue store, so the
-    // catalogue stops offering it for the rest of the process.
+    // catalogue stops offering it while the refusal is held.
     let router: Arc<dyn LlmProvider> = Arc::new(RefusalRecordingProvider::new(
         Arc::new(ProviderRouter::new(provider_list)),
         Arc::new(crate::infrastructure::catalogue_registry::snapshot_store_for(base_dir)),

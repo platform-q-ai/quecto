@@ -161,6 +161,9 @@ pub struct ModelSelector {
     cached_max_label_width: usize,
     /// What Enter does besides switching the session.
     action: ModelDefaultAction,
+    /// Why the last Enter chose nothing (#2435): the model it was on is
+    /// unavailable. Cleared by the next key.
+    refused: Option<String>,
 }
 
 impl ModelSelector {
@@ -216,6 +219,7 @@ impl ModelSelector {
             result: ModelSelectorResult::Pending,
             cached_max_label_width: cached_width,
             action: ModelDefaultAction::default(),
+            refused: None,
         }
     }
 
@@ -267,10 +271,13 @@ impl ModelSelector {
 /// display label); the description is the dim provider column (with the auth
 /// suffix, if any).
 fn to_suggestion(m: &ModelEntry) -> Suggestion {
-    let description = match m.auth.as_deref() {
+    let mut description = match m.auth.as_deref() {
         Some(auth) if !auth.is_empty() => format!("{} [{}]", m.provider, auth),
         _ => m.provider.clone(),
     };
+    if let Some(reason) = &m.unavailable {
+        description.push_str(&format!(" (unavailable: {reason})"));
+    }
     Suggestion {
         value: m.id.clone(),
         description,
@@ -281,6 +288,9 @@ impl ModelSelector {
     /// The key line under the list: the action Enter applies and how to
     /// change it. Letters go to the filter, so the cycle key is Tab.
     fn footer(&self) -> String {
+        if let Some(refused) = &self.refused {
+            return format!("  {}", theme::bold(refused));
+        }
         format!(
             "  {} {}",
             theme::bold(self.action.label()),
@@ -351,11 +361,19 @@ impl Component for ModelSelector {
             .iter()
             .find(|m| m.is_current)
             .map(|m| m.id.as_str());
+        // The unavailable ids, once per frame too (#2435): their rows dim.
+        let unavailable: Vec<&str> = self
+            .all_models
+            .iter()
+            .filter(|m| m.unavailable.is_some())
+            .map(|m| m.id.as_str())
+            .collect();
         lines.extend(self.list.render_rows(width, "  ", mode, |s| {
             let is_current = current_id == Some(s.value.as_str());
             ListRow {
                 description: Some(s.description.clone()),
                 marker: if is_current { " ●" } else { "" },
+                dim_label: unavailable.contains(&s.value.as_str()),
                 ..ListRow::plain(s.value.clone())
             }
         }));
@@ -365,17 +383,29 @@ impl Component for ModelSelector {
     }
 
     fn handle_input(&mut self, key: &Key) -> bool {
+        self.refused = None;
         match key {
             Key::Up => self.list.move_previous(),
             Key::Down => self.list.move_next(),
             Key::Tab => self.action = self.action.next(),
             Key::BackTab => self.action = self.action.previous(),
             Key::Enter => {
-                // With no matches, Enter cancels.
-                self.result = match self.selected_model() {
-                    Some(model) => ModelSelectorResult::Selected(model.id.clone()),
-                    None => ModelSelectorResult::Dismissed,
+                // With no matches, Enter cancels; on a model the harness
+                // says cannot run, it chooses nothing and says why (#2435).
+                let (result, refused) = match self.selected_model() {
+                    Some(ModelEntry {
+                        id,
+                        unavailable: Some(reason),
+                        ..
+                    }) => (
+                        ModelSelectorResult::Pending,
+                        Some(format!("{id} is unavailable: {reason}")),
+                    ),
+                    Some(model) => (ModelSelectorResult::Selected(model.id.clone()), None),
+                    None => (ModelSelectorResult::Dismissed, None),
                 };
+                self.result = result;
+                self.refused = refused;
             }
             Key::Escape => self.result = ModelSelectorResult::Dismissed,
             Key::Backspace => {

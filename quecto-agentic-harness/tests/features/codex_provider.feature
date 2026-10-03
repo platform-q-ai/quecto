@@ -1,6 +1,6 @@
 @done @providers
 Feature: Codex Responses API Provider
-  As a user using GPT-5.3-codex via OAuth
+  As a user of a GPT model via Codex OAuth (e.g. gpt-6-sol)
   I want the Codex provider to correctly format Responses API requests
   So that tool calls work even when reasoning items precede function calls
 

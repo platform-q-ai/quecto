@@ -147,8 +147,20 @@ pub fn parse_get_state(
         admission,
         admission_warnings,
         admission_warnings_authoritative,
-        startup_warnings: Vec::new(),
+        startup_warnings: startup_warnings(data, sanitize),
     }
+}
+
+/// The startup warnings a `get_state` payload carries (#2435), sanitized.
+fn startup_warnings(data: &serde_json::Value, sanitize: &dyn Fn(&str) -> String) -> Vec<String> {
+    #[derive(serde::Deserialize, Default)]
+    #[serde(default, rename_all = "camelCase")]
+    struct RawStartup {
+        startup_warnings: Option<serde_json::Value>,
+    }
+    use serde::Deserialize;
+    let raw = RawStartup::deserialize(data).unwrap_or_default();
+    crate::protocol::presentation_payloads::string_items(raw.startup_warnings.as_ref(), sanitize)
 }
 
 /// Extract the effort level echoed on a successful `set_effort` response.

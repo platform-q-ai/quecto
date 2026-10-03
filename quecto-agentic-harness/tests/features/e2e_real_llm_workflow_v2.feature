@@ -1,7 +1,7 @@
 @done
 Feature: E2E Real LLM Workflow V2 UDS Tests
   Comprehensive end-to-end tests validating the Workflow V2 subsystem through
-  a real LLM (OpenAI gpt-5.4 via OAuth). These exercise the full UDS stack:
+  a real LLM (an OpenAI model via OAuth). These exercise the full UDS stack:
   template selection, step progression, guards, live prompt injection,
   workflow_state events, get_state integration, and session persistence.
 

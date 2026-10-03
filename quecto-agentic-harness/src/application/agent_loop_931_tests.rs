@@ -273,9 +273,19 @@ fn a_model_refused_for_the_account_says_it_will_not_be_offered_again() {
     assert!(
         out.ends_with(
             "Model unavailable: the provider refused this model for the account or auth mode in \
-             use. It is marked unavailable for the rest of this process; choose another model \
+             use. It is held unavailable until the provider serves it or the hold ends \
+             (providers.model_refusal_ttl_secs, an hour by default); choose another model \
              (list_models, then set_model)."
         ),
         "{out}"
     );
+}
+
+/// #2435 review round 1: the refusal guidance is appended once.
+#[test]
+fn the_refusal_guidance_is_appended_once() {
+    let once = enhanced(
+        r#"HTTP 400 from Codex: {"detail":"The 'mini' model is not supported when using Codex with a ChatGPT account."}"#,
+    );
+    assert_eq!(enhanced(&once), once);
 }

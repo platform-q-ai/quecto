@@ -56,7 +56,7 @@ pub enum CatalogueStanding {
     /// The provider the request reaches lists the model.
     Listed,
     /// The provider refused the model for the account in use, for this
-    /// reason, earlier in this process.
+    /// reason; the refusal is still held.
     RefusedForAccount(String),
     /// `provider`, the provider the request reaches, lists other models
     /// but not this one: a typo, or a model it never listed.
@@ -143,7 +143,8 @@ impl std::fmt::Display for ModelSwitchError {
             Self::RefusedForAccount { model, reason } => write!(
                 f,
                 "cannot switch to `{model}`: the provider refused it for this account or auth \
-                 mode earlier in this process ({reason}). Choose another model from list_models"
+                 mode ({reason}); it is held unavailable for now. Choose another model from \
+                 list_models"
             ),
             Self::Persist {
                 model,

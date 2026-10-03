@@ -293,8 +293,8 @@ fn model_selector_overflow_indicator_pixels() {
     // indicator is the last row of the list itself.
     let plain = strip_ansi(&lines[lines.len() - 3]);
     assert_eq!(
-        plain, "  (1/38)",
-        "12-row window over the 38 known models shows the indicator"
+        plain, "  (1/22)",
+        "12-row window over the 22 known models shows the indicator"
     );
 }
 

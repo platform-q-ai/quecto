@@ -546,9 +546,13 @@ fn test_response_without_id_omits_id_field() {
 
 // ─── SessionState / SessionStats ────────────────────────────────────────
 
-#[test]
-fn test_session_state_serializes() {
-    let state = SessionState {
+/// An idle session state with `session_key`, `message_count` and `workflow`.
+fn session_state(
+    session_key: &str,
+    message_count: usize,
+    workflow: Option<serde_json::Value>,
+) -> SessionState {
+    SessionState {
         admission_warnings: Vec::new(),
         startup_warnings: Vec::new(),
         control_receipts: Vec::new(),
@@ -558,15 +562,20 @@ fn test_session_state_serializes() {
         model: "gpt-5".to_string(),
         generation: 1,
         is_streaming: false,
-        session_key: "cli:test".to_string(),
-        message_count: 4,
+        session_key: session_key.to_string(),
+        message_count,
         pending_message_count: 0,
         max_context_tokens: 200_000,
         effort: None,
         effort_levels: Vec::new(),
-        workflow: None,
+        workflow,
         sync: 1,
-    };
+    }
+}
+
+#[test]
+fn test_session_state_serializes() {
+    let state = session_state("cli:test", 4, None);
     let json = serde_json::to_string(&state).unwrap();
     assert!(json.contains("\"isStreaming\":false"));
     assert!(json.contains("\"sessionKey\":\"cli:test\""));
@@ -575,30 +584,16 @@ fn test_session_state_serializes() {
 
 #[test]
 fn test_session_state_with_workflow_serializes() {
-    let state = SessionState {
-        admission_warnings: Vec::new(),
-        startup_warnings: Vec::new(),
-        control_receipts: Vec::new(),
-        automatic_turns_suspended: false,
-        repeated_failure_notifications: 0,
-        execution: None,
-        model: "gpt-5".to_string(),
-        generation: 1,
-        is_streaming: false,
-        session_key: "cli:wf".to_string(),
-        message_count: 2,
-        pending_message_count: 0,
-        max_context_tokens: 200_000,
-        effort: None,
-        effort_levels: Vec::new(),
-        workflow: Some(serde_json::json!({
+    let state = session_state(
+        "cli:wf",
+        2,
+        Some(serde_json::json!({
             "enabled": true,
             "guardsEnabled": true,
             "mode": "active",
             "progress": { "done": 1, "total": 7, "percent": 14 }
         })),
-        sync: 1,
-    };
+    );
     let json = serde_json::to_string(&state).unwrap();
     assert!(json.contains("\"workflow\""));
     assert!(json.contains("\"active\""));
@@ -606,25 +601,7 @@ fn test_session_state_with_workflow_serializes() {
 
 #[test]
 fn test_session_state_without_workflow_omits_field() {
-    let state = SessionState {
-        admission_warnings: Vec::new(),
-        startup_warnings: Vec::new(),
-        control_receipts: Vec::new(),
-        automatic_turns_suspended: false,
-        repeated_failure_notifications: 0,
-        execution: None,
-        model: "gpt-5".to_string(),
-        generation: 1,
-        is_streaming: false,
-        session_key: "cli:no_wf".to_string(),
-        message_count: 0,
-        pending_message_count: 0,
-        max_context_tokens: 200_000,
-        effort: None,
-        effort_levels: Vec::new(),
-        workflow: None,
-        sync: 1,
-    };
+    let state = session_state("cli:no_wf", 0, None);
     let json = serde_json::to_string(&state).unwrap();
     assert!(
         !json.contains("workflow"),

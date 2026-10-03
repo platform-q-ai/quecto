@@ -140,10 +140,13 @@ pub struct ProvidersConfig {
 pub const DEFAULT_MODEL_REFUSAL_TTL_SECS: u64 = 3600;
 
 impl ProvidersConfig {
-    /// How long a model a provider refused is held unavailable.
+    /// How long a model a provider refused is held unavailable; `0` holds
+    /// none.
     pub fn model_refusal_ttl(&self) -> std::time::Duration {
-        let _ = self.model_refusal_ttl_secs;
-        std::time::Duration::ZERO
+        std::time::Duration::from_secs(
+            self.model_refusal_ttl_secs
+                .unwrap_or(DEFAULT_MODEL_REFUSAL_TTL_SECS),
+        )
     }
 }
 

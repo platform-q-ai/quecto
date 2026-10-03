@@ -14,8 +14,9 @@ use crate::domain::provider_error::{
 /// The guidance a model refused for the account or auth mode ends with
 /// (#2435): the catalogue now holds it unavailable.
 const MODEL_REFUSED_GUIDANCE: &str = "Model unavailable: the provider refused this model for \
-     the account or auth mode in use. It is marked unavailable for the rest of this process; \
-     choose another model (list_models, then set_model).";
+     the account or auth mode in use. It is held unavailable until the provider serves it or \
+     the hold ends (providers.model_refusal_ttl_secs, an hour by default); choose another model \
+     (list_models, then set_model).";
 
 /// Build the audit event that persists a terminal provider failure (#937).
 ///
@@ -107,9 +108,12 @@ pub(super) fn enhance_provider_error(err: DomainError) -> DomainError {
         ));
     }
 
-    if model_refusal(&DomainError::Provider(message.clone())).is_some()
-        && !message.contains(MODEL_REFUSED_GUIDANCE)
-    {
+    if model_refusal(&DomainError::Provider(message.clone())).is_some() {
+        // Enhanced once: a message that already ends with the guidance is
+        // returned as it is.
+        if message.ends_with(MODEL_REFUSED_GUIDANCE) {
+            return DomainError::Provider(message);
+        }
         return DomainError::Provider(format!("{message}\n\n{MODEL_REFUSED_GUIDANCE}"));
     }
 
