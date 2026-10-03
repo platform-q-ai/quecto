@@ -260,11 +260,21 @@ async fn run<T, F: Future<Output = Result<T, DomainError>>>(
     tx: Option<&Sender>,
     operation: impl FnOnce(Receipt) -> F,
 ) -> Result<T, AttemptError> {
-    let permit = tokio::select! {
+    let admitted = tokio::select! {
         biased;
-        _ = cancelled(cancel) => return Err(AttemptError::Stopped),
-        _ = closed(tx) => return Err(AttemptError::Stopped),
-        permit = gate.acquire() => permit.map_err(AttemptError::Failed)?,
+        _ = cancelled(cancel) => Err(AttemptError::Stopped),
+        _ = closed(tx) => Err(AttemptError::Stopped),
+        permit = gate.acquire() => permit.map_err(AttemptError::Failed),
+    };
+    let permit = match admitted {
+        Ok(permit) => permit,
+        Err(unsent) => {
+            // Never admitted, so never sent: no request to report (#2436).
+            if let Some(trace) = &trace {
+                trace.withdraw_attempt();
+            }
+            return Err(unsent);
+        }
     };
     let deadline = permit.deadline_expired();
     let receipt = Receipt::new(Some(permit), trace);

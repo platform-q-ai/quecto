@@ -187,7 +187,11 @@ pub struct StateSnapshot {
     /// attempts, refusals included. Always written by this harness (zero
     /// before the first request); `None` when read from an older child that
     /// never sent it, so a relay omits it rather than invent zeros.
-    #[serde(default)]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_optional"
+    )]
     pub agent_requests: Option<super::inference::request_completion::AgentRequestCounters>,
 }
 

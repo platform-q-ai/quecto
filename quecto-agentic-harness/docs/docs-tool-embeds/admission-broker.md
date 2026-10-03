@@ -240,9 +240,10 @@ Before replacing an apparently failed child, inspect its existing state.
 
 Queued inference is waiting, not stalled or idle. `get_state` includes `admission`
 and `progress.state = "waiting"`; inspect `waiting`, `admitted`,
-`longestWaitSeconds`, group `cooldown`/`lastRefusal`, and counters (shared by
-every attempt of the process's binding, not one agent's request count: that is
-`get_state` `agentRequests`, or its `request_completed` events). This is a
+`longestWaitSeconds`, group `cooldown`/`lastRefusal`, and counters (every
+admission attempt this process made across its quota groups, retries and
+refusals included — not its LLM requests or tokens: those are `get_state`
+`agentRequests` and its `request_completed` events). This is a
 process-local bounded view (up to 64 sampled live attempts, extras in `hidden`),
 not a global queue position. Full reads refresh elapsed wait/cooldown values;
 `admission_state_changed` events describe transitions. An unchanged generation

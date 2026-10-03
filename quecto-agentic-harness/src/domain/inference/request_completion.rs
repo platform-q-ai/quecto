@@ -79,7 +79,7 @@ impl RequestSpend {
                 let report = Self {
                     input_tokens: u64::from(usage.prompt_tokens),
                     cached_tokens: usage.cache_read_tokens.map(u64::from),
-                    cache_write_tokens: None,
+                    cache_write_tokens: usage.cache_write_tokens.map(u64::from),
                     output_tokens: u64::from(usage.completion_tokens),
                 };
                 Some(match spent {
@@ -162,6 +162,9 @@ impl RequestTally {
             counters.cached_tokens = counters
                 .cached_tokens
                 .saturating_add(spend.cached_tokens.unwrap_or(0));
+            counters.cache_write_tokens = counters
+                .cache_write_tokens
+                .saturating_add(spend.cache_write_tokens.unwrap_or(0));
             counters.output_tokens = counters.output_tokens.saturating_add(spend.output_tokens);
         }
         debug_assert!(
@@ -253,7 +256,11 @@ impl RequestTrace {
     /// cancelled while it waited to be admitted. It is withdrawn, never
     /// reported: nothing reached a provider (#2436 review).
     pub fn withdraw_attempt(&self) {
-        drop(self.clock());
+        let withdrawn = self.clock().open.take();
+        debug_assert!(
+            withdrawn.is_none_or(|open| open.number >= 1),
+            "only a started attempt is withdrawn"
+        );
     }
 
     /// The attempt in flight failed: it ends now, as an error, before any

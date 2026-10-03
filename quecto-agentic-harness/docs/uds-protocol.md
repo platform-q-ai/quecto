@@ -558,7 +558,7 @@ While a model request is in flight the marker also carries `modelTurn`
 | `admission` | object \| omitted | Bounded inference-admission view (#1679); present only when the process joined an admission authority |
 | `admissionWarnings` | array | Advisory usable provider slots with no effective admission binding; always present (empty when all usable slots are bound). Each item has `slot`, `code` (`admission_binding_missing`) and an actionable `message`. These slots remain usable but their requests are not broker-gated. |
 | `modelTurn` | object \| omitted | The model request in flight (#2210): present only while the agent waits on the model — thinking or streaming — and omitted otherwise |
-| `agentRequests` | object | This agent's own provider requests so far (#2436), retries included; always present. Not `admission.counters`, which are shared — see [Agent requests](#get_state) below |
+| `agentRequests` | object | This agent's own provider requests so far (#2436), retries included; always present. Not `admission.counters`, which count admission attempts — see [Agent requests](#agent-requests) below |
 
 **Admission (`admission`, #1679 P4).** When the process shares an inference
 authority ([inference-admission.md](inference-admission.md)) the projection
@@ -599,7 +599,7 @@ stays in `thinking` (or whatever phase it is in) and its `progress` becomes
 | `groups[].group` | string | Quota group |
 | `groups[].cooldown` | object \| omitted | `state` is `until` (with `remainingSeconds`), `unknown` (throttled without a deadline) or `unavailable` (authority marked the group unavailable) |
 | `groups[].lastRefusal` | string \| omitted | Most recent refusal reason, bounded to 200 bytes |
-| `counters` | object | Lifetime `completed`, `refused`, `cancelled` (wait given up, e.g. `abort`) and `abandoned` (permit dropped without completion). Shared, not per agent: they count every admission attempt made through the process's admission binding — every quota group it holds and every agent loop it hosts, retries included. For one agent's own requests read `agentRequests` or count its `request_completed` events (#2436) |
+| `counters` | object | Lifetime `completed`, `refused`, `cancelled` (wait given up, e.g. `abort`) and `abandoned` (permit dropped without completion). They count every admission attempt this process made, across its quota groups, retries and refusals included. One agent runs per process, so they are this agent's admission attempts — not its LLM requests or their usage, and absent when the process has no admission authority. For its requests and tokens read `agentRequests` or count its `request_completed` events (#2436) |
 | `hidden` | integer | Live attempts beyond the 64-attempt sample that `longestWaitSeconds` is derived from; when non-zero the longest wait may be under-reported |
 | `revision` | integer | Advances on every admission transition (queued, granted, completed, refused, cancelled, abandoned, cooldown learned); time-derived values are not transitions |
 | `directory` | string \| omitted | The authority directory this process is bound to (#2024 S3); not forwarded for a descendant |
@@ -684,30 +684,39 @@ snapshot the same way: at a current cursor, as that marker.
 > newer child. A name of any other shape is refused, and what the parent
 > relays is what it read, re-serialized — never the child's unknown members.
 
+<a id="agent-requests"></a>
 **Agent requests (`agentRequests`, #2436).** This agent's own LLM requests
 since it started, whatever its provider and whether or not it shares an
 admission authority: the totals of the [`request_completed`](#request_completed)
 events it has sent. Each attempt is a request, so a retried request counts
-twice. Always present, zero before the first request; `new_session`,
+twice. Always present, zero before the first request (a parent relaying a
+child built before #2436 omits it rather than report zeros); `new_session`,
 `resume_session` and `clear_history` do not reset it (it is the agent's, not
 the session's: per-session usage is [`get_session_stats`](#get_session_stats)).
 A request that ends advances `generation`.
 
 ```json
 {
-  "agentRequests": {"requests": 12, "inputTokens": 48210, "cachedTokens": 391000, "outputTokens": 6120}
+  "agentRequests": {"requests": 12, "inputTokens": 48210, "cachedTokens": 391000, "cacheWriteTokens": 0, "outputTokens": 6120}
 }
 ```
 
 | Field | Type | Description |
 |---|---|---|
 | `requests` | integer | Provider requests ended, retries included: the last `requestIndex` |
-| `inputTokens` | integer | Input tokens at the full price the providers reported (prompt-cache reads not included) |
+| `inputTokens` | integer | Input tokens at the full price the providers reported: neither cache reads nor cache writes |
 | `cachedTokens` | integer | Input tokens the providers reported served from their prompt cache |
+| `cacheWriteTokens` | integer | Input tokens the providers reported written to their prompt cache (Anthropic's cache creation) |
 | `outputTokens` | integer | Output tokens the providers reported |
 
 A token total sums what the providers reported: a request whose provider
-reported no usage adds nothing.
+reported no usage adds nothing. The three input counts never overlap, so a
+request's whole input is their sum. Per provider: OpenAI and Codex report
+cache reads within their input count, and the adapter splits them out, so
+their whole input is `inputTokens + cachedTokens` (they report no cache
+writes); Anthropic reports all three apart, so its whole input is
+`inputTokens + cachedTokens + cacheWriteTokens`, cache writes billed above the
+full price and cache reads below it.
 
 `get_state` intentionally does not include static vocabularies, transcript
 counts, sync/history state, context-window metadata, available workflow
@@ -1683,13 +1692,14 @@ agent's own.
 {"type":"admission_state_changed","admission":{"waiting":1,"admitted":0,"longestWaitSeconds":3,"groups":[{"group":"anthropic"}],"counters":{"completed":0,"refused":0,"cancelled":0,"abandoned":0},"hidden":0,"revision":1}}
 ```
 
-**Counters are shared, not per agent.** `counters` count every admission
-attempt made through the process's admission binding — all of its quota
-groups and every agent loop it hosts, retries included — so they are not one
-agent's request count, and an agent sharing the binding with a busy one shows
-that one's attempts. A forwarded event carries a descendant's counters under
-its `agent_id`: a client that drops `agent_id` merges them with the connected
-agent's. For an agent's own requests, count its
+**What `counters` count.** Each process keeps its own: every admission
+attempt this process made, across all its quota groups, retries and refusals
+included. One agent runs per process, so they are that agent's admission
+attempts — not its LLM requests, which they cannot price, and absent when the
+process has no admission authority. A parent's stream carries each child's
+`admission_state_changed` — its counters included — under the child's
+`agent_id`: a client that ignores `agent_id` adds them to the connected
+agent's. For an agent's requests and their tokens, count its
 [`request_completed`](#request_completed) events or read `get_state`
 `agentRequests`.
 
@@ -1705,14 +1715,16 @@ child's, so connect to the child's socket to count its requests.
 
 ```json
 {"type":"request_completed","model":"gpt-5.5","provider":"openai-oauth","inputTokens":1200,"cachedTokens":38000,"outputTokens":450,"durationMs":5321,"outcome":"ok","requestIndex":7,"attempt":1}
+{"type":"request_completed","model":"claude-sonnet-4-6","provider":"anthropic","inputTokens":100,"cachedTokens":1000,"cacheWriteTokens":5000,"outputTokens":80,"durationMs":2210,"outcome":"ok","requestIndex":8,"attempt":1}
 ```
 
 | Field | Type | Description |
 |---|---|---|
 | `model` | string | The model id the provider was sent (its `provider/` prefix removed) |
 | `provider` | string | The provider the request was routed to |
-| `inputTokens` | integer \| omitted | Input tokens at the full price, as the provider reported them (prompt-cache reads not included); omitted when it reported no usage |
+| `inputTokens` | integer \| omitted | Input tokens at the full price, as the provider reported them: neither cache reads nor cache writes; omitted when it reported no usage |
 | `cachedTokens` | integer \| omitted | Input tokens served from the provider's prompt cache; omitted when the provider did not report them |
+| `cacheWriteTokens` | integer \| omitted | Input tokens written to the provider's prompt cache (Anthropic's cache creation); omitted when the provider did not report them (OpenAI and Codex never do) |
 | `outputTokens` | integer \| omitted | Output tokens; omitted when the provider reported no usage |
 | `durationMs` | integer | From when the attempt started to when it ended (a retry's back-off is not part of either attempt) |
 | `outcome` | string | `ok` (a reply), `error` (a provider or transport error; a retry, if any, follows as its own event) or `cancelled` (dropped while it ran: `abort`, `steer`, a run deadline, a shutdown) |
@@ -1720,8 +1732,14 @@ child's, so connect to the child's socket to count its requests.
 | `attempt` | integer | Its number within its logical request, from 1; 2 and above are retries |
 
 A token count the provider did not report is omitted, never zero: a count of
-`0` is one the provider reported. A logical request refused before its first
-attempt started (the loop's admission check) is not announced. `requestIndex` has no gaps
+`0` is one the provider reported. A request's whole input is the sum of its
+three input counts (see [Agent requests](#agent-requests)). A reply that ends
+with nothing visible (`empty_stream`) still reports the tokens its provider
+counted, as an `error`. An attempt that admission refused — the loop's check
+before a first attempt or a reattempt, or the inference authority's permit —
+or that was cancelled while it waited to be admitted sent nothing and is not
+announced. One refused or cancelled at the authority had already taken its
+`attempt` number, so it leaves a gap there — never in `requestIndex`. `requestIndex` has no gaps
 unless the client lagged (see [`error`](#error-lagged-client)), so a client
 that sees one can read `get_state` `agentRequests` for the totals.
 

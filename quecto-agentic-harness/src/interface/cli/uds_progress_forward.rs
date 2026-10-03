@@ -92,7 +92,7 @@ fn request_completed(
         provider: completed.provider,
         input_tokens: completed.spend.map(|spend| spend.input_tokens),
         cached_tokens: completed.spend.and_then(|spend| spend.cached_tokens),
-        cache_write_tokens: None,
+        cache_write_tokens: completed.spend.and_then(|spend| spend.cache_write_tokens),
         output_tokens: completed.spend.map(|spend| spend.output_tokens),
         duration_ms: completed.duration_ms,
         outcome: completed.outcome,
