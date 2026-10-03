@@ -16,7 +16,7 @@ use std::time::{Duration, SystemTime};
 
 use super::sidecar_store::{ImageSidecarStore, SidecarFuture, SidecarRead};
 use crate::domain::conversation::stored_images::{
-    ImageRef, MAX_STORED_IMAGE_TEXT, is_sha256_hex, sha256_hex,
+    ImageRef, MAX_STORED_IMAGE_TEXT, VerifiedText, is_sha256_hex,
 };
 use crate::domain::error::DomainError;
 use crate::domain::session_identity::SessionIdentity;
@@ -221,13 +221,16 @@ impl ImageSidecarStore for FileImageSidecarStore {
                 }
                 Err(error) => return Err(failed("read")(error)),
             };
-            let matches = sha256_hex(&bytes) == sha256;
-            match (matches, String::from_utf8(bytes)) {
-                (true, Ok(text)) => {
+            let Ok(text) = String::from_utf8(bytes) else {
+                return Ok(SidecarRead::Corrupt);
+            };
+            let text = VerifiedText::of(text);
+            match text.sha256() == sha256 {
+                true => {
                     self.remember(&path, &meta);
                     Ok(SidecarRead::Found(text))
                 }
-                (_, _) => Ok(SidecarRead::Corrupt),
+                false => Ok(SidecarRead::Corrupt),
             }
         })
     }

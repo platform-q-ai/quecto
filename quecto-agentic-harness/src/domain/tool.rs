@@ -6,7 +6,7 @@
 //! (`application::tools::ports`, #1960).
 use std::borrow::Cow;
 
-use super::conversation::stored_images::ImageDigest;
+use super::conversation::stored_images::{ImageDigest, VerifiedText};
 use super::tool_descriptor::{ProfileAvailabilityScope, ToolAvailability, ToolCatalogueEntry};
 
 /// Metadata describing a tool for the LLM.
@@ -44,9 +44,10 @@ impl ImageBlock {
         }
     }
 
-    /// A block a session restored, whose text its sidecar read verified as
-    /// `sha256`'s (#2424): the digest is known, not computed again.
-    pub fn restored(mime_type: &'static str, data: String, sha256: String) -> Self {
+    /// A block a session restored from its sidecar's text, hashed when it
+    /// was read (#2424): the digest is known, not computed again.
+    pub(crate) fn restored(mime_type: &'static str, text: VerifiedText) -> Self {
+        let (sha256, data) = text.into_parts();
         Self {
             mime_type,
             data,

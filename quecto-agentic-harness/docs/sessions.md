@@ -38,8 +38,8 @@ before. Each image is stored once, as a sidecar file in
 SHA-256 of that text; a message record holds only references (`"images"` for
 a tool result, `"user_images"` for a user message, each
 `[{"sha256": …, "mime_type": …}]`, in the message's order), so session files
-stay small and an image several messages carry is stored once. A sidecar is
-written atomically before any record names it; each image is hashed once in
+stay small and an image several messages carry is stored once. A sidecar's
+write (atomic) is tried before any record names it; each image is hashed once in
 its life (a restored one not at all: its sidecar read verified it), and a
 sidecar already verified costs a `stat` on later saves. The sidecars are kept
 by `FileImageSidecarStore` behind `ImageSidecarStore`, a seam inside
@@ -48,8 +48,11 @@ store.
 
 - A sidecar that cannot be written (the `images/` directory unreadable, or a
   file where it should be) never fails a save: the record still names the
-  image, a warning is logged, and every later save tries again; a load before
-  then keeps the image as unloaded (below).
+  image and every later save tries again, but until one stores it only the
+  running session holds the image, so an exit or a reload loses it (a load
+  then keeps its reference as unloaded, below). A warning says so once per
+  image of each session, and again when the session is left (a switch, or
+  the store dropped at exit) with the image still not stored.
 
 - An image whose sidecar cannot be read on load (missing, unreadable, or not
   the image its name says) is never dropped: it stays on its message, is saved

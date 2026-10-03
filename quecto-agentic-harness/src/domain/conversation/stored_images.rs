@@ -87,9 +87,8 @@ impl Clone for ImageDigest {
 }
 
 impl ImageDigest {
-    /// A digest already known: what a sidecar read verified the text against.
-    pub fn verified(sha256: String) -> Self {
-        debug_assert!(is_sha256_hex(&sha256), "a digest");
+    /// The digest of a [`VerifiedText`], already known.
+    pub(crate) fn verified(sha256: String) -> Self {
         let verified = Self::default();
         assert!(verified.digest.set(sha256).is_ok(), "a new digest is unset");
         verified
@@ -107,6 +106,46 @@ impl ImageDigest {
     #[cfg(any(test, feature = "test-support"))]
     pub fn builds_for_tests(&self) -> usize {
         self.builds.load(Ordering::Relaxed)
+    }
+}
+
+/// An image's text with the SHA-256 it was hashed to: made only by hashing
+/// ([`VerifiedText::of`]), so its digest is always its text's. A sidecar read
+/// returns one, and a restored block takes its digest as known.
+#[derive(Clone, PartialEq, Eq)]
+pub struct VerifiedText {
+    sha256: String,
+    text: String,
+}
+
+impl VerifiedText {
+    /// `text`, hashed.
+    pub fn of(text: String) -> Self {
+        let sha256 = sha256_hex(text.as_bytes());
+        Self { sha256, text }
+    }
+
+    pub fn sha256(&self) -> &str {
+        &self.sha256
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// The digest and the text.
+    pub(crate) fn into_parts(self) -> (String, String) {
+        (self.sha256, self.text)
+    }
+}
+
+/// Never prints the text.
+impl std::fmt::Debug for VerifiedText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VerifiedText")
+            .field("sha256", &self.sha256)
+            .field("len", &self.text.len())
+            .finish()
     }
 }
 
@@ -281,6 +320,11 @@ pub fn image_tokens(message: &Message) -> usize {
     tool.chain(user).sum()
 }
 
+/// Whether `message` has a body to retain: text, or a user's image (#2424).
+pub fn has_text_or_user_image(message: &Message) -> bool {
+    !message.content.is_empty() || !message.user_image_blocks.is_empty()
+}
+
 /// Release every image `message` carries, loaded or not (a collapse: the
 /// message's body is in session memory).
 pub fn release_images(message: &mut Message) {
@@ -298,18 +342,26 @@ pub fn release_images(message: &mut Message) {
 /// Returns how many stayed unloaded.
 pub fn restore_images(
     message: &mut Message,
-    tool: Vec<(ImageRef, Option<String>)>,
-    user: Vec<(ImageRef, Option<String>)>,
+    tool: Vec<(ImageRef, Option<VerifiedText>)>,
+    user: Vec<(ImageRef, Option<VerifiedText>)>,
 ) -> usize {
     let typed = |reference: &ImageRef| ImageMime::parse_exact(&reference.mime_type);
-    // A sidecar read verified each text against its reference, so a block's
-    // digest is the reference's: a load hashes no image a second time.
+    // Each text was hashed when its sidecar was read: a block takes that
+    // digest, so a load hashes no image a second time.
+    let read = |reference: &ImageRef, text: &VerifiedText| {
+        assert_eq!(
+            text.sha256(),
+            reference.sha256,
+            "a sidecar read is its reference's"
+        );
+    };
     for (position, (reference, text)) in tool.into_iter().enumerate() {
         match (typed(&reference), text) {
             (Some(mime), Some(text)) => {
-                debug_assert_eq!(sha256_hex(text.as_bytes()), reference.sha256);
-                let block = ImageBlock::restored(mime.as_str(), text, reference.sha256);
-                message.image_blocks.push(block);
+                read(&reference, &text);
+                message
+                    .image_blocks
+                    .push(ImageBlock::restored(mime.as_str(), text));
             }
             (_, _) => message.unloaded_images.push(UnloadedImage {
                 kind: ImageKind::Tool,
@@ -322,7 +374,8 @@ pub fn restore_images(
         // Admitted exactly as it was stored, or not at all.
         let restored = match (typed(&reference), text) {
             (Some(mime), Some(text)) => {
-                UserImageBlock::restore_verified(mime, text, reference.sha256.clone())
+                read(&reference, &text);
+                UserImageBlock::restore_verified(mime, text)
             }
             (_, _) => None,
         };

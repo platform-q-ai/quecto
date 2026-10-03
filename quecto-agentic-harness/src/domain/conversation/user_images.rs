@@ -7,7 +7,7 @@
 //! admitted attachment becomes a [`UserImageBlock`] here, the block providers
 //! send. `quecto_image` is a pure leaf crate (no I/O, depends only on base64
 //! and serde), so the domain depends on it as it does on `base64`.
-use super::stored_images::ImageDigest;
+use super::stored_images::{ImageDigest, VerifiedText, sha256_hex};
 use crate::domain::message::{Message, Role};
 
 /// An image attached to a user message. Its fields are private to this
@@ -56,17 +56,21 @@ impl UserImageBlock {
         quecto_image::ImageAttachment::new(payload).map(Self::from)
     }
 
-    /// [`Self::restore`] for text a sidecar read verified as `sha256`'s
+    /// [`Self::restore`] for a sidecar's text, hashed when it was read
     /// (#2424): kept only when admission leaves it exactly as read, with the
-    /// digest known rather than computed again.
-    pub fn restore_verified(
+    /// digest known rather than computed again. Admission hands the text back
+    /// unchanged (the same allocation), so the check costs no copy; were it
+    /// ever to rewrite it, the text is hashed once to tell.
+    pub(crate) fn restore_verified(
         mime: quecto_image::ImageMime,
-        data: String,
-        sha256: String,
+        text: VerifiedText,
     ) -> Option<Self> {
-        let read = data.clone();
+        let (sha256, data) = text.into_parts();
+        let (at, len) = (data.as_ptr(), data.len());
         let block = Self::restore(mime, data).ok()?;
-        (block.data == read).then(|| Self {
+        let unchanged = std::ptr::eq(block.data.as_ptr(), at) && block.data.len() == len;
+        let same = unchanged || sha256_hex(block.data.as_bytes()) == sha256;
+        same.then(|| Self {
             digest: ImageDigest::verified(sha256),
             ..block
         })

@@ -149,14 +149,23 @@ fn restoring_puts_text_back_verbatim_and_keeps_the_rest_unloaded_in_place() {
     let unadmitted = samples::encode(b"GIF89a but no header");
     let unloaded_count = restore_images(
         &mut message,
-        vec![(reference(&wrapped, "image/png"), Some(wrapped.clone()))],
+        vec![(
+            reference(&wrapped, "image/png"),
+            Some(VerifiedText::of(wrapped.clone())),
+        )],
         vec![
             (reference(&gif, "image/gif"), None),
-            (reference(&gif, "image/gif"), Some(gif.clone())),
-            (reference(&gif, "text/html"), Some(gif.clone())),
+            (
+                reference(&gif, "image/gif"),
+                Some(VerifiedText::of(gif.clone())),
+            ),
+            (
+                reference(&gif, "text/html"),
+                Some(VerifiedText::of(gif.clone())),
+            ),
             (
                 reference(&unadmitted, "image/gif"),
-                Some(unadmitted.clone()),
+                Some(VerifiedText::of(unadmitted.clone())),
             ),
         ],
     );

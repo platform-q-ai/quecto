@@ -50,7 +50,6 @@ struct SpillRecord {
     input_preview: String,
     tokens: usize,
     content: String,
-    /// The spilled message's images, by reference; information only (#2424).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     images: Vec<ImageRefRecord>,
 }
@@ -116,15 +115,16 @@ struct SpillIndexRecord {
     // content field is intentionally omitted to skip deserialization
 }
 
+fn spill_error(what: &'static str) -> impl Fn(std::io::Error) -> DomainError {
+    move |e| DomainError::Session(format!("failed to {what}: {e}"))
+}
+
 /// Read the raw JSONL content from a spill file.
 async fn read_spill_content(path: &Path) -> Result<String, DomainError> {
     match tokio::fs::read_to_string(path).await {
         Ok(c) => Ok(c),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
-        Err(e) => Err(DomainError::Session(format!(
-            "failed to read spill file: {}",
-            e
-        ))),
+        Err(e) => Err(spill_error("read spill file")(e)),
     }
 }
 
@@ -177,7 +177,8 @@ impl ContextSpillStore for FileContextSpillStore {
                 serde_json::to_string(&record).map_err(|e| DomainError::Session(e.to_string()))?;
             line.push('\n');
 
-            // True append (append mode, written directly): no read-modify-write, no TOCTOU race.
+            // True append: open in append mode and write directly.
+            // No read-modify-write cycle, no TOCTOU race.
             use tokio::io::AsyncWriteExt;
             let mut file = tokio::fs::OpenOptions::new()
                 .create(true)
@@ -194,9 +195,9 @@ impl ContextSpillStore for FileContextSpillStore {
                 .await
                 .map_err(|e| DomainError::Session(format!("failed to flush spill file: {}", e)))?;
 
-            // Update the in-memory index cache only if already populated: an absent entry is
-            // seeded from disk, this entry included, by the next list_entries(), so the cache
-            // is never a partial one that misses prior entries.
+            // Update in-memory index cache (only if already populated). If no cache entry exists,
+            // we skip — the next list_entries() call will seed the cache from disk including this
+            // new entry. This avoids creating a partial cache that misses prior entries.
             let index = SpillIndex {
                 id: record.id,
                 tool: record.tool,
@@ -230,14 +231,16 @@ impl ContextSpillStore for FileContextSpillStore {
             }
 
             let content = read_spill_content(&path).await?;
-            // Line-by-line scan with early exit at the first match: only lines containing the
-            // target ID as a substring (a cheap check before the expensive JSON parse) are parsed.
+            // Line-by-line scan with early exit: only deserialize lines
+            // that contain the target ID as a substring (cheap string check
+            // before expensive JSON parse).  Stops at the first match.
             for line in content.lines() {
                 let trimmed = line.trim();
                 if trimmed.is_empty() {
                     continue;
                 }
-                // Quick substring filter: skip lines that obviously lack the target ID.
+                // Quick substring filter — avoids deserializing lines that
+                // obviously don't contain the target ID.
                 if !trimmed.contains(&id) {
                     continue;
                 }
@@ -269,8 +272,9 @@ impl ContextSpillStore for FileContextSpillStore {
                 }
             }
 
-            // Cold start: read from disk and populate the cache, holding the write lock for the
-            // full operation against TOCTOU races with concurrent cold starts or append().
+            // Cold start: read from disk and populate cache.
+            // Hold write lock for the full operation to prevent TOCTOU
+            // races with concurrent cold-start callers or append().
             let records = read_spill_index_records(&path).await?;
             let entries: Vec<SpillIndex> = records
                 .into_iter()
@@ -316,17 +320,13 @@ impl ContextSpillStore for FileContextSpillStore {
             // Check if the file exists — if not, nothing to clear.
             match tokio::fs::metadata(&path).await {
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-                Err(e) => {
-                    return Err(DomainError::Session(format!(
-                        "failed to stat spill file: {}",
-                        e
-                    )));
-                }
+                Err(e) => return Err(spill_error("stat spill file")(e)),
                 Ok(_) => {}
             }
 
-            // Atomic clear: write empty content to a temp file then rename over the target,
-            // so no concurrent append() interleaves with a truncate-in-place (O_TRUNC's race).
+            // Atomic clear: write empty content to a temp file then rename over the target.
+            // This avoids a race window where a concurrent append() could interleave with
+            // a truncate-in-place (which O_TRUNC would cause).
             let parent = path.parent().ok_or_else(|| {
                 DomainError::Session("spill path has no parent directory".to_string())
             })?;
@@ -334,9 +334,9 @@ impl ContextSpillStore for FileContextSpillStore {
             // Use the same directory so rename() is atomic (same filesystem).
             let tmp_path = parent.join(format!(".spill-clear-{}.tmp", uuid::Uuid::new_v4()));
 
-            tokio::fs::write(&tmp_path, b"").await.map_err(|e| {
-                DomainError::Session(format!("failed to write temp clear file: {}", e))
-            })?;
+            tokio::fs::write(&tmp_path, b"")
+                .await
+                .map_err(spill_error("write temp clear file"))?;
 
             tokio::fs::rename(&tmp_path, &path).await.map_err(|e| {
                 DomainError::Session(format!("failed to atomically clear spill file: {}", e))

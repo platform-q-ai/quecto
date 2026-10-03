@@ -8,7 +8,9 @@
 //! operation is keyed by the typed [`SessionIdentity`], never by a raw
 //! string, filename or path.
 pub mod export;
-use std::{future::Future, pin::Pin};
+use std::future::Future;
+use std::pin::Pin;
+
 pub mod session_runtime;
 pub mod session_transition;
 pub use session_runtime::{DurablePrefixObservation, HistoricalRosterSource, WorkflowRunSource};
@@ -32,11 +34,12 @@ pub type SessionLoad<'a> =
 
 /// Port: persistent storage for conversation sessions.
 pub trait SessionStore: Send + Sync {
-    /// Claim single-writer ownership of `identity` before opening or resuming it
-    /// for writing (#1460): a key owned by another live process must be refused
-    /// HERE, at open time, not only when the first turn is saved — otherwise a
-    /// whole paid turn can run before the conflict surfaces. Default is a no-op
-    /// for stores without cross-process shared state.
+    /// Claim single-writer ownership of `identity` before opening or
+    /// resuming it for writing (#1460): a key owned by another live process
+    /// must be refused HERE, at open time, not only when the first turn is
+    /// saved — otherwise a whole paid turn can run before the conflict
+    /// surfaces. Default is a no-op for stores without cross-process shared
+    /// state.
     fn claim(&self, _identity: &SessionIdentity) -> Result<(), DomainError> {
         Ok(())
     }
@@ -67,12 +70,8 @@ pub trait SessionStore: Send + Sync {
         _previously_persisted: usize,
         workflow_run: Option<WorkflowRunPersisted>,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
-        let session = Session {
-            key: identity.clone(),
-            messages: messages.to_vec(),
-            workflow_run,
-            subagent_roster: Vec::new(),
-        };
+        let mut session = Session::new(identity.clone());
+        (session.messages, session.workflow_run) = (messages.to_vec(), workflow_run);
         Box::pin(async move { self.save(&session).await })
     }
 
@@ -94,12 +93,13 @@ pub trait SessionStore: Send + Sync {
         identity: &SessionIdentity,
     ) -> Pin<Box<dyn Future<Output = Result<bool, DomainError>> + Send + '_>>;
 
-    /// List persisted sessions, newest first when modification times are available. A
-    /// [`SessionListQuery::ExistingKeyPrefix`] returns only the sessions whose identity starts
-    /// with the prefix; the adapter uses it to skip non-matching files cheaply (without
-    /// reading/parsing them). A SUMMARY-ONLY view, not a load guarantee: summaries may come
-    /// from a lightweight projection, so a listed [`SessionSummary`] does not guarantee
-    /// [`Self::load`] succeeds; callers handle a load failure.
+    /// List persisted sessions, newest first when modification times are
+    /// available. A [`SessionListQuery::ExistingKeyPrefix`] returns only the
+    /// sessions whose identity starts with the prefix; the adapter uses it
+    /// to skip non-matching files cheaply (without reading/parsing them).
+    /// A SUMMARY-ONLY view, not a load guarantee: summaries may come from a
+    /// lightweight projection, so a listed [`SessionSummary`] does not
+    /// guarantee [`Self::load`] succeeds; callers handle a load failure.
     fn list(
         &self,
         query: &SessionListQuery,

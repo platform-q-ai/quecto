@@ -69,7 +69,11 @@ async fn an_unreadable_image_directory_never_blocks_a_save() {
     files.save(&session(messages.clone())).await.unwrap();
     let dir = images_dir(tmp.path());
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
-    let faulty = std::fs::read_dir(&dir).is_err();
+    if std::fs::read_dir(&dir).is_ok() {
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        println!("skipped: mode 000 does not deny this user (root?), so there is no fault");
+        return;
+    }
 
     // A text-only turn, and a turn with a new image, while the fault lasts.
     messages.push(Message::user("and now?"));
@@ -91,12 +95,10 @@ async fn an_unreadable_image_directory_never_blocks_a_save() {
         png(),
         "back once fixed"
     );
-    if faulty {
-        // The image written during the fault is named, unloaded, until a save stores it.
-        assert_eq!(loaded.messages[3].unloaded_images.len(), 1);
-        files.save(&session(messages)).await.unwrap();
-        assert_eq!(reload(tmp.path()).await.messages[3].image_blocks.len(), 1);
-    }
+    // The image written during the fault is named, unloaded, until a save stores it.
+    assert_eq!(loaded.messages[3].unloaded_images.len(), 1);
+    files.save(&session(messages)).await.unwrap();
+    assert_eq!(reload(tmp.path()).await.messages[3].image_blocks.len(), 1);
 }
 
 #[tokio::test]

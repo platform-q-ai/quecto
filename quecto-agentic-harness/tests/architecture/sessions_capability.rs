@@ -752,8 +752,8 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/domain/token_estimate.rs", 207),
     // #2212: the estimate doc points at the per-class module (244 → 242);
     // #2349 review M1: the drop moved to the exchanges module (→ 209);
-    // #2414: the tool-count dial removed (→ 162).
-    ("src/application/context_pruning.rs", 162),
+    // #2414: the tool-count dial removed (→ 162); #2424: its real length (→ 161).
+    ("src/application/context_pruning.rs", 161),
     // #2349 review M1: new module (removal keeps exchanges whole).
     ("src/application/context_pruning_exchanges.rs", 86),
     // #2213: the demotion-ladder ceiling moved to its own module (304 → 217);
@@ -809,9 +809,9 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // #2218: the writes, their fsync and the append-or-compact decisions
     // and the intactness record moved to `session_store_write.rs` (656 → 510).
     // #2424: the message record conversions and the list's header parse moved
-    // beside the records they read (`session_store_records.rs`, 510 → 475);
+    // beside the records they read (`session_store_records.rs`, 510 → 476);
     // the image steps are `session_images/` (the write: 389 → 387).
-    ("src/infrastructure/persistence/session_store.rs", 475),
+    ("src/infrastructure/persistence/session_store.rs", 476),
     ("src/infrastructure/persistence/session_store_write.rs", 387),
     (
         "src/infrastructure/persistence/session_store_catalogue.rs",
@@ -1155,6 +1155,8 @@ fn ports_are_declared_only_in_the_capability_ports_file_and_contracted() {
     for extra in [
         "tests/contracts/session_layout.rs",
         "tests/contracts/session_list_scale.rs",
+        // #2424: the image sidecar seam's contract, beside it in persistence.
+        "src/infrastructure/persistence/session_images/sidecar_store_contract_tests.rs",
     ] {
         assert!(Path::new(extra).is_file(), "missing {extra}");
     }

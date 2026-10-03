@@ -148,6 +148,7 @@ impl SessionStore for FileSessionStore {
 
     fn release(&self, identity: &SessionIdentity) {
         self.intact.forget(&self.session_path(identity));
+        self.images.leave(identity);
         self.ownership.release(identity);
     }
 

@@ -330,16 +330,17 @@ async fn an_image_unreadable_for_a_while_is_back_on_the_next_load() {
         .unwrap();
     let sidecar = images_dir(tmp.path()).join(sha256(&png));
     std::fs::set_permissions(&sidecar, std::fs::Permissions::from_mode(0o000)).unwrap();
-    let unreadable = std::fs::read(&sidecar).is_err();
+    if std::fs::read(&sidecar).is_ok() {
+        println!("skipped: mode 000 does not deny this user (root?), so there is no fault");
+        return;
+    }
 
     let loaded = reload(tmp.path()).await;
-    if unreadable {
-        assert_eq!(
-            loaded.messages[2].unloaded_images.len(),
-            1,
-            "kept, not lost"
-        );
-    }
+    assert_eq!(
+        loaded.messages[2].unloaded_images.len(),
+        1,
+        "kept, not lost"
+    );
     // A new store's first save rewrites the whole transcript: a compaction.
     store(tmp.path()).save(&loaded).await.unwrap();
     std::fs::set_permissions(&sidecar, std::fs::Permissions::from_mode(0o600)).unwrap();

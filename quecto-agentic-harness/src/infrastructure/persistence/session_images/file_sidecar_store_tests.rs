@@ -9,7 +9,9 @@ use std::time::{Duration, SystemTime};
 
 use super::super::sidecar_store::{ImageSidecarStore, SidecarRead};
 use super::FileImageSidecarStore;
-use crate::domain::conversation::stored_images::{ImageRef, MAX_STORED_IMAGE_TEXT, sha256_hex};
+use crate::domain::conversation::stored_images::{
+    ImageRef, MAX_STORED_IMAGE_TEXT, VerifiedText, sha256_hex,
+};
 use crate::domain::session_identity::SessionIdentity;
 use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
 
@@ -61,7 +63,7 @@ async fn a_sidecar_whose_content_is_not_its_name_is_written_again() {
     store.put(&id(), &reference(text), text).await.unwrap();
     assert_eq!(
         store.get(&id(), &reference(text).sha256).await.unwrap(),
-        SidecarRead::Found(text.to_string())
+        SidecarRead::Found(VerifiedText::of(text.to_string()))
     );
 }
 

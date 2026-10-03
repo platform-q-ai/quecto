@@ -1,8 +1,9 @@
 //! The image sidecars of saved sessions (#2424): each image a session's
 //! messages carry is stored once beside its transcript, as its exact base64
 //! text, named by the SHA-256 of that text; the transcript names it by
-//! reference only. The session store writes an image here before any record
-//! that names it, reads it back on load, removes what its transcript no
+//! reference only. The session store tries to write an image here before any
+//! record names it (a failed write is warned about, never a failed save),
+//! reads it back on load, removes what its transcript no
 //! longer names once it compacts, and removes everything when the session is
 //! deleted. A seam inside persistence, not an application port: only the
 //! file session store drives it, and composition wires the adapter
@@ -11,7 +12,7 @@ use std::collections::BTreeSet;
 use std::future::Future;
 use std::pin::Pin;
 
-use crate::domain::conversation::stored_images::ImageRef;
+use crate::domain::conversation::stored_images::{ImageRef, VerifiedText};
 use crate::domain::error::DomainError;
 use crate::domain::session_identity::SessionIdentity;
 
@@ -20,8 +21,8 @@ pub type SidecarFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, DomainErro
 /// What reading one sidecar found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SidecarRead {
-    /// The image text whose SHA-256 the name is.
-    Found(String),
+    /// The image text, hashed as it was read: its SHA-256 is the name.
+    Found(VerifiedText),
     /// No sidecar by that name.
     Missing,
     /// Not an image the store wrote: text that does not hash to its name, a

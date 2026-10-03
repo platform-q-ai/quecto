@@ -13,7 +13,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use super::{ImageSidecarStore, SidecarRead};
-use crate::domain::conversation::stored_images::{ImageRef, sha256_hex};
+use crate::domain::conversation::stored_images::{ImageRef, VerifiedText, sha256_hex};
 use crate::domain::session_identity::SessionIdentity;
 use crate::infrastructure::persistence::session_images::FileImageSidecarStore;
 use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
@@ -61,7 +61,7 @@ async fn a_stored_image_reads_back_under_its_digest_and_storing_it_again_keeps_i
             .get(&id("cli:a"), &png.reference.sha256)
             .await
             .unwrap(),
-        SidecarRead::Found(png.text.clone())
+        SidecarRead::Found(VerifiedText::of(png.text.clone()))
     );
 }
 

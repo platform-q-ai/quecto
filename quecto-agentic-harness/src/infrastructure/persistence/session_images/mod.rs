@@ -7,9 +7,11 @@
 //! transcript's records hold [`ImageRefRecord`]s, in each message's order.
 //! Around its own writes and reads the file store takes the steps here
 //! ([`SessionImages`]):
-//! - every image the transcript names is stored before the record naming it
-//!   is written; one the store cannot keep (a type no image has, too large)
-//!   is still named, with a warning, and is never sent again;
+//! - storing every image the transcript names is tried before the record
+//!   naming it is written (a failed write is warned about, and the record
+//!   names the image all the same); one the store cannot keep (a type no
+//!   image has, too large) is still named, with a warning, and is never sent
+//!   again;
 //! - a load restores each reference's text verbatim; one whose sidecar cannot
 //!   be read stays on its message as an unloaded image (sent as a marker,
 //!   saved again, read again on the next load): never a load failure, and
@@ -24,7 +26,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::{Arc, Mutex};
 
 use crate::domain::conversation::stored_images::{
-    ImageRef, MessageImageRefs, is_storable, restore_images,
+    ImageRef, MessageImageRefs, VerifiedText, is_storable, restore_images,
 };
 use crate::domain::message::Message;
 use crate::domain::session_identity::SessionIdentity;
@@ -74,8 +76,12 @@ pub(in crate::infrastructure::persistence) struct SessionImages {
     sidecars: Option<Arc<dyn ImageSidecarStore>>,
     /// The digests already warned about as not storable, once each.
     refused: Mutex<HashSet<String>>,
-    /// The digests whose sidecar write failed and was warned about.
-    failing: Mutex<HashSet<String>>,
+    /// The images whose sidecar write failed and was warned about, by
+    /// session (its runtime key) and digest: each until a save stores it.
+    failing: Mutex<HashSet<(String, String)>>,
+    /// The failure warnings logged (tests).
+    #[cfg(test)]
+    warnings: std::sync::atomic::AtomicUsize,
 }
 
 impl std::fmt::Debug for SessionImages {
@@ -86,23 +92,35 @@ impl std::fmt::Debug for SessionImages {
     }
 }
 
+/// At exit (the store dropped), say once if any image was never stored.
+impl Drop for SessionImages {
+    fn drop(&mut self) {
+        let failing = self.failing.get_mut().unwrap_or_else(|e| e.into_inner());
+        if !failing.is_empty() {
+            tracing::warn!(
+                lost = failing.len(),
+                "exiting with image sidecars never written: those images are lost"
+            );
+        }
+    }
+}
+
 impl SessionImages {
     pub(in crate::infrastructure::persistence) fn over(
         sidecars: Arc<dyn ImageSidecarStore>,
     ) -> Self {
-        Self {
-            sidecars: Some(sidecars),
-            ..Self::default()
-        }
+        let mut images = Self::default();
+        images.sidecars = Some(sidecars);
+        images
     }
 
-    /// Store every loaded image `messages` carry, before a record names it.
-    /// Each image is hashed once in its life, and a sidecar already verified
-    /// costs a `stat`, so a save stores them all. Never a save failure: a
-    /// sidecar that cannot be written (the directory unreadable, say) is
-    /// warned about, the record still names the image, and the image is kept
-    /// in memory and stored again on the next save; a load before that keeps
-    /// the reference, unloaded.
+    /// Try to store every loaded image `messages` carry, before a record
+    /// names it. Each image is hashed once in its life, and a sidecar already
+    /// verified costs a `stat`, so a save tries them all. Never a save
+    /// failure: a sidecar that cannot be written (the directory unreadable,
+    /// say) is warned about, the record still names the image, and only the
+    /// image in memory holds it until a later save stores it; an exit or a
+    /// reload before then loses it (the reference stays, unloaded).
     pub(in crate::infrastructure::persistence) async fn store(
         &self,
         identity: &SessionIdentity,
@@ -146,22 +164,53 @@ impl SessionImages {
         text: &str,
     ) {
         let stored = sidecars.put(identity, reference, text).await;
+        let key = (identity.runtime_key().to_string(), reference.sha256.clone());
         let mut failing = self.failing.lock().unwrap_or_else(|e| e.into_inner());
         match stored {
             Ok(()) => {
-                failing.remove(&reference.sha256);
+                failing.remove(&key);
             }
             Err(error) => {
-                if failing.insert(reference.sha256.clone()) {
+                if failing.insert(key) {
+                    self.note_warning();
                     tracing::warn!(
                         session = identity.runtime_key(),
                         sha256 = reference.sha256,
                         %error,
-                        "an image sidecar was not written; the next save tries again"
+                        "an image sidecar was not written: until a save stores it, an exit or a \
+                         reload loses this image (the next save tries again)"
                     );
                 }
             }
         }
+    }
+
+    /// The session `identity` is left (a switch): if any of its images was
+    /// never stored, say once that they are lost with this process.
+    pub(in crate::infrastructure::persistence) fn leave(&self, identity: &SessionIdentity) {
+        let mut failing = self.failing.lock().unwrap_or_else(|e| e.into_inner());
+        let before = failing.len();
+        failing.retain(|(session, _)| session != identity.runtime_key());
+        let lost = before - failing.len();
+        if lost > 0 {
+            self.note_warning();
+            tracing::warn!(
+                session = identity.runtime_key(),
+                lost,
+                "leaving a session whose image sidecars were never written: those images are lost"
+            );
+        }
+    }
+
+    fn note_warning(&self) {
+        #[cfg(test)]
+        self.warnings
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    #[cfg(test)]
+    pub(in crate::infrastructure::persistence) fn warnings_for_tests(&self) -> usize {
+        self.warnings.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// An image the store cannot keep: named in the record, warned once.
@@ -212,8 +261,8 @@ impl SessionImages {
         &self,
         identity: &SessionIdentity,
         references: Vec<ImageRef>,
-        read: &mut BTreeMap<String, Option<String>>,
-    ) -> Vec<(ImageRef, Option<String>)> {
+        read: &mut BTreeMap<String, Option<VerifiedText>>,
+    ) -> Vec<(ImageRef, Option<VerifiedText>)> {
         let mut resolved = Vec::with_capacity(references.len());
         for reference in references {
             let text = match read.get(&reference.sha256) {
@@ -229,7 +278,7 @@ impl SessionImages {
         resolved
     }
 
-    async fn read(&self, identity: &SessionIdentity, sha256: &str) -> Option<String> {
+    async fn read(&self, identity: &SessionIdentity, sha256: &str) -> Option<VerifiedText> {
         let sidecars = self.sidecars.as_ref()?;
         let reason = match sidecars.get(identity, sha256).await {
             Ok(SidecarRead::Found(text)) => return Some(text),
@@ -295,3 +344,6 @@ mod faults_tests;
 #[cfg(test)]
 #[path = "round_trip_tests.rs"]
 mod round_trip_tests;
+#[cfg(test)]
+#[path = "warnings_tests.rs"]
+mod warnings_tests;
