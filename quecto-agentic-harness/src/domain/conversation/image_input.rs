@@ -142,19 +142,43 @@ fn skip_sub_blocks(bytes: &[u8], mut at: usize) -> Option<usize> {
 }
 
 /// What the animated-GIF walk found for each GIF already seen (#2421
-/// round 2 nit 1), so a request walks a GIF of the history once, not on
-/// every request.
+/// round 2 nit 1), keyed by the image's length and a hash of its base64,
+/// so a request walks a GIF of the history once, not on every request.
 #[derive(Debug, Default)]
 pub struct GifVerdicts {
+    known: std::sync::Mutex<std::collections::HashMap<(usize, u64), bool>>,
     walks: std::sync::atomic::AtomicUsize,
 }
 
+/// The most verdicts kept; past it they are forgotten and walked again.
+pub const MAX_GIF_VERDICTS: usize = 1_024;
+
 impl GifVerdicts {
-    /// Whether the `mime_type` image `data` encodes is an animated GIF.
+    /// Whether the `mime_type` image `data` encodes is an animated GIF; a
+    /// GIF is walked the first time it is asked about.
     pub fn is_animated(&self, mime_type: &str, data: &str) -> bool {
-        self.walks
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        is_animated_gif(mime_type, data)
+        match mime_type.eq_ignore_ascii_case("image/gif") {
+            false => false,
+            true => {
+                let key = (data.len(), {
+                    let mut hasher = std::hash::DefaultHasher::new();
+                    std::hash::Hasher::write(&mut hasher, data.as_bytes());
+                    std::hash::Hasher::finish(&hasher)
+                });
+                let mut known = self.known.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(verdict) = known.get(&key) {
+                    return *verdict;
+                }
+                self.walks
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let verdict = is_animated_gif(mime_type, data);
+                if known.len() >= MAX_GIF_VERDICTS {
+                    known.clear();
+                }
+                known.insert(key, verdict);
+                verdict
+            }
+        }
     }
 
     /// How many GIFs have been walked.

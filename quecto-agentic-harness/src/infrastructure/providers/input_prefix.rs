@@ -156,7 +156,8 @@ fn image_part_tokens(part: &serde_json::Value) -> usize {
         })
 }
 
-/// `item` with its `input_image` parts left out.
+/// `item` with only the `input_text` parts of its part lists: what it says
+/// beside its images (an allowlist, #2421 round 2 nit 2).
 fn without_images(item: &serde_json::Value) -> serde_json::Value {
     let mut text = item.clone();
     for field in IMAGE_FIELDS {
@@ -164,7 +165,7 @@ fn without_images(item: &serde_json::Value) -> serde_json::Value {
             .get_mut(field)
             .and_then(serde_json::Value::as_array_mut)
         {
-            parts.retain(|part| !is_image(part));
+            parts.retain(|part| part["type"] == "input_text");
         }
     }
     text

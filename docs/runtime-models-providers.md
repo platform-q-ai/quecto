@@ -81,6 +81,19 @@ Choose a supported transport (`openai-completions`, `anthropic-messages`, `googl
 
 A provider block declaring a transport with no adapter in this build is still listed: its models are *known but not runnable*, with a structured unsupported-transport reason naming the declared transport. Catalogue data does not make an unsupported protocol runnable, and the rest of the file keeps working.
 
+### Images: the `input` modalities
+
+`input` lists what a model takes, and decides which images it is sent (#2421). An image goes to a model only when its catalogue entry declares `"image"` (`"input": ["text", "image"]`); a model that declares no image input, or has no catalogue entry, is sent `[image not sent: <model> takes no image input]` in each image's place, after the text of the message it belonged to. Over the Anthropic wire every image goes; over the OpenAI wires (chat completions, Codex/Responses) an animated GIF (more than one frame) is sent as `[image not sent: animated GIF not supported by <model>]`, and every other image goes as an inline `data:` URL with `"detail": "high"` — always, never unset or `original` — which caps one at about 3,000 tokens. The session keeps its images, so a later switch to a model that takes them sends them.
+
+The built-in Claude, GPT-5/GPT-6 (all but GPT-5.3 Codex Spark) and Grok entries declare `image`. A record that does not say — a `models.json` entry without `input` for a built-in `provider/model`, or a model `refresh_models` discovered — keeps the built-in table's input for that `provider/model`, and a model the table does not know declares text only. So **a custom provider must declare image input itself**: a block of your own (say `my-anthropic` on `anthropic-messages`, listing `claude-opus-5`) sends no image unless the model sets `"input": ["text", "image"]`. An `overrides` entry's `input` turns images off or on for any known model. A bare model id reads the provider the router sends it to — the first configured — and takes no image when that provider does not list it; a provider prefix matches whatever its case.
+
+```json
+{"providers": {"my-anthropic": {"api": "anthropic-messages",
+  "baseUrl": "https://gw.example", "apiKey": "$MY_GATEWAY_KEY",
+  "models": [{"id": "claude-opus-5", "input": ["text", "image"]}]}},
+ "overrides": {"openai-oauth/gpt-6.1-sol": {"input": ["text"]}}}
+```
+
 ### Reasoning effort is a per-model capability
 
 Which `/effort` levels a model offers — and whether the selection is sent on the wire at all — is the catalogue's per-model capability (`effortLevels`), seeded by one domain rule (`domain::catalogue::EffortVocabulary`) from the provider's documented scale and applied by the change-reasoning-effort use case (`application/catalogue/use_cases/change_reasoning_effort.rs`) on every surface: the `get_state` vocabulary the selector shows, `set_effort`, spawn `effort`, startup `--effort`, and the reset on a model switch. Nothing infers a vocabulary from a model name, and no provider adapter decides support: an adapter transmits only a level the use case admitted for the active model.

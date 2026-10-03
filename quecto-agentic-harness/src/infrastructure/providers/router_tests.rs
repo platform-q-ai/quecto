@@ -475,39 +475,65 @@ async fn chat_stream_incremental_emits_error_on_unresolved_prefix() {
 #[test]
 fn parse_qualified_model_handles_edges() {
     assert_eq!(
-        super::parse_qualified_model("openai/gpt-5.2"),
+        crate::domain::provider::parse_qualified_model("openai/gpt-5.2"),
         Some(("openai", "gpt-5.2"))
     );
     // trims surrounding whitespace
     assert_eq!(
-        super::parse_qualified_model("  openai / gpt-5.2 "),
+        crate::domain::provider::parse_qualified_model("  openai / gpt-5.2 "),
         Some(("openai", "gpt-5.2"))
     );
     // bare name (no slash)
-    assert_eq!(super::parse_qualified_model("gpt-5.2"), None);
+    assert_eq!(
+        crate::domain::provider::parse_qualified_model("gpt-5.2"),
+        None
+    );
     // empty provider
-    assert_eq!(super::parse_qualified_model("/gpt-5.2"), None);
+    assert_eq!(
+        crate::domain::provider::parse_qualified_model("/gpt-5.2"),
+        None
+    );
     // empty model
-    assert_eq!(super::parse_qualified_model("openai/"), None);
+    assert_eq!(
+        crate::domain::provider::parse_qualified_model("openai/"),
+        None
+    );
     // model id is opaque after the first slash
     assert_eq!(
-        super::parse_qualified_model("openai/a/b"),
+        crate::domain::provider::parse_qualified_model("openai/a/b"),
         Some(("openai", "a/b"))
     );
 }
 
 #[test]
 fn provider_prefix_matches_aliases_and_case() {
-    assert!(super::provider_prefix_matches("OpenAI", "openai"));
-    assert!(super::provider_prefix_matches("anthropic", "anthropic"));
+    assert!(crate::domain::provider::provider_prefix_matches(
+        "OpenAI", "openai"
+    ));
+    assert!(crate::domain::provider::provider_prefix_matches(
+        "anthropic",
+        "anthropic"
+    ));
     // codex aliases are explicit; bare openai no longer aliases to codex because
     // API/OAuth billing modes must not be selected silently.
-    assert!(!super::provider_prefix_matches("openai", "codex"));
-    assert!(super::provider_prefix_matches("openai-codex", "codex"));
-    assert!(super::provider_prefix_matches("CODEX", "codex"));
+    assert!(!crate::domain::provider::provider_prefix_matches(
+        "openai", "codex"
+    ));
+    assert!(crate::domain::provider::provider_prefix_matches(
+        "openai-codex",
+        "codex"
+    ));
+    assert!(crate::domain::provider::provider_prefix_matches(
+        "CODEX", "codex"
+    ));
     // non-matches
-    assert!(!super::provider_prefix_matches("anthropic", "codex"));
-    assert!(!super::provider_prefix_matches("gemini", "openai"));
+    assert!(!crate::domain::provider::provider_prefix_matches(
+        "anthropic",
+        "codex"
+    ));
+    assert!(!crate::domain::provider::provider_prefix_matches(
+        "gemini", "openai"
+    ));
 }
 
 #[test]

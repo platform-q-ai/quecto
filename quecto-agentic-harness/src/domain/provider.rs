@@ -176,11 +176,7 @@ pub enum ModelRoute<'p, 'm> {
 /// lists the model. The split is at the first slash; the model id is
 /// opaque and may hold slashes of its own.
 pub fn route_model<'p, 'm>(model: &'m str, providers: &[&'p str]) -> ModelRoute<'p, 'm> {
-    let qualified = model
-        .split_once('/')
-        .map(|(prefix, id)| (prefix.trim(), id.trim()))
-        .filter(|(prefix, id)| !prefix.is_empty() && !id.is_empty());
-    match qualified {
+    match parse_qualified_model(model) {
         Some((prefix, id)) => providers
             .iter()
             .find(|name| provider_prefix_matches(prefix, name))
@@ -197,6 +193,17 @@ pub fn route_model<'p, 'm>(model: &'m str, providers: &[&'p str]) -> ModelRoute<
                 model,
             }),
     }
+}
+
+/// A `provider/model-id` string as its provider and model id, each trimmed;
+/// `None` for a bare id (no slash) or an empty side. The split is at the
+/// first slash: the model id is opaque and may hold slashes of its own
+/// (Fireworks' `accounts/fireworks/models/glm-5p2`).
+pub fn parse_qualified_model(model: &str) -> Option<(&str, &str)> {
+    model
+        .split_once('/')
+        .map(|(prefix, id)| (prefix.trim(), id.trim()))
+        .filter(|(prefix, id)| !prefix.is_empty() && !id.is_empty())
 }
 
 /// Whether `prefix` names the provider called `provider_name`: the same

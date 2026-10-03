@@ -238,7 +238,8 @@ impl AgentLoopImpl {
 }
 
 /// What the active model declares beside its token limits: how its
-/// provider bounds the prompt (#2405) and whether it takes images (#2421).
+/// provider bounds the prompt (#2405) and whether it takes images, with
+/// the animated-GIF verdicts kept across requests (#2421).
 #[derive(Debug, Default)]
 pub(super) struct ModelTraits {
     pub(super) prompt_limit: crate::domain::catalogue::PromptLimit,

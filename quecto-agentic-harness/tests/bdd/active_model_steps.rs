@@ -119,12 +119,16 @@ impl RuntimeSnapshotSource for AmRuntime {
     }
 }
 
+/// A router over the inputs' providers, in order.
 #[derive(Debug)]
-struct AmProvider;
+struct AmProvider(Vec<String>);
 
 impl quecto::application::providers::ports::LlmProvider for AmProvider {
     fn name(&self) -> &str {
         "router"
+    }
+    fn route_order(&self) -> Vec<String> {
+        self.0.clone()
     }
     fn chat<'a>(
         &'a self,
@@ -246,6 +250,13 @@ fn given_no_credential_for(world: &mut QuectoWorld, qualified: String) {
 fn given_runtime_over_inputs(world: &mut QuectoWorld) {
     let entries = world.active_model.entries.clone();
     let denied = world.active_model.denied.clone();
+    let mut order: Vec<String> = Vec::new();
+    for entry in &entries {
+        let provider = entry.provider.id.as_str().to_string();
+        if !order.contains(&provider) {
+            order.push(provider);
+        }
+    }
     let resolved = quecto::application::catalogue::ResolveCatalogueUseCase.resolve_and_publish(
         &[&AmSource(entries)],
         &AmCredentials(denied),
@@ -253,7 +264,7 @@ fn given_runtime_over_inputs(world: &mut QuectoWorld) {
     );
     world.active_model.runtime = Some(Arc::new(CatalogueRuntimeSnapshot {
         catalogue: resolved.snapshot,
-        provider: Arc::new(AmProvider),
+        provider: Arc::new(AmProvider(order)),
         admission_binding_diagnostic: Default::default(),
     }));
 }
