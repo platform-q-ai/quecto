@@ -42,3 +42,11 @@ fn nothing_else_is_retired() {
         assert!(!retired_builtin(provider, model), "{provider}/{model}");
     }
 }
+
+/// Review round 2: the model id is matched whatever its case, as the
+/// provider is.
+#[test]
+fn a_retired_id_in_another_case_is_retired() {
+    assert!(retired_builtin("OpenAI-OAuth", "GPT-5.5"));
+    assert!(retired_builtin("anthropic-api", "Claude-Opus-4-8"));
+}

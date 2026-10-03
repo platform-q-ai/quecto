@@ -40,3 +40,24 @@ async fn a_startup_warning_is_shown_once_across_state_refreshes() {
     assert_eq!(shown, [WARNING], "shown once, in the transcript");
     assert!(app.shown_startup_warnings.contains(WARNING));
 }
+
+/// Review round 2: a reconnecting client shows only what the agent still
+/// reports: a warning the agent cleared (its model was switched) is not
+/// shown again.
+#[tokio::test]
+async fn a_reconnect_shows_only_the_warnings_the_agent_still_reports() {
+    let mut app = test_app().await;
+    app.handle_event(state(&[WARNING]));
+    app.shown_startup_warnings.clear(); // what a disconnect does
+    app.handle_event(state(&[]));
+    let shown = app
+        .ac()
+        .master_session
+        .chat
+        .entries()
+        .iter()
+        .filter(|entry| matches!(entry, ChatEntry::Status { text } if text.contains("was retired")))
+        .count();
+    assert_eq!(shown, 1, "shown once, before the switch; not again");
+    assert!(app.shown_startup_warnings.is_empty());
+}

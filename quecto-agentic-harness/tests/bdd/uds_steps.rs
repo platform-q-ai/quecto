@@ -1419,14 +1419,12 @@ fn assert_slim_get_state_data(data: &serde_json::Value, workflow: bool) {
         .collect()
     };
     // `startupWarnings` is present only when the startup model drew one
-    // (#2435): the mock workspaces run a model the catalogue does not list.
-    let actual: std::collections::BTreeSet<&str> = obj
-        .keys()
-        .map(String::as_str)
-        .filter(|key| *key != "startupWarnings")
-        .collect();
-    assert_eq!(
-        actual, allowed,
+    // (#2435): allowed ⊆ actual ⊆ allowed ∪ {startupWarnings}.
+    let actual: std::collections::BTreeSet<&str> = obj.keys().map(String::as_str).collect();
+    let mut permitted = allowed.clone();
+    permitted.insert("startupWarnings");
+    assert!(
+        allowed.is_subset(&actual) && actual.is_subset(&permitted),
         "unexpected slim get_state keys in data: {data}"
     );
     if let Some(warnings) = obj.get("startupWarnings") {

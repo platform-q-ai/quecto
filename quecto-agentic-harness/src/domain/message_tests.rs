@@ -234,3 +234,31 @@ fn the_default_gpt_6_1_sol_is_costed_at_its_published_rates() {
     assert_eq!(pricing.cache_read_micro_usd_per_million, 100_000);
     assert_eq!(pricing.cache_write_micro_usd_per_million, 2_500_000);
 }
+
+/// #2435 review round 2: the kept Claude 5 built-ins are costed at
+/// Anthropic's published rates; Fable 5.1's own cache-read rate is not
+/// shadowed by the Fable 5 prefix.
+#[test]
+fn the_claude_5_built_ins_are_costed_at_their_published_rates() {
+    let rates = |model: &str| {
+        let p = model_pricing(model).unwrap_or_else(|| panic!("{model} is priced"));
+        [
+            p.input_micro_usd_per_million,
+            p.output_micro_usd_per_million,
+            p.cache_read_micro_usd_per_million,
+            p.cache_write_micro_usd_per_million,
+        ]
+    };
+    assert_eq!(
+        rates("claude-fable-5-1"),
+        [10_000_000, 50_000_000, 250_000, 12_500_000]
+    );
+    assert_eq!(
+        rates("claude-fable-5"),
+        [10_000_000, 50_000_000, 1_000_000, 12_500_000]
+    );
+    assert_eq!(
+        rates("claude-opus-5"),
+        [5_000_000, 25_000_000, 500_000, 6_250_000]
+    );
+}

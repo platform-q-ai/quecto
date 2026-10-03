@@ -450,3 +450,21 @@ fn then_error_names_valid_effort_values(world: &mut QuectoWorld, valid: String) 
         world.stderr
     );
 }
+
+/// #2435 review round 2: the run's global config points the OpenAI API-key
+/// provider at the mock endpoint, and names no model, so a run picks one.
+#[given("a config file pointing the OpenAI provider at that endpoint")]
+fn given_config_pointing_openai_at_the_mock(world: &mut QuectoWorld) {
+    let (base, uri) = base_dir_and_mock_uri(world);
+    let workspace = base.join("workspace");
+    std::fs::create_dir_all(&workspace).expect("create workspace");
+    let config = serde_json::json!({
+        "providers": {"openai": {"api_key": TEST_API_KEY, "api_base": uri}},
+        "agents": {"defaults": {"workspace": workspace.display().to_string()}},
+    });
+    std::fs::write(
+        base.join("config.json"),
+        serde_json::to_string_pretty(&config).expect("serialize config"),
+    )
+    .expect("write config");
+}

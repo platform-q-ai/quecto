@@ -326,18 +326,19 @@ async fn a_completed_stream_releases_the_refusal() {
     assert_eq!(refused(&sink, "openai-oauth/mini"), None, "released");
 }
 
-/// M3: a refusal is held for the configured time, no longer.
+/// M3 and review round 2: a zero hold (`model_refusal_ttl_secs = 0`)
+/// records nothing at all; the reply passes through unchanged.
 #[tokio::test]
-async fn a_refusal_is_held_for_the_configured_time() {
+async fn a_zero_hold_records_nothing() {
     let inner = Scripted::new(vec![Err(REFUSAL)]);
     let sink = counting();
     let provider = RefusalRecordingProvider::new(inner, sink.clone(), Duration::ZERO);
     let messages = [Message::user("hi")];
-    let _ = provider.chat(request(&messages, "openai-oauth/mini")).await;
-    assert_eq!(sink.calls.lock().unwrap().len(), 1, "recorded");
-    assert_eq!(
-        refused(&sink, "openai-oauth/mini"),
-        None,
-        "a zero hold has already expired"
-    );
+    let error = provider
+        .chat(request(&messages, "openai-oauth/mini"))
+        .await
+        .unwrap_err();
+    assert!(matches!(&error, DomainError::Provider(m) if m == REFUSAL));
+    assert!(sink.calls.lock().unwrap().is_empty(), "not recorded");
+    assert_eq!(refused(&sink, "openai-oauth/mini"), None);
 }

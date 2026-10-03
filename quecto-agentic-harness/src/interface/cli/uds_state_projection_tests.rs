@@ -414,3 +414,38 @@ fn get_state_carries_the_startup_warnings() {
         "absent when there are none, as before"
     );
 }
+
+/// #2435 review round 2: a startup warning is about the startup model; a
+/// switch to another model clears it, so `get_state` (and a reconnecting
+/// client) no longer carries it. A switch back does not revive it.
+#[test]
+fn a_model_switch_clears_the_startup_warnings_of_the_previous_model() {
+    let view =
+        || crate::interface::uds::catalogue::effort_presenter::EffortStateView::new(None, &[]);
+    let mut session = super::uds_session::AgentSession::new("openai-oauth/gpt-5.5".into());
+    session
+        .set_startup_warnings(&["agent: warning: model `openai-oauth/gpt-5.5` was retired".into()]);
+    session.set_model("openai-oauth/gpt-5.5".into());
+    let state = session.state_snapshot("cli:w", 0, None, 0, view());
+    assert_eq!(state.startup_warnings.len(), 1, "same model: still applies");
+    let before = state.generation;
+    session.set_model("openai-oauth/gpt-6.1-sol".into());
+    let state = session.state_snapshot("cli:w", 0, None, 0, view());
+    assert!(
+        state.startup_warnings.is_empty(),
+        "{:?}",
+        state.startup_warnings
+    );
+    assert!(
+        state.generation > before,
+        "the change is visible to a since-poll"
+    );
+    assert!(
+        slim_state_response_data(&state, None)
+            .get("startupWarnings")
+            .is_none()
+    );
+    session.set_model("openai-oauth/gpt-5.5".into());
+    let state = session.state_snapshot("cli:w", 0, None, 0, view());
+    assert!(state.startup_warnings.is_empty(), "not revived");
+}

@@ -35,8 +35,12 @@ fn an_unavailable_model_is_marked_dimmed_and_refused() {
     let lines = sel.render(120);
     let text = plain(&lines);
     assert!(
-        text.contains("(unavailable: refused-for-account: no ChatGPT)"),
-        "{text}"
+        text.contains("(unavailable: refused for account)"),
+        "the row carries a short tag: {text}"
+    );
+    assert!(
+        !text.contains("no ChatGPT"),
+        "the detail waits for Enter: {text}"
     );
     let row = lines
         .iter()
@@ -61,36 +65,31 @@ fn an_unavailable_model_is_marked_dimmed_and_refused() {
     );
 }
 
-/// Review round 1 nit: the fallback list is the harness's built-in OpenAI
-/// and Anthropic tables, read from their source.
+/// Review round 2: the fallback list is the harness's built-in Anthropic and
+/// OpenAI rows, each under the auth modes that offer it, as the harness
+/// writes them to `model_selector_builtin_models.txt` (a harness test keeps
+/// that file level with its tables).
 #[test]
-fn the_fallback_list_matches_the_harness_built_in_tables() {
-    let tables = include_str!(
-        "../../../quecto-agentic-harness/src/infrastructure/model_registry_builtin_tables.rs"
+fn the_fallback_list_is_the_harness_built_in_rows() {
+    let rows: Vec<&str> = include_str!("model_selector_builtin_models.txt")
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .collect();
+    assert!(rows.len() >= 22, "the built-in rows are listed: {rows:?}");
+    let known: Vec<String> = known_models().into_iter().map(|m| m.id).collect();
+    assert_eq!(known, rows);
+}
+
+#[test]
+fn a_row_tag_names_each_reason_briefly() {
+    assert_eq!(
+        unavailable_tag("refused-for-account: no ChatGPT; missing-credential"),
+        "refused for account, missing credential"
     );
-    let ids_in = |table: &str| -> Vec<String> {
-        let start = tables
-            .find(&format!("const {table}: &[BuiltinModel] = &["))
-            .unwrap_or_else(|| panic!("the {table} table"));
-        let body = &tables[start..];
-        let body = &body[..body.find("];").expect("the table ends")];
-        body.lines()
-            .filter_map(|line| line.trim().strip_prefix("builtin(\""))
-            .map(|rest| rest.split('"').next().unwrap().to_string())
-            .collect()
-    };
-    let mut expected = Vec::new();
-    for (vendor, table) in [("anthropic", "ANTHROPIC"), ("openai", "OPENAI")] {
-        let ids = ids_in(table);
-        assert!(!ids.is_empty(), "{table} lists models");
-        for id in ids {
-            for auth in ["api", "oauth"] {
-                expected.push(format!("{vendor}-{auth}/{id}"));
-            }
-        }
-    }
-    let mut known: Vec<String> = known_models().into_iter().map(|m| m.id).collect();
-    known.sort();
-    expected.sort();
-    assert_eq!(known, expected);
+    assert_eq!(unavailable_tag("not configured"), "not configured");
+    assert_eq!(
+        unavailable_tag("unsupported-transport: websocket-frames"),
+        "unsupported transport"
+    );
 }

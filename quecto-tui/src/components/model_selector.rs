@@ -59,6 +59,13 @@ fn known_models() -> Vec<ModelEntry> {
         .collect()
 }
 
+/// The short tag a row shows for `reason` (#2435 review round 2): each
+/// reason's kind, before any `: detail`.
+fn unavailable_tag(reason: &str) -> String {
+    let _ = reason;
+    String::new()
+}
+
 /// Maximum query length to prevent unbounded growth.
 const MAX_QUERY_LEN: usize = 64;
 
@@ -276,6 +283,7 @@ fn to_suggestion(m: &ModelEntry) -> Suggestion {
         _ => m.provider.clone(),
     };
     if let Some(reason) = &m.unavailable {
+        let _ = unavailable_tag(reason);
         description.push_str(&format!(" (unavailable: {reason})"));
     }
     Suggestion {

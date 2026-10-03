@@ -85,3 +85,19 @@ Feature: OpenAI endpoint and reasoning-effort rules (both auth modes)
     When I run the agent CLI with effort "turbo"
     Then the CLI should reject the effort level "turbo"
     And the error should name the valid effort values "none, low, medium, high, xhigh, max"
+
+  # #2435 review round 2: the OpenAI mock workspaces elsewhere run an id the
+  # catalogue does not list (every kept OpenAI built-in is a reasoning model
+  # served by the Responses API, which those Chat Completions mocks do not
+  # answer); this run covers a catalogued model end to end.
+  @issue-2435
+  Scenario: The agent runs a catalogued OpenAI model end to end with no startup warning
+    Given a temp base directory
+    And OpenAI's Chat Completions endpoint accepts agent turns with tools
+    And a config file pointing the OpenAI provider at that endpoint
+    When I run quecto agent --model openai-api/gpt-5.6-luna -m "hello"
+    Then the exit code should be 0
+    And stdout should contain "done"
+    And the turn should have been served via the "Responses" endpoint
+    And no request should have reached the "Chat Completions" endpoint
+    And the stderr should not contain "warning"

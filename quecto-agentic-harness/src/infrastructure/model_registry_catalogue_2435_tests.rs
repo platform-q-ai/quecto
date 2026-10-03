@@ -196,3 +196,75 @@ fn a_retired_model_declared_without_input_takes_text_only() {
         vec!["text".to_string()]
     );
 }
+
+/// Review round 2: every kept Claude 5 built-in declares its published
+/// 1M window and 128K output cap, and its price, on both auth modes.
+#[test]
+fn every_claude_5_built_in_declares_its_published_limits_and_price() {
+    let registry = ModelRegistry::builtin();
+    for provider in ["anthropic-api", "anthropic-oauth"] {
+        for id in ANTHROPIC_KEPT {
+            let m = registry.find(provider, id).expect("built in");
+            assert_eq!(
+                registry.context_window_for(&m.qualified_id()),
+                Some(1_000_000),
+                "{provider}/{id} window"
+            );
+            assert_eq!(
+                registry.max_tokens_for(&m.qualified_id()),
+                Some(128_000),
+                "{provider}/{id} output cap"
+            );
+            let published = crate::domain::message::model_pricing(id).expect("priced");
+            assert_eq!(
+                m.cost.input,
+                published.input_micro_usd_per_million as f64 / 1_000_000.0,
+                "{provider}/{id} input price"
+            );
+            assert_eq!(
+                m.cost.cache_read,
+                published.cache_read_micro_usd_per_million as f64 / 1_000_000.0,
+                "{provider}/{id} cache-read price"
+            );
+        }
+    }
+}
+
+/// Review round 2: the TUI's fallback model list
+/// (`quecto-tui/src/components/model_selector_builtin_models.txt`) is
+/// exactly the built-in Anthropic and OpenAI rows, each under the auth
+/// modes that offer it. The TUI reads that file; this test keeps it level
+/// with the tables.
+#[test]
+fn the_tui_fallback_list_is_the_builtin_anthropic_and_openai_rows() {
+    let expected: Vec<String> = ModelRegistry::builtin()
+        .models()
+        .iter()
+        .filter(|m| {
+            [
+                "anthropic-api",
+                "anthropic-oauth",
+                "openai-api",
+                "openai-oauth",
+            ]
+            .contains(&m.provider.as_str())
+        })
+        .map(|m| m.qualified_id())
+        .collect();
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../quecto-tui/src/components/model_selector_builtin_models.txt");
+    let fixture = std::fs::read_to_string(&path).unwrap_or_default();
+    let listed: Vec<String> = fixture
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(str::to_string)
+        .collect();
+    assert_eq!(
+        listed,
+        expected,
+        "{} must list, one per line:\n{}",
+        path.display(),
+        expected.join("\n")
+    );
+}
