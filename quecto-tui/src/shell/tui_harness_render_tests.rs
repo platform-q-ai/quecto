@@ -327,6 +327,7 @@ async fn full_height_multi_agent_renderer_no_desync_or_bleed() {
     h.event(Event::AgentEnd {
         messages: vec![],
         message_refs: vec![],
+        content_length: None,
     });
 
     // Capture-only renderer fed the REAL composed frames. A green BG_SUCCESS

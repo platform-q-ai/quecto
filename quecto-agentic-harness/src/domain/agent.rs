@@ -149,6 +149,16 @@ impl AgentResult {
         }
     }
 
+    /// The byte length of the reply the run recorded (#2434): 0 for a run
+    /// that recorded none — the tool iteration limit, whose `response` is
+    /// the harness's notice, or an empty reply to tool results.
+    pub fn reply_len(&self) -> usize {
+        match self.iteration_limit_reached {
+            true => 0,
+            false => self.response.len(),
+        }
+    }
+
     pub fn turn_tokens(&self) -> u32 {
         self.input_tokens.saturating_add(self.output_tokens)
     }

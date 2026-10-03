@@ -70,6 +70,7 @@ async fn duplicate_child_events_preserve_elapsed_clock_and_terminal_clears_wait(
         Event::AgentEnd {
             messages: vec![],
             message_refs: vec![],
+            content_length: None,
         },
     );
     app.route_subagent_event("child", direct(view(1, 1)));

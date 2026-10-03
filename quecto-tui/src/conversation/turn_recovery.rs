@@ -45,6 +45,9 @@ impl TurnOutcome<'_> {
         if self.open_tool_calls > 0 {
             return true;
         }
+        if self.recorded_no_reply() {
+            return false;
+        }
         let trimmed = self.assistant_text.trim();
         if trimmed.is_empty() || trimmed == "…" || trimmed == "..." {
             return true;
@@ -58,6 +61,17 @@ impl TurnOutcome<'_> {
         // assistant message; any other count means the stream lost messages.
         let expected_refs = self.tools_this_turn.saturating_mul(2).saturating_add(1);
         self.refs.len() != expected_refs
+    }
+
+    /// Whether the run recorded no reply (#2434): the model answered tool
+    /// results with nothing, or the run stopped at the tool iteration
+    /// limit. Its refs are exactly its tool calls and their results, and
+    /// the server says its reply text is 0 bytes, so there is no reply to
+    /// rebuild whatever text the run showed before.
+    fn recorded_no_reply(&self) -> bool {
+        self.tools_this_turn > 0
+            && self.refs.len() == self.tools_this_turn.saturating_mul(2)
+            && self.expected_content_len == Some(0)
     }
 }
 

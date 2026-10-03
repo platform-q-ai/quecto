@@ -27,8 +27,15 @@ pub(super) struct TurnEnd {
     pub(super) current_turn: u32,
 }
 
+/// A reply with nothing in it: no text (whitespace alone is none, #2434),
+/// no tool call and no visible thinking.
 pub(super) fn is_empty_streamed_response(response: &LlmResponse) -> bool {
-    response.content.as_deref().unwrap_or_default().is_empty()
+    response
+        .content
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .is_empty()
         && response.tool_calls.is_empty()
         && !crate::domain::visible_thinking::has_visible_thinking(&response.thinking_blocks)
 }
@@ -41,6 +48,10 @@ pub(super) fn is_empty_streamed_response(response: &LlmResponse) -> bool {
 pub(super) fn ends_turn_empty(response: &LlmResponse, requirement: ReplyRequirement) -> bool {
     requirement == ReplyRequirement::MayBeEmpty
         && is_empty_streamed_response(response)
+        // `EndTurn` also stands for Anthropic's `pause_turn` and
+        // `stop_sequence` (`StopReason::parse`). Neither can stop a reply
+        // today: the harness offers no server tools (which pause a turn)
+        // and sets no stop sequences.
         && response.stop_reason == Some(StopReason::EndTurn)
 }
 

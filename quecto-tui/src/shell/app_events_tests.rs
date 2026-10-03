@@ -64,6 +64,7 @@ async fn subagent_notification_deferred_while_parent_streams_then_flushed_on_idl
     app.handle_event(Event::AgentEnd {
         messages: vec![],
         message_refs: vec![],
+        content_length: None,
     });
     let text = app
         .ac()
@@ -87,6 +88,7 @@ async fn handles_agent_lifecycle_and_token_events() {
     app.handle_event(Event::AgentEnd {
         messages: vec![],
         message_refs: vec![],
+        content_length: None,
     });
     assert!(!app.ac().agent_state.is_running());
     assert!(app.ac().spinner.is_none());

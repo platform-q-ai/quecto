@@ -236,6 +236,10 @@ pub enum Event {
         messages: Vec<serde_json::Value>,
         #[serde(rename = "messageRefs", default)]
         message_refs: Vec<String>,
+        /// Byte length of the run's reply text; 0 when the run recorded no
+        /// reply (#2434). Absent from older harnesses.
+        #[serde(rename = "contentLength", default)]
+        content_length: Option<u64>,
     },
     Token {
         token: String,

@@ -359,6 +359,7 @@ async fn event_sink_variants_emit_identical_json_for_same_events() {
         AgentEvent::AgentEnd {
             messages: vec![],
             message_refs: vec![],
+            content_length: None,
         },
     ];
 

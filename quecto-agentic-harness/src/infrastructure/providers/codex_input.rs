@@ -47,6 +47,13 @@ impl CodexProvider {
             .collect()
     }
 
+    /// Whether an assistant message has text to send (#2434): one with no
+    /// text (whitespace is none) and no call sends no item — neither an
+    /// empty answer nor reasoning that leads to nothing.
+    fn has_text(msg: &Message) -> bool {
+        !msg.content.trim().is_empty()
+    }
+
     /// The `phase` of an assistant message (#2397): text-only is a
     /// `final_answer`, because it ended its turn; text sent with tool calls
     /// (the orphan fallback) is `commentary`. It depends on the message alone,
@@ -143,7 +150,7 @@ impl CodexProvider {
                         // If every tool call was orphaned and dropped, fall back to
                         // emitting the assistant text content (if any) so narrative
                         // context is not silently lost.
-                        if emitted == 0 && !msg.content.is_empty() {
+                        if emitted == 0 && Self::has_text(msg) {
                             input.extend(Self::replayed_reasoning(msg, origin, None));
                             input.push(serde_json::json!({
                                 "role": "assistant",
@@ -151,7 +158,7 @@ impl CodexProvider {
                                 "content": msg.content,
                             }));
                         }
-                    } else {
+                    } else if Self::has_text(msg) {
                         input.extend(Self::replayed_reasoning(msg, origin, None));
                         input.push(serde_json::json!({
                             "role": "assistant",

@@ -173,6 +173,7 @@ fn agent_end_exposes_non_empty_message_refs_without_full_content() {
             "22222222-2222-2222-2222-222222222222".into(),
             "33333333-3333-3333-3333-333333333333".into(),
         ],
+        content_length: None,
     };
     let j = round_trip_json(&ev);
     assert_eq!(j["type"], "agent_end");
@@ -247,6 +248,7 @@ fn large_real_turn_end_of_turn_events_stay_well_under_frame_cap() {
             "22222222-2222-2222-2222-222222222222".into(),
             "33333333-3333-3333-3333-333333333333".into(),
         ],
+        content_length: None,
     };
 
     // Prefer uncapped serialization so size is proven by refs, not by #1047
@@ -311,6 +313,7 @@ fn refs_only_tool_agent_end_stays_well_under_frame_cap() {
             "22222222-2222-2222-2222-222222222222".into(),
             "33333333-3333-3333-3333-333333333333".into(),
         ],
+        content_length: None,
     };
     let line = agent_end.to_json_line();
     let budget = EVENT_LINE_CAP_BYTES / 4;

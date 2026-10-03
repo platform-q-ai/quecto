@@ -473,7 +473,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
                     stop_reason: None,
                     context_tokens: Some(agent_result.context_tokens as u64),
                     max_context_tokens: Some(agent.max_context_tokens() as u64),
-                    content_length: Some(agent_result.response.len() as u64),
+                    content_length: Some(agent_result.reply_len() as u64),
                 },
                 tool_results: vec![],
             };
@@ -481,6 +481,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
             sink.emit(&AgentEvent::AgentEnd {
                 messages: vec![],
                 message_refs,
+                content_length: Some(agent_result.reply_len() as u64),
             })
             .await;
             PromptOutcome::Success

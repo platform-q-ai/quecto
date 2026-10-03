@@ -15,7 +15,7 @@ own messages are not something to answer, so they are ignored:
   loop's own feedback) must be answered. An empty reply to it is `empty_stream`,
   retried, then an `agent_error`, as above.
 - **Tool results** may be answered with nothing: the model acted and has nothing
-  to add. For example, a background tool may say "started — end your turn now".
+  to add. Text of whitespace alone counts as nothing. For example, a background tool may say "started — end your turn now".
   A completed reply with no text, no tool call and no visible thinking (encrypted
   reasoning alone counts as nothing) that stopped at `end_turn` ends the turn at
   once. There is no retry and no error, and the run ends with `agent_end`. It is
@@ -23,6 +23,21 @@ own messages are not something to answer, so they are ignored:
   providers refuse an empty assistant message when the conversation is sent
   again), so the conversation ends on the tool results, as it does at the tool
   iteration limit.
+
+A reply after tool results may hold visible reasoning (Anthropic thinking, a
+Codex summary, OpenAI-compatible `reasoning_content`) and no text. That is not
+nothing, so it is recorded as a final answer with no text. No provider is ever
+sent empty assistant text:
+
+- Anthropic keeps a signed thinking block without a text part. It leaves out
+  an assistant message with nothing else to send.
+- OpenAI chat leaves out an assistant entry with no text and no call.
+- Codex/Responses sends no empty answer and no reasoning item that leads to
+  nothing.
+
+A prompt after a turn that ended with no reply follows the tool results as its
+own user turn. On Anthropic that is a second consecutive user turn, which the
+API accepts.
 
 Only a clean stop ends the turn. After tool results, an empty reply stopped at
 `max_tokens` was cut off, so it keeps the `stop_reason=max_tokens` error.

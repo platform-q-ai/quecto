@@ -359,7 +359,7 @@ impl AnthropicProvider {
                     i += 1;
                 }
                 Role::Assistant => {
-                    api_messages.push(Self::build_assistant_message(m, is_oauth));
+                    api_messages.extend(Self::build_assistant_message(m, is_oauth));
                     i += 1;
                 }
                 Role::Tool => {
@@ -412,7 +412,7 @@ impl AnthropicProvider {
         })
     }
 
-    fn build_assistant_message(m: &Message, is_oauth: bool) -> serde_json::Value {
+    fn build_assistant_message(m: &Message, is_oauth: bool) -> Option<serde_json::Value> {
         claude_code::build_assistant_message(m, is_oauth)
     }
 

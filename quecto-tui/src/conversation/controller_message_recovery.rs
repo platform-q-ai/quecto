@@ -22,6 +22,7 @@ pub(crate) type MessageRecoveryBatch = crate::conversation::turn_recovery::Recov
 impl App {
     /// Both `turn_end` and `agent_end` may carry the same refs; skip message ids
     /// that already have an in-flight recovery request so we never double-fetch.
+    #[cfg(test)]
     pub(super) fn maybe_recover_from_refs(&mut self, refs: &[String]) {
         self.maybe_recover_from_refs_with_len(refs, None);
     }

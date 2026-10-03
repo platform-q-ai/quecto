@@ -47,6 +47,7 @@ async fn burst_of_completions_coalesces_to_one_summary_line() {
     h.event(Event::AgentEnd {
         messages: vec![],
         message_refs: vec![],
+        content_length: None,
     });
 
     let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
@@ -82,6 +83,7 @@ async fn single_completion_keeps_its_own_line() {
     h.event(Event::AgentEnd {
         messages: vec![],
         message_refs: vec![],
+        content_length: None,
     });
 
     let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
@@ -121,6 +123,7 @@ async fn errored_and_exited_are_not_folded_into_summary() {
     h.event(Event::AgentEnd {
         messages: vec![],
         message_refs: vec![],
+        content_length: None,
     });
 
     let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
@@ -158,6 +161,7 @@ async fn completion_names_are_capped_with_more_tail() {
     h.event(Event::AgentEnd {
         messages: vec![],
         message_refs: vec![],
+        content_length: None,
     });
 
     let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
@@ -194,6 +198,7 @@ async fn coalesced_notes_still_defer_until_idle() {
     h.event(Event::AgentEnd {
         messages: vec![],
         message_refs: vec![],
+        content_length: None,
     });
     let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
     assert!(

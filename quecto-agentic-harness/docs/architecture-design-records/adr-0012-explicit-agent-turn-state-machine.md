@@ -47,6 +47,21 @@ PrepareTurn
   -> CompleteTurn
 ```
 
+`ClassifyProviderResponse` can also end the turn without a reply, and the
+tool loop can stop before one. The states implemented in `TurnState`
+(`application/agent_loop_turn.rs`) are:
+
+- `PrepareProviderRequest`;
+- `AwaitProviderResponse`;
+- `RecoverMalformedResponse`;
+- `ExecuteToolCalls`;
+- `FinalizeAssistantResponse`;
+- `EndTurnWithoutReply`: the model answered tool results with nothing
+  (#2434), so the turn ends with no reply recorded;
+- `FailProviderRequest`;
+- `StopAtToolIterationLimit`: the tool iteration limit was reached, so the
+  turn ends with the harness's notice and no reply recorded.
+
 The exact Rust names may differ, but each transition should have a clear owner,
 inputs, outputs, and tests. The state machine is an internal application detail;
 it does not change provider adapters, tool implementations, UDS protocol shapes,

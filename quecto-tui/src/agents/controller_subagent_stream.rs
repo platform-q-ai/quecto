@@ -308,18 +308,15 @@ impl App {
     /// Extract non-empty end-of-turn message refs (+ optional contentLength).
     fn subagent_end_of_turn_refs(ev: &Event) -> Option<(Vec<String>, Option<u64>)> {
         match ev {
-            Event::AgentEnd { message_refs, .. } if !message_refs.is_empty() => {
-                Some((message_refs.clone(), None))
-            }
+            Event::AgentEnd {
+                message_refs,
+                content_length,
+                ..
+            } if !message_refs.is_empty() => Some((message_refs.clone(), *content_length)),
             Event::TurnEnd { message } => {
                 let payload = crate::protocol::presentation_payloads::parse_turn_end(message);
                 let refs = payload.message_refs;
-                let len = payload.content_length;
-                if refs.is_empty() {
-                    None
-                } else {
-                    Some((refs, len))
-                }
+                (!refs.is_empty()).then_some((refs, payload.content_length))
             }
             _ => None,
         }

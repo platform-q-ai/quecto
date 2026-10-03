@@ -140,6 +140,7 @@ async fn non_token_event_renders_immediately_mid_burst() {
     h.stream_event(Event::AgentEnd {
         messages: vec![],
         message_refs: vec![],
+        content_length: None,
     });
     assert_eq!(
         h.rendered_frames(),

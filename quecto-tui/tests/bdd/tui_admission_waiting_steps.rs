@@ -35,6 +35,7 @@ fn when_run_ends(world: &mut TuiWorld) {
     harness(world).event(Event::AgentEnd {
         messages: vec![],
         message_refs: vec![],
+        content_length: None,
     });
 }
 
