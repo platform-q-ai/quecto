@@ -181,20 +181,35 @@ fn release(sink: &dyn ModelRefusalSink, reference: &ModelRef) {
     }
 }
 
-/// Record `error` against `reference` when it is a definitive refusal.
+/// Record `error` against `reference` when it is a definitive refusal and
+/// refusals are held at all: a zero hold (`model_refusal_ttl_secs = 0`)
+/// records nothing, and the log says the model is still offered.
 fn record(
     sink: &dyn ModelRefusalSink,
     reference: &ModelRef,
     error: &DomainError,
     held_for: Duration,
 ) {
-    if let Some(reason) = model_refusal(error) {
-        if sink.record_refusal(reference, &reason, held_for) {
-            tracing::warn!(
-                model = %reference.qualified_id(),
-                reason = %reason,
-                "provider refused the model for this account; it is no longer offered"
-            );
+    let Some(reason) = model_refusal(error) else {
+        return;
+    };
+    match held_for.is_zero() {
+        true => tracing::warn!(
+            model = %reference.qualified_id(),
+            reason = %reason,
+            "provider refused the model for this account; refusals are not held \
+             (providers.model_refusal_ttl_secs = 0), so it is still offered"
+        ),
+        false => {
+            if sink.record_refusal(reference, &reason, held_for) {
+                tracing::warn!(
+                    model = %reference.qualified_id(),
+                    reason = %reason,
+                    held_secs = held_for.as_secs(),
+                    "provider refused the model for this account; it is not offered while the \
+                     refusal is held"
+                );
+            }
         }
     }
 }

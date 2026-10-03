@@ -1,8 +1,19 @@
 use std::path::Path;
 
 use crate::domain::catalogue::PromptLimit;
-use crate::domain::message::claude_sonnet_5_pricing;
+use crate::domain::message::{ModelPricing, model_pricing};
 use crate::infrastructure::providers::stream_idle::{StreamIdle, StreamLimits};
+
+/// The price of a Claude 5 built-in, `None` for any other id.
+fn claude_5_pricing(id: &str) -> Option<ModelPricing> {
+    const CLAUDE_5: [&str; 4] = [
+        "claude-fable-5-1",
+        "claude-fable-5",
+        "claude-opus-5",
+        "claude-sonnet-5",
+    ];
+    CLAUDE_5.contains(&id).then(|| model_pricing(id)).flatten()
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelRegistry {
@@ -130,12 +141,14 @@ impl ModelRegistry {
             let mut record = ModelRecord::with_defaults(provider, id, Some(&spec.name), spec.api);
             record.auth = spec.auth;
             record.oauth_provider = spec.oauth.map(str::to_string);
-            if id == "claude-sonnet-5" {
+            if let Some(pricing) = claude_5_pricing(id) {
+                // The Claude 5 built-ins publish a 1M window and a 128K
+                // output cap (Anthropic's model overview; #2435 review
+                // round 2), priced from `model_pricing`.
                 record.context_window = 1_000_000;
                 record.context_window_explicit = true;
                 record.max_tokens = 128_000;
                 record.max_tokens_explicit = true;
-                let pricing = claude_sonnet_5_pricing();
                 record.cost = ModelCost {
                     input: pricing.input_micro_usd_per_million as f64 / 1_000_000.0,
                     output: pricing.output_micro_usd_per_million as f64 / 1_000_000.0,

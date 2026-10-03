@@ -23,9 +23,7 @@ async fn an_unavailable_model_is_marked_and_cannot_be_chosen() {
     h.capture();
     let frame = h.dump_full();
     assert!(
-        frame.contains(
-            "openai-oauth/gpt-5.5-mini  openai-oauth [oauth] (unavailable: refused for account)"
-        ),
+        frame.contains("openai-oauth/gpt-5.5-mini  (unavailable: refused for account) openai-oau"),
         "the row carries a short tag: {frame}"
     );
     let _ = h.try_drain_commands();

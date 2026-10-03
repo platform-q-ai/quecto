@@ -621,118 +621,83 @@ pub(crate) fn starts_with_ci(model: &str, prefix: &str) -> bool {
         .all(|(a, b)| a.eq_ignore_ascii_case(b))
 }
 
-/// Look up pricing for a known model. Returns `None` for unknown models.
-///
-/// **Allowlist**: only `claude-sonnet-5`, `claude-sonnet-4`, `claude-opus-4`,
-/// and `claude-haiku-4` families are recognised. Any other model string returns
-/// `None`, preventing a spoofed model name from silently matching unintended
-/// pricing. The Claude 4 families are no longer built in (#2435); their rates
-/// stay so a model declared in `models.json` is still costed.
-///
-/// Rates are expressed as micro-USD per million tokens (integer arithmetic, no f64 drift).
-/// Cache write = 1.25× base input (5-minute TTL). Cache read = 0.1× base input.
+/// Published per-model rates, as `[input, output, cache read, cache write]`
+/// micro-USD per million tokens (integer arithmetic, no f64 drift); cache
+/// write is the 5-minute TTL. A prefix another extends comes after it.
 ///
 /// Sources:
-///   Anthropic (https://www.anthropic.com/news/claude-sonnet-5):
-///     Sonnet 5: $3 in / $15 out / $3.75 cache-write / $0.30 cache-read per MTok
-///     Opus 4.6 / 4.5: $5 in / $25 out / $6.25 cache-write / $0.50 cache-read per MTok
-///     Sonnet 4.6 / 4.5 / 4: $3 in / $15 out / $3.75 cache-write / $0.30 cache-read per MTok
+///   Anthropic (Claude API pricing, #2435 review round 2):
+///     Fable 5.1: $10 in / $50 out / $12.50 cache-write / $0.25 cache-read per MTok
+///     Fable 5: $10 in / $50 out / $12.50 cache-write / $1.00 cache-read per MTok
+///     Opus 5, Opus 4.8-4.5: $5 in / $25 out / $6.25 cache-write / $0.50 cache-read per MTok
+///     Sonnet 5 (https://www.anthropic.com/news/claude-sonnet-5) and Sonnet 4.x:
+///       $3 in / $15 out / $3.75 cache-write / $0.30 cache-read per MTok
 ///     Haiku 4.5: $1 in / $5 out / $1.25 cache-write / $0.10 cache-read per MTok
-///   OpenAI GPT-5.6 tiers mirror the registry pricing in `model_registry_builtin_tables.rs`:
-///     Sol: $5 in / $30 out / $6.25 cache-write / $0.50 cache-read per MTok
-///     Terra: $2.50 in / $15 out / $3.125 cache-write / $0.25 cache-read per MTok
-///     Luna: $1 in / $6 out / $1.25 cache-write / $0.10 cache-read per MTok
-pub(crate) fn claude_sonnet_5_pricing() -> ModelPricing {
-    // Flat standard Sonnet 5 rate (deterministic, no clock-based intro switch).
+///   OpenAI GPT-5.6/GPT-6 tiers mirror the registry pricing in
+///   `model_registry_builtin_tables.rs` (gpt-6.1-sol caches input at $0.10).
+const MODEL_PRICES: &[(&str, [u64; 4])] = &[
+    (
+        "claude-fable-5-1",
+        [10_000_000, 50_000_000, 250_000, 12_500_000],
+    ),
+    (
+        "claude-fable-5",
+        [10_000_000, 50_000_000, 1_000_000, 12_500_000],
+    ),
+    // Opus 5.5 ($4 / $20, $0.20 cache reads; the write rate is the
+    // standard 1.25x) must not be priced as Opus 5, which it extends.
+    (
+        "claude-opus-5-5",
+        [4_000_000, 20_000_000, 200_000, 5_000_000],
+    ),
+    ("claude-opus-5", [5_000_000, 25_000_000, 500_000, 6_250_000]),
+    ("claude-opus-4", [5_000_000, 25_000_000, 500_000, 6_250_000]),
+    // Sonnet 5's flat standard rate (deterministic, no clock-based intro
+    // switch).
+    (
+        "claude-sonnet-5",
+        [3_000_000, 15_000_000, 300_000, 3_750_000],
+    ),
+    (
+        "claude-sonnet-4",
+        [3_000_000, 15_000_000, 300_000, 3_750_000],
+    ),
+    ("claude-haiku-4", [1_000_000, 5_000_000, 100_000, 1_250_000]),
+    (
+        "gpt-6-astra",
+        [10_000_000, 50_000_000, 1_000_000, 12_500_000],
+    ),
+    ("gpt-6-sol", [2_000_000, 10_000_000, 200_000, 2_500_000]),
+    ("gpt-6.1-sol", [2_000_000, 10_000_000, 100_000, 2_500_000]),
+    ("gpt-6-luna", [100_000, 500_000, 10_000, 125_000]),
+    ("gpt-5.6-sol", [5_000_000, 30_000_000, 500_000, 6_250_000]),
+    ("gpt-5.6-terra", [2_500_000, 15_000_000, 250_000, 3_125_000]),
+    ("gpt-5.6-luna", [1_000_000, 6_000_000, 100_000, 1_250_000]),
+];
+
+fn pricing(rates: [u64; 4]) -> ModelPricing {
+    let [input, output, cache_read, cache_write] = rates;
     ModelPricing {
-        input_micro_usd_per_million: 3_000_000,
-        output_micro_usd_per_million: 15_000_000,
-        cache_write_micro_usd_per_million: 3_750_000,
-        cache_read_micro_usd_per_million: 300_000,
+        input_micro_usd_per_million: input,
+        output_micro_usd_per_million: output,
+        cache_read_micro_usd_per_million: cache_read,
+        cache_write_micro_usd_per_million: cache_write,
     }
 }
 
+/// Look up pricing for a known model. Returns `None` for unknown models.
+///
+/// **Allowlist**: only the families in [`MODEL_PRICES`] are recognised, by
+/// case-insensitive prefix (dated variants included). Any other model
+/// string returns `None`, preventing a spoofed model name from silently
+/// matching unintended pricing. The Claude 4 families are no longer built
+/// in (#2435); their rates stay so a model declared in `models.json` is
+/// still costed.
 pub fn model_pricing(model: &str) -> Option<ModelPricing> {
-    if starts_with_ci(model, "claude-opus-4") {
-        // Opus 4.5 / 4.6: $5.00 / $25.00 / $6.25 / $0.50 per million tokens → micro-USD
-        // (Opus 4.1 and earlier had $15/$75 but those models are retired/deprecated.)
-        Some(ModelPricing {
-            input_micro_usd_per_million: 5_000_000,
-            output_micro_usd_per_million: 25_000_000,
-            cache_read_micro_usd_per_million: 500_000,
-            cache_write_micro_usd_per_million: 6_250_000,
-        })
-    } else if starts_with_ci(model, "claude-sonnet-5") {
-        Some(claude_sonnet_5_pricing())
-    } else if starts_with_ci(model, "claude-sonnet-4") {
-        // Sonnet 4.x: $3.00 / $15.00 / $3.75 / $0.30 per million tokens → micro-USD
-        Some(ModelPricing {
-            input_micro_usd_per_million: 3_000_000,
-            output_micro_usd_per_million: 15_000_000,
-            cache_read_micro_usd_per_million: 300_000,
-            cache_write_micro_usd_per_million: 3_750_000,
-        })
-    } else if starts_with_ci(model, "claude-haiku-4") {
-        // Haiku 4.5: $1.00 / $5.00 / $1.25 / $0.10 per million tokens → micro-USD
-        Some(ModelPricing {
-            input_micro_usd_per_million: 1_000_000,
-            output_micro_usd_per_million: 5_000_000,
-            cache_read_micro_usd_per_million: 100_000,
-            cache_write_micro_usd_per_million: 1_250_000,
-        })
-    } else if starts_with_ci(model, "gpt-6-astra") {
-        Some(ModelPricing {
-            input_micro_usd_per_million: 10_000_000,
-            output_micro_usd_per_million: 50_000_000,
-            cache_read_micro_usd_per_million: 1_000_000,
-            cache_write_micro_usd_per_million: 12_500_000,
-        })
-    } else if starts_with_ci(model, "gpt-6-sol") {
-        Some(ModelPricing {
-            input_micro_usd_per_million: 2_000_000,
-            output_micro_usd_per_million: 10_000_000,
-            cache_read_micro_usd_per_million: 200_000,
-            cache_write_micro_usd_per_million: 2_500_000,
-        })
-    } else if starts_with_ci(model, "gpt-6.1-sol") {
-        // The registry's rates (#2435): cached input is $0.10 (5% of input).
-        Some(ModelPricing {
-            input_micro_usd_per_million: 2_000_000,
-            output_micro_usd_per_million: 10_000_000,
-            cache_read_micro_usd_per_million: 100_000,
-            cache_write_micro_usd_per_million: 2_500_000,
-        })
-    } else if starts_with_ci(model, "gpt-6-luna") {
-        Some(ModelPricing {
-            input_micro_usd_per_million: 100_000,
-            output_micro_usd_per_million: 500_000,
-            cache_read_micro_usd_per_million: 10_000,
-            cache_write_micro_usd_per_million: 125_000,
-        })
-    } else if starts_with_ci(model, "gpt-5.6-sol") {
-        Some(ModelPricing {
-            input_micro_usd_per_million: 5_000_000,
-            output_micro_usd_per_million: 30_000_000,
-            cache_read_micro_usd_per_million: 500_000,
-            cache_write_micro_usd_per_million: 6_250_000,
-        })
-    } else if starts_with_ci(model, "gpt-5.6-terra") {
-        Some(ModelPricing {
-            input_micro_usd_per_million: 2_500_000,
-            output_micro_usd_per_million: 15_000_000,
-            cache_read_micro_usd_per_million: 250_000,
-            cache_write_micro_usd_per_million: 3_125_000,
-        })
-    } else if starts_with_ci(model, "gpt-5.6-luna") {
-        Some(ModelPricing {
-            input_micro_usd_per_million: 1_000_000,
-            output_micro_usd_per_million: 6_000_000,
-            cache_read_micro_usd_per_million: 100_000,
-            cache_write_micro_usd_per_million: 1_250_000,
-        })
-    } else {
-        None
-    }
+    MODEL_PRICES
+        .iter()
+        .find(|(prefix, _)| starts_with_ci(model, prefix))
+        .map(|(_, rates)| pricing(*rates))
 }
 
 #[cfg(test)]

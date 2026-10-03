@@ -1,0 +1,26 @@
+# The harness's built-in Anthropic and OpenAI models, each under the auth
+# modes that offer it, in the harness's table order (#2435). A harness test
+# (the_tui_fallback_list_is_the_builtin_anthropic_and_openai_rows) keeps
+# this file level with model_registry_builtin_tables.rs.
+anthropic-api/claude-fable-5-1
+anthropic-api/claude-fable-5
+anthropic-api/claude-opus-5
+anthropic-api/claude-sonnet-5
+anthropic-oauth/claude-fable-5-1
+anthropic-oauth/claude-fable-5
+anthropic-oauth/claude-opus-5
+anthropic-oauth/claude-sonnet-5
+openai-api/gpt-6-astra
+openai-api/gpt-6-sol
+openai-api/gpt-6.1-sol
+openai-api/gpt-6-luna
+openai-api/gpt-5.6-sol
+openai-api/gpt-5.6-terra
+openai-api/gpt-5.6-luna
+openai-oauth/gpt-6-astra
+openai-oauth/gpt-6-sol
+openai-oauth/gpt-6.1-sol
+openai-oauth/gpt-6-luna
+openai-oauth/gpt-5.6-sol
+openai-oauth/gpt-5.6-terra
+openai-oauth/gpt-5.6-luna

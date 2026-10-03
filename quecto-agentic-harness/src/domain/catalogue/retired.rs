@@ -29,13 +29,16 @@ const RETIRED: &[(&[&str], &[&str])] = &[
     ),
 ];
 
-/// Whether `model` was a built-in of `provider` before #2435 retired it.
+/// Whether `model` was a built-in of `provider` before #2435 retired it,
+/// both matched whatever their case.
 pub fn retired_builtin(provider: &str, model: &str) -> bool {
     RETIRED.iter().any(|(providers, models)| {
         providers
             .iter()
             .any(|listed| listed.eq_ignore_ascii_case(provider))
-            && models.contains(&model)
+            && models
+                .iter()
+                .any(|retired| retired.eq_ignore_ascii_case(model))
     })
 }
 

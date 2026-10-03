@@ -12,11 +12,12 @@ use crate::domain::provider_error::{
 };
 
 /// The guidance a model refused for the account or auth mode ends with
-/// (#2435): the catalogue now holds it unavailable.
+/// (#2435). The loop does not know the hold, so the guidance says what a
+/// hold does without claiming one: with `model_refusal_ttl_secs = 0` none is.
 const MODEL_REFUSED_GUIDANCE: &str = "Model unavailable: the provider refused this model for \
-     the account or auth mode in use. It is held unavailable until the provider serves it or \
-     the hold ends (providers.model_refusal_ttl_secs, an hour by default); choose another model \
-     (list_models, then set_model).";
+     the account or auth mode in use. While a refusal is held (providers.model_refusal_ttl_secs, \
+     an hour by default; 0 holds none) the model is not offered, until the provider serves it \
+     again; choose another model (list_models, then set_model).";
 
 /// Build the audit event that persists a terminal provider failure (#937).
 ///

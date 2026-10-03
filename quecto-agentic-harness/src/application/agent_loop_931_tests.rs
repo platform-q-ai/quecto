@@ -273,9 +273,9 @@ fn a_model_refused_for_the_account_says_it_will_not_be_offered_again() {
     assert!(
         out.ends_with(
             "Model unavailable: the provider refused this model for the account or auth mode in \
-             use. It is held unavailable until the provider serves it or the hold ends \
-             (providers.model_refusal_ttl_secs, an hour by default); choose another model \
-             (list_models, then set_model)."
+             use. While a refusal is held (providers.model_refusal_ttl_secs, an hour by default; \
+             0 holds none) the model is not offered, until the provider serves it again; choose \
+             another model (list_models, then set_model)."
         ),
         "{out}"
     );

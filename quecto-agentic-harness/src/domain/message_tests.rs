@@ -261,4 +261,9 @@ fn the_claude_5_built_ins_are_costed_at_their_published_rates() {
         rates("claude-opus-5"),
         [5_000_000, 25_000_000, 500_000, 6_250_000]
     );
+    assert_eq!(
+        rates("claude-opus-5-5"),
+        [4_000_000, 20_000_000, 200_000, 5_000_000],
+        "Opus 5.5 is not priced as the Opus 5 it extends"
+    );
 }

@@ -557,7 +557,7 @@ While a model request is in flight the marker also carries `modelTurn`
 | `workflow` | object \| omitted | Slim selected-workflow identity and current step only |
 | `admission` | object \| omitted | Bounded inference-admission view (#1679); present only when the process joined an admission authority |
 | `admissionWarnings` | array | Advisory usable provider slots with no effective admission binding; always present (empty when all usable slots are bound). Each item has `slot`, `code` (`admission_binding_missing`) and an actionable `message`. These slots remain usable but their requests are not broker-gated. |
-| `startupWarnings` | array of strings | The warnings the startup model drew (#2435, #2126): a model its provider does not list (or a retired built-in), one refused for the account, or a provider this harness has not configured. Absent when there are none. The same lines go to the agent's stderr; the TUI shows each once as a notice. |
+| `startupWarnings` | array of strings | The warnings the startup model drew (#2435, #2126): a model its provider does not list (or a retired built-in), one refused for the account, or a provider this harness has not configured. Absent when there are none. They are about the startup model: a `set_model` to another model clears them. The same lines go to the agent's stderr; the TUI shows each once as a notice. |
 | `modelTurn` | object \| omitted | The model request in flight (#2210): present only while the agent waits on the model — thinking or streaming — and omitted otherwise |
 | `agentRequests` | object | This agent's own provider requests so far (#2436), retries included; always present. Not `admission.counters`, which count admission attempts — see [Agent requests](#agent-requests) below |
 

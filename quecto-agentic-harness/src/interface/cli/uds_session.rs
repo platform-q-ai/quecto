@@ -15,8 +15,10 @@ pub use uds_session_notify::NotificationEnqueueOutcome;
 pub struct AgentSession {
     model: String,
     admission_warnings: Vec<crate::domain::state_snapshot::AdmissionBindingWarning>,
-    /// What the startup model drew (#2435, #2126), shown to every client.
-    startup_warnings: Vec<String>,
+    /// What the startup model drew (#2435, #2126), shown to every client,
+    /// each with the model it is about: a switch keeps only those about the
+    /// model now active.
+    startup_warnings: Vec<(String, String)>,
     runtime_store: Option<crate::application::ports::RuntimeSnapshotStore>,
     streaming: bool,
     pub(crate) automatic_turns_allowed: bool,
@@ -269,6 +271,9 @@ impl AgentSession {
     }
     pub fn set_model(&mut self, model: String) {
         if self.model != model {
+            // #2435: a startup warning is about the model it was drawn for;
+            // only those about the model now active still apply.
+            self.startup_warnings.retain(|(about, _)| *about == model);
             self.model = model;
             self.bump_visible_generation();
         }
@@ -454,7 +459,11 @@ impl AgentSession {
         let effort = effort.into();
         SessionState {
             admission_warnings: self.current_admission_warnings(),
-            startup_warnings: self.startup_warnings.clone(),
+            startup_warnings: self
+                .startup_warnings
+                .iter()
+                .map(|(_, warning)| warning.clone())
+                .collect(),
             control_receipts: self.control_receipts.clone(),
             model: self.model.clone(),
             generation: self.generation,

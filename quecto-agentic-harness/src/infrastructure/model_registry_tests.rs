@@ -1,4 +1,4 @@
-use super::{AuthMode, ModelRegistry, ProviderApi, resolve_registry_value};
+use super::{AuthMode, ModelRecord, ModelRegistry, ProviderApi, resolve_registry_value};
 
 #[test]
 fn registry_loads_pi_shaped_models_json_with_defaults() {
@@ -631,10 +631,17 @@ fn context_window_for_returns_declared_windows_only() {
         Some(1_000_000),
         "a declared context window must be resolvable by qualified model id"
     );
-    // A model whose window is only the synthesized default is "unknown":
-    // it must not clamp the configured budget.
+    // A model whose window is only the synthesized default (one a
+    // models.json declares without `contextWindow`) is "unknown": it must
+    // not clamp the configured budget.
+    let declared = ModelRegistry::from_file_records(vec![ModelRecord::with_defaults(
+        "anthropic-api",
+        "claude-opus-4-8",
+        None,
+        ProviderApi::AnthropicMessages,
+    )]);
     assert_eq!(
-        registry.context_window_for("anthropic-api/claude-opus-5"),
+        declared.context_window_for("anthropic-api/claude-opus-4-8"),
         None
     );
     // Unknown models and non-qualified ids are unknown.

@@ -17,41 +17,17 @@ use crate::components::utils::{truncate_to_width, visible_width};
 use crate::shell::keys::Key;
 
 /// Well-known fallback models, used when the caller doesn't supply a model
-/// list: the harness's built-in Anthropic/OpenAI models (Claude 5 and
-/// GPT-5.6 on, #2435), each offered through both its `api` and `oauth`
-/// provider.
+/// list: the harness's built-in Anthropic/OpenAI rows, each under the auth
+/// modes that offer it (#2435), as `model_selector_builtin_models.txt`
+/// lists them — a harness test keeps that file level with its tables.
 fn known_models() -> Vec<ModelEntry> {
-    const ANTHROPIC: &[&str] = &[
-        "claude-fable-5-1",
-        "claude-fable-5",
-        "claude-opus-5",
-        "claude-sonnet-5",
-    ];
-    const OPENAI: &[&str] = &[
-        "gpt-6-astra",
-        "gpt-6-sol",
-        "gpt-6.1-sol",
-        "gpt-6-luna",
-        "gpt-5.6-sol",
-        "gpt-5.6-terra",
-        "gpt-5.6-luna",
-    ];
-    let mut pairs: Vec<(String, String)> = Vec::new();
-    for (vendor, brand, ids) in [
-        ("anthropic", "Anthropic", ANTHROPIC),
-        ("openai", "OpenAI", OPENAI),
-    ] {
-        for id in ids {
-            for (auth, label) in [("api", "API"), ("oauth", "OAuth")] {
-                pairs.push((format!("{vendor}-{auth}/{id}"), format!("{brand} {label}")));
-            }
-        }
-    }
-    pairs
-        .into_iter()
-        .map(|(id, provider)| ModelEntry {
-            id,
-            provider,
+    include_str!("model_selector_builtin_models.txt")
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(|id| ModelEntry {
+            id: id.to_string(),
+            provider: provider_label(id),
             auth: None,
             is_current: false,
             unavailable: None,
@@ -59,11 +35,32 @@ fn known_models() -> Vec<ModelEntry> {
         .collect()
 }
 
+/// The provider column of a fallback row: its vendor and auth mode.
+fn provider_label(id: &str) -> String {
+    let provider = id.split_once('/').map_or(id, |(provider, _)| provider);
+    match provider {
+        "anthropic-api" => "Anthropic API",
+        "anthropic-oauth" => "Anthropic OAuth",
+        "openai-api" => "OpenAI API",
+        "openai-oauth" => "OpenAI OAuth",
+        _ => "Model",
+    }
+    .to_string()
+}
+
 /// The short tag a row shows for `reason` (#2435 review round 2): each
 /// reason's kind, before any `: detail`.
 fn unavailable_tag(reason: &str) -> String {
-    let _ = reason;
-    String::new()
+    reason
+        .split("; ")
+        .map(|one| {
+            one.split_once(':')
+                .map_or(one, |(kind, _)| kind)
+                .trim()
+                .replace('-', " ")
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Maximum query length to prevent unbounded growth.
@@ -283,8 +280,9 @@ fn to_suggestion(m: &ModelEntry) -> Suggestion {
         _ => m.provider.clone(),
     };
     if let Some(reason) = &m.unavailable {
-        let _ = unavailable_tag(reason);
-        description.push_str(&format!(" (unavailable: {reason})"));
+        // A short tag, first so a narrow column keeps it; the full reason
+        // when Enter refuses the row.
+        description = format!("(unavailable: {}) {description}", unavailable_tag(reason));
     }
     Suggestion {
         value: m.id.clone(),
