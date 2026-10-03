@@ -258,15 +258,108 @@ fn reads_never_print_image_bytes() {
     assert_eq!(debug, "Image(4096 bytes)");
 }
 
-/// Whether `pid` is gone: no `/proc` entry, or a zombie waiting for its reaper.
-fn process_gone(pid: &str) -> bool {
+/// The state letter of `pid` in `/proc/<pid>/stat`, or `None` when it has
+/// no entry (reaped, or reaped between the open and the read).
+fn process_state(pid: libc::pid_t) -> Option<char> {
+    assert!(pid > 0, "a process id is positive, got {pid}");
     match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
-        Err(_) => true,
-        Ok(stat) => stat
-            .rsplit(')')
-            .next()
-            .is_some_and(|rest| rest.trim_start().starts_with('Z')),
+        Ok(stat) => {
+            // `pid (comm) S …`: the state follows the last `)`, as `comm`
+            // may hold one.
+            let state = stat
+                .rsplit_once(')')
+                .and_then(|(_, rest)| rest.trim_start().chars().next());
+            Some(state.unwrap_or_else(|| panic!("/proc/{pid}/stat has a state: {stat:?}")))
+        }
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound
+                || error.raw_os_error() == Some(libc::ESRCH) =>
+        {
+            None
+        }
+        Err(error) => panic!("read /proc/{pid}/stat: {error}"),
     }
+}
+
+/// Whether a process in `state` is gone: no entry, or one that has exited
+/// and only waits for its reaper (`Z`ombie, or `X`, dead and being
+/// released). A SIGKILLed helper is gone once it is a zombie;
+/// `kill(pid, 0)` still succeeds on one, so it cannot tell.
+fn state_is_gone(state: Option<char>) -> bool {
+    match state {
+        None => true,
+        Some(state) => matches!(state, 'Z' | 'X'),
+    }
+}
+
+fn process_gone(pid: libc::pid_t) -> bool {
+    state_is_gone(process_state(pid))
+}
+
+/// How long a killed helper is given to go (#2442): it is a survivor only
+/// once both are spent. The polls are real 10 ms sleeps, so a stalled
+/// runner that jumps past the wall-clock budget still gives the helper its
+/// turn; the wall clock covers a helper starved or stuck in `D` state.
+#[derive(Clone, Copy)]
+struct GoneBudget {
+    polls: u32,
+    wall: Duration,
+}
+
+const HELPER_GONE_BUDGET: GoneBudget = GoneBudget {
+    polls: 200,
+    wall: Duration::from_secs(10),
+};
+
+/// `Ok` as soon as `pid` is gone; once `budget` is spent, `Err` naming its
+/// last state and kernel wait channel.
+fn wait_gone(pid: libc::pid_t, budget: GoneBudget) -> Result<(), String> {
+    let started = std::time::Instant::now();
+    let mut polls = 0;
+    loop {
+        let state = process_state(pid);
+        if state_is_gone(state) {
+            return Ok(());
+        }
+        if polls >= budget.polls && started.elapsed() >= budget.wall {
+            let state = state.expect("a process that is not gone has a state");
+            let wchan = std::fs::read_to_string(format!("/proc/{pid}/wchan"))
+                .unwrap_or_else(|error| format!("unreadable: {error}"));
+            return Err(format!(
+                "state {state}, wchan {wchan:?} after {polls} polls and {:?} \
+                 (S: never signalled, a product bug; R or D: the runner stalled)",
+                started.elapsed()
+            ));
+        }
+        polls += 1;
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// The pid the tool's shell wrote to `pid_file`, waiting (bounded) for the
+/// file to exist and hold a whole line.
+fn helper_pid(pid_file: &Path) -> libc::pid_t {
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    let written = loop {
+        match std::fs::read_to_string(pid_file) {
+            Ok(written) if written.ends_with('\n') => break written,
+            read => assert!(
+                std::time::Instant::now() < deadline,
+                "the helper pid file {} is written: {read:?}",
+                pid_file.display()
+            ),
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let pid = written
+        .trim()
+        .parse()
+        .unwrap_or_else(|error| panic!("the helper pid file holds a pid ({written:?}): {error}"));
+    assert!(
+        pid > 0,
+        "the helper pid file holds a positive pid, got {pid}"
+    );
+    pid
 }
 
 /// Review round 1 (M2): `wl-paste` forks a helper; the timeout ends the
@@ -277,21 +370,114 @@ fn a_timeout_ends_the_tool_s_children_too() {
     let pid_file = dir.path().join("helper.pid");
     let script = format!("sleep 30 & echo $! > '{}'; wait", pid_file.display());
     let tool = fake_tool(dir.path(), "wl-paste", &[("--list-types", &script)]);
-    let clipboard = SystemClipboard::with_tools(
-        vec![(ClipboardTool::WlPaste, tool)],
-        Duration::from_millis(300),
-    );
+    // 3 s, so the shell has long written `$!` when the timeout fires.
+    let clipboard =
+        SystemClipboard::with_tools(vec![(ClipboardTool::WlPaste, tool)], Duration::from_secs(3));
+    let started = std::time::Instant::now();
     assert!(matches!(clipboard.read(), ClipboardRead::Failed(_)));
-    let pid = std::fs::read_to_string(&pid_file).unwrap();
-    let pid = pid.trim();
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    while !process_gone(pid) && std::time::Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    // The tool's shell waits for its helper: a read that waited the
+    // helper's 30 s out never killed it.
     assert!(
-        process_gone(pid),
-        "the forked helper {pid} outlived the read"
+        started.elapsed() < Duration::from_secs(20),
+        "the read waited {:?}",
+        started.elapsed()
     );
+    let pid = helper_pid(&pid_file);
+    if let Err(survivor) = wait_gone(pid, HELPER_GONE_BUDGET) {
+        panic!("the forked helper {pid} outlived the read: {survivor}");
+    }
+}
+
+/// #2442: a child that has exited but is not reaped is a zombie: gone,
+/// though `kill(pid, 0)` still succeeds on it.
+#[test]
+fn a_zombie_counts_as_gone() {
+    let mut child = std::process::Command::new("true").spawn().unwrap();
+    let pid = libc::pid_t::try_from(child.id()).unwrap();
+    let id = libc::id_t::try_from(pid).unwrap();
+    // Wait for it to exit without reaping it (WNOWAIT): a zombie now.
+    loop {
+        // SAFETY: an all-zero siginfo_t is a valid value for waitid to fill.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        let flags = libc::WEXITED | libc::WNOWAIT;
+        // SAFETY: `info` is a live siginfo_t; `pid` is this test's unreaped child.
+        let waited = unsafe { libc::waitid(libc::P_PID, id, &mut info, flags) };
+        if waited == 0 {
+            // SAFETY: waitid filled `info` for an exited child.
+            let exited = unsafe { info.si_pid() };
+            assert_eq!(exited, pid, "waitid names the child");
+            break;
+        }
+        let error = std::io::Error::last_os_error();
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::Interrupted,
+            "waitid {pid}: {error}"
+        );
+    }
+    // SAFETY: signal 0 only probes a pid this test spawned and has not reaped.
+    let probed = unsafe { libc::kill(pid, 0) };
+    assert_eq!(probed, 0, "a zombie still takes signal 0");
+    assert_eq!(process_state(pid), Some('Z'));
+    assert!(process_gone(pid), "the zombie {pid} counts as gone");
+    assert!(child.wait().unwrap().success());
+    assert!(process_gone(pid), "the reaped child {pid} is gone");
+}
+
+/// Kills and reaps its child when dropped, so a failing test leaves no
+/// `sleep` behind.
+struct KillOnDrop(std::process::Child);
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// #2442: a helper that is still running is never gone, however long the
+/// test polls, and the failure names it as never signalled: the timeout
+/// test still fails on a helper that survives.
+#[test]
+fn a_running_helper_is_not_gone() {
+    let child = KillOnDrop(
+        std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap(),
+    );
+    let pid = libc::pid_t::try_from(child.0.id()).unwrap();
+    // A fresh `sleep` on a loaded runner may still be running or in `D`:
+    // wait (bounded) for it to sleep before the budget starts.
+    let settle = std::time::Instant::now() + Duration::from_secs(5);
+    let sleeping = loop {
+        if process_state(pid) == Some('S') {
+            break true;
+        }
+        if std::time::Instant::now() >= settle {
+            break false;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let budget = GoneBudget {
+        polls: 20,
+        wall: Duration::from_millis(200),
+    };
+    let started = std::time::Instant::now();
+    let waited = wait_gone(pid, budget);
+    let elapsed = started.elapsed();
+    drop(child);
+    let survivor = waited.expect_err("a running helper is not gone");
+    // Asleep, it is named as never signalled; a runner too loaded for it
+    // to settle still gets a state and a wchan.
+    let named = if sleeping { "state S, " } else { "state " };
+    assert!(survivor.starts_with(named), "{survivor}");
+    assert!(survivor.contains(", wchan "), "{survivor}");
+    assert!(
+        elapsed >= budget.wall,
+        "both budgets are spent: {elapsed:?}"
+    );
+    assert!(process_gone(pid), "the killed, reaped helper {pid} is gone");
 }
 
 /// Review round 1 (L3): a stale `WAYLAND_DISPLAY` makes `wl-paste` fail;
