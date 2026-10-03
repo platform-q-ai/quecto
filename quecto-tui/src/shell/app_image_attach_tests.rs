@@ -180,6 +180,8 @@ async fn backspace_in_an_empty_composer_removes_the_last_chip() {
     assert!(chips[0].contains("first.png"), "{chips:?}");
     assert!(!h.last().contains("second.png"), "{}", h.last());
 
+    // Another fresh press (review round 2: a held one removes one chip).
+    h.advance_clock(std::time::Duration::from_secs(1));
     h.press(Key::Backspace);
     assert!(h.attachment_chips().is_empty());
     assert!(!h.last().contains("[image"), "{}", h.last());

@@ -247,38 +247,50 @@ pub(crate) fn resolve_image_path(
     home: Option<&Path>,
     workspace: &Path,
 ) -> Result<PathBuf, ImagePathError> {
-    let arg = unquote(arg.trim());
+    let (quote, arg) = unquote(arg.trim());
     if arg.is_empty() {
         return Err(ImagePathError::Missing);
     }
     if let Some(uri) = arg.strip_prefix("file://") {
+        // A query or fragment names nothing on disk (`%3F` / `%23` do).
+        let uri = uri.split(['?', '#']).next().unwrap_or_default();
         // `file:///p` and `file://localhost/p` name this machine.
         let path = uri.strip_prefix("localhost").unwrap_or(uri);
-        return match path.starts_with('/') {
-            true => Ok(PathBuf::from(percent_decode(path))),
-            false => Err(ImagePathError::NotLocal),
+        return match (path.is_empty(), path.starts_with('/')) {
+            (true, _) => Err(ImagePathError::Missing),
+            (false, true) => Ok(PathBuf::from(percent_decode(path))),
+            (false, false) => Err(ImagePathError::NotLocal),
         };
     }
-    let arg = unescape(arg);
+    // As a shell reads it: nothing is escaped inside single quotes, only
+    // `\\`, `\"`, `\$` and ``\` `` inside double quotes, any character
+    // outside quotes.
+    let arg = match quote {
+        Some('\'') => arg.to_string(),
+        Some(_) => unescape(arg, |ch| matches!(ch, '\\' | '"' | '$' | '`')),
+        None => unescape(arg, |_| true),
+    };
     let arg = arg.as_str();
     let under_home = match arg {
         "~" => Some(""),
         _ => arg.strip_prefix("~/"),
     };
-    match (under_home, home) {
-        (Some(rest), Some(home)) => Ok(home.join(rest)),
-        (Some(_), None) => Err(ImagePathError::NoHome),
-        (None, _) => Ok(workspace.join(arg)),
+    match (under_home, arg.starts_with('~'), home) {
+        (Some(rest), _, Some(home)) => Ok(home.join(rest)),
+        (Some(_), _, None) => Err(ImagePathError::NoHome),
+        (None, true, _) => Err(ImagePathError::OtherUsersHome),
+        (None, false, _) => Ok(workspace.join(arg)),
     }
 }
 
-/// `text` with each shell escape `\x` read as `x`.
-fn unescape(text: &str) -> String {
+/// `text` with each shell escape `\x` read as `x`, where `escapable(x)`;
+/// any other backslash is kept.
+fn unescape(text: &str, escapable: impl Fn(char) -> bool) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars();
     while let Some(ch) = chars.next() {
         match (ch, chars.clone().next()) {
-            ('\\', Some(escaped)) => {
+            ('\\', Some(escaped)) if escapable(escaped) => {
                 out.push(escaped);
                 chars.next();
             }
@@ -315,15 +327,17 @@ fn percent_decode(path: &str) -> std::ffi::OsString {
     std::ffi::OsString::from_vec(out)
 }
 
-/// `text` without one pair of matching surrounding quotes, `'…'` or `"…"`.
-fn unquote(text: &str) -> &str {
+/// `text` without one pair of matching surrounding quotes, `'…'` or `"…"`,
+/// and the quote it had.
+fn unquote(text: &str) -> (Option<char>, &str) {
     ['\'', '"']
         .into_iter()
         .find_map(|quote| {
             text.strip_prefix(quote)
                 .and_then(|inner| inner.strip_suffix(quote))
+                .map(|inner| (Some(quote), inner))
         })
-        .unwrap_or(text)
+        .unwrap_or((None, text))
 }
 
 /// The name an image's chip shows when it came from `path`: its file name.

@@ -75,21 +75,83 @@ impl Command {
         matches!(self, Self::Sync { .. })
     }
 
-    /// Whether the command, serialized, fits one protocol frame. The writer
-    /// drops an over-cap command with nothing on the wire, so a sender that
-    /// must never lose one silently (a user message with images, #2425)
-    /// asks first.
+    /// Whether the command, serialized, fits one protocol frame: its payload
+    /// plus the line's newline (the legacy line's cap counts it; a frame's
+    /// is one byte looser) within [`super::MAX_LINE_BYTES`]. The writer drops
+    /// an over-cap command with nothing on the wire, so a sender that must
+    /// never lose one silently (a user message with images, #2425) asks
+    /// first. A user message is measured, not serialized a second time.
     pub fn fits_one_frame(&self) -> bool {
-        super::serialize_command(self)
-            .is_ok_and(|line| line.trim_end_matches('\n').len() <= super::MAX_LINE_BYTES)
+        let payload = match self.user_message_len() {
+            Some(len) => len,
+            None => super::serialize_command(self).map_or(usize::MAX, |line| line.len() - 1),
+        };
+        payload.saturating_add(1) <= super::MAX_LINE_BYTES
     }
 
     /// The serialized length of a user message (`prompt` / `steer` /
-    /// `follow_up`), measured without serializing it; `None` for any other
-    /// command.
+    /// `follow_up`), measured without serializing it: the JSON serde writes
+    /// for these variants, field by field, in declaration order; `None`
+    /// for any other command.
     pub fn user_message_len(&self) -> Option<usize> {
-        None
+        let (kind, id, message, behavior, images) = match self {
+            Self::Prompt {
+                id,
+                message,
+                streaming_behavior,
+                images,
+            } => ("prompt", id, message, streaming_behavior.as_deref(), images),
+            Self::Steer {
+                id,
+                message,
+                images,
+            } => ("steer", id, message, None, images),
+            Self::FollowUp {
+                id,
+                message,
+                images,
+            } => ("follow_up", id, message, None, images),
+            _ => return None,
+        };
+        // `{"type":"<kind>"` … `}`
+        let mut len = r#"{"type":""#.len() + kind.len() + 1 + 1;
+        len += id
+            .as_deref()
+            .map_or(0, |id| r#","id":"#.len() + json_string_len(id));
+        len += r#","message":"#.len() + json_string_len(message);
+        len += behavior.map_or(0, |b| r#","streamingBehavior":"#.len() + json_string_len(b));
+        len += match images.len() {
+            0 => 0,
+            count => {
+                let each: usize = images
+                    .iter()
+                    .map(|image| {
+                        r#"{"mimeType":"","data":""}"#.len()
+                            + image.mime_type().len()
+                            + image.data().len()
+                    })
+                    .sum();
+                r#","images":[]"#.len() + each + (count - 1)
+            }
+        };
+        Some(len)
     }
+}
+
+/// The length of `text` as a JSON string, quotes included, escaped as
+/// `serde_json` escapes it: `"` `\` and the control characters with a
+/// short form take two bytes, the other control characters six
+/// (`\u00XX`), everything else its UTF-8 bytes.
+fn json_string_len(text: &str) -> usize {
+    let escaped: usize = text
+        .chars()
+        .map(|ch| match ch {
+            '"' | '\\' | '\n' | '\r' | '\t' | '\u{8}' | '\u{c}' => 2,
+            '\u{0}'..='\u{1f}' => 6,
+            _ => ch.len_utf8(),
+        })
+        .sum();
+    escaped + 2
 }
 
 #[cfg(test)]

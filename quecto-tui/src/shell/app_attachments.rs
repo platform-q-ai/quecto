@@ -7,13 +7,15 @@
 //! and the notices.
 //!
 //! Keys, while chips are pending: `Backspace` in an empty editor removes
-//! the last chip, but a held Backspace that emptied the text stops there
-//! (its key repeat leaves the chips alone); `Esc` on the master with no run
+//! the last chip, but a held Backspace stops at the start of the text and
+//! removes at most one chip (its key repeats leave the chips alone, with a
+//! one-time hint); `Esc` on the master with no run
 //! clears the chips with the editor text (a running agent's `Esc` still
 //! aborts, a focused sub-agent's `Esc` still leaves it, and the chips stay);
 //! `Ctrl+C` clears them with the editor before it would abort; `Enter` in
 //! an empty editor sends the images alone. The chips belong to the
 //! conversation: `/clear`, `/new` and a resume drop them, with a notice.
+//! A message is held back while an image is still being read.
 
 use super::*;
 use crate::conversation::image_attachments::{
@@ -48,9 +50,12 @@ pub(super) struct AttachmentFlow {
     clipboard_reading: bool,
     /// `/image` file reads running.
     file_reads: usize,
-    /// When the last Backspace that met text (or a key repeat of one) came:
-    /// a Backspace soon after it is that key held down, not a fresh press.
-    text_backspace_at: Option<tokio::time::Instant>,
+    /// When the last Backspace that did something (met text, removed a
+    /// chip) or was a key repeat of one came: a Backspace soon after it is
+    /// that key held down, not a fresh press. Only an editing key ends it.
+    backspace_held_at: Option<tokio::time::Instant>,
+    /// The "held Backspace" hint has been shown (it is shown once).
+    held_hint_shown: bool,
     /// Counts the conversations the composer has served: a read started in
     /// an earlier one attaches nothing to this one.
     conversation: u64,
@@ -66,16 +71,16 @@ impl AttachmentFlow {
             clipboard: Arc::new(NoClipboard),
             clipboard_reading: false,
             file_reads: 0,
-            text_backspace_at: None,
+            backspace_held_at: None,
+            held_hint_shown: false,
             conversation: 0,
             read_tx,
             read_rx,
         }
     }
 
-    /// Whether a read has been started and not yet applied (the harness
-    /// delivers reads the way the event loop's arm does).
-    #[cfg(any(test, feature = "test-harness"))]
+    /// Whether a read has been started and not yet applied: a message sent
+    /// meanwhile would leave its image behind.
     pub(super) fn reads_in_flight(&self) -> bool {
         self.clipboard_reading || self.file_reads > 0
     }
@@ -87,9 +92,15 @@ const READ_QUEUE: usize = 16;
 /// The most characters of a file or clipboard name kept for its chip.
 const LABEL_CHARS: usize = 120;
 
-/// A Backspace this soon after one that met text is that key held down:
-/// longer than any common initial key-repeat delay (X11's default is
-/// 660 ms), so a held Backspace stops at the start of the text.
+/// The hint for a Backspace that would have removed a chip but was taken
+/// for the key repeat of a held one (shown once).
+const HELD_BACKSPACE_HINT: &str = "Wait a moment, then press Backspace again to remove the image";
+
+/// A Backspace this soon after one that did something is that key held
+/// down: longer than the common initial key-repeat delays (X11's default is
+/// 660 ms), so a held Backspace stops at the start of the text and removes
+/// at most one chip. No terminal tells a repeat from a fresh press, so a
+/// slower first repeat counts as a press; the fast repeats after it do not.
 const KEY_REPEAT_GAP: Duration = Duration::from_millis(700);
 
 /// Sends a read's answer, or `fallback` if it is dropped without one (a
@@ -284,25 +295,36 @@ impl App {
     /// The keys that edit the attachments; whether `key` was one of them.
     pub(super) fn handle_attachment_key(&mut self, key: &Key) -> bool {
         let now = self.clock.now();
-        let held_backspace = matches!(key, Key::Backspace)
-            && self
-                .attachments
-                .text_backspace_at
-                .is_some_and(|at| now.saturating_duration_since(at) < KEY_REPEAT_GAP);
         let chips = !self.attachments.pending.is_empty();
         let editor_blank = self.editor.text().trim().is_empty();
         let editor_empty = self.editor.text().is_empty();
+        let held_backspace = matches!(key, Key::Backspace)
+            && self
+                .attachments
+                .backspace_held_at
+                .is_some_and(|at| now.saturating_duration_since(at) < KEY_REPEAT_GAP);
         let master_idle =
             self.ac().roster.active_agent_id.is_none() && !self.ac().agent_state.is_running();
-        // Only a Backspace that meets text, or the key repeat of one, keeps
-        // the run going.
-        self.attachments.text_backspace_at = match (key, editor_empty, held_backspace) {
+        // A Backspace that meets text, removes a chip or repeats one keeps
+        // the hold going; an editing key ends it; anything else (the wheel,
+        // the mouse) leaves it be.
+        self.attachments.backspace_held_at = match (key, editor_empty, chips || held_backspace) {
             (Key::Backspace, false, _) | (Key::Backspace, true, true) => Some(now),
-            _ => None,
+            (Key::Backspace, true, false) => None,
+            (key, _, _) if is_editing_key(key) => None,
+            _ => self.attachments.backspace_held_at,
         };
         match (key, chips) {
             (Key::Ctrl('v'), _) => self.start_clipboard_read(),
-            (Key::Backspace, true) if editor_empty && held_backspace => {}
+            (Key::Backspace, true) if editor_empty && held_backspace => {
+                match self.attachments.held_hint_shown {
+                    true => {}
+                    false => {
+                        self.attachments.held_hint_shown = true;
+                        self.notify(HELD_BACKSPACE_HINT, NotifyLevel::Info);
+                    }
+                }
+            }
             (Key::Backspace, true) if editor_empty => {
                 self.attachments.pending.remove_last();
             }
@@ -344,6 +366,34 @@ impl App {
     }
 }
 
+/// Whether `key` edits or moves in the editor (an allowlist): such a key
+/// ends a held Backspace. The wheel, the mouse and paging do not.
+fn is_editing_key(key: &Key) -> bool {
+    matches!(
+        key,
+        Key::Char(_)
+            | Key::Enter
+            | Key::ShiftEnter
+            | Key::Escape
+            | Key::Delete
+            | Key::Insert
+            | Key::Tab
+            | Key::BackTab
+            | Key::Paste(_)
+            | Key::Alt(_)
+            | Key::Ctrl(_)
+            | Key::CtrlShift(_)
+            | Key::Left
+            | Key::Right
+            | Key::Up
+            | Key::Down
+            | Key::CtrlLeft
+            | Key::CtrlRight
+            | Key::Home
+            | Key::End
+    )
+}
+
 /// A file or clipboard name made safe to show: control characters dropped,
 /// bounded in length.
 fn sanitize_label(name: &str) -> String {
@@ -352,16 +402,23 @@ fn sanitize_label(name: &str) -> String {
 
 /// Read the regular file `path`, at most one byte past the image limit: the
 /// admission check refuses an over-limit image, so the rest is never read.
-/// Anything but a regular file (a directory, a FIFO that would block) is
-/// refused before it is opened.
+/// Symlinks are resolved first; the resolved file is then opened without
+/// following a link and without blocking, and only a regular file (by
+/// `fstat` of what was opened, so nothing swapped in after a check) is read:
+/// a directory or a FIFO is refused, never waited on.
 fn read_image_file(path: &std::path::Path) -> std::io::Result<Vec<u8>> {
-    match std::fs::metadata(path)?.is_file() {
+    use std::os::unix::fs::OpenOptionsExt;
+    let resolved = std::fs::canonicalize(path)?;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(&resolved)?;
+    match file.metadata()?.is_file() {
         true => {}
         false => return Err(std::io::Error::other("not a regular file")),
     }
     let mut bytes = Vec::new();
-    std::fs::File::open(path)?
-        .take(quecto_image::MAX_IMAGE_BYTES as u64 + 1)
+    file.take(quecto_image::MAX_IMAGE_BYTES as u64 + 1)
         .read_to_end(&mut bytes)?;
     Ok(bytes)
 }

@@ -111,6 +111,17 @@ impl ClipboardTool {
         }
     }
 
+    /// Whether `stderr` from a listing that exited non-zero says the
+    /// clipboard is empty, as each tool words it; any other failure is the
+    /// tool failing to run (no display server, a stale `WAYLAND_DISPLAY`).
+    fn says_empty(self, stderr: &str) -> bool {
+        let empty: &[&str] = match self {
+            Self::WlPaste => &["Nothing is copied", "No selection"],
+            Self::Xclip => &["target TARGETS not available"],
+        };
+        empty.iter().any(|words| stderr.contains(words))
+    }
+
     /// The arguments that read the clipboard as text.
     fn text_args(self) -> Vec<String> {
         match self {
@@ -136,6 +147,9 @@ const TEXT_TYPES: [&str; 5] = [
 
 /// The most text one paste takes: 1 MiB.
 const MAX_TEXT_BYTES: usize = 1024 * 1024;
+
+/// The most of a tool's stderr kept to say why it failed.
+const MAX_STDERR_BYTES: u64 = 4096;
 
 /// The most a type listing may be.
 const MAX_LISTING_BYTES: usize = 64 * 1024;
@@ -227,7 +241,10 @@ impl SystemClipboard {
 
 impl ClipboardReader for SystemClipboard {
     fn read(&self) -> ClipboardRead {
-        let mut listing_failed = false;
+        // Of the tools that ran and listed nothing: whether one said the
+        // clipboard is empty, and why the others failed.
+        let mut said_empty = false;
+        let mut failures: Vec<String> = Vec::new();
         for (tool, program) in &self.tools {
             match run(program, &tool.list_args(), self.timeout, MAX_LISTING_BYTES) {
                 Ok(listing) => {
@@ -238,18 +255,17 @@ impl ClipboardReader for SystemClipboard {
                 // Not installed: the next tool of the allowlist.
                 Err(RunError::NotFound) => continue,
                 // A listing exits non-zero when the clipboard holds nothing
-                // (`wl-paste`: "Nothing is copied"; `xclip`: no owner) and
-                // when the tool reaches no display server (a stale
-                // `WAYLAND_DISPLAY`): the next tool may still read it.
-                Err(RunError::Exit(_)) => listing_failed = true,
-                Err(error) => {
-                    return ClipboardRead::Failed(format!("{}: {error}", tool.program()));
-                }
+                // (its stderr says so) and when the tool reaches no display
+                // server (a stale `WAYLAND_DISPLAY`): either way the next
+                // tool may still read it.
+                Err(RunError::Exit(_, stderr)) if tool.says_empty(&stderr) => said_empty = true,
+                Err(error) => failures.push(format!("{}: {error}", tool.program())),
             }
         }
-        match listing_failed {
-            true => ClipboardRead::Empty,
-            false => ClipboardRead::NoTool,
+        match (said_empty, failures.as_slice()) {
+            (true, _) => ClipboardRead::Empty,
+            (false, []) => ClipboardRead::NoTool,
+            (false, failed) => ClipboardRead::Failed(failed.join("; ")),
         }
     }
 }
@@ -263,8 +279,8 @@ enum RunError {
     Io(std::io::Error),
     /// It ran past the timeout and was killed.
     TimedOut(Duration),
-    /// It exited unsuccessfully.
-    Exit(std::process::ExitStatus),
+    /// It exited unsuccessfully: its status and what it said on stderr.
+    Exit(std::process::ExitStatus, String),
 }
 
 impl std::fmt::Display for RunError {
@@ -273,7 +289,10 @@ impl std::fmt::Display for RunError {
             Self::NotFound => f.write_str("not found"),
             Self::Io(error) => write!(f, "{error}"),
             Self::TimedOut(after) => write!(f, "timed out after {} ms", after.as_millis()),
-            Self::Exit(status) => write!(f, "{status}"),
+            Self::Exit(status, stderr) => match stderr.trim() {
+                "" => write!(f, "{status}"),
+                said => write!(f, "{said} ({status})"),
+            },
         }
     }
 }
@@ -295,13 +314,24 @@ fn run(
         .process_group(0)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| match error.kind() {
             std::io::ErrorKind::NotFound => RunError::NotFound,
             _ => RunError::Io(error),
         })?;
     let stdout = child.stdout.take().expect("stdout is piped");
+    let stderr = child.stderr.take().expect("stderr is piped");
+    let (stderr_tx, stderr_rx) = std::sync::mpsc::channel();
+    // stderr says why a listing failed: keep its start, drain the rest so
+    // the tool never blocks writing it.
+    std::thread::spawn(move || {
+        let mut stderr = stderr;
+        let mut said = Vec::new();
+        let _ = (&mut stderr).take(MAX_STDERR_BYTES).read_to_end(&mut said);
+        let _ = stderr_tx.send(said);
+        let _ = std::io::copy(&mut stderr, &mut std::io::sink());
+    });
     let (tx, rx) = std::sync::mpsc::channel();
     // A thread reads, so the wait below can give up at the deadline.
     std::thread::spawn(move || {
@@ -329,7 +359,14 @@ fn run(
     loop {
         match child.try_wait() {
             Ok(Some(status)) if status.success() => return Ok(output),
-            Ok(Some(status)) => return Err(RunError::Exit(status)),
+            Ok(Some(status)) => {
+                let wait = deadline.saturating_duration_since(Instant::now());
+                let said = stderr_rx.recv_timeout(wait).unwrap_or_default();
+                return Err(RunError::Exit(
+                    status,
+                    String::from_utf8_lossy(&said).into(),
+                ));
+            }
             Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(5)),
             Ok(None) => {
                 end(&mut child);

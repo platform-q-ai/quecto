@@ -183,7 +183,9 @@ of `prompt`, or of `follow_up` while the agent runs (see the harness's
 
 - **`Ctrl+V`** reads the system clipboard with `wl-paste` in a Wayland session
   or `xclip` in an X11 one: those two tools only, in that order (a `wl-paste`
-  that cannot reach a Wayland server falls through to `xclip`). Each command
+  that cannot reach a Wayland server falls through to `xclip`; a tool that
+  cannot run is reported as such, and only a tool that says so on stderr
+  makes the clipboard "empty"). Each command
   runs in its own process group, killed whole after 2 s. An image of an
   admitted type is attached; with no image, the clipboard's text (any
   `text/plain` spelling) is pasted into the editor as if typed; a clipboard
@@ -193,12 +195,19 @@ of `prompt`, or of `follow_up` while the agent runs (see the harness's
   terminal's own paste (often `Ctrl+Shift+V`) still pastes text as before.
 - **`/image <path>`** attaches a file: absolute, `~/…` or relative to the
   workspace; a quoted, shell-escaped (`my\ shot.png`) or `file://` path (as a
-  terminal or file manager drops one) works too. The file is read off the
-  event loop.
+  terminal or file manager drops one) works too, read as a shell would
+  (nothing is escaped inside single quotes; a URI's `?query#fragment` is
+  dropped). Another user's home (`~bob/…`) is refused: give the full path.
+  The file is read off the event loop, and only a regular file is read (a
+  symlink to one is followed; a FIFO or directory is refused, never waited
+  on). A message sent while an image is still being read is held back,
+  its text kept in the editor: send it again once the chip appears.
 - Pending images show as chips above the editor, e.g.
   `[image 1: screenshot.png · 240 KB]`. `Backspace` in an empty editor removes
-  the last one; a `Backspace` held down to delete text stops at the start of
-  the text (press it again after a moment to remove a chip). `Esc` clears
+  the last one. A held `Backspace` stops at the start of the text and
+  removes at most one chip: a press within 0.7 s of one that deleted text
+  or removed a chip counts as its key repeat (a one-time hint says so).
+  Only editing keys end the hold; the wheel and the mouse do not. `Esc` clears
   them all, with the editor text, on the master session when no run is
   active; otherwise `Esc` keeps its meaning (abort the run, or leave a
   focused sub-agent) and the chips stay. `Ctrl+C` clears the editor and the

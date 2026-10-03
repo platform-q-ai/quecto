@@ -71,7 +71,7 @@ impl App {
              \x20 Ctrl+C         Clear editor and images first, abort if empty\n\
              \x20 Ctrl+V         Attach the clipboard's image (pastes text if no image)\n\
              \x20 Backspace      In an empty editor: remove the last image (a held\n\
-             \x20                Backspace stops at the start of the text)\n\
+             \x20                Backspace stops at the text's start, removes one)\n\
              \x20 Ctrl+D         Exit (persists, then lets owned agents settle their subagents)\n\
              \x20 Ctrl+G         Jump to latest conversation output\n\
              \x20 Ctrl+L         Open model selector\n\

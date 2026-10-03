@@ -184,7 +184,7 @@ impl App {
         // authoritative response role to agree with the original stub metadata.
         let (response_id, role) = crate::protocol::presentation_payloads::response_identity(data);
         // A user message's images stay marked when its stub is expanded (#2425).
-        let images = crate::protocol::presentation_payloads::recovered_message(data).image_count();
+        let images = crate::protocol::session_payloads::message_image_count(data);
         let response_matches = response_id.as_deref() == Some(recall.message_id.as_str());
         let chat = match &recall.agent_id {
             None => Some(&mut self.ac_mut().master_session.chat),

@@ -152,6 +152,16 @@ impl App {
     /// never a slash command's own prompt (#2425). The images leave the
     /// composer only when the message is enqueued.
     fn send_user_message(&mut self, text: &str, with_images: bool) {
+        // An image still being read would be left behind: hold the message
+        // back, its text kept in the editor (#2425).
+        if with_images && self.attachments.reads_in_flight() {
+            self.editor.set_text(text);
+            self.notify(
+                "Still reading the image… send again once it is attached",
+                crate::components::notification::NotifyLevel::Info,
+            );
+            return;
+        }
         let images = match with_images {
             true => self.attachments.pending.attachments(),
             false => Vec::new(),

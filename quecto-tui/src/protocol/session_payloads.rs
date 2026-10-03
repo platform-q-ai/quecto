@@ -443,6 +443,17 @@ fn lenient_count<'de, D: serde::Deserializer<'de>>(d: D) -> Result<usize, D::Err
 /// clamped where it is read so nothing sizes work by it.
 pub(crate) const IMAGE_COUNT_CEILING: usize = 999;
 
+/// A message's `imageCount` (#2425), clamped; read in place, never cloning
+/// the message (a `get_message` page can be large).
+pub fn message_image_count(message: &serde_json::Value) -> usize {
+    #[derive(serde::Deserialize)]
+    struct ImageCount {
+        #[serde(default, rename = "imageCount", deserialize_with = "lenient_count")]
+        image_count: usize,
+    }
+    <ImageCount as serde::Deserialize>::deserialize(message).map_or(0, |count| count.image_count)
+}
+
 /// `count` from the wire, clamped to [`IMAGE_COUNT_CEILING`].
 pub(crate) fn clamp_image_count(count: usize) -> usize {
     count.min(IMAGE_COUNT_CEILING)

@@ -94,7 +94,8 @@
 ### App-level (must remain identical outcomes)
 - Ctrl+C: clear the composer (editor text and attached images, #2425) if either is non-empty, else abort if running, else noop
 - Escape (coordinator idle): clear a non-empty composer — editor text and attached images (#2425); an empty one → rewind idle escape path. A running agent's Escape still aborts and a focused sub-agent's Escape still returns to the coordinator; both leave the images attached
-- Backspace with the editor empty and images attached removes the last image (#2425), except as the key repeat of a Backspace that emptied the text (within 700 ms of it), which does nothing
+- Backspace with the editor empty and images attached removes the last image (#2425), except as the key repeat of a Backspace that met text or removed an image (within 700 ms of it, the window kept by each repeat and ended only by an editing key), which does nothing but a one-time hint
+- Enter while a clipboard or `/image` read is in flight is held back: a notice, the text kept in the editor (#2425)
 - Enter with a blank editor and images attached sends the images alone (#2425); `Ctrl+V` reads the clipboard (an image is attached, text is pasted as `Key::Paste`)
 - After every editor key: autocomplete.update(text); files autocomplete from current_line+cursor_col unless slash active
 - take_submit → handle_submit

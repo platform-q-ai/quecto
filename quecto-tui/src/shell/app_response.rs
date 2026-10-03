@@ -680,7 +680,7 @@ impl App {
         self.ac_mut().rewind.pending_apply_editor_baseline = Some(self.editor.text());
         self.ac_mut().rewind.pending_apply_text = Some(text);
         self.ac_mut().rewind.pending_apply_images =
-            crate::protocol::presentation_payloads::recovered_message(&data).image_count();
+            crate::protocol::session_payloads::message_image_count(&data);
         self.send_command(Command::RewindTo {
             id: Some(id),
             message_id,

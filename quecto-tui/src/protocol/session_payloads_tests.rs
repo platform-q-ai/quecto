@@ -1,8 +1,8 @@
 use serde_json::json;
 
 use super::{
-    ResumeMessagesError, ResumeSessionSummary, ResumedChatMessage, parse_resumed_messages,
-    parse_session_stats,
+    ResumeMessagesError, ResumeSessionSummary, ResumedChatMessage, message_image_count,
+    parse_resumed_messages, parse_session_stats,
 };
 
 /// The shell passes the terminal sanitizer; the tests pass the same one.
@@ -385,4 +385,13 @@ fn parse_resumed_messages_clamps_a_hostile_image_count() {
         })
         .collect();
     assert_eq!(counts, [999, 999, 8]);
+}
+
+#[test]
+fn a_message_s_image_count_is_read_in_place_and_clamped() {
+    assert_eq!(message_image_count(&json!({"imageCount": 3})), 3);
+    assert_eq!(message_image_count(&json!({"imageCount": u64::MAX})), 999);
+    assert_eq!(message_image_count(&json!({"imageCount": "x"})), 0);
+    assert_eq!(message_image_count(&json!({"content": "no images"})), 0);
+    assert_eq!(message_image_count(&json!(["not", "an", "object"])), 0);
 }
