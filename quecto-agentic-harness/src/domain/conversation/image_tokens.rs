@@ -31,9 +31,8 @@ pub const UNREADABLE_IMAGE_TOKENS: usize = MAX_IMAGE_TOKENS;
 
 /// Estimate the tokens of the `mime` image that `base64` encodes, from the
 /// pixel size in its header. Never panics.
-pub fn estimate_image_tokens(mime: &str, base64: &str) -> usize {
-    let read = ImageMime::parse_exact(mime).and_then(|mime| quecto_image::dimensions(mime, base64));
-    let tokens = match read {
+pub fn estimate_image_tokens(mime: ImageMime, base64: &str) -> usize {
+    let tokens = match quecto_image::dimensions(mime, base64) {
         Some(dimensions) => tokens_at(scaled(dimensions)),
         None => UNREADABLE_IMAGE_TOKENS,
     };
@@ -42,6 +41,16 @@ pub fn estimate_image_tokens(mime: &str, base64: &str) -> usize {
         "an image estimate is within the floor and the ceiling"
     );
     tokens
+}
+
+/// [`estimate_image_tokens`] for an image whose type is still a string (a
+/// tool result's block, until #2423 types it): a type off the allowlist is
+/// unreadable and costs the ceiling.
+pub fn estimate_named_image_tokens(mime: &str, base64: &str) -> usize {
+    match ImageMime::parse_exact(mime) {
+        Some(mime) => estimate_image_tokens(mime, base64),
+        None => UNREADABLE_IMAGE_TOKENS,
+    }
 }
 
 /// `dimensions` with the long edge scaled to at most [`MAX_LONG_EDGE`],

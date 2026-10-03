@@ -8,16 +8,17 @@
 //! - the size limit, [`MAX_IMAGE_BYTES`], and the count limit,
 //!   [`MAX_IMAGES_PER_MESSAGE`];
 //! - base64 (see below);
-//! - header parsing: an image's pixel size, [`dimensions`], and whether a
-//!   GIF is animated, [`is_animated_gif`].
+//! - header parsing: an image's pixel size, [`dimensions`] (base64) and
+//!   [`dimensions_of_bytes`] (a file's bytes), and whether a GIF is
+//!   animated, [`is_animated_gif`].
 //!
 //! Every peer that accepts an image from outside admits it as an
 //! [`ImageAttachment`] with [`ImageAttachment::new`] (one image),
 //! [`validate_images`] (a message's list) or [`ImageAttachment::from_bytes`]
 //! (a file it read), and refuses with the [`ImageRefusal`] / [`ImagesRefusal`]
-//! text when it fails: the agent's UDS `prompt` / `steer` / `follow_up` and
-//! the `read` tool (#2422), `quecto-api` (#2422), extension and MCP tool
-//! results (#2423), the TUI (#2425).
+//! text when it fails: today the agent's UDS `prompt` / `steer` /
+//! `follow_up` and the `read` tool, and `quecto-api` (#2422). Extension and
+//! MCP tool results (#2423) and the TUI (#2425) will admit theirs here too.
 //!
 //! The rules are an allowlist, checked in this order; the first that fails
 //! is the refusal. A message carries at most [`MAX_IMAGES_PER_MESSAGE`]. An
@@ -41,7 +42,7 @@ use serde::{Deserialize, Serialize};
 mod gif;
 mod header;
 pub use gif::is_animated_gif;
-pub use header::{Dimensions, MAX_JPEG_SEGMENTS, dimensions};
+pub use header::{Dimensions, MAX_JPEG_SEGMENTS, dimensions, dimensions_of_bytes};
 
 /// Real minimal image files (PNG, JPEG, GIF, WebP) for tests here and in
 /// the crates that use this one (`test-support` feature).
@@ -57,8 +58,9 @@ pub const MAX_IMAGE_BYTES: usize = 3 * 1024 * 1024 + 768 * 1024;
 pub const MAX_IMAGES_PER_MESSAGE: usize = 8;
 
 /// The longest base64 text that can decode to [`MAX_IMAGE_BYTES`] (exactly
-/// 5 MiB): anything longer is refused before it is decoded.
-const MAX_ENCODED_LEN: usize = MAX_IMAGE_BYTES.div_ceil(3) * 4;
+/// 5 MiB): the base64 length of the limit. Anything longer is refused
+/// before it is decoded.
+pub const MAX_ENCODED_LEN: usize = MAX_IMAGE_BYTES.div_ceil(3) * 4;
 
 /// How many characters of an unsupported MIME type a refusal echoes back.
 const MIME_ECHO_CHARS: usize = 64;
@@ -189,19 +191,22 @@ impl ImageAttachment {
                 .map_err(|_| ImageRefusal::InvalidBase64)?,
             false => return Err(ImageRefusal::TooLarge),
         };
-        Self::admit(mime, &bytes, payload.data)
+        Self::admit(mime, &bytes, || payload.data)
     }
 
-    /// Admit the `mime` file `bytes` (a file read from disk), encoding it.
+    /// Admit the `mime` file `bytes` (a file read from disk), encoding it
+    /// once it is admitted.
     pub fn from_bytes(mime: ImageMime, bytes: &[u8]) -> Result<Self, ImageRefusal> {
-        match bytes.len() <= MAX_IMAGE_BYTES {
-            true => Self::admit(mime, bytes, encode(bytes)),
-            false => Err(ImageRefusal::TooLarge),
-        }
+        Self::admit(mime, bytes, || encode(bytes))
     }
 
-    /// The checks after decoding: size, signature, readable header.
-    fn admit(mime: ImageMime, bytes: &[u8], data: String) -> Result<Self, ImageRefusal> {
+    /// The checks on the decoded bytes, the one size check among them:
+    /// size, signature, readable header. `data` gives the base64.
+    fn admit(
+        mime: ImageMime,
+        bytes: &[u8],
+        data: impl FnOnce() -> String,
+    ) -> Result<Self, ImageRefusal> {
         match (
             bytes.len() <= MAX_IMAGE_BYTES,
             mime.signature_matches(bytes),
@@ -210,7 +215,8 @@ impl ImageAttachment {
             (false, _) => return Err(ImageRefusal::TooLarge),
             (true, false) => return Err(ImageRefusal::SignatureMismatch(mime)),
         }
-        let dimensions = dimensions(mime, &data).ok_or(ImageRefusal::Unreadable(mime))?;
+        let dimensions = dimensions_of_bytes(mime, bytes).ok_or(ImageRefusal::Unreadable(mime))?;
+        let data = data();
         assert!(
             dimensions.width > 0 && dimensions.height > 0,
             "an admitted image has a size"
@@ -294,14 +300,17 @@ pub enum ImageRefusal {
 impl std::fmt::Display for ImageRefusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::UnsupportedMime(declared) => write!(
-                f,
-                "mimeType {declared:?} is not allowed; use image/png, image/jpeg, image/gif or image/webp"
-            ),
+            Self::UnsupportedMime(declared) => {
+                write!(f, "mimeType {declared:?} is not allowed; use ")?;
+                let (last, first) = ImageMime::ALL.split_last().expect("four types");
+                let first: Vec<&str> = first.iter().map(|mime| mime.as_str()).collect();
+                write!(f, "{} or {last}", first.join(", "))
+            }
             Self::InvalidBase64 => f.write_str("data is not valid standard base64"),
             Self::TooLarge => write!(
                 f,
-                "image decodes to more than {MAX_IMAGE_BYTES} bytes (3.75 MiB)"
+                "image decodes to more than {MAX_IMAGE_BYTES} bytes ({} MiB)",
+                mebibytes(MAX_IMAGE_BYTES)
             ),
             Self::SignatureMismatch(mime) => {
                 write!(f, "data does not start with the {mime} signature")
@@ -312,6 +321,21 @@ impl std::fmt::Display for ImageRefusal {
 }
 
 impl std::error::Error for ImageRefusal {}
+
+/// `bytes` in MiB, as few decimals as it needs: 3932160 is "3.75".
+fn mebibytes(bytes: usize) -> String {
+    let hundredths = bytes * 100 / (1024 * 1024);
+    let text = format!("{}.{:02}", hundredths / 100, hundredths % 100);
+    text.trim_end_matches('0').trim_end_matches('.').to_owned()
+}
+
+/// Deserialize a message's `images`, taking `null` as absent: no images.
+/// For a wire field declared `#[serde(default, deserialize_with = ...)]`.
+pub fn images_or_null<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<ImagePayload>, D::Error> {
+    Vec::<ImagePayload>::deserialize(deserializer) // red (#2422 review round 2): null refused
+}
 
 /// Why a message's images were refused: the whole list is refused when any
 /// one image is, naming that image's index. `Display` is the exact text.

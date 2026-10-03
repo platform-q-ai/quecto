@@ -9,12 +9,24 @@
 //! and serde), so the domain depends on it as it does on `base64`.
 use std::borrow::Cow;
 
-use crate::domain::message::{Message, Role, UserImageBlock};
+use crate::domain::message::{Message, Role};
 
 /// What an image stands for in a saved message's text (#2422).
 pub const IMAGE_PLACEHOLDER: &str = "[image]";
 
-/// The only way to make a block: from an admitted image.
+/// An image attached to a user message. Its fields are private to this
+/// module, so a block is made only here: from an admitted image (the normal
+/// path) or by [`UserImageBlock::restore`], which re-admits what persistence
+/// kept. It carries the admitted type and keeps it: no step after admission
+/// can lose or forge it.
+#[derive(Clone, PartialEq, Eq)]
+pub struct UserImageBlock {
+    mime: quecto_image::ImageMime,
+    /// Strict standard base64.
+    data: String,
+}
+
+/// The normal way to make a block: from an admitted image.
 impl From<quecto_image::ImageAttachment> for UserImageBlock {
     fn from(image: quecto_image::ImageAttachment) -> Self {
         Self {
@@ -25,6 +37,16 @@ impl From<quecto_image::ImageAttachment> for UserImageBlock {
 }
 
 impl UserImageBlock {
+    /// A block persistence kept (#2424 saves them): its type and base64
+    /// are re-admitted by the strict rules, never trusted, so a corrupt or
+    /// edited session file cannot carry an image admission would refuse.
+    pub fn restore(
+        mime: quecto_image::ImageMime,
+        data: String,
+    ) -> Result<Self, quecto_image::ImageRefusal> {
+        Ok(Self { mime, data }) // red (#2422 review round 2): trusted, not re-admitted
+    }
+
     /// The admitted type.
     pub fn mime(&self) -> quecto_image::ImageMime {
         self.mime
@@ -84,12 +106,16 @@ impl Message {
     }
 }
 
-/// The text `message` is saved with. An images-only message is saved as
-/// one [`IMAGE_PLACEHOLDER`] per image, so a resumed session never replays
-/// an empty turn; until #2424 saves the images themselves, the text is all a
-/// session keeps. Every other message is saved as it is.
+/// The text `message` is saved with. An images-only message (no text, or
+/// whitespace only) is saved as one [`IMAGE_PLACEHOLDER`] per image, so a
+/// resumed session never replays an empty turn; until #2424 saves the
+/// images themselves, the text is all a session keeps. Every other message
+/// is saved as it is.
 pub fn stored_text(message: &Message) -> Cow<'_, str> {
-    match (message.content.is_empty(), message.user_image_blocks.len()) {
+    match (
+        message.content.is_empty(), // red (#2422 review round 2): whitespace counts as text
+        message.user_image_blocks.len(),
+    ) {
         (true, images @ 1..) => Cow::Owned(vec![IMAGE_PLACEHOLDER; images].join("\n")),
         (true, 0) | (false, _) => Cow::Borrowed(&message.content),
     }

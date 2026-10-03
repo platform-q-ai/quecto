@@ -79,7 +79,7 @@ async fn health_handler<G: AgentGateway>(
 struct PromptRequest {
     message: String,
     /// Images attached to the prompt (#2422).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "quecto_image::images_or_null")]
     images: Vec<quecto_image::ImagePayload>,
     #[serde(rename = "streamingBehavior")]
     streaming_behavior: Option<String>,
@@ -199,7 +199,7 @@ async fn prompt_handler<G: AgentGateway>(
 #[derive(Deserialize)]
 struct MessageRequest {
     message: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "quecto_image::images_or_null")]
     images: Vec<quecto_image::ImagePayload>,
 }
 

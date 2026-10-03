@@ -3,10 +3,11 @@
 What an image is, in one place (#2422).
 
 Every quecto peer that handles an image uses this crate and keeps no copy of
-its facts: the agent (UDS `prompt` / `steer` / `follow_up`, the `read` tool,
-the image token estimate), `quecto-api` (`/prompt`, `/steer`, `/follow_up`,
-WebSocket prompt frames), and later extension / MCP tool results (#2423) and
-the TUI (#2425). It is a pure leaf crate: no I/O, only `base64` and `serde`.
+its facts: today the agent (UDS `prompt` / `steer` / `follow_up`, the `read`
+tool, the image token estimate) and `quecto-api` (`/prompt`, `/steer`,
+`/follow_up`, WebSocket prompt frames). Extension / MCP tool results (#2423)
+and the TUI (#2425) will use it too. It is a pure leaf crate: no I/O, only
+`base64` and `serde`.
 
 ## What it owns
 
@@ -14,6 +15,7 @@ the TUI (#2425). It is a pure leaf crate: no I/O, only `base64` and `serde`.
   `image/webp`) and its wire spelling. `ImageMime::parse_exact` matches the
   lowercase wire spelling exactly; `ImageMime::sniff` names the type a file's
   bytes start with.
+- `MAX_ENCODED_LEN`: 5 MiB, the base64 length of `MAX_IMAGE_BYTES`.
 - `MAX_IMAGE_BYTES`: 3.75 MiB (3,932,160 bytes) decoded, so the base64 is at
   most 5 MiB and Anthropic's 5 MB limit holds whether it is applied to the
   decoded or the encoded size. `MAX_IMAGES_PER_MESSAGE`: 8.
@@ -21,7 +23,8 @@ the TUI (#2425). It is a pure leaf crate: no I/O, only `base64` and `serde`.
   canonical, no whitespace); `encode` writes it. Reading the header of an
   image already held (`dimensions`) is lenient: padding optional,
   non-canonical trailing bits accepted.
-- Header parsing: `dimensions(mime, base64)` reads the pixel size from PNG
+- Header parsing: `dimensions(mime, base64)` (and `dimensions_of_bytes` for a
+  file's bytes) reads the pixel size from PNG
   IHDR, JPEG SOFn, the GIF screen descriptor and WebP VP8/VP8L/VP8X, decoding
   only the bytes it reads; `is_animated_gif(base64)` says whether a GIF has
   more than one frame (the harness caches the verdict and decides what a
@@ -46,7 +49,9 @@ check, in order, and refuse with the first failure:
 A list's refusal names the image: `images[1]: …`. `Display` on a refusal is
 the exact text clients see; `Debug` never prints the base64. An admitted
 `ImageAttachment` keeps its base64 and the pixel size its header gave, and
-serialises back to the wire shape `{"mimeType", "data"}`.
+serialises back to the wire shape `{"mimeType", "data"}`. A peer declares its
+`images` field with `#[serde(default, deserialize_with =
+"quecto_image::images_or_null")]` so `"images": null` reads as no images.
 
 The `test-support` feature exposes `samples`: real minimal PNG, JPEG, GIF and
 WebP files for other crates' tests.

@@ -2,7 +2,7 @@
 //! previous accepted request.
 use super::*;
 use crate::domain::conversation::image_tokens::{
-    MIN_IMAGE_TOKENS, UNREADABLE_IMAGE_TOKENS, estimate_image_tokens,
+    MIN_IMAGE_TOKENS, UNREADABLE_IMAGE_TOKENS, estimate_named_image_tokens,
 };
 use crate::domain::request_observation::{
     InputBaseline, InputItemKind, InputPrefixParts, RequestTrace,
@@ -305,7 +305,7 @@ fn an_items_images_are_estimated_from_their_pixel_size() {
         "call_id": "c1",
         "output": [],
     }));
-    let one_pixel = estimate_image_tokens("image/png", &data);
+    let one_pixel = estimate_named_image_tokens("image/png", &data);
     assert_eq!(one_pixel, MIN_IMAGE_TOKENS);
     let baseline = InputBaseline::default();
     observe(&baseline, "s", &[prompt.clone(), result.clone()]);

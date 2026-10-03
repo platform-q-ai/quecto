@@ -12,7 +12,7 @@ use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::application::tools::ports::Tool;
 use crate::domain::conversation::UserKind;
-use crate::domain::conversation::image_tokens::estimate_image_tokens;
+use crate::domain::conversation::image_tokens::estimate_named_image_tokens;
 use crate::domain::conversation::watermark::{DEFAULT_HIGH_TOKENS, Watermark};
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message, ToolCall};
@@ -204,7 +204,7 @@ async fn twenty_screenshots_in_a_70k_conversation_trigger_no_cut() {
     let images = messages.iter().map(|m| m.image_blocks.len()).sum::<usize>();
     assert_eq!(images, SCREENSHOTS, "every screenshot is still held");
     for image in messages.iter().flat_map(|m| &m.image_blocks) {
-        let estimate = estimate_image_tokens(image.mime_type, &image.data);
+        let estimate = estimate_named_image_tokens(image.mime_type, &image.data);
         assert_eq!(estimate, 2765, "1920x1080 by its pixels, not the fallback");
     }
     let total: usize = messages.iter().map(Message::estimated_tokens).sum();

@@ -263,3 +263,32 @@ fn every_sample_is_an_admitted_image_of_its_type() {
         assert!(ImageAttachment::from_bytes(mime, &bytes).is_ok(), "{mime}");
     }
 }
+
+/// The refusal text names the allowlist and the limit from their sources.
+#[test]
+fn refusal_text_comes_from_the_allowlist_and_the_limit() {
+    let types: Vec<&str> = ImageMime::ALL.iter().map(|m| m.as_str()).collect();
+    let text = ImageRefusal::UnsupportedMime("x".into()).to_string();
+    for name in types {
+        assert!(text.contains(name), "{text}");
+    }
+    assert_eq!(mebibytes(MAX_IMAGE_BYTES), "3.75");
+    assert_eq!(mebibytes(4 * 1024 * 1024), "4");
+    assert_eq!(mebibytes(5 * 1024 * 1024 / 2), "2.5");
+}
+
+#[test]
+fn a_null_images_field_reads_as_none() {
+    #[derive(serde::Deserialize)]
+    struct Message {
+        #[serde(default, deserialize_with = "images_or_null")]
+        images: Vec<ImagePayload>,
+    }
+    for wire in [r#"{"images":null}"#, "{}", r#"{"images":[]}"#] {
+        let message: Message = serde_json::from_str(wire).unwrap();
+        assert!(message.images.is_empty(), "{wire}");
+    }
+    let one: Message =
+        serde_json::from_str(r#"{"images":[{"mimeType":"image/png","data":"AA=="}]}"#).unwrap();
+    assert_eq!(one.images.len(), 1);
+}

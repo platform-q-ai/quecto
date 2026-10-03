@@ -44,8 +44,13 @@ pub enum AgentCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         message: String,
-        /// Images attached to the message (#2422), validated at dispatch.
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        /// Images attached to the message (#2422), validated at dispatch;
+        /// `null` is no images.
+        #[serde(
+            default,
+            deserialize_with = "quecto_image::images_or_null",
+            skip_serializing_if = "Vec::is_empty"
+        )]
         images: Vec<ImagePayload>,
         /// Required when the agent is currently running.
         #[serde(rename = "streamingBehavior", skip_serializing_if = "Option::is_none")]
@@ -56,8 +61,13 @@ pub enum AgentCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         message: String,
-        /// Images attached to the message (#2422), validated at dispatch.
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        /// Images attached to the message (#2422), validated at dispatch;
+        /// `null` is no images.
+        #[serde(
+            default,
+            deserialize_with = "quecto_image::images_or_null",
+            skip_serializing_if = "Vec::is_empty"
+        )]
         images: Vec<ImagePayload>,
     },
     /// Deliver this message when the agent finishes.
@@ -65,8 +75,13 @@ pub enum AgentCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         message: String,
-        /// Images attached to the message (#2422), validated at dispatch.
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        /// Images attached to the message (#2422), validated at dispatch;
+        /// `null` is no images.
+        #[serde(
+            default,
+            deserialize_with = "quecto_image::images_or_null",
+            skip_serializing_if = "Vec::is_empty"
+        )]
         images: Vec<ImagePayload>,
     },
     /// Cancel the current agent run.

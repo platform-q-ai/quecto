@@ -66,3 +66,33 @@ fn an_images_only_message_is_saved_with_one_placeholder_per_image() {
     assert_eq!(super::stored_text(&Message::user("")), "");
     assert_eq!(super::stored_text(&Message::user("hi")), "hi");
 }
+
+/// Whitespace with an image is an images-only message (#2422 review L4).
+#[test]
+fn whitespace_and_an_image_is_saved_with_the_placeholder() {
+    let spaced = Message::user("  \n\t ").with_user_images(vec![block("image/png")]);
+    assert_eq!(super::stored_text(&spaced), "[image]");
+    assert_eq!(super::stored_text(&Message::user("  ")), "  ");
+}
+
+/// What persistence kept is re-admitted, never trusted (#2422 review L1).
+#[test]
+fn a_restored_block_is_readmitted_by_the_strict_rules() {
+    use quecto_image::{ImageMime, ImageRefusal};
+    let kept = UserImageBlock::sample(ImageMime::Png);
+    let restored = UserImageBlock::restore(ImageMime::Png, kept.data().to_owned()).unwrap();
+    assert_eq!(restored, kept);
+    assert_eq!(
+        UserImageBlock::restore(ImageMime::Jpeg, kept.data().to_owned()).unwrap_err(),
+        ImageRefusal::SignatureMismatch(ImageMime::Jpeg)
+    );
+    assert_eq!(
+        UserImageBlock::restore(ImageMime::Png, "not base64!".to_owned()).unwrap_err(),
+        ImageRefusal::InvalidBase64
+    );
+    let oversized = "A".repeat(quecto_image::MAX_ENCODED_LEN + 4);
+    assert_eq!(
+        UserImageBlock::restore(ImageMime::Png, oversized).unwrap_err(),
+        ImageRefusal::TooLarge
+    );
+}

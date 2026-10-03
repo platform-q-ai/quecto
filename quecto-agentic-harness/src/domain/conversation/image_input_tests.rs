@@ -157,7 +157,7 @@ fn each_user_image_becomes_a_marker_after_the_text() {
     }
     assert_eq!(messages[0].content, "compare these", "put back");
     assert_eq!(messages[0].user_image_blocks.len(), 2);
-    assert_eq!(messages[0].user_image_blocks[1].data, "cG5n1", "in order");
+    assert_eq!(messages[0].user_image_blocks[1].data(), "cG5n1", "in order");
 }
 
 #[test]

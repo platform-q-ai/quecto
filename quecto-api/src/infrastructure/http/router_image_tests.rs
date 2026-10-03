@@ -216,3 +216,21 @@ async fn http_steer_and_follow_up_carry_and_refuse_images() {
         assert_eq!(gateway.commands.lock().unwrap().len(), 1, "{path}");
     }
 }
+
+/// `"images": null` is no images, as an absent field is (#2422 review).
+#[tokio::test]
+async fn a_null_images_field_is_no_images() {
+    for path in ["prompt", "steer", "follow_up"] {
+        let gateway = connected();
+        let addr = serve(gateway.clone()).await;
+        let body = serde_json::json!({"message": "look", "images": null});
+        let resp = reqwest::Client::new()
+            .post(format!("http://{addr}/{path}"))
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 200, "{path}");
+        assert_eq!(gateway.commands.lock().unwrap().len(), 1, "{path}");
+    }
+}

@@ -231,7 +231,7 @@ fn bad_base64_empty_and_non_ascii_input_are_unreadable_without_panicking() {
 #[test]
 fn unpadded_base64_is_read() {
     let bytes = gif(800, 600);
-    let unpadded = encode(&bytes[..10]).trim_end_matches('=').to_string();
+    let unpadded = encode(&bytes[..20]).trim_end_matches('=').to_string();
     assert_eq!(
         image_dimensions("image/gif", &unpadded).map(|d| d.width),
         Some(800)
@@ -242,11 +242,11 @@ fn unpadded_base64_is_read() {
 #[test]
 fn non_canonical_trailing_bits_are_read() {
     const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut chars = encode(&gif(800, 600)[..10]).into_bytes();
-    assert_eq!(&chars[14..], b"==");
-    let value = ALPHABET.iter().position(|c| *c == chars[13]).unwrap();
+    let mut chars = encode(&gif(800, 600)[..22]).into_bytes();
+    assert_eq!(&chars[30..], b"==");
+    let value = ALPHABET.iter().position(|c| *c == chars[29]).unwrap();
     assert_eq!(value & 0x0F, 0, "canonical: the unused bits are clear");
-    chars[13] = ALPHABET[value | 1];
+    chars[29] = ALPHABET[value | 1];
     let lax = String::from_utf8(chars).unwrap();
     assert_eq!(
         image_dimensions("image/gif", &lax).map(|d| d.height),
@@ -282,4 +282,38 @@ fn the_jpeg_segment_bound_is_exact() {
     assert_eq!(behind(MAX_JPEG_SEGMENTS - 1), Some((640, 480)));
     assert_eq!(behind(MAX_JPEG_SEGMENTS), None);
     assert_eq!(behind(MAX_JPEG_SEGMENTS + 1), None);
+}
+
+/// A file's bytes read the same size as their base64 does.
+#[test]
+fn bytes_and_their_base64_read_the_same_size() {
+    for (mime, bytes) in [
+        (ImageMime::Png, png(800, 600)),
+        (ImageMime::Jpeg, jpeg(800, 600)),
+        (ImageMime::Gif, gif(800, 600)),
+        (ImageMime::Webp, webp_lossy(800, 600)),
+        (ImageMime::Webp, webp_extended(800, 600)),
+    ] {
+        assert_eq!(
+            dimensions_of_bytes(mime, &bytes),
+            dimensions(mime, &encode(&bytes)),
+            "{mime}"
+        );
+        assert!(dimensions_of_bytes(mime, &bytes).is_some(), "{mime}");
+        assert_eq!(dimensions_of_bytes(mime, &bytes[..8]), None, "{mime} cut");
+    }
+}
+
+/// A file that only starts like a GIF is not one: the first block after
+/// the screen descriptor must be an extension, an image or the trailer.
+#[test]
+fn text_that_starts_like_a_gif_is_unreadable() {
+    assert_eq!(
+        read("image/gif", b"GIF89a is a format\nsee also PNG\n"),
+        None
+    );
+    let mut bytes = gif(8, 8);
+    let first = 13 + 6; // after the 2-colour global table
+    bytes[first] = b'x';
+    assert_eq!(read("image/gif", &bytes), None);
 }

@@ -1516,6 +1516,7 @@ mod uds_event_reader;
 mod uds_framing_steps;
 mod uds_fresh_session_steps;
 mod uds_history_recovery_steps;
+mod uds_image_steps;
 mod uds_live_execution_state_steps;
 mod uds_paged_history_steps;
 mod uds_report_export_steps;

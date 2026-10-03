@@ -72,7 +72,7 @@ Unknown flags and missing `--socket` / `QUECTO_SOCKET` exit with a non-zero stat
 ```
 
 - `message` — required; may be `""` only when `images` has at least one image.
-- `images` — optional (#2422): up to 8 images, each `{"mimeType", "data"}` with
+- `images` — optional (#2422; absent, `null` or `[]` is no images): up to 8 images, each `{"mimeType", "data"}` with
   `mimeType` one of `image/png`, `image/jpeg`, `image/gif`, `image/webp` and
   `data` strict standard base64 of at most 3.75 MiB decoded whose bytes match
   the type and whose header is readable.

@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::conversation::image_tokens::estimate_image_tokens;
+use crate::domain::conversation::image_tokens::estimate_named_image_tokens;
 use quecto_image::samples::{encode, png, png_with_body};
 
 #[test]
@@ -62,8 +62,8 @@ fn estimated_tokens_counts_content_tool_calls_ids_and_images_once() {
         + Message::estimate_tokens("tool")
         + Message::estimate_tokens("abcdefghi")
         + Message::estimate_tokens("callid")
-        + estimate_image_tokens("image/png", "12345")
-        + estimate_image_tokens("image/jpeg", "abcdef");
+        + estimate_named_image_tokens("image/png", "12345")
+        + estimate_named_image_tokens("image/jpeg", "abcdef");
 
     assert_eq!(msg.estimated_tokens(), expected);
     assert_eq!(msg.estimated_tokens(), expected);

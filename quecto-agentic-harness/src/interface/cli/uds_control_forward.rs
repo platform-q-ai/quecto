@@ -166,8 +166,10 @@ fn admit_forwarded_images(
         AgentCommand::Prompt { images, .. }
         | AgentCommand::Steer { images, .. }
         | AgentCommand::FollowUp { images, .. } => images,
-        // A command that carries no images admits none.
-        _ => Vec::new(),
+        other => unreachable!(
+            "only a prompt, steer or follow_up reaches image admission, not {}",
+            other.type_name()
+        ),
     };
     super::uds::admit_images(images).map_err(|refusal| {
         let mut ack_line =

@@ -27,22 +27,36 @@ pub const MAX_JPEG_SEGMENTS: usize = 256;
 /// The pixel size of the `mime` image that `base64` encodes; `None` when
 /// the header cannot be read.
 pub fn dimensions(mime: ImageMime, base64: &str) -> Option<Dimensions> {
-    let bytes = Encoded(base64.as_bytes());
+    read_header(mime, &Encoded(base64.as_bytes()))
+}
+
+/// The pixel size of the `mime` file `bytes`; `None` when the header
+/// cannot be read. For a file read from disk, before it is encoded.
+pub fn dimensions_of_bytes(mime: ImageMime, bytes: &[u8]) -> Option<Dimensions> {
+    read_header(mime, &Raw(bytes))
+}
+
+fn read_header(mime: ImageMime, bytes: &impl Source) -> Option<Dimensions> {
     let (width, height) = match mime {
-        ImageMime::Png => png(&bytes),
-        ImageMime::Jpeg => jpeg(&bytes),
-        ImageMime::Gif => gif(&bytes),
-        ImageMime::Webp => webp(&bytes),
+        ImageMime::Png => png(bytes),
+        ImageMime::Jpeg => jpeg(bytes),
+        ImageMime::Gif => gif(bytes),
+        ImageMime::Webp => webp(bytes),
     }?;
     (width > 0 && height > 0).then_some(Dimensions { width, height })
 }
 
-/// Random access to the bytes base64 encodes: byte `n` lives in the
-/// 4-character group `n / 3`, so a read decodes only its own groups.
+/// Random access to an image's bytes, however they are held.
+trait Source {
+    /// The `N` bytes at `offset`, or `None` past the end (or on bad base64).
+    fn read<const N: usize>(&self, offset: usize) -> Option<[u8; N]>;
+}
+
+/// The bytes base64 encodes: byte `n` lives in the 4-character group
+/// `n / 3`, so a read decodes only its own groups.
 struct Encoded<'a>(&'a [u8]);
 
-impl Encoded<'_> {
-    /// The `N` bytes at `offset`, or `None` past the end or on bad base64.
+impl Source for Encoded<'_> {
     fn read<const N: usize>(&self, offset: usize) -> Option<[u8; N]> {
         let first = offset / 3;
         let last = offset.checked_add(N)?.div_ceil(3);
@@ -51,6 +65,15 @@ impl Encoded<'_> {
         let decoded = LENIENT.decode(self.0.get(start..end)?).ok()?;
         let skip = offset - first * 3;
         decoded.get(skip..skip.checked_add(N)?)?.try_into().ok()
+    }
+}
+
+/// Bytes held as they are.
+struct Raw<'a>(&'a [u8]);
+
+impl Source for Raw<'_> {
+    fn read<const N: usize>(&self, offset: usize) -> Option<[u8; N]> {
+        self.0.get(offset..offset.checked_add(N)?)?.try_into().ok()
     }
 }
 
@@ -67,7 +90,7 @@ fn le24([a, b, c]: [u8; 3]) -> u32 {
 }
 
 /// The PNG signature, then IHDR first: length, type, width, height (BE).
-fn png(bytes: &Encoded<'_>) -> Option<(u32, u32)> {
+fn png(bytes: &impl Source) -> Option<(u32, u32)> {
     const SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
     let h = bytes.read::<24>(0)?;
     (h[..8] == SIGNATURE[..] && h[12..16] == *b"IHDR").then(|| {
@@ -78,19 +101,39 @@ fn png(bytes: &Encoded<'_>) -> Option<(u32, u32)> {
     })
 }
 
-/// "GIF87a" or "GIF89a", then the logical screen's width and height (LE).
-fn gif(bytes: &Encoded<'_>) -> Option<(u32, u32)> {
-    match bytes.read::<10>(0)? {
-        [b'G', b'I', b'F', b'8', b'7' | b'9', b'a', w0, w1, h0, h1] => {
-            Some((le16([w0, w1]), le16([h0, h1])))
-        }
-        _ => None,
-    }
+/// "GIF87a" or "GIF89a", then the logical screen's width and height (LE)
+/// and flags. The first block after the screen descriptor and its global
+/// colour table must be an extension, an image or the trailer (#2422
+/// review): a text file that merely starts "GIF89a" is not a GIF.
+fn gif(bytes: &impl Source) -> Option<(u32, u32)> {
+    let [
+        b'G',
+        b'I',
+        b'F',
+        b'8',
+        b'7' | b'9',
+        b'a',
+        w0,
+        w1,
+        h0,
+        h1,
+        flags,
+    ] = bytes.read::<11>(0)?
+    else {
+        return None;
+    };
+    let table = match flags & 0x80 {
+        0 => 0,
+        _ => 3usize << ((flags & 0x07) + 1),
+    };
+    let [first] = bytes.read::<1>(13 + table)?;
+    let _ = first; // red (#2422 review round 2): any first block
+    Some((le16([w0, w1]), le16([h0, h1])))
 }
 
 /// A RIFF/WEBP container whose first chunk is one of the three bitstream
 /// kinds; its payload starts at byte 20.
-fn webp(bytes: &Encoded<'_>) -> Option<(u32, u32)> {
+fn webp(bytes: &impl Source) -> Option<(u32, u32)> {
     match bytes.read::<16>(0)? {
         [
             b'R',
@@ -121,7 +164,7 @@ fn webp(bytes: &Encoded<'_>) -> Option<(u32, u32)> {
 
 /// VP8: a 3-byte frame tag, the start code, then 14-bit sides (LE; the
 /// top two bits are the upscaling hint).
-fn webp_lossy(bytes: &Encoded<'_>) -> Option<(u32, u32)> {
+fn webp_lossy(bytes: &impl Source) -> Option<(u32, u32)> {
     match bytes.read::<10>(20)? {
         [_, _, _, 0x9D, 0x01, 0x2A, w0, w1, h0, h1] => {
             Some((le16([w0, w1]) & 0x3FFF, le16([h0, h1]) & 0x3FFF))
@@ -131,7 +174,7 @@ fn webp_lossy(bytes: &Encoded<'_>) -> Option<(u32, u32)> {
 }
 
 /// VP8L: the 0x2F signature, then 14-bit sides minus one, packed LE.
-fn webp_lossless(bytes: &Encoded<'_>) -> Option<(u32, u32)> {
+fn webp_lossless(bytes: &impl Source) -> Option<(u32, u32)> {
     match bytes.read::<5>(20)? {
         [0x2F, b0, b1, b2, b3] => {
             let bits = u32::from_le_bytes([b0, b1, b2, b3]);
@@ -142,7 +185,7 @@ fn webp_lossless(bytes: &Encoded<'_>) -> Option<(u32, u32)> {
 }
 
 /// VP8X: 4 bytes of flags, then the canvas's 24-bit sides minus one (LE).
-fn webp_extended(bytes: &Encoded<'_>) -> Option<(u32, u32)> {
+fn webp_extended(bytes: &impl Source) -> Option<(u32, u32)> {
     let [_, _, _, _, w0, w1, w2, h0, h1, h2] = bytes.read::<10>(20)?;
     Some((le24([w0, w1, w2]) + 1, le24([h0, h1, h2]) + 1))
 }
@@ -174,7 +217,7 @@ impl Marker {
 
 /// SOI, then the segments up to the first frame header, each jumped by its
 /// length. A scan, an end, or any other marker before the frame is `None`.
-fn jpeg(bytes: &Encoded<'_>) -> Option<(u32, u32)> {
+fn jpeg(bytes: &impl Source) -> Option<(u32, u32)> {
     let [0xFF, 0xD8] = bytes.read::<2>(0)? else {
         return None;
     };

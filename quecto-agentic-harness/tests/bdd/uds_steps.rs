@@ -1665,7 +1665,7 @@ fn given_capturing_anthropic_mock(world: &mut QuectoWorld, content: String) {
     std::mem::forget(rt);
 }
 
-fn captured_anthropic_bodies(world: &QuectoWorld) -> Vec<serde_json::Value> {
+pub(crate) fn captured_anthropic_bodies(world: &QuectoWorld) -> Vec<serde_json::Value> {
     let server = world
         .wiremock_server_ref
         .expect("no capturing Anthropic mock configured");

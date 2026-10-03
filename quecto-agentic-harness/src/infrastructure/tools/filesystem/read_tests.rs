@@ -501,27 +501,47 @@ async fn test_read_rejects_image_over_the_limit() {
         .unwrap();
     assert!(result.is_error);
     assert!(
-        result
-            .content
-            .contains("too large to send inline (max 3.75 MiB)")
+        result.content.contains(
+            "too large to send inline: image decodes to more than 3932160 bytes (3.75 MiB)"
+        ),
+        "{}",
+        result.content
     );
     assert!(result.image_blocks.is_empty());
 }
 
-/// A file with an image's signature but no readable header is not sent
-/// (#2422): it says why instead.
+/// A file with an image's signature but no readable header is not an
+/// image (#2422 review): it is read as text or binary, as any other file.
 #[tokio::test]
-async fn test_read_refuses_an_image_whose_header_is_unreadable() {
+async fn test_read_falls_back_to_text_or_binary_when_the_header_is_unreadable() {
     let (ws, sb, tmp) = test_tools();
     let tool = ReadTool::new(ws, sb);
-    std::fs::write(tmp.path().join("bare.png"), b"\x89PNG\r\n\x1a\n").unwrap();
-    let result = tool.execute(r#"{"path":"bare.png"}"#).await.unwrap();
-    assert!(result.is_error);
-    assert_eq!(
-        result.content,
-        "Image file is not a readable image/png image; it cannot be sent."
-    );
-    assert!(result.image_blocks.is_empty());
+    let mut stray = vec![0xFF, 0xD8, 0xFF, 0x00, 0x13, 0x37];
+    stray.extend([0x80, 0x81, 0xFE, 0x00, 0x00, 0x9C]);
+    let mut cgbi = b"\x89PNG\r\n\x1a\n\0\0\0\x04CgBI\x50\x00\x20\x02".to_vec();
+    cgbi.extend_from_slice(&quecto_image::samples::png(2, 2)[8..]);
+    for (name, bytes) in [("stray.jpg", stray), ("apple.png", cgbi)] {
+        std::fs::write(tmp.path().join(name), &bytes).unwrap();
+        let result = tool
+            .execute(&format!(r#"{{"path":"{name}"}}"#))
+            .await
+            .unwrap();
+        assert!(result.image_blocks.is_empty(), "{name}");
+        assert!(
+            result.content.contains("is not UTF-8 text"),
+            "{name}: {}",
+            result.content
+        );
+    }
+    std::fs::write(
+        tmp.path().join("notes.gif"),
+        "GIF89a is a format\nsee also PNG\n",
+    )
+    .unwrap();
+    let text = tool.execute(r#"{"path":"notes.gif"}"#).await.unwrap();
+    assert!(!text.is_error, "{}", text.content);
+    assert!(text.image_blocks.is_empty());
+    assert!(text.content.contains("see also PNG"), "{}", text.content);
 }
 
 #[tokio::test]

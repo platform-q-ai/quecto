@@ -190,8 +190,12 @@ impl Tool for ReadTool {
 
             // Magic-byte MIME detection. Extension-only fallback is intentionally
             // absent — text files named .jpg should be read as text. What an
-            // image is, and the limit, are `quecto_image`'s (#2422).
-            if let Some(mime) = quecto_image::ImageMime::sniff(&raw_bytes) {
+            // image is, and the limit, are `quecto_image`'s (#2422): a file is
+            // an image when its signature names a type and its header is
+            // readable. Anything else (a JPEG with stray bytes, an Apple CgBI
+            // PNG, text that starts "GIF89a") is read as text or binary below.
+            let image = quecto_image::ImageMime::sniff(&raw_bytes); // red (#2422 review round 2): no fallback
+            if let Some(mime) = image {
                 return Ok(image_result(mime, &raw_bytes));
             }
             // Not an image — interpret as UTF-8 text; anything else is named
@@ -327,11 +331,8 @@ fn parse_optional_usize_arg(
 /// attachment (#2422), or why it cannot be sent.
 fn image_result(mime: quecto_image::ImageMime, bytes: &[u8]) -> ToolResult {
     let size = format_size(bytes.len());
-    let admitted = match bytes.len() <= quecto_image::MAX_IMAGE_BYTES {
-        true => quecto_image::ImageAttachment::from_bytes(mime, bytes),
-        false => Err(quecto_image::ImageRefusal::TooLarge),
-    };
-    match admitted {
+    // `from_bytes` makes the one size check.
+    match quecto_image::ImageAttachment::from_bytes(mime, bytes) {
         Ok(image) => ToolResult {
             content: format!("Read image file [{}] ({size})", image.mime_type()),
             is_error: false,
@@ -341,9 +342,9 @@ fn image_result(mime: quecto_image::ImageMime, bytes: &[u8]) -> ToolResult {
             }],
             delivery_metadata: None,
         },
-        Err(quecto_image::ImageRefusal::TooLarge) => ToolResult {
+        Err(refusal @ quecto_image::ImageRefusal::TooLarge) => ToolResult {
             content: format!(
-                "Image is {size} — too large to send inline (max 3.75 MiB). \
+                "Image is {size} — too large to send inline: {refusal}. \
                  Describe what you need from the image instead.",
             ),
             is_error: true,

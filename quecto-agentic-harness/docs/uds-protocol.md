@@ -58,7 +58,7 @@ Send a user message to the agent. This is the primary command — it triggers an
 | `type` | `"prompt"` | yes | |
 | `id` | string | no | Correlation ID |
 | `message` | string | yes | The user message; may be `""` when `images` has at least one image |
-| `images` | array of `{"mimeType", "data"}` | no | Images attached to the message (#2422); see [Image attachments](#image-attachments). Absent or empty for text only |
+| `images` | array of `{"mimeType", "data"}` | no | Images attached to the message (#2422); see [Image attachments](#image-attachments). Absent, `null` or empty for text only |
 | `streamingBehavior` | `"steer"` \| `"followUp"` | when agent is running | How to handle this prompt if the agent is already processing a previous one |
 
 **Behavior:**

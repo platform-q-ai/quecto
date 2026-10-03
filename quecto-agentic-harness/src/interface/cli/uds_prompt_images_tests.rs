@@ -403,3 +403,14 @@ async fn a_steer_the_reader_admitted_runs_with_its_admitted_images() {
         [seen("look", &[("image/png", PNG)])]
     );
 }
+
+/// `"images": null` is no images, as an absent field is (#2422 review).
+#[test]
+fn a_null_images_field_is_no_images() {
+    for kind in ["prompt", "steer", "follow_up"] {
+        let wire = format!(r#"{{"type":"{kind}","message":"look","images":null}}"#);
+        let parsed: AgentCommand = serde_json::from_str(&wire).expect(kind);
+        let back = serde_json::to_value(&parsed).unwrap();
+        assert!(back.get("images").is_none(), "{kind}: {back}");
+    }
+}
