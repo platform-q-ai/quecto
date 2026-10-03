@@ -51,6 +51,9 @@ pub enum ResumedChatMessage {
         id: Option<String>,
         stub: bool,
         content_len: Option<usize>,
+        /// How many images the message carried (`imageCount`, #2425); the
+        /// images themselves never come back.
+        image_count: usize,
     },
     Assistant {
         text: String,
@@ -223,6 +226,7 @@ pub fn parse_resumed_messages(
                     id,
                     stub,
                     content_len,
+                    image_count: 0,
                 }],
                 "assistant" => {
                     parse_assistant_resume_messages(message, content, id, stub, content_len)

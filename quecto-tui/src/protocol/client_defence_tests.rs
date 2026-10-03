@@ -157,6 +157,7 @@ async fn oversized_outbound_command_emits_warning_and_keeps_writer_alive() {
             id: None,
             message: oversized_message,
             streaming_behavior: None,
+            images: Vec::new(),
         })
         .await
         .unwrap();

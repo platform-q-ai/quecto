@@ -26,6 +26,9 @@ use crate::shell::terminal::Terminal;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::mpsc;
 
+#[path = "tui_harness_attachments.rs"]
+mod attachments;
+pub use attachments::FakeClipboard;
 #[path = "tui_harness_disconnect.rs"]
 mod disconnect;
 #[path = "tui_harness_drivers.rs"]

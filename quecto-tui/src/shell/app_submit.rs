@@ -168,12 +168,14 @@ impl App {
                 Command::FollowUp {
                     id: None,
                     message: text.to_string(),
+                    images: Vec::new(),
                 }
             } else {
                 Command::Prompt {
                     id: None,
                     message: text.to_string(),
                     streaming_behavior: None,
+                    images: Vec::new(),
                 }
             };
             // Append to the sub-agent transcript ONLY when the route actually
@@ -228,12 +230,14 @@ impl App {
             Command::FollowUp {
                 id: None,
                 message: text.to_string(),
+                images: Vec::new(),
             }
         } else {
             Command::Prompt {
                 id: None,
                 message: text.to_string(),
                 streaming_behavior: None,
+                images: Vec::new(),
             }
         };
         self.send_command(cmd);

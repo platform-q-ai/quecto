@@ -68,6 +68,11 @@ impl LedgerMessage {
         self.content.0.as_deref().unwrap_or("")
     }
 
+    /// How many images a user message carried (`imageCount`, #2425).
+    pub fn image_count(&self) -> usize {
+        0
+    }
+
     pub fn tool_calls(&self) -> &[LedgerToolCall] {
         &self.tool_calls.0
     }

@@ -123,6 +123,7 @@ fn parse_resumed_messages_keeps_only_displayable_chat_messages() {
                 id: Some("u1".to_string()),
                 stub: false,
                 content_len: None,
+                image_count: 0,
             },
             ResumedChatMessage::Assistant {
                 text: "world".to_string(),
@@ -340,4 +341,26 @@ fn an_archive_stub_does_not_resume_as_a_user_prompt() {
         3,
         "the stub is kept, as a notice: {messages:?}"
     );
+}
+
+/// #2425: `imageCount` on a user message is carried; a wrong-typed one reads
+/// as none and never hides the message.
+#[test]
+fn parse_resumed_messages_carries_a_user_message_s_image_count() {
+    let messages = parse_resumed_messages(&json!({
+        "messages": [
+            {"role": "user", "content": "look", "id": "u1", "imageCount": 2},
+            {"role": "user", "content": "plain", "id": "u2"},
+            {"role": "user", "content": "odd", "id": "u3", "imageCount": "many"}
+        ]
+    }))
+    .expect("valid messages array should parse");
+    let counts: Vec<_> = messages
+        .iter()
+        .map(|message| match message {
+            ResumedChatMessage::User { image_count, .. } => *image_count,
+            other => panic!("expected a user message, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(counts, [2, 0, 0]);
 }

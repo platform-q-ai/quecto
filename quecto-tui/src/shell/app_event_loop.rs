@@ -319,6 +319,11 @@ impl App {
                     self.finish_agent_stream_closed(detail);
                     self.render_and_note(&mut stream_render_coalescer);
                 }
+                // A `Ctrl+V` clipboard read finished off the loop (#2425).
+                Some(read) = self.attachments.clipboard_rx.recv() => {
+                    self.apply_clipboard_read(read);
+                    self.render_and_note(&mut stream_render_coalescer);
+                }
                 Some(failure) = self.command_send_failure_rx.recv() => {
                     self.handle_command_send_failure(failure);
                     self.render_and_note(&mut stream_render_coalescer);
@@ -526,6 +531,12 @@ impl App {
         if matches!(key, Key::Tab | Key::BackTab) && self.subagent_panel_visible() {
             self.subagents.focus = Focus::Panel;
             self.sync_panel_selection_to_active();
+            return;
+        }
+
+        // Image attachments (#2425): Ctrl+V, and Backspace / Esc / Enter
+        // while chips are pending.
+        if self.handle_attachment_key(&key) {
             return;
         }
 

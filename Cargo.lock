@@ -1764,6 +1764,7 @@ dependencies = [
  "libc",
  "pulldown-cmark",
  "quecto-fail-fast",
+ "quecto-image",
  "quecto-line-io",
  "regex",
  "serde",

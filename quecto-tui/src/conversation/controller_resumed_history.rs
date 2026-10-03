@@ -13,6 +13,7 @@ impl App {
                     id,
                     stub,
                     content_len,
+                    image_count: _,
                 } => entries.push(Self::history_entry(
                     crate::components::ansi::sanitize_control_keep_newlines(&text),
                     id,

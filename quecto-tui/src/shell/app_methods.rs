@@ -318,6 +318,8 @@ impl App {
             }
         }
 
+        // Attached-image chips, just above the composer (#2425).
+        bottom.extend(self.attachment_chip_lines(width));
         // Autocomplete dropdown (slash commands, then @files — only one active).
         bottom.extend(self.autocomplete.render(width));
         bottom.extend(self.workspace.files_autocomplete.render(width));

@@ -305,6 +305,7 @@ fn builtin_commands_have_stable_order_and_names() {
             "workflow",
             "workflow-auto",
             "workflow-nudge",
+            "image",
         ]
     );
 }

@@ -408,3 +408,28 @@ async fn failed_recovery_response_abandons_batch() {
         "an abandoned batch must not later apply a sibling response:\n{text}"
     );
 }
+
+/// #2425: a recovered user message that carried images shows its markers,
+/// an images-only one included.
+#[test]
+fn recovered_chat_entries_mark_user_images() {
+    use std::collections::HashMap;
+    let refs = vec!["u1".to_string(), "u2".to_string()];
+    let mut responses: HashMap<String, serde_json::Value> = HashMap::new();
+    responses.insert(
+        "u1".into(),
+        serde_json::json!({"role":"user","content":"see","imageCount":1}),
+    );
+    responses.insert(
+        "u2".into(),
+        serde_json::json!({"role":"user","content":"","imageCount":3}),
+    );
+    let users: Vec<_> = recovered_chat_entries(&refs, &responses)
+        .into_iter()
+        .filter_map(|entry| match entry {
+            ChatEntry::User { text } => Some(text),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(users, ["[image]\nsee", "[image] [image] [image]"]);
+}

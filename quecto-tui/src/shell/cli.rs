@@ -248,6 +248,9 @@ async fn run_tui(flags: CliFlags) -> i32 {
 
     let terminal = crate::shell::terminal::Terminal::new();
     let mut app = crate::shell::app::App::new(terminal, client);
+    app.set_clipboard(std::sync::Arc::new(
+        crate::shell::clipboard_image::SystemClipboard::from_env(),
+    ));
     if let Some(watch) = &child_watch {
         app.set_child_exit_watch(watch.clone());
     }

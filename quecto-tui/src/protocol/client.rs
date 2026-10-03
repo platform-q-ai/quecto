@@ -38,16 +38,24 @@ pub enum Command {
         /// How to handle this prompt if the agent is already running.
         #[serde(rename = "streamingBehavior", skip_serializing_if = "Option::is_none")]
         streaming_behavior: Option<String>,
+        /// Images attached to the message (#2425). Left out when there are
+        /// none, so a text-only command is byte-for-byte what it was.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        images: Vec<quecto_image::ImageAttachment>,
     },
     Steer {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         message: String,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        images: Vec<quecto_image::ImageAttachment>,
     },
     FollowUp {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         message: String,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        images: Vec<quecto_image::ImageAttachment>,
     },
     Abort {
         #[serde(skip_serializing_if = "Option::is_none")]

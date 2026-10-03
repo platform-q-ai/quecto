@@ -338,3 +338,26 @@ fn overlapping_anchor_older_page_prepends_new_prefix_messages() {
     );
     assert!(t.retained_message_count() <= LEDGER_RETAINED_MESSAGE_CAP);
 }
+
+/// #2425: a synced user message that carried images shows one `[image]`
+/// marker per image, an images-only one included.
+#[test]
+fn synced_user_images_render_as_markers() {
+    let mut t = LedgerTranscript::default();
+    let entries = t.apply_sync_delta(&delta(
+        vec![
+            json!({"id":"u1","role":"user","content":"look","imageCount":2,"imageMimeTypes":["image/png","image/gif"]}),
+            json!({"id":"u2","role":"user","content":"","imageCount":1}),
+            json!({"id":"u3","role":"user","content":"","imageCount":"two"}),
+        ],
+        false,
+    ));
+    let users: Vec<_> = entries
+        .iter()
+        .filter_map(|entry| match entry {
+            LedgerEntry::User { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(users, ["[image] [image]\nlook", "[image]"]);
+}

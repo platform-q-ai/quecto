@@ -23,6 +23,9 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "tim
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 quecto-line-io = { version = "0.2.1", path = "../quecto-line-io" }
+# What an image is (#2425): the admission rules for an attached image, so the
+# composer keeps no copy of them. A pure leaf crate (base64 + serde).
+quecto-image = { version = "0.1.0", path = "../quecto-image" }
 
 # Warn-log dropped oversized inbound frames (#1112). The TUI installs no
 # subscriber itself — events are no-ops unless an embedder/test installs one,
@@ -39,6 +42,7 @@ pulldown-cmark = { version = "0.13", default-features = false }
 libc = "0.2"
 
 [dev-dependencies]
+quecto-image = { version = "0.1.0", path = "../quecto-image", features = ["test-support"] }
 cucumber = "0.21"
 futures = "0.3"
 regex = "1"
