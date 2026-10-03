@@ -258,16 +258,48 @@ fn reads_never_print_image_bytes() {
     assert_eq!(debug, "Image(4096 bytes)");
 }
 
-/// Whether `pid` is gone: no `/proc` entry, or a zombie waiting for its reaper.
-fn process_gone(pid: &str) -> bool {
+/// Whether `pid` is gone: no `/proc` entry, or one that has exited and only
+/// waits for its reaper (`Z`ombie, or `X`, dead and being released). A
+/// SIGKILLed helper is gone once it is a zombie; `kill(pid, 0)` still
+/// succeeds on one, so it cannot tell.
+fn process_gone(pid: libc::pid_t) -> bool {
+    assert!(pid > 0, "a process id is positive, got {pid}");
     match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
-        Err(_) => true,
-        Ok(stat) => stat
-            .rsplit(')')
-            .next()
-            .is_some_and(|rest| rest.trim_start().starts_with('Z')),
+        Ok(stat) => {
+            // `pid (comm) S …`: the state follows the last `)`, as `comm`
+            // may hold one.
+            let state = stat
+                .rsplit_once(')')
+                .and_then(|(_, rest)| rest.trim_start().chars().next());
+            let state = state.unwrap_or_else(|| panic!("/proc/{pid}/stat has a state: {stat:?}"));
+            matches!(state, 'Z' | 'X')
+        }
+        // Reaped: no entry, or reaped between the open and the read.
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound
+                || error.raw_os_error() == Some(libc::ESRCH) =>
+        {
+            true
+        }
+        Err(error) => panic!("read /proc/{pid}/stat: {error}"),
     }
 }
+
+/// Whether `pid` is gone within `polls` checks 10 ms apart (#2442). The
+/// budget is counted in polls, not read off a clock, so a stalled runner
+/// that jumps past a deadline still gives the killed helper its turn.
+fn gone_within(pid: libc::pid_t, polls: u32) -> bool {
+    for _ in 0..polls {
+        if process_gone(pid) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    process_gone(pid)
+}
+
+/// About 2 s of polls: a helper SIGKILLed with its group is gone well inside it.
+const HELPER_GONE_POLLS: u32 = 200;
 
 /// Review round 1 (M2): `wl-paste` forks a helper; the timeout ends the
 /// whole process group, so the helper does not outlive the read.
@@ -281,17 +313,75 @@ fn a_timeout_ends_the_tool_s_children_too() {
         vec![(ClipboardTool::WlPaste, tool)],
         Duration::from_millis(300),
     );
+    let started = std::time::Instant::now();
     assert!(matches!(clipboard.read(), ClipboardRead::Failed(_)));
-    let pid = std::fs::read_to_string(&pid_file).unwrap();
-    let pid = pid.trim();
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    while !process_gone(pid) && std::time::Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    // The tool's shell waits for its helper: a read that waited the
+    // helper's 30 s out never killed it.
     assert!(
-        process_gone(pid),
+        started.elapsed() < Duration::from_secs(20),
+        "the read waited {:?}",
+        started.elapsed()
+    );
+    let pid = std::fs::read_to_string(&pid_file).unwrap();
+    let pid: libc::pid_t = pid
+        .trim()
+        .parse()
+        .unwrap_or_else(|error| panic!("the helper pid file holds a pid ({pid:?}): {error}"));
+    assert!(
+        gone_within(pid, HELPER_GONE_POLLS),
         "the forked helper {pid} outlived the read"
     );
+}
+
+/// #2442: a child that has exited but is not reaped is a zombie: gone,
+/// though `kill(pid, 0)` still succeeds on it.
+#[test]
+fn a_zombie_counts_as_gone() {
+    let mut child = std::process::Command::new("true").spawn().unwrap();
+    let pid = libc::pid_t::try_from(child.id()).unwrap();
+    let id = libc::id_t::try_from(pid).unwrap();
+    // Wait for it to exit without reaping it (WNOWAIT): a zombie now.
+    loop {
+        // SAFETY: an all-zero siginfo_t is a valid value for waitid to fill.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        let flags = libc::WEXITED | libc::WNOWAIT;
+        // SAFETY: `info` is a live siginfo_t; `pid` is this test's unreaped child.
+        let waited = unsafe { libc::waitid(libc::P_PID, id, &mut info, flags) };
+        if waited == 0 {
+            // SAFETY: waitid filled `info` for an exited child.
+            let exited = unsafe { info.si_pid() };
+            assert_eq!(exited, pid, "waitid names the child");
+            break;
+        }
+        let error = std::io::Error::last_os_error();
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::Interrupted,
+            "waitid {pid}: {error}"
+        );
+    }
+    // SAFETY: signal 0 only probes a pid this test spawned and has not reaped.
+    let probed = unsafe { libc::kill(pid, 0) };
+    assert_eq!(probed, 0, "a zombie still takes signal 0");
+    assert!(process_gone(pid), "the zombie {pid} counts as gone");
+    assert!(child.wait().unwrap().success());
+    assert!(process_gone(pid), "the reaped child {pid} is gone");
+}
+
+/// #2442: a helper that is still running is never gone, however long the
+/// test polls: the timeout test still fails on a helper that survives.
+#[test]
+fn a_running_helper_is_not_gone() {
+    let mut child = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .unwrap();
+    let pid = libc::pid_t::try_from(child.id()).unwrap();
+    let running = !gone_within(pid, 20);
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(running, "the running helper {pid} is not gone");
+    assert!(process_gone(pid), "the killed, reaped helper {pid} is gone");
 }
 
 /// Review round 1 (L3): a stale `WAYLAND_DISPLAY` makes `wl-paste` fail;
