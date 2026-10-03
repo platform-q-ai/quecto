@@ -135,6 +135,7 @@ pub(super) fn tool_reg(name: &str) -> ToolRegistration {
         description: format!("{name} description"),
         parameters_schema: r#"{"type":"object"}"#.to_string(),
         stable_id: None,
+        timeout_seconds: None,
     }
 }
 
@@ -246,6 +247,7 @@ async fn tool_result_for_pending_sender_delivers_and_sweeps_expired_entries() {
         tool_call_id: "live",
         content: "done",
         is_error: false,
+        image_blocks: None,
         registry: &registry,
     });
 
@@ -265,6 +267,7 @@ fn tool_result_for_unknown_client_does_not_panic_or_create_state() {
         tool_call_id: "missing-call",
         content: "late result",
         is_error: false,
+        image_blocks: None,
         registry: &registry,
     });
 
@@ -385,6 +388,7 @@ async fn handle_one_request_sends_execute_tool_and_tool_result_resolves_reply() 
         tool_call_id: "call-1",
         content: "snow",
         is_error: false,
+        image_blocks: None,
         registry: &registry,
     });
     let result = reply_rx.await.expect("tool result delivered");
@@ -679,6 +683,7 @@ fn poisoned_client_tool_registry_locks_recover_across_public_handlers() {
         tool_call_id: "poison-call",
         content: "ok after poison",
         is_error: false,
+        image_blocks: None,
         registry: &registry,
     });
     let result = reply_rx.blocking_recv().expect("reply survives poison");

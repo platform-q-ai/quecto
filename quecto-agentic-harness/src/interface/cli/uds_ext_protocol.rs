@@ -323,6 +323,8 @@ pub struct ToolResultArgs<'a> {
     pub tool_call_id: &'a str,
     pub content: &'a str,
     pub is_error: bool,
+    /// The `imageBlocks` field as sent (#2423).
+    pub image_blocks: Option<serde_json::Value>,
     pub registry: &'a ClientToolRegistry,
 }
 
@@ -333,8 +335,10 @@ pub fn handle_tool_result(args: ToolResultArgs<'_>) {
         tool_call_id,
         content,
         is_error,
+        image_blocks,
         registry,
     } = args;
+    let _not_yet_admitted = image_blocks;
     let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(state) = reg.get_mut(&client_id) {
         if let Some(pending) = state.pending_results.remove(tool_call_id) {
@@ -452,3 +456,11 @@ mod dispatch_cov_tests;
 #[cfg(test)]
 #[path = "uds_ext_protocol_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "uds_ext_protocol_images_tests.rs"]
+mod images_tests;
+
+#[cfg(test)]
+#[path = "uds_ext_images_e2e_tests.rs"]
+mod images_e2e_tests;

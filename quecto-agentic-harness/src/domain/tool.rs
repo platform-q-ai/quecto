@@ -71,6 +71,13 @@ impl ImageBlock {
     }
 }
 
+impl ImageBlock {
+    /// The MIME type as the wire spells it.
+    pub fn mime_type(&self) -> &'static str {
+        self.mime_type
+    }
+}
+
 /// The result of executing a tool.
 #[derive(Debug, Clone)]
 pub struct ToolResult {

@@ -347,14 +347,15 @@ pub(in crate::interface::cli) async fn dispatch_unregister_tools(
 pub(in crate::interface::cli) fn dispatch_tool_result(
     ctx: &mut crate::interface::cli::uds::DispatchCtx<'_>,
     tool_call_id: &str,
-    content: &str,
-    is_error: bool,
+    (content, is_error): (&str, bool),
+    image_blocks: Option<serde_json::Value>,
 ) {
     handle_tool_result(ToolResultArgs {
         client_id: ctx.current_client_id,
         tool_call_id,
         content,
         is_error,
+        image_blocks,
         registry: &ctx.client_tool_registry,
     });
 }

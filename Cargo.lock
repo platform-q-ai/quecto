@@ -1721,6 +1721,8 @@ dependencies = [
  "cucumber",
  "futures-util",
  "quecto-fail-fast",
+ "quecto-image",
+ "quecto-line-io",
  "reqwest",
  "serde",
  "serde_json",

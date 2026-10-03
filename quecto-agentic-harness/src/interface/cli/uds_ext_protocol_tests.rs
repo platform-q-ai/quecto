@@ -13,6 +13,7 @@ fn tool_reg(name: &str, desc: &str) -> ToolRegistration {
         description: desc.into(),
         parameters_schema: r#"{"type":"object"}"#.into(),
         stable_id: None,
+        timeout_seconds: None,
     }
 }
 
@@ -270,6 +271,7 @@ fn test_handle_tool_result_delivers() {
         tool_call_id: "call-1",
         content: "22°C, sunny",
         is_error: false,
+        image_blocks: None,
         registry: &r,
     });
     let result = rx.try_recv().unwrap();
@@ -285,6 +287,7 @@ fn test_handle_tool_result_unknown_call_id_is_noop() {
         tool_call_id: "nonexistent",
         content: "data",
         is_error: false,
+        image_blocks: None,
         registry: &r,
     });
 }
@@ -412,6 +415,7 @@ fn tool_result_sweeps_expired_entries_on_idle_client() {
         tool_call_id: "some-other-call",
         content: "late",
         is_error: false,
+        image_blocks: None,
         registry: &registry,
     });
 

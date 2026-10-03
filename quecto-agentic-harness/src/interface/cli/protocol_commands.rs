@@ -304,6 +304,16 @@ pub enum AgentCommand {
         content: String,
         #[serde(rename = "isError", default)]
         is_error: bool,
+        /// Images the tool returned (#2423): `[{"mimeType","data"}]`, kept
+        /// as sent and admitted when the result is delivered, so a malformed
+        /// entry still resolves the call (as an error result naming it);
+        /// absent or `null` is no images.
+        #[serde(
+            rename = "imageBlocks",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        image_blocks: Option<serde_json::Value>,
     },
     /// Clear conversation history in-place without restarting the agent.
     ClearHistory {
@@ -388,6 +398,16 @@ pub struct ToolRegistration {
     pub parameters_schema: String,
     #[serde(rename = "stableId", default, skip_serializing_if = "Option::is_none")]
     pub stable_id: Option<String>,
+    /// How long the agent waits for this tool's result, in whole seconds
+    /// (#2423): 1 to 600; absent or `null` is 30. Kept as sent, so any
+    /// other value refuses the registration with an exact message rather
+    /// than failing the whole command's parse.
+    #[serde(
+        rename = "timeoutSeconds",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub timeout_seconds: Option<serde_json::Value>,
 }
 fn default_params_schema() -> String {
     r#"{"type":"object"}"#.to_string()

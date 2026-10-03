@@ -6,6 +6,8 @@ pub(super) struct ParsedToolResult {
     pub(super) tool_call_id: String,
     pub(super) content: String,
     pub(super) is_error: bool,
+    /// The `imageBlocks` field as sent (#2423), admitted on delivery.
+    pub(super) image_blocks: Option<serde_json::Value>,
 }
 
 /// Intercept a raw client line that carries a `tool_result` so it can
@@ -38,10 +40,12 @@ pub(super) fn try_intercept_tool_result(line: &str) -> Option<ParsedToolResult> 
             tool_call_id,
             content,
             is_error,
+            image_blocks,
         }) => Some(ParsedToolResult {
             tool_call_id,
             content,
             is_error,
+            image_blocks,
         }),
         _ => None,
     }

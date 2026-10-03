@@ -428,7 +428,13 @@ pub(super) async fn dispatch_ext_command(
             tool_call_id,
             content,
             is_error,
-        } => uds_ext_protocol::dispatch_tool_result(ctx, &tool_call_id, &content, is_error),
+            image_blocks,
+        } => uds_ext_protocol::dispatch_tool_result(
+            ctx,
+            &tool_call_id,
+            (&content, is_error),
+            image_blocks,
+        ),
         _ => {}
     };
     false

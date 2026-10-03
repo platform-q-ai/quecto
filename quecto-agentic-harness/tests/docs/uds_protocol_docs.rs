@@ -88,3 +88,38 @@ fn image_attachments_are_documented_with_their_exact_refusals() {
         "docs/uds-protocol.md does not quote {missing:?}"
     );
 }
+
+/// #2423: `tool_result` documents `imageBlocks` and quotes each refusal
+/// exactly; `register_tools` documents `timeoutSeconds` and its refusal.
+#[test]
+fn extension_images_and_tool_timeouts_are_documented_exactly() {
+    let doc = read_repo_file("docs/uds-protocol.md");
+    let tool_result = command_section(&doc, "tool_result");
+    assert!(
+        tool_result.contains("| `imageBlocks` |"),
+        "the tool_result section has no `imageBlocks` row"
+    );
+    let refusals = [
+        "Error: imageBlocks[1]: data is not valid standard base64",
+        "Error: too many imageBlocks: 9; at most 8 per tool result",
+        r#"Error: imageBlocks: expected an array of {"mimeType", "data"} objects"#,
+        r#"Error: imageBlocks[0]: expected an object with string "mimeType" and "data""#,
+    ];
+    let missing: Vec<&&str> = refusals
+        .iter()
+        .filter(|text| !tool_result.contains(&format!("`{text}`")))
+        .collect();
+    assert!(missing.is_empty(), "tool_result does not quote {missing:?}");
+    let register = command_section(&doc, "register_tools");
+    assert!(register.contains("| `timeoutSeconds` |"));
+    assert!(register.contains(
+        "`tool 'shot': timeoutSeconds must be a whole number of seconds from 1 to 600, got 0`"
+    ));
+    let guide = read_repo_file("docs/extensions.md");
+    for field in ["`imageBlocks`", "`timeoutSeconds`"] {
+        assert!(
+            guide.contains(field),
+            "docs/extensions.md never names {field}"
+        );
+    }
+}

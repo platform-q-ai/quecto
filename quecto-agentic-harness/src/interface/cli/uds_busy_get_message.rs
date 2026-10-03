@@ -20,6 +20,7 @@ pub(super) async fn intercept(ctx: BusyCommandCtx<'_>) -> bool {
             tool_call_id: &result.tool_call_id,
             content: &result.content,
             is_error: result.is_error,
+            image_blocks: result.image_blocks,
             registry: ctx.registry,
         });
         return true;

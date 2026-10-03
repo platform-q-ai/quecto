@@ -8,8 +8,10 @@ use serde::Deserialize;
 use serde_json::Value;
 
 mod config;
+mod content;
 mod model;
 pub use config::Config;
+pub use content::{McpToolResult, mcp_tool_result};
 pub use model::{McpTool, QuectoToolRegistration, RegisteredMcpTools};
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};

@@ -7,6 +7,8 @@ license = "LicenseRef-Proprietary"
 
 [dependencies]
 quecto-fail-fast = { version = "0.1.0", path = "../quecto-fail-fast" }
+quecto-image = { version = "0.1.0", path = "../quecto-image" }
+quecto-line-io = { version = "0.2.1", path = "../quecto-line-io" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "signal", "time"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 futures-util = "0.3"
@@ -19,6 +21,7 @@ uuid = { version = "1", features = ["v4"] }
 shlex = "1"
 
 [dev-dependencies]
+quecto-image = { version = "0.1.0", path = "../quecto-image", features = ["test-support"] }
 cucumber = { version = "0.21", features = ["macros"] }
 tempfile = "3"
 wiremock = "0.6"
