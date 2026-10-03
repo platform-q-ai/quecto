@@ -1,4 +1,5 @@
 use super::agent_loop_turn::*;
+use crate::domain::conversation::reply_requirement::ReplyRequirement;
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, ToolCall};
 use crate::domain::provider_error::ProviderErrorClass;
@@ -44,7 +45,7 @@ fn tool_response() -> LlmResponse {
 #[test]
 fn final_assistant_response_transitions_to_finalization() {
     assert_eq!(
-        next_state_after_provider_response(&text_response()),
+        next_state_after_provider_response(&text_response(), ReplyRequirement::Output),
         TurnState::FinalizeAssistantResponse
     );
 }
@@ -52,7 +53,7 @@ fn final_assistant_response_transitions_to_finalization() {
 #[test]
 fn tool_call_response_transitions_to_tool_continuation() {
     assert_eq!(
-        next_state_after_provider_response(&tool_response()),
+        next_state_after_provider_response(&tool_response(), ReplyRequirement::MayBeEmpty),
         TurnState::ExecuteToolCalls
     );
 }
@@ -117,7 +118,7 @@ fn mixed_content_and_tool_calls_prefers_tool_continuation() {
     response.content = Some("I need a tool".to_string());
 
     assert_eq!(
-        next_state_after_provider_response(&response),
+        next_state_after_provider_response(&response, ReplyRequirement::MayBeEmpty),
         TurnState::ExecuteToolCalls
     );
 }

@@ -7,7 +7,7 @@
 //! that said "started, end your turn" is answered so), which ends the turn
 //! as a final answer with no text.
 
-use crate::domain::message::Message;
+use crate::domain::message::{Message, Role};
 
 /// Whether the reply to a conversation must have output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,9 +19,19 @@ pub enum ReplyRequirement {
 }
 
 impl ReplyRequirement {
-    /// The requirement of the reply to `messages`.
-    pub fn for_conversation(_messages: &[Message]) -> Self {
-        Self::Output
+    /// The requirement of the reply to `messages`: decided by the latest
+    /// message the model is to answer, a user message or a tool result.
+    /// System messages (the spill manifest) and the model's own are not
+    /// something to answer, so they decide nothing.
+    pub fn for_conversation(messages: &[Message]) -> Self {
+        let latest = messages
+            .iter()
+            .rev()
+            .find(|message| matches!(message.role, Role::User | Role::Tool));
+        match latest.map(|message| &message.role) {
+            Some(Role::Tool) => Self::MayBeEmpty,
+            _ => Self::Output,
+        }
     }
 }
 

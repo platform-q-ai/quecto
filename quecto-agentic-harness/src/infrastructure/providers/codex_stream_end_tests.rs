@@ -211,3 +211,24 @@ async fn an_untyped_empty_error_object_ends_the_stream_as_an_error() {
         CodexProvider::parse_sse_response(&format!("{TEXT}\n{chunk}\n{COMPLETED}\n")).unwrap_err();
     assert!(err.to_string().contains("Responses stream error"), "{err}");
 }
+
+/// #2434: a streamed reply that completed with nothing in it is whole,
+/// stopped at `end_turn`; the agent loop, not the stream, decides what it
+/// means.
+#[tokio::test]
+async fn a_streamed_reply_with_nothing_in_it_ends_whole_at_end_turn() {
+    let completed =
+        r#"data: {"type":"response.completed","response":{"status":"completed","output":[]}}"#;
+    let events = handled(&[completed]).await;
+    match events.last() {
+        Some(StreamEvent::Done(response)) => {
+            assert!(response.content.is_none(), "{response:?}");
+            assert!(response.tool_calls.is_empty());
+            assert_eq!(
+                response.stop_reason,
+                Some(crate::domain::message::StopReason::EndTurn)
+            );
+        }
+        other => panic!("expected a whole reply: {other:?}"),
+    }
+}

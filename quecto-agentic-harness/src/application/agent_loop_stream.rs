@@ -1,4 +1,5 @@
 use crate::application::agent_usage::UsageTotals;
+use crate::domain::conversation::reply_requirement::ReplyRequirement;
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, StopReason};
 
@@ -30,6 +31,17 @@ pub(super) fn is_empty_streamed_response(response: &LlmResponse) -> bool {
     response.content.as_deref().unwrap_or_default().is_empty()
         && response.tool_calls.is_empty()
         && !crate::domain::visible_thinking::has_visible_thinking(&response.thinking_blocks)
+}
+
+/// A reply with nothing in it that ends the turn (#2434): it answers a
+/// conversation that lets it be empty (tool results, never a prompt, a
+/// steer or a follow-up) and it says it finished (`end_turn`). A reply
+/// stopped at the output limit was cut off (#2124), and one that names no
+/// stop reason is not known to have finished: both stay empty streams.
+pub(super) fn ends_turn_empty(response: &LlmResponse, requirement: ReplyRequirement) -> bool {
+    requirement == ReplyRequirement::MayBeEmpty
+        && is_empty_streamed_response(response)
+        && response.stop_reason == Some(StopReason::EndTurn)
 }
 
 /// A reply that hit the output limit with nothing visible: no text and no

@@ -771,8 +771,9 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/application/agent_loop_spill.rs", 56),
     // #2212: the gauge wrappers moved to their own module (749 → 703);
     // #2414: the old rules' dials left the constructor (→ 682);
-    // #2421: the request builder moved to `agent_loop_turn_flow.rs` (→ 657).
-    ("src/application/agent_loop.rs", 657),
+    // #2421: the request builder moved to `agent_loop_turn_flow.rs` (→ 657);
+    // #2434: the final reply's builder moved beside its caller there (→ 630).
+    ("src/application/agent_loop.rs", 630),
     ("src/application/agent_loop_gauge.rs", 61),
     // D3 #1973, D4 #1974, D5 #1972, D6 #1975, D7 #1976 and D8 #1977 each
     // add use cases to this graph; the ceiling follows their merge (was 113

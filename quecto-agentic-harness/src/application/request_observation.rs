@@ -111,6 +111,13 @@ impl<'a> ObservationGuard<'a> {
         }
     }
 
+    /// The reply had nothing in it and ended the turn (#2434): noted on the
+    /// record before it is finished.
+    pub fn note_ended_empty_after_tools(&mut self) {
+        let record = self.record.as_mut().expect("noted before completion");
+        record.ended_empty_after_tools = true;
+    }
+
     pub fn finish(&mut self, result: &Result<LlmResponse, DomainError>) -> RequestObservation {
         let record = self.record.as_mut().expect("one completion per request");
         // What the request spent: every attempt cut short after reporting
