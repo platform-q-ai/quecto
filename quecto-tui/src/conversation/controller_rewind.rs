@@ -96,6 +96,19 @@ impl App {
         self.ac_mut().rewind.selector = Some(SelectList::new(items, 10));
     }
 
+    /// A rewind restores the selected message's text, never its images:
+    /// say how many were left behind (#2425).
+    pub(super) fn note_rewind_images_not_restored(&mut self) {
+        match std::mem::take(&mut self.ac_mut().rewind.pending_apply_images) {
+            0 => {}
+            count => {
+                let phrase = crate::conversation::image_attachments::image_count_phrase(count);
+                let notice = format!("{phrase} not restored: attach them again to send them");
+                self.notify(&notice, NotifyLevel::Info);
+            }
+        }
+    }
+
     pub(super) fn handle_rewind_selector_key(&mut self, key: &Key) {
         let Some(message_id) = route_overlay_key(&mut self.ac_mut().rewind.selector, key) else {
             return;

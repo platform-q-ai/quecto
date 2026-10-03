@@ -183,6 +183,8 @@ impl App {
         // Reject a mismatched body (stale / rerouted response) and require the
         // authoritative response role to agree with the original stub metadata.
         let (response_id, role) = crate::protocol::presentation_payloads::response_identity(data);
+        // A user message's images stay marked when its stub is expanded (#2425).
+        let images = crate::protocol::presentation_payloads::recovered_message(data).image_count();
         let response_matches = response_id.as_deref() == Some(recall.message_id.as_str());
         let chat = match &recall.agent_id {
             None => Some(&mut self.ac_mut().master_session.chat),
@@ -252,7 +254,9 @@ impl App {
         // Untrusted transcript text (especially sub-agents): strip control
         // sequences once after all pages are reassembled, so split ANSI/control
         // sequences are interpreted identically to the original message.
-        let accumulated = crate::components::ansi::sanitize_control_keep_newlines(&accumulated);
+        let accumulated = crate::components::ansi::sanitize_control_keep_newlines(
+            &crate::conversation::image_attachments::with_image_markers(&accumulated, images),
+        );
         if !chat.recall_stub(&recall.message_id, &accumulated) {
             self.ac_mut().failed_stub_recalls.insert(recall_key);
         }

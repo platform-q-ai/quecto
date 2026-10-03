@@ -117,8 +117,10 @@ impl App {
                             )
                         }
                         crate::setup::SetupCommand::Walkthrough(area) => {
+                            // The walkthrough is the TUI's own prompt: it
+                            // never takes the user's attached images (#2425).
                             let prompt = crate::setup::setup_walkthrough_prompt(&area);
-                            self.handle_submit(&prompt);
+                            self.send_user_message(&prompt, false);
                         }
                         crate::setup::SetupCommand::Usage => self.notify(
                             crate::setup::SETUP_USAGE,
@@ -142,6 +144,19 @@ impl App {
             }
         }
 
+        self.send_user_message(text, true);
+    }
+
+    /// Send `text` as a user message to the active session, with the
+    /// attached images when `with_images`: a message the user composed,
+    /// never a slash command's own prompt (#2425). The images leave the
+    /// composer only when the message is enqueued.
+    fn send_user_message(&mut self, text: &str, with_images: bool) {
+        let images = match with_images {
+            true => self.attachments.pending.attachments(),
+            false => Vec::new(),
+        };
+        let shown = with_image_markers(text, images.len());
         // Route to the ACTIVE session (#802). A selected sub-agent's prompt
         // targets THAT agent over its own connection and lands in its session,
         // not master's. When the selected child is already running, Enter queues
@@ -173,29 +188,19 @@ impl App {
                 self.note_subagent_undeliverable(&agent_id, &status);
                 return;
             }
-            let images = self.attachments.pending.attachments();
-            let shown = with_image_markers(text, images.len());
-            let cmd = if self.active_subagent_running() {
-                Command::FollowUp {
-                    id: None,
-                    message: text.to_string(),
-                    images,
-                }
-            } else {
-                Command::Prompt {
-                    id: None,
-                    message: text.to_string(),
-                    streaming_behavior: None,
-                    images,
-                }
-            };
+            let cmd = user_message_command(text, images, self.active_subagent_running());
+            if !self.message_fits_one_frame(&cmd, text) {
+                return;
+            }
             // Append to the sub-agent transcript ONLY when the route actually
             // enqueued it (#804 review): a failed route (no live sender / full
             // channel) never delivered the prompt, so a User entry would diverge
             // UI from state. The chips go with the message, and stay when it
             // was not delivered (#2425).
             if self.send_to_active_subagent(cmd) {
-                self.attachments.pending.clear();
+                if with_images {
+                    self.attachments.pending.clear();
+                }
                 self.active_chat_mut()
                     .add_entry_follow_tail(ChatEntry::User { text: shown });
             } else {
@@ -206,16 +211,17 @@ impl App {
             return;
         }
 
+        let cmd = user_message_command(text, images, self.ac().agent_state.is_running());
+        if !self.message_fits_one_frame(&cmd, text) {
+            return;
+        }
         // The composed text always lands in the chat (the editor was
         // already emptied by take_submit) — on a dead connection it is the
         // only surviving copy (#1470 r3/r6, single add site).
-        let images = self.attachments.pending.attachments();
         self.ac_mut()
             .master_session
             .chat
-            .add_entry_follow_tail(ChatEntry::User {
-                text: with_image_markers(text, images.len()),
-            });
+            .add_entry_follow_tail(ChatEntry::User { text: shown });
         // Refuse when the connection is known dead (#1470): the writer
         // channel can outlive the stream, so an enqueue could "succeed" and
         // the message silently vanish. The persistent refusal Status line
@@ -225,8 +231,27 @@ impl App {
             self.note_disconnected_refusal();
             return;
         }
-        if self.dispatch_master_user_text(text, images) {
+        if self.send_command(cmd) && with_images {
             self.attachments.pending.clear();
+        }
+    }
+
+    /// Whether `cmd` fits one protocol frame (#2425). One that does not would
+    /// be dropped by the writer unseen, so it is refused here instead: a
+    /// notice, its text back in the editor, its chips kept.
+    fn message_fits_one_frame(&mut self, cmd: &Command, text: &str) -> bool {
+        match cmd.fits_one_frame() {
+            true => true,
+            false => {
+                self.editor.set_text(text);
+                let cap = quecto_line_io::PROTOCOL_LINE_CAP_BYTES / (1024 * 1024);
+                let notice = format!(
+                    "Message not sent: it is over the {cap} MiB one message can carry; \
+                     remove an image or shorten the text"
+                );
+                self.notify(&notice, crate::components::notification::NotifyLevel::Error);
+                false
+            }
         }
     }
 
@@ -237,30 +262,6 @@ impl App {
         self.active_chat_mut()
             .add_entry(ChatEntry::Status { text: text.clone() });
         self.notify(&text, crate::components::notification::NotifyLevel::Warning);
-    }
-
-    /// Send a master-session user message (Prompt or FollowUp) with its
-    /// `images` (#2425) after connect; whether it was enqueued.
-    pub(crate) fn dispatch_master_user_text(
-        &mut self,
-        text: &str,
-        images: Vec<quecto_image::ImageAttachment>,
-    ) -> bool {
-        let cmd = if self.ac().agent_state.is_running() {
-            Command::FollowUp {
-                id: None,
-                message: text.to_string(),
-                images,
-            }
-        } else {
-            Command::Prompt {
-                id: None,
-                message: text.to_string(),
-                streaming_behavior: None,
-                images,
-            }
-        };
-        self.send_command(cmd)
     }
 
     // ── Abort handling (bug fix) ──────────────────────────────────────
@@ -310,6 +311,28 @@ impl App {
             .add_entry(ChatEntry::Status {
                 text: "Operation aborted".to_string(),
             });
+    }
+}
+
+/// A user message with its `images` (#2425): a follow-up while the session
+/// runs, else a prompt.
+fn user_message_command(
+    text: &str,
+    images: Vec<quecto_image::ImageAttachment>,
+    running: bool,
+) -> Command {
+    match running {
+        true => Command::FollowUp {
+            id: None,
+            message: text.to_string(),
+            images,
+        },
+        false => Command::Prompt {
+            id: None,
+            message: text.to_string(),
+            streaming_behavior: None,
+            images,
+        },
     }
 }
 

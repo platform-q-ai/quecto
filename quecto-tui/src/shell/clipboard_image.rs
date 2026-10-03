@@ -9,6 +9,7 @@
 
 use quecto_image::ImageMime;
 use std::io::Read;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -169,8 +170,19 @@ impl SystemClipboard {
         let image = ImageMime::ALL
             .into_iter()
             .find(|mime| types.contains(&mime.as_str()));
-        let text = types.iter().any(|kind| TEXT_TYPES.contains(kind));
-        let images_offered: Vec<&str> = types
+        let text = types.iter().any(|kind| {
+            TEXT_TYPES
+                .iter()
+                .any(|text| text.eq_ignore_ascii_case(kind))
+        });
+        // What the clipboard holds, as MIME types (`type/subtype`): X11's
+        // own bookkeeping targets (`TARGETS`, `TIMESTAMP`, …) name nothing.
+        let mime_types: Vec<&str> = types
+            .iter()
+            .copied()
+            .filter(|kind| kind.contains('/'))
+            .collect();
+        let images_offered: Vec<&str> = mime_types
             .iter()
             .copied()
             .filter(|kind| kind.starts_with("image/"))
@@ -204,7 +216,10 @@ impl SystemClipboard {
                     }
                 }
             }
-            (None, false, []) => ClipboardRead::Empty,
+            (None, false, []) => match mime_types.as_slice() {
+                [] => ClipboardRead::Empty,
+                held => ClipboardRead::NotPasteable(held.join(", ")),
+            },
             (None, false, offered) => ClipboardRead::UnsupportedImage(offered.join(", ")),
         }
     }
@@ -212,6 +227,7 @@ impl SystemClipboard {
 
 impl ClipboardReader for SystemClipboard {
     fn read(&self) -> ClipboardRead {
+        let mut listing_failed = false;
         for (tool, program) in &self.tools {
             match run(program, &tool.list_args(), self.timeout, MAX_LISTING_BYTES) {
                 Ok(listing) => {
@@ -221,15 +237,20 @@ impl ClipboardReader for SystemClipboard {
                 }
                 // Not installed: the next tool of the allowlist.
                 Err(RunError::NotFound) => continue,
-                // Both tools exit non-zero when the clipboard holds nothing
-                // (`wl-paste`: "Nothing is copied"; `xclip`: no owner).
-                Err(RunError::Exit(_)) => return ClipboardRead::Empty,
+                // A listing exits non-zero when the clipboard holds nothing
+                // (`wl-paste`: "Nothing is copied"; `xclip`: no owner) and
+                // when the tool reaches no display server (a stale
+                // `WAYLAND_DISPLAY`): the next tool may still read it.
+                Err(RunError::Exit(_)) => listing_failed = true,
                 Err(error) => {
                     return ClipboardRead::Failed(format!("{}: {error}", tool.program()));
                 }
             }
         }
-        ClipboardRead::NoTool
+        match listing_failed {
+            true => ClipboardRead::Empty,
+            false => ClipboardRead::NoTool,
+        }
     }
 }
 
@@ -267,8 +288,11 @@ fn run(
     cap: usize,
 ) -> Result<Vec<u8>, RunError> {
     let deadline = Instant::now() + timeout;
+    // Its own process group, so a timeout ends whatever it forked too
+    // (`wl-paste` hands the transfer to a child).
     let mut child = Command::new(program)
         .args(args)
+        .process_group(0)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -319,9 +343,12 @@ fn run(
     }
 }
 
-/// Kill `child` (SIGKILL) and reap it.
+/// Kill `child`'s whole process group (SIGKILL), then reap `child`.
 fn end(child: &mut std::process::Child) {
-    let _ = child.kill();
+    let group = libc::pid_t::try_from(child.id()).expect("a pid fits pid_t");
+    assert!(group > 0, "a child's process group is never 0 or negative");
+    // SAFETY: killpg only sends a signal; `child` leads its own group (`process_group(0)`) and is unreaped, so its id names no other group.
+    unsafe { libc::killpg(group, libc::SIGKILL) };
     let _ = child.wait();
 }
 

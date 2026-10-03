@@ -435,7 +435,17 @@ fn lenient_string<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::E
 
 fn lenient_count<'de, D: serde::Deserializer<'de>>(d: D) -> Result<usize, D::Error> {
     let value = <Lenient<usize> as serde::Deserialize>::deserialize(d)?;
-    Ok(value.known().unwrap_or_default())
+    Ok(clamp_image_count(value.known().unwrap_or_default()))
+}
+
+/// The largest `imageCount` a reader takes from the wire (#2425). The harness
+/// admits at most 8 images per message; a larger count is a peer's bad data,
+/// clamped where it is read so nothing sizes work by it.
+pub(crate) const IMAGE_COUNT_CEILING: usize = 999;
+
+/// `count` from the wire, clamped to [`IMAGE_COUNT_CEILING`].
+pub(crate) fn clamp_image_count(count: usize) -> usize {
+    count.min(IMAGE_COUNT_CEILING)
 }
 
 /// A value that is kept when it is what the protocol says and ignored —

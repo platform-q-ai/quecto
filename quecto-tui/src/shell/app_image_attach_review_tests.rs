@@ -325,3 +325,20 @@ async fn a_clipboard_of_files_says_what_it_holds() {
         Some("Nothing to paste: the clipboard holds only text/uri-list, neither an image nor text")
     );
 }
+
+#[tokio::test]
+async fn an_image_read_that_finishes_after_clear_is_not_attached() {
+    let mut h = harness().await;
+    let (_dir, path) = image_file("late.png", &samples::png(1, 1));
+    h.submit(&format!("/image {}", path.display()));
+    h.submit("/clear");
+    h.settle_attachment_reads().await;
+    assert!(
+        h.attachment_chips().is_empty(),
+        "the image belonged to the old conversation"
+    );
+    assert_eq!(
+        h.last_notification().as_deref(),
+        Some("Image not attached: late.png: the conversation changed")
+    );
+}

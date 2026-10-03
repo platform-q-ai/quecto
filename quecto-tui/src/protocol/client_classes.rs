@@ -74,6 +74,15 @@ impl Command {
     pub fn is_feed_liveness(&self) -> bool {
         matches!(self, Self::Sync { .. })
     }
+
+    /// Whether the command, serialized, fits one protocol frame. The writer
+    /// drops an over-cap command with nothing on the wire, so a sender that
+    /// must never lose one silently (a user message with images, #2425)
+    /// asks first.
+    pub fn fits_one_frame(&self) -> bool {
+        super::serialize_command(self)
+            .is_ok_and(|line| line.trim_end_matches('\n').len() <= super::MAX_LINE_BYTES)
+    }
 }
 
 #[cfg(feature = "test-harness")]

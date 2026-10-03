@@ -182,32 +182,46 @@ of `prompt`, or of `follow_up` while the agent runs (see the harness's
 [UDS protocol](../quecto-agentic-harness/docs/uds-protocol.md#image-attachments)).
 
 - **`Ctrl+V`** reads the system clipboard with `wl-paste` in a Wayland session
-  or `xclip` in an X11 one: those two tools only, the first that is
-  installed, each command killed after 2 s. An image of an admitted type is
-  attached; with no image, the clipboard's text is pasted into the editor as
-  if typed. The read runs off the event loop, so a slow clipboard never
-  freezes the screen. Your terminal's own paste (often `Ctrl+Shift+V`) still
-  pastes text as before.
-- **`/image <path>`** attaches a file.
+  or `xclip` in an X11 one: those two tools only, in that order (a `wl-paste`
+  that cannot reach a Wayland server falls through to `xclip`). Each command
+  runs in its own process group, killed whole after 2 s. An image of an
+  admitted type is attached; with no image, the clipboard's text (any
+  `text/plain` spelling) is pasted into the editor as if typed; a clipboard
+  of anything else (e.g. copied files, `text/uri-list`) says what it holds.
+  The read runs off the event loop, so a slow clipboard never freezes the
+  screen; a second `Ctrl+V` while one runs is ignored, with a notice. Your
+  terminal's own paste (often `Ctrl+Shift+V`) still pastes text as before.
+- **`/image <path>`** attaches a file: absolute, `~/…` or relative to the
+  workspace; a quoted, shell-escaped (`my\ shot.png`) or `file://` path (as a
+  terminal or file manager drops one) works too. The file is read off the
+  event loop.
 - Pending images show as chips above the editor, e.g.
   `[image 1: screenshot.png · 240 KB]`. `Backspace` in an empty editor removes
-  the last one. `Esc` clears them all, with the editor text, on the master
-  session when no run is active; otherwise `Esc` keeps its meaning (abort the
-  run, or leave a focused sub-agent) and the chips stay. `Ctrl+C` clears the
-  editor and the chips first, then aborts. `Enter` sends
-  them with the text, or alone when the editor is empty; the chips go with
-  the message. A message that could not be sent (no connection, an
-  unreachable sub-agent) keeps its chips.
+  the last one; a `Backspace` held down to delete text stops at the start of
+  the text (press it again after a moment to remove a chip). `Esc` clears
+  them all, with the editor text, on the master session when no run is
+  active; otherwise `Esc` keeps its meaning (abort the run, or leave a
+  focused sub-agent) and the chips stay. `Ctrl+C` clears the editor and the
+  chips first, then aborts. `Enter` sends them with the text, or alone when
+  the editor is empty; the chips go with the message. A message that could
+  not be sent (no connection, an unreachable sub-agent) keeps its chips.
+  Chips belong to their conversation: `/clear`, `/new` and a resume drop
+  them, with a notice (an image still being read then is not attached
+  either); `/setup`'s own prompt never takes them.
 - The checks are the harness's own (the `quecto-image` crate): an image is a
   PNG, JPEG, GIF or WebP by its bytes (never its name), at most 3.75 MiB, with
   a readable header; at most 8 per message. The TUI also keeps one message's
-  images within 7 MiB of base64, so the command fits the protocol's 8 MiB
-  frame with room for the text. An image that fails, an unreadable file or a
-  failed clipboard read shows a one-line notice, such as
-  `Image not attached: notes.txt: not an image/png, image/jpeg, image/gif or
-  image/webp file`, and nothing is attached.
+  images within 7 MiB of base64, and refuses a message whose command would
+  pass the protocol's 8 MiB frame (its text goes back to the editor, its
+  chips stay) rather than let it be dropped unseen. An image that fails, an
+  unreadable file or a failed clipboard read shows a one-line notice, such
+  as `Image not attached: notes.txt: not an image/png, image/jpeg, image/gif
+  or image/webp file`, and nothing is attached.
 - The conversation shows a user message's images as `[image]` markers above
-  its text, live and in history (from `imageCount`).
+  its text, live and in history (from `imageCount`), also when a collapsed
+  message is expanded; past 8 (a peer's bad data) one `[N images]` marker
+  stands for them. Rewinding to a message restores its text only and says
+  how many images were not restored.
 
 ## Notes
 

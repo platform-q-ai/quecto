@@ -233,7 +233,7 @@ fn labels_name_the_file_or_the_clipboard_type() {
 fn a_count_past_the_message_limit_is_one_counted_marker() {
     assert_eq!(
         with_image_markers("look", quecto_image::MAX_IMAGES_PER_MESSAGE),
-        format!("{}\nlook", vec!["[image]"; 8].join(" "))
+        format!("{}\nlook", ["[image]"; 8].join(" "))
     );
     assert_eq!(with_image_markers("look", 9), "[9 images]\nlook");
     let huge = with_image_markers("", usize::MAX);
@@ -281,4 +281,10 @@ fn an_image_path_may_be_shell_escaped_or_a_file_uri() {
         "{}",
         ImagePathError::NotLocal
     );
+}
+
+#[test]
+fn a_count_of_images_reads_as_words() {
+    assert_eq!(image_count_phrase(1), "1 image");
+    assert_eq!(image_count_phrase(2), "2 images");
 }

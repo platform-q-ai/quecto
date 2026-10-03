@@ -205,6 +205,8 @@ impl App {
         }
         let session = ack.map_or_else(|| "session".to_string(), |ack| ack.name);
         self.notify(&format!("Resumed session {session}"), NotifyLevel::Success);
+        // Attached images belong to the conversation left behind (#2425).
+        self.drop_pending_images();
         self.request_resumed_transcript();
         self.send_session_stats();
         // The agent resets session-scoped state (e.g. the effort override,

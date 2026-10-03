@@ -111,6 +111,10 @@ impl PendingImages {
             .sum()
     }
 
+    pub(crate) fn len(&self) -> usize {
+        self.images.len()
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.images.is_empty()
     }
@@ -150,6 +154,14 @@ impl PendingImages {
     }
 }
 
+/// `1 image`, `2 images`: a count of images for a notice.
+pub(crate) fn image_count_phrase(count: usize) -> String {
+    match count {
+        1 => "1 image".to_string(),
+        _ => format!("{count} images"),
+    }
+}
+
 /// `name`, cut to [`CHIP_NAME_CHARS`] with an ellipsis.
 fn chip_name(name: &str) -> String {
     match name.chars().count() <= CHIP_NAME_CHARS {
@@ -176,9 +188,18 @@ fn file_size(bytes: usize) -> String {
 }
 
 /// A user message's text as the transcript shows it: one [`IMAGE_MARKER`]
-/// per image on a line of their own, above the text.
+/// per image on a line of their own, above the text. A count past what one
+/// message can carry (a peer's bad data) is one counted marker,
+/// `[N images]`, so no count sizes the work.
 pub(crate) fn with_image_markers(text: &str, count: usize) -> String {
-    let markers = vec![IMAGE_MARKER; count].join(" ");
+    let markers = match count <= MAX_IMAGES_PER_MESSAGE {
+        true => vec![IMAGE_MARKER; count].join(" "),
+        false => format!("[{count} images]"),
+    };
+    assert!(
+        markers.len() <= MAX_IMAGES_PER_MESSAGE * (IMAGE_MARKER.len() + 1),
+        "the markers stay one short line"
+    );
     match (count, text.is_empty()) {
         (0, _) => text.to_string(),
         (_, true) => markers,
@@ -212,8 +233,10 @@ impl std::fmt::Display for ImagePathError {
 }
 
 /// The file a `/image` argument names: absolute as given, `~` or `~/…`
-/// under `home`, anything else relative to `workspace`. A path wrapped in
-/// one pair of matching quotes (as a terminal drops a file) is unquoted.
+/// under `home`, anything else relative to `workspace`. As a terminal or a
+/// file manager drops a file, a path may be wrapped in one pair of matching
+/// quotes, shell-escaped (`my\ shot.png`) or a local `file://` URI
+/// (percent-encoded).
 pub(crate) fn resolve_image_path(
     arg: &str,
     home: Option<&Path>,
@@ -223,6 +246,16 @@ pub(crate) fn resolve_image_path(
     if arg.is_empty() {
         return Err(ImagePathError::Missing);
     }
+    if let Some(uri) = arg.strip_prefix("file://") {
+        // `file:///p` and `file://localhost/p` name this machine.
+        let path = uri.strip_prefix("localhost").unwrap_or(uri);
+        return match path.starts_with('/') {
+            true => Ok(PathBuf::from(percent_decode(path))),
+            false => Err(ImagePathError::NotLocal),
+        };
+    }
+    let arg = unescape(arg);
+    let arg = arg.as_str();
     let under_home = match arg {
         "~" => Some(""),
         _ => arg.strip_prefix("~/"),
@@ -232,6 +265,49 @@ pub(crate) fn resolve_image_path(
         (Some(_), None) => Err(ImagePathError::NoHome),
         (None, _) => Ok(workspace.join(arg)),
     }
+}
+
+/// `text` with each shell escape `\x` read as `x`.
+fn unescape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(ch) = chars.next() {
+        match (ch, chars.clone().next()) {
+            ('\\', Some(escaped)) => {
+                out.push(escaped);
+                chars.next();
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+/// A URI path with each `%XX` decoded to its byte; a `%` that starts no
+/// such pair is kept as it is.
+fn percent_decode(path: &str) -> std::ffi::OsString {
+    use std::os::unix::ffi::OsStringExt;
+    let bytes = path.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let pair = bytes.get(index + 1..index + 3);
+        let decoded = pair
+            .filter(|pair| bytes[index] == b'%' && pair.iter().all(u8::is_ascii_hexdigit))
+            .and_then(|pair| std::str::from_utf8(pair).ok())
+            .and_then(|pair| u8::from_str_radix(pair, 16).ok());
+        match decoded {
+            Some(byte) => {
+                out.push(byte);
+                index += 3;
+            }
+            None => {
+                out.push(bytes[index]);
+                index += 1;
+            }
+        }
+    }
+    std::ffi::OsString::from_vec(out)
 }
 
 /// `text` without one pair of matching surrounding quotes, `'…'` or `"…"`.

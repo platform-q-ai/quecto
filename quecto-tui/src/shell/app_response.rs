@@ -289,6 +289,7 @@ impl App {
                 }
                 self.clear_message_recovery();
                 self.notify("Rewound conversation", NotifyLevel::Success);
+                self.note_rewind_images_not_restored();
                 let refresh_id = self
                     .mint_pending_solicited_get_messages(SolicitedGetMessagesKind::RewindRefresh);
                 self.send_command(Command::GetMessages {
@@ -678,6 +679,8 @@ impl App {
         self.ac_mut().rewind.pending_apply_id = Some(id.clone());
         self.ac_mut().rewind.pending_apply_editor_baseline = Some(self.editor.text());
         self.ac_mut().rewind.pending_apply_text = Some(text);
+        self.ac_mut().rewind.pending_apply_images =
+            crate::protocol::presentation_payloads::recovered_message(&data).image_count();
         self.send_command(Command::RewindTo {
             id: Some(id),
             message_id,

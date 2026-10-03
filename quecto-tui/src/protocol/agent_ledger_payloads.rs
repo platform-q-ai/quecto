@@ -71,7 +71,7 @@ impl LedgerMessage {
 
     /// How many images a user message carried (`imageCount`, #2425).
     pub fn image_count(&self) -> usize {
-        self.image_count.0
+        super::session_payloads::clamp_image_count(self.image_count.0)
     }
 
     pub fn tool_calls(&self) -> &[LedgerToolCall] {

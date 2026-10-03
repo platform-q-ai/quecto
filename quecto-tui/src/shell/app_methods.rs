@@ -66,10 +66,12 @@ impl App {
              \x20 Shift+Enter    Insert newline\n\
              \x20 Alt+Enter      Insert newline\n\
              \x20 Escape         Abort/cancel running agent or clear editor and images\n\
+             \x20                (images stay while a sub-agent is focused)\n\
              \x20 Esc Esc        Choose a previous turn to go back to\n\
              \x20 Ctrl+C         Clear editor and images first, abort if empty\n\
              \x20 Ctrl+V         Attach the clipboard's image (pastes text if no image)\n\
-             \x20 Backspace      In an empty editor: remove the last image\n\
+             \x20 Backspace      In an empty editor: remove the last image (a held\n\
+             \x20                Backspace stops at the start of the text)\n\
              \x20 Ctrl+D         Exit (persists, then lets owned agents settle their subagents)\n\
              \x20 Ctrl+G         Jump to latest conversation output\n\
              \x20 Ctrl+L         Open model selector\n\
@@ -691,6 +693,8 @@ impl App {
                 NotifyLevel::Warning,
             );
         }
+        // Attached images belong to the conversation just ended (#2425).
+        self.drop_pending_images();
     }
 
     /// Request a fresh agent session; false when the connection is dead (#1470).
