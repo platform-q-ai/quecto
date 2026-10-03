@@ -123,6 +123,7 @@ pub(super) async fn emit_pre_cancelled(ctx: &mut DispatchCtx<'_>) {
         &AgentEvent::AgentEnd {
             messages: vec![],
             message_refs: vec![],
+            content_length: None,
         },
     )
     .await;

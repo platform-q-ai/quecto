@@ -28,6 +28,7 @@ fn agent_end() -> Event {
     Event::AgentEnd {
         messages: vec![],
         message_refs: vec![],
+        content_length: None,
     }
 }
 

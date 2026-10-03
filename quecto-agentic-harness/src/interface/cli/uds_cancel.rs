@@ -473,7 +473,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
                     stop_reason: None,
                     context_tokens: Some(agent_result.context_tokens as u64),
                     max_context_tokens: Some(agent.max_context_tokens() as u64),
-                    content_length: Some(agent_result.response.len() as u64),
+                    content_length: Some(agent_result.reply_len() as u64),
                 },
                 tool_results: vec![],
             };
@@ -481,6 +481,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
             sink.emit(&AgentEvent::AgentEnd {
                 messages: vec![],
                 message_refs,
+                content_length: Some(agent_result.reply_len() as u64),
             })
             .await;
             PromptOutcome::Success
@@ -710,6 +711,9 @@ mod issue_1060_tests;
 #[cfg(test)]
 #[path = "uds_1072_e2e_tests.rs"]
 mod issue_1072_e2e_tests;
+#[cfg(test)]
+#[path = "uds_empty_reply_2434_tests.rs"]
+mod issue_2434_tests;
 
 #[path = "uds_swarm_turn.rs"]
 mod swarm_turn;

@@ -78,3 +78,6 @@ fn test_subagent_note_reaches_wire_as_trailing_user_turn() {
         "the note itself must be the trailing turn, got: {last}"
     );
 }
+
+#[path = "anthropic_2434_tests.rs"]
+mod issue_2434_tests;

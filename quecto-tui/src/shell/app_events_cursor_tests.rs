@@ -67,6 +67,7 @@ async fn master_tool_start_finalizes_streaming_assistant_cursor() {
     app.handle_event(Event::AgentEnd {
         messages: vec![],
         message_refs: vec![],
+        content_length: None,
     });
     plain = rendered_chat(&mut app);
     assert!(

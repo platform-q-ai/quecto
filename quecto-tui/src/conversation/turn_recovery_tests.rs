@@ -14,6 +14,7 @@ fn outcome<'a>(refs: &'a [String], text: &'a str, tools: usize) -> TurnOutcome<'
         refs,
         assistant_text: text,
         tools_this_turn: tools,
+        tool_batch_refs: 0,
         open_tool_calls: 0,
         expected_content_len: None,
     }
@@ -183,4 +184,70 @@ fn the_text_free_fast_path_never_disagrees_with_the_full_policy() {
             );
         }
     }
+}
+
+/// #2434 review round 1 (L1): a run that recorded no reply (the model
+/// answered tool results with nothing, or the tool iteration limit) has
+/// exactly its tool calls and results as refs and reports no reply text:
+/// there is nothing to rebuild, whatever text the run showed before.
+#[test]
+fn a_run_that_recorded_no_reply_does_not_trigger_recovery() {
+    for tools in 1..4 {
+        let r = refs(tools * 2);
+        for text in ["", "I'll start the job."] {
+            let mut o = outcome(&r, text, tools);
+            o.expected_content_len = Some(0);
+            assert!(
+                !o.needs_recovery(),
+                "{tools} tools, {} refs, no reply, text {text:?}",
+                r.len()
+            );
+        }
+    }
+}
+
+#[test]
+fn a_run_with_no_reply_still_recovers_an_open_tool_call() {
+    let r = refs(2);
+    let mut o = outcome(&r, "", 1);
+    o.expected_content_len = Some(0);
+    o.open_tool_calls = 1;
+    assert!(o.needs_recovery());
+}
+
+/// Reply text was advertised, or a ref is missing: the run is not one that
+/// recorded no reply, and the existing checks decide.
+#[test]
+fn a_run_with_advertised_text_or_a_missing_ref_still_triggers_recovery() {
+    let r = refs(2);
+    let mut o = outcome(&r, "", 1);
+    o.expected_content_len = Some(12);
+    assert!(o.needs_recovery(), "advertised reply text never arrived");
+    let r = refs(3);
+    let mut o = outcome(&r, "", 2);
+    o.expected_content_len = Some(0);
+    assert!(o.needs_recovery(), "two tools with three refs lost one");
+}
+
+/// Review round 2 (N1): parallel calls share one assistant message, so a
+/// batch of two calls appends three messages, not four. The run's expected
+/// refs come from the batches the stream reported, not from 2 x tools.
+#[test]
+fn a_parallel_batch_is_counted_by_its_messages_not_two_per_tool() {
+    // One message with two calls, their two results, then the reply.
+    let r = refs(4);
+    let mut o = outcome(&r, "a complete body", 2);
+    o.tool_batch_refs = 3;
+    assert!(!o.needs_recovery(), "a parallel batch and its reply");
+    // The same batch and no reply.
+    let r = refs(3);
+    let mut o = outcome(&r, "", 2);
+    o.tool_batch_refs = 3;
+    o.expected_content_len = Some(0);
+    assert!(!o.needs_recovery(), "a parallel batch and no reply");
+    // A ref beyond what the batches and the reply account for.
+    let r = refs(5);
+    let mut o = outcome(&r, "a complete body", 2);
+    o.tool_batch_refs = 3;
+    assert!(o.needs_recovery(), "one ref more than the run appended");
 }

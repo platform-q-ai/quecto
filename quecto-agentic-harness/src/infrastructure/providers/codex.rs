@@ -667,6 +667,9 @@ pub(crate) use codex_sse_handler::RESPONSES_CUT_SHORT;
 mod test_support;
 
 #[cfg(test)]
+#[path = "codex_2434_tests.rs"]
+mod empty_reply_2434_tests;
+#[cfg(test)]
 #[path = "codex_tests.rs"]
 mod tests;
 

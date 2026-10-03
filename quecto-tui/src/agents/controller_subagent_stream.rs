@@ -210,6 +210,9 @@ impl App {
             return;
         };
         let was_running = session.running;
+        session.note_tool_batch(crate::protocol::presentation_payloads::own_tool_batch_refs(
+            &ev,
+        ));
         match &ev {
             Event::AgentStart | Event::TurnStart => {
                 if !session.running {
@@ -217,8 +220,7 @@ impl App {
                     session.active_turn_start = session.chat.entry_count();
                     // New turn: reset the per-turn tool count that drives
                     // end-of-turn ref-cardinality recovery (#1060 review, F2).
-                    session.tools_this_turn = 0;
-                    session.open_tool_calls = 0;
+                    session.reset_turn_counts();
                     // Fresh in-flight buffer for this turn (#1259).
                     session.live_inflight.clear();
                 }
@@ -308,18 +310,15 @@ impl App {
     /// Extract non-empty end-of-turn message refs (+ optional contentLength).
     fn subagent_end_of_turn_refs(ev: &Event) -> Option<(Vec<String>, Option<u64>)> {
         match ev {
-            Event::AgentEnd { message_refs, .. } if !message_refs.is_empty() => {
-                Some((message_refs.clone(), None))
-            }
+            Event::AgentEnd {
+                message_refs,
+                content_length,
+                ..
+            } if !message_refs.is_empty() => Some((message_refs.clone(), *content_length)),
             Event::TurnEnd { message } => {
                 let payload = crate::protocol::presentation_payloads::parse_turn_end(message);
                 let refs = payload.message_refs;
-                let len = payload.content_length;
-                if refs.is_empty() {
-                    None
-                } else {
-                    Some((refs, len))
-                }
+                (!refs.is_empty()).then_some((refs, payload.content_length))
             }
             _ => None,
         }
@@ -460,6 +459,7 @@ impl App {
             refs,
             assistant_text: &assistant_text,
             tools_this_turn: tools,
+            tool_batch_refs: session.tool_batch_refs,
             open_tool_calls: session.open_tool_calls,
             expected_content_len,
         })

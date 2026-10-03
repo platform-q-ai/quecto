@@ -1,4 +1,5 @@
 use crate::application::agent_usage::UsageTotals;
+use crate::domain::conversation::reply_requirement::ReplyRequirement;
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, StopReason};
 
@@ -26,10 +27,32 @@ pub(super) struct TurnEnd {
     pub(super) current_turn: u32,
 }
 
+/// A reply with nothing in it: no text (whitespace alone is none, #2434),
+/// no tool call and no visible thinking.
 pub(super) fn is_empty_streamed_response(response: &LlmResponse) -> bool {
-    response.content.as_deref().unwrap_or_default().is_empty()
+    response
+        .content
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .is_empty()
         && response.tool_calls.is_empty()
         && !crate::domain::visible_thinking::has_visible_thinking(&response.thinking_blocks)
+}
+
+/// A reply with nothing in it that ends the turn (#2434): it answers a
+/// conversation that lets it be empty (tool results, never a prompt, a
+/// steer or a follow-up) and it says it finished (`end_turn`). A reply
+/// stopped at the output limit was cut off (#2124), and one that names no
+/// stop reason is not known to have finished: both stay empty streams.
+pub(super) fn ends_turn_empty(response: &LlmResponse, requirement: ReplyRequirement) -> bool {
+    requirement == ReplyRequirement::MayBeEmpty
+        && is_empty_streamed_response(response)
+        // `EndTurn` also stands for Anthropic's `pause_turn` and
+        // `stop_sequence` (`StopReason::parse`). Neither can stop a reply
+        // today: the harness offers no server tools (which pause a turn)
+        // and sets no stop sequences.
+        && response.stop_reason == Some(StopReason::EndTurn)
 }
 
 /// A reply that hit the output limit with nothing visible: no text and no

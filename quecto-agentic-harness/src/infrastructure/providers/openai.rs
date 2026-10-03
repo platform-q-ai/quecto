@@ -157,12 +157,11 @@ impl OpenAiProvider {
             .iter()
             .filter(|m| match (&m.role, m.tool_call_id.as_deref()) {
                 (Role::Tool, Some(id)) => is_paired(id),
-                // An assistant turn left with no text and no paired call is
-                // an empty turn: left out, as `codex_input` does.
+                // An assistant turn left with no text (whitespace is none)
+                // and no paired call is an empty turn: left out, as
+                // `codex_input` does (#2434). Its reasoning is never replayed.
                 (Role::Assistant, _) => {
-                    m.tool_calls.is_empty()
-                        || m.tool_calls.iter().any(|tc| is_paired(&tc.id))
-                        || !m.content.is_empty()
+                    m.tool_calls.iter().any(|tc| is_paired(&tc.id)) || !m.content.trim().is_empty()
                 }
                 _ => true,
             })
@@ -679,6 +678,10 @@ pub(crate) mod openai_sse_parser;
 #[path = "openai_cov_tests.rs"]
 mod cov_tests;
 
+// #2434: the request after a turn that ended with no reply.
+#[cfg(test)]
+#[path = "openai_2434_tests.rs"]
+mod empty_reply_2434_tests;
 // #2414 review L7: consecutive user messages on the wire.
 #[cfg(test)]
 #[path = "openai_consecutive_user_tests.rs"]

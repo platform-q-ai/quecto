@@ -1447,6 +1447,10 @@ Emitted when the agent finishes processing a prompt run. After #1060 / ADR-0008 
 {"type":"agent_end","messages":[],"messageRefs":["8f14e45f-ceea-4670-9f5c-2f1a72f1a72f"]}
 ```
 
+`agent_end` carries `contentLength`, the byte length of the run's reply text, as `turn_end` reports it (#2434). It is 0 for a run that recorded no reply. It is absent from runs that end before a turn, and from older harnesses.
+
+If the model answers tool results with nothing at all (no text, no tool call), the run ends at once with `agent_end`, not `agent_error` (#2434). The run then has no final reply: `messageRefs` ends with the tool results, and `contentLength` is 0 on `turn_end` and `agent_end`. A run stopped at the tool iteration limit also records no reply, so it reports `contentLength` 0 too. A client has no reply to rebuild for either. An empty reply to a prompt, steer or follow-up is still an `agent_error` (`empty_stream`). See `empty-stream-diagnostics.md`.
+
 ### `workflow_idle`
 
 Emitted after the post-turn drain finds no further workflow continuation runnable. Optional `reason` distinguishes intervention-worthy exhaustion from deliberate stops so supervisors do not alert on an abort they requested:

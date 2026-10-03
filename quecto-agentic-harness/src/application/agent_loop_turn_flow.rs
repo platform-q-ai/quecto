@@ -1,5 +1,7 @@
 use super::*;
+use crate::application::agent_loop_stream::ends_turn_empty;
 use crate::application::providers::ports::ChatRequest;
+use crate::domain::conversation::reply_requirement::ReplyRequirement;
 
 /// Retries for a reply cut off at the output limit with nothing visible.
 pub(super) const MAX_CUT_OFF_RETRIES: u32 = 1;
@@ -20,17 +22,21 @@ impl AgentLoopImpl {
     /// Emits `AgentProgressEvent::Token` for each text delta so the UDS layer
     /// can forward them as `{"type":"token"}` events.  Falls back gracefully
     /// for providers whose `chat_stream_incremental()` wraps `chat()` (emitting
-    /// only a single `Done`).
+    /// only a single `Done`). A completed reply with nothing in it is an
+    /// empty stream unless it ends the turn as `requirement` allows (#2434).
     pub(super) async fn stream_chat_once(
         &self,
         request: ChatRequest<'_>,
+        requirement: ReplyRequirement,
     ) -> Result<LlmResponse, StreamProviderError> {
         let mut emitted_event = false;
         let mut rx = self.provider.chat_stream_incremental(request).await;
         while let Some(event) = rx.recv().await {
             match event {
                 StreamEvent::TextDelta(t) => {
-                    emitted_event = true;
+                    // Whitespace alone is no output (#2434 review): a blank
+                    // reply is an empty stream, asked again as before.
+                    emitted_event |= t.chars().any(|c| !c.is_whitespace());
                     self.notify(|| AgentProgressEvent::Token(t));
                 }
                 StreamEvent::ThinkingDelta(t) => {
@@ -38,13 +44,15 @@ impl AgentLoopImpl {
                     self.notify(|| AgentProgressEvent::ThinkingDelta(t));
                 }
                 StreamEvent::Done(response) => {
-                    if is_empty_streamed_response(&response) {
-                        return Err(StreamProviderError {
+                    let empty = is_empty_streamed_response(&response);
+                    return match (empty, ends_turn_empty(&response, requirement)) {
+                        // Output, or nothing where nothing ends the turn.
+                        (false, _) | (true, true) => Ok(response),
+                        (true, false) => Err(StreamProviderError {
                             error: DomainError::Provider(empty_stream_error_message(&response)),
                             emitted_event,
-                        });
-                    }
-                    return Ok(response);
+                        }),
+                    };
                 }
                 StreamEvent::Error(e) => {
                     return Err(StreamProviderError {
@@ -70,8 +78,8 @@ impl AgentLoopImpl {
     pub(super) async fn request_provider_response(
         &self,
         mut request: ChatRequest<'_>,
-        turn: u32,
-        estimate: usize,
+        (turn, estimate): (u32, usize),
+        requirement: ReplyRequirement,
     ) -> Result<LlmResponse, StreamProviderError> {
         self.flush_request_accounting()
             .await
@@ -115,7 +123,7 @@ impl AgentLoopImpl {
         );
         let outcome = super::super::request_observation::MarkDropping::new(
             observation.trace(),
-            self.request_provider_response_inner(request),
+            self.request_provider_response_inner(request, requirement),
         )
         .await;
         // Whether the failed reply had shown output travels beside the
@@ -139,6 +147,12 @@ impl AgentLoopImpl {
                 if let Some(usage) = &response.usage {
                     unreported.record(usage);
                 }
+            }
+        }
+        // #2434: an empty reply that ends the turn stays visible.
+        if let Ok(response) = &result {
+            if ends_turn_empty(response, requirement) {
+                observation.note_ended_empty_after_tools();
             }
         }
         let record = observation.finish(&result);
@@ -165,6 +179,7 @@ impl AgentLoopImpl {
     async fn request_provider_response_inner(
         &self,
         request: ChatRequest<'_>,
+        requirement: ReplyRequirement,
     ) -> Result<LlmResponse, StreamProviderError> {
         if let Some(admission) = &self.request_admission {
             admission
@@ -206,7 +221,7 @@ impl AgentLoopImpl {
                     trace.retry();
                 }
             }
-            let result = match self.stream_chat_once(request.clone()).await {
+            let result = match self.stream_chat_once(request.clone(), requirement).await {
                 Ok(response) => Ok(response),
                 Err(stream_error) if stream_error.emitted_event => {
                     // Replaying after emitted content would corrupt output;
@@ -529,6 +544,51 @@ impl AgentLoopImpl {
         result
     }
 
+    pub(super) async fn finalize_text_response(
+        &self,
+        messages: &mut Vec<Message>,
+        response: LlmResponse,
+        end: TurnEnd,
+    ) -> AgentResult {
+        let text = response.content.unwrap_or_default();
+        let mut assistant_message = Message::assistant(text.clone(), vec![]);
+        assistant_message.thinking_blocks = response.thinking_blocks;
+        // Stamp + spill at creation: the loop returns right after this, so no
+        // later pruning pass could file the final reply (#1046).
+        assistant_message.turn = Some(end.current_turn);
+        self.spill_conversation_message(&mut assistant_message)
+            .await;
+        let estimate_context_tokens = end
+            .pre_response_context_tokens
+            .saturating_add(context_pruning::estimate_message_tokens(&assistant_message));
+        messages.push(assistant_message);
+        let usage = end.usage;
+        let context_tokens = if usage.context_input_tokens > 0 {
+            usage.context_input_tokens as usize
+        } else {
+            estimate_context_tokens
+        };
+        // #2212: `account_response` paired each report with its own estimate;
+        // the run's last usage may be an earlier call's, so never pair it here.
+        if usage.context_input_tokens == 0 {
+            self.observe_estimated_context_gauge(estimate_context_tokens);
+        }
+        AgentResult {
+            response: text,
+            tool_iterations: end.iterations,
+            iteration_limit_reached: false,
+            input_tokens: usage.context_input_tokens,
+            context_tokens,
+            output_tokens: usage.output_tokens,
+            billed_input_tokens: usage.billed_input_tokens,
+            billed_output_tokens: usage.billed_output_tokens,
+            cache_read_tokens: usage.cache_read_tokens,
+            cache_write_tokens: usage.cache_write_tokens,
+            cost_micro_usd: usage.cost_micro_usd,
+            appended_messages: Vec::new(),
+        }
+    }
+
     pub(super) fn tool_iteration_limit_result(
         &self,
         messages: &[Message],
@@ -536,7 +596,51 @@ impl AgentLoopImpl {
         usage_totals: UsageTotals,
         appended_messages: Vec<Message>,
     ) -> AgentResult {
-        // Emit Done so the spinner is cleared before the limit message.
+        let response = format!(
+            "Tool iteration limit ({}) reached. Stopping.",
+            self.max_tool_iterations
+        );
+        let mut result =
+            self.result_without_reply(messages, (iterations, usage_totals), appended_messages);
+        result.response = response;
+        result.iteration_limit_reached = true;
+        result
+    }
+
+    /// The model answered tool results with nothing (#2434): the turn ends
+    /// as a final answer with no text, and nothing empty is recorded as its
+    /// reply (an empty assistant message is one some providers refuse to be
+    /// sent again), so the conversation ends on the tool results, as at the
+    /// tool iteration limit.
+    pub(super) fn empty_reply_result(
+        &self,
+        messages: &[Message],
+        iterations: u32,
+        usage_totals: UsageTotals,
+        appended_messages: Vec<Message>,
+    ) -> AgentResult {
+        debug_assert_eq!(
+            ReplyRequirement::for_conversation(messages),
+            ReplyRequirement::MayBeEmpty,
+            "only a reply to tool results ends a turn empty"
+        );
+        tracing::info!(
+            target: "agent_loop",
+            iterations,
+            "ended_empty_after_tools: the model answered tool results with nothing; the turn ends"
+        );
+        self.result_without_reply(messages, (iterations, usage_totals), appended_messages)
+    }
+
+    /// A turn that ends with no reply recorded: no text, its usage and the
+    /// messages it appended.
+    fn result_without_reply(
+        &self,
+        messages: &[Message],
+        (iterations, usage_totals): (u32, UsageTotals),
+        appended_messages: Vec<Message>,
+    ) -> AgentResult {
+        // Emit Done so the spinner is cleared before the turn ends.
         self.notify(|| AgentProgressEvent::Done);
         // With the tool definitions, as every other estimate path (#2212).
         let estimated_context_tokens = context_pruning::estimate_total_tokens(messages)
@@ -551,12 +655,9 @@ impl AgentLoopImpl {
             estimated_context_tokens
         };
         AgentResult {
-            response: format!(
-                "Tool iteration limit ({}) reached. Stopping.",
-                self.max_tool_iterations
-            ),
+            response: String::new(),
             tool_iterations: iterations,
-            iteration_limit_reached: true,
+            iteration_limit_reached: false,
             input_tokens: usage_totals.context_input_tokens,
             context_tokens,
             output_tokens: usage_totals.output_tokens,

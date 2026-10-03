@@ -59,16 +59,22 @@ pub(super) fn from_claude_code_name(
 }
 
 /// Build an Anthropic assistant message with thinking blocks (#437-5)
-/// and tool name remapping (#437-4).
+/// and tool name remapping (#437-4). The API refuses empty text (#2434):
+/// text that is empty or whitespace alone is no text part, and a message
+/// left with nothing to send (an empty final answer, or reasoning only
+/// another provider reads) is `None`, left out of the request.
 pub(super) fn build_assistant_message(
     m: &crate::domain::message::Message,
     is_oauth: bool,
-) -> serde_json::Value {
+) -> Option<serde_json::Value> {
     use crate::domain::message::ThinkingBlock;
 
+    let has_text = !m.content.trim().is_empty();
     // If there are no thinking blocks and no tool calls, use simple format.
     if m.thinking_blocks.is_empty() && m.tool_calls.is_empty() {
-        return serde_json::json!({"role": "assistant", "content": sanitize_surrogates(&m.content)});
+        return has_text.then(
+            || serde_json::json!({"role": "assistant", "content": sanitize_surrogates(&m.content)}),
+        );
     }
 
     let mut content_blocks: Vec<serde_json::Value> = Vec::new();
@@ -107,7 +113,7 @@ pub(super) fn build_assistant_message(
         }
     }
 
-    if !m.content.is_empty() {
+    if has_text {
         content_blocks
             .push(serde_json::json!({"type": "text", "text": sanitize_surrogates(&m.content)}));
     }
@@ -130,11 +136,10 @@ pub(super) fn build_assistant_message(
         }));
     }
 
-    if content_blocks.is_empty() {
-        return serde_json::json!({"role": "assistant", "content": ""});
+    match content_blocks.is_empty() {
+        true => None,
+        false => Some(serde_json::json!({"role": "assistant", "content": content_blocks})),
     }
-
-    serde_json::json!({"role": "assistant", "content": content_blocks})
 }
 
 /// Defence-in-depth surrogate sanitization stub.

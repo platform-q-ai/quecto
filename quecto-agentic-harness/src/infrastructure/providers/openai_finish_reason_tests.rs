@@ -128,3 +128,25 @@ async fn the_streaming_handler_keeps_an_earlier_finish_reason() {
     }
     assert_eq!(done.expect("Done").stop_reason, Some(StopReason::MaxTokens));
 }
+
+/// #2434: a reply that finished with nothing in it is whole, stopped at
+/// `end_turn`; the agent loop, not the stream, decides what it means.
+#[tokio::test]
+async fn the_streaming_handler_ends_a_reply_with_nothing_in_it_at_end_turn() {
+    let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+    let mut handler = OpenAiSseHandler::new();
+    let chunk = serde_json::json!({"choices": [{"delta": {}, "finish_reason": "stop"}]});
+    handler.process_line(&format!("data: {chunk}"), &tx).await;
+    handler.process_line("data: [DONE]", &tx).await;
+    drop(tx);
+    let mut done = None;
+    while let Some(event) = rx.recv().await {
+        if let StreamEvent::Done(response) = event {
+            done = Some(response);
+        }
+    }
+    let response = done.expect("a whole reply");
+    assert!(response.content.is_none(), "{response:?}");
+    assert!(response.tool_calls.is_empty());
+    assert_eq!(response.stop_reason, Some(StopReason::EndTurn));
+}

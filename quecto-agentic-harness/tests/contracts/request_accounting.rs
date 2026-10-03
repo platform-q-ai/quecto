@@ -30,6 +30,7 @@ async fn real_accounting_redelivery_counts_once_and_rejects_changed_measurements
         harness_prefix_sha256: "prefix".into(),
         harness_prefix_bytes: 4,
         harness_prefix_unchanged: None,
+        ended_empty_after_tools: false,
         input_prefix: None,
     };
     context.record(&observation).await.unwrap();

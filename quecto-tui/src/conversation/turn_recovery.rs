@@ -16,6 +16,10 @@ pub struct TurnOutcome<'a> {
     pub assistant_text: &'a str,
     /// Tool boxes observed since this turn's `AgentStart`.
     pub tools_this_turn: usize,
+    /// Refs of the run's own tool batches, as the stream reported each one
+    /// (`subagent_messages_appended`): each call message and its results.
+    /// 0 when the stream reported none.
+    pub tool_batch_refs: usize,
     /// Tool starts not yet matched by an end.
     pub open_tool_calls: usize,
     /// Content length the server advertised for the assistant body, if any.
@@ -45,6 +49,9 @@ impl TurnOutcome<'_> {
         if self.open_tool_calls > 0 {
             return true;
         }
+        if self.recorded_no_reply() {
+            return false;
+        }
         let trimmed = self.assistant_text.trim();
         if trimmed.is_empty() || trimmed == "…" || trimmed == "..." {
             return true;
@@ -54,10 +61,30 @@ impl TurnOutcome<'_> {
         {
             return true;
         }
-        // Each tool contributes a call and a result message, plus the final
-        // assistant message; any other count means the stream lost messages.
-        let expected_refs = self.tools_this_turn.saturating_mul(2).saturating_add(1);
-        self.refs.len() != expected_refs
+        // The run's tool batches, plus the final assistant message; any
+        // other count means the stream lost messages.
+        self.refs.len() != self.tool_refs().saturating_add(1)
+    }
+
+    /// The refs the run's tool batches appended: as the stream reported
+    /// them (#2434 review), so parallel calls sharing one message count
+    /// once; else a call message and a result per tool, as before.
+    fn tool_refs(&self) -> usize {
+        match self.tool_batch_refs {
+            0 => self.tools_this_turn.saturating_mul(2),
+            reported => reported,
+        }
+    }
+
+    /// Whether the run recorded no reply (#2434): the model answered tool
+    /// results with nothing, or the run stopped at the tool iteration
+    /// limit. Its refs are exactly its tool calls and their results, and
+    /// the server says its reply text is 0 bytes, so there is no reply to
+    /// rebuild whatever text the run showed before.
+    fn recorded_no_reply(&self) -> bool {
+        self.tools_this_turn > 0
+            && self.refs.len() == self.tool_refs()
+            && self.expected_content_len == Some(0)
     }
 }
 

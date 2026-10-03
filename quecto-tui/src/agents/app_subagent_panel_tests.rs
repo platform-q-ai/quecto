@@ -47,7 +47,7 @@ async fn with_two_subagents() -> TuiHarness {
 
 #[rustfmt::skip]
 fn empty_agent_end() -> Event {
-    Event::AgentEnd { messages: vec![], message_refs: vec![] }
+    Event::AgentEnd { messages: vec![], message_refs: vec![], content_length: None }
 }
 
 #[tokio::test]

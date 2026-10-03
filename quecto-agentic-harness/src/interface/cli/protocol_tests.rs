@@ -476,10 +476,10 @@ fn test_agent_end_event_serializes() {
     let event = AgentEvent::AgentEnd {
         messages: vec![],
         message_refs: vec![],
+        content_length: None,
     };
     let json = event.to_json_line();
-    assert!(json.contains("\"type\":\"agent_end\""));
-    assert!(json.contains("\"messages\""));
+    assert!(json.contains("\"type\":\"agent_end\"") && json.contains("\"messages\""));
 }
 
 #[test]

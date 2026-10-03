@@ -105,9 +105,17 @@ impl<'a> ObservationGuard<'a> {
                 harness_prefix_sha256: prefix.sha256,
                 harness_prefix_bytes: prefix.bytes,
                 harness_prefix_unchanged: prefix.unchanged,
+                ended_empty_after_tools: false,
                 input_prefix: None,
             }),
         }
+    }
+
+    /// The reply had nothing in it and ended the turn (#2434): noted on the
+    /// record before it is finished.
+    pub fn note_ended_empty_after_tools(&mut self) {
+        let record = self.record.as_mut().expect("noted before completion");
+        record.ended_empty_after_tools = true;
     }
 
     pub fn finish(&mut self, result: &Result<LlmResponse, DomainError>) -> RequestObservation {

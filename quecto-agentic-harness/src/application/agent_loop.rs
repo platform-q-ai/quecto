@@ -15,6 +15,7 @@ use crate::application::tools::ports::{
 };
 use crate::domain::agent::{AgentInfo, AgentProgressEvent, AgentResult, ProgressCallback};
 use crate::domain::audit::AuditEvent;
+use crate::domain::conversation::reply_requirement::ReplyRequirement;
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message, ToolCall};
 use crate::domain::provider::{EffortLevel, StreamEvent};
@@ -410,51 +411,6 @@ impl AgentLoopImpl {
         }
     }
 
-    async fn finalize_text_response(
-        &self,
-        messages: &mut Vec<Message>,
-        response: LlmResponse,
-        end: TurnEnd,
-    ) -> AgentResult {
-        let text = response.content.unwrap_or_default();
-        let mut assistant_message = Message::assistant(text.clone(), vec![]);
-        assistant_message.thinking_blocks = response.thinking_blocks;
-        // Stamp + spill at creation: the loop returns right after this, so no
-        // later pruning pass could file the final reply (#1046).
-        assistant_message.turn = Some(end.current_turn);
-        self.spill_conversation_message(&mut assistant_message)
-            .await;
-        let estimate_context_tokens = end
-            .pre_response_context_tokens
-            .saturating_add(context_pruning::estimate_message_tokens(&assistant_message));
-        messages.push(assistant_message);
-        let usage = end.usage;
-        let context_tokens = if usage.context_input_tokens > 0 {
-            usage.context_input_tokens as usize
-        } else {
-            estimate_context_tokens
-        };
-        // #2212: `account_response` paired each report with its own estimate;
-        // the run's last usage may be an earlier call's, so never pair it here.
-        if usage.context_input_tokens == 0 {
-            self.observe_estimated_context_gauge(estimate_context_tokens);
-        }
-        AgentResult {
-            response: text,
-            tool_iterations: end.iterations,
-            iteration_limit_reached: false,
-            input_tokens: usage.context_input_tokens,
-            context_tokens,
-            output_tokens: usage.output_tokens,
-            billed_input_tokens: usage.billed_input_tokens,
-            billed_output_tokens: usage.billed_output_tokens,
-            cache_read_tokens: usage.cache_read_tokens,
-            cache_write_tokens: usage.cache_write_tokens,
-            cost_micro_usd: usage.cost_micro_usd,
-            appended_messages: Vec::new(),
-        }
-    }
-
     /// Run the LLM-tool loop.
     async fn run_loop(&mut self, messages: &mut Vec<Message>) -> Result<AgentResult, DomainError> {
         self.mark_turn_in_flight();
@@ -501,6 +457,9 @@ impl AgentLoopImpl {
 
             // #2421: the conversation as the active model is sent it.
             let sent = self.conversation_for_model(messages);
+            // #2434: whether its reply may be empty (tool results) or must
+            // have output (a prompt, a steer, a follow-up, feedback).
+            let requirement = ReplyRequirement::for_conversation(sent.messages());
             let request = self.prepare_provider_request_transition(
                 sent.messages(),
                 &tool_defs,
@@ -519,7 +478,11 @@ impl AgentLoopImpl {
             // Streaming (UDS mode) forwards token events in real time; REPL/
             // one-shot use the non-streaming path.
             let (response, output) = match self
-                .request_provider_response(request, current_turn, estimated_context_tokens)
+                .request_provider_response(
+                    request,
+                    (current_turn, estimated_context_tokens),
+                    requirement,
+                )
                 .await
             {
                 Ok(response) => (Ok(response), Output::NotShown),
@@ -564,7 +527,7 @@ impl AgentLoopImpl {
                 AfterResponse::Finish(result) => return result,
             };
 
-            match next_state_after_provider_response(&response) {
+            match next_state_after_provider_response(&response, requirement) {
                 TurnState::FinalizeAssistantResponse => {
                     let end = TurnEnd {
                         iterations,
@@ -575,6 +538,16 @@ impl AgentLoopImpl {
                     let result = self
                         .finalize_turn_response(messages, response, end, &mut appended_messages)
                         .await;
+                    self.drain_tool_policy_mutations_at_boundary();
+                    return Ok(result);
+                }
+                TurnState::EndTurnWithoutReply => {
+                    let result = self.empty_reply_result(
+                        messages,
+                        iterations,
+                        usage_totals,
+                        appended_messages,
+                    );
                     self.drain_tool_policy_mutations_at_boundary();
                     return Ok(result);
                 }

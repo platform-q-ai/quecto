@@ -319,6 +319,7 @@ async fn spinner_blink_with_subagents_does_not_reflow() {
         h.event(Event::AgentEnd {
             messages: vec![],
             message_refs: vec![],
+            content_length: None,
         }); // spinner off
         h.event(Event::AgentStart); // spinner on
     }
@@ -396,6 +397,7 @@ async fn idle_parent_shows_subagent_activity() {
     h.event(Event::AgentEnd {
         messages: vec![],
         message_refs: vec![],
+        content_length: None,
     }); // parent idle, a1 still running
     assert!(
         h.last().contains("subagent working"),
@@ -517,6 +519,7 @@ mod workflow_display_regression {
         h.event(Event::AgentEnd {
             messages: vec![],
             message_refs: vec![],
+            content_length: None,
         });
         h.select(None);
         h.event(get_state_dormant(true));
@@ -626,6 +629,7 @@ mod workflow_display_regression {
         h.event(Event::AgentEnd {
             messages: vec![],
             message_refs: vec![],
+            content_length: None,
         });
         let frame = h.full_frame();
         assert!(

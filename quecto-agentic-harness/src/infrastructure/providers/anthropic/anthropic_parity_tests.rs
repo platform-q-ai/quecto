@@ -249,7 +249,7 @@ fn test_assistant_message_with_normal_thinking_block() {
         thinking: "Let me reason".to_string(),
         signature: "sig123".to_string(),
     });
-    let json = AnthropicProvider::build_assistant_message(&msg, false);
+    let json = AnthropicProvider::build_assistant_message(&msg, false).expect("text to send");
     let content = json["content"].as_array().unwrap();
     let thinking_block = content
         .iter()
@@ -269,7 +269,7 @@ fn test_assistant_message_with_redacted_thinking_block() {
     msg.thinking_blocks.push(ThinkingBlock::Redacted {
         data: "opaque_data_abc".to_string(),
     });
-    let json = AnthropicProvider::build_assistant_message(&msg, false);
+    let json = AnthropicProvider::build_assistant_message(&msg, false).expect("text to send");
     let content = json["content"].as_array().unwrap();
     let redacted = content
         .iter()
@@ -288,7 +288,7 @@ fn test_encrypted_reasoning_is_not_sent_to_anthropic() {
         leads_to: None,
         item: "SECRET".to_string(),
     });
-    let json = AnthropicProvider::build_assistant_message(&msg, false);
+    let json = AnthropicProvider::build_assistant_message(&msg, false).expect("text to send");
     assert!(!json.to_string().contains("SECRET"), "{json}");
     assert_eq!(
         json["content"],
@@ -304,7 +304,7 @@ fn test_thinking_block_empty_signature_is_not_replayed_as_text() {
         thinking: "some reasoning".to_string(),
         signature: "".to_string(),
     });
-    let json = AnthropicProvider::build_assistant_message(&msg, false);
+    let json = AnthropicProvider::build_assistant_message(&msg, false).expect("text to send");
     let content = json["content"].as_array().unwrap();
     assert!(
         content.iter().all(|b| b["type"] != "thinking"),

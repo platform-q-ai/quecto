@@ -73,6 +73,7 @@ fn submit_and_respond(world: &mut TuiWorld, prompt: &str) {
         h.event(Event::AgentEnd {
             messages: vec![],
             message_refs: vec![],
+            content_length: None,
         });
     });
 }
@@ -172,6 +173,7 @@ fn agent_sends_agent_end(world: &mut TuiWorld) {
         h.event(Event::AgentEnd {
             messages: vec![],
             message_refs: vec![],
+            content_length: None,
         });
     });
     let pending = with_harness(world, |h| h.pending_aborts());
@@ -197,6 +199,7 @@ fn tui_does_not_hang(world: &mut TuiWorld) {
         h.event(Event::AgentEnd {
             messages: vec![],
             message_refs: vec![],
+            content_length: None,
         });
     });
     let frame = with_harness(world, |h| h.full_frame());

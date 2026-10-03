@@ -51,6 +51,15 @@ pub enum AgentEvent {
         /// Stable domain message ids for messages appended during this run.
         #[serde(rename = "messageRefs", default)]
         message_refs: Vec<String>,
+        /// Byte length of the run's reply text, as `turn_end` reports it: 0
+        /// for a run that recorded no reply (#2434). Absent from older
+        /// harnesses and from runs that end before a turn.
+        #[serde(
+            rename = "contentLength",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        content_length: Option<u64>,
     },
     /// The post-turn drain made no further workflow continuation runnable.
     /// Emitted only after pending work and automatic workflow nudges settle.

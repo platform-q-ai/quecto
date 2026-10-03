@@ -253,6 +253,7 @@ fn agent_reports_completion_with_undisplayed_details(world: &mut TuiWorld) {
                 stream.completion_agent_end = Some(Event::AgentEnd {
                     messages: vec![],
                     message_refs: vec![],
+                    content_length: None,
                 })
             }
             Event::TurnEnd { .. } => stream.completion_turn_end = Some(event),

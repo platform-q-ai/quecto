@@ -64,6 +64,7 @@ async fn streamed_text_turn_renders_without_message_fetches_at_end_of_turn() {
         a.handle_event(Event::AgentEnd {
             messages: vec![],
             message_refs: vec![],
+            content_length: None,
         });
         let frame = chat_text(a);
         assert!(
@@ -383,6 +384,7 @@ async fn late_recovery_replaces_original_turn_not_latest_assistant() {
     a.handle_event(Event::AgentEnd {
         messages: vec![],
         message_refs: vec!["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa".into()],
+        content_length: None,
     });
     let commands = h.drain_commands().await;
     let request_id = get_message_ids(&commands)
@@ -398,6 +400,7 @@ async fn late_recovery_replaces_original_turn_not_latest_assistant() {
     a.handle_event(Event::AgentEnd {
         messages: vec![],
         message_refs: vec!["bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb".into()],
+        content_length: None,
     });
     a.handle_event(Event::Response {
         id: Some(request_id), command: "get_message".into(), success: true,
@@ -441,6 +444,7 @@ async fn partial_multi_tool_turn_fetches_unresolved_refs() {
         message_refs: (0..5)
             .map(|n| format!("00000000-0000-0000-0000-00000000000{n}"))
             .collect(),
+        content_length: None,
     });
     assert_eq!(
         get_message_ids(&h.drain_commands().await).len(),

@@ -61,3 +61,37 @@ fn a_whole_body_that_ends_before_message_stop_is_cut_short() {
     .unwrap();
     assert_eq!(whole.content.as_deref(), Some("hi"));
 }
+
+/// #2434: a reply that finished with nothing in it is whole, stopped at
+/// `end_turn`; the agent loop, not the stream, decides what it means.
+#[tokio::test]
+async fn a_streamed_reply_with_nothing_in_it_ends_whole_at_end_turn() {
+    let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+    let mut handler = AnthropicSseHandler::new(None);
+    let mut outcome = SseLineOutcome::Continue;
+    for line in [
+        "event: message_start",
+        r#"data: {"message":{"usage":{"input_tokens":5,"output_tokens":1}}}"#,
+        "event: message_delta",
+        r#"data: {"delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}"#,
+        "event: message_stop",
+        "data: {}",
+    ] {
+        outcome = handler.process_line(line, &tx).await;
+    }
+    assert!(matches!(outcome, SseLineOutcome::Done));
+    drop(tx);
+    let mut done = None;
+    while let Some(event) = rx.recv().await {
+        if let StreamEvent::Done(response) = event {
+            done = Some(response);
+        }
+    }
+    let response = done.expect("a whole reply");
+    assert!(response.content.is_none(), "{response:?}");
+    assert!(response.tool_calls.is_empty());
+    assert_eq!(
+        response.stop_reason,
+        Some(crate::domain::message::StopReason::EndTurn)
+    );
+}

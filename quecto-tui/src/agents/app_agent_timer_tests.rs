@@ -60,6 +60,7 @@ async fn coordinator_panel_timer_accumulates_across_message_boundaries() {
     h.event(Event::AgentEnd {
         messages: vec![],
         message_refs: vec![],
+        content_length: None,
     });
     tokio::time::advance(std::time::Duration::from_secs(90)).await;
 
@@ -95,6 +96,7 @@ async fn coordinator_disconnect_after_end_does_not_count_idle_gap() {
     h.event(Event::AgentEnd {
         messages: vec![],
         message_refs: vec![],
+        content_length: None,
     });
     tokio::time::advance(std::time::Duration::from_secs(60)).await;
 
@@ -119,6 +121,7 @@ async fn coordinator_abort_then_stale_end_does_not_count_idle_gap() {
     h.event(Event::AgentEnd {
         messages: vec![],
         message_refs: vec![],
+        content_length: None,
     });
     h.event(Event::AgentStart);
 
@@ -138,6 +141,7 @@ async fn coordinator_panel_timer_resets_for_new_session() {
     h.event(Event::AgentEnd {
         messages: vec![],
         message_refs: vec![],
+        content_length: None,
     });
 
     h.app_mut().reset_session("New session started");
@@ -329,6 +333,7 @@ fn end_event() -> Event {
     Event::AgentEnd {
         messages: vec![],
         message_refs: vec![],
+        content_length: None,
     }
 }
 

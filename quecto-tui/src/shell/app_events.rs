@@ -49,8 +49,12 @@ impl App {
                 result,
                 is_error,
             } => self.handle_tool_end(tool_call_id, tool_name, result, is_error),
-            Event::AgentEnd { message_refs, .. } if self.ac_mut().agent_state.end() => {
-                self.maybe_recover_from_refs(&message_refs);
+            Event::AgentEnd {
+                message_refs,
+                content_length,
+                ..
+            } if self.ac_mut().agent_state.end() => {
+                self.maybe_recover_from_refs_with_len(&message_refs, content_length);
                 self.handle_agent_end();
             }
             Event::AgentEnd { .. } => {}
@@ -69,7 +73,10 @@ impl App {
             Event::SubagentNotification {
                 agent_id, message, ..
             } => self.handle_subagent_notification(agent_id, message),
-            Event::SubagentMessagesAppended { .. } => {}
+            ev @ Event::SubagentMessagesAppended { .. } => {
+                let refs = crate::protocol::presentation_payloads::own_tool_batch_refs(&ev);
+                self.ac_mut().master_session.note_tool_batch(refs);
+            }
             Event::WorkflowState {
                 agent_id,
                 steps,
@@ -153,8 +160,7 @@ impl App {
         // current session. Resume from the frozen duration so a new user message
         // or wake does not restart the counter (#1726); idle time stays excluded.
         self.ac_mut().start_coordinator_clock(now);
-        self.ac_mut().master_session.tools_this_turn = 0;
-        self.ac_mut().master_session.open_tool_calls = 0;
+        self.ac_mut().master_session.reset_turn_counts();
         self.ac_mut().running_tools.clear();
         let _ = self
             .ac_mut()

@@ -5,6 +5,79 @@ An assistant stream that terminates without text, tools or thinking is classifie
 existing retry budget and no-replay guard. `max_tokens` remains the existing
 non-retryable output-limit path. Neither classification establishes overload.
 
+## An empty reply to tool results ends the turn (#2434)
+
+Whether an empty reply is an error depends on what it answers. The latest user
+message or tool result in the request decides; system messages and the model's
+own messages are not something to answer, so they are ignored:
+
+- **A user message** (a prompt, a steer, a follow-up, a harness note or the
+  loop's own feedback) must be answered. An empty reply to it is `empty_stream`,
+  retried, then an `agent_error`, as above.
+- **Tool results** may be answered with nothing: the model acted and has nothing
+  to add. For example, a background tool may say "started — end your turn now".
+  A completed reply with no text, no tool call and no visible thinking (encrypted
+  reasoning alone counts as nothing) that stopped at `end_turn` ends the turn at
+  once. There is no retry and no error, and the run ends with `agent_end`. It is
+  a final answer with no text. No empty assistant message is recorded (some
+  providers refuse an empty assistant message when the conversation is sent
+  again), so the conversation ends on the tool results, as it does at the tool
+  iteration limit.
+
+Text of whitespace alone counts as nothing, in both cases. Whitespace a stream
+already sent is not output shown either: a blank reply to a user message is
+still asked again, as an empty one is. Only a failure after text that is not
+whitespace is never retried, since the user already saw part of a reply.
+
+A reply after tool results may hold visible reasoning (Anthropic thinking, a
+Codex summary, OpenAI-compatible `reasoning_content`) and no text. That is not
+nothing, so it is recorded as a final answer with no text. No provider is ever
+sent empty assistant text:
+
+- Anthropic keeps a signed thinking block without a text part. It leaves out
+  an assistant message with nothing else to send.
+- OpenAI chat leaves out an assistant entry with no text and no call.
+- Codex/Responses sends no empty answer and no reasoning item that leads to
+  nothing.
+
+Codex/Responses no longer replays the reasoning of a final answer that has no
+text, since that reasoning leads to no item.
+
+**One-time cache miss for existing sessions.** A session saved before this
+change may hold an assistant message that is empty or whitespace alone. That
+happens with an empty final answer on the whole-reply path or a reasoning-only
+answer. On Anthropic, whitespace text beside a tool call counts too. The first request after the
+upgrade sends that history without it, so the request differs from the last one
+at that message and the provider's prompt cache misses there once. Later
+requests hit the cache again. The affected providers are:
+
+- Anthropic: the message or its text part is left out;
+- OpenAI chat and OpenAI-compatible providers: the entry is left out;
+- Codex/Responses: the empty answer item is left out, with the reasoning that
+  led to it.
+
+A session that holds no such message is not affected.
+
+A prompt after a turn that ended with no reply follows the tool results as its
+own user turn. On Anthropic that is a second consecutive user turn, which the
+API accepts.
+
+Only a clean stop ends the turn. After tool results, an empty reply stopped at
+`max_tokens` was cut off, so it keeps the `stop_reason=max_tokens` error.
+Reasoning alone at the output limit is still asked again once and then fails
+(#2124). An empty reply that names no stop reason is not known to have finished,
+so it stays `empty_stream` and is retried. A 200 body with no event at all is
+a transport failure, not a reply, and stays `empty_stream` whatever it answers.
+
+The request whose reply ended the turn this way is recorded with outcome
+`succeeded` and `"ended_empty_after_tools": true` on its `RequestObservation`
+(in `request_observed` audit records and the recent request diagnostics). The
+field is absent when false and in older records. The harness also logs
+`ended_empty_after_tools` at info level (target `agent_loop`). The rule applies
+to the streamed and the whole-reply paths of every provider: Codex/Responses,
+OpenAI chat, OpenAI-compatible and Anthropic each deliver such a reply as a
+whole reply with stop reason `end_turn`.
+
 Request observations add `started_unix_ms`, `finished_unix_ms` and bounded
 `attempt_diagnostics`. Existing audit/session observation and swarm `request_usage`
 JSON payloads carry these fields; no logging/configuration switch is changed.

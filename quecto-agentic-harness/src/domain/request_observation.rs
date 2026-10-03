@@ -154,6 +154,11 @@ pub struct RequestObservation {
     pub harness_prefix_sha256: String,
     pub harness_prefix_bytes: usize,
     pub harness_prefix_unchanged: Option<bool>,
+    /// The reply had nothing in it and ended the turn, as a reply to tool
+    /// results may (#2434): the request `succeeded`, it was no empty stream.
+    /// Absent when false, and from records written before it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ended_empty_after_tools: bool,
     /// Where the request's input first differs from its session's previous
     /// request (#2398); absent when its provider does not observe its input.
     #[serde(flatten)]
