@@ -49,6 +49,7 @@ async fn an_export_writes_records_and_manifest_under_the_root_and_returns_the_re
                     input_preview: "needle".into(),
                     tokens: 5,
                     content: "haystack".into(),
+                    images: Vec::new(),
                 }),
             ],
             manifest(),

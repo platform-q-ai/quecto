@@ -355,6 +355,33 @@ fn history_shows_how_many_images_a_message_carried_never_their_data() {
     assert!(plain.get("imageMimeTypes").is_none(), "{plain}");
 }
 
+/// #2424: an image a resumed session could not load still counts, in its place.
+#[test]
+fn history_counts_an_image_a_session_could_not_load() {
+    use crate::domain::conversation::stored_images::{ImageKind, ImageRef, UnloadedImage};
+    let mut message = with_images();
+    message.unloaded_images = vec![UnloadedImage {
+        kind: ImageKind::User,
+        position: 1,
+        reference: ImageRef {
+            sha256: "0".repeat(64),
+            mime_type: "image/webp".into(),
+        },
+    }];
+    let json = crate::interface::cli::uds_session::message_to_json(&message);
+    assert_eq!(json["imageCount"], 3);
+    assert_eq!(
+        json["imageMimeTypes"],
+        serde_json::json!(["image/png", "image/webp", "image/jpeg"])
+    );
+    message.user_image_blocks.clear();
+    let json = crate::interface::cli::uds_session::message_to_json(&message);
+    assert_eq!(
+        json["imageCount"], 1,
+        "an unloaded image alone still counts"
+    );
+}
+
 #[test]
 fn an_oversized_history_entry_keeps_the_image_summary() {
     let mut message = with_images();

@@ -6,6 +6,7 @@
 //! (`application::tools::ports`, #1960).
 use std::borrow::Cow;
 
+use super::conversation::stored_images::{ImageDigest, VerifiedText};
 use super::tool_descriptor::{ProfileAvailabilityScope, ToolAvailability, ToolCatalogueEntry};
 
 /// Metadata describing a tool for the LLM.
@@ -28,7 +29,46 @@ pub struct ImageBlock {
     /// Always a static literal — avoids a heap allocation per image block.
     pub mime_type: &'static str,
     /// Base64-encoded image bytes (standard encoding, no line breaks).
-    pub data: String,
+    /// Private, as is its digest (#2424): a block's text never changes.
+    data: String,
+    /// The SHA-256 of `data`, once asked for (#2424: what a session stores it as).
+    digest: ImageDigest,
+}
+
+impl ImageBlock {
+    pub fn new(mime_type: &'static str, data: impl Into<String>) -> Self {
+        Self {
+            mime_type,
+            data: data.into(),
+            digest: ImageDigest::default(),
+        }
+    }
+
+    /// A block a session restored from its sidecar's text, hashed when it
+    /// was read (#2424): the digest is known, not computed again.
+    pub(crate) fn restored(mime_type: &'static str, text: VerifiedText) -> Self {
+        let (sha256, data) = text.into_parts();
+        Self {
+            mime_type,
+            data,
+            digest: ImageDigest::verified(sha256),
+        }
+    }
+
+    /// The image's base64.
+    pub fn data(&self) -> &str {
+        &self.data
+    }
+
+    /// The SHA-256 of the block's text, computed once.
+    pub fn sha256(&self) -> &str {
+        self.digest.of(&self.data)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn digest_builds_for_tests(&self) -> usize {
+        self.digest.builds_for_tests()
+    }
 }
 
 /// The result of executing a tool.

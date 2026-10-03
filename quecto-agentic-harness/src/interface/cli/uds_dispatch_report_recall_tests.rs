@@ -74,6 +74,7 @@ async fn fixture_with_recall(replies: &[Option<&'static str>]) -> Fixture {
         input_preview: "a big file".into(),
         tokens: 10,
         content: "retained".into(),
+        images: Vec::new(),
     };
     spill
         .append(&SessionIdentity::from_persisted_key("cli:test"), &entry)

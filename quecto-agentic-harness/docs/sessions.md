@@ -18,14 +18,70 @@ Sessions are stored as files in `<base_dir>/sessions/` by one flat layout
 (`FlatSessionLayout`): `<sanitized key>.json` holds the conversation record
 (a snapshot plus appended delta records with durable ordinals), `<sanitized
 key>.owner` is the ownership stamp a live harness holds while it has the
-session open, and `<sanitized key>/spill.jsonl` is the retained-context
-namespace the `recall` tool reads. The file contains the full conversation
+session open, `<sanitized key>/spill.jsonl` is the retained-context
+namespace the `recall` tool reads, and `<sanitized key>/images/` holds the
+session's images. The file contains the full conversation
 history (system prompt excluded — it is injected at run time and never
 persisted; user messages, assistant responses, tool calls and results, the
 workflow run and the historical sub-agent roster). For thinking-capable models
 (Claude Sonnet 4.5+, Opus 4.5+), extended thinking blocks and their
 cryptographic signatures are also persisted, enabling correct multi-turn
 replay.
+
+### Images (#2424)
+
+The images a conversation carries — a tool result's (`read` of an image) and
+a user's attachments — are saved with the session and restored when it is
+loaded or resumed, so the next request sends them again, byte for byte as
+before. Each image is stored once, as a sidecar file in
+`<sanitized key>/images/` holding its exact base64 text and named by the
+SHA-256 of that text; a message record holds only references (`"images"` for
+a tool result, `"user_images"` for a user message, each
+`[{"sha256": …, "mime_type": …}]`, in the message's order), so session files
+stay small and an image several messages carry is stored once. A sidecar's
+write (atomic) is tried before any record names it; each image is hashed once in
+its life (a restored one not at all: its sidecar read verified it), and a
+sidecar already verified costs a `stat` on later saves (one changed in the last
+2 s, or found corrupt, is read again: a same-length rewrite within a coarse
+timestamp tick keeps its times). The sidecars are kept
+by `FileImageSidecarStore` behind `ImageSidecarStore`, a seam inside
+persistence (not an application port) that composition wires into the file
+store.
+
+- A sidecar that cannot be written (the `images/` directory unreadable, or a
+  file where it should be) never fails a save: the record still names the
+  image and every later save tries again, but until one stores it only the
+  running session holds the image, so an exit or a reload loses it (a load
+  then keeps its reference as unloaded, below). A warning says so once per
+  image of each session, and again when the session is left (a switch, or
+  the store dropped at exit) with the image still not stored.
+
+- An image whose sidecar cannot be read on load (missing, unreadable, or not
+  the image its name says) is never dropped: it stays on its message, is saved
+  again with it and is read again on the next load, and a provider request
+  shows it as the text `[image unavailable: <first 12 hex digits>]` (with a
+  warning in the log). The marker is never written into the transcript.
+- A user's image is re-admitted on restore by the same strict rules as when
+  it was sent (`quecto-image`); one they refuse stays unloaded like the rest.
+  A message's text is saved exactly as sent, an images-only prompt's too.
+- An image of a type quecto does not admit (other than PNG, JPEG, GIF and
+  WebP, spelled exactly) or whose base64 is longer than 5 MiB is still named
+  in its record, with a warning, and a reload sends the marker for it.
+- A message archived to session memory keeps its image references there, for
+  information only: a `recall` of it stays text and ends with
+  `[N image(s) not recalled]`. An image-only prompt is archived with the
+  preview `[image]` and its image's token estimate.
+- When a save rewrites the file whole (after a cut, a clear or a rewind), the
+  sidecars the file no longer names are removed, including those only session
+  memory names; a sidecar a store write left half-done is removed once it is
+  a minute old. Deleting the session (an empty save) removes its sidecars
+  after its transcript; if that removal fails, the key's next save (always a
+  rewrite) collects what is left.
+- A transcript read only to be shown (another session's history page, or the
+  bounded read of an ended sub-agent's transcript) names its images, so they
+  are counted, but reads no sidecar.
+- A record written before images were saved has no image fields and loads as
+  it always did. Image-free records are written byte for byte as before.
 
 ## Session modes
 
@@ -187,7 +243,7 @@ Declared only under `src/application/sessions/ports.rs` and
 |------|----------------------|------------------|
 | `SessionHomeCatalogue` | `infrastructure/persistence/session_home_catalogue.rs` (`FileSessionHomeCatalogue`, its metadata query in `session_home_catalogue_metadata.rs`) | exact authoritative home reads, first-save home recording, derived catalogue validation and recovery, and the metadata query (#2010): every listed session once with its listing summary and home, validated by stamp; a record version already read — summarised, **or rejected** in this process (`session_home_catalogue_rejections.rs`: content verdicts only, in memory only) — is never read again |
 | `WorkspaceDiscovery` | `infrastructure/workspace/git_scope_discovery.rs` (`GitScopeDiscovery`), using `filesystem_scope.rs` | canonical execution directory and real Git common-dir/worktree grouping; observable discovery failure |
-| `SessionStore` | `infrastructure/persistence/session_store.rs` (`FileSessionStore`) | claim/release/load/save/save_delta/save_clean_delta/exists/list, keyed by `SessionIdentity` |
+| `SessionStore` | `infrastructure/persistence/session_store.rs` (`FileSessionStore`) | claim/release/load/load_transcript/save/save_delta/save_clean_delta/exists/list, keyed by `SessionIdentity` |
 | `ContextSpillStore` | `infrastructure/persistence/context_spill.rs` (`FileContextSpillStore`) | append/recall/list_entries/has_entries/clear/scrub_sync of the retention namespace |
 | `SessionExportPort` | `infrastructure/session_export.rs` (`FileSessionExport`) | the raw export writer (records, manifest, checksum) |
 | `DurablePrefixObservation` | `application/durable_prefix.rs` (`DurablePrefixLatch`) | the agent loop's dirty-prefix latch the save drains |
@@ -790,6 +846,9 @@ When the emergency ladder stubs a message, the compact stub looks like:
 The agent can call `recall("turn5:bash:0")` to retrieve the original content
 from the retention namespace, even after the original message has been
 archived by a cut or stubbed or dropped by the ladder.
+A retained message that carried images keeps them by reference, for
+information only; its recall returns the text and a last line
+`[N image(s) not recalled]` (see [Images](#images-2424)).
 
 ## Inspecting sessions
 

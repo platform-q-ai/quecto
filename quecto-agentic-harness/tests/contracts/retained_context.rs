@@ -90,6 +90,7 @@ fn entry(id: &str) -> SpillEntry {
         input_preview: "ls".to_string(),
         tokens: 3,
         content: format!("content of {id}"),
+        images: Vec::new(),
     }
 }
 

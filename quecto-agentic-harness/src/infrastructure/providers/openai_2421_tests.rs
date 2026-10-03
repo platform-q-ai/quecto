@@ -60,10 +60,7 @@ fn tool_with_images(id: &str, name: &str, text: &str, images: &[(&'static str, &
     message.tool_name = Some(name.into());
     message.image_blocks = images
         .iter()
-        .map(|(mime, data)| ImageBlock {
-            mime_type: mime,
-            data: data.to_string(),
-        })
+        .map(|(mime, data)| ImageBlock::new(mime, data.to_string()))
         .collect();
     message
 }

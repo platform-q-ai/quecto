@@ -85,6 +85,7 @@ fn entry(id: &str, preview: &str, tokens: usize, content: &str) -> SpillEntry {
         input_preview: preview.to_string(),
         tokens,
         content: content.to_string(),
+        images: Vec::new(),
     }
 }
 

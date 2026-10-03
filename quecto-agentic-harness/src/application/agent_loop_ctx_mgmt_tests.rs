@@ -536,6 +536,7 @@ async fn mem_spill_store_trait_surface_recalls_and_clears() {
         input_preview: "echo".into(),
         tokens: 2,
         content: "out".into(),
+        images: Vec::new(),
     };
     store.append(&id("s"), &entry).await.unwrap();
     assert_eq!(

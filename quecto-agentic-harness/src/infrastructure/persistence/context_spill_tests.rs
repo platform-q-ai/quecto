@@ -14,6 +14,7 @@ fn test_entry() -> SpillEntry {
         input_preview: "echo hello".to_string(),
         tokens: 100,
         content: "hello\n".to_string(),
+        images: Vec::new(),
     }
 }
 
@@ -118,6 +119,7 @@ async fn test_list_entries() {
         input_preview: "echo hello".to_string(),
         tokens: 100,
         content: "hello\n".to_string(),
+        images: Vec::new(),
     };
     let entry2 = SpillEntry {
         id: "turn2:bash:0".to_string(),
@@ -125,6 +127,7 @@ async fn test_list_entries() {
         input_preview: "ls -la".to_string(),
         tokens: 200,
         content: "total 0\n".to_string(),
+        images: Vec::new(),
     };
 
     store.append(&id("test-session"), &entry1).await.unwrap();
@@ -206,6 +209,7 @@ async fn test_has_entries_tracks_append_and_clear_without_loading_index() {
                 input_preview: "echo hi".into(),
                 tokens: 2,
                 content: "hi".into(),
+                images: Vec::new(),
             },
         )
         .await
@@ -244,6 +248,7 @@ async fn test_list_entries_uses_cache_after_append() {
         input_preview: "ls".to_string(),
         tokens: 50,
         content: "file.txt\n".to_string(),
+        images: Vec::new(),
     };
     store.append(&id("cached-session"), &entry2).await.unwrap();
 
@@ -294,6 +299,7 @@ async fn test_recall_finds_entry_among_many() {
             input_preview: format!("cmd-{}", i + 1),
             tokens: 100,
             content: format!("output-{}-{}", i + 1, "x".repeat(1000)),
+            images: Vec::new(),
         };
         store.append(&id("recall-test"), &entry).await.unwrap();
     }
@@ -360,6 +366,7 @@ async fn test_recall_handles_id_substring_in_content() {
         input_preview: "echo".to_string(),
         tokens: 50,
         content: "Use recall(\"turn2:bash:0\") to see the other output".to_string(),
+        images: Vec::new(),
     };
     let entry2 = SpillEntry {
         id: "turn2:bash:0".to_string(),
@@ -367,6 +374,7 @@ async fn test_recall_handles_id_substring_in_content() {
         input_preview: "ls".to_string(),
         tokens: 50,
         content: "actual output".to_string(),
+        images: Vec::new(),
     };
     store.append(&id("substr-test"), &entry1).await.unwrap();
     store.append(&id("substr-test"), &entry2).await.unwrap();

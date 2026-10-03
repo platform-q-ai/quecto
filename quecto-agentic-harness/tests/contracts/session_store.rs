@@ -276,3 +276,32 @@ async fn list_reports_an_unreadable_sessions_dir_as_an_error() {
         "{err}"
     );
 }
+
+/// #2424: a transcript only shown is the transcript `load` gives, its images
+/// named but not read (a text-only session is the same either way).
+#[tokio::test]
+async fn load_transcript_holds_what_load_holds() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = under_test(tmp.path());
+    save_with_messages(store.as_ref(), "cli:shown", &["one", "two"]).await;
+    let loaded = store.load(&id("cli:shown")).await.unwrap().unwrap();
+    let shown = store
+        .load_transcript(&id("cli:shown"))
+        .await
+        .unwrap()
+        .unwrap();
+    let contents = |s: &Session| {
+        s.messages
+            .iter()
+            .map(|m| m.content.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(contents(&shown), contents(&loaded));
+    assert!(
+        store
+            .load_transcript(&id("cli:none"))
+            .await
+            .unwrap()
+            .is_none()
+    );
+}

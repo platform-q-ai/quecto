@@ -9,6 +9,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
+use super::session_images::ImageRefRecord;
 use super::session_layout::FlatSessionLayout;
 use crate::application::sessions::ports::{ContextSpillStore, SpillIndexList, SpillPresence};
 use crate::domain::error::DomainError;
@@ -49,6 +50,8 @@ struct SpillRecord {
     input_preview: String,
     tokens: usize,
     content: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    images: Vec<ImageRefRecord>,
 }
 
 impl From<&SpillEntry> for SpillRecord {
@@ -59,6 +62,7 @@ impl From<&SpillEntry> for SpillRecord {
             input_preview: e.input_preview.clone(),
             tokens: e.tokens,
             content: e.content.clone(),
+            images: e.images.iter().map(ImageRefRecord::from).collect(),
         }
     }
 }
@@ -71,6 +75,7 @@ impl From<SpillRecord> for SpillEntry {
             input_preview: r.input_preview,
             tokens: r.tokens,
             content: r.content,
+            images: r.images.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -110,15 +115,16 @@ struct SpillIndexRecord {
     // content field is intentionally omitted to skip deserialization
 }
 
+fn spill_error(what: &'static str) -> impl Fn(std::io::Error) -> DomainError {
+    move |e| DomainError::Session(format!("failed to {what}: {e}"))
+}
+
 /// Read the raw JSONL content from a spill file.
 async fn read_spill_content(path: &Path) -> Result<String, DomainError> {
     match tokio::fs::read_to_string(path).await {
         Ok(c) => Ok(c),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
-        Err(e) => Err(DomainError::Session(format!(
-            "failed to read spill file: {}",
-            e
-        ))),
+        Err(e) => Err(spill_error("read spill file")(e)),
     }
 }
 
@@ -189,10 +195,9 @@ impl ContextSpillStore for FileContextSpillStore {
                 .await
                 .map_err(|e| DomainError::Session(format!("failed to flush spill file: {}", e)))?;
 
-            // Update in-memory index cache (only if already populated).
-            // If no cache entry exists, we skip — the next list_entries()
-            // call will seed the cache from disk including this new entry.
-            // This avoids creating a partial cache that misses prior entries.
+            // Update in-memory index cache (only if already populated). If no cache entry exists,
+            // we skip — the next list_entries() call will seed the cache from disk including this
+            // new entry. This avoids creating a partial cache that misses prior entries.
             let index = SpillIndex {
                 id: record.id,
                 tool: record.tool,
@@ -315,12 +320,7 @@ impl ContextSpillStore for FileContextSpillStore {
             // Check if the file exists — if not, nothing to clear.
             match tokio::fs::metadata(&path).await {
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-                Err(e) => {
-                    return Err(DomainError::Session(format!(
-                        "failed to stat spill file: {}",
-                        e
-                    )));
-                }
+                Err(e) => return Err(spill_error("stat spill file")(e)),
                 Ok(_) => {}
             }
 
@@ -334,9 +334,9 @@ impl ContextSpillStore for FileContextSpillStore {
             // Use the same directory so rename() is atomic (same filesystem).
             let tmp_path = parent.join(format!(".spill-clear-{}.tmp", uuid::Uuid::new_v4()));
 
-            tokio::fs::write(&tmp_path, b"").await.map_err(|e| {
-                DomainError::Session(format!("failed to write temp clear file: {}", e))
-            })?;
+            tokio::fs::write(&tmp_path, b"")
+                .await
+                .map_err(spill_error("write temp clear file"))?;
 
             tokio::fs::rename(&tmp_path, &path).await.map_err(|e| {
                 DomainError::Session(format!("failed to atomically clear spill file: {}", e))

@@ -1,6 +1,7 @@
 use crate::domain::conversation::image_tokens::{
     estimate_image_tokens, estimate_named_image_tokens,
 };
+use crate::domain::conversation::stored_images::UnloadedImage;
 #[cfg(any(test, feature = "test-support"))]
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -67,6 +68,7 @@ pub struct Message {
     pub spill_id: Option<String>,
     /// Image blocks for tool result messages that return image data (e.g. `read` on images).
     /// Empty for non-image messages. Not sent to context-pruning; passed directly to providers.
+    /// Saved with the session as sidecar references (#2424), restored on load.
     pub image_blocks: Vec<crate::domain::tool::ImageBlock>,
     /// Whether this tool result represents an error (propagated to Anthropic `is_error` field).
     pub is_error: bool,
@@ -80,11 +82,12 @@ pub struct Message {
     /// Distinct from `image_blocks` (which is for tool results). When non-empty,
     /// the provider builds a structured content block array instead of a plain string.
     ///
-    /// **Transient** — intentionally not persisted in `FileSessionStore`.
-    /// Session files store only the text portion of user messages; if a session
-    /// is reloaded the image content will not be replayed. This matches the
-    /// expected usage pattern (images are sent once in the active session).
+    /// Saved with the session like `image_blocks` (#2424): each image once, as a
+    /// sidecar the record references, so a reloaded session replays it.
     pub user_image_blocks: Vec<UserImageBlock>,
+    /// Images this message carries whose text could not be (or was not) read
+    /// from the session's sidecars (#2424): saved with it, sent as a marker.
+    pub unloaded_images: Vec<UnloadedImage>,
     /// Extended thinking blocks from assistant messages.
     ///
     /// Anthropic's thinking-capable models (Sonnet 4.5+, Opus 4.5+) emit
@@ -172,6 +175,7 @@ impl Clone for Message {
             is_error: self.is_error,
             stop_reason: self.stop_reason.clone(),
             user_image_blocks: self.user_image_blocks.clone(),
+            unloaded_images: self.unloaded_images.clone(),
             thinking_blocks: self.thinking_blocks.clone(),
             cached_tokens: TokenCache::default(),
         }
@@ -268,7 +272,7 @@ impl Message {
             let image_tokens: usize = self
                 .image_blocks
                 .iter()
-                .map(|img| estimate_named_image_tokens(img.mime_type, &img.data))
+                .map(|img| estimate_named_image_tokens(img.mime_type, img.data()))
                 .sum();
             text_tokens + tool_call_tokens + tool_call_id_tokens + image_tokens + user_image_tokens
         })

@@ -392,7 +392,7 @@ impl AnthropicProvider {
                     "source": {
                         "type": "base64",
                         "media_type": img.mime_type,
-                        "data": img.data,
+                        "data": img.data(),
                     }
                 }));
             }

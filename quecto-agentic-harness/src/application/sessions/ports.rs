@@ -29,6 +29,8 @@ use crate::domain::workflow::WorkflowRunPersisted;
 pub type SpillIndexList<'a> =
     Pin<Box<dyn Future<Output = Result<SpillEntries, DomainError>> + Send + 'a>>;
 pub type SpillPresence<'a> = Pin<Box<dyn Future<Output = Result<bool, DomainError>> + Send + 'a>>;
+pub type SessionLoad<'a> =
+    Pin<Box<dyn Future<Output = Result<Option<Session>, DomainError>> + Send + 'a>>;
 
 /// Port: persistent storage for conversation sessions.
 pub trait SessionStore: Send + Sync {
@@ -47,10 +49,12 @@ pub trait SessionStore: Send + Sync {
     fn release(&self, _identity: &SessionIdentity) {}
 
     /// Load a session by identity. Returns None if no session exists.
-    fn load(
-        &self,
-        identity: &SessionIdentity,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<Session>, DomainError>> + Send + '_>>;
+    fn load(&self, identity: &SessionIdentity) -> SessionLoad<'_>;
+
+    /// [`Self::load`] naming the images kept beside the records, reading none (#2424).
+    fn load_transcript<'a>(&'a self, identity: &'a SessionIdentity) -> SessionLoad<'a> {
+        self.load(identity)
+    }
 
     /// Save (create or update) a session under its own identity.
     fn save<'a>(
@@ -66,12 +70,8 @@ pub trait SessionStore: Send + Sync {
         _previously_persisted: usize,
         workflow_run: Option<WorkflowRunPersisted>,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
-        let session = Session {
-            key: identity.clone(),
-            messages: messages.to_vec(),
-            workflow_run,
-            subagent_roster: Vec::new(),
-        };
+        let mut session = Session::new(identity.clone());
+        (session.messages, session.workflow_run) = (messages.to_vec(), workflow_run);
         Box::pin(async move { self.save(&session).await })
     }
 

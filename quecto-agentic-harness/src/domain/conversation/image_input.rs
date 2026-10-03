@@ -6,6 +6,7 @@
 //! over a wire that takes one (the OpenAI wires document still GIFs only).
 //! Each image a model does not take is sent as a short text marker after the
 //! text of the message it belonged to: an image is never silently dropped.
+//! So is an image a resumed session could not load (#2424), for any model.
 //! The providers then serialize what they are given.
 //!
 //! What a message becomes depends on that message and the model alone,
@@ -20,6 +21,7 @@ use quecto_image::ImageMime;
 use sha2::Digest;
 
 use crate::domain::catalogue::TransportKind;
+use crate::domain::conversation::stored_images::unavailable_marker;
 use crate::domain::message::{Message, UserImageBlock};
 use crate::domain::tool::ImageBlock;
 
@@ -157,14 +159,18 @@ impl<'m> SentConversation<'m> {
         input: ImageInput,
         verdicts: &GifVerdicts,
     ) -> Self {
-        let withheld = match input {
-            ImageInput::AllImages => Vec::new(),
-            ImageInput::NoImages | ImageInput::StillImages => messages
-                .iter_mut()
-                .enumerate()
-                .filter_map(|(index, message)| withhold(index, message, (model, input), verdicts))
-                .collect(),
+        // #2424: an image a resumed session could not load is a marker for
+        // every model, so every model's request visits the messages with one.
+        let visits = |message: &Message| match input {
+            ImageInput::AllImages => !message.unloaded_images.is_empty(),
+            ImageInput::NoImages | ImageInput::StillImages => true,
         };
+        let withheld = messages
+            .iter_mut()
+            .enumerate()
+            .filter(|(_, message)| visits(message))
+            .filter_map(|(index, message)| withhold(index, message, (model, input), verdicts))
+            .collect();
         Self { messages, withheld }
     }
 
@@ -199,7 +205,7 @@ fn withhold(
     let mut markers = Vec::new();
     let (kept, tool_images) = split(
         std::mem::take(&mut message.image_blocks),
-        |image| input.withheld((image.mime_type, &image.data), model, verdicts),
+        |image| input.withheld((image.mime_type, image.data()), model, verdicts),
         &mut markers,
     );
     message.image_blocks = kept;
@@ -209,6 +215,8 @@ fn withhold(
         &mut markers,
     );
     message.user_image_blocks = kept;
+    let unloaded = message.unloaded_images.iter();
+    markers.extend(unloaded.map(|image| unavailable_marker(&image.reference.sha256)));
     let text_len = message.content.len();
     match markers.is_empty() {
         true => None,
@@ -222,9 +230,9 @@ fn withhold(
             }
             message.invalidate_token_cache();
             debug_assert_eq!(
-                tool_images.len() + user_images.len(),
+                tool_images.len() + user_images.len() + message.unloaded_images.len(),
                 markers.len(),
-                "one marker per withheld image"
+                "one marker per withheld or unloaded image"
             );
             Some(Withheld {
                 index,

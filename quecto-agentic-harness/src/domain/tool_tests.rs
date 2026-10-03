@@ -6,10 +6,7 @@ fn tool_result_and_image_block_construct() {
     let r = ToolResult {
         content: "ok".into(),
         is_error: false,
-        image_blocks: vec![ImageBlock {
-            mime_type: "image/png",
-            data: "AAAA".into(),
-        }],
+        image_blocks: vec![ImageBlock::new("image/png", "AAAA")],
         delivery_metadata: None,
     };
     assert!(!r.is_error);

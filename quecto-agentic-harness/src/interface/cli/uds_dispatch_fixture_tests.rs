@@ -5,7 +5,6 @@
 use super::cov_tests::make_agent;
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::domain::message::Message;
-use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::interface::cli::uds::DispatchCtx;
 use crate::interface::cli::uds_cancel::{CancelHandle, CancelSlot};
@@ -57,7 +56,10 @@ impl Fixture {
         // effort vocabulary every `get_state`/`set_effort` reads comes from
         // the published snapshot, as the composed loop has at startup.
         let _ = crate::composition::catalogue::list_models_wire_for(tmp.path());
-        let store = std::sync::Arc::new(FileSessionStore::new(FlatSessionLayout::new(tmp.path())));
+        // The store as composition builds it, image sidecars and all (#2424).
+        let store = std::sync::Arc::new(crate::composition::sessions::build_file_session_store(
+            tmp.path(),
+        ));
         let agent = make_agent();
         let latch = agent.durable_prefix_latch();
         let mut fixture = Self {

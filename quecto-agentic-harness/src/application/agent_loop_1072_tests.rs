@@ -479,6 +479,7 @@ async fn legacy_dynamic_manifest_migration_latches_dirty() {
                 input_preview: "legacy preview".into(),
                 tokens: 10,
                 content: "legacy content".into(),
+                images: Vec::new(),
             },
         )
         .await
@@ -551,6 +552,7 @@ async fn mem_spill_store_trait_surface_recalls_and_clears() {
         input_preview: "echo".into(),
         tokens: 2,
         content: "out".into(),
+        images: Vec::new(),
     };
     store.append(&id("s"), &entry).await.unwrap();
     assert_eq!(

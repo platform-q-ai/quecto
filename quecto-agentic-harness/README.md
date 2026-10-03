@@ -1011,6 +1011,7 @@ Coverage runs in authoritative CI after `merge-requested` is applied. For manual
   credentials.json         # Stored API tokens (from quecto auth)
   sessions/                # Persisted conversation history (safe filename mapping)
     cli_default.json
+    cli_default/            # Its session memory (spill.jsonl) and images/ (one file per SHA-256)
     repl_repl_default.json
   workspace/                # Agent working directory (files created by the agent)
 ```

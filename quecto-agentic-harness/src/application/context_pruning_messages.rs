@@ -6,12 +6,12 @@
 // creation (single writer: [`spill_conversation_message`]), so a ladder
 // stub or drop stays recallable.
 //
-// Depends on: domain::message, application::sessions::use_cases (the narrow
-// retention writer, D9 #1978). Never imports infrastructure, never reaches
-// the retention store.
+// Depends on: domain::message and its stored images, application::sessions::use_cases (the narrow
+// retention writer, D9 #1978). Never imports infrastructure, never reaches the retention store.
 
 use super::{estimate_tokens, truncate_utf8_safe};
 use crate::application::sessions::use_cases::RetainContext;
+use crate::domain::conversation::stored_images as images;
 use crate::domain::message::{Message, Role};
 use crate::domain::session::SpillEntry;
 use crate::domain::turn_origin::latest_opener;
@@ -62,8 +62,7 @@ fn collapse_conversation_message(msg: &mut Message, spill_id: &str) {
     msg.content = message_collapse_stub(msg.role.as_str(), &msg.content, tokens, spill_id);
     msg.invalidate_token_cache();
     msg.is_collapsed = true;
-    msg.image_blocks.clear();
-    msg.user_image_blocks.clear();
+    images::release_images(msg);
     msg.thinking_blocks.clear();
 }
 
@@ -107,28 +106,25 @@ fn exempt_flags(messages: &[Message], pin_recent_turns: u32) -> Vec<bool> {
         .collect()
 }
 
-/// Spill a conversation (assistant/user) message to the store at creation
-/// time (#1046 AC1) under `turn{N}:msg:{role}` — the single spill writer for
-/// conversation content. Turn numbering restarts each prompt while the store
-/// persists for the session, so the base id is de-duplicated by the sessions
-/// capability with a `:{n}` suffix (`RetainContext::retain_deduplicated`,
-/// D9 #1978: highest existing suffix + 1, one pass over the index); the
-/// policy allocates the base id, sessions appends and issues the id it
-/// retained. The message's `spill_id` is stamped with that id so a later
-/// archive or ladder stub can reference it. Ephemeral sessions (empty key)
-/// deliberately persist too, matching tool-output spilling: a cut and the
-/// ladder can fire within a single `--no-session` run, and their
-/// `recall()` stubs must stay resolvable, so entries are written under the
-/// sanitized empty-key store path (PR #1048; see the NOTE in
-/// `agent_loop_spill.rs`). The privacy counterpart lives at the interface
-/// layer: ephemeral run paths scrub the empty-key spill file at run end.
-/// Returns true when an entry was written (the manifest needs a refresh).
+/// Spill a conversation (assistant/user) message to the store at creation time (#1046 AC1) under
+/// `turn{N}:msg:{role}` — the single spill writer for conversation content (an image-only prompt
+/// too, previewed `[image]`, #2424). Turn numbering restarts each prompt while the store persists
+/// for the session, so the base id is de-duplicated by the sessions capability with a `:{n}` suffix
+/// (`RetainContext::retain_deduplicated`, D9 #1978: highest existing suffix + 1, one pass over the
+/// index); the policy allocates the base id, sessions appends and issues the id it retained. The
+/// message's `spill_id` is stamped with that id so a later archive or ladder stub can reference it.
+/// Ephemeral sessions (empty key) deliberately persist too, matching tool-output spilling: a cut
+/// and the ladder can fire within a single `--no-session` run, and their `recall()` stubs must stay
+/// resolvable, so entries are written under the sanitized empty-key store path (PR #1048; see the
+/// NOTE in `agent_loop_spill.rs`). The privacy counterpart lives at the interface layer: ephemeral
+/// run paths scrub the empty-key spill file at run end. Returns true when an entry was written (the
+/// manifest needs a refresh).
 pub async fn spill_conversation_message(
     msg: &mut Message,
     retain: &RetainContext,
     session_key: &crate::domain::session_identity::SessionIdentity,
 ) -> bool {
-    if !is_conversation(msg) || msg.is_collapsed || msg.content.is_empty() {
+    if !is_conversation(msg) || msg.is_collapsed || !images::has_text_or_user_image(msg) {
         return false;
     }
     let role = msg.role.as_str();
@@ -140,9 +136,13 @@ pub async fn spill_conversation_message(
     let mut entry = SpillEntry {
         id: base,
         tool: role.to_string(),
-        input_preview: truncate_utf8_safe(&content, 100).into_owned(),
-        tokens: estimate_tokens(&content),
+        input_preview: match content.is_empty() {
+            true => "[image]".to_string(),
+            false => truncate_utf8_safe(&content, 100).into_owned(),
+        },
+        tokens: estimate_tokens(&content) + images::image_tokens(msg),
         content,
+        images: images::MessageImageRefs::of(msg).into_all(),
     };
     let result = retain.retain_deduplicated(session_key, &mut entry).await;
     // Restore content back into the message (entry is consumed here).

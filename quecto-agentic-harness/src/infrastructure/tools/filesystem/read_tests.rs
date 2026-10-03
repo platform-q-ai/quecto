@@ -293,7 +293,7 @@ async fn test_read_png_returns_image_block() {
     assert!(!result.is_error);
     assert_eq!(result.image_blocks.len(), 1);
     assert_eq!(result.image_blocks[0].mime_type, "image/png");
-    assert!(!result.image_blocks[0].data.is_empty());
+    assert!(!result.image_blocks[0].data().is_empty());
     assert!(result.content.contains("image/png"));
 }
 
@@ -486,7 +486,7 @@ async fn test_read_allows_image_at_the_limit() {
     let result = tool.execute(r#"{"path":"max-image.bin"}"#).await.unwrap();
     assert!(!result.is_error, "{}", result.content);
     assert_eq!(result.image_blocks.len(), 1);
-    assert_eq!(result.image_blocks[0].data.len(), 5 * 1024 * 1024);
+    assert_eq!(result.image_blocks[0].data().len(), 5 * 1024 * 1024);
 }
 
 #[tokio::test]

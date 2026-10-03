@@ -45,6 +45,7 @@ impl BddMemorySpillStore {
                 input_preview,
                 tokens: 123,
                 content,
+                images: Vec::new(),
             });
     }
 }

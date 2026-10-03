@@ -174,6 +174,7 @@ fn test_store_with_entry() -> Arc<MemorySpillStore> {
         input_preview: "echo hello".to_string(),
         tokens: 100,
         content: "hello world output".to_string(),
+        images: Vec::new(),
     });
     store
 }
@@ -201,6 +202,7 @@ async fn test_spill_store_lifecycle() {
         input_preview: "pattern".to_string(),
         tokens: 7,
         content: "match".to_string(),
+        images: Vec::new(),
     };
     store.append(&id("test-session"), &appended).await.unwrap();
     let listed = store.list_entries(&id("test-session")).await.unwrap();
@@ -227,6 +229,7 @@ async fn test_recall_uses_updated_session_key() {
             input_preview: "old".to_string(),
             tokens: 1,
             content: "old output".to_string(),
+            images: Vec::new(),
         },
     );
     store.add(
@@ -237,6 +240,7 @@ async fn test_recall_uses_updated_session_key() {
             input_preview: "new".to_string(),
             tokens: 1,
             content: "new output".to_string(),
+            images: Vec::new(),
         },
     );
     assert!(store.has_entries(&id("old-session")).await.unwrap());
@@ -247,6 +251,7 @@ async fn test_recall_uses_updated_session_key() {
         input_preview: "extra".to_string(),
         tokens: 2,
         content: "extra output".to_string(),
+        images: Vec::new(),
     };
     store.append(&id("new-session"), &extra).await.unwrap();
     assert_eq!(
@@ -284,6 +289,7 @@ async fn test_recall_list() {
         input_preview: "ls -la".to_string(),
         tokens: 200,
         content: "drwxr-xr-x".to_string(),
+        images: Vec::new(),
     });
     let tool = RecallTool::new(recall_over(store), "test-session".to_string());
     let result = tool.execute(r#"{"id":"list"}"#).await.unwrap();

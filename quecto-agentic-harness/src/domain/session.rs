@@ -6,6 +6,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use super::conversation::stored_images::{ImageRef, not_recalled_marker};
 use super::message::Message;
 use super::session_identity::SessionIdentity;
 
@@ -178,6 +179,22 @@ pub struct SpillEntry {
     pub input_preview: String,
     pub tokens: usize,
     pub content: String,
+    /// The images the spilled message carried, by reference (#2424), for
+    /// information only: a recall stays text and names them
+    /// ([`Self::recalled_text`]), and no sidecar is kept for them.
+    pub images: Vec<ImageRef>,
+}
+
+impl SpillEntry {
+    /// What a recall of this entry returns: its text, and a line naming the
+    /// images it does not bring back.
+    pub fn recalled_text(self) -> String {
+        match self.images.len() {
+            0 => self.content,
+            count if self.content.is_empty() => not_recalled_marker(count),
+            count => format!("{}\n{}", self.content, not_recalled_marker(count)),
+        }
+    }
 }
 
 /// Index-only view of spill entries (without full content).

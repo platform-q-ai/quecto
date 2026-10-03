@@ -111,11 +111,11 @@ impl FileSessionStore {
     /// One write of `path` under the intactness record (#2218): forgotten
     /// before the write starts, remembered with its new length only once it
     /// succeeds; `write` learns whether it may append.
-    pub(super) async fn tracked<F: Future<Output = Result<(), DomainError>>>(
+    pub(super) async fn tracked<T, F: Future<Output = Result<T, DomainError>>>(
         &self,
         path: &Path,
         write: impl FnOnce(bool) -> F,
-    ) -> Result<(), DomainError> {
+    ) -> Result<T, DomainError> {
         let appendable = self.intact.appendable(path).await;
         self.intact.forget(path);
         let written = write(appendable).await;
@@ -126,14 +126,17 @@ impl FileSessionStore {
     }
 }
 
-pub(super) async fn write_compacted(path: &Path, session: &Session) -> Result<(), DomainError> {
+/// Rewrite `path` as one snapshot of `session`, naming the images kept (#2424).
+pub(super) async fn write_compacted(path: &Path, session: &Session) -> WriteResult {
     use tokio::io::AsyncWriteExt;
     #[cfg(test)]
     injected(&FAIL_NEXT_WRITE_OF, path)?;
 
+    let messages: Vec<_> = session.messages.iter().map(message_to_record_ref).collect();
+    let live = record_digests(&messages);
     let record = SessionRecordRef::Snapshot(SessionFileRef {
         key: session.key.runtime_key(),
-        messages: session.messages.iter().map(message_to_record_ref).collect(),
+        messages,
         workflow_run: session.workflow_run.as_ref(),
         subagent_roster: &session.subagent_roster,
     });
@@ -155,7 +158,7 @@ pub(super) async fn write_compacted(path: &Path, session: &Session) -> Result<()
     sync_parent_dir(path).await?;
     #[cfg(test)]
     injected(&FAIL_NEXT_SYNC_OF, path)?;
-    Ok(())
+    Ok(Written::Compacted(live))
 }
 
 /// Make the rename itself durable: fsync the directory holding `path`.
@@ -170,10 +173,7 @@ async fn sync_parent_dir(path: &Path) -> Result<(), DomainError> {
         .map_err(|e| DomainError::Session(format!("failed to sync sessions dir: {e}")))
 }
 
-pub(super) async fn append_record(
-    path: &Path,
-    record: &SessionRecordRef<'_>,
-) -> Result<(), DomainError> {
+pub(super) async fn append_record(path: &Path, record: &SessionRecordRef<'_>) -> WriteResult {
     use tokio::io::AsyncWriteExt;
     #[cfg(test)]
     injected(&FAIL_NEXT_WRITE_OF, path)?;
@@ -195,7 +195,7 @@ pub(super) async fn append_record(
         .map_err(|e| DomainError::Session(format!("failed to sync session: {e}")))?;
     #[cfg(test)]
     injected(&FAIL_NEXT_SYNC_OF, path)?;
-    Ok(())
+    Ok(Written::Appended)
 }
 
 async fn reject_symlink(path: &Path) -> Result<(), DomainError> {
@@ -221,21 +221,19 @@ pub(super) async fn persisted_prefix_changed(
     let data = tokio::fs::read_to_string(path)
         .await
         .map_err(|e| DomainError::Session(format!("failed to read session: {e}")))?;
-    let (persisted, intact) = parse_session_records(&data)
+    let persisted = parse_session_records(&data)
         .map_err(|e| DomainError::Session(format!("failed to parse session: {e}")))?;
-    if !intact {
+    if !persisted.intact {
         return Ok(true);
     }
     // #2218: a file of another length than the watermark (a write that
     // landed but reported failure, or a replaced file) is rewritten from the
     // live transcript, which is authoritative; never appended to.
-    if persisted.messages.len() != previously_persisted {
+    if persisted.session.messages.len() != previously_persisted {
         return Ok(true);
     }
-    Ok(persisted.messages[..previously_persisted]
-        .iter()
-        .zip(messages_with_assigned_ordinals(&messages[..previously_persisted]).iter())
-        .any(|(left, right)| message_to_record(left) != message_to_record(right)))
+    let live = messages_with_assigned_ordinals(&messages[..previously_persisted]);
+    Ok((0..previously_persisted).any(|i| persisted.record_at(i) != message_to_record(&live[i])))
 }
 
 pub(super) async fn append_known_delta(
@@ -245,7 +243,7 @@ pub(super) async fn append_known_delta(
     previously_persisted: usize,
     workflow_run: Option<&WorkflowRunPersisted>,
     appendable: bool,
-) -> Result<(), DomainError> {
+) -> WriteResult {
     let must_compact = previously_persisted == 0
         || !appendable
         || !path.exists()
@@ -269,7 +267,7 @@ pub(super) async fn compact_or_append_delta(
     previously_persisted: usize,
     workflow_run: Option<&WorkflowRunPersisted>,
     must_compact: bool,
-) -> Result<(), DomainError> {
+) -> WriteResult {
     if must_compact {
         let subagent_roster = tokio::fs::read_to_string(path)
             .await
@@ -303,7 +301,7 @@ pub(super) async fn append_or_compact(
     path: &Path,
     session: &Session,
     appendable: bool,
-) -> Result<(), DomainError> {
+) -> WriteResult {
     let mut assigned_session;
     let session = if session.messages.iter().any(|m| m.ordinal.is_none()) {
         assigned_session = session.clone();
@@ -320,16 +318,16 @@ pub(super) async fn append_or_compact(
     let data = tokio::fs::read_to_string(path)
         .await
         .map_err(|e| DomainError::Session(format!("failed to read session: {e}")))?;
-    let (previous, intact) = parse_session_records(&data)
+    let parsed = parse_session_records(&data)
         .map_err(|e| DomainError::Session(format!("failed to parse session: {e}")))?;
-    if !intact
+    let previous = &parsed.session;
+    if !parsed.intact
         || previous.key != session.key
         || session.messages.len() < previous.messages.len()
         || session.messages[..previous.messages.len()]
             .iter()
-            .map(message_to_record)
-            .zip(previous.messages.iter().map(message_to_record))
-            .any(|(current, saved)| current != saved)
+            .enumerate()
+            .any(|(index, current)| message_to_record(current) != parsed.record_at(index))
     {
         return write_compacted(path, session).await;
     }
@@ -337,7 +335,7 @@ pub(super) async fn append_or_compact(
     let added = &session.messages[previous.messages.len()..];
     let roster_changed = session.subagent_roster != previous.subagent_roster;
     if added.is_empty() && session.workflow_run == previous.workflow_run && !roster_changed {
-        return Ok(());
+        return Ok(Written::Appended);
     }
 
     let record = SessionRecordRef::Append {

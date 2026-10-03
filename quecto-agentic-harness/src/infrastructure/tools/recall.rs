@@ -100,7 +100,7 @@ impl Tool for RecallTool {
             match self.recall.recall(&session_key, &query).await {
                 Ok(RecallOutcome::Index(entries)) => Ok(index_result(&entries)),
                 Ok(RecallOutcome::Entry(entry)) => Ok(ToolResult {
-                    content: entry.content,
+                    content: entry.recalled_text(),
                     is_error: false,
                     image_blocks: vec![],
                     delivery_metadata: None,
