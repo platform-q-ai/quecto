@@ -100,6 +100,20 @@ fn the_system_clipboard_honours_the_contract() {
         other => panic!("expected the capped bytes, got {other:?}"),
     }
 
+    // A tool that runs and fails is a failure, never an empty clipboard.
+    let broken = fake_tool(
+        dir.path(),
+        "wl-paste-broken",
+        &[(
+            "--list-types",
+            "echo 'Failed to connect to a Wayland server' >&2; exit 1",
+        )],
+    );
+    let reader = SystemClipboard::with_tools(vec![(ClipboardTool::WlPaste, broken)], quick);
+    let first = reader.read();
+    assert!(matches!(first, ClipboardRead::Failed(_)), "{first:?}");
+    assert_eq!(reader.read(), first, "a read is repeatable");
+
     let missing = dir.path().join("not-installed");
     let reader = SystemClipboard::with_tools(vec![(ClipboardTool::WlPaste, missing)], quick);
     assert_contract(&reader, &ClipboardRead::NoTool);

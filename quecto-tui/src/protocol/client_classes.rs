@@ -83,7 +83,18 @@ impl Command {
         super::serialize_command(self)
             .is_ok_and(|line| line.trim_end_matches('\n').len() <= super::MAX_LINE_BYTES)
     }
+
+    /// The serialized length of a user message (`prompt` / `steer` /
+    /// `follow_up`), measured without serializing it; `None` for any other
+    /// command.
+    pub fn user_message_len(&self) -> Option<usize> {
+        None
+    }
 }
+
+#[cfg(test)]
+#[path = "client_frame_tests.rs"]
+mod frame_tests;
 
 #[cfg(feature = "test-harness")]
 impl CommandSender {

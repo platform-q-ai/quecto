@@ -62,3 +62,10 @@ impl TuiHarness {
         self
     }
 }
+
+impl TuiHarness {
+    /// Every notification still on the stack, oldest first.
+    pub fn notifications(&self) -> Vec<String> {
+        self.app.notifications.messages()
+    }
+}

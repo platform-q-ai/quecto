@@ -342,3 +342,179 @@ async fn an_image_read_that_finishes_after_clear_is_not_attached() {
         Some("Image not attached: late.png: the conversation changed")
     );
 }
+
+// ── Review round 2 ────────────────────────────────────────────────────
+
+/// `count` chips of a 1×1 PNG, attached.
+async fn chips(h: &mut super::tui_harness::TuiHarness, count: usize) -> tempfile::TempDir {
+    let (dir, path) = image_file("chip.png", &samples::png(1, 1));
+    for _ in 0..count {
+        attach(h, &path).await;
+    }
+    assert_eq!(h.attachment_chips().len(), count);
+    dir
+}
+
+/// `count` key repeats of Backspace, 30 ms apart.
+fn fast_repeats(h: &mut super::tui_harness::TuiHarness, count: usize) {
+    for _ in 0..count {
+        h.advance_clock(Duration::from_millis(30));
+        h.press(Key::Backspace);
+    }
+}
+
+#[tokio::test]
+async fn a_held_backspace_removes_one_chip_then_its_repeats_remove_none() {
+    let mut h = harness().await;
+    let _dir = chips(&mut h, 3).await;
+
+    h.press(Key::Backspace);
+    assert_eq!(h.attachment_chips().len(), 2, "the press removes one chip");
+    // A 500 ms initial repeat delay, then fast repeats.
+    h.advance_clock(Duration::from_millis(500));
+    h.press(Key::Backspace);
+    fast_repeats(&mut h, 10);
+    assert_eq!(h.attachment_chips().len(), 2, "the repeats remove none");
+}
+
+#[tokio::test]
+async fn a_slow_first_repeat_never_lets_the_fast_repeats_cascade() {
+    let mut h = harness().await;
+    let _dir = chips(&mut h, 4).await;
+
+    h.press(Key::Backspace);
+    // A 1 s initial repeat delay: no terminal tells this repeat from a fresh
+    // press, so it removes one chip; the fast repeats after it remove none.
+    h.advance_clock(Duration::from_secs(1));
+    h.press(Key::Backspace);
+    fast_repeats(&mut h, 10);
+    assert_eq!(h.attachment_chips().len(), 2);
+}
+
+#[tokio::test]
+async fn only_editing_keys_end_a_held_backspace() {
+    let mut h = harness().await;
+    let _dir = chips(&mut h, 1).await;
+    h.type_char('a');
+    h.press(Key::Backspace);
+
+    // The wheel and the mouse are not editing: the hold goes on.
+    h.advance_clock(Duration::from_millis(10));
+    h.press(Key::ScrollDown);
+    h.press(Key::MousePress(3, 3));
+    h.press(Key::MouseRelease(3, 3));
+    h.advance_clock(Duration::from_millis(20));
+    h.press(Key::Backspace);
+    assert_eq!(h.attachment_chips().len(), 1, "still the held key");
+
+    // Typing is: a Backspace after it is a fresh press.
+    h.type_char('b');
+    h.press(Key::Backspace);
+    h.advance_clock(Duration::from_secs(1));
+    h.press(Key::Backspace);
+    assert!(h.attachment_chips().is_empty());
+}
+
+#[tokio::test]
+async fn a_backspace_held_past_the_text_says_once_how_to_remove_the_image() {
+    let mut h = harness().await;
+    let _dir = chips(&mut h, 1).await;
+    h.type_char('a');
+    h.press(Key::Backspace);
+    fast_repeats(&mut h, 3);
+
+    const HINT: &str = "Wait a moment, then press Backspace again to remove the image";
+    assert_eq!(h.last_notification().as_deref(), Some(HINT));
+    assert_eq!(
+        h.notifications()
+            .iter()
+            .filter(|n| n.as_str() == HINT)
+            .count(),
+        1,
+        "the hint is shown once: {:?}",
+        h.notifications()
+    );
+    h.type_char('x');
+    h.press(Key::Backspace);
+    fast_repeats(&mut h, 2);
+    assert_eq!(
+        h.notifications()
+            .iter()
+            .filter(|n| n.as_str() == HINT)
+            .count(),
+        1,
+        "and never again: {:?}",
+        h.notifications()
+    );
+    assert_eq!(h.attachment_chips().len(), 1);
+}
+
+#[tokio::test]
+async fn a_message_sent_while_an_image_is_read_is_held_back() {
+    let mut h = harness().await;
+    let (_dir, path) = image_file("shot.png", &samples::png(2, 2));
+    let _ = h.drain_commands().await;
+    h.submit(&format!("/image {}", path.display()));
+    assert!(h.attachment_reads_in_flight());
+
+    h.submit("what is this?");
+
+    assert_eq!(
+        h.last_notification().as_deref(),
+        Some("Still reading the image… send again once it is attached")
+    );
+    assert_eq!(
+        h.editor_text(),
+        "what is this?",
+        "the text stays in the editor"
+    );
+    assert!(h.active_user_entries().is_empty());
+    assert!(sent(&h.drain_commands().await, "prompt").is_empty());
+
+    h.settle_attachment_reads().await;
+    h.set_editor_text("");
+    h.submit("what is this?");
+    let prompts = sent(&h.drain_commands().await, "prompt");
+    assert_eq!(prompts.len(), 1, "{prompts:?}");
+    assert_eq!(prompts[0]["images"].as_array().map(Vec::len), Some(1));
+}
+
+#[tokio::test]
+async fn a_message_sent_while_the_clipboard_is_read_is_held_back() {
+    let mut h = harness().await;
+    h.set_clipboard(ClipboardRead::Image(samples::png(1, 1)));
+    h.press(Key::Ctrl('v'));
+    h.submit("and this");
+    assert_eq!(h.editor_text(), "and this");
+    assert!(sent(&h.drain_commands().await, "prompt").is_empty());
+    h.settle_attachment_reads().await;
+    assert_eq!(h.attachment_chips().len(), 1);
+}
+
+#[tokio::test]
+async fn a_symlinked_image_attaches_and_a_fifo_is_refused_without_blocking() {
+    let mut h = harness().await;
+    let (dir, path) = image_file("real.png", &samples::png(1, 1));
+    let link = dir.path().join("link.png");
+    std::os::unix::fs::symlink(&path, &link).unwrap();
+    attach(&mut h, &link).await;
+    assert_eq!(
+        h.attachment_chips().len(),
+        1,
+        "a symlink to an image is read"
+    );
+
+    let fifo = dir.path().join("pipe.png");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .expect("mkfifo runs");
+    assert!(made.success());
+    attach(&mut h, &fifo).await;
+    let notice = h.last_notification().unwrap_or_default();
+    assert!(
+        notice.starts_with("Image not attached: pipe.png: "),
+        "{notice}"
+    );
+    assert_eq!(h.attachment_chips().len(), 1);
+}

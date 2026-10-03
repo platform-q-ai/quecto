@@ -326,9 +326,61 @@ fn a_failing_wl_paste_falls_through_to_xclip() {
         QUICK,
     );
     assert_eq!(both.read(), ClipboardRead::Text("via x11".into()));
-    // With no tool left to try, a listing that fails is an empty clipboard.
+    // Review round 2 (L4): with no tool left to try, a tool that could not
+    // run is a failure, never an empty clipboard.
     let alone = SystemClipboard::with_tools(vec![(ClipboardTool::WlPaste, wl)], QUICK);
-    assert_eq!(alone.read(), ClipboardRead::Empty);
+    match alone.read() {
+        ClipboardRead::Failed(reason) => {
+            assert!(reason.starts_with("wl-paste: "), "{reason}");
+            assert!(
+                reason.contains("Failed to connect to a Wayland server"),
+                "{reason}"
+            );
+        }
+        other => panic!("expected the run failure, got {other:?}"),
+    }
+}
+
+/// Review round 2 (L4): a tool that ran and found the clipboard empty says
+/// so on stderr; that, and only that, is an empty clipboard.
+#[test]
+fn only_a_tool_that_says_the_clipboard_is_empty_makes_it_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    let wl = fake_tool(
+        dir.path(),
+        "wl-paste",
+        &[(
+            "--list-types",
+            "echo 'Failed to connect to a Wayland server' >&2; exit 1",
+        )],
+    );
+    let xclip = fake_tool(
+        dir.path(),
+        "xclip",
+        &[(
+            "-selection clipboard -t TARGETS -o",
+            "echo 'Error: target TARGETS not available' >&2; exit 1",
+        )],
+    );
+    let both = SystemClipboard::with_tools(
+        vec![(ClipboardTool::WlPaste, wl), (ClipboardTool::Xclip, xclip)],
+        QUICK,
+    );
+    assert_eq!(both.read(), ClipboardRead::Empty);
+
+    let no_display = fake_tool(
+        dir.path(),
+        "xclip-2",
+        &[(
+            "-selection clipboard -t TARGETS -o",
+            "echo 'Error: Can'\\''t open display: :0' >&2; exit 1",
+        )],
+    );
+    let alone = SystemClipboard::with_tools(vec![(ClipboardTool::Xclip, no_display)], QUICK);
+    match alone.read() {
+        ClipboardRead::Failed(reason) => assert!(reason.contains("open display"), "{reason}"),
+        other => panic!("expected the run failure, got {other:?}"),
+    }
 }
 
 /// Review round 1 (L4): text types match whatever their case.

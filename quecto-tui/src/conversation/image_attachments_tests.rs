@@ -288,3 +288,38 @@ fn a_count_of_images_reads_as_words() {
     assert_eq!(image_count_phrase(1), "1 image");
     assert_eq!(image_count_phrase(2), "2 images");
 }
+
+/// Review round 2 (N2): the rest of how a path is written.
+#[test]
+fn quotes_uris_and_other_users_homes_are_read_as_written() {
+    let ws = Path::new("/work/repo");
+    let resolve = |arg| resolve_image_path(arg, Some(Path::new("/home/me")), ws);
+    assert_eq!(
+        resolve(r"'/tmp/a\ b.png'"),
+        Ok(PathBuf::from(r"/tmp/a\ b.png")),
+        "nothing is escaped inside single quotes"
+    );
+    assert_eq!(
+        resolve(r#""/tmp/a \"b\".png""#),
+        Ok(PathBuf::from(r#"/tmp/a "b".png"#)),
+        "inside double quotes only the shell's escapes are"
+    );
+    assert_eq!(
+        resolve("file:///tmp/a.png?size=2#top"),
+        Ok(PathBuf::from("/tmp/a.png"))
+    );
+    assert_eq!(
+        resolve("file:///tmp/a%3Fb%23c.png"),
+        Ok(PathBuf::from("/tmp/a?b#c.png"))
+    );
+    assert_eq!(resolve("file://localhost"), Err(ImagePathError::Missing));
+    assert_eq!(resolve("file://"), Err(ImagePathError::Missing));
+    assert_eq!(resolve("~bob/a.png"), Err(ImagePathError::OtherUsersHome));
+    assert!(
+        ImagePathError::OtherUsersHome
+            .to_string()
+            .contains("give the full path"),
+        "{}",
+        ImagePathError::OtherUsersHome
+    );
+}
