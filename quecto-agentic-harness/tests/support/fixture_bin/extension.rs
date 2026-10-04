@@ -125,8 +125,10 @@ pub fn run(args: &[String]) -> Result<(), String> {
             writeln!(writer, "{result}").map_err(|error| error.to_string())?;
         }
     }
-    while options.ignore_close {
-        std::thread::sleep(Duration::from_secs(60));
+    if options.ignore_close {
+        loop {
+            std::thread::sleep(Duration::from_secs(60));
+        }
     }
     Ok(())
 }
