@@ -48,6 +48,7 @@ fn parent_in(
     let mut stderr = String::new();
     let config = Config::default();
     build_tool_runtime(ToolRuntimeBuildArgs {
+        child_extensions: Vec::new(),
         swarm_context,
         swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::shared(),
         entrypoint,
@@ -190,7 +191,11 @@ fn denial_survives_reload_live_policy_and_turn_boundary_drain() {
         assert_workflow_denied(&tools, &format!("{case}: drain"));
         let child = uds_child(
             root.path(),
-            InheritedToolPolicySnapshot { version: 1, tools },
+            InheritedToolPolicySnapshot {
+                extensions: Default::default(),
+                version: 1,
+                tools,
+            },
             true,
             false,
         );
@@ -205,7 +210,11 @@ fn no_workflow_parent_closes_workflow_to_its_children() {
     assert!(parent.registry.get("workflow").is_none());
     let tools = spawn_snapshot(parent.registry.get("spawn").unwrap());
     assert_workflow_denied(&tools, "--no-workflow parent");
-    let snapshot = InheritedToolPolicySnapshot { version: 1, tools };
+    let snapshot = InheritedToolPolicySnapshot {
+        extensions: Default::default(),
+        version: 1,
+        tools,
+    };
     let plain = uds_child(root.path(), snapshot.clone(), false, false).expect("child builds");
     assert!(!child_sees_workflow(&plain));
     assert!(uds_child(root.path(), snapshot, true, false).is_err());
@@ -283,7 +292,11 @@ fn child_spawned_without_workflow_closes_it_to_grandchildren() {
     assert_workflow_denied(&tools, "a child spawned with disable_tools workflow");
     let grandchild = uds_child(
         root.path(),
-        InheritedToolPolicySnapshot { version: 1, tools },
+        InheritedToolPolicySnapshot {
+            extensions: Default::default(),
+            version: 1,
+            tools,
+        },
         false,
         false,
     )

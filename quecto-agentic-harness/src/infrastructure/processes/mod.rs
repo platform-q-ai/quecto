@@ -4,6 +4,7 @@
 
 pub mod child_line_pipes;
 pub mod child_stderr_tail;
+pub mod configured_extensions;
 pub mod containers;
 pub mod direct_child_routing;
 pub mod local;

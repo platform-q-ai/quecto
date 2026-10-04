@@ -59,4 +59,31 @@ impl AgentSession {
             self.bump_visible_generation();
         }
     }
+
+    /// Watch this agent's configured extensions (#2446).
+    pub fn observe_extensions(
+        &mut self,
+        extensions: crate::interface::cli::uds_extensions::Extensions,
+    ) {
+        self.extensions = extensions;
+        self.bump_visible_generation();
+    }
+
+    /// What this agent's configured extensions warn of (#2446).
+    pub(crate) fn extension_warnings(&self) -> Vec<String> {
+        self.extensions
+            .iter()
+            .flat_map(|extensions| extensions.warnings())
+            .collect()
+    }
+
+    /// The generation clients compare: the tracker's own, advanced by every
+    /// change of an extension's state, so a `since` read never hides one.
+    pub(crate) fn visible_generation(&self) -> u64 {
+        let extensions = self
+            .extensions
+            .as_ref()
+            .map_or(0, |extensions| extensions.revision());
+        self.generation.wrapping_add(extensions).max(1)
+    }
 }

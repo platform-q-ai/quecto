@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod agents;
 pub mod audit;
 pub mod catalogue;
 pub mod child_end;

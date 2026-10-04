@@ -29,6 +29,9 @@ pub struct Config {
     /// Shared inference admission (#1679). Absent keeps admission disabled.
     #[serde(default)]
     pub admission: Option<super::config_admission::AdmissionSection>,
+    /// The UDS extensions every agent launches (#2446); global-only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extensions: Vec<extensions::ExtensionConfig>,
     /// Not serialized: base directory for the default authority directory.
     #[serde(skip)]
     pub(super) admission_base_dir: PathBuf,
@@ -697,6 +700,7 @@ pub use error::ConfigError;
 pub mod container_config_lookup;
 pub mod container_config_roster;
 pub mod container_configs;
+pub mod extensions;
 pub mod grep_tool;
 pub mod telemetry;
 pub use grep_tool::GrepToolConfig;

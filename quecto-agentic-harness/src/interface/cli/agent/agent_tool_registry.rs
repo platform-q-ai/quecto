@@ -154,6 +154,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
             spawned: flags.spawned,
             parent_session_name: parent_session_name.clone(),
             parent_config_path: Some(config_path.to_path_buf()),
+            child_extensions: super::build_result::child_extensions(config, flags),
             effort_control: Some(effort_control),
             container_configs: Some(container_configs),
             environment_registry,

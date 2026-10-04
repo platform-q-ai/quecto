@@ -145,6 +145,8 @@ pub(crate) struct ToolRuntimeBuildArgs<'a> {
     /// The parent agent's own config path, forwarded so container spawns can
     /// fall back to it when the spawn call omits `config` (#1369 follow-up).
     pub parent_config_path: Option<std::path::PathBuf>,
+    /// The configured extensions each local child launches (#2446).
+    pub child_extensions: Vec<crate::infrastructure::config::extensions::ExtensionConfig>,
     /// The change-reasoning-effort use case (#1848) the spawn tool validates
     /// an explicit-model `effort` against.
     pub effort_control:
@@ -239,6 +241,7 @@ pub(crate) fn build_tool_runtime(
         spawned,
         parent_session_name,
         parent_config_path,
+        child_extensions,
         effort_control,
         container_configs,
         environment_registry,
@@ -340,6 +343,7 @@ pub(crate) fn build_tool_runtime(
         parent_session_name,
         inherited_tool_policy: None,
         parent_config_path,
+        child_extensions,
         owned_child_supervisor:
             crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor::process_wide(),
         effort_control,

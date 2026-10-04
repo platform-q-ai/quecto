@@ -937,7 +937,8 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // the moved lines are ratcheted at their new home.
     ("src/interface/cli/uds_lifecycle.rs", 193),
     ("src/interface/cli/uds_single_client.rs", 127),
-    ("src/interface/cli/uds_multi.rs", 633),
+    // #2446 moved the client-disconnect bookkeeping to `uds_multi/clients.rs`.
+    ("src/interface/cli/uds_multi.rs", 599),
     // Same merge of D3/D4/D5/D6/D7 handles (was 111 before D7); D10 #1979
     // types the loop's identity and reads the key from the active session
     // (was 125).

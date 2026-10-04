@@ -4,9 +4,9 @@
 
 use super::uds::{DispatchCtx, run_command_loop};
 use super::uds_cancel::{CancelSlot, TurnControl};
-use super::uds_lifecycle::{ExtRegistry, inject_system_prompt};
 use super::uds_session::AgentSession;
 use super::uds_session_handles::SessionHandles;
+use super::{uds_extensions::ExtRegistry, uds_lifecycle::inject_system_prompt};
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::sessions::dto::SaveTrigger;
 use crate::domain::message::Message;

@@ -15,6 +15,7 @@
 //! modules, met the child before it was bound (it then exits at the 30 s bind
 //! deadline instead of on connection loss, past the test's 20 s bound).
 
+mod configured_extensions;
 mod docker_create_admission_mask;
 mod docker_create_image_contract;
 mod docker_kill_script;

@@ -36,6 +36,7 @@ pub(super) fn build(
     let mut stderr = String::new();
     let uds = launch.entrypoint == ToolEntrypoint::UdsAgent;
     build_tool_runtime(ToolRuntimeBuildArgs {
+        child_extensions: Vec::new(),
         swarm_context: None,
         swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::shared(),
         entrypoint: launch.entrypoint,
@@ -102,7 +103,11 @@ pub(super) fn cli_parent_snapshot(
         .expect("spawn registered")
         .inherited_child_policy_snapshot_for_spawn()
         .expect("spawn carries the inherited policy");
-    InheritedToolPolicySnapshot { version: 1, tools }
+    InheritedToolPolicySnapshot {
+        extensions: Default::default(),
+        version: 1,
+        tools,
+    }
 }
 
 pub(super) fn uds_child(
@@ -327,6 +332,7 @@ fn guards_or_a_bound_spec_also_request_workflow_mode() {
     let mut stderr = String::new();
     let config = Config::default();
     let error = build_tool_runtime(ToolRuntimeBuildArgs {
+        child_extensions: Vec::new(),
         swarm_context: None,
         swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::shared(),
         entrypoint: ToolEntrypoint::UdsAgent,

@@ -299,6 +299,8 @@ fn a_trusted_overlay_with_a_global_only_key_is_refused_naming_the_key() {
     for (content, key) in [
         (r#"{"providers":{"openai":{"api_base":"x"}}}"#, "providers"),
         (r#"{"admission":null}"#, "admission"),
+        // #2446: launching commands is the owner's alone.
+        (r#"{"extensions":[]}"#, "extensions"),
     ] {
         let store = MemoryStore::with(&[(GLOBAL, "{}"), (OVERLAY, content)]);
         let (resolve, _) = use_case(store, FakeTrust::trusting(OVERLAY, content));

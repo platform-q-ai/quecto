@@ -141,7 +141,7 @@ fn production_code_reads_past_an_early_cfg_test_use() {
         ),
         (
             "src/interface/cli/uds_multi.rs",
-            "async fn handle_disconnect(",
+            "async fn handle_client_msg(",
         ),
     ] {
         assert!(

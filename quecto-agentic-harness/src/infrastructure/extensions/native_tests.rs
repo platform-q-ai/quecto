@@ -340,6 +340,7 @@ fn build_session_tool_extensions_supplies_recall() {
 fn build_agent_control_tool_extensions_supplies_spawn_and_agent_cmd() {
     let tmp = tempfile::TempDir::new().unwrap();
     let built = build_agent_control_tool_extensions(AgentControlToolDeps {
+        child_extensions: Vec::new(),
         swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
         swarm_context: None,
         parent_config_path: None,
@@ -373,6 +374,7 @@ fn build_agent_control_tool_extensions_supplies_spawn_and_agent_cmd() {
 async fn built_spawn_tool_admits_against_the_returned_harness_lifecycle() {
     let tmp = tempfile::TempDir::new().unwrap();
     let built = build_agent_control_tool_extensions(AgentControlToolDeps {
+        child_extensions: Vec::new(),
         swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
         swarm_context: None,
         parent_config_path: None,

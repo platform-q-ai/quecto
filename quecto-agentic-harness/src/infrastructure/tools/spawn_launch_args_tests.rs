@@ -25,6 +25,7 @@ fn base_config() -> SubagentConfig {
 
 fn spec<'a>(config: &'a SubagentConfig) -> ChildLaunchSpec<'a> {
     ChildLaunchSpec {
+        launches_extensions: true,
         session_name: "w1",
         socket_path: Path::new("/run/w1.sock"),
         config,
@@ -125,6 +126,7 @@ fn forwards_existing_flags_alongside_model() {
     cfg.workflow = true;
     cfg.workflow_guards = true;
     let s = ChildLaunchSpec {
+        launches_extensions: true,
         session_name: "w1",
         socket_path: Path::new("/run/w1.sock"),
         config: &cfg,
@@ -217,6 +219,7 @@ fn child_session_flag_uses_uuid_key_not_display_label() {
     let uuid = "11111111-2222-4333-8444-555555555555";
     let socket = format!("/run/quecto-agent-{uuid}.sock");
     let s = ChildLaunchSpec {
+        launches_extensions: true,
         session_name: uuid,
         socket_path: Path::new(&socket),
         config: &cfg,
@@ -317,4 +320,34 @@ fn the_child_is_handed_no_context_mode() {
         !strs.iter().any(|arg| arg.contains("context-mode")),
         "{strs:?}"
     );
+}
+
+/// #2446: a child that does not launch its configured extensions is told
+/// so; one that does gets no flag.
+#[test]
+fn a_child_that_launches_no_extensions_gets_no_extensions() {
+    let cfg = base_config();
+    assert!(!as_strings(&build_child_cli_args(&spec(&cfg))).contains(&"--no-extensions".into()));
+    let mut off = spec(&cfg);
+    off.launches_extensions = false;
+    assert!(as_strings(&build_child_cli_args(&off)).contains(&"--no-extensions".into()));
+}
+
+/// #2446: a local child launches this agent's own list; a container child
+/// never the host's; an agent with none hands down none.
+#[test]
+fn only_local_children_get_this_agents_extensions() {
+    let listed: Vec<crate::infrastructure::config::extensions::ExtensionConfig> =
+        serde_json::from_value(serde_json::json!([{"name": "bt", "command": "/opt/bt"}])).unwrap();
+    let tool = super::super::spawn::SpawnTool::new(Vec::new());
+    assert!(tool.extensions_for_child(&base_config()).is_empty());
+    let tool = tool.with_child_extensions(listed.clone());
+    let local = base_config();
+    let mut container = base_config();
+    container.container = crate::domain::subagent::ContainerSelection::New {
+        container_config: None,
+        name: None,
+    };
+    assert_eq!(tool.extensions_for_child(&local), listed);
+    assert!(tool.extensions_for_child(&container).is_empty());
 }

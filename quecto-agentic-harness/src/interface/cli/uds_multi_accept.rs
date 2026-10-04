@@ -33,6 +33,9 @@ pub(super) struct AcceptLoopArgs {
     /// Launch-bound parent control / teardown edge shared by every
     /// connection (#1935).
     pub(super) teardown: Option<std::sync::Arc<super::uds_parent_control::ConnectionTeardown>>,
+    /// This agent's configured extensions, whose connections are claimed
+    /// at accept (#2446).
+    pub(super) extensions: super::uds_extensions::Extensions,
 }
 
 /// Spawn the accept loop that listens for new client connections.
@@ -57,6 +60,7 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
         workflow_state,
         workspace_path,
         teardown,
+        extensions,
     } = args;
     tokio::spawn(async move {
         loop {
@@ -85,6 +89,12 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
                         &client_tool_registry,
                         client_id,
                         targeted_tx.clone(),
+                    );
+                    super::uds_extensions::claim_connection(
+                        &extensions,
+                        &stream,
+                        &client_tool_registry,
+                        client_id,
                     );
 
                     let broadcast_rx = broadcast_tx.subscribe();

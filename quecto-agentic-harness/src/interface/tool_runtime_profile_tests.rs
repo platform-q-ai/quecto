@@ -17,6 +17,7 @@ fn runtime(
     let mut stderr = String::new();
 
     build_tool_runtime(ToolRuntimeBuildArgs {
+        child_extensions: Vec::new(),
         swarm_context: None,
         swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::shared(),
         entrypoint: ToolEntrypoint::CliAgent,
@@ -267,6 +268,7 @@ fn runtime_in_container(
     let sandbox = crate::infrastructure::security::sandbox::Sandbox::new(Some(tmp.to_path_buf()));
     let mut stderr = String::new();
     build_tool_runtime(ToolRuntimeBuildArgs {
+        child_extensions: Vec::new(),
         swarm_context: Some(context),
         swarm_participation: participation,
         // The UDS entrypoint is the one that supports workflows at all.

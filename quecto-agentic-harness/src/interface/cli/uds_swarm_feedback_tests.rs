@@ -160,6 +160,7 @@ async fn approval_exchange(busy: bool) {
     let (broadcast, _) = tokio::sync::broadcast::channel(16);
     let accept = crate::interface::cli::uds_multi::spawn_accept_loop(
         crate::interface::cli::uds_multi::AcceptLoopArgs {
+            extensions: Default::default(),
             listener: tokio::net::UnixListener::bind(&socket).unwrap(),
             broadcast_tx: broadcast,
             cmd_tx: commands,
@@ -269,6 +270,7 @@ async fn rejected_socket_steer_does_not_cancel_but_explicit_abort_does() {
     *ctx.cancel_handle.lock().unwrap() = super::CancelSlot::Armed(cancel);
     let accept = crate::interface::cli::uds_multi::spawn_accept_loop(
         crate::interface::cli::uds_multi::AcceptLoopArgs {
+            extensions: Default::default(),
             listener: tokio::net::UnixListener::bind(&socket).unwrap(),
             broadcast_tx: broadcast,
             cmd_tx: commands,

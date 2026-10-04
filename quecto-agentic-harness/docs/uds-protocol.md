@@ -53,6 +53,14 @@ Every command accepts an optional `id` field (string). When present, the corresp
 
 Send a user message to the agent. This is the primary command — it triggers an LLM call, possible tool executions, and streams results back as events.
 
+**At start-up with configured extensions** (#2446): until the agent's
+configured extensions have registered their tools, at most 30 s, it
+answers only reads (`get_*`, `list_*`, `sync`, session search) and UDS tool
+traffic (`register_tools`, `unregister_tools`, `tool_result`). A `prompt`,
+`steer` or `follow_up`, every other command that changes state, and other
+clients' disconnects wait and then run in the order they arrived; an
+`"ack":"accept"` forward is still acknowledged at once.
+
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `type` | `"prompt"` | yes | |
@@ -557,7 +565,7 @@ While a model request is in flight the marker also carries `modelTurn`
 | `workflow` | object \| omitted | Slim selected-workflow identity and current step only |
 | `admission` | object \| omitted | Bounded inference-admission view (#1679); present only when the process joined an admission authority |
 | `admissionWarnings` | array | Advisory usable provider slots with no effective admission binding; always present (empty when all usable slots are bound). Each item has `slot`, `code` (`admission_binding_missing`) and an actionable `message`. These slots remain usable but their requests are not broker-gated. |
-| `startupWarnings` | array of strings | The warnings the startup model drew (#2435, #2126): a model its provider does not list (or a retired built-in), one refused for the account, or a provider this harness has not configured. Absent when there are none. They are about the startup model: a `set_model` to another model clears them. The same lines go to the agent's stderr; the TUI shows each once as a notice. |
+| `startupWarnings` | array of strings | The warnings the startup model drew (#2435, #2126): a model its provider does not list (or a retired built-in), one refused for the account, or a provider this harness has not configured. Absent when there are none. They are about the startup model: a `set_model` to another model clears them. A configured extension in trouble (#2446) adds a line too, for as long as it lasts: not registered within 30 s, its connection closed while it runs, restarting, or stopped (``extension `<name>` exited with code 3 (its tools were refused) and is not restarted (log: …)``); a `set_model` does not clear those, and each change of an extension's state advances `generation`. The same lines go to the agent's stderr; the TUI shows each once as a notice. |
 | `modelTurn` | object \| omitted | The model request in flight (#2210): present only while the agent waits on the model — thinking or streaming — and omitted otherwise |
 | `agentRequests` | object | This agent's own provider requests so far (#2436), retries included; always present. Not `admission.counters`, which count admission attempts — see [Agent requests](#agent-requests) below |
 
@@ -1275,8 +1283,10 @@ Each tool object:
 
 **Side effect:** Broadcasts `tool_catalogue_changed` to connected control/query clients with `changedTools`, `before`, `after`, and `reason`.
 
-**Failure:** Returns `success: false` if any tool shadows a core tool name, or
-sets a `timeoutSeconds` that is not a whole number from 1 to 600 (at most 64
+**Failure:** Returns `success: false` if any tool name is not 1 to 64
+ASCII letters, digits, `_` or `-` (#2446), shadows a core tool name, claims a
+configured extension's stable id (`tool.v1:uds:<n>:uds:extension:…`) from a
+connection that is not that extension's, or sets a `timeoutSeconds` that is not a whole number from 1 to 600 (at most 64
 characters of the value are echoed), e.g.
 `tool 'shot': timeoutSeconds must be a whole number of seconds from 1 to 600, got 0`.
 No tools from the batch are registered.
@@ -1976,6 +1986,7 @@ All flags for `quecto agent` that affect UDS mode:
 | `--workflow` | Start workflow-driven prompt injection immediately |
 | `--workflow-guards` | Enable workflow bash command guards |
 | `--no-workflow` | Disable workflow tool/state/prompt |
+| `--no-extensions` | Launch none of the configured `extensions`; sub-agents inherit it |
 | `--parent-id <id>` | Declare this agent's parent in the unit tree (set automatically by `spawn`) |
 | `--disable-tool <name>` | Disable/hide a tool and deny re-registration (repeatable) |
 | `--config <path>` | Override config file path |

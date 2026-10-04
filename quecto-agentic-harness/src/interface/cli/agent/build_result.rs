@@ -4,6 +4,9 @@ use std::sync::Arc;
 
 use super::ExtensionRegistry;
 use crate::application::agent_loop::AgentLoopImpl;
+use crate::domain::agents::configured_extensions::{AgentExtensions, AgentRole};
+use crate::infrastructure::config::Config;
+use crate::infrastructure::config::extensions::ExtensionConfig;
 
 use super::{NotificationRx, SharedHarnessLifecycle, SubagentRegistry};
 
@@ -29,4 +32,44 @@ pub(crate) struct AgentBuildResult {
     pub workspace: std::path::PathBuf,
     /// `telemetry.event_log.enabled` (#2150).
     pub event_log: bool,
+    /// The configured extensions this agent launches (#2446).
+    pub extensions: AgentExtensions,
+}
+
+/// The configured extensions an agent may launch (#2446): a top-level
+/// agent's own global config's; a spawned child's, only the validated list
+/// its parent handed down with its policy. A child's own `--config` (which
+/// a spawn call may name) never names commands to run.
+fn configured(config: &Config, flags: &super::AgentFlags) -> Vec<ExtensionConfig> {
+    match flags.spawned {
+        true => flags
+            .inherited_tool_policy
+            .as_ref()
+            .map(|policy| policy.extensions.clone())
+            .unwrap_or_default(),
+        false => config.extensions.clone(),
+    }
+}
+
+/// The configured extensions an agent started with `flags` launches: a
+/// spawned child's under its own id; none under `--no-extensions`.
+pub(super) fn agent_extensions(config: &Config, flags: &super::AgentFlags) -> AgentExtensions {
+    AgentExtensions::select(
+        configured(config, flags)
+            .iter()
+            .map(ExtensionConfig::spec)
+            .collect(),
+        AgentRole::of(flags.spawned),
+        flags.session_name.as_deref(),
+        flags.launch_extensions,
+    )
+}
+
+/// The configured extensions each local child of this agent launches:
+/// those of its own marked `children`; none under `--no-extensions`.
+pub(super) fn child_extensions(config: &Config, flags: &super::AgentFlags) -> Vec<ExtensionConfig> {
+    configured(config, flags)
+        .into_iter()
+        .filter(|extension| flags.launch_extensions && extension.children)
+        .collect()
 }

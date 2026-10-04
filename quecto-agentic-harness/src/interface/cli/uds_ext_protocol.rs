@@ -135,6 +135,17 @@ pub struct ClientToolState {
     /// that aren't addressed to them.  Set on accept via
     /// `register_client_writer`; cleared on disconnect.
     pub writer_tx: Option<tokio::sync::mpsc::Sender<String>>,
+    /// Set when this connection is a configured extension's own (#2446);
+    /// dropped with the state, which marks the extension disconnected.
+    pub extension: Option<crate::infrastructure::processes::configured_extensions::ExtensionClaim>,
+    /// Not (yet) an extension's: the agent's extensions and this peer's
+    /// pid, to claim it again at its `register_tools` (#2446).
+    pub extension_candidate: Option<(
+        std::sync::Arc<
+            crate::infrastructure::processes::configured_extensions::ConfiguredExtensions,
+        >,
+        i32,
+    )>,
 }
 
 /// Register a per-client writer sender so `forward_tool_requests` can
@@ -189,6 +200,25 @@ pub fn handle_register_tools(
         registry,
         core_tool_names,
     } = args;
+    // #2446: a name is what a model-facing tool name may be, so no tool can
+    // pose as a stable id or a configured extension's policy key.
+    let name_allowed = |name: &str| {
+        (1..=64).contains(&name.len())
+            && name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+    };
+    if let Some(tool) = tools.iter().find(|tool| !name_allowed(&tool.name)) {
+        let refusal = format!(
+            "tool '{}': a tool name is 1 to 64 ASCII letters, digits, `_` or `-`",
+            tool.name
+        );
+        return (
+            false,
+            AgentEvent::err(id, "register_tools", refusal),
+            vec![],
+        );
+    }
     // Check for shadow of core tools.
     for tool in tools {
         if core_tool_names.contains(&tool.name) {

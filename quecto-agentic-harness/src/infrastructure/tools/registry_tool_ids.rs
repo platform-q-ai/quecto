@@ -57,10 +57,15 @@ impl ToolRegistryImpl {
         metadata: &ToolRegistration,
     ) -> Option<crate::domain::tool_descriptor::ProfileAvailabilityScope> {
         let identity = metadata.identity_for_name(name);
+        // #2446: a configured extension's tool the snapshot does not name
+        // is covered by its extension's entry, which records that the parent
+        // holds that extension's tools.
+        let extension = crate::domain::tool_policy::configured_extension_key(&identity.stable_id);
         self.inherited_policy_scopes
             .get(identity.stable_id.as_ref())
+            .or_else(|| self.inherited_policy_scopes.get(name))
+            .or_else(|| extension.and_then(|key| self.inherited_policy_scopes.get(key)))
             .copied()
-            .or_else(|| self.inherited_policy_scopes.get(name).copied())
     }
 
     pub(super) fn registration_identity_is_available(

@@ -13,6 +13,8 @@
 //!   listener (`uds.rs`).
 //! - `admission-peer direct|proxy|nested`: the inference-admission
 //!   transport experiment's peer (`admission.rs`).
+//! - `extension --socket <path> --agent-id <id> --record <file>
+//!   [--exit-code <n>]`: a stand-in configured extension (`extension.rs`).
 //! - `pid2-signal-log <command…>`: the in-container proof's signal-logging
 //!   pid 2 (`pid2.rs`, `scripts/bdd-in-box/run.sh`).
 //!
@@ -21,6 +23,7 @@
 //! alone; elsewhere it refuses (the tests that use it run on Linux).
 
 mod admission;
+mod extension;
 #[cfg(target_os = "linux")]
 mod pid2;
 #[cfg(target_os = "linux")]
@@ -66,6 +69,7 @@ fn dispatch(args: &[String]) -> Result<(), String> {
             "uds-bridge" => uds::bridge(rest),
             "uds-listen" => uds::listen(rest),
             "admission-peer" => admission::run(rest),
+            "extension" => extension::run(rest),
             "pid2-signal-log" => pid2::run(rest),
             other => Err(format!("unknown fixture {other}")),
         },

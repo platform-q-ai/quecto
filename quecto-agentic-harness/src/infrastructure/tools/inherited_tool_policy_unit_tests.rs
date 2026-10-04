@@ -70,3 +70,23 @@ fn load_reports_malformed_snapshot_and_unlinks() {
     assert!(err.contains("parse inherited tool policy snapshot"));
     assert!(!path.exists());
 }
+
+/// #2446 review H1: the extensions a parent hands its child travel with
+/// its policy and are checked as config is: a bad entry refuses the child.
+#[test]
+fn handed_down_extensions_round_trip_and_a_bad_one_is_refused() {
+    let tmp = TempDir::new().unwrap();
+    let path = tmp.path().join("policy.json");
+    let mut snapshot = InheritedToolPolicySnapshot::new(BTreeMap::new());
+    snapshot.extensions = serde_json::from_value(serde_json::json!([
+        {"name": "bt", "command": "/opt/bt", "args": ["{socket}"]}
+    ]))
+    .unwrap();
+    write_snapshot(&path, &snapshot).unwrap();
+    assert_eq!(load_validate_unlink(&path).unwrap(), snapshot);
+    snapshot.extensions[0].command = "bt".into();
+    write_snapshot(&path, &snapshot).unwrap();
+    let error = load_validate_unlink(&path).unwrap_err();
+    assert!(error.contains("absolute path"), "{error}");
+    assert!(!path.exists());
+}

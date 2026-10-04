@@ -18,6 +18,8 @@ pub enum ConfigError {
     ContextBudget(String),
     /// A key or environment override that was removed (#2414).
     RemovedKey(String),
+    /// An invalid `extensions` entry (#2446).
+    Extensions(String),
 }
 
 impl std::fmt::Display for ConfigError {
@@ -43,6 +45,7 @@ impl std::fmt::Display for ConfigError {
             ConfigError::Admission(err) => write!(f, "invalid admission config: {err}"),
             ConfigError::ContextBudget(err) => write!(f, "invalid context budget: {err}"),
             ConfigError::RemovedKey(err) => write!(f, "removed config key: {err}"),
+            ConfigError::Extensions(err) => write!(f, "invalid extensions: {err}"),
         }
     }
 }
