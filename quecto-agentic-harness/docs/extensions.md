@@ -338,6 +338,106 @@ done
 
 > **Note:** The shell example requires `socat` and `jq`. For production extensions, use a proper client library or a compiled binary.
 
+## Configured extensions
+
+A UDS extension normally has to be started by hand and pointed at an
+agent's socket. Listed under `extensions` in the **global** `config.json`,
+it is launched by the agent itself, and every locally spawned sub-agent
+launches its own instance: several sub-agents can each drive their own
+browser, for example, instead of fighting over one page.
+
+```json
+{
+  "extensions": [
+    {
+      "name": "browser-task",
+      "command": "/home/me/bin/browser-task",
+      "args": [
+        "--socket", "{socket}",
+        "--profile-dir", "{state_dir}/profile",
+        "--action-log", "{state_dir}/actions.jsonl",
+        "--agent-browser", "/opt/agent-browser/bin/agent-browser-linux-x64",
+        "--jev-key-file", "/home/me/.config/typesafe/api_key"
+      ],
+      "children": true
+    }
+  ]
+}
+```
+
+| Field | Required | Meaning |
+|-------|----------|---------|
+| `name` | yes | 1 to 64 ASCII letters, digits, `-` or `_`; unique. Names the state directory |
+| `command` | yes | Absolute path of the program |
+| `args` | no | Its arguments (placeholders allowed) |
+| `env` | no | Extra environment variables (placeholders allowed in values) |
+| `children` | no, default `true` | Whether each locally spawned sub-agent launches its own instance |
+
+Placeholders in `args` and `env` values:
+
+| Placeholder | Value |
+|-------------|-------|
+| `{socket}` | This agent's own socket |
+| `{agent_id}` | `main` for a top-level agent; a sub-agent's own id (the UUID `spawn` returns) |
+| `{state_dir}` | `<base_dir>/extensions/<name>/<agent_id>`, created before the launch |
+
+Two top-level agents running at once are both `main`, so they share a state
+directory: an extension whose state cannot be shared (a browser profile)
+fails in the second one, which reports it.
+
+Any other `{name}` (letters, digits, `_` between braces) refuses the
+config at load, naming it; other braces, such as JSON in an argument, are
+kept as written. A relative `command`, a bad `name`, a repeated name or an
+unknown field (`child` for `children`) is refused too.
+
+`extensions` is **global-only**: a repo-local `.quecto/config.json` that
+defines it is refused naming the key, like `providers` and `admission`
+(launching commands is the owner's decision, not a repository's).
+`quecto config set --global extensions '[…]'` writes it.
+
+### How an agent runs them
+
+- **When.** In UDS mode, once the agent's socket listens. A one-shot
+  `quecto agent -m` launches none.
+- **Process.** stdin is closed; stdout and stderr are appended to
+  `{state_dir}/extension.log`. Each runs in a process group of its own,
+  owned by the agent: when the agent exits, the group gets SIGTERM, then
+  SIGKILL after 5 s. If the agent is killed outright, the extension gets
+  SIGTERM from the kernel (Linux parent-death signal).
+- **Start-up wait.** Until every extension has registered its tools (or
+  30 s passed), the agent serves only the extensions' own connections;
+  other clients' commands wait, in order, so the first turn already has
+  the tools. An extension's connection is recognised by its process group.
+  One that has not registered within 30 s is reported and left running.
+- **Restarts.** An extension that exits is restarted after 1 s, 2 s, 4 s, …
+  (at most 30 s), up to 5 times in 10 minutes; one more exit stops it.
+  Exit code 2 (command-line error) and 3 (its tools were refused) are
+  never restarted.
+- **Lifetime.** An extension's connection is not a client: it neither keeps
+  an agent that ends with its last client alive, nor ends it by leaving.
+- **Status.** An extension in trouble (not registered in time, restarting,
+  stopped, unlaunchable) appears in `get_state`'s `startupWarnings`, e.g.
+  ``extension `browser-task` exited with code 3 (its tools were refused) and
+  is not restarted (log: …/extension.log)``, and on the agent's stderr.
+  A starting or running one adds nothing.
+- **Tool ids.** A configured extension's tools get the stable id
+  `tool.v1:uds:<n>:uds:extension:<name>:<tool>`, the same in every agent and
+  every session, so a `tools.policy` entry for one applies wherever it runs.
+  No other client may register a tool under that namespace.
+
+### Sub-agents
+
+A locally spawned sub-agent launches its own instance of each extension
+with `children: true`, with `{agent_id}` set to its id and its own state
+directory. Its inherited tool policy allows them as the parent's policy
+allows the parent's instance (see [Tool policy](tool-policy.md)).
+A container sub-agent launches **no** host extensions (it is started with
+`--no-extensions`): forwarding them into a container is not supported.
+
+`quecto agent --no-extensions` launches none, and its sub-agents inherit
+the flag. The parent's own extension tools are never forwarded to its
+children: each child uses its own instance.
+
 ## Querying the tool catalogue
 
 Control/query clients can query the rich catalogue snapshot:

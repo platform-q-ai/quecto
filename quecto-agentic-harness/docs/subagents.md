@@ -623,6 +623,21 @@ that need to restrict which subagents can be spawned.
 4. Registers the child in the shared `SubagentRegistry` by UUID while retaining `agent_id` as the display label
 5. If `task` was provided, sends it as the initial `prompt` via UDS (fire-and-forget)
 
+#### Configured extensions (#2446)
+
+A locally spawned child launches its own instance of every configured
+extension with `children: true` (see [Extensions](extensions.md#configured-extensions)),
+with `{agent_id}` set to the child's UUID and its own state directory
+(`<base_dir>/extensions/<name>/<uuid>`): several children each get, say,
+their own browser. The child holds its task prompt until its instances have
+registered their tools (at most 30 s), and its inherited tool policy allows
+those tools as the parent's policy allows the parent's instance
+([Tool policy](tool-policy.md#inheritance-by-spawned-children)). The
+parent's own instance is never shared with a child. A container child
+launches no host extensions (`spawn` starts it with `--no-extensions`), and
+a parent started with `--no-extensions` passes it on to every child.
+A child's instances end with the child.
+
 #### Launch-bound parent control (#1935)
 
 A launcher-created child is lifetime-scoped to the harness that launched it.
