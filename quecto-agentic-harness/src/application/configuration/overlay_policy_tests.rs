@@ -98,6 +98,10 @@ fn global_only_keys_are_named() {
     assert_eq!(global_only_key(&doc), Some("admission"));
     let doc = json!({"providers":{}}).as_object().unwrap().clone();
     assert_eq!(global_only_key(&doc), Some("providers"));
+    // #2446: an overlay may not define or change the configured extensions.
+    let doc = json!({"extensions":[]}).as_object().unwrap().clone();
+    assert_eq!(global_only_key(&doc), Some("extensions"));
+    assert_eq!(global_only_path(&["extensions"]), Some("extensions"));
     let doc = json!({"agents":{}}).as_object().unwrap().clone();
     assert_eq!(global_only_key(&doc), None);
 }
