@@ -53,6 +53,14 @@ Every command accepts an optional `id` field (string). When present, the corresp
 
 Send a user message to the agent. This is the primary command — it triggers an LLM call, possible tool executions, and streams results back as events.
 
+**At start-up with configured extensions** (#2446): until the agent's
+configured extensions have registered their tools, at most 30 s, it
+answers only reads (`get_*`, `list_*`, `sync`, session search) and UDS tool
+traffic (`register_tools`, `unregister_tools`, `tool_result`). A `prompt`,
+`steer` or `follow_up`, every other command that changes state, and other
+clients' disconnects wait and then run in the order they arrived; an
+`"ack":"accept"` forward is still acknowledged at once.
+
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `type` | `"prompt"` | yes | |
@@ -1275,7 +1283,7 @@ Each tool object:
 
 **Side effect:** Broadcasts `tool_catalogue_changed` to connected control/query clients with `changedTools`, `before`, `after`, and `reason`.
 
-**Failure:** Returns `success: false` if any tool name is not one or more
+**Failure:** Returns `success: false` if any tool name is not 1 to 64
 ASCII letters, digits, `_` or `-` (#2446), shadows a core tool name, claims a
 configured extension's stable id (`tool.v1:uds:<n>:uds:extension:…`) from a
 connection that is not that extension's, or sets a `timeoutSeconds` that is not a whole number from 1 to 600 (at most 64

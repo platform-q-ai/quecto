@@ -175,7 +175,7 @@ On failure (e.g. shadowing a core tool):
 
 Other rejection cases (whole batch fails; nothing is registered):
 
-- A name that is not one or more ASCII letters, digits, `_` or `-` (#2446): ``"tool 'X': a tool name is one or more ASCII letters, digits, `_` or `-`"``
+- A name that is not 1 to 64 ASCII letters, digits, `_` or `-` (#2446): ``"tool 'X': a tool name is 1 to 64 ASCII letters, digits, `_` or `-`"``
 - Duplicate name in the same request: `"tool 'X' is registered more than once in this request"`
 - Name already owned by another connected client: `"tool 'X' is already registered by client <id>"`
 - A `timeoutSeconds` that is not a whole number from 1 to 600: `"tool 'X': timeoutSeconds must be a whole number of seconds from 1 to 600, got 0"`
@@ -371,7 +371,7 @@ browser, for example, instead of fighting over one page.
 | `name` | yes | 1 to 64 ASCII letters, digits, `-` or `_`; unique. Names the state directory |
 | `command` | yes | Absolute path of the program |
 | `args` | no | Its arguments (placeholders allowed) |
-| `env` | no | Extra environment variables (placeholders allowed in values) |
+| `env` | no | Extra environment variables; names are ASCII letters, digits and `_` (placeholders allowed in values) |
 | `children` | no, default `true` | Whether each locally spawned sub-agent launches its own instance |
 
 Placeholders in `args` and `env` values:
@@ -401,19 +401,23 @@ defines it is refused naming the key, like `providers` and `admission`
 - **When.** In UDS mode, once the agent's socket listens. A one-shot
   `quecto agent -m` launches none.
 - **Process.** stdin is closed; stdout and stderr are appended to
-  `{state_dir}/extension.log`. It inherits the agent's environment, API
+  `{state_dir}/extension.log`; both are made private (0700, 0600), an existing
+  directory included. It inherits the agent's environment, API
   keys included, plus its `env`. Each runs in a process group of its own,
-  owned by the agent: when the agent exits, the **whole group** gets
-  SIGTERM, then SIGKILL after 5 s. If the agent is killed outright (SIGKILL),
+  owned by the agent: as soon as the agent begins to shut down (alongside
+  its sub-agents' teardown), the **whole group** gets SIGTERM, then SIGKILL
+  after 5 s. If the agent is killed outright (SIGKILL),
   only the process the agent launched gets SIGTERM from the kernel (the
   Linux parent-death signal; none elsewhere): **an extension must end its
   own children** (a browser, say) when it gets SIGTERM or its connection
   closes. A child that leaves the group (`setsid`) is never signalled.
 - **Start-up wait.** Until every extension has registered its tools (or
-  30 s passed), work that starts a turn (`prompt`, `steer`, `follow_up`, a
-  sub-agent's note, a swarm wake) waits, in order, so the first turn already
-  has the tools. Everything else, queries such as `get_state` included, is
-  answered at once. One that has not registered within 30 s is reported
+  30 s passed), the agent serves only reads (`get_*`, `list_*`, `sync`,
+  session search), UDS tool traffic (`register_tools`, `unregister_tools`,
+  `tool_result`) and the extensions' own messages. Everything else (turns,
+  state changes such as `clear_history`, other clients' disconnects) waits
+  and then runs in the order it arrived, so the first turn already has the
+  tools and a client that sends a prompt and leaves still has it run. One that has not registered within 30 s is reported
   and left running.
 - **Its connection.** An extension's connection is recognised by the
   process group of the peer: connect from the process the agent launched,
@@ -435,7 +439,7 @@ defines it is refused naming the key, like `providers` and `admission`
   `tool.v1:uds:<n>:uds:extension:<name>:<tool>`, the same in every agent and
   every session, so a `tools.policy` entry for one applies wherever it runs.
   No other client may register a tool under that namespace, and a UDS tool
-  name is ASCII letters, digits, `_` and `-` only.
+  name is 1 to 64 ASCII letters, digits, `_` and `-`.
 
 ### Sub-agents
 
