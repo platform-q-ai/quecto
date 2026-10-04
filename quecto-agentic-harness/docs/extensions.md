@@ -175,6 +175,7 @@ On failure (e.g. shadowing a core tool):
 
 Other rejection cases (whole batch fails; nothing is registered):
 
+- A name that is not one or more ASCII letters, digits, `_` or `-` (#2446): ``"tool 'X': a tool name is one or more ASCII letters, digits, `_` or `-`"``
 - Duplicate name in the same request: `"tool 'X' is registered more than once in this request"`
 - Name already owned by another connected client: `"tool 'X' is already registered by client <id>"`
 - A `timeoutSeconds` that is not a whole number from 1 to 600: `"tool 'X': timeoutSeconds must be a whole number of seconds from 1 to 600, got 0"`
@@ -400,36 +401,50 @@ defines it is refused naming the key, like `providers` and `admission`
 - **When.** In UDS mode, once the agent's socket listens. A one-shot
   `quecto agent -m` launches none.
 - **Process.** stdin is closed; stdout and stderr are appended to
-  `{state_dir}/extension.log`. Each runs in a process group of its own,
-  owned by the agent: when the agent exits, the group gets SIGTERM, then
-  SIGKILL after 5 s. If the agent is killed outright, the extension gets
-  SIGTERM from the kernel (Linux parent-death signal).
+  `{state_dir}/extension.log`. It inherits the agent's environment, API
+  keys included, plus its `env`. Each runs in a process group of its own,
+  owned by the agent: when the agent exits, the **whole group** gets
+  SIGTERM, then SIGKILL after 5 s. If the agent is killed outright (SIGKILL),
+  only the process the agent launched gets SIGTERM from the kernel (the
+  Linux parent-death signal; none elsewhere): **an extension must end its
+  own children** (a browser, say) when it gets SIGTERM or its connection
+  closes. A child that leaves the group (`setsid`) is never signalled.
 - **Start-up wait.** Until every extension has registered its tools (or
-  30 s passed), the agent serves only the extensions' own connections;
-  other clients' commands wait, in order, so the first turn already has
-  the tools. An extension's connection is recognised by its process group.
-  One that has not registered within 30 s is reported and left running.
+  30 s passed), work that starts a turn (`prompt`, `steer`, `follow_up`, a
+  sub-agent's note, a swarm wake) waits, in order, so the first turn already
+  has the tools. Everything else, queries such as `get_state` included, is
+  answered at once. One that has not registered within 30 s is reported
+  and left running.
+- **Its connection.** An extension's connection is recognised by the
+  process group of the peer: connect from the process the agent launched,
+  or one in its process group (not one that called `setsid`). A connection
+  not yet recognised when it was accepted is recognised at its
+  `register_tools`. A connection from anywhere else is an ordinary client.
 - **Restarts.** An extension that exits is restarted after 1 s, 2 s, 4 s, …
   (at most 30 s), up to 5 times in 10 minutes; one more exit stops it.
   Exit code 2 (command-line error) and 3 (its tools were refused) are
   never restarted.
 - **Lifetime.** An extension's connection is not a client: it neither keeps
   an agent that ends with its last client alive, nor ends it by leaving.
-- **Status.** An extension in trouble (not registered in time, restarting,
-  stopped, unlaunchable) appears in `get_state`'s `startupWarnings`, e.g.
+- **Status.** An extension in trouble (not registered in time, its
+  connection closed while it runs, restarting, stopped, unlaunchable) appears in `get_state`'s `startupWarnings`, e.g.
   ``extension `browser-task` exited with code 3 (its tools were refused) and
   is not restarted (log: …/extension.log)``, and on the agent's stderr.
   A starting or running one adds nothing.
 - **Tool ids.** A configured extension's tools get the stable id
   `tool.v1:uds:<n>:uds:extension:<name>:<tool>`, the same in every agent and
   every session, so a `tools.policy` entry for one applies wherever it runs.
-  No other client may register a tool under that namespace.
+  No other client may register a tool under that namespace, and a UDS tool
+  name is ASCII letters, digits, `_` and `-` only.
 
 ### Sub-agents
 
-A locally spawned sub-agent launches its own instance of each extension
-with `children: true`, with `{agent_id}` set to its id and its own state
-directory. Its inherited tool policy allows them as the parent's policy
+A locally spawned sub-agent launches its own instance of each of its
+parent's extensions with `children: true`, with `{agent_id}` set to its id
+and its own state directory, which is removed when the sub-agent ends. The
+list is handed down with its inherited tool policy: an `extensions` section
+in a config the sub-agent is started with (`spawn`'s `config`) is ignored,
+so no spawn can make a child run a command the owner did not configure. Its inherited tool policy allows them as the parent's policy
 allows the parent's instance (see [Tool policy](tool-policy.md)).
 A container sub-agent launches **no** host extensions (it is started with
 `--no-extensions`): forwarding them into a container is not supported.

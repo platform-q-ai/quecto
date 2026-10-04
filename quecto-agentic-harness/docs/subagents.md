@@ -625,11 +625,13 @@ that need to restrict which subagents can be spawned.
 
 #### Configured extensions (#2446)
 
-A locally spawned child launches its own instance of every configured
-extension with `children: true` (see [Extensions](extensions.md#configured-extensions)),
+A locally spawned child launches its own instance of each of its parent's
+configured extensions with `children: true` (see [Extensions](extensions.md#configured-extensions)),
 with `{agent_id}` set to the child's UUID and its own state directory
-(`<base_dir>/extensions/<name>/<uuid>`): several children each get, say,
-their own browser. The child holds its task prompt until its instances have
+(`<base_dir>/extensions/<name>/<uuid>`, removed when the child ends):
+several children each get, say, their own browser. The list is handed down
+with the child's inherited tool policy; an `extensions` section in the
+config a spawn names (`config`) is ignored. The child holds its task prompt (not its queries) until its instances have
 registered their tools (at most 30 s), and its inherited tool policy allows
 those tools as the parent's policy allows the parent's instance
 ([Tool policy](tool-policy.md#inheritance-by-spawned-children)). The

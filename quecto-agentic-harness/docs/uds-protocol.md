@@ -557,7 +557,7 @@ While a model request is in flight the marker also carries `modelTurn`
 | `workflow` | object \| omitted | Slim selected-workflow identity and current step only |
 | `admission` | object \| omitted | Bounded inference-admission view (#1679); present only when the process joined an admission authority |
 | `admissionWarnings` | array | Advisory usable provider slots with no effective admission binding; always present (empty when all usable slots are bound). Each item has `slot`, `code` (`admission_binding_missing`) and an actionable `message`. These slots remain usable but their requests are not broker-gated. |
-| `startupWarnings` | array of strings | The warnings the startup model drew (#2435, #2126): a model its provider does not list (or a retired built-in), one refused for the account, or a provider this harness has not configured. Absent when there are none. They are about the startup model: a `set_model` to another model clears them. A configured extension in trouble (#2446) adds a line too, for as long as it lasts: not registered within 30 s, restarting, or stopped (``extension `<name>` exited with code 3 (its tools were refused) and is not restarted (log: …)``); a `set_model` does not clear those, and each change of an extension's state advances `generation`. The same lines go to the agent's stderr; the TUI shows each once as a notice. |
+| `startupWarnings` | array of strings | The warnings the startup model drew (#2435, #2126): a model its provider does not list (or a retired built-in), one refused for the account, or a provider this harness has not configured. Absent when there are none. They are about the startup model: a `set_model` to another model clears them. A configured extension in trouble (#2446) adds a line too, for as long as it lasts: not registered within 30 s, its connection closed while it runs, restarting, or stopped (``extension `<name>` exited with code 3 (its tools were refused) and is not restarted (log: …)``); a `set_model` does not clear those, and each change of an extension's state advances `generation`. The same lines go to the agent's stderr; the TUI shows each once as a notice. |
 | `modelTurn` | object \| omitted | The model request in flight (#2210): present only while the agent waits on the model — thinking or streaming — and omitted otherwise |
 | `agentRequests` | object | This agent's own provider requests so far (#2436), retries included; always present. Not `admission.counters`, which count admission attempts — see [Agent requests](#agent-requests) below |
 
@@ -1275,8 +1275,10 @@ Each tool object:
 
 **Side effect:** Broadcasts `tool_catalogue_changed` to connected control/query clients with `changedTools`, `before`, `after`, and `reason`.
 
-**Failure:** Returns `success: false` if any tool shadows a core tool name, or
-sets a `timeoutSeconds` that is not a whole number from 1 to 600 (at most 64
+**Failure:** Returns `success: false` if any tool name is not one or more
+ASCII letters, digits, `_` or `-` (#2446), shadows a core tool name, claims a
+configured extension's stable id (`tool.v1:uds:<n>:uds:extension:…`) from a
+connection that is not that extension's, or sets a `timeoutSeconds` that is not a whole number from 1 to 600 (at most 64
 characters of the value are echoed), e.g.
 `tool 'shot': timeoutSeconds must be a whole number of seconds from 1 to 600, got 0`.
 No tools from the batch are registered.
