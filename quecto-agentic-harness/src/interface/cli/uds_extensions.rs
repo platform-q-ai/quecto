@@ -40,13 +40,36 @@ pub(super) fn claim_connection(
         .peer_cred()
         .ok()
         .and_then(|credentials| credentials.pid());
-    if let Some(claim) = extensions
+    let (Some(extensions), Some(peer)) = (extensions, peer) else {
+        return;
+    };
+    let mut clients = registry.lock().unwrap_or_else(|e| e.into_inner());
+    let state = clients.entry(client_id).or_default();
+    match extensions.claim(Some(peer)) {
+        Some(claim) => {
+            tracing::info!(client_id, extension = %claim.name(), "configured extension connected");
+            state.extension = Some(claim);
+        }
+        None => state.extension_candidate = Some((Arc::clone(extensions), peer)),
+    }
+}
+
+/// At `register_tools`: a connection not claimed at accept (it connected
+/// before its extension's launch was recorded) is claimed now if its peer
+/// is an extension's.
+pub(super) fn claim_late(registry: &super::uds_ext_protocol::ClientToolRegistry, client_id: u64) {
+    let mut clients = registry.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(state) = clients.get_mut(&client_id) else {
+        return;
+    };
+    let claim = state
+        .extension_candidate
         .as_ref()
-        .and_then(|extensions| extensions.claim(peer))
-    {
-        tracing::info!(client_id, extension = %claim.name(), "configured extension connected");
-        let mut clients = registry.lock().unwrap_or_else(|e| e.into_inner());
-        clients.entry(client_id).or_default().extension = Some(claim);
+        .and_then(|(extensions, peer)| extensions.claim(Some(*peer)));
+    if let Some(claim) = claim {
+        tracing::info!(client_id, extension = %claim.name(), "configured extension claimed late");
+        state.extension_candidate = None;
+        state.extension = Some(claim);
     }
 }
 

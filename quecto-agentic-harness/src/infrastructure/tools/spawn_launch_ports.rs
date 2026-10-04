@@ -152,8 +152,17 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
         .map_err(|e| DomainError::Tool(format!("failed to write parent control sidecar: {e}")))?;
         self.parent_control = Some(credential);
         self.parent_control_path = Some(parent_control_path.clone());
+        // #2446: the child launches this agent's extensions, handed down
+        // with its policy; its own `--config` never names commands.
+        let child_extensions = self.tool.extensions_for_child(config);
         let inherited_tool_policy =
-            super::spawn_inherited_policy::snapshot(&self.tool.inherited_tool_policy);
+            super::spawn_inherited_policy::snapshot(&self.tool.inherited_tool_policy).map(
+                |snapshot| super::inherited_tool_policy::InheritedToolPolicySnapshot {
+                    extensions: child_extensions.clone(),
+                    ..snapshot
+                },
+            );
+        let launches_extensions = inherited_tool_policy.is_some() && !child_extensions.is_empty();
         let inherited_tool_policy_path = if let Some(snapshot) = inherited_tool_policy.as_ref() {
             let path = self.tool.socket_dir.join(child_sidecar_filename(
                 "quecto-tool-policy",
@@ -190,7 +199,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 workflow_spec_path: workflow_spec_path.as_deref(),
                 inherited_tool_policy_path: inherited_tool_policy_path.as_deref(),
                 parent_control_path: Some(&parent_control_path),
-                launches_extensions: self.tool.child_launches_extensions(config),
+                launches_extensions,
             },
         ))
     }

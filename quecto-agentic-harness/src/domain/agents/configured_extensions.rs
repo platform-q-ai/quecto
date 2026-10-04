@@ -41,8 +41,9 @@ pub struct ExtensionSpec {
 
 /// Which agent is launching: the top-level one, or a locally spawned
 /// child (a container child launches none, so it has no role here).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum AgentRole {
+    #[default]
     TopLevel,
     LocalChild,
 }
@@ -69,11 +70,26 @@ impl AgentRole {
 /// The extensions one agent launches, and the `{agent_id}` it gives them.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AgentExtensions {
+    pub role: AgentRole,
     pub agent_id: String,
     pub specs: Vec<ExtensionSpec>,
 }
 
 impl AgentExtensions {
+    /// Whether its instances' state directories go when the agent does: a
+    /// sub-agent's do (one per child would pile up); a top-level agent's
+    /// (`main`) stay for its next run. Only an id that names one directory.
+    pub fn discards_state(&self) -> bool {
+        let one_directory = self
+            .agent_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_');
+        self.role == AgentRole::LocalChild
+            && one_directory
+            && !self.agent_id.is_empty()
+            && self.agent_id != TOP_LEVEL_AGENT_ID
+    }
+
     /// The `configured` extensions an agent in `role` launches; none when
     /// launching is switched off (`--no-extensions`).
     pub fn select(
@@ -83,6 +99,7 @@ impl AgentExtensions {
         launching: bool,
     ) -> Self {
         Self {
+            role,
             agent_id: role.agent_id(session_name),
             specs: configured
                 .into_iter()
@@ -267,6 +284,8 @@ pub enum ExtensionState {
     Running,
     /// Running, but no `register_tools` within [`REGISTRATION_WAIT`].
     Unregistered,
+    /// Running, but its connection closed: it has no tools.
+    Disconnected,
     /// Exited; restart number `restart` is scheduled.
     Restarting { exit: ExtensionExit, restart: usize },
     /// Not running and not restarted.
@@ -281,7 +300,7 @@ impl ExtensionState {
     /// tools arrived, the wait ran out, or it will not run.
     pub fn settled(&self) -> bool {
         match self {
-            Self::Running | Self::Unregistered | Self::Stopped { .. } => true,
+            Self::Running | Self::Unregistered | Self::Disconnected | Self::Stopped { .. } => true,
             Self::Starting | Self::Restarting { .. } => false,
         }
     }
@@ -295,6 +314,9 @@ impl ExtensionState {
                 "did not register its tools within {} s; it is still running",
                 REGISTRATION_WAIT.as_secs()
             ),
+            Self::Disconnected => {
+                "closed its connection and is still running, without its tools".to_string()
+            }
             Self::Restarting { exit, restart } => {
                 format!("exited ({exit}); restart {restart} of {MAX_RESTARTS}")
             }

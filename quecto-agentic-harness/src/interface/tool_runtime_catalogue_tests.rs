@@ -34,7 +34,7 @@ fn build_runtime_with_entrypoint(
     let mut stderr = String::new();
 
     build_tool_runtime(ToolRuntimeBuildArgs {
-        launch_extensions: true,
+        child_extensions: Vec::new(),
         swarm_context: None,
         swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::shared(),
         entrypoint,

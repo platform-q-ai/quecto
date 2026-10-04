@@ -68,6 +68,10 @@ pub(crate) fn workflow_tool_identity() -> ToolIdentity {
 pub struct InheritedToolPolicySnapshot {
     pub version: u32,
     pub tools: BTreeMap<String, ProfileAvailabilityScope>,
+    /// The configured extensions the child launches (#2446): its parent's
+    /// validated list, never what the child's own config says.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extensions: Vec<crate::infrastructure::config::extensions::ExtensionConfig>,
 }
 
 impl InheritedToolPolicySnapshot {
@@ -75,6 +79,7 @@ impl InheritedToolPolicySnapshot {
         Self {
             version: INHERITED_TOOL_POLICY_SNAPSHOT_VERSION,
             tools,
+            extensions: Vec::new(),
         }
     }
 
@@ -88,6 +93,8 @@ impl InheritedToolPolicySnapshot {
         if self.tools.keys().any(|name| name.trim().is_empty()) {
             return Err("inherited tool policy snapshot contains an empty tool id".into());
         }
+        crate::infrastructure::config::extensions::validate(&self.extensions)
+            .map_err(|error| format!("inherited tool policy snapshot: {error}"))?;
         Ok(())
     }
 }

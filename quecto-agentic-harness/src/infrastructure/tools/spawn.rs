@@ -107,9 +107,8 @@ pub struct SpawnTool {
     /// when the spawn call names none. Container-config *selection* never
     /// reads it (#2024 S4a): that is `container_config_selection` below.
     pub(super) parent_config_path: Option<PathBuf>,
-    /// Whether this agent launches configured extensions (#2446); its
-    /// children inherit `--no-extensions` otherwise.
-    pub(super) launch_extensions: bool,
+    /// The configured extensions each local child launches (#2446).
+    pub(super) child_extensions: Vec<crate::infrastructure::config::extensions::ExtensionConfig>,
     /// Composition's container-config selection (#2024 S4a): launch policy
     /// over the launching agent's effective configuration for its checkout
     /// (trusted overlay merged), or an explicit spawn `config` file. A tool
@@ -187,7 +186,7 @@ impl SpawnTool {
             inherited_tool_policy: super::spawn_inherited_policy::new_state(),
             environment_registry: EnvironmentRegistry::new(),
             parent_config_path: None,
-            launch_extensions: true,
+            child_extensions: Vec::new(),
             container_config_selection: None,
             container_config_roster: None,
             roster_line: Mutex::new(None),
@@ -214,7 +213,7 @@ impl SpawnTool {
             inherited_tool_policy: super::spawn_inherited_policy::new_state(),
             environment_registry: EnvironmentRegistry::new(),
             parent_config_path: None,
-            launch_extensions: true,
+            child_extensions: Vec::new(),
             container_config_selection: None,
             container_config_roster: None,
             roster_line: Mutex::new(None),

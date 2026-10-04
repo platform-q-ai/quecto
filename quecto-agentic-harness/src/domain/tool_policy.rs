@@ -54,8 +54,10 @@ pub fn configured_extension_tool_id(extension: &str, tool: &str) -> String {
 }
 
 /// The policy key of the configured extension `stable_id` belongs to: its
-/// provider id, which no tool name or stable id can equal. `None` for any
-/// other tool.
+/// provider id (`uds:extension:<name>`). No stable id can equal it (every
+/// one starts `tool.v1:`), nor can a tool name: bundled names are fixed and
+/// a UDS registration's name is refused unless it is ASCII letters, digits,
+/// `_` or `-` (#2446), so never holds a `:`. `None` for any other tool.
 pub fn configured_extension_key(stable_id: &str) -> Option<&str> {
     parse_stable_tool_id(stable_id)
         .filter(|id| {

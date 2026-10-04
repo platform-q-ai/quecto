@@ -153,21 +153,31 @@ pub(super) fn validate_effort(
 }
 
 impl super::spawn::SpawnTool {
-    /// Whether this agent launches its configured extensions (#2446).
-    pub(crate) fn with_launch_extensions(mut self, launch_extensions: bool) -> Self {
-        self.launch_extensions = launch_extensions;
+    /// The configured extensions each local child launches (#2446): this
+    /// agent's own validated list, those marked `children`; empty under
+    /// `--no-extensions`.
+    pub(crate) fn with_child_extensions(
+        mut self,
+        extensions: Vec<crate::infrastructure::config::extensions::ExtensionConfig>,
+    ) -> Self {
+        self.child_extensions = extensions;
         self
     }
 
-    /// Whether a child launched with `config` launches its own configured
-    /// extensions (#2446): only a local child of an agent that launches
-    /// them; a container child never launches the host's.
-    pub(super) fn child_launches_extensions(&self, config: &SubagentConfig) -> bool {
-        self.launch_extensions
-            && matches!(
-                config.container,
-                crate::domain::subagent::ContainerSelection::Local
-            )
+    /// What a child launched with `config` launches (#2446): a local child,
+    /// this agent's list; a container child never the host's.
+    pub(super) fn extensions_for_child(
+        &self,
+        config: &SubagentConfig,
+    ) -> Vec<crate::infrastructure::config::extensions::ExtensionConfig> {
+        let local = matches!(
+            config.container,
+            crate::domain::subagent::ContainerSelection::Local
+        );
+        match local {
+            true => self.child_extensions.clone(),
+            false => Vec::new(),
+        }
     }
 }
 

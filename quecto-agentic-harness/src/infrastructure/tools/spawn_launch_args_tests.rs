@@ -333,20 +333,21 @@ fn a_child_that_launches_no_extensions_gets_no_extensions() {
     assert!(as_strings(&build_child_cli_args(&off)).contains(&"--no-extensions".into()));
 }
 
-/// #2446: only a local child of an agent that launches extensions launches
-/// its own; a container child never launches the host's, and an agent
-/// started with `--no-extensions` passes that on.
+/// #2446: a local child launches this agent's own list; a container child
+/// never the host's; an agent with none hands down none.
 #[test]
-fn only_local_children_of_a_launching_agent_launch_extensions() {
+fn only_local_children_get_this_agents_extensions() {
+    let listed: Vec<crate::infrastructure::config::extensions::ExtensionConfig> =
+        serde_json::from_value(serde_json::json!([{"name": "bt", "command": "/opt/bt"}])).unwrap();
     let tool = super::super::spawn::SpawnTool::new(Vec::new());
+    assert!(tool.extensions_for_child(&base_config()).is_empty());
+    let tool = tool.with_child_extensions(listed.clone());
     let local = base_config();
     let mut container = base_config();
     container.container = crate::domain::subagent::ContainerSelection::New {
         container_config: None,
         name: None,
     };
-    assert!(tool.child_launches_extensions(&local));
-    assert!(!tool.child_launches_extensions(&container));
-    let tool = tool.with_launch_extensions(false);
-    assert!(!tool.child_launches_extensions(&local));
+    assert_eq!(tool.extensions_for_child(&local), listed);
+    assert!(tool.extensions_for_child(&container).is_empty());
 }

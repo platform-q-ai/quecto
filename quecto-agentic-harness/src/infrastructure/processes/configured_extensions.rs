@@ -8,7 +8,6 @@
 //! which socket connections are an extension's own (by the process group
 //! of the peer), and says when the start-up wait is over.
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -37,6 +36,8 @@ pub struct ExtensionLaunch {
     spec: Result<ExtensionSpec, String>,
     state_dir: PathBuf,
     log: PathBuf,
+    /// Remove `state_dir` once the instance has ended (a sub-agent's).
+    discard_state: bool,
 }
 
 /// Expand `extensions` for an agent listening on `socket`: each instance's
@@ -60,6 +61,7 @@ pub fn plan(extensions: &AgentExtensions, socket: &Path, base_dir: &Path) -> Vec
                 spec: spec.expanded(&values),
                 log: state_dir.join("extension.log"),
                 state_dir,
+                discard_state: extensions.discards_state(),
             }
         })
         .collect()
@@ -71,13 +73,12 @@ struct Entry {
     state: ExtensionState,
     /// The running instance and its process group's id (its leader's pid).
     running: Option<(ChildHandleId, u32)>,
-    /// Bumped per launch, so a stale registration deadline is ignored.
-    launch: u64,
 }
 
 struct Board {
     entries: Mutex<Vec<Entry>>,
-    stopping: AtomicBool,
+    /// Set once, when the agent exits: every supervisor ends its instance.
+    stopping: tokio::sync::watch::Sender<bool>,
     revision: tokio::sync::watch::Sender<u64>,
 }
 
@@ -106,13 +107,24 @@ impl Board {
             self.revision.send_modify(|revision| *revision += 1);
         }
     }
+
+    /// Move entry `index` from `from` to `to`; any other state stays.
+    fn advance(&self, index: usize, from: &ExtensionState, to: ExtensionState) {
+        self.update(index, |entry| {
+            if entry.state == *from {
+                entry.state = to;
+            }
+        });
+    }
 }
 
 /// The configured extensions of one agent.
 pub struct ConfiguredExtensions {
     board: Arc<Board>,
-    supervisor: Arc<OwnedChildSupervisor>,
     tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    /// State directories removed once the instances have ended (a
+    /// sub-agent's; see [`AgentExtensions::discards_state`]).
+    discarded: Vec<PathBuf>,
 }
 
 impl std::fmt::Debug for ConfiguredExtensions {
@@ -135,13 +147,17 @@ impl ConfiguredExtensions {
                         log: launch.log.display().to_string(),
                         state: ExtensionState::Starting,
                         running: None,
-                        launch: 0,
                     })
                     .collect(),
             ),
-            stopping: AtomicBool::new(false),
+            stopping: tokio::sync::watch::channel(false).0,
             revision: tokio::sync::watch::channel(0).0,
         });
+        let discarded = launches
+            .iter()
+            .filter(|launch| launch.discard_state)
+            .map(|launch| launch.state_dir.clone())
+            .collect();
         let tasks = launches
             .into_iter()
             .enumerate()
@@ -156,8 +172,8 @@ impl ConfiguredExtensions {
             .collect();
         Self {
             board,
-            supervisor,
             tasks: Mutex::new(tasks),
+            discarded,
         }
     }
 
@@ -202,31 +218,25 @@ impl ConfiguredExtensions {
         *self.board.revision.borrow()
     }
 
-    /// The agent is exiting: nothing is restarted, and every running
-    /// extension is ended (TERM to its group, then KILL).
+    /// The agent is exiting: nothing is restarted, and every supervisor
+    /// ends its instance's whole process group (TERM, then KILL), one that
+    /// is mid-launch included, before this returns (bounded); then a
+    /// sub-agent's state directories go.
     pub async fn shutdown(&self) {
-        self.board.stopping.store(true, Ordering::SeqCst);
-        let running: Vec<ChildHandleId> = self
-            .board
-            .lock()
-            .iter()
-            .filter_map(|entry| entry.running.map(|(handle, _)| handle))
-            .collect();
-        futures::future::join_all(running.into_iter().map(|handle| {
-            self.supervisor.terminate(
-                handle,
-                async { ProtocolOutcome::Negative("its agent is exiting".into()) },
-                SHUTDOWN_BUDGET,
-            )
-        }))
-        .await;
-        for task in self
-            .tasks
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .drain(..)
+        self.board.stopping.send_replace(true);
+        let tasks = std::mem::take(&mut *self.tasks.lock().unwrap_or_else(|e| e.into_inner()));
+        let bound =
+            SHUTDOWN_BUDGET.term_grace + SHUTDOWN_BUDGET.kill_grace + Duration::from_secs(1);
+        if tokio::time::timeout(bound, futures::future::join_all(tasks))
+            .await
+            .is_err()
         {
-            task.abort();
+            tracing::warn!("a configured extension did not end within {bound:?}");
+        }
+        for state_dir in &self.discarded {
+            if let Err(error) = std::fs::remove_dir_all(state_dir) {
+                tracing::debug!(dir = %state_dir.display(), "state directory not removed: {error}");
+            }
         }
     }
 }
@@ -258,15 +268,14 @@ impl ExtensionClaim {
 impl Drop for ExtensionClaim {
     /// Its connection closed: a running extension without one has no tools.
     fn drop(&mut self) {
-        self.board.update(self.index, |entry| {
-            if entry.state == ExtensionState::Running {
-                entry.state = ExtensionState::Unregistered;
-            }
-        });
+        let running = ExtensionState::Running;
+        self.board
+            .advance(self.index, &running, ExtensionState::Disconnected);
     }
 }
 
-/// Run one extension until it stops for good or its agent exits.
+/// Run one extension until it stops for good or its agent exits; on the
+/// agent's exit, end the running instance.
 async fn supervise(
     board: Arc<Board>,
     supervisor: Arc<OwnedChildSupervisor>,
@@ -274,7 +283,8 @@ async fn supervise(
     launch: ExtensionLaunch,
 ) {
     let mut budget = RestartBudget::default();
-    while !board.stopping.load(Ordering::SeqCst) {
+    let mut stop = board.stopping.subscribe();
+    while !*stop.borrow() {
         let spawned = match start(&supervisor, &launch).await {
             Ok(spawned) => spawned,
             Err(error) => {
@@ -287,39 +297,37 @@ async fn supervise(
                 return;
             }
         };
-        let mut launched = 0;
         board.update(index, |entry| {
-            entry.launch += 1;
-            launched = entry.launch;
             entry.running = Some((spawned.handle, spawned.display_pid.0));
             entry.state = ExtensionState::Starting;
         });
-        if board.stopping.load(Ordering::SeqCst) {
-            // Launched while its agent began exiting: ended at once.
-            let negative = async { ProtocolOutcome::Negative("its agent is exiting".into()) };
-            supervisor
-                .terminate(spawned.handle, negative, SHUTDOWN_BUDGET)
-                .await;
-            return;
-        }
-        let overdue = Arc::clone(&board);
-        tokio::spawn(async move {
-            tokio::time::sleep(REGISTRATION_WAIT).await;
-            overdue.update(index, |entry| {
-                if entry.launch == launched && entry.state == ExtensionState::Starting {
-                    entry.state = ExtensionState::Unregistered;
+        let exit_wait = supervisor.wait_exit(spawned.handle);
+        tokio::pin!(exit_wait);
+        let overdue = tokio::time::sleep(REGISTRATION_WAIT);
+        tokio::pin!(overdue);
+        let mut waiting_for_tools = true;
+        let exit = loop {
+            tokio::select! {
+                exit = &mut exit_wait => break exit,
+                () = &mut overdue, if waiting_for_tools => {
+                    waiting_for_tools = false;
+                    board.advance(index, &ExtensionState::Starting, ExtensionState::Unregistered);
                 }
-            });
-        });
-        let exit = match supervisor.wait_exit(spawned.handle).await {
+                () = stopped(&mut stop) => {
+                    let negative = async { ProtocolOutcome::Negative("its agent is exiting".into()) };
+                    let outcome = supervisor.terminate(spawned.handle, negative, SHUTDOWN_BUDGET).await;
+                    tracing::info!(extension = %launch.name, ?outcome, "configured extension ended");
+                    supervisor.retire(spawned.handle);
+                    return;
+                }
+            }
+        };
+        let exit = match exit {
             Some(ChildExit::Code(code)) => ExtensionExit::Code(code),
             Some(ChildExit::Signal(signal)) => ExtensionExit::Signal(signal),
             Some(ChildExit::Unobservable(_)) | None => ExtensionExit::Unobservable,
         };
         supervisor.retire(spawned.handle);
-        if board.stopping.load(Ordering::SeqCst) {
-            return;
-        }
         let after = budget.after_exit(&exit, Instant::now());
         board.update(index, |entry| {
             entry.running = None;
@@ -334,11 +342,20 @@ async fn supervise(
                 },
             }
         });
-        match after {
-            AfterExit::Restart { delay, .. } => tokio::time::sleep(delay).await,
+        let delay = match after {
+            AfterExit::Restart { delay, .. } => delay,
             AfterExit::Stop(_) => return,
+        };
+        tokio::select! {
+            () = tokio::time::sleep(delay) => {}
+            () = stopped(&mut stop) => return,
         }
     }
+}
+
+/// Resolves once the agent is exiting (a closed channel counts).
+async fn stopped(stop: &mut tokio::sync::watch::Receiver<bool>) {
+    let _ = stop.wait_for(|stopping| *stopping).await;
 }
 
 /// Spawn one instance: its state directory made, stdin closed, its output

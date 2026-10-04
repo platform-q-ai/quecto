@@ -418,10 +418,12 @@ async fn run_dispatch_loop(
     mut args: DispatchLoopArgs,
     live_clients: &std::sync::atomic::AtomicU32,
 ) {
-    let mut held = clients::hold_for_extensions(ctx, &mut args, live_clients).await;
+    let mut hold = clients::StartupHold::new(ctx, args.extensions.clone());
     loop {
-        let msg = clients::next(&mut held, ctx, &mut args).await;
-        let Some(msg) = msg else { break };
+        let Some(msg) = hold.next(ctx, &mut args).await else {
+            break;
+        };
+        let Some(msg) = hold.admit(msg) else { continue };
         match msg {
             DispatchMsg::Shutdown => {
                 // The common shutdown settled the fleet before signalling

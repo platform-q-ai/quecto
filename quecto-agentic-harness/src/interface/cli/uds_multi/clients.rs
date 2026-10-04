@@ -1,85 +1,105 @@
 //! The dispatch loop's client bookkeeping: a client's disconnect (its tools
 //! leave with it), and the agent's configured extensions (#2446), which are
 //! its own connections rather than clients: until they have registered
-//! their tools, or the wait ran out, only they are served and everything
-//! else is held, in order, so the first turn already has their tools; they
-//! neither keep the agent alive nor end it by leaving. Child module of
-//! `uds_multi`.
+//! their tools, or the wait ran out, work that starts a turn is held, in
+//! order, so the first turn already has their tools (queries, tool
+//! registrations and disconnects are served as ever); they neither keep the
+//! agent alive nor end it by leaving. Child module of `uds_multi`.
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use super::recv::{DispatchMsg, recv_next_message};
 use super::{
     AgentEvent, ClientMessage, DispatchCtx, DispatchLoopArgs, emit_event_to_broadcast_or_writer,
-    handle_client_msg,
 };
 use crate::domain::agents::configured_extensions::REGISTRATION_WAIT;
 use crate::interface::cli::uds_extensions::{Extensions, extension_clients, extension_of};
 
-/// Serve only the configured extensions' own connections until they have
-/// settled; return what arrived from everyone else meanwhile, in order (a
-/// shutdown first).
-pub(super) async fn hold_for_extensions(
-    ctx: &mut DispatchCtx<'_>,
-    args: &mut DispatchLoopArgs,
-    live_clients: &AtomicU32,
-) -> VecDeque<DispatchMsg> {
-    let mut held = VecDeque::new();
-    let Some(extensions) = args.extensions.clone() else {
-        return held;
-    };
-    ctx.session.observe_extensions(Some(extensions.clone()));
-    let settled = tokio::time::timeout(REGISTRATION_WAIT, extensions.settled());
-    tokio::pin!(settled);
-    loop {
-        let next = recv_next_message(
-            &mut args.cmd_rx,
-            &mut args.disconnect_rx,
-            &mut ctx.notification_rx,
-            &args.shutdown,
-        );
-        let msg = tokio::select! {
-            biased;
-            _ = &mut settled => break,
-            msg = next => msg,
-        };
-        match msg {
-            Some(DispatchMsg::Client(ClientMessage::Command(cmd)))
-                if extension_of(&ctx.client_tool_registry, cmd.client_id).is_some() =>
-            {
-                let command = ClientMessage::Command(cmd);
-                let _ = handle_client_msg(ctx, command, args.lifetime, live_clients).await;
-                super::refresh_tool_catalogue_snapshot(ctx).await;
-                super::refresh_state_snapshot(ctx).await;
-            }
-            Some(DispatchMsg::Shutdown) => {
-                held.push_front(DispatchMsg::Shutdown);
-                break;
-            }
-            Some(other) => held.push_back(other),
-            None => break,
-        }
-    }
-    held
+/// The start-up wait for the configured extensions: until they have
+/// registered their tools (or [`REGISTRATION_WAIT`] passed), work that
+/// starts a turn is held, in order; everything else is served at once.
+pub(super) struct StartupHold {
+    wait: Option<std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>>,
+    held: VecDeque<DispatchMsg>,
 }
 
-/// The next message: a held one first, then whatever arrives.
-pub(super) async fn next(
-    held: &mut VecDeque<DispatchMsg>,
-    ctx: &mut DispatchCtx<'_>,
-    args: &mut DispatchLoopArgs,
-) -> Option<DispatchMsg> {
-    match held.pop_front() {
-        Some(msg) => Some(msg),
-        None => {
-            recv_next_message(
-                &mut args.cmd_rx,
-                &mut args.disconnect_rx,
-                &mut ctx.notification_rx,
-                &args.shutdown,
-            )
-            .await
+impl StartupHold {
+    pub(super) fn new(ctx: &mut DispatchCtx<'_>, extensions: Extensions) -> Self {
+        let wait = extensions.map(|extensions| {
+            ctx.session.observe_extensions(Some(extensions.clone()));
+            Box::pin(async move {
+                let settled = tokio::time::timeout(REGISTRATION_WAIT, extensions.settled()).await;
+                if settled.is_err() {
+                    tracing::warn!("configured extensions still unsettled; taking work");
+                }
+            }) as std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+        });
+        Self {
+            wait,
+            held: VecDeque::new(),
         }
+    }
+
+    /// The next message: a held one once the wait is over, else whatever
+    /// arrives.
+    pub(super) async fn next(
+        &mut self,
+        ctx: &mut DispatchCtx<'_>,
+        args: &mut DispatchLoopArgs,
+    ) -> Option<DispatchMsg> {
+        loop {
+            let Some(wait) = self.wait.as_mut() else {
+                if let Some(msg) = self.held.pop_front() {
+                    return Some(msg);
+                }
+                return recv_next_message(
+                    &mut args.cmd_rx,
+                    &mut args.disconnect_rx,
+                    &mut ctx.notification_rx,
+                    &args.shutdown,
+                )
+                .await;
+            };
+            tokio::select! {
+                biased;
+                () = wait => {}
+                msg = recv_next_message(
+                    &mut args.cmd_rx,
+                    &mut args.disconnect_rx,
+                    &mut ctx.notification_rx,
+                    &args.shutdown,
+                ) => return msg,
+            }
+            self.wait = None;
+        }
+    }
+
+    /// `msg` to handle now, or `None` when it starts a turn during the wait
+    /// and is held.
+    pub(super) fn admit(&mut self, msg: DispatchMsg) -> Option<DispatchMsg> {
+        match (self.wait.is_some(), starts_a_turn(&msg)) {
+            (true, true) => {
+                self.held.push_back(msg);
+                None
+            }
+            (true, false) | (false, _) => Some(msg),
+        }
+    }
+}
+
+/// Whether `msg` starts a turn: a prompt, steer or follow-up, a swarm wake,
+/// a sub-agent's note.
+fn starts_a_turn(msg: &DispatchMsg) -> bool {
+    match msg {
+        DispatchMsg::Client(ClientMessage::Command(command)) => {
+            let kind = serde_json::from_str::<serde_json::Value>(&command.line)
+                .ok()
+                .and_then(|line| line["type"].as_str().map(str::to_owned));
+            matches!(kind.as_deref(), Some("prompt" | "steer" | "follow_up"))
+        }
+        DispatchMsg::Client(ClientMessage::SwarmWake { .. }) | DispatchMsg::Notification(_) => true,
+        DispatchMsg::Client(ClientMessage::Disconnected(_) | ClientMessage::RejectedControl(_))
+        | DispatchMsg::Shutdown => false,
     }
 }
 

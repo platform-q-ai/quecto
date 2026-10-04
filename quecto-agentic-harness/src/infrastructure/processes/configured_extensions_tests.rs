@@ -76,3 +76,38 @@ async fn a_stopped_extension_settles_and_warns_without_restarting() {
     );
     host.shutdown().await;
 }
+
+/// #2446 review L4: shutdown waits for every supervisor, one mid-launch
+/// included, so no instance outlives it; a sub-agent's state goes.
+#[tokio::test]
+async fn shutdown_ends_every_instance_and_a_childs_state() {
+    for settle_first in [false, true] {
+        let base = tempfile::tempdir().unwrap();
+        let pid_file = base.path().join("pid");
+        let script = format!("echo $$ > {}; exec sleep 60", pid_file.display());
+        let extensions = AgentExtensions::select(
+            vec![spec("sleeper", "/bin/sh", &["-c", &script])],
+            AgentRole::LocalChild,
+            Some("c-1"),
+            true,
+        );
+        let launches = plan(&extensions, Path::new("/run/a.sock"), base.path());
+        let host = ConfiguredExtensions::launch(launches, OwnedChildSupervisor::process_wide());
+        if settle_first {
+            for _ in 0..200 {
+                if std::fs::read_to_string(&pid_file).is_ok_and(|pid| pid.ends_with('\n')) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        }
+        host.shutdown().await;
+        if let Ok(pid) = std::fs::read_to_string(&pid_file) {
+            let pid: i32 = pid.trim().parse().unwrap();
+            // SAFETY: signal 0 only probes existence.
+            let alive = unsafe { libc::kill(pid, 0) } == 0;
+            assert!(!alive, "the instance ended with shutdown");
+        }
+        assert!(!base.path().join("extensions/sleeper/c-1").exists());
+    }
+}

@@ -185,3 +185,31 @@ fn an_agent_selects_what_its_role_launches_and_nothing_when_switched_off() {
     let off = AgentExtensions::select(configured, AgentRole::TopLevel, None, false);
     assert!(off.specs.is_empty());
 }
+
+/// #2446 review L5: a sub-agent's state directories go with it; `main`'s
+/// stay; an id that would not name one directory is never removed.
+#[test]
+fn only_a_sub_agents_own_state_is_discarded() {
+    let of = |role, id: &str| AgentExtensions {
+        role,
+        agent_id: id.into(),
+        specs: Vec::new(),
+    };
+    assert!(of(AgentRole::LocalChild, "0f3c-a1_b").discards_state());
+    assert!(!of(AgentRole::TopLevel, "main").discards_state());
+    assert!(!of(AgentRole::LocalChild, "main").discards_state());
+    for unsafe_id in ["", "..", "a/b", "."] {
+        assert!(
+            !of(AgentRole::LocalChild, unsafe_id).discards_state(),
+            "{unsafe_id}"
+        );
+    }
+}
+
+#[test]
+fn a_closed_connection_is_not_reported_as_never_registered() {
+    let warning = ExtensionState::Disconnected.warning("x", "log").unwrap();
+    assert!(warning.contains("closed its connection"), "{warning}");
+    assert!(!warning.contains("did not register"), "{warning}");
+    assert!(ExtensionState::Disconnected.settled());
+}
