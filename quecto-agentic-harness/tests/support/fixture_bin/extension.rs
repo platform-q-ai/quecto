@@ -1,46 +1,65 @@
-//! `extension --socket <path> --agent-id <id> --record <file> [--exit-code <n>]`:
-//! a stand-in configured extension (#2446). It appends `<agent_id> <pid>
-//! <socket>` to the record file, then either exits at once with
-//! `--exit-code` (a crash, a command-line error, refused tools) or connects
-//! to the agent's socket, registers one tool, `echo_<agent_id>`, answers
-//! each `execute_tool` with its agent id, and exits 0 when the agent closes
-//! the connection.
+//! `extension --socket <path> --agent-id <id> --record <file> [--exit-code <n>]
+//! [--tool <name>] [--register-delay <ms>] [--exit-after-register-once <marker>]
+//! [--ignore-close]`: a stand-in configured extension (#2446). It appends
+//! `<agent_id> <pid> <socket>` to the record file, then either exits at once
+//! with `--exit-code` (a crash, a command-line error, refused tools) or
+//! connects to the agent's socket, waits `--register-delay`, registers one
+//! tool (`--tool`, else `echo_<agent_id>`) and answers each `execute_tool`
+//! with its agent id. With `--exit-after-register-once`, the first instance
+//! (the marker file absent) creates the marker and exits 1 once its tools
+//! are registered. It exits 0 when the agent closes the connection, unless
+//! `--ignore-close`, when it lives on until a signal ends it.
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
+use std::time::Duration;
 
+#[derive(Default)]
 struct Options {
     socket: String,
     agent_id: String,
     record: String,
     exit_code: Option<i32>,
+    tool: Option<String>,
+    register_delay: Duration,
+    exit_after_register_once: Option<String>,
+    ignore_close: bool,
 }
 
 fn options(args: &[String]) -> Result<Options, String> {
-    let mut socket = None;
-    let mut agent_id = None;
-    let mut record = None;
-    let mut exit_code = None;
+    let mut options = Options::default();
     let mut args = args.iter();
     while let Some(flag) = args.next() {
+        if flag == "--ignore-close" {
+            options.ignore_close = true;
+            continue;
+        }
         let value = args
             .next()
-            .ok_or_else(|| format!("extension: {flag} takes a value"))?;
+            .ok_or_else(|| format!("extension: {flag} takes a value"))?
+            .clone();
         match flag.as_str() {
-            "--socket" => socket = Some(value.clone()),
-            "--agent-id" => agent_id = Some(value.clone()),
-            "--record" => record = Some(value.clone()),
+            "--socket" => options.socket = value,
+            "--agent-id" => options.agent_id = value,
+            "--record" => options.record = value,
+            "--tool" => options.tool = Some(value),
+            "--exit-after-register-once" => options.exit_after_register_once = Some(value),
             "--exit-code" => {
-                exit_code = Some(value.parse().map_err(|_| "extension: --exit-code n")?)
+                options.exit_code = Some(value.parse().map_err(|_| "extension: --exit-code n")?)
+            }
+            "--register-delay" => {
+                let millis = value
+                    .parse()
+                    .map_err(|_| "extension: --register-delay ms")?;
+                options.register_delay = Duration::from_millis(millis);
             }
             other => return Err(format!("extension: unknown flag {other}")),
         }
     }
-    Ok(Options {
-        socket: socket.ok_or("extension: --socket")?,
-        agent_id: agent_id.ok_or("extension: --agent-id")?,
-        record: record.ok_or("extension: --record")?,
-        exit_code,
-    })
+    let given = [&options.socket, &options.agent_id, &options.record];
+    match given.iter().all(|value| !value.is_empty()) {
+        true => Ok(options),
+        false => Err("extension: --socket, --agent-id and --record are required".to_owned()),
+    }
 }
 
 pub fn run(args: &[String]) -> Result<(), String> {
@@ -64,11 +83,16 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let stream = UnixStream::connect(&options.socket)
         .map_err(|error| format!("connect {}: {error}", options.socket))?;
     let mut writer = stream.try_clone().map_err(|error| error.to_string())?;
+    std::thread::sleep(options.register_delay);
+    let tool = options
+        .tool
+        .clone()
+        .unwrap_or_else(|| format!("echo_{}", options.agent_id));
     let register = serde_json::json!({
         "type": "register_tools",
         "id": "register",
         "tools": [{
-            "name": format!("echo_{}", options.agent_id),
+            "name": tool,
             "description": "Answers with the agent id this instance was launched for",
             "parametersSchema": "{\"type\":\"object\",\"properties\":{}}",
         }],
@@ -79,6 +103,18 @@ pub fn run(args: &[String]) -> Result<(), String> {
         let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) else {
             continue;
         };
+        if event["type"] == "response" && event["id"] == "register" {
+            println!("register_tools: {event}");
+            if let Some(marker) = &options.exit_after_register_once
+                && std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(marker)
+                    .is_ok()
+            {
+                std::process::exit(1);
+            }
+        }
         if event["type"] == "execute_tool" {
             let result = serde_json::json!({
                 "type": "tool_result",
@@ -88,6 +124,9 @@ pub fn run(args: &[String]) -> Result<(), String> {
             });
             writeln!(writer, "{result}").map_err(|error| error.to_string())?;
         }
+    }
+    while options.ignore_close {
+        std::thread::sleep(Duration::from_secs(60));
     }
     Ok(())
 }

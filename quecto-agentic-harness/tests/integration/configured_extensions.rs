@@ -2,10 +2,11 @@
 //! fixture's stand-in extension (`quecto-test-fixture extension`): the
 //! agent launches what its config lists once its socket listens, owns it
 //! (the agent's exit, even a SIGKILL, ends it), restarts it unless it exits
-//! with 2 or 3, and every locally spawned child launches its own instance,
-//! under its own `{agent_id}`, whose tool the child's inherited policy
-//! allows. `--no-extensions` launches none; a placeholder the config does
-//! not know refuses the config.
+//! with 2 or 3, holds turns (never queries) until it has registered, and
+//! every locally spawned child launches its parent's list, never its own
+//! config's, under its own `{agent_id}`, whose tool the child's inherited
+//! policy allows. `--no-extensions` launches none; a placeholder the config
+//! does not know refuses the config; no other client may pose as one.
 //!
 //! Every wait is bounded so a regression fails instead of hanging.
 use std::io::{Read, Write};
@@ -30,9 +31,10 @@ fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
     }
 }
 
-/// A provider that makes the agent spawn one child when the prompt says
-/// `SPAWN_ONE`; every other turn just answers.
-async fn provider(config: PathBuf) -> wiremock::MockServer {
+/// A provider that makes the agent spawn one child, with `child_config` as
+/// its `config`, when the prompt says `SPAWN_ONE`; every other turn just
+/// answers.
+async fn provider(child_config: PathBuf) -> wiremock::MockServer {
     let server = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/chat/completions"))
@@ -48,7 +50,7 @@ async fn provider(config: PathBuf) -> wiremock::MockServer {
             let answered = messages.iter().any(|m| m["role"] == "tool");
             let delta = if spawner && !answered {
                 let arguments = serde_json::json!({
-                    "agent_id": "worker", "task": "wait", "config": config,
+                    "agent_id": "worker", "task": "wait", "config": child_config,
                 })
                 .to_string();
                 serde_json::json!({"tool_calls": [{
@@ -80,36 +82,54 @@ struct Fixture {
     _dir: tempfile::TempDir,
     base: PathBuf,
     config: PathBuf,
-    _server: wiremock::MockServer,
-    _runtime: tokio::runtime::Runtime,
+    server: wiremock::MockServer,
+    runtime: tokio::runtime::Runtime,
 }
 
-/// A base dir and a config whose one configured extension is `extension`.
-fn fixture(extension: serde_json::Value) -> Fixture {
+impl Fixture {
+    /// The model requests the agents made, in order.
+    fn requests(&self) -> Vec<serde_json::Value> {
+        let received = self.runtime.block_on(self.server.received_requests());
+        received
+            .unwrap_or_default()
+            .iter()
+            .map(|request| request.body_json().unwrap())
+            .collect()
+    }
+}
+
+/// A base dir and a config whose configured extensions are `extensions`.
+/// The child a `SPAWN_ONE` prompt spawns is handed `child.json`, a config
+/// of its own that lists another extension, `rogue`: a child must never
+/// launch it.
+fn fixture(extensions: serde_json::Value) -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let base = dir.path().to_path_buf();
     let workspace = base.join("workspace");
     std::fs::create_dir_all(&workspace).unwrap();
     let config = base.join("config.json");
+    let child_config = base.join("child.json");
     let runtime = tokio::runtime::Runtime::new().unwrap();
-    let server = runtime.block_on(provider(config.clone()));
-    let json = serde_json::json!({
+    let server = runtime.block_on(provider(child_config.clone()));
+    let mut json = serde_json::json!({
         "providers": {"openai": {"api_key": "sk-test", "api_base": server.uri()}},
         "agents": {"defaults": {"model": "openai-api/gpt-4o-mini", "workspace": workspace}},
-        "extensions": [extension],
+        "extensions": extensions,
     });
     std::fs::write(&config, serde_json::to_string_pretty(&json).unwrap()).unwrap();
+    json["extensions"] = serde_json::json!([stand_in("rogue", &[])]);
+    std::fs::write(&child_config, serde_json::to_string_pretty(&json).unwrap()).unwrap();
     Fixture {
         _dir: dir,
         base,
         config,
-        _server: server,
-        _runtime: runtime,
+        server,
+        runtime,
     }
 }
 
-/// The stand-in's config entry; `exit_code` makes it exit at once.
-fn stand_in(exit_code: Option<i32>) -> serde_json::Value {
+/// A stand-in's config entry named `name`, with `extra` arguments.
+fn stand_in(name: &str, extra: &[&str]) -> serde_json::Value {
     let mut args = vec![
         "extension",
         "--socket",
@@ -118,28 +138,29 @@ fn stand_in(exit_code: Option<i32>) -> serde_json::Value {
         "{agent_id}",
         "--record",
         "{state_dir}/launches",
-    ]
-    .into_iter()
-    .map(String::from)
-    .collect::<Vec<_>>();
-    if let Some(code) = exit_code {
-        args.extend(["--exit-code".to_string(), code.to_string()]);
-    }
-    serde_json::json!({"name": EXTENSION, "command": FIXTURE, "args": args})
+    ];
+    args.extend(extra);
+    serde_json::json!({"name": name, "command": FIXTURE, "args": args})
 }
 
-/// The state directory of the stand-in instance launched for `agent_id`.
+/// The one-extension config most tests use.
+fn just(extra: &[&str]) -> serde_json::Value {
+    serde_json::json!([stand_in(EXTENSION, extra)])
+}
+
+/// The state directory of extension `name`'s instance for `agent_id`.
+fn state_dir_of(fixture: &Fixture, name: &str, agent_id: &str) -> PathBuf {
+    fixture.base.join("extensions").join(name).join(agent_id)
+}
+
 fn state_dir(fixture: &Fixture, agent_id: &str) -> PathBuf {
-    fixture
-        .base
-        .join("extensions")
-        .join(EXTENSION)
-        .join(agent_id)
+    state_dir_of(fixture, EXTENSION, agent_id)
 }
 
-/// Each launch the instance for `agent_id` recorded: `(pid, socket)`.
-fn launches(fixture: &Fixture, agent_id: &str) -> Vec<(u32, PathBuf)> {
-    std::fs::read_to_string(state_dir(fixture, agent_id).join("launches"))
+/// Each launch extension `name`'s instance for `agent_id` recorded:
+/// `(pid, socket)`.
+fn launches_of(fixture: &Fixture, name: &str, agent_id: &str) -> Vec<(u32, PathBuf)> {
+    std::fs::read_to_string(state_dir_of(fixture, name, agent_id).join("launches"))
         .unwrap_or_default()
         .lines()
         .map(|line| {
@@ -148,6 +169,10 @@ fn launches(fixture: &Fixture, agent_id: &str) -> Vec<(u32, PathBuf)> {
             (parts[1].parse().unwrap(), PathBuf::from(parts[2]))
         })
         .collect()
+}
+
+fn launches(fixture: &Fixture, agent_id: &str) -> Vec<(u32, PathBuf)> {
+    launches_of(fixture, EXTENSION, agent_id)
 }
 
 struct Harness {
@@ -275,7 +300,7 @@ impl Client {
 
 #[test]
 fn a_configured_extension_is_launched_with_its_placeholders_and_ends_with_the_agent() {
-    let fixture = fixture(stand_in(None));
+    let fixture = fixture(just(&[]));
     let mut harness = Harness::start(&fixture, &["--persist"]);
     let mut client = Client::connect(&harness.socket);
     let tool = client.tool("echo_main");
@@ -292,11 +317,17 @@ fn a_configured_extension_is_launched_with_its_placeholders_and_ends_with_the_ag
     harness.signal("-TERM");
     harness.wait_exit();
     wait_until("the extension ending with its agent", || !alive(pid));
+    assert!(
+        state_dir(&fixture, "main").exists(),
+        "a top-level agent's state is kept for its next run"
+    );
 }
 
+/// The stand-in outlives its socket's close (`--ignore-close`): only the
+/// parent-death signal the agent armed ends it when the agent is killed.
 #[test]
 fn killing_the_agent_kills_its_extension() {
-    let fixture = fixture(stand_in(None));
+    let fixture = fixture(just(&["--ignore-close"]));
     let harness = Harness::start(&fixture, &["--persist"]);
     Client::connect(&harness.socket).tool("echo_main");
     let (pid, _) = launches(&fixture, "main")[0].clone();
@@ -306,9 +337,11 @@ fn killing_the_agent_kills_its_extension() {
     });
 }
 
+/// #2446 review H1: the child is handed `child.json`, which lists `rogue`;
+/// it launches its parent's list, never the file's.
 #[test]
-fn a_spawned_child_launches_its_own_instance_whose_tool_its_policy_allows() {
-    let fixture = fixture(stand_in(None));
+fn a_spawned_child_launches_its_parents_extensions_whose_tool_its_policy_allows() {
+    let fixture = fixture(just(&[]));
     let harness = Harness::start(&fixture, &["--persist"]);
     let mut parent = Client::connect(&harness.socket);
     parent.tool("echo_main");
@@ -334,6 +367,10 @@ fn a_spawned_child_launches_its_own_instance_whose_tool_its_policy_allows() {
         tool["effectiveChildEnabled"], true,
         "the child's inherited policy allows its own instance's tool: {tool}"
     );
+    assert!(
+        !fixture.base.join("extensions").join("rogue").exists(),
+        "the child's own --config names no command it runs"
+    );
     let parent_tools = parent.query("get_tool_catalogue")["tools"].to_string();
     assert!(
         !parent_tools.contains(&format!("echo_{child_id}")),
@@ -344,11 +381,14 @@ fn a_spawned_child_launches_its_own_instance_whose_tool_its_policy_allows() {
     wait_until("the child's instance ending with the tree", || {
         !alive(child_pid)
     });
+    wait_until("the child's state directory going with it", || {
+        !state_dir(&fixture, &child_id).exists()
+    });
 }
 
 #[test]
 fn an_extension_that_exits_is_restarted() {
-    let fixture = fixture(stand_in(Some(1)));
+    let fixture = fixture(just(&["--exit-code", "1"]));
     let harness = Harness::start(&fixture, &["--persist"]);
     wait_until("a restart", || launches(&fixture, "main").len() >= 2);
     let warnings = Client::connect(&harness.socket).startup_warnings();
@@ -357,8 +397,8 @@ fn an_extension_that_exits_is_restarted() {
 
 #[test]
 fn exit_codes_2_and_3_are_never_restarted() {
-    for (code, why) in [(2, "command-line error"), (3, "tools were refused")] {
-        let fixture = fixture(stand_in(Some(code)));
+    for (code, why) in [("2", "command-line error"), ("3", "tools were refused")] {
+        let fixture = fixture(just(&["--exit-code", code]));
         let harness = Harness::start(&fixture, &["--persist"]);
         let mut client = Client::connect(&harness.socket);
         let mut warnings = String::new();
@@ -372,9 +412,102 @@ fn exit_codes_2_and_3_are_never_restarted() {
     }
 }
 
+/// #2446 review M3(b): a prompt sent before a slow extension registered
+/// waits for it, so the model's first request already offers its tool.
+#[test]
+fn a_first_prompt_waits_for_a_slow_extensions_tools() {
+    let fixture = fixture(just(&["--register-delay", "3000"]));
+    let harness = Harness::start(&fixture, &["--persist"]);
+    let mut client = Client::connect(&harness.socket);
+    client.send(r#"{"type":"prompt","id":"p1","message":"hello"}"#);
+    client.read_until(|v| v["type"] == "agent_end");
+    let first = fixture
+        .requests()
+        .into_iter()
+        .next()
+        .expect("a model request");
+    let tools = first["tools"].to_string();
+    assert!(
+        tools.contains("echo_main"),
+        "the first request offers the extension's tool: {tools}"
+    );
+}
+
+/// #2446 review L1: only turns wait for the extensions; a query is answered
+/// at once.
+#[test]
+fn a_query_is_answered_during_the_start_up_wait() {
+    let fixture = fixture(just(&["--register-delay", "8000"]));
+    let harness = Harness::start(&fixture, &["--persist"]);
+    let mut client = Client::connect(&harness.socket);
+    let asked = Instant::now();
+    client.query("get_state");
+    assert!(
+        asked.elapsed() < Duration::from_secs(4),
+        "get_state took {:?}",
+        asked.elapsed()
+    );
+    assert!(launches(&fixture, "main").len() == 1);
+}
+
+/// #2446 review M1: an extension that crashes and restarts while another
+/// keeps the start-up wait open gets its tools back: its old connection's
+/// disconnect is not held behind the wait.
+#[test]
+fn an_extension_restarting_during_the_wait_registers_again() {
+    let fixture = fixture(serde_json::json!([
+        stand_in("slow", &["--tool", "slow_tool", "--register-delay", "6000"]),
+        stand_in(
+            EXTENSION,
+            &["--exit-after-register-once", "{state_dir}/crashed"]
+        ),
+    ]));
+    let harness = Harness::start(&fixture, &["--persist"]);
+    wait_until("the restart", || launches(&fixture, "main").len() == 2);
+    let mut client = Client::connect(&harness.socket);
+    client.tool("echo_main");
+    let log = std::fs::read_to_string(state_dir(&fixture, "main").join("extension.log")).unwrap();
+    let answers: Vec<&str> = log
+        .lines()
+        .filter(|l| l.starts_with("register_tools:"))
+        .collect();
+    assert_eq!(answers.len(), 2, "{log}");
+    assert!(answers[1].contains(r#""success":true"#), "{log}");
+    client.tool("slow_tool");
+}
+
+/// #2446 review M3(c), L3: a client that is no configured extension cannot
+/// register under an extension's stable id, nor a name that is not a tool
+/// name.
+#[test]
+fn no_other_client_poses_as_a_configured_extension() {
+    let fixture = fixture(serde_json::json!([]));
+    let harness = Harness::start(&fixture, &["--persist"]);
+    let mut client = Client::connect(&harness.socket);
+    let posing = serde_json::json!({
+        "type": "register_tools", "id": "pose",
+        "tools": [{"name": "fake", "description": "d",
+            "stableId": "tool.v1:uds:22:uds:extension:stand-in:fake"}],
+    });
+    client.send(&posing.to_string());
+    let answer = client.read_until(|v| v["type"] == "response" && v["id"] == "pose");
+    assert_eq!(answer["success"], false, "{answer}");
+    let colon = serde_json::json!({
+        "type": "register_tools", "id": "colon",
+        "tools": [{"name": "uds:extension:stand-in", "description": "d"}],
+    });
+    client.send(&colon.to_string());
+    let answer = client.read_until(|v| v["type"] == "response" && v["id"] == "colon");
+    assert_eq!(answer["success"], false, "{answer}");
+    assert!(
+        answer["error"].as_str().unwrap().contains("tool name"),
+        "{answer}"
+    );
+}
+
 #[test]
 fn no_extensions_launches_none() {
-    let fixture = fixture(stand_in(None));
+    let fixture = fixture(just(&[]));
     let harness = Harness::start(&fixture, &["--persist", "--no-extensions"]);
     let mut client = Client::connect(&harness.socket);
     client.query("get_state");
@@ -386,7 +519,7 @@ fn no_extensions_launches_none() {
 
 /// A config the agent refuses at start-up: it exits non-zero, naming why.
 fn refused(extension: serde_json::Value) -> String {
-    let fixture = fixture(extension);
+    let fixture = fixture(serde_json::json!([extension]));
     let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_quecto"))
         .args(["agent", "--mode", "uds", "--socket"])
         .arg(fixture.base.join("agent.sock"))
@@ -424,7 +557,7 @@ fn refused(extension: serde_json::Value) -> String {
 
 #[test]
 fn an_unknown_placeholder_or_a_relative_command_is_a_config_error() {
-    let mut unknown = stand_in(None);
+    let mut unknown = stand_in(EXTENSION, &[]);
     unknown["args"][2] = serde_json::json!("{sockets}");
     let stderr = refused(unknown);
     assert!(stderr.contains("{sockets}"), "{stderr}");
@@ -438,7 +571,7 @@ fn an_unknown_placeholder_or_a_relative_command_is_a_config_error() {
 /// last client still does, and ends its extension with it.
 #[test]
 fn an_extension_does_not_keep_its_agent_past_the_last_client() {
-    let fixture = fixture(stand_in(None));
+    let fixture = fixture(just(&[]));
     let mut harness = Harness::start(&fixture, &[]);
     let mut client = Client::connect(&harness.socket);
     client.tool("echo_main");
