@@ -56,17 +56,24 @@ pub(super) fn claim_connection(
 
 /// At `register_tools`: a connection not claimed at accept (it connected
 /// before its extension's launch was recorded) is claimed now if its peer
-/// is an extension's.
-pub(super) fn claim_late(registry: &super::uds_ext_protocol::ClientToolRegistry, client_id: u64) {
-    let mut clients = registry.lock().unwrap_or_else(|e| e.into_inner());
-    let Some(state) = clients.get_mut(&client_id) else {
+/// is an extension's, once any launch in flight has been recorded.
+pub(super) async fn claim_late(
+    registry: &super::uds_ext_protocol::ClientToolRegistry,
+    client_id: u64,
+) {
+    let candidate = {
+        let clients = registry.lock().unwrap_or_else(|e| e.into_inner());
+        clients
+            .get(&client_id)
+            .and_then(|state| state.extension_candidate.clone())
+    };
+    let Some((extensions, peer)) = candidate else {
         return;
     };
-    let claim = state
-        .extension_candidate
-        .as_ref()
-        .and_then(|(extensions, peer)| extensions.claim(Some(*peer)));
-    if let Some(claim) = claim {
+    extensions.launched().await;
+    let claim = extensions.claim(Some(peer));
+    let mut clients = registry.lock().unwrap_or_else(|e| e.into_inner());
+    if let (Some(claim), Some(state)) = (claim, clients.get_mut(&client_id)) {
         tracing::info!(client_id, extension = %claim.name(), "configured extension claimed late");
         state.extension_candidate = None;
         state.extension = Some(claim);

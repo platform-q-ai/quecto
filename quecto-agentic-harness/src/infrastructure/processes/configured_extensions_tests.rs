@@ -48,6 +48,13 @@ async fn a_stopped_extension_settles_and_warns_without_restarting() {
         None,
         true,
     );
+    // One made before, open to all: made private at the launch.
+    let made_before = base.path().join("extensions/usage/main");
+    std::fs::create_dir_all(&made_before).unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&made_before, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
     let launches = plan(&extensions, Path::new("/run/a.sock"), base.path());
     let host = ConfiguredExtensions::launch(launches, OwnedChildSupervisor::process_wide());
     tokio::time::timeout(Duration::from_secs(20), host.settled())

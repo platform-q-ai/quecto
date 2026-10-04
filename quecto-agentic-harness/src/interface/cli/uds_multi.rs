@@ -270,6 +270,7 @@ pub(super) async fn multi_client_loop(
     let bind_deadline = parent_control
         .as_ref()
         .map(|launch| launch.bind_deadline.clone());
+    clients::end_with_the_fleet(&extensions, harness_lifecycle.clone());
     let teardown = teardown_graph.map(|build| {
         build(super::uds_teardown_handles::TeardownLoopInputs {
             owner: crate::domain::ids::AgentUuid::new(if session_key.is_empty() {
@@ -423,7 +424,6 @@ async fn run_dispatch_loop(
         let Some(msg) = hold.next(ctx, &mut args).await else {
             break;
         };
-        let Some(msg) = hold.admit(msg) else { continue };
         match msg {
             DispatchMsg::Shutdown => {
                 // The common shutdown settled the fleet before signalling

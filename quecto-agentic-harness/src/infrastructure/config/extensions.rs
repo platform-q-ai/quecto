@@ -59,10 +59,18 @@ impl ExtensionConfig {
                 self.name, self.command
             ));
         }
-        let key_allowed =
-            |key: &String| !key.is_empty() && !key.contains('=') && !key.contains('\0');
+        // An allowlist: the characters of a portable environment name.
+        let key_allowed = |key: &String| {
+            !key.is_empty()
+                && key
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        };
         if let Some(key) = self.env.keys().find(|key| !key_allowed(key)) {
-            return Err(format!("`{}`: env name {key:?} is not valid", self.name));
+            return Err(format!(
+                "`{}`: env name {key:?} must be ASCII letters, digits or `_`",
+                self.name
+            ));
         }
         self.args
             .iter()

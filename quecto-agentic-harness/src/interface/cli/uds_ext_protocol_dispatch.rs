@@ -59,7 +59,8 @@ pub(in crate::interface::cli) async fn dispatch_register_tools(
     crate::interface::cli::uds_extensions::claim_late(
         &ctx.client_tool_registry,
         ctx.current_client_id,
-    );
+    )
+    .await;
     let owner = format!("uds:client:{}", ctx.current_client_id);
     // #2446: a configured extension's tools carry its stable ids, the same
     // in every agent; no other client may claim one.

@@ -1,10 +1,10 @@
 //! The dispatch loop's client bookkeeping: a client's disconnect (its tools
 //! leave with it), and the agent's configured extensions (#2446), which are
 //! its own connections rather than clients: until they have registered
-//! their tools, or the wait ran out, work that starts a turn is held, in
-//! order, so the first turn already has their tools (queries, tool
-//! registrations and disconnects are served as ever); they neither keep the
-//! agent alive nor end it by leaving. Child module of `uds_multi`.
+//! their tools, or the wait ran out, only reads and their own traffic are
+//! served and everything else is held, in order, so the first turn already
+//! has their tools; they neither keep the agent alive nor end it by
+//! leaving, and they start ending as soon as a shutdown is admitted. Child module of `uds_multi`.
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -16,8 +16,9 @@ use crate::domain::agents::configured_extensions::REGISTRATION_WAIT;
 use crate::interface::cli::uds_extensions::{Extensions, extension_clients, extension_of};
 
 /// The start-up wait for the configured extensions: until they have
-/// registered their tools (or [`REGISTRATION_WAIT`] passed), work that
-/// starts a turn is held, in order; everything else is served at once.
+/// registered their tools (or [`REGISTRATION_WAIT`] passed), only reads and
+/// the extensions' own traffic are served; everything else is held, in
+/// order.
 pub(super) struct StartupHold {
     wait: Option<std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>>,
     held: VecDeque<DispatchMsg>,
@@ -40,9 +41,24 @@ impl StartupHold {
         }
     }
 
+    /// The next message to handle: held ones in order once the wait is
+    /// over; during it, only what [`served_during_the_wait`] allows.
+    pub(super) async fn next(
+        &mut self,
+        ctx: &mut DispatchCtx<'_>,
+        args: &mut DispatchLoopArgs,
+    ) -> Option<DispatchMsg> {
+        loop {
+            let msg = self.receive(ctx, args).await?;
+            if let Some(msg) = self.admit(ctx, msg) {
+                return Some(msg);
+            }
+        }
+    }
+
     /// The next message: a held one once the wait is over, else whatever
     /// arrives.
-    pub(super) async fn next(
+    async fn receive(
         &mut self,
         ctx: &mut DispatchCtx<'_>,
         args: &mut DispatchLoopArgs,
@@ -74,33 +90,93 @@ impl StartupHold {
         }
     }
 
-    /// `msg` to handle now, or `None` when it starts a turn during the wait
-    /// and is held.
-    pub(super) fn admit(&mut self, msg: DispatchMsg) -> Option<DispatchMsg> {
-        match (self.wait.is_some(), starts_a_turn(&msg)) {
-            (true, true) => {
+    /// `msg` to handle now, or `None` when it is held: during the wait only
+    /// what [`served_during_the_wait`] allows is handled; everything else
+    /// waits, in order (#1720: a client's commands outrank its disconnect).
+    fn admit(&mut self, ctx: &DispatchCtx<'_>, msg: DispatchMsg) -> Option<DispatchMsg> {
+        if self.wait.is_none() {
+            return Some(msg);
+        }
+        match served_during_the_wait(ctx, &msg) {
+            true => Some(msg),
+            false => {
                 self.held.push_back(msg);
                 None
             }
-            (true, false) | (false, _) => Some(msg),
         }
     }
 }
 
-/// Whether `msg` starts a turn: a prompt, steer or follow-up, a swarm wake,
-/// a sub-agent's note.
-fn starts_a_turn(msg: &DispatchMsg) -> bool {
+/// Commands any client may have served during the start-up wait: reads,
+/// and the UDS tool traffic extensions need. An allowlist.
+const SERVED_COMMANDS: &[&str] = &[
+    "get_state",
+    "get_report",
+    "get_messages",
+    "get_messages_tail",
+    "get_message",
+    "get_session_stats",
+    "get_subagents",
+    "get_tool_catalogue",
+    "list_tools",
+    "list_models",
+    "list_sessions",
+    "search_session_metadata",
+    "sync",
+    "register_tools",
+    "unregister_tools",
+    "tool_result",
+];
+
+/// Whether `msg` is served during the wait: a shutdown, a configured
+/// extension's own command or disconnect, or a [`SERVED_COMMANDS`] command.
+/// Everything else (turns, state changes, other clients' disconnects) waits.
+fn served_during_the_wait(ctx: &DispatchCtx<'_>, msg: &DispatchMsg) -> bool {
+    let extension = |client_id| extension_of(&ctx.client_tool_registry, client_id).is_some();
     match msg {
+        DispatchMsg::Shutdown => true,
         DispatchMsg::Client(ClientMessage::Command(command)) => {
-            let kind = serde_json::from_str::<serde_json::Value>(&command.line)
-                .ok()
-                .and_then(|line| line["type"].as_str().map(str::to_owned));
-            matches!(kind.as_deref(), Some("prompt" | "steer" | "follow_up"))
+            extension(command.client_id) || {
+                let kind = serde_json::from_str::<serde_json::Value>(&command.line)
+                    .ok()
+                    .and_then(|line| line["type"].as_str().map(str::to_owned));
+                kind.is_some_and(|kind| SERVED_COMMANDS.contains(&kind.as_str()))
+            }
         }
-        DispatchMsg::Client(ClientMessage::SwarmWake { .. }) | DispatchMsg::Notification(_) => true,
-        DispatchMsg::Client(ClientMessage::Disconnected(_) | ClientMessage::RejectedControl(_))
-        | DispatchMsg::Shutdown => false,
+        DispatchMsg::Client(ClientMessage::Disconnected(disconnected)) => {
+            extension(disconnected.client_id)
+        }
+        DispatchMsg::Client(
+            ClientMessage::SwarmWake { .. } | ClientMessage::RejectedControl(_),
+        )
+        | DispatchMsg::Notification(_) => false,
     }
+}
+
+/// Start ending the configured extensions as soon as a shutdown is admitted
+/// (the harness lifecycle freezes), alongside the fleet teardown, so a
+/// child's exit fits its launcher's budget.
+pub(super) fn end_with_the_fleet(
+    extensions: &Extensions,
+    lifecycle: Option<crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle>,
+) {
+    use crate::domain::subagent_teardown::HarnessLifecycleState;
+    let (Some(extensions), Some(lifecycle)) = (extensions.clone(), lifecycle) else {
+        return;
+    };
+    tokio::spawn(async move {
+        loop {
+            match crate::infrastructure::tools::harness_lifecycle::current(&lifecycle) {
+                HarnessLifecycleState::Accepting => {
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
+                HarnessLifecycleState::Frozen | HarnessLifecycleState::Terminated => {
+                    extensions.shutdown().await;
+                    return;
+                }
+            }
+        }
+    });
 }
 
 /// End the agent's configured extensions as it exits.

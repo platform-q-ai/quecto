@@ -73,6 +73,8 @@ struct Entry {
     state: ExtensionState,
     /// The running instance and its process group's id (its leader's pid).
     running: Option<(ChildHandleId, u32)>,
+    /// A launch is in flight: its process may exist before `running` says so.
+    launching: bool,
 }
 
 struct Board {
@@ -122,6 +124,8 @@ impl Board {
 pub struct ConfiguredExtensions {
     board: Arc<Board>,
     tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    /// Held for a whole shutdown, so a second call waits for the first.
+    ending: tokio::sync::Mutex<()>,
     /// State directories removed once the instances have ended (a
     /// sub-agent's; see [`AgentExtensions::discards_state`]).
     discarded: Vec<PathBuf>,
@@ -147,6 +151,7 @@ impl ConfiguredExtensions {
                         log: launch.log.display().to_string(),
                         state: ExtensionState::Starting,
                         running: None,
+                        launching: false,
                     })
                     .collect(),
             ),
@@ -173,6 +178,7 @@ impl ConfiguredExtensions {
         Self {
             board,
             tasks: Mutex::new(tasks),
+            ending: tokio::sync::Mutex::new(()),
             discarded,
         }
     }
@@ -190,6 +196,22 @@ impl ConfiguredExtensions {
             board: Arc::clone(&self.board),
             index,
         })
+    }
+
+    /// Resolves once no launch is in flight (bounded): a connection that
+    /// arrived before its extension's launch was recorded can then be
+    /// claimed, closing that race.
+    pub async fn launched(&self) {
+        let mut changes = self.board.revision.subscribe();
+        let launched = || self.board.lock().iter().all(|entry| !entry.launching);
+        let wait = async {
+            while !launched() {
+                if changes.changed().await.is_err() {
+                    return;
+                }
+            }
+        };
+        let _ = tokio::time::timeout(Duration::from_secs(2), wait).await;
     }
 
     /// Resolves once every extension has registered its tools, ran out of
@@ -223,6 +245,7 @@ impl ConfiguredExtensions {
     /// is mid-launch included, before this returns (bounded); then a
     /// sub-agent's state directories go.
     pub async fn shutdown(&self) {
+        let _ending = self.ending.lock().await;
         self.board.stopping.send_replace(true);
         let tasks = std::mem::take(&mut *self.tasks.lock().unwrap_or_else(|e| e.into_inner()));
         let bound =
@@ -285,10 +308,12 @@ async fn supervise(
     let mut budget = RestartBudget::default();
     let mut stop = board.stopping.subscribe();
     while !*stop.borrow() {
+        board.update(index, |entry| entry.launching = true);
         let spawned = match start(&supervisor, &launch).await {
             Ok(spawned) => spawned,
             Err(error) => {
                 board.update(index, |entry| {
+                    entry.launching = false;
                     entry.state = ExtensionState::Stopped {
                         exit: None,
                         reason: StopReason::LaunchFailed(error),
@@ -299,6 +324,7 @@ async fn supervise(
         };
         board.update(index, |entry| {
             entry.running = Some((spawned.handle, spawned.display_pid.0));
+            entry.launching = false;
             entry.state = ExtensionState::Starting;
         });
         let exit_wait = supervisor.wait_exit(spawned.handle);
@@ -389,6 +415,13 @@ async fn start(
     let stderr = log
         .try_clone()
         .map_err(|error| describe("cannot open", &launch.log, error))?;
+    // One made before (by an earlier run, or by hand) is made private too.
+    #[cfg(unix)]
+    for (path, mode) in [(&launch.state_dir, 0o700), (&launch.log, 0o600)] {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+            .map_err(|error| describe("cannot make private", path, error))?;
+    }
     let mut command = tokio::process::Command::new(&spec.command);
     command
         .args(&spec.args)

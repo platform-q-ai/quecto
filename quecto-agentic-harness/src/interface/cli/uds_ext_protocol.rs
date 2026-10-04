@@ -203,14 +203,14 @@ pub fn handle_register_tools(
     // #2446: a name is what a model-facing tool name may be, so no tool can
     // pose as a stable id or a configured extension's policy key.
     let name_allowed = |name: &str| {
-        !name.is_empty()
+        (1..=64).contains(&name.len())
             && name
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
     };
     if let Some(tool) = tools.iter().find(|tool| !name_allowed(&tool.name)) {
         let refusal = format!(
-            "tool '{}': a tool name is one or more ASCII letters, digits, `_` or `-`",
+            "tool '{}': a tool name is 1 to 64 ASCII letters, digits, `_` or `-`",
             tool.name
         );
         return (
