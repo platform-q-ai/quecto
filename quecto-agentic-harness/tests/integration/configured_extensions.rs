@@ -503,6 +503,16 @@ fn no_other_client_poses_as_a_configured_extension() {
         answer["error"].as_str().unwrap().contains("tool name"),
         "{answer}"
     );
+    let long = serde_json::json!({
+        "type": "register_tools", "id": "long",
+        "tools": [{"name": "t".repeat(65), "description": "d"}],
+    });
+    client.send(&long.to_string());
+    let answer = client.read_until(|v| v["type"] == "response" && v["id"] == "long");
+    assert_eq!(
+        answer["success"], false,
+        "a provider refuses names over 64: {answer}"
+    );
 }
 
 #[test]
@@ -579,4 +589,37 @@ fn an_extension_does_not_keep_its_agent_past_the_last_client() {
     drop(client);
     harness.wait_exit();
     wait_until("the extension ending with its agent", || !alive(pid));
+}
+
+/// #2446 review round 2 M1: a prompt held during the start-up wait still
+/// runs when its client leaves at once: the disconnect waits behind it
+/// (#1720), and only then does the default lifetime end the agent.
+#[test]
+fn a_prompt_held_at_start_up_runs_though_its_client_leaves() {
+    let fixture = fixture(just(&["--register-delay", "3000"]));
+    let mut harness = Harness::start(&fixture, &[]);
+    let mut client = Client::connect(&harness.socket);
+    client.send(r#"{"type":"prompt","id":"p1","message":"hello"}"#);
+    client.query("get_state");
+    drop(client);
+    harness.wait_exit();
+    assert_eq!(fixture.requests().len(), 1, "the held prompt ran");
+}
+
+/// #2446 review round 2 M1: a state change sent after a held prompt is
+/// applied after that prompt's turn, as it was sent.
+#[test]
+fn a_state_change_after_a_held_prompt_applies_after_its_turn() {
+    let fixture = fixture(just(&["--register-delay", "3000"]));
+    let harness = Harness::start(&fixture, &["--persist"]);
+    let mut client = Client::connect(&harness.socket);
+    client.send(r#"{"type":"prompt","id":"p1","message":"HELD_PROMPT"}"#);
+    client.send(r#"{"type":"clear_history","id":"c1"}"#);
+    client.read_until(|v| v["type"] == "response" && v["id"] == "c1");
+    assert_eq!(fixture.requests().len(), 1, "the prompt ran first");
+    let history = client.query("get_messages").to_string();
+    assert!(
+        !history.contains("HELD_PROMPT"),
+        "the clear came after the turn: {history}"
+    );
 }

@@ -45,6 +45,10 @@ fn a_bad_entry_refuses_the_config_naming_why() {
             serde_json::json!({"name": "x", "command": "/bt", "env": {"A=B": "v"}}),
             "env name",
         ),
+        (
+            serde_json::json!({"name": "x", "command": "/bt", "env": {"A-B": "v"}}),
+            "env name",
+        ),
     ] {
         let error = load(serde_json::json!([entry])).unwrap_err().to_string();
         assert!(
