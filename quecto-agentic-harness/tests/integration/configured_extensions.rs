@@ -159,7 +159,7 @@ impl Harness {
     fn start(fixture: &Fixture, flags: &[&str]) -> Self {
         let socket = fixture.base.join("agent.sock");
         let child = std::process::Command::new(env!("CARGO_BIN_EXE_quecto"))
-            .args(["agent", "--mode", "uds", "--persist", "--socket"])
+            .args(["agent", "--mode", "uds", "--socket"])
             .arg(&socket)
             .args(["-s", "top", "--config"])
             .arg(&fixture.config)
@@ -276,7 +276,7 @@ impl Client {
 #[test]
 fn a_configured_extension_is_launched_with_its_placeholders_and_ends_with_the_agent() {
     let fixture = fixture(stand_in(None));
-    let mut harness = Harness::start(&fixture, &[]);
+    let mut harness = Harness::start(&fixture, &["--persist"]);
     let mut client = Client::connect(&harness.socket);
     let tool = client.tool("echo_main");
     assert_eq!(tool["source"], "uds", "{tool}");
@@ -297,7 +297,7 @@ fn a_configured_extension_is_launched_with_its_placeholders_and_ends_with_the_ag
 #[test]
 fn killing_the_agent_kills_its_extension() {
     let fixture = fixture(stand_in(None));
-    let harness = Harness::start(&fixture, &[]);
+    let harness = Harness::start(&fixture, &["--persist"]);
     Client::connect(&harness.socket).tool("echo_main");
     let (pid, _) = launches(&fixture, "main")[0].clone();
     harness.signal("-KILL");
@@ -309,7 +309,7 @@ fn killing_the_agent_kills_its_extension() {
 #[test]
 fn a_spawned_child_launches_its_own_instance_whose_tool_its_policy_allows() {
     let fixture = fixture(stand_in(None));
-    let harness = Harness::start(&fixture, &[]);
+    let harness = Harness::start(&fixture, &["--persist"]);
     let mut parent = Client::connect(&harness.socket);
     parent.tool("echo_main");
     parent.send(r#"{"type":"prompt","message":"SPAWN_ONE"}"#);
@@ -349,7 +349,7 @@ fn a_spawned_child_launches_its_own_instance_whose_tool_its_policy_allows() {
 #[test]
 fn an_extension_that_exits_is_restarted() {
     let fixture = fixture(stand_in(Some(1)));
-    let harness = Harness::start(&fixture, &[]);
+    let harness = Harness::start(&fixture, &["--persist"]);
     wait_until("a restart", || launches(&fixture, "main").len() >= 2);
     let warnings = Client::connect(&harness.socket).startup_warnings();
     assert!(warnings.contains("restart"), "{warnings}");
@@ -359,7 +359,7 @@ fn an_extension_that_exits_is_restarted() {
 fn exit_codes_2_and_3_are_never_restarted() {
     for (code, why) in [(2, "command-line error"), (3, "tools were refused")] {
         let fixture = fixture(stand_in(Some(code)));
-        let harness = Harness::start(&fixture, &[]);
+        let harness = Harness::start(&fixture, &["--persist"]);
         let mut client = Client::connect(&harness.socket);
         let mut warnings = String::new();
         wait_until("the stop warning", || {
@@ -375,7 +375,7 @@ fn exit_codes_2_and_3_are_never_restarted() {
 #[test]
 fn no_extensions_launches_none() {
     let fixture = fixture(stand_in(None));
-    let harness = Harness::start(&fixture, &["--no-extensions"]);
+    let harness = Harness::start(&fixture, &["--persist", "--no-extensions"]);
     let mut client = Client::connect(&harness.socket);
     client.query("get_state");
     std::thread::sleep(Duration::from_millis(1500));
@@ -432,4 +432,18 @@ fn an_unknown_placeholder_or_a_relative_command_is_a_config_error() {
         "name": EXTENSION, "command": "quecto-test-fixture", "env": {"A": "{nope}"}
     }));
     assert!(stderr.contains("absolute"), "{stderr}");
+}
+
+/// The agent's own extension is not a client: an agent that ends with its
+/// last client still does, and ends its extension with it.
+#[test]
+fn an_extension_does_not_keep_its_agent_past_the_last_client() {
+    let fixture = fixture(stand_in(None));
+    let mut harness = Harness::start(&fixture, &[]);
+    let mut client = Client::connect(&harness.socket);
+    client.tool("echo_main");
+    let (pid, _) = launches(&fixture, "main")[0].clone();
+    drop(client);
+    harness.wait_exit();
+    wait_until("the extension ending with its agent", || !alive(pid));
 }

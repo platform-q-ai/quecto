@@ -26,7 +26,11 @@ impl ToolRegistryImpl {
                     .contains_key(policy_id)
                     .then(|| policy_id.clone())
             }) else {
-                warnings.push(policy_id.clone());
+                // #2446: an extension's tool registers later, not a typo.
+                match crate::domain::tool_policy::registers_after_startup(policy_id) {
+                    true => {}
+                    false => warnings.push(policy_id.clone()),
+                }
                 continue;
             };
             let metadata = self

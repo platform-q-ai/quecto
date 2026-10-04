@@ -95,6 +95,7 @@ fn make_agent() -> AgentLoopImpl {
 
 fn multi_args<'a>(base: &'a std::path::Path) -> MultiClientArgs<'a> {
     MultiClientArgs {
+        extensions: Default::default(),
         agent: make_agent(),
         workspace: base,
         messages: vec![Message::user("seed")],
@@ -343,6 +344,7 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
     run_dispatch_loop(
         &mut ctx,
         DispatchLoopArgs {
+            extensions: Default::default(),
             cmd_rx,
             disconnect_rx: tokio::sync::mpsc::unbounded_channel().1,
             lifetime: crate::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,

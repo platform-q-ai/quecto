@@ -976,6 +976,7 @@ fn spawn_paged_agent(world: &mut QuectoWorld, base: &std::path::Path, session_na
     let ext_reg = Arc::new(std::sync::Mutex::new(ext_registry));
     let handle = std::thread::spawn(move || {
         run_uds_loop(UdsLoopArgs {
+            extensions: Default::default(),
             agent,
             retention: Some(retention),
             base_dir: &base_for_thread,

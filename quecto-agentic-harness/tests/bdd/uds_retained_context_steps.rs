@@ -174,6 +174,7 @@ fn when_model_recalls(world: &mut QuectoWorld) {
     let socket_path = base.join("retained-context.sock");
     let handle = std::thread::spawn(move || {
         run_uds_loop(UdsLoopArgs {
+            extensions: Default::default(),
             agent,
             retention: Some(retention),
             base_dir: &base,

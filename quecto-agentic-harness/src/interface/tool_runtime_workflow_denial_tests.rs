@@ -48,6 +48,7 @@ fn parent_in(
     let mut stderr = String::new();
     let config = Config::default();
     build_tool_runtime(ToolRuntimeBuildArgs {
+        launch_extensions: true,
         swarm_context,
         swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::shared(),
         entrypoint,

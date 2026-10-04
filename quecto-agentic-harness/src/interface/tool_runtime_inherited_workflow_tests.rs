@@ -36,6 +36,7 @@ pub(super) fn build(
     let mut stderr = String::new();
     let uds = launch.entrypoint == ToolEntrypoint::UdsAgent;
     build_tool_runtime(ToolRuntimeBuildArgs {
+        launch_extensions: true,
         swarm_context: None,
         swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::shared(),
         entrypoint: launch.entrypoint,
@@ -327,6 +328,7 @@ fn guards_or_a_bound_spec_also_request_workflow_mode() {
     let mut stderr = String::new();
     let config = Config::default();
     let error = build_tool_runtime(ToolRuntimeBuildArgs {
+        launch_extensions: true,
         swarm_context: None,
         swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::shared(),
         entrypoint: ToolEntrypoint::UdsAgent,

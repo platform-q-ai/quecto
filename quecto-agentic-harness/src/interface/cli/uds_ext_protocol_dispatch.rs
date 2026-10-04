@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::domain::extension_tool::ToolInvocation;
+use crate::domain::tool_policy::{configured_extension_key, configured_extension_tool_id};
 // ─── Dispatch helpers (called from uds.rs dispatch_command) ───────────────
 
 fn catalogue_values(
@@ -22,6 +23,9 @@ async fn emit_tool_catalogue_changed(
     before: Vec<serde_json::Value>,
     reason: &str,
 ) {
+    // #2446: children spawned from now on inherit the current catalogue,
+    // a configured extension's tools included.
+    ctx.agent.refresh_spawn_inherited_child_policy_snapshot();
     let after = catalogue_values(ctx.agent);
     {
         let mut snapshot = ctx.tool_catalogue_snapshot.write().await;
@@ -53,12 +57,33 @@ pub(in crate::interface::cli) async fn dispatch_register_tools(
         .collect();
 
     let owner = format!("uds:client:{}", ctx.current_client_id);
-    if let Some(rejected) = tools.iter().find(|tool| {
-        !ctx.agent.can_register_uds_tool_for_owner_with_stable_id(
-            &tool.name,
-            &owner,
-            tool.stable_id.as_deref(),
-        )
+    // #2446: a configured extension's tools carry its stable ids, the same
+    // in every agent; no other client may claim one.
+    let extension = crate::interface::cli::uds_extensions::extension_of(
+        &ctx.client_tool_registry,
+        ctx.current_client_id,
+    );
+    let stable_ids: Vec<Option<String>> = tools
+        .iter()
+        .map(|tool| match &extension {
+            Some(name) => Some(configured_extension_tool_id(name, &tool.name)),
+            None => tool.stable_id.clone(),
+        })
+        .collect();
+    let poses_as_extension = |stable_id: &Option<String>| {
+        extension.is_none()
+            && stable_id
+                .as_deref()
+                .and_then(configured_extension_key)
+                .is_some()
+    };
+    if let Some((rejected, _)) = tools.iter().zip(&stable_ids).find(|(tool, stable_id)| {
+        poses_as_extension(stable_id)
+            || !ctx.agent.can_register_uds_tool_for_owner_with_stable_id(
+                &tool.name,
+                &owner,
+                stable_id.as_deref(),
+            )
     }) {
         let err = AgentEvent::err(
             id,
@@ -83,11 +108,11 @@ pub(in crate::interface::cli) async fn dispatch_register_tools(
 
     let mut accepted = Vec::new();
     let owner: std::borrow::Cow<'static, str> = std::borrow::Cow::Owned(owner);
-    for (tool_reg, tool) in tools.iter().zip(new_tools.iter()) {
+    for ((tool_reg, tool), stable_id) in tools.iter().zip(new_tools.iter()).zip(stable_ids) {
         if ctx.agent.register_uds_tool_for_owner_with_stable_id(
             tool.clone(),
             owner.clone(),
-            tool_reg.stable_id.clone(),
+            stable_id,
         ) {
             accepted.push(tool_reg.name.clone());
         }
@@ -124,6 +149,10 @@ pub(in crate::interface::cli) async fn dispatch_register_tools(
         Some(serde_json::json!({ "registered": accepted })),
     );
     crate::interface::cli::uds::emit_event_to_broadcast_or_writer(ctx, &registered_ok).await;
+    crate::interface::cli::uds_extensions::tools_registered(
+        &ctx.client_tool_registry,
+        ctx.current_client_id,
+    );
     // Spawn a forwarder task for each newly-registered tool. These
     // drain the mpsc receiver stored in `tool_request_rxs` and are
     // the reason tool calls from the LLM actually reach the

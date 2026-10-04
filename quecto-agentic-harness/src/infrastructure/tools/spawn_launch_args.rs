@@ -152,6 +152,25 @@ pub(super) fn validate_effort(
     Ok(parsed.as_str().to_string())
 }
 
+impl super::spawn::SpawnTool {
+    /// Whether this agent launches its configured extensions (#2446).
+    pub(crate) fn with_launch_extensions(mut self, launch_extensions: bool) -> Self {
+        self.launch_extensions = launch_extensions;
+        self
+    }
+
+    /// Whether a child launched with `config` launches its own configured
+    /// extensions (#2446): only a local child of an agent that launches
+    /// them; a container child never launches the host's.
+    pub(super) fn child_launches_extensions(&self, config: &SubagentConfig) -> bool {
+        self.launch_extensions
+            && matches!(
+                config.container,
+                crate::domain::subagent::ContainerSelection::Local
+            )
+    }
+}
+
 /// Resolved launch context for a child agent: the deterministic inputs that are
 /// not carried on [`SubagentConfig`]. Grouped into a struct so the builder has a
 /// single descriptive parameter rather than a long positional list.
@@ -165,6 +184,9 @@ pub(super) struct ChildLaunchSpec<'a> {
     /// Already-written workflow spec file path, if any.
     pub workflow_spec_path: Option<&'a Path>,
     pub inherited_tool_policy_path: Option<&'a Path>,
+    /// Whether the child launches its configured extensions (#2446): a
+    /// local child of an agent that launches them does.
+    pub launches_extensions: bool,
     /// Private sidecar carrying the launch-bound parent control credential
     /// (#1935). Only the path is forwarded; the material never reaches argv.
     pub parent_control_path: Option<&'a Path>,
@@ -184,6 +206,7 @@ pub(super) fn build_child_cli_args(spec: &ChildLaunchSpec<'_>) -> Vec<OsString> 
         workflow_spec_path,
         inherited_tool_policy_path,
         parent_control_path,
+        launches_extensions,
     } = *spec;
 
     let mut args: Vec<OsString> = vec!["agent".into(), "--mode".into(), "uds".into()];
@@ -264,6 +287,11 @@ pub(super) fn build_child_cli_args(spec: &ChildLaunchSpec<'_>) -> Vec<OsString> 
     if let Some(control_path) = parent_control_path {
         args.push("--parent-control".into());
         args.push(control_path.into());
+    }
+
+    match launches_extensions {
+        true => {}
+        false => args.push("--no-extensions".into()),
     }
 
     // Forward each read-only tool restriction as `--disable-tool <name>` so the

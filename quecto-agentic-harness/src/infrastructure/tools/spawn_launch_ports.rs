@@ -190,6 +190,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 workflow_spec_path: workflow_spec_path.as_deref(),
                 inherited_tool_policy_path: inherited_tool_policy_path.as_deref(),
                 parent_control_path: Some(&parent_control_path),
+                launches_extensions: self.tool.child_launches_extensions(config),
             },
         ))
     }

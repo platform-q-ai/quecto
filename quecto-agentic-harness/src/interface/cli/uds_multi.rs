@@ -88,6 +88,7 @@ pub(super) struct MultiClientArgs<'a> {
     pub teardown_graph: Option<super::TeardownHandlesBuilder>,
     /// The environment control slot (#2070): an owner exit ends retained boxes through it.
     pub environment_control: Option<EnvironmentControlSlot>,
+    pub extensions: super::uds_extensions::Extensions, // #2446: see `clients`
 }
 
 /// A command line from a client.
@@ -172,6 +173,7 @@ pub(super) async fn multi_client_loop(
         parent_control,
         teardown_graph,
         environment_control,
+        extensions,
     } = args;
 
     inject_system_prompt(&mut messages, &system_prompt);
@@ -324,6 +326,7 @@ pub(super) async fn multi_client_loop(
         workflow_state: wf_state.clone(),
         workspace_path: workspace.to_path_buf(),
         teardown: connections,
+        extensions: extensions.clone(),
     });
 
     // Drop our clone so cmd_rx closes when all client senders (accept loop)
@@ -371,10 +374,12 @@ pub(super) async fn multi_client_loop(
             disconnect_rx,
             lifetime,
             shutdown,
+            extensions: extensions.clone(),
         },
         &live_clients,
     )
     .await;
+    clients::shut_down(&extensions).await;
 
     accept_task.abort();
 
@@ -402,6 +407,7 @@ struct DispatchLoopArgs {
     disconnect_rx: tokio::sync::mpsc::UnboundedReceiver<ClientDisconnected>,
     lifetime: crate::domain::harness_lifetime::HarnessLifetime,
     shutdown: super::uds_shutdown::ShutdownRequest,
+    extensions: super::uds_extensions::Extensions,
 }
 
 /// Process commands from all clients until no clients remain or a fatal error.
@@ -409,23 +415,12 @@ struct DispatchLoopArgs {
 /// During prompt execution, notifications are drained by run_with_token_drain_broadcast (#534).
 async fn run_dispatch_loop(
     ctx: &mut DispatchCtx<'_>,
-    args: DispatchLoopArgs,
+    mut args: DispatchLoopArgs,
     live_clients: &std::sync::atomic::AtomicU32,
 ) {
-    let DispatchLoopArgs {
-        mut cmd_rx,
-        mut disconnect_rx,
-        lifetime,
-        shutdown,
-    } = args;
+    let mut held = clients::hold_for_extensions(ctx, &mut args, live_clients).await;
     loop {
-        let msg = recv_next_message(
-            &mut cmd_rx,
-            &mut disconnect_rx,
-            &mut ctx.notification_rx,
-            &shutdown,
-        )
-        .await;
+        let msg = clients::next(&mut held, ctx, &mut args).await;
         let Some(msg) = msg else { break };
         match msg {
             DispatchMsg::Shutdown => {
@@ -440,14 +435,14 @@ async fn run_dispatch_loop(
                 break;
             }
             DispatchMsg::Client(client_msg) => {
-                if handle_client_msg(ctx, client_msg, lifetime, live_clients).await {
+                if handle_client_msg(ctx, client_msg, args.lifetime, live_clients).await {
                     // The last client of a lifetime that ends with it left:
                     // the same common shutdown runs to completion — fleet
                     // torn down, turn settled — before the loop returns and
                     // the final save happens (#1938). The exit-readiness
                     // notification it fires has no waiter left, which is
                     // fine: this loop is already leaving.
-                    shutdown.last_client_disconnected().await;
+                    args.shutdown.last_client_disconnected().await;
                     ctx.sessions
                         .active_session
                         .write()
@@ -512,9 +507,13 @@ async fn run_dispatch_loop(
     }
 }
 
+#[path = "uds_multi/clients.rs"]
+mod clients;
 #[path = "uds_multi_recv.rs"]
 mod recv;
-use recv::{DispatchMsg, recv_next_message};
+use recv::DispatchMsg;
+#[cfg(test)]
+use recv::recv_next_message;
 
 /// Handle a single client message. Returns `true` if the loop should exit.
 async fn handle_client_msg(
@@ -552,42 +551,8 @@ async fn handle_client_msg(
             false
         }
         ClientMessage::Disconnected(disc) => {
-            handle_disconnect(ctx, disc.client_id).await;
-            lifetime.exits_when_last_client_disconnects()
-                && live_clients.load(std::sync::atomic::Ordering::SeqCst) == 0
+            clients::disconnected(ctx, disc.client_id, lifetime, live_clients).await
         }
-    }
-}
-
-/// Unregister tools owned by a disconnecting client (#352).
-async fn handle_disconnect(ctx: &mut DispatchCtx<'_>, client_id: u64) {
-    let before: Vec<serde_json::Value> = ctx
-        .agent
-        .tool_catalogue_entries()
-        .into_iter()
-        .map(|entry| serde_json::to_value(entry).unwrap_or_default())
-        .collect();
-    let removed =
-        super::uds_ext_protocol::handle_client_disconnect(client_id, &ctx.client_tool_registry);
-    if !removed.is_empty() {
-        ctx.agent.unregister_uds_tools_for_client(client_id);
-        let after: Vec<serde_json::Value> = ctx
-            .agent
-            .tool_catalogue_entries()
-            .into_iter()
-            .map(|entry| serde_json::to_value(entry).unwrap_or_default())
-            .collect();
-        {
-            let mut snapshot = ctx.tool_catalogue_snapshot.write().await;
-            *snapshot = after.clone();
-        }
-        let ev = AgentEvent::ToolCatalogueChanged {
-            changed_tools: removed,
-            before,
-            after,
-            reason: "client_disconnect".to_string(),
-        };
-        emit_event_to_broadcast_or_writer(ctx, &ev).await;
     }
 }
 

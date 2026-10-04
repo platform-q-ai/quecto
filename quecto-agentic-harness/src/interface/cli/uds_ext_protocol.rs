@@ -135,6 +135,9 @@ pub struct ClientToolState {
     /// that aren't addressed to them.  Set on accept via
     /// `register_client_writer`; cleared on disconnect.
     pub writer_tx: Option<tokio::sync::mpsc::Sender<String>>,
+    /// Set when this connection is a configured extension's own (#2446);
+    /// dropped with the state, which marks the extension disconnected.
+    pub extension: Option<crate::infrastructure::processes::configured_extensions::ExtensionClaim>,
 }
 
 /// Register a per-client writer sender so `forward_tool_requests` can

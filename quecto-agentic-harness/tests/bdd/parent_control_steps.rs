@@ -413,6 +413,7 @@ fn launch_harness(world: &mut QuectoWorld, bind_deadline: BindDeadline) {
             catalogue,
         } = ctx;
         run_uds_loop(UdsLoopArgs {
+            extensions: Default::default(),
             agent,
             retention: None,
             base_dir: &base_dir,

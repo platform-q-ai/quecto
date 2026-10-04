@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use super::ExtensionRegistry;
 use crate::application::agent_loop::AgentLoopImpl;
+use crate::domain::agents::configured_extensions::{AgentExtensions, AgentRole};
 
 use super::{NotificationRx, SharedHarnessLifecycle, SubagentRegistry};
 
@@ -29,4 +30,25 @@ pub(crate) struct AgentBuildResult {
     pub workspace: std::path::PathBuf,
     /// `telemetry.event_log.enabled` (#2150).
     pub event_log: bool,
+    /// The configured extensions this agent launches (#2446).
+    pub extensions: AgentExtensions,
+}
+
+/// The configured extensions an agent started with `flags` launches: a
+/// spawned child only those marked `children`, under its own id; none
+/// under `--no-extensions`.
+pub(super) fn agent_extensions(
+    config: &crate::infrastructure::config::Config,
+    flags: &super::AgentFlags,
+) -> AgentExtensions {
+    AgentExtensions::select(
+        config
+            .extensions
+            .iter()
+            .map(|extension| extension.spec())
+            .collect(),
+        AgentRole::of(flags.spawned),
+        flags.session_name.as_deref(),
+        flags.launch_extensions,
+    )
 }

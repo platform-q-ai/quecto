@@ -39,6 +39,7 @@ fn spawn_capable_flags() -> AgentFlags {
         inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
+        launch_extensions: true,
         parent_identity_override: None,
         session_key_override: None,
         cwd_override: None,

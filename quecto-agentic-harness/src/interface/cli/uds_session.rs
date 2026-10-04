@@ -19,6 +19,7 @@ pub struct AgentSession {
     /// each with the model it is about: a switch keeps only those about the
     /// model now active.
     startup_warnings: Vec<(String, String)>,
+    extensions: super::uds_extensions::Extensions, // #2446: warnings, generation
     runtime_store: Option<crate::application::ports::RuntimeSnapshotStore>,
     streaming: bool,
     pub(crate) automatic_turns_allowed: bool,
@@ -243,6 +244,7 @@ impl AgentSession {
             model,
             admission_warnings: Vec::new(),
             startup_warnings: Vec::new(),
+            extensions: None,
             runtime_store: None,
             streaming: false,
             automatic_turns_allowed: true,
@@ -463,10 +465,11 @@ impl AgentSession {
                 .startup_warnings
                 .iter()
                 .map(|(_, warning)| warning.clone())
+                .chain(self.extension_warnings())
                 .collect(),
             control_receipts: self.control_receipts.clone(),
             model: self.model.clone(),
-            generation: self.generation,
+            generation: self.visible_generation(),
             is_streaming: self.streaming,
             session_key: session_key.to_owned(),
             message_count,

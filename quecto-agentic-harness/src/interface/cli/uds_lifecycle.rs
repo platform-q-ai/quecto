@@ -14,9 +14,6 @@ mod cov2_tests;
 #[cfg(test)]
 #[path = "uds_lifecycle_cov_tests.rs"]
 mod cov_tests;
-pub(super) type ExtRegistry = std::sync::Arc<
-    std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
->;
 pub struct UdsLoopArgs<'a> {
     pub agent: AgentLoopImpl,
     /// The run's retained-context handles (D9 #1978): the one store the
@@ -40,7 +37,7 @@ pub struct UdsLoopArgs<'a> {
     /// The run's catalogue handles (#1845, #1848), built once by the agent
     /// startup and shared with the spawn tool.
     pub catalogue: super::catalogue_handles::CatalogueHandles,
-    pub ext_registry: Option<ExtRegistry>,
+    pub ext_registry: Option<super::uds_extensions::ExtRegistry>,
     /// How long this harness lives (#1937): decided once at startup.
     pub lifetime: crate::domain::harness_lifetime::HarnessLifetime,
     pub notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
@@ -62,6 +59,7 @@ pub struct UdsLoopArgs<'a> {
     /// Composition's teardown handles builder; `None` runs the loop without
     /// the teardown edge (unit rigs) and is refused for a launched child.
     pub teardown_graph: Option<super::TeardownHandlesBuilder>,
+    pub extensions: crate::domain::agents::configured_extensions::AgentExtensions, // #2446
 }
 pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
     let rt = match crate::interface::cli::build_tokio_runtime() {
@@ -102,6 +100,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         broadcast_tx,
         parent_control,
         teardown_graph,
+        extensions,
     } = args;
     let session_key = identity.runtime_key().to_string(); // presenters, owner uuid
     let sessions = sessions(SessionLoopInputs {
@@ -161,7 +160,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
             }
         };
         eprint!("{}", super::uds_wire::socket_announcement(&socket_path));
-        let _guard = SocketGuard(socket_path);
+        let guard = SocketGuard(socket_path);
         super::uds_multi::multi_client_loop(
             MultiClientArgs {
                 agent,
@@ -182,6 +181,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 parent_control,
                 teardown_graph,
                 environment_control,
+                extensions: super::uds_extensions::launch(&extensions, &guard.0, base_dir),
             },
             listener,
             &sessions,

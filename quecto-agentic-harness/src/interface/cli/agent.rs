@@ -54,17 +54,19 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
     let mut parent_control: Option<std::path::PathBuf> = None;
     let mut inherited_tool_policy_path: Option<std::path::PathBuf> = None;
     let mut spawned = false;
+    let mut no_extensions = false;
     let mut backend = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             f @ ("--no-session" | "--persist" | "--workflow" | "--workflow-guards"
-            | "--spawned") => {
+            | "--spawned" | "--no-extensions") => {
                 *match f {
                     "--no-session" => &mut no_session,
                     "--persist" => &mut persist,
                     "--workflow" => &mut workflow,
                     "--spawned" => &mut spawned,
+                    "--no-extensions" => &mut no_extensions,
                     _ => &mut workflow_guards,
                 } = true;
                 if f == "--workflow" {
@@ -190,6 +192,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         inherited_tool_policy: None,
         parent_id,
         spawned,
+        launch_extensions: !no_extensions,
         parent_identity_override: None,
         session_key_override: None,
         cwd_override: None,
@@ -531,6 +534,7 @@ pub(crate) fn build_agent_from_config_in(
         workflow_state,
         workspace,
         event_log: event_log::switched_on(config.telemetry.event_log.enabled, base_dir),
+        extensions: build_result::agent_extensions(&config, flags),
     })
 }
 mod agent_tool_registry;
@@ -682,6 +686,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         parent_control,
         teardown_graph: ctx.teardown_graph,
         environment_control: build.environment_control,
+        extensions: build.extensions,
     });
     admission_startup::shutdown();
     // An ephemeral UDS server persisted spill content only for in-run recall.

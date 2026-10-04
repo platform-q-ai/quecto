@@ -50,6 +50,7 @@ impl Config {
         let config: Config = serde_json::from_value(value).map_err(ConfigError::Parse)?;
         config.validate_effort()?;
         config.validate_container_configs()?;
+        super::extensions::validate(&config.extensions)?;
         config.validate_context_budgets()?;
         Ok(config)
     }
@@ -68,6 +69,7 @@ impl Config {
         config.validate_effort()?;
         config.validate_admission()?;
         config.validate_context_budgets()?;
+        super::extensions::validate(&config.extensions)?;
         Ok(config)
     }
 
@@ -76,6 +78,7 @@ impl Config {
         self.validate_container_configs()?;
         self.validate_admission()?;
         self.validate_context_budgets()?;
+        super::extensions::validate(&self.extensions)?;
         Ok(self)
     }
 

@@ -40,6 +40,7 @@ fn runtime(
     let client = reqwest::Client::new();
     let mut stderr = String::new();
     build_tool_runtime(ToolRuntimeBuildArgs {
+        launch_extensions: true,
         swarm_context: None,
         swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::shared(),
         entrypoint,

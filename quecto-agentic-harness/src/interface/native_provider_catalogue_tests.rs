@@ -18,6 +18,7 @@ fn bundled_native_registration_preserves_provider_ids() {
     register_bundled_native_tools(
         &mut registry,
         build_agent_control_tool_extensions(AgentControlToolDeps {
+            launch_extensions: true,
             swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
             swarm_context: None,
             parent_config_path: None,

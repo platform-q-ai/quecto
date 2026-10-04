@@ -512,3 +512,23 @@ fn test_agent_max_iterations_overflow_rejected() {
 
 #[path = "agent_tool_flag_tests.rs"]
 mod tool_flag_tests;
+
+/// #2446: an agent launches its configured extensions unless started with
+/// `--no-extensions`.
+#[test]
+fn no_extensions_switches_the_configured_extensions_off() {
+    let mut stderr = String::new();
+    let uds = vec!["--mode".into(), "uds".into()];
+    assert!(
+        parse_agent_flags(&uds, &mut stderr)
+            .unwrap()
+            .launch_extensions
+    );
+    let mut off = uds.clone();
+    off.push("--no-extensions".into());
+    assert!(
+        !parse_agent_flags(&off, &mut stderr)
+            .unwrap()
+            .launch_extensions
+    );
+}
