@@ -292,9 +292,21 @@ fn model_selector_overflow_indicator_pixels() {
     // The last two lines are the gap and the action footer (#2024 S2); the
     // indicator is the last row of the list itself.
     let plain = strip_ansi(&lines[lines.len() - 3]);
+    // The fallback rows come from the built-in list file, so the total follows
+    // it rather than a hand-kept count that a new built-in model would break.
+    let known = include_str!("model_selector_builtin_models.txt")
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .count();
+    assert!(
+        known > 12,
+        "the 12-row window must overflow: {known} known models"
+    );
     assert_eq!(
-        plain, "  (1/22)",
-        "12-row window over the 22 known models shows the indicator"
+        plain,
+        format!("  (1/{known})"),
+        "12-row window over the {known} known models shows the indicator"
     );
 }
 

@@ -17,11 +17,13 @@ const OPENAI_KEPT: [&str; 7] = [
 ];
 
 /// Every Anthropic model the built-in catalogue keeps: Claude 5 and later.
-const ANTHROPIC_KEPT: [&str; 4] = [
+const ANTHROPIC_KEPT: [&str; 6] = [
     "claude-fable-5-1",
     "claude-fable-5",
     "claude-opus-5",
     "claude-sonnet-5",
+    "claude-opus-5-5",
+    "claude-sonnet-5-5",
 ];
 
 fn listed(provider: &str) -> Vec<String> {

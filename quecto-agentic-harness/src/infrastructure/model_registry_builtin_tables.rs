@@ -112,6 +112,8 @@ pub(super) fn builtin_specs() -> Vec<BuiltinSpec> {
         builtin("claude-fable-5", "Claude Fable 5"),
         builtin("claude-opus-5", "Claude Opus 5"),
         builtin("claude-sonnet-5", "Claude Sonnet 5"),
+        builtin("claude-opus-5-5", "Claude Opus 5.5"),
+        builtin("claude-sonnet-5-5", "Claude Sonnet 5.5"),
     ];
     const OPENAI: &[BuiltinModel] = &[
         builtin("gpt-6-astra", "GPT 6 Astra"),
@@ -220,6 +222,8 @@ const IMAGE_INPUT_IDS: &[&str] = &[
     "claude-fable-5",
     "claude-opus-5",
     "claude-sonnet-5",
+    "claude-opus-5-5",
+    "claude-sonnet-5-5",
     "gpt-6-astra",
     "gpt-6-sol",
     "gpt-6.1-sol",

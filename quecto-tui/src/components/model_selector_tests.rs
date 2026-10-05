@@ -69,6 +69,43 @@ fn known_models_include_latest_anthropic_models() {
     }
 }
 
+#[test]
+fn known_models_include_four_anthropic_5_5_rows_in_order_with_selector_parity() {
+    let expected = [
+        "anthropic-api/claude-opus-5-5",
+        "anthropic-api/claude-sonnet-5-5",
+        "anthropic-oauth/claude-opus-5-5",
+        "anthropic-oauth/claude-sonnet-5-5",
+    ];
+    let ids = known_ids();
+    for id in expected {
+        assert_eq!(
+            ids.iter().filter(|known| known.as_str() == id).count(),
+            1,
+            "fallback must offer {id} exactly once"
+        );
+    }
+    let actual: Vec<&str> = ids
+        .iter()
+        .map(String::as_str)
+        .filter(|id| expected.contains(id))
+        .collect();
+    assert_eq!(actual, expected, "preserve provider and model table order");
+
+    let selector = ModelSelector::new(None);
+    let selector_ids: Vec<&str> = selector
+        .shared_list()
+        .suggestions()
+        .iter()
+        .map(|suggestion| suggestion.value.as_str())
+        .filter(|id| expected.contains(id))
+        .collect();
+    assert_eq!(
+        selector_ids, expected,
+        "the selector must offer the same four qualified fallback rows in order"
+    );
+}
+
 /// #2435: the fallback list offers only the harness's current built-ins,
 /// never a retired model.
 #[test]
@@ -77,7 +114,13 @@ fn known_models_offer_no_retired_model() {
         let model = id.split_once('/').map_or(id.as_str(), |(_, model)| model);
         assert!(
             model.starts_with("claude-fable-5")
-                || ["claude-opus-5", "claude-sonnet-5"].contains(&model)
+                || [
+                    "claude-opus-5",
+                    "claude-sonnet-5",
+                    "claude-opus-5-5",
+                    "claude-sonnet-5-5",
+                ]
+                .contains(&model)
                 || model.starts_with("gpt-6")
                 || model.starts_with("gpt-5.6-"),
             "a retired model is offered: {id}"
@@ -85,8 +128,8 @@ fn known_models_offer_no_retired_model() {
     }
     assert_eq!(
         known_ids().len(),
-        22,
-        "eleven models through two auth modes"
+        26,
+        "thirteen models through two auth modes"
     );
 }
 
