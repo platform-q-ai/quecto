@@ -14,8 +14,9 @@
 
 use super::app_subagents_tests::info;
 use super::tui_harness::{
-    TuiHarness, drain_child_commands_until_quiet, spawn_subagent_socket_with_commands,
-    subagent_with_socket, subagents_changed,
+    TuiHarness, assert_no_further_child_commands, child_command_type,
+    drain_child_commands_until_quiet, spawn_subagent_socket_with_commands, subagent_with_socket,
+    subagents_changed,
 };
 use super::*;
 use serde_json::json;
@@ -291,19 +292,89 @@ async fn connecting_to_a_subagent_asks_for_its_own_stats() {
         Some(socket),
     )]));
 
-    let commands = drain_child_commands_until_quiet(&mut child_rx).await;
-    let stats_requests = commands
-        .iter()
-        .filter(|line| {
-            serde_json::from_str::<serde_json::Value>(line)
-                .ok()
-                .and_then(|v| v.get("type").and_then(|t| t.as_str()).map(str::to_owned))
-                .as_deref()
-                == Some("get_session_stats")
-        })
-        .count();
+    let commands = drain_until_stats_requests(&mut child_rx, 1).await;
     assert_eq!(
-        stats_requests, 1,
+        child_stats_request_count(&commands),
+        1,
         "connect must ask the child for its stats exactly once: {commands:?}"
+    );
+
+    // A run end before the connect request is answered waits for that reply
+    // (one request outstanding), then sends one follow-up.
+    h.route(AGENT, turn_end());
+    assert_no_further_child_commands(
+        &mut child_rx,
+        "a run end must not stack a second request on the unanswered connect one",
+    )
+    .await;
+    h.route(AGENT, coordinator_stats(Some("subagent-stats".into())));
+    let follow_up = drain_until_stats_requests(&mut child_rx, 1).await;
+    assert_eq!(
+        child_stats_request_count(&follow_up),
+        1,
+        "the connect reply brings one follow-up for the run end: {follow_up:?}"
+    );
+}
+
+fn child_stats_request_count(commands: &[String]) -> usize {
+    commands
+        .iter()
+        .filter(|line| child_command_type(line).as_deref() == Some("get_session_stats"))
+        .count()
+}
+
+/// Drain the child socket until `want` stats requests have arrived, or a
+/// bounded number of quiet windows has passed (load-tolerant).
+async fn drain_until_stats_requests(rx: &mut mpsc::Receiver<String>, want: usize) -> Vec<String> {
+    let mut commands = Vec::new();
+    for _ in 0..40 {
+        commands.extend(drain_child_commands_until_quiet(rx).await);
+        if child_stats_request_count(&commands) >= want {
+            break;
+        }
+    }
+    commands
+}
+
+#[tokio::test]
+async fn a_child_whose_roster_status_leaves_running_refreshes_its_stats() {
+    // A parent's or launcher's abort (`ack: accept`) is acknowledged to that
+    // client alone, and the cancelled run reports neither `turn_end` nor a
+    // broadcast reply: the roster's running → idle is the one signal left.
+    let (mut h, mut rx) = tracked_child(crate::agents::feed::FeedAuthority::WarmSync, true).await;
+    let app = h.app_mut();
+    assert!(stats_requests(&mut rx).is_empty());
+
+    app.update_subagent_bar(vec![info(AGENT, "idle")]);
+    assert_eq!(
+        answer_stats_requests(app, &mut rx),
+        1,
+        "running → idle must ask the child for its stats"
+    );
+    assert!(footer_text(app).contains("hit 92.4%"));
+
+    // A roster refresh that changes nothing asks for nothing.
+    app.update_subagent_bar(vec![info(AGENT, "idle")]);
+    assert!(stats_requests(&mut rx).is_empty());
+}
+
+#[tokio::test]
+async fn a_request_the_feed_could_not_queue_is_retried_on_the_next_child_event() {
+    let mut h = TuiHarness::new().await;
+    h.app_mut()
+        .update_subagent_bar(vec![info(AGENT, "running")]);
+    let mut rx = h.insert_full_channel_feed(AGENT);
+    let app = h.app_mut();
+
+    app.route_subagent_event(AGENT, turn_end());
+    // The queue held only its prefilled command: the request was not queued.
+    assert!(matches!(rx.try_recv(), Ok(Command::GetState { .. })));
+    assert!(rx.try_recv().is_err());
+
+    // The next event from the child, of any kind, retries the owed request.
+    app.route_subagent_event(AGENT, Event::Token { token: "x".into() });
+    assert!(
+        matches!(rx.try_recv(), Ok(Command::GetSessionStats { .. })),
+        "the owed stats request must be retried"
     );
 }

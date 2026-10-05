@@ -73,7 +73,14 @@ async fn warm_feed_startup_sends_get_state_initial_sync_then_stats_once() {
         Some(socket),
     )]));
 
-    let commands = drain_child_commands_until_quiet(&mut child_commands).await;
+    // Load-tolerant: a quiet window can fall between the startup writes.
+    let mut commands = Vec::new();
+    for _ in 0..40 {
+        commands.extend(drain_child_commands_until_quiet(&mut child_commands).await);
+        if commands.len() >= 3 {
+            break;
+        }
+    }
     assert_eq!(
         commands.len(),
         3,

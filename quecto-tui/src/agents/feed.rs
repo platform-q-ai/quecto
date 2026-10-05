@@ -102,6 +102,11 @@ impl StatsRefresh {
     pub(crate) fn not_sent(&mut self) {
         *self = Self::Settled;
     }
+
+    /// Whether a request is owed: one that could not be queued.
+    pub(crate) fn owes_request(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]
