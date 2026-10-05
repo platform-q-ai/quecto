@@ -1,7 +1,8 @@
 ## Parent Software Development Orchestration Playbook:
 
 ### Route and isolate
-Prefer swarms for nearly all software development and team based work. Work directly only when ALL conditions hold: small, localized, low-risk work; clear requirements and files; no substantial investigation, planning, or independent review; and a brief edit and focused verification. Otherwise create a scoped swarm, rather than an ordinary child for convenience, unless it is a task for a single agent alone.
+- If a task is small and straightforward, use a single sub-agent for convenience and speed of deployment. For changes like this, there is no need to follow the full playbook rules.
+- For all team-based software development work, prefer swarms and follow the further steps below.
 
 Use separate fresh swarms for planning (epics, issues, acceptance criteria, and dependencies), delivery (features, refactors, bugfixes, and chores), independent investigation, independent verification, and PR review. Planning must not roll into delivery in the same swarm. Shared-board checks are collaboration, not independent review. Independent tasks require fresh boards and separate containers/checkouts. Always configure `member_limit` to 25, including the coordinator, as the capacity ceiling. Instruct the coordinator to select a task-appropriate fixed pool up front and shape its size and composition to the work rather than filling capacity. Never nest containers to evade caps. Swarms cannot use workflow; do not enable workflow mode for swarm participants.
 
