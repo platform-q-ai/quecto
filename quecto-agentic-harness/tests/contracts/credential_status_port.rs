@@ -7,6 +7,7 @@ use quecto::domain::catalogue::{
     AuthIdentity, Availability, CatalogueEntry, ModelCapabilities, ModelCost, ModelDescriptor,
     ModelRef, ProviderDescriptor, ProviderId, TransportKind,
 };
+use quecto::infrastructure::auth::provider_slots::ProviderSlots;
 use quecto::infrastructure::catalogue_registry::RegistryCredentialStatus;
 use quecto::infrastructure::model_registry::ModelRegistry;
 
@@ -38,6 +39,11 @@ fn catalogue_entry(provider: &str, model: &str) -> CatalogueEntry {
     }
 }
 
+/// No credential-backed provider slot: records alone decide.
+fn no_slots() -> ProviderSlots {
+    ProviderSlots::routed(Vec::new())
+}
+
 #[test]
 fn registry_adapter_matches_the_legacy_configured_predicate() {
     let builtin = ModelRegistry::builtin();
@@ -54,7 +60,7 @@ fn registry_adapter_matches_the_legacy_configured_predicate() {
     bare.api_key = Some(String::new());
     bare.base_url = None;
 
-    let status = RegistryCredentialStatus::from_records([&keyed, &urled, &bare]);
+    let status = RegistryCredentialStatus::new([&keyed, &urled, &bare], no_slots());
     assert!(status.credential_available(&catalogue_entry("keyed", &model_id)));
     assert!(status.credential_available(&catalogue_entry("urled", &model_id)));
     assert!(!status.credential_available(&catalogue_entry("bare", &model_id)));
@@ -70,7 +76,7 @@ fn credential_status_is_per_record_not_per_provider() {
     keyed.provider = "keyed".to_string();
     keyed.api_key = Some("sk-live".to_string());
 
-    let status = RegistryCredentialStatus::from_records([&keyed]);
+    let status = RegistryCredentialStatus::new([&keyed], no_slots());
     assert!(status.credential_available(&catalogue_entry("keyed", &keyed.id)));
     assert!(
         !status.credential_available(&catalogue_entry("keyed", "sibling-without-key")),

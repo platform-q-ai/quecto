@@ -39,8 +39,10 @@ returns from it. `--device-code` (openai and custom `models.json` providers only
 refuses it) prints a URL and a code, then waits — both flows are for a human
 at a terminal. Ask the user for
 the key; do not echo it back, do not write it into any file yourself. Environment variables `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`
-also work for one process. The store takes priority over
-`providers.openai.api_key` in the global file.
+also work for one process. A configured key (that variable or
+`providers.openai.api_key` in the global file) takes priority over a stored
+token. A credential stored while a session runs is offered in `/model` once
+the session restarts.
 
 **2. Default model** — this repository (writes `./.quecto/config.json`, trusted):
 

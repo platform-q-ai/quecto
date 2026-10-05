@@ -8,6 +8,7 @@
 
 use std::path::Path;
 
+use crate::infrastructure::auth::provider_slots::{ConfiguredApiKeys, ProviderSlots};
 use crate::infrastructure::catalogue_registry::{
     BuiltinCatalogueSource, ModelsFileCatalogueSource, RegistryCredentialStatus,
     UserOverrideCatalogueSource, apply_overrides, entries_from_records, user_file_entries,
@@ -54,7 +55,17 @@ impl CatalogueInputs {
     /// feeds the user-defined source layer, credential status, discovery
     /// provider defaults, and the effective registry, so every consumer
     /// describes one on-disk state (and a resolve costs one file read).
+    ///
+    /// Credential status reads the provider slots the runtime published for
+    /// `base_dir` routes ([`published_slots`]), so a listing or a switch
+    /// offers exactly what the running router can reach.
     pub(crate) fn load(base_dir: &Path) -> Self {
+        Self::load_with_slots(base_dir, published_slots(base_dir))
+    }
+
+    /// [`Self::load`] with the provider slots a composition about to run
+    /// will build, probed by the caller from its configuration.
+    pub(crate) fn load_with_slots(base_dir: &Path, slots: ProviderSlots) -> Self {
         let config = ModelRegistry::load_registry_config(&base_dir.join("models.json"))
             .map_err(|error| error.to_string());
         let file_load = config
@@ -97,13 +108,14 @@ impl CatalogueInputs {
             }
             Err(error) => (Vec::new(), Err(error.clone())),
         };
-        let credentials = RegistryCredentialStatus::from_records(
+        let credentials = RegistryCredentialStatus::new(
             builtin_registry
                 .models()
                 .iter()
                 .chain(file_load.as_deref().unwrap_or_default())
                 .chain(discovered_records.iter())
                 .chain(override_records.iter()),
+            slots,
         );
         Self {
             builtin: BuiltinCatalogueSource,
@@ -166,6 +178,23 @@ impl CatalogueInputs {
     /// discovered layer via [`CatalogueInputs::sources`].
     pub(crate) fn discovered_providers(&self) -> Vec<&str> {
         self.discovered.iter().map(|c| c.provider()).collect()
+    }
+}
+
+/// The credential-backed provider slots of `base_dir`'s published runtime
+/// (#2451): the slots its router holds. The runtime reads the credential
+/// store when it is composed — at startup and on a configuration reload —
+/// so a credential stored since (`quecto auth login`) is offered once the
+/// runtime is next composed, exactly when the router can reach it. With no
+/// runtime published (a CLI listing, a rig), the slots a composition would
+/// build from the credential store alone.
+fn published_slots(base_dir: &Path) -> ProviderSlots {
+    match crate::infrastructure::catalogue_registry::runtime_store_for(base_dir).current() {
+        Some(runtime) => ProviderSlots::routed(runtime.provider.route_order()),
+        None => ProviderSlots::probe(
+            ConfiguredApiKeys::NONE,
+            &crate::infrastructure::auth::credential_store::CredentialStore::new(base_dir),
+        ),
     }
 }
 
