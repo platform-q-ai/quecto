@@ -343,6 +343,12 @@ fn publish_admission_slots(base: &std::path::Path, slots: &[&str]) {
     }
     struct Credentials;
     impl CredentialStatusPort for Credentials {
+        fn for_composed_routes(
+            &self,
+            _routes: &[String],
+        ) -> Option<Box<dyn CredentialStatusPort + '_>> {
+            None // this fake's status does not depend on routes
+        }
         fn credential_available(&self, _: &CatalogueEntry) -> bool {
             true
         }

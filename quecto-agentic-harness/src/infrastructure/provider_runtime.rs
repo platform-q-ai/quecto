@@ -17,7 +17,9 @@ use crate::infrastructure::providers::refreshable::{ProviderFactory, RefreshFn};
 
 use crate::application::providers::ports::LlmProvider;
 use crate::infrastructure::auth::credential_store::CredentialStore;
-use crate::infrastructure::auth::provider_slots::{api_slot_key, oauth_slot_token};
+use crate::infrastructure::auth::provider_slots::{
+    ANTHROPIC_API, ANTHROPIC_OAUTH, OPENAI_API, OPENAI_OAUTH, api_slot_key, oauth_slot_token,
+};
 use crate::infrastructure::config::Config;
 use crate::infrastructure::providers;
 use crate::infrastructure::providers::model_refusal::RefusalRecordingProvider;
@@ -133,18 +135,18 @@ pub(crate) fn compose_agent_provider_inner_outcome(
     ) {
         provider_list.push(
             providers::create_named_openai_provider_with_client_and_admission(
-                "openai-api",
+                OPENAI_API,
                 openai_api_key,
                 openai_base.clone(),
                 providers::ProviderTransportContext {
                     client: http_client.clone(),
-                    binding: bound(admission, "openai-api", openai_idle)?,
+                    binding: bound(admission, OPENAI_API, openai_idle)?,
                 },
                 false,
                 model_registry
                     .models()
                     .iter()
-                    .filter(|m| m.provider == "openai-api" && m.reasoning)
+                    .filter(|m| m.provider == OPENAI_API && m.reasoning)
                     .map(|m| m.id.clone())
                     .collect(),
             )
@@ -161,10 +163,10 @@ pub(crate) fn compose_agent_provider_inner_outcome(
             &openai_base,
             http_client,
             false,
-            bound(admission, "openai-oauth", openai_idle)?,
+            bound(admission, OPENAI_OAUTH, openai_idle)?,
         )?;
         let factory = if admission.is_some() {
-            let binding = bound(admission, "openai-oauth", openai_idle)?;
+            let binding = bound(admission, OPENAI_OAUTH, openai_idle)?;
             let base = openai_base.clone();
             let client = http_client.clone();
             Arc::new(move |token: &str| {
@@ -184,7 +186,7 @@ pub(crate) fn compose_agent_provider_inner_outcome(
         provider_list.push(Arc::new(RefreshableProvider::new(RefreshableConfig {
             inner,
             store: store_arc.clone(),
-            provider_name: "openai-oauth".to_string(),
+            provider_name: OPENAI_OAUTH.to_string(),
             credential_provider: "openai".to_string(),
             refresh_fn: refresh_fn.clone(),
             factory,
@@ -198,12 +200,12 @@ pub(crate) fn compose_agent_provider_inner_outcome(
     ) {
         provider_list.push(
             providers::create_anthropic_compatible_provider_and_admission(
-                "anthropic-api",
+                ANTHROPIC_API,
                 anthropic_api_key,
                 anthropic_base.clone(),
                 false,
                 http_client.clone(),
-                bound(admission, "anthropic-api", anthropic_idle)?,
+                bound(admission, ANTHROPIC_API, anthropic_idle)?,
             )
             .map_err(|e| format!("anthropic-api provider configuration error: {}", e))?,
         );
@@ -223,26 +225,26 @@ pub(crate) fn compose_agent_provider_inner_outcome(
     }
     if let Some(anthropic_oauth_key) = oauth_slot_token(store.get("anthropic").ok().flatten()) {
         let inner = providers::create_anthropic_compatible_provider_and_admission(
-            "anthropic-oauth",
+            ANTHROPIC_OAUTH,
             anthropic_oauth_key,
             anthropic_base.clone(),
             false,
             http_client.clone(),
-            bound(admission, "anthropic-oauth", anthropic_idle)?,
+            bound(admission, ANTHROPIC_OAUTH, anthropic_idle)?,
         )
         .map_err(|e| format!("anthropic-oauth provider configuration error: {}", e))?;
         let factory = registry_provider_factory_with_admission(
             crate::infrastructure::model_registry::ProviderApi::AnthropicMessages,
-            "anthropic-oauth".to_string(),
+            ANTHROPIC_OAUTH.to_string(),
             anthropic_base.clone(),
             false,
             http_client.clone(),
-            bound(admission, "anthropic-oauth", anthropic_idle)?,
+            bound(admission, ANTHROPIC_OAUTH, anthropic_idle)?,
         );
         provider_list.push(Arc::new(RefreshableProvider::new(RefreshableConfig {
             inner,
             store: store_arc.clone(),
-            provider_name: "anthropic-oauth".to_string(),
+            provider_name: ANTHROPIC_OAUTH.to_string(),
             credential_provider: "anthropic".to_string(),
             refresh_fn: refresh_fn.clone(),
             factory,

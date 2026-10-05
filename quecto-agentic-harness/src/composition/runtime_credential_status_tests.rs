@@ -413,3 +413,47 @@ fn an_openai_compatible_endpoint_under_a_builtin_slot_name_offers_that_slots_bui
     assert_listing_matches_routes(tmp.path(), &runtime);
     assert_runnable_on(tmp.path(), "anthropic-api/claude-sonnet-5", "anthropic-api");
 }
+
+#[test]
+fn a_refresh_credits_the_slots_the_published_runtime_routes() {
+    use crate::application::catalogue::ports::RefreshInputsLoader;
+    let tmp = tempfile::tempdir().unwrap();
+    store(tmp.path(), "anthropic", AuthMethod::OAuth, Some(i64::MAX));
+    let runtime = compose_with(tmp.path(), &Config::default());
+    let entry = |qualified: &str| {
+        runtime
+            .catalogue
+            .find(&crate::domain::catalogue::ModelRef::parse_qualified(qualified).unwrap())
+            .expect("built in")
+            .clone()
+    };
+
+    let loaded = crate::infrastructure::catalogue_refresh_inputs::FileRefreshInputs::new(
+        tmp.path(),
+        Arc::new(runtime_store_for(tmp.path())),
+    )
+    .load()
+    .expect("refresh inputs load");
+
+    let credentials = loaded.credentials();
+    assert!(credentials.credential_available(&entry("anthropic-oauth/claude-opus-5-5")));
+    assert!(!credentials.credential_available(&entry("anthropic-api/claude-opus-5-5")));
+}
+
+#[test]
+fn a_keyed_openai_compatible_record_without_a_base_url_is_not_offered() {
+    let tmp = tempfile::tempdir().unwrap();
+    store(tmp.path(), "anthropic", AuthMethod::OAuth, Some(i64::MAX));
+    // The runtime cannot build an OpenAI-compatible provider without its
+    // base URL, so the key alone offers nothing.
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{"nobase":{"api":"openai-completions","apiKey":"sk-nobase",
+            "models":[{"id":"nobase-model"}]}}}"#,
+    )
+    .unwrap();
+    let runtime = compose_with(tmp.path(), &Config::default());
+
+    assert!(!runtime.provider.route_order().iter().any(|r| r == "nobase"));
+    assert!(!selectable(&listing(tmp.path())["nobase/nobase-model"]));
+}

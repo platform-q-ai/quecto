@@ -58,6 +58,22 @@ pub(super) async fn poll_reload(ctx: &mut DispatchCtx<'_>) -> ReloadOutcome {
     reload.apply(ctx.agent, step)
 }
 
+/// Before `list_models`, the same poll (#2451): the listing offers what the
+/// router can reach, so a provider configured since the last poll is
+/// offered when `/model` opens rather than after the next prompt. Any
+/// other command polls nothing here.
+pub(super) async fn poll_before_listing(
+    cmd: &crate::interface::cli::protocol::AgentCommand,
+    ctx: &mut DispatchCtx<'_>,
+) {
+    if matches!(
+        cmd,
+        crate::interface::cli::protocol::AgentCommand::ListModels { .. }
+    ) {
+        poll_reload(ctx).await;
+    }
+}
+
 #[cfg(test)]
 #[path = "uds_dispatch_reload_tests.rs"]
 mod tests;

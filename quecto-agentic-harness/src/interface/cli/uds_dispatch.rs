@@ -32,6 +32,7 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
         return result;
     }
     // Fast path: queries + clear_history (defers id/type_name clones).
+    super::super::uds_dispatch_reload::poll_before_listing(&cmd, ctx).await;
     if let Some(result) = super::uds_dispatch_query::dispatch_fieldless_command(&cmd, ctx).await {
         return result;
     }

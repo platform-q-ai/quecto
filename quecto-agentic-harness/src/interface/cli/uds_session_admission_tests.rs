@@ -62,6 +62,12 @@ fn advisory_is_read_from_published_runtime_and_deduplicated() {
     }
     struct Credentials;
     impl CredentialStatusPort for Credentials {
+        fn for_composed_routes(
+            &self,
+            _routes: &[String],
+        ) -> Option<Box<dyn CredentialStatusPort + '_>> {
+            None // this fake's status does not depend on routes
+        }
         fn credential_available(&self, _: &CatalogueEntry) -> bool {
             true
         }

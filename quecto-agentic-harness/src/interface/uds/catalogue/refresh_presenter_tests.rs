@@ -27,6 +27,12 @@ fn a_republish_renders_the_exact_published_generation() {
 struct GrantNone;
 
 impl crate::application::catalogue::CredentialStatusPort for GrantNone {
+    fn for_composed_routes(
+        &self,
+        _routes: &[String],
+    ) -> Option<Box<dyn crate::application::catalogue::CredentialStatusPort + '_>> {
+        None // this fake's status does not depend on routes
+    }
     fn credential_available(&self, _entry: &crate::domain::catalogue::CatalogueEntry) -> bool {
         false
     }

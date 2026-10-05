@@ -399,6 +399,9 @@ pub(crate) fn execute_uds(world: &mut QuectoWorld) {
         )
         .expect("write Fireworks config");
     }
+    if world.uds_add_anthropic_key_before_loop {
+        crate::active_model_steps::add_anthropic_key_to_config(&base);
+    }
     if world.uds_invalid_config_before_loop {
         std::fs::write(base.join("config.json"), "{ invalid json").expect("write invalid config");
     }

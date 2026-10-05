@@ -345,6 +345,12 @@ fn status_reports_only_published_runtime_admission_warnings() {
     }
     struct Credentials;
     impl CredentialStatusPort for Credentials {
+        fn for_composed_routes(
+            &self,
+            _routes: &[String],
+        ) -> Option<Box<dyn CredentialStatusPort + '_>> {
+            None // this fake's status does not depend on routes
+        }
         fn credential_available(&self, _: &CatalogueEntry) -> bool {
             true
         }

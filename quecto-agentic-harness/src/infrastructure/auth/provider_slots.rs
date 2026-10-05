@@ -24,13 +24,14 @@ use crate::application::catalogue::ports::RuntimeSnapshotSource;
 use crate::domain::catalogue::AuthIdentity;
 
 /// The built-in slots the runtime builds straight from a vendor credential
-/// or a configured key.
-const DEDICATED_SLOTS: [&str; 4] = [
-    "openai-api",
-    "openai-oauth",
-    "anthropic-api",
-    "anthropic-oauth",
-];
+/// or a configured key, by the names the factory gives them: the factory
+/// names its providers with these constants, so a slot it builds is always
+/// one the catalogue credits.
+pub(crate) const OPENAI_API: &str = "openai-api";
+pub(crate) const OPENAI_OAUTH: &str = "openai-oauth";
+pub(crate) const ANTHROPIC_API: &str = "anthropic-api";
+pub(crate) const ANTHROPIC_OAUTH: &str = "anthropic-oauth";
+const DEDICATED_SLOTS: [&str; 4] = [OPENAI_API, OPENAI_OAUTH, ANTHROPIC_API, ANTHROPIC_OAUTH];
 
 /// The API key a vendor's API-key slot is built with: the configured key,
 /// else the stored token credential while it is unexpired. `None` builds

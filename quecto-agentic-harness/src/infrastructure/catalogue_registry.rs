@@ -342,12 +342,23 @@ impl RegistryCredentialStatus {
 }
 
 /// Whether a record carries its own credential: an API-key record with a
-/// non-empty key or an explicit base URL. An OAuth record never does.
+/// non-empty key the runtime can build a provider with (an
+/// OpenAI-compatible one needs its base URL too), or an explicit base URL
+/// an `openai_compatible` endpoint may supply the key for. An OAuth record
+/// never does: the runtime builds it from the stored sign-in alone.
 fn record_carries_credential(record: &ModelRecord) -> bool {
+    let has_key = record.api_key.as_deref().is_some_and(|key| !key.is_empty());
+    let buildable_with_key = match record.api {
+        ProviderApi::AnthropicMessages => has_key,
+        ProviderApi::OpenAiCompletions | ProviderApi::GoogleGenerativeAi => false,
+    };
     match record.auth {
         AuthMode::ApiKey => {
-            record.api_key.as_deref().is_some_and(|key| !key.is_empty())
-                || record.base_url.is_some()
+            buildable_with_key
+                || record
+                    .base_url
+                    .as_deref()
+                    .is_some_and(|base| !base.trim().is_empty())
         }
         AuthMode::OAuth => false,
     }

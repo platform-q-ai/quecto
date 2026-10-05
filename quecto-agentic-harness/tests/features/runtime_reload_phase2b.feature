@@ -15,6 +15,16 @@ Feature: Provider reload wiring for models/providers (Phase 2b)
     Then the agent output should contain a response command "set_model" with success true
     And the Fireworks provider should have received a chat completion request
 
+  @issue-2451
+  Scenario: list_models reloads providers before offering a newly configured provider's models
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the config file will be updated to add an Anthropic API key before the UDS command loop
+    When I start the UDS agent with no session
+    And I send command "list_models" with id "lm-1"
+    And I close the UDS connection
+    Then the list_models response should offer "anthropic-api/claude-opus-5-5"
+
   Scenario: prompt reloads providers at top of turn before using the configured model
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server

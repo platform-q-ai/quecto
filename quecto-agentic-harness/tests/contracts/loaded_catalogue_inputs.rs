@@ -49,7 +49,8 @@ fn credential_status_is_a_per_record_verdict_driven_by_the_credential() {
     std::fs::write(
         tmp.path().join("models.json"),
         r#"{"providers":{
-            "keyed":{"api":"openai-completions","apiKey":"sk-keyed","models":[{"id":"m"}]},
+            "keyed":{"api":"openai-completions","apiKey":"sk-keyed",
+                "baseUrl":"https://keyed.example.test/v1","models":[{"id":"m"}]},
             "unset":{"api":"openai-completions","apiKey":"$QUECTO_CONTRACT_UNSET_KEY","models":[{"id":"m"}]},
             "bare":{"api":"openai-completions","models":[{"id":"m"}]}
         }}"#,
