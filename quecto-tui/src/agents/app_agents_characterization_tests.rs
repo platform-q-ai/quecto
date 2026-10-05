@@ -53,7 +53,7 @@ fn feed_with_rx() -> (FeedState, mpsc::Receiver<Command>) {
 }
 
 #[tokio::test]
-async fn warm_feed_startup_sends_get_state_then_initial_sync_once() {
+async fn warm_feed_startup_sends_get_state_initial_sync_then_stats_once() {
     use super::tui_harness::{
         TuiHarness, assert_no_further_child_commands, child_command_type,
         drain_child_commands_until_quiet, spawn_subagent_socket_with_commands,
@@ -75,8 +75,8 @@ async fn warm_feed_startup_sends_get_state_then_initial_sync_once() {
     let commands = drain_child_commands_until_quiet(&mut child_commands).await;
     assert_eq!(
         commands.len(),
-        2,
-        "warm direct feed startup must send exactly get_state then sync once, got {commands:?}"
+        3,
+        "warm direct feed startup must send exactly get_state, sync, then get_session_stats once, got {commands:?}"
     );
     assert_eq!(
         child_command_type(&commands[0]).as_deref(),
@@ -86,10 +86,15 @@ async fn warm_feed_startup_sends_get_state_then_initial_sync_once() {
     assert_eq!(sync["type"], "sync");
     assert_eq!(sync["epoch"], 0);
     assert_eq!(sync["sinceRev"], 0);
+    // An idle child pushes no busy stats snapshot, so the feed asks for the
+    // child's own stats to fill its footer's cost and cache-hit ratio.
+    let stats = serde_json::from_str::<serde_json::Value>(&commands[2]).unwrap();
+    assert_eq!(stats["type"], "get_session_stats");
+    assert_eq!(stats["id"], "subagent-stats");
     // Pin "exactly once" against late duplicates, not just a prefix window.
     assert_no_further_child_commands(
         &mut child_commands,
-        "warm startup must not emit a third startup command after settle",
+        "warm startup must not emit a fourth startup command after settle",
     )
     .await;
 

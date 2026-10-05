@@ -561,3 +561,92 @@ fn drain_master_commands(world: &mut TuiWorld) -> Vec<String> {
     let h = &mut world.tui_parity.as_mut().expect("harness").0;
     handle.block_on(h.drain_commands())
 }
+
+// ── A sub-agent footer's own cache-hit ratio ────────────────────────────────
+
+/// The child's harness totals: 42 uncached input, 530,402 cache-read and
+/// 43,394 cache-write tokens, a normalized hit ratio of 92.4%.
+const CHILD_CACHE_READ: u64 = 530_402;
+const CHILD_CACHE_WRITE: u64 = 43_394;
+const CHILD_UNCACHED_INPUT: u64 = 42;
+
+/// Wait for the commands the child socket received to settle, then return them.
+fn settle_subagent_commands(world: &mut TuiWorld) -> Vec<String> {
+    let handle = world
+        .tui_parity_rt
+        .as_ref()
+        .expect("harness runtime")
+        .handle()
+        .clone();
+    let rx = world
+        .tui_subagent_commands
+        .as_mut()
+        .expect("sub-agent command receiver");
+    handle.block_on(tui_harness::drain_child_commands_until_quiet(rx))
+}
+
+#[when(expr = "sub-agent {string} ends a turn")]
+fn when_subagent_ends_turn(world: &mut TuiWorld, id: String) {
+    // The connect-time requests are not the turn's: settle them first.
+    settle_subagent_commands(world);
+    drive(world, |h| {
+        h.route(
+            &id,
+            Event::TurnEnd {
+                message: serde_json::json!({
+                    "contextTokens": 43_396,
+                    "maxContextTokens": 300_000,
+                }),
+            },
+        );
+    });
+}
+
+#[then(expr = "the TUI asks sub-agent {string} for its own session stats")]
+fn then_asks_subagent_stats(world: &mut TuiWorld, _id: String) {
+    let cmds = settle_subagent_commands(world);
+    let stats = cmds
+        .iter()
+        .filter(|c| c.contains("\"type\":\"get_session_stats\""))
+        .count();
+    assert_eq!(
+        stats, 1,
+        "a sub-agent's turn end must ask that child for its stats once: {cmds:?}"
+    );
+}
+
+#[when(expr = "sub-agent {string} answers with its session stats")]
+fn when_subagent_answers_stats(world: &mut TuiWorld, id: String) {
+    let ratio = CHILD_CACHE_READ as f64
+        / (CHILD_UNCACHED_INPUT + CHILD_CACHE_READ + CHILD_CACHE_WRITE) as f64;
+    drive(world, |h| {
+        h.route(
+            &id,
+            Event::Response {
+                id: Some("subagent-stats".into()),
+                command: "get_session_stats".into(),
+                success: true,
+                data: Some(serde_json::json!({
+                    "tokens": {
+                        "input": CHILD_UNCACHED_INPUT,
+                        "cacheRead": CHILD_CACHE_READ,
+                        "cacheWrite": CHILD_CACHE_WRITE,
+                    },
+                    "cacheHitRatio": ratio,
+                    "contextTokens": 43_396,
+                    "maxContextTokens": 300_000,
+                })),
+                error: None,
+            },
+        );
+    });
+}
+
+#[then("the footer shows the sub-agent's own cache-hit ratio")]
+fn then_footer_subagent_cache_hit(world: &mut TuiWorld) {
+    let frame = drive(world, |h| h.full_frame());
+    assert!(
+        frame.contains("hit 92.4%") && frame.contains("cache 530k/43k"),
+        "the sub-agent footer must show its own normalized cache figures, got:\n{frame}"
+    );
+}

@@ -667,6 +667,9 @@ mod app_subagent_environment_tests;
 #[path = "../agents/app_subagent_first_tests.rs"]
 mod app_subagent_first_tests;
 #[cfg(test)]
+#[path = "../agents/app_subagent_footer_stats_tests.rs"]
+mod app_subagent_footer_stats_tests;
+#[cfg(test)]
 #[path = "../agents/app_subagent_panel_observer_tests.rs"]
 mod app_subagent_panel_observer_tests;
 #[cfg(test)]

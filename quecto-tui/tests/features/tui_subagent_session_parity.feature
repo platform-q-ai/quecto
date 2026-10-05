@@ -34,6 +34,13 @@ Feature: Sub-agent session view + interaction parity, Tab focus model, focus div
     When I return to the master
     Then the footer shows the master's own model and context usage
 
+  Scenario: A sub-agent's footer shows its own cache-hit ratio once its turn ends
+    Given a TUI viewing sub-agent "a1"
+    When sub-agent "a1" ends a turn
+    Then the TUI asks sub-agent "a1" for its own session stats
+    When sub-agent "a1" answers with its session stats
+    Then the footer shows the sub-agent's own cache-hit ratio
+
   Scenario: Tab toggles focus between input and panel
     Given a TUI tracking sub-agent "a1"
     When I press Tab
