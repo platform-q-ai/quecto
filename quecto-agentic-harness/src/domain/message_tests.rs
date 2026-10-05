@@ -267,3 +267,40 @@ fn the_claude_5_built_ins_are_costed_at_their_published_rates() {
         "Opus 5.5 is not priced as the Opus 5 it extends"
     );
 }
+
+// First-party standard global USD/MTok, pricing snapshot retrieved 2026-10-05:
+// https://platform.claude.com/docs/en/about-claude/pricing
+// cache_write is the existing five-minute TTL; OAuth uses API-reference estimates.
+#[test]
+fn anthropic_55_sonnet_domain_prices_override_generic_sonnet_5() {
+    for id in ["claude-sonnet-5-5", "claude-sonnet-5-5-20261001"] {
+        let pricing = model_pricing(id).expect("Sonnet 5.5 has explicit pricing");
+        assert_eq!(
+            (
+                pricing.input_micro_usd_per_million,
+                pricing.output_micro_usd_per_million,
+                pricing.cache_read_micro_usd_per_million,
+                pricing.cache_write_micro_usd_per_million,
+            ),
+            (2_000_000, 10_000_000, 200_000, 2_500_000),
+            "{id}: standard global input/output/cache-read/5m-write rates"
+        );
+    }
+}
+
+#[test]
+fn anthropic_55_opus_domain_prices_preserve_sourced_rates() {
+    for id in ["claude-opus-5-5", "claude-opus-5-5-20261001"] {
+        let pricing = model_pricing(id).expect("Opus 5.5 has explicit pricing");
+        assert_eq!(
+            (
+                pricing.input_micro_usd_per_million,
+                pricing.output_micro_usd_per_million,
+                pricing.cache_read_micro_usd_per_million,
+                pricing.cache_write_micro_usd_per_million,
+            ),
+            (4_000_000, 20_000_000, 200_000, 5_000_000),
+            "{id}: standard global input/output/cache-read/5m-write rates"
+        );
+    }
+}
