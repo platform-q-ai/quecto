@@ -343,6 +343,7 @@ async fn a_child_whose_roster_status_leaves_running_refreshes_its_stats() {
     // broadcast reply: the roster's running → idle is the one signal left.
     let (mut h, mut rx) = tracked_child(crate::agents::feed::FeedAuthority::WarmSync, true).await;
     let app = h.app_mut();
+    app.route_subagent_event(AGENT, Event::AgentStart);
     assert!(stats_requests(&mut rx).is_empty());
 
     app.update_subagent_bar(vec![info(AGENT, "idle")]);
@@ -356,6 +357,60 @@ async fn a_child_whose_roster_status_leaves_running_refreshes_its_stats() {
     // A roster refresh that changes nothing asks for nothing.
     app.update_subagent_bar(vec![info(AGENT, "idle")]);
     assert!(stats_requests(&mut rx).is_empty());
+
+    // Nor does a run starting: only a run end makes the stats stale.
+    app.update_subagent_bar(vec![info(AGENT, "running")]);
+    assert!(stats_requests(&mut rx).is_empty());
+}
+
+#[tokio::test]
+async fn a_run_end_seen_on_the_childs_own_feed_is_not_asked_twice() {
+    // The child's own `turn_end` already asked; the master's later roster
+    // running → idle for the same run must not ask again.
+    let (mut h, mut rx) = tracked_child(crate::agents::feed::FeedAuthority::WarmSync, true).await;
+    let app = h.app_mut();
+    app.route_subagent_event(AGENT, Event::AgentStart);
+    app.route_subagent_event(AGENT, turn_end());
+    assert_eq!(answer_stats_requests(app, &mut rx), 1);
+
+    app.update_subagent_bar(vec![info(AGENT, "idle")]);
+    assert!(
+        stats_requests(&mut rx).is_empty(),
+        "the roster's run end duplicates the feed's"
+    );
+}
+
+#[tokio::test]
+async fn ordinary_child_events_send_no_stats_request() {
+    let (mut h, mut rx) = tracked_child(crate::agents::feed::FeedAuthority::WarmSync, true).await;
+    let app = h.app_mut();
+    let token = || Event::Token { token: "x".into() };
+
+    // Settled: streamed tokens ask for nothing.
+    for _ in 0..3 {
+        app.route_subagent_event(AGENT, token());
+    }
+    assert!(
+        stats_requests(&mut rx).is_empty(),
+        "tokens on a settled feed"
+    );
+
+    // Pending: tokens neither send nor force a follow-up after the reply.
+    app.route_subagent_event(AGENT, turn_end());
+    let sent = stats_requests(&mut rx);
+    assert_eq!(sent.len(), 1);
+    for _ in 0..3 {
+        app.route_subagent_event(AGENT, token());
+    }
+    assert!(
+        stats_requests(&mut rx).is_empty(),
+        "tokens on a pending feed"
+    );
+    app.route_subagent_event(AGENT, coordinator_stats(sent[0].clone()));
+    assert!(
+        stats_requests(&mut rx).is_empty(),
+        "tokens while pending must not force a follow-up"
+    );
 }
 
 #[tokio::test]
