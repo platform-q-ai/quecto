@@ -42,6 +42,25 @@ impl App {
             .is_some_and(|feed| !feed.inspection_only)
     }
 
+    /// Ask `id`'s child for its own session stats over its direct feed; the
+    /// reply lands in that child's footer through `update_session_footer`. An
+    /// inspection feed, routed through the master, is left alone: its
+    /// allowlist carries no session stats. Returns whether it was queued.
+    pub(super) fn request_subagent_session_stats(&mut self, id: &str) -> bool {
+        if self.subagent_feed_is_direct(id) {
+            let request = Command::GetSessionStats {
+                id: Some(crate::agents::runtime::SUBAGENT_STATS_ID.into()),
+            };
+            return self
+                .ac()
+                .roster
+                .feeds
+                .get(id)
+                .is_some_and(|feed| feed.cmd_tx.try_send(request).is_ok());
+        }
+        false
+    }
+
     /// Open a root-routed inspection feed for `id`. The TUI no longer consumes
     /// raw child socket paths from topology snapshots; safe inspection commands
     /// are sent to the master connection with `agent_id` and routed by the agent
@@ -82,6 +101,13 @@ impl App {
                         epoch: 0,
                         since_rev: 0,
                         agent_id: None,
+                    })
+                    .await;
+                // An idle child pushes no busy stats snapshot on connect, so
+                // its footer asks for the child's own stats (cost, cache hit).
+                let _ = client
+                    .send(&Command::GetSessionStats {
+                        id: Some(crate::agents::runtime::SUBAGENT_STATS_ID.into()),
                     })
                     .await;
                 use crate::shell::connection::SourcedEvent;

@@ -236,7 +236,7 @@ impl App {
             _ => {}
         }
         // Feed the selected child's own context/cost/model gauges (#805).
-        Self::update_session_footer(session, &ev);
+        let stats_stale = Self::update_session_footer(session, &ev);
         // A completion note for THIS child's own sub-agent (a grandchild): render
         // it as a passive one-line status in this session's chat, deferred while
         // the child streams so it never splits the child's response (#816).
@@ -274,9 +274,7 @@ impl App {
         if flush_notes {
             Self::flush_deferred_notes(&mut session.chat, &mut session.deferred_subagent_notes);
         }
-        if let Some((refs, content_len)) = recovery_refs {
-            self.maybe_recover_subagent_refs(agent_id, &refs, content_len);
-        }
+        self.finish_subagent_event(agent_id, recovery_refs, stats_stale);
     }
 
     fn apply_child_state_snapshot(&mut self, agent_id: &str, data: &serde_json::Value) {
@@ -431,7 +429,7 @@ impl App {
     }
 
     /// #1060: fetch missing child messages by ref on the child UDS connection.
-    fn maybe_recover_subagent_refs(
+    pub(super) fn maybe_recover_subagent_refs(
         &mut self,
         agent_id: &str,
         refs: &[String],
