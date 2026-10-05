@@ -116,6 +116,7 @@ async fn handle_submit_subagent_message_repins_scrolled_chat_to_tail() {
             pending_rev: None,
             transcript: crate::agents::ledger::LedgerTranscript::default(),
             authority: crate::agents::feed::FeedAuthority::WarmSync,
+            stats_refresh: crate::agents::feed::StatsRefresh::Settled,
         },
     );
     a.ensure_session(&id);

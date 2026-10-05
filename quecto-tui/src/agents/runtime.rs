@@ -7,10 +7,6 @@
 use crate::protocol::client::Command;
 use tokio::sync::mpsc;
 
-/// Correlation id of a child's own `get_session_stats` request, sent when its
-/// direct feed connects and when its turn ends.
-pub(crate) const SUBAGENT_STATS_ID: &str = "subagent-stats";
-
 /// Runtime ownership for a direct child feed. Kept separate from feed sync
 /// policy so pure synchronization state has no Tokio channel or task handle.
 pub(crate) struct FeedRuntime {

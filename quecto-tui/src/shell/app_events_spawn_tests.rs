@@ -206,6 +206,7 @@ async fn tool_end_uuid_rekey_migrates_sessions_feeds_and_session_order() {
             pending_rev: None,
             transcript: crate::agents::ledger::LedgerTranscript::default(),
             authority: crate::agents::feed::FeedAuthority::SyncedAuthoritative,
+            stats_refresh: crate::agents::feed::StatsRefresh::Settled,
         },
     );
     assert!(
@@ -372,6 +373,7 @@ async fn snapshot_uuid_migrate_moves_sessions_feeds_and_session_order() {
             pending_rev: None,
             transcript: crate::agents::ledger::LedgerTranscript::default(),
             authority: crate::agents::feed::FeedAuthority::SyncedAuthoritative,
+            stats_refresh: crate::agents::feed::StatsRefresh::Settled,
         },
     );
 

@@ -16,6 +16,7 @@ fn feed_with_rx() -> (FeedState, mpsc::Receiver<Command>) {
             pending_rev: None,
             transcript: crate::agents::ledger::LedgerTranscript::default(),
             authority: crate::agents::feed::FeedAuthority::WarmSync,
+            stats_refresh: crate::agents::feed::StatsRefresh::Settled,
         },
         cmd_rx,
     )
@@ -200,6 +201,7 @@ fn full_channel_feed() -> (FeedState, mpsc::Receiver<Command>) {
             pending_rev: None,
             transcript: crate::agents::ledger::LedgerTranscript::default(),
             authority: crate::agents::feed::FeedAuthority::WarmSync,
+            stats_refresh: crate::agents::feed::StatsRefresh::Settled,
         },
         cmd_rx,
     )

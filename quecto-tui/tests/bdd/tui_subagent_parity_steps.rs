@@ -585,11 +585,60 @@ fn settle_subagent_commands(world: &mut TuiWorld) -> Vec<String> {
     handle.block_on(tui_harness::drain_child_commands_until_quiet(rx))
 }
 
+fn stats_request_count(commands: &[String]) -> usize {
+    commands
+        .iter()
+        .filter(|c| c.contains("\"type\":\"get_session_stats\""))
+        .count()
+}
+
+/// The child's own `get_session_stats` reply, as its harness serializes it:
+/// before its run (no usage recorded yet) or after it.
+fn child_stats_reply(after_run: bool) -> Event {
+    let data = match after_run {
+        true => serde_json::json!({
+            "tokens": {
+                "input": CHILD_UNCACHED_INPUT,
+                "cacheRead": CHILD_CACHE_READ,
+                "cacheWrite": CHILD_CACHE_WRITE,
+            },
+            "cacheHitRatio": CHILD_CACHE_READ as f64
+                / (CHILD_UNCACHED_INPUT + CHILD_CACHE_READ + CHILD_CACHE_WRITE) as f64,
+            "contextTokens": 43_396,
+            "maxContextTokens": 300_000,
+        }),
+        false => serde_json::json!({
+            "tokens": { "input": 0, "cacheRead": 0, "cacheWrite": 0 },
+            "cacheHitRatio": null,
+        }),
+    };
+    Event::Response {
+        id: Some("subagent-stats".into()),
+        command: "get_session_stats".into(),
+        success: true,
+        data: Some(data),
+        error: None,
+    }
+}
+
 #[when(expr = "sub-agent {string} ends a turn")]
 fn when_subagent_ends_turn(world: &mut TuiWorld, id: String) {
-    // The connect-time requests are not the turn's: settle them first.
-    settle_subagent_commands(world);
+    // The connect-time stats request is not the turn's: wait until the child
+    // has received it, and answer it as the child would before its run ends.
+    let mut connect = Vec::new();
+    for _ in 0..50 {
+        connect.extend(settle_subagent_commands(world));
+        if stats_request_count(&connect) > 0 {
+            break;
+        }
+    }
+    assert_eq!(
+        stats_request_count(&connect),
+        1,
+        "the feed's connect asks the child for its stats once: {connect:?}"
+    );
     drive(world, |h| {
+        h.route(&id, child_stats_reply(false));
         h.route(
             &id,
             Event::TurnEnd {
@@ -600,45 +649,24 @@ fn when_subagent_ends_turn(world: &mut TuiWorld, id: String) {
             },
         );
     });
+    world.tui_viewed_agent = Some(id);
 }
 
 #[then(expr = "the TUI asks sub-agent {string} for its own session stats")]
-fn then_asks_subagent_stats(world: &mut TuiWorld, _id: String) {
+fn then_asks_subagent_stats(world: &mut TuiWorld, id: String) {
+    assert_eq!(world.tui_viewed_agent.as_deref(), Some(id.as_str()));
     let cmds = settle_subagent_commands(world);
-    let stats = cmds
-        .iter()
-        .filter(|c| c.contains("\"type\":\"get_session_stats\""))
-        .count();
     assert_eq!(
-        stats, 1,
+        stats_request_count(&cmds),
+        1,
         "a sub-agent's turn end must ask that child for its stats once: {cmds:?}"
     );
 }
 
 #[when(expr = "sub-agent {string} answers with its session stats")]
 fn when_subagent_answers_stats(world: &mut TuiWorld, id: String) {
-    let ratio = CHILD_CACHE_READ as f64
-        / (CHILD_UNCACHED_INPUT + CHILD_CACHE_READ + CHILD_CACHE_WRITE) as f64;
     drive(world, |h| {
-        h.route(
-            &id,
-            Event::Response {
-                id: Some("subagent-stats".into()),
-                command: "get_session_stats".into(),
-                success: true,
-                data: Some(serde_json::json!({
-                    "tokens": {
-                        "input": CHILD_UNCACHED_INPUT,
-                        "cacheRead": CHILD_CACHE_READ,
-                        "cacheWrite": CHILD_CACHE_WRITE,
-                    },
-                    "cacheHitRatio": ratio,
-                    "contextTokens": 43_396,
-                    "maxContextTokens": 300_000,
-                })),
-                error: None,
-            },
-        );
+        h.route(&id, child_stats_reply(true));
     });
 }
 

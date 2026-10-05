@@ -1,6 +1,7 @@
 //! A sub-agent's footer shows ITS OWN cache-hit ratio (#805 parity with the
-//! master footer): the TUI asks the child for its session stats when a turn
-//! ends and when it first connects, exactly as the master footer does.
+//! master footer): the TUI asks the child for its session stats when its feed
+//! connects and whenever its run ends (completed, failed or aborted), with at
+//! most one request outstanding per child.
 //!
 //! Shape of the evidence: a swarm coordinator on anthropic-api/claude-opus-5-5
 //! made 20 requests whose normalized usage sums to 42 uncached input, 530,402
@@ -59,6 +60,12 @@ fn coordinator_stats(id: Option<String>) -> Event {
 }
 
 fn feed_with_rx() -> (FeedState, mpsc::Receiver<Command>) {
+    feed_with_authority(crate::agents::feed::FeedAuthority::WarmSync)
+}
+
+fn feed_with_authority(
+    authority: crate::agents::feed::FeedAuthority,
+) -> (FeedState, mpsc::Receiver<Command>) {
     let (cmd_tx, cmd_rx) = mpsc::channel(8);
     let feed = FeedState {
         cmd_tx,
@@ -70,7 +77,8 @@ fn feed_with_rx() -> (FeedState, mpsc::Receiver<Command>) {
         supports_sync: false,
         pending_rev: None,
         transcript: crate::agents::ledger::LedgerTranscript::default(),
-        authority: crate::agents::feed::FeedAuthority::WarmSync,
+        authority,
+        stats_refresh: crate::agents::feed::StatsRefresh::Settled,
     };
     (feed, cmd_rx)
 }
@@ -80,36 +88,71 @@ fn footer_text(app: &mut App) -> String {
     crate::components::ansi::strip_ansi(&lines.join("\n"))
 }
 
-/// Answer every `get_session_stats` the TUI sent the child, as the child would.
-fn answer_stats_requests(app: &mut App, rx: &mut mpsc::Receiver<Command>) -> usize {
-    let mut answered = 0;
+/// The ids of every `get_session_stats` the TUI sent the child so far.
+fn stats_requests(rx: &mut mpsc::Receiver<Command>) -> Vec<Option<String>> {
+    let mut ids = Vec::new();
     while let Ok(cmd) = rx.try_recv() {
         if let Command::GetSessionStats { id } = cmd {
-            app.route_subagent_event(AGENT, coordinator_stats(id));
-            answered += 1;
+            ids.push(id);
         }
     }
-    answered
+    ids
+}
+
+/// Answer every `get_session_stats` the TUI sent the child, as the child would.
+fn answer_stats_requests(app: &mut App, rx: &mut mpsc::Receiver<Command>) -> usize {
+    let ids = stats_requests(rx);
+    for id in &ids {
+        assert_eq!(id.as_deref(), Some("subagent-stats"), "request id");
+        app.route_subagent_event(AGENT, coordinator_stats(id.clone()));
+    }
+    ids.len()
+}
+
+fn turn_end() -> Event {
+    Event::TurnEnd {
+        message: json!({
+            "contextTokens": LAST_CONTEXT,
+            "maxContextTokens": SWARM_CEILING,
+        }),
+    }
+}
+
+fn child_reply(command: &str, success: bool) -> Event {
+    Event::Response {
+        id: None,
+        command: command.into(),
+        success,
+        data: None,
+        error: match success {
+            true => None,
+            false => Some("provider failed".into()),
+        },
+    }
+}
+
+/// A tracked child with a direct feed of `authority`, optionally focused.
+async fn tracked_child(
+    authority: crate::agents::feed::FeedAuthority,
+    focused: bool,
+) -> (TuiHarness, mpsc::Receiver<Command>) {
+    let mut h = TuiHarness::new().await;
+    let app = h.app_mut();
+    app.update_subagent_bar(vec![info(AGENT, "running")]);
+    let (feed, rx) = feed_with_authority(authority);
+    app.ac_mut().roster.feeds.insert(AGENT.into(), feed);
+    if focused {
+        app.select_agent(Some(AGENT));
+    }
+    (h, rx)
 }
 
 #[tokio::test]
 async fn subagent_turn_end_refreshes_its_own_cache_hit_ratio() {
-    let mut h = TuiHarness::new().await;
+    let (mut h, mut rx) = tracked_child(crate::agents::feed::FeedAuthority::WarmSync, true).await;
     let app = h.app_mut();
-    app.update_subagent_bar(vec![info(AGENT, "running")]);
-    let (feed, mut rx) = feed_with_rx();
-    app.ac_mut().roster.feeds.insert(AGENT.into(), feed);
-    app.select_agent(Some(AGENT));
 
-    app.route_subagent_event(
-        AGENT,
-        Event::TurnEnd {
-            message: json!({
-                "contextTokens": LAST_CONTEXT,
-                "maxContextTokens": SWARM_CEILING,
-            }),
-        },
-    );
+    app.route_subagent_event(AGENT, turn_end());
     let at_turn_end = footer_text(app);
     assert!(
         at_turn_end.contains("43k/300k (14.5%)") && !at_turn_end.contains("hit "),
@@ -137,6 +180,80 @@ async fn subagent_turn_end_refreshes_its_own_cache_hit_ratio() {
 }
 
 #[tokio::test]
+async fn an_unfocused_synced_child_still_refreshes_its_stats() {
+    // The common swarm case: a warm, ledger-authoritative feed nobody is
+    // looking at. Its chat skips live events, but its stats must not.
+    let (mut h, mut rx) = tracked_child(
+        crate::agents::feed::FeedAuthority::SyncedAuthoritative,
+        false,
+    )
+    .await;
+    let app = h.app_mut();
+
+    app.route_subagent_event(AGENT, turn_end());
+    assert_eq!(answer_stats_requests(app, &mut rx), 1);
+
+    app.select_agent(Some(AGENT));
+    let footer = footer_text(app);
+    assert!(
+        footer.contains("hit 92.4%"),
+        "the unfocused child's footer must hold its own ratio when focused: {footer}"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_or_aborted_run_also_refreshes_the_stats() {
+    // The harness records usage for every outcome but reports `turn_end`
+    // only for a completed run: a failed run ends with an `agent_error`
+    // reply, an aborted one with the `abort` acknowledgement.
+    for run_end in [
+        child_reply("agent_error", false),
+        child_reply("abort", true),
+    ] {
+        let (mut h, mut rx) =
+            tracked_child(crate::agents::feed::FeedAuthority::WarmSync, true).await;
+        let app = h.app_mut();
+        app.route_subagent_event(AGENT, run_end.clone());
+        assert_eq!(
+            answer_stats_requests(app, &mut rx),
+            1,
+            "{run_end:?} must ask the child for its stats"
+        );
+        let footer = footer_text(app);
+        assert!(footer.contains("hit 92.4%"), "{run_end:?}: {footer}");
+    }
+}
+
+#[tokio::test]
+async fn turn_ends_in_quick_succession_keep_one_request_outstanding() {
+    let (mut h, mut rx) = tracked_child(crate::agents::feed::FeedAuthority::WarmSync, true).await;
+    let app = h.app_mut();
+
+    for _ in 0..5 {
+        app.route_subagent_event(AGENT, turn_end());
+    }
+    let first = stats_requests(&mut rx);
+    assert_eq!(
+        first.len(),
+        1,
+        "one request while it is unanswered: {first:?}"
+    );
+
+    // Its reply brings one follow-up for the turn ends seen meanwhile.
+    app.route_subagent_event(AGENT, coordinator_stats(first[0].clone()));
+    let follow_up = stats_requests(&mut rx);
+    assert_eq!(follow_up.len(), 1, "one follow-up: {follow_up:?}");
+
+    // The follow-up's reply settles it: nothing more is sent.
+    app.route_subagent_event(AGENT, coordinator_stats(follow_up[0].clone()));
+    assert!(stats_requests(&mut rx).is_empty());
+
+    // A later run end asks again.
+    app.route_subagent_event(AGENT, turn_end());
+    assert_eq!(stats_requests(&mut rx).len(), 1);
+}
+
+#[tokio::test]
 async fn subagent_stats_request_never_touches_an_inspection_only_feed() {
     // An inspection feed reaches the child through the master, whose routing
     // allowlist carries no session stats; the request must not leak into it.
@@ -147,15 +264,7 @@ async fn subagent_stats_request_never_touches_an_inspection_only_feed() {
     feed.inspection_only = true;
     app.ac_mut().roster.feeds.insert(AGENT.into(), feed);
 
-    app.route_subagent_event(
-        AGENT,
-        Event::TurnEnd {
-            message: json!({
-                "contextTokens": LAST_CONTEXT,
-                "maxContextTokens": SWARM_CEILING,
-            }),
-        },
-    );
+    app.route_subagent_event(AGENT, turn_end());
 
     let mut sent = Vec::new();
     while let Ok(cmd) = rx.try_recv() {

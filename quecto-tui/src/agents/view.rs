@@ -113,6 +113,7 @@ pub(crate) struct FeedState {
     pub(crate) pending_rev: Option<u64>,
     pub(crate) transcript: crate::agents::ledger::LedgerTranscript,
     pub(crate) authority: FeedAuthority,
+    pub(crate) stats_refresh: crate::agents::feed::StatsRefresh,
 }
 
 pub(crate) fn ledger_entry_to_chat_entry(
@@ -158,7 +159,14 @@ impl FeedState {
             pending_rev: sync.pending_rev,
             transcript: sync.transcript,
             authority: sync.authority,
+            stats_refresh: sync.stats_refresh,
         }
+    }
+
+    /// Whether this feed is a direct connection to the child's own socket
+    /// (not an inspection feed routed through the master).
+    pub(crate) fn is_direct(&self) -> bool {
+        !self.inspection_only
     }
 }
 

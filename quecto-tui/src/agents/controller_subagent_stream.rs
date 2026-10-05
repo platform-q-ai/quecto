@@ -236,7 +236,7 @@ impl App {
             _ => {}
         }
         // Feed the selected child's own context/cost/model gauges (#805).
-        let stats_stale = Self::update_session_footer(session, &ev);
+        Self::update_session_footer(session, &ev);
         // A completion note for THIS child's own sub-agent (a grandchild): render
         // it as a passive one-line status in this session's chat, deferred while
         // the child streams so it never splits the child's response (#816).
@@ -254,6 +254,7 @@ impl App {
         // streamed response is finalized below). Run-state already flipped above.
         let flush_notes = was_running && !session.running;
         let recovery_refs = Self::subagent_end_of_turn_refs(&ev);
+        let stats_signal = crate::protocol::subagent_stats::session_stats_signal(&ev);
         let early_return = matches!(
             &ev,
             Event::Response { command, .. } if command == "get_messages"
@@ -274,7 +275,7 @@ impl App {
         if flush_notes {
             Self::flush_deferred_notes(&mut session.chat, &mut session.deferred_subagent_notes);
         }
-        self.finish_subagent_event(agent_id, recovery_refs, stats_stale);
+        self.finish_subagent_event(agent_id, recovery_refs, stats_signal);
     }
 
     fn apply_child_state_snapshot(&mut self, agent_id: &str, data: &serde_json::Value) {

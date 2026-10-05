@@ -108,9 +108,7 @@ impl App {
     /// forwarded sub-agent event, mirroring the master footer path (#805):
     /// `get_state` carries the model and window, `turn_end` the live context
     /// usage, and `get_session_stats` the cumulative cost (plus usage fallback).
-    /// Returns whether the child's session stats are now stale (its turn
-    /// ended), so the caller asks the child for fresh ones.
-    pub(super) fn update_session_footer(session: &mut SessionView, ev: &Event) -> bool {
+    pub(super) fn update_session_footer(session: &mut SessionView, ev: &Event) {
         use crate::protocol::session_payloads;
         match ev {
             Event::Response {
@@ -137,30 +135,32 @@ impl App {
                 if let (Some(used), Some(window)) = (used, window) {
                     session.footer.update_context_usage(used, window);
                 }
-                return true;
             }
             _ => {}
         }
-        false
     }
 
     /// Follow-ups to one child stream event that need the whole `App` once the
     /// child's `SessionView` borrow has ended: recover the turn's missing
-    /// message refs, and when the child's stats went stale (its turn ended)
-    /// ask the child for them, as the master footer refreshes on its own
-    /// `turn_end`. Without that the child's footer never learns its cost or
-    /// cache-hit ratio after a run, and its only percentage is the context gauge.
+    /// message refs, and keep the child's own session stats current. A run
+    /// end (completed, failed or aborted) makes them stale, so the child is
+    /// asked for them, as the master footer refreshes on its own `turn_end`;
+    /// without that the child's footer never learns its cost or cache-hit
+    /// ratio, and its only percentage is the context gauge.
     pub(super) fn finish_subagent_event(
         &mut self,
         agent_id: &str,
         recovery_refs: Option<(Vec<String>, Option<u64>)>,
-        stats_stale: bool,
+        stats_signal: crate::protocol::subagent_stats::SessionStatsSignal,
     ) {
+        use crate::protocol::subagent_stats::SessionStatsSignal;
         if let Some((refs, content_len)) = recovery_refs {
             self.maybe_recover_subagent_refs(agent_id, &refs, content_len);
         }
-        if stats_stale {
-            self.request_subagent_session_stats(agent_id);
+        match stats_signal {
+            SessionStatsSignal::Stale => self.request_subagent_session_stats(agent_id),
+            SessionStatsSignal::Answered => self.note_subagent_stats_answered(agent_id),
+            SessionStatsSignal::Unrelated => {}
         }
     }
 

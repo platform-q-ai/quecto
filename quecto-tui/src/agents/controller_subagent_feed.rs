@@ -39,26 +39,43 @@ impl App {
             .roster
             .feeds
             .get(id)
-            .is_some_and(|feed| !feed.inspection_only)
+            .is_some_and(|feed| feed.is_direct())
     }
 
-    /// Ask `id`'s child for its own session stats over its direct feed; the
-    /// reply lands in that child's footer through `update_session_footer`. An
-    /// inspection feed, routed through the master, is left alone: its
-    /// allowlist carries no session stats. Returns whether it was queued.
-    pub(super) fn request_subagent_session_stats(&mut self, id: &str) -> bool {
-        if self.subagent_feed_is_direct(id) {
-            let request = Command::GetSessionStats {
-                id: Some(crate::agents::runtime::SUBAGENT_STATS_ID.into()),
-            };
-            return self
-                .ac()
-                .roster
-                .feeds
-                .get(id)
-                .is_some_and(|feed| feed.cmd_tx.try_send(request).is_ok());
+    /// The child `id`'s session stats went stale: ask the child for them
+    /// over its direct feed, unless a request is already outstanding (then
+    /// one follow-up goes once it is answered). The reply lands in that
+    /// child's footer through `update_session_footer`. An inspection feed,
+    /// routed through the master, is left alone: its allowlist carries no
+    /// session stats.
+    pub(super) fn request_subagent_session_stats(&mut self, id: &str) {
+        let now = std::time::Instant::now();
+        let Some(feed) = self.ac_mut().roster.feeds.get_mut(id) else {
+            return;
+        };
+        if feed.is_direct() && feed.stats_refresh.should_request(now) {
+            Self::send_stats_request(id, feed);
         }
-        false
+    }
+
+    /// A stats reply reached the child `id`'s feed: settle the outstanding
+    /// request, or send the follow-up a trigger seen meanwhile asked for.
+    pub(super) fn note_subagent_stats_answered(&mut self, id: &str) {
+        let now = std::time::Instant::now();
+        let Some(feed) = self.ac_mut().roster.feeds.get_mut(id) else {
+            return;
+        };
+        if feed.stats_refresh.answered(now) {
+            Self::send_stats_request(id, feed);
+        }
+    }
+
+    fn send_stats_request(id: &str, feed: &mut FeedState) {
+        let request = crate::protocol::subagent_stats::subagent_stats_request();
+        if let Err(error) = feed.cmd_tx.try_send(request) {
+            tracing::debug!(agent = %id, %error, "sub-agent stats request not queued");
+            feed.stats_refresh.not_sent();
+        }
     }
 
     /// Open a root-routed inspection feed for `id`. The TUI no longer consumes
@@ -103,12 +120,12 @@ impl App {
                         agent_id: None,
                     })
                     .await;
-                // An idle child pushes no busy stats snapshot on connect, so
-                // its footer asks for the child's own stats (cost, cache hit).
+                // Ask for the child's own stats (cost, cache hit): an idle
+                // child pushes no stats on connect, and a busy child's
+                // snapshot predates its run's usage. A busy child answers
+                // once its prompt ends.
                 let _ = client
-                    .send(&Command::GetSessionStats {
-                        id: Some(crate::agents::runtime::SUBAGENT_STATS_ID.into()),
-                    })
+                    .send(&crate::protocol::subagent_stats::subagent_stats_request())
                     .await;
                 use crate::shell::connection::SourcedEvent;
                 loop {
@@ -175,8 +192,22 @@ impl App {
                     handle,
                     inspection_only,
                 },
-                crate::agents::feed::FeedSyncState::new(authority),
+                Self::feed_sync_state(authority, !inspection_only),
             ),
         );
+    }
+
+    /// A new feed's sync state. A direct feed has just sent its connect-time
+    /// stats request, so that request is outstanding.
+    fn feed_sync_state(
+        authority: crate::agents::feed::FeedAuthority,
+        direct: bool,
+    ) -> crate::agents::feed::FeedSyncState {
+        let mut sync = crate::agents::feed::FeedSyncState::new(authority);
+        if direct {
+            sync.stats_refresh =
+                crate::agents::feed::StatsRefresh::sent_at(std::time::Instant::now());
+        }
+        sync
     }
 }
