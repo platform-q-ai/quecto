@@ -4,6 +4,7 @@ use std::os::unix::net::UnixStream;
 
 pub mod executable;
 pub mod mock_claude;
+pub mod tool_schema_portability;
 
 /// Read one production-format framed JSON command from a synchronous fixture.
 ///
