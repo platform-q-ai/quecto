@@ -312,11 +312,16 @@ impl App {
             self.ensure_session(&id);
             self.ensure_synced_subagent_feed(&id);
         }
-        // A run that left `running` by any route (including a parent's or
-        // launcher's abort, which broadcasts no run end on the child's own
-        // feed) has recorded its usage: the child's footer stats are stale.
+        // A run that left the active statuses (`starting`/`running`) has
+        // recorded its usage, so the child's footer stats are stale. Only
+        // a run end the child's own feed did not report counts: a parent's
+        // or launcher's abort broadcasts no run end there, so that session
+        // still reads running; a feed that saw `turn_end` already asked.
         let still_running = self.ac().roster.active_tracked_ids();
         for id in was_running.difference(&still_running) {
+            if self.subagent_feed_saw_run_end(id) {
+                continue;
+            }
             self.request_subagent_session_stats(id);
         }
         self.enforce_warm_feed_cap();

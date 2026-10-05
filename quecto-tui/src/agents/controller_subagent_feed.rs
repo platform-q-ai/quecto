@@ -70,16 +70,29 @@ impl App {
         }
     }
 
-    /// Any other event from the child `id`: send a stats request the feed
-    /// could not queue earlier.
+    /// Most other events from the child `id` (those that reach the end of
+    /// its stream routing): send a stats request the feed could not queue
+    /// earlier. Nothing else happens on this per-token path.
     pub(super) fn retry_owed_subagent_stats(&mut self, id: &str) {
-        let now = std::time::Instant::now();
         let Some(feed) = self.ac_mut().roster.feeds.get_mut(id) else {
             return;
         };
-        if feed.stats_refresh.owes_request() && feed.stats_refresh.should_request(now) {
+        if feed.stats_refresh.owes_request()
+            && feed.stats_refresh.should_request(std::time::Instant::now())
+        {
             Self::send_stats_request(id, feed);
         }
+    }
+
+    /// Whether the child `id`'s own feed has reported its latest run's end
+    /// (its session is not running). A child with no session view has
+    /// reported nothing.
+    pub(super) fn subagent_feed_saw_run_end(&self, id: &str) -> bool {
+        self.ac()
+            .roster
+            .sessions
+            .get(id)
+            .is_some_and(|session| session.observed_run_state && !session.running)
     }
 
     fn send_stats_request(id: &str, feed: &mut FeedState) {

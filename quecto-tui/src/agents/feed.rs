@@ -46,9 +46,9 @@ pub(crate) const STATS_REPLY_GRACE: Duration = Duration::from_secs(30);
 
 /// Whether a child's own session-stats request is outstanding, so run ends
 /// in quick succession queue at most one request plus one follow-up rather
-/// than one each in the child's dispatch queue. Replies and run ends share
-/// the child's ordered broadcast stream, so the follow-up is a safety net
-/// for replies that answered an earlier request.
+/// than one each in the child's dispatch queue. A follow-up is sent when a
+/// run end arrived while a request was outstanding: that reply may predate
+/// the run's usage (a peer's reply, or the connect request answered early).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StatsRefresh {
     /// No request outstanding and none owed.
@@ -56,7 +56,7 @@ pub(crate) enum StatsRefresh {
     /// A request went out at `sent`; `stale` records a trigger seen since.
     Pending { sent: Instant, stale: bool },
     /// The stats are stale but the request could not be queued: it is sent
-    /// at the next chance (a trigger, a reply, or any event from the child).
+    /// at the next chance (a trigger, a reply, or most other child events).
     Owed,
 }
 
@@ -72,13 +72,16 @@ impl StatsRefresh {
     /// The child's stats went stale at `now`: whether to send a request now.
     pub(crate) fn should_request(&mut self, now: Instant) -> bool {
         let send = match *self {
-            Self::Settled | Self::Owed => true,
-            Self::Pending { sent, .. } => now.saturating_duration_since(sent) >= STATS_REPLY_GRACE,
-        };
-        *self = match (send, *self) {
-            (true, _) => Self::sent_at(now),
-            (false, Self::Pending { sent, .. }) => Self::Pending { sent, stale: true },
-            (false, unchanged) => unchanged,
+            Self::Pending { sent, .. }
+                if now.saturating_duration_since(sent) < STATS_REPLY_GRACE =>
+            {
+                *self = Self::Pending { sent, stale: true };
+                false
+            }
+            Self::Settled | Self::Owed | Self::Pending { .. } => {
+                *self = Self::sent_at(now);
+                true
+            }
         };
         debug_assert!(
             !send || *self == Self::sent_at(now),
