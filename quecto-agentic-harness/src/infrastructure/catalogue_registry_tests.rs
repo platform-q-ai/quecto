@@ -92,12 +92,87 @@ fn registry_credentials_are_keyed_by_qualified_model() {
     unconfigured.api_key = None;
     unconfigured.base_url = None;
 
-    let credentials = RegistryCredentialStatus::from_records([&configured, &unconfigured]);
+    let credentials = RegistryCredentialStatus::new([&configured, &unconfigured], no_slots());
     let configured_entry = entry_from_record(&configured).unwrap();
     let unconfigured_entry = entry_from_record(&unconfigured).unwrap();
 
     assert!(credentials.credential_available(&configured_entry));
     assert!(!credentials.credential_available(&unconfigured_entry));
+}
+
+fn no_slots() -> ProviderSlots {
+    ProviderSlots::routed(Vec::new())
+}
+
+fn builtin_entry(provider: &str, id: &str) -> CatalogueEntry {
+    entry_from_record(
+        ModelRegistry::builtin()
+            .find(provider, id)
+            .expect("built in"),
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_builtin_is_credentialed_by_its_slot_not_by_its_record() {
+    let builtin = ModelRegistry::builtin();
+    let oauth = builtin_entry("anthropic-oauth", "claude-opus-5-5");
+    let api = builtin_entry("anthropic-api", "claude-opus-5-5");
+
+    let without = RegistryCredentialStatus::new(builtin.models(), no_slots());
+    assert!(!without.credential_available(&oauth));
+    assert!(!without.credential_available(&api));
+
+    let signed_in = RegistryCredentialStatus::new(
+        builtin.models(),
+        ProviderSlots::routed(["anthropic-oauth".to_string()]),
+    );
+    assert!(signed_in.credential_available(&oauth));
+    assert!(
+        !signed_in.credential_available(&api),
+        "an OAuth slot never credits the API slot"
+    );
+}
+
+#[test]
+fn an_oauth_record_is_credentialed_by_its_sign_in_not_its_own_key_or_url() {
+    let mut record = ModelRegistry::builtin()
+        .find("anthropic-oauth", "claude-opus-5-5")
+        .unwrap()
+        .clone();
+    record.provider = "my-claude".to_string();
+    record.api_key = Some("sk-ignored".to_string());
+    record.base_url = Some("https://api.anthropic.com".to_string());
+    let entry = entry_from_record(&record).unwrap();
+
+    assert!(!RegistryCredentialStatus::new([&record], no_slots()).credential_available(&entry));
+    assert!(
+        RegistryCredentialStatus::new([&record], ProviderSlots::routed(["my-claude".to_string()]))
+            .credential_available(&entry)
+    );
+}
+
+#[test]
+fn a_routed_api_key_provider_does_not_credit_a_keyless_sibling() {
+    let mut keyed = ModelRegistry::builtin().models()[0].clone();
+    keyed.provider = "custom".to_string();
+    keyed.id = "keyed".to_string();
+    keyed.auth = crate::infrastructure::model_registry::AuthMode::ApiKey;
+    keyed.oauth_provider = None;
+    keyed.api_key = Some("sk-test".to_string());
+    let mut keyless = keyed.clone();
+    keyless.id = "keyless".to_string();
+    keyless.api_key = None;
+    keyless.base_url = None;
+
+    // The runtime routes `custom` (built from the keyed record), yet the
+    // keyless sibling stays uncredentialed.
+    let credentials = RegistryCredentialStatus::new(
+        [&keyed, &keyless],
+        ProviderSlots::routed(["custom".to_string()]),
+    );
+    assert!(credentials.credential_available(&entry_from_record(&keyed).unwrap()));
+    assert!(!credentials.credential_available(&entry_from_record(&keyless).unwrap()));
 }
 
 #[test]

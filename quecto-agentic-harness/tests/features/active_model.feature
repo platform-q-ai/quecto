@@ -54,3 +54,14 @@ Feature: Change the active model
     Then the agent output should contain a response command "set_model" with success true
     And the set_model response selection status should be "ok" on provider "fireworks"
     And the get_state response model should be "fireworks/accounts/fireworks/models/glm-5p2"
+
+  @issue-2451
+  Scenario: set_model to a built-in whose provider is signed in is runnable
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And a stored credential for "anthropic" with method "oauth" in the base directory
+    When I start the UDS agent with no session
+    And I send set_model "anthropic-oauth/claude-opus-5-5"
+    And I close the UDS connection
+    Then the agent output should contain a response command "set_model" with success true
+    And the set_model response selection status should be "ok" on provider "anthropic-oauth"

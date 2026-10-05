@@ -19,6 +19,7 @@ use crate::domain::catalogue::{
     AuthIdentity, Availability, CatalogueEntry, ModelCapabilities, ModelCost as DomainModelCost,
     ModelDescriptor, ModelRef, ProviderDescriptor, ProviderId, SourceLayer, TransportKind,
 };
+use crate::infrastructure::auth::provider_slots::ProviderSlots;
 use crate::infrastructure::model_registry::{
     AuthMode, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_OUTPUT_TOKENS, ModelOverride, ModelRecord,
     ModelRegistry, ProviderApi, SkippedProviderBlock, UnsupportedProviderConfig,
@@ -303,33 +304,62 @@ impl CatalogueSource for UserOverrideCatalogueSource {
     }
 }
 
-/// Credential status derived from the parsed registry configuration: a model
-/// counts as credentialed exactly when the legacy per-record `configured`
-/// flag was true for it (a non-empty resolved API key or an explicit base
-/// URL on that record). Keyed per qualified model, not per provider, so a
-/// key declared for one model never marks its builtin siblings configured.
+/// Credential status derived from the parsed registry configuration and
+/// the runtime's credential-backed provider slots (#2451). A model counts as
+/// credentialed when either
+///
+/// - its own record carries what the runtime builds an API-key provider
+///   from (a non-empty resolved API key, or an explicit base URL an
+///   `openai_compatible` endpoint can supply a key for), keyed per
+///   qualified model so a key declared for one model never marks its
+///   siblings configured; an OAuth record's own key or URL is no
+///   credential, the runtime builds it from the stored sign-in alone; or
+/// - the runtime has (or would build) the credential-backed provider slot
+///   serving it: a dedicated `openai-api` / `openai-oauth` /
+///   `anthropic-api` / `anthropic-oauth` slot, or an OAuth provider whose
+///   vendor is signed in ([`ProviderSlots`], the rules the runtime factory
+///   builds by).
+///
 /// Only booleans leave this adapter — key material never reaches the
 /// application layer or a snapshot.
 pub struct RegistryCredentialStatus {
     configured: HashSet<String>,
+    slots: ProviderSlots,
 }
 
 impl RegistryCredentialStatus {
-    pub fn from_records<'a>(records: impl IntoIterator<Item = &'a ModelRecord>) -> Self {
+    pub fn new<'a>(
+        records: impl IntoIterator<Item = &'a ModelRecord>,
+        slots: ProviderSlots,
+    ) -> Self {
         let mut configured = HashSet::new();
         for record in records {
-            let has_key = record.api_key.as_deref().is_some_and(|k| !k.is_empty());
-            if has_key || record.base_url.is_some() {
+            if record_carries_credential(record) {
                 configured.insert(format!("{}/{}", record.provider, record.id));
             }
         }
-        Self { configured }
+        Self { configured, slots }
+    }
+}
+
+/// Whether a record carries its own credential: an API-key record with a
+/// non-empty key or an explicit base URL. An OAuth record never does.
+fn record_carries_credential(record: &ModelRecord) -> bool {
+    match record.auth {
+        AuthMode::ApiKey => {
+            record.api_key.as_deref().is_some_and(|key| !key.is_empty())
+                || record.base_url.is_some()
+        }
+        AuthMode::OAuth => false,
     }
 }
 
 impl CredentialStatusPort for RegistryCredentialStatus {
     fn credential_available(&self, entry: &CatalogueEntry) -> bool {
         self.configured.contains(&entry.reference().qualified_id())
+            || self
+                .slots
+                .credits(entry.provider.id.as_str(), &entry.provider.auth)
     }
 }
 

@@ -20,7 +20,7 @@ Catalogue sources are resolved as ordered layers, lowest precedence first: built
 
 The list-models use case (`application/catalogue/use_cases/list_models.rs`, UDS `list_models`) loads the inputs afresh on every call — so an edit to `models.json` shows on the next listing without a refresh — and reports every entry of the generation it just published with a per-entry runnable verdict (the wire's `configured`); each listed entry carries its domain availability (`Known` → `Configured` → `Available` → `Runnable`, with the reasons it cannot run, on the wire as `unavailable`: `missing-credential`, `unsupported-transport: <transport>`, `refused-for-account: <provider's reason>`, empty when it can run). When any source failed to load, the listing is withheld and the failed sources are reported instead.
 
-`configured` on a listed model means the runtime has what it needs to talk to that provider — a key in config, a credential in the store, an OAuth token, or an endpoint that supplies one — not merely that the entry declared a key or a base URL.
+`configured` on a listed model means the runtime has what it needs to talk to that provider — a key in config, a credential in the store, an OAuth token, or an endpoint that supplies one — not merely that the entry declared a key or a base URL (#2451). A built-in model is credentialed exactly when the runtime builds its provider slot, by the rules the runtime factory builds by (`infrastructure/auth/provider_slots.rs`, shared by both): `openai-api` / `anthropic-api` from the configured key (`providers.<vendor>.api_key` or `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`), else an unexpired stored token credential for the vendor; `openai-oauth`, `anthropic-oauth`, `xai` and every other OAuth provider from the vendor's stored OAuth credential with a non-empty token, expired or not (it is refreshed on first use). An OAuth sign-in never credits an API-key slot, nor an API key an OAuth slot. A custom API-key model in `models.json` is credentialed by its own record (a resolved key, or a base URL), per model: a key on one model never marks its siblings, and a vendor sign-in never credits it. A credential store that cannot be read counts as holding nothing (logged once). The runtime reads the credential store when it is composed — at startup and on a configuration reload — and the listing reports what the running router holds: a credential stored while a session runs (`quecto auth login`) is offered once the session restarts or its configuration reloads.
 
 ## Built-in models (#2435)
 
@@ -39,9 +39,11 @@ Two definitions of one route are a configuration error, not a precedence questio
 `quecto auth login --provider openai|anthropic --token <key>` (or `--oauth`,
 `--device-code`) stores a credential in `<base_dir>/credentials.json`; verify
 with `quecto auth status` (`openai (token) — active`), roll back with
-`quecto auth logout --provider <name>`. The store takes priority over
-`providers.*.api_key` in `config.json`; `quecto status`'s `OpenAI API:` line
-reflects only the latter. The harness doc's
+`quecto auth logout --provider <name>`. A configured `providers.*.api_key`
+(or `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`) takes priority over a stored
+token for the `-api` slots; `quecto status`'s `OpenAI API:` line reflects
+only the configured key. A credential stored while a session runs is used
+once the session restarts (or its configuration reloads). The harness doc's
 [credential runbook](../quecto-agentic-harness/docs/runtime-models-providers.md#store-a-credential-runbook)
 and the `docs` tool's `models` page carry the same commands.
 

@@ -14,6 +14,8 @@ use crate::application::provider_runtime::{
     RuntimeCompositionError,
 };
 use crate::application::providers::ports::LlmProvider;
+use crate::infrastructure::auth::credential_store::CredentialStore;
+use crate::infrastructure::auth::provider_slots::{ConfiguredApiKeys, ProviderSlots};
 use crate::infrastructure::catalogue_inputs::CatalogueInputs;
 use crate::infrastructure::catalogue_registry::{runtime_store_for, snapshot_store_for};
 use crate::infrastructure::config::Config;
@@ -35,7 +37,16 @@ pub fn compose_and_publish_runtime(
     base_dir: &Path,
     http_client: &reqwest::Client,
 ) -> Result<Arc<CatalogueRuntimeSnapshot>, RuntimeCompositionError> {
-    let catalogue_inputs = CatalogueInputs::load(base_dir);
+    // Credential status for this generation probes the configured keys and
+    // the credential store by the rules the factory below builds providers
+    // by (#2451), so the catalogue offers exactly the slots it routes.
+    let catalogue_inputs = CatalogueInputs::load_with_slots(
+        base_dir,
+        ProviderSlots::probe(
+            ConfiguredApiKeys::of(config),
+            &CredentialStore::new(base_dir),
+        ),
+    );
     let inputs = AgentRuntimeInputs {
         base_dir: base_dir.to_path_buf(),
         http_client: http_client.clone(),
@@ -153,3 +164,7 @@ mod tests;
 #[cfg(test)]
 #[path = "runtime_1066_tests.rs"]
 mod provider_1066_tests;
+
+#[cfg(test)]
+#[path = "runtime_credential_status_tests.rs"]
+mod credential_status_tests;

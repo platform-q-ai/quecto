@@ -17,6 +17,7 @@ use crate::infrastructure::providers::refreshable::{ProviderFactory, RefreshFn};
 
 use crate::application::providers::ports::LlmProvider;
 use crate::infrastructure::auth::credential_store::CredentialStore;
+use crate::infrastructure::auth::provider_slots::{api_slot_key, oauth_slot_token};
 use crate::infrastructure::config::Config;
 use crate::infrastructure::providers;
 use crate::infrastructure::providers::model_refusal::RefusalRecordingProvider;
@@ -123,21 +124,13 @@ pub(crate) fn compose_agent_provider_inner_outcome(
         .bounds("providers.openai")?;
     let anthropic = config.providers.anthropic.stream_limits;
     let anthropic_idle = anthropic.bounds("providers.anthropic")?;
-    let openai_api_key = if !config.providers.openai.api_key.is_empty() {
-        config.providers.openai.api_key.clone()
-    } else {
-        store
-            .get("openai")
-            .ok()
-            .flatten()
-            .filter(|c| {
-                c.method == crate::infrastructure::auth::credential_store::AuthMethod::Token
-            })
-            .filter(|c| !c.is_expired())
-            .map(|c| c.token)
-            .unwrap_or_default()
-    };
-    if !openai_api_key.is_empty() {
+    // The slot rules are shared with the catalogue's credential status
+    // (`auth::provider_slots`, #2451), so the model selector offers exactly
+    // the slots built here.
+    if let Some(openai_api_key) = api_slot_key(
+        &config.providers.openai.api_key,
+        store.get("openai").ok().flatten(),
+    ) {
         provider_list.push(
             providers::create_named_openai_provider_with_client_and_admission(
                 "openai-api",
@@ -158,69 +151,51 @@ pub(crate) fn compose_agent_provider_inner_outcome(
             .map_err(|e| format!("openai-api provider configuration error: {}", e))?,
         );
     }
-    if let Some(openai_oauth_cred) =
-        store.get("openai").ok().flatten().filter(|c| {
-            c.method == crate::infrastructure::auth::credential_store::AuthMethod::OAuth
-        })
-    {
-        // #811: construct from the stored (possibly stale) token — no eager
-        // network refresh on the pre-announce startup path. RefreshableProvider
-        // refreshes lazily on a 401 at first real request, after socket announce.
-        let openai_oauth_key = openai_oauth_cred.token;
-        if !openai_oauth_key.is_empty() {
-            let inner = build_single_provider_with_admission(
-                "openai",
-                &openai_oauth_key,
-                &openai_base,
-                http_client,
-                false,
-                bound(admission, "openai-oauth", openai_idle)?,
-            )?;
-            let factory = if admission.is_some() {
-                let binding = bound(admission, "openai-oauth", openai_idle)?;
-                let base = openai_base.clone();
-                let client = http_client.clone();
-                Arc::new(move |token: &str| {
-                    build_single_provider_with_admission(
-                        "openai",
-                        token,
-                        &base,
-                        &client,
-                        false,
-                        binding.clone(),
-                    )
-                    .expect("validated OpenAI OAuth provider should rebuild")
-                }) as ProviderFactory
-            } else {
-                inputs.openai_oauth_factory.clone()
-            };
-            provider_list.push(Arc::new(RefreshableProvider::new(RefreshableConfig {
-                inner,
-                store: store_arc.clone(),
-                provider_name: "openai-oauth".to_string(),
-                credential_provider: "openai".to_string(),
-                refresh_fn: refresh_fn.clone(),
-                factory,
-            })));
-        }
+    // #811: construct from the stored (possibly stale) token — no eager
+    // network refresh on the pre-announce startup path. RefreshableProvider
+    // refreshes lazily on a 401 at first real request, after socket announce.
+    if let Some(openai_oauth_key) = oauth_slot_token(store.get("openai").ok().flatten()) {
+        let inner = build_single_provider_with_admission(
+            "openai",
+            &openai_oauth_key,
+            &openai_base,
+            http_client,
+            false,
+            bound(admission, "openai-oauth", openai_idle)?,
+        )?;
+        let factory = if admission.is_some() {
+            let binding = bound(admission, "openai-oauth", openai_idle)?;
+            let base = openai_base.clone();
+            let client = http_client.clone();
+            Arc::new(move |token: &str| {
+                build_single_provider_with_admission(
+                    "openai",
+                    token,
+                    &base,
+                    &client,
+                    false,
+                    binding.clone(),
+                )
+                .expect("validated OpenAI OAuth provider should rebuild")
+            }) as ProviderFactory
+        } else {
+            inputs.openai_oauth_factory.clone()
+        };
+        provider_list.push(Arc::new(RefreshableProvider::new(RefreshableConfig {
+            inner,
+            store: store_arc.clone(),
+            provider_name: "openai-oauth".to_string(),
+            credential_provider: "openai".to_string(),
+            refresh_fn: refresh_fn.clone(),
+            factory,
+        })));
     }
 
     let anthropic_base = non_empty(config.providers.anthropic.api_base.clone());
-    let anthropic_api_key = if !config.providers.anthropic.api_key.is_empty() {
-        config.providers.anthropic.api_key.clone()
-    } else {
-        store
-            .get("anthropic")
-            .ok()
-            .flatten()
-            .filter(|c| {
-                c.method == crate::infrastructure::auth::credential_store::AuthMethod::Token
-            })
-            .filter(|c| !c.is_expired())
-            .map(|c| c.token)
-            .unwrap_or_default()
-    };
-    if !anthropic_api_key.is_empty() {
+    if let Some(anthropic_api_key) = api_slot_key(
+        &config.providers.anthropic.api_key,
+        store.get("anthropic").ok().flatten(),
+    ) {
         provider_list.push(
             providers::create_anthropic_compatible_provider_and_admission(
                 "anthropic-api",
@@ -246,42 +221,32 @@ pub(crate) fn compose_agent_provider_inner_outcome(
             );
         }
     }
-    if let Some(anthropic_oauth_cred) =
-        store.get("anthropic").ok().flatten().filter(|c| {
-            c.method == crate::infrastructure::auth::credential_store::AuthMethod::OAuth
-        })
-    {
-        // #811: construct from the stored (possibly stale) token — no eager
-        // network refresh on the pre-announce startup path. RefreshableProvider
-        // refreshes lazily on a 401 at first real request, after socket announce.
-        let anthropic_oauth_key = anthropic_oauth_cred.token;
-        if !anthropic_oauth_key.is_empty() {
-            let inner = providers::create_anthropic_compatible_provider_and_admission(
-                "anthropic-oauth",
-                anthropic_oauth_key,
-                anthropic_base.clone(),
-                false,
-                http_client.clone(),
-                bound(admission, "anthropic-oauth", anthropic_idle)?,
-            )
-            .map_err(|e| format!("anthropic-oauth provider configuration error: {}", e))?;
-            let factory = registry_provider_factory_with_admission(
-                crate::infrastructure::model_registry::ProviderApi::AnthropicMessages,
-                "anthropic-oauth".to_string(),
-                anthropic_base.clone(),
-                false,
-                http_client.clone(),
-                bound(admission, "anthropic-oauth", anthropic_idle)?,
-            );
-            provider_list.push(Arc::new(RefreshableProvider::new(RefreshableConfig {
-                inner,
-                store: store_arc.clone(),
-                provider_name: "anthropic-oauth".to_string(),
-                credential_provider: "anthropic".to_string(),
-                refresh_fn: refresh_fn.clone(),
-                factory,
-            })));
-        }
+    if let Some(anthropic_oauth_key) = oauth_slot_token(store.get("anthropic").ok().flatten()) {
+        let inner = providers::create_anthropic_compatible_provider_and_admission(
+            "anthropic-oauth",
+            anthropic_oauth_key,
+            anthropic_base.clone(),
+            false,
+            http_client.clone(),
+            bound(admission, "anthropic-oauth", anthropic_idle)?,
+        )
+        .map_err(|e| format!("anthropic-oauth provider configuration error: {}", e))?;
+        let factory = registry_provider_factory_with_admission(
+            crate::infrastructure::model_registry::ProviderApi::AnthropicMessages,
+            "anthropic-oauth".to_string(),
+            anthropic_base.clone(),
+            false,
+            http_client.clone(),
+            bound(admission, "anthropic-oauth", anthropic_idle)?,
+        );
+        provider_list.push(Arc::new(RefreshableProvider::new(RefreshableConfig {
+            inner,
+            store: store_arc.clone(),
+            provider_name: "anthropic-oauth".to_string(),
+            credential_provider: "anthropic".to_string(),
+            refresh_fn: refresh_fn.clone(),
+            factory,
+        })));
     }
 
     if config.providers.openai_compatible.endpoints.len() > MAX_OPENAI_COMPATIBLE_ENDPOINTS {
@@ -561,19 +526,15 @@ fn build_registry_provider_with_admission(
                     model.provider, oauth_provider
                 ));
             }
-            let Some(cred) = store.get(oauth_provider).map_err(|e| e.to_string())? else {
-                return Ok(None);
-            };
-            if cred.method != crate::infrastructure::auth::credential_store::AuthMethod::OAuth {
-                return Ok(None);
-            }
-            if cred.token.is_empty() {
-                return Ok(None);
-            }
-            api_base = oauth_registry_base_url(model, oauth_provider)?;
             // #811: use the stored (possibly stale) token; no eager network
             // refresh. RefreshableProvider refreshes lazily on 401 at first use.
-            cred.token
+            let Some(token) =
+                oauth_slot_token(store.get(oauth_provider).map_err(|e| e.to_string())?)
+            else {
+                return Ok(None);
+            };
+            api_base = oauth_registry_base_url(model, oauth_provider)?;
+            token
         }
     };
 
