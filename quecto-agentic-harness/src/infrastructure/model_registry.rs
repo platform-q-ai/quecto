@@ -6,11 +6,13 @@ use crate::infrastructure::providers::stream_idle::{StreamIdle, StreamLimits};
 
 /// The price of a Claude 5 built-in, `None` for any other id.
 fn claude_5_pricing(id: &str) -> Option<ModelPricing> {
-    const CLAUDE_5: [&str; 4] = [
+    const CLAUDE_5: [&str; 6] = [
         "claude-fable-5-1",
         "claude-fable-5",
         "claude-opus-5",
         "claude-sonnet-5",
+        "claude-opus-5-5",
+        "claude-sonnet-5-5",
     ];
     CLAUDE_5.contains(&id).then(|| model_pricing(id)).flatten()
 }

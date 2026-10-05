@@ -302,7 +302,9 @@ fn builtin_claude_models_keep_their_table_order_for_each_auth_mode() {
                 "claude-fable-5-1",
                 "claude-fable-5",
                 "claude-opus-5",
-                "claude-sonnet-5"
+                "claude-sonnet-5",
+                "claude-opus-5-5",
+                "claude-sonnet-5-5"
             ],
             "{provider}"
         );

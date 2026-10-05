@@ -652,6 +652,12 @@ const MODEL_PRICES: &[(&str, [u64; 4])] = &[
     ),
     ("claude-opus-5", [5_000_000, 25_000_000, 500_000, 6_250_000]),
     ("claude-opus-4", [5_000_000, 25_000_000, 500_000, 6_250_000]),
+    // Sonnet 5.5 standard global rates; cache writes use the 5-minute TTL.
+    // Keep this prefix before Sonnet 5 so dated 5.5 ids use the same rates.
+    (
+        "claude-sonnet-5-5",
+        [2_000_000, 10_000_000, 200_000, 2_500_000],
+    ),
     // Sonnet 5's flat standard rate (deterministic, no clock-based intro
     // switch).
     (
