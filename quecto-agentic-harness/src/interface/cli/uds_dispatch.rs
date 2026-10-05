@@ -31,7 +31,7 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
     if let Some(result) = try_forward_subagent_targeted_command(&cmd, ctx).await {
         return result;
     }
-    // Fast path: queries + clear_history (defers id/type_name clones).
+    // Reload poll before list_models (#2451); then the fast path for queries + clear_history.
     super::super::uds_dispatch_reload::poll_before_listing(&cmd, ctx).await;
     if let Some(result) = super::uds_dispatch_query::dispatch_fieldless_command(&cmd, ctx).await {
         return result;

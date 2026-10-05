@@ -34,7 +34,8 @@ folder sources, models/providers, and workflow template sets.
 
 - The shared `RuntimeReload` gate exists.
 - Provider/model reload is wired for config and `models.json` and runs before UDS
-  prompt/set-model consumption.
+  prompt, set-model and list-models consumption (list-models since #2451, so
+  `/model` offers what the router can reach).
 - Knowledge folder reload is not implemented.
 - Workflow-template set reload is not implemented.
 

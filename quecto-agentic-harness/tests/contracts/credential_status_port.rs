@@ -9,7 +9,7 @@ use quecto::domain::catalogue::{
 };
 use quecto::infrastructure::auth::provider_slots::ProviderSlots;
 use quecto::infrastructure::catalogue_registry::RegistryCredentialStatus;
-use quecto::infrastructure::model_registry::{AuthMode, ModelRegistry};
+use quecto::infrastructure::model_registry::{AuthMode, ModelRegistry, ProviderApi};
 
 fn catalogue_entry(provider: &str, model: &str) -> CatalogueEntry {
     let reference = ModelRef::parse(provider, model).unwrap();
@@ -44,12 +44,16 @@ fn no_slots() -> ProviderSlots {
     ProviderSlots::none()
 }
 
+/// A record credits itself only with a key the runtime builds with; a
+/// base URL alone is no credential until something routes its provider
+/// (#2451).
 #[test]
-fn registry_adapter_matches_the_legacy_configured_predicate() {
+fn registry_adapter_credits_a_record_by_the_key_the_runtime_builds_with() {
     let builtin = ModelRegistry::builtin();
     let mut keyed = builtin.models()[0].clone();
     let model_id = keyed.id.clone();
     keyed.provider = "keyed".to_string();
+    keyed.api = ProviderApi::AnthropicMessages;
     keyed.auth = AuthMode::ApiKey;
     keyed.oauth_provider = None;
     keyed.api_key = Some("sk-live".to_string());
@@ -64,7 +68,10 @@ fn registry_adapter_matches_the_legacy_configured_predicate() {
 
     let status = RegistryCredentialStatus::new([&keyed, &urled, &bare], no_slots());
     assert!(status.credential_available(&catalogue_entry("keyed", &model_id)));
-    assert!(status.credential_available(&catalogue_entry("urled", &model_id)));
+    assert!(
+        !status.credential_available(&catalogue_entry("urled", &model_id)),
+        "a base URL alone routes nothing"
+    );
     assert!(!status.credential_available(&catalogue_entry("bare", &model_id)));
     assert!(!status.credential_available(&catalogue_entry("unknown", &model_id)));
 }
@@ -76,6 +83,7 @@ fn credential_status_is_per_record_not_per_provider() {
     let builtin = ModelRegistry::builtin();
     let mut keyed = builtin.models()[0].clone();
     keyed.provider = "keyed".to_string();
+    keyed.api = ProviderApi::AnthropicMessages;
     keyed.auth = AuthMode::ApiKey;
     keyed.oauth_provider = None;
     keyed.api_key = Some("sk-live".to_string());

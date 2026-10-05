@@ -457,3 +457,40 @@ fn a_keyed_openai_compatible_record_without_a_base_url_is_not_offered() {
     assert!(!runtime.provider.route_order().iter().any(|r| r == "nobase"));
     assert!(!selectable(&listing(tmp.path())["nobase/nobase-model"]));
 }
+
+#[test]
+fn a_keyless_custom_provider_is_offered_exactly_when_an_endpoint_routes_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{
+            "gw":{"api":"openai-completions","baseUrl":"https://gw.example.test/v1",
+                "models":[{"id":"gw-model"}]},
+            "solo":{"api":"openai-completions","baseUrl":"https://solo.example.test/v1",
+                "models":[{"id":"solo-model"}]}
+        }}"#,
+    )
+    .unwrap();
+    let mut config = Config::default();
+    config.providers.openai_compatible.endpoints = vec![
+        serde_json::from_value(serde_json::json!({
+            "prefix": "gw",
+            "api_key": "sk-endpoint",
+            "api_base": "https://gw.example.test/v1",
+        }))
+        .unwrap(),
+    ];
+    compose_with(tmp.path(), &config);
+
+    let listed = listing(tmp.path());
+    assert!(
+        selectable(&listed["gw/gw-model"]),
+        "the endpoint supplies its key"
+    );
+    assert_runnable_on(tmp.path(), "gw/gw-model", "gw");
+    assert!(
+        !selectable(&listed["solo/solo-model"]),
+        "a base URL alone routes nothing"
+    );
+    assert_missing_credential(tmp.path(), "solo/solo-model");
+}

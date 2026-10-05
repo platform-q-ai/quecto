@@ -50,26 +50,33 @@ pub(super) async fn force_reload(ctx: &mut DispatchCtx<'_>) -> ReloadOutcome {
     reload.apply(ctx.agent, step)
 }
 
-/// The pull-based poll before a prompt or `set_model` (ADR-0002): rebuild
-/// off the runtime only if a watched file changed, apply here.
+/// The pull-based poll before a prompt, `set_model` or `list_models`
+/// (ADR-0002): rebuild off the runtime only if a watched file changed,
+/// apply here.
 pub(super) async fn poll_reload(ctx: &mut DispatchCtx<'_>) -> ReloadOutcome {
     let reload = ctx.catalogue.reload.clone();
     let step = rebuild_off_runtime(reload.clone(), false).await;
     reload.apply(ctx.agent, step)
 }
 
-/// Before `list_models`, the same poll (#2451): the listing offers what the
-/// router can reach, so a provider configured since the last poll is
-/// offered when `/model` opens rather than after the next prompt. Any
-/// other command polls nothing here.
+/// Whether `cmd` polls for a reload before the dispatch loop answers it:
+/// `list_models` only (#2451). The listing offers what the router can
+/// reach, so a provider configured since the last poll is offered when
+/// `/model` opens rather than after the next prompt. A prompt and
+/// `set_model` poll in their own handlers; nothing else polls.
+pub(super) fn polls_before_reply(cmd: &crate::interface::cli::protocol::AgentCommand) -> bool {
+    matches!(
+        cmd,
+        crate::interface::cli::protocol::AgentCommand::ListModels { .. }
+    )
+}
+
+/// The poll before a command that [`polls_before_reply`].
 pub(super) async fn poll_before_listing(
     cmd: &crate::interface::cli::protocol::AgentCommand,
     ctx: &mut DispatchCtx<'_>,
 ) {
-    if matches!(
-        cmd,
-        crate::interface::cli::protocol::AgentCommand::ListModels { .. }
-    ) {
+    if polls_before_reply(cmd) {
         poll_reload(ctx).await;
     }
 }

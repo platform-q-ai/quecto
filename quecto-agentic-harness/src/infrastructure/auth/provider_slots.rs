@@ -92,6 +92,11 @@ impl ProviderSlots {
         }
     }
 
+    /// Whether the router holds a provider named `provider`, however built.
+    pub fn routes(&self, provider: &str) -> bool {
+        self.routes.contains(&provider.trim().to_ascii_lowercase())
+    }
+
     /// Whether the runtime built a credential-backed provider for
     /// `provider` authenticating as `auth`. Only a dedicated slot or an
     /// OAuth provider is credential-backed: any other provider is

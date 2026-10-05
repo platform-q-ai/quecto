@@ -311,8 +311,8 @@ constructs provider state itself (#1849 PR 1), and threads the same builder
 into the reload inputs. Reloading a running session is the
 reload-runtime-configuration use case
 (`src/application/catalogue/use_cases/reload_runtime_configuration.rs`,
-#1849 PR 2): forced by the UDS `reload` command, polled before every prompt
-and `set_model`, over the `RuntimeConfigurationSource` port that
+#1849 PR 2): forced by the UDS `reload` command, polled before every prompt,
+`set_model` and `list_models` (#2451), over the `RuntimeConfigurationSource` port that
 `src/infrastructure/runtime_configuration.rs` implements (the ADR-0002 gate
 in `src/infrastructure/reload.rs`, one `Config` read, the injected builder)
 and the `ReloadRuntime` port the agent loop implements. The use case is two

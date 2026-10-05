@@ -185,3 +185,54 @@ fn snapshot_store_for_reuses_store_per_base_dir() {
 
     assert_eq!(second.current().generation(), 41);
 }
+
+fn api_key_record(provider: &str, id: &str) -> crate::infrastructure::model_registry::ModelRecord {
+    let mut record = ModelRegistry::builtin().models()[0].clone();
+    record.provider = provider.to_string();
+    record.id = id.to_string();
+    record.api = crate::infrastructure::model_registry::ProviderApi::OpenAiCompletions;
+    record.auth = crate::infrastructure::model_registry::AuthMode::ApiKey;
+    record.oauth_provider = None;
+    record.api_key = None;
+    record.base_url = Some("https://gw.example.test/v1".to_string());
+    record
+}
+
+#[test]
+fn a_keyless_record_is_credentialed_only_when_its_provider_is_routed_from_elsewhere() {
+    let urled = api_key_record("gw", "m");
+    let entry = entry_from_record(&urled).unwrap();
+
+    // A base URL alone is no credential: nothing routes `gw`.
+    assert!(!RegistryCredentialStatus::new([&urled], no_slots()).credential_available(&entry));
+    // An `openai_compatible` endpoint of that prefix supplies the key.
+    assert!(
+        RegistryCredentialStatus::new([&urled], ProviderSlots::routed(["gw".to_string()]))
+            .credential_available(&entry)
+    );
+}
+
+#[test]
+fn an_openai_compatible_key_needs_its_base_url() {
+    let mut keyed = api_key_record("nobase", "m");
+    keyed.api_key = Some("sk-test".to_string());
+    keyed.base_url = None;
+    let entry = entry_from_record(&keyed).unwrap();
+    assert!(!RegistryCredentialStatus::new([&keyed], no_slots()).credential_available(&entry));
+
+    keyed.base_url = Some("https://gw.example.test/v1".to_string());
+    assert!(RegistryCredentialStatus::new([&keyed], no_slots()).credential_available(&entry));
+}
+
+#[test]
+fn a_provider_keyed_by_one_record_does_not_credit_its_routed_keyless_siblings() {
+    let mut keyed = api_key_record("gw", "keyed");
+    keyed.api_key = Some("sk-test".to_string());
+    let keyless = api_key_record("gw", "keyless");
+    let credentials = RegistryCredentialStatus::new(
+        [&keyed, &keyless],
+        ProviderSlots::routed(["gw".to_string()]),
+    );
+    assert!(credentials.credential_available(&entry_from_record(&keyed).unwrap()));
+    assert!(!credentials.credential_available(&entry_from_record(&keyless).unwrap()));
+}
