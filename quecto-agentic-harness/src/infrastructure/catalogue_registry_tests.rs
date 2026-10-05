@@ -101,7 +101,7 @@ fn registry_credentials_are_keyed_by_qualified_model() {
 }
 
 fn no_slots() -> ProviderSlots {
-    ProviderSlots::routed(Vec::new())
+    ProviderSlots::none()
 }
 
 fn builtin_entry(provider: &str, id: &str) -> CatalogueEntry {

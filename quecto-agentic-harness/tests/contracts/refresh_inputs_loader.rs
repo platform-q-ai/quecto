@@ -9,7 +9,10 @@ use quecto::application::catalogue::ports::RefreshInputsLoader;
 use quecto::infrastructure::catalogue_refresh_inputs::FileRefreshInputs;
 
 fn under_test(dir: &std::path::Path) -> Arc<dyn RefreshInputsLoader> {
-    Arc::new(FileRefreshInputs::new(dir))
+    Arc::new(FileRefreshInputs::new(
+        dir,
+        Arc::new(quecto::application::ports::RuntimeSnapshotStore::new()),
+    ))
 }
 
 #[test]

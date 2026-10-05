@@ -6,31 +6,47 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::application::catalogue::ports::RuntimeSnapshotSource;
 use crate::application::catalogue::ports::{
     LoadedRefreshInputs, RefreshInputsLoader, RefreshRedactionPort, RefreshableCatalogueSource,
 };
 use crate::application::ports::{CatalogueSource, CredentialStatusPort};
+use crate::infrastructure::auth::provider_slots::ProviderSlots;
 use crate::infrastructure::catalogue_discovery::{
     ConfiguredDiscovery, SecretsRedaction, configured_discovery,
 };
 use crate::infrastructure::catalogue_inputs::CatalogueInputs;
 
-#[derive(Debug)]
+/// Credential status credits the slots `runtime` routes, as
+/// [`crate::infrastructure::catalogue_inputs::FileCatalogueInputs`] does (#2451).
 pub struct FileRefreshInputs {
     base_dir: PathBuf,
+    runtime: std::sync::Arc<dyn RuntimeSnapshotSource>,
 }
 
 impl FileRefreshInputs {
-    pub fn new(base_dir: &Path) -> Self {
+    pub fn new(base_dir: &Path, runtime: std::sync::Arc<dyn RuntimeSnapshotSource>) -> Self {
         Self {
             base_dir: base_dir.to_path_buf(),
+            runtime,
         }
+    }
+}
+
+impl std::fmt::Debug for FileRefreshInputs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FileRefreshInputs")
+            .field("base_dir", &self.base_dir)
+            .finish_non_exhaustive()
     }
 }
 
 impl RefreshInputsLoader for FileRefreshInputs {
     fn load(&self) -> Result<Box<dyn LoadedRefreshInputs>, String> {
-        let inputs = CatalogueInputs::load(&self.base_dir);
+        let inputs = CatalogueInputs::load(
+            &self.base_dir,
+            ProviderSlots::of_runtime(self.runtime.as_ref()),
+        );
         let discovery = match inputs.provider_defaults() {
             Ok(providers) => configured_discovery(&self.base_dir, providers),
             Err(error) => return Err(error.clone()),

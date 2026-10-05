@@ -74,10 +74,28 @@ fn selectable_builtin_slots(dir: &Path) -> Vec<String> {
     slots
 }
 
-/// Every built-in model is listed selectable exactly when the composed
-/// runtime routes its provider slot.
+/// Every built-in model is runnable exactly when the composed runtime
+/// routes its provider slot, both in the generation the runtime published
+/// with (what a `set_model` verdict reads) and in the listing the TUI
+/// selector reads.
 fn assert_listing_matches_routes(dir: &Path, runtime: &CatalogueRuntimeSnapshot) {
     let routes = runtime.provider.route_order();
+    let routed = |provider: &str| routes.iter().any(|route| route == provider);
+    let composed: Vec<_> = runtime
+        .catalogue
+        .entries()
+        .iter()
+        .filter(|entry| BUILTIN_SLOTS.contains(&entry.provider.id.as_str()))
+        .collect();
+    assert!(!composed.is_empty(), "built-ins are published");
+    for entry in composed {
+        assert_eq!(
+            entry.model.availability.is_runnable(),
+            routed(entry.provider.id.as_str()),
+            "{} is runnable in the composed generation exactly when the runtime routes its provider (routes {routes:?})",
+            entry.reference().qualified_id()
+        );
+    }
     let builtins: Vec<_> = listing(dir)
         .into_values()
         .filter(|model| BUILTIN_SLOTS.contains(&model["provider"].as_str().unwrap()))
@@ -87,7 +105,7 @@ fn assert_listing_matches_routes(dir: &Path, runtime: &CatalogueRuntimeSnapshot)
         let provider = model["provider"].as_str().unwrap();
         assert_eq!(
             selectable(&model),
-            routes.iter().any(|route| route == provider),
+            routed(provider),
             "{} is selectable exactly when the runtime routes {provider} (routes {routes:?})",
             model["model"]
         );
@@ -222,8 +240,8 @@ fn every_slot_signed_in_offers_every_builtin_slot_the_runtime_routes() {
 #[test]
 fn no_credentials_offer_no_builtin_model() {
     let tmp = tempfile::tempdir().unwrap();
-    // Nothing composes without a provider; the listing still reads the
-    // credential store and finds nothing.
+    // Nothing composes without a provider, and with no router nothing is
+    // offered.
     assert!(
         compose_and_publish_runtime(&Config::default(), tmp.path(), &reqwest::Client::new())
             .is_err()
@@ -235,6 +253,15 @@ fn no_credentials_offer_no_builtin_model() {
 fn an_unreadable_credential_store_offers_no_builtin_model_without_panicking() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(tmp.path().join("credentials.json"), "not json").unwrap();
+    // The runtime cannot read the sign-ins its OAuth built-ins need, so it
+    // composes nothing, even with a configured key; nothing is offered.
+    let error = compose_and_publish_runtime(
+        &config_with_keys("sk-openai", ""),
+        tmp.path(),
+        &reqwest::Client::new(),
+    )
+    .expect_err("an unreadable credential store fails composition");
+    assert!(error.error.contains("credentials"), "{}", error.error);
     assert!(selectable_builtin_slots(tmp.path()).is_empty());
 }
 
@@ -242,7 +269,7 @@ fn an_unreadable_credential_store_offers_no_builtin_model_without_panicking() {
 fn a_signed_in_vendor_does_not_credit_a_keyless_custom_provider_on_its_wire() {
     let tmp = tempfile::tempdir().unwrap();
     store(tmp.path(), "anthropic", AuthMethod::OAuth, Some(i64::MAX));
-    store(tmp.path(), "anthropic", AuthMethod::Token, None);
+    store(tmp.path(), "openai", AuthMethod::Token, None);
     std::fs::write(
         tmp.path().join("models.json"),
         r#"{"providers":{
@@ -253,7 +280,8 @@ fn a_signed_in_vendor_does_not_credit_a_keyless_custom_provider_on_its_wire() {
         }}"#,
     )
     .unwrap();
-    compose_with(tmp.path(), &Config::default());
+    let runtime = compose_with(tmp.path(), &Config::default());
+    assert_listing_matches_routes(tmp.path(), &runtime);
 
     let listed = listing(tmp.path());
     assert!(
@@ -346,4 +374,42 @@ fn change_active_model_switches_to_a_signed_in_builtin_with_a_runnable_verdict()
         ModelSelectionVerdict::Runnable { provider, .. } => assert_eq!(provider, "openai-oauth"),
         other => panic!("the switch is runnable, got {other:?}"),
     }
+}
+
+#[test]
+fn a_models_json_key_under_a_builtin_slot_name_offers_that_slots_builtins() {
+    let tmp = tempfile::tempdir().unwrap();
+    // No configured key and no stored token: the runtime builds `openai-api`
+    // from the models.json key and routes every `openai-api/...` id to it.
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{"openai-api":{"api":"openai-completions",
+            "baseUrl":"https://api.openai.com/v1","apiKey":"sk-file",
+            "models":[{"id":"gpt-5.6-luna"}]}}}"#,
+    )
+    .unwrap();
+    let runtime = compose_with(tmp.path(), &Config::default());
+
+    assert_eq!(selectable_builtin_slots(tmp.path()), ["openai-api"]);
+    assert_listing_matches_routes(tmp.path(), &runtime);
+    assert_runnable_on(tmp.path(), "openai-api/gpt-6-sol", "openai-api");
+}
+
+#[test]
+fn an_openai_compatible_endpoint_under_a_builtin_slot_name_offers_that_slots_builtins() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut config = Config::default();
+    config.providers.openai_compatible.endpoints = vec![
+        serde_json::from_value(serde_json::json!({
+            "prefix": "anthropic-api",
+            "api_key": "sk-endpoint",
+            "api_base": "https://gateway.example.test/v1",
+        }))
+        .unwrap(),
+    ];
+    let runtime = compose_with(tmp.path(), &config);
+
+    assert_eq!(selectable_builtin_slots(tmp.path()), ["anthropic-api"]);
+    assert_listing_matches_routes(tmp.path(), &runtime);
+    assert_runnable_on(tmp.path(), "anthropic-api/claude-sonnet-5", "anthropic-api");
 }

@@ -442,3 +442,67 @@ fn admission_advisory_publishes_atomically_and_failed_reload_retains_prior_diagn
         vec!["openai-api"]
     );
 }
+
+/// Credentials that count a provider only when the composed router holds
+/// it (#2451): what an infrastructure status scoped by route does.
+struct RouteScoped {
+    routes: Option<Vec<String>>,
+    asked: Mutex<Vec<Vec<String>>>,
+}
+
+impl CredentialStatusPort for RouteScoped {
+    fn credential_available(&self, entry: &CatalogueEntry) -> bool {
+        self.routes
+            .as_ref()
+            .is_some_and(|routes| routes.iter().any(|r| r == entry.provider.id.as_str()))
+    }
+    fn for_composed_routes(&self, routes: &[String]) -> Option<Box<dyn CredentialStatusPort + '_>> {
+        self.asked.lock().unwrap().push(routes.to_vec());
+        Some(Box::new(RouteScoped {
+            routes: Some(routes.to_vec()),
+            asked: Mutex::new(Vec::new()),
+        }))
+    }
+}
+
+#[test]
+fn the_published_catalogue_credits_what_the_composed_router_routes() {
+    let fixture = Fixture::new(vec![
+        entry("router/routed", "Routed", AuthIdentity::ApiKey),
+        gpt5(),
+    ]);
+    let credentials = RouteScoped {
+        routes: None,
+        asked: Mutex::new(Vec::new()),
+    };
+    let refs: Vec<&dyn CatalogueSource> = fixture
+        .sources
+        .iter()
+        .map(|s| s as &dyn CatalogueSource)
+        .collect();
+    let composed = ComposeProviderRuntimeUseCase::new()
+        .compose_and_publish(
+            &fixture.factory,
+            &(),
+            &(),
+            &CompositionPorts {
+                sources: &refs,
+                credentials: &credentials,
+                catalogue_store: &fixture.catalogue_store,
+                runtime_store: &fixture.runtime_store,
+            },
+        )
+        .expect("composes");
+
+    assert_eq!(
+        *credentials.asked.lock().unwrap(),
+        vec![vec!["router".to_string()]]
+    );
+    let routed = ModelRef::parse_qualified("router/routed").unwrap();
+    let unrouted = gpt5().model.reference;
+    assert!(select_in_snapshot(&composed.snapshot, &routed).is_ok());
+    assert!(matches!(
+        select_in_snapshot(&composed.snapshot, &unrouted),
+        Err(SelectionError::NotRunnable { .. })
+    ));
+}

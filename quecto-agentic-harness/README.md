@@ -345,7 +345,7 @@ quecto auth logout --provider openai
 | `auth logout` | `--provider <name>` | Remove a stored credential |
 | `auth status` | | List all stored credentials with status |
 
-Credentials are stored in `<base_dir>/credentials.json` (`~/.quecto/credentials.json` unless `QUECTO_BASE_DIR` is set). The credential store takes priority over keys in `config.json`.
+Credentials are stored in `<base_dir>/credentials.json` (`~/.quecto/credentials.json` unless `QUECTO_BASE_DIR` is set). A key configured in `config.json` (or `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`) takes priority over a stored token for the `openai-api` / `anthropic-api` slots; the OAuth slots use only the stored sign-in. A session reads the store when it starts, so a credential stored while it runs is used, and its models offered in `/model`, once the session restarts.
 
 ### `quecto status` — Check configuration
 

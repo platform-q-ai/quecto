@@ -4,6 +4,7 @@
 
 use crate::composition::catalogue::{published_model_limits_for, resolve_catalogue_for};
 use crate::domain::conversation::image_input::ImageInput;
+use crate::infrastructure::auth::provider_slots::ProviderSlots;
 use crate::infrastructure::catalogue_inputs::CatalogueInputs;
 use crate::infrastructure::catalogue_registry::snapshot_store_for;
 
@@ -120,7 +121,7 @@ fn discovered_models_inherit_provider_credentials_and_join_the_effective_registr
         entry.model.availability
     );
 
-    let registry = CatalogueInputs::load(tmp.path())
+    let registry = CatalogueInputs::load(tmp.path(), ProviderSlots::none())
         .effective_registry()
         .expect("registry must build");
     let record = registry
@@ -158,7 +159,7 @@ fn user_listed_models_win_over_synthesized_discovered_records() {
     .store_models_response(r#"{"data":[{"id":"alpha","name":"Theirs"}]}"#)
     .unwrap();
 
-    let registry = CatalogueInputs::load(tmp.path())
+    let registry = CatalogueInputs::load(tmp.path(), ProviderSlots::none())
         .effective_registry()
         .expect("registry must build");
     let record = registry.find("openrouter", "alpha").expect("record");

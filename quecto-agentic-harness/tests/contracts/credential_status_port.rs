@@ -9,7 +9,7 @@ use quecto::domain::catalogue::{
 };
 use quecto::infrastructure::auth::provider_slots::ProviderSlots;
 use quecto::infrastructure::catalogue_registry::RegistryCredentialStatus;
-use quecto::infrastructure::model_registry::ModelRegistry;
+use quecto::infrastructure::model_registry::{AuthMode, ModelRegistry};
 
 fn catalogue_entry(provider: &str, model: &str) -> CatalogueEntry {
     let reference = ModelRef::parse(provider, model).unwrap();
@@ -41,7 +41,7 @@ fn catalogue_entry(provider: &str, model: &str) -> CatalogueEntry {
 
 /// No credential-backed provider slot: records alone decide.
 fn no_slots() -> ProviderSlots {
-    ProviderSlots::routed(Vec::new())
+    ProviderSlots::none()
 }
 
 #[test]
@@ -50,6 +50,8 @@ fn registry_adapter_matches_the_legacy_configured_predicate() {
     let mut keyed = builtin.models()[0].clone();
     let model_id = keyed.id.clone();
     keyed.provider = "keyed".to_string();
+    keyed.auth = AuthMode::ApiKey;
+    keyed.oauth_provider = None;
     keyed.api_key = Some("sk-live".to_string());
     let mut urled = keyed.clone();
     urled.provider = "urled".to_string();
@@ -74,6 +76,8 @@ fn credential_status_is_per_record_not_per_provider() {
     let builtin = ModelRegistry::builtin();
     let mut keyed = builtin.models()[0].clone();
     keyed.provider = "keyed".to_string();
+    keyed.auth = AuthMode::ApiKey;
+    keyed.oauth_provider = None;
     keyed.api_key = Some("sk-live".to_string());
 
     let status = RegistryCredentialStatus::new([&keyed], no_slots());

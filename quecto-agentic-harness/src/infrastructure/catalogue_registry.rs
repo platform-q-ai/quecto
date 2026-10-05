@@ -314,11 +314,10 @@ impl CatalogueSource for UserOverrideCatalogueSource {
 ///   qualified model so a key declared for one model never marks its
 ///   siblings configured; an OAuth record's own key or URL is no
 ///   credential, the runtime builds it from the stored sign-in alone; or
-/// - the runtime has (or would build) the credential-backed provider slot
-///   serving it: a dedicated `openai-api` / `openai-oauth` /
-///   `anthropic-api` / `anthropic-oauth` slot, or an OAuth provider whose
-///   vendor is signed in ([`ProviderSlots`], the rules the runtime factory
-///   builds by).
+/// - the composed runtime built the credential-backed provider serving
+///   it — a dedicated `openai-api` / `openai-oauth` / `anthropic-api` /
+///   `anthropic-oauth` slot, or an OAuth provider — from a configured key,
+///   a stored token or a sign-in ([`ProviderSlots`], the router's routes).
 ///
 /// Only booleans leave this adapter — key material never reaches the
 /// application layer or a snapshot.
@@ -360,6 +359,15 @@ impl CredentialStatusPort for RegistryCredentialStatus {
             || self
                 .slots
                 .credits(entry.provider.id.as_str(), &entry.provider.auth)
+    }
+
+    /// Scoped to the router just composed: its slots replace whatever the
+    /// inputs were loaded with, the records' own credentials are kept.
+    fn for_composed_routes(&self, routes: &[String]) -> Option<Box<dyn CredentialStatusPort + '_>> {
+        Some(Box::new(Self {
+            configured: self.configured.clone(),
+            slots: ProviderSlots::routed(routes.iter().cloned()),
+        }))
     }
 }
 

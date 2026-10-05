@@ -8,7 +8,8 @@
 
 use std::path::Path;
 
-use crate::infrastructure::auth::provider_slots::{ConfiguredApiKeys, ProviderSlots};
+use crate::application::catalogue::ports::RuntimeSnapshotSource;
+use crate::infrastructure::auth::provider_slots::ProviderSlots;
 use crate::infrastructure::catalogue_registry::{
     BuiltinCatalogueSource, ModelsFileCatalogueSource, RegistryCredentialStatus,
     UserOverrideCatalogueSource, apply_overrides, entries_from_records, user_file_entries,
@@ -56,16 +57,10 @@ impl CatalogueInputs {
     /// provider defaults, and the effective registry, so every consumer
     /// describes one on-disk state (and a resolve costs one file read).
     ///
-    /// Credential status reads the provider slots the runtime published for
-    /// `base_dir` routes ([`published_slots`]), so a listing or a switch
-    /// offers exactly what the running router can reach.
-    pub(crate) fn load(base_dir: &Path) -> Self {
-        Self::load_with_slots(base_dir, published_slots(base_dir))
-    }
-
-    /// [`Self::load`] with the provider slots a composition about to run
-    /// will build, probed by the caller from its configuration.
-    pub(crate) fn load_with_slots(base_dir: &Path, slots: ProviderSlots) -> Self {
+    /// `slots` are the credential-backed provider slots the runtime routes
+    /// (#2451): credential status offers a built-in or OAuth model exactly
+    /// when its slot is among them.
+    pub(crate) fn load(base_dir: &Path, slots: ProviderSlots) -> Self {
         let config = ModelRegistry::load_registry_config(&base_dir.join("models.json"))
             .map_err(|error| error.to_string());
         let file_load = config
@@ -181,23 +176,6 @@ impl CatalogueInputs {
     }
 }
 
-/// The credential-backed provider slots of `base_dir`'s published runtime
-/// (#2451): the slots its router holds. The runtime reads the credential
-/// store when it is composed — at startup and on a configuration reload —
-/// so a credential stored since (`quecto auth login`) is offered once the
-/// runtime is next composed, exactly when the router can reach it. With no
-/// runtime published (a CLI listing, a rig), the slots a composition would
-/// build from the credential store alone.
-fn published_slots(base_dir: &Path) -> ProviderSlots {
-    match crate::infrastructure::catalogue_registry::runtime_store_for(base_dir).current() {
-        Some(runtime) => ProviderSlots::routed(runtime.provider.route_order()),
-        None => ProviderSlots::probe(
-            ConfiguredApiKeys::NONE,
-            &crate::infrastructure::auth::credential_store::CredentialStore::new(base_dir),
-        ),
-    }
-}
-
 /// Synthesize model records for discovered-cache models whose provider is
 /// configured in `models.json`: connection and auth come from the provider's
 /// defaults, so a discovered model is credentialed and routable exactly like
@@ -239,23 +217,39 @@ fn synthesize_discovered_records(
 
 /// The catalogue capability's inputs port over the real base directory
 /// (#1845): each load is one fresh `models.json` parse plus the persisted
-/// discovery caches and credential status — no network.
-#[derive(Debug)]
+/// discovery caches and credential status — no network. Credential status
+/// credits the slots `runtime`'s current generation routes (#2451): the
+/// runtime reads the credential store when it is composed (at startup and
+/// on a configuration reload), so a credential stored since is offered once
+/// the runtime is next composed — exactly when the router can reach it.
 pub struct FileCatalogueInputs {
     base_dir: std::path::PathBuf,
+    runtime: std::sync::Arc<dyn RuntimeSnapshotSource>,
 }
 
 impl FileCatalogueInputs {
-    pub fn new(base_dir: &Path) -> Self {
+    pub fn new(base_dir: &Path, runtime: std::sync::Arc<dyn RuntimeSnapshotSource>) -> Self {
         Self {
             base_dir: base_dir.to_path_buf(),
+            runtime,
         }
+    }
+}
+
+impl std::fmt::Debug for FileCatalogueInputs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FileCatalogueInputs")
+            .field("base_dir", &self.base_dir)
+            .finish_non_exhaustive()
     }
 }
 
 impl crate::application::catalogue::ports::CatalogueInputsLoader for FileCatalogueInputs {
     fn load(&self) -> Box<dyn crate::application::catalogue::ports::LoadedCatalogueInputs> {
-        Box::new(CatalogueInputs::load(&self.base_dir))
+        Box::new(CatalogueInputs::load(
+            &self.base_dir,
+            ProviderSlots::of_runtime(self.runtime.as_ref()),
+        ))
     }
 }
 

@@ -64,6 +64,18 @@ pub struct SkippedRecord {
 /// declared for one model must not mark its siblings configured.
 pub trait CredentialStatusPort: Send + Sync {
     fn credential_available(&self, entry: &CatalogueEntry) -> bool;
+
+    /// This status as of a composed runtime whose router holds `routes`,
+    /// its route order (#2451): a credential the runtime turns into a
+    /// provider — a configured key, a stored token, a sign-in — counts
+    /// exactly when the runtime built that provider. `None`, the default,
+    /// keeps this status unchanged.
+    fn for_composed_routes(
+        &self,
+        _routes: &[String],
+    ) -> Option<Box<dyn CredentialStatusPort + '_>> {
+        None
+    }
 }
 
 /// A source layer that could not be loaded; the layer is skipped so one
