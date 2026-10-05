@@ -8,8 +8,11 @@
 use super::client::{Command, Event};
 
 /// Request id of a child's own `get_session_stats`. The reply is applied
-/// whatever its id (any stats reply on the child's feed is the child's own);
-/// the id only names the request in logs and traces.
+/// whatever its id (any stats reply on the child's feed is the child's own).
+/// The id must stay: an id-less reply is what a busy child's connect-time
+/// snapshot looks like, and a parent's `subagent_transport` accepts id-less
+/// replies as snapshot answers to its own requests; the broadcast reply to
+/// this request carries an id so it is never mistaken for one.
 pub(crate) const SUBAGENT_STATS_ID: &str = "subagent-stats";
 
 /// The request for a child's own session stats.
@@ -31,10 +34,13 @@ pub(crate) enum SessionStatsSignal {
     Unrelated,
 }
 
-/// The commands whose reply means the child's run has ended. A completed
-/// run reports `turn_end`; a failed one only an `agent_error` reply; an
-/// aborted one the `abort` acknowledgement, dispatched after the cancelled
-/// prompt settles. An allowlist: any other reply leaves the stats as they are.
+/// The commands whose reply on the child's own feed means its run has
+/// ended. A completed run reports `turn_end`; a failed one only an
+/// `agent_error` reply; a plain abort the broadcast `abort` acknowledgement,
+/// dispatched after the cancelled prompt settles. A parent's or launcher's
+/// abort (`ack: accept`) is acknowledged to that client alone, so the
+/// roster's running -> idle covers it instead. An allowlist: any other
+/// reply leaves the stats as they are.
 const RUN_END_REPLIES: &[&str] = &["agent_error", "abort"];
 
 /// Classify one child stream event for that child's session stats.

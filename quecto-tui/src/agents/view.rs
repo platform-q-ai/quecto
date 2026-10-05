@@ -227,6 +227,15 @@ impl ConnectionRoster {
         std::mem::take(&mut self.delete_pending)
     }
 
+    /// The ids of tracked child agents currently in an active status.
+    pub(crate) fn active_tracked_ids(&self) -> BTreeSet<String> {
+        self.tracked
+            .iter()
+            .filter(|(_, t)| subagent_status_is_active(&t.info.status))
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
     /// How many tracked child agents are currently in an active status.
     pub(crate) fn tracked_active_count(&self) -> usize {
         self.tracked

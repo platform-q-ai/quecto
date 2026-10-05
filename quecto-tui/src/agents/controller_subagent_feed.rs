@@ -70,6 +70,18 @@ impl App {
         }
     }
 
+    /// Any other event from the child `id`: send a stats request the feed
+    /// could not queue earlier.
+    pub(super) fn retry_owed_subagent_stats(&mut self, id: &str) {
+        let now = std::time::Instant::now();
+        let Some(feed) = self.ac_mut().roster.feeds.get_mut(id) else {
+            return;
+        };
+        if feed.stats_refresh.owes_request() && feed.stats_refresh.should_request(now) {
+            Self::send_stats_request(id, feed);
+        }
+    }
+
     fn send_stats_request(id: &str, feed: &mut FeedState) {
         let request = crate::protocol::subagent_stats::subagent_stats_request();
         if let Err(error) = feed.cmd_tx.try_send(request) {

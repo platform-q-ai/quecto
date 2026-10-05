@@ -649,12 +649,16 @@ fn when_subagent_ends_turn(world: &mut TuiWorld, id: String) {
             },
         );
     });
-    world.tui_viewed_agent = Some(id);
 }
 
 #[then(expr = "the TUI asks sub-agent {string} for its own session stats")]
 fn then_asks_subagent_stats(world: &mut TuiWorld, id: String) {
-    assert_eq!(world.tui_viewed_agent.as_deref(), Some(id.as_str()));
+    // The captured commands are the socket of the sub-agent the Given views.
+    assert_eq!(
+        world.tui_viewed_agent.as_deref(),
+        Some(id.as_str()),
+        "the scenario must name the viewed sub-agent"
+    );
     let cmds = settle_subagent_commands(world);
     assert_eq!(
         stats_request_count(&cmds),

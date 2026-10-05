@@ -160,7 +160,7 @@ impl App {
         match stats_signal {
             SessionStatsSignal::Stale => self.request_subagent_session_stats(agent_id),
             SessionStatsSignal::Answered => self.note_subagent_stats_answered(agent_id),
-            SessionStatsSignal::Unrelated => {}
+            SessionStatsSignal::Unrelated => self.retry_owed_subagent_stats(agent_id),
         }
     }
 
@@ -274,6 +274,7 @@ impl App {
             self.rekey_agent_collections(&from, &to);
         }
 
+        let was_running = self.ac().roster.active_tracked_ids();
         let roster = &mut self.ac_mut().roster;
         crate::agents::roster::apply_roster_snapshot(
             &mut roster.tracked,
@@ -310,6 +311,13 @@ impl App {
         for id in warm_ids {
             self.ensure_session(&id);
             self.ensure_synced_subagent_feed(&id);
+        }
+        // A run that left `running` by any route (including a parent's or
+        // launcher's abort, which broadcasts no run end on the child's own
+        // feed) has recorded its usage: the child's footer stats are stale.
+        let still_running = self.ac().roster.active_tracked_ids();
+        for id in was_running.difference(&still_running) {
+            self.request_subagent_session_stats(id);
         }
         self.enforce_warm_feed_cap();
         self.clamp_panel_selection();
