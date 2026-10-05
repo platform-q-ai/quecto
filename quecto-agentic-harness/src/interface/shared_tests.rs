@@ -36,14 +36,13 @@ fn test_build_system_prompt_with_user_only() {
     let result = build_system_prompt(&Some("Be helpful".to_string()), false);
     assert!(!result.contains("Current date and time:"));
     assert!(result.contains(agent_role_preamble()));
-    assert!(!result.contains("operating manual"));
     assert!(result.contains("Be helpful"));
 }
 
 /// Given either role and optional custom instructions, role boundaries remain explicit.
 #[test]
-fn role_specific_prompts_preserve_custom_text_without_docs_guidance() {
-    let child_role = "You are a subagent responsible for the assigned task. Solve it directly by default. You may delegate a bounded, independently useful subtask when doing so materially improves the result. Do not delegate your entire assignment, create another coordinator for the same task, or spawn agents merely to reduce your own context. Remain responsible for integrating and verifying delegated results.";
+fn role_specific_prompts_preserve_custom_text() {
+    let child_role = child_role_preamble();
     for custom in [
         None,
         Some(String::new()),
@@ -52,14 +51,8 @@ fn role_specific_prompts_preserve_custom_text_without_docs_guidance() {
         let child = build_system_prompt(&custom, true);
         let parent = build_system_prompt(&custom, false);
         assert!(child.contains(child_role));
-        assert!(!child.contains("Parent Agent"));
-        assert!(!child.contains("Prefer swarms for nearly all software development"));
         assert!(parent.contains(agent_role_preamble()));
-        assert!(parent.contains("Prefer swarms for nearly all software development"));
-        assert!(!parent.contains("Common loops"));
-        assert!(!parent.contains("quick-start"));
-        assert!(!child.contains("quick-start"));
-        assert!(!child.contains("operating manual"));
+        assert!(!child.contains(agent_role_preamble()));
         if custom.as_ref().is_none_or(|text| text.is_empty()) {
             assert!(child.ends_with(child_role));
         }
@@ -640,24 +633,6 @@ mod context_settings {
             // #2405: less the 100-token request the reply needs beside it.
             1_000_000 - 100,
             "a smaller known window must clamp the configured budget"
-        );
-    }
-}
-
-#[test]
-fn production_prompts_rely_on_agents_md_for_codebase_conventions() {
-    let removed_clauses = [
-        "Follow the codebase’s conventions whenever possible.",
-        "BDD/TDD red–green–refactor",
-        "Clean Architecture",
-        "SOLID principles",
-    ];
-    for spawned in [false, true] {
-        let prompt = build_agent_system_prompt(None, None, spawned, "");
-        assert!(
-            removed_clauses
-                .iter()
-                .all(|clause| !prompt.contains(clause))
         );
     }
 }

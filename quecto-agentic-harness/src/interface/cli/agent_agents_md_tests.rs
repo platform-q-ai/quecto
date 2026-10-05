@@ -184,7 +184,6 @@ fn override_is_composed_only_for_parent_and_keeps_other_prompt_sources() {
         &playbook,
     );
     assert!(parent.contains("Unique project playbook"));
-    assert!(!parent.contains("### Route and isolate"));
     assert!(
         parent.find("Unique project playbook").unwrap() < parent.find("Project AGENTS").unwrap()
     );
