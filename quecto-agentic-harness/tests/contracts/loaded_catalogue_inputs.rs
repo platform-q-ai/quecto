@@ -51,7 +51,8 @@ fn credential_status_is_a_per_record_verdict_driven_by_the_credential() {
         r#"{"providers":{
             "keyed":{"api":"openai-completions","apiKey":"sk-keyed",
                 "baseUrl":"https://keyed.example.test/v1","models":[{"id":"m"}]},
-            "unset":{"api":"openai-completions","apiKey":"$QUECTO_CONTRACT_UNSET_KEY","models":[{"id":"m"}]},
+            "unset":{"api":"openai-completions","apiKey":"$QUECTO_CONTRACT_UNSET_KEY",
+                "baseUrl":"https://unset.example.test/v1","models":[{"id":"m"}]},
             "bare":{"api":"openai-completions","models":[{"id":"m"}]}
         }}"#,
     )

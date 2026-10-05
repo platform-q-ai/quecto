@@ -108,6 +108,8 @@ fn only_a_listing_polls_before_its_reply() {
         r#"{"type":"list_models","id":"lm"}"#
     )));
     for other in [
+        r#"{"type":"prompt","id":"p","message":"hi"}"#,
+        r#"{"type":"set_model","id":"sm","model":"openai-api/gpt-6-sol"}"#,
         r#"{"type":"get_state","id":"gs"}"#,
         r#"{"type":"refresh_models","id":"rm"}"#,
         r#"{"type":"get_tool_catalogue","id":"tc"}"#,

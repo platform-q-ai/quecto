@@ -306,27 +306,30 @@ impl CatalogueSource for UserOverrideCatalogueSource {
 
 /// Credential status derived from the parsed registry configuration and
 /// the provider slots the composed runtime routes (#2451). A model counts
-/// as credentialed exactly when the runtime can route it:
+/// as credentialed when the runtime routes it, by one of:
 ///
 /// - its own API-key record carries a key the runtime builds a provider
-///   with ([`record_builds_with_its_key`]), keyed per qualified model so a
-///   key declared for one model never marks its siblings configured;
+///   with ([`record_builds_with_its_key`]) and the router holds that
+///   provider (before any runtime is composed, the key alone: a
+///   composition would build it). Keyed per qualified model: a key
+///   declared for one model never marks its siblings configured, though
+///   the router would serve them with it (the owner's rule);
 /// - the runtime built the credential-backed provider serving it — a
 ///   dedicated `openai-api` / `openai-oauth` / `anthropic-api` /
 ///   `anthropic-oauth` slot, or an OAuth provider — from a configured key,
 ///   a stored token or a sign-in ([`ProviderSlots::credits`]); or
-/// - the runtime routes its API-key provider although no record of that
-///   provider carries a key: an `openai_compatible` endpoint of that prefix
-///   supplies it. (A provider some record keys is built from that record,
-///   and its keyless siblings stay uncredited.)
+/// - the router holds its API-key provider although no record of that
+///   provider carries a key and none signs in: an `openai_compatible`
+///   endpoint of that prefix supplies the key.
 ///
 /// Only booleans leave this adapter — key material never reaches the
 /// application layer or a snapshot.
 pub struct RegistryCredentialStatus {
     /// Qualified ids of records that carry a key the runtime builds with.
     keyed: HashSet<String>,
-    /// Lowercased providers with at least one such record.
-    keyed_providers: HashSet<String>,
+    /// Lowercased providers some record keys or signs in: the router's
+    /// provider of that name is built from a record, not an endpoint.
+    record_built: HashSet<String>,
     slots: ProviderSlots,
 }
 
@@ -336,17 +339,23 @@ impl RegistryCredentialStatus {
         slots: ProviderSlots,
     ) -> Self {
         let mut keyed = HashSet::new();
-        let mut keyed_providers = HashSet::new();
-        for record in records
-            .into_iter()
-            .filter(|r| record_builds_with_its_key(r))
-        {
-            keyed.insert(format!("{}/{}", record.provider, record.id));
-            keyed_providers.insert(record.provider.trim().to_ascii_lowercase());
+        let mut record_built = HashSet::new();
+        for record in records {
+            let provider = record.provider.trim().to_ascii_lowercase();
+            match record.auth {
+                AuthMode::OAuth => {
+                    record_built.insert(provider);
+                }
+                AuthMode::ApiKey if record_builds_with_its_key(record) => {
+                    keyed.insert(format!("{}/{}", record.provider, record.id));
+                    record_built.insert(provider);
+                }
+                AuthMode::ApiKey => {}
+            }
         }
         Self {
             keyed,
-            keyed_providers,
+            record_built,
             slots,
         }
     }
@@ -376,18 +385,18 @@ fn record_builds_with_its_key(record: &ModelRecord) -> bool {
 impl CredentialStatusPort for RegistryCredentialStatus {
     fn credential_available(&self, entry: &CatalogueEntry) -> bool {
         let provider = entry.provider.id.as_str();
-        let routed_from_elsewhere = match entry.provider.auth {
+        let own_key = self.keyed.contains(&entry.reference().qualified_id())
+            && self.slots.may_route(provider);
+        let endpoint_supplied = match entry.provider.auth {
             AuthIdentity::ApiKey => {
                 self.slots.routes(provider)
                     && !self
-                        .keyed_providers
+                        .record_built
                         .contains(&provider.trim().to_ascii_lowercase())
             }
             AuthIdentity::OAuth { .. } => false,
         };
-        self.keyed.contains(&entry.reference().qualified_id())
-            || self.slots.credits(provider, &entry.provider.auth)
-            || routed_from_elsewhere
+        own_key || self.slots.credits(provider, &entry.provider.auth) || endpoint_supplied
     }
 
     /// Scoped to the router just composed: its slots replace whatever the
@@ -395,7 +404,7 @@ impl CredentialStatusPort for RegistryCredentialStatus {
     fn for_composed_routes(&self, routes: &[String]) -> Option<Box<dyn CredentialStatusPort + '_>> {
         Some(Box::new(Self {
             keyed: self.keyed.clone(),
-            keyed_providers: self.keyed_providers.clone(),
+            record_built: self.record_built.clone(),
             slots: ProviderSlots::routed(routes.iter().cloned()),
         }))
     }

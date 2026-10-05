@@ -46,11 +46,12 @@ Feature: Provider reload wiring for models/providers (Phase 2b)
 
   # Every `list_models` republishes one generation, and so does every
   # rebuild; the generation deltas between the three listings therefore
-  # count the rebuilds: the forced `reload` must rebuild once (+1 rebuild,
-  # +1 listing) and the prompt's poll must not rebuild again (+1 listing
-  # only) — a no-op `reload` or a poll that rebuilt a second time each
-  # move a delta by one.
-  Scenario: explicit reload applies a provider added to the config and the next prompt routes through it without rebuilding again
+  # count the rebuilds. The first listing's poll applies the edit (#2451);
+  # the forced `reload` must still rebuild once although nothing changed
+  # since (+1 rebuild, +1 listing) and the prompt's poll must not rebuild
+  # again (+1 listing only) — a no-op `reload` or a poll that rebuilt a
+  # second time each move a delta by one.
+  Scenario: a listing applies a provider added to the config, an explicit reload still rebuilds, and the next prompt routes through it without rebuilding again
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the config default model is "fireworks/accounts/fireworks/models/glm-5p2"

@@ -236,3 +236,52 @@ fn a_provider_keyed_by_one_record_does_not_credit_its_routed_keyless_siblings() 
     assert!(credentials.credential_available(&entry_from_record(&keyed).unwrap()));
     assert!(!credentials.credential_available(&entry_from_record(&keyless).unwrap()));
 }
+
+#[test]
+fn a_keyed_record_is_credentialed_only_while_the_composed_router_holds_its_provider() {
+    let mut keyed = api_key_record("gw", "m");
+    keyed.api_key = Some("sk-test".to_string());
+    let entry = entry_from_record(&keyed).unwrap();
+
+    // No runtime yet: a composition would build it from the key.
+    assert!(RegistryCredentialStatus::new([&keyed], no_slots()).credential_available(&entry));
+    // A runtime composed before the provider existed cannot reach it.
+    let elsewhere = ProviderSlots::routed(["openai-api".to_string()]);
+    assert!(!RegistryCredentialStatus::new([&keyed], elsewhere).credential_available(&entry));
+    let routed = ProviderSlots::routed(["gw".to_string()]);
+    assert!(RegistryCredentialStatus::new([&keyed], routed).credential_available(&entry));
+}
+
+#[test]
+fn provider_names_compare_without_case() {
+    let mut keyed = api_key_record("GW", "keyed");
+    keyed.api_key = Some("sk-test".to_string());
+    let keyless = api_key_record("gw", "keyless");
+    let credentials = RegistryCredentialStatus::new(
+        [&keyed, &keyless],
+        ProviderSlots::routed(["Gw".to_string()]),
+    );
+    assert!(credentials.credential_available(&entry_from_record(&keyed).unwrap()));
+    assert!(
+        !credentials.credential_available(&entry_from_record(&keyless).unwrap()),
+        "its provider is keyed by a sibling, whatever the case"
+    );
+}
+
+#[test]
+fn a_keyless_api_key_record_is_not_credited_by_a_sign_in_of_its_provider_name() {
+    let signed_in = ModelRegistry::builtin()
+        .find("xai", "grok-4.7")
+        .expect("built in")
+        .clone();
+    let keyless = api_key_record("xai", "custom-grok");
+    let credentials = RegistryCredentialStatus::new(
+        [&signed_in, &keyless],
+        ProviderSlots::routed(["xai".to_string()]),
+    );
+    assert!(credentials.credential_available(&entry_from_record(&signed_in).unwrap()));
+    assert!(
+        !credentials.credential_available(&entry_from_record(&keyless).unwrap()),
+        "the router serves `xai` over the sign-in: an API-key model never silently bills OAuth"
+    );
+}

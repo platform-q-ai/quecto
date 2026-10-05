@@ -57,10 +57,12 @@ pub(crate) fn oauth_slot_token(stored: Option<Credential>) -> Option<String> {
 }
 
 /// The provider names a composed runtime routes, lowercased: which
-/// credential-backed slots it built.
+/// credential-backed slots it built. `None` before any runtime is
+/// composed — then nothing is routed, and only what a composition would
+/// build from a record's own key can be credited.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProviderSlots {
-    routes: BTreeSet<String>,
+    routes: Option<BTreeSet<String>>,
 }
 
 impl ProviderSlots {
@@ -80,7 +82,9 @@ impl ProviderSlots {
             routes.iter().all(|route| !route.is_empty()),
             "a router names every provider it routes"
         );
-        Self { routes }
+        Self {
+            routes: Some(routes),
+        }
     }
 
     /// The slots `runtime`'s current generation built, or [`Self::none`]
@@ -92,23 +96,35 @@ impl ProviderSlots {
         }
     }
 
-    /// Whether the router holds a provider named `provider`, however built.
+    /// Whether a composed router holds a provider named `provider`, however
+    /// built. False before any runtime is composed.
     pub fn routes(&self, provider: &str) -> bool {
-        self.routes.contains(&provider.trim().to_ascii_lowercase())
+        self.routes
+            .as_ref()
+            .is_some_and(|routes| routes.contains(&provider.trim().to_ascii_lowercase()))
+    }
+
+    /// Whether `provider` can be reached: the composed router holds it, or
+    /// no runtime is composed yet, so a composition would build it from a
+    /// record's own key.
+    pub fn may_route(&self, provider: &str) -> bool {
+        match &self.routes {
+            Some(_) => self.routes(provider),
+            None => true,
+        }
     }
 
     /// Whether the runtime built a credential-backed provider for
-    /// `provider` authenticating as `auth`. Only a dedicated slot or an
-    /// OAuth provider is credential-backed: any other provider is
-    /// credentialed by its own records alone, so a vendor sign-in or a
-    /// sibling's key never credits it.
+    /// `provider` authenticating as `auth`: a dedicated slot (from a
+    /// configured key, a stored token or a sign-in) or an OAuth provider
+    /// (from a sign-in). Any other provider is never credited here.
     pub fn credits(&self, provider: &str, auth: &AuthIdentity) -> bool {
-        let provider = provider.trim().to_ascii_lowercase();
+        let lowered = provider.trim().to_ascii_lowercase();
         let credential_backed = match auth {
             AuthIdentity::OAuth { .. } => true,
-            AuthIdentity::ApiKey => DEDICATED_SLOTS.contains(&provider.as_str()),
+            AuthIdentity::ApiKey => DEDICATED_SLOTS.contains(&lowered.as_str()),
         };
-        credential_backed && self.routes.contains(&provider)
+        credential_backed && self.routes(provider)
     }
 }
 
