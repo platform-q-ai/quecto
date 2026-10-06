@@ -13,10 +13,11 @@ on:
     - cron: "23 3 * * *"
   workflow_dispatch:
 
-# Per ref, so a manual run on a branch never cancels master's nightly.
+# Per ref, so a manual run on a branch never touches master's nightly; a second
+# run on the same ref queues rather than cancelling the one in progress.
 concurrency:
   group: nightly-coverage-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
