@@ -21,4 +21,5 @@ pub mod session_payloads;
 pub mod session_search_payloads;
 pub mod state_payloads;
 pub mod subagent_payloads;
+pub(crate) mod subagent_stats;
 pub mod workflow_payloads;

@@ -3532,8 +3532,9 @@ fn raw_json_site_count_ignores_ordinary_collections_and_string_accessors() {
     );
 }
 
-/// Uses of wire DTOs, not merely `use` lines: `use super::*` re-exports and
-/// fully-qualified paths would otherwise make the import count meaningless.
+/// Uses of wire DTOs, not merely `use` lines, so fully-qualified paths count.
+/// Bare DTO names count only in a file that names `protocol::client`: a file
+/// reaching them solely through `use super::*` is a known blind spot.
 fn wire_dto_usage_count(content: &str) -> usize {
     let imports_client = content
         .lines()
@@ -3665,8 +3666,10 @@ fn tui_wire_dto_usage_does_not_grow() {
         total, TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL,
         "#1257 Phase 6 relocation must preserve TUI feature/view wire-DTO usage: \
          found {total}, seed {TUI_WIRE_DTO_USAGE_SEED} (#1220). Counting usages, not \
-         `use` lines, so `use super::*` and fully-qualified paths are visible. \
-         Inventory (burn-down order): {per_file:?}"
+         `use` lines: fully-qualified `protocol::client` paths always count, and bare \
+         `Command`/`Event`/`SubagentInfoEvent`/`SubagentWorkflow` count in files that \
+         name `protocol::client`; a file reaching them only through `use super::*` is \
+         not seen. Inventory (burn-down order): {per_file:?}"
     );
 }
 

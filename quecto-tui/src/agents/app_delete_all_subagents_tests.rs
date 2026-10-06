@@ -224,6 +224,7 @@ fn feed_from_handle(handle: tokio::task::JoinHandle<()>) -> FeedState {
         pending_rev: None,
         transcript: crate::agents::ledger::LedgerTranscript::default(),
         authority: FeedAuthority::WarmSync,
+        stats_refresh: crate::agents::feed::StatsRefresh::Settled,
     }
 }
 

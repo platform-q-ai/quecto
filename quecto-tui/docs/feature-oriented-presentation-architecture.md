@@ -373,6 +373,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `protocol/admission_payloads.rs` | `protocol` inference-admission view mapper (#1679 P4) |
 | `protocol/client_result_text.rs` | `protocol` tool-result text extraction (split from `client.rs` for the 750-line cap, #1679 P4; protocol-mapper allowlist as a `client.rs` relocation) |
 | `protocol/subagent_payloads.rs` | `protocol` typed subagent roster wire DTOs incl. versioned environment metadata (#1369 slice 4; split from `client.rs` for the 750-line baseline) |
+| `protocol/subagent_stats.rs` | `protocol` a child's own `get_session_stats` request and the child stream events that make its stats stale or answer it (sub-agent footer cache-hit parity, #805) |
 | `protocol/workflow_payloads.rs` | `protocol` (relocated, #1257 Phase 2) |
 | `sessions/resume_picker.rs` | `sessions` (scope-aware presentation, #2009; the search box reports its text — typed or pasted, up to 256 characters — and filters nothing; `RowsState` settled/loading/searching/stalled/disconnected, the deferred Enter and its cue, the cursor rule for replaced rows and the status notice, #2010) |
 | `sessions/clock.rs` | `sessions` time source of the `/resume` picker's deadlines (owed Enter, search flight): tokio's clock in production, a manually advanced one in the headless harness, so time is an input of every test (#2010 R3-T1) |

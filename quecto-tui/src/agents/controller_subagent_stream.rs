@@ -254,6 +254,7 @@ impl App {
         // streamed response is finalized below). Run-state already flipped above.
         let flush_notes = was_running && !session.running;
         let recovery_refs = Self::subagent_end_of_turn_refs(&ev);
+        let stats_signal = crate::protocol::subagent_stats::session_stats_signal(&ev);
         let early_return = matches!(
             &ev,
             Event::Response { command, .. } if command == "get_messages"
@@ -274,9 +275,7 @@ impl App {
         if flush_notes {
             Self::flush_deferred_notes(&mut session.chat, &mut session.deferred_subagent_notes);
         }
-        if let Some((refs, content_len)) = recovery_refs {
-            self.maybe_recover_subagent_refs(agent_id, &refs, content_len);
-        }
+        self.finish_subagent_event(agent_id, recovery_refs, stats_signal);
     }
 
     fn apply_child_state_snapshot(&mut self, agent_id: &str, data: &serde_json::Value) {
@@ -431,7 +430,7 @@ impl App {
     }
 
     /// #1060: fetch missing child messages by ref on the child UDS connection.
-    fn maybe_recover_subagent_refs(
+    pub(super) fn maybe_recover_subagent_refs(
         &mut self,
         agent_id: &str,
         refs: &[String],

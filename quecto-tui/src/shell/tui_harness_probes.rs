@@ -197,6 +197,7 @@ impl TuiHarness {
                 pending_rev: None,
                 transcript: crate::agents::ledger::LedgerTranscript::default(),
                 authority: crate::agents::feed::FeedAuthority::WarmSync,
+                stats_refresh: crate::agents::feed::StatsRefresh::Settled,
             },
         );
         cmd_rx

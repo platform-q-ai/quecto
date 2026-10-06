@@ -140,6 +140,30 @@ impl App {
         }
     }
 
+    /// Follow-ups to one child stream event that need the whole `App` once the
+    /// child's `SessionView` borrow has ended: recover the turn's missing
+    /// message refs, and keep the child's own session stats current. A run
+    /// end (completed, failed or aborted) makes them stale, so the child is
+    /// asked for them, as the master footer refreshes on its own `turn_end`;
+    /// without that the child's footer never learns its cost or cache-hit
+    /// ratio, and its only percentage is the context gauge.
+    pub(super) fn finish_subagent_event(
+        &mut self,
+        agent_id: &str,
+        recovery_refs: Option<(Vec<String>, Option<u64>)>,
+        stats_signal: crate::protocol::subagent_stats::SessionStatsSignal,
+    ) {
+        use crate::protocol::subagent_stats::SessionStatsSignal;
+        if let Some((refs, content_len)) = recovery_refs {
+            self.maybe_recover_subagent_refs(agent_id, &refs, content_len);
+        }
+        match stats_signal {
+            SessionStatsSignal::Stale => self.request_subagent_session_stats(agent_id),
+            SessionStatsSignal::Answered => self.note_subagent_stats_answered(agent_id),
+            SessionStatsSignal::Unrelated => self.retry_owed_subagent_stats(agent_id),
+        }
+    }
+
     pub(super) fn update_subagent_bar(
         &mut self,
         subagents: Vec<crate::protocol::client::SubagentInfoEvent>,
@@ -250,6 +274,7 @@ impl App {
             self.rekey_agent_collections(&from, &to);
         }
 
+        let was_running = self.ac().roster.active_tracked_ids();
         let roster = &mut self.ac_mut().roster;
         crate::agents::roster::apply_roster_snapshot(
             &mut roster.tracked,
@@ -286,6 +311,18 @@ impl App {
         for id in warm_ids {
             self.ensure_session(&id);
             self.ensure_synced_subagent_feed(&id);
+        }
+        // A run that left the active statuses (`starting`/`running`) has
+        // recorded its usage, so the child's footer stats are stale. Only
+        // a run end the child's own feed did not report counts: a parent's
+        // or launcher's abort broadcasts no run end there, so that session
+        // still reads running; a feed that saw `turn_end` already asked.
+        let still_running = self.ac().roster.active_tracked_ids();
+        for id in was_running.difference(&still_running) {
+            if self.subagent_feed_saw_run_end(id) {
+                continue;
+            }
+            self.request_subagent_session_stats(id);
         }
         self.enforce_warm_feed_cap();
         self.clamp_panel_selection();

@@ -71,9 +71,16 @@ impl Child {
         )
     }
 
-    async fn start_turn(&mut self, slim_state: bool) {
+    /// The direct feed's connect handshake: state, initial sync, and the
+    /// child's own session stats (its footer's cost and cache-hit ratio).
+    async fn handshake(&mut self) {
         self.command("get_state").await;
         self.command("sync").await;
+        self.command("get_session_stats").await;
+    }
+
+    async fn start_turn(&mut self, slim_state: bool) {
+        self.handshake().await;
         // Current harness slim_state_projection does not emit `sync`, even
         // though its session snapshot supports the initial Sync below.
         let state = if slim_state {
@@ -302,8 +309,7 @@ async fn issue_1605_direct_slim_state_committed_checkpoint_visible_without_refoc
     roster.extend((1..8).map(|i| tui_harness::subagent(&format!("terminal-{i}"), "dead", None)));
     h.event(tui_harness::subagents_changed(roster));
     h.select(Some(&child.id));
-    child.command("get_state").await;
-    child.command("sync").await;
+    child.handshake().await;
     child
         .send(
             json!({"type":"response","command":"get_state","success":true,
