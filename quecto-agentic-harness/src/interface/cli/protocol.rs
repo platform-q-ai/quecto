@@ -177,7 +177,7 @@ pub enum AgentEvent {
         /// How long it waited to be admitted; omitted when it never waited.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         queued_ms: Option<u64>,
-        outcome: crate::domain::inference::request_completion::RequestOutcome,
+        outcome: crate::domain::inference::events::request_completion::RequestOutcome,
         /// This agent's requests so far, this one included.
         request_index: u64,
         /// Its number within its logical request, from 1.
@@ -578,9 +578,10 @@ impl SessionState {
 #[serde(rename_all = "camelCase")]
 pub struct SessionStats {
     #[serde(default)]
-    pub runtime: Option<crate::domain::request_observation::RuntimeIdentity>,
+    pub runtime: Option<crate::domain::inference::events::request_observation::RuntimeIdentity>,
     #[serde(default)]
-    pub request_diagnostics: crate::domain::request_observation::RequestDiagnostics,
+    pub request_diagnostics:
+        crate::domain::inference::events::request_observation::RequestDiagnostics,
     pub session_key: String,
     pub user_messages: usize,
     pub assistant_messages: usize,

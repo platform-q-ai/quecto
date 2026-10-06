@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-use crate::domain::provider::EffortLevel;
+use crate::domain::inference::value_objects::provider::EffortLevel;
 use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;

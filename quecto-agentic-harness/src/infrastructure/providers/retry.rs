@@ -24,8 +24,8 @@ use std::time::Duration;
 
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::error::DomainError;
+use crate::domain::inference::services::provider_error::classify_provider_error;
 use crate::domain::message::LlmResponse;
-use crate::domain::provider_error::classify_provider_error;
 
 /// Async sleep seam. Defaults to `tokio::time::sleep`; tests inject a recorder
 /// that captures the requested delay (so `Retry-After` honouring is observable)
@@ -169,7 +169,8 @@ impl LlmProvider for RetryingProvider {
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + 'a>> {
         Box::pin(async move {
             let mut attempt: u32 = 1;
-            let mut capped = crate::domain::provider_error::CappedFailures::default();
+            let mut capped =
+                crate::domain::inference::services::provider_error::CappedFailures::default();
             loop {
                 // The loop already admitted the logical request; only retries
                 // re-check, as reattempts (#2339), so a first attempt never
@@ -177,7 +178,7 @@ impl LlmProvider for RetryingProvider {
                 if attempt > 1 {
                     if let Some(admission) = &request.admission {
                         admission
-                            .check(crate::domain::provider::RequestAttempt::Reattempt)
+                            .check(crate::domain::inference::value_objects::provider::RequestAttempt::Reattempt)
                             .await?;
                     }
                     if let Some(trace) = &request.trace {
@@ -200,11 +201,13 @@ impl LlmProvider for RetryingProvider {
                         {
                             return Err(err);
                         }
-                        let Some(delay) = crate::domain::provider_retry::bounded_delay(
-                            &err,
-                            self.backoff_delay(attempt),
-                            self.config.max_backoff,
-                        ) else {
+                        let Some(delay) =
+                            crate::domain::inference::services::provider_retry::bounded_delay(
+                                &err,
+                                self.backoff_delay(attempt),
+                                self.config.max_backoff,
+                            )
+                        else {
                             return Err(err);
                         };
                         tracing::warn!(
@@ -237,8 +240,11 @@ impl LlmProvider for RetryingProvider {
         request: ChatRequest<'a>,
     ) -> Pin<
         Box<
-            dyn Future<Output = tokio::sync::mpsc::Receiver<crate::domain::provider::StreamEvent>>
-                + Send
+            dyn Future<
+                    Output = tokio::sync::mpsc::Receiver<
+                        crate::domain::inference::value_objects::provider::StreamEvent,
+                    >,
+                > + Send
                 + 'a,
         >,
     > {

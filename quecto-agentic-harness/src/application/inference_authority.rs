@@ -10,7 +10,7 @@ use super::ports::{
     AdmissionClient, AdmissionDispatcher, AdmissionJournal, AdmissionRecovery, AdmissionRegistry,
     AdmissionSecretSource, JournalError,
 };
-use crate::domain::inference_admission::*;
+use crate::domain::admission::value_objects::inference_admission::*;
 
 /// Scope identity plus the opaque secret proving the caller was issued it.
 #[derive(Debug, Clone, PartialEq, Eq)]

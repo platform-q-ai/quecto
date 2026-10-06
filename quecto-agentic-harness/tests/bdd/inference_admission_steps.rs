@@ -2,7 +2,7 @@
 use super::*;
 use quecto::application::inference_admission::AdmissionService;
 use quecto::application::ports::{AdmissionClient, AdmissionDispatcher, AdmissionRegistry};
-use quecto::domain::inference_admission::{
+use quecto::domain::admission::value_objects::inference_admission::{
     AdmissionConfig, Feedback, GroupId, GroupPolicy, RequestId, RequestState, ScopeId,
     TerminalOutcome, WorkloadClass,
 };

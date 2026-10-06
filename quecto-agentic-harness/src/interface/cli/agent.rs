@@ -44,7 +44,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
     let mut socket_path: Option<std::path::PathBuf> = None;
     let mut persist = false;
     let mut disabled_tools: Vec<String> = Vec::new();
-    let mut effort: Option<crate::domain::provider::EffortLevel> = None;
+    let mut effort: Option<crate::domain::inference::value_objects::provider::EffortLevel> = None;
     let mut workflow = false;
     let mut no_workflow_requested = false;
     let mut workflow_guards = false;

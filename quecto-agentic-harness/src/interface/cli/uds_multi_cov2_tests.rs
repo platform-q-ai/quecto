@@ -205,7 +205,7 @@ async fn real_multi_client_loop_answers_read_command_then_exits_on_disconnect() 
 
 #[tokio::test]
 async fn cov2_test_helpers_execute_their_trait_surfaces() {
-    use crate::domain::provider::StreamEvent;
+    use crate::domain::inference::value_objects::provider::StreamEvent;
 
     let provider = NeverUsedProvider;
     assert_eq!(provider.name(), "never-used");

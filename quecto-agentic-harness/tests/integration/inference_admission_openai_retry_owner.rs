@@ -6,8 +6,8 @@ use quecto::{
         inference_attempt::{AttemptAdmission, AttemptPermit},
     },
     domain::{
+        admission::value_objects::inference_admission::{Feedback, ThrottleFeedback},
         error::DomainError,
-        inference_admission::{Feedback, ThrottleFeedback},
         message::Message,
         tool::ToolProfileContext,
     },

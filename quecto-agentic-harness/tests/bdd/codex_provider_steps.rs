@@ -176,9 +176,9 @@ fn when_provider_builds_responses_request(world: &mut QuectoWorld) {
     // Issue #1066: the full OpenAI-documented effort scale must be
     // configurable; parse() rejecting a documented level is a failure.
     let effort = world.env_overrides.get("_codex_effort").map(|e| {
-        quecto::domain::provider::EffortLevel::parse(e).unwrap_or_else(|| {
-            panic!("effort level '{e}' must be a valid configurable level (#1066)")
-        })
+        quecto::domain::inference::value_objects::provider::EffortLevel::parse(e).unwrap_or_else(
+            || panic!("effort level '{e}' must be a valid configurable level (#1066)"),
+        )
     });
     let messages = vec![Message::system("You are helpful."), Message::user("Run ls")];
     let tools = vec![ToolDefinition {

@@ -240,8 +240,10 @@ fn given_provider_error(
 /// Map a wire class string to the typed [`ProviderErrorClass`]. The variant now
 /// stores the enum directly (#939 review), so the step builders translate once
 /// here instead of every reader re-parsing the string.
-fn class_from_str(class: &str) -> quecto::domain::provider_error::ProviderErrorClass {
-    use quecto::domain::provider_error::ProviderErrorClass;
+fn class_from_str(
+    class: &str,
+) -> quecto::domain::inference::services::provider_error::ProviderErrorClass {
+    use quecto::domain::inference::services::provider_error::ProviderErrorClass;
     match class {
         "rate_limit" => ProviderErrorClass::RateLimit,
         "auth" => ProviderErrorClass::Auth,

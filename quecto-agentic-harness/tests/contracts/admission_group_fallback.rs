@@ -1,7 +1,7 @@
 //! Shared no-hint fallback belongs to group state, not leaf retry decorators.
 use quecto::application::inference_admission::AdmissionService;
 use quecto::application::ports::{AdmissionClient, AdmissionDispatcher, AdmissionRegistry};
-use quecto::domain::inference_admission::*;
+use quecto::domain::admission::value_objects::inference_admission::*;
 use std::collections::BTreeMap;
 fn setup() -> (AdmissionService, ScopeId, GroupId) {
     let group = GroupId::new("shared").unwrap();

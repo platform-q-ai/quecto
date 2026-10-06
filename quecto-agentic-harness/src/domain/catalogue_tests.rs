@@ -374,7 +374,7 @@ fn empty_snapshot_is_explicit() {
 
 mod effort_vocabulary {
     use super::super::{EffortVocabulary, ProviderId, TransportKind};
-    use crate::domain::provider::EffortLevel::{self, *};
+    use crate::domain::inference::value_objects::provider::EffortLevel::{self, *};
 
     fn levels(
         provider: &str,

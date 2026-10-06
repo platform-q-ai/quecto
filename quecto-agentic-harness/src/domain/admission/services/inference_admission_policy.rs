@@ -1,6 +1,6 @@
 //! Pure queue, pacing and capacity transitions for one accounting epoch.
-use super::inference_admission::*;
-use super::inference_cooldown::FallbackCooldown;
+use crate::domain::admission::value_objects::inference_admission::*;
+use crate::domain::admission::value_objects::inference_cooldown::FallbackCooldown;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 #[path = "inference_admission_recovery.rs"]

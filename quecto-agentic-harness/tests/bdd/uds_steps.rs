@@ -216,7 +216,7 @@ pub(crate) fn build_uds_agent(
             .defaults
             .effort
             .as_deref()
-            .and_then(quecto::domain::provider::EffortLevel::parse),
+            .and_then(quecto::domain::inference::value_objects::provider::EffortLevel::parse),
     );
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,

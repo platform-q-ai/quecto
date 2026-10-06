@@ -242,7 +242,7 @@ fn panicking_board(
     panic!("the accounting job panicked")
 }
 
-fn observation() -> crate::domain::request_observation::RequestObservation {
+fn observation() -> crate::domain::inference::events::request_observation::RequestObservation {
     serde_json::from_value(json!({
         "request_id": "r1", "model": "m", "provider": "p", "outcome": "ok",
         "error_class": null, "input_tokens": null, "context_input_tokens": null,

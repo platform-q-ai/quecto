@@ -15,11 +15,11 @@ use super::stream_idle::tests::{GAP, LIVE, SILENT, bounded, servers};
 /// idle bound would end still arrives within it.
 const WHOLE: std::time::Duration = std::time::Duration::from_millis(1200);
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
-use crate::domain::attempt_diagnostics::Termination;
 use crate::domain::error::DomainError;
+use crate::domain::inference::events::request_observation::RequestTrace;
+use crate::domain::inference::value_objects::attempt_diagnostics::Termination;
+use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::message::Message;
-use crate::domain::provider::StreamEvent;
-use crate::domain::request_observation::RequestTrace;
 
 const CODEX_EVENT: &str = "data: {\"type\":\"response.created\",\"response\":{}}\n\n";
 const OPENAI_EVENT: &str = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}\n\n";
@@ -31,8 +31,16 @@ pub(super) struct Grant;
 #[derive(Debug)]
 pub(super) struct Granted;
 impl crate::application::ports::AttemptPermit for Granted {
-    fn feedback(&mut self, _: crate::domain::inference_admission::ThrottleFeedback) {}
-    fn finish(self: Box<Self>, _: crate::domain::inference_admission::Feedback) {}
+    fn feedback(
+        &mut self,
+        _: crate::domain::admission::value_objects::inference_admission::ThrottleFeedback,
+    ) {
+    }
+    fn finish(
+        self: Box<Self>,
+        _: crate::domain::admission::value_objects::inference_admission::Feedback,
+    ) {
+    }
 }
 impl crate::application::ports::AttemptAdmission for Grant {
     fn acquire(&self) -> crate::application::ports::AttemptAcquisition<'_> {

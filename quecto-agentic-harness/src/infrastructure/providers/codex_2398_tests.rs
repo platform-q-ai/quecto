@@ -1,11 +1,11 @@
 //! #2398: each request records, on its trace, where the input it sends
 //! first differs from its session's last accepted request.
 use super::*;
-use crate::domain::message::{Message, ToolCall};
-use crate::domain::request_observation::{
+use crate::domain::inference::events::request_observation::{
     InputBaseline, InputItemKind, InputPrefixParts, RequestTrace,
 };
-use crate::domain::token_estimate::estimate_tokens;
+use crate::domain::inference::value_objects::token_estimate::estimate_tokens;
+use crate::domain::message::{Message, ToolCall};
 use std::sync::Arc;
 use wiremock::matchers::{body_string_contains, method};
 use wiremock::{Mock, MockServer, ResponseTemplate};

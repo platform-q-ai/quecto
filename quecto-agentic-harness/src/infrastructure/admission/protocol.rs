@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::application::ports::{AuthorityError, AuthorityStatus, Credential};
-use crate::domain::inference_admission::*;
+use crate::domain::admission::value_objects::inference_admission::*;
 use crate::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal;
 
 pub const PROTOCOL_VERSION: u8 = 1;

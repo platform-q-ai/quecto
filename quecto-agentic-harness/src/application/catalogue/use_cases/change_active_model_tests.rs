@@ -16,7 +16,7 @@ use crate::domain::catalogue::{
     AuthIdentity, Availability, CatalogueEntry, ModelCapabilities, ModelCost, ModelDescriptor,
     ModelId, ProviderDescriptor, ProviderId, SourceLayer, TransportKind, UnavailableReason,
 };
-use crate::domain::provider::EffortLevel;
+use crate::domain::inference::value_objects::provider::EffortLevel;
 
 fn entry(provider: &str, model: &str, explicit_limits: Option<(u32, u32)>) -> CatalogueEntry {
     let (max_output_tokens, context_window) = explicit_limits.unwrap_or((4096, 128_000));

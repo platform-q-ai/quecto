@@ -288,7 +288,7 @@ mod tests;
 impl crate::application::providers::ports::RequestAccounting for SwarmContext {
     fn record<'a>(
         &'a self,
-        observation: &'a crate::domain::request_observation::RequestObservation,
+        observation: &'a crate::domain::inference::events::request_observation::RequestObservation,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), DomainError>> + Send + 'a>>
     {
         let context = self.clone();

@@ -154,7 +154,7 @@ fn a_stopped_run_records_its_unfinished_request_and_why() {
     impl crate::application::providers::ports::RequestAccounting for Recorded {
         fn record<'a>(
             &'a self,
-            observation: &'a crate::domain::request_observation::RequestObservation,
+            observation: &'a crate::domain::inference::events::request_observation::RequestObservation,
         ) -> std::pin::Pin<
             Box<
                 dyn std::future::Future<Output = Result<(), crate::domain::error::DomainError>>

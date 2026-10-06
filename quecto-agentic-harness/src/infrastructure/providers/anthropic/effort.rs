@@ -5,8 +5,10 @@
 /// (`low`/`medium`/`high`/`max`). The OpenAI-only levels (#1066) clamp to
 /// the nearest documented Anthropic value; Anthropic's own levels are
 /// transmitted verbatim, unchanged from the pre-#1066 behaviour.
-pub(super) fn anthropic_effort_str(effort: crate::domain::provider::EffortLevel) -> &'static str {
-    use crate::domain::provider::EffortLevel;
+pub(super) fn anthropic_effort_str(
+    effort: crate::domain::inference::value_objects::provider::EffortLevel,
+) -> &'static str {
+    use crate::domain::inference::value_objects::provider::EffortLevel;
     match effort {
         EffortLevel::None => "low",
         EffortLevel::XHigh => "high",

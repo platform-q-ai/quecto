@@ -174,7 +174,7 @@ async fn send_toolless_turn_with_effort(
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
-        effort: Some(crate::domain::provider::EffortLevel::XHigh),
+        effort: Some(crate::domain::inference::value_objects::provider::EffortLevel::XHigh),
     };
     provider.chat(request).await
 }

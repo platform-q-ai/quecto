@@ -10,10 +10,10 @@ use super::admission_feedback::{CooldownHint, is_typed_throttle, normalize_throt
 use super::attempt_profile::{Profile, Vendor};
 use super::sse_common::{SseHandler, SseLineOutcome};
 use crate::application::ports::{AttemptAdmission, AttemptPermit};
+use crate::domain::admission::value_objects::inference_admission::{Feedback, ThrottleFeedback};
 use crate::domain::error::DomainError;
-use crate::domain::inference_admission::{Feedback, ThrottleFeedback};
+use crate::domain::inference::value_objects::provider::{CancelFlag, StreamEvent};
 use crate::domain::message::LlmResponse;
-use crate::domain::provider::{CancelFlag, StreamEvent};
 
 #[path = "attempt_events.rs"]
 mod attempt_events;
@@ -26,8 +26,8 @@ use observer::{LineObserver, ProtocolObserver};
 mod diagnostic_sse;
 #[path = "transport_diagnostics.rs"]
 mod diagnostics;
-use crate::domain::attempt_diagnostics::*;
-use crate::domain::request_observation::RequestTrace;
+use crate::domain::inference::events::request_observation::RequestTrace;
+use crate::domain::inference::value_objects::attempt_diagnostics::*;
 
 type Sender = tokio::sync::mpsc::Sender<StreamEvent>;
 #[derive(Clone)]
@@ -67,11 +67,11 @@ impl Receipt {
     /// The attempt's output passed its request's output cap (#2210): the
     /// error to end it with, or `None` while it is within the cap (or its
     /// request has none).
-    fn capped(&self) -> Option<crate::domain::request_progress::OutputCapped> {
+    fn capped(&self) -> Option<crate::domain::inference::events::request_progress::OutputCapped> {
         let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
         let cap = state.trace.as_ref()?.output_cap()?;
         (state.diagnostics.output_bytes > cap)
-            .then_some(crate::domain::request_progress::OutputCapped { cap })
+            .then_some(crate::domain::inference::events::request_progress::OutputCapped { cap })
     }
 
     /// Record the attempt into its request's trace: once, when it ends.
@@ -158,14 +158,15 @@ impl Receipt {
             .any(|error| {
                 ["type", "code"].iter().any(|field| {
                     error[*field].as_str().is_some_and(|name| {
-                        crate::domain::provider_error::is_billing_error_name(name)
-                            || matches!(
-                                name,
-                                "authentication_error"
-                                    | "permission_error"
-                                    | "invalid_request_error"
-                                    | "invalid_api_key"
-                            )
+                        crate::domain::inference::services::provider_error::is_billing_error_name(
+                            name,
+                        ) || matches!(
+                            name,
+                            "authentication_error"
+                                | "permission_error"
+                                | "invalid_request_error"
+                                | "invalid_api_key"
+                        )
                     })
                 })
             });

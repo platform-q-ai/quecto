@@ -4,7 +4,7 @@ use super::uds_admission_projection::{
 use super::uds_execution_state::ExecutionState;
 use super::uds_state_projection::{slim_state_projection, slim_state_response_data};
 use crate::application::ports::AdmissionObservation;
-use crate::domain::inference_admission::{
+use crate::domain::admission::value_objects::inference_admission::{
     AdmissionActivity, AdmissionPhase, AttemptObservation, CooldownState, GroupActivity, GroupId,
 };
 use std::sync::{Arc, Mutex};
@@ -349,7 +349,9 @@ fn a_fully_hidden_queue_is_reported_without_a_guessed_group() {
 /// execution state reads the binding's view and every transition is pushed.
 #[test]
 fn attaching_a_process_binding_projects_and_pushes_its_transitions() {
-    use crate::domain::inference_admission::{AdmissionConfig, Feedback, GroupPolicy};
+    use crate::domain::admission::value_objects::inference_admission::{
+        AdmissionConfig, Feedback, GroupPolicy,
+    };
     use crate::infrastructure::admission::{
         AuthorityDirectory, AuthorityServer, Negotiation, negotiate,
     };
@@ -429,7 +431,9 @@ fn attaching_a_process_binding_projects_and_pushes_its_transitions() {
 /// reconnection — and every health change is pushed with `authorityStatus`.
 #[test]
 fn the_snapshot_and_pushed_events_follow_the_live_authority_link() {
-    use crate::domain::inference_admission::{AdmissionConfig, Feedback, GroupPolicy};
+    use crate::domain::admission::value_objects::inference_admission::{
+        AdmissionConfig, Feedback, GroupPolicy,
+    };
     use crate::infrastructure::admission::{
         AdminConnection, AuthorityDirectory, AuthorityServer, Negotiation, negotiate,
     };

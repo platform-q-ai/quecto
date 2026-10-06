@@ -242,17 +242,17 @@ const RETIRED_DOMAIN_PORTS: &[(&str, &str, &str)] = &[
         "src/application/sessions/ports.rs",
     ),
     (
-        "src/domain/provider.rs",
+        "src/domain/inference/value_objects/provider.rs",
         "trait LlmProvider",
         "src/application/providers/ports.rs",
     ),
     (
-        "src/domain/provider.rs",
+        "src/domain/inference/value_objects/provider.rs",
         "trait RequestAdmission",
         "src/application/providers/ports.rs",
     ),
     (
-        "src/domain/request_observation.rs",
+        "src/domain/inference/events/request_observation.rs",
         "trait RequestAccounting",
         "src/application/providers/ports.rs",
     ),

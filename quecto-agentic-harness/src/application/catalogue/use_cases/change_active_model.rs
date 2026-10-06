@@ -31,7 +31,7 @@ use crate::domain::catalogue::{
     CatalogueEntry, CatalogueSnapshot, ModelRef, UnavailableReason, retired_builtin,
 };
 use crate::domain::conversation::image_input::ImageInput;
-use crate::domain::provider::{
+use crate::domain::inference::value_objects::provider::{
     ModelRoute, parse_qualified_model, provider_prefix_matches, route_model,
 };
 

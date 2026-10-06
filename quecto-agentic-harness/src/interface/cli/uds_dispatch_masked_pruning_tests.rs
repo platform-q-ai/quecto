@@ -153,7 +153,7 @@ async fn masked_pruning_providers_use_trait_default_stream_surface() {
     );
     let mut rx = failing.chat_stream_incremental(empty_request()).await;
     assert!(
-        matches!(rx.recv().await, Some(crate::domain::provider::StreamEvent::Error(e)) if e.contains("boom"))
+        matches!(rx.recv().await, Some(crate::domain::inference::value_objects::provider::StreamEvent::Error(e)) if e.contains("boom"))
     );
 
     let hanging = HangingProvider;

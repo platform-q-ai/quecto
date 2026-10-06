@@ -339,7 +339,7 @@ data: [DONE]
 
 #[tokio::test]
 async fn codex_stream_emits_reasoning_summary_deltas_live() {
-    use crate::domain::provider::StreamEvent;
+    use crate::domain::inference::value_objects::provider::StreamEvent;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -706,7 +706,7 @@ fn oauth_and_api_key_bodies_differ_only_by_max_output_tokens_1236() {
 
 #[tokio::test]
 async fn codex_stream_rejects_over_limit_reasoning_with_error() {
-    use crate::domain::provider::StreamEvent;
+    use crate::domain::inference::value_objects::provider::StreamEvent;
     use crate::domain::visible_thinking::MAX_VISIBLE_THINKING_BYTES;
     use crate::infrastructure::providers::sse_common::SseHandler;
 

@@ -8,7 +8,8 @@ use super::*;
 
 #[derive(Debug, Clone, Default)]
 pub struct SessionUsage {
-    pub request_diagnostics: crate::domain::request_observation::RequestDiagnostics,
+    pub request_diagnostics:
+        crate::domain::inference::events::request_observation::RequestDiagnostics,
     pub tokens: TokenStats,
     pub cost_micro_usd: u64,
 }
@@ -18,7 +19,7 @@ impl SessionUsage {
     }
 
     pub fn cache_hit_ratio(&self) -> Option<f64> {
-        crate::domain::usage_accounting::cache_hit_ratio(
+        crate::domain::inference::services::usage_accounting::cache_hit_ratio(
             self.tokens.input,
             self.tokens.cache_read,
             self.tokens.cache_write,

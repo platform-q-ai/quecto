@@ -8,7 +8,7 @@ use std::time::{Instant, SystemTime};
 use crate::application::ports::{
     AdmissionObservation, AttemptAcquisition, AttemptAdmission, AttemptPermit,
 };
-use crate::domain::inference_admission::{
+use crate::domain::admission::value_objects::inference_admission::{
     AdmissionActivity, AdmissionPhase, AttemptObservation, CooldownState, Feedback, GroupActivity,
     GroupId, ThrottleFeedback,
 };

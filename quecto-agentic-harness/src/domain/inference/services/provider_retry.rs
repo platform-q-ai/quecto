@@ -1,5 +1,5 @@
 //! Bounded retry policy shared by streaming and non-streaming orchestration.
-use super::error::DomainError;
+use crate::domain::error::DomainError;
 use std::time::Duration;
 
 /// Respect a provider horizon, or return control when it exceeds the turn's wait budget.

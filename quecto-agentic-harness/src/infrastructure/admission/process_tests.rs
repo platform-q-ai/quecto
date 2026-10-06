@@ -1,7 +1,9 @@
 //! Process binding over a real in-process authority: root install, gates,
 //! child negotiation with sidecar consumption, failure paths and shutdown.
 use super::*;
-use crate::domain::inference_admission::{AdmissionConfig, Feedback, GroupId, GroupPolicy};
+use crate::domain::admission::value_objects::inference_admission::{
+    AdmissionConfig, Feedback, GroupId, GroupPolicy,
+};
 use crate::infrastructure::admission::{AdminConnection, AuthorityDirectory, AuthorityServer};
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -44,7 +46,7 @@ fn context_round_trip_and_rejections() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("ctx.json");
     let credential = Credential {
-        scope: crate::domain::inference_admission::ScopeId {
+        scope: crate::domain::admission::value_objects::inference_admission::ScopeId {
             epoch: 3,
             serial: 9,
         },
@@ -194,7 +196,7 @@ fn child_negotiation_consumes_its_sidecar_and_rejects_forgeries() {
             .await
             .unwrap();
         let credential = parent
-            .register_root(crate::domain::inference_admission::WorkloadClass::Interactive)
+            .register_root(crate::domain::admission::value_objects::inference_admission::WorkloadClass::Interactive)
             .await
             .unwrap();
         parent.bind(credential).await.unwrap();

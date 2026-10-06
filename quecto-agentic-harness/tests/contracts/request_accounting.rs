@@ -1,16 +1,18 @@
 use quecto::application::providers::ports::RequestAccounting;
-use quecto::domain::request_observation::RequestObservation;
+use quecto::domain::inference::events::request_observation::RequestObservation;
 #[tokio::test]
 async fn real_accounting_redelivery_counts_once_and_rejects_changed_measurements() {
     let (_directory, context) = super::swarm_control_fixture::context();
     let mut observation = RequestObservation {
         started_unix_ms: Some(1000),
         finished_unix_ms: Some(1001),
-        attempt_diagnostics: vec![quecto::domain::attempt_diagnostics::AttemptDiagnostics {
-            attempt_number: 1,
-            wire_status: Some(200),
-            ..Default::default()
-        }],
+        attempt_diagnostics: vec![
+            quecto::domain::inference::value_objects::attempt_diagnostics::AttemptDiagnostics {
+                attempt_number: 1,
+                wire_status: Some(200),
+                ..Default::default()
+            },
+        ],
         request_id: "contract-request".into(),
         model: "test".into(),
         provider: "test".into(),

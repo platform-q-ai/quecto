@@ -238,10 +238,12 @@ pub(super) fn build_command(args: &serde_json::Value) -> Result<(String, String,
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .ok_or("set_effort requires effort")?;
-            if crate::domain::provider::EffortLevel::parse(effort).is_none() {
+            if crate::domain::inference::value_objects::provider::EffortLevel::parse(effort)
+                .is_none()
+            {
                 return Err(format!(
                     "invalid effort '{effort}'; valid values: {}",
-                    crate::domain::provider::EffortLevel::VALID_VALUES
+                    crate::domain::inference::value_objects::provider::EffortLevel::VALID_VALUES
                 ));
             }
             serde_json::json!({"type": "set_effort", "effort": effort, "ack": "accept"})

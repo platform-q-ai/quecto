@@ -104,7 +104,7 @@ pub fn retry_after_suffix(headers: &reqwest::header::HeaderMap) -> String {
     String::new()
 }
 
-use crate::domain::provider::StreamEvent;
+use crate::domain::inference::value_objects::provider::StreamEvent;
 
 /// Outcome of processing a single SSE line.
 ///

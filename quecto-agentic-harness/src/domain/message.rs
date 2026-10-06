@@ -227,9 +227,9 @@ impl Message {
 
     /// Estimate token count from text content, by character class: prose,
     /// dense digit-bearing runs and non-ASCII (#2212). See
-    /// [`crate::domain::token_estimate`].
+    /// [`crate::domain::inference::value_objects::token_estimate`].
     pub fn estimate_tokens(text: &str) -> usize {
-        crate::domain::token_estimate::estimate_tokens(text)
+        crate::domain::inference::value_objects::token_estimate::estimate_tokens(text)
     }
 
     /// Clear the cached token estimate. Call this whenever the fields that

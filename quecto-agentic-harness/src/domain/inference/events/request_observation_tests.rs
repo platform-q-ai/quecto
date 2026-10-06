@@ -4,7 +4,9 @@ mod retention_tests {
 
     #[test]
     fn maximum_produced_attempt_payload_fits_accounting_envelope() {
-        use crate::domain::attempt_diagnostics::{HeaderName, HeaderValue, SafeHeader};
+        use crate::domain::inference::value_objects::attempt_diagnostics::{
+            HeaderName, HeaderValue, SafeHeader,
+        };
         let trace = RequestTrace::default();
         for attempt_number in 1..=16 {
             trace.record_attempt(AttemptDiagnostics {

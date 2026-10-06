@@ -37,7 +37,7 @@ impl std::fmt::Display for ConfigError {
                 f,
                 "invalid effort level '{}'; expected one of: {}",
                 v,
-                crate::domain::provider::EffortLevel::VALID_VALUES
+                crate::domain::inference::value_objects::provider::EffortLevel::VALID_VALUES
             ),
             ConfigError::ContainerConfigs(err) => {
                 write!(f, "invalid container_configs: {err}")

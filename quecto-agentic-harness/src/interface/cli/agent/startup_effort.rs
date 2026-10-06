@@ -8,7 +8,7 @@
 //! it.
 
 use crate::application::catalogue::use_cases::ChangeReasoningEffort;
-use crate::domain::provider::EffortLevel;
+use crate::domain::inference::value_objects::provider::EffortLevel;
 use crate::infrastructure::config::Config;
 
 /// `Some(level)` to apply, `Some(None)` for the provider default, `None`

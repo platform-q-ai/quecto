@@ -14,9 +14,9 @@ use crate::application::catalogue::ports::ModelRefusalSink;
 use crate::application::providers::ports::{ChatRequest, LlmProvider, RouteCheck};
 use crate::domain::catalogue::ModelRef;
 use crate::domain::error::DomainError;
+use crate::domain::inference::services::provider_error::model_refusal;
+use crate::domain::inference::value_objects::provider::{ModelRoute, StreamEvent, route_model};
 use crate::domain::message::LlmResponse;
-use crate::domain::provider::{ModelRoute, StreamEvent, route_model};
-use crate::domain::provider_error::model_refusal;
 
 #[derive(Debug)]
 pub struct RefusalRecordingProvider {

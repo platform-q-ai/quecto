@@ -3,7 +3,7 @@
 //! completion is acknowledged, and fails closed when durability fails.
 use quecto::application::inference_authority::{AdmissionAuthority, AuthorityError, Credential};
 use quecto::application::ports::{AdmissionJournal, AdmissionSecretSource, JournalError};
-use quecto::domain::inference_admission::{
+use quecto::domain::admission::value_objects::inference_admission::{
     AdmissionConfig, AdmissionError, AdmissionLedger, Feedback, GroupId, GroupPolicy, RequestId,
     RequestState, TerminalOutcome, WorkloadClass,
 };

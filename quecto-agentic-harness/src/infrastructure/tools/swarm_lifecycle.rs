@@ -506,7 +506,7 @@ impl crate::application::swarm::ports::Clock for SystemClock {
 impl crate::application::providers::ports::RequestAdmission for SwarmContext {
     fn check(
         &self,
-        attempt: crate::domain::provider::RequestAttempt,
+        attempt: crate::domain::inference::value_objects::provider::RequestAttempt,
     ) -> PortFuture<'_, Result<(), DomainError>> {
         let context = self.clone();
         let actor = self.member.clone();

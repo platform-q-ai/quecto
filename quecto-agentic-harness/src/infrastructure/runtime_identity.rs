@@ -1,5 +1,5 @@
 //! Identifies the running executable independently of the workload checkout.
-use crate::domain::request_observation::RuntimeIdentity;
+use crate::domain::inference::events::request_observation::RuntimeIdentity;
 use sha2::{Digest, Sha256};
 use std::io::Read;
 

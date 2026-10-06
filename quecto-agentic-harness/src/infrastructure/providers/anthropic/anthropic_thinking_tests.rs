@@ -10,8 +10,8 @@
 
 use super::*;
 use crate::application::providers::ports::ChatRequest;
+use crate::domain::inference::value_objects::provider::EffortLevel;
 use crate::domain::message::Message;
-use crate::domain::provider::EffortLevel;
 
 #[test]
 fn test_build_request_body_with_thinking_adds_thinking_param() {
@@ -27,7 +27,9 @@ fn test_build_request_body_with_thinking_adds_thinking_param() {
         session_id: None,
         tool_choice: None,
         metadata: None,
-        thinking_level: Some(crate::domain::provider::ThinkingLevel::Medium),
+        thinking_level: Some(
+            crate::domain::inference::value_objects::provider::ThinkingLevel::Medium,
+        ),
         cancel_flag: None,
         effort: None,
     };
@@ -146,7 +148,9 @@ fn test_build_request_body_thinking_bumps_max_tokens() {
         session_id: None,
         tool_choice: None,
         metadata: None,
-        thinking_level: Some(crate::domain::provider::ThinkingLevel::High),
+        thinking_level: Some(
+            crate::domain::inference::value_objects::provider::ThinkingLevel::High,
+        ),
         cancel_flag: None,
         effort: None,
     };
@@ -198,7 +202,7 @@ data: {\"type\":\"message_stop\"}\n";
 
 #[test]
 fn test_thinking_budget_tokens_levels() {
-    use crate::domain::provider::ThinkingLevel;
+    use crate::domain::inference::value_objects::provider::ThinkingLevel;
     assert_eq!(ThinkingLevel::Low.budget_tokens(), Some(1024));
     assert_eq!(ThinkingLevel::Medium.budget_tokens(), Some(10_000));
     assert_eq!(ThinkingLevel::High.budget_tokens(), Some(16_384));
@@ -208,7 +212,7 @@ fn test_thinking_budget_tokens_levels() {
 
 #[test]
 fn test_thinking_budget_tokens_adaptive_returns_none() {
-    use crate::domain::provider::ThinkingLevel;
+    use crate::domain::inference::value_objects::provider::ThinkingLevel;
     // budget_tokens() must return None for Adaptive — not panic.
     assert_eq!(ThinkingLevel::Adaptive.budget_tokens(), None);
 }
@@ -233,7 +237,9 @@ fn test_opus_4_6_adaptive_thinking_emits_correct_json() {
         session_id: None,
         tool_choice: None,
         metadata: None,
-        thinking_level: Some(crate::domain::provider::ThinkingLevel::Adaptive),
+        thinking_level: Some(
+            crate::domain::inference::value_objects::provider::ThinkingLevel::Adaptive,
+        ),
         cancel_flag: None,
         effort: None,
     };
@@ -268,7 +274,9 @@ fn test_sonnet_4_6_adaptive_thinking_emits_correct_json() {
         session_id: None,
         tool_choice: None,
         metadata: None,
-        thinking_level: Some(crate::domain::provider::ThinkingLevel::Adaptive),
+        thinking_level: Some(
+            crate::domain::inference::value_objects::provider::ThinkingLevel::Adaptive,
+        ),
         cancel_flag: None,
         effort: None,
     };
@@ -292,7 +300,9 @@ fn test_older_model_manual_thinking_still_uses_budget_tokens() {
         session_id: None,
         tool_choice: None,
         metadata: None,
-        thinking_level: Some(crate::domain::provider::ThinkingLevel::High),
+        thinking_level: Some(
+            crate::domain::inference::value_objects::provider::ThinkingLevel::High,
+        ),
         cancel_flag: None,
         effort: None,
     };
@@ -495,7 +505,9 @@ fn test_adaptive_thinking_with_effort_combined() {
         session_id: None,
         tool_choice: None,
         metadata: None,
-        thinking_level: Some(crate::domain::provider::ThinkingLevel::Adaptive),
+        thinking_level: Some(
+            crate::domain::inference::value_objects::provider::ThinkingLevel::Adaptive,
+        ),
         cancel_flag: None,
         effort: Some(EffortLevel::High),
     };

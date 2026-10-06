@@ -1,7 +1,7 @@
 //! #2210: the live progress of a request in flight, its output cap, and the
 //! record of an attempt interrupted in flight.
 use super::*;
-use crate::domain::request_observation::MAX_ATTEMPT_RECORDS;
+use crate::domain::inference::events::request_observation::MAX_ATTEMPT_RECORDS;
 use std::time::Duration;
 
 fn ms(n: u64) -> Duration {
@@ -31,12 +31,12 @@ fn the_output_cap_error_names_the_cap_and_classifies_as_output_capped() {
     let message = error.to_string();
     assert!(message.starts_with(OUTPUT_CAP_EXCEEDED), "{message}");
     assert!(message.contains("65536 bytes"), "{message}");
-    let class = crate::domain::provider_error::classify_provider_error(
+    let class = crate::domain::inference::services::provider_error::classify_provider_error(
         &crate::domain::error::DomainError::Provider(message),
     );
     assert_eq!(
         class,
-        crate::domain::provider_error::ProviderErrorClass::OutputCapped
+        crate::domain::inference::services::provider_error::ProviderErrorClass::OutputCapped
     );
     assert!(!class.is_retryable());
 }

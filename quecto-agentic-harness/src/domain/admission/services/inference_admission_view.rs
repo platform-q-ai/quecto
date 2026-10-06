@@ -2,7 +2,9 @@
 //! whose attempts are queued at the authority is *waiting*, never quiet or
 //! stalled. The verdict is a pure projection of [`AdmissionActivity`]; it
 //! carries no lifecycle state and no presentation text.
-use super::inference_admission::{AdmissionActivity, AdmissionPhase, CooldownState, GroupId};
+use crate::domain::admission::value_objects::inference_admission::{
+    AdmissionActivity, AdmissionPhase, CooldownState, GroupId,
+};
 
 /// Why the longest-waiting attempt is still queued, as far as this process
 /// last learned from its own feedback.

@@ -376,7 +376,7 @@ impl AgentSession {
     }
     pub(crate) fn record_request_diagnostics(
         &mut self,
-        diagnostics: crate::domain::request_observation::RequestDiagnostics,
+        diagnostics: crate::domain::inference::events::request_observation::RequestDiagnostics,
     ) {
         self.usage.request_diagnostics.merge(diagnostics);
         self.bump_visible_generation();

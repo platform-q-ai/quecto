@@ -12,7 +12,9 @@ use super::protocol::*;
 use super::secret::RandomSecretSource;
 use super::server::{Clock, wall_ms};
 use crate::application::ports::{AdmissionAuthority, AuthorityError, Credential};
-use crate::domain::inference_admission::{RequestId, RequestState, ScopeId, TerminalOutcome};
+use crate::domain::admission::value_objects::inference_admission::{
+    RequestId, RequestState, ScopeId, TerminalOutcome,
+};
 
 pub(super) enum Command {
     Open {

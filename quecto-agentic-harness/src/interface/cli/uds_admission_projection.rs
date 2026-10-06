@@ -2,8 +2,10 @@
 //! fresh `admission` object beside the execution phase, plus the `waiting`
 //! progress verdict. Admission never becomes a lifecycle `state` value.
 
-use crate::domain::inference_admission::{AdmissionActivity, CooldownState};
-use crate::domain::inference_admission_view::{WaitCause, waiting_verdict};
+use crate::domain::admission::services::inference_admission_view::{WaitCause, waiting_verdict};
+use crate::domain::admission::value_objects::inference_admission::{
+    AdmissionActivity, CooldownState,
+};
 
 pub use crate::domain::state_snapshot::{
     AdmissionCounters, AdmissionSnapshot, CooldownSnapshot, GroupSnapshot,

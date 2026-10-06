@@ -2,7 +2,7 @@
 //! loop applies to every subsequent `ChatRequest`. The loop implements it;
 //! the use case is the only writer.
 
-use crate::domain::provider::EffortLevel;
+use crate::domain::inference::value_objects::provider::EffortLevel;
 
 pub trait EffortRuntime {
     /// The level currently applied (`None` = provider default).

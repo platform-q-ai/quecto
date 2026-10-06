@@ -340,7 +340,7 @@ fn subagent_cmd_scrubs_flag_api_key() {
 
 #[test]
 fn provider_error_round_trip() {
-    use crate::domain::provider_error::ProviderErrorClass;
+    use crate::domain::inference::services::provider_error::ProviderErrorClass;
     let event = AuditEvent::ProviderError {
         provider: "fireworks".into(),
         class: ProviderErrorClass::Client,
@@ -358,7 +358,7 @@ fn provider_error_round_trip() {
 
 #[test]
 fn provider_error_null_status_round_trip() {
-    use crate::domain::provider_error::ProviderErrorClass;
+    use crate::domain::inference::services::provider_error::ProviderErrorClass;
     let event = AuditEvent::ProviderError {
         provider: "anthropic".into(),
         class: ProviderErrorClass::Network,
@@ -372,7 +372,7 @@ fn provider_error_null_status_round_trip() {
 
 #[test]
 fn provider_error_keeps_full_untruncated_body() {
-    use crate::domain::provider_error::ProviderErrorClass;
+    use crate::domain::inference::services::provider_error::ProviderErrorClass;
     use crate::domain::redaction::redact_secrets;
     // A body far longer than any TUI/preview cap (200 chars) must survive
     // intact in the persisted audit record (#937 AC1/AC5). A planted secret
@@ -408,7 +408,7 @@ fn provider_error_keeps_full_untruncated_body() {
 
 #[test]
 fn provider_error_redacts_planted_secret() {
-    use crate::domain::provider_error::ProviderErrorClass;
+    use crate::domain::inference::services::provider_error::ProviderErrorClass;
     let body = r#"{"error":{"message":"rejected request with key sk-abc123SECRETvalue here"}}"#;
     let event = AuditEvent::provider_error("openai", &ProviderErrorClass::Auth, Some(401), body);
     let json = serde_json::to_string(&event).unwrap();

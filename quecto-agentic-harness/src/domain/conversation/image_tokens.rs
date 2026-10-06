@@ -9,7 +9,7 @@
 //! provider: the long edge scaled to at most 2576 px, aspect kept, then
 //! the larger of `ceil(w*h/750)` and the 28 px patch count (a thin strip
 //! costs its patches), within [85, 4784]. The provider's own count comes
-//! back with the usage anyway (`domain::context_calibration`).
+//! back with the usage anyway (`domain::inference::services::context_calibration`).
 
 // What an image is, and how its header is read, is `quecto_image`'s
 // (#2422); how much a pixel size costs is this module's policy.

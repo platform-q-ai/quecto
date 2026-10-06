@@ -21,7 +21,7 @@ use crate::application::catalogue::dto::{
 use crate::application::catalogue::ports::{
     EffortDefaultPersistence, EffortRuntime, EffortVocabularySource,
 };
-use crate::domain::provider::EffortLevel;
+use crate::domain::inference::value_objects::provider::EffortLevel;
 
 pub struct ChangeReasoningEffort {
     vocabulary: Arc<dyn EffortVocabularySource>,

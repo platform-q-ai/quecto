@@ -81,7 +81,7 @@ pub(super) fn empty_stream_error_message(response: &LlmResponse) -> String {
         Some(StopReason::MaxTokens) => {
             "stream completed without assistant output: stop_reason=max_tokens".to_string()
         }
-        _ => crate::domain::provider_error::EMPTY_STREAM.to_string(),
+        _ => crate::domain::inference::services::provider_error::EMPTY_STREAM.to_string(),
     }
 }
 

@@ -3,8 +3,8 @@
 //
 // #437: Added `signature_delta` handling for thinking block signature capture.
 
+use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::message::{LlmResponse, StopReason, ThinkingBlock, ToolCall, UsageInfo};
-use crate::domain::provider::StreamEvent;
 use crate::domain::tool::ToolDefinition;
 use crate::domain::visible_thinking::{MAX_VISIBLE_THINKING_BYTES, append_visible_thinking};
 use crate::infrastructure::providers::sse_limits::append_with_limit;
@@ -315,7 +315,8 @@ pub(super) struct StreamParams<'a> {
     /// Tool definitions for reverse-mapping OAuth tool names (#438).
     pub tool_defs: Option<Vec<ToolDefinition>>,
     /// The request's trace: the attempt is observed beside it (#2210).
-    pub trace: Option<std::sync::Arc<crate::domain::request_observation::RequestTrace>>,
+    pub trace:
+        Option<std::sync::Arc<crate::domain::inference::events::request_observation::RequestTrace>>,
 }
 
 /// Parameters for incremental streaming (extends [`StreamParams`] with a channel).
@@ -621,7 +622,10 @@ async fn dispatch_sse_event(
         "message_stop" => {
             let mut response = std::mem::take(acc).into_response();
             if let Some(model) = model {
-                crate::domain::usage_accounting::attach_cost(&mut response, model);
+                crate::domain::inference::services::usage_accounting::attach_cost(
+                    &mut response,
+                    model,
+                );
             }
             let _ = tx.send(StreamEvent::Done(response)).await;
             return true;

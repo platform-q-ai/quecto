@@ -20,7 +20,7 @@
 //! next observation the estimate stands, as it does for a resumed session
 //! and for providers that report no usage.
 
-use crate::domain::context_calibration::EstimateScale;
+use crate::domain::inference::services::context_calibration::EstimateScale;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(in crate::application) struct ContextGaugeCalibration {

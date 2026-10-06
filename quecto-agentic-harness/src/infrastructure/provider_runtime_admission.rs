@@ -11,7 +11,7 @@ use crate::application::ports::AttemptAdmission;
 use crate::application::ports::ProviderRuntimeFactory;
 use crate::application::ports::ProviderRuntimeOutcome;
 use crate::application::providers::ports::LlmProvider;
-use crate::domain::inference_admission::{AdmissionConfig, GroupPolicy};
+use crate::domain::admission::value_objects::inference_admission::{AdmissionConfig, GroupPolicy};
 use crate::infrastructure::config::Config;
 
 /// Binding key that catches every provider slot with no explicit binding

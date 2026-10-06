@@ -12,10 +12,12 @@
 //! session key: what a request records is counts, indices, a kind and token
 //! estimates.
 use crate::domain::conversation::image_tokens::{UNREADABLE_IMAGE_TOKENS, estimate_image_tokens};
-use crate::domain::request_observation::{
+use crate::domain::inference::events::request_observation::{
     InputBaseline, InputItemKind, InputPrefix, InputPrefixParts, RequestTrace,
 };
-use crate::domain::token_estimate::{estimate_opaque_tokens, estimate_tokens};
+use crate::domain::inference::value_objects::token_estimate::{
+    estimate_opaque_tokens, estimate_tokens,
+};
 use std::hash::Hasher;
 
 /// A session's last accepted request, as its baseline keeps it.

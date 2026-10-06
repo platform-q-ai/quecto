@@ -491,7 +491,7 @@ fn numeric_throttle_chunks_throttle_admission() {
 /// one list never throttles admission, even as a 429; a plain 429 does.
 #[test]
 fn a_billing_http_error_never_throttles_admission() {
-    for name in crate::domain::provider_error::BILLING_ERROR_NAMES {
+    for name in crate::domain::inference::services::provider_error::BILLING_ERROR_NAMES {
         for field in ["type", "code"] {
             let receipt = diagnostic_receipt();
             let body = serde_json::json!({"error": { field: name }}).to_string();

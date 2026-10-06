@@ -7,7 +7,7 @@
 
 use super::AgentLoopImpl;
 use crate::application::catalogue::ports::EffortRuntime;
-use crate::domain::provider::EffortLevel;
+use crate::domain::inference::value_objects::provider::EffortLevel;
 
 impl EffortRuntime for AgentLoopImpl {
     fn effort(&self) -> Option<EffortLevel> {

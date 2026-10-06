@@ -377,7 +377,8 @@ impl Config {
     /// with an error naming every valid value (#1066).
     pub(super) fn validate_effort(&self) -> Result<(), ConfigError> {
         if let Some(effort) = self.agents.defaults.effort.as_deref()
-            && crate::domain::provider::EffortLevel::parse(effort).is_none()
+            && crate::domain::inference::value_objects::provider::EffortLevel::parse(effort)
+                .is_none()
         {
             return Err(ConfigError::InvalidEffort(effort.to_string()));
         }

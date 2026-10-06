@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use quecto::application::ports::AdmissionJournal;
-use quecto::domain::inference_admission::*;
+use quecto::domain::admission::value_objects::inference_admission::*;
 use quecto::infrastructure::admission::{
     AdminConnection, AuthorityConnection, AuthorityDirectory, AuthorityServer, ClientError,
     FileJournal, ServerError, SingletonLock,

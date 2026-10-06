@@ -422,7 +422,9 @@ fn composed_admission_startup_child_root_and_disabled() {
         let config_file = temp.path().join("config.json");
         let mut flags = admission_flags();
         let broker = if case == "child" {
-            use crate::domain::inference_admission::{AdmissionConfig, GroupId, GroupPolicy};
+            use crate::domain::admission::value_objects::inference_admission::{
+                AdmissionConfig, GroupId, GroupPolicy,
+            };
             use crate::infrastructure::admission::{
                 AuthorityDirectory, AuthorityServer, Negotiation, negotiate,
                 write_admission_context,

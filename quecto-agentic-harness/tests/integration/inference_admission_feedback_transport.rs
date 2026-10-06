@@ -7,7 +7,7 @@
 pub(crate) mod fixture;
 
 use fixture::*;
-use quecto::domain::inference_admission::{Feedback, ThrottleFeedback};
+use quecto::domain::admission::value_objects::inference_admission::{Feedback, ThrottleFeedback};
 use quecto::infrastructure::providers::retry::{RetryConfig, RetryingProvider};
 use std::sync::Arc;
 

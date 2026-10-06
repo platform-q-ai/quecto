@@ -75,7 +75,9 @@ fn empty_stream_error_message_distinguishes_max_tokens_from_provider_empty() {
 
 #[test]
 fn empty_stream_has_no_wire_status_or_overload_claim() {
-    use crate::domain::provider_error::{classify_provider_error, provider_http_status};
+    use crate::domain::inference::services::provider_error::{
+        classify_provider_error, provider_http_status,
+    };
     let error = DomainError::Provider(empty_stream_error_message(&response(
         None,
         vec![],

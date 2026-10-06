@@ -8,7 +8,7 @@
 use quecto::application::agent_loop::UsageTotals;
 use quecto::application::sessions::ports::SessionSwitchRuntime;
 use quecto::application::sessions::ports::session_runtime::TurnAccountingReset;
-use quecto::domain::provider::EffortLevel;
+use quecto::domain::inference::value_objects::provider::EffortLevel;
 use quecto::interface::cli::uds_session_switch_runtime::LoopSessionSwitchRuntime;
 
 use super::switch_runtime_fixture::{Runtime, runtime};

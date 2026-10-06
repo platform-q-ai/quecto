@@ -609,15 +609,18 @@ impl PublishedEffortVocabulary {
 }
 
 impl crate::application::catalogue::ports::EffortVocabularySource for PublishedEffortVocabulary {
-    fn effort_vocabulary(&self, model: &str) -> Option<Vec<crate::domain::provider::EffortLevel>> {
+    fn effort_vocabulary(
+        &self,
+        model: &str,
+    ) -> Option<Vec<crate::domain::inference::value_objects::provider::EffortLevel>> {
         let snapshot = self.store.current();
-        let levels = |entry: &CatalogueEntry| -> Vec<crate::domain::provider::EffortLevel> {
+        let levels = |entry: &CatalogueEntry| -> Vec<crate::domain::inference::value_objects::provider::EffortLevel> {
             entry
                 .model
                 .capabilities
                 .effort_levels
                 .iter()
-                .filter_map(|level| crate::domain::provider::EffortLevel::parse(level))
+                .filter_map(|level| crate::domain::inference::value_objects::provider::EffortLevel::parse(level))
                 .collect()
         };
         if let Ok(reference) = ModelRef::parse_qualified(model) {

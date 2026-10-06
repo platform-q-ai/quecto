@@ -2,7 +2,7 @@
 // Split from codex_tests.rs for the 750-line limit.
 
 use super::*;
-use crate::domain::provider::EffortLevel;
+use crate::domain::inference::value_objects::provider::EffortLevel;
 
 /// Issue #1066: when no effort is configured, the request must omit
 /// `reasoning.effort` entirely so OpenAI's server default applies — the

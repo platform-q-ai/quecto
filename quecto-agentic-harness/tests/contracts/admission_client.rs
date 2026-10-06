@@ -1,7 +1,7 @@
 //! #1679 P1: deterministic public-port admission contracts (AC1–3, AC6).
 use quecto::application::inference_admission::AdmissionService;
 use quecto::application::ports::{AdmissionClient, AdmissionDispatcher, AdmissionRegistry};
-use quecto::domain::inference_admission::{
+use quecto::domain::admission::value_objects::inference_admission::{
     AdmissionConfig, AdmissionError as Error, Feedback, GroupId, GroupPolicy, RequestId,
     RequestState, ScopeId, TerminalOutcome, WorkloadClass,
 };

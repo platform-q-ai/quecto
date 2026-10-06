@@ -8,8 +8,10 @@
 
 use super::*;
 use crate::application::providers::ports::ChatRequest;
+use crate::domain::inference::value_objects::provider::{
+    CancelFlag, RequestMetadata, StreamEvent, ToolChoice,
+};
 use crate::domain::message::{LlmResponse, Message, UsageInfo};
-use crate::domain::provider::{CancelFlag, RequestMetadata, StreamEvent, ToolChoice};
 use crate::domain::tool::{ImageBlock, ToolDefinition};
 
 fn base_req<'a>(
@@ -113,14 +115,17 @@ fn response_with_usage() -> LlmResponse {
 #[test]
 fn attach_cost_sets_cost_for_known_model() {
     let mut resp = response_with_usage();
-    crate::domain::usage_accounting::attach_cost(&mut resp, "claude-opus-4-6");
+    crate::domain::inference::services::usage_accounting::attach_cost(&mut resp, "claude-opus-4-6");
     assert!(resp.usage.unwrap().cost.is_some());
 }
 
 #[test]
 fn attach_cost_leaves_none_for_unknown_model() {
     let mut resp = response_with_usage();
-    crate::domain::usage_accounting::attach_cost(&mut resp, "totally-unknown-model-xyz");
+    crate::domain::inference::services::usage_accounting::attach_cost(
+        &mut resp,
+        "totally-unknown-model-xyz",
+    );
     assert!(resp.usage.unwrap().cost.is_none());
 }
 
@@ -133,7 +138,7 @@ fn attach_cost_noop_when_no_usage() {
         stop_reason: None,
         thinking_blocks: vec![],
     };
-    crate::domain::usage_accounting::attach_cost(&mut resp, "claude-opus-4-6");
+    crate::domain::inference::services::usage_accounting::attach_cost(&mut resp, "claude-opus-4-6");
     assert!(resp.usage.is_none());
 }
 
@@ -406,7 +411,7 @@ fn test_anthropic_cache_usage_matches_normalized_openai_equivalent() {
     assert_eq!(usage.cache_write_tokens, Some(5));
     assert_eq!(usage.context_tokens, Some(105));
     assert_eq!(
-        crate::domain::usage_accounting::cache_hit_ratio(
+        crate::domain::inference::services::usage_accounting::cache_hit_ratio(
             usage.prompt_tokens as u64,
             usage.cache_read_tokens.unwrap_or(0) as u64,
             usage.cache_write_tokens.unwrap_or(0) as u64,

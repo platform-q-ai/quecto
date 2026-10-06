@@ -7,8 +7,8 @@
 // channel is drained synchronously.
 
 use super::*;
+use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::message::{StopReason, ThinkingBlock};
-use crate::domain::provider::StreamEvent;
 use crate::infrastructure::providers::sse_common::{SseHandler, SseLineOutcome};
 
 fn channel() -> (
@@ -462,7 +462,11 @@ async fn handler_on_empty_eof_emits_the_empty_stream_error() {
     let events = drain(&mut rx);
     match events.first() {
         Some(StreamEvent::Error(e)) => {
-            assert_eq!(e, crate::domain::provider_error::EMPTY_STREAM, "{e}")
+            assert_eq!(
+                e,
+                crate::domain::inference::services::provider_error::EMPTY_STREAM,
+                "{e}"
+            )
         }
         other => panic!("unexpected: {other:?}"),
     }
@@ -595,7 +599,7 @@ fn thinking_and_signature_accumulation_are_capped() {
 
 #[tokio::test]
 async fn anthropic_live_thinking_uses_aggregate_cap() {
-    use crate::domain::provider::StreamEvent;
+    use crate::domain::inference::value_objects::provider::StreamEvent;
 
     let cap = crate::domain::visible_thinking::MAX_VISIBLE_THINKING_BYTES;
     let (tx, mut rx) = tokio::sync::mpsc::channel(8);
@@ -652,7 +656,7 @@ async fn anthropic_live_thinking_uses_aggregate_cap() {
 
 #[tokio::test]
 async fn anthropic_live_thinking_persists_once() {
-    use crate::domain::provider::StreamEvent;
+    use crate::domain::inference::value_objects::provider::StreamEvent;
 
     let (tx, mut rx) = tokio::sync::mpsc::channel(8);
     let mut acc = SseAccumulator::default();

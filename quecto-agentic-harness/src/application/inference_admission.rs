@@ -1,5 +1,5 @@
 //! Phase-local admission application capabilities. No runtime wiring is enabled.
-use crate::domain::inference_admission::*;
+use crate::domain::admission::value_objects::inference_admission::*;
 
 /// Trusted authority ingress only; not exposed to an unauthenticated client.
 pub trait AdmissionRegistry {
@@ -70,13 +70,13 @@ pub trait AdmissionRecovery {
 /// Not installed at provider boundaries until the later integration phases.
 #[derive(Debug)]
 pub struct AdmissionService {
-    policy: crate::domain::inference_admission_policy::AdmissionPolicy,
+    policy: crate::domain::admission::services::inference_admission_policy::AdmissionPolicy,
 }
 
 impl AdmissionService {
     pub fn new(epoch: u64, config: AdmissionConfig) -> Result<Self, AdmissionError> {
         Ok(Self {
-            policy: crate::domain::inference_admission_policy::AdmissionPolicy::new(epoch, config)?,
+            policy: crate::domain::admission::services::inference_admission_policy::AdmissionPolicy::new(epoch, config)?,
         })
     }
 
@@ -87,7 +87,7 @@ impl AdmissionService {
         now: u64,
     ) -> Result<Self, AdmissionError> {
         Ok(Self {
-            policy: crate::domain::inference_admission_policy::AdmissionPolicy::restore(
+            policy: crate::domain::admission::services::inference_admission_policy::AdmissionPolicy::restore(
                 config, ledger, now,
             )?,
         })

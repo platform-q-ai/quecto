@@ -4,10 +4,12 @@ use super::*;
 use crate::domain::conversation::image_tokens::{
     MIN_IMAGE_TOKENS, UNREADABLE_IMAGE_TOKENS, estimate_image_tokens,
 };
-use crate::domain::request_observation::{
+use crate::domain::inference::events::request_observation::{
     InputBaseline, InputItemKind, InputPrefixParts, RequestTrace,
 };
-use crate::domain::token_estimate::{estimate_opaque_tokens, estimate_tokens};
+use crate::domain::inference::value_objects::token_estimate::{
+    estimate_opaque_tokens, estimate_tokens,
+};
 use serde_json::{Value, json};
 
 fn user(text: &str) -> Value {

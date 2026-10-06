@@ -2,7 +2,7 @@
 //! `catalogue.rs` to respect the per-file line cap.
 
 use super::{ProviderId, TransportKind};
-use crate::domain::provider::EffortLevel;
+use crate::domain::inference::value_objects::provider::EffortLevel;
 
 /// The reasoning-effort vocabulary a model accepts on the wire (#1996): the
 /// one domain rule that seeds [`ModelCapabilities::effort_levels`]. Every

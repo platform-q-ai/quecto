@@ -3,8 +3,8 @@
 use quecto::application::inference_attempt::{AttemptAdmission, AttemptPermit};
 use quecto::application::providers::ports::{ChatRequest, LlmProvider};
 use quecto::domain::{
+    admission::value_objects::inference_admission::{Feedback, ThrottleFeedback},
     error::DomainError,
-    inference_admission::{Feedback, ThrottleFeedback},
 };
 use quecto::infrastructure::providers::openai::OpenAiProvider;
 use std::{

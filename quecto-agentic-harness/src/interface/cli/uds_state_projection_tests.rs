@@ -356,7 +356,7 @@ fn a_since_poll_sees_a_model_turn_in_flight() {
 /// admission view, zero before any request and without an execution view.
 #[test]
 fn the_agents_own_request_counters_are_always_reported() {
-    use crate::domain::inference::request_completion::AgentRequestCounters;
+    use crate::domain::inference::events::request_completion::AgentRequestCounters;
     let mut state = state_with_execution(7, "quiet");
     let execution = state.execution.as_mut().unwrap();
     execution.agent_requests = AgentRequestCounters {

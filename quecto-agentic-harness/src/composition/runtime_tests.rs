@@ -131,7 +131,9 @@ fn admission_candidate_is_the_configured_proposal_or_none() {
 /// its configured section as a validated candidate, never inherits.
 #[test]
 fn only_a_child_binding_inherits_at_composition() {
-    use crate::domain::inference_admission::{AdmissionConfig, GroupId, GroupPolicy};
+    use crate::domain::admission::value_objects::inference_admission::{
+        AdmissionConfig, GroupId, GroupPolicy,
+    };
     use crate::infrastructure::admission::{
         AuthorityDirectory, AuthorityServer, Negotiation, negotiate, write_admission_context,
     };

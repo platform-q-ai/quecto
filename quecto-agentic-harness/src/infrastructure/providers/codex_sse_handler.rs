@@ -1,8 +1,8 @@
 //! Responses SSE event handler.
 use super::codex_sse_state;
 use super::{CodexProvider, SseAccumulator};
+use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::message::LlmResponse;
-use crate::domain::provider::StreamEvent;
 use crate::infrastructure::providers::sse_common::{SseHandler, SseLineOutcome};
 use crate::infrastructure::providers::sse_end;
 
@@ -23,7 +23,8 @@ pub(super) struct CodexSseHandler {
     /// Where reasoning items are replayed to (#2162).
     origin: String,
     /// Where usage reported before a cut is recorded (#2249 review).
-    trace: Option<std::sync::Arc<crate::domain::request_observation::RequestTrace>>,
+    trace:
+        Option<std::sync::Arc<crate::domain::inference::events::request_observation::RequestTrace>>,
 }
 
 impl CodexSseHandler {
@@ -48,7 +49,9 @@ impl CodexSseHandler {
     /// Record usage a cut-short reply reported on `trace` (#2249 review).
     pub(super) fn with_trace(
         mut self,
-        trace: Option<std::sync::Arc<crate::domain::request_observation::RequestTrace>>,
+        trace: Option<
+            std::sync::Arc<crate::domain::inference::events::request_observation::RequestTrace>,
+        >,
     ) -> Self {
         self.trace = trace;
         self

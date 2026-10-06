@@ -17,15 +17,18 @@ use crate::domain::agent::{AgentInfo, AgentProgressEvent, AgentResult, ProgressC
 use crate::domain::audit::AuditEvent;
 use crate::domain::conversation::reply_requirement::ReplyRequirement;
 use crate::domain::error::DomainError;
+use crate::domain::inference::events::request_observation::{
+    InputBaseline, RequestDiagnostics, RequestObservation,
+};
+use crate::domain::inference::services::provider_error::classify_provider_error;
+use crate::domain::inference::value_objects::provider::{EffortLevel, StreamEvent};
 use crate::domain::message::{LlmResponse, Message, ToolCall};
-use crate::domain::provider::{EffortLevel, StreamEvent};
-use crate::domain::provider_error::classify_provider_error;
-use crate::domain::tool::ToolProfileContext;
-use std::pin::Pin;
-use std::sync::Arc;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
+use crate::domain::tool::{ToolPolicyReconciliation, ToolProfileContext};
+use std::{pin::Pin, sync::Arc};
 
 pub type ToolPolicyPersistence =
-    Arc<dyn Fn(&crate::domain::tool::ToolPolicyReconciliation) -> Result<(), String> + Send + Sync>;
+    Arc<dyn Fn(&ToolPolicyReconciliation) -> Result<(), String> + Send + Sync>;
 #[path = "agent_loop_clamp.rs"]
 mod agent_loop_clamp;
 #[path = "agent_loop_effort.rs"]
@@ -101,13 +104,12 @@ pub struct AgentLoopConfig {
 }
 pub struct AgentLoopImpl {
     unreported_usage: std::sync::Mutex<UsageTotals>,
-    accounting_outbox:
-        std::sync::Mutex<Vec<crate::domain::request_observation::RequestObservation>>,
-    request_observations: std::sync::Mutex<crate::domain::request_observation::RequestDiagnostics>,
+    accounting_outbox: std::sync::Mutex<Vec<RequestObservation>>,
+    request_observations: std::sync::Mutex<RequestDiagnostics>,
     /// The request in flight, which `get_state` reports (#2210).
-    in_flight_request: Arc<crate::domain::request_progress::InFlightRequest>,
+    in_flight_request: Arc<crate::domain::inference::events::request_progress::InFlightRequest>,
     /// This agent's own provider requests so far, for `get_state` (#2436).
-    request_tally: Arc<crate::domain::inference::request_completion::RequestTally>,
+    request_tally: Arc<crate::domain::inference::events::request_completion::RequestTally>,
     /// Requests that ended in flight, awaiting their audit record (#2210).
     interrupted_requests: std::sync::Mutex<Vec<super::request_observation::InterruptedRequest>>,
     request_admission: Option<Arc<dyn crate::application::providers::ports::RequestAdmission>>,
@@ -115,7 +117,7 @@ pub struct AgentLoopImpl {
     tool_admission: Option<Arc<dyn crate::application::tools::ports::ToolExecutionAdmission>>,
     request_prefix: std::sync::Mutex<Option<String>>,
     /// The session's input baseline, which outlives a rebuilt provider (#2398).
-    input_baseline: crate::domain::request_observation::InputBaseline,
+    input_baseline: InputBaseline,
     provider: Arc<dyn LlmProvider>,
     pub(super) tool_registry: Box<dyn ToolRegistry>,
     model: String,
@@ -173,9 +175,7 @@ impl AgentLoopImpl {
     pub fn new(config: AgentLoopConfig) -> Self {
         let context_manager = ContextManager::new(ContextManagerConfig {
             retention: config.retention.clone(),
-            session_key: crate::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key(
-                config.session_key.as_str(),
-            ),
+            session_key: SessionIdentity::from_persisted_key(config.session_key.as_str()),
             max_context_tokens: config.max_context_tokens,
             pin_recent_turns: config.pin_recent_turns,
             context_marks: config.context_marks,

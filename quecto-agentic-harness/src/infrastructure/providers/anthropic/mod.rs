@@ -14,8 +14,9 @@ use std::pin::Pin;
 
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::error::DomainError;
+use crate::domain::inference::services::usage_accounting;
+use crate::domain::inference::value_objects::provider::{EffortLevel, StreamEvent, ToolChoice};
 use crate::domain::message::{LlmResponse, Message, Role, StopReason, ThinkingBlock, ToolCall};
-use crate::domain::provider::StreamEvent;
 use crate::domain::visible_thinking::append_visible_thinking;
 use claude_code::{CLAUDE_CODE_VERSION, sanitize_surrogates, to_claude_code_name};
 
@@ -201,7 +202,7 @@ impl AnthropicProvider {
         }
         let effective_effort = request
             .effort
-            .or_else(|| adaptive_model.then_some(crate::domain::provider::EffortLevel::Low));
+            .or_else(|| adaptive_model.then_some(EffortLevel::Low));
         if let Some(effort) = effective_effort {
             body["output_config"] =
                 serde_json::json!({"effort": effort::anthropic_effort_str(effort)});
@@ -261,13 +262,9 @@ impl AnthropicProvider {
         // tool_choice
         if let Some(ref tc) = request.tool_choice {
             body["tool_choice"] = match tc {
-                crate::domain::provider::ToolChoice::Auto => {
-                    serde_json::json!({"type": "auto"})
-                }
-                crate::domain::provider::ToolChoice::Any => {
-                    serde_json::json!({"type": "any"})
-                }
-                crate::domain::provider::ToolChoice::Specific(name) => {
+                ToolChoice::Auto => serde_json::json!({"type": "auto"}),
+                ToolChoice::Any => serde_json::json!({"type": "any"}),
+                ToolChoice::Specific(name) => {
                     let tool_name = if is_oauth {
                         to_claude_code_name(name).to_string()
                     } else {
@@ -577,7 +574,7 @@ impl LlmProvider for AnthropicProvider {
                             DomainError::Provider(format!("failed to parse response JSON: {e}"))
                         })?;
                         let mut parsed = Self::parse_response(&json, is_oauth, &tools_snapshot)?;
-                        crate::domain::usage_accounting::attach_cost(&mut parsed, &model);
+                        usage_accounting::attach_cost(&mut parsed, &model);
                         Ok(parsed)
                     },
                 )
@@ -598,7 +595,7 @@ impl LlmProvider for AnthropicProvider {
                 })?;
 
             let mut resp = Self::parse_response(&response_json, is_oauth, &tools_snapshot)?;
-            crate::domain::usage_accounting::attach_cost(&mut resp, &model);
+            usage_accounting::attach_cost(&mut resp, &model);
             Ok(resp)
         })
     }
@@ -635,7 +632,7 @@ impl LlmProvider for AnthropicProvider {
                     |raw| {
                         let mut parsed = Self::parse_sse_reply(raw, tools_snapshot)
                             .map_err(|cut| cut.account(trace.as_deref(), &model))?;
-                        crate::domain::usage_accounting::attach_cost(&mut parsed, &model);
+                        usage_accounting::attach_cost(&mut parsed, &model);
                         Ok(parsed)
                     },
                 )
@@ -650,7 +647,7 @@ impl LlmProvider for AnthropicProvider {
                     trace,
                 })
                 .await?;
-            crate::domain::usage_accounting::attach_cost(&mut resp, &model);
+            usage_accounting::attach_cost(&mut resp, &model);
             Ok(resp)
         })
     }

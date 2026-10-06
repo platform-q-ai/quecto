@@ -3,7 +3,9 @@
 //! socket or a client reply, never through fixture bookkeeping.
 use super::*;
 use quecto::application::ports::{AttemptPermit, Credential};
-use quecto::domain::inference_admission::{Feedback, GroupId, GroupPolicy, WorkloadClass};
+use quecto::domain::admission::value_objects::inference_admission::{
+    Feedback, GroupId, GroupPolicy, WorkloadClass,
+};
 use quecto::infrastructure::admission::{
     AdminConnection, AuthorityConnection, AuthorityDirectory, AuthorityServer, ClientError,
 };
@@ -38,7 +40,7 @@ pub(super) fn group() -> GroupId {
 
 pub(super) fn proposal(capacity: usize, queue_timeout_ms: u64) -> AdmissionRuntimeProposal {
     AdmissionRuntimeProposal {
-        policy: quecto::domain::inference_admission::AdmissionConfig {
+        policy: quecto::domain::admission::value_objects::inference_admission::AdmissionConfig {
             groups: BTreeMap::from([(
                 group(),
                 GroupPolicy {
@@ -116,7 +118,9 @@ pub(super) fn inspect(s: &AuthorityState) -> quecto::application::ports::Authori
 pub(super) fn wait_for(
     s: &AuthorityState,
     description: &str,
-    expected: impl Fn(&quecto::domain::inference_admission::GroupSnapshot) -> bool,
+    expected: impl Fn(
+        &quecto::domain::admission::value_objects::inference_admission::GroupSnapshot,
+    ) -> bool,
 ) {
     let start = std::time::Instant::now();
     loop {
@@ -384,9 +388,16 @@ fn when_feedback(world: &mut QuectoWorld) {
     let (receipt_ms, wall) = permit.receipt_clock();
     assert!(wall > std::time::UNIX_EPOCH);
     assert_eq!(permit.maximum_cooldown_ms(), 10_000);
-    permit
-        .feedback(quecto::domain::inference_admission::ThrottleFeedback::Until(receipt_ms + 2_000));
-    permit.feedback(quecto::domain::inference_admission::ThrottleFeedback::NoHint { jitter: 0 });
+    permit.feedback(
+        quecto::domain::admission::value_objects::inference_admission::ThrottleFeedback::Until(
+            receipt_ms + 2_000,
+        ),
+    );
+    permit.feedback(
+        quecto::domain::admission::value_objects::inference_admission::ThrottleFeedback::NoHint {
+            jitter: 0,
+        },
+    );
     o.receipt_ms = receipt_ms;
     let _guard = rt(s).enter();
     permit.finish(Feedback::Failure);
@@ -743,8 +754,8 @@ fn then_slot_released(world: &mut QuectoWorld) {
     assert_eq!(status.groups[&group()].uncertain, 0);
     assert_eq!(
         rt(s).block_on(s.roots.last().unwrap().status(1)).unwrap(),
-        quecto::domain::inference_admission::RequestState::Terminal(
-            quecto::domain::inference_admission::TerminalOutcome::Finished
+        quecto::domain::admission::value_objects::inference_admission::RequestState::Terminal(
+            quecto::domain::admission::value_objects::inference_admission::TerminalOutcome::Finished
         )
     );
 }

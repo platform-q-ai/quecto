@@ -7,7 +7,7 @@ use super::inference_admission_authority_steps::{
 };
 use super::*;
 use quecto::application::ports::AttemptPermit;
-use quecto::domain::inference_admission::{Feedback, WorkloadClass};
+use quecto::domain::admission::value_objects::inference_admission::{Feedback, WorkloadClass};
 use quecto::infrastructure::admission::{AuthorityConnection, AuthorityDirectory, AuthorityServer};
 use std::time::{Duration, Instant};
 
@@ -31,7 +31,7 @@ impl std::fmt::Debug for MatrixState {
 
 fn start_with(
     world: &mut QuectoWorld,
-    mutate: impl FnOnce(&mut quecto::domain::inference_admission::GroupPolicy),
+    mutate: impl FnOnce(&mut quecto::domain::admission::value_objects::inference_admission::GroupPolicy),
 ) {
     let s = &mut world.authority;
     let runtime = tokio::runtime::Builder::new_multi_thread()

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use quecto::domain::inference_admission::WorkloadClass;
+use quecto::domain::admission::value_objects::inference_admission::WorkloadClass;
 use quecto::infrastructure::admission::{AdminConnection, AuthorityConnection, AuthorityDirectory};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -237,7 +237,9 @@ async fn independent_root_processes_share_the_configured_bound() {
     let dir = AuthorityDirectory::open(&temp.path().join("authority")).unwrap();
     let admin = AdminConnection::connect(&dir.admin_socket()).await.unwrap();
     let status = admin.inspect().await.unwrap();
-    let g = status.groups[&quecto::domain::inference_admission::GroupId::new("g").unwrap()];
+    let g = status.groups
+        [&quecto::domain::admission::value_objects::inference_admission::GroupId::new("g")
+            .unwrap()];
     assert_eq!((g.active, g.queued, g.uncertain), (0, 0, 0), "{g:?}");
     assert_eq!(status.live_scopes, 0, "exited roots retired their scopes");
 }
@@ -301,13 +303,15 @@ async fn descendant_context_waits_behind_its_root_and_a_forged_context_fails_clo
     );
     let admin = AdminConnection::connect(&dir.admin_socket()).await.unwrap();
     let status = admin.inspect().await.unwrap();
-    let g = status.groups[&quecto::domain::inference_admission::GroupId::new("g").unwrap()];
+    let g = status.groups
+        [&quecto::domain::admission::value_objects::inference_admission::GroupId::new("g")
+            .unwrap()];
     assert_eq!(
         (g.active, g.queued),
         (1, 1),
         "descendant is queued, not bypassing"
     );
-    permit.finish(quecto::domain::inference_admission::Feedback::Success);
+    permit.finish(quecto::domain::admission::value_objects::inference_admission::Feedback::Success);
     let (ok, stdout, stderr) = tokio::task::spawn_blocking(move || finish(agent))
         .await
         .unwrap();
@@ -412,7 +416,8 @@ async fn sigkilled_client_leaves_uncertain_occupancy_until_operator_reset() {
     let _ = tokio::task::spawn_blocking(move || finish(victim)).await;
     let dir = AuthorityDirectory::open(&temp.path().join("authority")).unwrap();
     let admin = AdminConnection::connect(&dir.admin_socket()).await.unwrap();
-    let group = quecto::domain::inference_admission::GroupId::new("g").unwrap();
+    let group =
+        quecto::domain::admission::value_objects::inference_admission::GroupId::new("g").unwrap();
     let deadline = Instant::now() + LIMIT;
     loop {
         let status = admin.inspect().await.unwrap();

@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::context_calibration::{MessageBudget, message_budget};
+use crate::domain::inference::services::context_calibration::{MessageBudget, message_budget};
 
 impl AgentLoopImpl {
     pub(super) async fn apply_context_pruning(

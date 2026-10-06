@@ -1,5 +1,5 @@
 //! Narrow outbound ports of the admission authority.
-use crate::domain::inference_admission::AdmissionLedger;
+use crate::domain::admission::value_objects::inference_admission::AdmissionLedger;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JournalError {

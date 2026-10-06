@@ -1,6 +1,6 @@
 use super::*;
+use crate::domain::inference::value_objects::provider::EffortLevel;
 use crate::domain::message::ToolCall;
-use crate::domain::provider::EffortLevel;
 use crate::domain::tool::ToolDefinition;
 
 #[test]

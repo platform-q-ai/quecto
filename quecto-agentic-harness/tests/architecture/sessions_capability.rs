@@ -748,8 +748,8 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // #2212: new modules (the gauge and its estimate scale; the pure ratio;
     // the per-class estimate).
     ("src/application/context_gauge.rs", 98),
-    ("src/domain/context_calibration.rs", 168),
-    ("src/domain/token_estimate.rs", 207),
+    ("src/domain/inference/services/context_calibration.rs", 168),
+    ("src/domain/inference/value_objects/token_estimate.rs", 207),
     // #2212: the estimate doc points at the per-class module (244 → 242);
     // #2349 review M1: the drop moved to the exchanges module (→ 209);
     // #2414: the tool-count dial removed (→ 162); #2424: its real length (→ 161).

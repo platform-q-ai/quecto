@@ -1,8 +1,8 @@
 use super::agent_loop_turn::*;
 use crate::domain::conversation::reply_requirement::ReplyRequirement;
 use crate::domain::error::DomainError;
+use crate::domain::inference::services::provider_error::ProviderErrorClass;
 use crate::domain::message::{LlmResponse, ToolCall};
-use crate::domain::provider_error::ProviderErrorClass;
 
 fn next_state_after_provider_failure(
     error: &DomainError,

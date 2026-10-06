@@ -25,7 +25,9 @@
 use std::future::Future;
 use std::time::Duration;
 
-use crate::domain::provider_error::{REPLY_TIMEOUT, STREAM_IDLE_TIMEOUT, STREAM_PROGRESS_TIMEOUT};
+use crate::domain::inference::services::provider_error::{
+    REPLY_TIMEOUT, STREAM_IDLE_TIMEOUT, STREAM_PROGRESS_TIMEOUT,
+};
 
 /// How long a streaming reply may send nothing — no response head, no SSE
 /// event (a keep-alive is no event, #2433) — before its request is abandoned.

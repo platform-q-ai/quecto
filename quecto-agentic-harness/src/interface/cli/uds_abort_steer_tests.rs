@@ -361,7 +361,7 @@ async fn advance_then_abort_provider_uses_trait_default_stream_surface() {
         .chat_stream_incremental(empty_advance_request())
         .await;
     match rx.recv().await.expect("done event") {
-        crate::domain::provider::StreamEvent::Done(resp) => {
+        crate::domain::inference::value_objects::provider::StreamEvent::Done(resp) => {
             assert_eq!(resp.content.as_deref(), Some("step"));
         }
         other => panic!("unexpected stream event: {other:?}"),

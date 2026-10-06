@@ -24,7 +24,7 @@ use crate::application::catalogue::ports::{
 };
 use crate::application::configuration::dto::{ConfigLayer, ConfigPatch, ConfigSelection};
 use crate::application::configuration::use_cases::PatchConfiguration;
-use crate::domain::provider::EffortLevel;
+use crate::domain::inference::value_objects::provider::EffortLevel;
 
 pub const MODEL_KEY_PATH: &str = "agents.defaults.model";
 pub const EFFORT_KEY_PATH: &str = "agents.defaults.effort";

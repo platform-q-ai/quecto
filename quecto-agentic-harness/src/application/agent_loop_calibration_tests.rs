@@ -6,7 +6,7 @@ use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::agent_loop::tests::{
     MockProvider, MockRegistry, MockTool, test_config, text_response, tool_call_response,
 };
-use crate::domain::context_calibration::EstimateScale;
+use crate::domain::inference::services::context_calibration::EstimateScale;
 use crate::domain::message::{LlmResponse, Message, UsageInfo};
 use std::sync::Arc;
 

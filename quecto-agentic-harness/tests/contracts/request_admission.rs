@@ -1,5 +1,5 @@
 use quecto::application::providers::ports::RequestAdmission;
-use quecto::domain::provider::RequestAttempt;
+use quecto::domain::inference::value_objects::provider::RequestAttempt;
 #[tokio::test]
 async fn real_admission_tracks_pause_resume_and_terminal_actor() {
     let (_directory, context) = super::swarm_control_fixture::context();

@@ -87,7 +87,7 @@ pub enum AgentProgressEvent {
     /// One provider request of this agent ended (#2436): every attempt,
     /// retries included, whatever its provider — for the UDS
     /// `request_completed` event.
-    RequestCompleted(super::inference::request_completion::RequestCompleted),
+    RequestCompleted(super::inference::events::request_completion::RequestCompleted),
     /// The agent loop has produced a final text response and is done.
     Done,
 }

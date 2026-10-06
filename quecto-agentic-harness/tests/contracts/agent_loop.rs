@@ -205,7 +205,7 @@ async fn terminal_provider_failure_persists_full_redacted_body_via_audit() {
     assert_eq!(provider, "failprov", "provider name captured");
     assert_eq!(
         *class,
-        quecto::domain::provider_error::ProviderErrorClass::Client,
+        quecto::domain::inference::services::provider_error::ProviderErrorClass::Client,
         "classified error class captured"
     );
     assert_eq!(*http_status, Some(400), "http status captured when known");

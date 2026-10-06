@@ -6,8 +6,8 @@
 //! content. Values are JSON objects, so keys are emitted in sorted order,
 //! the same bytes whichever record built them.
 use crate::application::sessions::dto::{ExportManifest, ExportRecord};
+use crate::domain::inference::events::request_observation::RuntimeIdentity;
 use crate::domain::message::{Message, ThinkingBlock};
-use crate::domain::request_observation::RuntimeIdentity;
 use crate::domain::sessions::entities::session::SpillEntry;
 use serde_json::{Value, json};
 

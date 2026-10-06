@@ -66,7 +66,7 @@ impl super::EffortDefaultPersistence for RecordedDefaults {
     fn persist_effort(
         &self,
         scope: DefaultScope,
-        level: crate::domain::provider::EffortLevel,
+        level: crate::domain::inference::value_objects::provider::EffortLevel,
     ) -> Result<PersistedDefault, String> {
         self.record(scope, "agents.defaults.effort", level.as_str())
     }

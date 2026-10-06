@@ -8,7 +8,7 @@ use super::*;
 use crate::application::catalogue::dto::{ModelLimits, ModelSelectionVerdict};
 use crate::application::catalogue::ports::{EffortRuntime, ModelRuntime};
 use crate::domain::catalogue::UnavailableReason;
-use crate::domain::provider::EffortLevel;
+use crate::domain::inference::value_objects::provider::EffortLevel;
 use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
 
 const BUILTIN_SLOTS: [&str; 5] = [

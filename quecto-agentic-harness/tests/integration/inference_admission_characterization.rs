@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use quecto::application::providers::ports::{ChatRequest, LlmProvider};
-use quecto::domain::provider::StreamEvent;
+use quecto::domain::inference::value_objects::provider::StreamEvent;
 use quecto::infrastructure::providers::openai::OpenAiProvider;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;

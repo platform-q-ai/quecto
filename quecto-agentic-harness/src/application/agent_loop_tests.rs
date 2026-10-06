@@ -1,6 +1,7 @@
 use super::*;
 use crate::application::providers::ports::ChatRequest;
 use crate::application::tools::ports::{Tool, ToolCatalog, ToolExecutor, ToolRegistry};
+use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::message::{LlmResponse, Role, ToolCall, UsageInfo};
 use crate::domain::tool::{ToolDefinition, ToolResult};
 use std::sync::{Arc, Mutex};
@@ -49,12 +50,12 @@ impl MockProvider {
 
 #[derive(Debug)]
 struct MockStreamingProvider {
-    responses: Mutex<Vec<Vec<crate::domain::provider::StreamEvent>>>,
+    responses: Mutex<Vec<Vec<StreamEvent>>>,
     request_count: Mutex<usize>,
 }
 
 impl MockStreamingProvider {
-    fn new(responses: Vec<Vec<crate::domain::provider::StreamEvent>>) -> Self {
+    fn new(responses: Vec<Vec<StreamEvent>>) -> Self {
         Self {
             responses: Mutex::new(responses),
             request_count: Mutex::new(0),
@@ -82,7 +83,7 @@ impl LlmProvider for MockStreamingProvider {
         *self.request_count.lock().unwrap() += 1;
         let events = self.responses.lock().unwrap().remove(0);
         let response = events.into_iter().find_map(|event| match event {
-            crate::domain::provider::StreamEvent::Done(response) => Some(response),
+            StreamEvent::Done(response) => Some(response),
             _ => None,
         });
         Box::pin(async move {
@@ -94,12 +95,7 @@ impl LlmProvider for MockStreamingProvider {
         &self,
         _request: ChatRequest<'_>,
     ) -> Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = tokio::sync::mpsc::Receiver<crate::domain::provider::StreamEvent>,
-                > + Send
-                + '_,
-        >,
+        Box<dyn std::future::Future<Output = tokio::sync::mpsc::Receiver<StreamEvent>> + Send + '_>,
     > {
         *self.request_count.lock().unwrap() += 1;
         let events = self.responses.lock().unwrap().remove(0);
@@ -324,16 +320,13 @@ fn empty_chat_request() -> ChatRequest<'static> {
 
 #[tokio::test]
 async fn mock_providers_trait_surface_methods_are_invoked() {
-    let streaming =
-        MockStreamingProvider::new(vec![vec![crate::domain::provider::StreamEvent::Done(
-            LlmResponse {
-                content: Some("streamed".into()),
-                tool_calls: vec![],
-                usage: None,
-                stop_reason: None,
-                thinking_blocks: vec![],
-            },
-        )]]);
+    let streaming = MockStreamingProvider::new(vec![vec![StreamEvent::Done(LlmResponse {
+        content: Some("streamed".into()),
+        tool_calls: vec![],
+        usage: None,
+        stop_reason: None,
+        thinking_blocks: vec![],
+    })]]);
     assert_eq!(streaming.name(), "mock-streaming");
     assert!(streaming.as_any().is::<()>());
     assert_eq!(

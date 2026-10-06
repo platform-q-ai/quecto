@@ -21,7 +21,7 @@
 //! request, `t` being the request's tool calls (plus one per reattempt).
 //! A read at any gate in which the token budget warns or pauses the run
 //! records the budget's `warned` or `paused` in place of the gate.
-use super::super::provider::RequestAttempt;
+use crate::domain::inference::value_objects::provider::RequestAttempt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AdmissionGate {

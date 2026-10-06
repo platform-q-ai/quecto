@@ -1,6 +1,7 @@
 use super::*;
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::error::DomainError;
+use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::message::LlmResponse;
 use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
 use std::future::Future;
@@ -387,10 +388,7 @@ async fn test_refreshable_forwards_without_cloning_on_happy_path() {
 // --- Streaming pre-emptive refresh tests ---
 
 /// Drain a StreamEvent channel and return the terminal event variant name.
-async fn terminal_event(
-    mut rx: tokio::sync::mpsc::Receiver<crate::domain::provider::StreamEvent>,
-) -> String {
-    use crate::domain::provider::StreamEvent;
+async fn terminal_event(mut rx: tokio::sync::mpsc::Receiver<StreamEvent>) -> String {
     let mut last = "none".to_string();
     while let Some(ev) = rx.recv().await {
         last = match ev {
@@ -557,8 +555,6 @@ fn owned_request_roundtrip_with_none_session() {
 
 #[tokio::test]
 async fn mock_provider_trait_surface_defaults_are_exercised() {
-    use crate::domain::provider::StreamEvent;
-
     let count = Arc::new(AtomicU32::new(0));
     let retry = MockRetryProvider::new(count, 0);
     assert_eq!(retry.name(), "mock");
@@ -680,21 +676,13 @@ impl LlmProvider for MockStreamingProvider {
     fn chat_stream_incremental(
         &self,
         _request: ChatRequest<'_>,
-    ) -> Pin<
-        Box<
-            dyn Future<Output = tokio::sync::mpsc::Receiver<crate::domain::provider::StreamEvent>>
-                + Send
-                + '_,
-        >,
-    > {
+    ) -> Pin<Box<dyn Future<Output = tokio::sync::mpsc::Receiver<StreamEvent>> + Send + '_>> {
         Box::pin(async {
             let (tx, rx) = tokio::sync::mpsc::channel(2);
-            tx.send(crate::domain::provider::StreamEvent::TextDelta(
-                "stream".into(),
-            ))
-            .await
-            .unwrap();
-            tx.send(crate::domain::provider::StreamEvent::Done(LlmResponse {
+            tx.send(StreamEvent::TextDelta("stream".into()))
+                .await
+                .unwrap();
+            tx.send(StreamEvent::Done(LlmResponse {
                 content: Some("stream-done".into()),
                 tool_calls: vec![],
                 usage: None,
@@ -734,11 +722,11 @@ async fn mock_streaming_provider_trait_surface_is_exercised() {
     let mut rx = provider.chat_stream_incremental(test_request()).await;
     assert!(matches!(
         rx.recv().await,
-        Some(crate::domain::provider::StreamEvent::TextDelta(text)) if text == "stream"
+        Some(StreamEvent::TextDelta(text)) if text == "stream"
     ));
     assert!(matches!(
         rx.recv().await,
-        Some(crate::domain::provider::StreamEvent::Done(done)) if done.content.as_deref() == Some("stream-done")
+        Some(StreamEvent::Done(done)) if done.content.as_deref() == Some("stream-done")
     ));
     assert!(rx.recv().await.is_none());
 }

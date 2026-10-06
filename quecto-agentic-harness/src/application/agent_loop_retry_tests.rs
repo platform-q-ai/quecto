@@ -49,12 +49,16 @@ async fn retries_retryable_provider_failures_before_returning_success() {
 #[tokio::test]
 async fn retries_streaming_provider_failures_before_any_output() {
     let provider = Arc::new(MockStreamingProvider::new(vec![
-        vec![crate::domain::provider::StreamEvent::Error(
-            "HTTP 503 from Codex: connection refused".to_string(),
-        )],
-        vec![crate::domain::provider::StreamEvent::Done(text_response(
-            "stream recovered",
-        ))],
+        vec![
+            crate::domain::inference::value_objects::provider::StreamEvent::Error(
+                "HTTP 503 from Codex: connection refused".to_string(),
+            ),
+        ],
+        vec![
+            crate::domain::inference::value_objects::provider::StreamEvent::Done(text_response(
+                "stream recovered",
+            )),
+        ],
     ]));
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: provider.clone(),
@@ -90,8 +94,12 @@ async fn retries_streaming_provider_failures_before_any_output() {
 #[tokio::test]
 async fn does_not_retry_streaming_provider_failures_after_output() {
     let provider = Arc::new(MockStreamingProvider::new(vec![vec![
-        crate::domain::provider::StreamEvent::TextDelta("partial".to_string()),
-        crate::domain::provider::StreamEvent::Error("HTTP 503 from Codex".to_string()),
+        crate::domain::inference::value_objects::provider::StreamEvent::TextDelta(
+            "partial".to_string(),
+        ),
+        crate::domain::inference::value_objects::provider::StreamEvent::Error(
+            "HTTP 503 from Codex".to_string(),
+        ),
     ]]));
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: provider.clone(),
@@ -162,7 +170,7 @@ async fn does_not_retry_non_streaming_openai_insufficient_quota_429() {
 #[tokio::test]
 async fn does_not_retry_streaming_openai_insufficient_quota_429() {
     let provider = Arc::new(MockStreamingProvider::new(vec![vec![
-        crate::domain::provider::StreamEvent::Error(
+        crate::domain::inference::value_objects::provider::StreamEvent::Error(
             r#"HTTP 429 from OpenAI: {"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","param":null,"code":"insufficient_quota"}}"#.to_string(),
         ),
     ]]));
@@ -234,16 +242,20 @@ async fn provider_context_limit_errors_are_actionable() {
 #[tokio::test]
 async fn retries_empty_streaming_done_before_success() {
     let provider = Arc::new(MockStreamingProvider::new(vec![
-        vec![crate::domain::provider::StreamEvent::Done(LlmResponse {
-            content: None,
-            tool_calls: vec![],
-            usage: None,
-            stop_reason: None,
-            thinking_blocks: vec![],
-        })],
-        vec![crate::domain::provider::StreamEvent::Done(text_response(
-            "stream recovered",
-        ))],
+        vec![
+            crate::domain::inference::value_objects::provider::StreamEvent::Done(LlmResponse {
+                content: None,
+                tool_calls: vec![],
+                usage: None,
+                stop_reason: None,
+                thinking_blocks: vec![],
+            }),
+        ],
+        vec![
+            crate::domain::inference::value_objects::provider::StreamEvent::Done(text_response(
+                "stream recovered",
+            )),
+        ],
     ]));
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: provider.clone(),
@@ -279,7 +291,7 @@ async fn retries_empty_streaming_done_before_success() {
 #[tokio::test]
 async fn empty_streaming_done_with_max_tokens_preserves_stop_reason() {
     let provider = Arc::new(MockStreamingProvider::new(vec![vec![
-        crate::domain::provider::StreamEvent::Done(LlmResponse {
+        crate::domain::inference::value_objects::provider::StreamEvent::Done(LlmResponse {
             content: None,
             tool_calls: vec![],
             usage: None,
@@ -319,7 +331,7 @@ struct PausedAdmission;
 impl crate::application::providers::ports::RequestAdmission for PausedAdmission {
     fn check(
         &self,
-        _attempt: crate::domain::provider::RequestAttempt,
+        _attempt: crate::domain::inference::value_objects::provider::RequestAttempt,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), DomainError>> + Send + '_>>
     {
         Box::pin(async { Err(DomainError::Tool("swarm paused".into())) })
@@ -358,12 +370,16 @@ async fn paused_execution_never_calls_provider() {
 #[tokio::test]
 async fn long_reset_horizon_prevents_stream_initiation_retry() {
     let provider = Arc::new(MockStreamingProvider::new(vec![
-        vec![crate::domain::provider::StreamEvent::Error(
-            "HTTP 429: retry-after: 601828".to_string(),
-        )],
-        vec![crate::domain::provider::StreamEvent::Done(text_response(
-            "stream recovered",
-        ))],
+        vec![
+            crate::domain::inference::value_objects::provider::StreamEvent::Error(
+                "HTTP 429: retry-after: 601828".to_string(),
+            ),
+        ],
+        vec![
+            crate::domain::inference::value_objects::provider::StreamEvent::Done(text_response(
+                "stream recovered",
+            )),
+        ],
     ]));
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: provider.clone(),
@@ -399,8 +415,8 @@ async fn long_reset_horizon_prevents_stream_initiation_retry() {
 /// blaming connectivity.
 #[tokio::test]
 async fn a_stalled_stream_is_retried_once_with_its_own_guidance() {
-    use crate::domain::provider::StreamEvent;
-    use crate::domain::provider_error::STREAM_IDLE_TIMEOUT;
+    use crate::domain::inference::services::provider_error::STREAM_IDLE_TIMEOUT;
+    use crate::domain::inference::value_objects::provider::StreamEvent;
     let stall = format!(
         "{STREAM_IDLE_TIMEOUT}the provider sent no event for 300 s; the request was abandoned"
     );
@@ -470,8 +486,8 @@ fn streaming_agent(provider: Arc<MockStreamingProvider>) -> AgentLoopImpl {
 /// failure claims no retry.
 #[tokio::test]
 async fn a_stall_after_output_is_not_retried_and_claims_no_retry() {
-    use crate::domain::provider::StreamEvent;
-    use crate::domain::provider_error::STREAM_IDLE_TIMEOUT;
+    use crate::domain::inference::services::provider_error::STREAM_IDLE_TIMEOUT;
+    use crate::domain::inference::value_objects::provider::StreamEvent;
     let stall = format!("{STREAM_IDLE_TIMEOUT}the provider sent no event for 300 s");
     let provider = Arc::new(MockStreamingProvider::new(vec![vec![
         StreamEvent::TextDelta("partial".to_string()),
@@ -495,8 +511,8 @@ async fn a_stall_after_output_is_not_retried_and_claims_no_retry() {
 /// a network failure is still re-initiated once, within the budget.
 #[tokio::test]
 async fn a_stall_after_a_network_failure_is_still_retried_once() {
-    use crate::domain::provider::StreamEvent;
-    use crate::domain::provider_error::STREAM_IDLE_TIMEOUT;
+    use crate::domain::inference::services::provider_error::STREAM_IDLE_TIMEOUT;
+    use crate::domain::inference::value_objects::provider::StreamEvent;
     let stall = format!("{STREAM_IDLE_TIMEOUT}the provider sent no event for 300 s");
     let provider = Arc::new(MockStreamingProvider::new(vec![
         vec![StreamEvent::Error("connection reset by peer".to_string())],
@@ -517,7 +533,7 @@ async fn a_stall_after_a_network_failure_is_still_retried_once() {
 /// and the turn fails with the error.
 #[tokio::test]
 async fn a_malformed_request_error_after_output_is_not_resent() {
-    use crate::domain::provider::StreamEvent;
+    use crate::domain::inference::value_objects::provider::StreamEvent;
     let error = r#"HTTP 400 OpenAI stream error: {"error":{"type":"invalid_request_error"}}"#;
     let provider = Arc::new(MockStreamingProvider::new(vec![
         vec![
@@ -539,7 +555,7 @@ async fn a_malformed_request_error_after_output_is_not_resent() {
 /// The same error before any output is still repaired and sent again.
 #[tokio::test]
 async fn a_malformed_request_error_before_output_is_recovered() {
-    use crate::domain::provider::StreamEvent;
+    use crate::domain::inference::value_objects::provider::StreamEvent;
     let error = r#"HTTP 400 OpenAI stream error: {"error":{"type":"invalid_request_error"}}"#;
     let provider = Arc::new(MockStreamingProvider::new(vec![
         vec![StreamEvent::Error(error.to_string())],
@@ -562,11 +578,13 @@ async fn a_malformed_request_error_before_output_is_recovered() {
 
 /// Records the attempt of each admission check, admitting every one (#2339).
 #[derive(Debug, Default)]
-struct RecordingAdmission(std::sync::Mutex<Vec<crate::domain::provider::RequestAttempt>>);
+struct RecordingAdmission(
+    std::sync::Mutex<Vec<crate::domain::inference::value_objects::provider::RequestAttempt>>,
+);
 impl crate::application::providers::ports::RequestAdmission for RecordingAdmission {
     fn check(
         &self,
-        attempt: crate::domain::provider::RequestAttempt,
+        attempt: crate::domain::inference::value_objects::provider::RequestAttempt,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), DomainError>> + Send + '_>>
     {
         self.0.lock().unwrap().push(attempt);
@@ -579,7 +597,7 @@ impl crate::application::providers::ports::RequestAdmission for RecordingAdmissi
 /// admission records the two apart.
 #[tokio::test]
 async fn a_stream_reinitiation_is_admitted_as_a_reattempt() {
-    use crate::domain::provider::{RequestAttempt, StreamEvent};
+    use crate::domain::inference::value_objects::provider::{RequestAttempt, StreamEvent};
     let provider = Arc::new(MockStreamingProvider::new(vec![
         vec![StreamEvent::Error(
             "HTTP 503 from Codex: connection refused".to_string(),
@@ -605,7 +623,7 @@ async fn a_stream_reinitiation_is_admitted_as_a_reattempt() {
 /// streaming or not.
 #[tokio::test]
 async fn a_request_answered_first_time_is_admitted_once() {
-    use crate::domain::provider::{RequestAttempt, StreamEvent};
+    use crate::domain::inference::value_objects::provider::{RequestAttempt, StreamEvent};
     let provider = Arc::new(MockStreamingProvider::new(vec![vec![StreamEvent::Done(
         text_response("first time"),
     )]]));
@@ -650,8 +668,8 @@ async fn a_request_answered_first_time_is_admitted_once() {
 /// as an idle stall is.
 #[tokio::test]
 async fn a_reply_without_output_is_retried_once() {
-    use crate::domain::provider::StreamEvent;
-    use crate::domain::provider_error::STREAM_PROGRESS_TIMEOUT;
+    use crate::domain::inference::services::provider_error::STREAM_PROGRESS_TIMEOUT;
+    use crate::domain::inference::value_objects::provider::StreamEvent;
     let stall = format!(
         "{STREAM_PROGRESS_TIMEOUT}the provider sent events but no output for 300 s; \\
          the request was abandoned"

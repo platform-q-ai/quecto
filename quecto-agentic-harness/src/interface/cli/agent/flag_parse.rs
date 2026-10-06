@@ -14,7 +14,7 @@ pub(crate) struct AgentFlags {
     pub(crate) socket_path: Option<std::path::PathBuf>,
     pub(crate) persist: bool,
     pub(crate) disabled_tools: Vec<String>,
-    pub(crate) effort: Option<crate::domain::provider::EffortLevel>,
+    pub(crate) effort: Option<crate::domain::inference::value_objects::provider::EffortLevel>,
     pub(crate) workflow: bool,
     pub(crate) workflow_guards: bool,
     pub(crate) workflow_disabled: bool,
@@ -194,12 +194,12 @@ pub(super) fn parse_pos_u64(val: &str, flag: &str, stderr: &mut String) -> Optio
 pub(super) fn parse_effort_level(
     val: &str,
     stderr: &mut String,
-) -> Option<crate::domain::provider::EffortLevel> {
-    crate::domain::provider::EffortLevel::parse(val).or_else(|| {
+) -> Option<crate::domain::inference::value_objects::provider::EffortLevel> {
+    crate::domain::inference::value_objects::provider::EffortLevel::parse(val).or_else(|| {
         stderr.push_str(&format!(
             "agent: invalid effort level '{}'; expected one of: {}\n",
             val,
-            crate::domain::provider::EffortLevel::VALID_VALUES
+            crate::domain::inference::value_objects::provider::EffortLevel::VALID_VALUES
         ));
         None
     })

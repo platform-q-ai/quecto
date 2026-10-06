@@ -92,7 +92,7 @@ fn loop_args<'a>(base: &'a std::path::Path, socket_path: std::path::PathBuf) -> 
 
 #[tokio::test]
 async fn read_only_provider_trait_defaults_are_exercised() {
-    use crate::domain::provider::StreamEvent;
+    use crate::domain::inference::value_objects::provider::StreamEvent;
 
     let provider = ReadOnlyProvider;
     assert_eq!(provider.name(), "read-only");

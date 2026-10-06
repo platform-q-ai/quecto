@@ -6,7 +6,7 @@ use super::inference_admission_authority_steps::{LIMIT, group, new_root, rt};
 use super::*;
 use quecto::application::ports::AttemptPermit;
 use quecto::application::ports::{AdmissionObservation, AttemptAdmission};
-use quecto::domain::inference_admission::{Feedback, GroupId};
+use quecto::domain::admission::value_objects::inference_admission::{Feedback, GroupId};
 use quecto::infrastructure::admission::AuthorityConnection;
 use quecto::infrastructure::admission::{AdmissionRecorder, ObservedAdmission};
 use std::sync::Arc;
@@ -63,7 +63,7 @@ fn then_waiting_observed(world: &mut QuectoWorld, expected_group: String) {
     assert_eq!(attempt.group, GroupId::new(&expected_group).unwrap());
     assert!(matches!(
         attempt.phase,
-        quecto::domain::inference_admission::AdmissionPhase::Waiting { .. }
+        quecto::domain::admission::value_objects::inference_admission::AdmissionPhase::Waiting { .. }
     ));
     std::thread::sleep(Duration::from_millis(30));
     let second = recorder.snapshot();

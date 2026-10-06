@@ -3,8 +3,8 @@
 //! Extracted from `openai.rs` to keep both files under the 750-line limit.
 //! Uses the shared SSE pump from [`sse_common`].
 
+use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::message::{LlmResponse, ThinkingBlock, ToolCall, UsageInfo};
-use crate::domain::provider::StreamEvent;
 use crate::infrastructure::providers::sse_common::{SseHandler, SseLineOutcome};
 
 use super::OpenAiProvider;
@@ -39,7 +39,8 @@ pub(crate) struct OpenAiSseHandler {
     /// Whether any `data:` event came: a body with none is an empty stream.
     saw_event: bool,
     /// Where usage reported before a cut is recorded (#2249 review).
-    trace: Option<std::sync::Arc<crate::domain::request_observation::RequestTrace>>,
+    trace:
+        Option<std::sync::Arc<crate::domain::inference::events::request_observation::RequestTrace>>,
 }
 
 impl OpenAiSseHandler {
@@ -62,7 +63,9 @@ impl OpenAiSseHandler {
     /// Record usage a cut-short reply reported on `trace` (#2249 review).
     pub(crate) fn with_trace(
         mut self,
-        trace: Option<std::sync::Arc<crate::domain::request_observation::RequestTrace>>,
+        trace: Option<
+            std::sync::Arc<crate::domain::inference::events::request_observation::RequestTrace>,
+        >,
     ) -> Self {
         self.trace = trace;
         self
@@ -96,7 +99,7 @@ impl OpenAiSseHandler {
             thinking_blocks,
         };
         if let Some(model) = &self.model {
-            crate::domain::usage_accounting::attach_cost(&mut response, model);
+            crate::domain::inference::services::usage_accounting::attach_cost(&mut response, model);
         }
         response
     }

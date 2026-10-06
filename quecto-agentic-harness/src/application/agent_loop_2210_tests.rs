@@ -4,10 +4,10 @@
 //! the attempt it interrupted — for the audit log exactly once.
 use super::*;
 use crate::application::audit::ports::AuditSink;
-use crate::domain::attempt_diagnostics::Termination;
 use crate::domain::audit::AuditEvent;
-use crate::domain::provider::StreamEvent;
-use crate::domain::request_progress::OutputCapped;
+use crate::domain::inference::events::request_progress::OutputCapped;
+use crate::domain::inference::value_objects::attempt_diagnostics::Termination;
+use crate::domain::inference::value_objects::provider::StreamEvent;
 use std::time::Instant;
 
 #[derive(Debug, Default)]
@@ -29,7 +29,9 @@ impl AuditSink for RecordingAudit {
 }
 
 impl RecordingAudit {
-    fn request_observations(&self) -> Vec<crate::domain::request_observation::RequestObservation> {
+    fn request_observations(
+        &self,
+    ) -> Vec<crate::domain::inference::events::request_observation::RequestObservation> {
         self.events
             .lock()
             .unwrap()
@@ -136,7 +138,9 @@ async fn every_request_is_capped_at_its_output_limits_worth_of_bytes() {
         (Some(128_000), 1_024_000),
         (
             None,
-            8 * u64::from(crate::domain::request_progress::FALLBACK_OUTPUT_TOKENS),
+            8 * u64::from(
+                crate::domain::inference::events::request_progress::FALLBACK_OUTPUT_TOKENS,
+            ),
         ),
     ] {
         let provider = Probe::new(Reply::Capped);
@@ -172,7 +176,7 @@ async fn a_reply_stopped_at_its_output_cap_is_not_retried() {
     assert_eq!(observed.len(), 1);
     assert_eq!(
         observed[0].error_class,
-        Some(crate::domain::provider_error::ProviderErrorClass::OutputCapped)
+        Some(crate::domain::inference::services::provider_error::ProviderErrorClass::OutputCapped)
     );
 }
 

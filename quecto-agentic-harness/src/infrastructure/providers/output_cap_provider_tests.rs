@@ -9,12 +9,12 @@ use std::time::{Duration, Instant};
 use super::stream_idle::tests::{LIVE, bounded, servers};
 use super::stream_idle_provider_tests::{Vendor, request, terminations, traced};
 use crate::application::providers::ports::LlmProvider;
-use crate::domain::attempt_diagnostics::Termination;
 use crate::domain::error::DomainError;
+use crate::domain::inference::events::request_observation::RequestTrace;
+use crate::domain::inference::services::provider_error::OUTPUT_CAP_EXCEEDED;
+use crate::domain::inference::value_objects::attempt_diagnostics::Termination;
+use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::message::Message;
-use crate::domain::provider::StreamEvent;
-use crate::domain::provider_error::OUTPUT_CAP_EXCEEDED;
-use crate::domain::request_observation::RequestTrace;
 
 /// The cap the runaway tests set: a few dozen deltas.
 pub(super) const CAP: u64 = 4096;
