@@ -192,6 +192,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         inherited_tool_policy: None,
         parent_id,
         spawned,
+        coordinator: false,
         launch_extensions: !no_extensions,
         parent_identity_override: None,
         session_key_override: None,
@@ -277,7 +278,7 @@ pub(crate) fn cmd_agent(
     flags.system_prompt = Some(startup_prompt::compose(
         agents_instructions.as_deref(),
         flags.system_prompt.as_deref(),
-        flags.spawned,
+        crate::interface::shared::PromptRole::of(flags.spawned, flags.coordinator),
         &build.extension_prompt_snippets,
         &parent_playbook,
     ));
@@ -647,7 +648,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
     let system_prompt = startup_prompt::compose(
         agents_instructions.as_deref(),
         flags.system_prompt.as_deref(),
-        flags.spawned,
+        crate::interface::shared::PromptRole::of(flags.spawned, flags.coordinator),
         &build.extension_prompt_snippets,
         &parent_playbook,
     );

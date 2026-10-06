@@ -102,6 +102,7 @@ pub(super) fn test_flags(
         inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
+        coordinator: false,
         launch_extensions: true,
         parent_identity_override: None,
         session_key_override: None,

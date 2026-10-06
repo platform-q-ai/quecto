@@ -60,14 +60,14 @@ pub(super) fn load_parent_playbook(
 pub(super) fn compose(
     agents_instructions: Option<&str>,
     explicit_system_prompt: Option<&str>,
-    spawned: bool,
+    role: crate::interface::shared::PromptRole,
     extension_prompt_snippets: &str,
     parent_playbook: &str,
 ) -> String {
     crate::interface::shared::build_agent_system_prompt_with_playbook(
         agents_instructions,
         explicit_system_prompt,
-        spawned,
+        role,
         extension_prompt_snippets,
         parent_playbook,
     )

@@ -39,14 +39,14 @@ fn one_shot_and_uds_share_the_same_startup_prompt_composer() {
     let one_shot = startup_prompt::compose(
         instructions.as_deref(),
         explicit.as_deref(),
-        false,
+        crate::interface::shared::PromptRole::Parent,
         "Extension marker",
         "Parent playbook marker",
     );
     let uds = startup_prompt::compose(
         instructions.as_deref(),
         explicit.as_deref(),
-        false,
+        crate::interface::shared::PromptRole::Parent,
         "Extension marker",
         "Parent playbook marker",
     );
@@ -179,7 +179,7 @@ fn override_is_composed_only_for_parent_and_keeps_other_prompt_sources() {
     let parent = startup_prompt::compose(
         Some("Project AGENTS"),
         Some("Explicit instructions"),
-        false,
+        crate::interface::shared::PromptRole::Parent,
         "Extension instructions",
         &playbook,
     );
@@ -196,7 +196,7 @@ fn override_is_composed_only_for_parent_and_keeps_other_prompt_sources() {
     let child = startup_prompt::compose(
         None,
         Some("Explicit child instructions"),
-        true,
+        crate::interface::shared::PromptRole::Subagent,
         "",
         &child_playbook,
     );

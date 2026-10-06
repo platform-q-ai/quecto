@@ -473,6 +473,7 @@ fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
         inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
+        coordinator: false,
         launch_extensions: true,
         parent_identity_override: None,
         session_key_override: None,
@@ -525,6 +526,7 @@ fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
         inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
+        coordinator: false,
         launch_extensions: true,
         parent_identity_override: None,
         session_key_override: None,
@@ -555,4 +557,29 @@ fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
         !stderr.contains("--persist keeps"),
         "length check should return first: {stderr}"
     );
+}
+
+/// #2461: internal `--coordinator` marks a spawned container coordinator.
+#[test]
+fn coordinator_flag_sets_value_beside_spawned() {
+    let mut e = String::new();
+    let f = parse_agent_flags(&argv(&["--spawned", "--coordinator"]), &mut e).unwrap();
+    assert!(f.spawned);
+    assert!(f.coordinator);
+}
+
+/// #2461: only a spawned child can be a coordinator.
+#[test]
+fn coordinator_flag_requires_spawned() {
+    let mut e = String::new();
+    assert!(parse_agent_flags(&argv(&["--coordinator"]), &mut e).is_none());
+    assert!(e.contains("--coordinator requires --spawned"), "stderr={e}");
+}
+
+/// #2461: a spawned child is a worker or plain subagent unless told otherwise.
+#[test]
+fn coordinator_defaults_false() {
+    let mut e = String::new();
+    let f = parse_agent_flags(&argv(&["--spawned"]), &mut e).unwrap();
+    assert!(!f.coordinator);
 }

@@ -33,6 +33,9 @@ pub(crate) struct AgentFlags {
     /// minimal child system prompt and parent-only docs filtering. Never inferred
     /// from `--parent-id`, session naming, env, or UDS mode (#1319).
     pub(crate) spawned: bool,
+    /// Internal `--coordinator` (#2461): set only by SpawnTool launches into
+    /// a container, beside `--spawned`. Selects the coordinator prompt.
+    pub(crate) coordinator: bool,
     /// Whether this agent launches its configured extensions (#2446):
     /// `--no-extensions` switches it off, and its children inherit that.
     pub(crate) launch_extensions: bool,

@@ -364,13 +364,17 @@ fn the_swarm_descriptions_coordinator_prose_is_in_the_docs_page() {
 
 /// #2348 review M2: the docs page a coordinator read collapses to a stub
 /// three turns later, so the rules no refusal teaches stay in the
-/// description: verify before accepting, revoke/recover need a running
-/// run, a recorded loss pauses it.
+/// description: judge evidence without redoing the work (#2461),
+/// revoke/recover need a running run, a recorded loss pauses it.
 #[test]
-fn the_swarm_description_keeps_the_coordinators_verify_rule() {
+fn the_swarm_description_keeps_the_coordinators_evidence_rule() {
     let description = include_str!("swarm_assets/tool_description.txt");
+    assert!(
+        !description.contains("verify artifacts"),
+        "#2461: the coordinator judges reported evidence, it does not redo the work"
+    );
     for rule in [
-        "verify artifacts and independent review before accepting evidence or complete",
+        "accept or reject reported evidence by the criteria; never redo the work",
         "revoke/recover need a running run",
         "a recorded loss pauses the run",
     ] {
