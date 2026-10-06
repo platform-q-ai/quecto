@@ -15,7 +15,7 @@ use std::time::Duration;
 use crate::application::subagents::ports::{
     ConclusionBudget, OwnedChildTermination, PortFuture, ProtocolAttempt, TerminationConclusion,
 };
-use crate::domain::subagent_teardown::DelegatedAgentIdentity;
+use crate::domain::agents::subagent_teardown::DelegatedAgentIdentity;
 use crate::infrastructure::tools::subagent_registry::SubagentRegistry;
 
 use super::owned_child_supervisor::{

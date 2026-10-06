@@ -14,11 +14,11 @@ use std::time::Duration;
 use quecto::application::environments::ports::{EnvironmentMemberShutdown, MemberShutdownResult};
 use quecto::application::subagents::ports::{DelegatedAgentRegistry, TerminationCause};
 use quecto::application::subagents::use_cases::{SettleDelegatedChild, SettleDelegatedChildPorts};
+use quecto::domain::agents::subagent_teardown::{DelegatedAgentIdentity, LaunchGeneration};
 use quecto::domain::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, mint_environment_uuid,
 };
 use quecto::domain::ids::AgentUuid;
-use quecto::domain::subagent_teardown::{DelegatedAgentIdentity, LaunchGeneration};
 use quecto::infrastructure::processes::direct_child_routing::UdsDirectChildRouting;
 use quecto::infrastructure::processes::owned_child_termination::SupervisedChildTermination;
 use quecto::infrastructure::tools::environment_member_shutdown::DelegatedMemberShutdown;

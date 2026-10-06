@@ -1,4 +1,4 @@
-use crate::domain::agent::AgentProgressEvent;
+use crate::domain::agents::agent::AgentProgressEvent;
 use crate::domain::message::Message;
 use crate::interface::cli::uds_cancel::{EventSink, forward_progress_event_sink};
 

@@ -18,10 +18,10 @@ use quecto::application::subagents::use_cases::{
     ExecuteHarnessShutdown, ExecuteHarnessShutdownPorts, HarnessShutdownTransaction,
     PrepareHarnessShutdown, TerminateDelegatedAgent,
 };
-use quecto::domain::ids::AgentUuid;
-use quecto::domain::subagent_teardown::{
+use quecto::domain::agents::subagent_teardown::{
     HarnessLifecycleState, LifecycleTransitionError, LineageSnapshot, RoutingDepth, ShutdownReason,
 };
+use quecto::domain::ids::AgentUuid;
 use quecto::interface::uds::subagent_teardown::controller::{
     ConnectionAuthority, ControllerOutcome, DeliveryState, SubagentTeardownController,
 };

@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::parent_control::CAPABILITY_HEX_LEN;
+use crate::domain::agents::parent_control::CAPABILITY_HEX_LEN;
 
 #[test]
 fn minted_credentials_are_random_and_generation_scoped() {

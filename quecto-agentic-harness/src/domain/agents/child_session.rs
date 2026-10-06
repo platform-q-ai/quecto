@@ -1,9 +1,9 @@
 //! The session a launched sub-agent runs as (#2192): the launcher starts it
 //! with `-s <uuid>`, so it is `cli:<uuid>`. A uuid that is not a valid
 //! session name names no session.
-use super::error::DomainError;
-use super::ids::AgentUuid;
-use super::sessions::entities::session_identity::SessionIdentity;
+use crate::domain::error::DomainError;
+use crate::domain::ids::AgentUuid;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 /// The session name the launcher passes as `-s` for `child` — the one
 /// source of truth for it (#1378: always the minted uuid, never the label).

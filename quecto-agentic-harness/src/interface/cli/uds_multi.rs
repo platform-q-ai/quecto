@@ -65,7 +65,7 @@ pub(super) struct MultiClientArgs<'a> {
     /// How long this harness lives (#1937): the top-level default exits
     /// when the last client disconnects; `--persist` (#348) and a
     /// launch-bound child ignore client churn.
-    pub lifetime: crate::domain::harness_lifetime::HarnessLifetime,
+    pub lifetime: crate::domain::agents::harness_lifetime::HarnessLifetime,
     /// Receiver for subagent notifications (#523).
     pub notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
     /// Shared subagent registry for get_subagents / state_changed (#524).
@@ -286,9 +286,9 @@ pub(super) async fn multi_client_loop(
             turn_control: turn_control.clone(),
             busy: busy.clone(),
             exit_notify: exit_notify.clone(),
-            binding: parent_control
-                .map(|launch| launch.binding)
-                .unwrap_or_else(crate::domain::parent_control::ParentControlBinding::unlaunched),
+            binding: parent_control.map(|launch| launch.binding).unwrap_or_else(
+                crate::domain::agents::parent_control::ParentControlBinding::unlaunched,
+            ),
             owner_exit: OwnerExitFlag::new(),
             environment_control,
         })
@@ -406,7 +406,7 @@ pub(super) async fn multi_client_loop(
 struct DispatchLoopArgs {
     cmd_rx: tokio::sync::mpsc::Receiver<ClientMessage>,
     disconnect_rx: tokio::sync::mpsc::UnboundedReceiver<ClientDisconnected>,
-    lifetime: crate::domain::harness_lifetime::HarnessLifetime,
+    lifetime: crate::domain::agents::harness_lifetime::HarnessLifetime,
     shutdown: super::uds_shutdown::ShutdownRequest,
     extensions: super::uds_extensions::Extensions,
 }
@@ -521,7 +521,7 @@ use recv::recv_next_message;
 async fn handle_client_msg(
     ctx: &mut DispatchCtx<'_>,
     client_msg: ClientMessage,
-    lifetime: crate::domain::harness_lifetime::HarnessLifetime,
+    lifetime: crate::domain::agents::harness_lifetime::HarnessLifetime,
     live_clients: &std::sync::atomic::AtomicU32,
 ) -> bool {
     match client_msg {

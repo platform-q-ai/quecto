@@ -8,7 +8,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use crate::domain::agent::{AgentInfo, AgentResult};
+use crate::domain::agents::agent::{AgentInfo, AgentResult};
 use crate::domain::error::DomainError;
 use crate::domain::message::Message;
 

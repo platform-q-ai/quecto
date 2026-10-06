@@ -10,7 +10,7 @@
 //! spawn can never slip past the shutdown unowned.
 use std::sync::{Arc, Mutex};
 
-use crate::domain::subagent_teardown::HarnessLifecycleState;
+use crate::domain::agents::subagent_teardown::HarnessLifecycleState;
 
 /// Shared between the spawn tool and the teardown graph of one harness.
 pub type SharedHarnessLifecycle = Arc<Mutex<HarnessLifecycleState>>;

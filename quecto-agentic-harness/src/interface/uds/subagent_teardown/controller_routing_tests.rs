@@ -5,10 +5,10 @@ use super::*;
 use crate::application::subagents::dto::TerminationRouted;
 use crate::application::subagents::ports::SubagentLifecycleRepository;
 use crate::application::subagents::use_cases::teardown_fakes::*;
-use crate::domain::ids::AgentUuid;
-use crate::domain::subagent_teardown::{
+use crate::domain::agents::subagent_teardown::{
     HarnessLifecycleState, LineageSnapshot, RoutingDepth, ShutdownReason,
 };
+use crate::domain::ids::AgentUuid;
 use crate::interface::uds::subagent_teardown::ack_fakes::RecordingWriter;
 
 #[tokio::test]

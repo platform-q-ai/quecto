@@ -264,7 +264,7 @@ fn missing_tool_call() -> LlmResponse {
     call
 }
 
-fn feedback_in_ledger(result: &crate::domain::agent::AgentResult) -> Vec<String> {
+fn feedback_in_ledger(result: &crate::domain::agents::agent::AgentResult) -> Vec<String> {
     result
         .appended_messages
         .iter()

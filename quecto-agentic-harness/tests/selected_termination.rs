@@ -578,7 +578,7 @@ async fn a_nested_child_that_acknowledges_but_never_exits_is_ended_by_its_owners
         routing.forward_termination(
             &a_identity,
             &b_identity,
-            quecto::domain::subagent_teardown::RoutingDepth::new(1).unwrap(),
+            quecto::domain::agents::subagent_teardown::RoutingDepth::new(1).unwrap(),
         ),
     )
     .await

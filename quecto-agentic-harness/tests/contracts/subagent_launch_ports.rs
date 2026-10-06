@@ -5,8 +5,8 @@ use quecto::application::subagent_launch::{
     LaunchFuture, LaunchIdentity, PreparedRuntime, RegisteredLaunch, SubagentLaunchPorts,
     SubagentLaunchUseCase,
 };
+use quecto::domain::agents::subagent::{ContainerSelection, SubagentConfig};
 use quecto::domain::error::DomainError;
-use quecto::domain::subagent::{ContainerSelection, SubagentConfig};
 use quecto::domain::tool::ToolResult;
 
 #[derive(Default)]
@@ -163,10 +163,10 @@ mod real_adapters {
     use std::path::{Path, PathBuf};
 
     use quecto::application::subagent_launch::SubagentLaunchUseCase;
+    use quecto::domain::agents::subagent::ContainerSelection;
+    use quecto::domain::agents::subagent::SubagentConfig;
     use quecto::domain::environment_registry::EnvironmentRegistry;
     use quecto::domain::error::DomainError;
-    use quecto::domain::subagent::ContainerSelection;
-    use quecto::domain::subagent::SubagentConfig;
     use quecto::domain::tool::ToolResult;
     use quecto::infrastructure::tools::spawn::SpawnTool;
 

@@ -13,7 +13,7 @@ use crate::application::providers::ports::LlmProvider;
 use crate::application::tools::ports::{
     RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog, ToolExecutor, ToolRegistry,
 };
-use crate::domain::agent::{AgentInfo, AgentProgressEvent, AgentResult, ProgressCallback};
+use crate::domain::agents::agent::{AgentInfo, AgentProgressEvent, AgentResult, ProgressCallback};
 use crate::domain::audit::AuditEvent;
 use crate::domain::conversation::reply_requirement::ReplyRequirement;
 use crate::domain::error::DomainError;

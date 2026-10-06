@@ -976,7 +976,7 @@ fn delegated_agents(world: &QuectoWorld) -> RegistryDelegatedAgents {
 fn member_identity(
     world: &QuectoWorld,
     agent_id: &str,
-) -> quecto::domain::subagent_teardown::DelegatedAgentIdentity {
+) -> quecto::domain::agents::subagent_teardown::DelegatedAgentIdentity {
     delegated_agents(world)
         .resolve(agent_id)
         .unwrap_or_else(|error| panic!("member {agent_id} is not a live delegated agent: {error}"))

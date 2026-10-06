@@ -1,13 +1,13 @@
 // Tests for the child launch argument builder (#881 --model passthrough).
 
 use super::{ChildLaunchSpec, build_child_cli_args};
-use crate::domain::subagent::SubagentConfig;
+use crate::domain::agents::subagent::SubagentConfig;
 use std::ffi::OsString;
 use std::path::Path;
 
 fn base_config() -> SubagentConfig {
     SubagentConfig {
-        container: crate::domain::subagent::ContainerSelection::Local,
+        container: crate::domain::agents::subagent::ContainerSelection::Local,
         task: None,
         agent_id: Some("w1".into()),
         system: None,
@@ -266,7 +266,7 @@ fn explicit_model_effort_without_composed_capability_is_refused() {
 /// `-s`, as `startup_identity` does) is the one the parent reads back.
 #[test]
 fn the_launched_session_is_the_one_the_domain_names_for_the_child() {
-    use crate::domain::child_session::{child_session_identity, child_session_name};
+    use crate::domain::agents::child_session::{child_session_identity, child_session_name};
     use crate::domain::ids::AgentUuid;
     use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
@@ -345,7 +345,7 @@ fn only_local_children_get_this_agents_extensions() {
     let tool = tool.with_child_extensions(listed.clone());
     let local = base_config();
     let mut container = base_config();
-    container.container = crate::domain::subagent::ContainerSelection::New {
+    container.container = crate::domain::agents::subagent::ContainerSelection::New {
         container_config: None,
         name: None,
     };
@@ -358,7 +358,7 @@ fn only_local_children_get_this_agents_extensions() {
 #[test]
 fn coordinator_launches_carry_the_coordinator_flag() {
     let mut cfg = base_config();
-    cfg.container = crate::domain::subagent::ContainerSelection::New {
+    cfg.container = crate::domain::agents::subagent::ContainerSelection::New {
         container_config: None,
         name: None,
     };
@@ -372,8 +372,8 @@ fn coordinator_launches_carry_the_coordinator_flag() {
 /// local child, swarm workers included, stay ordinary subagents.
 #[test]
 fn children_not_asked_to_coordinate_never_carry_the_coordinator_flag() {
+    use crate::domain::agents::subagent::ContainerSelection;
     use crate::domain::environment_registry::EnvironmentTarget;
-    use crate::domain::subagent::ContainerSelection;
     for container in [
         ContainerSelection::Local,
         ContainerSelection::New {

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use quecto::application::subagents::ports::TurnCancellation;
-use quecto::domain::subagent_teardown::ShutdownReason;
+use quecto::domain::agents::subagent_teardown::ShutdownReason;
 
 use super::teardown_fixture::{Cancellation, Harness, root_tree};
 

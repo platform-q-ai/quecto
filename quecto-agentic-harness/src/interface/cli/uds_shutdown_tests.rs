@@ -6,10 +6,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::domain::agents::subagent_teardown::LaunchGeneration;
 use crate::domain::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,
 };
-use crate::domain::subagent_teardown::LaunchGeneration;
 use crate::infrastructure::tools::subagent_registry::{SubagentEntry, SubagentRegistry};
 use crate::interface::cli::uds_cancel::{CancelHandle, CancelSlot, TurnControl};
 use crate::interface::cli::uds_teardown_handles::TeardownLoopInputs;
@@ -104,7 +104,7 @@ fn rig(dir: &std::path::Path) -> Rig {
         turn_control: Arc::new(TurnControl::default()),
         busy: busy.clone(),
         exit_notify: notify.clone(),
-        binding: crate::domain::parent_control::ParentControlBinding::unlaunched(),
+        binding: crate::domain::agents::parent_control::ParentControlBinding::unlaunched(),
         owner_exit: crate::infrastructure::tools::owner_exit::OwnerExitFlag::new(),
         environment_control: None,
     });
@@ -144,7 +144,7 @@ async fn termination_runs_the_common_shutdown_and_environment_kill_then_requests
     let outcome = outcome.unwrap();
     assert_eq!(
         outcome.reason,
-        crate::domain::subagent_teardown::ShutdownReason::TerminationSignal
+        crate::domain::agents::subagent_teardown::ShutdownReason::TerminationSignal
     );
     assert_eq!(
         outcome.children_shut_down,
@@ -169,7 +169,7 @@ async fn termination_runs_the_common_shutdown_and_environment_kill_then_requests
     );
     assert_eq!(
         rig.graph.persistence.recorded_reason(),
-        Some(crate::domain::subagent_teardown::ShutdownReason::TerminationSignal)
+        Some(crate::domain::agents::subagent_teardown::ShutdownReason::TerminationSignal)
     );
     // The loop is told to finish; the permit is retained for a late waiter.
     bounded(rig.notify.notified()).await;
@@ -262,7 +262,7 @@ async fn the_last_client_disconnect_runs_the_common_shutdown_to_completion() {
     let outcome = outcome.unwrap();
     assert_eq!(
         outcome.reason,
-        crate::domain::subagent_teardown::ShutdownReason::OperatorRequest
+        crate::domain::agents::subagent_teardown::ShutdownReason::OperatorRequest
     );
     assert_eq!(
         outcome.triggers,

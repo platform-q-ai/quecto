@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use crate::application::subagents::ports::EndedChildRecords;
-use crate::domain::child_end::ChildOrigin;
+use crate::domain::agents::child_end::ChildOrigin;
 use crate::domain::crash_record::CrashRecord;
 use crate::domain::ids::AgentUuid;
 use crate::domain::message::Message;
@@ -71,7 +71,7 @@ impl InspectEndedChild {
 
     /// The session a launched child runs as: `cli:<uuid>` (its `-s`).
     pub fn child_session(child: &AgentUuid) -> Option<SessionIdentity> {
-        crate::domain::child_session::child_session_identity(child).ok()
+        crate::domain::agents::child_session::child_session_identity(child).ok()
     }
 
     /// The crash record the child left, if it left one. A child this

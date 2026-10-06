@@ -5,8 +5,8 @@
 use std::sync::Arc;
 
 use crate::application::subagents::ports::{ProtocolAttempt, TerminationConclusion};
+use crate::domain::agents::subagent_launch::ParentEndpoint;
 use crate::domain::environment_registry::EnvironmentRegistry;
-use crate::domain::subagent_launch::ParentEndpoint;
 use crate::infrastructure::processes::child_stderr_tail::StderrTail;
 use crate::infrastructure::processes::containers::script_stderr::{
     ScriptStdout, run_capturing_stderr_tail,
@@ -231,7 +231,7 @@ impl PreparedChild {
                 Some(endpoint) => {
                     match crate::infrastructure::processes::direct_child_routing::shutdown_over_socket(
                         endpoint,
-                        crate::domain::subagent_teardown::ShutdownReason::OperatorRequest,
+                        crate::domain::agents::subagent_teardown::ShutdownReason::OperatorRequest,
                         ROLLBACK_PROTOCOL_TIMEOUT,
                     )
                     .await

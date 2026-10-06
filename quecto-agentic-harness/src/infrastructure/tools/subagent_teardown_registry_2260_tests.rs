@@ -9,8 +9,8 @@ use super::end_detail_tests::{REASON, UUID, crash, signal};
 use super::*;
 use crate::application::subagents::dto::{ObserveOwnedChildExitRequest, ObservedExit};
 use crate::application::subagents::use_cases::ObserveOwnedChildExit;
+use crate::domain::agents::subagent_teardown::LaunchGeneration;
 use crate::domain::ids::AgentUuid;
-use crate::domain::subagent_teardown::LaunchGeneration;
 use crate::infrastructure::processes::owned_child_supervisor::{
     ChildHandleId, OwnedChildSupervisor, ProcessGroup,
 };
@@ -56,7 +56,7 @@ fn rig(base: &std::path::Path, owned: Owned, wait: Option<Duration>) -> Rig {
         // Launched by this harness as pid 7: the pid its crash record names.
         7,
     );
-    entry.origin = crate::domain::child_end::ChildOrigin::Launched;
+    entry.origin = crate::domain::agents::child_end::ChildOrigin::Launched;
     entry.launch_generation = Some(LaunchGeneration::new(1));
     entry.exit_signal_tx = Some(exit_tx.clone());
     match owned {

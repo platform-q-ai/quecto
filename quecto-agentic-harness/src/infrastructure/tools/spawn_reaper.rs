@@ -13,7 +13,7 @@ use std::sync::Arc;
 use crate::application::subagents::dto::{ObserveOwnedChildExitRequest, ObservedExit};
 use crate::application::subagents::ports::ExitObservation;
 use crate::application::subagents::use_cases::ObserveOwnedChildExit;
-use crate::domain::subagent_teardown::DelegatedAgentIdentity;
+use crate::domain::agents::subagent_teardown::DelegatedAgentIdentity;
 use crate::infrastructure::processes::owned_child_supervisor::{
     ChildExit, ChildHandleId, OwnedChildSupervisor,
 };

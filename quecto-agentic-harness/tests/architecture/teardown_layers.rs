@@ -178,7 +178,7 @@ fn declares(line: &str, item: &str) -> bool {
 const RETIRED_DOMAIN_PORTS: &[(&str, &str, &str)] = &[
     // #1940
     (
-        "src/domain/subagent_launch.rs",
+        "src/domain/agents/subagent_launch.rs",
         "trait SubagentLaunchPorts",
         "src/application/subagent_launch.rs",
     ),
@@ -200,7 +200,7 @@ const RETIRED_DOMAIN_PORTS: &[(&str, &str, &str)] = &[
     ),
     // #1960
     (
-        "src/domain/agent.rs",
+        "src/domain/agents/agent.rs",
         "trait AgentLoop",
         "src/application/agent_turn/ports.rs",
     ),
@@ -267,7 +267,7 @@ const RETIRED_DOMAIN_PORTS: &[(&str, &str, &str)] = &[
         SWARM_PORTS,
     ),
     (
-        "src/domain/subagent_launch.rs",
+        "src/domain/agents/subagent_launch.rs",
         "type LaunchFuture",
         "src/application/subagent_launch.rs",
     ),
@@ -391,9 +391,9 @@ fn domain_is_pure_and_the_legacy_baseline_does_not_grow() {
         "a legacy domain file became pure: shrink the baseline"
     );
     for pure in [
-        "src/domain/subagent_teardown.rs",
-        "src/domain/parent_control.rs",
-        "src/domain/harness_lifetime.rs",
+        "src/domain/agents/subagent_teardown.rs",
+        "src/domain/agents/parent_control.rs",
+        "src/domain/agents/harness_lifetime.rs",
         "src/domain/environment_retention.rs",
         "src/domain/environment_registry.rs",
         "src/domain/environment_registry_inspect.rs",

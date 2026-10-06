@@ -9,10 +9,10 @@ use quecto::application::subagents::dto::{
 };
 use quecto::application::subagents::ports::{ChildRoutingError, DirectChildRouting};
 use quecto::application::subagents::use_cases::TerminateDelegatedAgent;
-use quecto::domain::ids::AgentUuid;
-use quecto::domain::subagent_teardown::{
+use quecto::domain::agents::subagent_teardown::{
     LaunchGeneration, LineageSnapshot, RoutingDepth, ShutdownReason, TerminationRouteError,
 };
+use quecto::domain::ids::AgentUuid;
 
 use super::teardown_fixture::{Call, Harness, Lifecycle, Routing, identity, record, root_tree};
 

@@ -22,7 +22,9 @@ fn build_agent_loop(world: &QuectoWorld, max_iterations: Option<u32>) -> AgentLo
 fn build_agent_loop_with_callback(
     world: &QuectoWorld,
     max_iterations: Option<u32>,
-    progress_callback: Option<Arc<dyn Fn(quecto::domain::agent::AgentProgressEvent) + Send + Sync>>,
+    progress_callback: Option<
+        Arc<dyn Fn(quecto::domain::agents::agent::AgentProgressEvent) + Send + Sync>,
+    >,
 ) -> AgentLoopImpl {
     let provider = world.mock_llm.clone().expect("mock LLM not configured") as Arc<dyn LlmProvider>;
 
@@ -311,10 +313,12 @@ fn when_agent_processes_message_with_progress(world: &mut QuectoWorld, message: 
     let completed_roles = Arc::new(std::sync::Mutex::new(Vec::new()));
     let completed_roles_for_callback = Arc::clone(&completed_roles);
     let callback = Arc::new(move |event| match event {
-        quecto::domain::agent::AgentProgressEvent::ToolFinished { result_content, .. } => {
+        quecto::domain::agents::agent::AgentProgressEvent::ToolFinished {
+            result_content, ..
+        } => {
             *preview_for_callback.lock().unwrap() = Some(result_content);
         }
-        quecto::domain::agent::AgentProgressEvent::TurnCompleted { messages } => {
+        quecto::domain::agents::agent::AgentProgressEvent::TurnCompleted { messages } => {
             *completed_roles_for_callback.lock().unwrap() = messages
                 .iter()
                 .map(|message| message.role.clone())

@@ -2,8 +2,8 @@
 
 use std::path::PathBuf;
 
-use super::error::DomainError;
-use super::ids::AgentUuid;
+use crate::domain::error::DomainError;
+use crate::domain::ids::AgentUuid;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DisplayNameResolutionEntry {
@@ -99,8 +99,8 @@ pub struct SubagentConfig {
     pub read_only: bool,
     /// The brain the child harness runs (#2287); `Quecto` unless the spawn
     /// asks for another. Checked by
-    /// [`super::external_agent::backend::validate_backend`].
-    pub backend: super::external_agent::backend::MemberBackend,
+    /// [`crate::domain::external_agent::backend::validate_backend`].
+    pub backend: crate::domain::external_agent::backend::MemberBackend,
     /// Whether this child is a swarm coordinator (#2461): an explicit spawn
     /// opt-in, accepted only for a new container. It is launched with
     /// `--coordinator` and starts from the coordinator playbook.
@@ -122,7 +122,7 @@ pub enum ContainerSelection {
     },
     /// Join an existing session environment by ref or name (#1369 slice 2).
     Existing {
-        target: super::environment_registry::EnvironmentTarget,
+        target: crate::domain::environment_registry::EnvironmentTarget,
     },
 }
 

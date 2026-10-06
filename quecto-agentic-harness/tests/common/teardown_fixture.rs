@@ -21,11 +21,11 @@ use quecto::application::subagents::use_cases::{
     ExecuteHarnessShutdown, ExecuteHarnessShutdownPorts, HarnessShutdownTransaction,
     PrepareHarnessShutdown, TerminateAllDelegatedAgents, TerminateAllDelegatedAgentsPorts,
 };
-use quecto::domain::ids::AgentUuid;
-use quecto::domain::subagent_teardown::{
+use quecto::domain::agents::subagent_teardown::{
     DelegatedAgentIdentity, HarnessLifecycleState, LaunchGeneration, LineageRecord,
     LineageSnapshot, RoutingDepth, ShutdownReason,
 };
+use quecto::domain::ids::AgentUuid;
 
 pub fn identity(uuid: &str, generation: u64) -> DelegatedAgentIdentity {
     DelegatedAgentIdentity::new(uuid, LaunchGeneration::new(generation))

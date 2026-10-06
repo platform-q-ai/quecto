@@ -12,7 +12,9 @@ use std::time::Duration;
 use crate::application::subagents::ports::{
     ChildRoutingError, DirectChildRouting, DownstreamRejection, PortFuture, TerminationResult,
 };
-use crate::domain::subagent_teardown::{DelegatedAgentIdentity, RoutingDepth, ShutdownReason};
+use crate::domain::agents::subagent_teardown::{
+    DelegatedAgentIdentity, RoutingDepth, ShutdownReason,
+};
 use crate::infrastructure::tools::subagent_registry::{
     SubagentRegistry, send_subagent_uds_command_with_timeout,
 };

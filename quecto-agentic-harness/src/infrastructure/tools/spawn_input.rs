@@ -4,8 +4,8 @@
 //! imports adapter modules (argv construction, process execution, JSON
 //! contract parsing stay in `spawn_container`).
 
+use crate::domain::agents::subagent::ContainerSelection;
 use crate::domain::environment_registry::EnvironmentTarget;
-use crate::domain::subagent::ContainerSelection;
 use serde_json::{Map, Value};
 
 pub(super) fn parse_container_selection(

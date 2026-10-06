@@ -18,7 +18,7 @@ fn ended_registry(label: &str, last_error: Option<String>) -> SubagentRegistry {
         // Launched by this harness as pid 7: the pid its crash record names.
         7,
     );
-    entry.origin = crate::domain::child_end::ChildOrigin::Launched;
+    entry.origin = crate::domain::agents::child_end::ChildOrigin::Launched;
     entry.persisted_liveness = SubagentLiveness::Dead;
     entry.last_tool = Some(format!("edit\n[harness] {}", "t".repeat(4000)));
     entry.last_error = last_error;
@@ -84,7 +84,7 @@ fn a_long_label_is_capped() {
     let long = format!("w{}", "x".repeat(4000));
     let row = find_ended(&ended_registry(&long, None), UUID).unwrap();
     assert!(
-        row.label.len() <= crate::domain::child_end::MAX_SHOWN_NAME_BYTES + "…".len(),
+        row.label.len() <= crate::domain::agents::child_end::MAX_SHOWN_NAME_BYTES + "…".len(),
         "{}",
         row.label.len()
     );
@@ -171,7 +171,7 @@ async fn a_forged_record_for_a_launched_sibling_is_not_believed_after_a_child_re
         "/tmp/sibling.sock".into(),
         4242,
     );
-    sibling.origin = crate::domain::child_end::ChildOrigin::Launched;
+    sibling.origin = crate::domain::agents::child_end::ChildOrigin::Launched;
     registry.lock().unwrap().insert(UUID.into(), sibling);
     reported_by_child(
         &registry,
@@ -246,7 +246,10 @@ async fn a_reported_descendant_cannot_make_its_parent_read_another_session() {
         .expect("merged under the reported key")
         .persisted_liveness = SubagentLiveness::Dead;
     let row = find_ended(&registry, "secret-plan").unwrap();
-    assert_eq!(row.origin, crate::domain::child_end::ChildOrigin::Reported);
+    assert_eq!(
+        row.origin,
+        crate::domain::agents::child_end::ChildOrigin::Reported
+    );
     let inspection =
         crate::composition::subagent_lifecycle::build_ended_child_inspection(base.path());
     for command in ["get_messages", "get_report", "get_state"] {
@@ -288,8 +291,8 @@ fn only_a_launched_rows_pid_is_vouched_for() {
     let row = find_ended(&registry, UUID).unwrap();
     assert_eq!(row.pid, Some(7));
     for origin in [
-        crate::domain::child_end::ChildOrigin::Reported,
-        crate::domain::child_end::ChildOrigin::Unverified,
+        crate::domain::agents::child_end::ChildOrigin::Reported,
+        crate::domain::agents::child_end::ChildOrigin::Unverified,
     ] {
         registry.lock().unwrap().get_mut(UUID).unwrap().origin = origin;
         let row = find_ended(&registry, UUID).unwrap();
@@ -312,12 +315,15 @@ fn a_reported_row_named_like_a_launched_child_never_stands_in_for_it() {
         "/tmp/fake.sock".into(),
         0,
     );
-    fake.origin = crate::domain::child_end::ChildOrigin::Reported;
+    fake.origin = crate::domain::agents::child_end::ChildOrigin::Reported;
     fake.persisted_liveness = SubagentLiveness::Dead;
     registry.lock().unwrap().insert("worker".into(), fake);
     let row = find_ended(&registry, "worker").expect("the launched child");
     assert_eq!(row.uuid.as_str(), UUID);
-    assert_eq!(row.origin, crate::domain::child_end::ChildOrigin::Launched);
+    assert_eq!(
+        row.origin,
+        crate::domain::agents::child_end::ChildOrigin::Launched
+    );
     registry
         .lock()
         .unwrap()
@@ -329,7 +335,7 @@ fn a_reported_row_named_like_a_launched_child_never_stands_in_for_it() {
     registry.lock().unwrap().remove(UUID);
     assert_eq!(
         find_ended(&registry, "worker").map(|row| row.origin),
-        Some(crate::domain::child_end::ChildOrigin::Reported)
+        Some(crate::domain::agents::child_end::ChildOrigin::Reported)
     );
 }
 

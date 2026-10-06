@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use quecto::application::subagents::dto::ReleaseOutcome;
 use quecto::application::subagents::ports::SubagentLifecycleRepository;
-use quecto::domain::subagent_teardown::{HarnessLifecycleState, ShutdownReason};
+use quecto::domain::agents::subagent_teardown::{HarnessLifecycleState, ShutdownReason};
 
 use super::teardown_fixture::{Harness, Lifecycle, root_tree};
 

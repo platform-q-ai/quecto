@@ -14,7 +14,7 @@
 use std::collections::HashSet;
 use std::fmt;
 
-use super::ids::AgentUuid;
+use crate::domain::ids::AgentUuid;
 
 /// Monotonic launch generation of a delegated agent. A uuid that is re-used
 /// by a later launch carries a different generation, so a stale command aimed

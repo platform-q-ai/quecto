@@ -15,11 +15,13 @@ use crate::application::subagents::dto::{
     FleetTeardownAuthority, TerminateAllDelegatedAgentsRequest,
 };
 use crate::application::subagents::ports::{TeardownCompensation, TerminationCause};
+use crate::domain::agents::subagent_teardown::{
+    DelegatedAgentIdentity, LaunchGeneration, ShutdownReason,
+};
 use crate::domain::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,
     mint_environment_uuid,
 };
-use crate::domain::subagent_teardown::{DelegatedAgentIdentity, LaunchGeneration, ShutdownReason};
 
 /// A script that appends `<op> <environment id>` to `log`.
 fn logging_script(dir: &Path, op: &str, log: &Path) -> String {

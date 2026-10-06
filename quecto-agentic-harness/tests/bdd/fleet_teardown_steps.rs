@@ -15,8 +15,8 @@ use quecto::application::subagents::dto::{
 use quecto::application::subagents::ports::{
     DelegatedAgentRegistry, SubagentLifecycleRepository, TerminationCause, TerminationConclusion,
 };
+use quecto::domain::agents::subagent_teardown::{HarnessLifecycleState, ShutdownReason};
 use quecto::domain::ids::AgentUuid;
-use quecto::domain::subagent_teardown::{HarnessLifecycleState, ShutdownReason};
 
 use crate::QuectoWorld;
 use crate::common::teardown_fixture::{Harness, RowPhase, root_tree};
@@ -251,9 +251,9 @@ fn when_busy_delete(world: &mut QuectoWorld, rows: usize) {
             std::path::PathBuf::from(format!("/nonexistent/busy-{index}.sock")),
             0,
         );
-        entry.launch_generation = Some(quecto::domain::subagent_teardown::LaunchGeneration::new(
-            index as u64 + 1,
-        ));
+        entry.launch_generation = Some(
+            quecto::domain::agents::subagent_teardown::LaunchGeneration::new(index as u64 + 1),
+        );
         registry.lock().unwrap().insert(uuid.into_string(), entry);
     }
     let fleet = build_fleet_teardown(FleetTeardownWiring {

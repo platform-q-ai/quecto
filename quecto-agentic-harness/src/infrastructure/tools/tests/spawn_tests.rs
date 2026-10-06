@@ -340,9 +340,9 @@ fn register_and_broadcast_rejects_duplicate_agent_uuid_without_replacing_existin
 // registration and stub mode) so the status decision cannot drift between
 // branches. Stub execute tests still exercise end-to-end registration+broadcast.
 
-fn sample_config(task: Option<&str>) -> crate::domain::subagent::SubagentConfig {
-    crate::domain::subagent::SubagentConfig {
-        container: crate::domain::subagent::ContainerSelection::Local,
+fn sample_config(task: Option<&str>) -> crate::domain::agents::subagent::SubagentConfig {
+    crate::domain::agents::subagent::SubagentConfig {
+        container: crate::domain::agents::subagent::ContainerSelection::Local,
         task: task.map(String::from),
         agent_id: Some("worker".into()),
         system: None,

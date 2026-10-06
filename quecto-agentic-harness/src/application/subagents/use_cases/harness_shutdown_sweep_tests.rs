@@ -6,8 +6,8 @@ use std::sync::atomic::Ordering;
 use super::tests::{rig, signal};
 use super::*;
 use crate::application::subagents::use_cases::teardown_fakes::*;
+use crate::domain::agents::subagent_teardown::HarnessLifecycleState;
 use crate::domain::ids::AgentUuid;
-use crate::domain::subagent_teardown::HarnessLifecycleState;
 
 /// Review of #1938: an operator fleet run (delete-all, a session switch)
 /// already past its lineage read, a spawn admitted meanwhile while the

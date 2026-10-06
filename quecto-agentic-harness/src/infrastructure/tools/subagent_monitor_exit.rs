@@ -26,9 +26,9 @@ pub(super) async fn notify_child_exited(
                 // A row without a launch generation (a fixture, a stub)
                 // is still this harness's to compensate when its
                 // connection ends; it just cannot be routed to.
-                crate::domain::subagent_teardown::DelegatedAgentIdentity::new(
+                crate::domain::agents::subagent_teardown::DelegatedAgentIdentity::new(
                     entry.agent_uuid.clone(),
-                    crate::domain::subagent_teardown::LaunchGeneration::new(0),
+                    crate::domain::agents::subagent_teardown::LaunchGeneration::new(0),
                 )
             })
         })

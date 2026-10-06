@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use super::message::Message;
-use super::tool::ToolPolicyReconciliation;
-use super::tool_descriptor::ToolCatalogueEntry;
+use crate::domain::message::Message;
+use crate::domain::tool::ToolPolicyReconciliation;
+use crate::domain::tool_descriptor::ToolCatalogueEntry;
 
 /// A live progress event emitted by the agent loop during processing.
 ///
@@ -87,7 +87,7 @@ pub enum AgentProgressEvent {
     /// One provider request of this agent ended (#2436): every attempt,
     /// retries included, whatever its provider — for the UDS
     /// `request_completed` event.
-    RequestCompleted(super::inference::events::request_completion::RequestCompleted),
+    RequestCompleted(crate::domain::inference::events::request_completion::RequestCompleted),
     /// The agent loop has produced a final text response and is done.
     Done,
 }

@@ -22,8 +22,8 @@ use crate::application::subagents::dto::{
     FleetTeardownAuthority, FleetTeardownError, TerminateAllDelegatedAgentsRequest,
 };
 use crate::application::subagents::use_cases::TerminateAllDelegatedAgents;
+use crate::domain::agents::subagent_teardown::ShutdownReason;
 use crate::domain::ids::AgentUuid;
-use crate::domain::subagent_teardown::ShutdownReason;
 use crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle;
 use crate::infrastructure::tools::subagent_registry::SubagentRegistry;
 

@@ -38,7 +38,7 @@ fn immediate_persist_failure_does_not_emit_success_event_or_retained_overlay() {
     assert!(
         events.lock().unwrap().iter().all(|event| !matches!(
             event,
-            crate::domain::agent::AgentProgressEvent::ToolPolicyChanged { .. }
+            crate::domain::agents::agent::AgentProgressEvent::ToolPolicyChanged { .. }
         )),
         "failed immediate persistence must not emit a success-looking tool_policy_changed event"
     );

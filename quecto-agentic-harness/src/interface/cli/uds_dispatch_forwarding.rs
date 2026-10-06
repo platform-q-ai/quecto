@@ -201,7 +201,7 @@ fn historical_launched_child(
     registry: &crate::infrastructure::tools::subagent_registry::SubagentRegistry,
     reference: &str,
 ) -> Result<Option<crate::domain::ids::AgentUuid>, String> {
-    use crate::domain::child_end::ChildOrigin;
+    use crate::domain::agents::child_end::ChildOrigin;
     type Entry = crate::infrastructure::tools::subagent_registry::SubagentEntry;
     let entries = registry
         .lock()
@@ -266,8 +266,9 @@ pub(super) async fn forward_subagent_get_messages(
             match historical_agent_uuid {
                 Ok(Some(child)) => {
                     // A launched child runs as `cli:<uuid>` (#2192).
-                    let session = match crate::domain::child_session::child_session_identity(&child)
-                    {
+                    let session = match crate::domain::agents::child_session::child_session_identity(
+                        &child,
+                    ) {
                         Ok(session) => session,
                         Err(error) => {
                             return AgentEvent::err(

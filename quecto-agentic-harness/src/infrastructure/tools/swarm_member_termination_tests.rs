@@ -8,8 +8,8 @@ use super::{DelegatedSwarmMemberTermination, shutdown_member_over_endpoint};
 use crate::application::subagents::use_cases::{
     KillDelegatedAgent, KillDelegatedAgentPorts, OwnerConclusionPorts, TerminateDelegatedAgent,
 };
+use crate::domain::agents::subagent_teardown::LaunchGeneration;
 use crate::domain::ids::AgentUuid;
-use crate::domain::subagent_teardown::LaunchGeneration;
 use crate::domain::swarm::{Member, MemberStatus, ProcessIdentity};
 use crate::infrastructure::processes::direct_child_routing::UdsDirectChildRouting;
 use crate::infrastructure::processes::owned_child_supervisor::{

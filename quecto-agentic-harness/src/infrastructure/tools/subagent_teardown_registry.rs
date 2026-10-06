@@ -16,9 +16,9 @@ use crate::application::subagents::ports::{
     Compensated, CompensationObservation, DelegatedAgentRegistry, ExitObservation, PortFuture,
     ResolutionError, StoppingClaimError, TeardownCompensation, TerminalClaim, TerminationCause,
 };
+use crate::domain::agents::subagent::DisplayNameResolveError;
+use crate::domain::agents::subagent_teardown::DelegatedAgentIdentity;
 use crate::domain::sessions::entities::session::SubagentLiveness;
-use crate::domain::subagent::DisplayNameResolveError;
-use crate::domain::subagent_teardown::DelegatedAgentIdentity;
 
 use super::subagent_registry::{
     ClaimOwner, ExitSignal, ExitSignalKind, NotificationTx, SequencedSubagentNotification,

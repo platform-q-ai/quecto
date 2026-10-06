@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::subagent_teardown::LaunchGeneration;
+use crate::domain::agents::subagent_teardown::LaunchGeneration;
 use crate::infrastructure::processes::owned_child_supervisor::ProcessGroup;
 use crate::infrastructure::tools::subagent_registry::{
     SubagentEntry, SubagentRegistry, TeardownPhase, new_exit_signal_channel, new_registry,

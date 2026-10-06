@@ -1,5 +1,5 @@
 use super::agent_loop::AgentLoopImpl;
-use crate::domain::agent::AgentProgressEvent;
+use crate::domain::agents::agent::AgentProgressEvent;
 use crate::domain::tool::{
     ToolDefinition, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationStatus,
     ToolPolicyReconciliation, ToolPolicyRequest,

@@ -17,10 +17,10 @@ use crate::application::subagents::ports::{
     ShutdownRun, ShutdownRunSpawner, ShutdownSessionPersistence, SubagentLifecycleRepository,
     TurnCancellation,
 };
-use crate::domain::ids::AgentUuid;
-use crate::domain::subagent_teardown::{
+use crate::domain::agents::subagent_teardown::{
     DelegatedAgentIdentity, HarnessLifecycleState, LineageRecord, LineageSnapshot, ShutdownReason,
 };
+use crate::domain::ids::AgentUuid;
 use crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle;
 use crate::infrastructure::tools::subagent_registry::SubagentRegistry;
 use crate::interface::uds::subagent_teardown::presenter::{AckWriteError, AckWriter};

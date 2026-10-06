@@ -23,10 +23,10 @@ use quecto::application::subagents::use_cases::{
     KillDelegatedAgent, KillDelegatedAgentPorts, OwnerConclusionPorts, TerminateDelegatedAgent,
 };
 use quecto::composition::subagent_teardown::LifecycleAdapter as RegistryLifecycleRepository;
-use quecto::domain::ids::AgentUuid;
-use quecto::domain::subagent_teardown::{
+use quecto::domain::agents::subagent_teardown::{
     DelegatedAgentIdentity, LaunchGeneration, RoutingDepth, TerminationRouteError,
 };
+use quecto::domain::ids::AgentUuid;
 use quecto::infrastructure::processes::direct_child_routing::UdsDirectChildRouting;
 use quecto::infrastructure::processes::owned_child_termination::SupervisedChildTermination;
 use quecto::infrastructure::tools::subagent_registry::{

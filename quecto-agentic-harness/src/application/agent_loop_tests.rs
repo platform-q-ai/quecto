@@ -605,17 +605,17 @@ fn make_agent_with_callback(
 ) -> (
     AgentLoopImpl,
     Arc<MockProvider>,
-    Arc<Mutex<Vec<crate::domain::agent::AgentProgressEvent>>>,
+    Arc<Mutex<Vec<crate::domain::agents::agent::AgentProgressEvent>>>,
 ) {
     let provider = Arc::new(MockProvider::new(responses));
     let mut registry = MockRegistry::new();
     for (name, response) in tools {
         registry.register(Arc::new(MockTool::new(name, response)));
     }
-    let events: Arc<Mutex<Vec<crate::domain::agent::AgentProgressEvent>>> =
+    let events: Arc<Mutex<Vec<crate::domain::agents::agent::AgentProgressEvent>>> =
         Arc::new(Mutex::new(Vec::new()));
     let events_clone = events.clone();
-    let callback: crate::domain::agent::ProgressCallback = Arc::new(move |ev| {
+    let callback: crate::domain::agents::agent::ProgressCallback = Arc::new(move |ev| {
         events_clone.lock().unwrap().push(ev);
     });
     let agent = AgentLoopImpl::new(AgentLoopConfig {
@@ -632,9 +632,12 @@ async fn test_progress_callback_thinking_fired_before_llm_call() {
     agent.run_loop(&mut messages).await.unwrap();
 
     let fired = events.lock().unwrap();
-    let has_thinking = fired
-        .iter()
-        .any(|e| matches!(e, crate::domain::agent::AgentProgressEvent::Thinking { .. }));
+    let has_thinking = fired.iter().any(|e| {
+        matches!(
+            e,
+            crate::domain::agents::agent::AgentProgressEvent::Thinking { .. }
+        )
+    });
     assert!(has_thinking, "expected Thinking event, got: {:?}", *fired);
 }
 
@@ -647,7 +650,7 @@ async fn test_progress_callback_done_fired_on_text_response() {
     let fired = events.lock().unwrap();
     let has_done = fired
         .iter()
-        .any(|e| matches!(e, crate::domain::agent::AgentProgressEvent::Done));
+        .any(|e| matches!(e, crate::domain::agents::agent::AgentProgressEvent::Done));
     assert!(has_done, "expected Done event, got: {:?}", *fired);
 }
 

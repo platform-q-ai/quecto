@@ -14,8 +14,8 @@ use std::sync::Arc;
 
 use crate::application::subagents::dto::{KillDelegatedAgentError, KillDelegatedAgentRequest};
 use crate::application::subagents::use_cases::KillDelegatedAgent;
+use crate::domain::agents::subagent_teardown::ShutdownReason;
 use crate::domain::error::DomainError;
-use crate::domain::subagent_teardown::ShutdownReason;
 use crate::domain::swarm::Member;
 use crate::infrastructure::processes::direct_child_routing::{
     PROTOCOL_ACK_TIMEOUT, shutdown_over_socket,

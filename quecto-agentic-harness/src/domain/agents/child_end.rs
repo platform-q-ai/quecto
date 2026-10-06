@@ -7,7 +7,7 @@
 //! record is only quoted. Whatever of it reaches the parent is escaped,
 //! capped and labelled as the child's unverified words — never text the
 //! parent could take as an instruction.
-use super::crash_record::{CrashRecord, PanicReport};
+use crate::domain::crash_record::{CrashRecord, PanicReport};
 
 /// The signal a fatal panic ends the process with (`SIGABRT`).
 pub const ABORT_SIGNAL: i32 = 6;

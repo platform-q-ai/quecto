@@ -168,7 +168,7 @@ fn test_session_tracks_context_tokens() {
     session.set_context_tokens(77);
     assert_eq!(session.context_tokens(), 77);
 
-    let mut result = crate::domain::agent::AgentResult::text("ok");
+    let mut result = crate::domain::agents::agent::AgentResult::text("ok");
     result.context_tokens = 88;
     result.billed_input_tokens = 10;
     session.record_agent_result("cli:test", &result);

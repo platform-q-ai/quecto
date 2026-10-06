@@ -67,7 +67,8 @@ fn launched_child(dir: &std::path::Path) -> Child {
         dir.join("never.sock"),
         0,
     );
-    entry.launch_generation = Some(crate::domain::subagent_teardown::LaunchGeneration::new(1));
+    entry.launch_generation =
+        Some(crate::domain::agents::subagent_teardown::LaunchGeneration::new(1));
     entry.environment_registry = Some(environments.clone());
     entry.environment_ref = Some(env_ref.clone());
     registry.lock().unwrap().insert("child".to_string(), entry);
