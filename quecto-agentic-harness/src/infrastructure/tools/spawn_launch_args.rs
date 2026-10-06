@@ -238,14 +238,15 @@ pub(super) fn build_child_cli_args(spec: &ChildLaunchSpec<'_>) -> Vec<OsString> 
         // children; never inferred from --parent-id / session / env / UDS.
         "--spawned".into(),
     ]);
-    // #2461: only the host parent launches into a container, and what it
-    // launches there is that swarm's coordinator; workers are spawned inside
-    // it with `container` omitted, so a local launch is never a coordinator.
-    match config.container {
-        ContainerSelection::New { .. } | ContainerSelection::Existing { .. } => {
-            args.push("--coordinator".into());
-        }
-        ContainerSelection::Local => {}
+    // #2461: the coordinator role is the spawn's explicit opt-in, which the
+    // spawn tool accepts only for a new container; every other child, an
+    // ordinary container child or a swarm worker, stays a subagent.
+    if config.coordinator {
+        assert!(
+            matches!(config.container, ContainerSelection::New { .. }),
+            "the spawn tool accepts a coordinator only for a new container"
+        );
+        args.push("--coordinator".into());
     }
     // Deliberately no `--persist` (#1937): a launcher-created child is
     // lifetime-scoped to its launcher through the parent control binding

@@ -73,7 +73,7 @@ pub(super) fn compose(
     )
 }
 
-/// The prompt role the parsed launch flags name (#2461). Not wired yet.
+/// The prompt role the parsed launch flags name (#2461).
 pub(super) fn role(flags: &super::flag_parse::AgentFlags) -> crate::interface::shared::PromptRole {
-    crate::interface::shared::PromptRole::of(flags.spawned, false)
+    crate::interface::shared::PromptRole::of(flags.spawned, flags.coordinator)
 }

@@ -56,7 +56,8 @@ With `container_configs` configured, `spawn` can place a child in an isolated co
 
 Read `docs {"name":"swarm"}` before directing a swarm. It runs in the
 coordinator's container: pick the config (step 1 above) and
-launch the coordinator with `{"mode":"new","container_config":"<name>"}`;
+launch the coordinator with `{"mode":"new","container_config":"<name>"}` and
+`coordinator: true`;
 only the official isolated-PID adapter can host a swarm (host-local scripts
 and the host cannot). Workers are spawned by the coordinator with
 `container` omitted. Workflow eligibility follows swarm participation, not

@@ -171,13 +171,35 @@ fn optional_string(
         .map(|v| v.map(str::to_string))
 }
 
-/// The spawn's `coordinator` opt-in (#2461). Not wired yet.
+/// The spawn's `coordinator` opt-in (#2461): absent, null or false is an
+/// ordinary child. `true` (or the quoted `"true"` some providers send, #2455)
+/// names a swarm coordinator, which starts its run in a fresh container, so it
+/// is accepted only for a new container and never beside a workflow (a
+/// workflow agent cannot create a swarm). Any other value is refused.
 pub(super) fn parse_coordinator(
-    _args: &Value,
-    _container: &ContainerSelection,
-    _workflow_requested: bool,
+    args: &Value,
+    container: &ContainerSelection,
+    workflow_requested: bool,
 ) -> Result<bool, String> {
-    Ok(false)
+    let requested = match args.get("coordinator") {
+        None | Some(Value::Null) | Some(Value::Bool(false)) => false,
+        Some(Value::Bool(true)) => true,
+        Some(Value::String(text)) if text == "false" => false,
+        Some(Value::String(text)) if text == "true" => true,
+        Some(_) => return Err("coordinator must be a boolean".to_string()),
+    };
+    match (requested, container, workflow_requested) {
+        (false, _, _) => Ok(false),
+        (true, ContainerSelection::New { .. }, false) => Ok(true),
+        (true, ContainerSelection::New { .. }, true) => Err(
+            "coordinator cannot run a workflow: a workflow agent cannot create a swarm".to_string(),
+        ),
+        (true, ContainerSelection::Local | ContainerSelection::Existing { .. }, _) => Err(
+            "coordinator requires a new container: a coordinator starts its swarm in a fresh \
+             container (container true or {\"mode\":\"new\"})"
+                .to_string(),
+        ),
+    }
 }
 
 #[cfg(test)]
