@@ -86,6 +86,36 @@ fn readme_uds_protocol_lists_current_commands_and_events() {
 }
 
 #[test]
+fn contributor_cookbook_rust_source_paths_exist() {
+    let cookbooks = read_repo_file("docs/contributor-cookbooks.md");
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let paths: Vec<_> = cookbooks
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        // Accept concrete paths; cookbook templates/globs are not file names.
+        .filter(|path| {
+            path.starts_with("src/")
+                && path.ends_with(".rs")
+                && path
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '_' | '-' | '.'))
+        })
+        .collect();
+
+    assert!(
+        !paths.is_empty(),
+        "contributor cookbooks should reference Rust source paths"
+    );
+    for path in paths {
+        assert!(
+            repo.join(path).is_file(),
+            "contributor cookbook source path should exist: {path}"
+        );
+    }
+}
+
+#[test]
 fn architecture_hardening_phase_0_docs_are_linked() {
     let prd = read_repo_file("docs/prd/prd-harness-architecture-hardening.md");
     let adr_index = read_repo_file("docs/architecture-design-records/README.md");
