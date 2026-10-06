@@ -3,8 +3,7 @@ name: Cache Warm
 # Populate the rust-cache entries the merge CI restores. ci.yml only runs on
 # labelled PRs and GitHub scopes caches to the branch that saved them plus the
 # default branch, so nothing ever lands in master's scope: every PR's first
-# labelled run compiled everything cold (Coverage 343 s vs 180 s warm, Static
-# Quality 137 s vs 58 s). Each job here builds one shape into the target dir
+# labelled run compiled everything cold (Static Quality 137 s vs 58 s warm). Each job here builds one shape into the target dir
 # and saves it under the same `shared-key` the CI jobs use; a PR then
 # restores the closest master entry (`restore-keys` prefix match) even when
 # its Cargo.lock differs. Nothing is tested here. The coverage-lib shape is

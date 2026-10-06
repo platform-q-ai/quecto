@@ -13,11 +13,11 @@ concurrency:
   group: merge-ci-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
-# rust-cache keys (`shared-key`) name a BUILD SHAPE, not a job, and the same
-# keys are produced on every master push by cache-warm.yml. This workflow only
-# runs on labelled PRs, so without that warm-up no cache ever exists in
-# master's scope and every PR's first run compiles everything cold (measured:
-# Coverage 180 s warm vs 343 s cold, Static Quality 58 s vs 137 s).
+# rust-cache keys (`shared-key`) name a BUILD SHAPE, not a job, and the keys
+# this workflow uses are produced on every master push by cache-warm.yml. This
+# workflow only runs on labelled PRs, so without that warm-up no cache ever
+# exists in master's scope and every PR's first run compiles everything cold
+# (measured: Static Quality 58 s warm vs 137 s cold).
 #   workspace    - cargo test/clippy of the workspace shape (target/)
 #   coverage-lib - instrumented workspace lib build (target/llvm-cov-lib), used
 #                  only by coverage-nightly.yml, which runs on master daily

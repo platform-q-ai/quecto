@@ -8,16 +8,18 @@ name: Nightly Coverage
 # the Actions tab (workflow_dispatch) to check a branch before merging.
 on:
   schedule:
-    - cron: "0 3 * * *"
+    # Off the hour: GitHub delays or drops scheduled runs under the
+    # top-of-the-hour load.
+    - cron: "23 3 * * *"
   workflow_dispatch:
 
+# Per ref, so a manual run on a branch never cancels master's nightly.
 concurrency:
-  group: nightly-coverage
+  group: nightly-coverage-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
-  issues: write
 
 jobs:
   coverage:
@@ -46,14 +48,27 @@ jobs:
       # and report alone (the same per-package numbers as four `cargo llvm-cov
       # --lib -p` runs, which each compiled their own feature unification).
       - run: bash scripts/run-lib-coverage.sh quecto-agentic-harness:92 quecto-tui:95 quecto-api:95 quecto-image:95
-      - name: Report a scheduled failure
-        if: failure() && github.event_name == 'schedule'
+
+  # Its own job, so a timed-out, cancelled or lost coverage run is reported
+  # too, and only this job's token can write issues.
+  report-failure:
+    name: Report a nightly failure
+    needs: coverage
+    if: always() && github.event_name == 'schedule' && contains(fromJSON('["failure","cancelled"]'), needs.coverage.result)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the tracking issue
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RESULT: ${{ needs.coverage.result }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           title="Nightly coverage failed"
-          body="Nightly coverage failed on master at ${GITHUB_SHA}: ${RUN_URL}"
+          body="Nightly coverage ${RESULT} on master at ${GITHUB_SHA}: ${RUN_URL}"
           existing="$(gh issue list --state open --search "\"${title}\" in:title" --json number --jq '.[0].number')"
           if [ -n "$existing" ]; then
             gh issue comment "$existing" --body "$body"
