@@ -11,10 +11,10 @@ use crate::application::sessions::dto::{
 use crate::application::sessions::dto::{ResumeOutcome, ResumeRequest, SavedSessionResumed};
 use crate::domain::ids::AgentUuid;
 use crate::domain::message::Message;
-use crate::domain::session::{
+use crate::domain::sessions::entities::session::{
     PersistedSubagentRosterEntry, Session, SubagentLiveness, SubagentRestoreReason,
 };
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::domain::workflow::WorkflowRunPersisted;
 
 const TARGET: &str = "cli:saved";

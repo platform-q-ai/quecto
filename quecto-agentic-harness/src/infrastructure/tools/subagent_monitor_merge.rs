@@ -6,7 +6,7 @@
 use std::time::Instant;
 
 use crate::domain::child_end::ChildOrigin;
-use crate::domain::session::SubagentLiveness;
+use crate::domain::sessions::entities::session::SubagentLiveness;
 
 use super::subagent_lifecycle::SubagentLifecycleState;
 use super::subagent_monitor::MAX_STORED_STRING;

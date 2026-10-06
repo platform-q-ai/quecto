@@ -379,7 +379,7 @@ query and `WorkspaceDiscovery` through the loop's `SessionHomeContext`; it holds
 no store. DTOs live in `dto/search_session_metadata.rs` (request with scope,
 `QueryGeneration` and `SearchLimit`; `SessionMetadataRow` — a `ListedSession`
 plus the repository label and the matched fields; `SearchFreshness`), and the
-pure matching rules in `domain/session_metadata_search.rs`.
+pure matching rules in `domain/sessions/services/session_metadata_search.rs`.
 
 - **What is matched.** The listing title (the first user message, as the index
   holds it), the **exact opaque key**, the **repository label** and the
@@ -387,7 +387,7 @@ pure matching rules in `domain/session_metadata_search.rs`.
   that occurs nowhere literally may match the **title as an in-order
   subsequence** (`fxbg` ⊂ "fix bug"), the lowest tier, never the key, label or
   path, and never demoting a row whose whole key was typed (#2043,
-  `domain/session_title_subsequence.rs`). Nothing else exists in the query's input, so transcript
+  `domain/sessions/value_objects/session_title_subsequence.rs`). Nothing else exists in the query's input, so transcript
   content can never match: no transcript is ever read to MATCH. What is read
   is decided by freshness alone — the adapter joins the store's summary walk
   with the validated home listing, both stamp-checked and index-seeded, so a
@@ -422,7 +422,7 @@ pure matching rules in `domain/session_metadata_search.rs`.
   *visible text* — control characters and invisible format characters (bidi
   controls, zero-width characters, the soft hyphen, tags, the BOM) are dropped
   from both sides, whitespace runs collapsed, and case **folded**
-  (`domain/session_metadata_text.rs`): the whole text is Unicode lower-cased,
+  (`domain/sessions/value_objects/session_metadata_text.rs`): the whole text is Unicode lower-cased,
   then final sigma is a sigma (`οδος` finds `ΟΔΟΣ`), sharp s is `ss` (`straße`
   finds `STRASSE`), a dotless `ı` is an `i`, and the combining dot a dotted
   capital `İ` lower-cases into is dropped after an `i` (`istanbul` finds
@@ -434,11 +434,11 @@ pure matching rules in `domain/session_metadata_search.rs`.
   the whole trimmed query equals it byte for byte — no fragment, no case fold.
   A path that is not UTF-8 is matched and presented with each byte that is no
   text spelled `\xNN` (`caf\xE9`) and a literal backslash doubled
-  (`domain/session_path_text.rs`: a folder really named `caf\xE9` is
+  (`domain/sessions/value_objects/session_path_text.rs`: a folder really named `caf\xE9` is
   `caf\\xE9`), so the spelling is injective and two folders stay
   distinguishable by `executionPath` and `repositoryLabel` alone. A query of
   more than 256 visible characters — counted before the fold, so `ß` is one —
-  is refused whole (`refused`, `domain/session_query_refusal.rs`), never
+  is refused whole (`refused`, `domain/sessions/value_objects/session_query_refusal.rs`), never
   searched as a prefix; the answer echoes the visible text that was searched;
   a query with nothing visible names every session in scope.
 - **Repository label.** For a Git home, the directory that holds the `.git`
@@ -513,7 +513,7 @@ nothing follows**: the descope of #2045 removed the resume actions (Open
 original, Fork, Locate, Associate, Cancel), their capability set, their
 composition and their refusal codes — quecto is a lightweight harness, and a
 session from another folder is resumed by opening quecto there. The client is
-told how: `domain/session_open_command.rs` spells `cd '<folder>' && quecto-tui`
+told how: `domain/sessions/value_objects/session_open_command.rs` spells `cd '<folder>' && quecto-tui`
 from the REAL folder as one POSIX single-quoted word (a contract test runs it
 in `sh` against hostile names), or spells **no command** when it would not
 read the way it runs — a folder that is not UTF-8, or one holding a control,
@@ -622,7 +622,7 @@ on the same terms.
 
 ### Identity and the workspace seam
 
-`SessionIdentity` (`src/domain/session_identity.rs`) is the **existing raw key
+`SessionIdentity` (`src/domain/sessions/entities/session_identity.rs`) is the **existing raw key
 only**: `ephemeral()`, `named_cli(name)`, `user_chat(key)`, `fresh_chat(secs,
 uniq)`, and the total persistence round-trip `from_persisted_key`. It has no
 scope field, no variant, no path conversion and no workspace behaviour, and

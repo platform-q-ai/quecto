@@ -11,7 +11,7 @@ use super::{ImageSidecarStore, SessionImages, SidecarFuture, SidecarRead};
 use crate::domain::conversation::stored_images::ImageRef;
 use crate::domain::error::DomainError;
 use crate::domain::message::{Message, UserImageBlock};
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 /// Sidecars whose writes fail while `failing` is set.
 #[derive(Default)]

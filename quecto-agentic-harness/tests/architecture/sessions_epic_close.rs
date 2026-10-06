@@ -283,8 +283,8 @@ const ADMITTED_PREDICATE_SITES: &[(&str, &str)] = &[
 
 /// The domain files the capability is built on.
 const DOMAIN_FILES: &[&str] = &[
-    "src/domain/session.rs",
-    "src/domain/session_identity.rs",
+    "src/domain/sessions/entities/session.rs",
+    "src/domain/sessions/entities/session_identity.rs",
     "src/domain/conversation_view.rs",
     "src/domain/conversation_edit.rs",
 ];

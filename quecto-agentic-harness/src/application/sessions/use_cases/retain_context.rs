@@ -11,8 +11,8 @@ use std::sync::Arc;
 use crate::application::sessions::dto::retained_context::Retained;
 use crate::application::sessions::ports::ContextSpillStore;
 use crate::domain::error::DomainError;
-use crate::domain::session::{SpillEntries, SpillEntry};
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session::{SpillEntries, SpillEntry};
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 /// The retention writer.
 pub struct RetainContext {

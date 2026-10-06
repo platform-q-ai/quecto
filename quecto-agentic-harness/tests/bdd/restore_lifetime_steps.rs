@@ -14,8 +14,8 @@ use quecto::application::tools::ports::Tool;
 use quecto::composition::subagent_teardown::build_teardown_graph;
 use quecto::domain::harness_lifetime::{HarnessLifetime, HarnessLifetimeError};
 use quecto::domain::message::Message;
-use quecto::domain::session::Session;
-use quecto::domain::session_identity::SessionIdentity;
+use quecto::domain::sessions::entities::session::Session;
+use quecto::domain::sessions::entities::session_identity::SessionIdentity;
 use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
 use quecto::infrastructure::tools::agent_cmd::{AgentCmdTool, SubagentRegistry};
@@ -326,7 +326,7 @@ fn start_restoring_harness(world: &mut QuectoWorld, lifetime: HarnessLifetime) {
             retention: None,
             base_dir: &base_dir,
             workspace: &base_dir,
-            identity: quecto::domain::session_identity::SessionIdentity::from_persisted_key(
+            identity: quecto::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key(
                 &session_key,
             ),
             model,

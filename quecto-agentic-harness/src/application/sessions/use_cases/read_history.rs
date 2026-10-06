@@ -15,7 +15,7 @@ use crate::application::sessions::history_paging;
 use crate::application::sessions::ports::SessionStore;
 use crate::domain::ids::MessageId;
 use crate::domain::message::Message;
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 pub struct ReadHistory {
     state: ActiveSessionHandle,

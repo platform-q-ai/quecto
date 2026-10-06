@@ -7,7 +7,7 @@
 use super::super::session_layout::FlatSessionLayout;
 use super::STAMP_LEN;
 use super::session_home_catalogue_index::Catalogue;
-use crate::domain::session::SessionSummary;
+use crate::domain::sessions::entities::session::SessionSummary;
 use std::{collections::BTreeMap, path::PathBuf};
 
 /// Per record path: the stamp it was read at and what the walk made of that

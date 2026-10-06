@@ -1,7 +1,7 @@
 use super::{
     ReportedMessage, UnreadSelection, acknowledged_report_index, needs_backfill, select_unread,
 };
-use crate::domain::session::PendingMessageReport;
+use crate::domain::sessions::entities::session::PendingMessageReport;
 use crate::domain::turn_origin::TurnOrigin;
 use std::collections::VecDeque;
 

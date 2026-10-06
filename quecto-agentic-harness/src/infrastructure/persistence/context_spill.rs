@@ -13,8 +13,8 @@ use super::session_images::ImageRefRecord;
 use super::session_layout::FlatSessionLayout;
 use crate::application::sessions::ports::{ContextSpillStore, SpillIndexList, SpillPresence};
 use crate::domain::error::DomainError;
-use crate::domain::session::{SpillEntry, SpillIndex};
-use crate::domain::session_identity::{SessionIdentity, SpillId};
+use crate::domain::sessions::entities::session::{SpillEntry, SpillIndex};
+use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
 
 /// JSONL-based spill store for context pruning.
 ///

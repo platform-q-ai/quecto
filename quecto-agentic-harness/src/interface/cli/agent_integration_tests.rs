@@ -439,7 +439,7 @@ fn test_run_agent_session_named_session_keeps_spill_file() {
     // for /resume + recall across runs.
     let tmp = tempfile::TempDir::new().unwrap();
     let key_dir = crate::infrastructure::persistence::filename::sanitize_session_key(
-        &crate::domain::session::Session::build_key("cli", "keepme"),
+        &crate::domain::sessions::entities::session::Session::build_key("cli", "keepme"),
     );
     let spill_path = tmp
         .path()
@@ -617,7 +617,9 @@ fn test_run_with_deadline_exercises_timeout_path() {
 fn seed_existing_home(base: &std::path::Path, name: &str) {
     use crate::application::sessions::ports::session_home::WorkspaceDiscovery;
     let store = crate::composition::sessions::build_file_session_store(base);
-    let identity = crate::domain::session_identity::SessionIdentity::named_cli(name).unwrap();
+    let identity =
+        crate::domain::sessions::entities::session_identity::SessionIdentity::named_cli(name)
+            .unwrap();
     let home = crate::infrastructure::workspace::git_scope_discovery::GitScopeDiscovery::default()
         .discover(&std::env::current_dir().unwrap())
         .unwrap();

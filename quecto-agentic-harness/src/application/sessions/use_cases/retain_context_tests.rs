@@ -1,6 +1,6 @@
 use super::{ListRetainedContext, RetainContext};
 use crate::application::sessions::use_cases::retention_rig::{JournalingRetention, entry};
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 fn cli(name: &str) -> SessionIdentity {
     SessionIdentity::from_persisted_key(format!("cli:{name}"))

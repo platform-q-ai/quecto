@@ -375,13 +375,14 @@ fn wait_gone(pid: u32, what: &str) {
 /// The persisted session of `session` carries no live operational child.
 fn assert_no_live_child_persisted(fixture: &Fixture, session: &str) {
     use quecto::application::sessions::ports::SessionStore;
-    use quecto::domain::session::{Session, SubagentLiveness};
+    use quecto::domain::sessions::entities::session::{Session, SubagentLiveness};
     let store = quecto::infrastructure::persistence::session_store::FileSessionStore::new(
         quecto::infrastructure::persistence::session_layout::FlatSessionLayout::new(&fixture.base),
     );
-    let key = quecto::domain::session_identity::SessionIdentity::from_persisted_key(
-        Session::build_key("cli", session),
-    );
+    let key =
+        quecto::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key(
+            Session::build_key("cli", session),
+        );
     let saved = fixture
         .runtime
         .block_on(store.load(&key))

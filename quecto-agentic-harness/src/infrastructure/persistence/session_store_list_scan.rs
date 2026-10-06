@@ -1,7 +1,7 @@
 //! One pass over the layout's flat directory for summary listing.
 use crate::application::sessions::dto::SessionListQuery;
 use crate::domain::error::DomainError;
-use crate::domain::session::SessionSummary;
+use crate::domain::sessions::entities::session::SessionSummary;
 
 use super::super::super::session_layout::FlatSessionLayout;
 use super::SummaryCache;

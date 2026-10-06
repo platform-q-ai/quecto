@@ -4,7 +4,7 @@
 //! save still work, as the `bash` guard does (see the workflow tool tests).
 use super::super::dispatch_test_env::DispatchTestEnv as Env;
 use crate::application::sessions::ports::SessionStore;
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::interface::cli::protocol::WorkflowIdleReason;
 use crate::interface::cli::uds_workflow_nudge::{
     workflow_idle_reason, workflow_nudge_message, workflow_progress_fingerprint,

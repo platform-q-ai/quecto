@@ -10,7 +10,7 @@
 //! this projection (and the identity), not the callers.
 use std::path::{Path, PathBuf};
 
-use crate::domain::session_identity::{SessionIdentity, SessionKeyPrefix};
+use crate::domain::sessions::entities::session_identity::{SessionIdentity, SessionKeyPrefix};
 
 /// The flat `<base>/sessions/<sanitized key>` projection.
 #[derive(Debug, Clone, PartialEq, Eq)]

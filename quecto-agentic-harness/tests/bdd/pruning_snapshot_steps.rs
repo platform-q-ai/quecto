@@ -6,8 +6,8 @@ use quecto::application::agent_loop::AgentLoopConfig;
 use quecto::application::audit::ports::AuditSink;
 use quecto::application::sessions::ports::{ContextSpillStore, SpillIndexList};
 use quecto::domain::audit::AuditEvent;
-use quecto::domain::session::{SpillEntry, SpillIndex};
-use quecto::domain::session_identity::{SessionIdentity, SpillId};
+use quecto::domain::sessions::entities::session::{SpillEntry, SpillIndex};
+use quecto::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
 
 /// A board whose every `summary` answer is the whole board, each read newer
 /// than the last.

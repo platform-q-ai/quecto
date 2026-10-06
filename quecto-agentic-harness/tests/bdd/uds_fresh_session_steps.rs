@@ -4,8 +4,8 @@
 //! and the fresh session.
 use super::*;
 use quecto::application::sessions::ports::SessionStore;
-use quecto::domain::session::USER_CHAT_PREFIX;
-use quecto::domain::session_identity::SessionIdentity;
+use quecto::domain::sessions::entities::session::USER_CHAT_PREFIX;
+use quecto::domain::sessions::entities::session_identity::SessionIdentity;
 use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
 

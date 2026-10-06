@@ -1,6 +1,6 @@
 use quecto::application::sessions::ports::session_home::SessionHomeCatalogue;
-use quecto::domain::session_home::SessionHomeScope;
-use quecto::domain::session_identity::SessionIdentity;
+use quecto::domain::sessions::entities::session_home::SessionHomeScope;
+use quecto::domain::sessions::entities::session_identity::SessionIdentity;
 use quecto::infrastructure::persistence::{
     session_home_catalogue::FileSessionHomeCatalogue, session_layout::FlatSessionLayout,
 };
@@ -27,8 +27,8 @@ fn corrupt_authority_is_unavailable_not_legacy() {
 use quecto::application::sessions::ports::SessionStore;
 use quecto::domain::{
     message::Message,
-    session::Session,
-    session_home::{AssociationProvenance, SessionHome, WorkspaceGroup},
+    sessions::entities::session::Session,
+    sessions::entities::session_home::{AssociationProvenance, SessionHome, WorkspaceGroup},
 };
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
 use std::sync::Arc;

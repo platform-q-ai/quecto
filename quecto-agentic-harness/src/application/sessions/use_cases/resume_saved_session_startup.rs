@@ -4,7 +4,7 @@
 use crate::application::sessions::dto::resume_saved_session::ResumeDisposition;
 use crate::application::sessions::dto::{ResumeSavedSessionError, StartupRefusal};
 use crate::application::sessions::session_home::SessionHomeContext;
-use crate::domain::{session_home::SessionHomeScope, session_identity::SessionIdentity};
+use crate::domain::sessions::entities::{session_home::SessionHomeScope, session_identity::*};
 pub(super) async fn admit_at_startup(
     home: &SessionHomeContext,
     identity: &SessionIdentity,

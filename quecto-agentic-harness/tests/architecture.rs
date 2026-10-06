@@ -1017,7 +1017,7 @@ fn ports_guard_is_an_allowlist() {
         "#[cfg(any(test, feature = \"test-support\"))]\npub use super::use_cases::KillEnvironment;",
         "mod local { pub struct X; }\npub use local::X;",
         "pub struct Row { pub at: std::time::SystemTime, pub value: serde_json::Value, pub n: u64 }",
-        "pub fn f(record: &crate::domain::session::SessionRecord) -> Option<String> { None }",
+        "pub fn f(record: &crate::domain::sessions::entities::session::SessionRecord) -> Option<String> { None }",
         "pub trait P { type E; fn f(&self) -> Result<(), Self::E>; }",
         "pub fn g<I: Iterator>(i: I) -> Option<I::Item> { None }",
         "pub struct H; impl Default for H { fn default() -> Self { H } }",
@@ -2487,7 +2487,7 @@ fn uncompiled_test_files_are_found_by_name_not_by_mention() {
         file("src/c_tests.rs", ""),
         file("src/d_tests.rs", ""),
         // Two folders, one file name: declaring one compiles only that one —
-        // how `domain/resume_decision_tests.rs` hid behind the dto's (#2056).
+        // how `domain/sessions/services/resume_decision_tests.rs` hid behind the dto's (#2056).
         file("src/dto/h.rs", "#[path = \"h_tests.rs\"]\nmod tests;"),
         file("src/dto/h_tests.rs", ""),
         file("src/domain/h.rs", "pub fn h() {}"),

@@ -12,8 +12,8 @@
 
 use quecto::application::sessions::ports::{ContextSpillStore, SessionStore};
 use quecto::domain::message::Message;
-use quecto::domain::session::{Session, SpillEntry};
-use quecto::domain::session_identity::{SessionIdentity, SpillId};
+use quecto::domain::sessions::entities::session::{Session, SpillEntry};
+use quecto::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
 use quecto::infrastructure::persistence::context_spill::FileContextSpillStore;
 use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
 use quecto::infrastructure::persistence::session_store::FileSessionStore;

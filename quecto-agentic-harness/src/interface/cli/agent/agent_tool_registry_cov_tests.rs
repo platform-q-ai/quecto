@@ -138,7 +138,7 @@ fn build_tool_registry_uses_cli_session_name_and_model_override() {
 
     assert_eq!(
         built.session_key,
-        crate::domain::session::Session::build_key("cli", "named")
+        crate::domain::sessions::entities::session::Session::build_key("cli", "named")
     );
     assert_eq!(built.model, "openai-api/gpt-5.6-sol");
     assert!(!built.extension_prompt_snippets.contains("failed"));

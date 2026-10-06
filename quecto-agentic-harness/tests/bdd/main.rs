@@ -10,7 +10,7 @@ use quecto::application::tools::ports::Tool;
 use quecto::domain::agent::{AgentInfo, AgentResult};
 use quecto::domain::error::DomainError;
 use quecto::domain::message::{LlmResponse, Message, Role, ToolCall};
-use quecto::domain::session::Session;
+use quecto::domain::sessions::entities::session::Session;
 use quecto::domain::tool::{ToolDefinition, ToolResult};
 use quecto::infrastructure::auth::credential_store::{
     AuthMethod, Credential, CredentialStatus, CredentialStore,

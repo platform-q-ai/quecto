@@ -7,7 +7,7 @@ use super::{AgentFlags, AgentOutput, DeadlineResult, run_with_deadline, settle_s
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::agent_turn::ports::AgentLoop;
 use crate::domain::message::Message;
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 use crate::interface::cli::uds_session_handles::SessionLoopInputs;
 

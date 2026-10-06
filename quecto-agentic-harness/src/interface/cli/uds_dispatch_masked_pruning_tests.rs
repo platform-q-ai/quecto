@@ -1,7 +1,7 @@
 use super::fixture_tests::{Fixture, latch_durable_prefix_dirty, persist_current_session};
 use super::*;
 use crate::application::sessions::ports::SessionStore;
-use crate::domain::{message::Message, session::Session};
+use crate::domain::{message::Message, sessions::entities::session::Session};
 
 /// Unit test of the save transaction's CONSUMER branch only: the dirty
 /// flag is hand-set here, so this cannot detect a deleted producer. The
@@ -13,7 +13,7 @@ async fn persist_replays_full_history_when_prefix_flagged_dirty() {
     fx.messages = vec![Message::user("old-a"), Message::assistant("old-b", vec![])];
     fx.store
         .save(&Session {
-            key: crate::domain::session_identity::SessionIdentity::from_persisted_key(
+            key: crate::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key(
                 fx.session_key.clone(),
             ),
             messages: fx.messages.clone(),
@@ -35,7 +35,7 @@ async fn persist_replays_full_history_when_prefix_flagged_dirty() {
     let resumed = fx
         .store
         .load(
-            &crate::domain::session_identity::SessionIdentity::from_persisted_key(&fx.session_key),
+            &crate::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key(&fx.session_key),
         )
         .await
         .unwrap()
@@ -238,7 +238,7 @@ fn ladder_stubbable_history(big_chars: usize) -> Vec<Message> {
 async fn persist_baseline(fx: &mut Fixture) {
     fx.store
         .save(&Session {
-            key: crate::domain::session_identity::SessionIdentity::from_persisted_key(
+            key: crate::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key(
                 fx.session_key.clone(),
             ),
             messages: fx.messages.clone(),
@@ -254,7 +254,7 @@ async fn assert_durable_matches_live(fx: &Fixture) {
     let resumed = fx
         .store
         .load(
-            &crate::domain::session_identity::SessionIdentity::from_persisted_key(&fx.session_key),
+            &crate::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key(&fx.session_key),
         )
         .await
         .unwrap()

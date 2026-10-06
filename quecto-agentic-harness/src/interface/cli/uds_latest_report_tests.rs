@@ -107,28 +107,28 @@ async fn raw_report_export_preserves_content_without_consuming_cursor() {
 mod export_control_tests {
     use super::*;
     use crate::application::sessions::ports::{ContextSpillStore, SpillIndexList};
-    use crate::domain::{error::DomainError, session::SpillEntry};
+    use crate::domain::{error::DomainError, sessions::entities::session::SpillEntry};
     use std::{future::Future, pin::Pin, sync::Arc};
     struct SlowExportStore;
     impl ContextSpillStore for SlowExportStore {
         fn append(
             &self,
-            _: &crate::domain::session_identity::SessionIdentity,
+            _: &crate::domain::sessions::entities::session_identity::SessionIdentity,
             _: &SpillEntry,
         ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
             Box::pin(async { Ok(()) })
         }
         fn recall(
             &self,
-            _: &crate::domain::session_identity::SessionIdentity,
-            _: &crate::domain::session_identity::SpillId,
+            _: &crate::domain::sessions::entities::session_identity::SessionIdentity,
+            _: &crate::domain::sessions::entities::session_identity::SpillId,
         ) -> Pin<Box<dyn Future<Output = Result<Option<SpillEntry>, DomainError>> + Send + '_>>
         {
             Box::pin(async { Ok(None) })
         }
         fn list_entries(
             &self,
-            _: &crate::domain::session_identity::SessionIdentity,
+            _: &crate::domain::sessions::entities::session_identity::SessionIdentity,
         ) -> SpillIndexList<'_> {
             // Slow but finite and cancellable, so the export slot taken by
             // the detached task is released and never leaks across tests.
@@ -139,7 +139,7 @@ mod export_control_tests {
         }
         fn clear(
             &self,
-            _: &crate::domain::session_identity::SessionIdentity,
+            _: &crate::domain::sessions::entities::session_identity::SessionIdentity,
         ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
             Box::pin(async { Ok(()) })
         }

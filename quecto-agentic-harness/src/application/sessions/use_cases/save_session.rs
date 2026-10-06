@@ -25,10 +25,10 @@ use crate::application::sessions::ports::{
 };
 use crate::domain::conversation_view::{inject_system_prompt, remove_injected_system_prompt};
 use crate::domain::message::Message;
-use crate::domain::session::{
+use crate::domain::sessions::entities::session::{
     PersistedSubagentRosterEntry, SubagentRestoreReason, assign_missing_ordinals,
 };
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 pub struct SaveSession {
     state: ActiveSessionHandle,

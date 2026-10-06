@@ -5,7 +5,7 @@ use super::session_scope_steps::{
     assert_scope_refusal, drive, emitted_resume_request, query, resume_roundtrip,
 };
 use super::*;
-use quecto::domain::session_identity::SessionIdentity;
+use quecto::domain::sessions::entities::session_identity::SessionIdentity;
 use quecto::infrastructure::persistence::{
     session_layout::FlatSessionLayout, session_ownership::SessionOwnershipGuard,
 };

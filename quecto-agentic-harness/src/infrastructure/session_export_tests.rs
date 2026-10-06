@@ -1,6 +1,6 @@
 use super::*;
 use crate::domain::message::{Message, ThinkingBlock, ToolCall};
-use crate::domain::session::SpillEntry;
+use crate::domain::sessions::entities::session::SpillEntry;
 
 fn manifest() -> ExportManifest {
     ExportManifest {

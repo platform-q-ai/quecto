@@ -10,7 +10,7 @@ use crate::application::sessions::active_session::ActiveSessionHandle;
 use crate::application::sessions::dto::SaveSessionError;
 use crate::domain::error::DomainError;
 use crate::domain::message::Message;
-use crate::domain::session::assign_missing_ordinals;
+use crate::domain::sessions::entities::session::assign_missing_ordinals;
 
 /// Set by a save that ended without committing — failed or cancelled after
 /// its write may have landed — so the next save verifies the file (#2218).

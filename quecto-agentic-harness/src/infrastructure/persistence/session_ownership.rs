@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 
 use super::session_layout::FlatSessionLayout;
 use crate::domain::error::DomainError;
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 /// What to tell the user about a refused claim. The lock itself is the truth —
 /// reaching here means it is held. The stamp only hints at by whom, and can name

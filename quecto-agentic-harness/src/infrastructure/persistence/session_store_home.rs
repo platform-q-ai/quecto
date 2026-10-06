@@ -3,8 +3,10 @@ use super::FileSessionStore;
 use crate::application::sessions::dto::SessionListQuery;
 use crate::domain::{
     error::DomainError,
-    session_home::{AssociationProvenance, SessionHome, SessionHomeScope, WorkspaceGroup},
-    session_identity::SessionIdentity,
+    sessions::entities::session_home::{
+        AssociationProvenance, SessionHome, SessionHomeScope, WorkspaceGroup,
+    },
+    sessions::entities::session_identity::SessionIdentity,
 };
 use serde::{Deserialize, Serialize};
 use std::{

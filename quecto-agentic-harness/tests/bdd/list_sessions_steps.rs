@@ -4,8 +4,8 @@
 
 use super::*;
 use quecto::domain::message::Message;
-use quecto::domain::session::Session;
-use quecto::domain::session_identity::SessionIdentity;
+use quecto::domain::sessions::entities::session::Session;
+use quecto::domain::sessions::entities::session_identity::SessionIdentity;
 use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
 

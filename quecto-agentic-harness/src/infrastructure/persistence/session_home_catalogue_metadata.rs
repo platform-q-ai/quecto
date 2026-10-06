@@ -7,7 +7,7 @@ use super::FileSessionHomeCatalogue;
 use crate::application::sessions::ports::session_home::{
     SessionHomeCatalogue, SessionMetadataRecord, SessionMetadataSnapshot,
 };
-use crate::domain::{error::DomainError, session_home::SessionHomeScope};
+use crate::domain::{error::DomainError, sessions::entities::session_home::SessionHomeScope};
 use std::collections::HashMap;
 
 pub(super) async fn query(

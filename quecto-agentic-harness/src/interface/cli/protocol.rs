@@ -368,7 +368,8 @@ pub fn build_live_subagent_info_list(
     registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
 ) -> Vec<SubagentInfo> {
     build_subagent_info_list_filtered(registry, |effective| {
-        effective.persisted_liveness == crate::domain::session::SubagentLiveness::Live
+        effective.persisted_liveness
+            == crate::domain::sessions::entities::session::SubagentLiveness::Live
             && *effective.status
                 != crate::infrastructure::tools::subagent_registry::SubagentStatus::Exited
     })
@@ -411,11 +412,15 @@ fn build_subagent_info_list_filtered(
                     display_name: Some(display_name),
                     status: status.to_wire_str().to_string(),
                     liveness: Some(match entry.persisted_liveness {
-                        crate::domain::session::SubagentLiveness::Live => "live".to_string(),
-                        crate::domain::session::SubagentLiveness::Detached => {
+                        crate::domain::sessions::entities::session::SubagentLiveness::Live => {
+                            "live".to_string()
+                        }
+                        crate::domain::sessions::entities::session::SubagentLiveness::Detached => {
                             "detached".to_string()
                         }
-                        crate::domain::session::SubagentLiveness::Dead => "dead".to_string(),
+                        crate::domain::sessions::entities::session::SubagentLiveness::Dead => {
+                            "dead".to_string()
+                        }
                     }),
                     last_tool: entry.last_tool.clone(),
                     last_error: entry.last_error.clone(),
@@ -439,7 +444,7 @@ fn build_subagent_info_list_filtered(
 }
 
 struct SubagentInfoBuildEntry<'a> {
-    persisted_liveness: crate::domain::session::SubagentLiveness,
+    persisted_liveness: crate::domain::sessions::entities::session::SubagentLiveness,
     status: &'a crate::infrastructure::tools::subagent_registry::SubagentStatus,
 }
 

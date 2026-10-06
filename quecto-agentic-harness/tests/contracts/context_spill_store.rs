@@ -15,8 +15,8 @@
 //! and the interface not at all.
 
 use quecto::application::sessions::ports::ContextSpillStore;
-use quecto::domain::session::SpillEntry;
-use quecto::domain::session_identity::{SessionIdentity, SpillId};
+use quecto::domain::sessions::entities::session::SpillEntry;
+use quecto::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
 use quecto::infrastructure::persistence::context_spill::FileContextSpillStore;
 use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
 use std::io::Write;

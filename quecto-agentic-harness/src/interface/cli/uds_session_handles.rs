@@ -15,7 +15,7 @@ use crate::application::sessions::ports::{ContextSpillStore, SessionStore};
 use crate::application::sessions::use_cases::{
     ClearConversation, ResumeSavedSession, RewindConversation, SaveSession, StartFreshConversation,
 };
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::interface::cli::uds_discovery_handles::SessionDiscoveryHandles;
 use crate::interface::uds::sessions::export_report_controller::ExportSessionReportController;
 use crate::interface::uds::sessions::read_history_controller::ReadHistoryController;

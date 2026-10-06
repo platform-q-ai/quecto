@@ -28,7 +28,7 @@ use crate::domain::conversation::watermark_cut::{
     apply_cut, archive_index, archive_stub, archived, plan_messages, stub_tokens_bound,
 };
 use crate::domain::message::Message;
-use crate::domain::session::SpillEntry;
+use crate::domain::sessions::entities::session::SpillEntry;
 use std::sync::Mutex;
 
 /// The archive index's base id; later cuts are `archive:2`, `archive:3`...

@@ -1,7 +1,7 @@
 //! Controller of the `resume_session` command: maps exact restore fields onto
 //! the application request. Legacy action handling remains at the wire edge.
 use crate::application::sessions::dto::{ResumeRequest, ResumeSavedSessionError};
-use crate::domain::resume_decision::HomeVersion;
+use crate::domain::sessions::services::resume_decision::HomeVersion;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResumeFields {

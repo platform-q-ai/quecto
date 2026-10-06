@@ -1,6 +1,6 @@
 use crate::application::sessions::ports::SessionStore;
 use crate::domain::message::Message;
-use crate::domain::session::Session;
+use crate::domain::sessions::entities::session::Session;
 use crate::infrastructure::tools::subagent_registry::new_registry;
 use crate::interface::cli::protocol::AgentCommand;
 
@@ -9,12 +9,13 @@ use super::fixture_tests::Fixture;
 #[tokio::test]
 async fn e2e_resume_picker_lists_persisted_default_tui_chat_session() {
     let mut fx = Fixture::new();
-    let persisted_key = crate::domain::session::Session::build_key("cli", "default");
+    let persisted_key =
+        crate::domain::sessions::entities::session::Session::build_key("cli", "default");
     crate::interface::cli::uds::dispatch_session_roster_tests::seed_home(&fx.store, &persisted_key)
         .await;
     fx.store
         .save(&Session {
-            key: crate::domain::session_identity::SessionIdentity::from_persisted_key(
+            key: crate::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key(
                 persisted_key.clone(),
             ),
             messages: vec![Message::user("persisted message that /resume must offer")],
@@ -91,7 +92,7 @@ async fn write_legacy_session_file(
     // The store must actually see the legacy file where it looks.
     assert!(
         fx.store
-            .load(&crate::domain::session_identity::SessionIdentity::from_persisted_key(key))
+            .load(&crate::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key(key))
             .await
             .unwrap()
             .is_some(),
@@ -285,7 +286,7 @@ async fn e2e_new_session_creates_no_child_row_and_probes_nothing() {
     // The old session's history was saved on the way out, without pid/socket.
     let saved = fx
         .store
-        .load(&crate::domain::session_identity::SessionIdentity::from_persisted_key(key))
+        .load(&crate::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key(key))
         .await
         .unwrap()
         .unwrap();

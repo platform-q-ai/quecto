@@ -13,7 +13,7 @@ use crate::domain::child_end::{
 };
 use crate::domain::ids::AgentUuid;
 use crate::domain::message::Message;
-use crate::domain::session::SubagentLiveness;
+use crate::domain::sessions::entities::session::SubagentLiveness;
 use crate::domain::tool::ToolResult;
 
 use super::subagent_registry::{ExitSignalKind, SubagentRegistry};

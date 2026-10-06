@@ -7,7 +7,7 @@ use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::context_pruning::build_manifest_text;
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::application::sessions::ports::SessionStore;
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
@@ -18,7 +18,7 @@ use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
 use crate::domain::ids::AgentUuid;
 use crate::domain::message::{LlmResponse, Message, Role, ToolCall};
-use crate::domain::session::{Session, SubagentLiveness};
+use crate::domain::sessions::entities::session::{Session, SubagentLiveness};
 use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
 use crate::interface::cli::protocol::AgentCommand;
@@ -706,7 +706,9 @@ async fn multi_turn_jsonl_start_index_chain_contiguous_with_tools_and_manifest()
 #[tokio::test]
 async fn persist_current_session_clears_previously_persisted_roster_when_registry_empty() {
     use crate::application::sessions::ports::SessionStore;
-    use crate::domain::session::{PersistedSubagentRosterEntry, Session, SubagentLiveness};
+    use crate::domain::sessions::entities::session::{
+        PersistedSubagentRosterEntry, Session, SubagentLiveness,
+    };
 
     let mut fx = Fixture::new();
     fx.store
@@ -719,7 +721,7 @@ async fn persist_current_session_clears_previously_persisted_roster_when_registr
                 display_name: "stale child".into(),
                 session_key: "stale-child".into(),
                 liveness: SubagentLiveness::Dead,
-                restore_reason: crate::domain::session::SubagentRestoreReason::LegacyUnspecified,
+                restore_reason: crate::domain::sessions::entities::session::SubagentRestoreReason::LegacyUnspecified,
                 parent_id: None,
                 read_only: false,
                 delivered_message_ordinal: None,

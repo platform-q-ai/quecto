@@ -1,7 +1,7 @@
 use super::*;
 use crate::application::sessions::ports::ContextSpillStore;
-use crate::domain::session::{SpillEntry, SpillIndex};
-use crate::domain::session_identity::{SessionIdentity, SpillId};
+use crate::domain::sessions::entities::session::{SpillEntry, SpillIndex};
+use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
 
 /// The recall use case over `store`, composed as the runtime composes it
 /// (D9 #1978): the tool adapts the use case, never the store.

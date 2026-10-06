@@ -24,7 +24,7 @@ use crate::application::sessions::dto::{
 use crate::application::sessions::ports::ContextSpillStore;
 use crate::application::sessions::ports::export::SessionExportPort;
 use crate::domain::message::Message;
-use crate::domain::session_identity::{SessionIdentity, SpillId};
+use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
 use crate::domain::turn_origin::{is_substantive_reply, transcript_report_index};
 
 /// How many raw exports may run at once, per composed loop (one loop per

@@ -20,8 +20,8 @@ use crate::{
     },
     domain::{
         error::DomainError,
-        session_home::{SessionHome, SessionHomeScope},
-        session_identity::SessionIdentity,
+        sessions::entities::session_home::{SessionHome, SessionHomeScope},
+        sessions::entities::session_identity::SessionIdentity,
     },
 };
 use std::{collections::BTreeMap, path::PathBuf};
@@ -233,7 +233,7 @@ impl FileSessionHomeCatalogue {
         path: &std::path::Path,
         identity: &SessionIdentity,
         records: &mut Records,
-        summary: Option<&crate::domain::session::SessionSummary>,
+        summary: Option<&crate::domain::sessions::entities::session::SessionSummary>,
     ) -> SessionHomeScope {
         let sidecar = self.layout.home_file(identity);
         let before = sidecar_stamp(&sidecar);

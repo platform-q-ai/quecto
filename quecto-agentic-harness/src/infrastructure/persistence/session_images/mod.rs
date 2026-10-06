@@ -29,7 +29,7 @@ use crate::domain::conversation::stored_images::{
     ImageRef, MessageImageRefs, VerifiedText, is_storable, restore_images,
 };
 use crate::domain::message::Message;
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 pub use sidecar_store::{ImageSidecarStore, SidecarFuture, SidecarRead};
 
 mod file_sidecar_store;

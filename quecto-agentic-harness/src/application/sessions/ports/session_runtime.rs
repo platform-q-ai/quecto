@@ -6,7 +6,7 @@
 //! engine, the sub-agent registry — never mutate their owner; the
 //! accounting reset is the one runtime effect the clear and rewind
 //! transactions order, and the runtime owns the counters it resets.
-use crate::domain::session::PersistedSubagentRosterEntry;
+use crate::domain::sessions::entities::session::PersistedSubagentRosterEntry;
 use crate::domain::workflow::WorkflowRunPersisted;
 
 /// Port: the agent loop's durable-prefix dirty latch (#1072). `take` is

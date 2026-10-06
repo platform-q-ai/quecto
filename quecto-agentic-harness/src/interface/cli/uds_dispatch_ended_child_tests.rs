@@ -5,8 +5,8 @@
 use super::forward_subagent_get_messages;
 use crate::application::sessions::ports::SessionStore;
 use crate::domain::message::Message;
-use crate::domain::session::{Session, SubagentLiveness};
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session::{Session, SubagentLiveness};
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::infrastructure::tools::subagent_registry::{
     SubagentEntry, SubagentRegistry, SubagentStatus, new_registry,
 };

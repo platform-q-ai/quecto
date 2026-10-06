@@ -1,9 +1,9 @@
 //! Home authority, derived discovery index, and canonical workspace facts.
 use crate::domain::{
     error::DomainError,
-    session::SessionSummary,
-    session_home::{SessionHome, SessionHomeScope},
-    session_identity::SessionIdentity,
+    sessions::entities::session::SessionSummary,
+    sessions::entities::session_home::{SessionHome, SessionHomeScope},
+    sessions::entities::session_identity::SessionIdentity,
 };
 use std::path::Path;
 

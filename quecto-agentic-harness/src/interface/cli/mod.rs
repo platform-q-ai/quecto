@@ -671,7 +671,7 @@ pub(crate) fn selected_config_missing(
 /// Wire syntax of a session name: the domain's named-session allowlist
 /// (`-`, the ephemeral marker, is itself an admitted name).
 pub(crate) fn is_valid_session_name(name: &str) -> bool {
-    crate::domain::session_identity::SessionIdentity::is_valid_cli_name(name)
+    crate::domain::sessions::entities::session_identity::SessionIdentity::is_valid_cli_name(name)
 }
 
 /// Pool-wide keep-alive, in effect the process lifetime: why, see

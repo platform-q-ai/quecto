@@ -24,7 +24,7 @@ pub struct UdsLoopArgs<'a> {
     pub workspace: &'a std::path::Path,
     /// The typed identity the loop opens (D10 #1979), carrying the stable
     /// session key and its validated persisted-key form across CLI/UDS layers.
-    pub identity: crate::domain::session_identity::SessionIdentity,
+    pub identity: crate::domain::sessions::entities::session_identity::SessionIdentity,
     pub model: String,
     pub ephemeral: bool,
     pub system_prompt: String,

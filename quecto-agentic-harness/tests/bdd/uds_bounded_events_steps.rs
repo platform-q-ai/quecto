@@ -1506,7 +1506,7 @@ fn drive_mc_start_and_connect(world: &mut QuectoWorld, clients: &[u32]) {
 fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
     use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
     use quecto::composition::runtime::build_agent_provider;
-    use quecto::domain::session::Session;
+    use quecto::domain::sessions::entities::session::Session;
     use quecto::infrastructure::config::Config;
     use quecto::infrastructure::security::sandbox::Sandbox;
     use quecto::infrastructure::tools::registry::ToolRegistryImpl;
@@ -1605,7 +1605,7 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
             retention: None,
             base_dir: &base_for_thread,
             workspace: &base_for_thread,
-            identity: quecto::domain::session_identity::SessionIdentity::from_persisted_key(
+            identity: quecto::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key(
                 &session_key,
             ),
             model,

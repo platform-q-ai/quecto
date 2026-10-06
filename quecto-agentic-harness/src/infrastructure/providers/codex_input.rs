@@ -101,7 +101,8 @@ impl CodexProvider {
         messages: &[Message],
         origin: &str,
     ) -> (Option<String>, Vec<serde_json::Value>) {
-        let (valid_pairs, diag) = crate::domain::session::filter_orphan_tool_pairs(messages);
+        let (valid_pairs, diag) =
+            crate::domain::sessions::entities::session::filter_orphan_tool_pairs(messages);
         if diag.has_orphans() {
             tracing::warn!(
                 orphaned_calls = ?diag.orphaned_calls,

@@ -211,8 +211,8 @@ encodes compact rows (`own`, `session`, `restored`, `config`,
 
 ## Persistence and session recovery
 
-**Primary code:** session vocabulary in `src/domain/session.rs`,
-`src/domain/session_identity.rs`, `src/domain/conversation_view.rs` and
+**Primary code:** session vocabulary in `src/domain/sessions/entities/session.rs`,
+`src/domain/sessions/entities/session_identity.rs`, `src/domain/conversation_view.rs` and
 `src/domain/conversation_edit.rs`; the sessions capability in
 `src/application/sessions/` (`use_cases/`, `ports.rs` + `ports/`, `dto/`,
 `active_session.rs`, `conversation_ledger.rs`, `session_home.rs`); persistence
@@ -268,12 +268,12 @@ mandatory for resume. A session that belongs elsewhere (#2011, #2045) stays
 with that owner: `ResumeSavedSession::execute` answers a `ResumeRequest` with
 `ResumeOutcome::Resumed` or a coded refusal — for a folder that does not admit
 the restore, a typed `ResumeDecision` (pure kinds, their refusal codes and
-`HomeVersion` in `src/domain/resume_decision.rs`; DTOs in
+`HomeVersion` in `src/domain/sessions/services/resume_decision.rs`; DTOs in
 `dto/resume_decision.rs`; eligibility collaborators in
 `use_cases/resume_saved_session_decision.rs`). Nothing is offered: resume
 actions, their capability set and its composition were removed (#2045). The
 command that opens quecto in the session's folder is the pure
-`src/domain/session_open_command.rs`; the wire edge is
+`src/domain/sessions/value_objects/session_open_command.rs`; the wire edge is
 `interface/uds/sessions/resume_session_controller.rs` and
 `interface/cli/uds_dispatch_resume.rs`.
 

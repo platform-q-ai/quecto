@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 
-use crate::domain::session::SubagentLiveness;
+use crate::domain::sessions::entities::session::SubagentLiveness;
 
 use super::subagent_registry::{SubagentEntry, SubagentRegistry, SubagentStatus};
 

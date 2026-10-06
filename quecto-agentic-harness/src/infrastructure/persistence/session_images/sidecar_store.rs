@@ -14,7 +14,7 @@ use std::pin::Pin;
 
 use crate::domain::conversation::stored_images::{ImageRef, VerifiedText};
 use crate::domain::error::DomainError;
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 pub type SidecarFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, DomainError>> + Send + 'a>>;
 

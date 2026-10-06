@@ -26,7 +26,7 @@ async fn same_process_persist_then_prune_keeps_live_ordinals_durable_and_monoton
 
     let loaded = fx
         .store
-        .load(&crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:test"))
+        .load(&crate::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key("cli:test"))
         .await
         .unwrap()
         .unwrap();

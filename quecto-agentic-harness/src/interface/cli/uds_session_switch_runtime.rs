@@ -10,7 +10,7 @@ use super::uds_turn_accounting::LoopTurnAccounting;
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::sessions::ports::session_runtime::TurnAccountingReset;
 use crate::application::sessions::ports::{SessionKeyPropagation, SessionSwitchRuntime};
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::interface::shared::WorkflowStateHandle;
 
 pub struct LoopSessionSwitchRuntime<'a> {

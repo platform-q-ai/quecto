@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex};
 
 use super::*;
 use crate::application::sessions::ports::SessionStore;
-use crate::domain::session::{Session, SessionSummary};
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session::{Session, SessionSummary};
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 struct RecordingStore {
     queries: Mutex<Vec<SessionListQuery>>,
@@ -46,7 +46,7 @@ impl SessionStore for RecordingStore {
             } else {
                 Ok(vec![SessionSummary {
                     key: "chat-1".into(),
-                    identity: crate::domain::session_identity::SessionIdentity::from_persisted_key(
+                    identity: crate::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key(
                         "chat-1",
                     ),
                     title: "hi".into(),
@@ -95,7 +95,7 @@ async fn scoped_controller_uses_application_discovery_without_guessing_home() {
     assert!(!global.sessions[0].resume_eligible);
     assert!(matches!(
         global.sessions[0].home,
-        crate::domain::session_home::SessionHomeScope::Unavailable(_)
+        crate::domain::sessions::entities::session_home::SessionHomeScope::Unavailable(_)
     ));
     assert!(
         store

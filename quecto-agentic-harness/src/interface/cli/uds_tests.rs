@@ -679,9 +679,12 @@ mod progress_clear_tests;
 
 #[test]
 fn session_summary_to_json_projects_stable_wire_fields() {
-    let summary = crate::domain::session::SessionSummary {
+    let summary = crate::domain::sessions::entities::session::SessionSummary {
         key: "cli:demo".into(),
-        identity: crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:demo"),
+        identity:
+            crate::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key(
+                "cli:demo",
+            ),
         title: "".into(),
         message_count: 3,
         updated_unix_secs: Some(1700000000),

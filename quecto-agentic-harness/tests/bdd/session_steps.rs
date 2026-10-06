@@ -1,6 +1,6 @@
 use super::*;
 use quecto::application::sessions::dto::SessionListQuery;
-use quecto::domain::session_identity::SessionIdentity;
+use quecto::domain::sessions::entities::session_identity::SessionIdentity;
 use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
 
 /// Session identity for a raw persisted key.
@@ -141,7 +141,10 @@ fn save_session(world: &QuectoWorld, session: &Session) {
         .expect("session save should succeed");
 }
 
-fn session_list_entry(world: &QuectoWorld, key: &str) -> quecto::domain::session::SessionSummary {
+fn session_list_entry(
+    world: &QuectoWorld,
+    key: &str,
+) -> quecto::domain::sessions::entities::session::SessionSummary {
     let store = world.session_store.as_ref().expect("session store not set");
     let summaries = tokio::runtime::Runtime::new()
         .unwrap()

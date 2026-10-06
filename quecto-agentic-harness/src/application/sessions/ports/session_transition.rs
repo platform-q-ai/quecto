@@ -10,7 +10,7 @@ use std::pin::Pin;
 
 use super::session_runtime::TurnAccountingReset;
 use crate::application::sessions::dto::FleetSettlementOutcome;
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::domain::workflow::WorkflowRunPersisted;
 
 /// Port: a fresh user-chat identity in the current key format. The

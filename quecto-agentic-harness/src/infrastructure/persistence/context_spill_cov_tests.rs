@@ -1,6 +1,6 @@
 use super::*;
 use crate::application::sessions::ports::ContextSpillStore;
-use crate::domain::session_identity::{SessionIdentity, SpillId};
+use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
 use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
 use tempfile::TempDir;
 

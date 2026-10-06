@@ -37,7 +37,7 @@ pub(super) fn ephemeral(flags: &super::AgentFlags) -> bool {
 /// names it: `cli:<name>`, `cli:default` without `-s`.
 pub(super) fn one_shot_key(session_name: Option<&str>) -> String {
     let name = session_name.unwrap_or("default");
-    crate::domain::session_identity::SessionIdentity::named_cli(name)
+    crate::domain::sessions::entities::session_identity::SessionIdentity::named_cli(name)
         .map(|identity| identity.runtime_key().to_owned())
         .unwrap_or_default()
 }

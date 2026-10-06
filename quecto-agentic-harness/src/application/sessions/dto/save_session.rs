@@ -1,7 +1,7 @@
 //! Boundary values of Save current session (#1860, D5 #1972): what a
 //! caller asks for, what the transaction chose and did, and how it failed.
 use crate::domain::error::DomainError;
-use crate::domain::session::SubagentRestoreReason;
+use crate::domain::sessions::entities::session::SubagentRestoreReason;
 
 /// Why a save is requested; it decides whether a clean delta is allowed
 /// and how the killing-exit state moves.

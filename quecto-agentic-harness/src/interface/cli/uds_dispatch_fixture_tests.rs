@@ -266,7 +266,7 @@ pub(crate) async fn persist_current_session(
 /// The explicit `persist_session` save with a client restore reason.
 pub(crate) async fn persist_current_session_with_restore_reason(
     ctx: &mut DispatchCtx<'_>,
-    restore_reason: crate::domain::session::SubagentRestoreReason,
+    restore_reason: crate::domain::sessions::entities::session::SubagentRestoreReason,
 ) -> Result<(), crate::application::sessions::dto::SaveSessionError> {
     ctx.save_session
         .save(

@@ -1,7 +1,7 @@
 use super::*;
 use crate::application::sessions::active_session::ActiveSessionState;
 use crate::domain::message::Message;
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 fn controller(messages: &[Message]) -> ExportSessionReportController {
     let mut state = ActiveSessionState::new(SessionIdentity::from_persisted_key("cli:ctl"));

@@ -7,7 +7,7 @@ use std::sync::{Mutex, OnceLock};
 
 use crate::domain::audit::AuditEvent;
 use crate::domain::crash_record::CrashRecord;
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 use super::super::audit_log::{AuditCrashLine, AuditLog};
 use super::{RecordDir, SessionRecords};

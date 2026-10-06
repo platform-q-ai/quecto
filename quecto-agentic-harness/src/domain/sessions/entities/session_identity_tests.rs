@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::session::USER_CHAT_PREFIX;
+use crate::domain::sessions::entities::session::USER_CHAT_PREFIX;
 
 #[test]
 fn ephemeral_identity_is_the_empty_key_with_no_persisted_key() {

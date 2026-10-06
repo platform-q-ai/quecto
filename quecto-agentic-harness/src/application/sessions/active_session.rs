@@ -15,7 +15,7 @@ use std::sync::Arc;
 use super::conversation_ledger::{ConversationLedger, LedgerAdvance};
 use super::ports::ContextSpillStore;
 use crate::domain::message::Message;
-use crate::domain::session_identity::{SessionIdentity, SpillId};
+use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
 
 /// Shared, lock-guarded handle on the loop's active session.
 pub type ActiveSessionHandle = Arc<tokio::sync::RwLock<ActiveSessionState>>;

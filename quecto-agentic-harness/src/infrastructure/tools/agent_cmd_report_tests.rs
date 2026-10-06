@@ -249,13 +249,13 @@ fn clear_history_delivery_resets_default_get_messages_cursor() {
     let mut entry = SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 0);
     entry.delivered_message_ordinal = Some(50);
     entry.pending_message_ordinal = Some(60);
-    entry
-        .pending_message_reports
-        .push_back(crate::domain::session::PendingMessageReport {
+    entry.pending_message_reports.push_back(
+        crate::domain::sessions::entities::session::PendingMessageReport {
             receipt: "stale".into(),
             response: "stale-response".into(),
             ordinal: 60,
-        });
+        },
+    );
     registry.lock().unwrap().insert("w1".to_string(), entry);
     let tool = AgentCmdTool::new(registry.clone());
     tool.result_delivered(

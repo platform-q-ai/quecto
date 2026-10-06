@@ -34,7 +34,7 @@ use crate::application::sessions::ports::{FleetSettlement, SessionStore, Session
 use crate::application::sessions::session_home::SessionHomeContext;
 use crate::domain::conversation_view::inject_system_prompt;
 use crate::domain::message::Message;
-use crate::domain::session::Session;
+use crate::domain::sessions::entities::session::Session;
 use std::sync::Arc;
 
 pub struct ResumeSavedSession {

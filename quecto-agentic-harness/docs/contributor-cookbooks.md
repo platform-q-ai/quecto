@@ -194,7 +194,7 @@ paths.
 
 **Production files usually involved:**
 
-- `src/domain/session.rs`, `src/domain/session_identity.rs` and
+- `src/domain/sessions/entities/session.rs`, `src/domain/sessions/entities/session_identity.rs` and
   `src/domain/message.rs` for persisted concepts; `src/application/sessions/
   ports.rs` (+ `ports/`) for the `SessionStore` / `ContextSpillStore` and the
   runtime ports.
@@ -298,7 +298,7 @@ or `agent_cmd` surface that exposes it.
   `src/application/context_pruning_messages.rs`.
 - `src/application/agent_loop_pruning.rs`, `agent_loop_spill.rs`, and
   the context gauge (`ContextGaugeCalibration` in `context.rs`).
-- `src/domain/session.rs` for spill index, dirty-prefix, or message metadata.
+- `src/domain/sessions/entities/session.rs` for spill index, dirty-prefix, or message metadata.
 - `src/infrastructure/persistence/*` when spill/session storage changes.
 
 **Tests to add/update:**

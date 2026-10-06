@@ -15,8 +15,8 @@ use crate::application::sessions::dto::SaveTrigger;
 use crate::application::sessions::ports::{HistoricalRosterSource, SessionStore};
 use crate::domain::error::DomainError;
 use crate::domain::message::Message;
-use crate::domain::session::{PersistedSubagentRosterEntry, Session};
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session::{PersistedSubagentRosterEntry, Session};
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::domain::workflow::WorkflowRunPersisted;
 use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
@@ -148,7 +148,7 @@ impl SessionStore for LandsThenFails {
     fn list(
         &self,
         query: &crate::application::sessions::dto::SessionListQuery,
-    ) -> Fut<'_, Vec<crate::domain::session::SessionSummary>> {
+    ) -> Fut<'_, Vec<crate::domain::sessions::entities::session::SessionSummary>> {
         self.inner.list(query)
     }
 }
@@ -318,7 +318,7 @@ impl SessionStore for LandsThenHangs {
     fn list(
         &self,
         query: &crate::application::sessions::dto::SessionListQuery,
-    ) -> Fut<'_, Vec<crate::domain::session::SessionSummary>> {
+    ) -> Fut<'_, Vec<crate::domain::sessions::entities::session::SessionSummary>> {
         self.inner.list(query)
     }
 }

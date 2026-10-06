@@ -52,7 +52,8 @@ fn build_subagent_info_list_reports_liveness_without_changing_legacy_status() {
         guard.insert("live".to_string(), live);
         let mut dead = SubagentEntry::new("/tmp/dead.sock".into(), 0);
         dead.status = SubagentStatus::Exited;
-        dead.persisted_liveness = crate::domain::session::SubagentLiveness::Dead;
+        dead.persisted_liveness =
+            crate::domain::sessions::entities::session::SubagentLiveness::Dead;
         guard.insert("dead".to_string(), dead);
     }
 
@@ -69,7 +70,8 @@ fn build_subagent_info_list_reports_liveness_without_changing_legacy_status() {
         let mut guard = reg.lock().unwrap();
         let mut detached = SubagentEntry::new("/tmp/detached.sock".into(), 0);
         detached.status = SubagentStatus::Exited;
-        detached.persisted_liveness = crate::domain::session::SubagentLiveness::Detached;
+        detached.persisted_liveness =
+            crate::domain::sessions::entities::session::SubagentLiveness::Detached;
         guard.insert("detached".to_string(), detached);
     }
     let list = build_subagent_info_list(&Some(reg));
@@ -83,7 +85,7 @@ fn build_subagent_info_list_reports_liveness_without_changing_legacy_status() {
 
 #[test]
 fn build_live_subagent_info_list_omits_dead_detached_and_effectively_exited_tombstones() {
-    use crate::domain::session::SubagentLiveness;
+    use crate::domain::sessions::entities::session::SubagentLiveness;
     use crate::infrastructure::tools::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };

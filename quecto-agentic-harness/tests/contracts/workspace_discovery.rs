@@ -31,7 +31,7 @@ fn real_workspace_port_groups_repository_subdirectories_but_not_execution() {
 #[test]
 fn ambient_git_environment_does_not_redefine_the_requested_scope() {
     use quecto::application::sessions::ports::session_home::WorkspaceDiscovery;
-    use quecto::domain::session_home::WorkspaceGroup;
+    use quecto::domain::sessions::entities::session_home::WorkspaceGroup;
     use quecto::infrastructure::workspace::git_scope_discovery::GitScopeDiscovery;
     use std::sync::{Mutex, OnceLock};
     static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();

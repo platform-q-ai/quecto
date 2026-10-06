@@ -8,7 +8,7 @@ use super::{AgentEvent, DispatchCtx};
 use crate::application::sessions::dto::{
     SearchSessionMetadataRequest, SearchSessionMetadataResult,
 };
-use crate::domain::session_metadata_search::MetadataQuery;
+use crate::domain::sessions::services::session_metadata_search::MetadataQuery;
 use crate::interface::cli::protocol::SessionListScopeCommand;
 
 pub(super) async fn handle(

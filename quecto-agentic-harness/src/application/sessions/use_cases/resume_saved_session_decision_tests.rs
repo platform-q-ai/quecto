@@ -11,12 +11,12 @@ use crate::application::sessions::use_cases::start_fresh_rig::{
 };
 use crate::domain::error::DomainError;
 use crate::domain::message::Message;
-use crate::domain::resume_decision::{HomeVersion, ResumeDecisionKind};
-use crate::domain::session::Session;
-use crate::domain::session_home::{
+use crate::domain::sessions::entities::session::Session;
+use crate::domain::sessions::entities::session_home::{
     AssociationProvenance, SessionHome, SessionHomeScope, WorkspaceGroup,
 };
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
+use crate::domain::sessions::services::resume_decision::{HomeVersion, ResumeDecisionKind};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 

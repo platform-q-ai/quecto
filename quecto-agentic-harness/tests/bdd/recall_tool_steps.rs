@@ -1,7 +1,7 @@
 use super::*;
 use quecto::application::sessions::ports::SpillIndexList;
-use quecto::domain::session::{SpillEntry, SpillIndex};
-use quecto::domain::session_identity::{SessionIdentity, SpillId};
+use quecto::domain::sessions::entities::session::{SpillEntry, SpillIndex};
+use quecto::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
 use quecto::infrastructure::tools::recall::RecallTool;
 
 /// The recall use case over `store`, composed as the runtime composes it

@@ -218,7 +218,8 @@ impl SubagentLifecycleRepository for RegistryLifecycleRepository {
                 let entry = &entries[&key];
                 // A terminal row is no edge: a target that already ended
                 // is refused as unknown rather than routed toward.
-                if entry.persisted_liveness == crate::domain::session::SubagentLiveness::Dead
+                if entry.persisted_liveness
+                    == crate::domain::sessions::entities::session::SubagentLiveness::Dead
                     || entry.status
                         == crate::infrastructure::tools::subagent_registry::SubagentStatus::Exited
                 {

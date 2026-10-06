@@ -26,7 +26,7 @@ mod uds_dispatch_discovery;
 pub(super) use uds_dispatch_discovery::{discovery_json, freshened, listed_row_json, safe_display};
 
 pub(super) fn session_summary_to_json(
-    summary: &crate::domain::session::SessionSummary,
+    summary: &crate::domain::sessions::entities::session::SessionSummary,
 ) -> serde_json::Value {
     serde_json::json!({
         "key": summary.key,

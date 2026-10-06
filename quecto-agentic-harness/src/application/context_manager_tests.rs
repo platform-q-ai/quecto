@@ -5,8 +5,8 @@ use crate::application::context_pruning::messages::{
 };
 use crate::application::sessions::ports::ContextSpillStore;
 use crate::domain::message::Message;
-use crate::domain::session::{SpillEntry, SpillIndex};
-use crate::domain::session_identity::{SessionIdentity, SpillId};
+use crate::domain::sessions::entities::session::{SpillEntry, SpillIndex};
+use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};

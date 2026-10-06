@@ -188,7 +188,7 @@ fn every_parent_facing_label_of_a_reported_row_says_it_is_reported() {
         .unwrap()
         .get_mut("g-1")
         .unwrap()
-        .persisted_liveness = crate::domain::session::SubagentLiveness::Dead;
+        .persisted_liveness = crate::domain::sessions::entities::session::SubagentLiveness::Dead;
     let row = super::super::agent_cmd_ended::find_ended(&registry, "g-1").unwrap();
     assert_eq!(row.label, "reported:g-1");
 }

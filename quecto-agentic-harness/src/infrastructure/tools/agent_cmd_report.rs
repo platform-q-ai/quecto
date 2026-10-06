@@ -3,7 +3,7 @@
 //! parsed here, the selection and acknowledgement rules are the domain's
 //! (`domain::unread_report`), and the report budget, receipt and envelope
 //! shaping stay with this tool.
-use crate::domain::session::PendingMessageReport;
+use crate::domain::sessions::entities::session::PendingMessageReport;
 use crate::domain::turn_origin::{TurnOrigin, report_index};
 use crate::domain::unread_report::{
     ReportedMessage, UnreadSelection, acknowledged_report_index, later_than, needs_backfill,

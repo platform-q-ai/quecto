@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use cucumber::{given, then, when};
 use quecto::application::sessions::dto::SessionListQuery;
 use quecto::application::sessions::ports::SessionStore;
-use quecto::domain::session_identity::SessionIdentity;
+use quecto::domain::sessions::entities::session_identity::SessionIdentity;
 use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
 use quecto::infrastructure::tools::subagent_registry::SubagentEntry;
@@ -96,10 +96,8 @@ fn then_no_session_writes_a_live_child(world: &mut QuectoWorld) {
             .unwrap()
             .expect("loadable");
         assert!(
-            saved
-                .subagent_roster
-                .iter()
-                .all(|row| row.liveness != quecto::domain::session::SubagentLiveness::Live),
+            saved.subagent_roster.iter().all(|row| row.liveness
+                != quecto::domain::sessions::entities::session::SubagentLiveness::Live),
             "{}: no live operational child may be persisted: {:?}",
             summary.key,
             saved.subagent_roster

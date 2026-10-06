@@ -3,7 +3,7 @@ use crate::{
     application::sessions::ports::session_home::WorkspaceDiscovery,
     domain::{
         error::DomainError,
-        session_home::{AssociationProvenance, SessionHome, WorkspaceGroup},
+        sessions::entities::session_home::{AssociationProvenance, SessionHome, WorkspaceGroup},
     },
 };
 use std::{

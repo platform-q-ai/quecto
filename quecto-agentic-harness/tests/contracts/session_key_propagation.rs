@@ -6,7 +6,7 @@
 //! moves. The `sessionKey` a presenter reports is the active session's.
 use quecto::application::agent_loop::UsageTotals;
 use quecto::application::sessions::ports::SessionKeyPropagation;
-use quecto::domain::session_identity::SessionIdentity;
+use quecto::domain::sessions::entities::session_identity::SessionIdentity;
 use quecto::interface::cli::uds_session_switch_runtime::LoopSessionSwitchRuntime;
 
 use super::switch_runtime_fixture::runtime;

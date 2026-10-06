@@ -150,7 +150,7 @@ fn fake_child_with(
 
 fn live_child(sock_path: std::path::PathBuf) -> SubagentEntry {
     let mut entry = SubagentEntry::new(sock_path, 0);
-    entry.persisted_liveness = crate::domain::session::SubagentLiveness::Live;
+    entry.persisted_liveness = crate::domain::sessions::entities::session::SubagentLiveness::Live;
     entry
 }
 
@@ -297,10 +297,11 @@ async fn a_grandchilds_final_report_is_read_through_its_ancestor() {
     let registry = new_registry();
     let mut child = SubagentEntry::new(std::path::PathBuf::new(), 0);
     child.parent_id = Some("parent".to_string());
-    child.persisted_liveness = crate::domain::session::SubagentLiveness::Live;
+    child.persisted_liveness = crate::domain::sessions::entities::session::SubagentLiveness::Live;
     let mut grandchild = SubagentEntry::new(std::path::PathBuf::new(), 0);
     grandchild.parent_id = Some("child".to_string());
-    grandchild.persisted_liveness = crate::domain::session::SubagentLiveness::Live;
+    grandchild.persisted_liveness =
+        crate::domain::sessions::entities::session::SubagentLiveness::Live;
     {
         let mut entries = registry.lock().unwrap();
         entries.insert("parent".to_string(), live_child(sock));

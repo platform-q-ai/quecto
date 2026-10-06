@@ -1,6 +1,6 @@
 use super::*;
 use crate::application::sessions::ports::SessionStore;
-use crate::domain::session::Session;
+use crate::domain::sessions::entities::session::Session;
 
 fn store(base: &std::path::Path) -> FileSessionStore {
     crate::composition::sessions::build_file_session_store(base)

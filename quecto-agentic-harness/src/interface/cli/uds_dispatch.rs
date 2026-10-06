@@ -18,7 +18,7 @@ use super::uds_dispatch_session::{handle_new_session, handle_resume_session, han
 use super::{AgentCommand, AgentEvent};
 use super::{DispatchCtx, emit_event_to_broadcast_or_writer};
 use crate::application::sessions::dto::SaveTrigger;
-use crate::domain::session::SubagentRestoreReason;
+use crate::domain::sessions::entities::session::SubagentRestoreReason;
 use crate::domain::tool::{
     ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyOperation, ToolPolicyRequest,
 };

@@ -3,7 +3,7 @@ use crate::application::sessions::active_session::{ActiveSessionHandle, ActiveSe
 use crate::application::sessions::conversation_ledger::{LEDGER_MAX_ENTRIES, LedgerAdvance};
 use crate::application::sessions::dto::{SyncRequest, TranscriptDelta, TranscriptSync};
 use crate::domain::message::Message;
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use std::sync::Arc;
 
 const RESET_WINDOW: usize = 64;

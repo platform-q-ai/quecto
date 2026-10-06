@@ -1,6 +1,6 @@
 //! Boundary values for an exact saved-session restore and a typed home refusal.
 use super::resume_saved_session::{ResumeTarget, SavedSessionResumed};
-use crate::domain::resume_decision::{HomeVersion, ResumeDecisionKind};
+use crate::domain::sessions::services::resume_decision::{HomeVersion, ResumeDecisionKind};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -5,9 +5,9 @@ use crate::application::sessions::ports::session_home::{
     WorkspaceDiscovery,
 };
 use crate::application::sessions::session_home::SessionHomeContext;
-use crate::domain::session::SessionSummary;
-use crate::domain::session_home::{SessionHome, SessionHomeScope};
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session::SessionSummary;
+use crate::domain::sessions::entities::session_home::{SessionHome, SessionHomeScope};
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use std::future::Future;
 use std::pin::Pin;
 

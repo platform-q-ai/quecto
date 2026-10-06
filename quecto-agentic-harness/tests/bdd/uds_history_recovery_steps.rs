@@ -11,8 +11,8 @@ use super::uds_paged_history_steps::{
 use super::*;
 use quecto::application::sessions::ports::SessionStore;
 use quecto::domain::message::{Message, ToolCall};
-use quecto::domain::session::Session;
-use quecto::domain::session_identity::SessionIdentity;
+use quecto::domain::sessions::entities::session::Session;
+use quecto::domain::sessions::entities::session_identity::SessionIdentity;
 use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
 use std::time::Duration;

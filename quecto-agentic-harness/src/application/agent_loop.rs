@@ -173,7 +173,7 @@ impl AgentLoopImpl {
     pub fn new(config: AgentLoopConfig) -> Self {
         let context_manager = ContextManager::new(ContextManagerConfig {
             retention: config.retention.clone(),
-            session_key: crate::domain::session_identity::SessionIdentity::from_persisted_key(
+            session_key: crate::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key(
                 config.session_key.as_str(),
             ),
             max_context_tokens: config.max_context_tokens,

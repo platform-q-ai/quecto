@@ -1,11 +1,11 @@
 //! Shared observations, not a transaction owner. Call admission under the store claim.
 use crate::application::sessions::dto::resume_saved_session::ResumeDisposition;
 use crate::application::sessions::ports::session_home::{SessionHomeCatalogue, WorkspaceDiscovery};
-use crate::domain::resume_decision::ResumeDecisionKind;
+use crate::domain::sessions::services::resume_decision::ResumeDecisionKind;
 use crate::domain::{
     error::DomainError,
-    session_home::{HomeAdmission, SessionHome, SessionHomeScope},
-    session_identity::SessionIdentity,
+    sessions::entities::session_home::{HomeAdmission, SessionHome, SessionHomeScope},
+    sessions::entities::session_identity::SessionIdentity,
 };
 use std::{path::PathBuf, sync::Arc};
 

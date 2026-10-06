@@ -23,7 +23,7 @@ use crate::application::sessions::ports::session_runtime::TurnAccountingReset;
 use crate::domain::conversation_edit::clear_conversation;
 use crate::domain::conversation_view::is_injected_system_prompt;
 use crate::domain::message::Message;
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 pub struct ClearConversation {
     state: ActiveSessionHandle,

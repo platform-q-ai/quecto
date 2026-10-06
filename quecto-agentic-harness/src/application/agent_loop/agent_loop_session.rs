@@ -1,5 +1,5 @@
 use super::AgentLoopImpl;
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 impl AgentLoopImpl {
     /// The raw key of the session this loop runs for: the provider session

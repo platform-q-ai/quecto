@@ -1,6 +1,6 @@
 use super::*;
 use crate::application::sessions::dto::SessionListQuery;
-use crate::domain::session_identity::{SessionIdentity, SessionKeyPrefix};
+use crate::domain::sessions::entities::session_identity::{SessionIdentity, SessionKeyPrefix};
 use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
 use tempfile::TempDir;
 
@@ -69,7 +69,8 @@ async fn list_returns_only_user_chat_sessions_with_metadata_newest_first() {
 
     let summaries = store
         .list(&SessionListQuery::ExistingKeyPrefix(
-            SessionKeyPrefix::new(crate::domain::session::USER_CHAT_PREFIX).unwrap(),
+            SessionKeyPrefix::new(crate::domain::sessions::entities::session::USER_CHAT_PREFIX)
+                .unwrap(),
         ))
         .await
         .unwrap();
@@ -121,7 +122,8 @@ async fn list_extracts_raw_first_user_message() {
 
     let summaries = store
         .list(&SessionListQuery::ExistingKeyPrefix(
-            SessionKeyPrefix::new(crate::domain::session::USER_CHAT_PREFIX).unwrap(),
+            SessionKeyPrefix::new(crate::domain::sessions::entities::session::USER_CHAT_PREFIX)
+                .unwrap(),
         ))
         .await
         .unwrap();

@@ -205,8 +205,9 @@ async fn the_transcript_is_offered_only_when_it_can_be_read() {
     use crate::domain::child_end::ChildOrigin;
     let base = tempfile::tempdir().unwrap();
     let store = crate::composition::sessions::build_file_session_store(base.path());
-    let mut session = crate::domain::session::Session::new(
-        crate::domain::session_identity::SessionIdentity::named_cli(UUID).unwrap(),
+    let mut session = crate::domain::sessions::entities::session::Session::new(
+        crate::domain::sessions::entities::session_identity::SessionIdentity::named_cli(UUID)
+            .unwrap(),
     );
     session.messages = vec![crate::domain::message::Message::user("the work")];
     store.save(&session).await.unwrap();

@@ -4,13 +4,13 @@
 //! hide a record from a query nor smuggle one into a result. Nothing here
 //! reads a file, a transcript, Git or a clock; a query is literal text, never
 //! a pattern.
-use super::session_home::SessionHomeScope;
-use super::session_home_text::path_below;
-pub use super::session_home_text::{execution_path, group_root, repository_label};
-pub use super::session_metadata_text::{display_path, shown_text, visible_text};
-pub use super::session_query_refusal::{MAX_QUERY_CHARS, QueryRefusal};
-pub use super::session_title_subsequence::rank_of;
-use super::session_title_subsequence::{MIN_SUBSEQUENCE_TERM_CHARS, title_holds_subsequence};
+use super::super::{entities::session_home::SessionHomeScope, value_objects::*};
+use session_home_text::path_below;
+pub use session_home_text::{execution_path, group_root, repository_label};
+pub use session_metadata_text::{display_path, shown_text, visible_text};
+pub use session_query_refusal::{MAX_QUERY_CHARS, QueryRefusal};
+pub use session_title_subsequence::rank_of;
+use session_title_subsequence::{MIN_SUBSEQUENCE_TERM_CHARS, title_holds_subsequence};
 use std::path::Path;
 
 /// The metadata a query can match, in rank order: an exact key outranks a

@@ -6,7 +6,7 @@ use super::{
 };
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::sessions::ports::{ContextSpillStore, SessionStore};
-use crate::domain::session_identity::{SessionIdentity, SpillId};
+use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
 use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
 
 fn id(key: impl Into<String>) -> SessionIdentity {
@@ -14,7 +14,7 @@ fn id(key: impl Into<String>) -> SessionIdentity {
 }
 use crate::application::tools::ports::Tool;
 use crate::domain::message::Message;
-use crate::domain::session::{Session, SpillEntry, SpillIndex};
+use crate::domain::sessions::entities::session::{Session, SpillEntry, SpillIndex};
 use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::interface::cli::protocol::{AgentCommand, ToolRegistration};

@@ -8,9 +8,9 @@ use crate::application::sessions::dto::{
 };
 use crate::application::sessions::use_cases::{ListSessions, SaveSession};
 use crate::application::sessions::{active_session::ActiveSessionState, ports::SessionStore};
-use crate::domain::session_home::SessionHomeScope;
-use crate::domain::session_identity::SessionIdentity;
-use crate::domain::{message::Message, session::Session};
+use crate::domain::sessions::entities::session_home::SessionHomeScope;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
+use crate::domain::{message::Message, sessions::entities::session::Session};
 use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
 use std::path::PathBuf;
 

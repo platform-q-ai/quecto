@@ -171,7 +171,7 @@ impl LlmProvider for Probe {
                 .map(|m| m.ordinal)
                 .collect();
             let identity =
-                crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:test");
+                crate::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key("cli:test");
             let stored = self
                 .store
                 .load(&identity)

@@ -1,6 +1,6 @@
 use super::*;
 
-use quecto::domain::session_identity::SessionIdentity;
+use quecto::domain::sessions::entities::session_identity::SessionIdentity;
 use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
 use quecto::infrastructure::persistence::session_ownership::{
     SessionOwnershipGuard, open_stamp_file,

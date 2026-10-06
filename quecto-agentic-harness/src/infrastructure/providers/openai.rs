@@ -151,7 +151,8 @@ impl OpenAiProvider {
         // #2349 review M1: chat completions rejects a call without its result
         // and a result without its call (400); leave both out, as the
         // Responses route does (`codex_input`).
-        let (paired, orphans) = crate::domain::session::filter_orphan_tool_pairs(messages);
+        let (paired, orphans) =
+            crate::domain::sessions::entities::session::filter_orphan_tool_pairs(messages);
         if orphans.has_orphans() {
             tracing::warn!(
                 orphaned_calls = ?orphans.orphaned_calls,

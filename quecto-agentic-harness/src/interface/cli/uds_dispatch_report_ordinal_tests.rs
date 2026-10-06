@@ -7,7 +7,7 @@
 use super::fixture_tests::Fixture;
 use crate::application::sessions::ports::SessionStore;
 use crate::domain::message::{Message, Role};
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 pub(super) fn assert_every_visible_message_numbered(fx: &Fixture) {
     assert!(!fx.messages.is_empty(), "the turn must have run");

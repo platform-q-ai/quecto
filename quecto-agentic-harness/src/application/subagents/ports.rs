@@ -569,7 +569,7 @@ pub trait EndedChildRecords: Send + Sync {
     /// `None`: it explains a death when present and is never required.
     fn crash<'a>(
         &'a self,
-        child: &'a crate::domain::session_identity::SessionIdentity,
+        child: &'a crate::domain::sessions::entities::session_identity::SessionIdentity,
         writer: Option<u32>,
     ) -> PortFuture<'a, Option<crate::domain::crash_record::CrashRecord>>;
 
@@ -577,7 +577,7 @@ pub trait EndedChildRecords: Send + Sync {
     /// when this harness's store holds no session of that name.
     fn transcript<'a>(
         &'a self,
-        child: &'a crate::domain::session_identity::SessionIdentity,
+        child: &'a crate::domain::sessions::entities::session_identity::SessionIdentity,
     ) -> PortFuture<'a, Result<Option<EndedTranscript>, crate::domain::error::DomainError>>;
 
     /// Whether a transcript of the child running as `child` is there to be
@@ -585,7 +585,7 @@ pub trait EndedChildRecords: Send + Sync {
     /// (#2192 review). By default, by reading it.
     fn has_transcript<'a>(
         &'a self,
-        child: &'a crate::domain::session_identity::SessionIdentity,
+        child: &'a crate::domain::sessions::entities::session_identity::SessionIdentity,
     ) -> PortFuture<'a, bool> {
         Box::pin(async move { matches!(self.transcript(child).await, Ok(Some(_))) })
     }
