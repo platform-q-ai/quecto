@@ -85,7 +85,7 @@ pub(crate) async fn forward_event(ev: AgentProgressEvent, sink: &mut EventSink<'
 
 /// The `request_completed` event of one ended provider request (#2436).
 fn request_completed(
-    completed: crate::domain::inference::request_completion::RequestCompleted,
+    completed: crate::domain::inference::events::request_completion::RequestCompleted,
 ) -> AgentEvent {
     AgentEvent::RequestCompleted {
         model: completed.model,

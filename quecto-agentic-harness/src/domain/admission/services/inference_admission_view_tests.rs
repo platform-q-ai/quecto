@@ -1,5 +1,7 @@
 use super::*;
-use crate::domain::inference_admission::{AttemptObservation, GroupActivity};
+use crate::domain::admission::value_objects::inference_admission::{
+    AttemptObservation, GroupActivity,
+};
 
 fn g(name: &str) -> GroupId {
     GroupId::new(name).unwrap()

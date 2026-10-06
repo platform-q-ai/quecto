@@ -26,7 +26,7 @@ fn when_provider_builds_chat_request(world: &mut QuectoWorld, provider: String) 
         .cloned()
         .expect("no model — add a 'Given a chat-completions request' step");
     let effort = world.env_overrides.get("_cc_effort").map(|e| {
-        quecto::domain::provider::EffortLevel::parse(e)
+        quecto::domain::inference::value_objects::provider::EffortLevel::parse(e)
             .unwrap_or_else(|| panic!("effort level '{e}' must parse"))
     });
     let messages = vec![Message::user("hi")];

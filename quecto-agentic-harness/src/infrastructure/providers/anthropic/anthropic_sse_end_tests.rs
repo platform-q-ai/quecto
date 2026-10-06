@@ -3,8 +3,10 @@
 //! a transport cut (retryable `Network`) — on the streamed read and the
 //! whole-body read alike.
 use super::*;
-use crate::domain::provider::StreamEvent;
-use crate::domain::provider_error::{ProviderErrorClass, classify_provider_error};
+use crate::domain::inference::services::provider_error::{
+    ProviderErrorClass, classify_provider_error,
+};
+use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::infrastructure::providers::sse_common::{SseHandler, SseLineOutcome};
 
 const TEXT: [&str; 2] = [

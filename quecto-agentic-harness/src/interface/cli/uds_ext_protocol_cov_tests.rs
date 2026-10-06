@@ -96,7 +96,7 @@ async fn cov_provider_trait_methods_are_invoked() {
     };
     let mut rx = provider.chat_stream_incremental(request).await;
     assert!(
-        matches!(rx.recv().await, Some(crate::domain::provider::StreamEvent::Error(message)) if message.contains("unused"))
+        matches!(rx.recv().await, Some(crate::domain::inference::value_objects::provider::StreamEvent::Error(message)) if message.contains("unused"))
     );
 }
 

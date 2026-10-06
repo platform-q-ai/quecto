@@ -1,6 +1,6 @@
 //! Shared assertions used by real loopback observations and sensitivity controls.
 //! Each control accepts a valid observation, then rejects independent bad values.
-use quecto::domain::inference_admission::Feedback;
+use quecto::domain::admission::value_objects::inference_admission::Feedback;
 
 pub fn sends(actual: usize, expected: usize) {
     assert_eq!(actual, expected, "physical HTTP send count");

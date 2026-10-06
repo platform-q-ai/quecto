@@ -17,7 +17,9 @@ use tokio::task::JoinHandle;
 use super::protocol::*;
 use super::remote_gate::RemoteAdmission;
 use crate::application::ports::{AttemptAdmission, AuthorityStatus, Credential};
-use crate::domain::inference_admission::{Feedback, RequestState, ScopeId, WorkloadClass};
+use crate::domain::admission::value_objects::inference_admission::{
+    Feedback, RequestState, ScopeId, WorkloadClass,
+};
 use crate::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal;
 
 const COMPLETE_RETRIES: u32 = 40;

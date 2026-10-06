@@ -3,7 +3,7 @@
 //! (`LlmProvider`), the per-request admission port (`RequestAdmission`) and
 //! the `ChatRequest` they exchange are the application's
 //! (`application::providers::ports`, #1960).
-use super::message::LlmResponse;
+use crate::domain::message::LlmResponse;
 
 /// Incremental streaming event emitted by `chat_stream_incremental()`.
 ///
@@ -31,7 +31,7 @@ pub enum StreamEvent {
     Error(String),
 }
 
-#[path = "cancel_flag.rs"]
+#[path = "../../cancel_flag.rs"]
 mod cancel_flag;
 pub use cancel_flag::{CancelFlag, CancelWatch};
 

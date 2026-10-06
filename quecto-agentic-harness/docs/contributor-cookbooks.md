@@ -124,7 +124,7 @@ that owns the command.
   model metadata, effort levels, or config defaults.
 - `src/infrastructure/providers/*` for provider-specific request/response
   handling.
-- `src/domain/provider.rs` only for provider-agnostic vocabulary that the
+- `src/domain/inference/value_objects/provider.rs` only for provider-agnostic vocabulary that the
   application genuinely needs; `src/application/providers/ports.rs` for the
   `LlmProvider` contract itself.
 - `src/interface/cli/models.rs` or the UDS runtime/model dispatch modules for

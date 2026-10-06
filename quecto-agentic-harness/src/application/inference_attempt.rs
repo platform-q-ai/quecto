@@ -1,6 +1,6 @@
 //! Transport-neutral admission capability bound to a trusted scope and quota alias.
+use crate::domain::admission::value_objects::inference_admission::{Feedback, ThrottleFeedback};
 use crate::domain::error::DomainError;
-use crate::domain::inference_admission::{Feedback, ThrottleFeedback};
 use std::fmt::Debug;
 use std::future::Future;
 use std::pin::Pin;

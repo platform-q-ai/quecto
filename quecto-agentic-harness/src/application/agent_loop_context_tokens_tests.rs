@@ -1,7 +1,7 @@
 use super::*;
 use crate::domain::agent::AgentProgressEvent;
+use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::message::{LlmResponse, Message, UsageInfo};
-use crate::domain::provider::StreamEvent;
 use std::sync::Arc;
 
 fn response_with_provider_input_tokens(content: &str, provider_input_tokens: u32) -> LlmResponse {

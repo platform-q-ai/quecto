@@ -1523,8 +1523,8 @@ fn then_tool_result_in_single_message(world: &mut QuectoWorld, expected_count: u
 #[given(expr = "an Anthropic request with tool_choice {string}")]
 fn given_anthropic_tool_choice(world: &mut QuectoWorld, choice: String) {
     let tc = match choice.as_str() {
-        "auto" => quecto::domain::provider::ToolChoice::Auto,
-        "any" => quecto::domain::provider::ToolChoice::Any,
+        "auto" => quecto::domain::inference::value_objects::provider::ToolChoice::Auto,
+        "any" => quecto::domain::inference::value_objects::provider::ToolChoice::Any,
         _ => panic!("unknown tool_choice: {}", choice),
     };
     world.env_overrides.insert("_tool_choice".into(), choice);
@@ -1553,11 +1553,11 @@ fn when_build_with_tool_choice(world: &mut QuectoWorld) {
         .expect("no tool_choice");
     let tool_choice = if choice_str.starts_with("specific:") {
         let name = choice_str.strip_prefix("specific:").unwrap();
-        Some(quecto::domain::provider::ToolChoice::Specific(name.into()))
+        Some(quecto::domain::inference::value_objects::provider::ToolChoice::Specific(name.into()))
     } else {
         match choice_str.as_str() {
-            "auto" => Some(quecto::domain::provider::ToolChoice::Auto),
-            "any" => Some(quecto::domain::provider::ToolChoice::Any),
+            "auto" => Some(quecto::domain::inference::value_objects::provider::ToolChoice::Auto),
+            "any" => Some(quecto::domain::inference::value_objects::provider::ToolChoice::Any),
             _ => None,
         }
     };
@@ -1631,7 +1631,7 @@ fn given_anthropic_no_metadata(world: &mut QuectoWorld) {
 fn when_build_with_metadata(world: &mut QuectoWorld) {
     let msgs = world.context_messages.as_ref().expect("no messages set");
     let metadata = world.env_overrides.get("_metadata_user_id").map(|uid| {
-        quecto::domain::provider::RequestMetadata {
+        quecto::domain::inference::value_objects::provider::RequestMetadata {
             user_id: Some(uid.clone()),
         }
     });
@@ -1681,10 +1681,10 @@ fn then_no_metadata(world: &mut QuectoWorld) {
 #[given(expr = "an Anthropic request with model {string} and thinking level {string}")]
 fn given_anthropic_request_with_thinking(world: &mut QuectoWorld, model: String, level: String) {
     let thinking_level = match level.as_str() {
-        "low" => Some(quecto::domain::provider::ThinkingLevel::Low),
-        "medium" => Some(quecto::domain::provider::ThinkingLevel::Medium),
-        "high" => Some(quecto::domain::provider::ThinkingLevel::High),
-        "max" => Some(quecto::domain::provider::ThinkingLevel::Max),
+        "low" => Some(quecto::domain::inference::value_objects::provider::ThinkingLevel::Low),
+        "medium" => Some(quecto::domain::inference::value_objects::provider::ThinkingLevel::Medium),
+        "high" => Some(quecto::domain::inference::value_objects::provider::ThinkingLevel::High),
+        "max" => Some(quecto::domain::inference::value_objects::provider::ThinkingLevel::Max),
         _ => panic!("unknown thinking level: {}", level),
     };
     world.env_overrides.insert("_thinking_model".into(), model);
@@ -1734,10 +1734,10 @@ fn when_build_request_body_with_thinking(world: &mut QuectoWorld) {
         .unwrap_or(16000);
 
     let thinking_level = match level_str.as_str() {
-        "low" => Some(quecto::domain::provider::ThinkingLevel::Low),
-        "medium" => Some(quecto::domain::provider::ThinkingLevel::Medium),
-        "high" => Some(quecto::domain::provider::ThinkingLevel::High),
-        "max" => Some(quecto::domain::provider::ThinkingLevel::Max),
+        "low" => Some(quecto::domain::inference::value_objects::provider::ThinkingLevel::Low),
+        "medium" => Some(quecto::domain::inference::value_objects::provider::ThinkingLevel::Medium),
+        "high" => Some(quecto::domain::inference::value_objects::provider::ThinkingLevel::High),
+        "max" => Some(quecto::domain::inference::value_objects::provider::ThinkingLevel::Max),
         _ => None,
     };
 
@@ -2029,8 +2029,8 @@ fn make_incremental_request(
 fn collect_stream_events(
     provider: &Arc<dyn LlmProvider>,
     messages: &[Message],
-) -> Vec<quecto::domain::provider::StreamEvent> {
-    use quecto::domain::provider::StreamEvent;
+) -> Vec<quecto::domain::inference::value_objects::provider::StreamEvent> {
+    use quecto::domain::inference::value_objects::provider::StreamEvent;
     let rt = tokio::runtime::Runtime::new().unwrap();
     let req = make_incremental_request(messages);
     rt.block_on(async {
@@ -2196,7 +2196,7 @@ async fn when_parse_sse_chunk_as_stream_event(world: &mut QuectoWorld) {
 
 #[then(expr = "the stream event should be a TextDelta with text {string}")]
 fn then_stream_event_text_delta(world: &mut QuectoWorld, expected: String) {
-    use quecto::domain::provider::StreamEvent;
+    use quecto::domain::inference::value_objects::provider::StreamEvent;
     let found = world
         .stream_events
         .iter()
@@ -2210,7 +2210,7 @@ fn then_stream_event_text_delta(world: &mut QuectoWorld, expected: String) {
 
 #[then(expr = "the stream event should be a ThinkingDelta with text {string}")]
 fn then_stream_event_thinking_delta(world: &mut QuectoWorld, expected: String) {
-    use quecto::domain::provider::StreamEvent;
+    use quecto::domain::inference::value_objects::provider::StreamEvent;
     let found = world
         .stream_events
         .iter()
@@ -2224,7 +2224,7 @@ fn then_stream_event_thinking_delta(world: &mut QuectoWorld, expected: String) {
 
 #[then(expr = "the stream event should be a ToolCallStart with id {string} and name {string}")]
 fn then_stream_event_tool_call_start(world: &mut QuectoWorld, id: String, name: String) {
-    use quecto::domain::provider::StreamEvent;
+    use quecto::domain::inference::value_objects::provider::StreamEvent;
     let found = world.stream_events.iter().any(
         |ev| matches!(ev, StreamEvent::ToolCallStart { id: i, name: n } if i == &id && n == &name),
     );
@@ -2237,7 +2237,7 @@ fn then_stream_event_tool_call_start(world: &mut QuectoWorld, id: String, name: 
 
 #[then(expr = "the stream event should be a ToolCallDelta with partial {string}")]
 fn then_stream_event_tool_call_delta(world: &mut QuectoWorld, expected: String) {
-    use quecto::domain::provider::StreamEvent;
+    use quecto::domain::inference::value_objects::provider::StreamEvent;
     let found = world
         .stream_events
         .iter()
@@ -2258,7 +2258,7 @@ fn then_stream_event_tool_call_end(
     name: String,
     arguments: String,
 ) {
-    use quecto::domain::provider::StreamEvent;
+    use quecto::domain::inference::value_objects::provider::StreamEvent;
     let found = world.stream_events.iter().any(|ev| {
         matches!(ev, StreamEvent::ToolCallEnd { id: i, name: n, arguments: a } if i == &id && n == &name && a == &arguments)
     });
@@ -2459,7 +2459,7 @@ fn given_anthropic_mock_text_and_tool(world: &mut QuectoWorld) {
 
 #[when("I send an incremental streaming chat request")]
 fn when_send_incremental_streaming(world: &mut QuectoWorld) {
-    use quecto::domain::provider::StreamEvent;
+    use quecto::domain::inference::value_objects::provider::StreamEvent;
     let provider = world.provider.as_ref().expect("provider not set").clone();
     let messages = vec![Message::user("Hi")];
     let events = collect_stream_events(&provider, &messages);
@@ -2469,7 +2469,7 @@ fn when_send_incremental_streaming(world: &mut QuectoWorld) {
 
 #[when("I send both a streaming and an incremental streaming chat request")]
 fn when_send_both_streaming_and_incremental(world: &mut QuectoWorld) {
-    use quecto::domain::provider::StreamEvent;
+    use quecto::domain::inference::value_objects::provider::StreamEvent;
     let provider = world.provider.as_ref().expect("provider not set").clone();
     let messages = vec![Message::user("Hi")];
 
@@ -2514,7 +2514,7 @@ fn when_send_both_streaming_and_incremental(world: &mut QuectoWorld) {
 
 #[then(expr = "I should receive TextDelta events totalling {string}")]
 fn then_text_delta_total(world: &mut QuectoWorld, expected: String) {
-    use quecto::domain::provider::StreamEvent;
+    use quecto::domain::inference::value_objects::provider::StreamEvent;
     let collected: String = world
         .stream_events
         .iter()
@@ -2535,7 +2535,7 @@ fn then_text_delta_total(world: &mut QuectoWorld, expected: String) {
 
 #[then(expr = "the final event should be Done with content {string}")]
 fn then_final_event_done_with_content(world: &mut QuectoWorld, expected: String) {
-    use quecto::domain::provider::StreamEvent;
+    use quecto::domain::inference::value_objects::provider::StreamEvent;
     let last = world.stream_events.last().expect("no events");
     match last {
         StreamEvent::Done(resp) => {
@@ -2552,7 +2552,7 @@ fn then_final_event_done_with_content(world: &mut QuectoWorld, expected: String)
 
 #[then(expr = "the final event should be Done with a tool call for {string}")]
 fn then_final_event_done_with_tool(world: &mut QuectoWorld, tool: String) {
-    use quecto::domain::provider::StreamEvent;
+    use quecto::domain::inference::value_objects::provider::StreamEvent;
     let last = world.stream_events.last().expect("no events");
     match last {
         StreamEvent::Done(resp) => {
@@ -2569,7 +2569,7 @@ fn then_final_event_done_with_tool(world: &mut QuectoWorld, tool: String) {
 
 #[then(expr = "I should receive a ToolCallStart event for tool {string}")]
 fn then_received_tool_call_start(world: &mut QuectoWorld, tool: String) {
-    use quecto::domain::provider::StreamEvent;
+    use quecto::domain::inference::value_objects::provider::StreamEvent;
     let found = world
         .stream_events
         .iter()
@@ -2583,7 +2583,7 @@ fn then_received_tool_call_start(world: &mut QuectoWorld, tool: String) {
 
 #[then("I should receive ToolCallDelta events")]
 fn then_received_tool_call_delta(world: &mut QuectoWorld) {
-    use quecto::domain::provider::StreamEvent;
+    use quecto::domain::inference::value_objects::provider::StreamEvent;
     let found = world
         .stream_events
         .iter()
@@ -2597,7 +2597,7 @@ fn then_received_tool_call_delta(world: &mut QuectoWorld) {
 
 #[then(expr = "I should receive a ToolCallEnd event for tool {string} with arguments {string}")]
 fn then_received_tool_call_end(world: &mut QuectoWorld, tool: String, args: String) {
-    use quecto::domain::provider::StreamEvent;
+    use quecto::domain::inference::value_objects::provider::StreamEvent;
     let found = world.stream_events.iter().any(|ev| {
         matches!(ev, StreamEvent::ToolCallEnd { name, arguments, .. } if name == &tool && arguments == &args)
     });
@@ -2610,7 +2610,7 @@ fn then_received_tool_call_end(world: &mut QuectoWorld, tool: String, args: Stri
 
 #[then("I should receive an Error stream event")]
 fn then_received_error_event(world: &mut QuectoWorld) {
-    use quecto::domain::provider::StreamEvent;
+    use quecto::domain::inference::value_objects::provider::StreamEvent;
     let found = world
         .stream_events
         .iter()
@@ -2624,7 +2624,7 @@ fn then_received_error_event(world: &mut QuectoWorld) {
 
 #[then("I should receive TextDelta events totalling the expected text")]
 fn then_text_delta_total_expected(world: &mut QuectoWorld) {
-    use quecto::domain::provider::StreamEvent;
+    use quecto::domain::inference::value_objects::provider::StreamEvent;
     let expected = world
         .env_overrides
         .get("_expected_text")
@@ -3130,7 +3130,7 @@ fn given_anthropic_mock_success_182(world: &mut QuectoWorld) {
 
 #[given("a cancel flag that is already set")]
 fn given_cancel_flag_set(world: &mut QuectoWorld) {
-    use quecto::domain::provider::CancelFlag;
+    use quecto::domain::inference::value_objects::provider::CancelFlag;
     let flag = CancelFlag::new();
     flag.cancel();
     world.cancel_flag = Some(flag);
@@ -3138,7 +3138,7 @@ fn given_cancel_flag_set(world: &mut QuectoWorld) {
 
 #[given("a cancel flag that is not set")]
 fn given_cancel_flag_not_set(world: &mut QuectoWorld) {
-    use quecto::domain::provider::CancelFlag;
+    use quecto::domain::inference::value_objects::provider::CancelFlag;
     world.cancel_flag = Some(CancelFlag::new());
 }
 
@@ -3201,7 +3201,7 @@ fn when_streaming_chat_with_cancel_flag(world: &mut QuectoWorld) {
 #[when("I send an incremental streaming chat request with the cancel flag")]
 fn when_incremental_chat_with_cancel_flag(world: &mut QuectoWorld) {
     use quecto::application::providers::ports::ChatRequest;
-    use quecto::domain::provider::StreamEvent;
+    use quecto::domain::inference::value_objects::provider::StreamEvent;
     let provider = world.provider.as_ref().expect("no provider").clone();
     let cancel = world.cancel_flag.clone();
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -3272,7 +3272,7 @@ fn then_chat_succeeds(world: &mut QuectoWorld) {
 
 #[then(expr = "I should receive an Error stream event containing {string}")]
 fn then_stream_has_error_containing(world: &mut QuectoWorld, expected: String) {
-    use quecto::domain::provider::StreamEvent;
+    use quecto::domain::inference::value_objects::provider::StreamEvent;
     let found = world.stream_events.iter().any(|ev| {
         if let StreamEvent::Error(msg) = ev {
             msg.to_lowercase().contains(&expected.to_lowercase())
@@ -3453,10 +3453,10 @@ fn when_build_request_body_with_effort(world: &mut QuectoWorld) {
         .env_overrides
         .get("_effort_level")
         .map(|l| match l.as_str() {
-            "low" => quecto::domain::provider::EffortLevel::Low,
-            "medium" => quecto::domain::provider::EffortLevel::Medium,
-            "high" => quecto::domain::provider::EffortLevel::High,
-            "max" => quecto::domain::provider::EffortLevel::Max,
+            "low" => quecto::domain::inference::value_objects::provider::EffortLevel::Low,
+            "medium" => quecto::domain::inference::value_objects::provider::EffortLevel::Medium,
+            "high" => quecto::domain::inference::value_objects::provider::EffortLevel::High,
+            "max" => quecto::domain::inference::value_objects::provider::EffortLevel::Max,
             _ => panic!("unknown effort level: {}", l),
         });
 
@@ -3637,7 +3637,7 @@ async fn when_parse_sse_events_without_oauth_remap(world: &mut QuectoWorld) {
 
 #[then(expr = "the ToolCallStart event name should be {string}")]
 fn then_tool_call_start_name(world: &mut QuectoWorld, expected: String) {
-    use quecto::domain::provider::StreamEvent;
+    use quecto::domain::inference::value_objects::provider::StreamEvent;
     let found = world
         .stream_events
         .iter()
@@ -3655,7 +3655,7 @@ fn then_tool_call_start_name(world: &mut QuectoWorld, expected: String) {
 
 #[then(expr = "the ToolCallEnd event name should be {string}")]
 fn then_tool_call_end_name(world: &mut QuectoWorld, expected: String) {
-    use quecto::domain::provider::StreamEvent;
+    use quecto::domain::inference::value_objects::provider::StreamEvent;
     let found = world
         .stream_events
         .iter()
@@ -3673,7 +3673,7 @@ fn then_tool_call_end_name(world: &mut QuectoWorld, expected: String) {
 
 #[then(expr = "the Done response tool call name should be {string}")]
 fn then_done_response_tool_call_name(world: &mut QuectoWorld, expected: String) {
-    use quecto::domain::provider::StreamEvent;
+    use quecto::domain::inference::value_objects::provider::StreamEvent;
     let response = world
         .stream_events
         .iter()

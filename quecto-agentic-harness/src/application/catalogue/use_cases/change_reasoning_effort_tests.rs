@@ -5,7 +5,9 @@ use std::sync::Mutex;
 
 use super::*;
 use crate::application::catalogue::ports::{DefaultScope, RecordedDefaults};
-use crate::domain::provider::EffortLevel::{High, Low, Max, Medium, None as NoneLevel, XHigh};
+use crate::domain::inference::value_objects::provider::EffortLevel::{
+    High, Low, Max, Medium, None as NoneLevel, XHigh,
+};
 
 struct FakeVocabulary(HashMap<&'static str, Vec<EffortLevel>>);
 

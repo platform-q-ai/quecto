@@ -3,7 +3,7 @@
 //! snapshot by infrastructure; the use case never re-derives a vocabulary
 //! from a model name.
 
-use crate::domain::provider::EffortLevel;
+use crate::domain::inference::value_objects::provider::EffortLevel;
 
 pub trait EffortVocabularySource: Send + Sync {
     /// The ordered vocabulary of `model` (a qualified `provider/model` id),

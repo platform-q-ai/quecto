@@ -2,7 +2,7 @@
 //! as an orthogonal admission state with group, reason, elapsed wait and a
 //! bounded, fresh aggregate. Proven over the real remote gate and authority.
 use quecto::application::ports::{AdmissionObservation, AttemptAdmission};
-use quecto::domain::inference_admission::{
+use quecto::domain::admission::value_objects::inference_admission::{
     AdmissionActivity, AdmissionConfig, AdmissionPhase, CooldownState, Feedback, GroupId,
     GroupPolicy, ThrottleFeedback, WorkloadClass,
 };

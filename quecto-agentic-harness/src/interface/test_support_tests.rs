@@ -71,7 +71,7 @@ async fn stub_provider_trait_methods_are_scripted() {
     };
     let mut rx = provider.chat_stream_incremental(request).await;
     assert!(
-        matches!(rx.recv().await, Some(crate::domain::provider::StreamEvent::Done(done)) if done.content.as_deref() == Some("stub response"))
+        matches!(rx.recv().await, Some(crate::domain::inference::value_objects::provider::StreamEvent::Done(done)) if done.content.as_deref() == Some("stub response"))
     );
     assert!(rx.recv().await.is_none());
 }

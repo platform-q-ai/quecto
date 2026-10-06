@@ -6,7 +6,7 @@ use std::time::Duration;
 use wiremock::matchers::method;
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use crate::domain::request_observation::RequestTrace;
+use crate::domain::inference::events::request_observation::RequestTrace;
 
 #[tokio::test]
 async fn an_unbound_provider_records_attempts_and_time_to_first_token() {
@@ -161,8 +161,8 @@ async fn a_reasoning_delta_is_a_first_token() {
 async fn incremental(
     provider: &Arc<dyn crate::application::providers::ports::LlmProvider>,
 ) -> (
-    Vec<crate::domain::provider::StreamEvent>,
-    Vec<crate::domain::attempt_diagnostics::AttemptDiagnostics>,
+    Vec<crate::domain::inference::value_objects::provider::StreamEvent>,
+    Vec<crate::domain::inference::value_objects::attempt_diagnostics::AttemptDiagnostics>,
 ) {
     let trace = Arc::new(RequestTrace::default());
     trace.start();
@@ -240,7 +240,7 @@ async fn a_mid_stream_rate_limit_chunk_is_observed_without_a_permit() {
 /// completed.
 #[tokio::test]
 async fn how_each_attempt_ended_is_recorded() {
-    use crate::domain::attempt_diagnostics::Termination;
+    use crate::domain::inference::value_objects::attempt_diagnostics::Termination;
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .respond_with(
@@ -311,7 +311,7 @@ async fn a_tool_call_alone_is_a_first_token() {
 /// and the events the caller sees are exactly as before.
 #[tokio::test]
 async fn a_stream_that_fails_mid_body_ends_as_a_read_error() {
-    use crate::domain::attempt_diagnostics::Termination;
+    use crate::domain::inference::value_objects::attempt_diagnostics::Termination;
     use tokio::io::AsyncWriteExt;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -344,7 +344,7 @@ async fn a_stream_that_fails_mid_body_ends_as_a_read_error() {
         "{attempts:?}"
     );
     assert!(
-        matches!(events.last(), Some(crate::domain::provider::StreamEvent::Error(e)) if e.contains("stream read error")),
+        matches!(events.last(), Some(crate::domain::inference::value_objects::provider::StreamEvent::Error(e)) if e.contains("stream read error")),
         "{events:?}"
     );
     assert_eq!(
@@ -374,7 +374,7 @@ async fn a_stream_that_fails_mid_body_ends_as_a_read_error() {
 /// tool-call arguments over their limit) ends as rejected, never as dropped.
 #[tokio::test]
 async fn a_reply_refused_mid_stream_ends_as_rejected() {
-    use crate::domain::attempt_diagnostics::Termination;
+    use crate::domain::inference::value_objects::attempt_diagnostics::Termination;
     let piece = "a".repeat(600 * 1024);
     let line = |arguments: &str| {
         format!(
@@ -393,7 +393,7 @@ async fn a_reply_refused_mid_stream_ends_as_rejected() {
     assert!(
         matches!(
             events.last(),
-            Some(crate::domain::provider::StreamEvent::Error(_))
+            Some(crate::domain::inference::value_objects::provider::StreamEvent::Error(_))
         ),
         "{events:?}"
     );
@@ -412,7 +412,7 @@ async fn a_reply_refused_mid_stream_ends_as_rejected() {
 /// The same request with no trace: the old path's events, to compare.
 async fn untraced(
     provider: &Arc<dyn crate::application::providers::ports::LlmProvider>,
-) -> Vec<crate::domain::provider::StreamEvent> {
+) -> Vec<crate::domain::inference::value_objects::provider::StreamEvent> {
     let messages = vec![crate::domain::message::Message::user("hi")];
     let request = crate::application::providers::ports::ChatRequest {
         trace: None,
@@ -440,7 +440,7 @@ async fn untraced(
 /// Review #2156: a whole reply `chat` cannot accept ends as rejected.
 #[tokio::test]
 async fn a_whole_reply_that_cannot_be_parsed_ends_as_rejected() {
-    use crate::domain::attempt_diagnostics::Termination;
+    use crate::domain::inference::value_objects::attempt_diagnostics::Termination;
     for body in ["not json", r#"{"choices":"not a list"}"#] {
         let (_server, provider) = served(body).await;
         let trace = Arc::new(RequestTrace::default());
@@ -476,7 +476,7 @@ async fn a_whole_reply_that_cannot_be_parsed_ends_as_rejected() {
 /// incrementally.
 #[tokio::test]
 async fn a_long_error_body_is_typed_from_the_whole_body() {
-    use crate::domain::attempt_diagnostics::ErrorCode;
+    use crate::domain::inference::value_objects::attempt_diagnostics::ErrorCode;
     let body = serde_json::json!({
         "error": {
             "message": "m".repeat(2 * crate::infrastructure::providers::sse_common::MAX_ERROR_BODY_BYTES),
@@ -540,7 +540,7 @@ async fn a_long_error_body_is_typed_from_the_whole_body() {
 /// read error, as it does through admission, not as an HTTP error.
 #[tokio::test]
 async fn an_error_body_that_cannot_be_read_ends_as_a_read_error() {
-    use crate::domain::attempt_diagnostics::Termination;
+    use crate::domain::inference::value_objects::attempt_diagnostics::Termination;
     use tokio::io::AsyncWriteExt;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -580,8 +580,8 @@ async fn an_error_body_that_cannot_be_read_ends_as_a_read_error() {
 /// is the error, and no `Done` carries the partial text as a whole answer.
 #[tokio::test]
 async fn a_reply_cut_short_by_an_error_chunk_is_never_a_whole_answer() {
-    use crate::domain::attempt_diagnostics::TerminalEvent;
-    use crate::domain::provider::StreamEvent;
+    use crate::domain::inference::value_objects::attempt_diagnostics::TerminalEvent;
+    use crate::domain::inference::value_objects::provider::StreamEvent;
     let text = r#"{"choices":[{"index":0,"delta":{"content":"half"}}]}"#;
     for error in [
         r#"{"error":"model crashed"}"#,

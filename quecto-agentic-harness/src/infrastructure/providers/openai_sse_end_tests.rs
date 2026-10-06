@@ -7,8 +7,10 @@
 //! without alike.
 use super::*;
 use crate::domain::error::DomainError;
+use crate::domain::inference::services::provider_error::{
+    ProviderErrorClass, classify_provider_error,
+};
 use crate::domain::message::Message;
-use crate::domain::provider_error::{ProviderErrorClass, classify_provider_error};
 use crate::infrastructure::providers::stream_idle::tests::{LIVE, bounded, servers};
 use crate::infrastructure::providers::stream_idle_provider_tests::{Vendor, request, traced};
 
@@ -224,7 +226,7 @@ async fn a_body_with_no_event_is_an_empty_stream() {
     for lines in [&[][..], &[": keepalive"][..]] {
         let events = handled(lines).await;
         assert!(
-            matches!(events.last(), Some(StreamEvent::Error(e)) if e == crate::domain::provider_error::EMPTY_STREAM),
+            matches!(events.last(), Some(StreamEvent::Error(e)) if e == crate::domain::inference::services::provider_error::EMPTY_STREAM),
             "{lines:?}: {events:?}"
         );
     }

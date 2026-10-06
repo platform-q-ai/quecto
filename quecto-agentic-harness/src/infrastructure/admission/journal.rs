@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use super::directory::AuthorityDirectory;
 use crate::application::ports::{AdmissionJournal, JournalError};
-use crate::domain::inference_admission::{
+use crate::domain::admission::value_objects::inference_admission::{
     AdmissionLedger, GroupId, LedgerGroup, OutstandingAttempt,
 };
 

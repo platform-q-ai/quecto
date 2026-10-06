@@ -3,12 +3,12 @@ use super::*;
 #[derive(Debug)]
 struct PauseAfterUnauthorized(
     Arc<AtomicU32>,
-    std::sync::Mutex<Vec<crate::domain::provider::RequestAttempt>>,
+    std::sync::Mutex<Vec<crate::domain::inference::value_objects::provider::RequestAttempt>>,
 );
 impl crate::application::providers::ports::RequestAdmission for PauseAfterUnauthorized {
     fn check(
         &self,
-        attempt: crate::domain::provider::RequestAttempt,
+        attempt: crate::domain::inference::value_objects::provider::RequestAttempt,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
         self.1.lock().unwrap().push(attempt);
         Box::pin(async move {
@@ -61,7 +61,7 @@ async fn pause_after_unauthorized_response_prevents_refreshed_inference() {
     // loop, not this decorator, admitted the first send.
     assert_eq!(
         *admission.1.lock().unwrap(),
-        [crate::domain::provider::RequestAttempt::Reattempt]
+        [crate::domain::inference::value_objects::provider::RequestAttempt::Reattempt]
     );
 }
 
@@ -80,11 +80,11 @@ async fn refreshable_delegates_chat_stream_incremental_to_inner_provider() {
     let mut rx = provider.chat_stream_incremental(test_request()).await;
     assert!(matches!(
         rx.recv().await,
-        Some(crate::domain::provider::StreamEvent::TextDelta(text)) if text == "stream"
+        Some(crate::domain::inference::value_objects::provider::StreamEvent::TextDelta(text)) if text == "stream"
     ));
     assert!(matches!(
         rx.recv().await,
-        Some(crate::domain::provider::StreamEvent::Done(done)) if done.content.as_deref() == Some("stream-done")
+        Some(crate::domain::inference::value_objects::provider::StreamEvent::Done(done)) if done.content.as_deref() == Some("stream-done")
     ));
 }
 

@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::provider::EffortLevel::{High, Low, Medium};
+use crate::domain::inference::value_objects::provider::EffortLevel::{High, Low, Medium};
 
 #[test]
 fn state_view_renders_api_strings_and_an_empty_vocabulary_as_is() {

@@ -445,8 +445,16 @@ struct Grant;
 #[derive(Debug)]
 struct Granted;
 impl crate::application::ports::AttemptPermit for Granted {
-    fn feedback(&mut self, _: crate::domain::inference_admission::ThrottleFeedback) {}
-    fn finish(self: Box<Self>, _: crate::domain::inference_admission::Feedback) {}
+    fn feedback(
+        &mut self,
+        _: crate::domain::admission::value_objects::inference_admission::ThrottleFeedback,
+    ) {
+    }
+    fn finish(
+        self: Box<Self>,
+        _: crate::domain::admission::value_objects::inference_admission::Feedback,
+    ) {
+    }
 }
 impl crate::application::ports::AttemptAdmission for Grant {
     fn acquire(&self) -> crate::application::ports::AttemptAcquisition<'_> {

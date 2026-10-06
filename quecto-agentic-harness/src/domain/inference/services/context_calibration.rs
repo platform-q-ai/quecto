@@ -1,6 +1,6 @@
 //! Provider-calibrated token estimates (#2212).
 //!
-//! The local estimate (`domain::token_estimate`) prices prose, digit-bearing
+//! The local estimate (`domain::inference::value_objects::token_estimate`) prices prose, digit-bearing
 //! runs, high-entropy runs and non-ASCII text at their own rates, so dense tool output is no
 //! longer counted at half its size. What it still misses is a residual: a
 //! tokeniser's own quirks, message framing, and the two gaps below. A

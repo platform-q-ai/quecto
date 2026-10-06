@@ -10,10 +10,10 @@
 //! - usage a cut-short reply reported is still counted
 //!   ([`UnfinishedReply`]).
 use crate::domain::error::DomainError;
+use crate::domain::inference::events::request_observation::RequestTrace;
 use crate::domain::message::{LlmResponse, UsageInfo};
-use crate::domain::request_observation::RequestTrace;
 
-pub(crate) use crate::domain::provider_error::EMPTY_STREAM;
+pub(crate) use crate::domain::inference::services::provider_error::EMPTY_STREAM;
 
 /// What every cut-short error says, after its protocol's name and before
 /// the terminal event it never saw: `connection` makes the classifier read
@@ -106,7 +106,7 @@ pub(crate) fn record_unfinished_usage(
             stop_reason: None,
             thinking_blocks: Vec::new(),
         };
-        crate::domain::usage_accounting::attach_cost(&mut priced, model);
+        crate::domain::inference::services::usage_accounting::attach_cost(&mut priced, model);
         let usage = priced.usage.expect("the usage just set is kept");
         trace.record_unfinished_usage(usage);
     }

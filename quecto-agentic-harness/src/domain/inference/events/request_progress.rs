@@ -18,10 +18,12 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use super::attempt_diagnostics::{AttemptDiagnostics, Termination};
-use super::provider_error::OUTPUT_CAP_EXCEEDED;
 use super::request_observation::{MAX_ATTEMPT_RECORDS, RequestTrace};
-pub use super::state_snapshot::{AttemptProgressSnapshot, ModelTurnSnapshot};
+use crate::domain::inference::services::provider_error::OUTPUT_CAP_EXCEEDED;
+use crate::domain::inference::value_objects::attempt_diagnostics::{
+    AttemptDiagnostics, Termination,
+};
+pub use crate::domain::state_snapshot::{AttemptProgressSnapshot, ModelTurnSnapshot};
 
 /// Bytes of streamed output one attempt may send per token of its output
 /// limit. A token is about four bytes of English and rarely more than
@@ -81,7 +83,7 @@ pub(super) struct LiveAttempt {
     first_token: Option<Instant>,
     last_event: Option<Instant>,
     /// Its events by type (#2433), for the record of an attempt cut off.
-    event_types: super::attempt_diagnostics::EventTypeCounts,
+    event_types: crate::domain::inference::value_objects::attempt_diagnostics::EventTypeCounts,
 }
 
 /// Milliseconds from `from` to `to`; none when the clock reads earlier.

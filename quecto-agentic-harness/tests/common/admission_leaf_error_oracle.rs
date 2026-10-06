@@ -1,7 +1,7 @@
 //! One executable acceptance oracle shared by actual-wire checks and observed
 //! counterexamples. A mutation of each fact must fail its own named predicate.
 use super::fixture::{Snapshot, Transcript};
-use quecto::domain::inference_admission::{Feedback, ThrottleFeedback};
+use quecto::domain::admission::value_objects::inference_admission::{Feedback, ThrottleFeedback};
 
 #[derive(Clone, Copy)]
 pub struct Expected<'a> {

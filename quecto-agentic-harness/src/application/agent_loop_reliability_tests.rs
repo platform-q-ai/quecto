@@ -101,7 +101,7 @@ struct RetryAccounting {
 impl crate::application::providers::ports::RequestAccounting for RetryAccounting {
     fn record<'a>(
         &'a self,
-        observation: &'a crate::domain::request_observation::RequestObservation,
+        observation: &'a crate::domain::inference::events::request_observation::RequestObservation,
     ) -> crate::application::subagent_launch::LaunchFuture<'a, Result<(), DomainError>> {
         Box::pin(async move {
             let mut records = self.records.lock().unwrap();
@@ -143,7 +143,7 @@ struct RejectingAccounting {
 impl crate::application::providers::ports::RequestAccounting for RejectingAccounting {
     fn record<'a>(
         &'a self,
-        observation: &'a crate::domain::request_observation::RequestObservation,
+        observation: &'a crate::domain::inference::events::request_observation::RequestObservation,
     ) -> crate::application::subagent_launch::LaunchFuture<'a, Result<(), DomainError>> {
         Box::pin(async move {
             self.records
@@ -230,10 +230,9 @@ async fn cancelled_provider_request_remains_in_accounting_outbox() {
 
 #[tokio::test]
 async fn mock_streaming_provider_trait_surface_chat_and_incremental() {
-    let provider =
-        MockStreamingProvider::new(vec![vec![crate::domain::provider::StreamEvent::Done(
-            text_response("done"),
-        )]]);
+    let provider = MockStreamingProvider::new(vec![vec![
+        crate::domain::inference::value_objects::provider::StreamEvent::Done(text_response("done")),
+    ]]);
     let messages = [];
     let tools = [];
     let request = ChatRequest {
@@ -256,14 +255,15 @@ async fn mock_streaming_provider_trait_surface_chat_and_incremental() {
     let mut rx = provider.chat_stream_incremental(request).await;
     assert!(matches!(
         rx.recv().await,
-        Some(crate::domain::provider::StreamEvent::Done(_))
+        Some(crate::domain::inference::value_objects::provider::StreamEvent::Done(_))
     ));
     assert_eq!(provider.request_count(), 1);
 
-    let provider =
-        MockStreamingProvider::new(vec![vec![crate::domain::provider::StreamEvent::Done(
-            text_response("chat done"),
-        )]]);
+    let provider = MockStreamingProvider::new(vec![vec![
+        crate::domain::inference::value_objects::provider::StreamEvent::Done(text_response(
+            "chat done",
+        )),
+    ]]);
     let messages = [];
     let tools = [];
     let request = ChatRequest {

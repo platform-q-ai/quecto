@@ -33,7 +33,7 @@ use super::client::{AuthorityConnection, ClientError, Inner, expect_credential};
 use super::directory::AuthorityDirectory;
 use super::protocol::Op;
 use crate::application::ports::Credential;
-use crate::domain::inference_admission::WorkloadClass;
+use crate::domain::admission::value_objects::inference_admission::WorkloadClass;
 use crate::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal;
 
 type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;

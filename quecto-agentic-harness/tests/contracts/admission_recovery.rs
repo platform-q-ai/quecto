@@ -4,7 +4,7 @@ use quecto::application::inference_admission::AdmissionService;
 use quecto::application::ports::{
     AdmissionClient, AdmissionDispatcher, AdmissionRecovery, AdmissionRegistry,
 };
-use quecto::domain::inference_admission::{
+use quecto::domain::admission::value_objects::inference_admission::{
     AdmissionConfig, AdmissionError, Feedback, GroupId, GroupPolicy, RequestId, RequestState,
     ScopeId, TerminalOutcome, WorkloadClass,
 };

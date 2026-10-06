@@ -3,7 +3,7 @@
 #[path = "../common/admission_error_fixture.rs"]
 mod fixture;
 use fixture::*;
-use quecto::domain::provider_error::ProviderErrorClass;
+use quecto::domain::inference::services::provider_error::ProviderErrorClass;
 
 async fn refused(leaf: Leaf, surface: Surface) {
     let (disabled, enabled, url) = compare_refused(leaf, surface).await;
@@ -420,7 +420,7 @@ fn parity_oracle_rejects_every_observation_field_mutation() {
 
 #[test]
 fn fixture_oracles_reject_each_isolated_counterexample() {
-    use quecto::domain::inference_admission::Feedback;
+    use quecto::domain::admission::value_objects::inference_admission::Feedback;
     let good = Snapshot {
         grants: 1,
         finishes: vec![Feedback::Failure],

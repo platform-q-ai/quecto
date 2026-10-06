@@ -230,7 +230,7 @@ fn effort_valid_parses() {
     let f = parse_agent_flags(&argv(&["--effort", "high"]), &mut e).unwrap();
     assert!(matches!(
         f.effort,
-        Some(crate::domain::provider::EffortLevel::High)
+        Some(crate::domain::inference::value_objects::provider::EffortLevel::High)
     ));
 }
 

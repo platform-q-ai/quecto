@@ -11,11 +11,13 @@ use quecto::{
     application::inference_attempt::{AttemptAdmission, AttemptPermit},
     application::providers::ports::{ChatRequest, LlmProvider},
     domain::{
+        admission::value_objects::inference_admission::{Feedback, ThrottleFeedback},
         error::DomainError,
-        inference_admission::{Feedback, ThrottleFeedback},
+        inference::services::provider_error::{
+            ProviderErrorClass, classify_provider_error, provider_http_status,
+        },
+        inference::value_objects::provider::StreamEvent,
         message::LlmResponse,
-        provider::StreamEvent,
-        provider_error::{ProviderErrorClass, classify_provider_error, provider_http_status},
     },
     infrastructure::providers::{
         anthropic::AnthropicProvider, codex::CodexProvider, openai::OpenAiProvider,

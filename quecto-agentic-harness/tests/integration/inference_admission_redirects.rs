@@ -5,9 +5,9 @@ use std::sync::{Arc, Mutex};
 
 use quecto::application::ports::{AttemptAdmission, AttemptPermit};
 use quecto::application::providers::ports::{ChatRequest, LlmProvider};
+use quecto::domain::admission::value_objects::inference_admission::{Feedback, ThrottleFeedback};
 use quecto::domain::error::DomainError;
-use quecto::domain::inference_admission::{Feedback, ThrottleFeedback};
-use quecto::domain::provider::StreamEvent;
+use quecto::domain::inference::value_objects::provider::StreamEvent;
 use quecto::infrastructure::providers::{
     SingleAttemptClient, anthropic::AnthropicProvider, codex::CodexProvider, openai::OpenAiProvider,
 };

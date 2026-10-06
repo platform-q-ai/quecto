@@ -18,8 +18,10 @@ use tokio::sync::RwLock;
 
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::error::DomainError;
+use crate::domain::inference::services::provider_error::{
+    ProviderErrorClass, classify_provider_error,
+};
 use crate::domain::message::LlmResponse;
-use crate::domain::provider_error::{ProviderErrorClass, classify_provider_error};
 use crate::infrastructure::auth::credential_store::{AuthMethod, CredentialStore};
 
 /// Async function that refreshes an OAuth token.
@@ -195,8 +197,11 @@ impl LlmProvider for RefreshableProvider {
         request: ChatRequest<'a>,
     ) -> Pin<
         Box<
-            dyn Future<Output = tokio::sync::mpsc::Receiver<crate::domain::provider::StreamEvent>>
-                + Send
+            dyn Future<
+                    Output = tokio::sync::mpsc::Receiver<
+                        crate::domain::inference::value_objects::provider::StreamEvent,
+                    >,
+                > + Send
                 + 'a,
         >,
     > {
@@ -218,7 +223,7 @@ impl LlmProvider for RefreshableProvider {
 /// provider needs its own copy of the request data because the new provider
 /// `Arc` has a different lifetime than the original borrow.
 struct OwnedRequest {
-    trace: Option<Arc<crate::domain::request_observation::RequestTrace>>,
+    trace: Option<Arc<crate::domain::inference::events::request_observation::RequestTrace>>,
     admission: Option<Arc<dyn crate::application::providers::ports::RequestAdmission>>,
     messages: Vec<crate::domain::message::Message>,
     tools: Vec<crate::domain::tool::ToolDefinition>,
@@ -226,11 +231,11 @@ struct OwnedRequest {
     max_tokens: u32,
     temperature: f32,
     session_id: Option<String>,
-    tool_choice: Option<crate::domain::provider::ToolChoice>,
-    metadata: Option<crate::domain::provider::RequestMetadata>,
-    thinking_level: Option<crate::domain::provider::ThinkingLevel>,
-    cancel_flag: Option<crate::domain::provider::CancelFlag>,
-    effort: Option<crate::domain::provider::EffortLevel>,
+    tool_choice: Option<crate::domain::inference::value_objects::provider::ToolChoice>,
+    metadata: Option<crate::domain::inference::value_objects::provider::RequestMetadata>,
+    thinking_level: Option<crate::domain::inference::value_objects::provider::ThinkingLevel>,
+    cancel_flag: Option<crate::domain::inference::value_objects::provider::CancelFlag>,
+    effort: Option<crate::domain::inference::value_objects::provider::EffortLevel>,
 }
 
 impl OwnedRequest {
@@ -330,7 +335,7 @@ impl RefreshableProvider {
                             // The resend is a reattempt of a request the loop
                             // already admitted (#2339).
                             admission
-                                .check(crate::domain::provider::RequestAttempt::Reattempt)
+                                .check(crate::domain::inference::value_objects::provider::RequestAttempt::Reattempt)
                                 .await?;
                         }
                         if let Some(trace) = &owned.trace {

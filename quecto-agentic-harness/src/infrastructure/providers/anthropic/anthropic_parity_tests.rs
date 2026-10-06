@@ -482,7 +482,7 @@ async fn test_sse_events_reverse_maps_tool_name_in_start_and_end() {
         parameters_schema: Cow::Borrowed("{}"),
     }];
     let events = AnthropicProvider::parse_sse_events_with_tools_public(sse, &tool_defs).await;
-    use crate::domain::provider::StreamEvent;
+    use crate::domain::inference::value_objects::provider::StreamEvent;
 
     // ToolCallStart should have remapped name
     let start = events
@@ -529,7 +529,7 @@ async fn test_sse_events_no_remap_without_tool_defs() {
         event: message_stop\n\
         data: {}\n\n";
     let events = AnthropicProvider::parse_sse_events_public(sse).await;
-    use crate::domain::provider::StreamEvent;
+    use crate::domain::inference::value_objects::provider::StreamEvent;
     let start = events
         .iter()
         .find_map(|ev| match ev {

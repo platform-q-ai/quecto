@@ -3,7 +3,7 @@
 //! carries.
 
 use crate::application::catalogue::dto::{EffortChangeError, EffortChangeOutcome};
-use crate::domain::provider::EffortLevel;
+use crate::domain::inference::value_objects::provider::EffortLevel;
 
 /// The effort fields of a session-state snapshot: the level in effect and
 /// the active model's vocabulary, as API strings.

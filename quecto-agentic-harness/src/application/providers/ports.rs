@@ -4,18 +4,18 @@
 //! local execution policy through [`RequestAdmission`] before every request
 //! (and retry). Infrastructure implements both: the vendor clients and the
 //! router, and the admission broker. [`ChatRequest`] is the request they
-//! exchange; the pure vocabulary it carries stays in `domain::provider`.
+//! exchange; the pure vocabulary it carries stays in `domain::inference::value_objects::provider`.
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::domain::error::DomainError;
-use crate::domain::message::{LlmResponse, Message};
-use crate::domain::provider::{
+use crate::domain::inference::events::request_observation::{RequestObservation, RequestTrace};
+use crate::domain::inference::value_objects::provider::{
     CancelFlag, EffortLevel, RequestAttempt, RequestMetadata, StreamEvent, ThinkingLevel,
     ToolChoice,
 };
-use crate::domain::request_observation::{RequestObservation, RequestTrace};
+use crate::domain::message::{LlmResponse, Message};
 use crate::domain::tool::ToolDefinition;
 
 /// Parameters for a chat request to an LLM provider.
@@ -81,8 +81,8 @@ pub trait LlmProvider: Send + Sync + std::fmt::Debug {
 
     /// The providers a request can reach, by name, in routing order
     /// (#2421 round 2 L1): what the shared routing rule
-    /// (`domain::provider::route_model`) picks among. A single provider is
-    /// the only one; a router lists the providers it holds, and every
+    /// (`domain::inference::value_objects::provider::route_model`) picks among. A single
+    /// provider is the only one; a router lists the providers it holds, and every
     /// decorator around one forwards it. No default (round 3 L1): a wrapper
     /// that did not forward it would silently cost qualified ids their
     /// catalogue entry.

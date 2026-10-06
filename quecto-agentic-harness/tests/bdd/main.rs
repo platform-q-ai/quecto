@@ -17,7 +17,9 @@ use quecto::infrastructure::auth::credential_store::{
 };
 use quecto::infrastructure::config::Config;
 
-use quecto::domain::provider_error::{ProviderErrorClass, classify_provider_error};
+use quecto::domain::inference::services::provider_error::{
+    ProviderErrorClass, classify_provider_error,
+};
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
 use quecto::infrastructure::providers;
 use quecto::infrastructure::providers::router::ProviderRouter;
@@ -652,7 +654,7 @@ pub struct QuectoWorld {
     /// Streaming response from provider streaming scenarios
     pub streaming_response: Option<LlmResponse>,
     /// Incremental stream events collected from chat_stream_incremental scenarios (#181)
-    pub stream_events: Vec<quecto::domain::provider::StreamEvent>,
+    pub stream_events: Vec<quecto::domain::inference::value_objects::provider::StreamEvent>,
     /// Whether any parse error occurred during incremental streaming (#181)
     pub stream_had_parse_error: bool,
     /// Context pruning: in-memory spill store
@@ -802,7 +804,7 @@ pub struct QuectoWorld {
     pub routing_response: Option<LlmResponse>,
     // --- Issue #182: cancellation support ---
     /// Cancel flag for cancellation BDD scenarios
-    pub cancel_flag: Option<quecto::domain::provider::CancelFlag>,
+    pub cancel_flag: Option<quecto::domain::inference::value_objects::provider::CancelFlag>,
     /// Result of a chat() call (Ok(response) or Err(message)) for cancellation tests
     pub chat_result: Option<Result<LlmResponse, String>>,
     /// Result of a chat_stream() call for cancellation tests

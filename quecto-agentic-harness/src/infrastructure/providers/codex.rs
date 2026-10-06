@@ -12,10 +12,10 @@ use std::pin::Pin;
 
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::error::DomainError;
+use crate::domain::inference::value_objects::provider::StreamEvent;
 #[cfg(any(test, feature = "test-support"))]
 use crate::domain::message::Message;
 use crate::domain::message::{LlmResponse, Role, ThinkingBlock};
-use crate::domain::provider::StreamEvent;
 
 #[path = "codex_sse_state.rs"]
 mod codex_sse_state;
@@ -163,7 +163,7 @@ impl CodexProvider {
     /// Cost the response, and stamp its reasoning items with the origin
     /// they are replayed to (#2162).
     pub(super) fn finish_response(response: &mut LlmResponse, model: &str, origin: &str) {
-        crate::domain::usage_accounting::attach_cost(response, model);
+        crate::domain::inference::services::usage_accounting::attach_cost(response, model);
         for block in &mut response.thinking_blocks {
             if let ThinkingBlock::EncryptedReasoning {
                 origin: stamped, ..
@@ -305,8 +305,10 @@ impl CodexProvider {
     /// (`none`/`low`/`medium`/`high`/`xhigh`): levels outside that scale
     /// clamp to the nearest documented value (#1066). `max` is
     /// Anthropic-only, so it clamps to `xhigh` here.
-    fn reasoning_effort_str(effort: crate::domain::provider::EffortLevel) -> &'static str {
-        use crate::domain::provider::EffortLevel;
+    fn reasoning_effort_str(
+        effort: crate::domain::inference::value_objects::provider::EffortLevel,
+    ) -> &'static str {
+        use crate::domain::inference::value_objects::provider::EffortLevel;
         match effort {
             EffortLevel::Max => "xhigh",
             other => other.as_str(),
@@ -316,8 +318,10 @@ impl CodexProvider {
     /// Map an effort level onto the Responses API `text.verbosity` scale,
     /// which only accepts `low`/`medium`/`high`: levels outside that scale
     /// clamp to the nearest documented value.
-    fn verbosity_str(effort: crate::domain::provider::EffortLevel) -> &'static str {
-        use crate::domain::provider::EffortLevel;
+    fn verbosity_str(
+        effort: crate::domain::inference::value_objects::provider::EffortLevel,
+    ) -> &'static str {
+        use crate::domain::inference::value_objects::provider::EffortLevel;
         match effort {
             EffortLevel::None | EffortLevel::Low => "low",
             EffortLevel::Medium => "medium",

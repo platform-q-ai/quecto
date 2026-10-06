@@ -4,7 +4,9 @@
 //! minutes with no output. A paused clock stands in for the minutes.
 use super::*;
 use crate::domain::error::DomainError;
-use crate::domain::provider_error::{ProviderErrorClass, classify_provider_error};
+use crate::domain::inference::services::provider_error::{
+    ProviderErrorClass, classify_provider_error,
+};
 
 /// An event of the Responses wire that carries no output.
 const NO_OUTPUT: &str = "data: {\"type\":\"response.in_progress\",\"response\":{}}\n\n";

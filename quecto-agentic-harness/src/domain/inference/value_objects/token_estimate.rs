@@ -21,7 +21,7 @@
 //! - non-ASCII: about 1 token per character (CJK, emoji).
 //!
 //! What remains (tokeniser differences, JSON punctuation, framing) is the
-//! provider-observed residual in `domain::context_calibration`.
+//! provider-observed residual in `domain::inference::services::context_calibration`.
 
 /// ASCII prose: characters per token.
 pub const PROSE_CHARS_PER_TOKEN: usize = 4;

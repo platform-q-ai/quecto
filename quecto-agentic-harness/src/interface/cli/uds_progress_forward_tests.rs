@@ -2,7 +2,7 @@
 //! `request_completed` event, with the token counts its provider reported
 //! and none it did not.
 use super::*;
-use crate::domain::inference::request_completion::{
+use crate::domain::inference::events::request_completion::{
     RequestCompleted, RequestOutcome, RequestSpend,
 };
 use serde_json::json;

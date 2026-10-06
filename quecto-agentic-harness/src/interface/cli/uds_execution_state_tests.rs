@@ -168,8 +168,8 @@ fn visible_generation_advances_once_per_new_component_revision() {
 /// as the model turn; before and after, none.
 #[test]
 fn the_request_in_flight_rides_on_every_snapshot() {
-    use crate::domain::request_observation::RequestTrace;
-    use crate::domain::request_progress::InFlightRequest;
+    use crate::domain::inference::events::request_observation::RequestTrace;
+    use crate::domain::inference::events::request_progress::InFlightRequest;
     use std::sync::Arc;
     let mut state = ExecutionState::default();
     assert!(state.snapshot().model_turn.is_none());
@@ -205,7 +205,7 @@ fn the_request_in_flight_rides_on_every_snapshot() {
 /// one is attached; a request that ended advances the public cursor.
 #[test]
 fn the_agents_own_requests_ride_on_every_snapshot() {
-    use crate::domain::inference::request_completion::{
+    use crate::domain::inference::events::request_completion::{
         AgentRequestCounters, EndedAttempt, RequestOutcome, RequestSpend, RequestTally,
     };
     use std::sync::Arc;

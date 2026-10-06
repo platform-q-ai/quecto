@@ -2,7 +2,9 @@
 //!
 //! The accounting port a completed observation is recorded through is the
 //! application's (`application::providers::ports::RequestAccounting`, #1960).
-use super::attempt_diagnostics::{AttemptDiagnostics, Termination};
+use crate::domain::inference::value_objects::attempt_diagnostics::{
+    AttemptDiagnostics, Termination,
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -33,9 +35,9 @@ pub struct RequestTrace {
     /// The session's input baseline the provider compares with (#2398).
     input_baseline: std::sync::OnceLock<InputBaseline>,
     /// The attempt in flight, until it ends and is reported (#2436).
-    pub(super) attempt_clock: Mutex<super::inference::request_completion::AttemptClock>,
+    pub(super) attempt_clock: Mutex<super::request_completion::AttemptClock>,
     /// Where each attempt is reported as it ends (#2436).
-    pub(super) attempt_end: super::inference::request_completion::AttemptEndHook,
+    pub(super) attempt_end: super::request_completion::AttemptEndHook,
 }
 impl RequestTrace {
     /// The provider serialized the request's input (#2398). The first
@@ -154,7 +156,7 @@ pub struct RequestObservation {
     pub model: String,
     pub provider: String,
     pub outcome: String,
-    pub error_class: Option<super::provider_error::ProviderErrorClass>,
+    pub error_class: Option<crate::domain::inference::services::provider_error::ProviderErrorClass>,
     pub input_tokens: Option<u64>,
     pub context_input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,

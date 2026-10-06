@@ -371,7 +371,7 @@ async fn test_incremental_stream_initiation_failure_is_not_retried() {
 
     let mut rx = retrying.chat_stream_incremental(test_request()).await;
     match rx.recv().await.expect("default incremental error event") {
-        crate::domain::provider::StreamEvent::Error(err) => {
+        crate::domain::inference::value_objects::provider::StreamEvent::Error(err) => {
             assert!(err.contains("service unavailable"), "{err}");
         }
         other => panic!("unexpected stream event: {other:?}"),
@@ -396,7 +396,7 @@ async fn counting_mock_provider_trait_surface_defaults_are_exercised() {
 
     let mut rx = provider.chat_stream_incremental(test_request()).await;
     match rx.recv().await.expect("default stream event") {
-        crate::domain::provider::StreamEvent::Done(done) => {
+        crate::domain::inference::value_objects::provider::StreamEvent::Done(done) => {
             assert_eq!(done.content.as_deref(), Some("success"));
         }
         other => panic!("unexpected stream event: {other:?}"),
@@ -420,7 +420,7 @@ struct PauseAfterFirstAttempt(Arc<AtomicU32>);
 impl crate::application::providers::ports::RequestAdmission for PauseAfterFirstAttempt {
     fn check(
         &self,
-        _attempt: crate::domain::provider::RequestAttempt,
+        _attempt: crate::domain::inference::value_objects::provider::RequestAttempt,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
         Box::pin(async move {
             if self.0.load(Ordering::SeqCst) == 0 {
@@ -455,7 +455,7 @@ async fn pause_during_backoff_prevents_the_next_provider_attempt() {
 #[tokio::test]
 async fn admission_is_rechecked_only_on_retry_attempts() {
     use crate::application::providers::ports::RequestAdmission;
-    use crate::domain::provider::RequestAttempt;
+    use crate::domain::inference::value_objects::provider::RequestAttempt;
     #[derive(Debug)]
     struct Counting(Arc<std::sync::Mutex<Vec<RequestAttempt>>>);
     impl RequestAdmission for Counting {
@@ -493,7 +493,7 @@ async fn admission_is_rechecked_only_on_retry_attempts() {
 /// costs the whole bound.
 #[tokio::test]
 async fn a_stalled_reply_is_retried_at_most_once() {
-    use crate::domain::provider_error::{REPLY_TIMEOUT, STREAM_IDLE_TIMEOUT};
+    use crate::domain::inference::services::provider_error::{REPLY_TIMEOUT, STREAM_IDLE_TIMEOUT};
     for prefix in [STREAM_IDLE_TIMEOUT, REPLY_TIMEOUT] {
         let count = Arc::new(AtomicU32::new(0));
         let message = format!("{prefix}the provider sent nothing; the request was abandoned");
@@ -551,7 +551,7 @@ impl LlmProvider for SequenceProvider {
 /// a network failure is still retried once, within the overall budget.
 #[tokio::test]
 async fn a_stall_after_another_failure_is_still_retried_once() {
-    use crate::domain::provider_error::STREAM_IDLE_TIMEOUT;
+    use crate::domain::inference::services::provider_error::STREAM_IDLE_TIMEOUT;
     let stall = format!("{STREAM_IDLE_TIMEOUT}the provider sent nothing");
     let cases = [
         (

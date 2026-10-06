@@ -1,6 +1,6 @@
 //! #1679 P2 AC5: bounded group-wide fallback, not an additional retry owner.
-use quecto::domain::inference_admission::AdmissionError;
-use quecto::domain::inference_cooldown::FallbackCooldown;
+use quecto::domain::admission::value_objects::inference_admission::AdmissionError;
+use quecto::domain::admission::value_objects::inference_cooldown::FallbackCooldown;
 
 #[test]
 fn first_throttle_is_base_regardless_of_jitter() {

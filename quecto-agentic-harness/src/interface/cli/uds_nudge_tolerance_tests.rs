@@ -14,7 +14,7 @@ use super::dispatch_test_env::{
 };
 use super::*;
 use crate::application::providers::ports::LlmProvider;
-use crate::domain::provider::StreamEvent;
+use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::interface::shared::WorkflowStateHandle;
 
 /// Fragment of the standard auto-continue nudge (first nudge, and any nudge

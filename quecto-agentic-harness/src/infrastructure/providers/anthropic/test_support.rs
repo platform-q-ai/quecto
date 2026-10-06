@@ -1,8 +1,8 @@
 #[cfg(any(test, feature = "test-support"))]
 use super::{AnthropicProvider, DomainError, Message};
 use crate::application::providers::ports::ChatRequest;
+use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::message::LlmResponse;
-use crate::domain::provider::StreamEvent;
 
 #[cfg(any(test, feature = "test-support"))]
 use super::anthropic_sse::AnthropicSseHandler;

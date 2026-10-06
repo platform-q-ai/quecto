@@ -19,7 +19,7 @@ use quecto::domain::catalogue::{
     AuthIdentity, Availability, CatalogueEntry, ModelCapabilities, ModelCost, ModelDescriptor,
     ModelRef, ProviderDescriptor, SourceLayer, TransportKind, UnavailableReason,
 };
-use quecto::domain::provider::EffortLevel;
+use quecto::domain::inference::value_objects::provider::EffortLevel;
 
 #[derive(Debug, Default)]
 pub struct ActiveModelState {

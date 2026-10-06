@@ -15,8 +15,8 @@ use super::super::{MultiClientArgs, multi_client_loop};
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::error::DomainError;
+use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::message::{LlmResponse, Message, ToolCall};
-use crate::domain::provider::StreamEvent;
 
 /// The follow-up the extension sends mid-reply.
 const FOLLOW_UP: &str = "the background job finished";

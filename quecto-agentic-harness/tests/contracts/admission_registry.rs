@@ -1,7 +1,7 @@
 //! Trusted AdmissionRegistry identity boundaries (#1679 AC3/AC6).
 use quecto::application::inference_admission::AdmissionService;
 use quecto::application::ports::{AdmissionClient, AdmissionRegistry};
-use quecto::domain::inference_admission::{
+use quecto::domain::admission::value_objects::inference_admission::{
     AdmissionConfig, AdmissionError, GroupId, GroupPolicy, ScopeId, WorkloadClass,
 };
 use std::collections::BTreeMap;

@@ -16,9 +16,9 @@ use quecto::application::provider_runtime::{
     ComposeProviderRuntimeUseCase, CompositionPorts, ProviderRuntimeFactory, RuntimeSnapshotStore,
 };
 use quecto::application::providers::ports::{ChatRequest, LlmProvider};
+use quecto::domain::admission::value_objects::inference_admission::*;
 use quecto::domain::catalogue::{CatalogueEntry, SourceLayer};
 use quecto::domain::error::DomainError;
-use quecto::domain::inference_admission::*;
 use quecto::infrastructure::config::{Config, OpenAiCompatibleEndpoint};
 use quecto::infrastructure::model_registry::ModelRegistry;
 use quecto::infrastructure::provider_runtime::{AgentProviderRuntimeFactory, AgentRuntimeInputs};

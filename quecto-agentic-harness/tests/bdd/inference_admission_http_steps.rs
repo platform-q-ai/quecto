@@ -1,7 +1,7 @@
 //! Real loopback HTTP contracts for each admitted provider entrypoint.
 use super::inference_admission_provider_steps::feedback;
 use super::*;
-use quecto::domain::inference_admission::{Feedback, ThrottleFeedback};
+use quecto::domain::admission::value_objects::inference_admission::{Feedback, ThrottleFeedback};
 
 #[derive(Debug, Default)]
 pub struct HttpAdmissionState {

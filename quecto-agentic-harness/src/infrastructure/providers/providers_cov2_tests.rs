@@ -78,7 +78,7 @@ fn test_request() -> ChatRequest<'static> {
 
 #[tokio::test]
 async fn downcast_inner_provider_trait_surface_defaults_are_exercised() {
-    use crate::domain::provider::StreamEvent;
+    use crate::domain::inference::value_objects::provider::StreamEvent;
 
     let provider = DowncastInnerProvider;
     assert_eq!(provider.name(), "inner");

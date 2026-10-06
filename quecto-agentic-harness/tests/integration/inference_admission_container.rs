@@ -12,7 +12,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use quecto::domain::inference_admission::{Feedback, GroupId, WorkloadClass};
+use quecto::domain::admission::value_objects::inference_admission::{
+    Feedback, GroupId, WorkloadClass,
+};
 use quecto::infrastructure::admission::{
     AdminConnection, AuthorityConnection, AuthorityDirectory, write_admission_context,
 };

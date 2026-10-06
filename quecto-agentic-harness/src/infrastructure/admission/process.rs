@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use super::client::{AuthorityConnection, ClientError};
 use super::directory::AuthorityDirectory;
 use crate::application::ports::{AttemptAdmission, Credential};
-use crate::domain::inference_admission::WorkloadClass;
+use crate::domain::admission::value_objects::inference_admission::WorkloadClass;
 use crate::infrastructure::provider_runtime_admission::{
     AdmissionRuntimeContext, AdmissionRuntimeProposal,
 };
@@ -244,7 +244,7 @@ async fn bind_child(context: AdmissionContext) -> Result<(AuthorityConnection, P
         .await
         .map_err(|e| format!("admission authority unreachable: {e}"))?;
     let credential = Credential {
-        scope: crate::domain::inference_admission::ScopeId {
+        scope: crate::domain::admission::value_objects::inference_admission::ScopeId {
             epoch: context.epoch,
             serial: context.serial,
         },

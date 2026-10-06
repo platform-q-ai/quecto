@@ -4,10 +4,10 @@
 //! admission refusals that send nothing and so announce nothing.
 use super::*;
 use crate::domain::agent::AgentProgressEvent;
-use crate::domain::inference::request_completion::{
+use crate::domain::inference::events::request_completion::{
     AgentRequestCounters, RequestCompleted, RequestOutcome, RequestSpend,
 };
-use crate::domain::provider::StreamEvent;
+use crate::domain::inference::value_objects::provider::StreamEvent;
 
 type Events = Arc<Mutex<Vec<AgentProgressEvent>>>;
 
@@ -294,13 +294,13 @@ async fn an_oauth_resend_is_its_own_request() {
 /// An admission gate that admits the attempts `admit` allows.
 #[derive(Debug)]
 struct Gate {
-    admit: fn(crate::domain::provider::RequestAttempt) -> bool,
+    admit: fn(crate::domain::inference::value_objects::provider::RequestAttempt) -> bool,
 }
 
 impl crate::application::providers::ports::RequestAdmission for Gate {
     fn check(
         &self,
-        attempt: crate::domain::provider::RequestAttempt,
+        attempt: crate::domain::inference::value_objects::provider::RequestAttempt,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<(), DomainError>> + Send + '_>> {
         let admitted = (self.admit)(attempt);
         Box::pin(async move {
@@ -337,7 +337,7 @@ async fn a_refused_first_attempt_announces_nothing() {
 /// before it is announced.
 #[tokio::test]
 async fn a_refused_reattempt_announces_only_the_attempt_before_it() {
-    use crate::domain::provider::RequestAttempt;
+    use crate::domain::inference::value_objects::provider::RequestAttempt;
     let inner = Arc::new(MockProvider::new_results(vec![
         Err(DomainError::Provider("HTTP 503 from upstream".into())),
         Ok(text_response("never")),
@@ -436,7 +436,7 @@ async fn an_empty_reply_after_tools_is_one_ok_request_with_its_usage() {
 /// exactly one `error` event, and the retry cap leaves no third.
 #[tokio::test]
 async fn each_no_progress_attempt_is_one_error_event() {
-    use crate::domain::provider_error::STREAM_PROGRESS_TIMEOUT;
+    use crate::domain::inference::services::provider_error::STREAM_PROGRESS_TIMEOUT;
     let stall = format!(
         "{STREAM_PROGRESS_TIMEOUT}the provider sent events but no output for 300 s; \
          the request was abandoned"

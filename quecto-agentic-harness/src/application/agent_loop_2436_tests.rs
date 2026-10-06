@@ -4,10 +4,10 @@
 //! whoever else shares its admission.
 use super::*;
 use crate::domain::agent::AgentProgressEvent;
-use crate::domain::inference::request_completion::{
+use crate::domain::inference::events::request_completion::{
     AgentRequestCounters, RequestCompleted, RequestOutcome, RequestSpend,
 };
-use crate::domain::provider::StreamEvent;
+use crate::domain::inference::value_objects::provider::StreamEvent;
 
 type Events = Arc<Mutex<Vec<AgentProgressEvent>>>;
 
@@ -223,7 +223,7 @@ struct SharedGroup {
 impl crate::application::providers::ports::RequestAdmission for SharedGroup {
     fn check(
         &self,
-        _attempt: crate::domain::provider::RequestAttempt,
+        _attempt: crate::domain::inference::value_objects::provider::RequestAttempt,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<(), DomainError>> + Send + '_>> {
         *self.checks.lock().unwrap() += 1;
         Box::pin(async { Ok(()) })

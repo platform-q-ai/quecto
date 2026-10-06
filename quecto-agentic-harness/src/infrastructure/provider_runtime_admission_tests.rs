@@ -1,7 +1,7 @@
 use super::*;
 use crate::application::ports::AttemptPermit;
+use crate::domain::admission::value_objects::inference_admission::GroupId;
 use crate::domain::error::DomainError;
-use crate::domain::inference_admission::GroupId;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -298,7 +298,8 @@ fn a_default_binding_catches_unlisted_slots() {
 fn an_explicit_binding_still_wins_over_the_default() {
     let mut proposal = proposal();
     // A second alias/group so the explicit and default bindings differ.
-    let other = crate::domain::inference_admission::GroupId::new("other").unwrap();
+    let other = crate::domain::admission::value_objects::inference_admission::GroupId::new("other")
+        .unwrap();
     proposal.policy.groups.insert(
         other.clone(),
         proposal.policy.groups.values().next().unwrap().clone(),

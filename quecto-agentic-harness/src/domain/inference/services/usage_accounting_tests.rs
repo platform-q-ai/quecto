@@ -1,5 +1,5 @@
+use crate::domain::inference::services::usage_accounting::{attach_cost, cache_hit_ratio};
 use crate::domain::message::{LlmResponse, UsageInfo};
-use crate::domain::usage_accounting::{attach_cost, cache_hit_ratio};
 
 fn response_with_usage(usage: UsageInfo) -> LlmResponse {
     LlmResponse {

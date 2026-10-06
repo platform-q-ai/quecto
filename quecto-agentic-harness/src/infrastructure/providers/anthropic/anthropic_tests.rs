@@ -610,7 +610,7 @@ fn test_build_request_body_includes_tool_choice_auto() {
         max_tokens: 1024,
         temperature: 0.7,
         session_id: None,
-        tool_choice: Some(crate::domain::provider::ToolChoice::Auto),
+        tool_choice: Some(crate::domain::inference::value_objects::provider::ToolChoice::Auto),
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
@@ -637,7 +637,7 @@ fn test_build_request_body_includes_tool_choice_any() {
         max_tokens: 1024,
         temperature: 0.7,
         session_id: None,
-        tool_choice: Some(crate::domain::provider::ToolChoice::Any),
+        tool_choice: Some(crate::domain::inference::value_objects::provider::ToolChoice::Any),
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
@@ -664,7 +664,9 @@ fn test_build_request_body_includes_tool_choice_specific() {
         max_tokens: 1024,
         temperature: 0.7,
         session_id: None,
-        tool_choice: Some(crate::domain::provider::ToolChoice::Specific("bash".into())),
+        tool_choice: Some(
+            crate::domain::inference::value_objects::provider::ToolChoice::Specific("bash".into()),
+        ),
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
@@ -690,9 +692,11 @@ fn test_build_request_body_includes_metadata_user_id() {
         temperature: 0.7,
         session_id: None,
         tool_choice: None,
-        metadata: Some(crate::domain::provider::RequestMetadata {
-            user_id: Some("telegram_12345".into()),
-        }),
+        metadata: Some(
+            crate::domain::inference::value_objects::provider::RequestMetadata {
+                user_id: Some("telegram_12345".into()),
+            },
+        ),
         thinking_level: None,
         cancel_flag: None,
         effort: None,

@@ -19,7 +19,7 @@ pub struct AuditIssue {
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum AuditEvent {
     RequestObserved {
-        observation: Box<super::request_observation::RequestObservation>,
+        observation: Box<crate::domain::inference::events::request_observation::RequestObservation>,
     },
     ToolCall {
         tool: String,
@@ -174,7 +174,7 @@ pub enum AuditEvent {
     /// match on the enum instead of re-parsing a string.
     ProviderError {
         provider: String,
-        class: crate::domain::provider_error::ProviderErrorClass,
+        class: crate::domain::inference::services::provider_error::ProviderErrorClass,
         http_status: Option<u16>,
         body: crate::domain::redaction::Redacted,
     },
@@ -287,7 +287,7 @@ impl AuditEvent {
     /// any API key echoed back in the error never lands on disk.
     pub fn provider_error(
         provider: impl Into<String>,
-        class: &crate::domain::provider_error::ProviderErrorClass,
+        class: &crate::domain::inference::services::provider_error::ProviderErrorClass,
         http_status: Option<u16>,
         body: &str,
     ) -> Self {

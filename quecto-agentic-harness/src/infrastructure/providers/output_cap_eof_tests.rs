@@ -6,10 +6,10 @@
 use super::output_cap_provider_tests::{CAP, DELTA, capped_trace, is_cap_error};
 use super::stream_idle::tests::{LIVE, bounded, servers};
 use super::stream_idle_provider_tests::{Vendor, request, terminations};
-use crate::domain::attempt_diagnostics::Termination;
 use crate::domain::error::DomainError;
+use crate::domain::inference::value_objects::attempt_diagnostics::Termination;
+use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::message::Message;
-use crate::domain::provider::StreamEvent;
 
 /// A body of complete deltas exactly filling the cap, then one more delta
 /// with no final newline: only the unterminated one crosses the cap.

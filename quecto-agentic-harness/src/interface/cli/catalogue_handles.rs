@@ -93,7 +93,7 @@ impl CatalogueHandles {
     /// vocabulary from the change-reasoning-effort use case.
     pub fn effort_view(
         &self,
-        current: Option<crate::domain::provider::EffortLevel>,
+        current: Option<crate::domain::inference::value_objects::provider::EffortLevel>,
         model: &str,
     ) -> crate::interface::uds::catalogue::effort_presenter::EffortStateView {
         crate::interface::uds::catalogue::effort_presenter::EffortStateView::new(

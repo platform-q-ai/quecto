@@ -5,9 +5,11 @@
 //! and its retries, and a reply stopped at the output limit is never a clean
 //! empty end (#2124).
 use super::*;
+use crate::domain::inference::services::provider_error::{
+    ProviderErrorClass, classify_provider_error,
+};
+use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::message::{StopReason, ThinkingBlock};
-use crate::domain::provider::StreamEvent;
-use crate::domain::provider_error::{ProviderErrorClass, classify_provider_error};
 
 fn empty_reply(stop_reason: Option<StopReason>) -> LlmResponse {
     LlmResponse {

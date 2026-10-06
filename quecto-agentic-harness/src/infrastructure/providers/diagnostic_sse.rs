@@ -35,7 +35,7 @@ impl Receipt {
     /// output-capped, with the cap error's message.
     pub(super) fn output_capped(
         &self,
-        capped: crate::domain::request_progress::OutputCapped,
+        capped: crate::domain::inference::events::request_progress::OutputCapped,
     ) -> String {
         self.fail();
         self.termination(Termination::OutputCapped);

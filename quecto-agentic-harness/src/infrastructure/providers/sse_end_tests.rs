@@ -1,5 +1,7 @@
 use super::*;
-use crate::domain::provider_error::{ProviderErrorClass, classify_provider_error};
+use crate::domain::inference::services::provider_error::{
+    ProviderErrorClass, classify_provider_error,
+};
 
 #[test]
 fn done_is_recognised_with_trailing_whitespace_only() {

@@ -57,13 +57,17 @@ impl AgentLoopImpl {
 
     /// The request in flight, which `get_state` reports as `modelTurn`
     /// while the model thinks or streams (#2210).
-    pub fn request_in_flight(&self) -> Arc<crate::domain::request_progress::InFlightRequest> {
+    pub fn request_in_flight(
+        &self,
+    ) -> Arc<crate::domain::inference::events::request_progress::InFlightRequest> {
         self.in_flight_request.clone()
     }
 
     /// This agent's own provider requests so far, which `get_state`
     /// reports as `agentRequests` (#2436).
-    pub fn request_tally(&self) -> Arc<crate::domain::inference::request_completion::RequestTally> {
+    pub fn request_tally(
+        &self,
+    ) -> Arc<crate::domain::inference::events::request_completion::RequestTally> {
         self.request_tally.clone()
     }
 
@@ -74,8 +78,8 @@ impl AgentLoopImpl {
     pub(super) fn request_completion_sink(
         &self,
         model: &str,
-    ) -> crate::domain::inference::request_completion::AttemptEndSink {
-        use crate::domain::provider::{ModelRoute, route_model};
+    ) -> crate::domain::inference::events::request_completion::AttemptEndSink {
+        use crate::domain::inference::value_objects::provider::{ModelRoute, route_model};
         let order = self.provider.route_order();
         let names: Vec<&str> = order.iter().map(String::as_str).collect();
         let (provider, model) = match route_model(model, &names) {
@@ -96,13 +100,13 @@ impl AgentLoopImpl {
 
     pub fn take_request_observations(
         &self,
-    ) -> Vec<crate::domain::request_observation::RequestObservation> {
+    ) -> Vec<crate::domain::inference::events::request_observation::RequestObservation> {
         self.take_request_diagnostics().recent
     }
 
     pub fn take_request_diagnostics(
         &self,
-    ) -> crate::domain::request_observation::RequestDiagnostics {
+    ) -> crate::domain::inference::events::request_observation::RequestDiagnostics {
         std::mem::take(
             &mut *self
                 .request_observations

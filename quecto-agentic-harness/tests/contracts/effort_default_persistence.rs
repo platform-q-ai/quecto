@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use quecto::application::catalogue::ports::{DefaultScope, EffortDefaultPersistence};
-use quecto::domain::provider::EffortLevel;
+use quecto::domain::inference::value_objects::provider::EffortLevel;
 
 use super::model_default_persistence::{Layers, json, layers, writer};
 

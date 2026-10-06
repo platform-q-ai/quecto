@@ -23,7 +23,8 @@ fn enabled_admission_section_yields_a_validated_proposal_and_directory() {
     let (directory, proposal) = config.admission_proposal().unwrap().unwrap();
     assert_eq!(directory, std::path::Path::new("/tmp/x"));
     assert_eq!(proposal.bindings["fake"], "acct");
-    let group = crate::domain::inference_admission::GroupId::new("g").unwrap();
+    let group =
+        crate::domain::admission::value_objects::inference_admission::GroupId::new("g").unwrap();
     assert_eq!(proposal.policy.groups[&group].capacity, 2);
     assert_eq!(proposal.policy.aliases["acct"], group);
 }

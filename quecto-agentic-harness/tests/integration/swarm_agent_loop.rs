@@ -425,7 +425,7 @@ async fn a_resent_request_reads_the_retry_gate_not_a_second_model_gate() {
 async fn each_admission_gate_is_recorded_as_its_own_decision() {
     use quecto::application::providers::ports::RequestAdmission;
     use quecto::application::tools::ports::ToolExecutionAdmission;
-    use quecto::domain::provider::RequestAttempt;
+    use quecto::domain::inference::value_objects::provider::RequestAttempt;
     let directory = tempfile::tempdir().unwrap();
     let (context, log) = recorded_run(&directory);
     RequestAdmission::check(&context, RequestAttempt::First)

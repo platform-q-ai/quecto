@@ -9,8 +9,8 @@ use std::task::{Context, Poll};
 use super::openai_images;
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::error::DomainError;
+use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::message::{LlmResponse, Message, Role, ToolCall};
-use crate::domain::provider::StreamEvent;
 use crate::domain::visible_thinking::append_visible_thinking;
 
 struct AbortOnDrop<T> {
@@ -346,7 +346,9 @@ impl OpenAiProvider {
         body: serde_json::Value,
         url: &str,
         model: &str,
-        trace: Option<std::sync::Arc<crate::domain::request_observation::RequestTrace>>,
+        trace: Option<
+            std::sync::Arc<crate::domain::inference::events::request_observation::RequestTrace>,
+        >,
     ) -> Result<LlmResponse, DomainError> {
         // Observed beside the request, never altering it (#2151).
         let handler = openai_sse::OpenAiSseHandler::with_model(model).with_trace(trace.clone());
@@ -434,7 +436,9 @@ impl OpenAiProvider {
         url: &str,
         tx: tokio::sync::mpsc::Sender<StreamEvent>,
         model: &str,
-        trace: Option<std::sync::Arc<crate::domain::request_observation::RequestTrace>>,
+        trace: Option<
+            std::sync::Arc<crate::domain::inference::events::request_observation::RequestTrace>,
+        >,
     ) {
         // Observed beside the request, never altering it (#2151).
         let handler = openai_sse::OpenAiSseHandler::with_model(model).with_trace(trace.clone());
@@ -533,7 +537,10 @@ impl LlmProvider for OpenAiProvider {
                             DomainError::Provider(format!("failed to parse response JSON: {e}"))
                         })?;
                         let mut parsed = Self::parse_response(&json)?;
-                        crate::domain::usage_accounting::attach_cost(&mut parsed, &model);
+                        crate::domain::inference::services::usage_accounting::attach_cost(
+                            &mut parsed,
+                            &model,
+                        );
                         Ok(parsed)
                     },
                 )
@@ -599,7 +606,7 @@ impl LlmProvider for OpenAiProvider {
                 })?;
 
             let mut parsed = Self::parse_response(&response_json).inspect_err(|_| rejected())?;
-            crate::domain::usage_accounting::attach_cost(&mut parsed, &model);
+            crate::domain::inference::services::usage_accounting::attach_cost(&mut parsed, &model);
             attempt.iter().for_each(|a| a.completed());
             Ok(parsed)
         })

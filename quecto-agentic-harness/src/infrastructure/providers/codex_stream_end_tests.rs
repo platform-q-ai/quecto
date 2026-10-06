@@ -3,7 +3,9 @@
 //! transport cut (retryable `Network`), never a whole reply — and an error
 //! chunk in any shape the providers send ends the stream as an error.
 use super::*;
-use crate::domain::provider_error::{ProviderErrorClass, classify_provider_error};
+use crate::domain::inference::services::provider_error::{
+    ProviderErrorClass, classify_provider_error,
+};
 
 const TEXT: &str = r#"data: {"type":"response.output_text.delta","delta":"Hi"}"#;
 const COMPLETED: &str = r#"data: {"type":"response.completed","response":{}}"#;
@@ -187,7 +189,7 @@ async fn a_body_with_no_event_is_an_empty_stream() {
         let events = handled(lines).await;
         assert_eq!(
             last_error(&events),
-            crate::domain::provider_error::EMPTY_STREAM,
+            crate::domain::inference::services::provider_error::EMPTY_STREAM,
             "{lines:?}"
         );
     }

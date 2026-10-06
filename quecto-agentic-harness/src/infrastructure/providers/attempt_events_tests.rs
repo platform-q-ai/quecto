@@ -73,7 +73,9 @@ fn an_event_is_counted_under_a_known_name_or_unknown() {
 /// A record keeps the 16 most frequent event types, ties by name.
 #[test]
 fn a_record_keeps_the_most_frequent_event_types() {
-    use crate::domain::attempt_diagnostics::{EventTypeCounts, MAX_EVENT_TYPES};
+    use crate::domain::inference::value_objects::attempt_diagnostics::{
+        EventTypeCounts, MAX_EVENT_TYPES,
+    };
     let mut counts = EventTypeCounts::default();
     for (rank, name) in KNOWN_EVENTS.iter().enumerate() {
         for _ in 0..=rank {

@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use super::{SseAccumulator, dispatch_sse_event};
-use crate::domain::provider::StreamEvent;
-use crate::domain::request_observation::RequestTrace;
+use crate::domain::inference::events::request_observation::RequestTrace;
+use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::tool::ToolDefinition;
 use crate::infrastructure::providers::sse_common::{SseHandler, SseLineOutcome};
 use crate::infrastructure::providers::sse_end;

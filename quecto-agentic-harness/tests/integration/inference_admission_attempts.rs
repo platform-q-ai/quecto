@@ -11,7 +11,7 @@ pub(crate) mod fixture;
 use std::sync::Arc;
 
 use fixture::*;
-use quecto::domain::provider::{CancelFlag, StreamEvent};
+use quecto::domain::inference::value_objects::provider::{CancelFlag, StreamEvent};
 
 async fn one_attempt(leaf: Leaf, surface: Surface) {
     let gate = Gate::new(false);

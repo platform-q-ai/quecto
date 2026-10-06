@@ -4,7 +4,7 @@
 // `inference_admission_feedback_transport`.
 use crate::inference_admission_feedback_transport::fixture;
 use fixture::*;
-use quecto::domain::inference_admission::Feedback;
+use quecto::domain::admission::value_objects::inference_admission::Feedback;
 use std::sync::Arc;
 async fn check(leaf: Leaf, terminal: bool, incremental: bool) {
     let body = match leaf {
@@ -73,7 +73,7 @@ fn observer_assertions_reject_observed_counterexamples() {
     assert!(!observer_checks(false, &state)[0]);
     state
         .receipts
-        .push(quecto::domain::inference_admission::ThrottleFeedback::Unavailable);
+        .push(quecto::domain::admission::value_objects::inference_admission::ThrottleFeedback::Unavailable);
     assert!(!observer_checks(true, &state)[1]);
     state.receipts.clear();
     state.finishes = vec![Feedback::Failure];
@@ -145,13 +145,13 @@ fn extension_assertions_reject_observed_counterexamples() {
         }];
         if throttle {
             state.receipts =
-                vec![quecto::domain::inference_admission::ThrottleFeedback::NoHint { jitter: 0 }];
+                vec![quecto::domain::admission::value_objects::inference_admission::ThrottleFeedback::NoHint { jitter: 0 }];
         }
         verify(extension_checks(!throttle, &state, throttle));
         assert!(!extension_checks(throttle, &state, throttle)[0]);
         state
             .receipts
-            .push(quecto::domain::inference_admission::ThrottleFeedback::Unavailable);
+            .push(quecto::domain::admission::value_objects::inference_admission::ThrottleFeedback::Unavailable);
         assert!(!extension_checks(!throttle, &state, throttle)[1]);
         state.finishes.clear();
         assert!(!extension_checks(!throttle, &state, throttle)[2]);

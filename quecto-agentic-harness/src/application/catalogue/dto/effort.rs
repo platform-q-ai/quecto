@@ -2,7 +2,7 @@
 //! #1996).
 
 use crate::application::catalogue::dto::{DefaultScope, PersistedDefault};
-use crate::domain::provider::EffortLevel;
+use crate::domain::inference::value_objects::provider::EffortLevel;
 
 /// Change the effort applied to subsequent turns of a session.
 #[derive(Debug, Clone, PartialEq, Eq)]

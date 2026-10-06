@@ -7,7 +7,9 @@ use std::sync::Arc;
 
 use quecto::application::admission::dto::AuthorityAdminError;
 use quecto::application::admission::ports::AuthorityAdmin;
-use quecto::domain::inference_admission::{AdmissionConfig, GroupId, GroupPolicy};
+use quecto::domain::admission::value_objects::inference_admission::{
+    AdmissionConfig, GroupId, GroupPolicy,
+};
 use quecto::infrastructure::admission::{
     AuthorityDirectory, AuthorityServer, SocketAuthorityAdmin,
 };

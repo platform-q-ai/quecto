@@ -23,7 +23,7 @@ use crate::domain::message::{Message, Role};
 
 /// Estimate token count from text content (#305, #2212).
 ///
-/// A per-class character heuristic (`domain::token_estimate`):
+/// A per-class character heuristic (`domain::inference::value_objects::token_estimate`):
 ///
 /// - ASCII prose: ~4 chars per token (GPT cl100k_base on English);
 /// - ASCII words carrying a digit, and the separator after each: ~2 chars
@@ -35,7 +35,7 @@ use crate::domain::message::{Message, Role};
 /// It replaced a byte-based `len/3`, which overcounted ASCII by ~33% and
 /// undercounted CJK.
 /// Not exact: once a provider reports its prompt size, the ceiling is
-/// scaled by the observed residual (`domain::context_calibration`, 1x..4x).
+/// scaled by the observed residual (`domain::inference::services::context_calibration`, 1x..4x).
 pub fn estimate_tokens(text: &str) -> usize {
     crate::domain::message::Message::estimate_tokens(text)
 }

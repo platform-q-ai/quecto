@@ -7,7 +7,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use super::config::{Config, ConfigError};
-use crate::domain::inference_admission::{AdmissionConfig, GroupId, GroupPolicy};
+use crate::domain::admission::value_objects::inference_admission::{
+    AdmissionConfig, GroupId, GroupPolicy,
+};
 use crate::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

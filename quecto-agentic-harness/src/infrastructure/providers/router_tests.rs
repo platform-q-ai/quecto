@@ -481,65 +481,81 @@ async fn chat_stream_incremental_emits_error_on_unresolved_prefix() {
 #[test]
 fn parse_qualified_model_handles_edges() {
     assert_eq!(
-        crate::domain::provider::parse_qualified_model("openai/gpt-5.2"),
+        crate::domain::inference::value_objects::provider::parse_qualified_model("openai/gpt-5.2"),
         Some(("openai", "gpt-5.2"))
     );
     // trims surrounding whitespace
     assert_eq!(
-        crate::domain::provider::parse_qualified_model("  openai / gpt-5.2 "),
+        crate::domain::inference::value_objects::provider::parse_qualified_model(
+            "  openai / gpt-5.2 "
+        ),
         Some(("openai", "gpt-5.2"))
     );
     // bare name (no slash)
     assert_eq!(
-        crate::domain::provider::parse_qualified_model("gpt-5.2"),
+        crate::domain::inference::value_objects::provider::parse_qualified_model("gpt-5.2"),
         None
     );
     // empty provider
     assert_eq!(
-        crate::domain::provider::parse_qualified_model("/gpt-5.2"),
+        crate::domain::inference::value_objects::provider::parse_qualified_model("/gpt-5.2"),
         None
     );
     // empty model
     assert_eq!(
-        crate::domain::provider::parse_qualified_model("openai/"),
+        crate::domain::inference::value_objects::provider::parse_qualified_model("openai/"),
         None
     );
     // model id is opaque after the first slash
     assert_eq!(
-        crate::domain::provider::parse_qualified_model("openai/a/b"),
+        crate::domain::inference::value_objects::provider::parse_qualified_model("openai/a/b"),
         Some(("openai", "a/b"))
     );
 }
 
 #[test]
 fn provider_prefix_matches_aliases_and_case() {
-    assert!(crate::domain::provider::provider_prefix_matches(
-        "OpenAI", "openai"
-    ));
-    assert!(crate::domain::provider::provider_prefix_matches(
-        "anthropic",
-        "anthropic"
-    ));
+    assert!(
+        crate::domain::inference::value_objects::provider::provider_prefix_matches(
+            "OpenAI", "openai"
+        )
+    );
+    assert!(
+        crate::domain::inference::value_objects::provider::provider_prefix_matches(
+            "anthropic",
+            "anthropic"
+        )
+    );
     // codex aliases are explicit; bare openai no longer aliases to codex because
     // API/OAuth billing modes must not be selected silently.
-    assert!(!crate::domain::provider::provider_prefix_matches(
-        "openai", "codex"
-    ));
-    assert!(crate::domain::provider::provider_prefix_matches(
-        "openai-codex",
-        "codex"
-    ));
-    assert!(crate::domain::provider::provider_prefix_matches(
-        "CODEX", "codex"
-    ));
+    assert!(
+        !crate::domain::inference::value_objects::provider::provider_prefix_matches(
+            "openai", "codex"
+        )
+    );
+    assert!(
+        crate::domain::inference::value_objects::provider::provider_prefix_matches(
+            "openai-codex",
+            "codex"
+        )
+    );
+    assert!(
+        crate::domain::inference::value_objects::provider::provider_prefix_matches(
+            "CODEX", "codex"
+        )
+    );
     // non-matches
-    assert!(!crate::domain::provider::provider_prefix_matches(
-        "anthropic",
-        "codex"
-    ));
-    assert!(!crate::domain::provider::provider_prefix_matches(
-        "gemini", "openai"
-    ));
+    assert!(
+        !crate::domain::inference::value_objects::provider::provider_prefix_matches(
+            "anthropic",
+            "codex"
+        )
+    );
+    assert!(
+        !crate::domain::inference::value_objects::provider::provider_prefix_matches(
+            "gemini", "openai"
+        )
+    );
 }
 
 #[test]
@@ -570,7 +586,7 @@ async fn slice_ptr_provider_trait_surface_defaults_are_exercised() {
         .chat_stream_incremental(test_request(&messages))
         .await;
     match rx.recv().await.expect("default stream event") {
-        crate::domain::provider::StreamEvent::Done(done) => {
+        crate::domain::inference::value_objects::provider::StreamEvent::Done(done) => {
             assert_eq!(done.content.as_deref(), Some("ok"));
         }
         other => panic!("unexpected stream event: {other:?}"),
@@ -639,7 +655,9 @@ fn the_retry_decorator_forwards_the_route_order_to_the_router() {
 async fn an_unconfigured_provider_is_refused_naming_the_configured_ones_and_never_as_auth() {
     // #2126: `openai-oauth` in the list must not make the refusal an Auth
     // error (which would tell the owner to log in again).
-    use crate::domain::provider_error::{ProviderErrorClass, classify_provider_error};
+    use crate::domain::inference::services::provider_error::{
+        ProviderErrorClass, classify_provider_error,
+    };
     let router = ProviderRouter::new(vec![
         TestProvider::succeeding("fireworks", "x") as Arc<dyn LlmProvider>,
         TestProvider::succeeding("openai-oauth", "x"),

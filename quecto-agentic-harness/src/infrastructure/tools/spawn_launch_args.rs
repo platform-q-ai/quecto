@@ -104,7 +104,7 @@ pub(super) fn parse_effort_arg(
     model: Option<&str>,
     effort_control: Option<&crate::application::catalogue::use_cases::ChangeReasoningEffort>,
 ) -> Result<Option<String>, String> {
-    use crate::domain::provider::EffortLevel;
+    use crate::domain::inference::value_objects::provider::EffortLevel;
     match arg {
         None | Some(serde_json::Value::Null) => Ok(None),
         Some(serde_json::Value::String(s)) => match s.trim() {
@@ -130,7 +130,7 @@ pub(super) fn validate_effort(
     model: Option<&str>,
     effort_control: Option<&crate::application::catalogue::use_cases::ChangeReasoningEffort>,
 ) -> Result<String, String> {
-    use crate::domain::provider::EffortLevel;
+    use crate::domain::inference::value_objects::provider::EffortLevel;
     let parsed = match (model, effort_control) {
         (Some(model), Some(effort_control)) => effort_control
             .validate(model, level)

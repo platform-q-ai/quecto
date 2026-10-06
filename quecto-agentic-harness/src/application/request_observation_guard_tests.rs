@@ -1,6 +1,6 @@
 use super::*;
-use crate::domain::attempt_diagnostics::Termination;
-use crate::domain::request_progress::InFlightRequest;
+use crate::domain::inference::events::request_progress::InFlightRequest;
+use crate::domain::inference::value_objects::attempt_diagnostics::Termination;
 
 /// The sinks one guard publishes to.
 #[derive(Default)]
@@ -127,11 +127,13 @@ fn a_request_dropped_between_attempts_records_only_its_ended_attempts() {
     let trace = Arc::new(RequestTrace::default());
     let guard = sinks.guard(&trace);
     trace.begin_attempt(1, Instant::now(), 1_000);
-    trace.record_attempt(crate::domain::attempt_diagnostics::AttemptDiagnostics {
-        attempt_number: 1,
-        termination: Termination::Idle,
-        ..Default::default()
-    });
+    trace.record_attempt(
+        crate::domain::inference::value_objects::attempt_diagnostics::AttemptDiagnostics {
+            attempt_number: 1,
+            termination: Termination::Idle,
+            ..Default::default()
+        },
+    );
     drop(guard);
     let interrupted = sinks.interrupted();
     assert_eq!(interrupted.len(), 1);
@@ -187,12 +189,14 @@ fn a_request_dropped_after_its_transport_records_the_attempt_as_interrupted() {
     let guard = sinks.guard(&trace);
     trace.begin_attempt(1, Instant::now(), 1_000);
     trace.mark_dropping();
-    trace.record_attempt(crate::domain::attempt_diagnostics::AttemptDiagnostics {
-        attempt_number: 1,
-        event_count: 3,
-        termination: Termination::Dropped,
-        ..Default::default()
-    });
+    trace.record_attempt(
+        crate::domain::inference::value_objects::attempt_diagnostics::AttemptDiagnostics {
+            attempt_number: 1,
+            event_count: 3,
+            termination: Termination::Dropped,
+            ..Default::default()
+        },
+    );
     drop(guard);
     let interrupted = sinks.interrupted();
     let attempt = &interrupted[0].attempt_diagnostics[0];
@@ -211,12 +215,13 @@ fn a_request_dropped_unfinished_is_marked_dropping_first() {
     impl Drop for Records {
         fn drop(&mut self) {
             self.0.begin_attempt(1, Instant::now(), 1);
-            self.0
-                .record_attempt(crate::domain::attempt_diagnostics::AttemptDiagnostics {
+            self.0.record_attempt(
+                crate::domain::inference::value_objects::attempt_diagnostics::AttemptDiagnostics {
                     attempt_number: 1,
                     termination: Termination::Dropped,
                     ..Default::default()
-                });
+                },
+            );
         }
     }
     let trace = Arc::new(RequestTrace::default());
@@ -248,11 +253,13 @@ fn a_request_dropped_unfinished_is_marked_dropping_first() {
     );
     drop(done);
     finished.begin_attempt(1, Instant::now(), 1);
-    finished.record_attempt(crate::domain::attempt_diagnostics::AttemptDiagnostics {
-        attempt_number: 1,
-        termination: Termination::Dropped,
-        ..Default::default()
-    });
+    finished.record_attempt(
+        crate::domain::inference::value_objects::attempt_diagnostics::AttemptDiagnostics {
+            attempt_number: 1,
+            termination: Termination::Dropped,
+            ..Default::default()
+        },
+    );
     assert_eq!(
         finished.attempt_diagnostics()[0].termination,
         Termination::Dropped
@@ -264,7 +271,9 @@ fn a_request_dropped_unfinished_is_marked_dropping_first() {
 /// recorded it on the trace, whether the request finished or was dropped.
 #[test]
 fn a_published_observation_carries_the_input_prefix_its_provider_recorded() {
-    use crate::domain::request_observation::{InputItemKind, InputPrefix, InputPrefixParts};
+    use crate::domain::inference::events::request_observation::{
+        InputItemKind, InputPrefix, InputPrefixParts,
+    };
     let prefix = InputPrefix::new(InputPrefixParts {
         input_items: 6,
         previous_items: Some(6),

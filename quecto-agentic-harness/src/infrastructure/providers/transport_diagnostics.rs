@@ -1,4 +1,4 @@
-use crate::domain::attempt_diagnostics::*;
+use crate::domain::inference::value_objects::attempt_diagnostics::*;
 use sha2::{Digest, Sha256};
 
 pub(super) fn headers<'a>(values: impl IntoIterator<Item = (&'a str, &'a str)>) -> Vec<SafeHeader> {

@@ -101,14 +101,18 @@ impl AgentLoopImpl {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .replace(prefix.0.clone())
             .map(|previous| previous == prefix.0);
-        let trace = Arc::new(crate::domain::request_observation::RequestTrace::default());
+        let trace = Arc::new(
+            crate::domain::inference::events::request_observation::RequestTrace::default(),
+        );
         // #2398: the provider compares the input with the session's last.
         trace.attach_input_baseline(self.input_baseline.clone());
         // #2210: every attempt is capped at its output limit's worth of bytes.
-        trace.set_output_cap(crate::domain::request_progress::output_cap_bytes(
-            self.model_max_tokens,
-            request.max_tokens,
-        ));
+        trace.set_output_cap(
+            crate::domain::inference::events::request_progress::output_cap_bytes(
+                self.model_max_tokens,
+                request.max_tokens,
+            ),
+        );
         // #2436: each attempt is counted and announced as it ends.
         trace.on_attempt_end(self.request_completion_sink(request.model));
         request.trace = Some(trace.clone());
@@ -195,7 +199,7 @@ impl AgentLoopImpl {
     ) -> Result<LlmResponse, StreamProviderError> {
         if let Some(admission) = &self.request_admission {
             admission
-                .check(crate::domain::provider::RequestAttempt::First)
+                .check(crate::domain::inference::value_objects::provider::RequestAttempt::First)
                 .await
                 .map_err(StreamProviderError::before_output)?;
         }
@@ -213,7 +217,8 @@ impl AgentLoopImpl {
 
         // Streaming initiation *is* retried here: the decorator forwards
         // `chat_stream` without retry, so this loop owns stream re-initiation.
-        let mut capped = crate::domain::provider_error::CappedFailures::default();
+        let mut capped =
+            crate::domain::inference::services::provider_error::CappedFailures::default();
         for attempt in 1..=MAX_PROVIDER_ATTEMPTS {
             // The logical request was admitted above; only re-initiations
             // re-check, as reattempts (#2339), so streaming never pays a
@@ -221,7 +226,7 @@ impl AgentLoopImpl {
             if attempt > 1 {
                 if let Some(admission) = &self.request_admission {
                     admission
-                        .check(crate::domain::provider::RequestAttempt::Reattempt)
+                        .check(crate::domain::inference::value_objects::provider::RequestAttempt::Reattempt)
                         .await
                         .map_err(StreamProviderError::before_output)?;
                 }
@@ -269,13 +274,15 @@ impl AgentLoopImpl {
                         error_class = %class,
                         "retrying stream initiation after transient failure"
                     );
-                    let Some(delay) = crate::domain::provider_retry::bounded_delay(
-                        &err,
-                        std::time::Duration::from_millis(
-                            PROVIDER_RETRY_BACKOFF_MS * attempt as u64,
-                        ),
-                        std::time::Duration::from_secs(30),
-                    ) else {
+                    let Some(delay) =
+                        crate::domain::inference::services::provider_retry::bounded_delay(
+                            &err,
+                            std::time::Duration::from_millis(
+                                PROVIDER_RETRY_BACKOFF_MS * attempt as u64,
+                            ),
+                            std::time::Duration::from_secs(30),
+                        )
+                    else {
                         return Err(StreamProviderError::before_output(enhance_provider_error(
                             err,
                         )));

@@ -5,7 +5,6 @@ pub mod catalogue;
 pub mod child_end;
 pub mod child_session;
 pub mod constants;
-pub mod context_calibration;
 pub mod conversation;
 pub mod conversation_edit;
 pub mod conversation_view;
@@ -30,19 +29,13 @@ pub mod message;
 pub mod nat64_prefix;
 pub mod network_destination;
 pub mod parent_control;
-pub mod provider;
-pub mod provider_error;
-pub mod provider_retry;
 pub mod redaction;
-pub mod request_observation;
-pub mod request_progress;
 pub mod search_ranking;
 pub mod sessions;
 pub mod subagent;
 pub mod subagent_launch;
 pub mod subagent_teardown;
 pub mod text;
-pub mod token_estimate;
 pub mod tool;
 pub mod tool_descriptor;
 pub mod tool_id;
@@ -50,22 +43,12 @@ pub mod tool_policy;
 pub mod tool_policy_catalogue;
 pub mod turn_origin;
 pub mod unread_report;
-pub mod usage_accounting;
-
-#[cfg(test)]
-#[path = "usage_accounting_tests.rs"]
-mod usage_accounting_tests;
 pub mod visible_thinking;
 pub mod workflow;
 
+pub mod admission;
 pub mod inference;
-pub mod inference_admission;
-pub mod inference_admission_policy;
-pub mod inference_admission_view;
 
-pub mod inference_cooldown;
 pub mod swarm;
 
 pub mod state_snapshot;
-
-pub mod attempt_diagnostics;

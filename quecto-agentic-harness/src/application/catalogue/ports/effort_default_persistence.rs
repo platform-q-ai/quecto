@@ -5,7 +5,7 @@
 //! (`composition/catalogue_defaults.rs`).
 
 use crate::application::catalogue::ports::{DefaultScope, PersistedDefault};
-use crate::domain::provider::EffortLevel;
+use crate::domain::inference::value_objects::provider::EffortLevel;
 
 pub trait EffortDefaultPersistence: Send + Sync {
     /// Record `level` as the default effort of `scope`. Nothing is written

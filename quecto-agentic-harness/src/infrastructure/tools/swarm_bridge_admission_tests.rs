@@ -14,7 +14,7 @@ async fn terminal_reports_are_admitted_only_for_the_retained_coordinator() {
         .unwrap();
         assert!(
             parent
-                .check(crate::domain::provider::RequestAttempt::First)
+                .check(crate::domain::inference::value_objects::provider::RequestAttempt::First)
                 .await
                 .is_ok(),
             "coordinator report unavailable for {status}"
@@ -25,7 +25,7 @@ async fn terminal_reports_are_admitted_only_for_the_retained_coordinator() {
         };
         assert!(
             worker
-                .check(crate::domain::provider::RequestAttempt::First)
+                .check(crate::domain::inference::value_objects::provider::RequestAttempt::First)
                 .await
                 .is_err(),
             "terminal worker admitted for {status}"

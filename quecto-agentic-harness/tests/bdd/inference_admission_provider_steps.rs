@@ -7,8 +7,8 @@ use super::*;
 pub mod attempts;
 #[path = "../common/admission_feedback_fixture.rs"]
 pub mod feedback;
-use quecto::domain::inference_admission::{Feedback, ThrottleFeedback};
-use quecto::domain::provider::StreamEvent;
+use quecto::domain::admission::value_objects::inference_admission::{Feedback, ThrottleFeedback};
+use quecto::domain::inference::value_objects::provider::StreamEvent;
 use quecto::infrastructure::providers::retry::{RetryConfig, RetryingProvider};
 use tokio::sync::mpsc;
 
@@ -365,8 +365,8 @@ mod oracle {
         assert_eq!(out.done, 0);
     }
     pub fn boundary(
-        actual: Option<quecto::domain::inference_admission::RequestId>,
-        expected: Option<quecto::domain::inference_admission::RequestId>,
+        actual: Option<quecto::domain::admission::value_objects::inference_admission::RequestId>,
+        expected: Option<quecto::domain::admission::value_objects::inference_admission::RequestId>,
     ) {
         assert_eq!(actual, expected, "exact authority cooldown boundary");
     }
@@ -374,7 +374,7 @@ mod oracle {
         use quecto::application::inference_admission::{
             AdmissionClient, AdmissionDispatcher, AdmissionRegistry, AdmissionService,
         };
-        use quecto::domain::inference_admission::*;
+        use quecto::domain::admission::value_objects::inference_admission::*;
         let group = GroupId::new("fixture").unwrap();
         let mut service = AdmissionService::new(
             1,
@@ -556,7 +556,7 @@ fn prove_oracles() {
         done: 1,
     };
     rejects(|| oracle::no_replay(1, &bad));
-    use quecto::domain::inference_admission::{RequestId, ScopeId};
+    use quecto::domain::admission::value_objects::inference_admission::{RequestId, ScopeId};
     let id = RequestId {
         scope: ScopeId {
             epoch: 1,

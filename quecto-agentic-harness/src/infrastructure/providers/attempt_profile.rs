@@ -223,7 +223,9 @@ pub(super) fn openai_stream_error(value: &serde_json::Value) -> String {
 /// The HTTP status an OpenAI-compatible error chunk stands for; see
 /// [`openai_stream_error`].
 pub(super) fn stream_error_status(value: &serde_json::Value) -> u16 {
-    use crate::domain::provider_error::{ProviderErrorClass, is_billing_error_name};
+    use crate::domain::inference::services::provider_error::{
+        ProviderErrorClass, is_billing_error_name,
+    };
     let error = &value["error"];
     let fields = [error["type"].as_str(), error["code"].as_str()];
     if fields.into_iter().flatten().any(is_billing_error_name) {

@@ -2,9 +2,9 @@ use super::uds_admission_projection::{
     AdmissionSnapshot, AuthorityView, project, waiting_progress,
 };
 use crate::application::ports::AdmissionObservation;
+use crate::domain::admission::value_objects::inference_admission::AdmissionActivity;
 use crate::domain::agent::AgentProgressEvent;
-use crate::domain::inference::request_completion::{AgentRequestCounters, RequestTally};
-use crate::domain::inference_admission::AdmissionActivity;
+use crate::domain::inference::events::request_completion::{AgentRequestCounters, RequestTally};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -72,7 +72,7 @@ pub struct ExecutionState {
     /// of the connection so `get_state.admission` carries broker health.
     authority: Option<AuthorityProbe>,
     /// The agent's model request in flight, read on every snapshot (#2210).
-    model_turn: Option<Arc<crate::domain::request_progress::InFlightRequest>>,
+    model_turn: Option<Arc<crate::domain::inference::events::request_progress::InFlightRequest>>,
     /// The agent's own requests so far, read on every snapshot (#2436).
     request_tally: Option<Arc<RequestTally>>,
     /// Last admission revision folded into `visible_generation`.
@@ -191,7 +191,7 @@ impl ExecutionState {
     /// it as `modelTurn` while the agent waits on the model.
     pub(crate) fn set_model_turn_source(
         &mut self,
-        source: Arc<crate::domain::request_progress::InFlightRequest>,
+        source: Arc<crate::domain::inference::events::request_progress::InFlightRequest>,
     ) {
         self.model_turn = Some(source);
     }

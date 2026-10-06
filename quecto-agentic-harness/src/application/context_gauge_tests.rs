@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::context_calibration::EstimateScale;
+use crate::domain::inference::services::context_calibration::EstimateScale;
 
 #[test]
 fn estimate_only_gauge_tracks_estimate_until_provider_truth_arrives() {

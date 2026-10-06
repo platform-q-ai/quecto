@@ -13,8 +13,8 @@ use super::client::{ClientError, Inner};
 use super::link::AuthorityLink;
 use super::protocol::{Body, Op};
 use crate::application::ports::{AttemptAcquisition, AttemptAdmission, AttemptPermit};
+use crate::domain::admission::value_objects::inference_admission::{Feedback, ThrottleFeedback};
 use crate::domain::error::DomainError;
-use crate::domain::inference_admission::{Feedback, ThrottleFeedback};
 
 /// Where a gate reads its live connection from.
 #[derive(Debug)]

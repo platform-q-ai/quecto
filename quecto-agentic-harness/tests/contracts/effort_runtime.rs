@@ -3,7 +3,7 @@
 //! from the use case; `None` means the provider default. Nothing but the
 //! use case writes the running level.
 use quecto::application::catalogue::ports::EffortRuntime;
-use quecto::domain::provider::EffortLevel;
+use quecto::domain::inference::value_objects::provider::EffortLevel;
 
 use super::switch_runtime_fixture::runtime;
 

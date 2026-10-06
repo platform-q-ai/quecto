@@ -5,9 +5,9 @@
 //! payload byte). Ported from the deleted Python suite `tests/swarm_helpers_test.py`, plus the
 //! loosely typed arguments Python accepts (epic P3). `summary` is S12's, so
 //! the scenarios read the run with `_snapshot` and `_control_status`.
-use quecto::domain::attempt_diagnostics::AttemptDiagnostics;
-use quecto::domain::provider_error::ProviderErrorClass;
-use quecto::domain::request_observation::{RequestObservation, RuntimeIdentity};
+use quecto::domain::inference::events::request_observation::{RequestObservation, RuntimeIdentity};
+use quecto::domain::inference::services::provider_error::ProviderErrorClass;
+use quecto::domain::inference::value_objects::attempt_diagnostics::AttemptDiagnostics;
 use serde_json::{Value, json};
 
 use crate::swarm_board_diff_membership::{at, create, snapshot};

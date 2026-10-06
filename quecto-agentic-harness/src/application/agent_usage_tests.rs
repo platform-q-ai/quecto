@@ -88,7 +88,7 @@ fn assert_ratio(actual: Option<f64>, expected: f64) {
 #[test]
 fn usage_totals_cache_hit_ratio_none_without_denominator() {
     assert_eq!(
-        crate::domain::usage_accounting::cache_hit_ratio(0, 0, 0),
+        crate::domain::inference::services::usage_accounting::cache_hit_ratio(0, 0, 0),
         None
     );
 }
@@ -96,7 +96,7 @@ fn usage_totals_cache_hit_ratio_none_without_denominator() {
 #[test]
 fn usage_totals_cache_hit_ratio_mixed_input_and_read() {
     assert_ratio(
-        crate::domain::usage_accounting::cache_hit_ratio(70, 30, 0),
+        crate::domain::inference::services::usage_accounting::cache_hit_ratio(70, 30, 0),
         0.30,
     );
 }
@@ -104,7 +104,7 @@ fn usage_totals_cache_hit_ratio_mixed_input_and_read() {
 #[test]
 fn usage_totals_cache_hit_ratio_write_only_zero_hit() {
     assert_ratio(
-        crate::domain::usage_accounting::cache_hit_ratio(0, 0, 50),
+        crate::domain::inference::services::usage_accounting::cache_hit_ratio(0, 0, 50),
         0.0,
     );
 }
@@ -112,7 +112,7 @@ fn usage_totals_cache_hit_ratio_write_only_zero_hit() {
 #[test]
 fn usage_totals_cache_hit_ratio_read_only_full_hit() {
     assert_ratio(
-        crate::domain::usage_accounting::cache_hit_ratio(0, 30, 0),
+        crate::domain::inference::services::usage_accounting::cache_hit_ratio(0, 30, 0),
         1.0,
     );
 }
@@ -120,7 +120,7 @@ fn usage_totals_cache_hit_ratio_read_only_full_hit() {
 #[test]
 fn usage_totals_cache_hit_ratio_read_and_write() {
     assert_ratio(
-        crate::domain::usage_accounting::cache_hit_ratio(0, 30, 20),
+        crate::domain::inference::services::usage_accounting::cache_hit_ratio(0, 30, 20),
         30.0 / 50.0,
     );
 }
@@ -128,7 +128,7 @@ fn usage_totals_cache_hit_ratio_read_and_write() {
 #[test]
 fn usage_totals_cache_hit_ratio_uncached_input_zero_hit() {
     assert_ratio(
-        crate::domain::usage_accounting::cache_hit_ratio(70, 0, 0),
+        crate::domain::inference::services::usage_accounting::cache_hit_ratio(70, 0, 0),
         0.0,
     );
 }
@@ -158,7 +158,7 @@ fn session_stats_from_shared_usage_fixture_reports_cost_and_ratio() {
     assert_eq!(totals.context_input_tokens, 105);
     assert_eq!(totals.cost_micro_usd, 1_234);
     assert_ratio(
-        crate::domain::usage_accounting::cache_hit_ratio(
+        crate::domain::inference::services::usage_accounting::cache_hit_ratio(
             totals.billed_input_tokens,
             totals.cache_read_tokens,
             totals.cache_write_tokens,
@@ -214,7 +214,7 @@ fn equivalent_provider_usage_produces_identical_shared_stats() {
                 totals.cache_write_tokens,
                 totals.context_input_tokens,
                 totals.cost_micro_usd,
-                crate::domain::usage_accounting::cache_hit_ratio(
+                crate::domain::inference::services::usage_accounting::cache_hit_ratio(
                     totals.billed_input_tokens,
                     totals.cache_read_tokens,
                     totals.cache_write_tokens,
