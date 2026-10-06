@@ -147,3 +147,32 @@ fn the_schema_declares_the_coordinator_opt_in_as_a_boolean() {
     let schema: serde_json::Value = serde_json::from_str(&def.parameters_schema).unwrap();
     assert_eq!(schema["properties"]["coordinator"]["type"], "boolean");
 }
+
+/// #2461 review: the spawn tool carries the opt-in through to the launch
+/// config, and refuses it where the parser does.
+#[test]
+fn the_spawn_tool_carries_the_coordinator_opt_in_to_the_config() {
+    let tool = SpawnTool::new(vec![]);
+    let config = tool
+        .parse_args_for_test(r#"{"agent_id":"c","coordinator":true,"container":true}"#)
+        .unwrap();
+    assert!(config.coordinator);
+    let config = tool
+        .parse_args_for_test(r#"{"agent_id":"c","container":true}"#)
+        .unwrap();
+    assert!(!config.coordinator);
+    for (args, reason) in [
+        (r#"{"agent_id":"c","coordinator":true}"#, "new container"),
+        (
+            r#"{"agent_id":"c","coordinator":true,"container":true,"workflow":true}"#,
+            "workflow",
+        ),
+        (
+            r#"{"agent_id":"c","coordinator":"yes","container":true}"#,
+            "boolean",
+        ),
+    ] {
+        let err = tool.parse_args_for_test(args).unwrap_err();
+        assert!(err.contains(reason), "{args}: {err}");
+    }
+}

@@ -43,7 +43,7 @@ fn coordinator_playbook() -> &'static str {
 pub enum PromptRole {
     /// A top-level agent: the parent preamble and playbook.
     Parent,
-    /// A spawned agent launched into a container: the swarm coordinator.
+    /// A swarm coordinator: spawned with the explicit `--coordinator` flag.
     Coordinator,
     /// Any other spawned agent, swarm workers included.
     Subagent,

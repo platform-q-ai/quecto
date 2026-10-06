@@ -12,7 +12,7 @@ How to spike:
 - Implementation timebox: <TIMEBOX, e.g. 60 min>. Stop implementation when it ends, finished or not. The additional reporting window is only for running existing checks, pushing the branch, and reporting findings; do not continue building.
 
 Keep it disposable: work on a branch named spike/<N>-<slug> in its own worktree; push it as a spike branch so the planner can read the diff; never open a PR, never merge, never cherry-pick from it. It is deleted, locally and on the remote, once the plan is filed.
-Project rules: <PROJECT_RULES, or "none">. Environment problems you cannot fix: pause the swarm and raise the concern with the exact error.
+Project rules: <PROJECT_RULES, or "none">. Environment problems you cannot fix: report the exact error to the parent and yield.
 
 Post ONE Spike report comment on #<N>:
 1. Did it work? — one paragraph: what you built, how far it got, the branch name and `git diff --stat`.

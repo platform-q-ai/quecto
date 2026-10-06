@@ -91,11 +91,28 @@ fn coordinator_is_accepted_only_for_a_new_container() {
 /// coordinator; a value that is not a boolean is refused, not ignored.
 #[test]
 fn coordinator_refuses_workflow_and_non_boolean_values() {
-    let err = parse_coordinator(&json!({"coordinator": true}), &new_container(), true).unwrap_err();
-    assert!(err.contains("workflow"), "{err}");
+    for workflow in [
+        json!({"coordinator": true, "workflow": true}),
+        json!({"coordinator": true, "workflow_spec": {"template": {}}}),
+    ] {
+        let err = parse_coordinator(&workflow, &new_container(), false).unwrap_err();
+        assert!(err.contains("workflow"), "{err}");
+    }
     for value in [json!(1), json!("yes"), json!({})] {
         let err =
             parse_coordinator(&json!({"coordinator": value}), &new_container(), false).unwrap_err();
         assert!(err.contains("coordinator must be a boolean"), "{err}");
     }
+}
+
+/// #2461 review: a swarm member never launches a coordinator; the refusal
+/// comes before anything is written for the launch.
+#[test]
+fn a_swarm_member_cannot_launch_a_coordinator() {
+    let err = parse_coordinator(&json!({"coordinator": true}), &new_container(), true).unwrap_err();
+    assert!(err.contains("swarm member"), "{err}");
+    assert_eq!(
+        parse_coordinator(&json!({}), &new_container(), true),
+        Ok(false)
+    );
 }

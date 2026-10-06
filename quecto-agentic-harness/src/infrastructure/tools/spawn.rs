@@ -457,11 +457,8 @@ impl SpawnTool {
             has("write") && has("edit")
         };
 
-        let coordinator = super::spawn_input::parse_coordinator(
-            &args,
-            &container,
-            workflow || workflow_spec.is_some(),
-        )?;
+        let coordinator =
+            super::spawn_input::parse_coordinator(&args, &container, self.launches_swarm_worker())?;
         let config = SubagentConfig {
             task,
             container,

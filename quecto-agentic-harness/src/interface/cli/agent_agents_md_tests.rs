@@ -270,7 +270,7 @@ fn startup_composes_the_role_named_by_the_launch_flags() {
         (&["--mode", "uds"][..], false),
     ] {
         let flags = super::parse_agent_flags(&argv(parts), &mut errors).unwrap();
-        let prompt = startup_prompt::compose(None, None, startup_prompt::role(&flags), "", "");
+        let prompt = startup_prompt::compose_for(&flags, None, "", "");
         assert_eq!(prompt.contains(document), coordinator, "{parts:?}");
     }
 }

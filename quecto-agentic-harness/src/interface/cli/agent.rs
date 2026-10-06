@@ -276,10 +276,9 @@ pub(crate) fn cmd_agent(
         None => return 1,
     };
 
-    flags.system_prompt = Some(startup_prompt::compose(
+    flags.system_prompt = Some(startup_prompt::compose_for(
+        &flags,
         agents_instructions.as_deref(),
-        flags.system_prompt.as_deref(),
-        startup_prompt::role(&flags),
         &build.extension_prompt_snippets,
         &parent_playbook,
     ));
@@ -646,10 +645,9 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
     // session (#1113): workflow state is never appended, so the provider-side
     // cached prefix survives every workflow step. Dynamic workflow state
     // reaches the model through tool results and idle-boundary nudges.
-    let system_prompt = startup_prompt::compose(
+    let system_prompt = startup_prompt::compose_for(
+        &flags,
         agents_instructions.as_deref(),
-        flags.system_prompt.as_deref(),
-        startup_prompt::role(&flags),
         &build.extension_prompt_snippets,
         &parent_playbook,
     );

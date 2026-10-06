@@ -68,6 +68,8 @@ plants a coordination file in the host checkout. Linux procfs supplies process
 start identities for conservative lifecycle reconciliation.
 
 The first in-container agent is the coordinator and designated Git integrator.
+The parent spawns it with `coordinator: true` (a new container only), so it
+starts from the bundled coordinator playbook (#2461).
 The external supervising parent is not a member. Initial harness startup records
 membership in a setup board; creation cannot choose a smaller limit than the
 already live/reserved population. Create the run before launching the pool.
