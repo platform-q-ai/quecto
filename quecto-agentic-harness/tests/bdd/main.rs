@@ -607,6 +607,8 @@ pub struct QuectoWorld {
     pub uds_invalid_config_before_loop: bool,
     /// UDS agent: add Fireworks provider after building the agent but before the command loop
     pub uds_add_fireworks_before_loop: bool,
+    /// UDS agent: add an Anthropic API key after building the agent but before the command loop (#2451)
+    pub uds_add_anthropic_key_before_loop: bool,
     /// UDS agent: captured stderr after execution
     pub agent_stderr: String,
     /// UDS agent: exit code after execution

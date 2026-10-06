@@ -23,6 +23,7 @@ fn cli_uds_and_tui_surfaces_render_the_same_snapshot_generation() {
     write_models_json(
         tmp.path(),
         r#"{"providers":{"contractish":{"api":"openai-completions","apiKey":"sk-contract",
+            "baseUrl":"https://contract.example.test/v1",
             "models":[{"id":"contract-model","name":"Contract Model"}]}}}"#,
     );
 

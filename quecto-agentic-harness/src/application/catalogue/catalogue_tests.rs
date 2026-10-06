@@ -108,6 +108,12 @@ impl FakeCredentials {
 }
 
 impl CredentialStatusPort for FakeCredentials {
+    fn for_composed_routes(
+        &self,
+        _routes: &[String],
+    ) -> Option<Box<dyn CredentialStatusPort + '_>> {
+        None // this fake's status does not depend on routes
+    }
     fn credential_available(&self, entry: &CatalogueEntry) -> bool {
         // The secret stays inside the port: only a boolean ever leaves.
         debug_assert!(!self.secret.is_empty());

@@ -62,6 +62,12 @@ struct RtFakeCredentials {
 }
 
 impl CredentialStatusPort for RtFakeCredentials {
+    fn for_composed_routes(
+        &self,
+        _routes: &[String],
+    ) -> Option<Box<dyn CredentialStatusPort + '_>> {
+        None // this fake's status does not depend on routes
+    }
     fn credential_available(&self, entry: &CatalogueEntry) -> bool {
         !self.denied.iter().any(|p| p == entry.provider.id.as_str())
     }

@@ -28,7 +28,7 @@ pub struct CatalogueHandles {
     /// models (#1844): UDS `refresh_models` and CLI `models discover`.
     pub refresh: Arc<RefreshCatalogueSources>,
     /// Reload runtime configuration (#1849): the UDS `reload` command and
-    /// the poll before every prompt and `set_model`. Unconfigured (every
+    /// the poll before every prompt, `set_model` and `list_models`. Unconfigured (every
     /// reload reports so) for a loop built without
     /// [`RuntimeConfigurationInputs`].
     pub reload: Arc<ReloadRuntimeConfiguration>,

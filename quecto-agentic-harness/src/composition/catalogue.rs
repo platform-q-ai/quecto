@@ -34,7 +34,11 @@ pub fn build_catalogue_handles(
     base_dir: &std::path::Path,
     runtime: Option<&RuntimeConfigurationInputs>,
 ) -> CatalogueHandles {
-    let inputs: Arc<FileCatalogueInputs> = Arc::new(FileCatalogueInputs::new(base_dir));
+    // Credential status credits the slots the published runtime routes (#2451).
+    let inputs: Arc<FileCatalogueInputs> = Arc::new(FileCatalogueInputs::new(
+        base_dir,
+        Arc::new(runtime_store_for(base_dir)),
+    ));
     let list_models = Arc::new(ListModels::new(
         inputs.clone(),
         snapshot_store_for(base_dir),
@@ -66,7 +70,10 @@ pub fn build_catalogue_handles(
         defaults,
     ));
     let refresh = Arc::new(RefreshCatalogueSources::new(
-        Arc::new(FileRefreshInputs::new(base_dir)),
+        Arc::new(FileRefreshInputs::new(
+            base_dir,
+            Arc::new(runtime_store_for(base_dir)),
+        )),
         snapshot_store_for(base_dir),
     ));
     let reload = Arc::new(match runtime {
@@ -128,7 +135,7 @@ pub fn resolve_catalogue_for(
     base_dir: &std::path::Path,
 ) -> crate::application::catalogue::ResolvedCatalogue {
     use crate::application::catalogue::ports::CatalogueInputsLoader;
-    let inputs = FileCatalogueInputs::new(base_dir).load();
+    let inputs = FileCatalogueInputs::new(base_dir, Arc::new(runtime_store_for(base_dir))).load();
     crate::application::catalogue::ResolveCatalogueUseCase.resolve_and_publish(
         &inputs.sources(),
         inputs.credentials(),

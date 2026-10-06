@@ -1,7 +1,8 @@
 //! Reload runtime configuration (#1849): apply changed provider/model
 //! configuration to a running session without restarting it — the UDS
-//! `reload` command (forced) and the pull-based poll before every prompt
-//! and `set_model` (ADR-0002: no watcher, no per-turn rebuild).
+//! `reload` command (forced) and the pull-based poll before every prompt,
+//! `set_model` and `list_models` (ADR-0002: no watcher, no per-turn
+//! rebuild).
 //!
 //! Policy: a poll asks the source whether its files changed and rebuilds
 //! only then; a forced reload always rebuilds. A successful rebuild swaps

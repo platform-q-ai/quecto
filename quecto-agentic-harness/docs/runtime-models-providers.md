@@ -64,8 +64,10 @@ quecto auth logout --provider openai                       # rollback → Creden
 `quecto status`'s `OpenAI API:` / `Anthropic API:` lines reflect
 `providers.*.api_key` in the global file only, not the credential store —
 trust `quecto auth status`. A configured key (or `OPENAI_API_KEY` /
-`ANTHROPIC_API_KEY`) takes priority over a stored token; a credential stored
-while a session runs is offered and used once the session restarts. An
+`ANTHROPIC_API_KEY`) takes priority over a stored token. A credential stored
+while a session runs is offered and used from the next provider rebuild (a
+UDS `reload`, or the next prompt or `/model` after a config or `models.json`
+edit; `credentials.json` is not watched), else once the session restarts. An
 agent doing this asks the user for the key, never echoes it, never writes
 it into a file itself, and never passes `--show-secrets`.
 

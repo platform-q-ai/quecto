@@ -1,8 +1,7 @@
-//! Which provider slots the credential sources let the runtime build
-//! (#2451): the one statement of the rules provider-runtime composition
-//! builds its credential-backed providers by, shared with the catalogue's
-//! credential status so the model selector offers exactly the models the
-//! runtime can route.
+//! The provider slots credentials turn into runtime providers (#2451).
+//!
+//! The runtime factory builds its credential-backed providers by the two
+//! slot rules here:
 //!
 //! - An API-key slot (`openai-api`, `anthropic-api`) is built with the
 //!   configured key, else an unexpired stored token credential of its
@@ -12,22 +11,27 @@
 //!   credential when its token is non-empty, expired or not: an expired
 //!   token is refreshed lazily on the first 401 (#811).
 //!
-//! Key material stays here and in the runtime factory: [`ProviderSlots`]
-//! holds only which slots and vendors are buildable.
+//! The catalogue's credential status does not re-derive them: it reads
+//! which slots the composed runtime actually built ([`ProviderSlots`], the
+//! router's route order), so the model selector offers exactly what the
+//! runtime can route and the two can never disagree. Only provider names
+//! cross into the catalogue; key material stays with the factory.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 
-use super::credential_store::{AuthMethod, Credential, CredentialStore};
+use super::credential_store::{AuthMethod, Credential};
+use crate::application::catalogue::ports::RuntimeSnapshotSource;
 use crate::domain::catalogue::AuthIdentity;
 
-/// The built-in slots a vendor credential builds directly, by slot name,
-/// vendor (the credential store key) and auth mode.
-const DEDICATED_SLOTS: [(&str, &str, AuthMethod); 4] = [
-    ("openai-api", "openai", AuthMethod::Token),
-    ("openai-oauth", "openai", AuthMethod::OAuth),
-    ("anthropic-api", "anthropic", AuthMethod::Token),
-    ("anthropic-oauth", "anthropic", AuthMethod::OAuth),
-];
+/// The built-in slots the runtime builds straight from a vendor credential
+/// or a configured key, by the names the factory gives them: the factory
+/// names its providers with these constants, so a slot it builds is always
+/// one the catalogue credits.
+pub(crate) const OPENAI_API: &str = "openai-api";
+pub(crate) const OPENAI_OAUTH: &str = "openai-oauth";
+pub(crate) const ANTHROPIC_API: &str = "anthropic-api";
+pub(crate) const ANTHROPIC_OAUTH: &str = "anthropic-oauth";
+const DEDICATED_SLOTS: [&str; 4] = [OPENAI_API, OPENAI_OAUTH, ANTHROPIC_API, ANTHROPIC_OAUTH];
 
 /// The API key a vendor's API-key slot is built with: the configured key,
 /// else the stored token credential while it is unexpired. `None` builds
@@ -52,141 +56,75 @@ pub(crate) fn oauth_slot_token(stored: Option<Credential>) -> Option<String> {
         .filter(|token| !token.is_empty())
 }
 
-/// The configured API keys composition reads (`providers.<vendor>.api_key`,
-/// environment overrides applied). Secret material: never rendered, so no
-/// `Debug`.
-#[derive(Clone, Copy, Default)]
-pub struct ConfiguredApiKeys<'a> {
-    pub openai: &'a str,
-    pub anthropic: &'a str,
-}
-
-impl<'a> ConfiguredApiKeys<'a> {
-    /// No configured key: the credential store alone decides.
-    pub const NONE: ConfiguredApiKeys<'static> = ConfiguredApiKeys {
-        openai: "",
-        anthropic: "",
-    };
-
-    pub fn of(config: &'a crate::infrastructure::config::Config) -> Self {
-        Self {
-            openai: &config.providers.openai.api_key,
-            anthropic: &config.providers.anthropic.api_key,
-        }
-    }
-
-    fn for_vendor(&self, vendor: &str) -> &'a str {
-        match vendor {
-            "openai" => self.openai,
-            "anthropic" => self.anthropic,
-            _ => "",
-        }
-    }
-}
-
-/// The credential-backed provider slots the runtime builds, as booleans
-/// only. Either probed from the configured keys and the credential store
-/// (what a composition would build now) or read off a composed runtime's
-/// routes (what it built).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ProviderSlots {
-    Probed {
-        /// Dedicated slot names the credentials build.
-        dedicated: BTreeSet<&'static str>,
-        /// Kernel OAuth vendors with a usable stored OAuth token.
-        oauth_vendors: BTreeSet<String>,
-    },
-    /// The provider names a composed runtime routes, lowercased.
-    Routed(BTreeSet<String>),
+/// The provider names a composed runtime routes, lowercased: which
+/// credential-backed slots it built. `None` before any runtime is
+/// composed — then nothing is routed, and only what a composition would
+/// build from a record's own key can be credited.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProviderSlots {
+    routes: Option<BTreeSet<String>>,
 }
 
 impl ProviderSlots {
-    /// What a composition would build now from `keys` and `store`. A store
-    /// that cannot be read or parsed builds no stored-credential slot, as in
-    /// the runtime; the failure is logged once per process.
-    pub fn probe(keys: ConfiguredApiKeys<'_>, store: &CredentialStore) -> Self {
-        let stored = match store.load_snapshot() {
-            Ok(stored) => stored,
-            Err(error) => {
-                static WARNED: std::sync::Once = std::sync::Once::new();
-                WARNED.call_once(|| {
-                    tracing::warn!(
-                        %error,
-                        path = %store.path().display(),
-                        "credential store unreadable: models that need a stored credential are listed as missing one"
-                    );
-                });
-                HashMap::new()
-            }
-        };
-        Self::from_stored(keys, &stored)
+    /// No runtime composed: nothing is routed, so no credential-backed slot
+    /// is either.
+    pub fn none() -> Self {
+        Self::default()
     }
 
-    fn from_stored(keys: ConfiguredApiKeys<'_>, stored: &HashMap<String, Credential>) -> Self {
-        let credential = |vendor: &str| stored.get(vendor).cloned();
-        let dedicated = DEDICATED_SLOTS
-            .iter()
-            .filter(|(_, vendor, method)| match method {
-                AuthMethod::Token => {
-                    api_slot_key(keys.for_vendor(vendor), credential(vendor)).is_some()
-                }
-                AuthMethod::OAuth => oauth_slot_token(credential(vendor)).is_some(),
-            })
-            .map(|(slot, _, _)| *slot)
-            .collect();
-        let oauth_vendors = stored
-            .keys()
-            .filter(|vendor| oauth_slot_token(credential(vendor)).is_some())
-            .filter(|vendor| super::oauth::OAuthConfig::for_provider(vendor).is_some())
-            .cloned()
-            .collect();
-        Self::Probed {
-            dedicated,
-            oauth_vendors,
-        }
-    }
-
-    /// The slots a composed runtime routes, from its route order.
+    /// The slots a router holding `routes` (its route order) built.
     pub fn routed(routes: impl IntoIterator<Item = String>) -> Self {
-        Self::Routed(
-            routes
-                .into_iter()
-                .map(|route| route.trim().to_ascii_lowercase())
-                .collect(),
-        )
+        let routes: BTreeSet<String> = routes
+            .into_iter()
+            .map(|route| route.trim().to_ascii_lowercase())
+            .collect();
+        debug_assert!(
+            routes.iter().all(|route| !route.is_empty()),
+            "a router names every provider it routes"
+        );
+        Self {
+            routes: Some(routes),
+        }
     }
 
-    /// Whether the runtime has a credential-backed provider for `provider`
-    /// authenticating as `auth`. Only a dedicated slot or an OAuth provider
-    /// is credential-backed: any other provider is credentialed by its own
-    /// record alone, so a vendor sign-in never credits it.
-    pub fn credits(&self, provider: &str, auth: &AuthIdentity) -> bool {
-        let provider = provider.trim().to_ascii_lowercase();
-        let dedicated = DEDICATED_SLOTS
-            .iter()
-            .find(|(slot, _, _)| *slot == provider)
-            .map(|(slot, _, _)| *slot);
-        match (self, dedicated, auth) {
-            (
-                Self::Probed {
-                    dedicated: built, ..
-                },
-                Some(slot),
-                _,
-            ) => built.contains(slot),
-            (
-                Self::Probed { oauth_vendors, .. },
-                None,
-                AuthIdentity::OAuth { provider: vendor },
-            ) => vendor
-                .as_ref()
-                .is_some_and(|vendor| oauth_vendors.contains(vendor.as_str())),
-            (Self::Routed(routes), Some(_), _)
-            | (Self::Routed(routes), None, AuthIdentity::OAuth { .. }) => {
-                routes.contains(&provider)
-            }
-            (_, None, AuthIdentity::ApiKey) => false,
+    /// The slots `runtime`'s current generation built, or [`Self::none`]
+    /// before one is composed.
+    pub fn of_runtime(runtime: &dyn RuntimeSnapshotSource) -> Self {
+        match runtime.current_runtime() {
+            Some(runtime) => Self::routed(runtime.provider.route_order()),
+            None => Self::none(),
         }
+    }
+
+    /// Whether a composed router holds a provider named `provider`, however
+    /// built. False before any runtime is composed.
+    pub fn routes(&self, provider: &str) -> bool {
+        self.routes
+            .as_ref()
+            .is_some_and(|routes| routes.contains(&provider.trim().to_ascii_lowercase()))
+    }
+
+    /// Whether `provider` can be reached: the composed router holds it, or
+    /// no runtime is composed yet, so a composition would build it from a
+    /// record's own key.
+    pub fn may_route(&self, provider: &str) -> bool {
+        match &self.routes {
+            Some(_) => self.routes(provider),
+            None => true,
+        }
+    }
+
+    /// Whether the runtime built a credential-backed provider for
+    /// `provider` authenticating as `auth`: a dedicated slot (from a
+    /// configured key, a stored token or a sign-in) or an OAuth provider
+    /// (from a sign-in). Any other provider is never credited here.
+    pub fn credits(&self, provider: &str, auth: &AuthIdentity) -> bool {
+        let lowered = provider.trim().to_ascii_lowercase();
+        let credential_backed = match auth {
+            AuthIdentity::OAuth { .. } => true,
+            AuthIdentity::ApiKey => DEDICATED_SLOTS.contains(&lowered.as_str()),
+        };
+        credential_backed && self.routes(provider)
     }
 }
 
