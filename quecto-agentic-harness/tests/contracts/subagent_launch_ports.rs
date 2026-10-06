@@ -152,6 +152,7 @@ fn config(task: Option<&str>) -> SubagentConfig {
         disable_tools: Vec::new(),
         read_only: false,
         backend: Default::default(),
+        coordinator: false,
     }
 }
 
@@ -218,6 +219,7 @@ exec '{}' uds-listen "$sock" --hold --idle-exit 15
             disable_tools: Vec::new(),
             read_only: false,
             backend: Default::default(),
+            coordinator: false,
         }
     }
 

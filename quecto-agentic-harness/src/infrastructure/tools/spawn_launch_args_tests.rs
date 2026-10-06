@@ -20,6 +20,7 @@ fn base_config() -> SubagentConfig {
         disable_tools: Vec::new(),
         read_only: false,
         backend: Default::default(),
+        coordinator: false,
     }
 }
 
@@ -352,13 +353,29 @@ fn only_local_children_get_this_agents_extensions() {
     assert!(tool.extensions_for_child(&container).is_empty());
 }
 
-/// #2461: a launch into a container starts that container's swarm
-/// coordinator, so it carries `--coordinator` beside `--spawned`.
+/// #2461 review: only a spawn that asks for a coordinator gets the
+/// coordinator prompt; it is launched into a new container.
 #[test]
-fn container_launches_carry_the_coordinator_flag() {
+fn coordinator_launches_carry_the_coordinator_flag() {
+    let mut cfg = base_config();
+    cfg.container = crate::domain::subagent::ContainerSelection::New {
+        container_config: None,
+        name: None,
+    };
+    cfg.coordinator = true;
+    let strs = as_strings(&build_child_cli_args(&spec(&cfg)));
+    assert!(strs.iter().any(|a| a == "--spawned"), "{strs:?}");
+    assert!(strs.iter().any(|a| a == "--coordinator"), "{strs:?}");
+}
+
+/// #2461 review: an ordinary container child (new or joined) and every
+/// local child, swarm workers included, stay ordinary subagents.
+#[test]
+fn children_not_asked_to_coordinate_never_carry_the_coordinator_flag() {
     use crate::domain::environment_registry::EnvironmentTarget;
     use crate::domain::subagent::ContainerSelection;
     for container in [
+        ContainerSelection::Local,
         ContainerSelection::New {
             container_config: None,
             name: None,
@@ -370,15 +387,6 @@ fn container_launches_carry_the_coordinator_flag() {
         let mut cfg = base_config();
         cfg.container = container;
         let strs = as_strings(&build_child_cli_args(&spec(&cfg)));
-        assert!(strs.iter().any(|a| a == "--spawned"), "{strs:?}");
-        assert!(strs.iter().any(|a| a == "--coordinator"), "{strs:?}");
+        assert!(!strs.iter().any(|a| a == "--coordinator"), "{strs:?}");
     }
-}
-
-/// #2461: a local child, and so every swarm worker (spawned with
-/// `container` omitted), is not a coordinator.
-#[test]
-fn local_launches_never_carry_the_coordinator_flag() {
-    let strs = as_strings(&build_child_cli_args(&spec(&base_config())));
-    assert!(!strs.iter().any(|a| a == "--coordinator"), "{strs:?}");
 }

@@ -72,3 +72,8 @@ pub(super) fn compose(
         parent_playbook,
     )
 }
+
+/// The prompt role the parsed launch flags name (#2461). Not wired yet.
+pub(super) fn role(flags: &super::flag_parse::AgentFlags) -> crate::interface::shared::PromptRole {
+    crate::interface::shared::PromptRole::of(flags.spawned, false)
+}

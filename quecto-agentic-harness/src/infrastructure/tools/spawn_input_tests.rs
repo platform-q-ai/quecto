@@ -50,3 +50,52 @@ fn parse_accepts_true_false_and_new_object() {
         }
     );
 }
+
+fn new_container() -> ContainerSelection {
+    ContainerSelection::New {
+        container_config: None,
+        name: None,
+    }
+}
+
+/// #2461 review: a coordinator is an explicit opt-in; absent or false is an
+/// ordinary child wherever it runs.
+#[test]
+fn coordinator_defaults_to_an_ordinary_child() {
+    for args in [
+        json!({}),
+        json!({"coordinator": null}),
+        json!({"coordinator": false}),
+    ] {
+        assert_eq!(parse_coordinator(&args, &new_container(), false), Ok(false));
+    }
+}
+
+/// #2461 review: a coordinator starts its swarm in a fresh container, so it
+/// is accepted only for a new container; quoted booleans read as booleans.
+#[test]
+fn coordinator_is_accepted_only_for_a_new_container() {
+    for args in [json!({"coordinator": true}), json!({"coordinator": "true"})] {
+        assert_eq!(parse_coordinator(&args, &new_container(), false), Ok(true));
+    }
+    let existing = ContainerSelection::Existing {
+        target: crate::domain::environment_registry::EnvironmentTarget::Name("c".into()),
+    };
+    for container in [ContainerSelection::Local, existing] {
+        let err = parse_coordinator(&json!({"coordinator": true}), &container, false).unwrap_err();
+        assert!(err.contains("new container"), "{err}");
+    }
+}
+
+/// #2461 review: a workflow agent cannot create a swarm, so it cannot be one's
+/// coordinator; a value that is not a boolean is refused, not ignored.
+#[test]
+fn coordinator_refuses_workflow_and_non_boolean_values() {
+    let err = parse_coordinator(&json!({"coordinator": true}), &new_container(), true).unwrap_err();
+    assert!(err.contains("workflow"), "{err}");
+    for value in [json!(1), json!("yes"), json!({})] {
+        let err =
+            parse_coordinator(&json!({"coordinator": value}), &new_container(), false).unwrap_err();
+        assert!(err.contains("coordinator must be a boolean"), "{err}");
+    }
+}

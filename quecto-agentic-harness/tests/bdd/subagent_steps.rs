@@ -39,6 +39,7 @@ fn test_subagent_config(task: Option<String>) -> SubagentConfig {
         disable_tools: Vec::new(),
         read_only: false,
         backend: Default::default(),
+        coordinator: false,
     }
 }
 

@@ -19,6 +19,7 @@ fn config(backend: MemberBackend) -> SubagentConfig {
         disable_tools: Vec::new(),
         read_only: false,
         backend,
+        coordinator: false,
     }
 }
 

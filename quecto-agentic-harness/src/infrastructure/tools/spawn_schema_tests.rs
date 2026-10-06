@@ -138,3 +138,12 @@ fn a_quoted_container_from_any_provider_parses_at_the_tool_boundary() {
         );
     }
 }
+
+/// #2461 review: the parent opts a child into the coordinator role with a
+/// boolean the schema declares.
+#[test]
+fn the_schema_declares_the_coordinator_opt_in_as_a_boolean() {
+    let def = SpawnTool::new(vec![]).definition();
+    let schema: serde_json::Value = serde_json::from_str(&def.parameters_schema).unwrap();
+    assert_eq!(schema["properties"]["coordinator"]["type"], "boolean");
+}

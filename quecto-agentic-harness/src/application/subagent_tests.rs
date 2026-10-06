@@ -16,6 +16,7 @@ fn test_subagent_context_has_empty_history() {
         disable_tools: Vec::new(),
         read_only: false,
         backend: Default::default(),
+        coordinator: false,
     };
     let ctx = SubagentContext::from_config(&config);
     assert_eq!(ctx.task, "Do stuff");
@@ -38,6 +39,7 @@ fn test_subagent_context_no_task() {
         disable_tools: Vec::new(),
         read_only: false,
         backend: Default::default(),
+        coordinator: false,
     };
     let ctx = SubagentContext::from_config(&config);
     assert_eq!(ctx.task, "");

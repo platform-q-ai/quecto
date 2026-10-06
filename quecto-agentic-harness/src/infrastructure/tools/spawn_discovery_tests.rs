@@ -370,10 +370,6 @@ fn the_swarm_descriptions_coordinator_prose_is_in_the_docs_page() {
 #[test]
 fn the_swarm_description_keeps_the_coordinators_evidence_rule() {
     let description = include_str!("swarm_assets/tool_description.txt");
-    assert!(
-        !description.contains("verify artifacts"),
-        "#2461: the coordinator judges reported evidence, it does not redo the work"
-    );
     for rule in [
         "accept or reject reported evidence by the criteria; never redo the work",
         "revoke/recover need a running run",

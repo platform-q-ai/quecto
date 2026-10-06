@@ -171,6 +171,15 @@ fn optional_string(
         .map(|v| v.map(str::to_string))
 }
 
+/// The spawn's `coordinator` opt-in (#2461). Not wired yet.
+pub(super) fn parse_coordinator(
+    _args: &Value,
+    _container: &ContainerSelection,
+    _workflow_requested: bool,
+) -> Result<bool, String> {
+    Ok(false)
+}
+
 #[cfg(test)]
 #[path = "spawn_input_tests.rs"]
 mod tests;

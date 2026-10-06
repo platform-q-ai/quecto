@@ -279,7 +279,7 @@ pub(crate) fn cmd_agent(
     flags.system_prompt = Some(startup_prompt::compose(
         agents_instructions.as_deref(),
         flags.system_prompt.as_deref(),
-        crate::interface::shared::PromptRole::of(flags.spawned, flags.coordinator),
+        startup_prompt::role(&flags),
         &build.extension_prompt_snippets,
         &parent_playbook,
     ));
@@ -649,7 +649,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
     let system_prompt = startup_prompt::compose(
         agents_instructions.as_deref(),
         flags.system_prompt.as_deref(),
-        crate::interface::shared::PromptRole::of(flags.spawned, flags.coordinator),
+        startup_prompt::role(&flags),
         &build.extension_prompt_snippets,
         &parent_playbook,
     );

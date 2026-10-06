@@ -457,6 +457,11 @@ impl SpawnTool {
             has("write") && has("edit")
         };
 
+        let coordinator = super::spawn_input::parse_coordinator(
+            &args,
+            &container,
+            workflow || workflow_spec.is_some(),
+        )?;
         let config = SubagentConfig {
             task,
             container,
@@ -471,6 +476,7 @@ impl SpawnTool {
             disable_tools,
             read_only,
             backend: super::spawn_launch_args::parse_backend_arg(args.get("backend"))?,
+            coordinator,
         };
         crate::domain::external_agent::backend::validate_backend(
             &config,

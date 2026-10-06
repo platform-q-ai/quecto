@@ -26,6 +26,7 @@ fn config() -> SubagentConfig {
         read_only: false,
         container: crate::domain::subagent::ContainerSelection::Local,
         backend: Default::default(),
+        coordinator: false,
     }
 }
 
