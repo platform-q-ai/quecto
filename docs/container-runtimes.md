@@ -21,6 +21,15 @@ The `spawn` tool's `container` field selects the launch adapter:
 | `{"mode": "existing", "ref": "C1"}` | Join the existing session environment `C1` via its retained `exec` script |
 | `{"mode": "existing", "name": "review-env"}` | Join an existing environment by its (unambiguous) name |
 
+The tool schema types `container` as a boolean or one of the objects
+above (`anyOf`: `mode: new` with optional `container_config` and `name`;
+`mode: existing` with `ref`; `mode: existing` with `name`), so pass the
+value itself, not a quoted JSON string. Some models quote it anyway, so a string
+holding exactly one JSON `true`, `false` or object (only JSON whitespace
+around it) is read as that value and checked like one; any other string,
+number, array or `null` is refused with a message naming what arrived and
+how to send it.
+
 Unknown fields are rejected. Runtime-specific fields (`branch`, `pr`,
 `image`, ...) do not exist. `mode: existing` requires exactly one of
 `ref`/`name`; unknown, ambiguous, stopped, or stale (kill pending/failed)

@@ -23,5 +23,8 @@ pub mod tool_policy;
 
 #[cfg(test)]
 mod find_tests;
+#[cfg(test)]
+#[path = "tool_schema_typing_tests.rs"]
+mod tool_schema_typing_tests;
 
 pub mod web_fetch;

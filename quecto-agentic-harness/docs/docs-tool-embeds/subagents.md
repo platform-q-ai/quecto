@@ -37,7 +37,7 @@ With `container_configs` configured, `spawn` can place a child in an isolated co
 
 **Run a subagent in this repo's container** (six steps):
 1. `agent_cmd {"agent_id":"*","command":"get_container_configs"}` → `container_configs[]` with `name`, `default`, `source` (`overlay` = repo-bound, `global`), `repository`, `problem`, `joinable` (= the spawn description's `Available container configs:` line).
-2. `spawn {"agent_id":"…","task":"…","container":true}` — this repo's `standard` entry when the roster shows one (no global default overrides it; none? `quecto container init`), else the labelled default; or `"container":{"mode":"new","container_config":"<name>","name"?}` (`name` for later joins/kills).
+2. `spawn {"agent_id":"…","task":"…","container":true}` — this repo's `standard` entry when the roster shows one (no global default overrides it; none? `quecto container init`), else the labelled default; or `"container":{"mode":"new","container_config":"<name>","name"?}` (`name` for later joins/kills). Pass it unquoted.
 3. Check `container_config=<name>` in the result is the repo meant.
 4. On failure the error quotes the script's stderr; run `quecto container doctor` here, apply the remedy, retry.
 5. `overlay_withheld: true` / `container: true refused` → the overlay is untrusted, refused or unparseable; `diagnostics` says which (`quecto config trust` if untrusted), then retry.
