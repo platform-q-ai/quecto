@@ -59,6 +59,7 @@ pub(super) fn base_config(container: ContainerSelection) -> SubagentConfig {
         disable_tools: Vec::new(),
         read_only: false,
         backend: Default::default(),
+        coordinator: false,
     }
 }
 

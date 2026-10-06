@@ -1,4 +1,4 @@
-Goal: Independent effectiveness and simplicity review of PR <PR> (delivering <ISSUE><, part of epic EPIC>), bound to head <HEAD_SHA>. Re-check the head SHA before starting; if it moves, stop and ask the parent which revision to review. Judge whether the change actually works and holds up, and whether it is as small as it can be — not merely whether it matches the issue text.
+Goal: Independent effectiveness and simplicity review of PR <PR> (delivering <ISSUE><, part of epic EPIC>), bound to head <HEAD_SHA>. Re-check the head SHA before starting; if it moves, ask the parent which revision to review before going on. Judge whether the change actually works and holds up, and whether it is as small as it can be — not merely whether it matches the issue text.
 
 Setup and rules:
 - Fresh review swarm with its own container and checkout; a fixed small pool chosen up front; member_limit 25.

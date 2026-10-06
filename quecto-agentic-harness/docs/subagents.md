@@ -176,7 +176,10 @@ and continue when the note arrives; do not invent a same-turn wait.
 
 When the LLM calls the `spawn` tool, quecto launches a new `quecto agent`
 process in UDS mode (`--mode uds --spawned --parent-control <sidecar>`; never
-`--persist`, see [Lifetime](#lifetime-and-session-restore-1937)). The child process:
+`--persist`, see [Lifetime](#lifetime-and-session-restore-1937)). A spawn with
+`coordinator: true` (accepted only for a new container) also passes
+`--coordinator`, so the child starts from the coordinator preamble and the
+bundled `COORDINATOR_PLAYBOOK.md` instead of the subagent preamble (#2461). The child process:
 
 - Uses the same quecto binary (`std::env::current_exe()`)
 - Inherits the parent's `QUECTO_BASE_DIR` (config, credentials, sessions)
@@ -617,7 +620,7 @@ that need to restrict which subagents can be spawned.
 
 ### Startup
 
-1. `spawn` launches the child with `quecto agent --mode uds --socket <path> --spawned --parent-control <sidecar>` (no `--persist`, #1937)
+1. `spawn` launches the child with `quecto agent --mode uds --socket <path> --spawned --parent-control <sidecar>` (no `--persist`, #1937), plus `--coordinator` for a spawn with `coordinator: true` (#2461)
 2. Polls for socket readiness (100ms intervals, 10s timeout)
 3. If the socket does not become ready, the child is terminated through the owned-child supervisor and an error is returned
 4. Registers the child in the shared `SubagentRegistry` by UUID while retaining `agent_id` as the display label

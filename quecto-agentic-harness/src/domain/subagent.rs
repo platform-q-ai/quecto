@@ -101,6 +101,10 @@ pub struct SubagentConfig {
     /// asks for another. Checked by
     /// [`super::external_agent::backend::validate_backend`].
     pub backend: super::external_agent::backend::MemberBackend,
+    /// Whether this child is a swarm coordinator (#2461): an explicit spawn
+    /// opt-in, accepted only for a new container. It is launched with
+    /// `--coordinator` and starts from the coordinator playbook.
+    pub coordinator: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

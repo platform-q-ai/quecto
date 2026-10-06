@@ -20,6 +20,7 @@ fn base_config() -> SubagentConfig {
         disable_tools: Vec::new(),
         read_only: false,
         backend: Default::default(),
+        coordinator: false,
     }
 }
 
@@ -350,4 +351,42 @@ fn only_local_children_get_this_agents_extensions() {
     };
     assert_eq!(tool.extensions_for_child(&local), listed);
     assert!(tool.extensions_for_child(&container).is_empty());
+}
+
+/// #2461 review: only a spawn that asks for a coordinator gets the
+/// coordinator prompt; it is launched into a new container.
+#[test]
+fn coordinator_launches_carry_the_coordinator_flag() {
+    let mut cfg = base_config();
+    cfg.container = crate::domain::subagent::ContainerSelection::New {
+        container_config: None,
+        name: None,
+    };
+    cfg.coordinator = true;
+    let strs = as_strings(&build_child_cli_args(&spec(&cfg)));
+    assert!(strs.iter().any(|a| a == "--spawned"), "{strs:?}");
+    assert!(strs.iter().any(|a| a == "--coordinator"), "{strs:?}");
+}
+
+/// #2461 review: an ordinary container child (new or joined) and every
+/// local child, swarm workers included, stay ordinary subagents.
+#[test]
+fn children_not_asked_to_coordinate_never_carry_the_coordinator_flag() {
+    use crate::domain::environment_registry::EnvironmentTarget;
+    use crate::domain::subagent::ContainerSelection;
+    for container in [
+        ContainerSelection::Local,
+        ContainerSelection::New {
+            container_config: None,
+            name: None,
+        },
+        ContainerSelection::Existing {
+            target: EnvironmentTarget::Name("l2".into()),
+        },
+    ] {
+        let mut cfg = base_config();
+        cfg.container = container;
+        let strs = as_strings(&build_child_cli_args(&spec(&cfg)));
+        assert!(!strs.iter().any(|a| a == "--coordinator"), "{strs:?}");
+    }
 }

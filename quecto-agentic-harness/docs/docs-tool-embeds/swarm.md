@@ -13,7 +13,7 @@ containers to evade its limit. See `docs {"name":"subagents"}` for launching.
   entry — `agent_cmd {"agent_id":"*","command":"get_container_configs"}` lists
   the names (the spawn description's roster line shows the same set) — and
   names it
-  explicitly: `spawn {"agent_id":"coordinator","task":"…","container":{"mode":"new","container_config":"<name>"}}`
+  explicitly: `spawn {"agent_id":"coordinator","task":"…","coordinator":true,"container":{"mode":"new","container_config":"<name>"}}`
   (`"container": true` = this repo's `standard` entry when one exists — no
   global default overrides it; run `quecto container init` first if the
   roster shows none — else the labelled default). The result's
@@ -34,7 +34,7 @@ containers to evade its limit. See `docs {"name":"subagents"}` for launching.
   `docs {"name": "container-runtime"}` until `quecto container doctor` exits 0
   and `quecto container status` reports the image present (its last line is
   `ready:`), then spawn the
-  coordinator with `"container":{"mode":"new","container_config":"standard"}`.
+  coordinator with `"coordinator":true,"container":{"mode":"new","container_config":"standard"}`.
   Verify: the spawn result names `container_config=standard`; the
   coordinator's `swarm op=create` succeeds; `agent_cmd get_containers` lists
   the environment `running`. Rollback: `kill_container` or `quecto container kill <ref|name>`
@@ -216,7 +216,9 @@ submitted task. An amendment keeps the full contract before and after it.
 Persist final evidence before `complete` or `stop`, and report from the
 harness afterward.
 
-Actually inspect command results and independent review before accepting them.
+Accept or reject reported command results and review evidence against the
+criteria; reject with reasons when they fall short. Do not re-run or re-derive
+the work yourself: CI and the PR review rounds catch what slips through.
 Worker proposals, an empty queue or a message acknowledgment do not prove done.
 Only the coordinator may amend, verify, revalidate, complete, stop, revoke or recover.
 Workers may call `evidence`; their proposals never authorize completion.

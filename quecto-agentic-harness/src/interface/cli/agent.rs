@@ -53,19 +53,20 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
     let mut admission_context: Option<std::path::PathBuf> = None;
     let mut parent_control: Option<std::path::PathBuf> = None;
     let mut inherited_tool_policy_path: Option<std::path::PathBuf> = None;
-    let mut spawned = false;
+    let (mut spawned, mut coordinator) = (false, false);
     let mut no_extensions = false;
     let mut backend = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             f @ ("--no-session" | "--persist" | "--workflow" | "--workflow-guards"
-            | "--spawned" | "--no-extensions") => {
+            | "--spawned" | "--no-extensions" | "--coordinator") => {
                 *match f {
                     "--no-session" => &mut no_session,
                     "--persist" => &mut persist,
                     "--workflow" => &mut workflow,
                     "--spawned" => &mut spawned,
+                    "--coordinator" => &mut coordinator,
                     "--no-extensions" => &mut no_extensions,
                     _ => &mut workflow_guards,
                 } = true;
@@ -192,6 +193,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         inherited_tool_policy: None,
         parent_id,
         spawned,
+        coordinator,
         launch_extensions: !no_extensions,
         parent_identity_override: None,
         session_key_override: None,
@@ -274,10 +276,9 @@ pub(crate) fn cmd_agent(
         None => return 1,
     };
 
-    flags.system_prompt = Some(startup_prompt::compose(
+    flags.system_prompt = Some(startup_prompt::compose_for(
+        &flags,
         agents_instructions.as_deref(),
-        flags.system_prompt.as_deref(),
-        flags.spawned,
         &build.extension_prompt_snippets,
         &parent_playbook,
     ));
@@ -644,10 +645,9 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
     // session (#1113): workflow state is never appended, so the provider-side
     // cached prefix survives every workflow step. Dynamic workflow state
     // reaches the model through tool results and idle-boundary nudges.
-    let system_prompt = startup_prompt::compose(
+    let system_prompt = startup_prompt::compose_for(
+        &flags,
         agents_instructions.as_deref(),
-        flags.system_prompt.as_deref(),
-        flags.spawned,
         &build.extension_prompt_snippets,
         &parent_playbook,
     );

@@ -131,6 +131,8 @@ fn claude_code_launch_allowed(
         task: _,
         agent_id: _,
         backend: _,
+        // Accepted only for a new container, which the match below refuses.
+        coordinator: _,
         container,
         workflow,
         workflow_guards,

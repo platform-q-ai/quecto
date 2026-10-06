@@ -331,8 +331,10 @@ fn the_spawn_and_swarm_descriptions_stay_within_the_budget() {
 /// coordinator's inbox rule replaced field types the schema already states,
 /// then from 3,446 when #2394 made every op answer what it changed (no
 /// "null for none"), then from 3,417 when the get_messages rule replaced
-/// revoke's gloss: it only shrinks.
-const SWARM_DESCRIPTION_BUDGET_BYTES: usize = 3_410;
+/// revoke's gloss, then from 3,410 when the coordinator's evidence rule
+/// replaced "verify artifacts" (#2461), then from 3,404 when waiting for the
+/// master stopped asking for a block the board refuses: it only shrinks.
+const SWARM_DESCRIPTION_BUDGET_BYTES: usize = 3_385;
 
 #[test]
 fn the_swarm_descriptions_coordinator_prose_is_in_the_docs_page() {
@@ -364,13 +366,13 @@ fn the_swarm_descriptions_coordinator_prose_is_in_the_docs_page() {
 
 /// #2348 review M2: the docs page a coordinator read collapses to a stub
 /// three turns later, so the rules no refusal teaches stay in the
-/// description: verify before accepting, revoke/recover need a running
-/// run, a recorded loss pauses it.
+/// description: judge evidence without redoing the work (#2461),
+/// revoke/recover need a running run, a recorded loss pauses it.
 #[test]
-fn the_swarm_description_keeps_the_coordinators_verify_rule() {
+fn the_swarm_description_keeps_the_coordinators_evidence_rule() {
     let description = include_str!("swarm_assets/tool_description.txt");
     for rule in [
-        "verify artifacts and independent review before accepting evidence or complete",
+        "accept or reject reported evidence by the criteria; never redo the work",
         "revoke/recover need a running run",
         "a recorded loss pauses the run",
     ] {

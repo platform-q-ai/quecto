@@ -39,14 +39,14 @@ fn one_shot_and_uds_share_the_same_startup_prompt_composer() {
     let one_shot = startup_prompt::compose(
         instructions.as_deref(),
         explicit.as_deref(),
-        false,
+        crate::interface::shared::PromptRole::Parent,
         "Extension marker",
         "Parent playbook marker",
     );
     let uds = startup_prompt::compose(
         instructions.as_deref(),
         explicit.as_deref(),
-        false,
+        crate::interface::shared::PromptRole::Parent,
         "Extension marker",
         "Parent playbook marker",
     );
@@ -179,7 +179,7 @@ fn override_is_composed_only_for_parent_and_keeps_other_prompt_sources() {
     let parent = startup_prompt::compose(
         Some("Project AGENTS"),
         Some("Explicit instructions"),
-        false,
+        crate::interface::shared::PromptRole::Parent,
         "Extension instructions",
         &playbook,
     );
@@ -196,7 +196,7 @@ fn override_is_composed_only_for_parent_and_keeps_other_prompt_sources() {
     let child = startup_prompt::compose(
         None,
         Some("Explicit child instructions"),
-        true,
+        crate::interface::shared::PromptRole::Subagent,
         "",
         &child_playbook,
     );
@@ -255,4 +255,22 @@ fn present_invalid_override_fails_parent_startup_but_does_not_affect_child() {
     assert!(startup_prompt::load_parent_playbook(&context, false, &mut errors).is_none());
     assert!(errors.contains("not valid UTF-8"));
     assert!(startup_prompt::load_parent_playbook(&context, true, &mut String::new()).is_some());
+}
+
+/// #2461 review: startup takes the prompt role from the parsed launch flags,
+/// so `--spawned --coordinator` composes the coordinator playbook.
+#[test]
+fn startup_composes_the_role_named_by_the_launch_flags() {
+    let document = include_str!("../../../../COORDINATOR_PLAYBOOK.md").trim_end();
+    let argv = |parts: &[&str]| parts.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let mut errors = String::new();
+    for (parts, coordinator) in [
+        (&["--mode", "uds", "--spawned", "--coordinator"][..], true),
+        (&["--mode", "uds", "--spawned"][..], false),
+        (&["--mode", "uds"][..], false),
+    ] {
+        let flags = super::parse_agent_flags(&argv(parts), &mut errors).unwrap();
+        let prompt = startup_prompt::compose_for(&flags, None, "", "");
+        assert_eq!(prompt.contains(document), coordinator, "{parts:?}");
+    }
 }

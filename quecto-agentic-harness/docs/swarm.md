@@ -19,7 +19,7 @@ capability. **The swarm runs in the container the coordinator was spawned
 into**: the master picks a `container_configs` entry by name —
 `agent_cmd {"agent_id":"*","command":"get_container_configs"}` lists the
 effective names for the master's checkout, and the spawn tool description
-carries the same roster — and launches the coordinator with
+carries the same roster — and launches the coordinator with `"coordinator": true`,
 `"container": {"mode":"new","container_config":"<name>"}` (`"container": true`
 selects this repo's `standard` entry when one exists — no global default
 overrides it; run `quecto container init` first if the roster shows none —
@@ -68,6 +68,8 @@ plants a coordination file in the host checkout. Linux procfs supplies process
 start identities for conservative lifecycle reconciliation.
 
 The first in-container agent is the coordinator and designated Git integrator.
+The parent spawns it with `coordinator: true` (a new container only), so it
+starts from the bundled coordinator playbook (#2461).
 The external supervising parent is not a member. Initial harness startup records
 membership in a setup board; creation cannot choose a smaller limit than the
 already live/reserved population. Create the run before launching the pool.
@@ -379,10 +381,11 @@ cannot verify the replacement. A submitted task cannot be changed to blocked. On
 tasks with `verify_task` (`task_id`, the claim `token`, `revision`), accept
 evidence using `evidence` (`criterion`, `artifact`, `revision`, `kind`,
 `passed`), and `complete` (`revision`).
-A worker's `evidence` call records an unaccepted submission. A coordinator must
-actually inspect command results and obtain the required independent/human
-review before accepting them; the board does not execute tests or act as an
-independent reviewer. `command` and `review` evidence are distinguished.
+A worker's `evidence` call records an unaccepted submission. A coordinator
+accepts or rejects it on the reported command results and the required
+independent/human review, judged against the criteria, and rejects with reasons
+when they fall short; it does not re-run or re-derive the work (#2461). The
+board does not execute tests or act as an independent reviewer. `command` and `review` evidence are distinguished.
 
 Completion requires accepted evidence for every original criterion at the
 specified revision, completed tasks with matching evidence revisions, and no

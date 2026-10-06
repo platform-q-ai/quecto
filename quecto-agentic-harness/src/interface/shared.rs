@@ -27,21 +27,55 @@ fn child_role_preamble() -> &'static str {
     "You are a subagent responsible for the assigned task. Solve it directly by default. You may delegate a bounded, independently useful subtask when doing so materially improves the result. Do not delegate your entire assignment, create another coordinator for the same task, or spawn agents merely to reduce your own context. Remain responsible for integrating and verifying delegated results."
 }
 
-fn core_system_prompt_with_playbook(spawned: bool, playbook: &str) -> String {
-    let role = if spawned {
-        child_role_preamble()
-    } else {
-        agent_role_preamble()
-    };
-    let mut sections = vec![role];
-    if !spawned {
-        sections.push(playbook);
+/// Swarm coordinator identity (#2461); its policy is the coordinator playbook.
+fn coordinator_role_preamble() -> &'static str {
+    "You are the swarm coordinator for one bounded phase inside Quecto. You plan and specify the phase, judge your workers' reported evidence, integrate the result, and report to the parent; your workers do the hands-on work."
+}
+
+/// Coordinator-only policy, packaged beside the parent playbook (#2461).
+fn coordinator_playbook() -> &'static str {
+    include_str!("../../../COORDINATOR_PLAYBOOK.md").trim_ascii_end()
+}
+
+/// Which core prompt an agent starts from (#2461), chosen only by its
+/// explicit launch flags: never inferred from session, env or socket.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptRole {
+    /// A top-level agent: the parent preamble and playbook.
+    Parent,
+    /// A swarm coordinator: spawned with the explicit `--coordinator` flag.
+    Coordinator,
+    /// Any other spawned agent, swarm workers included.
+    Subagent,
+}
+
+impl PromptRole {
+    /// The role of an agent started with `--spawned` and `--coordinator`.
+    /// Flag validation refuses `--coordinator` without `--spawned`.
+    pub fn of(spawned: bool, coordinator: bool) -> Self {
+        assert!(
+            spawned || !coordinator,
+            "--coordinator without --spawned is refused at flag validation"
+        );
+        match (spawned, coordinator) {
+            (false, _) => Self::Parent,
+            (true, false) => Self::Subagent,
+            (true, true) => Self::Coordinator,
+        }
     }
+}
+
+fn core_system_prompt_with_playbook(role: PromptRole, playbook: &str) -> String {
+    let sections = match role {
+        PromptRole::Parent => vec![agent_role_preamble(), playbook],
+        PromptRole::Coordinator => vec![coordinator_role_preamble(), coordinator_playbook()],
+        PromptRole::Subagent => vec![child_role_preamble()],
+    };
     sections.join("\n\n")
 }
 
 fn core_system_prompt(spawned: bool) -> String {
-    core_system_prompt_with_playbook(spawned, parent_coordination_policy())
+    core_system_prompt_with_playbook(PromptRole::of(spawned, false), parent_coordination_policy())
 }
 
 fn append_prompt_section(prompt: &mut String, heading: &str, content: &str) {
@@ -74,21 +108,22 @@ pub fn build_agent_system_prompt(
     build_agent_system_prompt_with_playbook(
         agents_instructions,
         user_prompt,
-        spawned,
+        PromptRole::of(spawned, false),
         extension_snippets,
         parent_coordination_policy(),
     )
 }
 
-/// Compose startup sources with a parent-only playbook selected at initialization.
+/// Compose startup sources for `role`, with a parent-only playbook selected
+/// at initialization.
 pub fn build_agent_system_prompt_with_playbook(
     agents_instructions: Option<&str>,
     user_prompt: Option<&str>,
-    spawned: bool,
+    role: PromptRole,
     extension_snippets: &str,
     playbook: &str,
 ) -> String {
-    let mut prompt = core_system_prompt_with_playbook(spawned, playbook);
+    let mut prompt = core_system_prompt_with_playbook(role, playbook);
     prompt.push_str("\n\n## End Core Instructions");
     if let Some(instructions) = agents_instructions {
         append_prompt_section(&mut prompt, "agents-md-instructions", instructions);

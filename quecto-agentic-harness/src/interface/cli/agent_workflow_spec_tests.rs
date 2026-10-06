@@ -27,6 +27,7 @@ pub(super) fn uds_workflow_flags(workflow: bool, workflow_disabled: bool) -> Age
         inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
+        coordinator: false,
         launch_extensions: true,
         parent_identity_override: None,
         session_key_override: None,

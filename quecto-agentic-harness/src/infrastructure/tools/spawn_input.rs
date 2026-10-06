@@ -171,6 +171,47 @@ fn optional_string(
         .map(|v| v.map(str::to_string))
 }
 
+/// The spawn's `coordinator` opt-in (#2461): absent, null or false is an
+/// ordinary child. `true` (or the quoted `"true"` some providers send, #2455)
+/// names a swarm coordinator, which starts its run in a fresh container, so it
+/// is accepted only for a new container, never beside a workflow (a workflow
+/// agent cannot create a swarm) and never from a swarm member (members never
+/// launch containers). Any other value is refused.
+pub(super) fn parse_coordinator(
+    args: &Value,
+    container: &ContainerSelection,
+    launcher_is_swarm_member: bool,
+) -> Result<bool, String> {
+    let set = |key: &str| args.get(key).and_then(Value::as_bool) == Some(true);
+    let workflow_requested = set("workflow")
+        || set("workflow_guards")
+        || args
+            .get("workflow_spec")
+            .is_some_and(|spec| !spec.is_null());
+    let requested = match args.get("coordinator") {
+        None | Some(Value::Null) | Some(Value::Bool(false)) => false,
+        Some(Value::Bool(true)) => true,
+        Some(Value::String(text)) if text == "false" => false,
+        Some(Value::String(text)) if text == "true" => true,
+        Some(_) => return Err("coordinator must be a boolean".to_string()),
+    };
+    if requested && launcher_is_swarm_member {
+        return Err("a swarm member cannot launch a coordinator".to_string());
+    }
+    match (requested, container, workflow_requested) {
+        (false, _, _) => Ok(false),
+        (true, ContainerSelection::New { .. }, false) => Ok(true),
+        (true, ContainerSelection::New { .. }, true) => Err(
+            "coordinator cannot run a workflow: a workflow agent cannot create a swarm".to_string(),
+        ),
+        (true, ContainerSelection::Local | ContainerSelection::Existing { .. }, _) => Err(
+            "coordinator requires a new container: a coordinator starts its swarm in a fresh \
+             container (container true or {\"mode\":\"new\"})"
+                .to_string(),
+        ),
+    }
+}
+
 #[cfg(test)]
 #[path = "spawn_input_tests.rs"]
 mod tests;
