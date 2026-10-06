@@ -418,7 +418,7 @@ fn launch_harness(world: &mut QuectoWorld, bind_deadline: BindDeadline) {
             retention: None,
             base_dir: &base_dir,
             workspace: &base_dir,
-            identity: quecto::domain::session_identity::SessionIdentity::from_persisted_key(
+            identity: quecto::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key(
                 &session_key,
             ),
             model,

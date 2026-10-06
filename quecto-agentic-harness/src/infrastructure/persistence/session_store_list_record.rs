@@ -4,8 +4,8 @@
 //! a hand-renamed or symlinked file, an unreadable or invalid one, a file
 //! replaced mid-read — so no record ever vanishes from the list silently.
 use crate::domain::message::Role;
-use crate::domain::session::SessionSummary;
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session::SessionSummary;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 use super::super::super::super::session_home_catalogue::stamp;
 use super::super::super::super::session_layout::FlatSessionLayout;

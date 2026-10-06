@@ -35,7 +35,7 @@ async fn two_reads(newest: Value, older: Value) -> [(Value, usize, Option<u64>);
     let seen = serve_child(&sock, vec![(None, newest), (Some("p"), older)], vec![]);
     let registry = new_registry();
     let mut entry = SubagentEntry::new(sock.clone(), 0);
-    entry.persisted_liveness = crate::domain::session::SubagentLiveness::Live;
+    entry.persisted_liveness = crate::domain::sessions::entities::session::SubagentLiveness::Live;
     registry.lock().unwrap().insert("w1".to_string(), entry);
     let tool = AgentCmdTool::new(registry.clone());
     let args = r#"{"agent_id":"w1","command":"get_messages"}"#;

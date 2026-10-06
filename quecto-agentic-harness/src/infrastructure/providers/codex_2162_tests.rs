@@ -667,7 +667,7 @@ async fn every_path_names_its_session() {
 /// Review 2: a real chat key, at its longest, keeps its prefix.
 #[test]
 fn the_longest_chat_key_keeps_its_prefix() {
-    let key = crate::domain::session::user_chat_key(u64::MAX, u64::MAX);
+    let key = crate::domain::sessions::entities::session::user_chat_key(u64::MAX, u64::MAX);
     let prefix = key.split(':').next().unwrap();
     assert!(
         CodexProvider::sanitize_cache_key(&key).starts_with(&format!("{prefix}:")),

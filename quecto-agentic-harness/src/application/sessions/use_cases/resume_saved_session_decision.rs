@@ -8,9 +8,9 @@ use crate::application::sessions::dto::{
 };
 use crate::application::sessions::ports::SessionStore;
 use crate::application::sessions::session_home::{HomeObstacle, SessionHomeContext};
-use crate::domain::resume_decision::HomeVersion;
-use crate::domain::session::Session;
-use crate::domain::session_home::SessionHomeScope;
+use crate::domain::sessions::entities::session::Session;
+use crate::domain::sessions::entities::session_home::SessionHomeScope;
+use crate::domain::sessions::services::resume_decision::HomeVersion;
 
 /// What the admission of a request leaves to do.
 pub(super) struct Admitted(pub(super) ResumeTarget);

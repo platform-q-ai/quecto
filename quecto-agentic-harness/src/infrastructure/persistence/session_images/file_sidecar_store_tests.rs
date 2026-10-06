@@ -12,7 +12,7 @@ use super::FileImageSidecarStore;
 use crate::domain::conversation::stored_images::{
     ImageRef, MAX_STORED_IMAGE_TEXT, VerifiedText, sha256_hex,
 };
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
 
 fn id() -> SessionIdentity {

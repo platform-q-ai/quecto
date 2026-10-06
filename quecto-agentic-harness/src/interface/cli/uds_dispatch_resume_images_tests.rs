@@ -11,8 +11,8 @@ use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::application::sessions::ports::SessionStore;
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message, Role, ToolCall, UserImageBlock};
-use crate::domain::session::Session;
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session::Session;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::domain::tool::ImageBlock;
 use crate::interface::cli::protocol::AgentCommand;
 

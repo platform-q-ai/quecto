@@ -3,7 +3,7 @@ use crate::application::sessions::use_cases::recover_message::tests::{
     MemSpillStore, NoopSpillStore, collapsed_message, spill_entry,
 };
 use crate::domain::message::Message;
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use std::sync::Arc;
 
 #[test]

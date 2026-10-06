@@ -12,7 +12,7 @@
 use super::super::session_layout::FlatSessionLayout;
 use super::super::session_store::session_store_home::error;
 use super::stamp;
-use crate::domain::{error::DomainError, session_identity::SessionIdentity};
+use crate::domain::{error::DomainError, sessions::entities::session_identity::SessionIdentity};
 use serde::{Deserializer, de::IgnoredAny};
 use std::{collections::BTreeMap, path::Path, path::PathBuf};
 

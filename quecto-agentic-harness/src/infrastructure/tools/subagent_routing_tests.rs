@@ -1,4 +1,4 @@
-use crate::domain::session::SubagentLiveness;
+use crate::domain::sessions::entities::session::SubagentLiveness;
 
 use super::subagent_registry::{SubagentEntry, lookup_subagent_socket, new_registry};
 use super::subagent_routing::{

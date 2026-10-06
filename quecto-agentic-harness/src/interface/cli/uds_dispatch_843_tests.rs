@@ -614,7 +614,7 @@ async fn forward_get_message_unknown_agent_is_error_event() {
 
 #[tokio::test]
 async fn forward_get_messages_rejects_duplicate_historical_display_names() {
-    use crate::domain::session::SubagentLiveness;
+    use crate::domain::sessions::entities::session::SubagentLiveness;
 
     let registry = new_registry();
     for uuid in ["dead-a", "dead-b"] {

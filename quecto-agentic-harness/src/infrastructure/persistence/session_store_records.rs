@@ -1,6 +1,6 @@
 use crate::domain::conversation::stored_images::{ImageRef, MessageImageRefs};
 use crate::domain::message::{Message, Role, StopReason, ThinkingBlock, ToolCall};
-use crate::domain::session::PersistedSubagentRosterEntry;
+use crate::domain::sessions::entities::session::PersistedSubagentRosterEntry;
 use crate::domain::workflow::WorkflowRunPersisted;
 use crate::infrastructure::persistence::session_images::ImageRefRecord;
 use crate::infrastructure::turn_origin_names::{self as names, origin_from_name, origin_name};

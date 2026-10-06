@@ -13,7 +13,7 @@ use super::{estimate_tokens, truncate_utf8_safe};
 use crate::application::sessions::use_cases::RetainContext;
 use crate::domain::conversation::stored_images as images;
 use crate::domain::message::{Message, Role};
-use crate::domain::session::SpillEntry;
+use crate::domain::sessions::entities::session::SpillEntry;
 use crate::domain::turn_origin::latest_opener;
 
 // #2213: the emergency ladder and its low-water mark.
@@ -122,7 +122,7 @@ fn exempt_flags(messages: &[Message], pin_recent_turns: u32) -> Vec<bool> {
 pub async fn spill_conversation_message(
     msg: &mut Message,
     retain: &RetainContext,
-    session_key: &crate::domain::session_identity::SessionIdentity,
+    session_key: &crate::domain::sessions::entities::session_identity::SessionIdentity,
 ) -> bool {
     if !is_conversation(msg) || msg.is_collapsed || !images::has_text_or_user_image(msg) {
         return false;

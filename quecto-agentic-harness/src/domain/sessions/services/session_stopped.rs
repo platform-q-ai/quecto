@@ -4,7 +4,7 @@
 
 use std::collections::HashSet;
 
-use super::message::{Message, Role};
+use crate::domain::message::{Message, Role};
 
 /// Give every tool call of this run without a result an error result that
 /// says the run stopped first, placed after the results of its own
@@ -58,7 +58,11 @@ pub fn answer_unfinished_tool_calls(
     added
 }
 
-fn stopped_result(call: &super::message::ToolCall, turn: Option<u32>, reason: &str) -> Message {
+fn stopped_result(
+    call: &crate::domain::message::ToolCall,
+    turn: Option<u32>,
+    reason: &str,
+) -> Message {
     let mut result = Message::tool(
         call.id.clone(),
         format!("{reason} before this call finished; whether it had any effect is unknown"),

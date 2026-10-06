@@ -6,7 +6,7 @@
 //! Pure rules over typed observations of the messages; the `agent_cmd`
 //! adapter parses the child's wire response into them, applies these
 //! rules, and keeps the transport budget and envelope shaping to itself.
-use super::session::PendingMessageReport;
+use super::sessions::entities::session::PendingMessageReport;
 use super::turn_origin::{TurnOrigin, report_index};
 use std::collections::VecDeque;
 

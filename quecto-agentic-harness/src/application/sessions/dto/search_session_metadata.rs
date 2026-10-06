@@ -4,7 +4,7 @@
 //! values only — no wire field, no adapter record.
 pub use super::search_limits::{QueryGeneration, SearchLimit};
 use super::{ListedSession, SessionListScope};
-use crate::domain::session_metadata_search::{MatchedField, QueryRefusal};
+use crate::domain::sessions::services::session_metadata_search::{MatchedField, QueryRefusal};
 
 #[derive(Debug, Clone, Default)]
 pub struct SearchSessionMetadataRequest {

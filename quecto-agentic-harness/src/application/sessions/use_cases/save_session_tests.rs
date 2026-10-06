@@ -13,8 +13,8 @@ use super::rig_tests::{
 use crate::application::sessions::dto::{SaveMode, SaveOutcome, SaveSessionError, SaveTrigger};
 use crate::domain::error::DomainError;
 use crate::domain::message::{Message, Role};
-use crate::domain::session::SubagentRestoreReason;
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session::SubagentRestoreReason;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 #[tokio::test]
 async fn an_ephemeral_run_and_the_empty_key_are_affirmative_no_ops() {

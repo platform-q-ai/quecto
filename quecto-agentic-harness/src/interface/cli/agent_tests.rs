@@ -1,6 +1,6 @@
 use super::*;
 use crate::composition::tool_policy::build_tool_policy_persistence;
-use crate::domain::session::Session;
+use crate::domain::sessions::entities::session::Session;
 
 use crate::interface::cli::{CliContext, CliOutput, run_with_output};
 

@@ -5,9 +5,9 @@ use std::collections::HashMap;
 
 use crate::application::sessions::dto::{ListSessionsResult, ListedSession, SessionListScope};
 use crate::application::sessions::session_home::SessionHomeContext;
-use crate::domain::session::SessionSummary;
-use crate::domain::session_home::{SessionHome, SessionHomeScope};
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session::SessionSummary;
+use crate::domain::sessions::entities::session_home::{SessionHome, SessionHomeScope};
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 /// Catalogue rows keyed by runtime key; `None` when authority is unavailable.
 type CatalogueRows = Option<HashMap<String, SessionHomeScope>>;

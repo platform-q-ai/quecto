@@ -4,10 +4,10 @@ use std::sync::{Arc, Mutex};
 
 use super::*;
 use crate::application::sessions::dto::{ListSessionsRequest, SessionListQuery, SessionListScope};
-use crate::domain::session::Session;
-use crate::domain::session::SessionSummary;
-use crate::domain::session_home::SessionHomeScope;
-use crate::domain::session_identity::{SessionIdentity, SessionKeyPrefix};
+use crate::domain::sessions::entities::session::Session;
+use crate::domain::sessions::entities::session::SessionSummary;
+use crate::domain::sessions::entities::session_home::SessionHomeScope;
+use crate::domain::sessions::entities::session_identity::{SessionIdentity, SessionKeyPrefix};
 
 /// A store fake that records the queries it receives and answers with a
 /// scripted outcome; it never loads a session (list is summary-only).
@@ -170,7 +170,9 @@ async fn local_discovery_without_workspace_facts_never_broadens_to_global() {
 use crate::application::sessions::ports::session_home::{
     HomeCatalogueSnapshot, SessionHomeCatalogue, WorkspaceDiscovery,
 };
-use crate::domain::session_home::{AssociationProvenance, SessionHome, WorkspaceGroup};
+use crate::domain::sessions::entities::session_home::{
+    AssociationProvenance, SessionHome, WorkspaceGroup,
+};
 use std::path::{Path, PathBuf};
 
 struct CountingDiscovery(Mutex<Vec<PathBuf>>);

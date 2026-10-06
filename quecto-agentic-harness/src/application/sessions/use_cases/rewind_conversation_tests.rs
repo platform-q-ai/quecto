@@ -341,7 +341,7 @@ fn rewinding_keeps_collapsed_conversation_messages_as_non_empty_turns() {
 #[test]
 fn the_ledger_reset_bumps_the_epoch_once_without_double_counting_republished_messages() {
     let mut state = crate::application::sessions::active_session::ActiveSessionState::new(
-        crate::domain::session_identity::SessionIdentity::ephemeral(),
+        crate::domain::sessions::entities::session_identity::SessionIdentity::ephemeral(),
     );
     state.publish(&[Message::user("old")]);
     let epoch = state.conversation().epoch();

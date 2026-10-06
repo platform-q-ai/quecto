@@ -1,8 +1,8 @@
 //! The exact target of a resume request (#1863, #2011): admitted by
 //! affirmative rules, never by prefix or fuzzy match.
 use super::ResumeSavedSessionError;
-use crate::domain::session::USER_CHAT_PREFIX;
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session::USER_CHAT_PREFIX;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 /// The saved session a client asked to resume: the name as the client
 /// spelled it (trimmed; echoed in the acknowledgement and the not-found

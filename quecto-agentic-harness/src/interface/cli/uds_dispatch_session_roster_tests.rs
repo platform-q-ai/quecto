@@ -5,9 +5,10 @@
 //! read only to be ignored. No socket probe, no pid compare, no readoption.
 use crate::application::sessions::dto::SaveTrigger;
 use crate::domain::ids::AgentUuid;
-use crate::domain::session::{
+use crate::domain::sessions::entities::session::{
     PersistedSubagentRosterEntry, SubagentLiveness, SubagentRestoreReason,
 };
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::infrastructure::tools::subagent_registry::{
     SubagentEntry, SubagentStatus, new_registry,
 };
@@ -42,7 +43,7 @@ pub(crate) async fn persisted_roster_via_save_async(
         .expect("the save succeeds");
     handles
         .store
-        .load(&crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:roster"))
+        .load(&SessionIdentity::from_persisted_key("cli:roster"))
         .await
         .expect("load")
         .expect("saved")
@@ -289,7 +290,7 @@ async fn legacy_session_on_disk(
     dir: &std::path::Path,
     key: &str,
     rows: serde_json::Value,
-) -> crate::domain::session::Session {
+) -> crate::domain::sessions::entities::session::Session {
     use crate::application::sessions::ports::SessionStore;
     let store = crate::infrastructure::persistence::session_store::FileSessionStore::new(
         crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(dir),
@@ -308,7 +309,7 @@ async fn legacy_session_on_disk(
     });
     std::fs::write(&path, format!("{snapshot}\n")).unwrap();
     store
-        .load(&crate::domain::session_identity::SessionIdentity::from_persisted_key(key))
+        .load(&SessionIdentity::from_persisted_key(key))
         .await
         .unwrap()
         .expect("the store loads the legacy file")
@@ -562,7 +563,7 @@ pub(crate) fn loop_inputs(
 ) -> crate::interface::cli::uds_session_handles::SessionLoopInputs {
     crate::interface::cli::uds_session_handles::SessionLoopInputs {
         base_dir: base.to_path_buf(),
-        identity: crate::domain::session_identity::SessionIdentity::from_persisted_key(session_key),
+        identity: SessionIdentity::from_persisted_key(session_key),
         ephemeral: false,
         system_prompt: String::new(),
         spill_store: None,
@@ -620,7 +621,7 @@ pub(crate) async fn seed_home(
     key: &str,
 ) {
     crate::composition::session_home::build_session_home(store.clone())
-        .record_new(&crate::domain::session_identity::SessionIdentity::from_persisted_key(key))
+        .record_new(&SessionIdentity::from_persisted_key(key))
         .await
         .expect("home at the current directory");
 }

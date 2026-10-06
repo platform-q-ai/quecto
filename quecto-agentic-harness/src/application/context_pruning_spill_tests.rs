@@ -10,8 +10,8 @@ use std::sync::{Arc, Mutex};
 use super::*;
 use crate::application::sessions::ports::ContextSpillStore;
 use crate::domain::message::{Message, Role};
-use crate::domain::session::{SpillEntry, SpillIndex};
-use crate::domain::session_identity::{SessionIdentity, SpillId};
+use crate::domain::sessions::entities::session::{SpillEntry, SpillIndex};
+use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
 
 fn id(k: &str) -> SessionIdentity {
     SessionIdentity::from_persisted_key(k)

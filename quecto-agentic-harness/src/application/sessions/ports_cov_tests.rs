@@ -1,8 +1,8 @@
 use super::*;
 use crate::application::sessions::dto::SessionListQuery;
 use crate::domain::message::Role;
-use crate::domain::session::SpillIndex;
-use crate::domain::session_identity::{SessionIdentity, SpillId};
+use crate::domain::sessions::entities::session::SpillIndex;
+use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
 use std::sync::Arc;
 use std::sync::Mutex;
 

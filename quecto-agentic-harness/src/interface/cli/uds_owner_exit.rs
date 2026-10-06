@@ -3,7 +3,7 @@
 //! its exit persist and signals within seconds, so the announcement must not
 //! wait behind the dispatch queue. The same connection's close withdraws it.
 use crate::application::subagents::ports::OwnerExitAnnouncement;
-use crate::domain::session::SubagentRestoreReason;
+use crate::domain::sessions::entities::session::SubagentRestoreReason;
 
 /// Raise the announcement when `line` is the owning TUI's exit persist. The
 /// line is still forwarded to the dispatch loop, which performs the save.

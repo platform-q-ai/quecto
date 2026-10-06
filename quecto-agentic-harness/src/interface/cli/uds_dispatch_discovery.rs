@@ -3,7 +3,7 @@
 //! the backend's eligibility — with untrusted text bounded and made safe.
 use super::session_summary_to_json;
 use crate::application::sessions::dto::{ListSessionsResult, ListedSession};
-use crate::domain::{session_home::SessionHomeScope, session_metadata_text::display_path};
+use crate::domain::sessions::{entities::session_home::*, value_objects::session_metadata_text::*};
 
 /// One discovery row, shared by `list_sessions` and the metadata search (#2010).
 pub(in crate::interface::cli) fn listed_row_json(row: &ListedSession) -> serde_json::Value {

@@ -12,8 +12,8 @@ use quecto::application::sessions::dto::retained_context::{RecallOutcome, Recall
 use quecto::application::sessions::ports::{ContextSpillStore, SpillIndexList, SpillPresence};
 use quecto::composition::retention::retention_handles_over;
 use quecto::domain::error::DomainError;
-use quecto::domain::session::SpillEntry;
-use quecto::domain::session_identity::{SessionIdentity, SpillId};
+use quecto::domain::sessions::entities::session::SpillEntry;
+use quecto::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
 use quecto::infrastructure::persistence::context_spill::FileContextSpillStore;
 use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
 use std::future::Future;

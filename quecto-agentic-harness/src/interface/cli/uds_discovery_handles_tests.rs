@@ -1,7 +1,7 @@
 use crate::application::sessions::dto::{SearchSessionMetadataRequest, SessionListScope};
 use crate::domain::message::Message;
-use crate::domain::session::Session;
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session::Session;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::interface::cli::uds::dispatch_session_roster_tests::composed_sessions;
 
 /// Both handles of the composed bundle answer from the one store.

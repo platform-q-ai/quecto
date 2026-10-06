@@ -6,7 +6,7 @@ use super::super::dispatch_test_env::DispatchTestEnv as Env;
 use super::*;
 use crate::application::sessions::ports::SessionStore;
 use crate::domain::message::Role;
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 async fn persisted_user_prompts(env: &Env) -> Vec<String> {
     let session = env

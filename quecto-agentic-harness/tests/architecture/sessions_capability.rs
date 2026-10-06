@@ -67,7 +67,7 @@ use super::teardown_authority::{production_code, production_files, walk};
 /// The files the plural capability is made of (R1).
 const CANONICAL_FILES: &[&str] = &[
     // #2009 extends the existing owners with home discovery, not scoped keys.
-    "src/domain/session_home.rs",
+    "src/domain/sessions/entities/session_home.rs",
     "src/application/sessions/dto/list_sessions.rs",
     "src/application/sessions/ports/session_home.rs",
     "src/application/sessions/session_home.rs",
@@ -94,18 +94,18 @@ const CANONICAL_FILES: &[&str] = &[
     "src/application/sessions/dto/resume_disposition.rs",
     "src/application/sessions/dto/startup_refusal.rs",
     // #2011 typed resume decisions extend the resume owner, not a new one.
-    "src/domain/resume_decision.rs",
+    "src/domain/sessions/services/resume_decision.rs",
     "src/application/sessions/dto/resume_decision.rs",
     "src/application/sessions/dto/resume_refusal_text.rs",
     "src/application/sessions/dto/resume_refusal_code.rs",
     "src/application/sessions/dto/resume_target.rs",
-    "src/domain/stable_digest.rs",
+    "src/domain/sessions/services/stable_digest.rs",
     "src/interface/cli/uds_safe_display.rs",
     "src/application/sessions/use_cases/resume_saved_session_decision.rs",
     "src/interface/uds/sessions/resume_session_controller.rs",
     "src/interface/cli/uds_dispatch_resume.rs",
     // #2010 global metadata search: one new query owner and its edges.
-    "src/domain/session_metadata_search.rs",
+    "src/domain/sessions/services/session_metadata_search.rs",
     "src/application/sessions/dto/search_session_metadata.rs",
     "src/application/sessions/use_cases/search_session_metadata.rs",
     "src/infrastructure/persistence/session_home_catalogue_metadata.rs",
@@ -115,10 +115,10 @@ const CANONICAL_FILES: &[&str] = &[
     "src/interface/cli/uds_dispatch_search.rs",
     // #2010 review round 1: the text fold, the request's numbers (typed and
     // on the wire), the rejection cache and the walk's seeding.
-    "src/domain/session_metadata_text.rs",
+    "src/domain/sessions/value_objects/session_metadata_text.rs",
     // #2043: the title subsequence tier, and the home texts moved out of the matcher.
-    "src/domain/session_title_subsequence.rs",
-    "src/domain/session_home_text.rs",
+    "src/domain/sessions/value_objects/session_title_subsequence.rs",
+    "src/domain/sessions/value_objects/session_home_text.rs",
     "src/application/sessions/dto/search_limits.rs",
     "src/interface/cli/uds_search_numbers.rs",
     "src/infrastructure/persistence/session_home_catalogue_rejections.rs",
@@ -128,10 +128,10 @@ const CANONICAL_FILES: &[&str] = &[
     "src/infrastructure/persistence/session_record_read.rs",
     // #2042: the one pass both halves of discovery share.
     "src/infrastructure/persistence/session_home_catalogue_joined.rs",
-    "src/domain/session_path_text.rs",
+    "src/domain/sessions/value_objects/session_path_text.rs",
     // #2045: the shell command that opens quecto in a session's folder.
-    "src/domain/session_open_command.rs",
-    "src/domain/session_query_refusal.rs",
+    "src/domain/sessions/value_objects/session_open_command.rs",
+    "src/domain/sessions/value_objects/session_query_refusal.rs",
     "src/interface/cli/protocol_search_rescue.rs",
     "src/interface/cli/uds_freshness_json.rs",
     "src/application/sessions/use_cases/read_history.rs",
@@ -188,7 +188,7 @@ const CANONICAL_FILES: &[&str] = &[
     "src/domain/conversation_view.rs",
     "src/domain/conversation_edit.rs",
     "src/infrastructure/persistence/session_layout.rs",
-    "src/domain/session_identity.rs",
+    "src/domain/sessions/entities/session_identity.rs",
     // #2424: a saved session's image sidecars: the store's image steps, the
     // seam inside persistence and its file adapter.
     "src/infrastructure/persistence/session_images/sidecar_store.rs",
@@ -719,8 +719,8 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/application/sessions/dto/resume_target.rs", 39),
     ("src/application/sessions/dto/resume_decision.rs", 162),
     // Review R1: the digest is its own pure module (182 → 165).
-    ("src/domain/resume_decision.rs", 163),
-    ("src/domain/stable_digest.rs", 30),
+    ("src/domain/sessions/services/resume_decision.rs", 163),
+    ("src/domain/sessions/services/stable_digest.rs", 30),
     (
         "src/interface/uds/sessions/resume_session_controller.rs",
         55,
@@ -800,7 +800,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ),
     // D8 #1977 adds the wire-admitted user-chat constructor (was 133
     // before D8).
-    ("src/domain/session_identity.rs", 148),
+    ("src/domain/sessions/entities/session_identity.rs", 148),
     // D9 #1978 moves the ephemeral scrub onto the port (was 376 before D9).
     ("src/infrastructure/persistence/context_spill.rs", 377),
     ("src/infrastructure/persistence/session_layout.rs", 94),
@@ -902,21 +902,36 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         80,
     ),
     ("src/application/sessions/dto/search_limits.rs", 33),
-    ("src/domain/session_metadata_text.rs", 51),
+    (
+        "src/domain/sessions/value_objects/session_metadata_text.rs",
+        51,
+    ),
     ("src/interface/cli/uds_search_numbers.rs", 62),
-    ("src/domain/session_metadata_search.rs", 161),
+    (
+        "src/domain/sessions/services/session_metadata_search.rs",
+        161,
+    ),
     // #2043: the subsequence tier and the home texts are their own owners.
-    ("src/domain/session_title_subsequence.rs", 33),
-    ("src/domain/session_home_text.rs", 47),
+    (
+        "src/domain/sessions/value_objects/session_title_subsequence.rs",
+        33,
+    ),
+    ("src/domain/sessions/value_objects/session_home_text.rs", 47),
     (
         "src/infrastructure/persistence/session_home_catalogue_metadata.rs",
         45,
     ),
     // Review round 2: the refusal, the injective path spelling, the rescue of
     // a number no `f64` holds and the bounded freshness tail are new owners.
-    ("src/domain/session_path_text.rs", 23),
-    ("src/domain/session_open_command.rs", 44),
-    ("src/domain/session_query_refusal.rs", 31),
+    ("src/domain/sessions/value_objects/session_path_text.rs", 23),
+    (
+        "src/domain/sessions/value_objects/session_open_command.rs",
+        44,
+    ),
+    (
+        "src/domain/sessions/value_objects/session_query_refusal.rs",
+        31,
+    ),
     ("src/interface/cli/protocol_search_rescue.rs", 51),
     ("src/interface/cli/uds_freshness_json.rs", 33),
     ("src/composition/session_search.rs", 23),

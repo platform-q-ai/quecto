@@ -1,6 +1,6 @@
 //! The identity a UDS loop opens on (#1976).
 use super::{AgentFlags, CliContext};
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 /// The identity a UDS loop opens on (#1976): ephemeral (never persisted),
 /// the named `cli:<name>` session, or a fresh user-chat identity drawn from

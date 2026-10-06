@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 use crate::application::subagents::ports::{EndedChildRecords, EndedTranscript, PortFuture};
 use crate::domain::crash_record::CrashRecord;
 use crate::domain::error::DomainError;
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 use super::crash_record::{RecordDir, SessionRecords};
 use super::session_store::FileSessionStore;

@@ -8,7 +8,7 @@
 
 use super::super::session_layout::FlatSessionLayout;
 use super::*;
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 fn id(k: &str) -> SessionIdentity {
     SessionIdentity::from_persisted_key(k)

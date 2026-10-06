@@ -3,7 +3,7 @@ use crate::application::sessions::dto::retained_context::{
     RecallError, RecallOutcome, RecallQuery,
 };
 use crate::application::sessions::use_cases::retention_rig::JournalingRetention;
-use crate::domain::session_identity::{SessionIdentity, SpillId};
+use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
 
 fn cli(name: &str) -> SessionIdentity {
     SessionIdentity::from_persisted_key(format!("cli:{name}"))

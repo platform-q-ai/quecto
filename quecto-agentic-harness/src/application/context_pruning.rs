@@ -94,7 +94,7 @@ pub const DEFAULT_PIN_RECENT_TURNS: u32 = 2;
 pub async fn update_spill_manifest(
     messages: &mut Vec<Message>,
     retained: &ListRetainedContext,
-    session_key: &crate::domain::session_identity::SessionIdentity,
+    session_key: &crate::domain::sessions::entities::session_identity::SessionIdentity,
 ) -> bool {
     let has_entries = retained.retains_entries(session_key).await.unwrap_or(false);
     if !has_entries {

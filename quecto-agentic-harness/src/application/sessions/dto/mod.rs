@@ -3,7 +3,7 @@
 //! path, and carry domain values (messages, ids, ranges, ledger positions)
 //! — never a wire value or event.
 
-use crate::domain::session_identity::SessionKeyPrefix;
+use crate::domain::sessions::entities::session_identity::SessionKeyPrefix;
 
 pub mod clear_conversation;
 pub mod history;

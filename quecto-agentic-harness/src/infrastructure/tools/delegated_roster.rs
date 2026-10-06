@@ -3,7 +3,7 @@
 //! counts and replaces. A mapping only — what a live delegated row is —
 //! the transaction decides what to do with the count.
 use crate::application::sessions::ports::DelegatedChildrenRoster;
-use crate::domain::session::SubagentLiveness;
+use crate::domain::sessions::entities::session::SubagentLiveness;
 use crate::infrastructure::tools::subagent_registry::{SubagentRegistry, SubagentStatus};
 
 /// The registry's rows as the transition's roster.

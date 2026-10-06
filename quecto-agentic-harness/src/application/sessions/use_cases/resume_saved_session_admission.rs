@@ -3,7 +3,7 @@
 //! exact-key/startup paths alike. Not a second transaction owner: the
 //! decision is the domain's, the observations the shared context's.
 use crate::application::sessions::ports::SessionStore;
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use std::sync::Arc;
 
 /// The target's claim, held while it is loaded and admitted: released on every

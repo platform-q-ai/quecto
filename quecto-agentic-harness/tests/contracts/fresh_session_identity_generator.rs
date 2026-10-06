@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use quecto::application::sessions::ports::FreshSessionIdentityGenerator;
-use quecto::domain::session::USER_CHAT_PREFIX;
+use quecto::domain::sessions::entities::session::USER_CHAT_PREFIX;
 use quecto::infrastructure::persistence::fresh_session_identity::ProcessClockIdentityGenerator;
 
 fn under_test() -> Arc<dyn FreshSessionIdentityGenerator> {

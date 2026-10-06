@@ -3,9 +3,9 @@ use crate::application::sessions::dto::{
 };
 use crate::composition::sessions::{SessionLoopInputs, build_session_handles};
 use crate::domain::message::Message;
-use crate::domain::session_home::SessionHomeScope;
-use crate::domain::session_identity::SessionIdentity;
-use crate::domain::session_metadata_search::MatchedField;
+use crate::domain::sessions::entities::session_home::SessionHomeScope;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
+use crate::domain::sessions::services::session_metadata_search::MatchedField;
 
 fn inputs(base: &std::path::Path, identity: SessionIdentity) -> SessionLoopInputs {
     SessionLoopInputs {

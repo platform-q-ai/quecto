@@ -2,8 +2,7 @@
 use super::super::uds_dispatch_query::safe_display;
 use super::AgentEvent;
 use crate::application::sessions::dto::{ResumeDecision, ResumeOutcome, ResumeSavedSessionError};
-use crate::domain::session_open_command::{open_there_command, resume_step};
-use crate::domain::session_path_text::display_path;
+use crate::domain::sessions::value_objects::{session_open_command::*, session_path_text::*};
 
 pub(super) fn outcome_event(
     id: Option<&str>,

@@ -1,6 +1,6 @@
 //! The texts a session's home offers the metadata query (#2010): the
 //! repository label, the execution path, and the path below a local root.
-use super::session_home::{SessionHome, SessionHomeScope, WorkspaceGroup};
+use super::super::entities::session_home::{SessionHome, SessionHomeScope, WorkspaceGroup};
 use super::session_metadata_text::display_path;
 use std::path::{Path, PathBuf};
 

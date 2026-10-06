@@ -9,7 +9,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::application::sessions::ports::FreshSessionIdentityGenerator;
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
 

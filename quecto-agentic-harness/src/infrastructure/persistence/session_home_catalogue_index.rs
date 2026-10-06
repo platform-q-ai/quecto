@@ -6,7 +6,7 @@
 //! never remove one. Trust: an entry is reused only while its file carries its
 //! stamp, as the identity it is keyed under; admission never reads this index.
 use super::super::session_store::session_store_home::admissible_home_path;
-use crate::domain::session_home::{
+use crate::domain::sessions::entities::session_home::{
     AssociationProvenance, SessionHome, SessionHomeScope, WorkspaceGroup,
 };
 use serde::{Deserialize, Serialize};

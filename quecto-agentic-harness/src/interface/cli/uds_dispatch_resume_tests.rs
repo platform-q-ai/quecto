@@ -1,7 +1,7 @@
 use super::*;
 use crate::application::sessions::dto::{ResumeDecision, ResumeTarget};
-use crate::domain::resume_decision::{HomeVersion, ResumeDecisionKind};
-use crate::domain::session_home::SessionHomeScope;
+use crate::domain::sessions::entities::session_home::SessionHomeScope;
+use crate::domain::sessions::services::resume_decision::{HomeVersion, ResumeDecisionKind};
 use std::path::PathBuf;
 fn json(event: &AgentEvent) -> serde_json::Value {
     serde_json::from_str(&event.to_json_line()).unwrap()

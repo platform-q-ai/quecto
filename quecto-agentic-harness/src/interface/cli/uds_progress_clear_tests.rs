@@ -181,14 +181,16 @@ fn test_rewind_to_type_name() {
 #[tokio::test]
 async fn test_spill_store_clear_removes_entries_and_recall() {
     use crate::application::sessions::ports::ContextSpillStore;
-    use crate::domain::session::SpillEntry;
+    use crate::domain::sessions::entities::session::SpillEntry;
     use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
     let tmp = tempfile::tempdir().unwrap();
     let store = std::sync::Arc::new(FileContextSpillStore::new(
         crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(tmp.path()),
     ));
     let key =
-        &crate::domain::session_identity::SessionIdentity::from_persisted_key("clear-test-412");
+        &crate::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key(
+            "clear-test-412",
+        );
     let entry = SpillEntry {
         id: "turn1:bash:0".into(),
         tool: "bash".into(),
@@ -203,7 +205,7 @@ async fn test_spill_store_clear_removes_entries_and_recall() {
         store
             .recall(
                 key,
-                &crate::domain::session_identity::SpillId::new("turn1:bash:0")
+                &crate::domain::sessions::entities::session_identity::SpillId::new("turn1:bash:0")
             )
             .await
             .unwrap()
@@ -216,7 +218,7 @@ async fn test_spill_store_clear_removes_entries_and_recall() {
         store
             .recall(
                 key,
-                &crate::domain::session_identity::SpillId::new("turn1:bash:0")
+                &crate::domain::sessions::entities::session_identity::SpillId::new("turn1:bash:0")
             )
             .await
             .unwrap()

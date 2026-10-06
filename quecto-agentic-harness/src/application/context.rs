@@ -28,7 +28,7 @@ use crate::application::context_pruning;
 use crate::application::sessions::use_cases::{ListRetainedContext, RetainContext};
 use crate::domain::conversation::watermark::Watermark;
 use crate::domain::message::Message;
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::domain::{catalogue::ModelWindow, context_calibration::EstimateScale};
 use std::sync::{Arc, Mutex};
 

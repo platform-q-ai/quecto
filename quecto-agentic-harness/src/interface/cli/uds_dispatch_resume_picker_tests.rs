@@ -3,8 +3,8 @@
 use super::fixture_tests::Fixture;
 use crate::application::sessions::ports::SessionStore;
 use crate::domain::message::Message;
-use crate::domain::session::Session;
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session::Session;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::interface::cli::protocol::AgentCommand;
 
 /// Dispatch one wire line and return the answer with the same `id`.

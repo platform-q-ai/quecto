@@ -395,7 +395,7 @@ fn preserved_active_identity(world: &mut QuectoWorld) {
         fs::read(base.join("sessions/cli_foreign.home")).unwrap(),
         home
     );
-    use quecto::domain::session_identity::SessionIdentity;
+    use quecto::domain::sessions::entities::session_identity::SessionIdentity;
     use quecto::infrastructure::persistence::{
         session_layout::FlatSessionLayout, session_ownership::SessionOwnershipGuard,
     };
@@ -767,7 +767,7 @@ fn one_local(world: &mut QuectoWorld) {
 /// scenarios explicitly omit/remove authority instead of bypassing admission.
 pub(super) fn record_fixture_home(base: &Path, key: &str) {
     use quecto::application::sessions::ports::session_home::WorkspaceDiscovery;
-    use quecto::domain::session_identity::SessionIdentity;
+    use quecto::domain::sessions::entities::session_identity::SessionIdentity;
     use quecto::infrastructure::persistence::{
         session_layout::FlatSessionLayout, session_store::FileSessionStore,
     };

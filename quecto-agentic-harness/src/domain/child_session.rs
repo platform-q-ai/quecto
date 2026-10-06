@@ -3,7 +3,7 @@
 //! session name names no session.
 use super::error::DomainError;
 use super::ids::AgentUuid;
-use super::session_identity::SessionIdentity;
+use super::sessions::entities::session_identity::SessionIdentity;
 
 /// The session name the launcher passes as `-s` for `child` — the one
 /// source of truth for it (#1378: always the minted uuid, never the label).

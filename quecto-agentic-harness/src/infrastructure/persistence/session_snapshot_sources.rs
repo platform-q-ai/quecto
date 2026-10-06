@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::application::sessions::ports::{HistoricalRosterSource, WorkflowRunSource};
 use crate::domain::workflow::{WorkflowEngine, WorkflowRunPersisted};
-use crate::domain::{child_session::roster_session_key, session::PersistedSubagentRosterEntry};
+use crate::domain::{child_session::roster_session_key, sessions::entities::session::*};
 use crate::infrastructure::tools::subagent_registry::SubagentRegistry;
 
 /// The workflow run of a bound workflow engine.

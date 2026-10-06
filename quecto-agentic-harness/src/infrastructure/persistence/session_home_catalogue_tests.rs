@@ -10,8 +10,8 @@ use crate::application::sessions::ports::session_home::{
     SessionHomeCatalogue, SessionMetadataSnapshot,
 };
 use crate::domain::message::Message;
-use crate::domain::session::Session;
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session::Session;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use std::sync::Arc;
 
 const ROT: &[u8] = br#"{"key":"chat-rot","messages":[{"role":"user","content":"AAAA"#;

@@ -4,7 +4,7 @@ use super::fixture_tests::Fixture;
 use super::{handle_clear_history, handle_new_session, handle_resume_session, handle_rewind_to};
 use crate::application::sessions::ports::SessionStore;
 use crate::domain::message::Message;
-use crate::domain::session::Session;
+use crate::domain::sessions::entities::session::Session;
 
 #[tokio::test]
 async fn clear_history_clears_message_ref_lookup_ledger() {
@@ -98,7 +98,7 @@ async fn resume_session_clears_previous_session_ref() {
     crate::interface::cli::uds::dispatch_session_roster_tests::seed_home(&fx.store, &key).await;
     fx.store
         .save(&Session {
-            key: crate::domain::session_identity::SessionIdentity::from_persisted_key(key),
+            key: crate::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key(key),
             messages: vec![Message::user("restored")],
             workflow_run: None,
             subagent_roster: Vec::new(),
@@ -277,7 +277,7 @@ async fn new_session_while_streaming_answers_the_refusal_and_keeps_the_session()
     );
     assert!(
         fx.store
-            .load(&crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:test"))
+            .load(&crate::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key("cli:test"))
             .await
             .unwrap()
             .is_none(),

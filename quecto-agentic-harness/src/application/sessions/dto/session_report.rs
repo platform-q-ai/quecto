@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use crate::domain::error::DomainError;
 use crate::domain::ids::MessageId;
 use crate::domain::message::Message;
-use crate::domain::session::SpillEntry;
+use crate::domain::sessions::entities::session::SpillEntry;
 
 /// The report preview budget, in bytes.
 pub const REPORT_PREVIEW_BYTES: usize = 8192;

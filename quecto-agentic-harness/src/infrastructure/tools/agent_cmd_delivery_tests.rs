@@ -20,11 +20,13 @@ fn report_planning_is_pure_and_returns_pending_transition() {
 
 #[test]
 fn delivery_planning_is_pure_and_returns_acknowledgement_transition() {
-    let pending = VecDeque::from([crate::domain::session::PendingMessageReport {
-        receipt: "receipt-1".into(),
-        response: "content".into(),
-        ordinal: 2,
-    }]);
+    let pending = VecDeque::from([
+        crate::domain::sessions::entities::session::PendingMessageReport {
+            receipt: "receipt-1".into(),
+            response: "content".into(),
+            ordinal: 2,
+        },
+    ]);
     let decision = crate::infrastructure::tools::agent_cmd_report::plan_delivery(
         Some("get_messages"),
         false,
@@ -47,20 +49,20 @@ fn json_response(messages: serde_json::Value) -> String {
 fn delivery_receipts_prevent_byte_identical_response_collision() {
     let registry = new_registry();
     let mut entry = SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 0);
-    entry
-        .pending_message_reports
-        .push_back(crate::domain::session::PendingMessageReport {
+    entry.pending_message_reports.push_back(
+        crate::domain::sessions::entities::session::PendingMessageReport {
             receipt: "r1".into(),
             response: serde_json::json!({"success":true,"data":{"messages":["same"]}}).to_string(),
             ordinal: 5,
-        });
-    entry
-        .pending_message_reports
-        .push_back(crate::domain::session::PendingMessageReport {
+        },
+    );
+    entry.pending_message_reports.push_back(
+        crate::domain::sessions::entities::session::PendingMessageReport {
             receipt: "r2".into(),
             response: serde_json::json!({"success":true,"data":{"messages":["same"]}}).to_string(),
             ordinal: 9,
-        });
+        },
+    );
     entry.pending_message_ordinal = Some(9);
     registry.lock().unwrap().insert("w1".to_string(), entry);
     let tool = AgentCmdTool::new(registry.clone());
@@ -85,13 +87,13 @@ fn delivery_receipts_prevent_byte_identical_response_collision() {
 fn missing_or_unknown_delivery_receipt_does_not_ack_new_pending_report() {
     let registry = new_registry();
     let mut entry = SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 0);
-    entry
-        .pending_message_reports
-        .push_back(crate::domain::session::PendingMessageReport {
+    entry.pending_message_reports.push_back(
+        crate::domain::sessions::entities::session::PendingMessageReport {
             receipt: "real".into(),
             response: serde_json::json!({"success":true,"data":{"messages":["same"]}}).to_string(),
             ordinal: 5,
-        });
+        },
+    );
     entry.pending_message_ordinal = Some(5);
     registry.lock().unwrap().insert("w1".to_string(), entry);
     let tool = AgentCmdTool::new(registry.clone());
@@ -146,7 +148,7 @@ fn explicit_paging_result_delivery_is_cursor_neutral_even_with_new_ordinals() {
 
 #[test]
 fn legacy_pending_report_deserializes_without_receipt() {
-    let pending: crate::domain::session::PendingMessageReport =
+    let pending: crate::domain::sessions::entities::session::PendingMessageReport =
         serde_json::from_str(r#"{"response":"legacy-response","ordinal":7}"#).unwrap();
     assert_eq!(pending.receipt, "");
     assert_eq!(pending.response, "legacy-response");
@@ -166,20 +168,20 @@ fn delivery_receipts_are_opaque_unique_tokens() {
 fn duplicate_legacy_pending_responses_are_ambiguous_and_do_not_ack() {
     let registry = new_registry();
     let mut entry = SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 0);
-    entry
-        .pending_message_reports
-        .push_back(crate::domain::session::PendingMessageReport {
+    entry.pending_message_reports.push_back(
+        crate::domain::sessions::entities::session::PendingMessageReport {
             receipt: "".into(),
             response: serde_json::json!({"success":true,"data":{"messages":["same"]}}).to_string(),
             ordinal: 5,
-        });
-    entry
-        .pending_message_reports
-        .push_back(crate::domain::session::PendingMessageReport {
+        },
+    );
+    entry.pending_message_reports.push_back(
+        crate::domain::sessions::entities::session::PendingMessageReport {
             receipt: "".into(),
             response: serde_json::json!({"success":true,"data":{"messages":["same"]}}).to_string(),
             ordinal: 9,
-        });
+        },
+    );
     entry.pending_message_ordinal = Some(9);
     registry.lock().unwrap().insert("w1".to_string(), entry);
     let tool = AgentCmdTool::new(registry.clone());
@@ -202,14 +204,14 @@ fn duplicate_legacy_pending_responses_are_ambiguous_and_do_not_ack() {
 fn single_legacy_pending_response_acknowledges_by_response_equality() {
     let registry = new_registry();
     let mut entry = SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 0);
-    entry
-        .pending_message_reports
-        .push_back(crate::domain::session::PendingMessageReport {
+    entry.pending_message_reports.push_back(
+        crate::domain::sessions::entities::session::PendingMessageReport {
             receipt: "".into(),
             response: serde_json::json!({"success":true,"data":{"messages":["legacy"]}})
                 .to_string(),
             ordinal: 7,
-        });
+        },
+    );
     entry.pending_message_ordinal = Some(7);
     registry.lock().unwrap().insert("w1".to_string(), entry);
     let tool = AgentCmdTool::new(registry.clone());
@@ -232,13 +234,13 @@ fn single_legacy_pending_response_acknowledges_by_response_equality() {
 fn delivery_metadata_ack_does_not_expose_receipt_in_content() {
     let registry = new_registry();
     let mut entry = SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 0);
-    entry
-        .pending_message_reports
-        .push_back(crate::domain::session::PendingMessageReport {
+    entry.pending_message_reports.push_back(
+        crate::domain::sessions::entities::session::PendingMessageReport {
             receipt: "secret".into(),
             response: serde_json::json!({"success":true,"data":{"messages":[]}}).to_string(),
             ordinal: 11,
-        });
+        },
+    );
     entry.pending_message_ordinal = Some(11);
     registry.lock().unwrap().insert("w1".to_string(), entry);
     let tool = AgentCmdTool::new(registry.clone());

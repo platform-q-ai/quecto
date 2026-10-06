@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
 use tempfile::TempDir;
 
@@ -18,23 +18,24 @@ fn make_message(role: Role, content: &str) -> Message {
 
 fn roster_entry(
     id: &str,
-    liveness: crate::domain::session::SubagentLiveness,
-) -> crate::domain::session::PersistedSubagentRosterEntry {
-    crate::domain::session::PersistedSubagentRosterEntry {
+    liveness: crate::domain::sessions::entities::session::SubagentLiveness,
+) -> crate::domain::sessions::entities::session::PersistedSubagentRosterEntry {
+    crate::domain::sessions::entities::session::PersistedSubagentRosterEntry {
         agent_uuid: id.to_string(),
         display_name: format!("worker-{id}"),
         session_key: format!("cli:{id}"),
         liveness,
-        restore_reason: crate::domain::session::SubagentRestoreReason::LegacyUnspecified,
+        restore_reason:
+            crate::domain::sessions::entities::session::SubagentRestoreReason::LegacyUnspecified,
         parent_id: Some("root".to_string()),
         read_only: id == "dead",
         delivered_message_ordinal: None,
         pending_message_reports: std::collections::VecDeque::new(),
         status: Some(
             match liveness {
-                crate::domain::session::SubagentLiveness::Live => "idle",
-                crate::domain::session::SubagentLiveness::Detached => "exited",
-                crate::domain::session::SubagentLiveness::Dead => "exited",
+                crate::domain::sessions::entities::session::SubagentLiveness::Live => "idle",
+                crate::domain::sessions::entities::session::SubagentLiveness::Detached => "exited",
+                crate::domain::sessions::entities::session::SubagentLiveness::Dead => "exited",
             }
             .to_string(),
         ),
@@ -45,14 +46,18 @@ fn roster_entry(
 async fn subagent_roster_roundtrips_and_legacy_files_load_empty_roster() {
     let tmp = TempDir::new().unwrap();
     let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
-    let mut live = roster_entry("live", crate::domain::session::SubagentLiveness::Live);
+    let mut live = roster_entry(
+        "live",
+        crate::domain::sessions::entities::session::SubagentLiveness::Live,
+    );
     live.delivered_message_ordinal = Some(4);
-    live.pending_message_reports
-        .push_back(crate::domain::session::PendingMessageReport {
+    live.pending_message_reports.push_back(
+        crate::domain::sessions::entities::session::PendingMessageReport {
             receipt: "receipt-1".into(),
             response: "response-1".into(),
             ordinal: 8,
-        });
+        },
+    );
     let session = Session {
         key: id("cli:roster"),
         messages: vec![make_message(Role::User, "hello")],
@@ -61,9 +66,12 @@ async fn subagent_roster_roundtrips_and_legacy_files_load_empty_roster() {
             live,
             roster_entry(
                 "detached",
-                crate::domain::session::SubagentLiveness::Detached,
+                crate::domain::sessions::entities::session::SubagentLiveness::Detached,
             ),
-            roster_entry("dead", crate::domain::session::SubagentLiveness::Dead),
+            roster_entry(
+                "dead",
+                crate::domain::sessions::entities::session::SubagentLiveness::Dead,
+            ),
         ],
     };
 
@@ -182,7 +190,7 @@ async fn roster_only_session_persists_and_empty_roster_session_stays_absent() {
             workflow_run: None,
             subagent_roster: vec![roster_entry(
                 "dead",
-                crate::domain::session::SubagentLiveness::Dead,
+                crate::domain::sessions::entities::session::SubagentLiveness::Dead,
             )],
         })
         .await
@@ -221,19 +229,25 @@ async fn roster_only_updates_replay_as_full_replacements() {
         workflow_run: None,
         subagent_roster: vec![roster_entry(
             "a",
-            crate::domain::session::SubagentLiveness::Live,
+            crate::domain::sessions::entities::session::SubagentLiveness::Live,
         )],
     };
     store.save(&session).await.unwrap();
 
     session.subagent_roster = vec![roster_entry(
         "a",
-        crate::domain::session::SubagentLiveness::Dead,
+        crate::domain::sessions::entities::session::SubagentLiveness::Dead,
     )];
     store.save(&session).await.unwrap();
     session.subagent_roster = vec![
-        roster_entry("a", crate::domain::session::SubagentLiveness::Dead),
-        roster_entry("b", crate::domain::session::SubagentLiveness::Detached),
+        roster_entry(
+            "a",
+            crate::domain::sessions::entities::session::SubagentLiveness::Dead,
+        ),
+        roster_entry(
+            "b",
+            crate::domain::sessions::entities::session::SubagentLiveness::Detached,
+        ),
     ];
     store.save(&session).await.unwrap();
 
@@ -252,14 +266,14 @@ async fn compaction_retains_current_subagent_roster() {
         workflow_run: None,
         subagent_roster: vec![roster_entry(
             "a",
-            crate::domain::session::SubagentLiveness::Live,
+            crate::domain::sessions::entities::session::SubagentLiveness::Live,
         )],
     };
     store.save(&session).await.unwrap();
     session.messages = vec![make_message(Role::User, "replacement")];
     session.subagent_roster = vec![roster_entry(
         "a",
-        crate::domain::session::SubagentLiveness::Dead,
+        crate::domain::sessions::entities::session::SubagentLiveness::Dead,
     )];
     store.save(&session).await.unwrap();
 
@@ -282,7 +296,7 @@ async fn save_delta_compaction_preserves_persisted_subagent_roster() {
         workflow_run: None,
         subagent_roster: vec![roster_entry(
             "a",
-            crate::domain::session::SubagentLiveness::Detached,
+            crate::domain::sessions::entities::session::SubagentLiveness::Detached,
         )],
     };
     store.save(&session).await.unwrap();

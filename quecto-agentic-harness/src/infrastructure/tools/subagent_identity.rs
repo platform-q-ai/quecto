@@ -3,7 +3,7 @@ pub fn parent_identity_from_session_key(session_key: &str) -> Option<&str> {
         return None;
     }
     Some(
-        if session_key.starts_with(crate::domain::session::USER_CHAT_PREFIX) {
+        if session_key.starts_with(crate::domain::sessions::entities::session::USER_CHAT_PREFIX) {
             session_key
         } else {
             session_key.strip_prefix("cli:").unwrap_or_else(|| {

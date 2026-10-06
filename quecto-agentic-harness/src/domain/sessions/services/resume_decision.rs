@@ -2,9 +2,11 @@
 //! authoritative home, the explicit actions a user may choose, the kinds of
 //! obstacle a home can present, and the one affirmative table of which actions
 //! each kind offers. No filesystem, Git, UI or process call lives here.
-use super::session_home::{AssociationProvenance, SessionHome, SessionHomeScope, WorkspaceGroup};
-use super::session_identity::SessionIdentity;
 use super::stable_digest::Fnv1a;
+use crate::domain::sessions::entities::session_home::{
+    AssociationProvenance, SessionHome, SessionHomeScope, WorkspaceGroup,
+};
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 /// Opaque version of one session's authoritative home metadata, bound to that
 /// session's identity: two reads that yield the same token saw the same

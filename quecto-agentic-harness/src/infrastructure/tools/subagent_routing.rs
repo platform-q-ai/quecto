@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use crate::domain::session::SubagentLiveness;
+use crate::domain::sessions::entities::session::SubagentLiveness;
 
 use super::subagent_registry::{SubagentRegistry, resolve_registry_key};
 

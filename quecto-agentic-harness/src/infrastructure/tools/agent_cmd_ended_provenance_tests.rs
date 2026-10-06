@@ -226,8 +226,11 @@ async fn a_reported_descendant_cannot_make_its_parent_read_another_session() {
     use crate::application::sessions::ports::SessionStore;
     let base = tempfile::tempdir().unwrap();
     let store = crate::composition::sessions::build_file_session_store(base.path());
-    let mut secret = crate::domain::session::Session::new(
-        crate::domain::session_identity::SessionIdentity::named_cli("secret-plan").unwrap(),
+    let mut secret = crate::domain::sessions::entities::session::Session::new(
+        crate::domain::sessions::entities::session_identity::SessionIdentity::named_cli(
+            "secret-plan",
+        )
+        .unwrap(),
     );
     secret.messages = vec![crate::domain::message::Message::user("THE SECRET PLAN")];
     store.save(&secret).await.unwrap();

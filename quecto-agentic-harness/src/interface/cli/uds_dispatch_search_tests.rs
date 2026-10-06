@@ -4,9 +4,11 @@
 use super::super::fixture_tests::Fixture;
 use crate::application::sessions::ports::SessionStore;
 use crate::domain::message::Message;
-use crate::domain::session::Session;
-use crate::domain::session_home::{AssociationProvenance, SessionHome, WorkspaceGroup};
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session::Session;
+use crate::domain::sessions::entities::session_home::{
+    AssociationProvenance, SessionHome, WorkspaceGroup,
+};
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::interface::cli::protocol::AgentCommand;
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;

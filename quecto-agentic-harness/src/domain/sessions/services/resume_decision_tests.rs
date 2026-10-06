@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::session_home::AssociationProvenance;
+use crate::domain::sessions::entities::session_home::AssociationProvenance;
 use std::path::PathBuf;
 
 fn folder(dir: &str) -> SessionHomeScope {

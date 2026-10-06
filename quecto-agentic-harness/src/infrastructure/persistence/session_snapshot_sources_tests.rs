@@ -1,7 +1,7 @@
 use super::{RegistryRosterSource, WorkflowEngineRunSource};
 use crate::application::sessions::ports::{HistoricalRosterSource, WorkflowRunSource};
 use crate::domain::ids::AgentUuid;
-use crate::domain::session::{SubagentLiveness, SubagentRestoreReason};
+use crate::domain::sessions::entities::session::{SubagentLiveness, SubagentRestoreReason};
 use crate::domain::workflow::{
     WorkflowConfig, WorkflowEngine, WorkflowTemplate, WorkflowTemplateStep,
 };

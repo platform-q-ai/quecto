@@ -1,8 +1,8 @@
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::sessions::ports::{ContextSpillStore, SessionStore};
 use crate::domain::message::{Message, ToolCall};
-use crate::domain::session::{Session, SpillEntry, SpillIndex};
-use crate::domain::session_identity::{SessionIdentity, SpillId};
+use crate::domain::sessions::entities::session::{Session, SpillEntry, SpillIndex};
+use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
 use crate::domain::tool::ToolProfileContext;
 use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
 use crate::interface::cli::protocol::AgentCommand;

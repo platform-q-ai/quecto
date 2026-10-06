@@ -1,7 +1,7 @@
 use super::*;
 use crate::application::sessions::dto::{ListSessionsResult, ListedSession};
-use crate::domain::session::SessionSummary;
-use crate::domain::session_home::SessionHomeScope;
+use crate::domain::sessions::entities::session::SessionSummary;
+use crate::domain::sessions::entities::session_home::SessionHomeScope;
 use crate::interface::cli::protocol::SessionListScopeCommand;
 
 #[test]
@@ -10,7 +10,7 @@ fn discovery_preserves_identity_and_authoritative_admission() {
         sessions: vec![ListedSession {
             summary: SessionSummary {
                 key: "opaque:key".into(),
-                identity: crate::domain::session_identity::SessionIdentity::from_persisted_key(
+                identity: crate::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key(
                     "opaque:key",
                 ),
                 title: "unsafe\u{1b}title".into(),
@@ -39,7 +39,7 @@ fn discovery_preserves_identity_and_authoritative_admission() {
     );
     assert_eq!(
         result.sessions[0].home_version(),
-        crate::domain::resume_decision::HomeVersion::of(
+        crate::domain::sessions::services::resume_decision::HomeVersion::of(
             &result.sessions[0].summary.identity,
             &result.sessions[0].home
         )

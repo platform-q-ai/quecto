@@ -8,8 +8,8 @@ use quecto::application::sessions::dto::{
     ListedSession, ResumeOutcome, ResumeRequest, ResumeSavedSessionError, SessionListScope,
 };
 use quecto::application::sessions::ports::session_home::SessionHomeCatalogue;
-use quecto::domain::resume_decision::{HomeVersion, ResumeDecisionKind};
-use quecto::domain::session_home::SessionHomeScope;
+use quecto::domain::sessions::entities::session_home::SessionHomeScope;
+use quecto::domain::sessions::services::resume_decision::{HomeVersion, ResumeDecisionKind};
 use quecto::infrastructure::persistence::session_home_catalogue::FileSessionHomeCatalogue;
 use std::os::unix::ffi::OsStrExt;
 
@@ -126,12 +126,12 @@ async fn a_well_formed_lying_index_cannot_influence_exact_key_resolution() {
     let lied = row(&rows, "cli:theirs");
     assert_eq!(
         lied.home,
-        SessionHomeScope::Scoped(quecto::domain::session_home::SessionHome {
+        SessionHomeScope::Scoped(quecto::domain::sessions::entities::session_home::SessionHome {
             execution_dir: world.here.clone(),
-            group: quecto::domain::session_home::WorkspaceGroup::Folder {
+            group: quecto::domain::sessions::entities::session_home::WorkspaceGroup::Folder {
                 directory: world.here.clone(),
             },
-            provenance: quecto::domain::session_home::AssociationProvenance::SavedHere,
+            provenance: quecto::domain::sessions::entities::session_home::AssociationProvenance::SavedHere,
         }),
         "the lie really reaches the listing: the index was trusted there"
     );

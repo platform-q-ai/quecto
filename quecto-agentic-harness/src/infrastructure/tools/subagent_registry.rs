@@ -10,7 +10,7 @@ use transport::{
 };
 
 use crate::domain::ids::AgentUuid;
-use crate::domain::session::SubagentLiveness;
+use crate::domain::sessions::entities::session::SubagentLiveness;
 use crate::domain::subagent::{DisplayNameResolutionEntry, resolve_live_display_name};
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
@@ -126,7 +126,7 @@ pub struct SubagentEntry {
     pub persisted_liveness: SubagentLiveness,
 }
 
-pub use crate::domain::session::PendingMessageReport;
+pub use crate::domain::sessions::entities::session::PendingMessageReport;
 
 pub(super) fn seed_bound_workflow(
     entry: &mut SubagentEntry,

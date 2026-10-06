@@ -20,11 +20,11 @@ pub use session_transition::{
 };
 
 use super::dto::SessionListQuery;
-use crate::domain::error::DomainError;
-use crate::domain::message::Message;
-use crate::domain::session::{Session, SessionSummary, SpillEntries, SpillEntry};
-use crate::domain::session_identity::{SessionIdentity, SpillId};
-use crate::domain::workflow::WorkflowRunPersisted;
+use crate::domain::sessions::entities::session::{
+    Session, SessionSummary, SpillEntries, SpillEntry,
+};
+use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
+use crate::domain::{error::DomainError, message::Message, workflow::WorkflowRunPersisted};
 
 pub type SpillIndexList<'a> =
     Pin<Box<dyn Future<Output = Result<SpillEntries, DomainError>> + Send + 'a>>;

@@ -15,8 +15,8 @@
 //! - a **persisted** identity is whatever key a stored session carries —
 //!   every historical category (`telegram:<id>`, legacy `cli:<name>`, chat
 //!   keys, arbitrary keys) round-trips unchanged.
-use super::error::DomainError;
 use super::session::user_chat_key;
+use crate::domain::error::DomainError;
 
 /// Opaque identity of a session: the existing raw key, read-only.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]

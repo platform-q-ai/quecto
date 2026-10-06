@@ -352,7 +352,7 @@ async fn handle_client_closes_on_version_mismatch_and_drops_guard() {
 async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier_with_killed_tombstones() {
     use crate::application::sessions::ports::SessionStore;
     use crate::domain::message::Message;
-    use crate::domain::session::{
+    use crate::domain::sessions::entities::session::{
         PersistedSubagentRosterEntry, Session, SubagentLiveness, SubagentRestoreReason,
     };
     use crate::infrastructure::persistence::session_store::FileSessionStore;
@@ -392,7 +392,7 @@ async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier_with_ki
     ];
     store
         .save(&Session {
-            key: crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:test"),
+            key: crate::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key("cli:test"),
             messages: vec![Message::user("saved")],
             workflow_run: None,
             subagent_roster: previous_roster.clone(),
@@ -411,7 +411,7 @@ async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier_with_ki
     assert!(roster.is_empty());
     assert_eq!(
         store
-            .load(&crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:test"))
+            .load(&crate::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key("cli:test"))
             .await
             .unwrap()
             .unwrap()
@@ -425,7 +425,7 @@ async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier_with_ki
 async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier() {
     use crate::application::sessions::ports::SessionStore;
     use crate::domain::message::Message;
-    use crate::domain::session::{
+    use crate::domain::sessions::entities::session::{
         PersistedSubagentRosterEntry, Session, SubagentLiveness, SubagentRestoreReason,
     };
     use crate::infrastructure::persistence::session_store::FileSessionStore;
@@ -437,7 +437,7 @@ async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier() {
     );
     store
         .save(&Session {
-            key: crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:test"),
+            key: crate::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key("cli:test"),
             messages: vec![Message::user("saved")],
             workflow_run: None,
             subagent_roster: vec![PersistedSubagentRosterEntry {
@@ -467,7 +467,7 @@ async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier() {
     assert!(roster.is_empty());
     assert_eq!(
         store
-            .load(&crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:test"))
+            .load(&crate::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key("cli:test"))
             .await
             .unwrap()
             .unwrap()

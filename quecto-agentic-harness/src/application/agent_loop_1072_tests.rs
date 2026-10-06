@@ -12,8 +12,8 @@ use super::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::sessions::ports::ContextSpillStore;
 use crate::domain::error::DomainError;
 use crate::domain::message::{Message, Role};
-use crate::domain::session::SpillEntry;
-use crate::domain::session_identity::{SessionIdentity, SpillId};
+use crate::domain::sessions::entities::session::SpillEntry;
+use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -56,12 +56,12 @@ impl ContextSpillStore for MemSpillStore {
         &self,
         _session_key: &SessionIdentity,
     ) -> crate::application::sessions::ports::SpillIndexList<'_> {
-        let index: Vec<crate::domain::session::SpillIndex> = self
+        let index: Vec<crate::domain::sessions::entities::session::SpillIndex> = self
             .entries
             .lock()
             .unwrap()
             .iter()
-            .map(|e| crate::domain::session::SpillIndex {
+            .map(|e| crate::domain::sessions::entities::session::SpillIndex {
                 id: e.id.clone(),
                 tool: e.tool.clone(),
                 input_preview: e.input_preview.clone(),

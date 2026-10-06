@@ -1,7 +1,7 @@
 use super::*;
 use crate::application::sessions::ports::SessionStore;
 use crate::domain::message::Message;
-use crate::domain::session::Session;
+use crate::domain::sessions::entities::session::Session;
 
 fn child() -> SessionIdentity {
     SessionIdentity::named_cli("child").unwrap()

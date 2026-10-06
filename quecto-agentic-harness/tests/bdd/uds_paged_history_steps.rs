@@ -14,8 +14,8 @@ use quecto::application::sessions::ports::{ContextSpillStore, SessionStore};
 use quecto::composition::runtime::build_agent_provider;
 use quecto::domain::error::DomainError;
 use quecto::domain::message::{LlmResponse, Message, ToolCall};
-use quecto::domain::session::Session;
-use quecto::domain::session_identity::SessionIdentity;
+use quecto::domain::sessions::entities::session::Session;
+use quecto::domain::sessions::entities::session_identity::SessionIdentity;
 use quecto::infrastructure::config::Config;
 use quecto::infrastructure::persistence::context_spill::FileContextSpillStore;
 use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
@@ -981,7 +981,7 @@ fn spawn_paged_agent(world: &mut QuectoWorld, base: &std::path::Path, session_na
             retention: Some(retention),
             base_dir: &base_for_thread,
             workspace: &base_for_thread,
-            identity: quecto::domain::session_identity::SessionIdentity::from_persisted_key(
+            identity: quecto::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key(
                 &session_key,
             ),
             model,

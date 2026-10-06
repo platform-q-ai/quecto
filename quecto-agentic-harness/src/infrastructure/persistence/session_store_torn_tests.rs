@@ -20,7 +20,7 @@ pub(super) fn transcript(len: usize) -> Vec<Message> {
             _ => Message::assistant(format!("report {i}"), vec![]),
         })
         .collect();
-    crate::domain::session::assign_missing_ordinals(&mut messages);
+    crate::domain::sessions::entities::session::assign_missing_ordinals(&mut messages);
     messages
 }
 

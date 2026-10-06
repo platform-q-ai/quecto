@@ -6,7 +6,7 @@ use crate::interface::cli::CliContext;
 
 #[test]
 fn the_startup_identity_is_ephemeral_named_or_a_fresh_chat_key() {
-    use crate::domain::session::USER_CHAT_PREFIX;
+    use crate::domain::sessions::entities::session::USER_CHAT_PREFIX;
     let ctx = CliContext {
         sessions: Some(crate::composition::sessions::build_session_handles),
         retention: Some(crate::composition::sessions::build_retention_handles),

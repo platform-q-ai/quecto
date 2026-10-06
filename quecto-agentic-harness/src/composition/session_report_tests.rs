@@ -7,9 +7,10 @@ async fn the_composed_loop_exports_under_the_artifacts_directory_of_its_base() {
     let tmp = tempfile::tempdir().unwrap();
     let handles = build_session_handles(SessionLoopInputs {
         base_dir: tmp.path().to_path_buf(),
-        identity: crate::domain::session_identity::SessionIdentity::from_persisted_key(
-            "cli:export",
-        ),
+        identity:
+            crate::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key(
+                "cli:export",
+            ),
         ephemeral: false,
         system_prompt: String::new(),
         spill_store: None,
@@ -50,7 +51,7 @@ async fn the_composed_loop_exports_under_the_artifacts_directory_of_its_base() {
 async fn a_loop_composed_without_an_exporter_refuses_raw_exports() {
     let state = Arc::new(tokio::sync::RwLock::new(
         crate::application::sessions::active_session::ActiveSessionState::new(
-            crate::domain::session_identity::SessionIdentity::from_persisted_key("cli:none"),
+            crate::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key("cli:none"),
         ),
     ));
     let controller = build_export_report(state, None);

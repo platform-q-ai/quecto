@@ -14,7 +14,7 @@ use crate::application::sessions::ports::ContextSpillStore;
 use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
 use crate::domain::message::{Message, Role, UserImageBlock};
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::domain::tool::{ImageBlock, ToolDefinition, ToolResult};
 use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
 use crate::infrastructure::persistence::session_layout::FlatSessionLayout;

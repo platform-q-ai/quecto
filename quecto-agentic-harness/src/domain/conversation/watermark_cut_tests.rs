@@ -350,7 +350,7 @@ fn the_stub_takes_the_ordinal_of_the_newest_message_it_replaces() {
     for n in 1..6 {
         exchange(&mut messages, &format!("now-{n}"), 2_000);
     }
-    crate::domain::session::assign_missing_ordinals(&mut messages);
+    crate::domain::sessions::entities::session::assign_missing_ordinals(&mut messages);
     let read = messages.iter().filter_map(|m| m.ordinal).max().unwrap();
     let cut = plan(&messages, 20_000, 6_000);
     let newest_archived = archived(&messages, &cut)

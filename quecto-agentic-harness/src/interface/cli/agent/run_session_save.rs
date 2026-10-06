@@ -44,7 +44,7 @@ impl<'a> TranscriptSave<'a> {
         if self.ephemeral {
             return;
         }
-        crate::domain::session_stopped::answer_unfinished_tool_calls(
+        crate::domain::sessions::services::session_stopped::answer_unfinished_tool_calls(
             messages,
             self.run_start,
             &format!("max-time {secs}s stopped the run"),

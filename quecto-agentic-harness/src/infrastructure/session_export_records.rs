@@ -8,7 +8,7 @@
 use crate::application::sessions::dto::{ExportManifest, ExportRecord};
 use crate::domain::message::{Message, ThinkingBlock};
 use crate::domain::request_observation::RuntimeIdentity;
-use crate::domain::session::SpillEntry;
+use crate::domain::sessions::entities::session::SpillEntry;
 use serde_json::{Value, json};
 
 /// One record as one JSON object.

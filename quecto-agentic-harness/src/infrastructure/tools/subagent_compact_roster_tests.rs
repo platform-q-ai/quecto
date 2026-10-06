@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::session::SubagentLiveness;
+use crate::domain::sessions::entities::session::SubagentLiveness;
 use crate::infrastructure::tools::subagent_monitor::update_entry_next_sequence;
 use crate::infrastructure::tools::subagent_registry::{
     SubagentEntry, SubagentStatus, new_registry,

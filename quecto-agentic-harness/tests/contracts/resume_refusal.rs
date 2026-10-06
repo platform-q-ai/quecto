@@ -8,9 +8,9 @@ use super::resume_fixture::{World, identity};
 use quecto::application::sessions::dto::{ResumeOutcome, ResumeRequest, ResumeSavedSessionError};
 use quecto::application::sessions::ports::SessionStore;
 use quecto::application::sessions::ports::session_home::SessionHomeCatalogue;
-use quecto::domain::resume_decision::{HomeVersion, ResumeDecisionKind};
-use quecto::domain::session_home::SessionHomeScope;
-use quecto::domain::session_identity::SessionIdentity;
+use quecto::domain::sessions::entities::session_home::SessionHomeScope;
+use quecto::domain::sessions::entities::session_identity::SessionIdentity;
+use quecto::domain::sessions::services::resume_decision::{HomeVersion, ResumeDecisionKind};
 use quecto::infrastructure::persistence::session_home_catalogue::FileSessionHomeCatalogue;
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
 use std::os::unix::fs::PermissionsExt;
@@ -302,7 +302,9 @@ async fn a_target_owned_by_another_live_process_is_refused_and_not_stolen() {
 /// called, `cd` lands in exactly that folder and nothing in its name executes.
 #[test]
 fn the_command_changes_into_exactly_that_folder_whatever_it_is_called() {
-    use quecto::domain::session_open_command::{cd_there_command, open_there_command};
+    use quecto::domain::sessions::value_objects::session_open_command::{
+        cd_there_command, open_there_command,
+    };
     let root = tempfile::tempdir().unwrap();
     let root_path = root.path().canonicalize().unwrap();
     for name in [

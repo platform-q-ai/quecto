@@ -3,11 +3,11 @@ use crate::application::sessions::dto::{QueryGeneration, SearchLimit};
 use crate::application::sessions::ports::session_home::{
     HomeCatalogueSnapshot, SessionHomeCatalogue, SessionMetadataSnapshot, WorkspaceDiscovery,
 };
-use crate::domain::resume_decision::HomeVersion;
-use crate::domain::session::SessionSummary;
-use crate::domain::session_home::{AssociationProvenance, WorkspaceGroup};
-use crate::domain::session_identity::SessionIdentity;
-use crate::domain::session_metadata_search::QueryRefusal;
+use crate::domain::sessions::entities::session::SessionSummary;
+use crate::domain::sessions::entities::session_home::{AssociationProvenance, WorkspaceGroup};
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
+use crate::domain::sessions::services::resume_decision::HomeVersion;
+use crate::domain::sessions::services::session_metadata_search::QueryRefusal;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -542,7 +542,7 @@ async fn fuzzy_title_rows_rank_below_every_literal_match_and_are_cut_first() {
     assert_eq!((result.total_matches, result.truncated()), (3, true));
     assert_eq!(
         result.rows[0].matched,
-        [crate::domain::session_metadata_search::MatchedField::Path],
+        [crate::domain::sessions::services::session_metadata_search::MatchedField::Path],
         "the literal row says why"
     );
 }

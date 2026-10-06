@@ -1,7 +1,7 @@
 use super::*;
 use crate::domain::message::Message;
-use crate::domain::session::Session;
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session::Session;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 #[tokio::test]
 async fn handles_over_the_file_store_list_what_the_store_saved() {
@@ -50,7 +50,7 @@ fn production_inputs(base: &std::path::Path, identity: SessionIdentity) -> Sessi
 async fn production_graph_save_restart_discovery_and_startup_share_home_authority() {
     use crate::application::sessions::dto::SaveTrigger;
     use crate::application::sessions::dto::SessionListScope;
-    use crate::domain::session_home::SessionHomeScope;
+    use crate::domain::sessions::entities::session_home::SessionHomeScope;
     let base = tempfile::tempdir().unwrap();
     let identity = SessionIdentity::named_cli("composition-home").unwrap();
     let handles = build_session_handles(production_inputs(base.path(), identity.clone()));

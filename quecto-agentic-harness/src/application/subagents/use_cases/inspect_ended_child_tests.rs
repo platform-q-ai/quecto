@@ -2,7 +2,7 @@ use super::*;
 use crate::application::subagents::ports::{EndedTranscript, PortFuture};
 use crate::domain::child_end::ChildOrigin::{Launched, Reported, Unverified};
 use crate::domain::error::DomainError;
-use crate::domain::session::Session;
+use crate::domain::sessions::entities::session::Session;
 use std::sync::Mutex;
 
 /// Records answering one scripted transcript load and a fixed crash record,

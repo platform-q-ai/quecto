@@ -37,9 +37,7 @@ pub mod redaction;
 pub mod request_observation;
 pub mod request_progress;
 pub mod search_ranking;
-pub mod session;
-pub mod session_identity;
-pub mod session_stopped;
+pub mod sessions;
 pub mod subagent;
 pub mod subagent_launch;
 pub mod subagent_teardown;
@@ -71,14 +69,3 @@ pub mod swarm;
 pub mod state_snapshot;
 
 pub mod attempt_diagnostics;
-
-pub mod resume_decision;
-pub mod session_home;
-pub mod session_home_text;
-pub mod session_metadata_search;
-pub mod session_metadata_text;
-pub mod session_open_command;
-pub mod session_path_text;
-pub mod session_query_refusal;
-pub mod session_title_subsequence;
-mod stable_digest;

@@ -1,7 +1,7 @@
 use super::*;
 use crate::domain::conversation::image_input::{GifVerdicts, ImageInput, SentConversation};
 use crate::domain::message::UserImageBlock;
-use crate::domain::session::SpillEntry;
+use crate::domain::sessions::entities::session::SpillEntry;
 use crate::domain::tool::ImageBlock;
 use quecto_image::samples;
 

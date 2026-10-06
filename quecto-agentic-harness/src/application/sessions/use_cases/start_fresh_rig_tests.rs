@@ -23,8 +23,10 @@ use crate::application::sessions::ports::{
 };
 use crate::domain::error::DomainError;
 use crate::domain::message::Message;
-use crate::domain::session::{Session, SessionSummary, SpillEntries, SpillEntry};
-use crate::domain::session_identity::{SessionIdentity, SpillId};
+use crate::domain::sessions::entities::session::{
+    Session, SessionSummary, SpillEntries, SpillEntry,
+};
+use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
 use crate::domain::workflow::WorkflowRunPersisted;
 
 pub(crate) type Journal = Arc<Mutex<Vec<String>>>;
@@ -608,7 +610,7 @@ fn rig_home(legacy: bool) -> crate::application::sessions::session_home::Session
     use crate::application::sessions::ports::session_home::{
         HomeCatalogueSnapshot, SessionHomeCatalogue, WorkspaceDiscovery,
     };
-    use crate::domain::session_home::{
+    use crate::domain::sessions::entities::session_home::{
         AssociationProvenance, SessionHome, SessionHomeScope, WorkspaceGroup,
     };
     fn home_at(path: &std::path::Path) -> SessionHome {

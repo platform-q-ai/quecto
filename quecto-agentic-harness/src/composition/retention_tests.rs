@@ -1,7 +1,7 @@
 use super::*;
 use crate::application::sessions::dto::retained_context::{RecallOutcome, RecallQuery};
-use crate::domain::session::SpillEntry;
-use crate::domain::session_identity::{SessionIdentity, SpillId};
+use crate::domain::sessions::entities::session::SpillEntry;
+use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
 
 fn entry(id: &str) -> SpillEntry {
     SpillEntry {

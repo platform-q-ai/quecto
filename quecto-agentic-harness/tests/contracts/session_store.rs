@@ -18,8 +18,8 @@
 use quecto::application::sessions::dto::SessionListQuery;
 use quecto::application::sessions::ports::SessionStore;
 use quecto::domain::message::Message;
-use quecto::domain::session::Session;
-use quecto::domain::session_identity::{SessionIdentity, SessionKeyPrefix};
+use quecto::domain::sessions::entities::session::Session;
+use quecto::domain::sessions::entities::session_identity::{SessionIdentity, SessionKeyPrefix};
 use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
 use std::sync::Arc;

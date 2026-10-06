@@ -1,6 +1,6 @@
 use super::{INDEX_QUERY, RecallError, RecallQuery, Retained};
 use crate::domain::error::DomainError;
-use crate::domain::session_identity::SpillId;
+use crate::domain::sessions::entities::session_identity::SpillId;
 
 #[test]
 fn the_reserved_list_id_selects_the_index() {

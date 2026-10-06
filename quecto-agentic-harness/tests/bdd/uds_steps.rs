@@ -14,10 +14,10 @@ use super::*;
 use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use quecto::composition::runtime::build_agent_provider;
 use quecto::domain::message::Role;
-use quecto::domain::session::{
+use quecto::domain::sessions::entities::session::{
     PersistedSubagentRosterEntry, Session, SubagentLiveness, SubagentRestoreReason,
 };
-use quecto::domain::session_identity::SessionIdentity;
+use quecto::domain::sessions::entities::session_identity::SessionIdentity;
 use quecto::infrastructure::config::Config;
 use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
@@ -437,7 +437,7 @@ pub(crate) fn execute_uds(world: &mut QuectoWorld) {
             retention: None,
             base_dir: &base_for_thread,
             workspace: &base_for_thread,
-            identity: quecto::domain::session_identity::SessionIdentity::from_persisted_key(
+            identity: quecto::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key(
                 &session_key,
             ),
             model,
@@ -1865,7 +1865,8 @@ fn then_session_answers_each_tool_call(world: &mut QuectoWorld, session_name: St
         .block_on(store.load(&SessionIdentity::from_persisted_key(&key)))
         .expect("failed to load session")
         .expect("session not found");
-    let (_, orphans) = quecto::domain::session::filter_orphan_tool_pairs(&session.messages);
+    let (_, orphans) =
+        quecto::domain::sessions::entities::session::filter_orphan_tool_pairs(&session.messages);
     assert!(!orphans.has_orphans(), "unpaired tool calls: {orphans:?}");
     let mut open_calls: Vec<String> = Vec::new();
     for message in &session.messages {
@@ -2200,7 +2201,7 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
             retention: None,
             base_dir: &base_dir,
             workspace: &base_dir,
-            identity: quecto::domain::session_identity::SessionIdentity::from_persisted_key(
+            identity: quecto::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key(
                 &session_key,
             ),
             model,
@@ -2620,7 +2621,7 @@ fn mc_spawn_agent(
             retention: None,
             base_dir: &base_for_thread,
             workspace: &base_for_thread,
-            identity: quecto::domain::session_identity::SessionIdentity::from_persisted_key(
+            identity: quecto::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key(
                 &session_key,
             ),
             model,

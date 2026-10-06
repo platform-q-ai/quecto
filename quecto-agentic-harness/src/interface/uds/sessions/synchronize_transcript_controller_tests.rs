@@ -3,7 +3,7 @@ use crate::application::sessions::active_session::ActiveSessionState;
 use crate::application::sessions::dto::TranscriptSync;
 use crate::application::sessions::use_cases::SynchronizeTranscript;
 use crate::domain::message::Message;
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use std::sync::Arc;
 
 fn controller(published: &[Message]) -> SynchronizeTranscriptController {

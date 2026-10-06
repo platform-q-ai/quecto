@@ -8,7 +8,7 @@
 //! told so and nothing is read again.
 use crate::domain::error::DomainError;
 use crate::domain::message::Message;
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 use super::super::FileSessionStore;
 

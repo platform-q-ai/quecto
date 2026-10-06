@@ -14,7 +14,7 @@ use super::super::session_store::session_store_list::SummaryCache;
 use super::super::session_store::session_store_list::session_store_list_scan::session_store_list_record::summary_in;
 use super::{FileSessionHomeCatalogue, IndexEntry, Projection, session_home_catalogue_rejections};
 use crate::application::sessions::ports::session_home::HomeCatalogueSnapshot;
-use crate::domain::{error::DomainError, session::SessionSummary, session_identity::SessionIdentity};
+use crate::domain::{error::DomainError, sessions::entities::session::SessionSummary, sessions::entities::session_identity::SessionIdentity};
 use std::path::Path;
 
 /// What the metadata query takes from the pass besides the listing: the

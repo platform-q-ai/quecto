@@ -5,7 +5,7 @@
 //! interface protocol module, which infrastructure must not import).
 use super::subagent_environment_wire::environment_wire;
 use super::subagent_registry::{SubagentRegistry, SubagentStatus, effective_status};
-use crate::domain::session::SubagentLiveness;
+use crate::domain::sessions::entities::session::SubagentLiveness;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

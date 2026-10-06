@@ -9,7 +9,7 @@ use crate::domain::child_end::ChildOrigin;
 use crate::domain::crash_record::CrashRecord;
 use crate::domain::ids::AgentUuid;
 use crate::domain::message::Message;
-use crate::domain::session_identity::SessionIdentity;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 /// A window of an ended child's persisted transcript. Paged by the durable
 /// ordinals persistence assigns, not by message ids: those are minted anew

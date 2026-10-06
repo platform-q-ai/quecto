@@ -6,7 +6,7 @@
 //! terms of at least three characters as typed, like the length bound; one
 //! pass over the folded title, no transcript content, no new index. A row
 //! that needed the tier for any term ranks by it, below every literal match.
-use super::session_metadata_search::MatchedField;
+use crate::domain::sessions::services::session_metadata_search::MatchedField;
 
 /// Shown characters a term needs before the tier is tried on it.
 pub const MIN_SUBSEQUENCE_TERM_CHARS: usize = 3;

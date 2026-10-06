@@ -1,7 +1,7 @@
 //! Command-line wording for refusal to start a saved session in this folder.
 use super::resume_saved_session::ResumeDisposition;
-use crate::domain::session_open_command::cd_there_command;
-use crate::domain::session_path_text::display_path;
+use crate::domain::sessions::value_objects::session_open_command::cd_there_command;
+use crate::domain::sessions::value_objects::session_path_text::display_path;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

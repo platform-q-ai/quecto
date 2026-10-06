@@ -16,10 +16,10 @@ use quecto::application::sessions::ports::session_home::SessionHomeCatalogue;
 use quecto::application::sessions::use_cases::SearchSessionMetadata;
 use quecto::composition::session_home::session_home_in;
 use quecto::domain::message::Message;
-use quecto::domain::resume_decision::HomeVersion;
-use quecto::domain::session::Session;
-use quecto::domain::session_home::SessionHomeScope;
-use quecto::domain::session_metadata_search::MatchedField;
+use quecto::domain::sessions::entities::session::Session;
+use quecto::domain::sessions::entities::session_home::SessionHomeScope;
+use quecto::domain::sessions::services::resume_decision::HomeVersion;
+use quecto::domain::sessions::services::session_metadata_search::MatchedField;
 use quecto::infrastructure::persistence::session_home_catalogue::FileSessionHomeCatalogue;
 use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
@@ -292,7 +292,7 @@ async fn a_corrupt_index_and_a_corrupt_record_are_recovered_or_named_without_hid
     let decision = world.decision("cli:theirs").await;
     assert_eq!(
         decision.kind,
-        quecto::domain::resume_decision::ResumeDecisionKind::CrossFolder
+        quecto::domain::sessions::services::resume_decision::ResumeDecisionKind::CrossFolder
     );
 }
 

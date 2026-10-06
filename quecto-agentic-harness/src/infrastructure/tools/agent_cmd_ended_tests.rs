@@ -2,7 +2,7 @@ use super::*;
 use crate::application::sessions::ports::SessionStore;
 use crate::domain::crash_record::CrashRecord;
 use crate::domain::crash_record::PanicReport;
-use crate::domain::session::Session;
+use crate::domain::sessions::entities::session::Session;
 use crate::infrastructure::persistence::crash_record::Armed;
 use crate::infrastructure::tools::subagent_registry::{
     ExitSignal, SubagentEntry, new_exit_signal_channel, new_registry,
