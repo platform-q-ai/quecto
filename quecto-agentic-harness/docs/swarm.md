@@ -19,7 +19,7 @@ capability. **The swarm runs in the container the coordinator was spawned
 into**: the master picks a `container_configs` entry by name —
 `agent_cmd {"agent_id":"*","command":"get_container_configs"}` lists the
 effective names for the master's checkout, and the spawn tool description
-carries the same roster — and launches the coordinator with
+carries the same roster — and launches the coordinator with `"coordinator": true`,
 `"container": {"mode":"new","container_config":"<name>"}` (`"container": true`
 selects this repo's `standard` entry when one exists — no global default
 overrides it; run `quecto container init` first if the roster shows none —

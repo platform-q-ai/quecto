@@ -332,8 +332,9 @@ fn the_spawn_and_swarm_descriptions_stay_within_the_budget() {
 /// then from 3,446 when #2394 made every op answer what it changed (no
 /// "null for none"), then from 3,417 when the get_messages rule replaced
 /// revoke's gloss, then from 3,410 when the coordinator's evidence rule
-/// replaced "verify artifacts" (#2461): it only shrinks.
-const SWARM_DESCRIPTION_BUDGET_BYTES: usize = 3_404;
+/// replaced "verify artifacts" (#2461), then from 3,404 when waiting for the
+/// master stopped asking for a block the board refuses: it only shrinks.
+const SWARM_DESCRIPTION_BUDGET_BYTES: usize = 3_385;
 
 #[test]
 fn the_swarm_descriptions_coordinator_prose_is_in_the_docs_page() {
