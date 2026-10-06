@@ -145,6 +145,11 @@ pub(super) fn validate_agent_flags(flags: AgentFlags, stderr: &mut String) -> Op
         stderr.push_str("agent: --persist requires --mode uds\n");
         return None;
     }
+    // #2461: only a SpawnTool child can be a coordinator.
+    if flags.coordinator && !flags.spawned {
+        stderr.push_str("agent: --coordinator requires --spawned\n");
+        return None;
+    }
     if flags.parent_control.is_some() && !(flags.uds_mode && flags.spawned) {
         stderr.push_str("agent: --parent-control requires --mode uds and --spawned\n");
         return None;

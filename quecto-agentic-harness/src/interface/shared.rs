@@ -32,6 +32,11 @@ fn coordinator_role_preamble() -> &'static str {
     "You are the swarm coordinator for one bounded phase inside Quecto. You plan and specify the phase, judge your workers' reported evidence, integrate the result, and report to the parent; your workers do the hands-on work."
 }
 
+/// Coordinator-only policy, packaged beside the parent playbook (#2461).
+fn coordinator_playbook() -> &'static str {
+    include_str!("../../../COORDINATOR_PLAYBOOK.md").trim_ascii_end()
+}
+
 /// Which core prompt an agent starts from (#2461), chosen only by its
 /// explicit launch flags: never inferred from session, env or socket.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,7 +60,7 @@ impl PromptRole {
         match (spawned, coordinator) {
             (false, _) => Self::Parent,
             (true, false) => Self::Subagent,
-            (true, true) => Self::Subagent,
+            (true, true) => Self::Coordinator,
         }
     }
 }
@@ -63,7 +68,7 @@ impl PromptRole {
 fn core_system_prompt_with_playbook(role: PromptRole, playbook: &str) -> String {
     let sections = match role {
         PromptRole::Parent => vec![agent_role_preamble(), playbook],
-        PromptRole::Coordinator => vec![coordinator_role_preamble()],
+        PromptRole::Coordinator => vec![coordinator_role_preamble(), coordinator_playbook()],
         PromptRole::Subagent => vec![child_role_preamble()],
     };
     sections.join("\n\n")

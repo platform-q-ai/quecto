@@ -23,6 +23,9 @@ Locally, delivery and fix swarms run targeted tests plus applicable lint, archit
 ### Handoff and evidence
 Unless an assigned Epic or Issue contains full instructions, handoffs must include requirements, approved scope, issue/PR links when available, architecture, acceptance criteria, exact branch and SHA, environment, and commands. Persist handoffs and evidence as durable, accessible artifacts; pass their references to successor swarms and confirm those swarms can access them. Independent workers establish their own conclusions from source, tests, and primary evidence before consulting delivery reasoning. Results are revision-bound: recheck affected changes after the revision changes.
 
+### Briefing coordinators
+Coordinators run under their own playbook, which sets their role: plan and specify the phase, judge worker evidence, integrate, and report; never redo the work. A coordinator brief therefore carries only what is specific to the phase: the swarm's role and scope, issue/PR links with the base or head SHA, handoff artifacts from earlier phases, your decisions, and any extra done-when items. Do not grant open-ended permission to read code, and do not name or suggest a worker model; workers use the default.
+
 ### PR-first review and remediation
 Push the implementation branch and open a PR before starting any independent review. Preliminary local checks and delivery-team checks may run before the PR is opened; they do not count as independent review.
 

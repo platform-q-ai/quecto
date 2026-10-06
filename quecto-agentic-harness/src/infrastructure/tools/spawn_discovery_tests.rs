@@ -331,8 +331,9 @@ fn the_spawn_and_swarm_descriptions_stay_within_the_budget() {
 /// coordinator's inbox rule replaced field types the schema already states,
 /// then from 3,446 when #2394 made every op answer what it changed (no
 /// "null for none"), then from 3,417 when the get_messages rule replaced
-/// revoke's gloss: it only shrinks.
-const SWARM_DESCRIPTION_BUDGET_BYTES: usize = 3_410;
+/// revoke's gloss, then from 3,410 when the coordinator's evidence rule
+/// replaced "verify artifacts" (#2461): it only shrinks.
+const SWARM_DESCRIPTION_BUDGET_BYTES: usize = 3_404;
 
 #[test]
 fn the_swarm_descriptions_coordinator_prose_is_in_the_docs_page() {

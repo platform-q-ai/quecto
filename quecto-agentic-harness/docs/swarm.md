@@ -379,10 +379,11 @@ cannot verify the replacement. A submitted task cannot be changed to blocked. On
 tasks with `verify_task` (`task_id`, the claim `token`, `revision`), accept
 evidence using `evidence` (`criterion`, `artifact`, `revision`, `kind`,
 `passed`), and `complete` (`revision`).
-A worker's `evidence` call records an unaccepted submission. A coordinator must
-actually inspect command results and obtain the required independent/human
-review before accepting them; the board does not execute tests or act as an
-independent reviewer. `command` and `review` evidence are distinguished.
+A worker's `evidence` call records an unaccepted submission. A coordinator
+accepts or rejects it on the reported command results and the required
+independent/human review, judged against the criteria, and rejects with reasons
+when they fall short; it does not re-run or re-derive the work (#2461). The
+board does not execute tests or act as an independent reviewer. `command` and `review` evidence are distinguished.
 
 Completion requires accepted evidence for every original criterion at the
 specified revision, completed tasks with matching evidence revisions, and no

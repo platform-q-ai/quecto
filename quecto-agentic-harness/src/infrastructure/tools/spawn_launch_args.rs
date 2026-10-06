@@ -8,7 +8,7 @@ use std::ffi::OsString;
 use std::path::Path;
 
 use crate::domain::external_agent::backend::{BackendLaunchContext, MemberBackend};
-use crate::domain::subagent::SubagentConfig;
+use crate::domain::subagent::{ContainerSelection, SubagentConfig};
 
 /// Parse the spawn tool's `backend` argument (#2287): absent or null is
 /// quecto; otherwise one of [`MemberBackend::SPAWN_VALUES`]. Whether the
@@ -238,6 +238,15 @@ pub(super) fn build_child_cli_args(spec: &ChildLaunchSpec<'_>) -> Vec<OsString> 
         // children; never inferred from --parent-id / session / env / UDS.
         "--spawned".into(),
     ]);
+    // #2461: only the host parent launches into a container, and what it
+    // launches there is that swarm's coordinator; workers are spawned inside
+    // it with `container` omitted, so a local launch is never a coordinator.
+    match config.container {
+        ContainerSelection::New { .. } | ContainerSelection::Existing { .. } => {
+            args.push("--coordinator".into());
+        }
+        ContainerSelection::Local => {}
+    }
     // Deliberately no `--persist` (#1937): a launcher-created child is
     // lifetime-scoped to its launcher through the parent control binding
     // (`--parent-control`, #1935). It ignores ordinary client churn because
