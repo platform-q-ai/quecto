@@ -7,7 +7,9 @@ name: Cache Warm
 # Quality 137 s vs 58 s). Each job here builds one shape into the target dir
 # and saves it under the same `shared-key` the CI jobs use; a PR then
 # restores the closest master entry (`restore-keys` prefix match) even when
-# its Cargo.lock differs. Nothing is tested here.
+# its Cargo.lock differs. Nothing is tested here. The coverage-lib shape is
+# not warmed: only coverage-nightly.yml uses it, and that runs on master, so it
+# saves and restores its own cache.
 on:
   push:
     branches: [master]
@@ -34,21 +36,6 @@ jobs:
       - run: cargo clippy -p quecto-tui --lib --bins -- -D warnings
       - run: cargo clippy -p quecto-agentic-harness --lib --bins -- -D warnings
       - run: cargo test --workspace --features quecto-agentic-harness/test-support --all-targets --no-run
-
-  coverage-lib:
-    name: Warm coverage-lib
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools-preview
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: coverage-lib
-      - uses: taiki-e/install-action@cargo-llvm-cov
-      - run: bash scripts/run-lib-coverage.sh --build-only
 
   bdd:
     name: Warm bdd

@@ -1,0 +1,62 @@
+name: Nightly Coverage
+
+# Library coverage thresholds, checked once a day on master instead of on
+# every merge-requested PR: the instrumented build plus a second, instrumented
+# run of every lib test made Coverage the slowest merge-CI job (~9-11 min).
+# A failure opens (or comments on) one tracking issue, so a PR that dropped
+# coverage below a threshold is seen the next morning. Run it by hand from
+# the Actions tab (workflow_dispatch) to check a branch before merging.
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-coverage
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  coverage:
+    name: Coverage
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: coverage-lib
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Install fd
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fd-find
+          # Ubuntu names the fd-find executable `fdfind`; expose the upstream name.
+          mkdir -p "$HOME/.local/bin"
+          ln -sf "$(command -v fdfind)" "$HOME/.local/bin/fd"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/fd" --version
+      # One instrumented workspace-shape build; each package's lib tests run
+      # and report alone (the same per-package numbers as four `cargo llvm-cov
+      # --lib -p` runs, which each compiled their own feature unification).
+      - run: bash scripts/run-lib-coverage.sh quecto-agentic-harness:92 quecto-tui:95 quecto-api:95 quecto-image:95
+      - name: Report a scheduled failure
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Nightly coverage failed"
+          body="Nightly coverage failed on master at ${GITHUB_SHA}: ${RUN_URL}"
+          existing="$(gh issue list --state open --search "\"${title}\" in:title" --json number --jq '.[0].number')"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --label bug --body "$body"
+          fi

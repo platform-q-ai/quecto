@@ -1,7 +1,8 @@
 name: Authoritative Merge CI
 
 # Full validation runs only when the merge-requested label is applied to a PR.
-# workflow_dispatch remains available for explicit diagnosis.
+# workflow_dispatch remains available for explicit diagnosis. Library coverage
+# is not part of merge CI: coverage-nightly.yml checks it on master once a day.
 on:
   pull_request:
     branches: [master]
@@ -18,7 +19,8 @@ concurrency:
 # master's scope and every PR's first run compiles everything cold (measured:
 # Coverage 180 s warm vs 343 s cold, Static Quality 58 s vs 137 s).
 #   workspace    - cargo test/clippy of the workspace shape (target/)
-#   coverage-lib - instrumented workspace lib build (target/llvm-cov-lib)
+#   coverage-lib - instrumented workspace lib build (target/llvm-cov-lib), used
+#                  only by coverage-nightly.yml, which runs on master daily
 #   bdd          - bdd test binaries, no coverage instrumentation (target/)
 #   macos-types  - aarch64/x86_64-apple-darwin cross type-checks (target/<triple>)
 
@@ -197,35 +199,6 @@ jobs:
         with:
           shared-key: workspace
       - run: bash scripts/run-bdd-shards.sh --suite mock-llm-bdd --shards 8 --timeout 5m --tag mock-llm
-
-  coverage:
-    needs: [static-quality, dependency-policy]
-    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'merge-requested'
-    name: Coverage
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools-preview
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: coverage-lib
-      - uses: taiki-e/install-action@cargo-llvm-cov
-      - name: Install fd
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y fd-find
-          # Ubuntu names the fd-find executable `fdfind`; expose the upstream name.
-          mkdir -p "$HOME/.local/bin"
-          ln -sf "$(command -v fdfind)" "$HOME/.local/bin/fd"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          "$HOME/.local/bin/fd" --version
-      # One instrumented workspace-shape build; each package's lib tests run
-      # and report alone (the same per-package numbers as four `cargo llvm-cov
-      # --lib -p` runs, which each compiled their own feature unification).
-      - run: bash scripts/run-lib-coverage.sh quecto-agentic-harness:92 quecto-tui:95 quecto-api:95 quecto-image:95
 
   dependency-policy:
     if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'merge-requested'

@@ -927,7 +927,7 @@ All test commands pipe through `scripts/test-filter.sh` which strips the per-tes
 
 `--no-fail-fast` ensures all failures are reported in a single run, not just the first.
 
-Two-tier local hooks: pre-commit performs lightweight staged-file hygiene and formatting; pre-push runs fast quality rules, changed-package strict Clippy, and architecture/repository invariants. Full tests, BDD, coverage, dependency policy, and mock E2E run in authoritative CI only after the `merge-requested` label is applied; the same label starts advisory mutation testing of the PR's changed lines (see CONTRIBUTIONS.md). A subsequent push removes that label. Install via `scripts/install-hooks.sh`.
+Two-tier local hooks: pre-commit performs lightweight staged-file hygiene and formatting; pre-push runs fast quality rules, changed-package strict Clippy, and architecture/repository invariants. Full tests, BDD, dependency policy, and mock E2E run in authoritative CI only after the `merge-requested` label is applied (library coverage runs nightly on master instead); the same label starts advisory mutation testing of the PR's changed lines (see CONTRIBUTIONS.md). A subsequent push removes that label. Install via `scripts/install-hooks.sh`.
 
 ### Sharded BDD (24-way parallel)
 
@@ -1005,7 +1005,7 @@ Pre-merge controls (real-LLM lane):
 - `QUECTO_REAL_LLM_TAG` scenario tag to run (default `manual-real-llm`; use `real-llm-smoke` for the old smoke subset)
 - `QUECTO_PREMERGE_FORCE=1` to bypass cache and rerun merge-time checks
 
-Coverage runs in authoritative CI after `merge-requested` is applied. For manual coverage checks, use `cargo llvm-cov`.
+Library coverage runs nightly on master (`.github/workflows/coverage-nightly.yml`; a failure opens a tracking issue), not on every PR. To check a branch before merging, run that workflow by hand from the Actions tab, or locally with `bash scripts/run-lib-coverage.sh quecto-agentic-harness:92 quecto-tui:95 quecto-api:95 quecto-image:95`.
 
 ## Directory Structure
 

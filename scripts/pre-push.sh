@@ -138,7 +138,7 @@ if (( FAILED != 0 )); then
 fi
 
 elapsed=$((SECONDS - start))
-printf '\nPre-push passed in %ss. Full workspace Clippy, tests, BDD, coverage and dependency policy run when the merge-requested label is applied.\n' "$elapsed"
+printf '\nPre-push passed in %ss. Full workspace Clippy, tests, BDD and dependency policy run when the merge-requested label is applied; coverage runs nightly on master.\n' "$elapsed"
 if (( elapsed > 20 )); then
     echo "WARNING: pre-push exceeded its 20-second target (${elapsed}s)." >&2
 fi
