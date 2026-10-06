@@ -96,3 +96,24 @@ fn a_panicking_rebuild_worker_reports_failure_when_forced_and_retains_last_good_
     assert!(matches!(&forced, ReloadStep::Failed(error) if error == WORKER_PANICKED));
     assert!(matches!(polled, ReloadStep::Unchanged));
 }
+
+/// Only `list_models` polls before the dispatch loop answers it (#2451).
+#[test]
+fn only_a_listing_polls_before_its_reply() {
+    let command = |json: &str| {
+        serde_json::from_str::<crate::interface::cli::protocol::AgentCommand>(json)
+            .expect("a protocol command")
+    };
+    assert!(polls_before_reply(&command(
+        r#"{"type":"list_models","id":"lm"}"#
+    )));
+    for other in [
+        r#"{"type":"prompt","id":"p","message":"hi"}"#,
+        r#"{"type":"set_model","id":"sm","model":"openai-api/gpt-6-sol"}"#,
+        r#"{"type":"get_state","id":"gs"}"#,
+        r#"{"type":"refresh_models","id":"rm"}"#,
+        r#"{"type":"get_tool_catalogue","id":"tc"}"#,
+    ] {
+        assert!(!polls_before_reply(&command(other)), "{other}");
+    }
+}

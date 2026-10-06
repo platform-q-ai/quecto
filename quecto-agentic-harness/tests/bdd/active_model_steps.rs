@@ -79,6 +79,12 @@ impl CatalogueSource for AmSource {
 struct AmCredentials(Vec<String>);
 
 impl CredentialStatusPort for AmCredentials {
+    fn for_composed_routes(
+        &self,
+        _routes: &[String],
+    ) -> Option<Box<dyn CredentialStatusPort + '_>> {
+        None // this fake's status does not depend on routes
+    }
     fn credential_available(&self, entry: &CatalogueEntry) -> bool {
         !self.0.contains(&entry.reference().qualified_id())
     }
@@ -366,4 +372,49 @@ fn then_set_model_selection(world: &mut QuectoWorld, status: String, provider: S
     let resp = find_agent_response(world, "set_model").expect("no set_model response");
     assert_eq!(resp["data"]["selection"]["status"], status, "{resp}");
     assert_eq!(resp["data"]["selection"]["provider"], provider, "{resp}");
+}
+
+#[given("the config file will be updated to add an Anthropic API key before the UDS command loop")]
+fn given_anthropic_key_added_before_loop(world: &mut QuectoWorld) {
+    world.uds_add_anthropic_key_before_loop = true;
+}
+
+/// Write `providers.anthropic.api_key` into `<base>/config.json` (#2451):
+/// the running agent composed without it.
+pub(crate) fn add_anthropic_key_to_config(base: &std::path::Path) {
+    // Past the composed config's mtime, so the reload poll sees a change.
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    let path = base.join("config.json");
+    let mut config: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).expect("read config"))
+            .expect("parse config");
+    let providers = config
+        .as_object_mut()
+        .expect("config object")
+        .entry("providers")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .expect("providers object");
+    let anthropic = providers
+        .entry("anthropic")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .expect("anthropic object");
+    anthropic.insert("api_key".to_string(), serde_json::json!("sk-ant-test"));
+    std::fs::write(
+        &path,
+        serde_json::to_string_pretty(&config).expect("serialize config"),
+    )
+    .expect("write Anthropic key");
+}
+
+#[then(expr = "the list_models response should offer {string}")]
+fn then_list_models_offers(world: &mut QuectoWorld, model: String) {
+    let models = super::provider_auth_modes_steps::list_models_response(world);
+    let listed = models
+        .iter()
+        .find(|m| m["model"] == serde_json::Value::String(model.clone()))
+        .unwrap_or_else(|| panic!("{model} is not listed: {models:?}"));
+    assert_eq!(listed["configured"], true, "{listed}");
+    assert_eq!(listed["unavailable"], serde_json::json!([]), "{listed}");
 }

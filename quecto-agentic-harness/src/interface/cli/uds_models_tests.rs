@@ -57,7 +57,8 @@ fn list_models_wire_serializes_registry_models() {
 
     let google = find("gemini-custom");
     assert_eq!(google["api"], "google-generative-ai");
-    assert_eq!(google["configured"], true);
+    // A base URL alone is no credential: nothing routes it (#2451).
+    assert_eq!(google["configured"], false);
 
     let open = find("open-custom");
     assert_eq!(open["api"], "openai-completions");

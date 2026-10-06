@@ -1,5 +1,5 @@
-//! Tests for the provider-slot rules shared by the runtime factory and the
-//! catalogue credential status (#2451).
+//! Tests for the provider-slot rules the runtime factory builds by, and
+//! the routed slots the catalogue credits from (#2451).
 
 use super::*;
 use crate::domain::catalogue::ProviderId;
@@ -26,12 +26,8 @@ fn oauth(vendor: &str) -> AuthIdentity {
     }
 }
 
-fn probed(keys: ConfiguredApiKeys<'_>, credentials: &[Credential]) -> ProviderSlots {
-    let stored = credentials
-        .iter()
-        .map(|credential| (credential.provider.clone(), credential.clone()))
-        .collect();
-    ProviderSlots::from_stored(keys, &stored)
+fn routed(routes: &[&str]) -> ProviderSlots {
+    ProviderSlots::routed(routes.iter().map(|route| (*route).to_string()))
 }
 
 #[test]
@@ -81,106 +77,45 @@ fn an_oauth_slot_refuses_a_token_credential_or_an_empty_token() {
 }
 
 #[test]
-fn probed_oauth_sign_ins_credit_their_oauth_slots_only() {
-    let slots = probed(
-        ConfiguredApiKeys::NONE,
-        &[
-            credential("anthropic", AuthMethod::OAuth, "a", None),
-            credential("openai", AuthMethod::OAuth, "o", None),
-        ],
-    );
+fn a_routed_slot_credits_its_own_models_only() {
+    let slots = routed(&["anthropic-oauth", "openai-api"]);
     assert!(slots.credits("anthropic-oauth", &oauth("anthropic")));
-    assert!(slots.credits("openai-oauth", &oauth("openai")));
-    assert!(!slots.credits("anthropic-api", &AuthIdentity::ApiKey));
-    assert!(!slots.credits("openai-api", &AuthIdentity::ApiKey));
-    assert!(!slots.credits("xai", &oauth("xai")));
-}
-
-#[test]
-fn probed_api_keys_credit_their_api_slots_only() {
-    let slots = probed(
-        ConfiguredApiKeys {
-            openai: "sk-configured",
-            anthropic: "",
-        },
-        &[credential("anthropic", AuthMethod::Token, "stored", None)],
-    );
     assert!(slots.credits("openai-api", &AuthIdentity::ApiKey));
-    assert!(slots.credits("anthropic-api", &AuthIdentity::ApiKey));
+    assert!(
+        !slots.credits("anthropic-api", &AuthIdentity::ApiKey),
+        "an OAuth slot never credits the API slot"
+    );
     assert!(!slots.credits("openai-oauth", &oauth("openai")));
-    assert!(!slots.credits("anthropic-oauth", &oauth("anthropic")));
 }
 
 #[test]
-fn probed_nothing_credits_nothing() {
-    let slots = probed(ConfiguredApiKeys::NONE, &[]);
-    for (slot, vendor, _) in DEDICATED_SLOTS {
-        assert!(!slots.credits(slot, &AuthIdentity::ApiKey));
-        assert!(!slots.credits(slot, &oauth(vendor)));
-    }
-}
-
-#[test]
-fn a_probed_sign_in_credits_any_oauth_provider_of_its_vendor_but_no_api_key_provider() {
-    let slots = probed(
-        ConfiguredApiKeys::NONE,
-        &[
-            credential("anthropic", AuthMethod::OAuth, "a", None),
-            credential("xai", AuthMethod::OAuth, "x", None),
-        ],
-    );
+fn routed_oauth_providers_are_credited_whatever_their_name() {
+    let slots = routed(&["XAI", " my-claude "]);
     assert!(slots.credits("xai", &oauth("xai")));
-    assert!(slots.credits("my-claude", &oauth("anthropic")));
-    assert!(!slots.credits("my-claude", &AuthIdentity::ApiKey));
-    assert!(!slots.credits("my-claude", &AuthIdentity::OAuth { provider: None }));
-}
-
-#[test]
-fn a_probed_sign_in_for_a_vendor_without_kernel_oauth_credits_nothing() {
-    let slots = probed(
-        ConfiguredApiKeys::NONE,
-        &[credential("acme", AuthMethod::OAuth, "a", None)],
+    assert!(slots.credits("My-Claude", &oauth("anthropic")));
+    assert!(
+        !slots.credits("grok", &oauth("xai")),
+        "only routed providers"
     );
-    assert!(!slots.credits("acme-oauth", &oauth("acme")));
 }
 
 #[test]
-fn routed_slots_credit_the_dedicated_and_oauth_providers_the_runtime_holds() {
-    let slots = ProviderSlots::routed([
-        "anthropic-oauth".to_string(),
-        "XAI".to_string(),
-        "keyed".to_string(),
-    ]);
-    assert!(slots.credits("anthropic-oauth", &oauth("anthropic")));
-    assert!(slots.credits("xai", &oauth("xai")));
-    assert!(!slots.credits("anthropic-api", &AuthIdentity::ApiKey));
+fn a_routed_api_key_provider_is_credentialed_by_its_records_not_its_route() {
+    let slots = routed(&["keyed"]);
     assert!(
         !slots.credits("keyed", &AuthIdentity::ApiKey),
-        "an API-key provider is credentialed by its own records, never its route"
+        "a key on one model never marks its siblings"
     );
 }
 
 #[test]
-fn an_unreadable_store_probes_no_slot() {
-    let tmp = tempfile::tempdir().unwrap();
-    std::fs::write(tmp.path().join("credentials.json"), "not json").unwrap();
-    let slots = ProviderSlots::probe(ConfiguredApiKeys::NONE, &CredentialStore::new(tmp.path()));
-    assert_eq!(
-        slots,
-        ProviderSlots::Probed {
-            dedicated: BTreeSet::new(),
-            oauth_vendors: BTreeSet::new(),
-        }
+fn no_runtime_credits_nothing() {
+    let slots = ProviderSlots::of_runtime(
+        &crate::application::provider_runtime::RuntimeSnapshotStore::new(),
     );
-    let configured = ProviderSlots::probe(
-        ConfiguredApiKeys {
-            openai: "sk",
-            anthropic: "",
-        },
-        &CredentialStore::new(tmp.path()),
-    );
-    assert!(
-        configured.credits("openai-api", &AuthIdentity::ApiKey),
-        "a configured key needs no store"
-    );
+    assert_eq!(slots, ProviderSlots::none());
+    for slot in DEDICATED_SLOTS {
+        assert!(!slots.credits(slot, &AuthIdentity::ApiKey));
+    }
+    assert!(!slots.credits("xai", &oauth("xai")));
 }

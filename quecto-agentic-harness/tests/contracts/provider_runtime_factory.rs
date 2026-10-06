@@ -84,6 +84,12 @@ impl CatalogueSource for EmptySource {
 struct AllowAll;
 
 impl CredentialStatusPort for AllowAll {
+    fn for_composed_routes(
+        &self,
+        _routes: &[String],
+    ) -> Option<Box<dyn CredentialStatusPort + '_>> {
+        None // this fake's status does not depend on routes
+    }
     fn credential_available(&self, _entry: &CatalogueEntry) -> bool {
         true
     }

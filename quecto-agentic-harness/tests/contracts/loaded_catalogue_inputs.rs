@@ -9,7 +9,10 @@ use quecto::domain::catalogue::SourceLayer;
 use quecto::infrastructure::catalogue_inputs::FileCatalogueInputs;
 
 fn under_test(dir: &std::path::Path) -> Arc<dyn CatalogueInputsLoader> {
-    Arc::new(FileCatalogueInputs::new(dir))
+    Arc::new(FileCatalogueInputs::new(
+        dir,
+        Arc::new(quecto::application::ports::RuntimeSnapshotStore::new()),
+    ))
 }
 
 #[test]
@@ -46,8 +49,10 @@ fn credential_status_is_a_per_record_verdict_driven_by_the_credential() {
     std::fs::write(
         tmp.path().join("models.json"),
         r#"{"providers":{
-            "keyed":{"api":"openai-completions","apiKey":"sk-keyed","models":[{"id":"m"}]},
-            "unset":{"api":"openai-completions","apiKey":"$QUECTO_CONTRACT_UNSET_KEY","models":[{"id":"m"}]},
+            "keyed":{"api":"openai-completions","apiKey":"sk-keyed",
+                "baseUrl":"https://keyed.example.test/v1","models":[{"id":"m"}]},
+            "unset":{"api":"openai-completions","apiKey":"$QUECTO_CONTRACT_UNSET_KEY",
+                "baseUrl":"https://unset.example.test/v1","models":[{"id":"m"}]},
             "bare":{"api":"openai-completions","models":[{"id":"m"}]}
         }}"#,
     )

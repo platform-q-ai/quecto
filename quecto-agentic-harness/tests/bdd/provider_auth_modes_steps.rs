@@ -213,7 +213,7 @@ fn then_provider_construction_fails(world: &mut QuectoWorld, expected: String) {
 }
 
 /// Locate the `list_models` response event and return its `data.models` array.
-fn list_models_response(world: &QuectoWorld) -> Vec<serde_json::Value> {
+pub(crate) fn list_models_response(world: &QuectoWorld) -> Vec<serde_json::Value> {
     let event = world
         .agent_events
         .iter()

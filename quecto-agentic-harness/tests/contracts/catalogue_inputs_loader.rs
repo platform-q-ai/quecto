@@ -9,7 +9,10 @@ use quecto::domain::catalogue::SourceLayer;
 use quecto::infrastructure::catalogue_inputs::FileCatalogueInputs;
 
 fn under_test(dir: &std::path::Path) -> Arc<dyn CatalogueInputsLoader> {
-    Arc::new(FileCatalogueInputs::new(dir))
+    Arc::new(FileCatalogueInputs::new(
+        dir,
+        Arc::new(quecto::application::ports::RuntimeSnapshotStore::new()),
+    ))
 }
 
 #[test]

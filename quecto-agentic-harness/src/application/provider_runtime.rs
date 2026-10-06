@@ -157,9 +157,18 @@ impl ComposeProviderRuntimeUseCase {
                 });
             }
         };
+        // The catalogue this generation publishes calls runnable what the
+        // router just composed can reach (#2451).
+        let routes = outcome.provider.route_order();
+        debug_assert!(
+            routes.iter().all(|route| !route.trim().is_empty()),
+            "a composed router names every provider it routes"
+        );
+        let routed = ports.credentials.for_composed_routes(&routes);
+        let credentials = routed.as_deref().unwrap_or(ports.credentials);
         let resolution = ResolveCatalogueUseCase.resolve_and_publish(
             ports.sources,
-            ports.credentials,
+            credentials,
             ports.catalogue_store,
         );
         let snapshot = Arc::new(CatalogueRuntimeSnapshot {

@@ -41,8 +41,10 @@ at a terminal. Ask the user for
 the key; do not echo it back, do not write it into any file yourself. Environment variables `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`
 also work for one process. A configured key (that variable or
 `providers.openai.api_key` in the global file) takes priority over a stored
-token. A credential stored while a session runs is offered in `/model` once
-the session restarts.
+token. A credential stored while a session runs is offered in `/model` from
+the next provider rebuild (a UDS `reload`, or the next prompt or `/model`
+after a config or `models.json` edit; `credentials.json` is not watched),
+else once the session restarts.
 
 **2. Default model** — this repository (writes `./.quecto/config.json`, trusted):
 

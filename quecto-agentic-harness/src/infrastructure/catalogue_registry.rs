@@ -305,25 +305,31 @@ impl CatalogueSource for UserOverrideCatalogueSource {
 }
 
 /// Credential status derived from the parsed registry configuration and
-/// the runtime's credential-backed provider slots (#2451). A model counts as
-/// credentialed when either
+/// the provider slots the composed runtime routes (#2451). A model counts
+/// as credentialed when the runtime routes it, by one of:
 ///
-/// - its own record carries what the runtime builds an API-key provider
-///   from (a non-empty resolved API key, or an explicit base URL an
-///   `openai_compatible` endpoint can supply a key for), keyed per
-///   qualified model so a key declared for one model never marks its
-///   siblings configured; an OAuth record's own key or URL is no
-///   credential, the runtime builds it from the stored sign-in alone; or
-/// - the runtime has (or would build) the credential-backed provider slot
-///   serving it: a dedicated `openai-api` / `openai-oauth` /
-///   `anthropic-api` / `anthropic-oauth` slot, or an OAuth provider whose
-///   vendor is signed in ([`ProviderSlots`], the rules the runtime factory
-///   builds by).
+/// - its own API-key record carries a key the runtime builds a provider
+///   with ([`record_builds_with_its_key`]) and the router holds that
+///   provider (before any runtime is composed, the key alone: a
+///   composition would build it). Keyed per qualified model: a key
+///   declared for one model never marks its siblings configured, though
+///   the router would serve them with it (the owner's rule);
+/// - the runtime built the credential-backed provider serving it — a
+///   dedicated `openai-api` / `openai-oauth` / `anthropic-api` /
+///   `anthropic-oauth` slot, or an OAuth provider — from a configured key,
+///   a stored token or a sign-in ([`ProviderSlots::credits`]); or
+/// - the router holds its API-key provider although no record of that
+///   provider carries a key and none signs in: an `openai_compatible`
+///   endpoint of that prefix supplies the key.
 ///
 /// Only booleans leave this adapter — key material never reaches the
 /// application layer or a snapshot.
 pub struct RegistryCredentialStatus {
-    configured: HashSet<String>,
+    /// Qualified ids of records that carry a key the runtime builds with.
+    keyed: HashSet<String>,
+    /// Lowercased providers some record keys or signs in: the router's
+    /// provider of that name is built from a record, not an endpoint.
+    record_built: HashSet<String>,
     slots: ProviderSlots,
 }
 
@@ -332,34 +338,75 @@ impl RegistryCredentialStatus {
         records: impl IntoIterator<Item = &'a ModelRecord>,
         slots: ProviderSlots,
     ) -> Self {
-        let mut configured = HashSet::new();
+        let mut keyed = HashSet::new();
+        let mut record_built = HashSet::new();
         for record in records {
-            if record_carries_credential(record) {
-                configured.insert(format!("{}/{}", record.provider, record.id));
+            let provider = record.provider.trim().to_ascii_lowercase();
+            match record.auth {
+                AuthMode::OAuth => {
+                    record_built.insert(provider);
+                }
+                AuthMode::ApiKey if record_builds_with_its_key(record) => {
+                    keyed.insert(format!("{}/{}", record.provider, record.id));
+                    record_built.insert(provider);
+                }
+                AuthMode::ApiKey => {}
             }
         }
-        Self { configured, slots }
+        Self {
+            keyed,
+            record_built,
+            slots,
+        }
     }
 }
 
-/// Whether a record carries its own credential: an API-key record with a
-/// non-empty key or an explicit base URL. An OAuth record never does.
-fn record_carries_credential(record: &ModelRecord) -> bool {
+/// Whether the runtime builds a provider from this record's own key: an
+/// API-key record with a non-empty key on a wire it can build (an
+/// OpenAI-compatible one needs its base URL too). An OAuth record never
+/// does: the runtime builds it from the stored sign-in alone.
+fn record_builds_with_its_key(record: &ModelRecord) -> bool {
+    let has_key = record.api_key.as_deref().is_some_and(|key| !key.is_empty());
+    let has_base = record
+        .base_url
+        .as_deref()
+        .is_some_and(|base| !base.trim().is_empty());
+    let buildable = match record.api {
+        ProviderApi::AnthropicMessages => has_key,
+        ProviderApi::OpenAiCompletions => has_key && has_base,
+        ProviderApi::GoogleGenerativeAi => false,
+    };
     match record.auth {
-        AuthMode::ApiKey => {
-            record.api_key.as_deref().is_some_and(|key| !key.is_empty())
-                || record.base_url.is_some()
-        }
+        AuthMode::ApiKey => buildable,
         AuthMode::OAuth => false,
     }
 }
 
 impl CredentialStatusPort for RegistryCredentialStatus {
     fn credential_available(&self, entry: &CatalogueEntry) -> bool {
-        self.configured.contains(&entry.reference().qualified_id())
-            || self
-                .slots
-                .credits(entry.provider.id.as_str(), &entry.provider.auth)
+        let provider = entry.provider.id.as_str();
+        let own_key = self.keyed.contains(&entry.reference().qualified_id())
+            && self.slots.may_route(provider);
+        let endpoint_supplied = match entry.provider.auth {
+            AuthIdentity::ApiKey => {
+                self.slots.routes(provider)
+                    && !self
+                        .record_built
+                        .contains(&provider.trim().to_ascii_lowercase())
+            }
+            AuthIdentity::OAuth { .. } => false,
+        };
+        own_key || self.slots.credits(provider, &entry.provider.auth) || endpoint_supplied
+    }
+
+    /// Scoped to the router just composed: its slots replace whatever the
+    /// inputs were loaded with, the records' own credentials are kept.
+    fn for_composed_routes(&self, routes: &[String]) -> Option<Box<dyn CredentialStatusPort + '_>> {
+        Some(Box::new(Self {
+            keyed: self.keyed.clone(),
+            record_built: self.record_built.clone(),
+            slots: ProviderSlots::routed(routes.iter().cloned()),
+        }))
     }
 }
 
