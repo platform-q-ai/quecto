@@ -65,8 +65,9 @@ fn common_folder(listed: &[ResumeSessionSummary]) -> Option<PathBuf> {
     spread.then_some(common)
 }
 
-/// The harness's visible-text fold (`domain/session_metadata_text.rs`), kept
-/// in step by hand — the two crates share no code: invisible and control
+/// The harness's visible-text fold
+/// (`domain/sessions/value_objects/session_metadata_text.rs`), kept in step
+/// by hand — the two crates share no code: invisible and control
 /// characters dropped, case folded (final sigma, sharp s, dotted/dotless i),
 /// whitespace collapsed.
 fn visible_text(raw: &str) -> String {
