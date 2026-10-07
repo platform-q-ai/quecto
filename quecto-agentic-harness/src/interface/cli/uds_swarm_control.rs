@@ -429,6 +429,17 @@ pub(super) async fn date_provider_suspension(ctx: &mut super::uds::DispatchCtx<'
     }
 }
 
+/// The idle boundary every drain ends at (#2467): the provider-suspension
+/// dating it always ran, then, for the run's coordinator, the `swarm_state`
+/// its parent wakes on. Not wired yet.
+pub(super) async fn at_idle_boundary(ctx: &mut super::uds::DispatchCtx<'_>) {
+    date_provider_suspension(ctx).await;
+    let _ = ctx
+        .turn_control
+        .coordinator_reported
+        .load(std::sync::atomic::Ordering::SeqCst);
+}
+
 /// How a coordination-store failure is treated by automatic turns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum StoreFailure {

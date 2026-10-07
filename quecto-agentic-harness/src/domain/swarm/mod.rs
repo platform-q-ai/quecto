@@ -12,6 +12,7 @@ pub mod admission_gate;
 pub mod dependencies;
 pub mod notification;
 pub mod owner;
+pub mod parent_wake;
 pub mod policy;
 pub mod python_value;
 pub mod records;

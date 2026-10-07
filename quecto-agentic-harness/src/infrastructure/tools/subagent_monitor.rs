@@ -32,6 +32,7 @@ const STATE_CHANGING_EVENTS: &[&str] = &[
     "\"type\":\"tool_execution_end\"",
     "\"type\":\"workflow_state\"",
     "\"type\":\"workflow_idle\"",
+    "\"type\":\"swarm_state\"",
     "\"command\":\"agent_error\"",
 ];
 
@@ -507,6 +508,24 @@ fn apply_and_notify(
         classify_workflow_idle_stall(registry, notify_tx, agent_id, sequence, value);
         return;
     }
+    // A swarm coordinator's parent wakes on the run's state (#2467).
+    if value.get("type").and_then(|v| v.as_str()) == Some("swarm_state") {
+        let quiet_after = swarm_wake::QUIET_AFTER;
+        swarm_wake::classify_swarm_state(
+            registry,
+            notify_tx,
+            agent_id,
+            sequence,
+            value,
+            quiet_after,
+        );
+        return;
+    }
+    if value.get("type").and_then(|v| v.as_str()) == Some("agent_end")
+        && swarm_wake::defer_completion(registry, agent_id)
+    {
+        return;
+    }
     let note_label = notification_display_label(registry, agent_id);
     let agent_uuid = notification_agent_uuid(registry, agent_id);
     notify_from_parsed(
@@ -629,6 +648,11 @@ mod exit_cascade_tests;
 #[cfg(test)]
 #[path = "subagent_monitor_lifecycle_tests.rs"]
 mod lifecycle_tests;
+#[path = "subagent_monitor/swarm_wake.rs"]
+mod swarm_wake;
+#[cfg(test)]
+#[path = "tests/subagent_monitor_swarm_wake_tests.rs"]
+mod swarm_wake_tests;
 #[cfg(test)]
 #[path = "subagent_monitor_tests.rs"]
 mod tests;

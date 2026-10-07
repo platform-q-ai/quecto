@@ -62,6 +62,9 @@ pub struct TurnControl {
     /// dispatch loop reaches its exit signal instead of a fresh provider
     /// call. Sticky: a shutdown never un-happens.
     shutting_down: std::sync::atomic::AtomicBool,
+    /// This member has read itself as its run's coordinator (#2467): an
+    /// unreadable board then still reports `swarm_state`, as unknown.
+    pub(crate) coordinator_reported: std::sync::atomic::AtomicBool,
 }
 
 #[path = "uds_turn_generation.rs"]

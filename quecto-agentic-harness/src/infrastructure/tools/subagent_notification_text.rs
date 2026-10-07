@@ -31,6 +31,7 @@ impl SubagentNotification {
                 shown_label(agent_id),
                 crate::domain::agents::value_objects::child_end::shown(workflow_mode, 32)
             ),
+            Self::SwarmState { agent_id, state } => swarm_state_message(agent_id, state),
             Self::Errored { agent_id, error } => format!(
                 "Agent '{}' failed: {}",
                 shown_label(agent_id),
@@ -66,6 +67,12 @@ impl SubagentNotification {
             }
         }
     }
+}
+
+/// A swarm coordinator's wake note (#2467). Not built yet.
+fn swarm_state_message(agent_id: &str, state: &super::SwarmNoteState) -> String {
+    let _ = state;
+    shown_label(agent_id)
 }
 
 /// The most of a child's error a notice shows, in bytes.

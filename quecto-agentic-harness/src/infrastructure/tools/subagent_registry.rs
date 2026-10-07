@@ -111,6 +111,14 @@ pub struct SubagentEntry {
     /// A supervision-critical stall alert retained after notification-channel
     /// saturation and retried on the next monitor event (#1076).
     pub pending_stall: Option<SequencedSubagentNotification>,
+    /// Swarm-coordinator wakes (#2467): set by the child's first
+    /// `swarm_state`; from then on its turn-end note waits for the next one.
+    pub swarm_reporting: bool,
+    /// A turn end held until the child's next `swarm_state` decides it.
+    pub completion_deferred: bool,
+    /// The current hold, for the quiet-coordinator timer: `None` once the
+    /// coordinator takes a new turn.
+    pub swarm_hold: Option<u64>,
     pub read_only: bool,
     pub cleanup_environment_id: Option<String>,
     pub cleanup_argv: Vec<String>,
@@ -267,6 +275,9 @@ impl SubagentEntry {
             completion_armed: true,
             stalled_armed: true,
             pending_stall: None,
+            swarm_reporting: false,
+            completion_deferred: false,
+            swarm_hold: None,
             read_only: false,
             cleanup_environment_id: None,
             cleanup_argv: Vec::new(),
@@ -614,6 +625,12 @@ pub enum SubagentNotification {
     },
     /// Child agent's last tool execution returned an error.
     Errored { agent_id: String, error: String },
+    /// A swarm coordinator's idle boundary that should wake its parent
+    /// (#2467): the run's state, read from its board, as the note says it.
+    SwarmState {
+        agent_id: String,
+        state: SwarmNoteState,
+    },
     /// Child agent process exited (connection closed or process reaped).
     Exited {
         agent_id: String,
@@ -622,6 +639,17 @@ pub enum SubagentNotification {
         /// `ChildEnd::reason` — its exit status and the panic it recorded.
         detail: Option<String>,
     },
+}
+
+/// The coordinator state a [`SubagentNotification::SwarmState`] names (#2467).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SwarmNoteState {
+    /// The run left `running`; its final report is ready.
+    Finished { status: String },
+    /// The run is running with nothing in flight and no result.
+    Idle,
+    /// Held this many minutes with work in flight and no new turn.
+    Quiet { minutes: u64 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -658,6 +686,7 @@ impl SequencedSubagentNotification {
             SubagentNotification::Completed { agent_id, .. }
             | SubagentNotification::Stalled { agent_id, .. }
             | SubagentNotification::Errored { agent_id, .. }
+            | SubagentNotification::SwarmState { agent_id, .. }
             | SubagentNotification::Exited { agent_id, .. } => agent_id.clone(),
         };
         (agent_id, self.sequence)

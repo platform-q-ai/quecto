@@ -347,3 +347,33 @@ fn absolute_deadline(input: &Value) -> Result<Value, DomainError> {
         _ => Ok(Value::Null),
     }
 }
+
+impl SwarmContext {
+    /// The run as this member reads it if it is the run's coordinator
+    /// (#2467): two harness reads. Blocking: call it off the async workers.
+    pub(crate) fn coordinator_board_now(
+        &self,
+    ) -> Result<
+        Option<crate::domain::swarm::parent_wake::CoordinatorBoard>,
+        crate::domain::error::DomainError,
+    > {
+        let status = self.call("_status", serde_json::json!([]))?;
+        let totals = self.call("_run_totals", serde_json::json!([]))?;
+        decode_coordinator_board(&self.member, &status, &totals)
+    }
+}
+
+/// The run as its coordinator reads it (#2467), from the board's `_status`
+/// and `_run_totals` answers: `None` when `member` is not the run's
+/// coordinator. Not built yet.
+pub(crate) fn decode_coordinator_board(
+    member: &str,
+    status: &serde_json::Value,
+    totals: &serde_json::Value,
+) -> Result<
+    Option<crate::domain::swarm::parent_wake::CoordinatorBoard>,
+    crate::domain::error::DomainError,
+> {
+    let _ = (member, status, totals);
+    Ok(None)
+}

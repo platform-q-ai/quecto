@@ -14,6 +14,7 @@ impl Default for TurnControl {
             pending_steers: std::sync::atomic::AtomicUsize::new(0),
             control_generation: std::sync::atomic::AtomicU64::new(u64::MAX),
             shutting_down: std::sync::atomic::AtomicBool::new(false),
+            coordinator_reported: std::sync::atomic::AtomicBool::new(false),
         }
     }
 }

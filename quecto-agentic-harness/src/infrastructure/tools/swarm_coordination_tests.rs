@@ -282,3 +282,71 @@ async fn a_panicking_accounting_job_is_an_error_not_a_panic_in_the_loop() {
     // durable rejection, which it logs and drops.
     assert!(!error.to_string().contains("is locked"), "{error}");
 }
+
+fn coordinator_status(coordinator: &str, status: &str, idle: i64) -> serde_json::Value {
+    serde_json::json!({
+        "members_without_claim": idle,
+        "members_dead": 0,
+        "id": "run-1",
+        "status": status,
+        "deadline": 1.0,
+        "coordinator": coordinator,
+        "outcome": null,
+    })
+}
+
+fn totals(ready: i64, claimed: i64) -> serde_json::Value {
+    serde_json::json!({"run_id": "run-1", "tasks": {
+        "total": ready + claimed, "ready": ready, "claimed": claimed,
+        "blocked": 0, "submitted": 0, "completed": 0}})
+}
+
+/// #2467: the coordinator reads its run's status, its claimed and ready
+/// tasks and its free workers from `_status` and `_run_totals`.
+#[test]
+fn the_coordinator_reads_its_board_from_status_and_totals() {
+    let board = decode_coordinator_board(
+        "member-2",
+        &coordinator_status("member-2", "running", 1),
+        &totals(2, 3),
+    )
+    .unwrap();
+    assert_eq!(
+        board,
+        Some(crate::domain::swarm::parent_wake::CoordinatorBoard {
+            status: "running".into(),
+            ready: 2,
+            claimed: 3,
+            idle_workers: 1,
+        })
+    );
+}
+
+/// #2467: a member that is not the run's coordinator reads nothing.
+#[test]
+fn a_worker_reads_no_coordinator_board() {
+    let board = decode_coordinator_board(
+        "member-3",
+        &coordinator_status("member-2", "running", 1),
+        &totals(0, 1),
+    )
+    .unwrap();
+    assert_eq!(board, None);
+}
+
+/// #2467: answers missing the fields the decision needs are an error, so
+/// the parent falls back to its ordinary turn-end note.
+#[test]
+fn a_malformed_answer_is_an_error() {
+    let missing_counts = serde_json::json!({"run_id": "run-1"});
+    assert!(
+        decode_coordinator_board(
+            "member-2",
+            &coordinator_status("member-2", "running", 1),
+            &missing_counts,
+        )
+        .is_err()
+    );
+    let missing_status = serde_json::json!({"coordinator": "member-2"});
+    assert!(decode_coordinator_board("member-2", &missing_status, &totals(0, 0)).is_err());
+}

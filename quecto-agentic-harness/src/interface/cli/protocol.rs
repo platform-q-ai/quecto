@@ -72,6 +72,13 @@ pub enum AgentEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<WorkflowIdleReason>,
     },
+    /// A swarm coordinator's idle boundary (#2467): what its run's board says
+    /// the parent should hear. Only the run's coordinator sends it.
+    SwarmState {
+        wake: SwarmWake,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<String>,
+    },
     /// An incremental text token from the LLM during streaming.
     Token { token: String },
     /// A display-safe model thinking/reasoning delta from the LLM during streaming.
@@ -233,6 +240,18 @@ pub enum WorkflowIdleReason {
     /// A reason this build does not recognize (newer producer). Never
     /// produced by this build — it exists for deserialization only — and
     /// never classified as a stall.
+    #[serde(other)]
+    Unknown,
+}
+
+/// The parent wake a `swarm_state` carries (#2467); `Unknown` also absorbs
+/// values from newer producers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SwarmWake {
+    Hold,
+    Finished,
+    Idle,
     #[serde(other)]
     Unknown,
 }
