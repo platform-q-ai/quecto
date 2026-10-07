@@ -5,6 +5,7 @@ fn board(status: RunStatus, ready: i64, claimed_by: &[&str]) -> WorkerBoard {
         status,
         ready,
         claimed_by: claimed_by.iter().map(|owner| (*owner).to_owned()).collect(),
+        coordinator: "coordinator".into(),
     }
 }
 
@@ -92,4 +93,15 @@ fn a_report_is_rearmed_by_a_worker_it_names_or_any_worker_for_ready_work() {
     assert!(stranded(&["a"], 0).rearmed_by("a"));
     assert!(!stranded(&["a"], 0).rearmed_by("b"));
     assert!(stranded(&[], 1).rearmed_by("b"));
+}
+
+#[test]
+fn the_coordinator_s_own_claim_is_not_stranded() {
+    assert_eq!(
+        stranded_work(
+            &board(RunStatus::Running, 0, &["coordinator"]),
+            &working(&[])
+        ),
+        None
+    );
 }

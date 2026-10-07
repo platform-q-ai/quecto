@@ -1537,7 +1537,7 @@ Once a launched coordinator has sent one, its parent holds each `agent_end` note
 
 ### `reply_ready`
 
-Emitted by a swarm member that is not its run's coordinator, once at the end of the idle boundary after a client's `prompt`, `steer` or `follow_up` ran (#2471). Its launching coordinator no longer wakes on each of its turn ends, so this is how it hears the reply. Other parents ignore it.
+Emitted by a swarm member that is not its run's coordinator, once at the end of the idle boundary after a client's `prompt`, `steer` or `follow_up` was taken (#2471). An instruction refused after all (not kept, or a `prompt` to a busy agent without `streamingBehavior`) doesn't count. Its launching coordinator no longer wakes on each of its turn ends, so this is how it hears the reply. Other parents ignore it.
 
 ```json
 {"type":"reply_ready"}

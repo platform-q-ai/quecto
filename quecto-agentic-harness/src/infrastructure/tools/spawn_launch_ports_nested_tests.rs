@@ -151,5 +151,19 @@ async fn register_gives_a_run_creator_s_worker_the_launcher_board() {
             .and_then(|entry| entry.coordinator_wake.worker.launcher_board.clone())
             .map(|board| board.member);
         assert_eq!(member.as_deref(), expected, "created_run {created_run}");
+        let task_pending = tool
+            .registry
+            .lock()
+            .unwrap()
+            .get(&identity.registry_key)
+            .is_some_and(|entry| entry.coordinator_wake.worker.task_pending);
+        assert!(!task_pending, "launched without a task");
+        let task_pending = tool
+            .registry
+            .lock()
+            .unwrap()
+            .get(&identity.registry_key)
+            .is_some_and(|entry| entry.coordinator_wake.worker.task_pending);
+        assert!(!task_pending, "launched without a task");
     }
 }

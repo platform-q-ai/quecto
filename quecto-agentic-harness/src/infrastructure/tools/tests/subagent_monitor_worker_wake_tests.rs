@@ -46,6 +46,7 @@ fn work(ready: i64, claimed_by: &[&str]) -> Result<Option<WorkerBoard>, String> 
             .iter()
             .map(|owner| format!("m-{owner}"))
             .collect(),
+        coordinator: "m-coordinator".into(),
     }))
 }
 
@@ -318,4 +319,73 @@ fn only_a_swarm_worker_of_the_run_s_creator_gets_a_launcher_board() {
     assert!(launcher_board_for(false, member(), read()).is_none());
     assert!(launcher_board_for(true, None, read()).is_none());
     assert!(launcher_board_for(true, member(), None).is_none());
+}
+
+#[tokio::test]
+async fn a_worker_s_task_reply_is_the_board_s_and_a_later_one_is_sent() {
+    let board = Board::answering(work(0, &[]));
+    let registry = coordinator_with(&["a"], &board);
+    registry
+        .lock()
+        .unwrap()
+        .get_mut("a")
+        .unwrap()
+        .coordinator_wake
+        .worker
+        .task_pending = true;
+    let (tx, mut rx) = new_notification_channel();
+    for _ in 0..2 {
+        event(&registry, &tx, "a", agent_start());
+        event(&registry, &tx, "a", agent_end());
+        event(
+            &registry,
+            &tx,
+            "a",
+            serde_json::json!({"type": "reply_ready"}),
+        );
+    }
+    let notes = notes(&mut rx).await;
+    assert!(
+        ordinary(&notes),
+        "only the later instruction's reply: {notes:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_reply_ready_after_a_failed_turn_leaves_the_error_as_the_reply() {
+    let board = Board::answering(work(0, &[]));
+    let registry = coordinator_with(&["a"], &board);
+    let (tx, mut rx) = new_notification_channel();
+    event(&registry, &tx, "a", agent_start());
+    event(&registry, &tx, "a", agent_error());
+    event(
+        &registry,
+        &tx,
+        "a",
+        serde_json::json!({"type": "reply_ready"}),
+    );
+    let notes = notes(&mut rx).await;
+    assert!(
+        matches!(notes[..], [SubagentNotification::Errored { .. }]),
+        "{notes:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_board_read_older_than_one_applied_is_stale() {
+    let board = Board::answering(work(0, &["a"]));
+    let registry = coordinator_with(&["a"], &board);
+    registry.lock().unwrap().get_mut("a").unwrap().status =
+        crate::infrastructure::tools::subagent_registry::SubagentStatus::Idle;
+    let stale = WorkerBoard {
+        status: RunStatus::Running,
+        ready: 0,
+        claimed_by: vec!["m-a".into()],
+        coordinator: "m-coordinator".into(),
+    };
+    assert!(super::worker_wake::newly_stranded(&registry, &stale, 2).is_some());
+    assert!(
+        super::worker_wake::newly_stranded(&registry, &stale, 1).is_none(),
+        "read 1 began before read 2, which is already applied"
+    );
 }

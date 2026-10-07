@@ -396,6 +396,7 @@ impl SwarmContext {
             status: board.status,
             ready: board.ready,
             claimed_by,
+            coordinator: self.member.clone(),
         }))
     }
 

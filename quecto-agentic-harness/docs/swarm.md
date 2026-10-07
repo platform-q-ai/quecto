@@ -592,7 +592,10 @@ sub-agents, workflows, a resumed coordinator, and a worker's own helpers.
 - **The reply to its own instruction.** After a `prompt`, `steer` or
   `follow_up` the coordinator sent through `agent_cmd` has run, the worker's
   harness sends `reply_ready` at its next idle boundary, and the coordinator
-  gets the ordinary note. A prompt to a busy worker is queued and counts too.
+  gets the ordinary note. A prompt to a busy worker is queued and counts too;
+  an instruction the worker refuses does not. The spawn's own task is not a
+  reply: its end is the board's to report. After a failed turn the worker's
+  error note is the reply.
 - **The first good turn after a failure.** The worker's error note is sent as
   before. The turn that recovers is sent too, so the coordinator's note queue
   forgets the failure and a later identical failure is news again.
@@ -601,8 +604,10 @@ sub-agents, workflows, a resumed coordinator, and a worker's own helpers.
   reports a task claimed by a worker that is not starting or in a turn, and
   ready work while no worker is working: "Swarm work is stranded … N claimed
   task(s) held by workers not working, M ready task(s) with no worker
-  working". It isn't reported again until it grows (a new claim or more ready
-  work), or a worker it names (any worker, for ready work) takes another turn.
+  working". The coordinator's own claims never count, and a board read older
+  than one already applied is dropped. It isn't reported again until it grows
+  (a new claim or more ready work), or a worker it names (any worker, for
+  ready work) takes another turn.
 
 If the board can't be read, or doesn't name this process coordinator, the
 ordinary note is sent, unless the worker has already begun another turn. Error and exit notes are unchanged. Submissions,

@@ -32,6 +32,7 @@ async fn only_the_run_s_coordinator_reads_its_worker_board() {
     assert_eq!(board.status, RunStatus::Running);
     assert_eq!(board.ready, 101);
     assert_eq!(board.claimed_by, vec!["coordinator".to_owned()]);
+    assert_eq!(board.coordinator, "coordinator");
     let mut worker = context.clone();
     worker.member = "worker".into();
     assert_eq!(worker.worker_board().await.unwrap(), None);

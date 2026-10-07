@@ -71,9 +71,7 @@ async fn boundaries_as(
     );
     for prompted in prompts {
         if prompted {
-            ctx.turn_control
-                .client_prompted
-                .store(true, std::sync::atomic::Ordering::SeqCst);
+            ctx.turn_control.client_instruction_taken();
         }
         at_idle_boundary(&mut ctx).await;
     }
@@ -206,11 +204,25 @@ async fn a_process_outside_any_swarm_never_says_reply_ready() {
     let mut ctx = env.ctx();
     let (tx, mut rx) = tokio::sync::broadcast::channel(64);
     ctx.broadcast_tx = Some(tx);
-    ctx.turn_control
-        .client_prompted
-        .store(true, std::sync::atomic::Ordering::SeqCst);
+    ctx.turn_control.client_instruction_taken();
     at_idle_boundary(&mut ctx).await;
     while let Ok(line) = rx.try_recv() {
         assert!(!line.contains("reply_ready"), "{line}");
     }
+}
+
+/// #2471: an instruction refused after it was taken owes no reply.
+#[test]
+fn a_refused_instruction_owes_no_reply() {
+    let control = crate::interface::cli::uds_cancel::TurnControl::default();
+    control.client_instruction_taken();
+    control.client_instruction_refused();
+    assert!(!control.take_client_instructions());
+    control.client_instruction_refused();
+    control.client_instruction_taken();
+    assert!(
+        control.take_client_instructions(),
+        "a refund never goes below zero"
+    );
+    assert!(!control.take_client_instructions(), "taken once");
 }

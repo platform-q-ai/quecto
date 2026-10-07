@@ -441,6 +441,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     .as_ref()
                     .map(|r| r.member().to_owned()),
             );
+            entry.coordinator_wake.worker.task_pending = config.task.is_some();
             let lifecycle = self.tool.lifecycle_use_cases()?;
             entry.owned_child = prepared.owned_child;
             entry.owned_child_supervisor = Some(std::sync::Arc::clone(&prepared.supervisor));

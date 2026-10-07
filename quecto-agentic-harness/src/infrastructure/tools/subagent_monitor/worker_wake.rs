@@ -31,6 +31,13 @@ pub struct WorkerWake {
     pub launcher_board: Option<LauncherBoard>,
     /// Its last turn failed: the next good turn end is sent as it was.
     after_failure: bool,
+    /// It was launched with a task, whose end the board reports: its first
+    /// `reply_ready` (the task's) owes the coordinator nothing.
+    pub task_pending: bool,
+    /// Board reads begun and applied for this coordinator's workers (kept on
+    /// every worker's entry alike): a read older than one applied is stale.
+    reads_begun: u64,
+    reads_applied: u64,
     /// The stranded work last reported for this coordinator's workers
     /// (kept on every worker's entry alike).
     stall_reported: Option<Stranded>,
@@ -79,16 +86,26 @@ pub(super) fn reply_ready(
     agent_id: &str,
     sequence: u64,
 ) -> bool {
-    let worker = registry
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .get(agent_id)
-        .is_some_and(|entry| entry.coordinator_wake.worker.launcher_board.is_some());
-    if worker {
+    let owed = {
+        let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(entry) = entries.get_mut(agent_id) else {
+            return false;
+        };
+        let failed = entry.run_error.is_some();
+        let worker = &mut entry.coordinator_wake.worker;
+        let Some(_) = worker.launcher_board else {
+            return false;
+        };
+        // The task's end is the board's to report; a failed turn's error
+        // note is the reply.
+        let task = std::mem::take(&mut worker.task_pending);
+        matches!((task, failed), (false, false))
+    };
+    if owed {
         let note = Box::new(|agent_id| SubagentNotification::Completed { agent_id });
         super::swarm_wake::send(registry, notify_tx, agent_id, sequence, note);
     }
-    worker
+    true
 }
 
 /// A worker starting a turn re-arms a stall report that names it (or that
@@ -123,7 +140,7 @@ pub(super) fn worker_turn_end(
     notify_tx: Option<&NotificationTx>,
     agent_id: &str,
 ) -> bool {
-    let board = {
+    let (board, read) = {
         let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
         let Some(entry) = entries.get_mut(agent_id) else {
             return false;
@@ -137,7 +154,7 @@ pub(super) fn worker_turn_end(
         );
         match std::mem::take(&mut entry.coordinator_wake.worker.after_failure) {
             true => return false,
-            false => board,
+            false => (board, begin_read(&mut entries)),
         }
     };
     let (Some(tx), Ok(runtime)) = (notify_tx.cloned(), tokio::runtime::Handle::try_current())
@@ -146,9 +163,9 @@ pub(super) fn worker_turn_end(
     };
     let (registry, agent_id) = (registry.clone(), agent_id.to_owned());
     runtime.spawn(async move {
-        let read = board.read.worker_board().await;
-        let note: Box<dyn FnOnce(String) -> SubagentNotification + Send> = match read {
-            Ok(Some(work)) => match newly_stranded(&registry, &work) {
+        let answer = board.read.worker_board().await;
+        let note: Box<dyn FnOnce(String) -> SubagentNotification + Send> = match answer {
+            Ok(Some(work)) => match newly_stranded(&registry, &work, read) {
                 Some(Stranded { claimed_by, ready }) => {
                     let claimed = i64::try_from(claimed_by.len()).unwrap_or(i64::MAX);
                     Box::new(move |agent_id| SubagentNotification::SwarmState {
@@ -194,11 +211,21 @@ fn workers(
 
 /// The stranded work `work` shows against the workers working now, when it
 /// is news after the last report; the report is recorded on every worker.
-fn newly_stranded(
+pub(super) fn newly_stranded(
     registry: &SubagentRegistry,
     work: &crate::domain::swarm::worker_wake::WorkerBoard,
+    read: u64,
 ) -> Option<Stranded> {
     let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+    let applied = workers(&entries)
+        .map(|entry| entry.coordinator_wake.worker.reads_applied)
+        .max()
+        .unwrap_or(0);
+    match read > applied {
+        true => record(entries.values_mut(), |worker| worker.reads_applied = read),
+        // A newer read has already been applied: this one is stale.
+        false => return None,
+    }
     let working: BTreeSet<String> = workers(&entries)
         .filter(|entry| entry.status.is_active())
         .filter_map(|entry| {
@@ -231,10 +258,29 @@ fn record_stall<'a>(
     entries: impl Iterator<Item = &'a mut SubagentEntry>,
     report: Option<Stranded>,
 ) {
+    record(entries, |worker| worker.stall_reported = report.clone());
+}
+
+/// Apply `change` to every worker's part alike.
+fn record<'a>(
+    entries: impl Iterator<Item = &'a mut SubagentEntry>,
+    mut change: impl FnMut(&mut WorkerWake),
+) {
     for entry in entries {
         let worker = &mut entry.coordinator_wake.worker;
         if worker.launcher_board.is_some() {
-            worker.stall_reported = report.clone();
+            change(worker);
         }
     }
+}
+
+/// Stamp a new board read, after every read begun before it.
+fn begin_read(entries: &mut std::collections::HashMap<String, SubagentEntry>) -> u64 {
+    let read = workers(entries)
+        .map(|entry| entry.coordinator_wake.worker.reads_begun)
+        .max()
+        .unwrap_or(0)
+        + 1;
+    record(entries.values_mut(), |worker| worker.reads_begun = read);
+    read
 }

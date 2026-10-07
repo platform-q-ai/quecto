@@ -17,6 +17,8 @@ pub struct WorkerBoard {
     pub ready: i64,
     /// The board member owning each claimed task, one entry per task.
     pub claimed_by: Vec<String>,
+    /// The coordinator reading it: its own claims are not stranded work.
+    pub coordinator: String,
 }
 
 /// Work no worker is doing.
@@ -33,7 +35,9 @@ pub struct Stranded {
 /// every claim's owner is working and ready work has a worker to take it.
 pub fn stranded_work(board: &WorkerBoard, working: &BTreeSet<String>) -> Option<Stranded> {
     let live = matches!(board.status, RunStatus::Setup | RunStatus::Running);
-    let idle_owner = |owner: &&String| working.get(owner.as_str()).is_none();
+    let idle_owner = |owner: &&String| {
+        working.get(owner.as_str()).is_none() && owner.as_str() != board.coordinator
+    };
     let mut claimed_by: Vec<String> = board
         .claimed_by
         .iter()

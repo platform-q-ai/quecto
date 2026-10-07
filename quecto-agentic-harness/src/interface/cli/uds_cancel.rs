@@ -65,9 +65,10 @@ pub struct TurnControl {
     /// This member has read itself as its run's coordinator (#2467): an
     /// unreadable board then still reports `swarm_state`, as unknown.
     pub(crate) coordinator_reported: std::sync::atomic::AtomicBool,
-    /// A client's `prompt`, `steer` or `follow_up` arrived since the last
-    /// idle boundary (#2467): the coordinator's parent is owed its reply.
-    pub(crate) client_prompted: std::sync::atomic::AtomicBool,
+    /// Client `prompt`, `steer` and `follow_up` instructions taken since the
+    /// last idle boundary, less those refused after all (#2467, #2471): the
+    /// launcher is owed their reply.
+    pub(crate) client_prompts: std::sync::atomic::AtomicU32,
     /// Launched as its swarm's coordinator (#2461): only then is the board
     /// read at idle boundaries for the parent (#2467).
     pub(crate) launched_coordinator: bool,

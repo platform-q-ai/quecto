@@ -464,10 +464,9 @@ pub(super) async fn at_idle_boundary(ctx: &mut super::uds::DispatchCtx<'_>) {
 fn member_reply_ready(
     turn_control: &super::uds_cancel::TurnControlHandle,
 ) -> Option<super::protocol::AgentEvent> {
-    let prompted = std::sync::atomic::Ordering::SeqCst;
     match (
         turn_control.swarm_control.is_some(),
-        turn_control.client_prompted.swap(false, prompted),
+        turn_control.take_client_instructions(),
     ) {
         (true, true) => Some(super::protocol::AgentEvent::ReplyReady),
         (true, false) | (false, _) => None,
@@ -502,7 +501,7 @@ async fn coordinator_swarm_state(
         Ok(None) | Err(_) if reported.load(Ordering::SeqCst) => parent_wake(None),
         Ok(None) | Err(_) => return None,
     };
-    let prompted = turn_control.client_prompted.swap(false, Ordering::SeqCst);
+    let prompted = turn_control.take_client_instructions();
     Some(super::protocol::AgentEvent::SwarmState {
         wake: wake.kind(),
         status: wake.status().map(|status| status_name(status).to_owned()),
