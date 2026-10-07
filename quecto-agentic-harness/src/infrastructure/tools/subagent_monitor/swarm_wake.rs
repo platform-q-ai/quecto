@@ -12,7 +12,9 @@ use super::super::subagent_registry::{
     NotificationTx, SequencedSubagentNotification, SubagentNotification, SubagentRegistry,
     SubagentStatus, SwarmNoteState,
 };
-use crate::domain::swarm::parent_wake::{HeldNote, StretchEnd, WakeKind, settle_held_note};
+use crate::domain::swarm::parent_wake::{
+    HeldNote, StretchEnd, WakeKind, WorkersStalled, settle_held_note, workers_stalled,
+};
 use serde::Deserialize as _;
 
 /// How long a held coordinator may go without a new turn before its parent
@@ -64,14 +66,19 @@ pub fn launcher_board_for(
     container_creator: bool,
     board: Option<LauncherBoard>,
 ) -> Option<LauncherBoard> {
-    let _ = (launches_swarm_worker, container_creator);
-    drop(board);
-    None
+    match (launches_swarm_worker, container_creator) {
+        (true, true) => board,
+        (true, false) | (false, _) => None,
+    }
 }
 
 /// Record that `agent_id`'s launcher sent it a prompt, steer or follow-up.
 pub fn mark_reply_owed(registry: &SubagentRegistry, agent_id: &str) {
-    let _ = (registry, agent_id);
+    let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+    let key = super::super::subagent_registry::resolve_registry_key(&entries, agent_id);
+    if let Some(entry) = key.ok().and_then(|key| entries.get_mut(&key)) {
+        entry.coordinator_wake.reply_owed = true;
+    }
 }
 
 /// Settle a swarm worker's plain turn end at its coordinator (#2471):
@@ -82,10 +89,62 @@ pub(super) fn worker_turn_end(
     notify_tx: Option<&NotificationTx>,
     agent_id: &str,
 ) -> bool {
-    let _ = notify_tx;
-    let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-    let _ = entries.get(agent_id).map(|e| e.coordinator_wake.reply_owed);
-    false
+    let board = {
+        let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(wake) = entries.get_mut(agent_id).map(|e| &mut e.coordinator_wake) else {
+            return false;
+        };
+        let Some(board) = wake.launcher_board.clone() else {
+            return false;
+        };
+        if std::mem::take(&mut wake.reply_owed) {
+            return false;
+        }
+        // The coordinator's workers are the children with its board; one
+        // still starting or in a turn is working.
+        let working = entries.values().any(|entry| {
+            entry.coordinator_wake.launcher_board.is_some()
+                && matches!(
+                    entry.status,
+                    SubagentStatus::Starting | SubagentStatus::Running
+                )
+        });
+        match working {
+            true => return true,
+            false => board,
+        }
+    };
+    let (Some(tx), Ok(runtime)) = (notify_tx.cloned(), tokio::runtime::Handle::try_current())
+    else {
+        return false;
+    };
+    let (registry, agent_id) = (registry.clone(), agent_id.to_owned());
+    runtime.spawn(async move {
+        let note: Box<dyn FnOnce(String) -> SubagentNotification + Send> =
+            match board.0.coordinator_board().await {
+                Ok(Some(board)) => match workers_stalled(&board) {
+                    Some(WorkersStalled { claimed, ready }) => {
+                        Box::new(move |agent_id| SubagentNotification::SwarmState {
+                            agent_id,
+                            state: SwarmNoteState::WorkersIdle { claimed, ready },
+                        })
+                    }
+                    None => return,
+                },
+                // Not the run's coordinator after all, or no board: as before.
+                Ok(None) | Err(_) => {
+                    Box::new(|agent_id| SubagentNotification::Completed { agent_id })
+                }
+            };
+        let sequence = {
+            let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+            super::super::subagent_monitor_registry::next_sequence(&mut entries, &agent_id)
+        };
+        if let Some(sequence) = sequence {
+            send(&registry, Some(&tx), &agent_id, sequence, note);
+        }
+    });
+    true
 }
 
 #[derive(Debug, Clone)]

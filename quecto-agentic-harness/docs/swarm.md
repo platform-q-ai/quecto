@@ -578,6 +578,26 @@ coordinator acceptance. Members use the Bash tool for Git, checks, computation
 and other external commands under its configured policy; they must not raise
 or bypass configured limits.
 
+A coordinator's workers report through the board, not through their turn ends
+(#2471). The coordinator is the spawn parent of the workers it launches, and
+each of their turn ends used to raise the ordinary sub-agent note, which woke it
+for an empty inbox. Now a worker launched by the container's creator (the
+coordinator spawned with `coordinator: true`) sends its coordinator only three
+kinds of note:
+- **A reply it is owed:** the first turn end after the coordinator sent it a
+  `prompt`, `steer` or `follow_up` through `agent_cmd`.
+- **A stall:** when the last working worker ends a turn, the coordinator's
+  harness reads the board. If the run is live and a task is still claimed, or
+  ready work has no free worker, it sends one note: "Swarm workers are all
+  idle … with N claimed and M ready task(s) unfinished". It isn't sent again
+  until some worker has taken another turn.
+- **Its error and exit notes,** which are unchanged.
+
+Submissions, blocks, messages and deaths reach the coordinator as board wake
+hints, as below. If the board can't be read, or names another coordinator, the
+ordinary note is sent. Every other launcher, including plain sub-agents,
+workflows and a worker's own helpers, keeps the ordinary note on every turn end.
+
 Wake hints are selected from the invoking member's actionable events and coalesced
 using a durable per-actor cursor. Reading the board, acknowledging messages and
 reservation bookkeeping do not broadcast more work. Message hints target their
