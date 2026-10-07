@@ -9,7 +9,7 @@ use super::{
 };
 
 pub fn live_execution_state_for_events(
-    events: &[crate::domain::agents::agent::AgentProgressEvent],
+    events: &[crate::domain::agents::value_objects::agent::AgentProgressEvent],
 ) -> serde_json::Value {
     let mut state = uds_execution_state::ExecutionState::default();
     state.start_run();
@@ -77,7 +77,7 @@ pub fn admission_broadcast_hook(
 }
 
 pub fn completed_live_execution_state(
-    events: &[crate::domain::agents::agent::AgentProgressEvent],
+    events: &[crate::domain::agents::value_objects::agent::AgentProgressEvent],
 ) -> serde_json::Value {
     let mut state = uds_execution_state::ExecutionState::default();
     state.start_run();
@@ -93,7 +93,7 @@ pub fn completed_live_execution_state(
 /// this to pin that mid-turn `TurnCompleted` events emit `ledger_advanced`
 /// hints (the child-progress-freeze fix, 2026-07-29).
 pub async fn ledger_hint_lines_for_turn_events(
-    events: &[crate::domain::agents::agent::AgentProgressEvent],
+    events: &[crate::domain::agents::value_objects::agent::AgentProgressEvent],
     session: &crate::application::sessions::active_session::ActiveSessionHandle,
 ) -> Vec<serde_json::Value> {
     let mut buf: Vec<u8> = Vec::new();

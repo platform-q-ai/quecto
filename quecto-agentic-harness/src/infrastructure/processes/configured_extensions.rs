@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use crate::domain::agents::configured_extensions::{
+use crate::domain::agents::entities::configured_extensions::{
     AfterExit, AgentExtensions, ExtensionExit, ExtensionSpec, ExtensionState, PlaceholderValues,
     REGISTRATION_WAIT, RestartBudget, StopReason,
 };

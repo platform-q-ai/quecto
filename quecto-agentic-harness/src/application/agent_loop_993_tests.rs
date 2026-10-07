@@ -1,6 +1,6 @@
 use super::tests::{MockProvider, MockRegistry, MockTool, text_response, tool_call_response};
 use super::*;
-use crate::domain::agents::agent::AgentProgressEvent;
+use crate::domain::agents::value_objects::agent::AgentProgressEvent;
 use crate::domain::message::{
     LlmResponse, Message, Role, StopReason, ThinkingBlock, ToolCall,
     reset_tool_call_clone_count_for_tests, tool_call_clone_count_for_tests,
@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 fn agent_config(
     provider: Arc<MockProvider>,
     registry: MockRegistry,
-    progress_callback: Option<crate::domain::agents::agent::ProgressCallback>,
+    progress_callback: Option<crate::domain::agents::value_objects::agent::ProgressCallback>,
 ) -> AgentLoopConfig {
     AgentLoopConfig {
         provider,
@@ -64,9 +64,10 @@ async fn tool_result_preview_is_built_once_for_observed_tool_finish() {
     registry.register(Arc::new(MockTool::new("read", content)));
     let events = Arc::new(Mutex::new(Vec::new()));
     let events_for_callback = Arc::clone(&events);
-    let callback: crate::domain::agents::agent::ProgressCallback = Arc::new(move |event| {
-        events_for_callback.lock().unwrap().push(event);
-    });
+    let callback: crate::domain::agents::value_objects::agent::ProgressCallback =
+        Arc::new(move |event| {
+            events_for_callback.lock().unwrap().push(event);
+        });
     let mut agent = AgentLoopImpl::new(agent_config(provider, registry, Some(callback)));
     let mut messages = vec![Message::user("read")];
 

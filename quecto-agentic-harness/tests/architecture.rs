@@ -13,8 +13,6 @@
 //! - infrastructure/ imports domain/ only
 //! - interface/ imports all three (composition root)
 
-#[path = "architecture/agents_placement.rs"]
-mod agents_placement;
 #[path = "architecture/bdd_lanes.rs"]
 mod bdd_lanes;
 /// Production-token and relative-path scanning shared by the layer rules
@@ -4678,7 +4676,7 @@ fn subagent_teardown_application_depends_only_inward() {
 
 #[test]
 fn subagent_teardown_domain_is_pure() {
-    let source = fs::read_to_string("src/domain/agents/subagent_teardown.rs").unwrap();
+    let source = fs::read_to_string("src/domain/agents/services/subagent_teardown.rs").unwrap();
     let paths = dependency_paths(&source).unwrap();
     for dep in paths {
         let parts: Vec<_> = dep.split("::").collect();
@@ -4871,7 +4869,7 @@ fn subagent_teardown_guards_reject_outward_and_wire_dependencies() {
         );
     }
     for dep in [
-        "crate::domain::agents::subagent_teardown::ShutdownReason",
+        "crate::domain::agents::services::subagent_teardown::ShutdownReason",
         "crate::application::subagents::dto::ShutdownToken",
         "std::sync::Arc",
         "std::future::Future",
@@ -5195,7 +5193,7 @@ fn subagent_interface_modules_never_import_composition() {
 /// second, unredacted representation).
 #[test]
 fn parent_control_capability_equality_is_the_manual_constant_time_impl() {
-    let source = production_source("src/domain/agents/parent_control.rs");
+    let source = production_source("src/domain/agents/entities/parent_control.rs");
     let derive_line = source
         .lines()
         .zip(source.lines().skip(1))
@@ -5310,7 +5308,7 @@ fn process_adapters_depend_only_inward() {
         );
     }
     for dep in [
-        "crate::domain::agents::parent_control::ParentControlCredential",
+        "crate::domain::agents::entities::parent_control::ParentControlCredential",
         "crate::application::subagents::ports::DirectChildRouting",
         "super::owned_child_supervisor::ProtocolOutcome",
         "tokio::sync::watch",
@@ -5407,7 +5405,7 @@ fn parent_control_capability_never_travels_on_argv_or_env() {
                 matches!(
                     path,
                     "src/infrastructure/processes/parent_control.rs"
-                        | "src/domain/agents/parent_control.rs"
+                        | "src/domain/agents/entities/parent_control.rs"
                 ),
                 "{path} exposes parent control material"
             );

@@ -8,7 +8,7 @@ use super::spawn_launch_args::write_private_new;
 pub use super::subagent_registry::{SubagentEntry, SubagentRegistry};
 use crate::application::subagent_launch::SubagentLaunchUseCase;
 use crate::application::tools::ports::Tool;
-use crate::domain::agents::subagent::{
+use crate::domain::agents::services::subagent::{
     DisplayNameResolutionEntry, DisplayNameResolveError, SubagentConfig,
     assert_display_name_available_for_spawn, validate_agent_id,
 };
@@ -424,7 +424,7 @@ impl SpawnTool {
         };
 
         // explicit model > forwarded --config > built-in default.
-        let model_arg = crate::domain::agents::subagent::parse_model_arg(
+        let model_arg = crate::domain::agents::services::subagent::parse_model_arg(
             args.get("model").and_then(|v| v.as_str()),
             args.get("provider").and_then(|v| v.as_str()),
             args.get("model_id").and_then(|v| v.as_str()),

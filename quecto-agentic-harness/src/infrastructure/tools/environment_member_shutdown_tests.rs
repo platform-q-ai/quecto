@@ -12,7 +12,7 @@ use crate::application::subagents::ports::{
     TerminationConclusion, TerminationResult,
 };
 use crate::application::subagents::use_cases::{SettleDelegatedChild, SettleDelegatedChildPorts};
-use crate::domain::agents::subagent_teardown::{
+use crate::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, LaunchGeneration, RoutingDepth, ShutdownReason,
 };
 use crate::domain::ids::AgentUuid;

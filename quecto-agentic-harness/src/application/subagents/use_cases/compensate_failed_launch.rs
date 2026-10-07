@@ -12,7 +12,7 @@
 //! acknowledged script-managed member is compensated at once.
 use std::sync::Arc;
 
-use crate::domain::agents::subagent_teardown::ShutdownReason;
+use crate::domain::agents::services::subagent_teardown::ShutdownReason;
 
 use super::super::dto::{CompensateFailedLaunchRequest, FailedLaunchCompensated};
 use super::super::ports::{

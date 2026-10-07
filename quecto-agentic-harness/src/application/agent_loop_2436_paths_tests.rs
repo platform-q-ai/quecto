@@ -3,7 +3,7 @@
 //! output, an OAuth refresh's resend, Anthropic's cache writes — and the
 //! admission refusals that send nothing and so announce nothing.
 use super::*;
-use crate::domain::agents::agent::AgentProgressEvent;
+use crate::domain::agents::value_objects::agent::AgentProgressEvent;
 use crate::domain::inference::events::request_completion::{
     AgentRequestCounters, RequestCompleted, RequestOutcome, RequestSpend,
 };

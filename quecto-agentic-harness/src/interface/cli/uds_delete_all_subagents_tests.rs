@@ -7,7 +7,7 @@ use crate::application::subagents::use_cases::teardown_fakes::*;
 use crate::application::subagents::use_cases::{TerminateAllDelegatedAgents, lifecycle_fakes};
 
 fn fleet_with(
-    lineage: crate::domain::agents::subagent_teardown::LineageSnapshot,
+    lineage: crate::domain::agents::services::subagent_teardown::LineageSnapshot,
 ) -> (
     Arc<TerminateAllDelegatedAgents>,
     Arc<lifecycle_fakes::FakeRegistry>,
@@ -40,10 +40,12 @@ async fn presents_every_settled_child_and_the_removed_count() {
 
 #[tokio::test]
 async fn an_empty_fleet_reports_nothing_removed() {
-    let (fleet, _) = fleet_with(crate::domain::agents::subagent_teardown::LineageSnapshot {
-        owner: crate::domain::ids::AgentUuid::new("root"),
-        records: Vec::new(),
-    });
+    let (fleet, _) = fleet_with(
+        crate::domain::agents::services::subagent_teardown::LineageSnapshot {
+            owner: crate::domain::ids::AgentUuid::new("root"),
+            records: Vec::new(),
+        },
+    );
     let event = super::respond(Some(&fleet), None).await;
     let value = serde_json::to_value(&event).unwrap();
     assert_eq!(value["success"], true);

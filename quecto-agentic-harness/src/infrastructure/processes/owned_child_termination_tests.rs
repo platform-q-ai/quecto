@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use super::*;
 use crate::application::subagents::ports::ConclusionBudget;
-use crate::domain::agents::subagent_teardown::LaunchGeneration;
+use crate::domain::agents::services::subagent_teardown::LaunchGeneration;
 use crate::domain::ids::AgentUuid;
 use crate::infrastructure::processes::owned_child_supervisor::{ProcessGroup, SentSignal};
 use crate::infrastructure::tools::subagent_registry::SubagentEntry;

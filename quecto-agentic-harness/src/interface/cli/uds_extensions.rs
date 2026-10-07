@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::domain::agents::configured_extensions::AgentExtensions;
+use crate::domain::agents::entities::configured_extensions::AgentExtensions;
 use crate::infrastructure::processes::configured_extensions::{ConfiguredExtensions, plan};
 use crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor;
 

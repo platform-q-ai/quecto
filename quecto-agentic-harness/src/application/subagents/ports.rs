@@ -8,7 +8,7 @@ use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
 
-use crate::domain::agents::subagent_teardown::{
+use crate::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, HarnessLifecycleState, LineageSnapshot, RoutingDepth, ShutdownReason,
 };
 use crate::domain::ids::AgentUuid;

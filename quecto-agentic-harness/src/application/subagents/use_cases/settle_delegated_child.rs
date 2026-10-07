@@ -16,7 +16,7 @@
 //! environment kill settles the environment's members through it.
 use std::sync::Arc;
 
-use crate::domain::agents::subagent_teardown::{DelegatedAgentIdentity, ShutdownReason};
+use crate::domain::agents::services::subagent_teardown::{DelegatedAgentIdentity, ShutdownReason};
 use crate::domain::ids::AgentUuid;
 
 use super::super::dto::{FleetChildResult, SettledChild};

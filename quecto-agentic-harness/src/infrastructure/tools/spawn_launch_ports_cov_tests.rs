@@ -24,7 +24,7 @@ fn config() -> SubagentConfig {
         workflow_spec: None,
         disable_tools: vec![],
         read_only: false,
-        container: crate::domain::agents::subagent::ContainerSelection::Local,
+        container: crate::domain::agents::services::subagent::ContainerSelection::Local,
         backend: Default::default(),
         coordinator: false,
     }
@@ -79,7 +79,7 @@ async fn ports_ready_rollback_prompt_uncommit_and_success_paths() {
         None,
         Some("env".into()),
         Some(
-            crate::domain::agents::subagent_launch::ParentEndpoint::Direct {
+            crate::domain::agents::value_objects::subagent_launch::ParentEndpoint::Direct {
                 socket_path: socket.clone(),
             },
         ),
@@ -264,7 +264,7 @@ fn container_child_cli_args_fall_back_to_parents_config_and_local_does_not() {
     let tool = tool().with_parent_config_path(Some(parent_cfg.clone()));
     let mut ports = SpawnLaunchPorts::new(&tool);
     let mut cfg = config();
-    cfg.container = crate::domain::agents::subagent::ContainerSelection::New {
+    cfg.container = crate::domain::agents::services::subagent::ContainerSelection::New {
         container_config: None,
         name: None,
     };
@@ -367,7 +367,7 @@ async fn register_and_monitor_records_the_owned_handle_and_fleet_teardown_termin
         std::time::Duration::from_secs(30),
         fleet.execute(
             crate::application::subagents::dto::TerminateAllDelegatedAgentsRequest {
-                reason: crate::domain::agents::subagent_teardown::ShutdownReason::OperatorRequest,
+                reason: crate::domain::agents::services::subagent_teardown::ShutdownReason::OperatorRequest,
                 authority: crate::application::subagents::dto::FleetTeardownAuthority::Harness,
             },
         ),

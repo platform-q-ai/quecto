@@ -212,7 +212,7 @@ pub(super) fn build_command(args: &serde_json::Value) -> Result<(String, String,
         "set_model" => {
             // Reuse the shared model-arg validation (#881) so `set_model`
             // and `spawn`'s `model` cannot diverge.
-            use crate::domain::agents::subagent::{ModelArg, parse_model_arg};
+            use crate::domain::agents::services::subagent::{ModelArg, parse_model_arg};
             let parsed = parse_model_arg(
                 args.get("model").and_then(|v| v.as_str()),
                 args.get("provider").and_then(|v| v.as_str()),

@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use quecto::application::subagents::dto::ReleaseOutcome;
 use quecto::application::subagents::ports::{ShutdownClock, ShutdownInstant};
-use quecto::domain::agents::subagent_teardown::ShutdownReason;
+use quecto::domain::agents::services::subagent_teardown::ShutdownReason;
 
 use super::teardown_fixture::{Clock, Harness, root_tree};
 

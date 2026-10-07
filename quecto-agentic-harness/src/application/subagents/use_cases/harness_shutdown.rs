@@ -32,7 +32,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::task::{Context, Poll, Waker};
 
-use crate::domain::agents::subagent_teardown::{HarnessLifecycleState, ShutdownReason};
+use crate::domain::agents::services::subagent_teardown::{HarnessLifecycleState, ShutdownReason};
 use crate::domain::ids::AgentUuid;
 
 use super::super::dto::{

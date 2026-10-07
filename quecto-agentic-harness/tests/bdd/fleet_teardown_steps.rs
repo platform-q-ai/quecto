@@ -15,7 +15,7 @@ use quecto::application::subagents::dto::{
 use quecto::application::subagents::ports::{
     DelegatedAgentRegistry, SubagentLifecycleRepository, TerminationCause, TerminationConclusion,
 };
-use quecto::domain::agents::subagent_teardown::{HarnessLifecycleState, ShutdownReason};
+use quecto::domain::agents::services::subagent_teardown::{HarnessLifecycleState, ShutdownReason};
 use quecto::domain::ids::AgentUuid;
 
 use crate::QuectoWorld;
@@ -252,7 +252,9 @@ fn when_busy_delete(world: &mut QuectoWorld, rows: usize) {
             0,
         );
         entry.launch_generation = Some(
-            quecto::domain::agents::subagent_teardown::LaunchGeneration::new(index as u64 + 1),
+            quecto::domain::agents::services::subagent_teardown::LaunchGeneration::new(
+                index as u64 + 1,
+            ),
         );
         registry.lock().unwrap().insert(uuid.into_string(), entry);
     }

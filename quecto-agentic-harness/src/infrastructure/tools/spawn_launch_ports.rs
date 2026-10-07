@@ -7,11 +7,11 @@ use super::spawn_launch_args::write_private_new;
 use super::spawn_registry::register_and_broadcast;
 use super::subagent_registry::new_exit_signal_channel;
 use crate::application::ports::{LaunchFuture, SubagentLaunchPorts as SubagentLaunchPortsTrait};
-use crate::domain::agents::subagent::SubagentConfig;
-use crate::domain::agents::subagent::{
+use crate::domain::agents::services::subagent::SubagentConfig;
+use crate::domain::agents::services::subagent::{
     DisplayNameResolutionEntry, DisplayNameResolveError, assert_display_name_available_for_spawn,
 };
-use crate::domain::agents::subagent_launch::{
+use crate::domain::agents::value_objects::subagent_launch::{
     LaunchIdentity, ParentEndpoint, PreparedRuntime, RegisteredLaunch,
 };
 use crate::domain::error::DomainError;
@@ -32,7 +32,8 @@ pub(super) struct SpawnLaunchPorts<'a> {
     /// The launch-bound parent control credential minted for this child
     /// (#1935): kept in memory only until the monitor presents it, and
     /// mirrored once into a private sidecar the child consumes at startup.
-    parent_control: Option<crate::domain::agents::parent_control::ParentControlCredential>,
+    parent_control:
+        Option<crate::domain::agents::entities::parent_control::ParentControlCredential>,
     parent_control_path: Option<PathBuf>,
     /// What the container-config selection reported about the layers the
     /// prepared child was selected from (#2024 S4a); relayed verbatim in
@@ -513,7 +514,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     super::spawn_reaper::ReaperContext {
                         exit_tx,
                         child:
-                            crate::domain::agents::subagent_teardown::DelegatedAgentIdentity::new(
+                            crate::domain::agents::services::subagent_teardown::DelegatedAgentIdentity::new(
                                 agent_uuid,
                                 launch_generation,
                             ),

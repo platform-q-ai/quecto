@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::*;
-use crate::domain::agents::subagent_teardown::LaunchGeneration;
+use crate::domain::agents::services::subagent_teardown::LaunchGeneration;
 use crate::domain::ids::AgentUuid;
 use crate::infrastructure::tools::subagent_registry::{
     SubagentNotification, new_exit_signal_channel, new_notification_channel, new_registry,

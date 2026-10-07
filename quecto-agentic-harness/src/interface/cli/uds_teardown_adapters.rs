@@ -17,7 +17,7 @@ use crate::application::subagents::ports::{
     ShutdownRun, ShutdownRunSpawner, ShutdownSessionPersistence, SubagentLifecycleRepository,
     TurnCancellation,
 };
-use crate::domain::agents::subagent_teardown::{
+use crate::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, HarnessLifecycleState, LineageRecord, LineageSnapshot, ShutdownReason,
 };
 use crate::domain::ids::AgentUuid;

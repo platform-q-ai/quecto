@@ -123,7 +123,7 @@ fn create_result_contract_accepts_direct_endpoint() {
     assert_eq!(parsed.environment_id, "env");
     assert_eq!(
         parsed.endpoint,
-        crate::domain::agents::subagent_launch::ParentEndpoint::Direct {
+        crate::domain::agents::value_objects::subagent_launch::ParentEndpoint::Direct {
             socket_path: PathBuf::from("/tmp/sock")
         }
     );
@@ -146,7 +146,7 @@ fn exec_result_contract_rejects_invalid_shapes_and_proxy() {
     assert!(parse_exec(br#"{"metadata":{},"socket_path":"/tmp/s","bogus":1}"#).is_err());
     assert_eq!(
         parse_exec(br#"{"metadata":{},"socket_path":"/tmp/s"}"#).unwrap(),
-        crate::domain::agents::subagent_launch::ParentEndpoint::Direct {
+        crate::domain::agents::value_objects::subagent_launch::ParentEndpoint::Direct {
             socket_path: PathBuf::from("/tmp/s")
         }
     );

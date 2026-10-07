@@ -1,6 +1,7 @@
 //! The session a launched sub-agent runs as (#2192): the launcher starts it
 //! with `-s <uuid>`, so it is `cli:<uuid>`. A uuid that is not a valid
 //! session name names no session.
+use crate::domain::agents::value_objects::child_end;
 use crate::domain::error::DomainError;
 use crate::domain::ids::AgentUuid;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
@@ -28,12 +29,10 @@ pub fn child_runtime_key(child: &AgentUuid) -> String {
 /// The session key a saved roster records for a row of `origin` (#2192
 /// review): a launched child's own session; none for any other row, whose
 /// uuid is another agent's word.
-pub fn roster_session_key(child: &AgentUuid, origin: super::child_end::ChildOrigin) -> String {
+pub fn roster_session_key(child: &AgentUuid, origin: child_end::ChildOrigin) -> String {
     match origin {
-        super::child_end::ChildOrigin::Launched => child_runtime_key(child),
-        super::child_end::ChildOrigin::Reported | super::child_end::ChildOrigin::Unverified => {
-            String::new()
-        }
+        child_end::ChildOrigin::Launched => child_runtime_key(child),
+        child_end::ChildOrigin::Reported | child_end::ChildOrigin::Unverified => String::new(),
     }
 }
 

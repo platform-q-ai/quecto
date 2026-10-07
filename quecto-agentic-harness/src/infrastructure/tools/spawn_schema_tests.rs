@@ -128,7 +128,7 @@ fn a_quoted_container_from_any_provider_parses_at_the_tool_boundary() {
         assert!(
             matches!(
                 &config.container,
-                crate::domain::agents::subagent::ContainerSelection::New {
+                crate::domain::agents::services::subagent::ContainerSelection::New {
                     container_config: Some(config_name),
                     name: Some(_),
                 } if config_name == "quecto"

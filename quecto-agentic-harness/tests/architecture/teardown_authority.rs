@@ -371,9 +371,9 @@ fn session_ownership_only_probes_with_signal_zero() {
 /// application capabilities, their domain policy, the interface adapters and
 /// the composition graph do not contain the token at all.
 const NO_PID_FILES: &[&str] = &[
-    "src/domain/agents/subagent_teardown.rs",
-    "src/domain/agents/parent_control.rs",
-    "src/domain/agents/harness_lifetime.rs",
+    "src/domain/agents/services/subagent_teardown.rs",
+    "src/domain/agents/entities/parent_control.rs",
+    "src/domain/agents/value_objects/harness_lifetime.rs",
     "src/domain/environment_retention.rs",
     "src/domain/environment_registry.rs",
     "src/domain/environment_registry/record_lookup.rs",

@@ -366,7 +366,7 @@ fn spawn_issue_1093_agent(world: &mut QuectoWorld, base: &std::path::Path) {
                 Some(&runtime_configuration),
             ),
             ext_registry: Some(ext_reg),
-            lifetime: quecto::domain::agents::harness_lifetime::HarnessLifetime::Persistent,
+            lifetime: quecto::domain::agents::value_objects::harness_lifetime::HarnessLifetime::Persistent,
             notification_rx: None,
             subagent_registry: None,
             harness_lifecycle: None,

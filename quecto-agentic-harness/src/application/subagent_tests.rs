@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn test_subagent_context_has_empty_history() {
     let config = SubagentConfig {
-        container: crate::domain::agents::subagent::ContainerSelection::Local,
+        container: crate::domain::agents::services::subagent::ContainerSelection::Local,
         task: Some("Do stuff".to_string()),
         agent_id: None,
         system: None,
@@ -26,7 +26,7 @@ fn test_subagent_context_has_empty_history() {
 #[test]
 fn test_subagent_context_no_task() {
     let config = SubagentConfig {
-        container: crate::domain::agents::subagent::ContainerSelection::Local,
+        container: crate::domain::agents::services::subagent::ContainerSelection::Local,
         task: None,
         agent_id: None,
         system: None,

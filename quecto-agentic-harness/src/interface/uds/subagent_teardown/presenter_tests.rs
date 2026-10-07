@@ -1,7 +1,7 @@
 use super::super::ack_fakes::RecordingWriter;
 use super::*;
 use crate::application::subagents::dto::{PreparedShutdown, ShutdownToken};
-use crate::domain::agents::subagent_teardown::{
+use crate::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, LaunchGeneration, RoutingDepth, ShutdownReason, TerminationRouteError,
 };
 use crate::domain::ids::AgentUuid;

@@ -39,7 +39,7 @@ fn queued_persist_failure_emits_failure_policy_changed_event() {
     );
     let events = events.lock().unwrap();
     let changed = events.iter().find_map(|event| match event {
-        crate::domain::agents::agent::AgentProgressEvent::ToolPolicyChanged {
+        crate::domain::agents::value_objects::agent::AgentProgressEvent::ToolPolicyChanged {
             reconciliation,
             ..
         } => Some(reconciliation),
@@ -102,7 +102,7 @@ fn queued_drain_keeps_registry_catalogue_and_event_after_consistent() {
 
     let events = events.lock().unwrap();
     let changed = events.iter().find_map(|event| match event {
-        crate::domain::agents::agent::AgentProgressEvent::ToolPolicyChanged {
+        crate::domain::agents::value_objects::agent::AgentProgressEvent::ToolPolicyChanged {
             reconciliation,
             ..
         } => Some(reconciliation),
@@ -144,12 +144,14 @@ fn queued_drain_event_carries_each_request_correlation_id() {
     let events = events.lock().unwrap();
     let correlations: Vec<_> = events
         .iter()
-        .filter_map(|event| match event {
-            crate::domain::agents::agent::AgentProgressEvent::ToolPolicyChanged {
+        .filter_map(|event| {
+            match event {
+            crate::domain::agents::value_objects::agent::AgentProgressEvent::ToolPolicyChanged {
                 reconciliation,
                 ..
             } => reconciliation.correlation_id.as_deref(),
             _ => None,
+        }
         })
         .collect();
     assert_eq!(correlations, vec!["set-policy-1", "set-policy-2"]);

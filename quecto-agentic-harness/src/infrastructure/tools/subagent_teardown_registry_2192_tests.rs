@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use super::*;
-use crate::domain::agents::subagent_teardown::LaunchGeneration;
+use crate::domain::agents::services::subagent_teardown::LaunchGeneration;
 use crate::domain::crash_record::{CrashRecord, PanicReport};
 use crate::domain::ids::AgentUuid;
 use crate::infrastructure::persistence::crash_record::Armed;
@@ -28,7 +28,7 @@ async fn exit_note(
         exit,
         ended,
         cause,
-        crate::domain::agents::child_end::ChildOrigin::Launched,
+        crate::domain::agents::value_objects::child_end::ChildOrigin::Launched,
     )
     .await
 }
@@ -38,7 +38,7 @@ async fn exit_note_of(
     exit: Option<ExitSignal>,
     ended: bool,
     cause: TerminationCause,
-    origin: crate::domain::agents::child_end::ChildOrigin,
+    origin: crate::domain::agents::value_objects::child_end::ChildOrigin,
 ) -> Option<SubagentNotification> {
     let registry = new_registry();
     let (exit_tx, _exit_rx) = new_exit_signal_channel();
@@ -202,7 +202,7 @@ async fn a_clean_exit_is_announced_in_the_same_words_as_everywhere_else() {
 #[tokio::test]
 async fn the_transcript_is_offered_only_when_it_can_be_read() {
     use crate::application::sessions::ports::SessionStore;
-    use crate::domain::agents::child_end::ChildOrigin;
+    use crate::domain::agents::value_objects::child_end::ChildOrigin;
     let base = tempfile::tempdir().unwrap();
     let store = crate::composition::sessions::build_file_session_store(base.path());
     let mut session = crate::domain::sessions::entities::session::Session::new(

@@ -168,14 +168,14 @@ fn a_waiting_attempt_is_reported_as_waiting_never_quiet_or_active() {
     assert_eq!(waiting.admission.as_ref().unwrap().waiting, 1);
     // Recent tool completions do not out-rank a queued attempt.
     state.observe(
-        &crate::domain::agents::agent::AgentProgressEvent::ToolStarted {
+        &crate::domain::agents::value_objects::agent::AgentProgressEvent::ToolStarted {
             tool_call_id: "c1".into(),
             name: "bash".into(),
             arguments: "{}".into(),
         },
     );
     state.observe(
-        &crate::domain::agents::agent::AgentProgressEvent::ToolFinished {
+        &crate::domain::agents::value_objects::agent::AgentProgressEvent::ToolFinished {
             tool_call_id: "c1".into(),
             name: "bash".into(),
             arguments: "{}".into(),

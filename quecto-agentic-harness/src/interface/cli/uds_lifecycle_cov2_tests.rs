@@ -78,7 +78,7 @@ fn loop_args<'a>(base: &'a std::path::Path, socket_path: std::path::PathBuf) -> 
         catalogue: crate::composition::catalogue::build_catalogue_handles(base, None),
         ext_registry: None,
         lifetime:
-            crate::domain::agents::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
+            crate::domain::agents::value_objects::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
         notification_rx: None,
         subagent_registry: None,
         harness_lifecycle: None,

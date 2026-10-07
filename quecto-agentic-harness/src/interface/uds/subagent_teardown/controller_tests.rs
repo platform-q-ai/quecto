@@ -6,7 +6,7 @@ use super::*;
 use crate::application::subagents::ports::ExitReadiness;
 use crate::application::subagents::ports::SubagentLifecycleRepository;
 use crate::application::subagents::use_cases::teardown_fakes::*;
-use crate::domain::agents::subagent_teardown::{HarnessLifecycleState, ShutdownReason};
+use crate::domain::agents::services::subagent_teardown::{HarnessLifecycleState, ShutdownReason};
 use crate::interface::uds::subagent_teardown::ack_fakes::RecordingWriter;
 use crate::interface::uds::subagent_teardown::wire::TEARDOWN_COMMAND_CAP_BYTES;
 

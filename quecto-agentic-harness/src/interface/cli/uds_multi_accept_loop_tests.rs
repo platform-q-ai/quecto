@@ -322,7 +322,7 @@ async fn busy_harness_answers_delete_all_subagents_without_the_dispatch_loop() {
     );
     entry.status = SubagentStatus::Running;
     entry.launch_generation =
-        Some(crate::domain::agents::subagent_teardown::LaunchGeneration::new(1));
+        Some(crate::domain::agents::services::subagent_teardown::LaunchGeneration::new(1));
     let registry = crate::infrastructure::tools::subagent_registry::new_registry();
     registry.lock().unwrap().insert(uuid.into_string(), entry);
 
@@ -341,7 +341,8 @@ async fn busy_harness_answers_delete_all_subagents_without_the_dispatch_loop() {
             turn_control: args.turn_control.clone(),
             busy: args.busy.clone(),
             exit_notify: Arc::new(tokio::sync::Notify::new()),
-            binding: crate::domain::agents::parent_control::ParentControlBinding::unlaunched(),
+            binding:
+                crate::domain::agents::entities::parent_control::ParentControlBinding::unlaunched(),
             owner_exit: crate::infrastructure::tools::owner_exit::OwnerExitFlag::new(),
             environment_control: None,
         },

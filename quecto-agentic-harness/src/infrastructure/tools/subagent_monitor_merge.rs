@@ -5,7 +5,7 @@
 
 use std::time::Instant;
 
-use crate::domain::agents::child_end::ChildOrigin;
+use crate::domain::agents::value_objects::child_end::ChildOrigin;
 use crate::domain::sessions::entities::session::SubagentLiveness;
 
 use super::subagent_lifecycle::SubagentLifecycleState;
@@ -228,7 +228,7 @@ fn merge_descendants(
             entry.reported_generation = d
                 .get("launchGeneration")
                 .and_then(serde_json::Value::as_u64)
-                .map(crate::domain::agents::subagent_teardown::LaunchGeneration::new);
+                .map(crate::domain::agents::services::subagent_teardown::LaunchGeneration::new);
         }
         entry.socket_path = socket_path;
         entry.parent_id = d

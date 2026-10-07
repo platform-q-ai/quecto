@@ -16,7 +16,7 @@ use crate::application::environments::ports::{
 use crate::application::subagents::dto::FleetChildResult;
 use crate::application::subagents::ports::{DelegatedAgentRegistry, ResolutionError};
 use crate::application::subagents::use_cases::{ChildSettlement, SettleDelegatedChild};
-use crate::domain::agents::subagent_teardown::ShutdownReason;
+use crate::domain::agents::services::subagent_teardown::ShutdownReason;
 
 pub struct DelegatedMemberShutdown {
     registry: Arc<dyn DelegatedAgentRegistry>,

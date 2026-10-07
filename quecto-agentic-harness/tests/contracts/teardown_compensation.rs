@@ -13,7 +13,9 @@ use quecto::application::subagents::ports::{
     TerminalClaim, TerminationCause,
 };
 use quecto::application::subagents::use_cases::ObserveOwnedChildExit;
-use quecto::domain::agents::subagent_teardown::{DelegatedAgentIdentity, LaunchGeneration};
+use quecto::domain::agents::services::subagent_teardown::{
+    DelegatedAgentIdentity, LaunchGeneration,
+};
 use quecto::domain::ids::AgentUuid;
 use quecto::infrastructure::tools::subagent_registry::{
     ExitSignalKind, SubagentEntry, SubagentNotification, SubagentRegistry, SubagentStatus,

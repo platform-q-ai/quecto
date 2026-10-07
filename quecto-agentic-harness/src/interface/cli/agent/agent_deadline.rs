@@ -8,7 +8,12 @@ use crate::domain::message::Message;
 /// Outcome of a deadline-bounded agent run.
 pub(crate) enum DeadlineResult {
     /// Agent completed (successfully or with error) within the deadline.
-    Completed(Result<crate::domain::agents::agent::AgentResult, crate::domain::error::DomainError>),
+    Completed(
+        Result<
+            crate::domain::agents::value_objects::agent::AgentResult,
+            crate::domain::error::DomainError,
+        >,
+    ),
     /// The deadline expired before the agent finished.
     TimedOut,
 }

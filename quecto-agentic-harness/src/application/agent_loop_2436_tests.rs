@@ -3,7 +3,7 @@
 //! sequence and counted in its own tally, whatever its provider and
 //! whoever else shares its admission.
 use super::*;
-use crate::domain::agents::agent::AgentProgressEvent;
+use crate::domain::agents::value_objects::agent::AgentProgressEvent;
 use crate::domain::inference::events::request_completion::{
     AgentRequestCounters, RequestCompleted, RequestOutcome, RequestSpend,
 };

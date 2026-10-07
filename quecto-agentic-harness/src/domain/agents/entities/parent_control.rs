@@ -13,7 +13,7 @@
 //! files, sockets and processes stay in adapters.
 use std::fmt;
 
-use super::subagent_teardown::LaunchGeneration;
+use crate::domain::agents::services::subagent_teardown::LaunchGeneration;
 
 /// Length in hex characters of a capability: 256 bits of entropy.
 pub const CAPABILITY_HEX_LEN: usize = 64;

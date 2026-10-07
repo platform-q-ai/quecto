@@ -7,7 +7,7 @@ use quecto::application::providers::ports::{ChatRequest, LlmProvider};
 use quecto::application::sessions::ports::{ContextSpillStore, SessionStore};
 use quecto::application::subagent::{SubagentConfig, SubagentContext, validate_agent_id};
 use quecto::application::tools::ports::Tool;
-use quecto::domain::agents::agent::{AgentInfo, AgentResult};
+use quecto::domain::agents::value_objects::agent::{AgentInfo, AgentResult};
 use quecto::domain::error::DomainError;
 use quecto::domain::message::{LlmResponse, Message, Role, ToolCall};
 use quecto::domain::sessions::entities::session::Session;
@@ -938,7 +938,7 @@ pub struct QuectoWorld {
     /// Members whose termination a scenario staged as owned by another
     /// path that never settles (#1939); released explicitly by a step.
     pub stalled_member_terminations:
-        Vec<quecto::domain::agents::subagent_teardown::DelegatedAgentIdentity>,
+        Vec<quecto::domain::agents::services::subagent_teardown::DelegatedAgentIdentity>,
     /// Scenario-scoped runtime for script-managed environment steps (#1369
     /// slice 3): keeps monitor/liveness/bridge tasks alive ACROSS steps so
     /// EOF-pushed death can actually be observed (a per-step runtime would
@@ -1751,7 +1751,7 @@ fn ask_owned_child_to_stop(
     }
     let protocol = shutdown_protocol_attempt(
         entry.socket_path.clone(),
-        quecto::domain::agents::subagent_teardown::ShutdownReason::ParentShutdown,
+        quecto::domain::agents::services::subagent_teardown::ShutdownReason::ParentShutdown,
         PROTOCOL_ACK_TIMEOUT,
     );
     supervisor.request_termination(handle, Box::pin(protocol), TerminationBudget::DEFAULT);

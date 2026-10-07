@@ -5,8 +5,8 @@ use crate::application::subagents::dto::{
     ContainerConfigSource, SelectContainerConfigRequest, SelectedContainerConfig,
 };
 use crate::application::subagents::use_cases::SelectContainerConfig;
-use crate::domain::agents::subagent::{ContainerSelection, SubagentConfig};
-use crate::domain::agents::subagent_launch::ParentEndpoint;
+use crate::domain::agents::services::subagent::{ContainerSelection, SubagentConfig};
+use crate::domain::agents::value_objects::subagent_launch::ParentEndpoint;
 use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentRegistry};
 use crate::domain::error::DomainError;
 use crate::infrastructure::processes::containers::script_stderr::{

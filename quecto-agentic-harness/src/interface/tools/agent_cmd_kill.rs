@@ -42,7 +42,7 @@ pub fn parse_kill_arguments(arguments: &str) -> Result<KillDelegatedAgentRequest
     // Delivery-specific syntax only (the same shape every `agent_cmd`
     // command accepts); whether the reference names anything is the use
     // case's answer.
-    crate::domain::agents::subagent::validate_agent_id_format(agent_id)?;
+    crate::domain::agents::services::subagent::validate_agent_id_format(agent_id)?;
     Ok(KillDelegatedAgentRequest {
         reference: agent_id.to_owned(),
     })

@@ -19,7 +19,7 @@ fn registry_with(label: &str, dead: bool, exit: Option<ExitSignal>) -> SubagentR
         // Launched by this harness as pid 7: the pid its crash record names.
         7,
     );
-    entry.origin = crate::domain::agents::child_end::ChildOrigin::Launched;
+    entry.origin = crate::domain::agents::value_objects::child_end::ChildOrigin::Launched;
     if dead {
         entry.persisted_liveness = SubagentLiveness::Dead;
     }

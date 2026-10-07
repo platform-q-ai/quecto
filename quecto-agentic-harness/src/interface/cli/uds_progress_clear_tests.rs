@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn test_forward_progress_event_emits_tool_started_with_tool_call_id() {
-    use crate::domain::agents::agent::AgentProgressEvent;
+    use crate::domain::agents::value_objects::agent::AgentProgressEvent;
     use crate::interface::cli::uds_cancel::forward_progress_event;
 
     let mut buf = Vec::new();
@@ -30,7 +30,7 @@ async fn test_forward_progress_event_emits_tool_started_with_tool_call_id() {
 
 #[tokio::test]
 async fn test_forward_progress_event_emits_tool_finished_with_tool_call_id() {
-    use crate::domain::agents::agent::AgentProgressEvent;
+    use crate::domain::agents::value_objects::agent::AgentProgressEvent;
     use crate::interface::cli::uds_cancel::forward_progress_event;
 
     let mut buf = Vec::new();
@@ -66,7 +66,7 @@ async fn test_forward_progress_event_emits_tool_finished_with_tool_call_id() {
 
 #[tokio::test]
 async fn test_forward_progress_event_emits_subagent_messages_appended() {
-    use crate::domain::agents::agent::AgentProgressEvent;
+    use crate::domain::agents::value_objects::agent::AgentProgressEvent;
     use crate::interface::cli::uds_cancel::forward_progress_event;
 
     let mut buf = Vec::new();

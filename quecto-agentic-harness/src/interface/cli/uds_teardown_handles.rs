@@ -14,7 +14,7 @@ use tokio::sync::Notify;
 use crate::application::subagents::use_cases::{
     HarnessShutdownTransaction, TerminateAllDelegatedAgents,
 };
-use crate::domain::agents::parent_control::ParentControlBinding;
+use crate::domain::agents::entities::parent_control::ParentControlBinding;
 use crate::domain::ids::AgentUuid;
 use crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle;
 use crate::infrastructure::tools::subagent_registry::{NotificationTx, SubagentRegistry};

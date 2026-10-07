@@ -2,7 +2,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::domain::agents::subagent_teardown::{
+use crate::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, HarnessLifecycleState, LaunchGeneration, LineageRecord,
     LineageSnapshot, RoutingDepth, ShutdownReason,
 };
