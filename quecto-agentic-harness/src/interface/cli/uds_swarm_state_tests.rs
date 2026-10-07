@@ -226,3 +226,55 @@ fn a_refused_instruction_owes_no_reply() {
     );
     assert!(!control.take_client_instructions(), "taken once");
 }
+
+/// The `reply_ready` lines one idle boundary emits for a member whose
+/// instruction `refuse` takes and then refuses.
+async fn reply_after(refuse: impl AsyncFnOnce(&mut super::super::DispatchCtx<'_>)) -> usize {
+    let mut env = Env::with_unselected_workflow();
+    let mut ctx = env.ctx();
+    let (tx, mut rx) = tokio::sync::broadcast::channel(256);
+    ctx.broadcast_tx = Some(tx);
+    let board = std::sync::Arc::new(Board(std::sync::Mutex::new(vec![])));
+    ctx.turn_control = std::sync::Arc::new(
+        crate::interface::cli::uds_cancel::TurnControl::with_swarm_control(Some(board)),
+    );
+    ctx.turn_control.client_instruction_taken();
+    refuse(&mut ctx).await;
+    at_idle_boundary(&mut ctx).await;
+    std::iter::from_fn(|| rx.try_recv().ok())
+        .filter(|line| line.contains("\"reply_ready\""))
+        .count()
+}
+
+/// #2471: a prompt a busy member refuses (no `streamingBehavior`) owes no
+/// reply.
+#[tokio::test]
+async fn a_busy_prompt_the_member_refuses_owes_no_reply() {
+    let replies = reply_after(async |ctx| {
+        super::super::prompt_admission::handle_busy_prompt(ctx, None, "prompt", "x".into(), None)
+            .await;
+    })
+    .await;
+    assert_eq!(replies, 0);
+}
+
+/// #2471: a follow-up the full pending queue does not keep owes no reply.
+#[tokio::test]
+async fn a_follow_up_the_full_queue_does_not_keep_owes_no_reply() {
+    let replies = reply_after(async |ctx| {
+        while ctx
+            .session
+            .enqueue_control(None, "follow_up", "fill".into(), false)
+        {}
+        crate::interface::cli::uds::pending::queue_prompt(
+            ctx,
+            None,
+            "follow_up",
+            "x".into(),
+            false,
+        )
+        .await;
+    })
+    .await;
+    assert_eq!(replies, 0);
+}

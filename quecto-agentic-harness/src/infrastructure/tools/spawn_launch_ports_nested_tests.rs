@@ -108,7 +108,13 @@ fn only_a_run_creator_s_swarm_workers_settle_their_turn_ends_by_its_board() {
 /// launcher's worker keeps the ordinary notes.
 #[tokio::test]
 async fn register_gives_a_run_creator_s_worker_the_launcher_board() {
-    for (created_run, expected) in [(true, Some("m-1")), (false, None)] {
+    for (created_run, expected, task) in [
+        (true, Some("m-1"), None),
+        (true, Some("m-1"), Some("claim a task")),
+        (false, None, None),
+    ] {
+        let mut launch = config();
+        launch.task = task.map(str::to_owned);
         let context = crate::infrastructure::tools::swarm_bridge::SwarmContext {
             board: crate::composition::swarm::swarm_board(),
             checkout: std::env::temp_dir(),
@@ -140,7 +146,7 @@ async fn register_gives_a_run_creator_s_worker_the_launcher_board() {
             environment_ref: None,
         };
         ports
-            .register_and_monitor(&identity, runtime, &mut prepared, &config())
+            .register_and_monitor(&identity, runtime, &mut prepared, &launch)
             .await
             .unwrap();
         let member = tool
@@ -157,13 +163,10 @@ async fn register_gives_a_run_creator_s_worker_the_launcher_board() {
             .unwrap()
             .get(&identity.registry_key)
             .is_some_and(|entry| entry.coordinator_wake.worker.task_pending);
-        assert!(!task_pending, "launched without a task");
-        let task_pending = tool
-            .registry
-            .lock()
-            .unwrap()
-            .get(&identity.registry_key)
-            .is_some_and(|entry| entry.coordinator_wake.worker.task_pending);
-        assert!(!task_pending, "launched without a task");
+        assert_eq!(
+            task_pending,
+            created_run && task.is_some(),
+            "a run creator's worker launched with a task"
+        );
     }
 }
