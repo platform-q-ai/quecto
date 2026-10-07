@@ -603,3 +603,29 @@ async fn a_failed_turn_before_an_idle_run_names_the_idle_run() {
         }]
     );
 }
+
+#[tokio::test]
+async fn a_turn_that_succeeds_after_a_failed_one_is_not_reported_as_stopped() {
+    for (state, expected_notes) in [
+        (swarm_state("hold", "running"), 0),
+        (prompted_state("hold", "running"), 1),
+    ] {
+        let registry = registry_with("coord");
+        let (tx, mut rx) = new_notification_channel();
+        first_boundary(&registry, &tx, &mut rx);
+        apply_and_notify(&registry, Some(&tx), "coord", &agent_start());
+        apply_and_notify(&registry, Some(&tx), "coord", &agent_error());
+        drain(&mut rx);
+        apply_and_notify(&registry, Some(&tx), "coord", &agent_start());
+        apply_and_notify(&registry, Some(&tx), "coord", &agent_end());
+        apply_and_notify(&registry, Some(&tx), "coord", &state);
+        let notes = drain(&mut rx);
+        assert_eq!(notes.len(), expected_notes, "{notes:?}");
+        assert!(
+            notes
+                .iter()
+                .all(|n| matches!(n, SubagentNotification::Completed { .. })),
+            "{notes:?}"
+        );
+    }
+}

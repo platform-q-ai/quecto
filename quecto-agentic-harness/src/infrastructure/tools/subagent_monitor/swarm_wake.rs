@@ -54,9 +54,11 @@ enum TimerKind {
 }
 
 impl CoordinatorWake {
-    /// A new turn is activity: a held coordinator is not quiet, and its held
-    /// note waits for this turn's own end.
+    /// A new turn is activity: a held coordinator is not quiet, its held
+    /// note waits for this turn's own end, and an earlier failed turn is no
+    /// longer the outcome.
     pub(super) fn turn_started(&mut self) {
+        self.failed = false;
         self.cancel_timer();
     }
 
