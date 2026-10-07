@@ -659,6 +659,10 @@ impl Tool for AgentCmdTool {
                 Ok(response) => {
                     let rejected = serde_json::from_str::<serde_json::Value>(&response)
                         .is_ok_and(|value| value["success"] == false);
+                    if let (false, "prompt" | "steer" | "follow_up") = (rejected, command.as_str())
+                    {
+                        super::subagent_monitor::mark_reply_owed(&self.registry, &agent_id);
+                    }
                     let routed = routed_target_id.as_deref();
                     let response = if default_get_messages_report {
                         let backfilled = self

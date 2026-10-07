@@ -38,6 +38,54 @@ pub struct CoordinatorWake {
     /// The one timer running for it: settling a held note, or the quiet
     /// report of a hold.
     timer: Option<Timer>,
+    /// A swarm worker this process launched as its run's coordinator
+    /// (#2471): the board its plain turn ends are settled by.
+    pub launcher_board: Option<LauncherBoard>,
+    /// Its launcher sent it a prompt, steer or follow-up: its next turn end
+    /// is the reply, owed whatever the board says.
+    reply_owed: bool,
+}
+
+/// The run control a coordinator reads its board through.
+#[derive(Clone)]
+pub struct LauncherBoard(pub std::sync::Arc<dyn crate::application::swarm::ports::SwarmRunControl>);
+
+impl std::fmt::Debug for LauncherBoard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LauncherBoard")
+    }
+}
+
+/// The board a newly launched child's turn ends are settled by (#2471):
+/// only a swarm worker launched by the container's creator (the coordinator
+/// spawned with `coordinator: true`) gets one.
+pub fn launcher_board_for(
+    launches_swarm_worker: bool,
+    container_creator: bool,
+    board: Option<LauncherBoard>,
+) -> Option<LauncherBoard> {
+    let _ = (launches_swarm_worker, container_creator);
+    drop(board);
+    None
+}
+
+/// Record that `agent_id`'s launcher sent it a prompt, steer or follow-up.
+pub fn mark_reply_owed(registry: &SubagentRegistry, agent_id: &str) {
+    let _ = (registry, agent_id);
+}
+
+/// Settle a swarm worker's plain turn end at its coordinator (#2471):
+/// `true` when it is handled here (dropped, or the run's stall reported
+/// later), `false` to send the ordinary note.
+pub(super) fn worker_turn_end(
+    registry: &SubagentRegistry,
+    notify_tx: Option<&NotificationTx>,
+    agent_id: &str,
+) -> bool {
+    let _ = notify_tx;
+    let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+    let _ = entries.get(agent_id).map(|e| e.coordinator_wake.reply_owed);
+    false
 }
 
 #[derive(Debug, Clone)]

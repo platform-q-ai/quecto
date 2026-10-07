@@ -525,6 +525,12 @@ fn apply_and_notify(
         );
         return;
     }
+    // A coordinator's workers report through its board (#2471).
+    if value.get("type").and_then(|v| v.as_str()) == Some("agent_end")
+        && swarm_wake::worker_turn_end(registry, notify_tx, agent_id)
+    {
+        return;
+    }
     if value.get("type").and_then(|v| v.as_str()) == Some("agent_end")
         && swarm_wake::defer_completion(registry, notify_tx, agent_id, sequence)
     {
@@ -654,13 +660,16 @@ mod exit_cascade_tests;
 mod lifecycle_tests;
 #[path = "subagent_monitor/swarm_wake.rs"]
 mod swarm_wake;
-pub use swarm_wake::CoordinatorWake;
+pub use swarm_wake::{CoordinatorWake, LauncherBoard, launcher_board_for, mark_reply_owed};
 #[cfg(test)]
 #[path = "tests/subagent_monitor_swarm_wake_tests.rs"]
 mod swarm_wake_tests;
 #[cfg(test)]
 #[path = "subagent_monitor_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "tests/subagent_monitor_worker_wake_tests.rs"]
+mod worker_wake_tests;
 
 #[cfg(test)]
 #[path = "subagent_monitor_forward_tests.rs"]

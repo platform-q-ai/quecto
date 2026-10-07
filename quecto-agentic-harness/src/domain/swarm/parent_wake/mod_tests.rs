@@ -155,3 +155,47 @@ fn a_wake_kind_this_build_does_not_know_reads_as_unknown() {
     let hold: WakeKind = serde_json::from_str("\"hold\"").expect("decodes");
     assert_eq!(hold, WakeKind::Hold);
 }
+
+#[test]
+fn a_claimed_task_with_every_worker_idle_is_stalled() {
+    for status in LIVE {
+        assert_eq!(
+            workers_stalled(&board(status, 0, 2, 1)),
+            Some(WorkersStalled {
+                claimed: 2,
+                ready: 0
+            })
+        );
+    }
+}
+
+#[test]
+fn ready_work_with_no_free_worker_is_stalled() {
+    assert_eq!(
+        workers_stalled(&board(RunStatus::Running, 3, 0, 0)),
+        Some(WorkersStalled {
+            claimed: 0,
+            ready: 3
+        })
+    );
+}
+
+#[test]
+fn ready_work_a_free_worker_was_woken_for_is_not_stalled() {
+    assert_eq!(workers_stalled(&board(RunStatus::Running, 3, 0, 1)), None);
+}
+
+#[test]
+fn work_awaiting_the_coordinator_or_none_left_is_not_stalled() {
+    let mut submitted = board(RunStatus::Running, 0, 0, 2);
+    submitted.submitted = 1;
+    assert_eq!(workers_stalled(&submitted), None);
+    assert_eq!(workers_stalled(&board(RunStatus::Running, 0, 0, 2)), None);
+}
+
+#[test]
+fn a_run_that_is_not_live_is_never_stalled() {
+    for status in TERMINAL.into_iter().chain([RunStatus::Paused]) {
+        assert_eq!(workers_stalled(&board(status, 2, 2, 0)), None, "{status:?}");
+    }
+}

@@ -433,6 +433,14 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     crate::infrastructure::processes::parent_control::next_launch_generation,
                 );
             entry.launch_generation = Some(launch_generation);
+            // A coordinator's workers report through its board (#2471).
+            entry.coordinator_wake.launcher_board = super::subagent_monitor::launcher_board_for(
+                self.tool.launches_swarm_worker(),
+                super::swarm_lifecycle::is_creator(),
+                self.tool.swarm_context.clone().map(|context| {
+                    super::subagent_monitor::LauncherBoard(std::sync::Arc::new(context))
+                }),
+            );
             let lifecycle = self.tool.lifecycle_use_cases()?;
             entry.owned_child = prepared.owned_child;
             entry.owned_child_supervisor = Some(std::sync::Arc::clone(&prepared.supervisor));
