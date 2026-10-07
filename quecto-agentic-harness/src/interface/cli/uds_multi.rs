@@ -468,7 +468,7 @@ async fn run_dispatch_loop(
                         agent_id.clone(),
                         sequence,
                         notif.to_message(),
-                        notif.is_completion(),
+                        crate::interface::cli::uds_session::NoteClass::of(&notif),
                     );
                     // #1082 review round 2: only a retained note is announced;
                     // Duplicate means already delivered, Dropped means both

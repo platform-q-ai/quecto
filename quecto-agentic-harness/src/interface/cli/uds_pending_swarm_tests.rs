@@ -4,6 +4,9 @@ use crate::application::swarm::ports::SwarmRunControl;
 use crate::domain::swarm::{RunControlAction, RunControlReceipt, RunStatus};
 struct Control(RunStatus);
 impl SwarmRunControl for Control {
+    fn coordinator_board(&self) -> crate::application::swarm::ports::CoordinatorBoardFuture<'_> {
+        Box::pin(async { Ok(None) })
+    }
     fn nudge_watch(&self) {}
     fn apply(
         &self,
@@ -50,8 +53,12 @@ async fn terminal_notifications_do_not_create_extra_report_turns() {
             std::sync::Arc::new(Control(RunStatus::Failed)),
         )),
     );
-    ctx.session
-        .enqueue_subagent_notification("worker".into(), 1, "worker ended".into(), true);
+    ctx.session.enqueue_subagent_notification(
+        "worker".into(),
+        1,
+        "worker ended".into(),
+        crate::interface::cli::uds_session::NoteClass::Completion,
+    );
     ctx.session
         .enqueue_control(Some("report"), "follow_up", "final report".into(), false);
     drain_and_run_pending(&mut ctx).await;
@@ -156,6 +163,9 @@ fn composed_suspension_rechecks_durable_generation_before_cancelling() {
 /// the re-arming can be observed without a model turn.
 struct RunningAt(u64);
 impl SwarmRunControl for RunningAt {
+    fn coordinator_board(&self) -> crate::application::swarm::ports::CoordinatorBoardFuture<'_> {
+        Box::pin(async { Ok(None) })
+    }
     fn nudge_watch(&self) {}
     fn apply(
         &self,
@@ -246,6 +256,9 @@ async fn a_resume_wake_re_arms_a_provider_suspended_member() {
 struct Answer(Result<(RunStatus, u64), &'static str>);
 
 impl SwarmRunControl for Answer {
+    fn coordinator_board(&self) -> crate::application::swarm::ports::CoordinatorBoardFuture<'_> {
+        Box::pin(async { Ok(None) })
+    }
     fn nudge_watch(&self) {}
     fn apply(
         &self,
@@ -463,8 +476,12 @@ async fn an_explicit_follow_up_re_arms_a_provider_suspended_idle_member() {
     let mut ctx = env.ctx();
     ctx.session
         .suspend_automatic_turns(SuspensionCause::ProviderFailure, Some(1));
-    ctx.session
-        .enqueue_subagent_notification("worker".into(), 1, "worker ended".into(), true);
+    ctx.session.enqueue_subagent_notification(
+        "worker".into(),
+        1,
+        "worker ended".into(),
+        crate::interface::cli::uds_session::NoteClass::Completion,
+    );
     drain_and_run_pending(&mut ctx).await;
     assert!(
         !ctx.session.automatic_turns_allowed,

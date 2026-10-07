@@ -65,6 +65,9 @@ pub struct TurnControl {
     /// This member has read itself as its run's coordinator (#2467): an
     /// unreadable board then still reports `swarm_state`, as unknown.
     pub(crate) coordinator_reported: std::sync::atomic::AtomicBool,
+    /// A client's `prompt`, `steer` or `follow_up` arrived since the last
+    /// idle boundary (#2467): the coordinator's parent is owed its reply.
+    pub(crate) client_prompted: std::sync::atomic::AtomicBool,
 }
 
 #[path = "uds_turn_generation.rs"]
@@ -395,7 +398,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
             agent_id,
             sequence,
             notif.to_message(),
-            notif.is_completion(),
+            crate::interface::cli::uds_session::NoteClass::of(&notif),
         );
     }
 

@@ -48,6 +48,9 @@ async fn a_stale_abort_drain_dates_a_failed_explicit_turn() {
 /// A control port whose generation rises by ten on every probe.
 struct Rising(std::sync::atomic::AtomicU64);
 impl SwarmRunControl for Rising {
+    fn coordinator_board(&self) -> crate::application::swarm::ports::CoordinatorBoardFuture<'_> {
+        Box::pin(async { Ok(None) })
+    }
     fn nudge_watch(&self) {}
     fn apply(
         &self,

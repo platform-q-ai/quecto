@@ -7,7 +7,7 @@ use crate::domain::visible_thinking::has_visible_thinking;
 /// In-memory state for an active UDS session.
 #[path = "uds_session_notify.rs"]
 mod uds_session_notify;
-pub use uds_session_notify::NotificationEnqueueOutcome;
+pub use uds_session_notify::{NoteClass, NotificationEnqueueOutcome};
 /// The tracker holds no session key (D10 #1979): the active session's typed
 /// identity is the one owner of `sessionKey`, and every presenter that
 /// reports it is handed the key by its caller from that identity.

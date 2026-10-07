@@ -136,9 +136,11 @@ Completion is **multi-turn**. The `agent_cmd await` command has been removed; us
 2. **End this parent turn** (or do other *non-duplicative* work that does not need
    the child’s answer). Stay available to the user.
 3. **Next turn:** a passive one-line completion note arrives automatically when
-   the child finishes/errors/exits. A swarm coordinator's note comes only when
-   its run's state calls for it (finished, idle with nothing in flight, quiet
-   for 30 min, or its board unreadable), not on every idle turn (#2467).
+   the child finishes/errors/exits. A child spawned with `coordinator: true`
+   sends its first turn-end note as usual; after that its notes come only when
+   its run's state calls for it (the run ended, nothing in flight, no turn for
+   30 min, its board unreadable, or the reply to your prompt), not on every
+   idle turn (#2467). Silence while its workers are busy is expected.
 4. **Then** plain `agent_cmd get_messages` (omit/null `count` and `before`) for the default unread report.
 5. Verify, synthesize, and answer the user. Relay conclusions — not raw child dumps
    unless asked.
@@ -517,6 +519,14 @@ available or required. The note is:
 - **Coalesced + deduplicated** — multiple completions from the same child
   collapse to one note (latest wins), so a noisy child costs at most one extra
   turn.
+- **Swarm coordinators** (#2467) — a child spawned with `coordinator: true`
+  wakes its parent on its run's state instead of each idle turn:
+  `Swarm coordinator 'c' reports its run succeeded; its final report is ready`,
+  `… reports its run running with nothing in flight and no result; it may need
+  a decision`, or `… has taken no turn for 30 min since its board last showed
+  work in flight`. These are never folded into a coalesced summary, and a
+  repeat of the same state is delivered again (the parent may have acted on
+  the last one). See `swarm_state` in `uds-protocol.md`.
 
 The note is a **summary only**; to read the child's default unread report call
 plain `get_messages` (omit/null `count` and `before`). Explicit `count`/`before`

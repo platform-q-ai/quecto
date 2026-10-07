@@ -1,68 +1,153 @@
 use super::*;
 
-fn board(status: &str, ready: i64, claimed: i64, idle_workers: i64) -> CoordinatorBoard {
+fn board(status: RunStatus, ready: i64, claimed: i64, idle_workers: i64) -> CoordinatorBoard {
     CoordinatorBoard {
-        status: status.to_owned(),
+        status,
+        outcome: None,
         ready,
         claimed,
+        submitted: 0,
         idle_workers,
     }
 }
 
+const LIVE: [RunStatus; 2] = [RunStatus::Setup, RunStatus::Running];
+const TERMINAL: [RunStatus; 5] = [
+    RunStatus::Succeeded,
+    RunStatus::Blocked,
+    RunStatus::Failed,
+    RunStatus::Cancelled,
+    RunStatus::BudgetExhausted,
+];
+
 #[test]
 fn an_unreadable_board_wakes_as_an_ordinary_turn_end() {
     assert_eq!(parent_wake(None), ParentWake::Unknown);
+    assert_eq!(parent_wake(None).status(), None);
 }
 
 #[test]
 fn a_claimed_task_holds_the_parent() {
+    for status in LIVE {
+        assert_eq!(
+            parent_wake(Some(&board(status, 0, 1, 0))),
+            ParentWake::Hold { status }
+        );
+    }
+}
+
+#[test]
+fn submitted_work_awaiting_a_verdict_holds_the_parent() {
+    let mut board = board(RunStatus::Running, 0, 0, 2);
+    board.submitted = 1;
     assert_eq!(
-        parent_wake(Some(&board("running", 0, 1, 0))),
-        ParentWake::Hold
+        parent_wake(Some(&board)),
+        ParentWake::Hold {
+            status: RunStatus::Running
+        }
     );
 }
 
 #[test]
 fn ready_work_with_a_free_worker_holds_the_parent() {
     assert_eq!(
-        parent_wake(Some(&board("running", 2, 0, 1))),
-        ParentWake::Hold
+        parent_wake(Some(&board(RunStatus::Running, 2, 0, 1))),
+        ParentWake::Hold {
+            status: RunStatus::Running
+        }
     );
 }
 
 #[test]
 fn ready_work_no_worker_can_take_wakes_the_parent_as_idle() {
     assert_eq!(
-        parent_wake(Some(&board("running", 2, 0, 0))),
-        ParentWake::Idle
+        parent_wake(Some(&board(RunStatus::Running, 2, 0, 0))),
+        ParentWake::Idle {
+            status: RunStatus::Running
+        }
     );
 }
 
 #[test]
 fn nothing_in_flight_wakes_the_parent_as_idle() {
+    for status in LIVE {
+        assert_eq!(
+            parent_wake(Some(&board(status, 0, 0, 3))),
+            ParentWake::Idle { status }
+        );
+    }
+}
+
+#[test]
+fn a_paused_run_with_an_outcome_wakes_the_parent_with_that_outcome() {
+    for outcome in TERMINAL {
+        let mut board = board(RunStatus::Paused, 0, 1, 0);
+        board.outcome = Some(outcome);
+        let wake = parent_wake(Some(&board));
+        assert_eq!(wake, ParentWake::Finished { outcome }, "{outcome:?}");
+        assert_eq!(wake.status(), Some(outcome));
+    }
+}
+
+#[test]
+fn a_paused_run_with_no_outcome_wakes_the_parent_as_idle() {
     assert_eq!(
-        parent_wake(Some(&board("running", 0, 0, 3))),
-        ParentWake::Idle
+        parent_wake(Some(&board(RunStatus::Paused, 0, 1, 0))),
+        ParentWake::Idle {
+            status: RunStatus::Paused
+        }
     );
 }
 
 #[test]
-fn any_status_but_running_wakes_the_parent_as_finished() {
-    for status in [
-        "complete",
-        "stopped",
-        "paused",
-        "failed",
-        "lost",
-        "budget-exhausted",
-        "setup",
-    ] {
+fn a_terminal_status_wakes_the_parent_as_finished() {
+    for status in TERMINAL {
         assert_eq!(
             parent_wake(Some(&board(status, 0, 1, 0))),
-            ParentWake::Finished {
-                status: status.to_owned()
-            },
-            "{status}"
+            ParentWake::Finished { outcome: status },
+            "{status:?}"
         );
     }
+}
+
+#[test]
+fn each_wake_names_its_kind() {
+    let running = RunStatus::Running;
+    assert_eq!(ParentWake::Hold { status: running }.kind(), WakeKind::Hold);
+    assert_eq!(ParentWake::Idle { status: running }.kind(), WakeKind::Idle);
+    let finished = ParentWake::Finished {
+        outcome: RunStatus::Succeeded,
+    };
+    assert_eq!(finished.kind(), WakeKind::Finished);
+    assert_eq!(ParentWake::Unknown.kind(), WakeKind::Unknown);
+}
+
+#[test]
+fn a_held_note_settles_by_the_wake() {
+    use HeldNote::*;
+    let cases = [
+        (WakeKind::Hold, false, Silent),
+        (WakeKind::Hold, true, Ordinary),
+        (WakeKind::Finished, false, Finished),
+        (WakeKind::Finished, true, Finished),
+        (WakeKind::Idle, false, Idle),
+        (WakeKind::Idle, true, Idle),
+        (WakeKind::Unknown, false, Ordinary),
+        (WakeKind::Unknown, true, Ordinary),
+    ];
+    for (kind, prompted, note) in cases {
+        assert_eq!(
+            settle_held_note(kind, prompted),
+            note,
+            "{kind:?} {prompted}"
+        );
+    }
+}
+
+#[test]
+fn a_wake_kind_this_build_does_not_know_reads_as_unknown() {
+    let kind: WakeKind = serde_json::from_str("\"stalled\"").expect("decodes");
+    assert_eq!(kind, WakeKind::Unknown);
+    let hold: WakeKind = serde_json::from_str("\"hold\"").expect("decodes");
+    assert_eq!(hold, WakeKind::Hold);
 }

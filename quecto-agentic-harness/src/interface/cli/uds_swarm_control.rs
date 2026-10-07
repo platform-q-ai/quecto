@@ -439,14 +439,14 @@ pub(super) async fn at_idle_boundary(ctx: &mut super::uds::DispatchCtx<'_>) {
     }
 }
 
-/// The run's `swarm_state` as this member reports it (#2467): only the
-/// run's coordinator reports; an unreadable board is reported as unknown
-/// once this member has reported before, so its parent is never left
-/// waiting for a state that will not come.
+/// The run's `swarm_state` as this member reports it (#2467): only a
+/// process launched as its run's coordinator reads its board; an unreadable
+/// board is reported as unknown once it has reported before, so its parent
+/// is never left waiting for a state that will not come.
 async fn coordinator_swarm_state(
     turn_control: &super::uds_cancel::TurnControlHandle,
 ) -> Option<super::protocol::AgentEvent> {
-    use crate::domain::swarm::parent_wake::{ParentWake, parent_wake};
+    use crate::domain::swarm::parent_wake::parent_wake;
     use std::sync::atomic::Ordering;
     let control = turn_control.swarm_control.clone()?;
     let reported = &turn_control.coordinator_reported;
@@ -460,13 +460,12 @@ async fn coordinator_swarm_state(
         Ok(None) | Err(_) if reported.load(Ordering::SeqCst) => parent_wake(None),
         Ok(None) | Err(_) => return None,
     };
-    let (wake, status) = match wake {
-        ParentWake::Hold => (super::protocol::SwarmWake::Hold, Some("running".to_owned())),
-        ParentWake::Finished { status } => (super::protocol::SwarmWake::Finished, Some(status)),
-        ParentWake::Idle => (super::protocol::SwarmWake::Idle, Some("running".to_owned())),
-        ParentWake::Unknown => (super::protocol::SwarmWake::Unknown, None),
-    };
-    Some(super::protocol::AgentEvent::SwarmState { wake, status })
+    let prompted = turn_control.client_prompted.swap(false, Ordering::SeqCst);
+    Some(super::protocol::AgentEvent::SwarmState {
+        wake: wake.kind(),
+        status: wake.status().map(|status| status_name(status).to_owned()),
+        prompted,
+    })
 }
 
 /// How a coordination-store failure is treated by automatic turns.

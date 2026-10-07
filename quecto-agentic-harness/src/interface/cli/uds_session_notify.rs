@@ -4,6 +4,32 @@
 
 use super::{AgentSession, PendingMessage};
 
+/// How a sub-agent note is queued (#894, #2467).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoteClass {
+    /// A turn end: coalesced across agents, and it clears the agent's
+    /// remembered failure.
+    Completion,
+    /// A failure: kept verbatim, and a repeat of the agent's last failure
+    /// text is dropped.
+    Failure,
+    /// A swarm coordinator's run state: kept verbatim, never a repeat; the
+    /// same state can be news again after the parent acted on it.
+    State,
+}
+
+impl NoteClass {
+    pub fn of(
+        note: &crate::infrastructure::tools::subagent_registry::SequencedSubagentNotification,
+    ) -> Self {
+        match (note.is_completion(), note.is_swarm_state()) {
+            (true, _) => Self::Completion,
+            (false, true) => Self::State,
+            (false, false) => Self::Failure,
+        }
+    }
+}
+
 /// Outcome of [`AgentSession::enqueue_subagent_notification`] (#1082 review):
 /// callers must distinguish "this is a new note to announce" from "stale
 /// duplicate" from "dropped for capacity" — a single bool conflated the
@@ -74,7 +100,7 @@ impl AgentSession {
         agent_id: String,
         sequence: u64,
         content: String,
-        is_completion: bool,
+        class: NoteClass,
     ) -> NotificationEnqueueOutcome {
         // Dedupe against the monotonic per-agent sequence — the passive broadcast
         // path also records completions, so a repeated/stale sequence is dropped
@@ -87,16 +113,22 @@ impl AgentSession {
         {
             return NotificationEnqueueOutcome::Duplicate;
         }
-        if is_completion {
-            self.last_failure_notifications.remove(&agent_id);
-        } else if self.last_failure_notifications.get(&agent_id) == Some(&content) {
-            self.repeated_failure_notifications =
-                self.repeated_failure_notifications.saturating_add(1);
-            self.record_subagent_notification(agent_id, sequence);
-            self.bump_visible_generation();
-            return NotificationEnqueueOutcome::Duplicate;
+        let repeated = self.last_failure_notifications.get(&agent_id) == Some(&content);
+        match (class, repeated) {
+            (NoteClass::Completion, _) => {
+                self.last_failure_notifications.remove(&agent_id);
+            }
+            (NoteClass::Failure, true) => {
+                self.repeated_failure_notifications =
+                    self.repeated_failure_notifications.saturating_add(1);
+                self.record_subagent_notification(agent_id, sequence);
+                self.bump_visible_generation();
+                return NotificationEnqueueOutcome::Duplicate;
+            }
+            (NoteClass::Failure, false) | (NoteClass::State, _) => {}
         }
-        let failure = (!is_completion).then(|| content.clone());
+        let is_completion = class == NoteClass::Completion;
+        let failure = (class == NoteClass::Failure).then(|| content.clone());
         // Coalesce: if a still-pending note for this same agent has not yet been
         // drained, replace it in place (latest wins) instead of queuing a second
         // turn — a noisy child must not cost N extra LLM turns. The pending

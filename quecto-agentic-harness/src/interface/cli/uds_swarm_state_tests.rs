@@ -4,7 +4,7 @@ use super::super::super::uds_swarm_control::at_idle_boundary;
 use super::super::dispatch_test_env::DispatchTestEnv as Env;
 use crate::application::swarm::ports::SwarmRunControl;
 use crate::domain::swarm::parent_wake::CoordinatorBoard;
-use crate::domain::swarm::{RunControlAction, RunControlReceipt};
+use crate::domain::swarm::{RunControlAction, RunControlReceipt, RunStatus};
 
 /// A board that answers `coordinator_board` with each of `answers` in turn.
 struct Board(std::sync::Mutex<Vec<Result<Option<CoordinatorBoard>, String>>>);
@@ -20,12 +20,7 @@ impl SwarmRunControl for Board {
     > {
         Box::pin(async { Err(crate::domain::error::DomainError::Tool("no status".into())) })
     }
-    fn coordinator_board(
-        &self,
-    ) -> crate::application::subagent_launch::LaunchFuture<
-        '_,
-        Result<Option<CoordinatorBoard>, crate::domain::error::DomainError>,
-    > {
+    fn coordinator_board(&self) -> crate::application::swarm::ports::CoordinatorBoardFuture<'_> {
         let next = self.0.lock().unwrap().remove(0);
         Box::pin(async move { next.map_err(crate::domain::error::DomainError::Tool) })
     }
@@ -33,9 +28,11 @@ impl SwarmRunControl for Board {
 
 fn running(claimed: i64) -> CoordinatorBoard {
     CoordinatorBoard {
-        status: "running".into(),
+        status: RunStatus::Running,
+        outcome: None,
         ready: 0,
         claimed,
+        submitted: 0,
         idle_workers: 0,
     }
 }
@@ -44,7 +41,16 @@ fn running(claimed: i64) -> CoordinatorBoard {
 async fn boundaries(
     answers: Vec<Result<Option<CoordinatorBoard>, String>>,
 ) -> Vec<serde_json::Value> {
-    let count = answers.len();
+    let prompts = vec![false; answers.len()];
+    boundaries_after(answers, prompts).await
+}
+
+/// [`boundaries`], with a client's prompt arriving before each boundary
+/// `prompts` marks.
+async fn boundaries_after(
+    answers: Vec<Result<Option<CoordinatorBoard>, String>>,
+    prompts: Vec<bool>,
+) -> Vec<serde_json::Value> {
     let mut env = Env::with_unselected_workflow();
     let mut ctx = env.ctx();
     let (tx, mut rx) = tokio::sync::broadcast::channel(64);
@@ -54,7 +60,12 @@ async fn boundaries(
             std::sync::Arc::new(Board(std::sync::Mutex::new(answers))),
         )),
     );
-    for _ in 0..count {
+    for prompted in prompts {
+        if prompted {
+            ctx.turn_control
+                .client_prompted
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+        }
         at_idle_boundary(&mut ctx).await;
     }
     let mut states = Vec::new();
@@ -77,15 +88,34 @@ async fn the_coordinator_reports_its_wake_at_each_idle_boundary() {
 }
 
 #[tokio::test]
-async fn a_finished_run_is_reported_with_its_status() {
+async fn a_finished_run_is_reported_with_its_outcome() {
     let finished = CoordinatorBoard {
-        status: "complete".into(),
+        status: RunStatus::Paused,
+        outcome: Some(RunStatus::Succeeded),
         ..running(0)
     };
     let states = boundaries(vec![Ok(Some(finished))]).await;
     assert_eq!(states.len(), 1, "{states:?}");
     assert_eq!(states[0]["wake"], "finished");
-    assert_eq!(states[0]["status"], "complete");
+    assert_eq!(states[0]["status"], "succeeded");
+}
+
+#[tokio::test]
+async fn a_client_prompt_is_reported_once_at_the_next_boundary() {
+    let states = boundaries_after(
+        vec![
+            Ok(Some(running(1))),
+            Ok(Some(running(1))),
+            Ok(Some(running(1))),
+        ],
+        vec![false, true, false],
+    )
+    .await;
+    let prompted: Vec<_> = states
+        .iter()
+        .map(|state| state["prompted"].clone())
+        .collect();
+    assert_eq!(prompted, vec![false, true, false], "{states:?}");
 }
 
 #[tokio::test]
@@ -98,9 +128,12 @@ async fn a_member_that_is_not_the_coordinator_reports_nothing() {
 
 #[tokio::test]
 async fn an_unreadable_board_after_a_report_is_reported_as_unknown() {
-    let states = boundaries(vec![Ok(Some(running(1))), Err("locked".into())]).await;
-    assert_eq!(states.len(), 2, "{states:?}");
-    assert_eq!(states[1]["wake"], "unknown");
+    let states = boundaries(vec![Ok(Some(running(1))), Err("locked".into()), Ok(None)]).await;
+    assert_eq!(states.len(), 3, "{states:?}");
+    for state in &states[1..] {
+        assert_eq!(state["wake"], "unknown");
+        assert!(state.get("status").is_none(), "{state}");
+    }
 }
 
 #[tokio::test]
@@ -118,11 +151,12 @@ async fn without_a_swarm_nothing_is_reported() {
 #[test]
 fn swarm_state_is_sent_as_a_typed_event() {
     let event = super::super::super::protocol::AgentEvent::SwarmState {
-        wake: super::super::super::protocol::SwarmWake::Finished,
-        status: Some("complete".into()),
+        wake: crate::domain::swarm::parent_wake::WakeKind::Finished,
+        status: Some("succeeded".into()),
+        prompted: false,
     };
     assert_eq!(
         serde_json::to_value(&event).unwrap(),
-        serde_json::json!({"type": "swarm_state", "wake": "finished", "status": "complete"})
+        serde_json::json!({"type": "swarm_state", "wake": "finished", "status": "succeeded", "prompted": false})
     );
 }

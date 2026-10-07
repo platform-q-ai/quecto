@@ -590,12 +590,7 @@ impl crate::application::swarm::ports::SwarmRunControl for SwarmContext {
     }
     /// Two harness reads, off the async workers: `_status` (whose
     /// coordinator, which status, free workers) and `_run_totals` (tasks).
-    fn coordinator_board(
-        &self,
-    ) -> PortFuture<
-        '_,
-        Result<Option<crate::domain::swarm::parent_wake::CoordinatorBoard>, DomainError>,
-    > {
+    fn coordinator_board(&self) -> crate::application::swarm::ports::CoordinatorBoardFuture<'_> {
         let context = self.clone();
         Box::pin(async move {
             super::call_work::spawn_blocking_in_call(move || context.coordinator_board_now())

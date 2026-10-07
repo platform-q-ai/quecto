@@ -188,6 +188,9 @@ async fn run_message(
     body: crate::interface::cli::uds_session::PromptBody,
     kind: MessageKind,
 ) -> bool {
+    ctx.turn_control
+        .client_prompted
+        .store(true, std::sync::atomic::Ordering::SeqCst);
     match kind {
         MessageKind::Prompt(streaming_behavior) => {
             let cmd = PromptCommand {

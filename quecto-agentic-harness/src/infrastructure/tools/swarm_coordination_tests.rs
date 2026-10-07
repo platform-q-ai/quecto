@@ -295,58 +295,92 @@ fn coordinator_status(coordinator: &str, status: &str, idle: i64) -> serde_json:
     })
 }
 
-fn totals(ready: i64, claimed: i64) -> serde_json::Value {
+fn totals(ready: i64, claimed: i64, submitted: i64) -> serde_json::Value {
     serde_json::json!({"run_id": "run-1", "tasks": {
-        "total": ready + claimed, "ready": ready, "claimed": claimed,
-        "blocked": 0, "submitted": 0, "completed": 0}})
+        "total": ready + claimed + submitted, "ready": ready, "claimed": claimed,
+        "blocked": 0, "submitted": submitted, "completed": 0}})
 }
 
-/// #2467: the coordinator reads its run's status, its claimed and ready
-/// tasks and its free workers from `_status` and `_run_totals`.
+fn read_board(
+    member: &str,
+    status: &serde_json::Value,
+    totals: serde_json::Value,
+) -> Result<Option<crate::domain::swarm::parent_wake::CoordinatorBoard>, DomainError> {
+    decode_coordinator_board(member, status, || Ok(totals))
+}
+
+/// #2467: the coordinator reads its run's status and outcome, its ready,
+/// claimed and submitted tasks and its free workers from `_status` and
+/// `_run_totals`.
 #[test]
 fn the_coordinator_reads_its_board_from_status_and_totals() {
-    let board = decode_coordinator_board(
+    let board = read_board(
         "member-2",
         &coordinator_status("member-2", "running", 1),
-        &totals(2, 3),
+        totals(2, 3, 4),
     )
     .unwrap();
     assert_eq!(
         board,
         Some(crate::domain::swarm::parent_wake::CoordinatorBoard {
-            status: "running".into(),
+            status: RunStatus::Running,
+            outcome: None,
             ready: 2,
             claimed: 3,
+            submitted: 4,
             idle_workers: 1,
         })
     );
 }
 
-/// #2467: a member that is not the run's coordinator reads nothing.
+/// #2467: a run the board ended is `paused` holding its outcome.
+#[test]
+fn the_coordinator_reads_an_ended_run_s_outcome() {
+    let mut status = coordinator_status("member-2", "paused", 0);
+    status["outcome"] = serde_json::json!("succeeded");
+    let board = read_board("member-2", &status, totals(0, 0, 0))
+        .unwrap()
+        .expect("the coordinator reads its board");
+    assert_eq!(board.status, RunStatus::Paused);
+    assert_eq!(board.outcome, Some(RunStatus::Succeeded));
+}
+
+/// #2467: a member that is not the run's coordinator reads nothing, and
+/// never reads the run's totals.
 #[test]
 fn a_worker_reads_no_coordinator_board() {
     let board = decode_coordinator_board(
         "member-3",
         &coordinator_status("member-2", "running", 1),
-        &totals(0, 1),
+        || panic!("a worker must not read the run's totals"),
     )
     .unwrap();
     assert_eq!(board, None);
 }
 
-/// #2467: answers missing the fields the decision needs are an error, so
-/// the parent falls back to its ordinary turn-end note.
+/// #2467: answers missing or mistyping the fields the decision needs are
+/// an error, so the parent falls back to its ordinary turn-end note.
 #[test]
 fn a_malformed_answer_is_an_error() {
+    let status = coordinator_status("member-2", "running", 1);
     let missing_counts = serde_json::json!({"run_id": "run-1"});
-    assert!(
-        decode_coordinator_board(
-            "member-2",
-            &coordinator_status("member-2", "running", 1),
-            &missing_counts,
-        )
-        .is_err()
-    );
+    assert!(read_board("member-2", &status, missing_counts).is_err());
     let missing_status = serde_json::json!({"coordinator": "member-2"});
-    assert!(decode_coordinator_board("member-2", &missing_status, &totals(0, 0)).is_err());
+    assert!(read_board("member-2", &missing_status, totals(0, 0, 0)).is_err());
+    let mut numeric_status = status.clone();
+    numeric_status["status"] = serde_json::json!(3);
+    assert!(read_board("member-2", &numeric_status, totals(0, 0, 0)).is_err());
+    let mut unknown_status = status.clone();
+    unknown_status["status"] = serde_json::json!("complete");
+    assert!(read_board("member-2", &unknown_status, totals(0, 0, 0)).is_err());
+    let mut null_coordinator = status.clone();
+    null_coordinator["coordinator"] = serde_json::Value::Null;
+    assert!(read_board("member-2", &null_coordinator, totals(0, 0, 0)).is_err());
+    let mut numeric_outcome = status.clone();
+    numeric_outcome["outcome"] = serde_json::json!(1);
+    assert!(read_board("member-2", &numeric_outcome, totals(0, 0, 0)).is_err());
+    let unreadable_totals = decode_coordinator_board("member-2", &status, || {
+        Err(DomainError::Tool("database is locked".into()))
+    });
+    assert!(unreadable_totals.is_err());
 }

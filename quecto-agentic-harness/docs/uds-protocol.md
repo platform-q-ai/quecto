@@ -1517,19 +1517,21 @@ Emitted after the post-turn drain finds no further workflow continuation runnabl
 
 ### `swarm_state`
 
-Emitted by a swarm's coordinator only, at the end of every idle boundary (after pending work and nudges settle), so its parent wakes on the run's state rather than on every idle turn (#2467). It reads the run's board (`_status` and `_run_totals`):
+Emitted only by a process launched as its swarm's coordinator (`--coordinator`, a spawn with `coordinator: true`), at the end of every idle boundary (after pending work and nudges settle), so its parent wakes on the run's state rather than on every idle turn (#2467). Its harness reads the run's board (`_status`, then `_run_totals`) as its own `host` reads.
 
-| `wake` | When | Parent's monitor |
-|---|---|---|
-| `hold` | a task is claimed, or ready work has a free worker | no note; one quiet note if no new turn starts within 30 min |
-| `finished` | the run left `running` (`status` names it) | one note: the run's status, its final report is ready |
-| `idle` | running with nothing claimed and no worker for ready work | one note: idle with nothing in flight, may need a decision |
-| `unknown` | the board could not be read (sent only after an earlier report) | the ordinary turn-end note |
+| `wake` | When | `status` | Parent's monitor |
+|---|---|---|---|
+| `hold` | `setup`/`running` with a task claimed or submitted, or ready work and a free worker | the run's status | no note; one quiet note if no new turn starts within 30 min |
+| `finished` | the run ended: a terminal status, or `paused` holding an outcome | the outcome (`succeeded`, `blocked`, `failed`, `cancelled`, `budget-exhausted`) | one note: the outcome, its final report is ready |
+| `idle` | `setup`/`running` with nothing in flight, or `paused` with no outcome | the run's status | one note: nothing in flight and no result, may need a decision |
+| `unknown` | the board could not be read (sent only after an earlier report) | omitted | the ordinary turn-end note |
 
-Once a child has sent one, its parent holds each `agent_end` note until the next `swarm_state` settles it; a child that never sends one keeps the ordinary note on every turn end. Exit and error notes are unchanged.
+`prompted` is `true` when a client's `prompt`, `steer` or `follow_up` arrived since the last boundary: the parent then gets the ordinary turn-end note for a `hold` (its reply is due) and the state note otherwise.
+
+Once a launched coordinator has sent one, its parent holds each `agent_end` note until the next `swarm_state` settles it, or sends it as it was if none arrives within 60 s of that turn end. A child that never sends one, or that was not launched as a coordinator, keeps the ordinary note on every turn end. Exit and error notes are unchanged. The quiet note measures coordinator turns, not board activity: a worker's long task with no coordinator turn for 30 min also raises it.
 
 ```json
-{"type":"swarm_state","wake":"finished","status":"complete"}
+{"type":"swarm_state","wake":"finished","status":"succeeded","prompted":false}
 ```
 
 ### `token`

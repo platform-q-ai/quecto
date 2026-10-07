@@ -65,7 +65,7 @@ pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) 
             // retry/backstop paths from attributing an old stall to this run.
             entry.pending_stall = None;
             // A new turn is activity: a held coordinator is not quiet (#2467).
-            entry.swarm_hold = None;
+            entry.coordinator_wake.turn_started();
             // Re-arm the passive-note dedupe: a new run means a future terminal
             // completion must notify again, even if a prior run's completion was
             // already consumed.
@@ -524,7 +524,7 @@ fn apply_and_notify(
         return;
     }
     if value.get("type").and_then(|v| v.as_str()) == Some("agent_end")
-        && swarm_wake::defer_completion(registry, agent_id)
+        && swarm_wake::defer_completion(registry, notify_tx, agent_id, sequence)
     {
         return;
     }
@@ -652,6 +652,7 @@ mod exit_cascade_tests;
 mod lifecycle_tests;
 #[path = "subagent_monitor/swarm_wake.rs"]
 mod swarm_wake;
+pub use swarm_wake::CoordinatorWake;
 #[cfg(test)]
 #[path = "tests/subagent_monitor_swarm_wake_tests.rs"]
 mod swarm_wake_tests;

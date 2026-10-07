@@ -78,11 +78,12 @@ fn swarm_state_message(agent_id: &str, state: &super::SwarmNoteState) -> String 
             "Swarm coordinator '{label}' reports its run {}; its final report is ready: agent_cmd get_messages.",
             crate::domain::agents::child_end::shown(status, 32)
         ),
-        super::SwarmNoteState::Idle => format!(
-            "Swarm coordinator '{label}' is idle with nothing in flight and no result; it may need a decision: agent_cmd get_messages."
+        super::SwarmNoteState::Idle { status } => format!(
+            "Swarm coordinator '{label}' reports its run {} with nothing in flight and no result; it may need a decision: agent_cmd get_messages.",
+            crate::domain::agents::child_end::shown(status, 32)
         ),
         super::SwarmNoteState::Quiet { minutes } => format!(
-            "Swarm coordinator '{label}' has held for {minutes} min with work in flight and no new turn; check it with agent_cmd get_state or get_messages."
+            "Swarm coordinator '{label}' has taken no turn for {minutes} min since its board last showed work in flight; check it with agent_cmd get_state or get_messages."
         ),
     }
 }

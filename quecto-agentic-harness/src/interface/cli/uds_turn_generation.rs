@@ -15,6 +15,7 @@ impl Default for TurnControl {
             control_generation: std::sync::atomic::AtomicU64::new(u64::MAX),
             shutting_down: std::sync::atomic::AtomicBool::new(false),
             coordinator_reported: std::sync::atomic::AtomicBool::new(false),
+            client_prompted: std::sync::atomic::AtomicBool::new(false),
         }
     }
 }

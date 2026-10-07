@@ -135,17 +135,15 @@ pub trait SwarmRunControl: Send + Sync {
     /// no prompt, and the wake cursor is left as it is.
     fn nudge_watch(&self);
     /// The run as its coordinator reads it at an idle boundary (#2467):
-    /// `None` when this member is not the run's coordinator, or there is no
-    /// board to read.
-    fn coordinator_board(
-        &self,
-    ) -> PortFuture<
-        '_,
-        Result<Option<crate::domain::swarm::parent_wake::CoordinatorBoard>, DomainError>,
-    > {
-        Box::pin(async { Ok(None) })
-    }
+    /// `None` unless this process was launched as its run's coordinator.
+    fn coordinator_board(&self) -> CoordinatorBoardFuture<'_>;
 }
+
+/// [`SwarmRunControl::coordinator_board`]'s answer.
+pub type CoordinatorBoardFuture<'a> = PortFuture<
+    'a,
+    Result<Option<crate::domain::swarm::parent_wake::CoordinatorBoard>, DomainError>,
+>;
 
 // ─── The coordination board (epic #2265, #2270) ─────────────────────────────
 //

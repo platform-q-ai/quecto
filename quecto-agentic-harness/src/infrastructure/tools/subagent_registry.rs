@@ -111,14 +111,8 @@ pub struct SubagentEntry {
     /// A supervision-critical stall alert retained after notification-channel
     /// saturation and retried on the next monitor event (#1076).
     pub pending_stall: Option<SequencedSubagentNotification>,
-    /// Swarm-coordinator wakes (#2467): set by the child's first
-    /// `swarm_state`; from then on its turn-end note waits for the next one.
-    pub swarm_reporting: bool,
-    /// A turn end held until the child's next `swarm_state` decides it.
-    pub completion_deferred: bool,
-    /// The current hold, for the quiet-coordinator timer: `None` once the
-    /// coordinator takes a new turn.
-    pub swarm_hold: Option<u64>,
+    /// Its part in swarm-coordinator wakes (#2467).
+    pub coordinator_wake: super::subagent_monitor::CoordinatorWake,
     pub read_only: bool,
     pub cleanup_environment_id: Option<String>,
     pub cleanup_argv: Vec<String>,
@@ -275,9 +269,7 @@ impl SubagentEntry {
             completion_armed: true,
             stalled_armed: true,
             pending_stall: None,
-            swarm_reporting: false,
-            completion_deferred: false,
-            swarm_hold: None,
+            coordinator_wake: Default::default(),
             read_only: false,
             cleanup_environment_id: None,
             cleanup_argv: Vec::new(),
@@ -644,11 +636,12 @@ pub enum SubagentNotification {
 /// The coordinator state a [`SubagentNotification::SwarmState`] names (#2467).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SwarmNoteState {
-    /// The run left `running`; its final report is ready.
+    /// The run ended with this outcome; its final report is ready.
     Finished { status: String },
-    /// The run is running with nothing in flight and no result.
-    Idle,
-    /// Held this many minutes with work in flight and no new turn.
+    /// The run (in this status) has nothing in flight and no result.
+    Idle { status: String },
+    /// Held this many minutes with no new turn since its board last showed
+    /// work in flight.
     Quiet { minutes: u64 },
 }
 
@@ -699,6 +692,11 @@ impl SequencedSubagentNotification {
     /// `true` only for normal idle turn ends; failures must not coalesce (#894).
     pub fn is_completion(&self) -> bool {
         matches!(self.notification, SubagentNotification::Completed { .. })
+    }
+
+    /// A coordinator's run state (#2467): neither coalesced nor deduped.
+    pub fn is_swarm_state(&self) -> bool {
+        matches!(self.notification, SubagentNotification::SwarmState { .. })
     }
 }
 
