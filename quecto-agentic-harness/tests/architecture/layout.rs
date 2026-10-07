@@ -2,7 +2,7 @@
 //! Include mod.rs and cfg(test) support names; exclude only *_tests.rs.
 use std::collections::BTreeSet;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 struct FlatBudget<'a> {
     path: &'a str,
     expected: usize,
@@ -92,6 +92,7 @@ const MIGRATED: &[Capability<'_>] = &[
     Capability("domain/sessions", &["entities", "value_objects", "services"]),
     Capability("domain/inference", &["value_objects", "services", "events"]),
     Capability("domain/admission", &["value_objects", "services"]),
+    Capability("domain/agents", &["entities", "value_objects", "services"]),
 ];
 // Wiki target-source-tree anchors define allowed future names; Transitional rows must exist.
 // https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture#target-source-tree
@@ -327,3 +328,57 @@ fn source_tree_layout_obeys_checked_in_policy() {
 }
 #[path = "layout/fixtures.rs"]
 mod fixtures;
+
+const AGENT_MODULES: &[&str] = &[
+    "agent",
+    "subagent",
+    "subagent_launch",
+    "subagent_teardown",
+    "parent_control",
+    "harness_lifetime",
+    "child_end",
+    "child_session",
+    "unread_report",
+];
+const EXTERNAL_AGENT_FILES: &[&str] = &["mod.rs", "backend.rs", "stream.rs", "turn.rs", "usage.rs"];
+
+fn domain() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("src/domain")
+}
+
+#[test]
+fn agent_modules_live_under_domain_agents() {
+    let expected_paths: Vec<_> = AGENT_MODULES
+        .iter()
+        .map(|name| domain().join("agents").join(format!("{name}.rs")))
+        .collect();
+    assert!(
+        expected_paths.iter().all(|path| path.is_file()),
+        "expected in src/domain/agents/: {expected_paths:?}"
+    );
+}
+
+#[test]
+fn agent_modules_are_absent_from_domain_root() {
+    let stray: Vec<_> = AGENT_MODULES
+        .iter()
+        .filter(|name| domain().join(format!("{name}.rs")).exists())
+        .collect();
+    assert!(stray.is_empty(), "still at src/domain root: {stray:?}");
+}
+
+#[test]
+fn external_agent_stays_a_sibling_domain_capability() {
+    let missing: Vec<_> = EXTERNAL_AGENT_FILES
+        .iter()
+        .filter(|file| !domain().join("external_agent").join(file).is_file())
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "expected in src/domain/external_agent/: {missing:?}"
+    );
+    assert!(
+        !domain().join("agents/external_agent").exists(),
+        "external_agent must not nest under domain/agents (#2356 wiki e61de22)"
+    );
+}

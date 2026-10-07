@@ -13,8 +13,6 @@
 //! - infrastructure/ imports domain/ only
 //! - interface/ imports all three (composition root)
 
-#[path = "architecture/agents_placement.rs"]
-mod agents_placement;
 #[path = "architecture/bdd_lanes.rs"]
 mod bdd_lanes;
 /// Production-token and relative-path scanning shared by the layer rules
