@@ -37,8 +37,20 @@ const RUNNING: &str = "running";
 
 /// Decide the wake for `board` (`None` when it could not be read).
 pub fn parent_wake(board: Option<&CoordinatorBoard>) -> ParentWake {
-    let _ = (board, RUNNING);
-    ParentWake::Unknown
+    let Some(board) = board else {
+        return ParentWake::Unknown;
+    };
+    if board.status != RUNNING {
+        return ParentWake::Finished {
+            status: board.status.clone(),
+        };
+    }
+    let workers_busy = board.claimed > 0;
+    let ready_work_taken = board.ready > 0 && board.idle_workers > 0;
+    match workers_busy || ready_work_taken {
+        true => ParentWake::Hold,
+        false => ParentWake::Idle,
+    }
 }
 
 #[cfg(test)]

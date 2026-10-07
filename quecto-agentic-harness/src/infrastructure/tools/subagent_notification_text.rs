@@ -69,10 +69,22 @@ impl SubagentNotification {
     }
 }
 
-/// A swarm coordinator's wake note (#2467). Not built yet.
+/// A swarm coordinator's wake note (#2467): the run's state, then where
+/// its report is.
 fn swarm_state_message(agent_id: &str, state: &super::SwarmNoteState) -> String {
-    let _ = state;
-    shown_label(agent_id)
+    let label = shown_label(agent_id);
+    match state {
+        super::SwarmNoteState::Finished { status } => format!(
+            "Swarm coordinator '{label}' reports its run {}; its final report is ready: agent_cmd get_messages.",
+            crate::domain::agents::child_end::shown(status, 32)
+        ),
+        super::SwarmNoteState::Idle => format!(
+            "Swarm coordinator '{label}' is idle with nothing in flight and no result; it may need a decision: agent_cmd get_messages."
+        ),
+        super::SwarmNoteState::Quiet { minutes } => format!(
+            "Swarm coordinator '{label}' has held for {minutes} min with work in flight and no new turn; check it with agent_cmd get_state or get_messages."
+        ),
+    }
 }
 
 /// The most of a child's error a notice shows, in bytes.

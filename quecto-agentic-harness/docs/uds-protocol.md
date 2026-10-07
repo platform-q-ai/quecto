@@ -1515,6 +1515,23 @@ Emitted after the post-turn drain finds no further workflow continuation runnabl
 {"type":"workflow_idle","reason":"exhausted"}
 ```
 
+### `swarm_state`
+
+Emitted by a swarm's coordinator only, at the end of every idle boundary (after pending work and nudges settle), so its parent wakes on the run's state rather than on every idle turn (#2467). It reads the run's board (`_status` and `_run_totals`):
+
+| `wake` | When | Parent's monitor |
+|---|---|---|
+| `hold` | a task is claimed, or ready work has a free worker | no note; one quiet note if no new turn starts within 30 min |
+| `finished` | the run left `running` (`status` names it) | one note: the run's status, its final report is ready |
+| `idle` | running with nothing claimed and no worker for ready work | one note: idle with nothing in flight, may need a decision |
+| `unknown` | the board could not be read (sent only after an earlier report) | the ordinary turn-end note |
+
+Once a child has sent one, its parent holds each `agent_end` note until the next `swarm_state` settles it; a child that never sends one keeps the ordinary note on every turn end. Exit and error notes are unchanged.
+
+```json
+{"type":"swarm_state","wake":"finished","status":"complete"}
+```
+
 ### `token`
 
 Incremental text token from the LLM during streaming. Tokens arrive in real time as the model generates them.

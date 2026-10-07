@@ -374,6 +374,33 @@ pub(crate) fn decode_coordinator_board(
     Option<crate::domain::swarm::parent_wake::CoordinatorBoard>,
     crate::domain::error::DomainError,
 > {
-    let _ = (member, status, totals);
-    Ok(None)
+    let malformed = |what: &str| {
+        crate::domain::error::DomainError::Tool(format!("coordinator board: {what} missing"))
+    };
+    let coordinator = status
+        .get("coordinator")
+        .ok_or_else(|| malformed("coordinator"))?;
+    if coordinator.as_str() != Some(member) {
+        return Ok(None);
+    }
+    let text = |value: &serde_json::Value, key: &str| {
+        value
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| malformed(key))
+    };
+    let count = |value: &serde_json::Value, key: &str| {
+        value
+            .get(key)
+            .and_then(serde_json::Value::as_i64)
+            .ok_or_else(|| malformed(key))
+    };
+    let tasks = totals.get("tasks").ok_or_else(|| malformed("tasks"))?;
+    Ok(Some(crate::domain::swarm::parent_wake::CoordinatorBoard {
+        status: text(status, "status")?,
+        ready: count(tasks, "ready")?,
+        claimed: count(tasks, "claimed")?,
+        idle_workers: count(status, "members_without_claim")?,
+    }))
 }

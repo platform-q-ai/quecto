@@ -64,6 +64,8 @@ pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) 
             // retained from the previous run — dropping it here prevents the
             // retry/backstop paths from attributing an old stall to this run.
             entry.pending_stall = None;
+            // A new turn is activity: a held coordinator is not quiet (#2467).
+            entry.swarm_hold = None;
             // Re-arm the passive-note dedupe: a new run means a future terminal
             // completion must notify again, even if a prior run's completion was
             // already consumed.

@@ -431,13 +431,42 @@ pub(super) async fn date_provider_suspension(ctx: &mut super::uds::DispatchCtx<'
 
 /// The idle boundary every drain ends at (#2467): the provider-suspension
 /// dating it always ran, then, for the run's coordinator, the `swarm_state`
-/// its parent wakes on. Not wired yet.
+/// its parent wakes on.
 pub(super) async fn at_idle_boundary(ctx: &mut super::uds::DispatchCtx<'_>) {
     date_provider_suspension(ctx).await;
-    let _ = ctx
-        .turn_control
-        .coordinator_reported
-        .load(std::sync::atomic::Ordering::SeqCst);
+    if let Some(event) = coordinator_swarm_state(&ctx.turn_control).await {
+        super::uds::emit_event_to_broadcast_or_writer(ctx, &event).await;
+    }
+}
+
+/// The run's `swarm_state` as this member reports it (#2467): only the
+/// run's coordinator reports; an unreadable board is reported as unknown
+/// once this member has reported before, so its parent is never left
+/// waiting for a state that will not come.
+async fn coordinator_swarm_state(
+    turn_control: &super::uds_cancel::TurnControlHandle,
+) -> Option<super::protocol::AgentEvent> {
+    use crate::domain::swarm::parent_wake::{ParentWake, parent_wake};
+    use std::sync::atomic::Ordering;
+    let control = turn_control.swarm_control.clone()?;
+    let reported = &turn_control.coordinator_reported;
+    let wake = match control.coordinator_board().await {
+        Ok(Some(board)) => {
+            reported.store(true, Ordering::SeqCst);
+            parent_wake(Some(&board))
+        }
+        // After a report, every later boundary reports, so a held turn-end
+        // note always has a state to settle on.
+        Ok(None) | Err(_) if reported.load(Ordering::SeqCst) => parent_wake(None),
+        Ok(None) | Err(_) => return None,
+    };
+    let (wake, status) = match wake {
+        ParentWake::Hold => (super::protocol::SwarmWake::Hold, Some("running".to_owned())),
+        ParentWake::Finished { status } => (super::protocol::SwarmWake::Finished, Some(status)),
+        ParentWake::Idle => (super::protocol::SwarmWake::Idle, Some("running".to_owned())),
+        ParentWake::Unknown => (super::protocol::SwarmWake::Unknown, None),
+    };
+    Some(super::protocol::AgentEvent::SwarmState { wake, status })
 }
 
 /// How a coordination-store failure is treated by automatic turns.
