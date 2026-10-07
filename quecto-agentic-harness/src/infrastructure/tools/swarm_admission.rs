@@ -27,6 +27,20 @@ impl LaunchReservation {
         })
     }
 
+    /// A reservation held without a board call (#2471 tests).
+    #[cfg(test)]
+    pub(in crate::infrastructure::tools) fn held_for_test(
+        context: SwarmContext,
+        member: &str,
+    ) -> Self {
+        Self {
+            context,
+            member: member.to_owned(),
+            token: String::new(),
+            launched: true,
+        }
+    }
+
     /// The member id this reservation launched under (#1961).
     pub fn member(&self) -> &str {
         &self.member

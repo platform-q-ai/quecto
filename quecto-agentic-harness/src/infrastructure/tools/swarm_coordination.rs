@@ -363,6 +363,43 @@ impl SwarmContext {
         decode_coordinator_board(&self.member, &status, || self.host_read("_run_totals"))
     }
 
+    /// The run as its coordinator reads it when a worker ends a turn
+    /// (#2471): [`Self::coordinator_board_now`], then the owner of each
+    /// claimed task from `tasks`. Blocking.
+    pub(crate) fn worker_board_now(
+        &self,
+    ) -> Result<
+        Option<crate::domain::swarm::worker_wake::WorkerBoard>,
+        crate::domain::error::DomainError,
+    > {
+        let Some(board) = self.coordinator_board_now()? else {
+            return Ok(None);
+        };
+        // `tasks` pages by at most 100.
+        const PAGE: usize = 100;
+        let mut claimed_by = Vec::new();
+        for offset in (0..).step_by(PAGE) {
+            let page = self.board.call_as(
+                self.location(),
+                &self.member,
+                "tasks",
+                json!([offset, PAGE]),
+                super::super::swarm_board_dispatch::CallOrigin::Harness,
+            )?;
+            claimed_by.extend(decode_claimed_owners(&page)?);
+            match page.as_array().map(Vec::len) {
+                Some(PAGE) => {}
+                Some(_) | None => break,
+            }
+        }
+        Ok(Some(crate::domain::swarm::worker_wake::WorkerBoard {
+            status: board.status,
+            ready: board.ready,
+            claimed_by,
+            coordinator: self.member.clone(),
+        }))
+    }
+
     fn host_read(&self, method: &str) -> Result<Value, crate::domain::error::DomainError> {
         self.board.call_as(
             self.location(),
@@ -426,4 +463,29 @@ pub(crate) fn decode_coordinator_board(
         submitted: count(tasks, "submitted")?,
         idle_workers,
     }))
+}
+
+/// The owner of each claimed task in a `tasks` answer (#2471).
+pub(crate) fn decode_claimed_owners(
+    tasks: &Value,
+) -> Result<Vec<String>, crate::domain::error::DomainError> {
+    let malformed =
+        |what: &str| crate::domain::error::DomainError::Tool(format!("worker board: {what}"));
+    let tasks = tasks
+        .as_array()
+        .ok_or_else(|| malformed("tasks is not a list"))?;
+    let mut owners = Vec::new();
+    for task in tasks {
+        match task.get("status").and_then(Value::as_str) {
+            Some("claimed") => owners.push(
+                task.get("owner")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| malformed("a claimed task has no owner"))?
+                    .to_owned(),
+            ),
+            Some("ready" | "blocked" | "submitted" | "completed") => {}
+            Some(_) | None => return Err(malformed("a task has no known status")),
+        }
+    }
+    Ok(owners)
 }

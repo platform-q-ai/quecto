@@ -153,6 +153,7 @@ pub(super) async fn handle_busy_prompt(
                 type_name,
                 crate::interface::cli::protocol::ControlStatus::Rejected,
             );
+            ctx.turn_control.client_instruction_refused();
             let msg = "agent is running; provide streamingBehavior";
             let ev = AgentEvent::err(id, type_name, msg);
             emit_event_to_broadcast_or_writer(ctx, &ev).await;
@@ -188,9 +189,7 @@ async fn run_message(
     body: crate::interface::cli::uds_session::PromptBody,
     kind: MessageKind,
 ) -> bool {
-    ctx.turn_control
-        .client_prompted
-        .store(true, std::sync::atomic::Ordering::SeqCst);
+    ctx.turn_control.client_instruction_taken();
     match kind {
         MessageKind::Prompt(streaming_behavior) => {
             let cmd = PromptCommand {

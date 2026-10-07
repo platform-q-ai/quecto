@@ -384,3 +384,27 @@ fn a_malformed_answer_is_an_error() {
     });
     assert!(unreadable_totals.is_err());
 }
+
+/// #2471: the owner of each claimed task, one per task; a claimed task
+/// with no owner, a task with no status, or no list is an error.
+#[test]
+fn claimed_owners_are_read_from_tasks() {
+    let tasks = serde_json::json!([
+        {"id": 1, "status": "claimed", "owner": "m-a"},
+        {"id": 2, "status": "ready", "owner": null},
+        {"id": 3, "status": "claimed", "owner": "m-a"},
+        {"id": 4, "status": "completed", "owner": "m-b"},
+    ]);
+    assert_eq!(
+        decode_claimed_owners(&tasks).unwrap(),
+        vec!["m-a".to_owned(), "m-a".to_owned()]
+    );
+    for malformed in [
+        serde_json::json!([{"status": "claimed", "owner": null}]),
+        serde_json::json!([{"owner": "m-a"}]),
+        serde_json::json!([{"status": "lost", "owner": "m-a"}]),
+        serde_json::json!({"tasks": []}),
+    ] {
+        assert!(decode_claimed_owners(&malformed).is_err(), "{malformed}");
+    }
+}

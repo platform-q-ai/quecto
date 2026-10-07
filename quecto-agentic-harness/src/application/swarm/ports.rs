@@ -139,6 +139,14 @@ pub trait SwarmRunControl: Send + Sync {
     fn coordinator_board(&self) -> CoordinatorBoardFuture<'_>;
 }
 
+/// What a coordinator reads when one of its swarm workers ends a turn
+/// (#2471): `None` unless this member is its run's coordinator.
+pub trait WorkerBoardRead: Send + Sync {
+    fn worker_board(
+        &self,
+    ) -> PortFuture<'_, Result<Option<crate::domain::swarm::worker_wake::WorkerBoard>, DomainError>>;
+}
+
 /// [`SwarmRunControl::coordinator_board`]'s answer.
 pub type CoordinatorBoardFuture<'a> = PortFuture<
     'a,

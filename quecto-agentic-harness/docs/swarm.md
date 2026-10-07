@@ -578,6 +578,42 @@ coordinator acceptance. Members use the Bash tool for Git, checks, computation
 and other external commands under its configured policy; they must not raise
 or bypass configured limits.
 
+A coordinator's workers report through the board, not through their turn ends
+(#2471). The coordinator is the spawn parent of the workers it launches, and
+each of their turn ends used to raise the ordinary sub-agent note, which woke it
+for an empty inbox.
+
+**Who this applies to:** a worker that holds a board member reservation and
+was launched by the process that created its container, and so its run. Every
+other child keeps the ordinary note on every turn end. That includes plain
+sub-agents, workflows, a resumed coordinator, and a worker's own helpers.
+
+**What reaches the coordinator** from one of its workers:
+- **The reply to its own instruction.** After a `prompt`, `steer` or
+  `follow_up` the coordinator sent through `agent_cmd` has run, the worker's
+  harness sends `reply_ready` at its next idle boundary, and the coordinator
+  gets the ordinary note. A prompt to a busy worker is queued and counts too;
+  an instruction the worker refuses does not. The spawn's own task is not a
+  reply: its end is the board's to report. After a failed turn the worker's
+  error note is the reply.
+- **The first good turn after a failure.** The worker's error note is sent as
+  before. The turn that recovers is sent too, so the coordinator's note queue
+  forgets the failure and a later identical failure is news again.
+- **Stranded work.** At any other turn end, the coordinator's harness reads
+  the board (`_status`, `_run_totals`, `tasks`). While the run is live, it
+  reports a task claimed by a worker that is not starting or in a turn, and
+  ready work while no worker is working: "Swarm work is stranded … N claimed
+  task(s) held by workers not working, M ready task(s) with no worker
+  working". The coordinator's own claims never count, and a board read older
+  than one already applied is dropped. It isn't reported again until it grows
+  (a new claim or more ready work), or a worker it names (any worker, for
+  ready work) takes another turn.
+
+If the board can't be read, or doesn't name this process coordinator, the
+ordinary note is sent, unless the worker has already begun another turn. Error and exit notes are unchanged. Submissions,
+blocks, messages and deaths reach the coordinator as board wake hints, as
+described below.
+
 Wake hints are selected from the invoking member's actionable events and coalesced
 using a durable per-actor cursor. Reading the board, acknowledging messages and
 reservation bookkeeping do not broadcast more work. Message hints target their

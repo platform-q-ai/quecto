@@ -168,6 +168,10 @@ pub(super) async fn queue_prompt(
         ctx.turn_control.consume_steer();
     }
     let retained = ctx.session.enqueue_control(id, type_name, message, steer);
+    match retained {
+        true => {}
+        false => ctx.turn_control.client_instruction_refused(),
+    }
     ctx.session.record_control(
         id,
         type_name,

@@ -449,8 +449,27 @@ pub(super) fn process_turn_control(coordinator: bool) -> super::uds_cancel::Turn
 /// its parent wakes on.
 pub(super) async fn at_idle_boundary(ctx: &mut super::uds::DispatchCtx<'_>) {
     date_provider_suspension(ctx).await;
-    if let Some(event) = coordinator_swarm_state(&ctx.turn_control).await {
+    let event = match ctx.turn_control.launched_coordinator {
+        true => coordinator_swarm_state(&ctx.turn_control).await,
+        false => member_reply_ready(&ctx.turn_control),
+    };
+    if let Some(event) = event {
         super::uds::emit_event_to_broadcast_or_writer(ctx, &event).await;
+    }
+}
+
+/// A swarm member's `reply_ready` (#2471): sent once at the idle boundary
+/// after a client's instruction ran, so its coordinator, which no longer
+/// wakes on every turn end, hears the reply.
+fn member_reply_ready(
+    turn_control: &super::uds_cancel::TurnControlHandle,
+) -> Option<super::protocol::AgentEvent> {
+    match (
+        turn_control.swarm_control.is_some(),
+        turn_control.take_client_instructions(),
+    ) {
+        (true, true) => Some(super::protocol::AgentEvent::ReplyReady),
+        (true, false) | (false, _) => None,
     }
 }
 
@@ -482,7 +501,7 @@ async fn coordinator_swarm_state(
         Ok(None) | Err(_) if reported.load(Ordering::SeqCst) => parent_wake(None),
         Ok(None) | Err(_) => return None,
     };
-    let prompted = turn_control.client_prompted.swap(false, Ordering::SeqCst);
+    let prompted = turn_control.take_client_instructions();
     Some(super::protocol::AgentEvent::SwarmState {
         wake: wake.kind(),
         status: wake.status().map(|status| status_name(status).to_owned()),

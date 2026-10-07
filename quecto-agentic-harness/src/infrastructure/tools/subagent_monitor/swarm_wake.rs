@@ -38,6 +38,8 @@ pub struct CoordinatorWake {
     /// The one timer running for it: settling a held note, or the quiet
     /// report of a hold.
     timer: Option<Timer>,
+    /// Its part as a coordinator's swarm worker (#2471).
+    pub worker: super::worker_wake::WorkerWake,
 }
 
 #[derive(Debug, Clone)]
@@ -68,6 +70,7 @@ impl CoordinatorWake {
         self.failed = true;
         self.deferred = None;
         self.cancel_timer();
+        self.worker.turn_failed();
     }
 
     fn cancel_timer(&mut self) {
@@ -239,7 +242,7 @@ fn fire(
 
 /// Send the note `note` builds for `agent_id`'s display label, as its
 /// identity.
-fn send(
+pub(super) fn send(
     registry: &SubagentRegistry,
     notify_tx: Option<&NotificationTx>,
     agent_id: &str,

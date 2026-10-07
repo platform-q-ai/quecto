@@ -71,16 +71,14 @@ async fn boundaries_as(
     );
     for prompted in prompts {
         if prompted {
-            ctx.turn_control
-                .client_prompted
-                .store(true, std::sync::atomic::Ordering::SeqCst);
+            ctx.turn_control.client_instruction_taken();
         }
         at_idle_boundary(&mut ctx).await;
     }
     let mut states = Vec::new();
     while let Ok(line) = rx.try_recv() {
         let value: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
-        if value["type"] == "swarm_state" {
+        if let Some("swarm_state" | "reply_ready") = value["type"].as_str() {
             states.push(value);
         }
     }
@@ -137,7 +135,7 @@ async fn a_member_that_is_not_the_coordinator_reports_nothing() {
 
 #[tokio::test]
 async fn a_process_not_launched_as_a_coordinator_never_reads_its_board() {
-    let states = boundaries_as(false, vec![Ok(Some(running(0)))], vec![true]).await;
+    let states = boundaries_as(false, vec![Ok(Some(running(0)))], vec![false]).await;
     assert_eq!(states, Vec::<serde_json::Value>::new());
 }
 
@@ -185,4 +183,98 @@ fn swarm_state_is_sent_as_a_typed_event() {
         serde_json::to_value(&event).unwrap(),
         serde_json::json!({"type": "swarm_state", "wake": "finished", "status": "succeeded", "prompted": false})
     );
+}
+
+/// #2471: a swarm member that is not its run's coordinator says
+/// `reply_ready` once at the boundary after a client's instruction ran, and
+/// nothing else.
+#[tokio::test]
+async fn a_member_says_its_reply_is_ready_once_after_a_client_instruction() {
+    let events = boundaries_as(false, vec![], vec![false, true, false]).await;
+    assert_eq!(
+        events,
+        vec![serde_json::json!({"type": "reply_ready"})],
+        "{events:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_process_outside_any_swarm_never_says_reply_ready() {
+    let mut env = Env::with_unselected_workflow();
+    let mut ctx = env.ctx();
+    let (tx, mut rx) = tokio::sync::broadcast::channel(64);
+    ctx.broadcast_tx = Some(tx);
+    ctx.turn_control.client_instruction_taken();
+    at_idle_boundary(&mut ctx).await;
+    while let Ok(line) = rx.try_recv() {
+        assert!(!line.contains("reply_ready"), "{line}");
+    }
+}
+
+/// #2471: an instruction refused after it was taken owes no reply.
+#[test]
+fn a_refused_instruction_owes_no_reply() {
+    let control = crate::interface::cli::uds_cancel::TurnControl::default();
+    control.client_instruction_taken();
+    control.client_instruction_refused();
+    assert!(!control.take_client_instructions());
+    control.client_instruction_refused();
+    control.client_instruction_taken();
+    assert!(
+        control.take_client_instructions(),
+        "a refund never goes below zero"
+    );
+    assert!(!control.take_client_instructions(), "taken once");
+}
+
+/// The `reply_ready` lines one idle boundary emits for a member whose
+/// instruction `refuse` takes and then refuses.
+async fn reply_after(refuse: impl AsyncFnOnce(&mut super::super::DispatchCtx<'_>)) -> usize {
+    let mut env = Env::with_unselected_workflow();
+    let mut ctx = env.ctx();
+    let (tx, mut rx) = tokio::sync::broadcast::channel(256);
+    ctx.broadcast_tx = Some(tx);
+    let board = std::sync::Arc::new(Board(std::sync::Mutex::new(vec![])));
+    ctx.turn_control = std::sync::Arc::new(
+        crate::interface::cli::uds_cancel::TurnControl::with_swarm_control(Some(board)),
+    );
+    ctx.turn_control.client_instruction_taken();
+    refuse(&mut ctx).await;
+    at_idle_boundary(&mut ctx).await;
+    std::iter::from_fn(|| rx.try_recv().ok())
+        .filter(|line| line.contains("\"reply_ready\""))
+        .count()
+}
+
+/// #2471: a prompt a busy member refuses (no `streamingBehavior`) owes no
+/// reply.
+#[tokio::test]
+async fn a_busy_prompt_the_member_refuses_owes_no_reply() {
+    let replies = reply_after(async |ctx| {
+        super::super::prompt_admission::handle_busy_prompt(ctx, None, "prompt", "x".into(), None)
+            .await;
+    })
+    .await;
+    assert_eq!(replies, 0);
+}
+
+/// #2471: a follow-up the full pending queue does not keep owes no reply.
+#[tokio::test]
+async fn a_follow_up_the_full_queue_does_not_keep_owes_no_reply() {
+    let replies = reply_after(async |ctx| {
+        while ctx
+            .session
+            .enqueue_control(None, "follow_up", "fill".into(), false)
+        {}
+        crate::interface::cli::uds::pending::queue_prompt(
+            ctx,
+            None,
+            "follow_up",
+            "x".into(),
+            false,
+        )
+        .await;
+    })
+    .await;
+    assert_eq!(replies, 0);
 }

@@ -648,6 +648,9 @@ pub enum SwarmNoteState {
     /// Held this many minutes with no new turn since its board last showed
     /// work in flight.
     Quiet { minutes: u64 },
+    /// Its workers left work stranded (#2471): claims held by workers not
+    /// working, and ready work while none works.
+    WorkersIdle { claimed: i64, ready: i64 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

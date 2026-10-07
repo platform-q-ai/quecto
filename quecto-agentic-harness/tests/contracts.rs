@@ -243,6 +243,8 @@ mod swarm_control_fixture;
 mod swarm_run_control;
 #[path = "contracts/tool_execution_admission.rs"]
 mod tool_execution_admission;
+#[path = "contracts/worker_board_read.rs"]
+mod worker_board_read;
 
 #[path = "contracts/find_paths.rs"]
 mod find_paths;
