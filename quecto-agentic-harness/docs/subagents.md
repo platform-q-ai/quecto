@@ -523,8 +523,9 @@ available or required. The note is:
   wakes its parent on its run's state instead of each idle turn:
   `Swarm coordinator 'c' reports its run succeeded; its final report is ready`,
   `… reports its run running with nothing in flight and no result; it may need
-  a decision`, or `… has taken no turn for 30 min since its board last showed
-  work in flight`. These are never folded into a coalesced summary, and a
+  a decision`, `… reports its run paused with no result`, `… stopped on a
+  failed turn; it may need a resume`, or `… has taken no turn for 30 min since
+  its board last showed work in flight`. These are never folded into a coalesced summary, and a
   repeat of the same state is delivered again (the parent may have acted on
   the last one). See `swarm_state` in `uds-protocol.md`.
 

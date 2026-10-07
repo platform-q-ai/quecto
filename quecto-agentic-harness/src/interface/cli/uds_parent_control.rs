@@ -60,6 +60,10 @@ pub struct ParentControlLaunch {
     pub binding: ParentControlBinding,
     /// When the harness stops waiting for the presentation.
     pub bind_deadline: BindDeadline,
+    /// Launched as its swarm's coordinator (`--coordinator`, #2461): the
+    /// one kind of child that reports its run's state at idle boundaries
+    /// (#2467).
+    pub coordinator: bool,
 }
 
 /// Shared across every connection of one harness.

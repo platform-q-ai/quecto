@@ -155,6 +155,8 @@ pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) 
             );
             entry.last_error = Some(error.clone());
             entry.run_error = Some(error);
+            // A coordinator's failed turn settles nothing over its error (#2467).
+            entry.coordinator_wake.turn_failed();
             // #1082 review round 2: the run's verdict is now Errored; drop any
             // retained stall so retry/backstop cannot also deliver Stalled.
             entry.pending_stall = None;

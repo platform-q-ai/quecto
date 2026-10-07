@@ -10,9 +10,9 @@
 
 use super::super::subagent_registry::{
     NotificationTx, SequencedSubagentNotification, SubagentNotification, SubagentRegistry,
-    SwarmNoteState,
+    SubagentStatus, SwarmNoteState,
 };
-use crate::domain::swarm::parent_wake::{HeldNote, WakeKind, settle_held_note};
+use crate::domain::swarm::parent_wake::{HeldNote, StretchEnd, WakeKind, settle_held_note};
 use serde::Deserialize as _;
 
 /// How long a held coordinator may go without a new turn before its parent
@@ -33,6 +33,8 @@ pub struct CoordinatorWake {
     reporting: bool,
     /// The held turn end's sequence, until a state settles it.
     deferred: Option<u64>,
+    /// A turn failed since the last state: the next one reports it once.
+    failed: bool,
     /// The one timer running for it: settling a held note, or the quiet
     /// report of a hold.
     timer: Option<Timer>,
@@ -55,6 +57,14 @@ impl CoordinatorWake {
     /// A new turn is activity: a held coordinator is not quiet, and its held
     /// note waits for this turn's own end.
     pub(super) fn turn_started(&mut self) {
+        self.cancel_timer();
+    }
+
+    /// A failed turn is the stretch's outcome: its error note stands, and
+    /// no held turn end is settled over it.
+    pub(super) fn turn_failed(&mut self) {
+        self.failed = true;
+        self.deferred = None;
         self.cancel_timer();
     }
 
@@ -105,13 +115,14 @@ pub(super) fn classify_swarm_state(
         .get("wake")
         .and_then(|wake| WakeKind::deserialize(wake).ok())
         .unwrap_or(WakeKind::Unknown);
+    // A state that names no status is sent as the ordinary note.
     let status = value
         .get("status")
         .and_then(serde_json::Value::as_str)
-        .unwrap_or_default()
-        .to_owned();
+        .filter(|status| !status.is_empty())
+        .map(str::to_owned);
     let prompted = value.get("prompted").and_then(serde_json::Value::as_bool) == Some(true);
-    let held = {
+    let (held, errored) = {
         let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
         let Some(entry) = entries.get_mut(agent_id) else {
             return;
@@ -122,27 +133,33 @@ pub(super) fn classify_swarm_state(
             false => return,
         }
         wake.reporting = true;
+        let errored = std::mem::take(&mut wake.failed);
         wake.cancel_timer();
         if kind == WakeKind::Hold {
             let timer = (TimerKind::Quiet, sequence, quiet_after);
             arm(wake, registry, notify_tx, agent_id, timer);
         }
-        wake.deferred.take()
+        (wake.deferred.take(), errored)
     };
-    if held.is_none() {
+    // A turn that failed since the last state is reported once even with no
+    // held turn end: its own error note may have been a repeat the parent's
+    // queue dropped.
+    if held.is_none() && !errored {
         return;
     }
-    let state = |state| SubagentNotification::SwarmState {
-        agent_id: String::new(),
-        state,
+    let named = |state| -> Box<dyn FnOnce(String) -> SubagentNotification> {
+        Box::new(move |agent_id| SubagentNotification::SwarmState { agent_id, state })
     };
-    let note = match settle_held_note(kind, prompted) {
-        HeldNote::Silent => return,
-        HeldNote::Ordinary => SubagentNotification::Completed {
-            agent_id: String::new(),
-        },
-        HeldNote::Finished => state(SwarmNoteState::Finished { status }),
-        HeldNote::Idle => state(SwarmNoteState::Idle { status }),
+    let end = StretchEnd { prompted, errored };
+    let note = match (settle_held_note(kind, end), status) {
+        (HeldNote::Silent, _) => return,
+        (HeldNote::Finished, Some(status)) => named(SwarmNoteState::Finished { status }),
+        (HeldNote::Idle, Some(status)) => named(SwarmNoteState::Idle { status }),
+        (HeldNote::Paused, _) => named(SwarmNoteState::Paused),
+        (HeldNote::Stopped, _) => named(SwarmNoteState::Stopped),
+        (HeldNote::Ordinary, _) | (HeldNote::Finished | HeldNote::Idle, None) => {
+            Box::new(|agent_id| SubagentNotification::Completed { agent_id })
+        }
     };
     send(registry, notify_tx, agent_id, sequence, note);
 }
@@ -174,61 +191,61 @@ fn arm(
     });
 }
 
+/// A standing timer's note, sent under a fresh sequence so it is never
+/// mistaken for one already delivered, and only while the child is alive
+/// and idle.
 fn fire(
     registry: &SubagentRegistry,
     tx: &NotificationTx,
     agent_id: &str,
     (kind, token, after): (TimerKind, u64, std::time::Duration),
 ) {
-    let standing = {
+    let sequence = {
         let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-        let Some(wake) = entries.get_mut(agent_id).map(|e| &mut e.coordinator_wake) else {
+        let Some(entry) = entries.get_mut(agent_id) else {
             return;
         };
+        let idle = matches!(entry.status, SubagentStatus::Idle | SubagentStatus::Error);
+        let wake = &mut entry.coordinator_wake;
         let standing = wake
             .timer
             .take_if(|timer| timer.kind == kind && timer.token == token)
             .is_some();
-        match (standing, kind) {
-            (true, TimerKind::Settle) => wake.deferred.take().is_some(),
-            (standing, _) => standing,
+        let due = match kind {
+            TimerKind::Settle => standing && wake.deferred.take().is_some(),
+            TimerKind::Quiet => standing,
+        };
+        match due && idle {
+            true => super::super::subagent_monitor_registry::next_sequence(&mut entries, agent_id),
+            false => None,
         }
     };
-    let note = match (standing, kind) {
-        (false, _) => return,
-        (true, TimerKind::Settle) => SubagentNotification::Completed {
-            agent_id: String::new(),
-        },
-        (true, TimerKind::Quiet) => SubagentNotification::SwarmState {
-            agent_id: String::new(),
+    let Some(sequence) = sequence else {
+        return;
+    };
+    let note: Box<dyn FnOnce(String) -> SubagentNotification> = match kind {
+        TimerKind::Settle => Box::new(|agent_id| SubagentNotification::Completed { agent_id }),
+        TimerKind::Quiet => Box::new(move |agent_id| SubagentNotification::SwarmState {
+            agent_id,
             state: SwarmNoteState::Quiet {
                 minutes: after.as_secs() / 60,
             },
-        },
+        }),
     };
-    send(registry, Some(tx), agent_id, token, note);
+    send(registry, Some(tx), agent_id, sequence, note);
 }
 
-/// Send `note` for `agent_id` as its display label and identity.
+/// Send the note `note` builds for `agent_id`'s display label, as its
+/// identity.
 fn send(
     registry: &SubagentRegistry,
     notify_tx: Option<&NotificationTx>,
     agent_id: &str,
     sequence: u64,
-    note: SubagentNotification,
+    note: Box<dyn FnOnce(String) -> SubagentNotification>,
 ) {
     let Some(tx) = notify_tx else { return };
-    let label = super::notification_display_label(registry, agent_id);
-    let note = match note {
-        SubagentNotification::SwarmState { state, .. } => SubagentNotification::SwarmState {
-            agent_id: label,
-            state,
-        },
-        SubagentNotification::Completed { .. } => {
-            SubagentNotification::Completed { agent_id: label }
-        }
-        other => other,
-    };
+    let note = note(super::notification_display_label(registry, agent_id));
     let uuid = super::notification_agent_uuid(registry, agent_id);
     let _ = tx.try_send(SequencedSubagentNotification::new_for_agent(
         sequence, note, uuid,

@@ -90,13 +90,12 @@ fn a_paused_run_with_an_outcome_wakes_the_parent_with_that_outcome() {
 }
 
 #[test]
-fn a_paused_run_with_no_outcome_wakes_the_parent_as_idle() {
-    assert_eq!(
-        parent_wake(Some(&board(RunStatus::Paused, 0, 1, 0))),
-        ParentWake::Idle {
-            status: RunStatus::Paused
-        }
-    );
+fn a_paused_run_with_no_outcome_wakes_the_parent_as_paused_whatever_is_claimed() {
+    for claimed in [0, 1] {
+        let wake = parent_wake(Some(&board(RunStatus::Paused, 0, claimed, 0)));
+        assert_eq!(wake, ParentWake::Paused);
+        assert_eq!(wake.status(), Some(RunStatus::Paused));
+    }
 }
 
 #[test]
@@ -119,28 +118,33 @@ fn each_wake_names_its_kind() {
         outcome: RunStatus::Succeeded,
     };
     assert_eq!(finished.kind(), WakeKind::Finished);
+    assert_eq!(ParentWake::Paused.kind(), WakeKind::Paused);
     assert_eq!(ParentWake::Unknown.kind(), WakeKind::Unknown);
 }
 
 #[test]
 fn a_held_note_settles_by_the_wake() {
     use HeldNote::*;
+    let end = |prompted, errored| StretchEnd { prompted, errored };
     let cases = [
-        (WakeKind::Hold, false, Silent),
-        (WakeKind::Hold, true, Ordinary),
-        (WakeKind::Finished, false, Finished),
-        (WakeKind::Finished, true, Finished),
-        (WakeKind::Idle, false, Idle),
-        (WakeKind::Idle, true, Idle),
-        (WakeKind::Unknown, false, Ordinary),
-        (WakeKind::Unknown, true, Ordinary),
+        (WakeKind::Hold, end(false, false), Silent),
+        (WakeKind::Hold, end(true, false), Ordinary),
+        (WakeKind::Hold, end(false, true), Stopped),
+        (WakeKind::Hold, end(true, true), Stopped),
+        (WakeKind::Unknown, end(false, false), Ordinary),
+        (WakeKind::Unknown, end(true, false), Ordinary),
+        (WakeKind::Unknown, end(false, true), Stopped),
     ];
-    for (kind, prompted, note) in cases {
-        assert_eq!(
-            settle_held_note(kind, prompted),
-            note,
-            "{kind:?} {prompted}"
-        );
+    for (kind, end, note) in cases {
+        assert_eq!(settle_held_note(kind, end), note, "{kind:?} {end:?}");
+    }
+    for prompted in [false, true] {
+        for errored in [false, true] {
+            let end = end(prompted, errored);
+            assert_eq!(settle_held_note(WakeKind::Finished, end), Finished);
+            assert_eq!(settle_held_note(WakeKind::Idle, end), Idle);
+            assert_eq!(settle_held_note(WakeKind::Paused, end), Paused);
+        }
     }
 }
 

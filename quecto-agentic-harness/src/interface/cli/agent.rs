@@ -562,7 +562,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         }
     }
     let Some((parent_control, lifetime)) = parent_control_startup::consume_and_resolve_lifetime(
-        flags.parent_control.as_deref(),
+        (flags.parent_control.as_deref(), flags.coordinator),
         flags.persist,
         ctx.teardown_graph.is_some(),
         stderr,

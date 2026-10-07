@@ -32,10 +32,12 @@ pub enum ParentWake {
     Hold { status: RunStatus },
     /// The run ended with `outcome`: its final report is ready.
     Finished { outcome: RunStatus },
-    /// Nothing in flight and no result (`status` is `setup`, `running` or
-    /// a `paused` run with no outcome): the coordinator needs a decision or
-    /// is stuck.
+    /// Nothing in flight and no result (`status` is `setup` or `running`):
+    /// the coordinator needs a decision or is stuck.
     Idle { status: RunStatus },
+    /// The run is paused with no outcome, whatever is claimed: someone must
+    /// resume or end it.
+    Paused,
     /// The board could not be read: wake as an ordinary turn end would.
     Unknown,
 }
@@ -47,6 +49,7 @@ pub enum WakeKind {
     Hold,
     Finished,
     Idle,
+    Paused,
     /// The board could not be read, or a kind this build does not know.
     #[serde(other)]
     Unknown,
@@ -58,6 +61,7 @@ impl ParentWake {
             Self::Hold { .. } => WakeKind::Hold,
             Self::Finished { .. } => WakeKind::Finished,
             Self::Idle { .. } => WakeKind::Idle,
+            Self::Paused => WakeKind::Paused,
             Self::Unknown => WakeKind::Unknown,
         }
     }
@@ -68,6 +72,7 @@ impl ParentWake {
         match self {
             Self::Hold { status } | Self::Idle { status } => Some(*status),
             Self::Finished { outcome } => Some(*outcome),
+            Self::Paused => Some(RunStatus::Paused),
             Self::Unknown => None,
         }
     }
@@ -81,9 +86,7 @@ pub fn parent_wake(board: Option<&CoordinatorBoard>) -> ParentWake {
     match (board.status, board.outcome) {
         (RunStatus::Setup | RunStatus::Running, _) => in_flight(board),
         (RunStatus::Paused, Some(outcome)) => ParentWake::Finished { outcome },
-        (RunStatus::Paused, None) => ParentWake::Idle {
-            status: RunStatus::Paused,
-        },
+        (RunStatus::Paused, None) => ParentWake::Paused,
         (
             RunStatus::Succeeded
             | RunStatus::Blocked
@@ -121,17 +124,32 @@ pub enum HeldNote {
     Finished,
     /// Nothing in flight and no result: the parent may need to decide.
     Idle,
+    /// The run is paused with no result: the parent may need to decide.
+    Paused,
+    /// The coordinator's last turn failed with work in flight or the board
+    /// unreadable: it may need a resume.
+    Stopped,
 }
 
-/// Settle a held turn end by the run's wake. `prompted` means a client's
-/// prompt (the parent's question, say) ran in this idle stretch: its reply
-/// is due even while workers are busy.
-pub fn settle_held_note(kind: WakeKind, prompted: bool) -> HeldNote {
-    match (kind, prompted) {
-        (WakeKind::Finished, _) => HeldNote::Finished,
-        (WakeKind::Idle, _) => HeldNote::Idle,
-        (WakeKind::Hold, false) => HeldNote::Silent,
-        (WakeKind::Hold, true) | (WakeKind::Unknown, _) => HeldNote::Ordinary,
+/// How the idle stretch a wake closes ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StretchEnd {
+    /// A client's prompt (the parent's question, say) ran in it: its reply
+    /// is due even while workers are busy.
+    pub prompted: bool,
+    /// Its last turn failed: the coordinator is stopped until resumed.
+    pub errored: bool,
+}
+
+/// Settle a held turn end (or a failed last turn) by the run's wake.
+pub fn settle_held_note(kind: WakeKind, end: StretchEnd) -> HeldNote {
+    match (kind, end.prompted, end.errored) {
+        (WakeKind::Finished, _, _) => HeldNote::Finished,
+        (WakeKind::Idle, _, _) => HeldNote::Idle,
+        (WakeKind::Paused, _, _) => HeldNote::Paused,
+        (WakeKind::Hold | WakeKind::Unknown, _, true) => HeldNote::Stopped,
+        (WakeKind::Hold, false, false) => HeldNote::Silent,
+        (WakeKind::Hold, true, false) | (WakeKind::Unknown, _, false) => HeldNote::Ordinary,
     }
 }
 

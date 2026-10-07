@@ -149,3 +149,77 @@ fn each_note_is_queued_in_its_class() {
         );
     }
 }
+
+/// #2467: a coordinator's pending run state is never overwritten by a later
+/// plain turn end from it; a later state still replaces an earlier one.
+#[test]
+fn a_pending_swarm_state_is_not_replaced_by_a_turn_end() {
+    use crate::interface::cli::uds_session::NoteClass;
+    let mut session = AgentSession::new("test".into());
+    let finished = "coord reports its run succeeded";
+    for (sequence, content, class) in [
+        (1, finished, NoteClass::State),
+        (2, "coord ended a turn", NoteClass::Completion),
+    ] {
+        assert!(
+            session
+                .enqueue_subagent_notification("coord".into(), sequence, content.into(), class)
+                .is_retained()
+        );
+    }
+    let drained = format!("{:?}", session.drain_pending());
+    assert!(drained.contains(finished), "{drained}");
+    assert!(drained.contains("coord ended a turn"), "{drained}");
+    assert!(NoteClass::State.supersedes(NoteClass::State));
+    assert!(!NoteClass::Completion.supersedes(NoteClass::State));
+    assert!(NoteClass::Completion.supersedes(NoteClass::Failure));
+}
+
+/// #2467: a coordinator's run state is news after a failure, so the same
+/// failure text is delivered again after it; and a run state never
+/// replaces a pending failure.
+#[test]
+fn a_swarm_state_clears_the_remembered_failure_and_never_replaces_one() {
+    use crate::interface::cli::uds_session::NoteClass;
+    let mut session = AgentSession::new("test".into());
+    let failure = "coord failed: rate limited";
+    let enqueue = |session: &mut AgentSession, sequence, content: &str, class| {
+        session
+            .enqueue_subagent_notification("coord".into(), sequence, content.into(), class)
+            .is_retained()
+    };
+    assert!(enqueue(&mut session, 1, failure, NoteClass::Failure));
+    assert!(enqueue(&mut session, 2, "coord stopped", NoteClass::State));
+    let drained = format!("{:?}", session.drain_pending());
+    assert!(
+        drained.contains(failure) && drained.contains("coord stopped"),
+        "{drained}"
+    );
+    assert!(
+        enqueue(&mut session, 3, failure, NoteClass::Failure),
+        "news again"
+    );
+}
+
+/// #2467: the dispatch loops' enqueue keeps each run-state note it is sent,
+/// however often the same state repeats.
+#[test]
+fn the_dispatch_enqueue_keeps_every_repeated_swarm_state() {
+    use crate::infrastructure::tools::subagent_registry::{
+        SequencedSubagentNotification, SubagentNotification, SwarmNoteState,
+    };
+    let mut session = AgentSession::new("test".into());
+    for sequence in 1..=3 {
+        let note = SequencedSubagentNotification::new(
+            sequence,
+            SubagentNotification::SwarmState {
+                agent_id: "coord".into(),
+                state: SwarmNoteState::Idle {
+                    status: "running".into(),
+                },
+            },
+        );
+        assert!(session.enqueue_note(&note).is_retained(), "note {sequence}");
+        assert_eq!(session.drain_pending().len(), 1);
+    }
+}

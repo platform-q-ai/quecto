@@ -54,12 +54,14 @@ fn a_launched_child_without_the_composed_graph_fails_closed_and_consumes_the_sid
 #[test]
 fn lifetime_resolution_follows_the_launch_facts() {
     let mut stderr = String::new();
-    let (binding, lifetime) = consume_and_resolve_lifetime(None, false, true, &mut stderr).unwrap();
+    let (binding, lifetime) =
+        consume_and_resolve_lifetime((None, false), false, true, &mut stderr).unwrap();
     assert!(binding.is_none());
     assert_eq!(lifetime, HarnessLifetime::UntilLastClientDisconnects);
     assert!(stderr.is_empty());
 
-    let (_, lifetime) = consume_and_resolve_lifetime(None, true, true, &mut stderr).unwrap();
+    let (_, lifetime) =
+        consume_and_resolve_lifetime((None, false), true, true, &mut stderr).unwrap();
     assert_eq!(lifetime, HarnessLifetime::Persistent);
     assert!(stderr.contains("WARNING: --persist"), "{stderr}");
 
@@ -68,7 +70,7 @@ fn lifetime_resolution_follows_the_launch_facts() {
     write_sidecar(&path, &mint_credential()).unwrap();
     let mut stderr = String::new();
     let (binding, lifetime) =
-        consume_and_resolve_lifetime(Some(&path), false, true, &mut stderr).unwrap();
+        consume_and_resolve_lifetime((Some(&path), false), false, true, &mut stderr).unwrap();
     assert!(binding.unwrap().binding.is_launched_child());
     assert_eq!(lifetime, HarnessLifetime::LaunchBound);
     assert!(stderr.is_empty(), "no persist warning for a launched child");
@@ -82,7 +84,7 @@ fn a_persistent_launched_child_is_refused_and_its_sidecar_consumed() {
     let path = dir.path().join("sidecar");
     write_sidecar(&path, &mint_credential()).unwrap();
     let mut stderr = String::new();
-    assert!(consume_and_resolve_lifetime(Some(&path), true, true, &mut stderr).is_none());
+    assert!(consume_and_resolve_lifetime((Some(&path), false), true, true, &mut stderr).is_none());
     assert!(
         stderr.contains("--persist is refused with --parent-control"),
         "{stderr}"

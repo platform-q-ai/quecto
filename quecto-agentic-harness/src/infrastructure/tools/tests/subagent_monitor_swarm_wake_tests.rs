@@ -407,3 +407,199 @@ async fn a_run_error_while_a_turn_end_is_held_is_still_reported() {
         "{notes:?}"
     );
 }
+
+/// Every sequenced note `rx` holds, in order.
+fn drain_sequenced(
+    rx: &mut crate::infrastructure::tools::subagent_registry::NotificationRx,
+) -> Vec<crate::infrastructure::tools::subagent_registry::SequencedSubagentNotification> {
+    std::iter::from_fn(|| rx.try_recv().ok()).collect()
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_quiet_report_after_a_prompted_reply_carries_a_newer_sequence() {
+    let registry = registry_with("coord");
+    let (tx, mut rx) = new_notification_channel();
+    first_boundary(&registry, &tx, &mut rx);
+    apply_and_notify(&registry, Some(&tx), "coord", &agent_start());
+    apply_and_notify(&registry, Some(&tx), "coord", &agent_end());
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "coord",
+        &prompted_state("hold", "running"),
+    );
+    let reply = drain_sequenced(&mut rx);
+    assert_eq!(reply.len(), 1, "{reply:?}");
+    tokio::time::sleep(swarm_wake::QUIET_AFTER + std::time::Duration::from_secs(1)).await;
+    tokio::task::yield_now().await;
+    let quiet = drain_sequenced(&mut rx);
+    assert_eq!(quiet.len(), 1, "{quiet:?}");
+    assert!(
+        quiet[0].sequence > reply[0].sequence,
+        "the parent's dedupe drops a note whose sequence is not newer"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_settled_turn_end_carries_a_newer_sequence_than_the_turn_end() {
+    let registry = registry_with("coord");
+    let (tx, mut rx) = new_notification_channel();
+    first_boundary(&registry, &tx, &mut rx);
+    apply_and_notify(&registry, Some(&tx), "coord", &agent_start());
+    apply_and_notify(&registry, Some(&tx), "coord", &agent_end());
+    let turn_end = registry.lock().unwrap()["coord"].notification_sequence;
+    tokio::time::sleep(swarm_wake::SETTLE_AFTER + std::time::Duration::from_secs(1)).await;
+    tokio::task::yield_now().await;
+    let notes = drain_sequenced(&mut rx);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].sequence > turn_end);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_coordinator_that_exited_reports_no_quiet() {
+    let registry = registry_with("coord");
+    let (tx, mut rx) = new_notification_channel();
+    first_boundary(&registry, &tx, &mut rx);
+    registry.lock().unwrap().get_mut("coord").unwrap().status =
+        crate::infrastructure::tools::subagent_registry::SubagentStatus::Exited;
+    tokio::time::sleep(swarm_wake::QUIET_AFTER * 2).await;
+    tokio::task::yield_now().await;
+    assert_eq!(drain(&mut rx), Vec::new());
+}
+
+#[tokio::test]
+async fn a_paused_run_wakes_the_parent_as_needing_a_decision() {
+    let registry = registry_with("coord");
+    let (tx, mut rx) = new_notification_channel();
+    first_boundary(&registry, &tx, &mut rx);
+    apply_and_notify(&registry, Some(&tx), "coord", &agent_end());
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "coord",
+        &swarm_state("paused", "paused"),
+    );
+    let notes = drain(&mut rx);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert_eq!(
+        notes[0].to_message(),
+        "Swarm coordinator 'coord' reports its run paused with no result; it may need a decision: agent_cmd get_messages."
+    );
+}
+
+#[tokio::test]
+async fn a_finished_state_naming_no_status_sends_the_ordinary_note() {
+    let registry = registry_with("coord");
+    let (tx, mut rx) = new_notification_channel();
+    first_boundary(&registry, &tx, &mut rx);
+    apply_and_notify(&registry, Some(&tx), "coord", &agent_end());
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "coord",
+        &serde_json::json!({"type": "swarm_state", "wake": "finished"}),
+    );
+    let notes = drain(&mut rx);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(matches!(notes[0], SubagentNotification::Completed { .. }));
+}
+
+// `swarm_state` must survive the monitor's substring pre-filter: this
+// enters through `handle_monitor_line`, the real wire path.
+#[tokio::test]
+async fn a_swarm_state_line_from_the_wire_settles_the_held_turn_end() {
+    let registry = registry_with("coord");
+    let (tx, mut rx) = new_notification_channel();
+    first_boundary(&registry, &tx, &mut rx);
+    apply_and_notify(&registry, Some(&tx), "coord", &agent_end());
+    handle_monitor_line(
+        r#"{"type":"swarm_state","wake":"idle","status":"running","prompted":false}"#,
+        "coord",
+        &registry,
+        Some(&tx),
+        None,
+        None,
+    );
+    let notes = drain(&mut rx);
+    assert_eq!(
+        notes,
+        vec![SubagentNotification::SwarmState {
+            agent_id: "coord".into(),
+            state: SwarmNoteState::Idle {
+                status: "running".into()
+            },
+        }]
+    );
+}
+
+fn agent_error() -> serde_json::Value {
+    serde_json::json!({"type":"response","command":"agent_error","error":"rate limited"})
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_failed_turn_is_reported_once_by_the_next_state_and_never_settled_over() {
+    let registry = registry_with("coord");
+    let (tx, mut rx) = new_notification_channel();
+    first_boundary(&registry, &tx, &mut rx);
+    apply_and_notify(&registry, Some(&tx), "coord", &agent_start());
+    apply_and_notify(&registry, Some(&tx), "coord", &agent_end());
+    apply_and_notify(&registry, Some(&tx), "coord", &agent_start());
+    apply_and_notify(&registry, Some(&tx), "coord", &agent_error());
+    let errored = drain(&mut rx);
+    assert!(
+        matches!(errored[..], [SubagentNotification::Errored { .. }]),
+        "{errored:?}"
+    );
+    tokio::time::sleep(swarm_wake::SETTLE_AFTER * 2).await;
+    tokio::task::yield_now().await;
+    assert_eq!(
+        drain(&mut rx),
+        Vec::new(),
+        "no turn end is settled over the error"
+    );
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "coord",
+        &swarm_state("hold", "running"),
+    );
+    assert_eq!(
+        drain(&mut rx),
+        vec![SubagentNotification::SwarmState {
+            agent_id: "coord".into(),
+            state: SwarmNoteState::Stopped,
+        }]
+    );
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "coord",
+        &swarm_state("hold", "running"),
+    );
+    assert_eq!(drain(&mut rx), Vec::new(), "reported once");
+}
+
+#[tokio::test]
+async fn a_failed_turn_before_an_idle_run_names_the_idle_run() {
+    let registry = registry_with("coord");
+    let (tx, mut rx) = new_notification_channel();
+    first_boundary(&registry, &tx, &mut rx);
+    apply_and_notify(&registry, Some(&tx), "coord", &agent_start());
+    apply_and_notify(&registry, Some(&tx), "coord", &agent_error());
+    drain(&mut rx);
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "coord",
+        &swarm_state("idle", "running"),
+    );
+    assert_eq!(
+        drain(&mut rx),
+        vec![SubagentNotification::SwarmState {
+            agent_id: "coord".into(),
+            state: SwarmNoteState::Idle {
+                status: "running".into()
+            },
+        }]
+    );
+}

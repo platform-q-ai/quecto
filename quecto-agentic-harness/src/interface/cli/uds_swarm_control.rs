@@ -429,6 +429,21 @@ pub(super) async fn date_provider_suspension(ctx: &mut super::uds::DispatchCtx<'
     }
 }
 
+/// This process's turn control: its swarm's run control when it runs under
+/// a container contract, launched as its coordinator or not (#2467).
+pub(super) fn process_turn_control(coordinator: bool) -> super::uds_cancel::TurnControlHandle {
+    let swarm_control = crate::interface::tool_runtime::swarm_context().map(|context| {
+        std::sync::Arc::new(context)
+            as std::sync::Arc<dyn crate::application::swarm::ports::SwarmRunControl>
+    });
+    let turn_control = std::sync::Arc::new(
+        super::uds_cancel::TurnControl::with_swarm_control(swarm_control)
+            .launched_as_coordinator(coordinator),
+    );
+    seed_control_generation(&turn_control);
+    turn_control
+}
+
 /// The idle boundary every drain ends at (#2467): the provider-suspension
 /// dating it always ran, then, for the run's coordinator, the `swarm_state`
 /// its parent wakes on.
@@ -448,9 +463,16 @@ async fn coordinator_swarm_state(
 ) -> Option<super::protocol::AgentEvent> {
     use crate::domain::swarm::parent_wake::parent_wake;
     use std::sync::atomic::Ordering;
-    let control = turn_control.swarm_control.clone()?;
+    let control = match turn_control.launched_coordinator {
+        true => turn_control.swarm_control.clone()?,
+        false => return None,
+    };
     let reported = &turn_control.coordinator_reported;
-    let wake = match control.coordinator_board().await {
+    let board = control.coordinator_board().await;
+    if let Err(error) = &board {
+        tracing::warn!("swarm_state: coordinator board unreadable: {error}");
+    }
+    let wake = match board {
         Ok(Some(board)) => {
             reported.store(true, Ordering::SeqCst);
             parent_wake(Some(&board))

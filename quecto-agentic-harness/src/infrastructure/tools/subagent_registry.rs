@@ -640,6 +640,10 @@ pub enum SwarmNoteState {
     Finished { status: String },
     /// The run (in this status) has nothing in flight and no result.
     Idle { status: String },
+    /// The run is paused with no result.
+    Paused,
+    /// Its last turn failed with work in flight or its board unreadable.
+    Stopped,
     /// Held this many minutes with no new turn since its board last showed
     /// work in flight.
     Quiet { minutes: u64 },

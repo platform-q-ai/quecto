@@ -68,6 +68,9 @@ pub struct TurnControl {
     /// A client's `prompt`, `steer` or `follow_up` arrived since the last
     /// idle boundary (#2467): the coordinator's parent is owed its reply.
     pub(crate) client_prompted: std::sync::atomic::AtomicBool,
+    /// Launched as its swarm's coordinator (#2461): only then is the board
+    /// read at idle boundaries for the parent (#2467).
+    pub(crate) launched_coordinator: bool,
 }
 
 #[path = "uds_turn_generation.rs"]
@@ -393,13 +396,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
     // pending notes — NOT injected into the turn that just ran. They surface at
     // the parent's NEXT idle boundary. Empty on the writer path.
     for notif in notifications {
-        let (agent_id, sequence) = notif.dedupe_key();
-        agent_session.enqueue_subagent_notification(
-            agent_id,
-            sequence,
-            notif.to_message(),
-            crate::interface::cli::uds_session::NoteClass::of(&notif),
-        );
+        agent_session.enqueue_note(&notif);
     }
 
     // #2218: a completed or failed turn is saved before it publishes or

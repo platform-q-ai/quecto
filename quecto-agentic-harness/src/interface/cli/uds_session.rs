@@ -75,10 +75,10 @@ pub enum PendingMessage {
         agent_id: String,
         sequence: u64,
         content: String,
-        /// `true` for a successful completion; `false` for an errored/exited
-        /// note. Only completions are eligible for coalescing — failures keep
-        /// their individual note so the error detail is never dropped (#894).
-        is_completion: bool,
+        /// Only completions are eligible for coalescing — failures and a
+        /// coordinator's run state keep their individual note, so the error
+        /// detail or the state is never dropped (#894, #2467).
+        class: NoteClass,
     },
     /// A SINGLE informational note summarizing a batch of sub-agent completions
     /// that drained together at one idle boundary (#894). Built by
@@ -90,19 +90,6 @@ impl PendingMessage {
         Self::User {
             content,
             images: Vec::new(),
-        }
-    }
-    pub fn subagent_notification(
-        agent_id: String,
-        sequence: u64,
-        content: String,
-        is_completion: bool,
-    ) -> Self {
-        Self::SubagentNotification {
-            agent_id,
-            sequence,
-            content,
-            is_completion,
         }
     }
     /// Convert to the message injected into the parent conversation.
@@ -182,7 +169,7 @@ pub fn coalesce_pending(pending: Vec<PendingMessage>) -> Vec<PendingMessage> {
         .filter_map(|m| match m {
             PendingMessage::SubagentNotification {
                 agent_id,
-                is_completion: true,
+                class: NoteClass::Completion,
                 ..
             } => Some(agent_id.as_str()),
             _ => None,
@@ -198,10 +185,10 @@ pub fn coalesce_pending(pending: Vec<PendingMessage>) -> Vec<PendingMessage> {
     let mut inserted = false;
     for msg in pending {
         match msg {
-            // Only completions collapse; failures (is_completion=false) fall
+            // Only completions collapse; failures and run states fall
             // through to the catch-all and keep their own note.
             PendingMessage::SubagentNotification {
-                is_completion: true,
+                class: NoteClass::Completion,
                 ..
             } => {
                 if !inserted {

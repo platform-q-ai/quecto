@@ -717,3 +717,28 @@ fn test_definition_documents_container_spawning() {
     assert!(config_desc.contains("absolute"));
     assert!(config_desc.contains("omit normally"));
 }
+
+/// #2467: only a child launched with `coordinator: true` settles its
+/// turn-end notes by its run's state.
+#[test]
+fn initial_entry_records_whether_it_was_launched_as_a_coordinator() {
+    for coordinator in [false, true] {
+        let mut config = sample_config(None);
+        config.coordinator = coordinator;
+        let entry = super::initial_registry_entry(super::InitialRegistryEntrySpec {
+            agent_uuid: crate::domain::ids::AgentUuid::new("00000000-0000-4000-8000-000000000109"),
+            display_name: "coord".to_string(),
+            socket_path: PathBuf::from("/tmp/coord.sock"),
+            pid: 42,
+            parent_id: None,
+            config: &config,
+            exit_signal_tx: None,
+            cleanup_environment_id: None,
+            cleanup_argv: Vec::new(),
+            environment_registry: None,
+            environment_ref: None,
+            process_owner: crate::infrastructure::tools::process_tree::ProcessOwner::DirectPid,
+        });
+        assert_eq!(entry.coordinator_wake.launched, coordinator);
+    }
+}

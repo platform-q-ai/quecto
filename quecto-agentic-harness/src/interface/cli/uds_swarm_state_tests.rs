@@ -51,14 +51,23 @@ async fn boundaries_after(
     answers: Vec<Result<Option<CoordinatorBoard>, String>>,
     prompts: Vec<bool>,
 ) -> Vec<serde_json::Value> {
+    boundaries_as(true, answers, prompts).await
+}
+
+/// [`boundaries_after`] for a process launched as a coordinator or not.
+async fn boundaries_as(
+    launched_coordinator: bool,
+    answers: Vec<Result<Option<CoordinatorBoard>, String>>,
+    prompts: Vec<bool>,
+) -> Vec<serde_json::Value> {
     let mut env = Env::with_unselected_workflow();
     let mut ctx = env.ctx();
     let (tx, mut rx) = tokio::sync::broadcast::channel(64);
     ctx.broadcast_tx = Some(tx);
+    let board = std::sync::Arc::new(Board(std::sync::Mutex::new(answers)));
     ctx.turn_control = std::sync::Arc::new(
-        crate::interface::cli::uds_cancel::TurnControl::with_swarm_control(Some(
-            std::sync::Arc::new(Board(std::sync::Mutex::new(answers))),
-        )),
+        crate::interface::cli::uds_cancel::TurnControl::with_swarm_control(Some(board))
+            .launched_as_coordinator(launched_coordinator),
     );
     for prompted in prompts {
         if prompted {
@@ -124,6 +133,23 @@ async fn a_member_that_is_not_the_coordinator_reports_nothing() {
         boundaries(vec![Ok(None), Err("locked".into())]).await,
         Vec::<serde_json::Value>::new()
     );
+}
+
+#[tokio::test]
+async fn a_process_not_launched_as_a_coordinator_never_reads_its_board() {
+    let states = boundaries_as(false, vec![Ok(Some(running(0)))], vec![true]).await;
+    assert_eq!(states, Vec::<serde_json::Value>::new());
+}
+
+#[tokio::test]
+async fn a_paused_run_with_no_outcome_is_reported_as_paused() {
+    let paused = CoordinatorBoard {
+        status: RunStatus::Paused,
+        ..running(1)
+    };
+    let states = boundaries(vec![Ok(Some(paused))]).await;
+    assert_eq!(states[0]["wake"], "paused");
+    assert_eq!(states[0]["status"], "paused");
 }
 
 #[tokio::test]

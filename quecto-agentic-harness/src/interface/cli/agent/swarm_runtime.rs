@@ -10,7 +10,6 @@ use crate::interface::cli::CliContext;
 /// bound as the process's board before its context is discovered, and a
 /// process launched under the container contract without one is refused.
 pub(super) fn admit(ctx: &CliContext, flags: &mut AgentFlags, stderr: &mut String) -> bool {
-    swarm_bridge::set_launched_as_coordinator(flags.coordinator);
     let contracted = SwarmContext::contracted_checkout().is_some();
     let context = match admission_board(ctx, flags, contracted) {
         Ok(Some(board)) => {

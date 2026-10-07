@@ -349,23 +349,18 @@ fn absolute_deadline(input: &Value) -> Result<Value, DomainError> {
 }
 
 impl SwarmContext {
-    /// The run as this process reads it if it was launched as its run's
-    /// coordinator (#2467): `_status`, then, for the run's coordinator
-    /// only, `_run_totals`, both recorded as the harness's own reads.
-    /// Blocking: call it off the async workers.
+    /// The run as this member reads it if it is the run's coordinator
+    /// (#2467): `_status`, then, for the run's coordinator only,
+    /// `_run_totals`, both recorded as the harness's own reads. Blocking:
+    /// call it off the async workers.
     pub(crate) fn coordinator_board_now(
         &self,
     ) -> Result<
         Option<crate::domain::swarm::parent_wake::CoordinatorBoard>,
         crate::domain::error::DomainError,
     > {
-        match super::launched_as_coordinator() {
-            true => {
-                let status = self.host_read("_status")?;
-                decode_coordinator_board(&self.member, &status, || self.host_read("_run_totals"))
-            }
-            false => Ok(None),
-        }
+        let status = self.host_read("_status")?;
+        decode_coordinator_board(&self.member, &status, || self.host_read("_run_totals"))
     }
 
     fn host_read(&self, method: &str) -> Result<Value, crate::domain::error::DomainError> {

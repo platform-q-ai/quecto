@@ -440,19 +440,6 @@ pub fn process_socket() -> Option<&'static Path> {
     PROCESS_SOCKET.get().map(PathBuf::as_path)
 }
 
-/// Whether this process was launched as a swarm coordinator (`--coordinator`,
-/// #2461): set once at admission. Only a coordinator reads its run's board
-/// at idle boundaries for its parent (#2467).
-static PROCESS_COORDINATOR: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-
-pub fn set_launched_as_coordinator(coordinator: bool) {
-    let _ = PROCESS_COORDINATOR.set(coordinator);
-}
-
-pub fn launched_as_coordinator() -> bool {
-    PROCESS_COORDINATOR.get() == Some(&true)
-}
-
 /// A composition's workflow engine slot (#1715): filled once the workflow
 /// runtime is built, read by the swarm tool before creating a run.
 pub type WorkflowEngineSlot = std::sync::Arc<
