@@ -2,7 +2,7 @@
 //! good — its retained cleanup runs and its record is forgotten — while
 //! every swarm rule of #1924/#2070 stands untouched.
 
-use crate::domain::environment_retention::*;
+use crate::domain::environments::services::environment_retention::*;
 use crate::domain::swarm::RunStatus;
 
 fn swarm(status: RunStatus, outcome: Option<RunStatus>) -> HostedSwarmRun {

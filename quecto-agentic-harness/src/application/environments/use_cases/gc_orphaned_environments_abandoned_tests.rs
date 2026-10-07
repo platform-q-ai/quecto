@@ -6,7 +6,7 @@
 use super::super::dto::{AbandonedRuns, EnvironmentStateDir, GcRemoval, GcRequest};
 use super::gc_orphaned_environments_hosted_tests::{kept_reason, removable, run};
 use super::gc_orphaned_environments_tests::{Rig, dir, record};
-use crate::domain::environment_registry::EnvironmentStatus;
+use crate::domain::environments::entities::environment_registry::EnvironmentStatus;
 use crate::domain::swarm::RunStatus;
 
 fn request(abandoned: AbandonedRuns) -> GcRequest {
@@ -176,7 +176,7 @@ fn an_unrecorded_directory_hosting_a_run_is_collected_only_when_asked() {
 /// unreadable store is never an abandoned run.
 #[test]
 fn a_recorded_directory_and_an_unreadable_store_are_never_abandoned() {
-    use crate::domain::environment_retention::SwarmRunObservation;
+    use crate::domain::environments::services::environment_retention::SwarmRunObservation;
     let rig = Rig::new();
     rig.registry
         .commit(record("C2", "env-recorded", EnvironmentStatus::Stopped));

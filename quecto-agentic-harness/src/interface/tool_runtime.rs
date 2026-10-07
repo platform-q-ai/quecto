@@ -159,7 +159,8 @@ pub(crate) struct ToolRuntimeBuildArgs<'a> {
         Option<crate::interface::cli::container_config_handles::ContainerConfigHandles>,
     /// Composition's durable environment registry (#2024 S4d) the spawn
     /// tool commits to; `None` (unit rigs) builds an in-memory one.
-    pub environment_registry: Option<crate::domain::environment_registry::EnvironmentRegistry>,
+    pub environment_registry:
+        Option<crate::domain::environments::entities::environment_registry::EnvironmentRegistry>,
     /// Composition's builder of the `agent_cmd kill` owner (#1936); `None`
     /// leaves `kill` unavailable.
     pub kill_tool: Option<crate::interface::cli::KillToolBuilder>,

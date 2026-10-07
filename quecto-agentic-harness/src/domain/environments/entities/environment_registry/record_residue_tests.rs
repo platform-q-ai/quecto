@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use super::GONE_AT_RESTORE;
-use crate::domain::environment_registry::{
+use crate::domain::environments::entities::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentStatus,
 };
 

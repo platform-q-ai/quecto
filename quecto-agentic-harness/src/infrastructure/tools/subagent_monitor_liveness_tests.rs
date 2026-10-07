@@ -4,7 +4,7 @@
 //! death signal as a clean EOF.
 
 use super::*;
-use crate::domain::environment_registry::{
+use crate::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, mint_environment_uuid,
 };
 use crate::infrastructure::test_support::executable::write_executable;
@@ -59,7 +59,8 @@ fn environment_with_inspect(inspect: Vec<String>) -> (EnvironmentRegistry, Strin
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({}),
         last_error: None,
-        origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+        origin:
+            crate::domain::environments::entities::environment_registry::EnvironmentOrigin::Created,
         created_by: String::new(),
         created_at: None,
     });

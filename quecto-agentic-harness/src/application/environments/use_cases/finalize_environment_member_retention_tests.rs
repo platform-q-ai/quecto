@@ -11,10 +11,10 @@ use crate::application::environments::ports::{
     EnvironmentProcessCommands, HostedSwarmRunObservation, PortFuture,
 };
 use crate::application::environments::use_cases::FinalizeEnvironmentMember;
-use crate::domain::environment_registry::{
+use crate::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,
 };
-use crate::domain::environment_retention::{
+use crate::domain::environments::services::environment_retention::{
     CoordinatorLoss, HostedSwarmRun, MemberFinalizeMode, SwarmRunObservation,
 };
 use crate::domain::swarm::RunStatus;
@@ -120,7 +120,7 @@ impl EnvironmentProcessCommands for HostedRunPort {
 
     fn observe_liveness<'a>(
         &'a self,
-        _record: &'a crate::domain::environment_registry::EnvironmentRecord,
+        _record: &'a crate::domain::environments::entities::environment_registry::EnvironmentRecord,
     ) -> PortFuture<'a, crate::application::environments::dto::EnvironmentLiveness> {
         Box::pin(async { panic!("a final-member teardown never asks liveness") })
     }
@@ -399,7 +399,7 @@ fn a_run_that_ends_between_observation_and_the_loss_record_follows_how_it_ended(
         }
         fn observe_liveness<'a>(
             &'a self,
-            _record: &'a crate::domain::environment_registry::EnvironmentRecord,
+            _record: &'a crate::domain::environments::entities::environment_registry::EnvironmentRecord,
         ) -> PortFuture<'a, crate::application::environments::dto::EnvironmentLiveness> {
             Box::pin(async { panic!("a final-member teardown never asks liveness") })
         }

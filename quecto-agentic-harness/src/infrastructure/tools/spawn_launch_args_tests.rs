@@ -375,7 +375,7 @@ fn coordinator_launches_carry_the_coordinator_flag() {
 #[test]
 fn children_not_asked_to_coordinate_never_carry_the_coordinator_flag() {
     use crate::domain::agents::services::subagent::ContainerSelection;
-    use crate::domain::environment_registry::EnvironmentTarget;
+    use crate::domain::environments::entities::environment_registry::EnvironmentTarget;
     for container in [
         ContainerSelection::Local,
         ContainerSelection::New {

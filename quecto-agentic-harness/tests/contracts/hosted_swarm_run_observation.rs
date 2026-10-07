@@ -7,10 +7,10 @@
 use std::sync::Arc;
 
 use quecto::application::environments::ports::HostedSwarmRunObservation;
-use quecto::domain::environment_registry::{
+use quecto::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentStatus, mint_environment_uuid,
 };
-use quecto::domain::environment_retention::SwarmRunObservation;
+use quecto::domain::environments::services::environment_retention::SwarmRunObservation;
 use quecto::domain::swarm::RunStatus;
 use quecto::infrastructure::tools::environment_commands::HostedStoreObservation;
 use quecto::infrastructure::tools::swarm_bridge::SwarmContext;
@@ -42,7 +42,8 @@ fn record(checkout: &std::path::Path, advertise: bool) -> EnvironmentRecord {
             serde_json::json!({})
         },
         last_error: None,
-        origin: quecto::domain::environment_registry::EnvironmentOrigin::Created,
+        origin:
+            quecto::domain::environments::entities::environment_registry::EnvironmentOrigin::Created,
         created_by: String::new(),
         created_at: None,
     }
@@ -98,7 +99,7 @@ async fn an_environment_without_a_store_observes_no_store_and_cannot_record_a_lo
         port.observe_hosted_swarm_run(&homeless).await,
         SwarmRunObservation::Unreadable(_)
     ));
-    let hosted = quecto::domain::environment_retention::HostedSwarmRun {
+    let hosted = quecto::domain::environments::services::environment_retention::HostedSwarmRun {
         id: "run-contract".into(),
         status: RunStatus::Running,
         outcome: None,

@@ -100,16 +100,13 @@ const MIGRATED: &[Capability<'_>] = &[
 type Placement<'a> = (&'a str, &'a [&'a str]);
 #[rustfmt::skip]
 const PLACEMENTS: &[Placement<'_>] = &[
-    ("domain", &["conversation", "admission", "environments", "catalogue", "tool_policy", "sessions", "agents", "audit", "inference", "commander", "identity", "shared", "external_agent", "swarm", "workflow", "environment_registry"]),
+    ("domain", &["conversation", "admission", "environments", "catalogue", "tool_policy", "sessions", "agents", "audit", "inference", "commander", "identity", "shared", "external_agent", "swarm", "workflow"]),
     ("application", &["admission", "agent_turn", "audit", "catalogue", "configuration", "environments", "extensions", "external_agent", "provider_runtime", "providers", "search", "sessions", "subagents", "swarm", "tools", "workflow", "agent_commander", "shared", "agent_loop"]),
     ("interface", &["cli", "repl", "tools", "uds"]),
     ("infrastructure", &["admission", "auth", "config", "extensions", "external_agents", "http", "persistence", "processes", "providers", "search", "security", "tools", "workspace", "judgment", "observability", "time", "test_support"]),
     ("composition", &["bootstrap", "runtime", "logging", "shutdown"]),
  ];
-const TRANSITIONAL: &[(&str, &str)] = &[
-    ("domain", "environment_registry"),
-    ("application", "agent_loop"),
-];
+const TRANSITIONAL: &[(&str, &str)] = &[("application", "agent_loop")];
 enum Kind {
     File,
     Directory,

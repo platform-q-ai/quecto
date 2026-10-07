@@ -7,8 +7,12 @@
 //! and the whole within [`MAX_LISTING_BYTES`]. What is left out is
 //! counted, with a note naming the way to see it.
 
-use crate::domain::environment_listing::{EnvironmentListing, ListedEnvironment, ListingScope};
-use crate::domain::environment_registry::{EnvironmentOrigin, EnvironmentRecord};
+use crate::domain::environments::entities::environment_registry::{
+    EnvironmentOrigin, EnvironmentRecord,
+};
+use crate::domain::environments::services::environment_listing::{
+    EnvironmentListing, ListedEnvironment, ListingScope,
+};
 use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
 
 /// Rows one `get_containers` result carries at most.

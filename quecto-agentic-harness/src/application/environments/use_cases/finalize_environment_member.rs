@@ -9,8 +9,10 @@
 //! capability's ports.
 use std::sync::Arc;
 
-use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentRegistry, KillClaim};
-use crate::domain::environment_retention::{
+use crate::domain::environments::entities::environment_registry::{
+    EnvironmentRecord, EnvironmentRegistry, KillClaim,
+};
+use crate::domain::environments::services::environment_retention::{
     MemberFinalizeMode, SwarmRunObservation, ends_plain_environment, loss_reason,
     retains_environment, retention_reason, unrecorded_loss_reason,
 };

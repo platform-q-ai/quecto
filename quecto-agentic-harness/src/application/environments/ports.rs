@@ -17,8 +17,12 @@ use crate::application::environments::dto::{
     EnvironmentLiveness, EnvironmentStateDir, PersistedContainerConfig, PreflightCheck,
     RuntimeContainer, StateOnDisk,
 };
-use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentStatus};
-use crate::domain::environment_retention::{CoordinatorLoss, HostedSwarmRun, SwarmRunObservation};
+use crate::domain::environments::entities::environment_registry::{
+    EnvironmentRecord, EnvironmentStatus,
+};
+use crate::domain::environments::services::environment_retention::{
+    CoordinatorLoss, HostedSwarmRun, SwarmRunObservation,
+};
 
 pub type PortFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 

@@ -6,7 +6,7 @@
 //! the config's cleanup (M1). The rig is `container_persistence_steps`'.
 use super::*;
 
-use quecto::domain::environment_registry::{
+use quecto::domain::environments::entities::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentStatus,
 };
 

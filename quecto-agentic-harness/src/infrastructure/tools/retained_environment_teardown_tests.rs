@@ -10,7 +10,7 @@ use crate::application::environments::ports::{
     EnvironmentMemberShutdown, EnvironmentProcessCommands, MemberShutdownReport, PortFuture,
 };
 use crate::application::environments::use_cases::{KillEnvironment, ListEnvironmentsQuery};
-use crate::domain::environment_registry::EnvironmentRegistry;
+use crate::domain::environments::entities::environment_registry::EnvironmentRegistry;
 use crate::infrastructure::tools::agent_cmd_containers::EnvironmentControl;
 
 struct Commands {
@@ -31,7 +31,7 @@ impl EnvironmentProcessCommands for Commands {
 
     fn observe_liveness<'a>(
         &'a self,
-        _record: &'a crate::domain::environment_registry::EnvironmentRecord,
+        _record: &'a crate::domain::environments::entities::environment_registry::EnvironmentRecord,
     ) -> PortFuture<'a, crate::application::environments::dto::EnvironmentLiveness> {
         Box::pin(async { panic!("a final-member teardown never asks liveness") })
     }

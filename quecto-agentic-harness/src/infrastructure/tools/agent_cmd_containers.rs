@@ -12,7 +12,7 @@ use crate::application::environments::dto::ContainerConfigInventory;
 use crate::application::environments::use_cases::{
     KillEnvironment, KilledEnvironment, ListContainerConfigs, ListEnvironmentsQuery,
 };
-use crate::domain::environment_registry::EnvironmentTarget;
+use crate::domain::environments::entities::environment_registry::EnvironmentTarget;
 use crate::domain::tool::ToolResult;
 
 /// The environment control use cases `agent_cmd` invokes (#1369, #1939):

@@ -178,7 +178,9 @@ async fn join_fails_for_unknown_target_and_missing_retained_exec() {
     let err = join_script_managed_child(
         &child,
         &registry,
-        &crate::domain::environment_registry::EnvironmentTarget::Ref("C9".into()),
+        &crate::domain::environments::entities::environment_registry::EnvironmentTarget::Ref(
+            "C9".into(),
+        ),
     )
     .await
     .unwrap_err();
@@ -189,7 +191,9 @@ async fn join_fails_for_unknown_target_and_missing_retained_exec() {
     let err = join_script_managed_child(
         &child,
         &registry,
-        &crate::domain::environment_registry::EnvironmentTarget::Ref("C1".into()),
+        &crate::domain::environments::entities::environment_registry::EnvironmentTarget::Ref(
+            "C1".into(),
+        ),
     )
     .await
     .unwrap_err();
@@ -229,7 +233,9 @@ async fn join_refuses_an_altered_standard_exec_script_before_running_it() {
     let err = join_script_managed_child(
         &child,
         &registry,
-        &crate::domain::environment_registry::EnvironmentTarget::Ref("C1".into()),
+        &crate::domain::environments::entities::environment_registry::EnvironmentTarget::Ref(
+            "C1".into(),
+        ),
     )
     .await
     .unwrap_err()

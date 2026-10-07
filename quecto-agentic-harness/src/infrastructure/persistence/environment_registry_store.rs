@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use crate::application::environments::dto::CorrectionOutcome;
 use crate::application::environments::ports::EnvironmentRegistryStore;
-use crate::domain::environment_registry::{
+use crate::domain::environments::entities::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentStatus, merge_metadata, ref_number,
 };
 use crate::infrastructure::atomic_write::atomic_write;

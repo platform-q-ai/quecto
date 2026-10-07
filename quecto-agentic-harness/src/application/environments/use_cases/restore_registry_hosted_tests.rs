@@ -11,9 +11,11 @@ use super::restore_registry_tests::{FakeHosted, process, record, store_with};
 use super::{RELABELLED_BY_OLDER_BUILD, RestoreRegistry, unfinished_run_reason};
 use crate::application::environments::dto::EnvironmentLiveness;
 use crate::application::environments::ports::EnvironmentRegistryStore;
-use crate::domain::environment_registry::EnvironmentStatus;
-use crate::domain::environment_registry::GONE_AT_RESTORE;
-use crate::domain::environment_retention::{HostedSwarmRun, SwarmRunObservation};
+use crate::domain::environments::entities::environment_registry::EnvironmentStatus;
+use crate::domain::environments::entities::environment_registry::GONE_AT_RESTORE;
+use crate::domain::environments::services::environment_retention::{
+    HostedSwarmRun, SwarmRunObservation,
+};
 use crate::domain::swarm::RunStatus;
 
 fn run(id: &str, status: RunStatus, outcome: Option<RunStatus>) -> HostedSwarmRun {
@@ -250,7 +252,7 @@ fn an_observing_restore_seeds_the_retained_relabel_without_writing_it() {
 
 fn relabelled_by_older_build(
     reference: &str,
-) -> crate::domain::environment_registry::EnvironmentRecord {
+) -> crate::domain::environments::entities::environment_registry::EnvironmentRecord {
     let mut stale = record(reference, EnvironmentStatus::Stopped);
     stale.metadata = serde_json::json!({"retained": "run ended: blocked; environment retained for inspection, kill_container to remove"});
     stale.last_error = Some(GONE_AT_RESTORE.into());

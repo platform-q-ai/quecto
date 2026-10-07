@@ -9,8 +9,10 @@ use crate::application::environments::ports::EnvironmentProcess;
 use crate::application::environments::ports::{
     EnvironmentProcessCommands, HostedSwarmRunInspection, HostedSwarmRunObservation, PortFuture,
 };
-use crate::domain::environment_registry::EnvironmentRecord;
-use crate::domain::environment_retention::{CoordinatorLoss, HostedSwarmRun, SwarmRunObservation};
+use crate::domain::environments::entities::environment_registry::EnvironmentRecord;
+use crate::domain::environments::services::environment_retention::{
+    CoordinatorLoss, HostedSwarmRun, SwarmRunObservation,
+};
 use crate::infrastructure::processes::containers::environment_process::ScriptEnvironmentProcess;
 use crate::infrastructure::processes::containers::script_stderr::{
     ScriptStdout, run_sync_capturing_stderr_tail,

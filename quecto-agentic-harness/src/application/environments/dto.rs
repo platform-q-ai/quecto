@@ -245,7 +245,7 @@ pub enum CorrectionOutcome {
     Applied,
     /// Another party changed the record meanwhile; the correction was not
     /// written and this is the record as it stands.
-    Superseded(Box<crate::domain::environment_registry::EnvironmentRecord>),
+    Superseded(Box<crate::domain::environments::entities::environment_registry::EnvironmentRecord>),
     /// The record was removed meanwhile (a rolled-back create).
     Forgotten,
 }

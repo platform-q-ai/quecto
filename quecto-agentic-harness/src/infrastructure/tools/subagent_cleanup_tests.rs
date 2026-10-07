@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use super::subagent_cleanup::{cleanup_registered_once, cleanup_removed_entries_once};
 use super::subagent_registry::{SubagentEntry, SubagentRegistry};
-use crate::domain::environment_retention::MemberFinalizeMode as FinalizeMode;
+use crate::domain::environments::services::environment_retention::MemberFinalizeMode as FinalizeMode;
 
 fn cleanup_script(log: &std::path::Path) -> std::path::PathBuf {
     let script = log.parent().unwrap().join("cleanup.sh");
@@ -136,7 +136,7 @@ async fn fleet_teardown_finalizes_a_script_managed_member_and_clears_its_row() {
 
 #[tokio::test]
 async fn cleanup_registered_once_stops_the_committed_environment_entry() {
-    use crate::domain::environment_registry::{
+    use crate::domain::environments::entities::environment_registry::{
         EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, mint_environment_uuid,
     };
 
@@ -162,7 +162,8 @@ async fn cleanup_registered_once_stops_the_committed_environment_entry() {
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({}),
         last_error: None,
-        origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+        origin:
+            crate::domain::environments::entities::environment_registry::EnvironmentOrigin::Created,
         created_by: String::new(),
         created_at: None,
     });
@@ -209,8 +210,10 @@ fn committed_env_record(
     kill_argv: Vec<String>,
     cleanup_argv: Vec<String>,
     members: Vec<String>,
-) -> crate::domain::environment_registry::EnvironmentRecord {
-    use crate::domain::environment_registry::{EnvironmentRecord, mint_environment_uuid};
+) -> crate::domain::environments::entities::environment_registry::EnvironmentRecord {
+    use crate::domain::environments::entities::environment_registry::{
+        EnvironmentRecord, mint_environment_uuid,
+    };
     EnvironmentRecord {
         environment_ref: env_ref.to_string(),
         environment_id: format!("runtime-{env_ref}"),
@@ -224,10 +227,12 @@ fn committed_env_record(
         retained_cleanup_argv: cleanup_argv,
         retained_inspect_argv: vec![],
         members,
-        status: crate::domain::environment_registry::EnvironmentStatus::Running,
+        status:
+            crate::domain::environments::entities::environment_registry::EnvironmentStatus::Running,
         metadata: serde_json::json!({}),
         last_error: None,
-        origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+        origin:
+            crate::domain::environments::entities::environment_registry::EnvironmentOrigin::Created,
         created_by: String::new(),
         created_at: None,
     }
@@ -242,7 +247,8 @@ async fn final_joiner_exit_falls_back_to_the_record_retained_cleanup() {
     let log = temp.path().join("cleanup.log");
     let script = cleanup_script(&log);
 
-    let environments = crate::domain::environment_registry::EnvironmentRegistry::new();
+    let environments =
+        crate::domain::environments::entities::environment_registry::EnvironmentRegistry::new();
     let env_ref = environments.mint_ref().unwrap();
     environments.commit(committed_env_record(
         &env_ref,
@@ -290,7 +296,7 @@ async fn final_joiner_exit_falls_back_to_the_record_retained_cleanup() {
     let record = environments.get(&env_ref).unwrap();
     assert_eq!(
         record.status,
-        crate::domain::environment_registry::EnvironmentStatus::Stopped
+        crate::domain::environments::entities::environment_registry::EnvironmentStatus::Stopped
     );
     assert_eq!(
         std::fs::read_to_string(&log).unwrap().trim(),
@@ -319,7 +325,8 @@ async fn launch_rollback_runs_retained_cleanup_instead_of_kill() {
         script
     };
 
-    let environments = crate::domain::environment_registry::EnvironmentRegistry::new();
+    let environments =
+        crate::domain::environments::entities::environment_registry::EnvironmentRegistry::new();
     let env_ref = environments.mint_ref().unwrap();
     environments.commit(committed_env_record(
         &env_ref,
@@ -343,7 +350,7 @@ async fn launch_rollback_runs_retained_cleanup_instead_of_kill() {
     assert!(!kill_log.exists(), "rollback must not run retained kill");
     assert_eq!(
         environments.get(&env_ref).unwrap().status,
-        crate::domain::environment_registry::EnvironmentStatus::Stopped
+        crate::domain::environments::entities::environment_registry::EnvironmentStatus::Stopped
     );
 }
 
@@ -353,7 +360,8 @@ async fn owned_launch_rollback_discards_the_environment_record_entirely() {
     let cleanup_log = temp.path().join("cleanup.log");
     let cleanup = cleanup_script(&cleanup_log);
 
-    let environments = crate::domain::environment_registry::EnvironmentRegistry::new();
+    let environments =
+        crate::domain::environments::entities::environment_registry::EnvironmentRegistry::new();
     let env_ref = environments.mint_ref().unwrap();
     environments.commit(committed_env_record(
         &env_ref,
@@ -398,7 +406,9 @@ fn logging_fail_script(log: &std::path::Path, dir: &std::path::Path) -> String {
 /// a permanent error onto a cleanly killed environment.
 #[tokio::test]
 async fn parent_kill_members_are_not_inspected_and_no_error_sticks() {
-    use crate::domain::environment_registry::{EnvironmentRegistry, EnvironmentStatus};
+    use crate::domain::environments::entities::environment_registry::{
+        EnvironmentRegistry, EnvironmentStatus,
+    };
 
     let temp = tempfile::tempdir().unwrap();
     let inspect_log = temp.path().join("inspect.log");

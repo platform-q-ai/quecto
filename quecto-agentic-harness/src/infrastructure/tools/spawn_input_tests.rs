@@ -79,7 +79,10 @@ fn coordinator_is_accepted_only_for_a_new_container() {
         assert_eq!(parse_coordinator(&args, &new_container(), false), Ok(true));
     }
     let existing = ContainerSelection::Existing {
-        target: crate::domain::environment_registry::EnvironmentTarget::Name("c".into()),
+        target:
+            crate::domain::environments::entities::environment_registry::EnvironmentTarget::Name(
+                "c".into(),
+            ),
     };
     for container in [ContainerSelection::Local, existing] {
         let err = parse_coordinator(&json!({"coordinator": true}), &container, false).unwrap_err();

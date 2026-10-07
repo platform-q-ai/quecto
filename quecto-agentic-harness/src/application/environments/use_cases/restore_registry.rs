@@ -42,12 +42,14 @@
 //! the document is seen without a restart.
 use std::sync::Arc;
 
-use crate::domain::environment_registry::{
+use crate::domain::environments::entities::environment_registry::{
     EnvironmentJournal, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, GONE_AT_RESTORE,
     JournalWrite,
 };
 
-use crate::domain::environment_retention::{HostedSwarmRun, SwarmRunObservation};
+use crate::domain::environments::services::environment_retention::{
+    HostedSwarmRun, SwarmRunObservation,
+};
 
 use super::super::dto::{
     CorrectionOutcome, EnvironmentLiveness, OvertakenAudience, RestoreMode, RestoredRegistry,
@@ -590,7 +592,9 @@ fn speaks_for(record: &EnvironmentRecord, (session, audience): (&str, OvertakenA
     match audience {
         OvertakenAudience::Fleet => true,
         OvertakenAudience::OwnEnvironments => {
-            crate::domain::environment_listing::created_by_session(record, session)
+            crate::domain::environments::services::environment_listing::created_by_session(
+                record, session,
+            )
         }
     }
 }

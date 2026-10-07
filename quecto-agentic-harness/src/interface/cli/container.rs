@@ -30,7 +30,11 @@ pub type ContainerDoctorBuilder =
 /// directory's records for a top-level session, journalling only for a
 /// spawned child.
 pub type EnvironmentRegistryBuilder =
-    fn(&std::path::Path, &str, bool) -> crate::domain::environment_registry::EnvironmentRegistry;
+    fn(
+        &std::path::Path,
+        &str,
+        bool,
+    ) -> crate::domain::environments::entities::environment_registry::EnvironmentRegistry;
 
 /// Composition's builder of the `container ls|kill|gc` handles (#2024
 /// S4d) over a registry restored from the base directory.

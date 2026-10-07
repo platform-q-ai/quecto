@@ -4,7 +4,7 @@
 use std::sync::{Arc, Mutex};
 
 use super::{build_environment_registry, build_environment_registry_store};
-use crate::domain::environment_registry::{
+use crate::domain::environments::entities::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentStatus,
 };
 
@@ -157,7 +157,7 @@ fn a_host_side_loss_is_recorded_in_the_process_boards_event_log() {
     let recorded = Arc::new(RecordedOps::default());
     assert!(process_board.record_in(recorded.clone()));
     let observation = super::hosted_store_observation_over(Some(&process_board));
-    let hosted = crate::domain::environment_retention::HostedSwarmRun {
+    let hosted = crate::domain::environments::services::environment_retention::HostedSwarmRun {
         id: String::new(),
         status: crate::domain::swarm::RunStatus::Running,
         outcome: None,

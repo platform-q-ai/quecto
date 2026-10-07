@@ -117,7 +117,8 @@ pub struct SubagentEntry {
     pub cleanup_environment_id: Option<String>,
     pub cleanup_argv: Vec<String>,
     /// Session environment-registry handle and minted `CN` ref for cleanup.
-    pub environment_registry: Option<crate::domain::environment_registry::EnvironmentRegistry>,
+    pub environment_registry:
+        Option<crate::domain::environments::entities::environment_registry::EnvironmentRegistry>,
     pub environment_ref: Option<String>,
     /// Forwarded execution backend for a merged descendant entry (#1369).
     pub forwarded_execution_backend: Option<String>,

@@ -2,7 +2,7 @@
 //! swarm workers launched by the coordinator into its own container.
 
 use super::*;
-use crate::domain::environment_registry::EnvironmentTarget;
+use crate::domain::environments::entities::environment_registry::EnvironmentTarget;
 
 fn config(backend: MemberBackend) -> SubagentConfig {
     SubagentConfig {

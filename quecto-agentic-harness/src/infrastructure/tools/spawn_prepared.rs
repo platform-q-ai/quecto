@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::application::subagents::ports::{ProtocolAttempt, TerminationConclusion};
 use crate::domain::agents::value_objects::subagent_launch::ParentEndpoint;
-use crate::domain::environment_registry::EnvironmentRegistry;
+use crate::domain::environments::entities::environment_registry::EnvironmentRegistry;
 use crate::infrastructure::processes::child_stderr_tail::StderrTail;
 use crate::infrastructure::processes::containers::script_stderr::{
     ScriptStdout, run_capturing_stderr_tail,

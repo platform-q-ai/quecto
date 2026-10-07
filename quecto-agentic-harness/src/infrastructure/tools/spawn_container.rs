@@ -7,7 +7,9 @@ use crate::application::subagents::dto::{
 use crate::application::subagents::use_cases::SelectContainerConfig;
 use crate::domain::agents::services::subagent::{ContainerSelection, SubagentConfig};
 use crate::domain::agents::value_objects::subagent_launch::ParentEndpoint;
-use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentRegistry};
+use crate::domain::environments::entities::environment_registry::{
+    EnvironmentRecord, EnvironmentRegistry,
+};
 use crate::domain::error::DomainError;
 use crate::infrastructure::processes::containers::script_stderr::{
     ScriptOutput, ScriptStdout, run_capturing_stderr_tail,
@@ -165,7 +167,7 @@ fn report_diagnostics(diagnostics: &[String]) {
 async fn join_script_managed_child(
     child: &ChildCommand<'_>,
     environments: &EnvironmentRegistry,
-    target: &crate::domain::environment_registry::EnvironmentTarget,
+    target: &crate::domain::environments::entities::environment_registry::EnvironmentTarget,
 ) -> Result<PreparedChild, DomainError> {
     let record = environments
         .resolve_joinable(target)
@@ -397,7 +399,9 @@ async fn spawn_script_managed_child(
     // — would make every later `name` lookup ambiguous, so it is refused
     // before any ref is minted or script runs.
     if let Some(name) = environment_name(config) {
-        use crate::domain::environment_registry::{EnvironmentLookupError, EnvironmentTarget};
+        use crate::domain::environments::entities::environment_registry::{
+            EnvironmentLookupError, EnvironmentTarget,
+        };
         match environments.resolve(&EnvironmentTarget::Name(name.clone())) {
             Ok(live) => {
                 return Err(DomainError::Tool(format!(
