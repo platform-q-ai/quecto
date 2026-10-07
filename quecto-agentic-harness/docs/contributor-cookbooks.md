@@ -85,7 +85,7 @@ that owns the command.
 - `src/interface/cli/uds_dispatch.rs` and focused dispatch modules such as
   `uds_dispatch_query.rs`, `uds_dispatch_session.rs`, `uds_dispatch_runtime.rs`,
   `uds_dispatch_forwarding.rs`, or `uds_dispatch_sync_forward.rs`.
-- `src/interface/cli/uds_responses.rs`, `uds_session.rs`, and `uds_snapshots.rs`
+- `src/interface/cli/protocol.rs`, `uds_session.rs`, and `uds_snapshots.rs`
   when response or snapshot JSON changes.
 - `src/infrastructure/tools/agent_cmd.rs` when the spawned-agent tool exposes
   the command.
@@ -160,7 +160,7 @@ serialization for UDS-visible events.
 
 **Production files usually involved:**
 
-- `src/domain/agent.rs` for `AgentProgressEvent` changes.
+- `src/domain/agents/agent.rs` for `AgentProgressEvent` changes.
 - `src/application/agent_loop*.rs` where progress is emitted.
 - `src/interface/cli/uds_cancel.rs`, `uds_snapshots.rs`, or `protocol.rs` for
   UDS event conversion.
@@ -256,7 +256,7 @@ or `agent_cmd` surface that exposes it.
 
 **Production files usually involved:**
 
-- `src/domain/subagent.rs` for shared validation or vocabulary.
+- `src/domain/agents/subagent.rs` for shared validation or vocabulary.
 - `src/infrastructure/tools/spawn*.rs`, `subagent_registry.rs`,
   `subagent_monitor*.rs`, `subagent_lifecycle.rs`, and
   `subagent_lifecycle.rs` and `subagent_registry.rs` for process/run state.

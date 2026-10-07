@@ -17,7 +17,7 @@ async fn fleet_end(
     compensated_as: TerminationCause,
 ) -> (EnvironmentRecord, bool) {
     use crate::application::subagents::ports::{DelegatedAgentRegistry, TeardownCompensation};
-    use crate::domain::subagent_teardown::{DelegatedAgentIdentity, LaunchGeneration};
+    use crate::domain::agents::subagent_teardown::{DelegatedAgentIdentity, LaunchGeneration};
     let dir = tempfile::tempdir().unwrap();
     let checkout = dir.path().join("checkout");
     let _context = hosted(&checkout);

@@ -104,7 +104,8 @@ fn multi_args<'a>(base: &'a std::path::Path) -> MultiClientArgs<'a> {
         session_key: "cli:cov".into(),
         system_prompt: "system from test".into(),
         ext_registry: None,
-        lifetime: crate::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
+        lifetime:
+            crate::domain::agents::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
         notification_rx: None,
         subagent_registry: None,
         harness_lifecycle: None,
@@ -347,7 +348,7 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
             extensions: Default::default(),
             cmd_rx,
             disconnect_rx: tokio::sync::mpsc::unbounded_channel().1,
-            lifetime: crate::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
+            lifetime: crate::domain::agents::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
             shutdown: super::super::uds_shutdown::ShutdownRequest::detached(std::sync::Arc::new(
                 tokio::sync::Notify::new(),
             )),

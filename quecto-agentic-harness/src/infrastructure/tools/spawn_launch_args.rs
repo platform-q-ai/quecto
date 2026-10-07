@@ -7,8 +7,8 @@
 use std::ffi::OsString;
 use std::path::Path;
 
+use crate::domain::agents::subagent::{ContainerSelection, SubagentConfig};
 use crate::domain::external_agent::backend::{BackendLaunchContext, MemberBackend};
-use crate::domain::subagent::{ContainerSelection, SubagentConfig};
 
 /// Parse the spawn tool's `backend` argument (#2287): absent or null is
 /// quecto; otherwise one of [`MemberBackend::SPAWN_VALUES`]. Whether the
@@ -172,7 +172,7 @@ impl super::spawn::SpawnTool {
     ) -> Vec<crate::infrastructure::config::extensions::ExtensionConfig> {
         let local = matches!(
             config.container,
-            crate::domain::subagent::ContainerSelection::Local
+            crate::domain::agents::subagent::ContainerSelection::Local
         );
         match local {
             true => self.child_extensions.clone(),

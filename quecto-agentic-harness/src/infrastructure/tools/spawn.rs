@@ -8,13 +8,13 @@ use super::spawn_launch_args::write_private_new;
 pub use super::subagent_registry::{SubagentEntry, SubagentRegistry};
 use crate::application::subagent_launch::SubagentLaunchUseCase;
 use crate::application::tools::ports::Tool;
-use crate::domain::environment_registry::EnvironmentRegistry;
-use crate::domain::error::DomainError;
-use crate::domain::ids::AgentUuid;
-use crate::domain::subagent::{
+use crate::domain::agents::subagent::{
     DisplayNameResolutionEntry, DisplayNameResolveError, SubagentConfig,
     assert_display_name_available_for_spawn, validate_agent_id,
 };
+use crate::domain::environment_registry::EnvironmentRegistry;
+use crate::domain::error::DomainError;
+use crate::domain::ids::AgentUuid;
 use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::domain::tool_descriptor::ProfileAvailabilityScope;
 use std::collections::{BTreeMap, HashMap};
@@ -424,7 +424,7 @@ impl SpawnTool {
         };
 
         // explicit model > forwarded --config > built-in default.
-        let model_arg = crate::domain::subagent::parse_model_arg(
+        let model_arg = crate::domain::agents::subagent::parse_model_arg(
             args.get("model").and_then(|v| v.as_str()),
             args.get("provider").and_then(|v| v.as_str()),
             args.get("model_id").and_then(|v| v.as_str()),

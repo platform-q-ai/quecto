@@ -11,7 +11,7 @@
 //! is touched.
 use std::sync::Arc;
 
-use crate::domain::subagent_teardown::{
+use crate::domain::agents::subagent_teardown::{
     DelegatedAgentIdentity, ShutdownReason, TerminationRoute, TerminationRouteError,
     resolve_termination_route,
 };

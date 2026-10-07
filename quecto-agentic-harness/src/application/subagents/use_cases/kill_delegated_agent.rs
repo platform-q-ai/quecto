@@ -21,10 +21,10 @@
 //! kill rather than post-mortemed as a natural one.
 use std::sync::Arc;
 
-use crate::domain::ids::AgentUuid;
-use crate::domain::subagent_teardown::{
+use crate::domain::agents::subagent_teardown::{
     DelegatedAgentIdentity, LineageSnapshot, RoutingDepth, TerminationRouteError, route_length,
 };
+use crate::domain::ids::AgentUuid;
 
 use super::super::dto::{
     KillDelegatedAgentError, KillDelegatedAgentOutcome, KillDelegatedAgentRequest,

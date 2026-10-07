@@ -190,7 +190,7 @@ fn when_model_recalls(world: &mut QuectoWorld) {
             sessions: quecto::composition::sessions::build_session_handles,
             catalogue: quecto::composition::catalogue::build_catalogue_handles(&base, None),
             ext_registry: None,
-            lifetime: quecto::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
+            lifetime: quecto::domain::agents::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
             notification_rx: None,
             subagent_registry: None,
             harness_lifecycle: None,

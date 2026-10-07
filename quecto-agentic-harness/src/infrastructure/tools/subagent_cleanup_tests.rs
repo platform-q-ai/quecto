@@ -96,7 +96,8 @@ async fn fleet_teardown_finalizes_a_script_managed_member_and_clears_its_row() {
         temp.path().join("never.sock"),
         0,
     );
-    entry.launch_generation = Some(crate::domain::subagent_teardown::LaunchGeneration::new(1));
+    entry.launch_generation =
+        Some(crate::domain::agents::subagent_teardown::LaunchGeneration::new(1));
     entry.cleanup_environment_id = Some("env-teardown".into());
     entry.cleanup_argv = vec![script.to_string_lossy().to_string()];
     registry.lock().unwrap().insert("child".to_string(), entry);
@@ -114,7 +115,7 @@ async fn fleet_teardown_finalizes_a_script_managed_member_and_clears_its_row() {
         std::time::Duration::from_secs(30),
         fleet.execute(
             crate::application::subagents::dto::TerminateAllDelegatedAgentsRequest {
-                reason: crate::domain::subagent_teardown::ShutdownReason::OperatorRequest,
+                reason: crate::domain::agents::subagent_teardown::ShutdownReason::OperatorRequest,
                 authority: crate::application::subagents::dto::FleetTeardownAuthority::Harness,
             },
         ),

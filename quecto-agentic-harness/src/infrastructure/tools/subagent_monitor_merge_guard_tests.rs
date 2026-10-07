@@ -5,7 +5,7 @@
 //! harness launched, by key or by label (M1), nor any ancestor of the
 //! reporter, nor make a row its own ancestor.
 use super::*;
-use crate::domain::child_end::ChildOrigin;
+use crate::domain::agents::child_end::ChildOrigin;
 use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
 
 /// A registry holding one child this harness (`root-id`) launched:

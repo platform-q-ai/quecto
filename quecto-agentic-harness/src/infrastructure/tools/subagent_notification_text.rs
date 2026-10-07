@@ -29,12 +29,12 @@ impl SubagentNotification {
             } => format!(
                 "Agent '{}' stalled: idle with workflow still {} at {steps_completed}/{steps_total}. Inspect output/state, then prompt, steer, abort, or kill it.",
                 shown_label(agent_id),
-                crate::domain::child_end::shown(workflow_mode, 32)
+                crate::domain::agents::child_end::shown(workflow_mode, 32)
             ),
             Self::Errored { agent_id, error } => format!(
                 "Agent '{}' failed: {}",
                 shown_label(agent_id),
-                crate::domain::child_end::shown(error, MAX_SHOWN_ERROR_BYTES)
+                crate::domain::agents::child_end::shown(error, MAX_SHOWN_ERROR_BYTES)
             ),
             // The label may be a merged descendant's, from a child's own
             // snapshot: shown escaped and capped (#2192).
@@ -48,10 +48,12 @@ impl SubagentNotification {
             Self::Exited {
                 agent_id, reason, ..
             } => {
-                let end = crate::domain::child_end::ChildEnd::default().reason();
+                let end = crate::domain::agents::child_end::ChildEnd::default().reason();
                 let observed = match reason.as_deref() {
                     Some("") | None => String::new(),
-                    Some(reason) => format!(" ({})", crate::domain::child_end::shown(reason, 64)),
+                    Some(reason) => {
+                        format!(" ({})", crate::domain::agents::child_end::shown(reason, 64))
+                    }
                 };
                 format!("Sub-agent '{}' {end}{observed}.", shown_label(agent_id))
             }
@@ -64,5 +66,8 @@ const MAX_SHOWN_ERROR_BYTES: usize = 512;
 
 /// A sub-agent's label as a notice shows it: escaped and capped.
 fn shown_label(label: &str) -> String {
-    crate::domain::child_end::shown(label, crate::domain::child_end::MAX_SHOWN_NAME_BYTES)
+    crate::domain::agents::child_end::shown(
+        label,
+        crate::domain::agents::child_end::MAX_SHOWN_NAME_BYTES,
+    )
 }

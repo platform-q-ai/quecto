@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use super::*;
+use crate::domain::agents::subagent_teardown::LaunchGeneration;
 use crate::domain::ids::AgentUuid;
-use crate::domain::subagent_teardown::LaunchGeneration;
 use crate::infrastructure::tools::subagent_registry::SubagentEntry;
 
 /// A fake child endpoint: records each request and answers with a

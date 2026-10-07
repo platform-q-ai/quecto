@@ -1,10 +1,10 @@
 use super::super::ack_fakes::RecordingWriter;
 use super::*;
 use crate::application::subagents::dto::{PreparedShutdown, ShutdownToken};
-use crate::domain::ids::AgentUuid;
-use crate::domain::subagent_teardown::{
+use crate::domain::agents::subagent_teardown::{
     DelegatedAgentIdentity, LaunchGeneration, RoutingDepth, ShutdownReason, TerminationRouteError,
 };
+use crate::domain::ids::AgentUuid;
 
 fn prepared() -> PreparedShutdown {
     PreparedShutdown {

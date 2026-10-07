@@ -1,8 +1,8 @@
 use super::*;
-use quecto::domain::ids::AgentUuid;
-use quecto::domain::subagent::{
+use quecto::domain::agents::subagent::{
     DisplayNameResolutionEntry, assert_display_name_available_for_spawn,
 };
+use quecto::domain::ids::AgentUuid;
 use quecto::infrastructure::tools::subagent_registry::{
     SubagentEntry, SubagentStatus, new_registry, resolve_registry_key,
 };
@@ -26,7 +26,7 @@ fn given_parent_agent_config(world: &mut QuectoWorld) {
 
 fn test_subagent_config(task: Option<String>) -> SubagentConfig {
     SubagentConfig {
-        container: quecto::domain::subagent::ContainerSelection::Local,
+        container: quecto::domain::agents::subagent::ContainerSelection::Local,
         task,
         agent_id: None,
         system: None,
@@ -186,10 +186,12 @@ fn when_parent_spawns_named(world: &mut QuectoWorld, name: String) {
         }
         Err(err) => {
             world.agent_id_validation = Some(Err(match err {
-                quecto::domain::subagent::DisplayNameResolveError::NoLiveMatch { display_name } => {
+                quecto::domain::agents::subagent::DisplayNameResolveError::NoLiveMatch {
+                    display_name,
+                } => {
                     format!("no live subagent named '{display_name}'")
                 }
-                quecto::domain::subagent::DisplayNameResolveError::AmbiguousLiveMatch {
+                quecto::domain::agents::subagent::DisplayNameResolveError::AmbiguousLiveMatch {
                     display_name,
                 } => {
                     format!("duplicate live subagent display label '{display_name}'")
@@ -210,10 +212,12 @@ fn when_parent_tool_targets_exited_label(world: &mut QuectoWorld, name: String) 
         resolve_registry_key(&entries, &name)
     };
     world.agent_id_validation = Some(result.map(|_| ()).map_err(|err| match err {
-        quecto::domain::subagent::DisplayNameResolveError::NoLiveMatch { display_name } => {
+        quecto::domain::agents::subagent::DisplayNameResolveError::NoLiveMatch { display_name } => {
             format!("no live subagent named '{display_name}'")
         }
-        quecto::domain::subagent::DisplayNameResolveError::AmbiguousLiveMatch { display_name } => {
+        quecto::domain::agents::subagent::DisplayNameResolveError::AmbiguousLiveMatch {
+            display_name,
+        } => {
             format!("duplicate live subagent display label '{display_name}'")
         }
     }));

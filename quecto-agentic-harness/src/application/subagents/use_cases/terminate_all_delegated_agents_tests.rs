@@ -9,7 +9,7 @@ use crate::application::subagents::ports::{
 };
 use crate::application::subagents::use_cases::lifecycle_fakes::Phase;
 use crate::application::subagents::use_cases::teardown_fakes::*;
-use crate::domain::subagent_teardown::LineageSnapshot;
+use crate::domain::agents::subagent_teardown::LineageSnapshot;
 
 /// A request shaped like its production caller: delete-all asks with
 /// `OperatorRequest` on the owner's word; every other reason is the harness.

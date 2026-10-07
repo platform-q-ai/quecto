@@ -1,5 +1,5 @@
 use super::*;
-use quecto::domain::agent::AgentProgressEvent;
+use quecto::domain::agents::agent::AgentProgressEvent;
 use quecto::domain::message::Message;
 
 fn started(id: &str, name: &str) -> AgentProgressEvent {

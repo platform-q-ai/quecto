@@ -12,10 +12,10 @@ use crate::application::subagents::ports::{
     TerminationConclusion, TerminationResult,
 };
 use crate::application::subagents::use_cases::{SettleDelegatedChild, SettleDelegatedChildPorts};
-use crate::domain::ids::AgentUuid;
-use crate::domain::subagent_teardown::{
+use crate::domain::agents::subagent_teardown::{
     DelegatedAgentIdentity, LaunchGeneration, RoutingDepth, ShutdownReason,
 };
+use crate::domain::ids::AgentUuid;
 
 /// Rows keyed by uuid with a scripted resolution, protocol answer and
 /// conclusion; records the causes each claim and compensation carried.

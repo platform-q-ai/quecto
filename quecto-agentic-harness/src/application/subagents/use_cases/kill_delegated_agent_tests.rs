@@ -6,10 +6,10 @@ use crate::application::subagents::ports::{
     ConclusionBudget, ProtocolAttempt, ResolutionError, TerminationConclusion,
 };
 use crate::application::subagents::use_cases::OwnerConclusionPorts;
-use crate::domain::ids::AgentUuid;
-use crate::domain::subagent_teardown::{
+use crate::domain::agents::subagent_teardown::{
     HarnessLifecycleState, LineageSnapshot, ShutdownReason, TerminationRouteError,
 };
+use crate::domain::ids::AgentUuid;
 
 use super::super::lifecycle_fakes::*;
 use super::super::teardown_fakes::*;

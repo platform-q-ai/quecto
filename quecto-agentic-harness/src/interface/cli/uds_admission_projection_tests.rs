@@ -167,19 +167,23 @@ fn a_waiting_attempt_is_reported_as_waiting_never_quiet_or_active() {
     assert!(waiting.progress.reason.contains("group g"));
     assert_eq!(waiting.admission.as_ref().unwrap().waiting, 1);
     // Recent tool completions do not out-rank a queued attempt.
-    state.observe(&crate::domain::agent::AgentProgressEvent::ToolStarted {
-        tool_call_id: "c1".into(),
-        name: "bash".into(),
-        arguments: "{}".into(),
-    });
-    state.observe(&crate::domain::agent::AgentProgressEvent::ToolFinished {
-        tool_call_id: "c1".into(),
-        name: "bash".into(),
-        arguments: "{}".into(),
-        result_content: String::new(),
-        duration_ms: 1,
-        is_error: false,
-    });
+    state.observe(
+        &crate::domain::agents::agent::AgentProgressEvent::ToolStarted {
+            tool_call_id: "c1".into(),
+            name: "bash".into(),
+            arguments: "{}".into(),
+        },
+    );
+    state.observe(
+        &crate::domain::agents::agent::AgentProgressEvent::ToolFinished {
+            tool_call_id: "c1".into(),
+            name: "bash".into(),
+            arguments: "{}".into(),
+            result_content: String::new(),
+            duration_ms: 1,
+            is_error: false,
+        },
+    );
     assert_eq!(state.snapshot().progress.state, "waiting");
     // The grant restores the evidence-based tool verdict.
     let mut admitted = AdmissionActivity {

@@ -1,10 +1,10 @@
 //! Boundary request/result models for the subagent teardown capability.
 use std::fmt;
 
-use crate::domain::ids::AgentUuid;
-use crate::domain::subagent_teardown::{
+use crate::domain::agents::subagent_teardown::{
     DelegatedAgentIdentity, RoutingDepth, ShutdownReason, TerminationRouteError,
 };
+use crate::domain::ids::AgentUuid;
 
 /// Independent inbound events that all converge on one common shutdown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

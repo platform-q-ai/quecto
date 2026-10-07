@@ -24,7 +24,7 @@ fn config() -> SubagentConfig {
         workflow_spec: None,
         disable_tools: vec![],
         read_only: false,
-        container: crate::domain::subagent::ContainerSelection::Local,
+        container: crate::domain::agents::subagent::ContainerSelection::Local,
         backend: Default::default(),
         coordinator: false,
     }
@@ -59,7 +59,7 @@ async fn a_nested_container_refusal_follows_the_launchers_swarm_participation() 
                 crate::infrastructure::tools::swarm_bridge::Participation::Fixed(participating),
             );
         let mut container = config();
-        container.container = crate::domain::subagent::ContainerSelection::New {
+        container.container = crate::domain::agents::subagent::ContainerSelection::New {
             container_config: None,
             name: None,
         };

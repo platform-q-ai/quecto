@@ -11,7 +11,7 @@ fn parse_create(stdout: &[u8]) -> Result<CreateResult, DomainError> {
 fn parse_exec(stdout: &[u8]) -> Result<ParentEndpoint, DomainError> {
     parse_exec_result(stdout, None)
 }
-use crate::domain::subagent_launch::ParentEndpoint;
+use crate::domain::agents::subagent_launch::ParentEndpoint;
 
 fn create_json(endpoint_fields: &str) -> Vec<u8> {
     format!(

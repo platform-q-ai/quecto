@@ -1,12 +1,12 @@
 //! Wire schema of the `bind_parent_control` presentation (#1935). Parsed,
-//! never interpreted: the binding policy lives in `domain::parent_control`.
+//! never interpreted: the binding policy lives in `domain::agents::parent_control`.
 //!
 //! The launcher's monitor (an outbound adapter) encodes the same shape; the
 //! round-trip is pinned by the tests here.
 use serde::{Deserialize, Serialize};
 
-use crate::domain::parent_control::ParentControlCapability;
-use crate::domain::subagent_teardown::LaunchGeneration;
+use crate::domain::agents::parent_control::ParentControlCapability;
+use crate::domain::agents::subagent_teardown::LaunchGeneration;
 
 /// Wire `type` of the presentation frame the parent sends first.
 pub const BIND_PARENT_CONTROL: &str = "bind_parent_control";

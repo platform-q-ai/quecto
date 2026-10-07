@@ -2,7 +2,7 @@
 //! baseline).
 
 use super::EventSink;
-use crate::domain::agent::AgentProgressEvent;
+use crate::domain::agents::agent::AgentProgressEvent;
 
 /// Publish the messages of a just-completed INNER turn into the shared
 /// conversation snapshot, and emit the resulting `ledger_advanced` hints.

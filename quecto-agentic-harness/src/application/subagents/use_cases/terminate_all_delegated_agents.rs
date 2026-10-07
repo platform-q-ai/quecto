@@ -27,8 +27,8 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::task::{Context, Poll, Waker};
 
+use crate::domain::agents::subagent_teardown::{DelegatedAgentIdentity, ShutdownReason};
 use crate::domain::ids::AgentUuid;
-use crate::domain::subagent_teardown::{DelegatedAgentIdentity, ShutdownReason};
 
 use super::super::dto::{
     FleetTeardownAuthority, FleetTeardownError, FleetTeardownOutcome, SettledChild,

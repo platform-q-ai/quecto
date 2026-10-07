@@ -9,10 +9,12 @@ use crate::application::subagents::use_cases::{
     ExecuteHarnessShutdown, ExecuteHarnessShutdownPorts, HarnessShutdownTransaction,
     PrepareHarnessShutdown, TerminateDelegatedAgent,
 };
-use crate::domain::parent_control::{
+use crate::domain::agents::parent_control::{
     BindingState, ParentControlCapability, ParentControlCredential,
 };
-use crate::domain::subagent_teardown::{HarnessLifecycleState, LaunchGeneration, ShutdownReason};
+use crate::domain::agents::subagent_teardown::{
+    HarnessLifecycleState, LaunchGeneration, ShutdownReason,
+};
 use crate::infrastructure::processes::parent_control::presentation_json;
 use crate::interface::uds::parent_control::wire::BindParentControlWire;
 

@@ -448,7 +448,7 @@ pub(crate) fn execute_uds(world: &mut QuectoWorld) {
             sessions: quecto::composition::sessions::build_session_handles,
             catalogue,
             ext_registry: Some(ext_registry),
-            lifetime: quecto::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
+            lifetime: quecto::domain::agents::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
             notification_rx: None,
             subagent_registry: None,
             harness_lifecycle: None,
@@ -2212,7 +2212,7 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
             sessions: quecto::composition::sessions::build_session_handles,
             catalogue,
             ext_registry: Some(ext_registry),
-            lifetime: quecto::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
+            lifetime: quecto::domain::agents::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
             notification_rx: None,
             subagent_registry: None,
             harness_lifecycle: None,
@@ -2633,9 +2633,9 @@ fn mc_spawn_agent(
             catalogue,
             ext_registry: Some(ext_registry),
             lifetime: if persist {
-                quecto::domain::harness_lifetime::HarnessLifetime::Persistent
+                quecto::domain::agents::harness_lifetime::HarnessLifetime::Persistent
             } else {
-                quecto::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects
+                quecto::domain::agents::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects
             },
             notification_rx: None,
             subagent_registry: None,

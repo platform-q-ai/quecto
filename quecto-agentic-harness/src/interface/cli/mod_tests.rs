@@ -204,7 +204,7 @@ fn blocking_thread_keep_alive_spans_the_process_lifetime() {
 /// lib's public surface for the BDD suites; pin their shapes here too.
 #[tokio::test]
 async fn test_support_probes_report_live_and_completed_execution_state() {
-    use crate::domain::agent::AgentProgressEvent;
+    use crate::domain::agents::agent::AgentProgressEvent;
     let started = AgentProgressEvent::ToolStarted {
         tool_call_id: "c1".into(),
         name: "bash".into(),

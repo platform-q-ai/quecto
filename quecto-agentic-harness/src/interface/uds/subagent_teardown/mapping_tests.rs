@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::subagent_teardown::RoutingDepth;
+use crate::domain::agents::subagent_teardown::RoutingDepth;
 
 fn shutdown(reason: &str) -> SubagentTeardownCommand {
     SubagentTeardownCommand::Shutdown {

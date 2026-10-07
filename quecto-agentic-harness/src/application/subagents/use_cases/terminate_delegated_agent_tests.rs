@@ -4,11 +4,11 @@ use super::*;
 use crate::application::subagents::dto::{
     TerminateDelegatedAgentError, TerminateDelegatedAgentRequest, TerminationRouted,
 };
-use crate::domain::ids::AgentUuid;
-use crate::domain::subagent_teardown::{
+use crate::domain::agents::subagent_teardown::{
     HarnessLifecycleState, LaunchGeneration, LineageSnapshot, RoutingDepth, ShutdownReason,
     TerminationRouteError,
 };
+use crate::domain::ids::AgentUuid;
 
 use super::super::teardown_fakes::*;
 

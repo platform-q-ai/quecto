@@ -1,14 +1,14 @@
 //! The `agent_cmd` default unread report (#1856): the adapter side of the
 //! supervisor's plain `get_messages` read. The child's wire response is
 //! parsed here, the selection and acknowledgement rules are the domain's
-//! (`domain::unread_report`), and the report budget, receipt and envelope
+//! (`domain::agents::unread_report`), and the report budget, receipt and envelope
 //! shaping stay with this tool.
-use crate::domain::sessions::entities::session::PendingMessageReport;
-use crate::domain::turn_origin::{TurnOrigin, report_index};
-use crate::domain::unread_report::{
+use crate::domain::agents::unread_report::{
     ReportedMessage, UnreadSelection, acknowledged_report_index, later_than, needs_backfill,
     select_unread, select_unread_without_report, skipped_unread,
 };
+use crate::domain::sessions::entities::session::PendingMessageReport;
+use crate::domain::turn_origin::{TurnOrigin, report_index};
 
 pub(crate) fn mint_default_report_receipt() -> String {
     format!("agent-cmd-report-{}", uuid::Uuid::new_v4())

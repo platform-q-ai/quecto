@@ -132,7 +132,8 @@ fn loop_args(base: &std::path::Path, agent: AgentLoopImpl) -> MultiClientArgs<'_
         session_key: "cli:followup".into(),
         system_prompt: "system".into(),
         ext_registry: None,
-        lifetime: crate::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
+        lifetime:
+            crate::domain::agents::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
         notification_rx: None,
         subagent_registry: None,
         harness_lifecycle: None,

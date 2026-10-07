@@ -11,7 +11,7 @@ use crate::application::sessions::dto::{FleetSettled, FleetSettlementOutcome};
 use crate::application::sessions::ports::FleetSettlement;
 use crate::application::subagents::dto::{FleetTeardownError, TerminateAllDelegatedAgentsRequest};
 use crate::application::subagents::use_cases::TerminateAllDelegatedAgents;
-use crate::domain::subagent_teardown::ShutdownReason;
+use crate::domain::agents::subagent_teardown::ShutdownReason;
 
 impl FleetSettlement for TerminateAllDelegatedAgents {
     fn settle_fleet(&self) -> Pin<Box<dyn Future<Output = FleetSettlementOutcome> + Send + '_>> {

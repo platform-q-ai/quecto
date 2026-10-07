@@ -3,7 +3,7 @@
 //! (the child-progress-freeze fix, 2026-07-29).
 
 use super::*;
-use quecto::domain::agent::AgentProgressEvent;
+use quecto::domain::agents::agent::AgentProgressEvent;
 use quecto::domain::message::Message;
 
 fn inner_turn() -> AgentProgressEvent {
@@ -149,9 +149,9 @@ fn send_delete_all(world: &mut QuectoWorld, id: String) {
             std::path::PathBuf::from(format!("/nonexistent/{name}.sock")),
             0,
         );
-        entry.launch_generation = Some(quecto::domain::subagent_teardown::LaunchGeneration::new(
-            index as u64 + 1,
-        ));
+        entry.launch_generation = Some(
+            quecto::domain::agents::subagent_teardown::LaunchGeneration::new(index as u64 + 1),
+        );
         registry.lock().unwrap().insert(uuid.into_string(), entry);
     }
     let fleet = quecto::composition::subagent_teardown::build_fleet_teardown(

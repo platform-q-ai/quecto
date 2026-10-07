@@ -753,7 +753,7 @@ fn when_subagent_completes_turn_on_parent(world: &mut QuectoWorld) {
         let child_messages = vec![quecto::domain::message::Message::assistant(&body, vec![])];
         let mut child_bytes = Vec::new();
         quecto::interface::cli::uds_cancel::forward_progress_event(
-            quecto::domain::agent::AgentProgressEvent::TurnCompleted {
+            quecto::domain::agents::agent::AgentProgressEvent::TurnCompleted {
                 messages: child_messages.into(),
             },
             &mut child_bytes,
@@ -1620,9 +1620,9 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
             ),
             ext_registry: Some(ext_reg),
             lifetime: if persist {
-                quecto::domain::harness_lifetime::HarnessLifetime::Persistent
+                quecto::domain::agents::harness_lifetime::HarnessLifetime::Persistent
             } else {
-                quecto::domain::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects
+                quecto::domain::agents::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects
             },
             notification_rx: None,
             subagent_registry: None,

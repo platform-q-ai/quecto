@@ -1,5 +1,5 @@
 use super::uds_execution_state::ExecutionState;
-use crate::domain::agent::AgentProgressEvent;
+use crate::domain::agents::agent::AgentProgressEvent;
 
 fn started(id: &str, name: &str) -> AgentProgressEvent {
     AgentProgressEvent::ToolStarted {

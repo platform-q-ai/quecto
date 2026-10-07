@@ -75,7 +75,7 @@ const WIKI: &str =
     "https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture";
 #[rustfmt::skip] // One readable source-policy row per path.
 const BUDGETS: &[FlatBudget<'_>] = &[
-    FlatBudget { path: "domain", expected: 43 },
+    FlatBudget { path: "domain", expected: 34 },
     FlatBudget { path: "application", expected: 41 },
     FlatBudget { path: "interface", expected: 6 },
     FlatBudget { path: "infrastructure", expected: 28 },

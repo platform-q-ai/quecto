@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::agent_turn::ports::AgentLoop;
-use crate::domain::agent::AgentProgressEvent;
+use crate::domain::agents::agent::AgentProgressEvent;
 use crate::domain::message::Message;
 use crate::interface::cli::protocol::{AgentEvent, TurnMessage, TurnUsage};
 use crate::interface::cli::uds_session::AgentSession;
@@ -527,7 +527,7 @@ struct TokenDrainArgs<'a, 's> {
 async fn run_with_token_drain(
     args: TokenDrainArgs<'_, '_>,
 ) -> (
-    Option<Result<crate::domain::agent::AgentResult, crate::domain::error::DomainError>>,
+    Option<Result<crate::domain::agents::agent::AgentResult, crate::domain::error::DomainError>>,
     Vec<SequencedSubagentNotification>,
     bool,
 ) {

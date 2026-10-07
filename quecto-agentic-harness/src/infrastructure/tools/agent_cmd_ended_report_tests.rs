@@ -6,7 +6,7 @@
 use super::*;
 use crate::application::sessions::ports::SessionStore;
 use crate::application::tools::ports::Tool;
-use crate::domain::child_end::ChildOrigin;
+use crate::domain::agents::child_end::ChildOrigin;
 use crate::domain::ids::AgentUuid;
 use crate::domain::message::ToolCall;
 use crate::domain::sessions::entities::session::Session;

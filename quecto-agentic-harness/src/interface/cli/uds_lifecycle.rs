@@ -39,7 +39,7 @@ pub struct UdsLoopArgs<'a> {
     pub catalogue: super::catalogue_handles::CatalogueHandles,
     pub ext_registry: Option<super::uds_extensions::ExtRegistry>,
     /// How long this harness lives (#1937): decided once at startup.
-    pub lifetime: crate::domain::harness_lifetime::HarnessLifetime,
+    pub lifetime: crate::domain::agents::harness_lifetime::HarnessLifetime,
     pub notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
     pub subagent_registry:
         Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,

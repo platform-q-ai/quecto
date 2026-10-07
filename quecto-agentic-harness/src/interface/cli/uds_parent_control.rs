@@ -21,7 +21,7 @@
 //! never get here past the binding's refusal.
 use std::sync::{Arc, Mutex};
 
-use crate::domain::parent_control::{ConnectionLoss, ParentControlBinding};
+use crate::domain::agents::parent_control::{ConnectionLoss, ParentControlBinding};
 use crate::interface::uds::parent_control::wire::{BindParentControlWire, bound_ack_line};
 use crate::interface::uds::subagent_teardown::controller::{
     ConnectionAuthority, ControllerOutcome, DeliveryState, SubagentTeardownController,
@@ -83,7 +83,7 @@ impl ConnectionTeardown {
         }
     }
 
-    pub fn binding_state(&self) -> crate::domain::parent_control::BindingState {
+    pub fn binding_state(&self) -> crate::domain::agents::parent_control::BindingState {
         self.binding
             .lock()
             .unwrap_or_else(|e| e.into_inner())

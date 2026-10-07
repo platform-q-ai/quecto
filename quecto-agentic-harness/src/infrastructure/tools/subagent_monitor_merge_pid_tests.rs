@@ -74,9 +74,9 @@ async fn launch_a_merge_b_and_let_a_die(
         supervisor,
         ReaperContext {
             exit_tx,
-            child: crate::domain::subagent_teardown::DelegatedAgentIdentity::new(
+            child: crate::domain::agents::subagent_teardown::DelegatedAgentIdentity::new(
                 "a-uuid",
-                crate::domain::subagent_teardown::LaunchGeneration::new(1),
+                crate::domain::agents::subagent_teardown::LaunchGeneration::new(1),
             ),
             observer,
             swarm_member: None,

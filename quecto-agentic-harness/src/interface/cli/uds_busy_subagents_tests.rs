@@ -224,9 +224,8 @@ fn delegated_registry(
             std::path::PathBuf::from(format!("/nonexistent/{name}.sock")),
             0,
         );
-        entry.launch_generation = Some(crate::domain::subagent_teardown::LaunchGeneration::new(
-            index as u64 + 1,
-        ));
+        entry.launch_generation =
+            Some(crate::domain::agents::subagent_teardown::LaunchGeneration::new(index as u64 + 1));
         registry.lock().unwrap().insert(uuid.into_string(), entry);
     }
     registry

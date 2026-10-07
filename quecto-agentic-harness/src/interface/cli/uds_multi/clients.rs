@@ -160,7 +160,7 @@ pub(super) fn end_with_the_fleet(
     extensions: &Extensions,
     lifecycle: Option<crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle>,
 ) {
-    use crate::domain::subagent_teardown::HarnessLifecycleState;
+    use crate::domain::agents::subagent_teardown::HarnessLifecycleState;
     let (Some(extensions), Some(lifecycle)) = (extensions.clone(), lifecycle) else {
         return;
     };
@@ -192,7 +192,7 @@ pub(super) async fn shut_down(extensions: &Extensions) {
 pub(super) async fn disconnected(
     ctx: &mut DispatchCtx<'_>,
     client_id: u64,
-    lifetime: crate::domain::harness_lifetime::HarnessLifetime,
+    lifetime: crate::domain::agents::harness_lifetime::HarnessLifetime,
     live_clients: &AtomicU32,
 ) -> bool {
     let client = extension_of(&ctx.client_tool_registry, client_id).is_none();

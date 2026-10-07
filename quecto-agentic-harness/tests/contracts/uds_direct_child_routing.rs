@@ -12,11 +12,11 @@ use quecto::application::subagents::dto::{
 };
 use quecto::application::subagents::ports::{ChildRoutingError, DirectChildRouting};
 use quecto::application::subagents::use_cases::TerminateDelegatedAgent;
-use quecto::domain::ids::AgentUuid;
-use quecto::domain::subagent_teardown::{
+use quecto::domain::agents::subagent_teardown::{
     DelegatedAgentIdentity, LaunchGeneration, LineageSnapshot, RoutingDepth, ShutdownReason,
     TerminationRouteError,
 };
+use quecto::domain::ids::AgentUuid;
 use quecto::infrastructure::processes::direct_child_routing::{
     PROTOCOL_ACK_TIMEOUT, UdsDirectChildRouting, shutdown_over_socket,
 };

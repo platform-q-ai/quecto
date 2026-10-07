@@ -13,7 +13,7 @@ use crate::application::subagents::dto::{
     FleetTeardownError, FleetTeardownOutcome, TerminateAllDelegatedAgentsRequest,
 };
 use crate::application::subagents::use_cases::TerminateAllDelegatedAgents;
-use crate::domain::subagent_teardown::ShutdownReason;
+use crate::domain::agents::subagent_teardown::ShutdownReason;
 
 use super::protocol::AgentEvent;
 

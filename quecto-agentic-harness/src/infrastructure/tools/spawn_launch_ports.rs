@@ -7,15 +7,15 @@ use super::spawn_launch_args::write_private_new;
 use super::spawn_registry::register_and_broadcast;
 use super::subagent_registry::new_exit_signal_channel;
 use crate::application::ports::{LaunchFuture, SubagentLaunchPorts as SubagentLaunchPortsTrait};
-use crate::domain::error::DomainError;
-use crate::domain::ids::AgentUuid;
-use crate::domain::subagent::SubagentConfig;
-use crate::domain::subagent::{
+use crate::domain::agents::subagent::SubagentConfig;
+use crate::domain::agents::subagent::{
     DisplayNameResolutionEntry, DisplayNameResolveError, assert_display_name_available_for_spawn,
 };
-use crate::domain::subagent_launch::{
+use crate::domain::agents::subagent_launch::{
     LaunchIdentity, ParentEndpoint, PreparedRuntime, RegisteredLaunch,
 };
+use crate::domain::error::DomainError;
+use crate::domain::ids::AgentUuid;
 use crate::domain::tool::ToolResult;
 use std::path::{Path, PathBuf};
 
@@ -32,7 +32,7 @@ pub(super) struct SpawnLaunchPorts<'a> {
     /// The launch-bound parent control credential minted for this child
     /// (#1935): kept in memory only until the monitor presents it, and
     /// mirrored once into a private sidecar the child consumes at startup.
-    parent_control: Option<crate::domain::parent_control::ParentControlCredential>,
+    parent_control: Option<crate::domain::agents::parent_control::ParentControlCredential>,
     parent_control_path: Option<PathBuf>,
     /// What the container-config selection reported about the layers the
     /// prepared child was selected from (#2024 S4a); relayed verbatim in
@@ -512,10 +512,11 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     std::sync::Arc::clone(&prepared.supervisor),
                     super::spawn_reaper::ReaperContext {
                         exit_tx,
-                        child: crate::domain::subagent_teardown::DelegatedAgentIdentity::new(
-                            agent_uuid,
-                            launch_generation,
-                        ),
+                        child:
+                            crate::domain::agents::subagent_teardown::DelegatedAgentIdentity::new(
+                                agent_uuid,
+                                launch_generation,
+                            ),
                         observer: lifecycle.observe_exit,
                         swarm_member: prepared
                             .swarm_reservation

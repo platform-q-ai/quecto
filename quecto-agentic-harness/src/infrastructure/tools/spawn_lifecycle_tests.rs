@@ -35,7 +35,8 @@ async fn uncomposed_tool_refuses_a_real_launch_and_registers_nothing() {
 #[tokio::test]
 async fn a_frozen_harness_refuses_a_spawn_as_a_tool_error() {
     let lifecycle = super::super::harness_lifecycle::new_shared_harness_lifecycle();
-    *lifecycle.lock().unwrap() = crate::domain::subagent_teardown::HarnessLifecycleState::Frozen;
+    *lifecycle.lock().unwrap() =
+        crate::domain::agents::subagent_teardown::HarnessLifecycleState::Frozen;
     let dir = tempfile::tempdir().expect("tempdir");
     let tools = [
         SpawnTool::new(vec![]).with_harness_lifecycle(lifecycle.clone()),

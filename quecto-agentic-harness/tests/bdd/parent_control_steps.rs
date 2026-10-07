@@ -10,11 +10,11 @@ use std::time::{Duration, Instant};
 
 use cucumber::{given, then, when};
 use quecto::composition::subagent_teardown::build_teardown_graph;
-use quecto::domain::parent_control::{
+use quecto::domain::agents::parent_control::{
     BindRejection, BindingState, ConnectionLoss, ParentControlBinding, ParentControlCapability,
     ParentControlCredential,
 };
-use quecto::domain::subagent_teardown::LaunchGeneration;
+use quecto::domain::agents::subagent_teardown::LaunchGeneration;
 use quecto::infrastructure::processes::owned_child_supervisor::{
     ChildHandleId, OwnedChildSupervisor, SentSignal, TerminationOutcome,
 };
@@ -431,7 +431,7 @@ fn launch_harness(world: &mut QuectoWorld, bind_deadline: BindDeadline) {
             ext_registry: Some(ext_registry),
             // A launcher-created child is launch-bound (#1937): ordinary
             // client churn must never end it, and it never persists.
-            lifetime: quecto::domain::harness_lifetime::HarnessLifetime::LaunchBound,
+            lifetime: quecto::domain::agents::harness_lifetime::HarnessLifetime::LaunchBound,
             notification_rx: Some(notification_rx),
             subagent_registry: Some(registry_for_loop),
             harness_lifecycle: None,

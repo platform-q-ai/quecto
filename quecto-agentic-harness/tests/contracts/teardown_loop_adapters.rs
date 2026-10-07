@@ -8,11 +8,13 @@ use std::time::Duration;
 
 use quecto::application::subagents::ports::ExitReadiness;
 use quecto::composition::subagent_teardown::build_teardown_graph;
-use quecto::domain::ids::AgentUuid;
-use quecto::domain::parent_control::{
+use quecto::domain::agents::parent_control::{
     BindingState, ParentControlBinding, ParentControlCapability, ParentControlCredential,
 };
-use quecto::domain::subagent_teardown::{HarnessLifecycleState, LaunchGeneration, ShutdownReason};
+use quecto::domain::agents::subagent_teardown::{
+    HarnessLifecycleState, LaunchGeneration, ShutdownReason,
+};
+use quecto::domain::ids::AgentUuid;
 use quecto::infrastructure::tools::subagent_registry::{SubagentEntry, SubagentRegistry};
 use quecto::interface::cli::uds_cancel::{CancelSlot, TurnControl};
 use quecto::interface::cli::uds_teardown_handles::TeardownLoopInputs;

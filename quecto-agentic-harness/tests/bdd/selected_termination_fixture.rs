@@ -14,8 +14,8 @@ use quecto::application::tools::ports::Tool;
 use quecto::composition::subagent_lifecycle::{
     SubagentLifecycleUseCases, build_lifecycle_use_cases,
 };
+use quecto::domain::agents::subagent_teardown::LaunchGeneration;
 use quecto::domain::ids::AgentUuid;
-use quecto::domain::subagent_teardown::LaunchGeneration;
 use quecto::domain::tool::ToolResult;
 use quecto::infrastructure::processes::owned_child_supervisor::{
     ChildHandleId, OwnedChildSupervisor, ProcessGroup,

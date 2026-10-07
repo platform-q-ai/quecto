@@ -2,11 +2,11 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::domain::ids::AgentUuid;
-use crate::domain::subagent_teardown::{
+use crate::domain::agents::subagent_teardown::{
     DelegatedAgentIdentity, HarnessLifecycleState, LaunchGeneration, LineageRecord,
     LineageSnapshot, RoutingDepth, ShutdownReason,
 };
+use crate::domain::ids::AgentUuid;
 
 use crate::application::subagents::dto::TerminationResult;
 use crate::application::subagents::ports::{

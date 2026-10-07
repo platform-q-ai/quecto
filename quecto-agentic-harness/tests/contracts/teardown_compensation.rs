@@ -13,8 +13,8 @@ use quecto::application::subagents::ports::{
     TerminalClaim, TerminationCause,
 };
 use quecto::application::subagents::use_cases::ObserveOwnedChildExit;
+use quecto::domain::agents::subagent_teardown::{DelegatedAgentIdentity, LaunchGeneration};
 use quecto::domain::ids::AgentUuid;
-use quecto::domain::subagent_teardown::{DelegatedAgentIdentity, LaunchGeneration};
 use quecto::infrastructure::tools::subagent_registry::{
     ExitSignalKind, SubagentEntry, SubagentNotification, SubagentRegistry, SubagentStatus,
     TeardownPhase, new_exit_signal_channel, new_notification_channel,

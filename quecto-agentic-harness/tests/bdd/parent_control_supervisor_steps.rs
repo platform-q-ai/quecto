@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use cucumber::{given, then, when};
-use quecto::domain::subagent_teardown::ShutdownReason;
+use quecto::domain::agents::subagent_teardown::ShutdownReason;
 use quecto::infrastructure::processes::owned_child_supervisor::{
     ChildExit, ChildHandleId, OwnedChildSupervisor, ProcessGroup, ProtocolOutcome, SentSignal,
     TerminationBudget, TerminationOutcome,

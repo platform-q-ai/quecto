@@ -16,8 +16,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use crate::domain::parent_control::{ParentControlCapability, ParentControlCredential};
-use crate::domain::subagent_teardown::LaunchGeneration;
+use crate::domain::agents::parent_control::{ParentControlCapability, ParentControlCredential};
+use crate::domain::agents::subagent_teardown::LaunchGeneration;
 
 const SIDECAR_FORMAT: u32 = 1;
 

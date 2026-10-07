@@ -8,7 +8,7 @@ use crate::application::subagents::use_cases::teardown_fakes::*;
 use crate::application::subagents::use_cases::{
     ExecuteHarnessShutdownPorts, HarnessShutdownTransaction,
 };
-use crate::domain::subagent_teardown::{HarnessLifecycleState, LineageSnapshot};
+use crate::domain::agents::subagent_teardown::{HarnessLifecycleState, LineageSnapshot};
 use crate::interface::uds::subagent_teardown::ack_fakes::RecordingWriter;
 
 pub(super) struct Rig {

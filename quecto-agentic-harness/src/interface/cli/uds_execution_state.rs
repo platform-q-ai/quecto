@@ -3,7 +3,7 @@ use super::uds_admission_projection::{
 };
 use crate::application::ports::AdmissionObservation;
 use crate::domain::admission::value_objects::inference_admission::AdmissionActivity;
-use crate::domain::agent::AgentProgressEvent;
+use crate::domain::agents::agent::AgentProgressEvent;
 use crate::domain::inference::events::request_completion::{AgentRequestCounters, RequestTally};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};

@@ -1,4 +1,4 @@
-use crate::domain::child_end::ChildOrigin;
+use crate::domain::agents::child_end::ChildOrigin;
 use std::collections::hash_map::Entry;
 
 use super::harness_lifecycle::{SharedHarnessLifecycle, admit_spawn};

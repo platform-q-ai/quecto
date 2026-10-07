@@ -16,7 +16,7 @@ async fn test_progress_callback_tool_started_fired_for_each_tool_call() {
     let fired = events.lock().unwrap();
     let tool_started_count = fired
         .iter()
-        .filter(|e| matches!(e, crate::domain::agent::AgentProgressEvent::ToolStarted { name, .. } if name == "bash"))
+        .filter(|e| matches!(e, crate::domain::agents::agent::AgentProgressEvent::ToolStarted { name, .. } if name == "bash"))
         .count();
     assert_eq!(
         tool_started_count, 1,
@@ -40,7 +40,7 @@ async fn test_progress_callback_tool_finished_fired_after_tool_executes() {
     let fired = events.lock().unwrap();
     let tool_finished = fired
         .iter()
-        .find(|e| matches!(e, crate::domain::agent::AgentProgressEvent::ToolFinished { name, .. } if name == "bash"));
+        .find(|e| matches!(e, crate::domain::agents::agent::AgentProgressEvent::ToolFinished { name, .. } if name == "bash"));
     assert!(
         tool_finished.is_some(),
         "expected ToolFinished(bash) event, got: {:?}",
@@ -63,24 +63,27 @@ async fn test_progress_callback_event_order_thinking_tool_started_tool_finished_
     let fired = events.lock().unwrap();
 
     // Find positions of key event types
-    let thinking_pos = fired
-        .iter()
-        .position(|e| matches!(e, crate::domain::agent::AgentProgressEvent::Thinking { .. }));
+    let thinking_pos = fired.iter().position(|e| {
+        matches!(
+            e,
+            crate::domain::agents::agent::AgentProgressEvent::Thinking { .. }
+        )
+    });
     let tool_started_pos = fired.iter().position(|e| {
         matches!(
             e,
-            crate::domain::agent::AgentProgressEvent::ToolStarted { .. }
+            crate::domain::agents::agent::AgentProgressEvent::ToolStarted { .. }
         )
     });
     let tool_finished_pos = fired.iter().position(|e| {
         matches!(
             e,
-            crate::domain::agent::AgentProgressEvent::ToolFinished { .. }
+            crate::domain::agents::agent::AgentProgressEvent::ToolFinished { .. }
         )
     });
     let done_pos = fired
         .iter()
-        .rposition(|e| matches!(e, crate::domain::agent::AgentProgressEvent::Done));
+        .rposition(|e| matches!(e, crate::domain::agents::agent::AgentProgressEvent::Done));
 
     assert!(thinking_pos.is_some(), "expected Thinking event");
     assert!(tool_started_pos.is_some(), "expected ToolStarted event");
@@ -110,7 +113,7 @@ async fn test_progress_callback_tool_finished_captures_duration_and_error_flag()
     agent.run_loop(&mut messages).await.unwrap();
 
     let fired = events.lock().unwrap();
-    if let Some(crate::domain::agent::AgentProgressEvent::ToolFinished {
+    if let Some(crate::domain::agents::agent::AgentProgressEvent::ToolFinished {
         name,
         arguments,
         duration_ms,
@@ -119,7 +122,7 @@ async fn test_progress_callback_tool_finished_captures_duration_and_error_flag()
     }) = fired.iter().find(|e| {
         matches!(
             e,
-            crate::domain::agent::AgentProgressEvent::ToolFinished { .. }
+            crate::domain::agents::agent::AgentProgressEvent::ToolFinished { .. }
         )
     }) {
         assert_eq!(name, "bash");
@@ -205,10 +208,10 @@ async fn ok_tool_result_is_error_propagates_to_message_and_progress() {
         },
         content: "llm-addressable failure".into(),
     }));
-    let events: Arc<Mutex<Vec<crate::domain::agent::AgentProgressEvent>>> =
+    let events: Arc<Mutex<Vec<crate::domain::agents::agent::AgentProgressEvent>>> =
         Arc::new(Mutex::new(Vec::new()));
     let events_clone = events.clone();
-    let callback: crate::domain::agent::ProgressCallback =
+    let callback: crate::domain::agents::agent::ProgressCallback =
         Arc::new(move |ev| events_clone.lock().unwrap().push(ev));
     let audit = Arc::new(RecordingAudit::default());
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
@@ -234,11 +237,13 @@ async fn ok_tool_result_is_error_propagates_to_message_and_progress() {
     let finished = fired.iter().find(|e| {
         matches!(
             e,
-            crate::domain::agent::AgentProgressEvent::ToolFinished { name, .. } if name == "bash"
+            crate::domain::agents::agent::AgentProgressEvent::ToolFinished { name, .. } if name == "bash"
         )
     });
     match finished {
-        Some(crate::domain::agent::AgentProgressEvent::ToolFinished { is_error, .. }) => {
+        Some(crate::domain::agents::agent::AgentProgressEvent::ToolFinished {
+            is_error, ..
+        }) => {
             assert!(
                 *is_error,
                 "ToolFinished.is_error must be true for Ok(is_error: true)"
@@ -277,7 +282,7 @@ async fn test_progress_callback_multiple_tool_calls_all_reported() {
     let started: Vec<&str> = fired
         .iter()
         .filter_map(|e| {
-            if let crate::domain::agent::AgentProgressEvent::ToolStarted { name, .. } = e {
+            if let crate::domain::agents::agent::AgentProgressEvent::ToolStarted { name, .. } = e {
                 Some(name.as_str())
             } else {
                 None
@@ -318,12 +323,14 @@ async fn test_progress_callback_tool_started_includes_arguments() {
     agent.run_loop(&mut messages).await.unwrap();
 
     let fired = events.lock().unwrap();
-    if let Some(crate::domain::agent::AgentProgressEvent::ToolStarted {
-        name, arguments, ..
+    if let Some(crate::domain::agents::agent::AgentProgressEvent::ToolStarted {
+        name,
+        arguments,
+        ..
     }) = fired.iter().find(|e| {
         matches!(
             e,
-            crate::domain::agent::AgentProgressEvent::ToolStarted { .. }
+            crate::domain::agents::agent::AgentProgressEvent::ToolStarted { .. }
         )
     }) {
         assert_eq!(name, "bash");
@@ -371,12 +378,14 @@ async fn test_progress_callback_tool_started_includes_tool_call_id() {
     agent.run_loop(&mut messages).await.unwrap();
 
     let fired = events.lock().unwrap();
-    if let Some(crate::domain::agent::AgentProgressEvent::ToolStarted {
-        tool_call_id, name, ..
+    if let Some(crate::domain::agents::agent::AgentProgressEvent::ToolStarted {
+        tool_call_id,
+        name,
+        ..
     }) = fired.iter().find(|e| {
         matches!(
             e,
-            crate::domain::agent::AgentProgressEvent::ToolStarted { .. }
+            crate::domain::agents::agent::AgentProgressEvent::ToolStarted { .. }
         )
     }) {
         assert_eq!(name, "bash");
@@ -402,12 +411,14 @@ async fn test_progress_callback_tool_finished_includes_tool_call_id() {
     agent.run_loop(&mut messages).await.unwrap();
 
     let fired = events.lock().unwrap();
-    if let Some(crate::domain::agent::AgentProgressEvent::ToolFinished {
-        tool_call_id, name, ..
+    if let Some(crate::domain::agents::agent::AgentProgressEvent::ToolFinished {
+        tool_call_id,
+        name,
+        ..
     }) = fired.iter().find(|e| {
         matches!(
             e,
-            crate::domain::agent::AgentProgressEvent::ToolFinished { .. }
+            crate::domain::agents::agent::AgentProgressEvent::ToolFinished { .. }
         )
     }) {
         assert_eq!(name, "bash");
@@ -438,8 +449,9 @@ async fn test_progress_callback_tool_finished_preview_handles_mid_codepoint_cap(
     let result_content = fired
         .iter()
         .find_map(|e| {
-            if let crate::domain::agent::AgentProgressEvent::ToolFinished {
-                result_content, ..
+            if let crate::domain::agents::agent::AgentProgressEvent::ToolFinished {
+                result_content,
+                ..
             } = e
             {
                 Some(result_content)
