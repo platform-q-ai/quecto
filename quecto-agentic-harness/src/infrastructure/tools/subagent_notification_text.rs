@@ -31,6 +31,7 @@ impl SubagentNotification {
                 shown_label(agent_id),
                 crate::domain::agents::value_objects::child_end::shown(workflow_mode, 32)
             ),
+            Self::SwarmState { agent_id, state } => swarm_state_message(agent_id, state),
             Self::Errored { agent_id, error } => format!(
                 "Agent '{}' failed: {}",
                 shown_label(agent_id),
@@ -65,6 +66,31 @@ impl SubagentNotification {
                 format!("Sub-agent '{}' {end}{observed}.", shown_label(agent_id))
             }
         }
+    }
+}
+
+/// A swarm coordinator's wake note (#2467): the run's state, then where
+/// its report is.
+fn swarm_state_message(agent_id: &str, state: &super::SwarmNoteState) -> String {
+    let label = shown_label(agent_id);
+    match state {
+        super::SwarmNoteState::Finished { status } => format!(
+            "Swarm coordinator '{label}' reports its run {}; its final report is ready: agent_cmd get_messages.",
+            crate::domain::agents::value_objects::child_end::shown(status, 32)
+        ),
+        super::SwarmNoteState::Idle { status } => format!(
+            "Swarm coordinator '{label}' reports its run {} with nothing in flight and no result; it may need a decision: agent_cmd get_messages.",
+            crate::domain::agents::value_objects::child_end::shown(status, 32)
+        ),
+        super::SwarmNoteState::Paused => format!(
+            "Swarm coordinator '{label}' reports its run paused with no result; it may need a decision: agent_cmd get_messages."
+        ),
+        super::SwarmNoteState::Stopped => format!(
+            "Swarm coordinator '{label}' stopped on a failed turn; it may need a resume: agent_cmd get_messages."
+        ),
+        super::SwarmNoteState::Quiet { minutes } => format!(
+            "Swarm coordinator '{label}' has taken no turn for {minutes} min since its board last showed work in flight; check it with agent_cmd get_state or get_messages."
+        ),
     }
 }
 

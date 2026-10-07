@@ -429,6 +429,67 @@ pub(super) async fn date_provider_suspension(ctx: &mut super::uds::DispatchCtx<'
     }
 }
 
+/// This process's turn control: its swarm's run control when it runs under
+/// a container contract, launched as its coordinator or not (#2467).
+pub(super) fn process_turn_control(coordinator: bool) -> super::uds_cancel::TurnControlHandle {
+    let swarm_control = crate::interface::tool_runtime::swarm_context().map(|context| {
+        std::sync::Arc::new(context)
+            as std::sync::Arc<dyn crate::application::swarm::ports::SwarmRunControl>
+    });
+    let turn_control = std::sync::Arc::new(
+        super::uds_cancel::TurnControl::with_swarm_control(swarm_control)
+            .launched_as_coordinator(coordinator),
+    );
+    seed_control_generation(&turn_control);
+    turn_control
+}
+
+/// The idle boundary every drain ends at (#2467): the provider-suspension
+/// dating it always ran, then, for the run's coordinator, the `swarm_state`
+/// its parent wakes on.
+pub(super) async fn at_idle_boundary(ctx: &mut super::uds::DispatchCtx<'_>) {
+    date_provider_suspension(ctx).await;
+    if let Some(event) = coordinator_swarm_state(&ctx.turn_control).await {
+        super::uds::emit_event_to_broadcast_or_writer(ctx, &event).await;
+    }
+}
+
+/// The run's `swarm_state` as this member reports it (#2467): only a
+/// process launched as its run's coordinator reads its board; an unreadable
+/// board is reported as unknown once it has reported before, so its parent
+/// is never left waiting for a state that will not come.
+async fn coordinator_swarm_state(
+    turn_control: &super::uds_cancel::TurnControlHandle,
+) -> Option<super::protocol::AgentEvent> {
+    use crate::domain::swarm::parent_wake::parent_wake;
+    use std::sync::atomic::Ordering;
+    let control = match turn_control.launched_coordinator {
+        true => turn_control.swarm_control.clone()?,
+        false => return None,
+    };
+    let reported = &turn_control.coordinator_reported;
+    let board = control.coordinator_board().await;
+    if let Err(error) = &board {
+        tracing::warn!("swarm_state: coordinator board unreadable: {error}");
+    }
+    let wake = match board {
+        Ok(Some(board)) => {
+            reported.store(true, Ordering::SeqCst);
+            parent_wake(Some(&board))
+        }
+        // After a report, every later boundary reports, so a held turn-end
+        // note always has a state to settle on.
+        Ok(None) | Err(_) if reported.load(Ordering::SeqCst) => parent_wake(None),
+        Ok(None) | Err(_) => return None,
+    };
+    let prompted = turn_control.client_prompted.swap(false, Ordering::SeqCst);
+    Some(super::protocol::AgentEvent::SwarmState {
+        wake: wake.kind(),
+        status: wake.status().map(|status| status_name(status).to_owned()),
+        prompted,
+    })
+}
+
 /// How a coordination-store failure is treated by automatic turns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum StoreFailure {

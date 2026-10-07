@@ -333,7 +333,7 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
         );
         emit_pre_cancelled(ctx).await; // Stale abort (#483).
         drain_and_run_pending(ctx).await;
-        super::uds_swarm_control::date_provider_suspension(ctx).await;
+        super::uds_swarm_control::at_idle_boundary(ctx).await;
         return false;
     };
     let mut message = super::uds_session::command_message(&type_name, message, ctx.messages);
@@ -392,7 +392,7 @@ pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
     drain_pending_and_nudge_turns(ctx).await;
     // #1721: whichever turn failed (prompt, drained or nudged), date its
     // provider-failure suspension by the generation current after it.
-    super::uds_swarm_control::date_provider_suspension(ctx).await;
+    super::uds_swarm_control::at_idle_boundary(ctx).await;
 }
 
 /// The routine save every turn runs before it reports its end (#2218),

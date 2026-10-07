@@ -1515,6 +1515,26 @@ Emitted after the post-turn drain finds no further workflow continuation runnabl
 {"type":"workflow_idle","reason":"exhausted"}
 ```
 
+### `swarm_state`
+
+Emitted only by a process launched as its swarm's coordinator (`--coordinator`, a spawn with `coordinator: true`), at the end of every idle boundary (after pending work and nudges settle), so its parent wakes on the run's state rather than on every idle turn (#2467). Its harness reads the run's board (`_status`, then `_run_totals`) as its own `host` reads.
+
+| `wake` | When | `status` | Parent's monitor |
+|---|---|---|---|
+| `hold` | `setup`/`running` with a task claimed or submitted, or ready work and a free worker | the run's status | no note; one quiet note if no new turn starts within 30 min |
+| `finished` | the run ended: a terminal status, or `paused` holding an outcome | the outcome (`succeeded`, `blocked`, `failed`, `cancelled`, `budget-exhausted`) | one note: the outcome, its final report is ready |
+| `idle` | `setup`/`running` with nothing in flight | the run's status | one note: nothing in flight and no result, may need a decision |
+| `paused` | `paused` with no outcome, whatever is claimed | `paused` | one note: paused with no result, may need a decision |
+| `unknown` | the board could not be read (sent only after an earlier report) | omitted | the ordinary turn-end note |
+
+`prompted` is `true` when a client's `prompt`, `steer` or `follow_up` arrived since the last boundary: the parent then gets the ordinary turn-end note for a `hold` (its reply is due) and the state note otherwise.
+
+Once a launched coordinator has sent one, its parent holds each `agent_end` note until the next `swarm_state` settles it, or sends it as it was if none arrives within 60 s of that turn end. A turn that failed (`agent_error`) keeps its error note and settles nothing over it; the next `swarm_state` reports it once: the state note for `finished`/`idle`/`paused`, otherwise a "stopped on a failed turn" note. A child that never sends one, or that was not launched as a coordinator, keeps the ordinary note on every turn end. Exit and error notes are unchanged; a run-state note never replaces a pending error note, is never coalesced or deduplicated, and makes the same error text news again after it. Notes a timer sends carry a fresh sequence. The quiet note measures coordinator turns, not board activity: a worker's long task with no coordinator turn for 30 min also raises it.
+
+```json
+{"type":"swarm_state","wake":"finished","status":"succeeded","prompted":false}
+```
+
 ### `token`
 
 Incremental text token from the LLM during streaming. Tokens arrive in real time as the model generates them.
@@ -1667,7 +1687,7 @@ Broadcast when the rich tool catalogue changes after `register_tools`, `unregist
 
 ### `subagent_notification`
 
-Passive child-agent notification for human/UI visibility (completion, error, exit).
+Passive child-agent notification for human/UI visibility (completion, error, exit, or a swarm coordinator's run state, #2467).
 
 ```json
 {"type":"subagent_notification","agentId":"reviewer","sequence":3,"message":"child exited"}

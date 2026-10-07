@@ -72,6 +72,17 @@ pub enum AgentEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<WorkflowIdleReason>,
     },
+    /// A swarm coordinator's idle boundary (#2467): what its run's board says
+    /// the parent should hear. Only a process launched as its run's
+    /// coordinator sends it. `prompted`: a client's prompt ran since the
+    /// last boundary, so its reply is due whatever the wake.
+    SwarmState {
+        wake: crate::domain::swarm::parent_wake::WakeKind,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<String>,
+        #[serde(default)]
+        prompted: bool,
+    },
     /// An incremental text token from the LLM during streaming.
     Token { token: String },
     /// A display-safe model thinking/reasoning delta from the LLM during streaming.

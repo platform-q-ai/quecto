@@ -347,3 +347,83 @@ fn absolute_deadline(input: &Value) -> Result<Value, DomainError> {
         _ => Ok(Value::Null),
     }
 }
+
+impl SwarmContext {
+    /// The run as this member reads it if it is the run's coordinator
+    /// (#2467): `_status`, then, for the run's coordinator only,
+    /// `_run_totals`, both recorded as the harness's own reads. Blocking:
+    /// call it off the async workers.
+    pub(crate) fn coordinator_board_now(
+        &self,
+    ) -> Result<
+        Option<crate::domain::swarm::parent_wake::CoordinatorBoard>,
+        crate::domain::error::DomainError,
+    > {
+        let status = self.host_read("_status")?;
+        decode_coordinator_board(&self.member, &status, || self.host_read("_run_totals"))
+    }
+
+    fn host_read(&self, method: &str) -> Result<Value, crate::domain::error::DomainError> {
+        self.board.call_as(
+            self.location(),
+            &self.member,
+            method,
+            json!([]),
+            super::super::swarm_board_dispatch::CallOrigin::Harness,
+        )
+    }
+}
+
+/// The run as its coordinator reads it (#2467), from the board's `_status`
+/// answer and, read only when `member` is the run's coordinator, its
+/// `_run_totals`: `None` for any other member.
+pub(crate) fn decode_coordinator_board(
+    member: &str,
+    status: &Value,
+    totals: impl FnOnce() -> Result<Value, crate::domain::error::DomainError>,
+) -> Result<
+    Option<crate::domain::swarm::parent_wake::CoordinatorBoard>,
+    crate::domain::error::DomainError,
+> {
+    let malformed = |what: &str| {
+        crate::domain::error::DomainError::Tool(format!("coordinator board: {what} missing"))
+    };
+    let coordinator = status
+        .get("coordinator")
+        .and_then(Value::as_str)
+        .ok_or_else(|| malformed("coordinator"))?;
+    match coordinator == member {
+        true => {}
+        false => return Ok(None),
+    }
+    let text = |key: &str| {
+        status
+            .get(key)
+            .and_then(Value::as_str)
+            .ok_or_else(|| malformed(key))
+    };
+    let count = |value: &Value, key: &str| {
+        value
+            .get(key)
+            .and_then(Value::as_i64)
+            .ok_or_else(|| malformed(key))
+    };
+    let outcome = match status.get("outcome") {
+        None | Some(Value::Null) => None,
+        Some(outcome) => Some(decode_status(
+            outcome.as_str().ok_or_else(|| malformed("outcome"))?,
+        )?),
+    };
+    let run_status = decode_status(text("status")?)?;
+    let idle_workers = count(status, "members_without_claim")?;
+    let totals = totals()?;
+    let tasks = totals.get("tasks").ok_or_else(|| malformed("tasks"))?;
+    Ok(Some(crate::domain::swarm::parent_wake::CoordinatorBoard {
+        status: run_status,
+        outcome,
+        ready: count(tasks, "ready")?,
+        claimed: count(tasks, "claimed")?,
+        submitted: count(tasks, "submitted")?,
+        idle_workers,
+    }))
+}

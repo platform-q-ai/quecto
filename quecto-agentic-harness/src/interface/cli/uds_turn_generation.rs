@@ -14,6 +14,9 @@ impl Default for TurnControl {
             pending_steers: std::sync::atomic::AtomicUsize::new(0),
             control_generation: std::sync::atomic::AtomicU64::new(u64::MAX),
             shutting_down: std::sync::atomic::AtomicBool::new(false),
+            coordinator_reported: std::sync::atomic::AtomicBool::new(false),
+            client_prompted: std::sync::atomic::AtomicBool::new(false),
+            launched_coordinator: false,
         }
     }
 }
@@ -63,6 +66,15 @@ impl TurnControl {
         Self {
             swarm_control: control,
             ..Self::default()
+        }
+    }
+
+    /// This turn control, for a process launched as its swarm's
+    /// coordinator or not (#2467).
+    pub fn launched_as_coordinator(self, coordinator: bool) -> Self {
+        Self {
+            launched_coordinator: coordinator,
+            ..self
         }
     }
 }

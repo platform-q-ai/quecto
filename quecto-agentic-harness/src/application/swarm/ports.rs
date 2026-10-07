@@ -134,7 +134,16 @@ pub trait SwarmRunControl: Send + Sync {
     /// rather than at its refresh (#2390). No board call, no model turn,
     /// no prompt, and the wake cursor is left as it is.
     fn nudge_watch(&self);
+    /// The run as its coordinator reads it at an idle boundary (#2467):
+    /// `None` unless this process was launched as its run's coordinator.
+    fn coordinator_board(&self) -> CoordinatorBoardFuture<'_>;
 }
+
+/// [`SwarmRunControl::coordinator_board`]'s answer.
+pub type CoordinatorBoardFuture<'a> = PortFuture<
+    'a,
+    Result<Option<crate::domain::swarm::parent_wake::CoordinatorBoard>, DomainError>,
+>;
 
 // ─── The coordination board (epic #2265, #2270) ─────────────────────────────
 //

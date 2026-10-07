@@ -193,3 +193,7 @@ pub(super) async fn queue_prompt(
 #[cfg(test)]
 #[path = "uds_pending_persist_tests.rs"]
 mod persist_tests;
+
+#[cfg(test)]
+#[path = "uds_swarm_state_tests.rs"]
+mod swarm_state_tests;

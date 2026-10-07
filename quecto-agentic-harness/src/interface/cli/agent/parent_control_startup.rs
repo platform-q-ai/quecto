@@ -37,6 +37,7 @@ pub(super) fn consume(
             bind_deadline: BindDeadline::After(bind_deadline(
                 std::env::var(BIND_DEADLINE_ENV).ok().as_deref(),
             )),
+            coordinator: false,
         })),
         Err(error) => {
             stderr.push_str(&format!("agent: parent control: {error}\n"));
@@ -51,12 +52,15 @@ pub(super) fn consume(
 /// credential behind. `None` when startup must stop with the error on
 /// `stderr`.
 pub(super) fn consume_and_resolve_lifetime(
-    sidecar: Option<&Path>,
+    (sidecar, coordinator): (Option<&Path>, bool),
     persist_requested: bool,
     composed: bool,
     stderr: &mut String,
 ) -> Option<(Option<ParentControlLaunch>, HarnessLifetime)> {
-    let parent_control = consume(sidecar, composed, stderr)?;
+    let parent_control = consume(sidecar, composed, stderr)?.map(|launch| ParentControlLaunch {
+        coordinator,
+        ..launch
+    });
     let lifetime = match HarnessLifetime::resolve(persist_requested, parent_control.is_some()) {
         Ok(lifetime) => lifetime,
         Err(error) => {

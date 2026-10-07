@@ -32,6 +32,7 @@ const STATE_CHANGING_EVENTS: &[&str] = &[
     "\"type\":\"tool_execution_end\"",
     "\"type\":\"workflow_state\"",
     "\"type\":\"workflow_idle\"",
+    "\"type\":\"swarm_state\"",
     "\"command\":\"agent_error\"",
 ];
 
@@ -63,6 +64,8 @@ pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) 
             // retained from the previous run — dropping it here prevents the
             // retry/backstop paths from attributing an old stall to this run.
             entry.pending_stall = None;
+            // A new turn is activity: a held coordinator is not quiet (#2467).
+            entry.coordinator_wake.turn_started();
             // Re-arm the passive-note dedupe: a new run means a future terminal
             // completion must notify again, even if a prior run's completion was
             // already consumed.
@@ -152,6 +155,8 @@ pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) 
             );
             entry.last_error = Some(error.clone());
             entry.run_error = Some(error);
+            // A coordinator's failed turn settles nothing over its error (#2467).
+            entry.coordinator_wake.turn_failed();
             // #1082 review round 2: the run's verdict is now Errored; drop any
             // retained stall so retry/backstop cannot also deliver Stalled.
             entry.pending_stall = None;
@@ -507,6 +512,24 @@ fn apply_and_notify(
         classify_workflow_idle_stall(registry, notify_tx, agent_id, sequence, value);
         return;
     }
+    // A swarm coordinator's parent wakes on the run's state (#2467).
+    if value.get("type").and_then(|v| v.as_str()) == Some("swarm_state") {
+        let quiet_after = swarm_wake::QUIET_AFTER;
+        swarm_wake::classify_swarm_state(
+            registry,
+            notify_tx,
+            agent_id,
+            sequence,
+            value,
+            quiet_after,
+        );
+        return;
+    }
+    if value.get("type").and_then(|v| v.as_str()) == Some("agent_end")
+        && swarm_wake::defer_completion(registry, notify_tx, agent_id, sequence)
+    {
+        return;
+    }
     let note_label = notification_display_label(registry, agent_id);
     let agent_uuid = notification_agent_uuid(registry, agent_id);
     notify_from_parsed(
@@ -629,6 +652,12 @@ mod exit_cascade_tests;
 #[cfg(test)]
 #[path = "subagent_monitor_lifecycle_tests.rs"]
 mod lifecycle_tests;
+#[path = "subagent_monitor/swarm_wake.rs"]
+mod swarm_wake;
+pub use swarm_wake::CoordinatorWake;
+#[cfg(test)]
+#[path = "tests/subagent_monitor_swarm_wake_tests.rs"]
+mod swarm_wake_tests;
 #[cfg(test)]
 #[path = "subagent_monitor_tests.rs"]
 mod tests;
