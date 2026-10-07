@@ -2,12 +2,12 @@
 //! (#1860, D5 #1972): the workflow engine's persisted run and the sub-agent
 //! registry's historical roster rows. Pure mappings from the runtime
 //! objects to domain records; the transaction decides what to do with them.
-use std::sync::{Arc, Mutex};
-
 use crate::application::sessions::ports::{HistoricalRosterSource, WorkflowRunSource};
+use crate::domain::agents::services::child_session::roster_session_key;
+use crate::domain::sessions::entities::session::*;
 use crate::domain::workflow::{WorkflowEngine, WorkflowRunPersisted};
-use crate::domain::{agents::child_session::roster_session_key, sessions::entities::session::*};
 use crate::infrastructure::tools::subagent_registry::SubagentRegistry;
+use std::sync::{Arc, Mutex};
 
 /// The workflow run of a bound workflow engine.
 pub struct WorkflowEngineRunSource(Arc<Mutex<WorkflowEngine>>);

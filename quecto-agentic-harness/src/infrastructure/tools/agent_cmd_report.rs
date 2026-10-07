@@ -1,9 +1,9 @@
 //! The `agent_cmd` default unread report (#1856): the adapter side of the
 //! supervisor's plain `get_messages` read. The child's wire response is
 //! parsed here, the selection and acknowledgement rules are the domain's
-//! (`domain::agents::unread_report`), and the report budget, receipt and envelope
+//! (`domain::agents::services::unread_report`), and the report budget, receipt and envelope
 //! shaping stay with this tool.
-use crate::domain::agents::unread_report::{
+use crate::domain::agents::services::unread_report::{
     ReportedMessage, UnreadSelection, acknowledged_report_index, later_than, needs_backfill,
     select_unread, select_unread_without_report, skipped_unread,
 };

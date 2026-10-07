@@ -1,7 +1,7 @@
 //! Boundary request/result models for the subagent teardown capability.
 use std::fmt;
 
-use crate::domain::agents::subagent_teardown::{
+use crate::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, RoutingDepth, ShutdownReason, TerminationRouteError,
 };
 use crate::domain::ids::AgentUuid;

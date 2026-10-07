@@ -6,7 +6,7 @@ use crate::application::subagent_launch::{
     LaunchFuture, LaunchIdentity, PreparedRuntime, RegisteredLaunch, SubagentLaunchPorts,
     SubagentLaunchUseCase,
 };
-use crate::domain::agents::subagent::{ContainerSelection, SubagentConfig};
+use crate::domain::agents::services::subagent::{ContainerSelection, SubagentConfig};
 use crate::domain::error::DomainError;
 use crate::domain::tool::ToolResult;
 

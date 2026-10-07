@@ -7,7 +7,7 @@ use quecto::application::subagents::dto::HarnessShutdownError;
 use quecto::application::subagents::ports::{
     CompositionExitReadiness, ExitReadiness, SubagentLifecycleRepository,
 };
-use quecto::domain::agents::subagent_teardown::{HarnessLifecycleState, ShutdownReason};
+use quecto::domain::agents::services::subagent_teardown::{HarnessLifecycleState, ShutdownReason};
 
 use super::teardown_fixture::{Exit, Harness, root_tree};
 

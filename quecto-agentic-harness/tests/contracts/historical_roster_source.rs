@@ -33,7 +33,7 @@ fn every_entry_becomes_one_history_row_with_the_default_reason() {
             "/tmp/w.sock".into(),
             4242,
         );
-        worker.origin = quecto::domain::agents::child_end::ChildOrigin::Launched;
+        worker.origin = quecto::domain::agents::value_objects::child_end::ChildOrigin::Launched;
         worker.persisted_liveness = SubagentLiveness::Detached;
         worker.parent_id = Some("parent".into());
         worker.read_only = true;
@@ -66,7 +66,7 @@ fn a_reported_row_records_no_session() {
         "/tmp/s.sock".into(),
         0,
     );
-    reported.origin = quecto::domain::agents::child_end::ChildOrigin::Reported;
+    reported.origin = quecto::domain::agents::value_objects::child_end::ChildOrigin::Reported;
     registry
         .lock()
         .unwrap()

@@ -126,7 +126,7 @@ fn given_script_member(world: &mut QuectoWorld) {
         0,
     );
     entry.launch_generation =
-        Some(quecto::domain::agents::subagent_teardown::LaunchGeneration::new(7_001));
+        Some(quecto::domain::agents::services::subagent_teardown::LaunchGeneration::new(7_001));
     entry.cleanup_environment_id = Some("env-member".into());
     entry.cleanup_argv = vec![script.display().to_string()];
     harness

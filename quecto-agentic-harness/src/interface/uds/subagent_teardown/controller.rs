@@ -188,7 +188,7 @@ impl SubagentTeardownController {
             delivery,
             PrepareShutdownRequest {
                 reason:
-                    crate::domain::agents::subagent_teardown::ShutdownReason::ParentConnectionLost,
+                    crate::domain::agents::services::subagent_teardown::ShutdownReason::ParentConnectionLost,
                 trigger:
                     crate::application::subagents::dto::ShutdownTrigger::ParentConnectionClosed,
             },
@@ -203,7 +203,7 @@ impl SubagentTeardownController {
         self.parent_gone(
             delivery,
             PrepareShutdownRequest {
-                reason: crate::domain::agents::subagent_teardown::ShutdownReason::ParentNeverBound,
+                reason: crate::domain::agents::services::subagent_teardown::ShutdownReason::ParentNeverBound,
                 trigger: crate::application::subagents::dto::ShutdownTrigger::ParentNeverBound,
             },
         )
@@ -218,7 +218,7 @@ impl SubagentTeardownController {
         self.triggered_without_ack(
             delivery,
             PrepareShutdownRequest {
-                reason: crate::domain::agents::subagent_teardown::ShutdownReason::TerminationSignal,
+                reason: crate::domain::agents::services::subagent_teardown::ShutdownReason::TerminationSignal,
                 trigger: crate::application::subagents::dto::ShutdownTrigger::TerminationSignal,
             },
         )
@@ -234,7 +234,7 @@ impl SubagentTeardownController {
         self.triggered_without_ack(
             delivery,
             PrepareShutdownRequest {
-                reason: crate::domain::agents::subagent_teardown::ShutdownReason::OperatorRequest,
+                reason: crate::domain::agents::services::subagent_teardown::ShutdownReason::OperatorRequest,
                 trigger:
                     crate::application::subagents::dto::ShutdownTrigger::LastClientDisconnected,
             },

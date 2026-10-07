@@ -328,14 +328,18 @@ fn forgetting_retention_rewrites_only_a_stub_and_drops_every_spill_id() {
 }
 
 /// The reported view of `messages` an unread read selects from.
-fn reported(messages: &[Message]) -> Vec<crate::domain::agents::unread_report::ReportedMessage> {
+fn reported(
+    messages: &[Message],
+) -> Vec<crate::domain::agents::services::unread_report::ReportedMessage> {
     messages
         .iter()
-        .map(|m| crate::domain::agents::unread_report::ReportedMessage {
-            ordinal: m.ordinal,
-            substantive_assistant: crate::domain::turn_origin::is_substantive_reply(m),
-            origin: m.turn_origin,
-        })
+        .map(
+            |m| crate::domain::agents::services::unread_report::ReportedMessage {
+                ordinal: m.ordinal,
+                substantive_assistant: crate::domain::turn_origin::is_substantive_reply(m),
+                origin: m.turn_origin,
+            },
+        )
         .collect()
 }
 
@@ -345,7 +349,7 @@ fn reported(messages: &[Message]) -> Vec<crate::domain::agents::unread_report::R
 /// the head, ordinals stay strictly increasing in transcript order.
 #[test]
 fn the_stub_takes_the_ordinal_of_the_newest_message_it_replaces() {
-    use crate::domain::agents::unread_report::{UnreadSelection, select_unread};
+    use crate::domain::agents::services::unread_report::{UnreadSelection, select_unread};
     let mut messages = session();
     for n in 1..6 {
         exchange(&mut messages, &format!("now-{n}"), 2_000);

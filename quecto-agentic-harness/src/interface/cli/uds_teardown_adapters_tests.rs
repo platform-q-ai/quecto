@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use super::*;
-use crate::domain::agents::subagent_teardown::LaunchGeneration;
+use crate::domain::agents::services::subagent_teardown::LaunchGeneration;
 use crate::infrastructure::tools::subagent_registry::SubagentEntry;
 use crate::interface::cli::uds_cancel::{CancelSlot, TurnControl};
 

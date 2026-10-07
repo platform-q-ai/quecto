@@ -30,7 +30,7 @@ fn a_childs_session_name_is_its_uuid_and_names_its_identity() {
 /// session.
 #[test]
 fn only_a_launched_childs_roster_row_names_its_session() {
-    use crate::domain::agents::child_end::ChildOrigin;
+    use crate::domain::agents::value_objects::child_end::ChildOrigin;
     let child = AgentUuid::new("secret-plan");
     assert_eq!(
         roster_session_key(&child, ChildOrigin::Launched),

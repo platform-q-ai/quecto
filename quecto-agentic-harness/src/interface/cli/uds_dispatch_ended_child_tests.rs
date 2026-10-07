@@ -22,7 +22,7 @@ fn ended_child() -> SubagentRegistry {
         "/tmp/dead.sock".into(),
         0,
     );
-    entry.origin = crate::domain::agents::child_end::ChildOrigin::Launched;
+    entry.origin = crate::domain::agents::value_objects::child_end::ChildOrigin::Launched;
     entry.status = SubagentStatus::Exited;
     entry.persisted_liveness = SubagentLiveness::Dead;
     registry.lock().unwrap().insert("dead-child".into(), entry);
@@ -146,7 +146,7 @@ async fn a_uuid_that_names_no_session_is_refused_for_what_it_is() {
         "/tmp/odd.sock".into(),
         0,
     );
-    entry.origin = crate::domain::agents::child_end::ChildOrigin::Launched;
+    entry.origin = crate::domain::agents::value_objects::child_end::ChildOrigin::Launched;
     entry.persisted_liveness = SubagentLiveness::Dead;
     registry.lock().unwrap().insert("has space".into(), entry);
     let mut ctx = fx.ctx();
@@ -185,7 +185,7 @@ async fn a_reported_row_does_not_open_another_sessions_transcript() {
         "/tmp/s.sock".into(),
         0,
     );
-    reported.origin = crate::domain::agents::child_end::ChildOrigin::Reported;
+    reported.origin = crate::domain::agents::value_objects::child_end::ChildOrigin::Reported;
     reported.status = SubagentStatus::Exited;
     reported.persisted_liveness = SubagentLiveness::Dead;
     registry

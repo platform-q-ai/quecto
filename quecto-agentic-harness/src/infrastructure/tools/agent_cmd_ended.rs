@@ -8,7 +8,7 @@ use std::sync::{Arc, OnceLock};
 use crate::application::subagents::use_cases::{
     EndedTranscriptError, EndedTranscriptPage, InspectEndedChild,
 };
-use crate::domain::agents::child_end::{
+use crate::domain::agents::value_objects::child_end::{
     ChildEnd, ChildOrigin, MAX_SHOWN_NAME_BYTES, MAX_SHOWN_PANIC_BYTES, shown,
 };
 use crate::domain::ids::AgentUuid;

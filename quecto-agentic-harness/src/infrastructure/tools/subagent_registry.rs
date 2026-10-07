@@ -9,7 +9,9 @@ use transport::{
     with_operation_deadline,
 };
 
-use crate::domain::agents::subagent::{DisplayNameResolutionEntry, resolve_live_display_name};
+use crate::domain::agents::services::subagent::{
+    DisplayNameResolutionEntry, resolve_live_display_name,
+};
 use crate::domain::ids::AgentUuid;
 use crate::domain::sessions::entities::session::SubagentLiveness;
 use std::collections::{HashMap, VecDeque};
@@ -43,18 +45,20 @@ pub struct SubagentEntry {
     /// Launch generation minted by this harness for a child it launched
     /// itself (#1935). `None` for merged descendants, restored rows and
     /// fixtures: they are never direct children of this harness.
-    pub launch_generation: Option<crate::domain::agents::subagent_teardown::LaunchGeneration>,
+    pub launch_generation:
+        Option<crate::domain::agents::services::subagent_teardown::LaunchGeneration>,
     /// Where the row came from, as far as this harness vouches for it
     /// (#2192 review): `Launched` only for a child this harness launched
     /// itself — the one kind of row a child's report never overwrites, and
     /// the only one whose transcript its parent reads.
-    pub origin: crate::domain::agents::child_end::ChildOrigin,
+    pub origin: crate::domain::agents::value_objects::child_end::ChildOrigin,
     /// Launch generation a descendant was reported with by the harness that
     /// launched it (#1936). Together with `parent_id` it makes a merged row
     /// addressable for selected termination — routed one edge at a time
     /// through its direct ancestor, never signalled from here. `None` for
     /// rows this harness launched itself and for legacy snapshots.
-    pub reported_generation: Option<crate::domain::agents::subagent_teardown::LaunchGeneration>,
+    pub reported_generation:
+        Option<crate::domain::agents::services::subagent_teardown::LaunchGeneration>,
     /// Per-row teardown phase (#1936): the claims every termination path
     /// (kill, reaper, monitor EOF, rollback, reported prune) takes so the
     /// row's terminal effects run exactly once, observable by waiters.
@@ -160,11 +164,11 @@ impl SubagentEntry {
     /// a child this harness launched.
     pub fn parent_facing_label(&self, registry_key: &str) -> String {
         match self.origin {
-            crate::domain::agents::child_end::ChildOrigin::Reported => {
+            crate::domain::agents::value_objects::child_end::ChildOrigin::Reported => {
                 format!("reported:{registry_key}")
             }
-            crate::domain::agents::child_end::ChildOrigin::Launched
-            | crate::domain::agents::child_end::ChildOrigin::Unverified => {
+            crate::domain::agents::value_objects::child_end::ChildOrigin::Launched
+            | crate::domain::agents::value_objects::child_end::ChildOrigin::Unverified => {
                 self.effective_display_name(registry_key).to_string()
             }
         }
@@ -186,11 +190,11 @@ impl SubagentEntry {
     /// are not delegated agents (fixtures, stubs, restored rows).
     pub fn delegated_identity(
         &self,
-    ) -> Option<crate::domain::agents::subagent_teardown::DelegatedAgentIdentity> {
+    ) -> Option<crate::domain::agents::services::subagent_teardown::DelegatedAgentIdentity> {
         self.launch_generation
             .or(self.reported_generation)
             .map(|generation| {
-                crate::domain::agents::subagent_teardown::DelegatedAgentIdentity::new(
+                crate::domain::agents::services::subagent_teardown::DelegatedAgentIdentity::new(
                     self.agent_uuid.clone(),
                     generation,
                 )
@@ -242,7 +246,7 @@ impl SubagentEntry {
             pid,
             process_owner: ProcessOwner::DirectPid,
             launch_generation: None,
-            origin: crate::domain::agents::child_end::ChildOrigin::Unverified,
+            origin: crate::domain::agents::value_objects::child_end::ChildOrigin::Unverified,
             reported_generation: None,
             teardown: new_teardown_phase(),
             owned_child: None,
@@ -289,7 +293,7 @@ impl SubagentEntry {
 pub fn resolve_registry_key(
     entries: &HashMap<String, SubagentEntry>,
     agent_ref: &str,
-) -> Result<String, crate::domain::agents::subagent::DisplayNameResolveError> {
+) -> Result<String, crate::domain::agents::services::subagent::DisplayNameResolveError> {
     if entries.contains_key(agent_ref) {
         return Ok(agent_ref.to_string());
     }
@@ -431,10 +435,10 @@ pub fn lookup_subagent_socket(
 ) -> Result<PathBuf, String> {
     let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
     let key = resolve_registry_key(&entries, agent_id).map_err(|err| match err {
-        crate::domain::agents::subagent::DisplayNameResolveError::NoLiveMatch { display_name } => {
+        crate::domain::agents::services::subagent::DisplayNameResolveError::NoLiveMatch { display_name } => {
             format!("no live subagent named '{display_name}' (not found)")
         }
-        crate::domain::agents::subagent::DisplayNameResolveError::AmbiguousLiveMatch {
+        crate::domain::agents::services::subagent::DisplayNameResolveError::AmbiguousLiveMatch {
             display_name,
         } => {
             format!("duplicate live subagent display label '{display_name}'")
@@ -687,7 +691,7 @@ pub fn new_notification_channel() -> (NotificationTx, NotificationRx) {
 }
 
 /// Validate an agent_id string for format (shared between spawn and agent_cmd).
-pub use crate::domain::agents::subagent::validate_agent_id_format;
+pub use crate::domain::agents::services::subagent::validate_agent_id_format;
 
 /// Snapshot of workflow state reported by a subagent.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]

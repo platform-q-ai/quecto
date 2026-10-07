@@ -12,7 +12,9 @@ use cucumber::{given, then, when};
 use quecto::application::sessions::ports::SessionStore;
 use quecto::application::tools::ports::Tool;
 use quecto::composition::subagent_teardown::build_teardown_graph;
-use quecto::domain::agents::harness_lifetime::{HarnessLifetime, HarnessLifetimeError};
+use quecto::domain::agents::value_objects::harness_lifetime::{
+    HarnessLifetime, HarnessLifetimeError,
+};
 use quecto::domain::message::Message;
 use quecto::domain::sessions::entities::session::Session;
 use quecto::domain::sessions::entities::session_identity::SessionIdentity;

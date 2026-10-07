@@ -348,10 +348,20 @@ fn domain() -> PathBuf {
 
 #[test]
 fn agent_modules_live_under_domain_agents() {
-    let expected_paths: Vec<_> = AGENT_MODULES
-        .iter()
-        .map(|name| domain().join("agents").join(format!("{name}.rs")))
-        .collect();
+    let expected_paths: Vec<_> = [
+        "value_objects/agent.rs",
+        "value_objects/subagent_launch.rs",
+        "services/subagent.rs",
+        "services/subagent_teardown.rs",
+        "entities/parent_control.rs",
+        "value_objects/harness_lifetime.rs",
+        "value_objects/child_end.rs",
+        "services/child_session.rs",
+        "services/unread_report.rs",
+    ]
+    .iter()
+    .map(|path| domain().join("agents").join(path))
+    .collect();
     assert!(
         expected_paths.iter().all(|path| path.is_file()),
         "expected in src/domain/agents/: {expected_paths:?}"

@@ -7,7 +7,7 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use crate::domain::agents::subagent::{ContainerSelection, SubagentConfig};
+use crate::domain::agents::services::subagent::{ContainerSelection, SubagentConfig};
 use crate::domain::external_agent::backend::{BackendLaunchContext, MemberBackend};
 
 /// Parse the spawn tool's `backend` argument (#2287): absent or null is
@@ -172,7 +172,7 @@ impl super::spawn::SpawnTool {
     ) -> Vec<crate::infrastructure::config::extensions::ExtensionConfig> {
         let local = matches!(
             config.container,
-            crate::domain::agents::subagent::ContainerSelection::Local
+            crate::domain::agents::services::subagent::ContainerSelection::Local
         );
         match local {
             true => self.child_extensions.clone(),

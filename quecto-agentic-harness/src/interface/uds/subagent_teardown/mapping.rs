@@ -3,7 +3,7 @@
 use crate::application::subagents::dto::{
     PrepareShutdownRequest, ShutdownTrigger, TerminateDelegatedAgentRequest,
 };
-use crate::domain::agents::subagent_teardown::{
+use crate::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, LaunchGeneration, RoutingDepth, ShutdownReason,
 };
 

@@ -10,7 +10,7 @@ use quecto::application::subagents::dto::{
 use quecto::application::subagents::ports::{
     ExitObservation, ResolutionError, TerminationConclusion,
 };
-use quecto::domain::agents::subagent_teardown::{
+use quecto::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, LaunchGeneration, TerminationRouteError,
 };
 use quecto::domain::ids::AgentUuid;

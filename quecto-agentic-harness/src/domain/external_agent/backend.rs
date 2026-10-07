@@ -6,7 +6,7 @@
 //! keeps that brain to swarm **workers**: the coordinator launches them into
 //! its own container, and they run no workflow and take no effort.
 
-use crate::domain::agents::subagent::{ContainerSelection, SubagentConfig};
+use crate::domain::agents::services::subagent::{ContainerSelection, SubagentConfig};
 use crate::domain::error::DomainError;
 
 /// The brain a member harness runs.

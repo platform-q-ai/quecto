@@ -3,7 +3,7 @@
 
 use cucumber::then;
 use quecto::application::subagents::dto::{ReleaseOutcome, TerminationRouted};
-use quecto::domain::agents::subagent_teardown::{LaunchGeneration, ShutdownReason};
+use quecto::domain::agents::services::subagent_teardown::{LaunchGeneration, ShutdownReason};
 use quecto::domain::ids::AgentUuid;
 use quecto::interface::uds::subagent_teardown::controller::ControllerOutcome;
 use quecto::interface::uds::subagent_teardown::presenter::AckWriteError;

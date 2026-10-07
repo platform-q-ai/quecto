@@ -184,7 +184,8 @@ pub struct MonitorSpec {
     /// The launch-bound parent control credential to present first (#1935).
     /// `Some` only for a child this harness launched; the monitor of any
     /// other connection presents nothing and is an ordinary client.
-    pub parent_control: Option<crate::domain::agents::parent_control::ParentControlCredential>,
+    pub parent_control:
+        Option<crate::domain::agents::entities::parent_control::ParentControlCredential>,
     /// Where the connection's end is reported (#1936): the exit observation
     /// use case that claims or joins the child's exactly-once compensation.
     pub observer: std::sync::Arc<crate::application::subagents::use_cases::ObserveOwnedChildExit>,

@@ -301,7 +301,7 @@ impl AgentSession {
     pub fn record_agent_result(
         &mut self,
         session_key: &str,
-        result: &crate::domain::agents::agent::AgentResult,
+        result: &crate::domain::agents::value_objects::agent::AgentResult,
     ) {
         self.context_tokens = result.context_tokens;
         self.record_usage(

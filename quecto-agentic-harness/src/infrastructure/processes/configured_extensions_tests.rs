@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::agents::configured_extensions::AgentRole;
+use crate::domain::agents::entities::configured_extensions::AgentRole;
 
 fn spec(name: &str, command: &str, args: &[&str]) -> ExtensionSpec {
     ExtensionSpec {

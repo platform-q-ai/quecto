@@ -160,7 +160,7 @@ serialization for UDS-visible events.
 
 **Production files usually involved:**
 
-- `src/domain/agents/agent.rs` for `AgentProgressEvent` changes.
+- `src/domain/agents/value_objects/agent.rs` for `AgentProgressEvent` changes.
 - `src/application/agent_loop*.rs` where progress is emitted.
 - `src/interface/cli/uds_cancel.rs`, `uds_snapshots.rs`, or `protocol.rs` for
   UDS event conversion.
@@ -256,7 +256,7 @@ or `agent_cmd` surface that exposes it.
 
 **Production files usually involved:**
 
-- `src/domain/agents/subagent.rs` for shared validation or vocabulary.
+- `src/domain/agents/services/subagent.rs` for shared validation or vocabulary.
 - `src/infrastructure/tools/spawn*.rs`, `subagent_registry.rs`,
   `subagent_monitor*.rs`, `subagent_lifecycle.rs`, and
   `subagent_lifecycle.rs` and `subagent_registry.rs` for process/run state.

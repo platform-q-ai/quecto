@@ -9,7 +9,7 @@ use crate::application::subagents::dto::{
     TerminationRouted,
 };
 use crate::application::subagents::ports::DownstreamRejection;
-use crate::domain::agents::subagent_teardown::TerminationRouteError;
+use crate::domain::agents::services::subagent_teardown::TerminationRouteError;
 
 use super::wire::{
     SHUTDOWN_COMMAND, TERMINATE_DELEGATED_AGENT_COMMAND, TeardownResponse, TeardownResponseData,

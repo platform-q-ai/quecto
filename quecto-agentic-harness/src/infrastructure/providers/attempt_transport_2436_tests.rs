@@ -8,7 +8,7 @@ use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::agent_turn::ports::AgentLoop;
 use crate::application::ports::AttemptAcquisition;
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
-use crate::domain::agents::agent::AgentProgressEvent;
+use crate::domain::agents::value_objects::agent::AgentProgressEvent;
 use crate::domain::inference::events::request_completion::{RequestCompleted, RequestOutcome};
 use crate::domain::message::Message;
 use std::sync::atomic::{AtomicU32, Ordering};

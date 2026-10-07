@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::agents::agent::AgentProgressEvent;
+use crate::domain::agents::value_objects::agent::AgentProgressEvent;
 use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::message::{LlmResponse, Message, UsageInfo};
 use std::sync::Arc;

@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::domain::agents::subagent::SubagentConfig;
+use crate::domain::agents::services::subagent::SubagentConfig;
 use crate::domain::ids::AgentUuid;
 
 pub(super) fn inherited_runtime_config_path() -> Option<PathBuf> {
@@ -24,12 +24,12 @@ pub(super) fn effective_config_path(
 /// the child, inside it, has no checkout overlay to bind). A local child
 /// keeps the explicit, then inherited, chain.
 pub(super) fn forwarded_config_path(
-    container: &crate::domain::agents::subagent::ContainerSelection,
+    container: &crate::domain::agents::services::subagent::ContainerSelection,
     explicit_config_path: Option<&PathBuf>,
     parent_config_path: Option<&PathBuf>,
 ) -> Option<PathBuf> {
     match container {
-        crate::domain::agents::subagent::ContainerSelection::Local => {
+        crate::domain::agents::services::subagent::ContainerSelection::Local => {
             effective_config_path(explicit_config_path, inherited_runtime_config_path())
         }
         _ => explicit_config_path
@@ -42,7 +42,7 @@ pub(super) fn forwarded_config_path(
 /// Always the minted AgentUuid — never the user-facing display label; the
 /// domain names it so the parent reads back the session the child opens.
 pub(super) fn child_session_key(agent_uuid: &AgentUuid) -> &str {
-    crate::domain::agents::child_session::child_session_name(agent_uuid)
+    crate::domain::agents::services::child_session::child_session_name(agent_uuid)
 }
 
 /// Socket path for a spawned child, keyed by AgentUuid (#1378).
@@ -88,7 +88,7 @@ pub(super) fn initial_registry_entry(spec: InitialRegistryEntrySpec<'_>) -> Suba
     );
     // The one place a row is vouched for as this harness's own child
     // (#2192 review): every launch, stub mode included, registers through it.
-    entry.origin = crate::domain::agents::child_end::ChildOrigin::Launched;
+    entry.origin = crate::domain::agents::value_objects::child_end::ChildOrigin::Launched;
     entry.exit_signal_tx = spec.exit_signal_tx;
     entry.cleanup_environment_id = spec.cleanup_environment_id;
     entry.cleanup_argv = spec.cleanup_argv;

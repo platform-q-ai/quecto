@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::agents::configured_extensions::{ExtensionSpec, check_placeholders};
+use crate::domain::agents::entities::configured_extensions::{ExtensionSpec, check_placeholders};
 
 use super::ConfigError;
 

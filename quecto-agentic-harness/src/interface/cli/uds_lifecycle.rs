@@ -39,7 +39,7 @@ pub struct UdsLoopArgs<'a> {
     pub catalogue: super::catalogue_handles::CatalogueHandles,
     pub ext_registry: Option<super::uds_extensions::ExtRegistry>,
     /// How long this harness lives (#1937): decided once at startup.
-    pub lifetime: crate::domain::agents::harness_lifetime::HarnessLifetime,
+    pub lifetime: crate::domain::agents::value_objects::harness_lifetime::HarnessLifetime,
     pub notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
     pub subagent_registry:
         Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
@@ -59,7 +59,7 @@ pub struct UdsLoopArgs<'a> {
     /// Composition's teardown handles builder; `None` runs the loop without
     /// the teardown edge (unit rigs) and is refused for a launched child.
     pub teardown_graph: Option<super::TeardownHandlesBuilder>,
-    pub extensions: crate::domain::agents::configured_extensions::AgentExtensions, // #2446
+    pub extensions: crate::domain::agents::entities::configured_extensions::AgentExtensions, // #2446
 }
 pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
     let rt = match crate::interface::cli::build_tokio_runtime() {

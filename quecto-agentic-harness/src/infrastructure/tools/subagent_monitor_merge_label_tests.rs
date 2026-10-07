@@ -77,7 +77,7 @@ fn a_descendants_last_tool_and_error_are_capped_as_a_direct_childs_are() {
 /// crash record is checked against), its parent, its label or its origin.
 #[test]
 fn a_child_cannot_merge_over_a_row_this_harness_launched() {
-    use crate::domain::agents::child_end::ChildOrigin;
+    use crate::domain::agents::value_objects::child_end::ChildOrigin;
     use crate::infrastructure::tools::subagent_registry::SubagentEntry;
     let sibling = "65268567-be4a-471f-a805-1238dcf08b68";
     let registry = new_registry();
@@ -105,7 +105,7 @@ fn a_child_cannot_merge_over_a_row_this_harness_launched() {
 
 #[test]
 fn a_reported_row_is_marked_reported_even_over_a_restored_one() {
-    use crate::domain::agents::child_end::ChildOrigin;
+    use crate::domain::agents::value_objects::child_end::ChildOrigin;
     use crate::infrastructure::tools::subagent_registry::SubagentEntry;
     let registry = new_registry();
     let restored = SubagentEntry::with_identity(

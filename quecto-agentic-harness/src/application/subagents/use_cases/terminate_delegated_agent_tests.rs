@@ -4,7 +4,7 @@ use super::*;
 use crate::application::subagents::dto::{
     TerminateDelegatedAgentError, TerminateDelegatedAgentRequest, TerminationRouted,
 };
-use crate::domain::agents::subagent_teardown::{
+use crate::domain::agents::services::subagent_teardown::{
     HarnessLifecycleState, LaunchGeneration, LineageSnapshot, RoutingDepth, ShutdownReason,
     TerminationRouteError,
 };

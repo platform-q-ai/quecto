@@ -38,7 +38,8 @@ async fn the_exit_persist_announces_on_the_reader_task_and_its_close_withdraws()
             turn_control: args.turn_control.clone(),
             busy: args.busy.clone(),
             exit_notify: Arc::new(tokio::sync::Notify::new()),
-            binding: crate::domain::agents::parent_control::ParentControlBinding::unlaunched(),
+            binding:
+                crate::domain::agents::entities::parent_control::ParentControlBinding::unlaunched(),
             owner_exit: flag.clone(),
             environment_control: None,
         },

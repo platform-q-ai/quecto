@@ -21,7 +21,7 @@ use quecto::application::subagents::use_cases::{
     ExecuteHarnessShutdown, ExecuteHarnessShutdownPorts, HarnessShutdownTransaction,
     PrepareHarnessShutdown, TerminateAllDelegatedAgents, TerminateAllDelegatedAgentsPorts,
 };
-use quecto::domain::agents::subagent_teardown::{
+use quecto::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, HarnessLifecycleState, LaunchGeneration, LineageRecord,
     LineageSnapshot, RoutingDepth, ShutdownReason,
 };

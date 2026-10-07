@@ -12,7 +12,7 @@ use super::recv::{DispatchMsg, recv_next_message};
 use super::{
     AgentEvent, ClientMessage, DispatchCtx, DispatchLoopArgs, emit_event_to_broadcast_or_writer,
 };
-use crate::domain::agents::configured_extensions::REGISTRATION_WAIT;
+use crate::domain::agents::entities::configured_extensions::REGISTRATION_WAIT;
 use crate::interface::cli::uds_extensions::{Extensions, extension_clients, extension_of};
 
 /// The start-up wait for the configured extensions: until they have
@@ -160,7 +160,7 @@ pub(super) fn end_with_the_fleet(
     extensions: &Extensions,
     lifecycle: Option<crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle>,
 ) {
-    use crate::domain::agents::subagent_teardown::HarnessLifecycleState;
+    use crate::domain::agents::services::subagent_teardown::HarnessLifecycleState;
     let (Some(extensions), Some(lifecycle)) = (extensions.clone(), lifecycle) else {
         return;
     };
@@ -192,7 +192,7 @@ pub(super) async fn shut_down(extensions: &Extensions) {
 pub(super) async fn disconnected(
     ctx: &mut DispatchCtx<'_>,
     client_id: u64,
-    lifetime: crate::domain::agents::harness_lifetime::HarnessLifetime,
+    lifetime: crate::domain::agents::value_objects::harness_lifetime::HarnessLifetime,
     live_clients: &AtomicU32,
 ) -> bool {
     let client = extension_of(&ctx.client_tool_registry, client_id).is_none();

@@ -91,9 +91,10 @@ fn notify_tool_catalogue_changed_emits_event_when_catalogue_differs() {
     registry.register(Arc::new(MockTool::new("alpha", "ok")));
     let events: Arc<Mutex<Vec<AgentProgressEvent>>> = Arc::new(Mutex::new(Vec::new()));
     let events_clone = events.clone();
-    let callback: crate::domain::agents::agent::ProgressCallback = Arc::new(move |ev| {
-        events_clone.lock().unwrap().push(ev);
-    });
+    let callback: crate::domain::agents::value_objects::agent::ProgressCallback =
+        Arc::new(move |ev| {
+            events_clone.lock().unwrap().push(ev);
+        });
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         progress_callback: Some(callback),
         ..test_config(provider, Box::new(registry))

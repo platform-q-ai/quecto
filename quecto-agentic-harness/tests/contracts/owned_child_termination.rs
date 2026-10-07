@@ -9,7 +9,9 @@ use std::time::Duration;
 use quecto::application::subagents::ports::{
     ConclusionBudget, OwnedChildTermination, ProtocolAttempt, TerminationConclusion,
 };
-use quecto::domain::agents::subagent_teardown::{DelegatedAgentIdentity, LaunchGeneration};
+use quecto::domain::agents::services::subagent_teardown::{
+    DelegatedAgentIdentity, LaunchGeneration,
+};
 use quecto::domain::ids::AgentUuid;
 use quecto::infrastructure::processes::owned_child_supervisor::{
     ChildHandleId, OwnedChildSupervisor, ProcessGroup, SentSignal, TerminationBudget,

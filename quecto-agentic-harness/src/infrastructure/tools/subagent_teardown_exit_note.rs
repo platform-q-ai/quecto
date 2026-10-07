@@ -46,11 +46,13 @@ impl RegistryDelegatedAgents {
         // How the end was observed stays in the note (#2192 review), as it
         // does when nothing else is known.
         let reason = match (end.kind(), &end.crash) {
-            (crate::domain::agents::child_end::EndKind::Unknown, None) => return None,
+            (crate::domain::agents::value_objects::child_end::EndKind::Unknown, None) => {
+                return None;
+            }
             _ => format!(
                 "{} ({})",
                 end.reason(),
-                crate::domain::agents::child_end::shown(observation, 64)
+                crate::domain::agents::value_objects::child_end::shown(observation, 64)
             ),
         };
         // The transcript is offered only when it can be read (#2192

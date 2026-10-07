@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use quecto::application::sessions::ports::DelegatedChildrenRoster;
-use quecto::domain::agents::subagent_teardown::LaunchGeneration;
+use quecto::domain::agents::services::subagent_teardown::LaunchGeneration;
 use quecto::domain::sessions::entities::session::SubagentLiveness;
 use quecto::infrastructure::tools::delegated_roster::RegistryDelegatedRoster;
 use quecto::infrastructure::tools::subagent_registry::{

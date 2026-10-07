@@ -70,10 +70,10 @@ pub fn resolve_inspection_route(
 ) -> Result<InspectionRoute, String> {
     let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
     let target_key = resolve_registry_key(&entries, target_ref).map_err(|err| match err {
-        crate::domain::agents::subagent::DisplayNameResolveError::NoLiveMatch { display_name } => {
+        crate::domain::agents::services::subagent::DisplayNameResolveError::NoLiveMatch { display_name } => {
             format!("no live subagent named '{display_name}' (not found)")
         }
-        crate::domain::agents::subagent::DisplayNameResolveError::AmbiguousLiveMatch {
+        crate::domain::agents::services::subagent::DisplayNameResolveError::AmbiguousLiveMatch {
             display_name,
         } => {
             format!("duplicate live subagent display label '{display_name}'")

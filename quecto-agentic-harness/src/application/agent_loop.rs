@@ -13,10 +13,9 @@ use crate::application::providers::ports::LlmProvider;
 use crate::application::tools::ports::{
     RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog, ToolExecutor, ToolRegistry,
 };
-use crate::domain::agents::agent::{AgentInfo, AgentProgressEvent, AgentResult, ProgressCallback};
-use crate::domain::audit::AuditEvent;
+use crate::domain::agents::value_objects::agent::{AgentInfo, AgentProgressEvent};
+use crate::domain::agents::value_objects::agent::{AgentResult, ProgressCallback};
 use crate::domain::conversation::reply_requirement::ReplyRequirement;
-use crate::domain::error::DomainError;
 use crate::domain::inference::events::request_observation::{
     InputBaseline, RequestDiagnostics, RequestObservation,
 };
@@ -25,6 +24,7 @@ use crate::domain::inference::value_objects::provider::{EffortLevel, StreamEvent
 use crate::domain::message::{LlmResponse, Message, ToolCall};
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::domain::tool::{ToolPolicyReconciliation, ToolProfileContext};
+use crate::domain::{audit::AuditEvent, error::DomainError};
 use std::{pin::Pin, sync::Arc};
 
 pub type ToolPolicyPersistence =

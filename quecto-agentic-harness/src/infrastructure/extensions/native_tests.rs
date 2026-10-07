@@ -397,7 +397,7 @@ async fn built_spawn_tool_admits_against_the_returned_harness_lifecycle() {
         .find(|tool| tool.definition().name == "spawn")
         .expect("spawn tool");
     *built.harness_lifecycle.lock().unwrap() =
-        crate::domain::agents::subagent_teardown::HarnessLifecycleState::Frozen;
+        crate::domain::agents::services::subagent_teardown::HarnessLifecycleState::Frozen;
     let refused = spawn
         .execute(r#"{"agent_id":"late","task":"wait"}"#)
         .await

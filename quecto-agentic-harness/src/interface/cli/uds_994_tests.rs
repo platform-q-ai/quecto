@@ -135,7 +135,7 @@ async fn multi_client_parse_error_text(line: &str) -> String {
         let exit = handle_client_msg(
             &mut ctx,
             msg,
-            crate::domain::agents::harness_lifetime::HarnessLifetime::Persistent,
+            crate::domain::agents::value_objects::harness_lifetime::HarnessLifetime::Persistent,
             &live,
         )
         .await;

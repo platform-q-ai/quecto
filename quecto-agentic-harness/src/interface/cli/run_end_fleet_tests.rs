@@ -66,7 +66,7 @@ fn launched_container_child(
         0,
     );
     entry.launch_generation =
-        Some(crate::domain::agents::subagent_teardown::LaunchGeneration::new(1));
+        Some(crate::domain::agents::services::subagent_teardown::LaunchGeneration::new(1));
     entry.environment_registry = Some(environments.clone());
     entry.environment_ref = Some(env_ref.clone());
     registry.lock().unwrap().insert("child".to_string(), entry);

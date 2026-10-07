@@ -1,8 +1,8 @@
-use crate::domain::agents::subagent::SubagentConfig;
+use crate::domain::agents::services::subagent::SubagentConfig;
 use crate::domain::error::DomainError;
 use crate::domain::tool::ToolResult;
 
-pub use crate::domain::agents::subagent_launch::{
+pub use crate::domain::agents::value_objects::subagent_launch::{
     LaunchIdentity, ParentEndpoint, PreparedRuntime, RegisteredLaunch,
 };
 use std::ffi::OsString;

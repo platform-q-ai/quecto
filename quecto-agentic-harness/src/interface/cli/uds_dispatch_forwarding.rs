@@ -201,7 +201,7 @@ fn historical_launched_child(
     registry: &crate::infrastructure::tools::subagent_registry::SubagentRegistry,
     reference: &str,
 ) -> Result<Option<crate::domain::ids::AgentUuid>, String> {
-    use crate::domain::agents::child_end::ChildOrigin;
+    use crate::domain::agents::value_objects::child_end::ChildOrigin;
     type Entry = crate::infrastructure::tools::subagent_registry::SubagentEntry;
     let entries = registry
         .lock()
@@ -266,21 +266,22 @@ pub(super) async fn forward_subagent_get_messages(
             match historical_agent_uuid {
                 Ok(Some(child)) => {
                     // A launched child runs as `cli:<uuid>` (#2192).
-                    let session = match crate::domain::agents::child_session::child_session_identity(
-                        &child,
-                    ) {
-                        Ok(session) => session,
-                        Err(error) => {
-                            return AgentEvent::err(
-                                id_ref,
-                                tn,
-                                format!(
-                                    "subagent '{}' names no session a child runs as: {error}",
-                                    agent_id.as_str()
-                                ),
-                            );
-                        }
-                    };
+                    let session =
+                        match crate::domain::agents::services::child_session::child_session_identity(
+                            &child,
+                        ) {
+                            Ok(session) => session,
+                            Err(error) => {
+                                return AgentEvent::err(
+                                    id_ref,
+                                    tn,
+                                    format!(
+                                        "subagent '{}' names no session a child runs as: {error}",
+                                        agent_id.as_str()
+                                    ),
+                                );
+                            }
+                        };
                     let session_key = session.runtime_key().to_string();
                     // A historical child's transcript is history the store
                     // holds: the composed history owner pages it (#1856).
