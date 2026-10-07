@@ -153,31 +153,6 @@ pub fn settle_held_note(kind: WakeKind, end: StretchEnd) -> HeldNote {
     }
 }
 
-/// Work stranded once every worker of a run is idle (#2471): tasks a
-/// worker still holds, and ready work no free worker can take.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct WorkersStalled {
-    pub claimed: i64,
-    pub ready: i64,
-}
-
-/// Whether a run whose workers have all ended their turns is stalled: it is
-/// live and a task is still claimed, or ready work has no free worker. Work
-/// submitted or blocked already woke the coordinator through its board.
-pub fn workers_stalled(board: &CoordinatorBoard) -> Option<WorkersStalled> {
-    let live = matches!(board.status, RunStatus::Setup | RunStatus::Running);
-    let claimed = board.claimed > 0;
-    let ready_untaken = board.ready > 0 && board.idle_workers == 0;
-    let stalled = WorkersStalled {
-        claimed: board.claimed,
-        ready: board.ready,
-    };
-    match (live, claimed || ready_untaken) {
-        (true, true) => Some(stalled),
-        (true, false) | (false, _) => None,
-    }
-}
-
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;

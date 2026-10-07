@@ -476,6 +476,9 @@ pub fn workflow_engaged(slot: &WorkflowEngineSlot) -> bool {
 pub enum Participation {
     Shared(std::sync::Arc<SharedParticipation>),
     Fixed(bool),
+    /// Tests: a participant that created its container, and so its run.
+    #[cfg(any(test, feature = "test-support"))]
+    FixedCreator,
 }
 
 type ParticipationHook = Box<dyn Fn() + Send + Sync>;
@@ -483,6 +486,8 @@ type ParticipationHook = Box<dyn Fn() + Send + Sync>;
 #[derive(Default)]
 pub struct SharedParticipation {
     flag: std::sync::atomic::AtomicBool,
+    /// This process created its container (#2471), recorded at its join.
+    creator: std::sync::atomic::AtomicBool,
     hooks: std::sync::Mutex<Vec<ParticipationHook>>,
 }
 
@@ -506,6 +511,32 @@ impl Participation {
         match self {
             Self::Shared(shared) => shared.flag.load(std::sync::atomic::Ordering::SeqCst),
             Self::Fixed(value) => *value,
+            #[cfg(any(test, feature = "test-support"))]
+            Self::FixedCreator => true,
+        }
+    }
+
+    /// Whether this process takes part as its container's creator, the one
+    /// process that creates the run and so coordinates it (#2471).
+    pub fn created_run(&self) -> bool {
+        match self {
+            Self::Shared(shared) => {
+                shared.flag.load(std::sync::atomic::Ordering::SeqCst)
+                    && shared.creator.load(std::sync::atomic::Ordering::SeqCst)
+            }
+            Self::Fixed(_) => false,
+            #[cfg(any(test, feature = "test-support"))]
+            Self::FixedCreator => true,
+        }
+    }
+
+    /// Record that this process created its container; a fixed answer
+    /// never changes.
+    pub fn record_creator(&self, creator: bool) {
+        if let Self::Shared(shared) = self {
+            shared
+                .creator
+                .store(creator, std::sync::atomic::Ordering::SeqCst);
         }
     }
 

@@ -73,3 +73,29 @@ async fn a_nested_container_refusal_follows_the_launchers_swarm_participation() 
         assert_eq!(error.to_string(), format!("tool error: {expected}"));
     }
 }
+
+/// #2471: a child gets a launcher board only when it is a swarm worker (it
+/// holds a board member) and its launcher created its run.
+#[test]
+fn only_a_run_creator_s_swarm_workers_settle_their_turn_ends_by_its_board() {
+    let context = || {
+        Some(crate::infrastructure::tools::swarm_bridge::SwarmContext {
+            board: crate::composition::swarm::swarm_board(),
+            checkout: std::env::temp_dir(),
+            member: "member-1".into(),
+            lifecycle: Arc::new(crate::application::swarm::LifecycleService),
+        })
+    };
+    use crate::infrastructure::tools::swarm_bridge::Participation;
+    let launcher = |participation| {
+        let (tool, _socket_dir) = tool();
+        tool.with_swarm_context(context())
+            .with_swarm_participation(participation)
+    };
+    let creator = launcher(Participation::FixedCreator);
+    let board = super::worker_launcher_board(&creator, Some("m-1".into()));
+    assert_eq!(board.map(|board| board.member), Some("m-1".to_owned()));
+    assert!(super::worker_launcher_board(&creator, None).is_none());
+    let worker = launcher(Participation::Fixed(true));
+    assert!(super::worker_launcher_board(&worker, Some("m-1".into())).is_none());
+}

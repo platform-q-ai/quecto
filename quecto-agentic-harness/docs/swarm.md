@@ -581,22 +581,31 @@ or bypass configured limits.
 A coordinator's workers report through the board, not through their turn ends
 (#2471). The coordinator is the spawn parent of the workers it launches, and
 each of their turn ends used to raise the ordinary sub-agent note, which woke it
-for an empty inbox. Now a worker launched by the container's creator (the
-coordinator spawned with `coordinator: true`) sends its coordinator only three
-kinds of note:
-- **A reply it is owed:** the first turn end after the coordinator sent it a
-  `prompt`, `steer` or `follow_up` through `agent_cmd`.
-- **A stall:** when the last working worker ends a turn, the coordinator's
-  harness reads the board. If the run is live and a task is still claimed, or
-  ready work has no free worker, it sends one note: "Swarm workers are all
-  idle … with N claimed and M ready task(s) unfinished". It isn't sent again
-  until some worker has taken another turn.
-- **Its error and exit notes,** which are unchanged.
+for an empty inbox.
 
-Submissions, blocks, messages and deaths reach the coordinator as board wake
-hints, as below. If the board can't be read, or names another coordinator, the
-ordinary note is sent. Every other launcher, including plain sub-agents,
-workflows and a worker's own helpers, keeps the ordinary note on every turn end.
+**Who this applies to:** a worker that holds a board member reservation and
+was launched by the process that created its container, and so its run. Every
+other child keeps the ordinary note on every turn end. That includes plain
+sub-agents, workflows, a resumed coordinator, and a worker's own helpers.
+
+**What reaches the coordinator** from one of its workers' plain turn ends:
+- **A reply it is owed:** the end of the turn that ran a `prompt`, `steer` or
+  `follow_up` it sent through `agent_cmd`. A follow-up queued behind a running
+  turn is owed by the turn that runs it. A prompt to a worker mid-turn, which
+  the worker refuses, owes nothing.
+- **The first good turn after a failure:** the worker's error note is sent as
+  before, and the turn that recovers is sent too.
+- **Stranded work:** at every other turn end the coordinator's harness reads
+  the board. While the run is live, it reports a task claimed by a worker that
+  is not starting or in a turn, and ready work while no worker is working:
+  "Swarm work is stranded … N claimed task(s) held by workers not working, M
+  ready task(s) with no worker working". The same stranded work is reported
+  once, and again only after it has cleared.
+
+If the board can't be read, or doesn't name this process coordinator, the
+ordinary note is sent. Error and exit notes are unchanged. Submissions,
+blocks, messages and deaths reach the coordinator as board wake hints, as
+described below.
 
 Wake hints are selected from the invoking member's actionable events and coalesced
 using a durable per-actor cursor. Reading the board, acknowledging messages and

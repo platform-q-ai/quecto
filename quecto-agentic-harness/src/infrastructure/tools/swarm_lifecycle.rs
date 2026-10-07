@@ -31,6 +31,7 @@ pub fn join_current_process(
         socket.and_then(|s| s.to_str()),
         std::env::var("QUECTO_SWARM_RESERVATION").ok().as_deref(),
     )?;
+    participation.record_creator(creator);
     let participates = crate::domain::swarm::participates(snapshot.deadline);
     participation.set(participates);
     if needs_supervision(snapshot.status) {
@@ -594,6 +595,21 @@ impl crate::application::swarm::ports::SwarmRunControl for SwarmContext {
         let context = self.clone();
         Box::pin(async move {
             super::call_work::spawn_blocking_in_call(move || context.coordinator_board_now())
+                .await
+                .map_err(|error| DomainError::Tool(error.to_string()))?
+        })
+    }
+}
+
+impl crate::application::swarm::ports::WorkerBoardRead for SwarmContext {
+    /// Three harness reads, off the async workers (#2471).
+    fn worker_board(
+        &self,
+    ) -> PortFuture<'_, Result<Option<crate::domain::swarm::worker_wake::WorkerBoard>, DomainError>>
+    {
+        let context = self.clone();
+        Box::pin(async move {
+            super::call_work::spawn_blocking_in_call(move || context.worker_board_now())
                 .await
                 .map_err(|error| DomainError::Tool(error.to_string()))?
         })

@@ -434,12 +434,12 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 );
             entry.launch_generation = Some(launch_generation);
             // A coordinator's workers report through its board (#2471).
-            entry.coordinator_wake.launcher_board = super::subagent_monitor::launcher_board_for(
-                self.tool.launches_swarm_worker(),
-                super::swarm_lifecycle::is_creator(),
-                self.tool.swarm_context.clone().map(|context| {
-                    super::subagent_monitor::LauncherBoard(std::sync::Arc::new(context))
-                }),
+            entry.coordinator_wake.worker.launcher_board = worker_launcher_board(
+                self.tool,
+                prepared
+                    .swarm_reservation
+                    .as_ref()
+                    .map(|r| r.member().to_owned()),
             );
             let lifecycle = self.tool.lifecycle_use_cases()?;
             entry.owned_child = prepared.owned_child;
@@ -639,3 +639,20 @@ mod cov_tests;
 #[cfg(test)]
 #[path = "spawn_launch_ports_nested_tests.rs"]
 mod nested_tests;
+
+/// The board a child `tool` launches settles its turn ends by (#2471): a
+/// swarm worker (it holds board `member`) launched by its container's
+/// creator.
+pub(super) fn worker_launcher_board(
+    tool: &SpawnTool,
+    member: Option<String>,
+) -> Option<super::subagent_monitor::LauncherBoard> {
+    super::subagent_monitor::launcher_board_for(
+        tool.swarm_participation.created_run(),
+        member,
+        tool.swarm_context.clone().map(|context| {
+            std::sync::Arc::new(context)
+                as std::sync::Arc<dyn crate::application::swarm::ports::WorkerBoardRead>
+        }),
+    )
+}

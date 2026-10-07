@@ -89,7 +89,7 @@ fn swarm_state_message(agent_id: &str, state: &super::SwarmNoteState) -> String 
             "Swarm coordinator '{label}' stopped on a failed turn; it may need a resume: agent_cmd get_messages."
         ),
         super::SwarmNoteState::WorkersIdle { claimed, ready } => format!(
-            "Swarm workers are all idle ('{label}' ended a turn last) with {claimed} claimed and {ready} ready task(s) unfinished; check the board: swarm op=summary."
+            "Swarm work is stranded ('{label}' ended a turn last): {claimed} claimed task(s) held by workers not working, {ready} ready task(s) with no worker working; check the board: swarm op=summary."
         ),
         super::SwarmNoteState::Quiet { minutes } => format!(
             "Swarm coordinator '{label}' has taken no turn for {minutes} min since its board last showed work in flight; check it with agent_cmd get_state or get_messages."

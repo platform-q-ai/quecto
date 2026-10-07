@@ -529,10 +529,14 @@ available or required. The note is:
   repeat of the same state is delivered again (the parent may have acted on
   the last one). See `swarm_state` in `uds-protocol.md`.
 - **A coordinator's swarm workers** (#2471): their plain turn ends don't wake
-  the coordinator, which hears about their work through its board. It still
-  gets a worker's reply to its own `prompt`/`steer`/`follow_up`, the worker's
-  error and exit notes, and one "Swarm workers are all idle … unfinished" note
-  when every worker has stopped with work stranded. See `docs/swarm.md`.
+  the coordinator that created their run, which hears about their work through
+  its board. It still gets:
+  - the reply to its own `prompt`/`steer`/`follow_up`;
+  - a worker's error and exit notes, and its first good turn after a failure;
+  - one "Swarm work is stranded …" note when the board shows a claim held by a
+    worker that isn't working, or ready work with none working.
+
+  See `docs/swarm.md`.
 
 The note is a **summary only**; to read the child's default unread report call
 plain `get_messages` (omit/null `count` and `before`). Explicit `count`/`before`

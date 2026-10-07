@@ -527,7 +527,7 @@ fn apply_and_notify(
     }
     // A coordinator's workers report through its board (#2471).
     if value.get("type").and_then(|v| v.as_str()) == Some("agent_end")
-        && swarm_wake::worker_turn_end(registry, notify_tx, agent_id)
+        && worker_wake::worker_turn_end(registry, notify_tx, agent_id)
     {
         return;
     }
@@ -660,7 +660,10 @@ mod exit_cascade_tests;
 mod lifecycle_tests;
 #[path = "subagent_monitor/swarm_wake.rs"]
 mod swarm_wake;
-pub use swarm_wake::{CoordinatorWake, LauncherBoard, launcher_board_for, mark_reply_owed};
+pub use swarm_wake::CoordinatorWake;
+#[path = "subagent_monitor/worker_wake.rs"]
+mod worker_wake;
+pub use worker_wake::{LauncherBoard, WorkerWake, launcher_board_for, owing_reply};
 #[cfg(test)]
 #[path = "tests/subagent_monitor_swarm_wake_tests.rs"]
 mod swarm_wake_tests;
