@@ -71,7 +71,8 @@ pub(super) struct InitialRegistryEntrySpec<'a> {
     pub exit_signal_tx: Option<ExitSignalTx>,
     pub cleanup_environment_id: Option<String>,
     pub cleanup_argv: Vec<String>,
-    pub environment_registry: Option<crate::domain::environment_registry::EnvironmentRegistry>,
+    pub environment_registry:
+        Option<crate::domain::environments::entities::environment_registry::EnvironmentRegistry>,
     pub environment_ref: Option<String>,
     pub process_owner: super::process_tree::ProcessOwner,
 }

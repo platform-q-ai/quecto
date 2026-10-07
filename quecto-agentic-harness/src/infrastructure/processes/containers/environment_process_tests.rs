@@ -1,6 +1,8 @@
 use super::*;
 use crate::application::environments::dto::EnvironmentLiveness;
-use crate::domain::environment_registry::{EnvironmentOrigin, EnvironmentStatus};
+use crate::domain::environments::entities::environment_registry::{
+    EnvironmentOrigin, EnvironmentStatus,
+};
 
 fn script(dir: &std::path::Path, name: &str, body: &str) -> Vec<String> {
     let path = dir.join(name);

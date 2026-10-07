@@ -1,5 +1,9 @@
-use crate::domain::environment_listing::{EnvironmentListing, ListingScope, select_listing};
-use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentRegistry};
+use crate::domain::environments::entities::environment_registry::{
+    EnvironmentRecord, EnvironmentRegistry,
+};
+use crate::domain::environments::services::environment_listing::{
+    EnvironmentListing, ListingScope, select_listing,
+};
 
 /// Synchronous, side-effect-free snapshot query over the session inventory.
 #[derive(Clone, Debug)]

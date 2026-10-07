@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use super::{EnvironmentListing, ListingScope, select_listing};
-use crate::domain::environment_registry::{
+use crate::domain::environments::entities::environment_registry::{
     EnvironmentJournal, EnvironmentOrigin, EnvironmentRecord, EnvironmentRegistry,
     EnvironmentStatus, JournalWrite,
 };

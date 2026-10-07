@@ -6,7 +6,7 @@
 //! collects, and only `container kill` ends it.
 use super::tests::{composed_with_exited_containers, run};
 use crate::application::environments::ports::EnvironmentRegistryStore;
-use crate::domain::environment_registry::EnvironmentStatus;
+use crate::domain::environments::entities::environment_registry::EnvironmentStatus;
 use crate::infrastructure::persistence::environment_registry_store::FileEnvironmentRegistryStore;
 use crate::infrastructure::tools::swarm_bridge::SwarmContext;
 use std::sync::Arc;

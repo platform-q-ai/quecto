@@ -228,7 +228,7 @@ pub(crate) fn state(world: &mut QuectoWorld) -> &mut SelectedTerminationState {
                 harness_lifecycle:
                     quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
                 environment_registry:
-                    quecto::domain::environment_registry::EnvironmentRegistry::new(),
+                    quecto::domain::environments::entities::environment_registry::EnvironmentRegistry::new(),
                 slots: Default::default(),
                 base_dir: std::env::temp_dir(),
             },

@@ -12,7 +12,7 @@ use super::container_handles::ContainerInventoryHandles;
 use crate::application::environments::dto::{
     AbandonedRuns, GcCandidate, GcRemoval, GcReport, GcRequest, RestoreMode,
 };
-use crate::domain::environment_registry::{
+use crate::domain::environments::entities::environment_registry::{
     EnvironmentLookupError, EnvironmentRecord, EnvironmentStatus, EnvironmentTarget, ref_number,
 };
 

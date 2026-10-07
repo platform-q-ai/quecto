@@ -266,7 +266,7 @@ fn given_stopped_record(world: &mut QuectoWorld, env_ref: String, name: String) 
         world,
         &env_ref,
         &name,
-        quecto::domain::environment_registry::EnvironmentStatus::Stopped,
+        quecto::domain::environments::entities::environment_registry::EnvironmentStatus::Stopped,
         "elsewhere",
         false,
     );
@@ -280,7 +280,7 @@ fn given_running_record(world: &mut QuectoWorld, env_ref: String, name: String, 
         world,
         &env_ref,
         &name,
-        quecto::domain::environment_registry::EnvironmentStatus::Running,
+        quecto::domain::environments::entities::environment_registry::EnvironmentStatus::Running,
         &session,
         true,
     );
@@ -292,7 +292,7 @@ fn plant_record(
     world: &QuectoWorld,
     env_ref: &str,
     name: &str,
-    status: quecto::domain::environment_registry::EnvironmentStatus,
+    status: quecto::domain::environments::entities::environment_registry::EnvironmentStatus,
     session: &str,
     live: bool,
 ) {
@@ -308,7 +308,7 @@ fn plant_record(
         std::fs::write(runtime_dir(world).join(format!("quecto-{id}")), "running\n").unwrap();
     }
     store
-        .record(&quecto::domain::environment_registry::EnvironmentRecord {
+        .record(&quecto::domain::environments::entities::environment_registry::EnvironmentRecord {
             environment_ref: env_ref.to_string(),
             environment_id: id.clone(),
             environment_uuid: format!("uuid-{number}"),
@@ -328,7 +328,7 @@ fn plant_record(
             status,
             metadata: serde_json::json!({}),
             last_error: None,
-            origin: quecto::domain::environment_registry::EnvironmentOrigin::Created,
+            origin: quecto::domain::environments::entities::environment_registry::EnvironmentOrigin::Created,
             created_by: session.to_string(),
             created_at: Some(0),
         })

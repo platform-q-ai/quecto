@@ -189,7 +189,7 @@ fn built_in_definitions(workspace: &std::path::Path) -> Vec<ToolDefinition> {
             notify_tx: None,
             harness_lifecycle:
                 crate::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
-            environment_registry: crate::domain::environment_registry::EnvironmentRegistry::new(),
+            environment_registry: crate::domain::environments::entities::environment_registry::EnvironmentRegistry::new(),
             slots: Default::default(),
             base_dir: workspace.to_path_buf(),
         });

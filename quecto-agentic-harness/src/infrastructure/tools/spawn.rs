@@ -12,7 +12,7 @@ use crate::domain::agents::services::subagent::{
     DisplayNameResolutionEntry, DisplayNameResolveError, SubagentConfig,
     assert_display_name_available_for_spawn, validate_agent_id,
 };
-use crate::domain::environment_registry::EnvironmentRegistry;
+use crate::domain::environments::entities::environment_registry::EnvironmentRegistry;
 use crate::domain::error::DomainError;
 use crate::domain::ids::AgentUuid;
 use crate::domain::tool::{ToolDefinition, ToolResult};

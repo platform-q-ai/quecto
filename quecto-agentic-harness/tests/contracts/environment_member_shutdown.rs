@@ -17,7 +17,7 @@ use quecto::application::subagents::use_cases::{SettleDelegatedChild, SettleDele
 use quecto::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, LaunchGeneration,
 };
-use quecto::domain::environment_registry::{
+use quecto::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, mint_environment_uuid,
 };
 use quecto::domain::ids::AgentUuid;
@@ -109,7 +109,7 @@ fn rig_with_kill(rows: Vec<(&str, SubagentEntry)>, retained_kill_argv: Vec<Strin
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({}),
         last_error: None,
-        origin: quecto::domain::environment_registry::EnvironmentOrigin::Created,
+        origin: quecto::domain::environments::entities::environment_registry::EnvironmentOrigin::Created,
         created_by: String::new(),
         created_at: None,
     });
@@ -234,7 +234,7 @@ async fn a_member_whose_end_another_path_owns_and_never_settles_is_unsettled() {
 #[tokio::test]
 async fn kill_container_after_a_failed_member_kill_re_attempts_and_runs_the_retained_kill_once() {
     use quecto::application::environments::use_cases::KillEnvironment;
-    use quecto::domain::environment_registry::EnvironmentTarget;
+    use quecto::domain::environments::entities::environment_registry::EnvironmentTarget;
     use quecto::infrastructure::tools::environment_commands::ScriptEnvironmentCommands;
     use quecto::infrastructure::tools::subagent_registry::{ClaimOwner, TeardownPhase};
 

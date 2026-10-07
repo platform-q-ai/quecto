@@ -7,7 +7,9 @@ use super::{
 use crate::application::environments::dto::{EnvironmentLiveness, StateOnDisk};
 use crate::application::environments::ports::EnvironmentProcess;
 use crate::application::environments::use_cases::restore_registry_tests::record;
-use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentStatus};
+use crate::domain::environments::entities::environment_registry::{
+    EnvironmentRecord, EnvironmentStatus,
+};
 
 /// Every state directory is absent unless listed in `present`; every
 /// container answers `live` (by ref, else `Gone`); inspects are counted.

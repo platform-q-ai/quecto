@@ -1008,7 +1008,7 @@ fn ports_guard_is_an_allowlist() {
         assert!(!port_exposures(file, source).1.is_empty(), "{source}");
     }
     for source in [
-        "pub use crate::domain::environment_registry::EnvironmentRegistry;",
+        "pub use crate::domain::environments::entities::environment_registry::EnvironmentRegistry;",
         "pub use super::dto::EnvironmentLiveness;",
         "pub use crate::application::sessions::ports::SessionStore;",
         "pub use crate::application::subagent_launch::{LaunchFuture, SubagentLaunchPorts};",
@@ -1165,8 +1165,8 @@ fn query_dependencies_allowed(content: &str) -> bool {
         paths.iter().all(|path| {
             matches!(
                 path.as_str(),
-                "crate::domain::environment_registry::EnvironmentRecord"
-                    | "crate::domain::environment_registry::EnvironmentRegistry"
+                "crate::domain::environments::entities::environment_registry::EnvironmentRecord"
+                    | "crate::domain::environments::entities::environment_registry::EnvironmentRegistry"
                     | "EnvironmentRecord"
                     | "EnvironmentRegistry"
                     | "EnvironmentRegistry::entries"
@@ -1184,9 +1184,9 @@ fn query_dependencies_allowed(content: &str) -> bool {
                     // The bounded listing (#2220): the domain's pure
                     // selection over the same snapshot, for the
                     // registry's session, with the diagnostics above.
-                    | "crate::domain::environment_listing::EnvironmentListing"
-                    | "crate::domain::environment_listing::ListingScope"
-                    | "crate::domain::environment_listing::select_listing"
+                    | "crate::domain::environments::services::environment_listing::EnvironmentListing"
+                    | "crate::domain::environments::services::environment_listing::ListingScope"
+                    | "crate::domain::environments::services::environment_listing::select_listing"
                     | "EnvironmentListing"
                     | "ListingScope"
                     | "select_listing"
@@ -1878,7 +1878,7 @@ fn dependency_paths_in(module: Option<Vec<String>>, content: &str) -> Option<Vec
 
 #[test]
 fn query_dependency_guard_rejects_filesystem_imports() {
-    let source = "use crate::domain::environment_registry::EnvironmentRegistry; use std::fs; fn effect() { let _ = fs::read(\"x\"); }";
+    let source = "use crate::domain::environments::entities::environment_registry::EnvironmentRegistry; use std::fs; fn effect() { let _ = fs::read(\"x\"); }";
     assert!(!query_dependencies_allowed(source));
 }
 
@@ -3729,8 +3729,8 @@ fn tui_shell_owns_app_composition_root() {
 #[test]
 fn dependency_allowlists_use_paths_not_substrings() {
     for source in [
-        "use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentRegistry};",
-        "use crate::domain::environment_registry::EnvironmentRegistry as Registry;",
+        "use crate::domain::environments::entities::environment_registry::{EnvironmentRecord, EnvironmentRegistry};",
+        "use crate::domain::environments::entities::environment_registry::EnvironmentRegistry as Registry;",
     ] {
         assert!(query_dependencies_allowed(source), "{source}");
     }
@@ -3738,8 +3738,8 @@ fn dependency_allowlists_use_paths_not_substrings() {
         "#[derive(serde::Serialize)] struct ListEnvironmentsQuery;",
         "use std::{fs, path::Path};",
         "fn effect() { std::fs::read(\"x\"); }",
-        "use crate::domain::environment_registry::*;",
-        "use crate::domain::environment_registry::Unexpected;",
+        "use crate::domain::environments::entities::environment_registry::*;",
+        "use crate::domain::environments::entities::environment_registry::Unexpected;",
     ] {
         assert!(!query_dependencies_allowed(source), "{source}");
     }
@@ -5994,7 +5994,7 @@ fn environments_application_depends_only_inward() {
         );
     }
     for dep in [
-        "crate::domain::environment_registry::EnvironmentRegistry",
+        "crate::domain::environments::entities::environment_registry::EnvironmentRegistry",
         "crate::application::environments::ports::EnvironmentMemberShutdown",
         "serde_json::Value",
         "std::sync::Arc",
@@ -6333,9 +6333,9 @@ fn domain_holds_no_environment_use_case_or_effect_port() {
         "domain/environment_finalization.rs was retired; orchestration lives in application/environments"
     );
     for path in [
-        "src/domain/environment_registry.rs",
-        "src/domain/environment_registry_inspect.rs",
-        "src/domain/environment_retention.rs",
+        "src/domain/environments/entities/environment_registry.rs",
+        "src/domain/environments/entities/environment_registry_inspect.rs",
+        "src/domain/environments/services/environment_retention.rs",
     ] {
         let source = production_source(path);
         for forbidden in [

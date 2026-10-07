@@ -3,7 +3,7 @@
 //! record on request — in ref-number order, capped, with counts for the
 //! rest. Pure selection over a snapshot; presentation is the adapter's.
 
-use super::environment_registry::{
+use crate::domain::environments::entities::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentStatus, ref_number,
 };
 

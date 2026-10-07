@@ -215,7 +215,8 @@ pub struct AgentControlToolDeps {
     /// Composition's durable environment registry (#2024 S4d), restored
     /// from the base directory; `None` in unit rigs, which then run over
     /// a fresh in-memory registry.
-    pub environment_registry: Option<crate::domain::environment_registry::EnvironmentRegistry>,
+    pub environment_registry:
+        Option<crate::domain::environments::entities::environment_registry::EnvironmentRegistry>,
     /// Composition's container-config listing (#2024 S4c) over the same
     /// layers: the spawn description's roster line and `agent_cmd
     /// get_container_configs` read it; `None` lists nothing.
@@ -239,7 +240,8 @@ pub struct AgentControlToolBuild {
         crate::infrastructure::tools::environment_member_shutdown::TerminationSlots,
     /// The session-scoped environment registry the spawn tool commits
     /// members to; composition builds the environment control over it.
-    pub environment_registry: crate::domain::environment_registry::EnvironmentRegistry,
+    pub environment_registry:
+        crate::domain::environments::entities::environment_registry::EnvironmentRegistry,
 }
 
 pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentControlToolBuild {

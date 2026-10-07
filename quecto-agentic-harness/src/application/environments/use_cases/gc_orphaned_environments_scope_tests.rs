@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use super::super::dto::{EnvironmentLiveness, EnvironmentStateDir, GcRemoval, GcRequest};
 use super::gc_orphaned_environments::{CREATE_GRACE_SECS, retained_state_root};
 use super::gc_orphaned_environments_tests::{FakeInventory, Rig, container, record};
-use crate::domain::environment_registry::EnvironmentStatus;
+use crate::domain::environments::entities::environment_registry::EnvironmentStatus;
 
 fn foreign_dir(root: &str, id: &str, container: Option<&str>) -> EnvironmentStateDir {
     EnvironmentStateDir {

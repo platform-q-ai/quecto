@@ -364,8 +364,10 @@ fn preparing_a_checkout_makes_the_store_directory() {
 
 // ─── #2206: a board the layout no longer names is never "no swarm" ─────────
 
-fn sandbox_record(workspace: &Path) -> crate::domain::environment_registry::EnvironmentRecord {
-    use crate::domain::environment_registry::{
+fn sandbox_record(
+    workspace: &Path,
+) -> crate::domain::environments::entities::environment_registry::EnvironmentRecord {
+    use crate::domain::environments::entities::environment_registry::{
         EnvironmentOrigin, EnvironmentRecord, EnvironmentStatus,
     };
     EnvironmentRecord {
@@ -423,7 +425,7 @@ impl crate::application::environments::ports::EnvironmentProcessCommands for Scr
 
     fn observe_liveness<'a>(
         &'a self,
-        _: &'a crate::domain::environment_registry::EnvironmentRecord,
+        _: &'a crate::domain::environments::entities::environment_registry::EnvironmentRecord,
     ) -> crate::application::environments::ports::PortFuture<
         'a,
         crate::application::environments::dto::EnvironmentLiveness,
@@ -441,8 +443,10 @@ impl crate::application::environments::ports::EnvironmentProcessCommands for Scr
 fn a_live_swarm_whose_layout_changed_is_never_taken_for_a_plain_container() {
     use crate::application::environments::ports::HostedSwarmRunInspection;
     use crate::application::environments::use_cases::FinalizeEnvironmentMember;
-    use crate::domain::environment_registry::{EnvironmentRegistry, EnvironmentStatus};
-    use crate::domain::environment_retention::{
+    use crate::domain::environments::entities::environment_registry::{
+        EnvironmentRegistry, EnvironmentStatus,
+    };
+    use crate::domain::environments::services::environment_retention::{
         MemberFinalizeMode, SwarmRunObservation, ends_plain_environment,
     };
     use crate::infrastructure::tools::environment_commands::HostedStoreObservation;

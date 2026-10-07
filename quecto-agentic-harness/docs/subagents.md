@@ -702,7 +702,7 @@ exactly once, no post-mortem), and only then runs the retained `kill`
 exactly once. An unsettled member withholds the kill and leaves a retryable
 `cleanup-failed` state. Final-member finalization (`FinalizeEnvironmentMember`,
 the #1924 retention and loss recording) lives beside it; the domain keeps
-only the pure retention policy (`domain/environment_retention.rs`).
+only the pure retention policy (`domain/environments/services/environment_retention.rs`).
 
 #### Lifetime and session restore (#1937)
 

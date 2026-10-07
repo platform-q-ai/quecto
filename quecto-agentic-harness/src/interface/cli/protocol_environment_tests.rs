@@ -3,7 +3,7 @@
 //! lose what live events reported.
 
 use super::*;
-use crate::domain::environment_registry::{
+use crate::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, mint_environment_uuid,
 };
 use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
@@ -28,7 +28,8 @@ fn build_subagent_info_list_carries_execution_backend_and_environment() {
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({ "branch": "pr-42" }),
         last_error: None,
-        origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+        origin:
+            crate::domain::environments::entities::environment_registry::EnvironmentOrigin::Created,
         created_by: String::new(),
         created_at: None,
     });

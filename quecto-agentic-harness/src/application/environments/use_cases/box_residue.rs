@@ -11,7 +11,7 @@
 //! runtime cannot hold a session start, and a record whose inspect fails
 //! fast (no argv, an unrecognised status) holds back no other. What is not inspected is
 //! kept, to be judged by a later restore.
-use crate::domain::environment_registry::EnvironmentRecord;
+use crate::domain::environments::entities::environment_registry::EnvironmentRecord;
 
 use super::super::dto::{EnvironmentLiveness, StateOnDisk};
 use super::super::ports::EnvironmentProcess;

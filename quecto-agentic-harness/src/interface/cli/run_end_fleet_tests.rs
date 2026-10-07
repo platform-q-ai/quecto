@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use super::super::agent::AgentOutput;
 use super::{RunEnd, RunEndFleetBuilder, waiting_for};
-use crate::domain::environment_registry::{
+use crate::domain::environments::entities::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,
     mint_environment_uuid,
 };

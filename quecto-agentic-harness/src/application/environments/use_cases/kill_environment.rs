@@ -38,7 +38,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::domain::environment_registry::{
+use crate::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, EnvironmentTarget,
 };
 
@@ -48,7 +48,7 @@ use super::super::ports::{
     EnvironmentMemberShutdown, EnvironmentProcessCommands, HostedSwarmRunObservation,
     MemberShutdownReport,
 };
-use crate::domain::environment_retention::SwarmRunObservation;
+use crate::domain::environments::services::environment_retention::SwarmRunObservation;
 
 pub struct KillEnvironment {
     registry: EnvironmentRegistry,

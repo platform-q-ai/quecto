@@ -13,9 +13,13 @@ use super::super::dto::{EnvironmentLiveness, EnvironmentStateDir, GcRemoval, GcR
 use super::super::ports::HostedSwarmRunInspection;
 use super::gc_orphaned_environments::CREATE_GRACE_SECS;
 use super::gc_orphaned_environments_tests::{Rig, container, dir, record};
-use crate::domain::environment_registry::GONE_AT_RESTORE;
-use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentStatus};
-use crate::domain::environment_retention::{HostedSwarmRun, SwarmRunObservation};
+use crate::domain::environments::entities::environment_registry::GONE_AT_RESTORE;
+use crate::domain::environments::entities::environment_registry::{
+    EnvironmentRecord, EnvironmentStatus,
+};
+use crate::domain::environments::services::environment_retention::{
+    HostedSwarmRun, SwarmRunObservation,
+};
 use crate::domain::swarm::RunStatus;
 
 /// The hosted store as the collector reads it: by environment id for a

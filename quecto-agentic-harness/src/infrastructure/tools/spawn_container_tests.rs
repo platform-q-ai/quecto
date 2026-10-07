@@ -25,7 +25,8 @@ pub(super) fn test_record(env_ref: &str, env_id: &str) -> EnvironmentRecord {
     EnvironmentRecord {
         environment_ref: env_ref.into(),
         environment_id: env_id.into(),
-        environment_uuid: crate::domain::environment_registry::mint_environment_uuid(),
+        environment_uuid:
+            crate::domain::environments::entities::environment_registry::mint_environment_uuid(),
         name: None,
         workspace_path: PathBuf::from("/workspace"),
         repository: String::new(),
@@ -35,10 +36,12 @@ pub(super) fn test_record(env_ref: &str, env_id: &str) -> EnvironmentRecord {
         retained_cleanup_argv: vec![],
         retained_inspect_argv: vec![],
         members: vec![],
-        status: crate::domain::environment_registry::EnvironmentStatus::Running,
+        status:
+            crate::domain::environments::entities::environment_registry::EnvironmentStatus::Running,
         metadata: serde_json::json!({}),
         last_error: None,
-        origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+        origin:
+            crate::domain::environments::entities::environment_registry::EnvironmentOrigin::Created,
         created_by: String::new(),
         created_at: None,
     }
@@ -615,7 +618,9 @@ async fn a_nested_container_is_refused_inside_a_container_by_the_real_condition(
         name: None,
     };
     let existing = || ContainerSelection::Existing {
-        target: crate::domain::environment_registry::EnvironmentTarget::Ref("C1".into()),
+        target: crate::domain::environments::entities::environment_registry::EnvironmentTarget::Ref(
+            "C1".into(),
+        ),
     };
     for container in [new(), existing()] {
         assert_eq!(

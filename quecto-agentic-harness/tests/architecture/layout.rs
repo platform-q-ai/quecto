@@ -75,7 +75,7 @@ const WIKI: &str =
     "https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture";
 #[rustfmt::skip] // One readable source-policy row per path.
 const BUDGETS: &[FlatBudget<'_>] = &[
-    FlatBudget { path: "domain", expected: 34 },
+    FlatBudget { path: "domain", expected: 28 },
     FlatBudget { path: "application", expected: 41 },
     FlatBudget { path: "interface", expected: 6 },
     FlatBudget { path: "infrastructure", expected: 28 },
@@ -93,22 +93,20 @@ const MIGRATED: &[Capability<'_>] = &[
     Capability("domain/inference", &["value_objects", "services", "events"]),
     Capability("domain/admission", &["value_objects", "services"]),
     Capability("domain/agents", &["entities", "value_objects", "services"]),
+    Capability("domain/environments", &["entities", "services"]),
 ];
 // Wiki target-source-tree anchors define allowed future names; Transitional rows must exist.
 // https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture#target-source-tree
 type Placement<'a> = (&'a str, &'a [&'a str]);
 #[rustfmt::skip]
 const PLACEMENTS: &[Placement<'_>] = &[
-    ("domain", &["conversation", "admission", "environments", "catalogue", "tool_policy", "sessions", "agents", "audit", "inference", "commander", "identity", "shared", "external_agent", "swarm", "workflow", "environment_registry"]),
+    ("domain", &["conversation", "admission", "environments", "catalogue", "tool_policy", "sessions", "agents", "audit", "inference", "commander", "identity", "shared", "external_agent", "swarm", "workflow"]),
     ("application", &["admission", "agent_turn", "audit", "catalogue", "configuration", "environments", "extensions", "external_agent", "provider_runtime", "providers", "search", "sessions", "subagents", "swarm", "tools", "workflow", "agent_commander", "shared", "agent_loop"]),
     ("interface", &["cli", "repl", "tools", "uds"]),
     ("infrastructure", &["admission", "auth", "config", "extensions", "external_agents", "http", "persistence", "processes", "providers", "search", "security", "tools", "workspace", "judgment", "observability", "time", "test_support"]),
     ("composition", &["bootstrap", "runtime", "logging", "shutdown"]),
  ];
-const TRANSITIONAL: &[(&str, &str)] = &[
-    ("domain", "environment_registry"),
-    ("application", "agent_loop"),
-];
+const TRANSITIONAL: &[(&str, &str)] = &[("application", "agent_loop")];
 enum Kind {
     File,
     Directory,
@@ -326,6 +324,8 @@ fn source_tree_layout_obeys_checked_in_policy() {
         "layout policy violations: {failures:#?}"
     );
 }
+#[path = "layout/environments.rs"]
+mod environments;
 #[path = "layout/fixtures.rs"]
 mod fixtures;
 

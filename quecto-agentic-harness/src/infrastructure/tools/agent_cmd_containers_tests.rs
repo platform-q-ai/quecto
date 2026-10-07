@@ -6,7 +6,7 @@ use crate::application::environments::ports::{
     SettledMember,
 };
 use crate::application::environments::use_cases::{KillEnvironment, ListEnvironmentsQuery};
-use crate::domain::environment_registry::{
+use crate::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, mint_environment_uuid,
 };
 
@@ -66,7 +66,8 @@ fn committed_registry() -> EnvironmentRegistry {
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({}),
         last_error: None,
-        origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+        origin:
+            crate::domain::environments::entities::environment_registry::EnvironmentOrigin::Created,
         created_by: String::new(),
         created_at: None,
     });
@@ -371,11 +372,13 @@ fn get_containers_marks_restored_environments_with_their_creating_session() {
 /// a kill of a ref the session could not have loaded names the read error.
 #[test]
 fn get_containers_carries_the_registry_read_error_as_a_diagnostic() {
-    use crate::domain::environment_registry::EnvironmentJournal;
+    use crate::domain::environments::entities::environment_registry::EnvironmentJournal;
     let journal = EnvironmentJournal {
         allocate_ref: Arc::new(|_| Ok(1)),
         release_ref: Arc::new(|_| {}),
-        recorded: Arc::new(|_, _| crate::domain::environment_registry::JournalWrite::Written),
+        recorded: Arc::new(|_, _| {
+            crate::domain::environments::entities::environment_registry::JournalWrite::Written
+        }),
         forgotten: Arc::new(|_| {}),
         reload: Arc::new(|| Err("environments.json: corrupt".into())),
     };

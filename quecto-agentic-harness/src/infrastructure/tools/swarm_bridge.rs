@@ -227,7 +227,10 @@ impl HostedStore {
     /// environment rather than guessing.
     pub fn hosted_run(
         &self,
-    ) -> Result<Option<crate::domain::environment_retention::HostedSwarmRun>, DomainError> {
+    ) -> Result<
+        Option<crate::domain::environments::services::environment_retention::HostedSwarmRun>,
+        DomainError,
+    > {
         let displaced = match self.contained()? {
             Found::Store { displaced } => displaced,
             Found::Nothing => return Ok(None),
@@ -257,7 +260,10 @@ impl HostedStore {
     pub fn record_lost_coordinator(
         &self,
         coordinator: &str,
-    ) -> Result<crate::domain::environment_retention::CoordinatorLoss, DomainError> {
+    ) -> Result<
+        crate::domain::environments::services::environment_retention::CoordinatorLoss,
+        DomainError,
+    > {
         match self.contained()? {
             Found::Store { .. } => {}
             Found::Nothing => {
@@ -270,12 +276,14 @@ impl HostedStore {
         let value =
             self.board
                 .call(self.location(), coordinator, "_lose_coordinator", json!([]))?;
-        Ok(crate::domain::environment_retention::CoordinatorLoss {
-            run: decode_hosted_run(&value)?,
-            lost: value["lost"]
-                .as_bool()
-                .ok_or_else(|| DomainError::Tool("swarm loss receipt carries no verdict".into()))?,
-        })
+        Ok(
+            crate::domain::environments::services::environment_retention::CoordinatorLoss {
+                run: decode_hosted_run(&value)?,
+                lost: value["lost"].as_bool().ok_or_else(|| {
+                    DomainError::Tool("swarm loss receipt carries no verdict".into())
+                })?,
+            },
+        )
     }
 }
 
@@ -366,7 +374,8 @@ impl HostedStore {
 
 fn decode_hosted_run(
     status: &Value,
-) -> Result<crate::domain::environment_retention::HostedSwarmRun, DomainError> {
+) -> Result<crate::domain::environments::services::environment_retention::HostedSwarmRun, DomainError>
+{
     let deadline = status["deadline"]
         .as_f64()
         .ok_or_else(|| DomainError::Tool("swarm status carries no deadline".into()))?;
@@ -384,13 +393,15 @@ fn decode_hosted_run(
         .as_str()
         .filter(|id| !id.is_empty())
         .ok_or_else(|| DomainError::Tool("swarm status carries no run id".into()))?;
-    Ok(crate::domain::environment_retention::HostedSwarmRun {
-        id: id.to_owned(),
-        status: coordination::decode_status(run_status)?,
-        outcome,
-        coordinator: coordinator.to_owned(),
-        deadline,
-    })
+    Ok(
+        crate::domain::environments::services::environment_retention::HostedSwarmRun {
+            id: id.to_owned(),
+            status: coordination::decode_status(run_status)?,
+            outcome,
+            coordinator: coordinator.to_owned(),
+            deadline,
+        },
+    )
 }
 
 /// Kernel process start time disambiguates recycled PIDs. Missing procfs is

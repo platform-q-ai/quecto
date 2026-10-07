@@ -13,8 +13,8 @@
 use super::environment_commands::ScriptEnvironmentCommands;
 use super::subagent_registry::SubagentRegistry;
 use crate::application::environments::use_cases::FinalizeEnvironmentMember;
-use crate::domain::environment_registry::EnvironmentRegistry;
-use crate::domain::environment_retention::MemberFinalizeMode;
+use crate::domain::environments::entities::environment_registry::EnvironmentRegistry;
+use crate::domain::environments::services::environment_retention::MemberFinalizeMode;
 
 /// Composition's builder of the final-member use case over one entry's
 /// environment registry: the jobs already run on a blocking worker, so the

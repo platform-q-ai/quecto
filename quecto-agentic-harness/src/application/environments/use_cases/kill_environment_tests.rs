@@ -10,7 +10,7 @@ use crate::application::environments::ports::{
     MemberShutdownResult, PortFuture, SettledMember, UnsettledMember,
 };
 use crate::application::environments::use_cases::{KillEnvironment, KillEnvironmentError};
-use crate::domain::environment_registry::{
+use crate::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, EnvironmentTarget,
 };
 
@@ -77,7 +77,7 @@ impl EnvironmentProcessCommands for SpyCommands {
 
     fn observe_liveness<'a>(
         &'a self,
-        _record: &'a crate::domain::environment_registry::EnvironmentRecord,
+        _record: &'a crate::domain::environments::entities::environment_registry::EnvironmentRecord,
     ) -> PortFuture<'a, crate::application::environments::dto::EnvironmentLiveness> {
         Box::pin(async { panic!("a running environment's kill never asks liveness") })
     }
@@ -156,7 +156,8 @@ fn committed_env(reg: &EnvironmentRegistry, members: &[&str]) -> String {
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({}),
         last_error: None,
-        origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+        origin:
+            crate::domain::environments::entities::environment_registry::EnvironmentOrigin::Created,
         created_by: String::new(),
         created_at: None,
     });

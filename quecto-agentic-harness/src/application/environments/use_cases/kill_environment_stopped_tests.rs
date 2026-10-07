@@ -12,10 +12,12 @@ use crate::application::environments::ports::{
     MemberShutdownReport, PortFuture,
 };
 use crate::application::environments::use_cases::{KillEnvironment, KillEnvironmentError};
-use crate::domain::environment_registry::{
+use crate::domain::environments::entities::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, EnvironmentTarget,
 };
-use crate::domain::environment_retention::{CoordinatorLoss, HostedSwarmRun, SwarmRunObservation};
+use crate::domain::environments::services::environment_retention::{
+    CoordinatorLoss, HostedSwarmRun, SwarmRunObservation,
+};
 use crate::domain::swarm::RunStatus;
 
 /// Records every script, answers liveness as configured.
@@ -341,8 +343,7 @@ fn an_owed_removal_whose_container_runs_again_takes_the_ordinary_kill() {
         EnvironmentStatus::CleanupFailed,
         EnvironmentOrigin::Created,
     );
-    owed.metadata =
-        serde_json::json!({ crate::domain::environment_registry::REMOVAL_PENDING: true });
+    owed.metadata = serde_json::json!({ crate::domain::environments::entities::environment_registry::REMOVAL_PENDING: true });
     registry.commit(owed);
     let commands = Commands::answering(EnvironmentLiveness::Running);
 
@@ -365,8 +366,7 @@ fn an_owed_removal_whose_liveness_is_unknown_stays_owed() {
         EnvironmentStatus::CleanupFailed,
         EnvironmentOrigin::Created,
     );
-    owed.metadata =
-        serde_json::json!({ crate::domain::environment_registry::REMOVAL_PENDING: true });
+    owed.metadata = serde_json::json!({ crate::domain::environments::entities::environment_registry::REMOVAL_PENDING: true });
     registry.commit(owed);
     let commands = Commands::answering(EnvironmentLiveness::Unknown("down".into()));
 
@@ -418,8 +418,7 @@ fn a_refused_removal_of_a_stopped_record_with_a_stale_mark_stays_stopped() {
             EnvironmentStatus::Stopped,
             EnvironmentOrigin::Restored,
         );
-        stale.metadata =
-            serde_json::json!({ crate::domain::environment_registry::REMOVAL_PENDING: true });
+        stale.metadata = serde_json::json!({ crate::domain::environments::entities::environment_registry::REMOVAL_PENDING: true });
         registry.commit(stale);
         let commands = Commands::answering(liveness.clone());
 

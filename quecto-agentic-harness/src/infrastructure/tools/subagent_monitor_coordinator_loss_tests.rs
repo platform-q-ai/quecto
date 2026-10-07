@@ -7,7 +7,7 @@
 //! placeholder run) keeps the ordinary final-member kill.
 
 use super::*;
-use crate::domain::environment_registry::{
+use crate::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, mint_environment_uuid,
 };
 use crate::infrastructure::test_support::executable::write_executable;
@@ -89,7 +89,8 @@ fn environment(
         status: EnvironmentStatus::Running,
         metadata: json!({ "checkout": checkout.display().to_string() }),
         last_error: None,
-        origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+        origin:
+            crate::domain::environments::entities::environment_registry::EnvironmentOrigin::Created,
         created_by: String::new(),
         created_at: None,
     });
@@ -619,7 +620,7 @@ async fn supervisor_kill_of_the_coordinator_retains_the_environment() {
     let mut removed = removed;
     super::super::subagent_cleanup::cleanup_removed_entries_once(
         &mut removed,
-        crate::domain::environment_retention::MemberFinalizeMode::ParentKill,
+        crate::domain::environments::services::environment_retention::MemberFinalizeMode::ParentKill,
         crate::composition::environments::build_member_finalizer,
     )
     .await;

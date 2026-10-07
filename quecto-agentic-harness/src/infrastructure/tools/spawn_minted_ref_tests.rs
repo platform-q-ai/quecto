@@ -1,5 +1,7 @@
 use super::*;
-use crate::domain::environment_journal::{EnvironmentJournal, JournalWrite};
+use crate::domain::environments::entities::environment_journal::{
+    EnvironmentJournal, JournalWrite,
+};
 use std::sync::{Arc, Mutex};
 
 /// A registry whose journal allocates C1, C2, … and records releases.

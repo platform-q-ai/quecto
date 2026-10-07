@@ -122,7 +122,7 @@ pub enum ContainerSelection {
     },
     /// Join an existing session environment by ref or name (#1369 slice 2).
     Existing {
-        target: crate::domain::environment_registry::EnvironmentTarget,
+        target: crate::domain::environments::entities::environment_registry::EnvironmentTarget,
     },
 }
 

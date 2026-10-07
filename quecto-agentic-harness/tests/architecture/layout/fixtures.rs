@@ -199,7 +199,7 @@ fn missing_substituted_and_restored_roots_and_injected_denials() {
     assert!(flat(root.path(), "domain", 0).is_empty());
     root.write(SESSIONS);
     inspection(&shape(root.path(), SESSIONS, &[]), None, "");
-    root.mkdir("domain/environment_registry");
+    root.mkdir("domain/environments");
     let failures = placements(root.path(), PLACEMENTS);
     assert_eq!(failures.len(), 4);
     assert!(
@@ -263,12 +263,11 @@ fn placement_future_targets_unknowns_and_stale_transitional_rows() {
         );
     }
     let root = fixture(LAYERS, &[]);
-    root.mkdir("application/agent_loop");
     let failures = placements(root.path(), PLACEMENTS);
     assert_eq!(failures.len(), 1);
     fragments(
         &failures,
-        &["remove domain/environment_registry from PLACEMENTS", WIKI],
+        &["remove application/agent_loop from PLACEMENTS", WIKI],
     );
 }
 #[test]

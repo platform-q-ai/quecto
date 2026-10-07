@@ -1,7 +1,7 @@
 //! Pure retention policy (#1924): which ends of an environment withhold its
 //! final-member teardown and how the reason reads. No effect, no port.
 
-use crate::domain::environment_retention::*;
+use crate::domain::environments::services::environment_retention::*;
 use crate::domain::swarm::RunStatus;
 
 fn running_swarm() -> HostedSwarmRun {

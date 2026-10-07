@@ -38,10 +38,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::domain::environment_registry::{
+use crate::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,
 };
-use crate::domain::environment_retention::SwarmRunObservation;
+use crate::domain::environments::services::environment_retention::SwarmRunObservation;
 
 use super::super::dto::{
     AbandonedRuns, ContainerRuntimeTarget, DiagnosableContainerConfig, EnvironmentLiveness,
