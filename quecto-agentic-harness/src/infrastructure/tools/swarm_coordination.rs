@@ -482,8 +482,8 @@ pub(crate) fn decode_claimed_owners(
                     .ok_or_else(|| malformed("a claimed task has no owner"))?
                     .to_owned(),
             ),
-            Some(_) => {}
-            None => return Err(malformed("a task has no status")),
+            Some("ready" | "blocked" | "submitted" | "completed") => {}
+            Some(_) | None => return Err(malformed("a task has no known status")),
         }
     }
     Ok(owners)

@@ -80,7 +80,7 @@ async fn boundaries_as(
     let mut states = Vec::new();
     while let Ok(line) = rx.try_recv() {
         let value: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
-        if value["type"] == "swarm_state" {
+        if let Some("swarm_state" | "reply_ready") = value["type"].as_str() {
             states.push(value);
         }
     }
@@ -137,7 +137,7 @@ async fn a_member_that_is_not_the_coordinator_reports_nothing() {
 
 #[tokio::test]
 async fn a_process_not_launched_as_a_coordinator_never_reads_its_board() {
-    let states = boundaries_as(false, vec![Ok(Some(running(0)))], vec![true]).await;
+    let states = boundaries_as(false, vec![Ok(Some(running(0)))], vec![false]).await;
     assert_eq!(states, Vec::<serde_json::Value>::new());
 }
 
@@ -185,4 +185,32 @@ fn swarm_state_is_sent_as_a_typed_event() {
         serde_json::to_value(&event).unwrap(),
         serde_json::json!({"type": "swarm_state", "wake": "finished", "status": "succeeded", "prompted": false})
     );
+}
+
+/// #2471: a swarm member that is not its run's coordinator says
+/// `reply_ready` once at the boundary after a client's instruction ran, and
+/// nothing else.
+#[tokio::test]
+async fn a_member_says_its_reply_is_ready_once_after_a_client_instruction() {
+    let events = boundaries_as(false, vec![], vec![false, true, false]).await;
+    assert_eq!(
+        events,
+        vec![serde_json::json!({"type": "reply_ready"})],
+        "{events:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_process_outside_any_swarm_never_says_reply_ready() {
+    let mut env = Env::with_unselected_workflow();
+    let mut ctx = env.ctx();
+    let (tx, mut rx) = tokio::sync::broadcast::channel(64);
+    ctx.broadcast_tx = Some(tx);
+    ctx.turn_control
+        .client_prompted
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    at_idle_boundary(&mut ctx).await;
+    while let Ok(line) = rx.try_recv() {
+        assert!(!line.contains("reply_ready"), "{line}");
+    }
 }

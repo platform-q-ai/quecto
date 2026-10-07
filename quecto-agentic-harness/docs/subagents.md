@@ -531,9 +531,10 @@ available or required. The note is:
 - **A coordinator's swarm workers** (#2471): their plain turn ends don't wake
   the coordinator that created their run, which hears about their work through
   its board. It still gets:
-  - the reply to its own `prompt`/`steer`/`follow_up`;
+  - the reply to its own `prompt`/`steer`/`follow_up`, signalled by the
+    worker's `reply_ready`;
   - a worker's error and exit notes, and its first good turn after a failure;
-  - one "Swarm work is stranded …" note when the board shows a claim held by a
+  - a "Swarm work is stranded …" note when the board shows a claim held by a
     worker that isn't working, or ready work with none working.
 
   See `docs/swarm.md`.

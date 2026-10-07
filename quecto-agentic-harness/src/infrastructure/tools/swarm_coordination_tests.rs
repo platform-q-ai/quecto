@@ -402,6 +402,7 @@ fn claimed_owners_are_read_from_tasks() {
     for malformed in [
         serde_json::json!([{"status": "claimed", "owner": null}]),
         serde_json::json!([{"owner": "m-a"}]),
+        serde_json::json!([{"status": "lost", "owner": "m-a"}]),
         serde_json::json!({"tasks": []}),
     ] {
         assert!(decode_claimed_owners(&malformed).is_err(), "{malformed}");

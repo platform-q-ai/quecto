@@ -1535,6 +1535,14 @@ Once a launched coordinator has sent one, its parent holds each `agent_end` note
 {"type":"swarm_state","wake":"finished","status":"succeeded","prompted":false}
 ```
 
+### `reply_ready`
+
+Emitted by a swarm member that is not its run's coordinator, once at the end of the idle boundary after a client's `prompt`, `steer` or `follow_up` ran (#2471). Its launching coordinator no longer wakes on each of its turn ends, so this is how it hears the reply. Other parents ignore it.
+
+```json
+{"type":"reply_ready"}
+```
+
 ### `token`
 
 Incremental text token from the LLM during streaming. Tokens arrive in real time as the model generates them.

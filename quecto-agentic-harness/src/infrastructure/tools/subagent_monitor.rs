@@ -33,6 +33,7 @@ const STATE_CHANGING_EVENTS: &[&str] = &[
     "\"type\":\"workflow_state\"",
     "\"type\":\"workflow_idle\"",
     "\"type\":\"swarm_state\"",
+    "\"type\":\"reply_ready\"",
     "\"command\":\"agent_error\"",
 ];
 
@@ -526,10 +527,16 @@ fn apply_and_notify(
         return;
     }
     // A coordinator's workers report through its board (#2471).
-    if value.get("type").and_then(|v| v.as_str()) == Some("agent_end")
-        && worker_wake::worker_turn_end(registry, notify_tx, agent_id)
-    {
-        return;
+    match value.get("type").and_then(|v| v.as_str()) {
+        Some("reply_ready") => {
+            worker_wake::reply_ready(registry, notify_tx, agent_id, sequence);
+            return;
+        }
+        Some("agent_start") => worker_wake::worker_started(registry, agent_id),
+        Some("agent_end") if worker_wake::worker_turn_end(registry, notify_tx, agent_id) => {
+            return;
+        }
+        _ => {}
     }
     if value.get("type").and_then(|v| v.as_str()) == Some("agent_end")
         && swarm_wake::defer_completion(registry, notify_tx, agent_id, sequence)
@@ -663,7 +670,7 @@ mod swarm_wake;
 pub use swarm_wake::CoordinatorWake;
 #[path = "subagent_monitor/worker_wake.rs"]
 mod worker_wake;
-pub use worker_wake::{LauncherBoard, WorkerWake, launcher_board_for, owing_reply};
+pub use worker_wake::{LauncherBoard, WorkerWake, launcher_board_for};
 #[cfg(test)]
 #[path = "tests/subagent_monitor_swarm_wake_tests.rs"]
 mod swarm_wake_tests;

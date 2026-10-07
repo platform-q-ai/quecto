@@ -476,9 +476,6 @@ pub fn workflow_engaged(slot: &WorkflowEngineSlot) -> bool {
 pub enum Participation {
     Shared(std::sync::Arc<SharedParticipation>),
     Fixed(bool),
-    /// Tests: a participant that created its container, and so its run.
-    #[cfg(any(test, feature = "test-support"))]
-    FixedCreator,
 }
 
 type ParticipationHook = Box<dyn Fn() + Send + Sync>;
@@ -511,8 +508,6 @@ impl Participation {
         match self {
             Self::Shared(shared) => shared.flag.load(std::sync::atomic::Ordering::SeqCst),
             Self::Fixed(value) => *value,
-            #[cfg(any(test, feature = "test-support"))]
-            Self::FixedCreator => true,
         }
     }
 
@@ -525,8 +520,6 @@ impl Participation {
                     && shared.creator.load(std::sync::atomic::Ordering::SeqCst)
             }
             Self::Fixed(_) => false,
-            #[cfg(any(test, feature = "test-support"))]
-            Self::FixedCreator => true,
         }
     }
 

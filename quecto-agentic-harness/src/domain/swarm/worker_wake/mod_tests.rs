@@ -12,15 +12,19 @@ fn working(members: &[&str]) -> BTreeSet<String> {
     members.iter().map(|member| (*member).to_owned()).collect()
 }
 
+fn stranded(claimed_by: &[&str], ready: i64) -> Stranded {
+    Stranded {
+        claimed_by: claimed_by.iter().map(|owner| (*owner).to_owned()).collect(),
+        ready,
+    }
+}
+
 #[test]
 fn a_claim_held_by_a_worker_that_is_not_working_is_stranded() {
     for status in [RunStatus::Setup, RunStatus::Running] {
         assert_eq!(
-            stranded_work(&board(status, 0, &["b", "a"]), &working(&["a"])),
-            Some(Stranded {
-                claimed_by: vec!["b".into()],
-                ready: 0
-            })
+            stranded_work(&board(status, 0, &["b", "a", "b"]), &working(&["a"])),
+            Some(stranded(&["b", "b"], 0))
         );
     }
 }
@@ -40,10 +44,7 @@ fn claims_whose_owners_all_work_are_not_stranded() {
 fn ready_work_is_stranded_only_when_no_worker_works() {
     assert_eq!(
         stranded_work(&board(RunStatus::Running, 2, &[]), &working(&[])),
-        Some(Stranded {
-            claimed_by: vec![],
-            ready: 2
-        })
+        Some(stranded(&[], 2))
     );
     assert_eq!(
         stranded_work(&board(RunStatus::Running, 2, &[]), &working(&["a"])),
@@ -74,32 +75,21 @@ fn nothing_left_or_a_run_that_is_not_live_strands_nothing() {
 }
 
 #[test]
-fn the_same_stranded_work_has_the_same_signature() {
-    let one = Stranded {
-        claimed_by: vec!["b".into()],
-        ready: 1,
-    };
-    assert_eq!(one.signature(), one.clone().signature());
-    let other = Stranded {
-        claimed_by: vec!["c".into()],
-        ready: 1,
-    };
-    assert_ne!(one.signature(), other.signature());
+fn a_report_covers_the_same_or_less_and_not_a_new_claim_or_more_ready_work() {
+    let reported = stranded(&["a", "b"], 1);
+    assert!(reported.covers(&stranded(&["a", "b"], 1)));
+    assert!(reported.covers(&stranded(&["a"], 0)));
+    assert!(!reported.covers(&stranded(&["a", "c"], 0)), "a new claim");
+    assert!(
+        !reported.covers(&stranded(&["a", "a"], 0)),
+        "a second claim"
+    );
+    assert!(!reported.covers(&stranded(&["a"], 2)), "more ready work");
 }
 
 #[test]
-fn a_reply_or_the_first_turn_after_a_failure_is_the_ordinary_note() {
-    use WorkerTurnEnd::*;
-    for (reply_due, after_failure, settled) in [
-        (false, false, CheckBoard),
-        (true, false, Ordinary),
-        (false, true, Ordinary),
-        (true, true, Ordinary),
-    ] {
-        assert_eq!(
-            settle_worker_turn_end(reply_due, after_failure),
-            settled,
-            "{reply_due} {after_failure}"
-        );
-    }
+fn a_report_is_rearmed_by_a_worker_it_names_or_any_worker_for_ready_work() {
+    assert!(stranded(&["a"], 0).rearmed_by("a"));
+    assert!(!stranded(&["a"], 0).rearmed_by("b"));
+    assert!(stranded(&[], 1).rearmed_by("b"));
 }

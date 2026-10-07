@@ -62,7 +62,6 @@ impl CoordinatorWake {
     pub(super) fn turn_started(&mut self) {
         self.failed = false;
         self.cancel_timer();
-        self.worker.turn_started();
     }
 
     /// A failed turn is the stretch's outcome: its error note stands, and

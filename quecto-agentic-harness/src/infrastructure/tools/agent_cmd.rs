@@ -640,18 +640,17 @@ impl Tool for AgentCmdTool {
                 }
             };
             // Inspection is bounded independently of acceptance-ack semantics.
-            // A coordinator is owed its worker's reply (#2471).
             let send =
-                super::subagent_monitor::owing_reply(&self.registry, &agent_id, &command, async {
-                    if matches!(command.as_str(), "get_state") || Self::is_control_command(&command)
-                    {
-                        let timeout = super::subagent_registry::INSPECTOR_RESPONSE_TIMEOUT;
-                        send_uds_command_with_timeout(socket_path, &json_cmd, timeout).await
-                    } else {
-                        send_uds_command(socket_path, &json_cmd).await
-                    }
-                });
-            let send = send.await;
+                if matches!(command.as_str(), "get_state") || Self::is_control_command(&command) {
+                    send_uds_command_with_timeout(
+                        socket_path,
+                        &json_cmd,
+                        super::subagent_registry::INSPECTOR_RESPONSE_TIMEOUT,
+                    )
+                    .await
+                } else {
+                    send_uds_command(socket_path, &json_cmd).await
+                };
 
             // Send the command via UDS. Lifecycle state comes from the child's
             // monitor events; the transport ack alone cannot prove task progress

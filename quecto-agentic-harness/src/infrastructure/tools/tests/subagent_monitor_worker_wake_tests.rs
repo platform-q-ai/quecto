@@ -1,6 +1,6 @@
 // A coordinator's workers report through its board (#2471): their plain
-// turn ends reach the coordinator only as a reply it is owed, the first
-// good turn after a failure, or stranded work read from the board.
+// turn ends reach the coordinator only as stranded work read from the board
+// or the first good turn after a failure; a reply comes as `reply_ready`.
 
 use super::*;
 use crate::application::swarm::ports::WorkerBoardRead;
@@ -131,25 +131,55 @@ async fn a_worker_that_stops_holding_its_claim_is_reported_while_another_works()
 }
 
 #[tokio::test]
-async fn the_same_stranded_work_is_reported_once_and_again_after_it_clears() {
+async fn stranded_work_is_reported_once_until_it_grows_or_its_worker_turns_again() {
     let board = Board::answering(work(0, &["a"]));
-    let registry = coordinator_with(&["a", "b"], &board);
+    let registry = coordinator_with(&["a", "b", "c"], &board);
     let (tx, mut rx) = new_notification_channel();
-    for worker in ["a", "b"] {
+    for worker in ["a", "b", "c"] {
         event(&registry, &tx, worker, agent_start());
     }
     event(&registry, &tx, "a", agent_end());
     assert_eq!(notes(&mut rx).await, vec![stranded("a", 1, 0)]);
     event(&registry, &tx, "b", agent_end());
     assert_eq!(notes(&mut rx).await, Vec::new(), "the same work, once");
-    board.set(work(0, &[]));
     event(&registry, &tx, "b", agent_start());
     event(&registry, &tx, "b", agent_end());
-    assert_eq!(notes(&mut rx).await, Vec::new(), "cleared");
-    board.set(work(0, &["a"]));
-    event(&registry, &tx, "b", agent_start());
-    event(&registry, &tx, "b", agent_end());
-    assert_eq!(notes(&mut rx).await, vec![stranded("b", 1, 0)]);
+    assert_eq!(notes(&mut rx).await, Vec::new(), "b is not named");
+    board.set(work(0, &["a", "b"]));
+    event(&registry, &tx, "c", agent_end());
+    assert_eq!(notes(&mut rx).await, vec![stranded("c", 2, 0)], "it grew");
+    event(&registry, &tx, "a", agent_start());
+    event(&registry, &tx, "a", agent_end());
+    assert_eq!(
+        notes(&mut rx).await,
+        vec![stranded("a", 2, 0)],
+        "a named worker turned again and stopped holding its claim"
+    );
+}
+
+#[tokio::test]
+async fn a_worker_in_error_or_exited_is_not_working() {
+    let board = Board::answering(work(0, &["b"]));
+    let registry = coordinator_with(&["a", "b"], &board);
+    let (tx, mut rx) = new_notification_channel();
+    for worker in ["a", "b"] {
+        event(&registry, &tx, worker, agent_start());
+    }
+    registry.lock().unwrap().get_mut("b").unwrap().status =
+        crate::infrastructure::tools::subagent_registry::SubagentStatus::Exited;
+    event(&registry, &tx, "a", agent_end());
+    assert_eq!(notes(&mut rx).await, vec![stranded("a", 1, 0)]);
+}
+
+#[tokio::test]
+async fn the_fallback_note_is_not_sent_once_a_newer_turn_has_begun() {
+    let board = Board::answering(Err("database is locked".into()));
+    let registry = coordinator_with(&["a"], &board);
+    let (tx, mut rx) = new_notification_channel();
+    event(&registry, &tx, "a", agent_start());
+    event(&registry, &tx, "a", agent_end());
+    event(&registry, &tx, "a", agent_start());
+    assert_eq!(notes(&mut rx).await, Vec::new());
 }
 
 #[tokio::test]
@@ -176,66 +206,39 @@ async fn a_board_that_cannot_be_read_or_names_another_coordinator_sends_the_ordi
     }
 }
 
-/// `agent_cmd` sends through `owing_reply`; `accept` is the worker's answer.
-async fn instruct(registry: &SubagentRegistry, agent: &str, command: &str, accept: bool) {
-    let answer = serde_json::json!({"type": "response", "success": accept}).to_string();
-    let sent: Result<String, String> =
-        owing_reply(registry, agent, command, async move { Ok(answer) }).await;
-    assert!(sent.is_ok());
-}
-
 #[tokio::test]
-async fn a_follow_up_to_a_busy_worker_is_owed_by_the_turn_that_runs_it() {
+async fn a_worker_s_reply_ready_is_sent_as_the_ordinary_note() {
     let board = Board::answering(work(0, &[]));
-    let registry = coordinator_with(&["a"], &board);
+    let registry = coordinator_with(&["a", "b"], &board);
     let (tx, mut rx) = new_notification_channel();
-    event(&registry, &tx, "a", agent_start());
-    instruct(&registry, "a", "follow_up", true).await;
+    for worker in ["a", "b"] {
+        event(&registry, &tx, worker, agent_start());
+    }
     event(&registry, &tx, "a", agent_end());
-    assert_eq!(
-        notes(&mut rx).await,
-        Vec::new(),
-        "the running turn is not the reply"
+    event(
+        &registry,
+        &tx,
+        "a",
+        serde_json::json!({"type": "reply_ready"}),
     );
-    event(&registry, &tx, "a", agent_start());
-    event(&registry, &tx, "a", agent_end());
-    let reply = notes(&mut rx).await;
-    assert!(ordinary(&reply), "{reply:?}");
-    event(&registry, &tx, "a", agent_start());
-    event(&registry, &tx, "a", agent_end());
-    assert_eq!(notes(&mut rx).await, Vec::new(), "owed once");
-}
-
-#[tokio::test]
-async fn a_prompt_to_an_idle_worker_is_owed_and_a_refused_one_is_not() {
-    let board = Board::answering(work(0, &[]));
-    let registry = coordinator_with(&["a"], &board);
-    let (tx, mut rx) = new_notification_channel();
-    event(&registry, &tx, "a", agent_start());
-    event(&registry, &tx, "a", agent_end());
-    notes(&mut rx).await;
-    instruct(&registry, "a", "prompt", false).await;
-    event(&registry, &tx, "a", agent_start());
-    event(&registry, &tx, "a", agent_end());
-    assert_eq!(notes(&mut rx).await, Vec::new(), "refused: nothing owed");
-    instruct(&registry, "a", "prompt", true).await;
-    event(&registry, &tx, "a", agent_start());
-    event(&registry, &tx, "a", agent_end());
     let reply = notes(&mut rx).await;
     assert!(ordinary(&reply), "{reply:?}");
 }
 
 #[tokio::test]
-async fn a_prompt_to_a_busy_worker_or_a_read_owes_nothing() {
-    let board = Board::answering(work(0, &[]));
-    let registry = coordinator_with(&["a"], &board);
+async fn a_reply_ready_from_a_child_that_is_not_a_worker_sends_nothing_extra() {
+    let registry = new_registry();
+    registry.lock().unwrap().insert(
+        "helper".into(),
+        SubagentEntry::new(std::path::PathBuf::new(), 0),
+    );
     let (tx, mut rx) = new_notification_channel();
-    event(&registry, &tx, "a", agent_start());
-    instruct(&registry, "a", "prompt", true).await;
-    instruct(&registry, "a", "get_state", true).await;
-    event(&registry, &tx, "a", agent_end());
-    event(&registry, &tx, "a", agent_start());
-    event(&registry, &tx, "a", agent_end());
+    event(
+        &registry,
+        &tx,
+        "helper",
+        serde_json::json!({"type": "reply_ready"}),
+    );
     assert_eq!(notes(&mut rx).await, Vec::new());
 }
 

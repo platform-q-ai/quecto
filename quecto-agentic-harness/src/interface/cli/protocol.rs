@@ -72,6 +72,10 @@ pub enum AgentEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<WorkflowIdleReason>,
     },
+    /// A swarm member's idle boundary after a client's `prompt`, `steer` or
+    /// `follow_up` ran (#2471): its reply is ready. Its launching coordinator
+    /// is woken by this rather than by each of its turn ends.
+    ReplyReady,
     /// A swarm coordinator's idle boundary (#2467): what its run's board says
     /// the parent should hear. Only a process launched as its run's
     /// coordinator sends it. `prompted`: a client's prompt ran since the

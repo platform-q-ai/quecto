@@ -588,22 +588,24 @@ was launched by the process that created its container, and so its run. Every
 other child keeps the ordinary note on every turn end. That includes plain
 sub-agents, workflows, a resumed coordinator, and a worker's own helpers.
 
-**What reaches the coordinator** from one of its workers' plain turn ends:
-- **A reply it is owed:** the end of the turn that ran a `prompt`, `steer` or
-  `follow_up` it sent through `agent_cmd`. A follow-up queued behind a running
-  turn is owed by the turn that runs it. A prompt to a worker mid-turn, which
-  the worker refuses, owes nothing.
-- **The first good turn after a failure:** the worker's error note is sent as
-  before, and the turn that recovers is sent too.
-- **Stranded work:** at every other turn end the coordinator's harness reads
-  the board. While the run is live, it reports a task claimed by a worker that
-  is not starting or in a turn, and ready work while no worker is working:
-  "Swarm work is stranded … N claimed task(s) held by workers not working, M
-  ready task(s) with no worker working". The same stranded work is reported
-  once, and again only after it has cleared.
+**What reaches the coordinator** from one of its workers:
+- **The reply to its own instruction.** After a `prompt`, `steer` or
+  `follow_up` the coordinator sent through `agent_cmd` has run, the worker's
+  harness sends `reply_ready` at its next idle boundary, and the coordinator
+  gets the ordinary note. A prompt to a busy worker is queued and counts too.
+- **The first good turn after a failure.** The worker's error note is sent as
+  before. The turn that recovers is sent too, so the coordinator's note queue
+  forgets the failure and a later identical failure is news again.
+- **Stranded work.** At any other turn end, the coordinator's harness reads
+  the board (`_status`, `_run_totals`, `tasks`). While the run is live, it
+  reports a task claimed by a worker that is not starting or in a turn, and
+  ready work while no worker is working: "Swarm work is stranded … N claimed
+  task(s) held by workers not working, M ready task(s) with no worker
+  working". It isn't reported again until it grows (a new claim or more ready
+  work), or a worker it names (any worker, for ready work) takes another turn.
 
 If the board can't be read, or doesn't name this process coordinator, the
-ordinary note is sent. Error and exit notes are unchanged. Submissions,
+ordinary note is sent, unless the worker has already begun another turn. Error and exit notes are unchanged. Submissions,
 blocks, messages and deaths reach the coordinator as board wake hints, as
 described below.
 

@@ -92,10 +92,64 @@ fn only_a_run_creator_s_swarm_workers_settle_their_turn_ends_by_its_board() {
         tool.with_swarm_context(context())
             .with_swarm_participation(participation)
     };
-    let creator = launcher(Participation::FixedCreator);
+    let created = Participation::shared();
+    created.record_creator(true);
+    created.set(true);
+    let creator = launcher(created);
     let board = super::worker_launcher_board(&creator, Some("m-1".into()));
     assert_eq!(board.map(|board| board.member), Some("m-1".to_owned()));
     assert!(super::worker_launcher_board(&creator, None).is_none());
     let worker = launcher(Participation::Fixed(true));
     assert!(super::worker_launcher_board(&worker, Some("m-1".into())).is_none());
+}
+
+/// #2471: registering a swarm worker launched by its run's creator gives
+/// its entry the launcher's board under the worker's member id; any other
+/// launcher's worker keeps the ordinary notes.
+#[tokio::test]
+async fn register_gives_a_run_creator_s_worker_the_launcher_board() {
+    for (created_run, expected) in [(true, Some("m-1")), (false, None)] {
+        let context = crate::infrastructure::tools::swarm_bridge::SwarmContext {
+            board: crate::composition::swarm::swarm_board(),
+            checkout: std::env::temp_dir(),
+            member: "coordinator".into(),
+            lifecycle: Arc::new(crate::application::swarm::LifecycleService),
+        };
+        let participation = crate::infrastructure::tools::swarm_bridge::Participation::shared();
+        participation.record_creator(created_run);
+        participation.set(true);
+        let (tool, _socket_dir) = tool();
+        let tool = tool
+            .with_swarm_context(Some(context.clone()))
+            .with_swarm_participation(participation);
+        let mut ports = SpawnLaunchPorts::new(&tool);
+        let identity = ports.allocate_identity(&config()).unwrap();
+        let mut prepared =
+            crate::infrastructure::tools::spawn_container::PreparedChild::new_for_test(
+                None, None, None,
+            )
+            .await;
+        prepared.swarm_reservation = Some(
+            crate::infrastructure::tools::swarm_admission::LaunchReservation::held_for_test(
+                context, "m-1",
+            ),
+        );
+        let runtime = PreparedRuntime {
+            socket_path: std::path::PathBuf::from("/tmp/worker-2471.sock"),
+            pid: 0,
+            environment_ref: None,
+        };
+        ports
+            .register_and_monitor(&identity, runtime, &mut prepared, &config())
+            .await
+            .unwrap();
+        let member = tool
+            .registry
+            .lock()
+            .unwrap()
+            .get(&identity.registry_key)
+            .and_then(|entry| entry.coordinator_wake.worker.launcher_board.clone())
+            .map(|board| board.member);
+        assert_eq!(member.as_deref(), expected, "created_run {created_run}");
+    }
 }
