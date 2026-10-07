@@ -75,7 +75,7 @@ const WIKI: &str =
     "https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture";
 #[rustfmt::skip] // One readable source-policy row per path.
 const BUDGETS: &[FlatBudget<'_>] = &[
-    FlatBudget { path: "domain", expected: 34 },
+    FlatBudget { path: "domain", expected: 28 },
     FlatBudget { path: "application", expected: 41 },
     FlatBudget { path: "interface", expected: 6 },
     FlatBudget { path: "infrastructure", expected: 28 },
@@ -93,6 +93,7 @@ const MIGRATED: &[Capability<'_>] = &[
     Capability("domain/inference", &["value_objects", "services", "events"]),
     Capability("domain/admission", &["value_objects", "services"]),
     Capability("domain/agents", &["entities", "value_objects", "services"]),
+    Capability("domain/environments", &["entities", "services"]),
 ];
 // Wiki target-source-tree anchors define allowed future names; Transitional rows must exist.
 // https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture#target-source-tree
@@ -326,6 +327,8 @@ fn source_tree_layout_obeys_checked_in_policy() {
         "layout policy violations: {failures:#?}"
     );
 }
+#[path = "layout/environments.rs"]
+mod environments;
 #[path = "layout/fixtures.rs"]
 mod fixtures;
 
