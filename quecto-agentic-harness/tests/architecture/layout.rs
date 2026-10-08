@@ -549,7 +549,7 @@ fn l5_user_kind_and_snapshot_placement_is_explicit() {
     ];
     let missing: Vec<_> = expected
         .into_iter()
-        .filter(|path| matches!(root.join(path).is_file(), false))
+        .filter(|path| [false].contains(&root.join(path).is_file()))
         .collect();
     assert!(
         missing.is_empty(),

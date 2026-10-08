@@ -8,8 +8,7 @@
 //! operation is keyed by the typed [`SessionIdentity`], never by a raw
 //! string, filename or path.
 pub mod export;
-use std::future::Future;
-use std::pin::Pin;
+use std::{future::Future, pin::Pin};
 
 pub mod session_runtime;
 pub mod session_transition;
@@ -20,14 +19,12 @@ pub use session_transition::{
 };
 
 use super::dto::SessionListQuery;
-use crate::domain::sessions::entities::session::{
-    Session, SessionSummary, SpillEntries, SpillEntry,
-};
+use crate::domain::conversation::value_objects::message::Message;
+use crate::domain::error::DomainError;
+use crate::domain::sessions::entities::session;
 use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
-use crate::domain::{
-    conversation::value_objects::message::Message, error::DomainError,
-    workflow::WorkflowRunPersisted,
-};
+use crate::domain::workflow::WorkflowRunPersisted;
+use session::{Session, SessionSummary, SpillEntries, SpillEntry};
 
 pub type SpillIndexList<'a> =
     Pin<Box<dyn Future<Output = Result<SpillEntries, DomainError>> + Send + 'a>>;
