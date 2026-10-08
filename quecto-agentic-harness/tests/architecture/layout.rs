@@ -75,7 +75,7 @@ const WIKI: &str =
     "https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture";
 #[rustfmt::skip] // One readable source-policy row per path.
 const BUDGETS: &[FlatBudget<'_>] = &[
-    FlatBudget { path: "domain", expected: 28 },
+    FlatBudget { path: "domain", expected: 14 },
     FlatBudget { path: "application", expected: 41 },
     FlatBudget { path: "interface", expected: 6 },
     FlatBudget { path: "infrastructure", expected: 28 },
@@ -89,6 +89,9 @@ const BUDGETS: &[FlatBudget<'_>] = &[
 // Layout slices opt capabilities into strict shape as they migrate (#2357).
 #[rustfmt::skip] // One readable source-policy row per capability.
 const MIGRATED: &[Capability<'_>] = &[
+    Capability("domain/conversation", &["value_objects", "services"]),
+    Capability("domain/tool_policy", &["value_objects", "services"]),
+    Capability("domain/catalogue", &["value_objects"]),
     Capability("domain/sessions", &["entities", "value_objects", "services"]),
     Capability("domain/inference", &["value_objects", "services", "events"]),
     Capability("domain/admission", &["value_objects", "services"]),
@@ -390,5 +393,173 @@ fn external_agent_stays_a_sibling_domain_capability() {
     assert!(
         !domain().join("agents/external_agent").exists(),
         "external_agent must not nest under domain/agents (#2356 wiki e61de22)"
+    );
+}
+
+// Binding L5 whole-file moves; UserKind is the separately approved extraction.
+#[rustfmt::skip]
+const L5_MOVES: &[(&str, &str)] = &[
+    ("message.rs", "conversation/value_objects/message.rs"),
+    ("message_tests.rs", "conversation/value_objects/message_tests.rs"),
+    ("message_cov_tests.rs", "conversation/value_objects/message_cov_tests.rs"),
+    ("conversation_view.rs", "conversation/services/conversation_view.rs"),
+    ("conversation_view_tests.rs", "conversation/services/conversation_view_tests.rs"),
+    ("conversation_edit.rs", "conversation/services/conversation_edit.rs"),
+    ("conversation_edit_tests.rs", "conversation/services/conversation_edit_tests.rs"),
+    ("turn_origin.rs", "conversation/services/turn_origin.rs"),
+    ("turn_origin_tests.rs", "conversation/services/turn_origin_tests.rs"),
+    ("visible_thinking.rs", "conversation/services/visible_thinking.rs"),
+    ("visible_thinking_tests.rs", "conversation/services/visible_thinking_tests.rs"),
+    ("conversation/image_input.rs", "conversation/services/image_input.rs"),
+    ("conversation/image_input_tests.rs", "conversation/services/image_input_tests.rs"),
+    ("conversation/image_tokens.rs", "conversation/value_objects/image_tokens.rs"),
+    ("conversation/image_tokens_tests.rs", "conversation/value_objects/image_tokens_tests.rs"),
+    ("conversation/reply_requirement.rs", "conversation/services/reply_requirement.rs"),
+    ("conversation/reply_requirement_tests.rs", "conversation/services/reply_requirement_tests.rs"),
+    ("conversation/stored_images.rs", "conversation/value_objects/stored_images.rs"),
+    ("conversation/stored_images_tests.rs", "conversation/value_objects/stored_images_tests.rs"),
+    ("conversation/user_images.rs", "conversation/value_objects/user_images.rs"),
+    ("conversation/user_images_tests.rs", "conversation/value_objects/user_images_tests.rs"),
+    ("conversation/watermark.rs", "conversation/services/watermark.rs"),
+    ("conversation/watermark_tests.rs", "conversation/services/watermark_tests.rs"),
+    ("conversation/watermark_split_tests.rs", "conversation/services/watermark_split_tests.rs"),
+    ("conversation/watermark_cut.rs", "conversation/services/watermark_cut.rs"),
+    ("conversation/watermark_cut_tests.rs", "conversation/services/watermark_cut_tests.rs"),
+    ("tool.rs", "tool_policy/value_objects/tool.rs"),
+    ("tool_tests.rs", "tool_policy/value_objects/tool_tests.rs"),
+    ("tool_descriptor.rs", "tool_policy/value_objects/tool_descriptor.rs"),
+    ("tool_descriptor_tests.rs", "tool_policy/value_objects/tool_descriptor_tests.rs"),
+    ("tool_id.rs", "tool_policy/value_objects/tool_id.rs"),
+    ("tool_id_tests.rs", "tool_policy/value_objects/tool_id_tests.rs"),
+    ("extension_tool.rs", "tool_policy/value_objects/extension_tool.rs"),
+    ("extension_tool_tests.rs", "tool_policy/value_objects/extension_tool_tests.rs"),
+    ("tool_policy.rs", "tool_policy/services/tool_policy.rs"),
+    ("tool_policy_tests.rs", "tool_policy/services/tool_policy_tests.rs"),
+    ("tool_policy_catalogue.rs", "tool_policy/services/tool_policy_catalogue.rs"),
+    ("tool_policy_catalogue_tests.rs", "tool_policy/services/tool_policy_catalogue_tests.rs"),
+    ("catalogue.rs", "catalogue/value_objects/catalogue.rs"),
+    ("catalogue_tests.rs", "catalogue/value_objects/catalogue_tests.rs"),
+    ("catalogue_window_tests.rs", "catalogue/value_objects/catalogue_window_tests.rs"),
+    ("catalogue/effort_vocabulary.rs", "catalogue/value_objects/effort_vocabulary.rs"),
+    ("catalogue/retired.rs", "catalogue/value_objects/retired.rs"),
+    ("catalogue/retired_tests.rs", "catalogue/value_objects/retired_tests.rs"),
+    ("state_snapshot.rs", "sessions/value_objects/state_snapshot.rs"),
+    ("state_snapshot_tests.rs", "sessions/value_objects/state_snapshot_tests.rs"),
+    ("state_snapshot_reader.rs", "sessions/value_objects/state_snapshot_reader.rs"),
+];
+
+#[test]
+fn l5_all_47_moves_have_destinations_and_retire_sources() {
+    assert_eq!(L5_MOVES.len(), 47);
+    let root = domain();
+    let mut failures = Vec::new();
+    for (old, new) in L5_MOVES {
+        if root.join(new).is_file() {
+        } else {
+            failures.push(format!("missing destination {new}"));
+        }
+        match root.join(old).try_exists() {
+            Ok(false) => {}
+            Ok(true) => failures.push(format!("retained source {old}")),
+            Err(error) => failures.push(format!("cannot inspect {old}: {error}")),
+        }
+    }
+    assert!(failures.is_empty(), "L5 exact moves: {failures:#?}");
+}
+
+#[test]
+fn l5_moved_tests_remain_siblings_of_their_production_module() {
+    let root = domain();
+    let mut failures = Vec::new();
+    for (_, test) in L5_MOVES
+        .iter()
+        .filter(|(_, new)| new.ends_with("_tests.rs"))
+    {
+        let parent = Path::new(test).parent().expect("test has role parent");
+        let production = L5_MOVES
+            .iter()
+            .filter(|(old, new)| {
+                matches!(old.strip_suffix("_tests.rs"), None)
+                    && Path::new(new).parent() == Some(parent)
+            })
+            .any(|(_, production)| {
+                let stem = Path::new(production).file_stem().unwrap().to_str().unwrap();
+                Path::new(test)
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .starts_with(&format!("{stem}_"))
+                    && root.join(production).is_file()
+            });
+        if production && root.join(test).is_file() {
+        } else {
+            failures.push(format!("missing production/test sibling pair {test}"));
+        }
+    }
+    assert!(failures.is_empty(), "L5 sibling pairs: {failures:#?}");
+}
+
+#[test]
+fn l5_new_roles_have_at_least_two_approved_production_modules() {
+    let root = domain();
+    let mut failures = Vec::new();
+    for role in [
+        "conversation/value_objects",
+        "conversation/services",
+        "tool_policy/value_objects",
+        "tool_policy/services",
+        "catalogue/value_objects",
+    ] {
+        let approved: Vec<_> = L5_MOVES
+            .iter()
+            .filter(|(old, new)| {
+                matches!(old.strip_suffix("_tests.rs"), None)
+                    && Path::new(new).parent() == Some(Path::new(role))
+            })
+            .map(|(_, new)| *new)
+            .chain(
+                ["conversation/value_objects/user_kind.rs"]
+                    .into_iter()
+                    .filter(|new| Path::new(new).parent() == Some(Path::new(role))),
+            )
+            .collect();
+        assert!(approved.len() >= 2, "invalid role allowlist {role}");
+        let actual = approved
+            .iter()
+            .filter(|path| root.join(path).is_file())
+            .count();
+        if actual >= 2 {
+        } else {
+            failures.push(format!(
+                "{role}: approved production modules {actual}, minimum 2"
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "L5 role population: {failures:#?}");
+}
+
+#[test]
+fn l5_user_kind_and_snapshot_placement_is_explicit() {
+    let root = domain();
+    let expected = [
+        "conversation/value_objects/user_kind.rs",
+        "sessions/value_objects/state_snapshot.rs",
+        "sessions/value_objects/state_snapshot_reader.rs",
+        "sessions/value_objects/state_snapshot_tests.rs",
+    ];
+    let missing: Vec<_> = expected
+        .into_iter()
+        .filter_map(|path| {
+            if root.join(path).is_file() {
+                None
+            } else {
+                Some(path)
+            }
+        })
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing approved UserKind/session snapshot placement: {missing:?}"
     );
 }
