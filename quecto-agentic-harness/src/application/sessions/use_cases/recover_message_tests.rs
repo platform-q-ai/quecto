@@ -4,9 +4,9 @@ use crate::application::sessions::dto::{
     ContentSelector, RecoveredContent, RecoveryError, RecoveryRequest,
 };
 use crate::application::sessions::ports::ContextSpillStore;
+use crate::domain::conversation::value_objects::message::{Message, ToolCall};
 use crate::domain::error::DomainError;
 use crate::domain::ids::MessageId;
-use crate::domain::message::{Message, ToolCall};
 use crate::domain::sessions::entities::session::{SpillEntries, SpillEntry, SpillIndex};
 use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
 use std::future::Future;
@@ -263,12 +263,12 @@ fn select_maps_ranges_thinking_offsets_and_tool_calls() {
             arguments: "{\"command\":\"echo\"}".into(),
         }],
     );
-    message
-        .thinking_blocks
-        .push(crate::domain::message::ThinkingBlock::Normal {
+    message.thinking_blocks.push(
+        crate::domain::conversation::value_objects::message::ThinkingBlock::Normal {
             thinking: "why".into(),
             signature: "sig".into(),
-        });
+        },
+    );
     let RecoveredContent::Message {
         range,
         thinking_offset,

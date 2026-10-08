@@ -23,9 +23,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
+use crate::domain::conversation::value_objects::message::LlmResponse;
 use crate::domain::error::DomainError;
 use crate::domain::inference::services::provider_error::classify_provider_error;
-use crate::domain::message::LlmResponse;
 
 /// Async sleep seam. Defaults to `tokio::time::sleep`; tests inject a recorder
 /// that captures the requested delay (so `Retry-After` honouring is observable)

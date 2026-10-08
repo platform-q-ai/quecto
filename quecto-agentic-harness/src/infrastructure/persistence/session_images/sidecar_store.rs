@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 use std::future::Future;
 use std::pin::Pin;
 
-use crate::domain::conversation::stored_images::{ImageRef, VerifiedText};
+use crate::domain::conversation::value_objects::stored_images::{ImageRef, VerifiedText};
 use crate::domain::error::DomainError;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 

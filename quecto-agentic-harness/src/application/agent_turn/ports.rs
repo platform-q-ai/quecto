@@ -9,8 +9,8 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::domain::agents::value_objects::agent::{AgentInfo, AgentResult};
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::error::DomainError;
-use crate::domain::message::Message;
 
 /// Port: the agent loop that processes messages through LLM + tools.
 pub trait AgentLoop: Send + Sync {

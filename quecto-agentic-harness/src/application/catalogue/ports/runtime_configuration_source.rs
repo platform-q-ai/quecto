@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::application::providers::ports::LlmProvider;
-use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
 
 /// One rebuilt configuration: everything a reload applies, from one read
 /// of the configuration files.

@@ -1,11 +1,13 @@
 use super::agent_loop::AgentLoopImpl;
 use crate::domain::agents::value_objects::agent::AgentProgressEvent;
-use crate::domain::tool::{
+use crate::domain::tool_policy::services::tool_policy::inherited_child_policy_from_catalogue;
+use crate::domain::tool_policy::value_objects::tool::{
     ToolDefinition, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationStatus,
     ToolPolicyReconciliation, ToolPolicyRequest,
 };
-use crate::domain::tool_descriptor::{ProfileAvailabilityScope, ToolCatalogueEntry};
-use crate::domain::tool_policy::inherited_child_policy_from_catalogue;
+use crate::domain::tool_policy::value_objects::tool_descriptor::{
+    ProfileAvailabilityScope, ToolCatalogueEntry,
+};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
 
@@ -20,7 +22,7 @@ impl ToolPolicyState {
     pub(super) fn is_model_visible(
         &self,
         name: &str,
-        profile: crate::domain::tool::ToolProfileContext,
+        profile: crate::domain::tool_policy::value_objects::tool::ToolProfileContext,
         catalogue_entry: Option<&ToolCatalogueEntry>,
     ) -> bool {
         if let Some(entry) = catalogue_entry
@@ -33,8 +35,12 @@ impl ToolPolicyState {
         }
         if let Some(entry) = catalogue_entry {
             let profile_enabled = match profile {
-                crate::domain::tool::ToolProfileContext::Parent => entry.effective_parent_enabled,
-                crate::domain::tool::ToolProfileContext::Child => entry.effective_child_enabled,
+                crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent => {
+                    entry.effective_parent_enabled
+                }
+                crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Child => {
+                    entry.effective_child_enabled
+                }
             };
             return (profile_enabled || self.enabled_tools.contains(name))
                 && entry.explicit_restriction.is_none()
@@ -46,7 +52,7 @@ impl ToolPolicyState {
     pub(super) fn blocks_execution(
         &self,
         name: &str,
-        profile: crate::domain::tool::ToolProfileContext,
+        profile: crate::domain::tool_policy::value_objects::tool::ToolProfileContext,
     ) -> bool {
         self.scopes.get(name).map_or_else(
             || self.disabled_tools.contains(name),
@@ -96,25 +102,29 @@ impl ToolPolicyState {
             entry.effective_child_enabled = scope.allows_child();
             entry.effective_enabled = scope.is_enabled();
             entry.runtime_availability = if scope.is_enabled() {
-                crate::domain::tool_descriptor::ToolAvailability::Enabled
+                crate::domain::tool_policy::value_objects::tool_descriptor::ToolAvailability::Enabled
             } else {
-                crate::domain::tool_descriptor::ToolAvailability::Disabled
+                crate::domain::tool_policy::value_objects::tool_descriptor::ToolAvailability::Disabled
             };
             entry.health = if scope.is_enabled() {
-                crate::domain::tool_descriptor::ToolHealth::Ok
+                crate::domain::tool_policy::value_objects::tool_descriptor::ToolHealth::Ok
             } else {
-                crate::domain::tool_descriptor::ToolHealth::Disabled
+                crate::domain::tool_policy::value_objects::tool_descriptor::ToolHealth::Disabled
             };
         }
     }
 
     fn scope_allows(
         scope: ProfileAvailabilityScope,
-        profile: crate::domain::tool::ToolProfileContext,
+        profile: crate::domain::tool_policy::value_objects::tool::ToolProfileContext,
     ) -> bool {
         match profile {
-            crate::domain::tool::ToolProfileContext::Parent => scope.allows_parent(),
-            crate::domain::tool::ToolProfileContext::Child => scope.allows_child(),
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent => {
+                scope.allows_parent()
+            }
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Child => {
+                scope.allows_child()
+            }
         }
     }
 }
@@ -137,7 +147,7 @@ impl AgentLoopImpl {
 
     pub fn tool_catalogue_entries(
         &self,
-    ) -> Vec<crate::domain::tool_descriptor::ToolCatalogueEntry> {
+    ) -> Vec<crate::domain::tool_policy::value_objects::tool_descriptor::ToolCatalogueEntry> {
         let mut entries = self.tool_catalog().catalogue_entries();
         let policy = self
             .tool_policy_state

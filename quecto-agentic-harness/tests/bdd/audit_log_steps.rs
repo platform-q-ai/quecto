@@ -296,7 +296,7 @@ impl quecto::application::providers::ports::LlmProvider for LoopFailingProvider 
         Box<
             dyn std::future::Future<
                     Output = Result<
-                        quecto::domain::message::LlmResponse,
+                        quecto::domain::conversation::value_objects::message::LlmResponse,
                         quecto::domain::error::DomainError,
                     >,
                 > + Send
@@ -332,7 +332,7 @@ impl quecto::application::audit::ports::AuditSink for LoopRecordingSink {
 
 struct LoopEmptyRegistry;
 impl quecto::application::tools::ports::ToolCatalog for LoopEmptyRegistry {
-    fn definitions(&self) -> &[quecto::domain::tool::ToolDefinition] {
+    fn definitions(&self) -> &[quecto::domain::tool_policy::value_objects::tool::ToolDefinition] {
         &[]
     }
 }
@@ -346,7 +346,7 @@ impl quecto::application::tools::ports::ToolExecutor for LoopEmptyRegistry {
         Box<
             dyn std::future::Future<
                     Output = Result<
-                        quecto::domain::tool::ToolResult,
+                        quecto::domain::tool_policy::value_objects::tool::ToolResult,
                         quecto::domain::error::DomainError,
                     >,
                 > + Send
@@ -410,11 +410,13 @@ fn when_agent_processes_failing_turn(world: &mut QuectoWorld) {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            quecto::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
 
     let rt = tokio::runtime::Runtime::new().expect("runtime");
-    let mut messages = vec![quecto::domain::message::Message::user("hi")];
+    let mut messages =
+        vec![quecto::domain::conversation::value_objects::message::Message::user("hi")];
     let result = rt.block_on(agent.process(&mut messages));
     assert!(result.is_err(), "a terminal provider failure must error");
 

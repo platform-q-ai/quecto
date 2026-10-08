@@ -1,7 +1,7 @@
 //! #2403/#2414: the watermark marks, plain settings with environment
 //! overrides, and their validation.
 
-use crate::domain::conversation::watermark::Watermark;
+use crate::domain::conversation::services::watermark::Watermark;
 use crate::infrastructure::config::{Config, ConfigError};
 use std::collections::HashMap;
 

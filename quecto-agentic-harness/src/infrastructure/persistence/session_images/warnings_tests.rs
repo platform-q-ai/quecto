@@ -8,9 +8,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use quecto_image::{ImageMime, samples};
 
 use super::{ImageSidecarStore, SessionImages, SidecarFuture, SidecarRead};
-use crate::domain::conversation::stored_images::ImageRef;
+use crate::domain::conversation::value_objects::message::{Message, UserImageBlock};
+use crate::domain::conversation::value_objects::stored_images::ImageRef;
 use crate::domain::error::DomainError;
-use crate::domain::message::{Message, UserImageBlock};
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 /// Sidecars whose writes fail while `failing` is set.

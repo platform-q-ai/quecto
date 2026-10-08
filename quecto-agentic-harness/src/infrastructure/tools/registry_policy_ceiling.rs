@@ -1,5 +1,7 @@
 use super::ToolRegistryImpl;
-use crate::domain::tool_descriptor::{ProfileAvailabilityScope, ToolCatalogueEntry};
+use crate::domain::tool_policy::value_objects::tool_descriptor::{
+    ProfileAvailabilityScope, ToolCatalogueEntry,
+};
 
 impl ToolRegistryImpl {
     pub(super) fn restriction_ceiling(

@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use super::*;
 use crate::application::catalogue::CatalogueSnapshotStore;
-use crate::domain::catalogue::ModelRef;
-use crate::domain::message::Message;
+use crate::domain::catalogue::value_objects::catalogue::ModelRef;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::infrastructure::providers::router::ProviderRouter;
 
 const REFUSAL: &str = r#"HTTP 400 from Codex: {"detail":"The 'mini' model is not supported when using Codex with a ChatGPT account."}"#;

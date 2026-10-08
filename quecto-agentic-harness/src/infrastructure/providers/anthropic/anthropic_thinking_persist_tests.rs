@@ -17,7 +17,7 @@ fn test_parse_response_with_thinking_blocks() {
     assert_eq!(result.content.as_deref(), Some("The answer is 42"));
     assert_eq!(result.thinking_blocks.len(), 1);
     match &result.thinking_blocks[0] {
-        crate::domain::message::ThinkingBlock::Normal {
+        crate::domain::conversation::value_objects::message::ThinkingBlock::Normal {
             thinking,
             signature,
         } => {
@@ -41,7 +41,7 @@ fn test_parse_response_keeps_redacted_thinking_placeholder() {
     assert_eq!(result.content.as_deref(), Some("answer"));
     assert_eq!(result.thinking_blocks.len(), 2);
     match &result.thinking_blocks[1] {
-        crate::domain::message::ThinkingBlock::Redacted { data } => {
+        crate::domain::conversation::value_objects::message::ThinkingBlock::Redacted { data } => {
             assert_eq!(data, "secret-redacted-blob");
         }
         other => panic!("expected redacted thinking block, got {other:?}"),
@@ -52,7 +52,7 @@ fn test_parse_response_keeps_redacted_thinking_placeholder() {
 fn test_parse_response_rejects_oversized_non_stream_thinking() {
     let body = serde_json::json!({
         "content": [
-            {"type": "thinking", "thinking": "t".repeat(crate::domain::visible_thinking::MAX_VISIBLE_THINKING_BYTES + 1)},
+            {"type": "thinking", "thinking": "t".repeat(crate::domain::conversation::services::visible_thinking::MAX_VISIBLE_THINKING_BYTES + 1)},
             {"type": "text", "text": "answer"}
         ]
     });

@@ -7,8 +7,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use super::session_identity::SessionIdentity;
-use crate::domain::conversation::stored_images::{ImageRef, not_recalled_marker};
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
+use crate::domain::conversation::value_objects::stored_images::{ImageRef, not_recalled_marker};
 
 pub type SpillEntries = Arc<Vec<SpillIndex>>;
 
@@ -217,7 +217,7 @@ pub struct SpillIndex {
 /// - `Role::Assistant` with tool_calls, empty content → Drop (pure dispatch, no text)
 /// - `Role::User` / plain `Role::Assistant` → Keep always
 pub fn strip_tool_history(messages: &[Message]) -> Vec<Message> {
-    use crate::domain::message::Role;
+    use crate::domain::conversation::value_objects::message::Role;
 
     // Single-pass filter: an assistant message that calls "recall" is kept in full;
     // all other tool-dispatching assistant messages are either text-preserved or dropped.
@@ -297,7 +297,7 @@ impl OrphanDiag {
 /// heap-allocate (Rust `Vec::new()` has zero capacity), so the happy
 /// path (no orphans) is effectively zero-alloc beyond the two `HashSet`s.
 pub fn filter_orphan_tool_pairs(messages: &[Message]) -> (HashSet<String>, OrphanDiag) {
-    use crate::domain::message::Role;
+    use crate::domain::conversation::value_objects::message::Role;
 
     let mut sent: HashSet<String> = HashSet::new();
     let mut received: HashSet<String> = HashSet::new();

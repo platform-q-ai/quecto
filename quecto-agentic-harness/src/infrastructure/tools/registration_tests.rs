@@ -1,5 +1,7 @@
 use super::registration::ToolRegistration;
-use crate::domain::tool_descriptor::{ProfileAvailabilityScope, ToolRestrictionReason, ToolSource};
+use crate::domain::tool_policy::value_objects::tool_descriptor::{
+    ProfileAvailabilityScope, ToolRestrictionReason, ToolSource,
+};
 
 #[test]
 fn registration_builder_covers_session_spawn_unloadable_alias_and_stable_id() {

@@ -1,7 +1,7 @@
 use super::*;
 use crate::application::providers::ports::ChatRequest;
-use crate::domain::message::Message;
-use crate::domain::tool::ToolDefinition;
+use crate::domain::conversation::value_objects::message::Message;
+use crate::domain::tool_policy::value_objects::tool::ToolDefinition;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -58,7 +58,7 @@ fn parse_response_preserves_non_stream_reasoning_fields() {
     let resp = OpenAiProvider::parse_response(&body).unwrap();
     assert_eq!(resp.content.as_deref(), Some("final"));
     match &resp.thinking_blocks[0] {
-        crate::domain::message::ThinkingBlock::Normal {
+        crate::domain::conversation::value_objects::message::ThinkingBlock::Normal {
             thinking,
             signature,
         } => {
@@ -76,7 +76,7 @@ fn parse_response_rejects_oversized_non_stream_reasoning_fields() {
             "message": {
                 "role": "assistant",
                 "content": "final",
-                "reasoning": "r".repeat(crate::domain::visible_thinking::MAX_VISIBLE_THINKING_BYTES + 1)
+                "reasoning": "r".repeat(crate::domain::conversation::services::visible_thinking::MAX_VISIBLE_THINKING_BYTES + 1)
             }
         }]
     });
@@ -365,7 +365,7 @@ fn test_openai_provider_accepts_shared_client() {
 /// with a 400. Paired calls and results pass through untouched.
 #[test]
 fn orphaned_calls_and_results_are_never_sent() {
-    use crate::domain::message::ToolCall;
+    use crate::domain::conversation::value_objects::message::ToolCall;
     let call = |id: &str| ToolCall {
         id: id.to_string(),
         name: "bash".to_string(),
@@ -415,7 +415,7 @@ fn orphaned_calls_and_results_are_never_sent() {
 /// the Responses route does; one with text keeps its text, without calls.
 #[test]
 fn an_assistant_message_left_with_nothing_is_not_sent() {
-    use crate::domain::message::ToolCall;
+    use crate::domain::conversation::value_objects::message::ToolCall;
     let call = |id: &str| ToolCall {
         id: id.to_string(),
         name: "bash".to_string(),

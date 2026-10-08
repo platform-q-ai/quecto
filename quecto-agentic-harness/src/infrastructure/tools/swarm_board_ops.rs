@@ -50,7 +50,7 @@ use super::swarm_control::AfterExecution;
 use super::swarm_output::tool_err;
 use crate::domain::error::DomainError;
 use crate::domain::swarm::RefusalKind;
-use crate::domain::tool::ToolResult;
+use crate::domain::tool_policy::value_objects::tool::ToolResult;
 
 /// One argument of a board op: its name, its JSON schema (as JSON text),
 /// and whether it is required or has a default (as JSON text).

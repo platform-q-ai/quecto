@@ -3,11 +3,13 @@
 use super::ToolRegistryImpl;
 use super::tests::{DummyTestTool, test_registry};
 use crate::application::tools::ports::{Tool, ToolPolicyMutator};
-use crate::domain::tool::{
+use crate::domain::tool_policy::value_objects::tool::{
     ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationStatus, ToolPolicyRequest,
     ToolProfileContext,
 };
-use crate::domain::tool_descriptor::{ProfileAvailabilityScope, ToolRestrictionReason};
+use crate::domain::tool_policy::value_objects::tool_descriptor::{
+    ProfileAvailabilityScope, ToolRestrictionReason,
+};
 use std::sync::Arc;
 
 mod persisted;

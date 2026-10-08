@@ -3,7 +3,7 @@
 use super::fixture_tests::Fixture;
 use super::{handle_clear_history, handle_new_session, handle_resume_session, handle_rewind_to};
 use crate::application::sessions::ports::SessionStore;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session::Session;
 
 #[tokio::test]

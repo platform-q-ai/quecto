@@ -15,7 +15,7 @@ use quecto::composition::subagent_teardown::build_teardown_graph;
 use quecto::domain::agents::value_objects::harness_lifetime::{
     HarnessLifetime, HarnessLifetimeError,
 };
-use quecto::domain::message::Message;
+use quecto::domain::conversation::value_objects::message::Message;
 use quecto::domain::sessions::entities::session::Session;
 use quecto::domain::sessions::entities::session_identity::SessionIdentity;
 use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;

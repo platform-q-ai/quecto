@@ -4,14 +4,14 @@
 //! launcher-created child cannot outlive its launcher, so persisted rows are
 //! read only to be ignored. No socket probe, no pid compare, no readoption.
 use crate::application::sessions::dto::SaveTrigger;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::ids::AgentUuid;
 use crate::domain::sessions::entities::session::{
     PersistedSubagentRosterEntry, SubagentLiveness, SubagentRestoreReason,
 };
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
-use crate::infrastructure::tools::subagent_registry::{
-    SubagentEntry, SubagentStatus, new_registry,
-};
+use crate::infrastructure::tools::subagent_registry;
+use subagent_registry::{SubagentEntry, SubagentStatus, new_registry};
 
 /// The roster rows the save transaction records for `registry` under an
 /// explicit `restore_reason` (#1860): a real save through the composed
@@ -36,7 +36,7 @@ pub(crate) async fn persisted_roster_via_save_async(
     handles
         .save_session
         .save(
-            &mut vec![crate::domain::message::Message::user("history")],
+            &mut vec![Message::user("history")],
             SaveTrigger::Explicit { restore_reason },
         )
         .await
@@ -600,7 +600,7 @@ pub(crate) fn handles_over(
     store: std::sync::Arc<crate::infrastructure::persistence::session_store::FileSessionStore>,
     session_key: &str,
     spill_store: Option<std::sync::Arc<dyn crate::application::sessions::ports::ContextSpillStore>>,
-    messages: &[crate::domain::message::Message],
+    messages: &[Message],
 ) -> crate::interface::cli::uds_session_handles::SessionHandles {
     let mut inputs = loop_inputs(std::path::Path::new(""), session_key);
     inputs.spill_store = spill_store;
@@ -632,7 +632,7 @@ pub(crate) fn read_handles_over(
     store: std::sync::Arc<crate::infrastructure::persistence::session_store::FileSessionStore>,
     session_key: &str,
     spill_store: Option<std::sync::Arc<dyn crate::application::sessions::ports::ContextSpillStore>>,
-    messages: &[crate::domain::message::Message],
+    messages: &[Message],
 ) -> crate::interface::cli::uds_session_handles::SessionReadHandles {
     handles_over(store, session_key, spill_store, messages).read_handles()
 }
@@ -676,7 +676,7 @@ pub(crate) fn seeded_read_handles(
     base: &std::path::Path,
     session_key: &str,
     spill_store: Option<std::sync::Arc<dyn crate::application::sessions::ports::ContextSpillStore>>,
-    messages: &[crate::domain::message::Message],
+    messages: &[Message],
 ) -> crate::interface::cli::uds_session_handles::SessionReadHandles {
     let handles = composed_sessions_for(base, session_key, spill_store).read_handles();
     let _ = handles
@@ -692,7 +692,7 @@ pub(crate) fn seeded_read_handles(
 pub(crate) fn read_handles_for(
     session_key: &str,
     spill_store: Option<std::sync::Arc<dyn crate::application::sessions::ports::ContextSpillStore>>,
-    messages: &[crate::domain::message::Message],
+    messages: &[Message],
 ) -> crate::interface::cli::uds_session_handles::SessionReadHandles {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let base = tmp.path().to_path_buf();
@@ -705,7 +705,7 @@ pub(crate) fn read_handles_for(
 pub(crate) async fn resolve_message(
     handles: &crate::interface::cli::uds_session_handles::SessionReadHandles,
     message_id: &str,
-) -> Option<crate::domain::message::Message> {
+) -> Option<Message> {
     use crate::application::sessions::dto::RecoveredContent;
     use crate::interface::uds::sessions::recover_message_controller::GetMessageFields;
     match handles
@@ -729,7 +729,7 @@ pub(crate) async fn resolve_message(
 
 /// Read handles of an ephemeral session with `messages` published.
 pub(crate) fn ephemeral_read_handles(
-    messages: &[crate::domain::message::Message],
+    messages: &[Message],
 ) -> crate::interface::cli::uds_session_handles::SessionReadHandles {
     read_handles_for("", None, messages)
 }

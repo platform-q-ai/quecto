@@ -15,7 +15,7 @@ use crate::application::sessions::dto::{
     SyncRequest, TranscriptDelta, TranscriptReset, TranscriptSync,
 };
 use crate::application::sessions::history_paging::newest_window;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 
 pub struct SynchronizeTranscript {
     state: ActiveSessionHandle,

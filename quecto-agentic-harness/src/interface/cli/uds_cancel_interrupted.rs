@@ -30,7 +30,7 @@ pub(super) async fn settle_interrupted_turn(turn: InterruptedTurn<'_, '_>) {
     } = turn;
     let finalized =
         crate::interface::cli::uds_cancel_history::finalize_interrupted_turn(messages, prompt_id);
-    crate::domain::turn_origin::stamp_turn(messages, prompt_id); // #2226
+    crate::domain::conversation::services::turn_origin::stamp_turn(messages, prompt_id); // #2226
     save_turn(turn_save, messages).await;
     if let Some(session) = active_session {
         let visible = user_visible_messages(messages, system_prompt);

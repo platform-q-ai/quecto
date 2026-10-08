@@ -4,12 +4,12 @@
 use super::*;
 use crate::application::catalogue::{CatalogueSnapshotStore, SourceEntries};
 use crate::application::providers::ports::ChatRequest;
-use crate::domain::catalogue::{
+use crate::domain::catalogue::value_objects::catalogue::{
     AuthIdentity, CatalogueEntry, ModelCapabilities, ModelCost, ModelDescriptor, ModelRef,
     ProviderDescriptor, SourceLayer, TransportKind,
 };
+use crate::domain::conversation::value_objects::message::LlmResponse;
 use crate::domain::error::DomainError;
-use crate::domain::message::LlmResponse;
 use std::sync::Mutex;
 
 #[derive(Debug)]
@@ -143,7 +143,8 @@ fn entry(qualified: &str, display: &str, auth: AuthIdentity) -> CatalogueEntry {
             reference: reference.clone(),
             display_name: Some(display.to_string()),
             capabilities: capabilities(),
-            availability: crate::domain::catalogue::Availability::runnable(),
+            availability:
+                crate::domain::catalogue::value_objects::catalogue::Availability::runnable(),
         },
     }
 }
@@ -348,7 +349,8 @@ fn selection_before_any_composition_returns_no_runtime() {
 #[test]
 fn selection_never_swaps_api_key_and_oauth_identities() {
     let api = entry("openai-api/gpt-5", "API GPT", AuthIdentity::ApiKey);
-    let oauth_provider = crate::domain::catalogue::ProviderId::new("openai").unwrap();
+    let oauth_provider =
+        crate::domain::catalogue::value_objects::catalogue::ProviderId::new("openai").unwrap();
     let oauth = entry(
         "openai/gpt-5",
         "OAuth GPT",
@@ -397,7 +399,7 @@ fn selection_generation_tracks_recomposition_past_the_first_generation() {
 
 #[test]
 fn selection_of_unsupported_transport_returns_unsupported_transport_reason() {
-    use crate::domain::catalogue::{Availability, AvailabilityStatus};
+    use crate::domain::catalogue::value_objects::catalogue::{Availability, AvailabilityStatus};
 
     // The resolve path cannot currently produce an unsupported transport
     // (every enumerated transport has an adapter), so the selection rule is
@@ -409,7 +411,7 @@ fn selection_of_unsupported_transport_returns_unsupported_transport_reason() {
     unrunnable.model.availability =
         Availability::unavailable(AvailabilityStatus::Configured, vec![unsupported.clone()])
             .unwrap();
-    let resolution = crate::domain::catalogue::resolve_catalogue(
+    let resolution = crate::domain::catalogue::value_objects::catalogue::resolve_catalogue(
         1,
         vec![(SourceLayer::BuiltIn, vec![unrunnable])],
     );

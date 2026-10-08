@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::message::{Message, ThinkingBlock, ToolCall};
+use crate::domain::conversation::value_objects::message::{Message, ThinkingBlock, ToolCall};
 use crate::domain::sessions::entities::session::SpillEntry;
 
 fn manifest() -> ExportManifest {
@@ -111,13 +111,14 @@ async fn a_plain_message_record_omits_thinking_and_keeps_tool_result_linkage() {
     let directory = tempfile::tempdir().unwrap();
     let exporter = FileSessionExport::new(directory.path().to_path_buf());
     let mut result = Message::user("ignored");
-    result.role = crate::domain::message::Role::Tool;
+    result.role = crate::domain::conversation::value_objects::message::Role::Tool;
     result.content = "out".into();
     result.tool_call_id = Some("call-1".into());
     result.tool_name = Some("bash".into());
     result.is_error = true;
     result.is_collapsed = true;
-    result.turn_origin = crate::domain::turn_origin::TurnOrigin::ProgressNudge;
+    result.turn_origin =
+        crate::domain::conversation::services::turn_origin::TurnOrigin::ProgressNudge;
     let receipt = exporter
         .write_export(vec![ExportRecord::Message(Box::new(result))], manifest())
         .await
@@ -189,11 +190,11 @@ async fn a_message_record_carries_its_user_kind() {
     let directory = tempfile::tempdir().unwrap();
     let exporter = FileSessionExport::new(directory.path().to_path_buf());
     let records = vec![
-        ExportRecord::Message(Box::new(crate::domain::turn_origin::prompt(
-            "the brief".into(),
-        ))),
         ExportRecord::Message(Box::new(
-            crate::domain::conversation::watermark_cut::archive_stub(3, Some("archive")),
+            crate::domain::conversation::services::turn_origin::prompt("the brief".into()),
+        )),
+        ExportRecord::Message(Box::new(
+            crate::domain::conversation::services::watermark_cut::archive_stub(3, Some("archive")),
         )),
         ExportRecord::Message(Box::new(Message::user("feedback"))),
     ];

@@ -1,6 +1,6 @@
 //! #2123: tool-call arguments are replayed as an object and never lost.
 use super::*;
-use crate::domain::message::ToolCall;
+use crate::domain::conversation::value_objects::message::ToolCall;
 
 #[test]
 fn build_input_sends_an_object_for_a_call_with_invalid_arguments() {

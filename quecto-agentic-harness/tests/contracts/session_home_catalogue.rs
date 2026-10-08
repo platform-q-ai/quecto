@@ -26,7 +26,7 @@ fn corrupt_authority_is_unavailable_not_legacy() {
 
 use quecto::application::sessions::ports::SessionStore;
 use quecto::domain::{
-    message::Message,
+    conversation::value_objects::message::Message,
     sessions::entities::session::Session,
     sessions::entities::session_home::{AssociationProvenance, SessionHome, WorkspaceGroup},
 };

@@ -20,9 +20,9 @@ use crate::application::sessions::active_session::ActiveSessionHandle;
 use crate::application::sessions::dto::{ClearConversationError, ClearedConversation, SaveTrigger};
 use crate::application::sessions::ports::ContextSpillStore;
 use crate::application::sessions::ports::session_runtime::TurnAccountingReset;
-use crate::domain::conversation_edit::clear_conversation;
-use crate::domain::conversation_view::is_injected_system_prompt;
-use crate::domain::message::Message;
+use crate::domain::conversation::services::conversation_edit::clear_conversation;
+use crate::domain::conversation::services::conversation_view::is_injected_system_prompt;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 pub struct ClearConversation {

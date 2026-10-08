@@ -9,9 +9,9 @@ use std::sync::{Arc, Mutex};
 use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use quecto::application::providers::ports::{ChatRequest, LlmProvider};
 use quecto::application::tools::ports::Tool;
+use quecto::domain::conversation::value_objects::message::LlmResponse;
 use quecto::domain::error::DomainError;
-use quecto::domain::message::LlmResponse;
-use quecto::domain::tool::{ToolDefinition, ToolResult};
+use quecto::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use quecto::domain::workflow::{
     WorkflowConfig, WorkflowEngine, WorkflowTemplate, WorkflowTemplateStep,
 };
@@ -110,7 +110,8 @@ pub fn runtime(session_key: &str) -> Runtime {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            quecto::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
     let workflow = WorkflowEngine::new(
         WorkflowConfig {

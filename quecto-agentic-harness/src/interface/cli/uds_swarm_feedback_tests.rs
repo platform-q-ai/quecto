@@ -1,7 +1,7 @@
 //! Real socket delivery into a workflow-free coordinator, followed by board action.
 use super::dispatch_test_env::{DispatchTestEnv, make_workflow};
 use crate::application::tools::ports::Tool;
-use crate::domain::message::{LlmResponse, ToolCall};
+use crate::domain::conversation::value_objects::message::{LlmResponse, ToolCall};
 use crate::infrastructure::tools::{swarm::SwarmTool, swarm_bridge::SwarmContext};
 use std::sync::Arc;
 
@@ -36,10 +36,10 @@ impl crate::application::providers::ports::LlmProvider for ApprovalProvider {
         }
         // #2281: the approval applied one call at a time: read the task,
         // write the artifact, submit it under the task's token.
-        let answers: Vec<&crate::domain::message::Message> = request
+        let answers: Vec<&crate::domain::conversation::value_objects::message::Message> = request
             .messages
             .iter()
-            .filter(|m| m.role == crate::domain::message::Role::Tool)
+            .filter(|m| m.role == crate::domain::conversation::value_objects::message::Role::Tool)
             .collect();
         assert!(
             answers.iter().all(|m| !m.is_error),
@@ -332,7 +332,7 @@ async fn rejected_socket_steer_does_not_cancel_but_explicit_abort_does() {
 /// harness's, unmarked, so the member's real task keeps its pin.
 #[tokio::test]
 async fn an_idle_wake_is_unmarked_and_a_prompt_or_steer_is_a_prompt() {
-    use crate::domain::conversation::UserKind;
+    use crate::domain::conversation::value_objects::user_kind::UserKind;
     use crate::interface::cli::uds_swarm_control::SWARM_WAKE;
     for (type_name, id, expected) in [
         ("prompt", Some("p"), UserKind::Prompt),

@@ -16,7 +16,7 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 
 use super::request_observation::RequestTrace;
-use crate::domain::message::UsageInfo;
+use crate::domain::conversation::value_objects::message::UsageInfo;
 
 /// How one provider request ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

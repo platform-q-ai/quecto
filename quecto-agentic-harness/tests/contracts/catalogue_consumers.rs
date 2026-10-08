@@ -108,7 +108,12 @@ fn credential_material_from_models_json_never_reaches_the_snapshot() {
     let snapshot = snapshot_store_for(tmp.path()).current();
     assert!(
         snapshot
-            .find(&quecto::domain::catalogue::ModelRef::parse_qualified("secretish/m").unwrap())
+            .find(
+                &quecto::domain::catalogue::value_objects::catalogue::ModelRef::parse_qualified(
+                    "secretish/m"
+                )
+                .unwrap()
+            )
             .is_some()
     );
     assert!(!format!("{snapshot:?}").contains("sk-super-secret-42"));

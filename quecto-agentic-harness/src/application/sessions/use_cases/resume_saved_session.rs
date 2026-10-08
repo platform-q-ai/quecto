@@ -32,8 +32,8 @@ use crate::application::sessions::dto::{
 };
 use crate::application::sessions::ports::{FleetSettlement, SessionStore, SessionSwitchRuntime};
 use crate::application::sessions::session_home::SessionHomeContext;
-use crate::domain::conversation_view::inject_system_prompt;
-use crate::domain::message::Message;
+use crate::domain::conversation::services::conversation_view::inject_system_prompt;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session::Session;
 use std::sync::Arc;
 

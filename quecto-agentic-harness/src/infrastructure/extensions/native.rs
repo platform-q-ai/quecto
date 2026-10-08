@@ -338,7 +338,9 @@ pub fn register_bundled_native_tools(
 pub fn register_bundled_native_tools_with_scope(
     registry: &mut crate::infrastructure::tools::registry::ToolRegistryImpl,
     extensions: Vec<Arc<dyn Extension>>,
-    profile_scope: Option<crate::domain::tool_descriptor::ProfileAvailabilityScope>,
+    profile_scope: Option<
+        crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope,
+    >,
 ) {
     for extension in extensions {
         let provider_id = extension.name().to_string();

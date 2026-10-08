@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
-use crate::domain::message::{LlmResponse, StopReason, ThinkingBlock, ToolCall, UsageInfo};
-use crate::domain::visible_thinking::append_visible_thinking;
+use crate::domain::conversation::services::visible_thinking::append_visible_thinking;
+use crate::domain::conversation::value_objects::message::{
+    LlmResponse, StopReason, ThinkingBlock, ToolCall, UsageInfo,
+};
 use serde_json::Value;
 
 #[derive(Default)]

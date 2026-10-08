@@ -1,5 +1,5 @@
-use crate::domain::message::ThinkingBlock;
-use crate::domain::visible_thinking::VisibleThinkingPageBlock;
+use crate::domain::conversation::services::visible_thinking::VisibleThinkingPageBlock;
+use crate::domain::conversation::value_objects::message::ThinkingBlock;
 
 pub(super) fn visible_thinking_blocks_json(blocks: &[ThinkingBlock]) -> serde_json::Value {
     serde_json::Value::Array(

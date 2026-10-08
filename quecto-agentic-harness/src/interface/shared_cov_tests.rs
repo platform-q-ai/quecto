@@ -73,12 +73,12 @@ async fn build_official_tool_registry_registers_common_bundled_native_surface() 
         let descriptor = registry.descriptor(name).expect("descriptor");
         assert!(matches!(
             descriptor.source,
-            crate::domain::tool_descriptor::ToolSource::BundledNative
+            crate::domain::tool_policy::value_objects::tool_descriptor::ToolSource::BundledNative
         ));
         assert_eq!(descriptor.owner, "quecto:official-tools");
         assert!(matches!(
             descriptor.availability,
-            crate::domain::tool_descriptor::ToolAvailability::Enabled
+            crate::domain::tool_policy::value_objects::tool_descriptor::ToolAvailability::Enabled
         ));
     }
     registry.unregister_runtime_tool("docs");
@@ -137,7 +137,7 @@ fn build_and_register_native_extensions_registers_web_fetch() {
         .expect("web_fetch descriptor");
     assert!(matches!(
         descriptor.source,
-        crate::domain::tool_descriptor::ToolSource::BundledNative
+        crate::domain::tool_policy::value_objects::tool_descriptor::ToolSource::BundledNative
     ));
 }
 
@@ -415,7 +415,9 @@ async fn with_oauth_config_valid_token_short_circuits() {
 
 #[test]
 fn shared_tool_runtime_builder_cli_and_uds_use_same_pipeline() {
-    use crate::domain::tool_descriptor::{ToolAvailability, ToolSource};
+    use crate::domain::tool_policy::value_objects::tool_descriptor::{
+        ToolAvailability, ToolSource,
+    };
 
     let tmp = tempfile::TempDir::new().unwrap();
     let mut config = crate::infrastructure::config::Config::default();

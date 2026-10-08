@@ -14,7 +14,7 @@ use crate::application::ports::{
     CatalogueSource, RefreshChange, RefreshContext, RefreshError, RefreshRedactionPort,
     RefreshableCatalogueSource, SkippedRecord, SourceEntries,
 };
-use crate::domain::catalogue::{
+use crate::domain::catalogue::value_objects::catalogue::{
     AuthIdentity, Availability, CatalogueEntry, ModelDescriptor, ModelRef, ProviderDescriptor,
     ProviderId, SourceLayer, TransportKind,
 };
@@ -219,7 +219,7 @@ fn cached_entry(provider: &str, model: &CachedModel) -> Result<CatalogueEntry, S
             // carries no effort vocabulary until the user's record says so;
             // a listing says nothing of its input, so a built-in model keeps
             // the built-in table's (#2421 review L1).
-            capabilities: crate::domain::catalogue::ModelCapabilities {
+            capabilities: crate::domain::catalogue::value_objects::catalogue::ModelCapabilities {
                 input_modalities: crate::infrastructure::model_registry::builtin_input(
                     provider, &model.id,
                 ),

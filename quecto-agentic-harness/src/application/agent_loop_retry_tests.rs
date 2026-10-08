@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::message::StopReason;
+use crate::domain::conversation::value_objects::message::StopReason;
 
 #[tokio::test]
 async fn retries_retryable_provider_failures_before_returning_success() {
@@ -35,7 +35,8 @@ async fn retries_retryable_provider_failures_before_returning_success() {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1);
 
@@ -76,7 +77,8 @@ async fn retries_streaming_provider_failures_before_any_output() {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1);
 
@@ -117,7 +119,8 @@ async fn does_not_retry_streaming_provider_failures_after_output() {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1);
 
@@ -155,7 +158,8 @@ async fn does_not_retry_non_streaming_openai_insufficient_quota_429() {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1);
 
@@ -190,7 +194,8 @@ async fn does_not_retry_streaming_openai_insufficient_quota_429() {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1);
 
@@ -224,7 +229,8 @@ async fn provider_context_limit_errors_are_actionable() {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1);
 
@@ -273,7 +279,8 @@ async fn retries_empty_streaming_done_before_success() {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1);
 
@@ -315,7 +322,8 @@ async fn empty_streaming_done_with_max_tokens_preserves_stop_reason() {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1);
 
@@ -357,7 +365,8 @@ async fn paused_execution_never_calls_provider() {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1)
     .with_request_admission(Some(Arc::new(PausedAdmission)));
@@ -397,7 +406,8 @@ async fn long_reset_horizon_prevents_stream_initiation_retry() {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1);
 
@@ -441,7 +451,8 @@ async fn a_stalled_stream_is_retried_once_with_its_own_guidance() {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1);
 
@@ -477,7 +488,8 @@ fn streaming_agent(provider: Arc<MockStreamingProvider>) -> AgentLoopImpl {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1)
 }
@@ -559,13 +571,15 @@ async fn a_malformed_request_error_before_output_is_recovered() {
     let error = r#"HTTP 400 OpenAI stream error: {"error":{"type":"invalid_request_error"}}"#;
     let provider = Arc::new(MockStreamingProvider::new(vec![
         vec![StreamEvent::Error(error.to_string())],
-        vec![StreamEvent::Done(crate::domain::message::LlmResponse {
-            content: Some("repaired".to_string()),
-            tool_calls: vec![],
-            usage: None,
-            stop_reason: None,
-            thinking_blocks: vec![],
-        })],
+        vec![StreamEvent::Done(
+            crate::domain::conversation::value_objects::message::LlmResponse {
+                content: Some("repaired".to_string()),
+                tool_calls: vec![],
+                usage: None,
+                stop_reason: None,
+                thinking_blocks: vec![],
+            },
+        )],
     ]));
     let mut agent = streaming_agent(provider.clone());
     let result = agent
@@ -653,7 +667,8 @@ async fn a_request_answered_first_time_is_admitted_once() {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
     .with_request_admission(Some(admission.clone()));
     agent

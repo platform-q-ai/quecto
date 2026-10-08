@@ -9,7 +9,7 @@ use super::uds_session_handles::SessionHandles;
 use super::{uds_extensions::ExtRegistry, uds_lifecycle::inject_system_prompt};
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::sessions::dto::SaveTrigger;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 
 pub(super) struct SingleClientArgs<'a> {
     pub(super) agent: AgentLoopImpl,

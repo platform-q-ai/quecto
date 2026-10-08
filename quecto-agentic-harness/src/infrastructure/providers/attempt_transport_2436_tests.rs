@@ -9,8 +9,8 @@ use crate::application::agent_turn::ports::AgentLoop;
 use crate::application::ports::AttemptAcquisition;
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::agents::value_objects::agent::AgentProgressEvent;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::inference::events::request_completion::{RequestCompleted, RequestOutcome};
-use crate::domain::message::Message;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 #[derive(Debug)]
@@ -147,7 +147,8 @@ fn agent_on(provider: Arc<dyn LlmProvider>, streaming: bool) -> (AgentLoopImpl, 
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
     (agent, events)
 }

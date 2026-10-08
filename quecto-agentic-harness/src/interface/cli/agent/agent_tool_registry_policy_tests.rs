@@ -1,8 +1,12 @@
 //! #2217: persisted `tools.policy` entries that match no registered tool.
 
 use super::*;
-use crate::domain::tool_descriptor::{ProfileAvailabilityScope, ToolSource};
-use crate::domain::tool_policy_catalogue::{BUNDLED_TOOLS, bundled_stable_id};
+use crate::domain::tool_policy::services::tool_policy_catalogue::{
+    BUNDLED_TOOLS, bundled_stable_id,
+};
+use crate::domain::tool_policy::value_objects::tool_descriptor::{
+    ProfileAvailabilityScope, ToolSource,
+};
 use crate::infrastructure::config::ToolPolicyEntryConfig;
 use crate::interface::cli::agent::flag_parse::AgentFlags;
 

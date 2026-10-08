@@ -13,7 +13,7 @@ use crate::domain::environments::services::environment_listing::tests::{
 use crate::domain::environments::services::environment_listing::{
     EnvironmentListing, ListedEnvironment,
 };
-use crate::domain::tool::ToolResult;
+use crate::domain::tool_policy::value_objects::tool::ToolResult;
 
 fn get_containers(registry: EnvironmentRegistry, args: serde_json::Value) -> ToolResult {
     let query = Arc::new(ListEnvironmentsQuery::new(registry));

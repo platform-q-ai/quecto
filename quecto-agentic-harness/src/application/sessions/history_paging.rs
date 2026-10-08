@@ -4,10 +4,10 @@
 //! state, no ports — so the history and sync use cases share one rule and
 //! a unit rig needs no store to exercise either.
 use crate::application::sessions::dto::{HistoryError, HistoryPage, HistoryQuery};
-use crate::domain::conversation_view::{position_by_id, user_visible_messages};
+use crate::domain::conversation::{services, value_objects::message::Message};
 use crate::domain::ids::MessageId;
-use crate::domain::message::Message;
-use crate::domain::turn_origin::{ReportRef, is_substantive_reply, transcript_report_index};
+use services::conversation_view::{position_by_id, user_visible_messages};
+use services::turn_origin::{ReportRef, is_substantive_reply, transcript_report_index};
 
 /// The window `query` selects from `conversation`, whose injected system
 /// prompt (`injected_prompt`, empty when none) is not part of the visible

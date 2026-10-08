@@ -3,6 +3,8 @@
 //! reports; dropped mid-attempt, it records that attempt as `Interrupted`
 //! and queues itself for its audit record (#2210).
 use crate::application::providers::ports::ChatRequest;
+use crate::domain::conversation::value_objects::message::UsageInfo;
+use crate::domain::conversation::value_objects::message::{LlmResponse, Role};
 use crate::domain::error::DomainError;
 use crate::domain::inference::events::request_completion::RequestOutcome;
 use crate::domain::inference::events::request_observation::{
@@ -10,8 +12,6 @@ use crate::domain::inference::events::request_observation::{
 };
 use crate::domain::inference::events::request_progress::InFlightRequest;
 use crate::domain::inference::services::provider_error::classify_provider_error;
-use crate::domain::message::UsageInfo;
-use crate::domain::message::{LlmResponse, Role};
 use sha2::{Digest, Sha256};
 use std::future::Future;
 use std::pin::Pin;

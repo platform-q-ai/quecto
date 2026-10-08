@@ -1,5 +1,5 @@
 use crate::application::tools::ports::Tool;
-use crate::domain::tool::ToolResult;
+use crate::domain::tool_policy::value_objects::tool::ToolResult;
 use crate::infrastructure::tools::agent_cmd::AgentCmdTool;
 use crate::infrastructure::tools::agent_cmd_report::{
     REPORT_BUDGET_BYTES, bounded_report_messages,

@@ -12,7 +12,7 @@ use quecto_image::{
     ImagePayload, ImageRefusal, ImagesRefusal, MAX_IMAGES_PER_MESSAGE, validate_images,
 };
 
-use crate::domain::tool::{ImageBlock, ToolResult};
+use crate::domain::tool_policy::value_objects::tool::{ImageBlock, ToolResult};
 
 /// An extension's `imageBlocks` as its transport read them, not yet
 /// admitted: each entry an image payload, or `None` for one that is not

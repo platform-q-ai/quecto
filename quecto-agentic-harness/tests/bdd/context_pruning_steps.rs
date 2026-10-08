@@ -1369,13 +1369,15 @@ fn complete_text_only_prompt(world: &mut QuectoWorld, reply: &str) {
 
     let store = world.context_spill_store.as_ref().unwrap().clone();
     let mock = ensure_mock_llm(world);
-    mock.push_response(quecto::domain::message::LlmResponse {
-        content: Some(reply.to_string()),
-        tool_calls: vec![],
-        usage: None,
-        stop_reason: None,
-        thinking_blocks: vec![],
-    });
+    mock.push_response(
+        quecto::domain::conversation::value_objects::message::LlmResponse {
+            content: Some(reply.to_string()),
+            tool_calls: vec![],
+            usage: None,
+            stop_reason: None,
+            thinking_blocks: vec![],
+        },
+    );
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: mock,
         tool_registry: Box::new(quecto::infrastructure::tools::registry::ToolRegistryImpl::new()),
@@ -1394,7 +1396,8 @@ fn complete_text_only_prompt(world: &mut QuectoWorld, reply: &str) {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            quecto::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
     let messages = world.context_messages.as_mut().unwrap();
     messages.push(Message::user("a question"));
@@ -1685,13 +1688,15 @@ fn when_agent_completes_over_budget_prompt(world: &mut QuectoWorld) {
         .context_max_tokens
         .expect("max_context_tokens must be set");
     let mock = ensure_mock_llm(world);
-    mock.push_response(quecto::domain::message::LlmResponse {
-        content: Some("done".to_string()),
-        tool_calls: vec![],
-        usage: None,
-        stop_reason: None,
-        thinking_blocks: vec![],
-    });
+    mock.push_response(
+        quecto::domain::conversation::value_objects::message::LlmResponse {
+            content: Some("done".to_string()),
+            tool_calls: vec![],
+            usage: None,
+            stop_reason: None,
+            thinking_blocks: vec![],
+        },
+    );
     let sink = Arc::new(RecordingAuditSink::default());
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: mock,
@@ -1709,7 +1714,8 @@ fn when_agent_completes_over_budget_prompt(world: &mut QuectoWorld) {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            quecto::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
     // The in-flight prompt alone (never droppable) exceeds the tiny budget.
     let mut messages = vec![Message::user("y".repeat(600))];
@@ -1775,7 +1781,8 @@ fn when_agent_derives_effective_budget(world: &mut QuectoWorld) {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: world.context_model_window.expect("window declared"),
-        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            quecto::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
     world.context_effective_budget = Some(agent.effective_max_context_tokens());
 }
@@ -1814,7 +1821,7 @@ fn given_ephemeral_session(world: &mut QuectoWorld) {
 /// what a run persists; honours the ephemeral-session context step.
 fn run_prompt_through_loop(
     world: &mut QuectoWorld,
-    responses: Vec<quecto::domain::message::LlmResponse>,
+    responses: Vec<quecto::domain::conversation::value_objects::message::LlmResponse>,
 ) {
     use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
     use quecto::application::agent_turn::ports::AgentLoop;
@@ -1843,7 +1850,8 @@ fn run_prompt_through_loop(
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            quecto::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
     let messages = world.context_messages.as_mut().unwrap();
     messages.push(Message::user("a question"));
@@ -1853,8 +1861,10 @@ fn run_prompt_through_loop(
         .expect("the prompt must complete");
 }
 
-fn text_llm_response(text: &str) -> quecto::domain::message::LlmResponse {
-    quecto::domain::message::LlmResponse {
+fn text_llm_response(
+    text: &str,
+) -> quecto::domain::conversation::value_objects::message::LlmResponse {
+    quecto::domain::conversation::value_objects::message::LlmResponse {
         content: Some(text.to_string()),
         tool_calls: vec![],
         usage: None,
@@ -1865,13 +1875,15 @@ fn text_llm_response(text: &str) -> quecto::domain::message::LlmResponse {
 
 #[when("the agent runs a bash tool")]
 fn when_agent_runs_bash_tool(world: &mut QuectoWorld) {
-    let tool_call = quecto::domain::message::LlmResponse {
+    let tool_call = quecto::domain::conversation::value_objects::message::LlmResponse {
         content: None,
-        tool_calls: vec![quecto::domain::message::ToolCall {
-            id: "call_1".into(),
-            name: "bash".into(),
-            arguments: r#"{"command":"echo hi"}"#.into(),
-        }],
+        tool_calls: vec![
+            quecto::domain::conversation::value_objects::message::ToolCall {
+                id: "call_1".into(),
+                name: "bash".into(),
+                arguments: r#"{"command":"echo hi"}"#.into(),
+            },
+        ],
         usage: None,
         stop_reason: None,
         thinking_blocks: vec![],

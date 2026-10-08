@@ -21,7 +21,7 @@ use std::collections::BTreeSet;
 
 use super::credential_store::{AuthMethod, Credential};
 use crate::application::catalogue::ports::RuntimeSnapshotSource;
-use crate::domain::catalogue::AuthIdentity;
+use crate::domain::catalogue::value_objects::catalogue::AuthIdentity;
 
 /// The built-in slots the runtime builds straight from a vendor credential
 /// or a configured key, by the names the factory gives them: the factory

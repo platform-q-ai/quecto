@@ -119,11 +119,9 @@ pub async fn busy_reader_dispatch(
     line: &str,
     session: &uds_session_handles::SessionReadHandles,
 ) -> (bool, Option<serde_json::Value>) {
-    let _ = session
-        .active_session
-        .write()
-        .await
-        .publish(&[crate::domain::message::Message::user("committed")]);
+    let _ = session.active_session.write().await.publish(&[
+        crate::domain::conversation::value_objects::message::Message::user("committed"),
+    ]);
     let clients = uds_ext_protocol::new_client_tool_registry();
     let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(8);
     uds_ext_protocol::register_client_writer(&clients, 1, tx);

@@ -278,7 +278,11 @@ mod transport_tests {
                 content: Some("SECRET".into()),
                 tool_calls: vec![],
                 usage: None,
-                stop_reason: Some(crate::domain::message::StopReason::Unknown("SECRET".into())),
+                stop_reason: Some(
+                    crate::domain::conversation::value_objects::message::StopReason::Unknown(
+                        "SECRET".into(),
+                    ),
+                ),
                 thinking_blocks: vec![],
             }))
             .await

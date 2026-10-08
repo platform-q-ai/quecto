@@ -2,10 +2,10 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use super::tests::{DummyTestTool, test_registry};
-use crate::domain::tool::{
+use crate::domain::tool_policy::value_objects::tool::{
     ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationStatus, ToolProfileContext,
 };
-use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
 use crate::infrastructure::tools::inherited_tool_policy::InheritedToolPolicySnapshot;
 use crate::infrastructure::tools::registration::ToolRegistration;
 
@@ -13,7 +13,9 @@ use crate::infrastructure::tools::registration::ToolRegistration;
 /// with the registry's policy over entrypoint-only tools.
 fn spawn_child_policy(reg: &super::ToolRegistryImpl) -> BTreeMap<String, ProfileAvailabilityScope> {
     let mut snapshot =
-        crate::domain::tool_policy::inherited_child_policy_from_catalogue(reg.catalogue_entries());
+        crate::domain::tool_policy::services::tool_policy::inherited_child_policy_from_catalogue(
+            reg.catalogue_entries(),
+        );
     reg.record_unbuilt_entrypoint_only_policy(&mut snapshot);
     snapshot
 }

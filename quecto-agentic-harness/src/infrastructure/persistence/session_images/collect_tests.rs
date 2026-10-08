@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 use crate::application::sessions::ports::{ContextSpillStore, SessionStore};
-use crate::domain::conversation::stored_images::{ImageRef, sha256_hex};
-use crate::domain::message::{Message, UserImageBlock};
+use crate::domain::conversation::value_objects::message::{Message, UserImageBlock};
+use crate::domain::conversation::value_objects::stored_images::{ImageRef, sha256_hex};
 use crate::domain::sessions::entities::session::{Session, SpillEntry};
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::infrastructure::persistence::context_spill::FileContextSpillStore;

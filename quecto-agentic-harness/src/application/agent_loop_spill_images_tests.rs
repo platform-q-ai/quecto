@@ -12,10 +12,10 @@ use super::super::tests::{MockProvider, MockRegistry, text_response, tool_call_r
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::sessions::ports::ContextSpillStore;
 use crate::application::tools::ports::Tool;
+use crate::domain::conversation::value_objects::message::{Message, Role, UserImageBlock};
 use crate::domain::error::DomainError;
-use crate::domain::message::{Message, Role, UserImageBlock};
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
-use crate::domain::tool::{ImageBlock, ToolDefinition, ToolResult};
+use crate::domain::tool_policy::value_objects::tool::{ImageBlock, ToolDefinition, ToolResult};
 use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
 use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
 use crate::infrastructure::tools::recall::RecallTool;
@@ -94,7 +94,8 @@ async fn a_recalled_message_with_images_says_how_many_it_did_not_bring_back() {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
     // A prompt that is only an image: no text, still retained.
     let mut prompt = Message::user("");

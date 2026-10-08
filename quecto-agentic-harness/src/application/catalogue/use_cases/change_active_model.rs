@@ -27,10 +27,10 @@ use crate::application::catalogue::ports::{
 use crate::application::catalogue::use_cases::ChangeReasoningEffort;
 use crate::application::catalogue::{CatalogueSnapshotStore, ResolveCatalogueUseCase};
 use crate::application::provider_runtime::{SelectionError, select_in_runtime};
-use crate::domain::catalogue::{
+use crate::domain::catalogue::value_objects::catalogue::{
     CatalogueEntry, CatalogueSnapshot, ModelRef, UnavailableReason, retired_builtin,
 };
-use crate::domain::conversation::image_input::ImageInput;
+use crate::domain::conversation::services::image_input::ImageInput;
 use crate::domain::inference::value_objects::provider::{
     ModelRoute, parse_qualified_model, provider_prefix_matches, route_model,
 };

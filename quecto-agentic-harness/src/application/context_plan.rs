@@ -1,8 +1,8 @@
 //! What one context-preparation pass did, and the tool-result message
 //! input (split from `context.rs` for its decrease-only line ceiling, #2348).
 
-use crate::domain::message::ToolCall;
-use crate::domain::tool::ImageBlock;
+use crate::domain::conversation::value_objects::message::ToolCall;
+use crate::domain::tool_policy::value_objects::tool::ImageBlock;
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ContextPlan {

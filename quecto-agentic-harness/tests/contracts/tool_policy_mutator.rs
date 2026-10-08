@@ -1,4 +1,6 @@
-use quecto::domain::tool::{ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationStatus};
+use quecto::domain::tool_policy::value_objects::tool::{
+    ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationStatus,
+};
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
 
 #[test]

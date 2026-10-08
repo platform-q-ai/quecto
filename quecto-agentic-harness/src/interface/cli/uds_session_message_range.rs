@@ -9,8 +9,10 @@
 //! stay one rule — until the framed response fits (#1094), with range
 //! metadata so clients walk and reassemble content that exceeds the cap.
 use crate::application::sessions::dto::{RecoveredContent, Utf8Range};
-use crate::domain::message::{Message, ToolCall};
-use crate::domain::visible_thinking::{visible_thinking_len, visible_thinking_page};
+use crate::domain::conversation::services::visible_thinking::{
+    visible_thinking_len, visible_thinking_page,
+};
+use crate::domain::conversation::value_objects::message::{Message, ToolCall};
 use crate::infrastructure::turn_origin_names::{origin_name, user_kind_name};
 use crate::interface::cli::protocol::AgentEvent;
 

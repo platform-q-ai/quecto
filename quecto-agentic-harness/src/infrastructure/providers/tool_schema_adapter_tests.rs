@@ -4,8 +4,8 @@
 
 use crate::application::providers::ports::ChatRequest;
 use crate::application::tools::ports::Tool;
-use crate::domain::message::Message;
-use crate::domain::tool::ToolDefinition;
+use crate::domain::conversation::value_objects::message::Message;
+use crate::domain::tool_policy::value_objects::tool::ToolDefinition;
 use crate::infrastructure::providers::anthropic::AnthropicProvider;
 use crate::infrastructure::providers::codex::CodexProvider;
 use crate::infrastructure::providers::openai::OpenAiProvider;

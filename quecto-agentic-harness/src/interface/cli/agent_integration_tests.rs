@@ -3,7 +3,8 @@ use super::*;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::composition::runtime::build_agent_provider;
 use crate::composition::tool_policy::build_tool_policy_persistence;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
+use crate::domain::tool_policy::value_objects::tool::ToolProfileContext;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::security::sandbox::Sandbox;
 use std::path::PathBuf;
@@ -160,7 +161,7 @@ pub(super) fn make_test_agent(base_dir: &std::path::Path) -> AgentLoopImpl {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context: ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1)
 }
@@ -579,7 +580,7 @@ fn test_run_with_deadline_completes_before_timeout() {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context: ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1);
 

@@ -15,15 +15,17 @@ use crate::application::tools::ports::{
 };
 use crate::domain::agents::value_objects::agent::{AgentInfo, AgentProgressEvent};
 use crate::domain::agents::value_objects::agent::{AgentResult, ProgressCallback};
-use crate::domain::conversation::reply_requirement::ReplyRequirement;
+use crate::domain::conversation::services::reply_requirement::ReplyRequirement;
+use crate::domain::conversation::value_objects::message::{LlmResponse, Message, ToolCall};
 use crate::domain::inference::events::request_observation::{
     InputBaseline, RequestDiagnostics, RequestObservation,
 };
 use crate::domain::inference::services::provider_error::classify_provider_error;
 use crate::domain::inference::value_objects::provider::{EffortLevel, StreamEvent};
-use crate::domain::message::{LlmResponse, Message, ToolCall};
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
-use crate::domain::tool::{ToolPolicyReconciliation, ToolProfileContext};
+use crate::domain::tool_policy::value_objects::tool::{
+    ToolPolicyReconciliation, ToolProfileContext,
+};
 use crate::domain::{audit::AuditEvent, error::DomainError};
 use std::{pin::Pin, sync::Arc};
 
@@ -97,7 +99,7 @@ pub struct AgentLoopConfig {
     pub pin_recent_turns: u32,
     /// #2403/#2414: the watermark marks (cut at the high, down to the low),
     /// before the ceiling scales them. Constructor field for the same reason.
-    pub context_marks: crate::domain::conversation::watermark::Watermark,
+    pub context_marks: crate::domain::conversation::services::watermark::Watermark,
     /// #1044: active model context window (`None` unknown); bounds pruning budget.
     pub model_context_window: Option<usize>,
     pub tool_profile_context: ToolProfileContext,
@@ -156,7 +158,7 @@ pub struct AgentLoopImpl {
     /// user-facing context gauge decisions.
     context_manager: ContextManager,
     pub(super) pending_tool_policy_requests:
-        std::sync::Mutex<Vec<crate::domain::tool::ToolPolicyRequest>>,
+        std::sync::Mutex<Vec<crate::domain::tool_policy::value_objects::tool::ToolPolicyRequest>>,
     pub(super) tool_policy_state: std::sync::Mutex<ToolPolicyState>,
     pub(super) turn_in_flight: std::sync::atomic::AtomicBool,
     pub(super) tool_profile_context: ToolProfileContext,
@@ -266,7 +268,10 @@ impl AgentLoopImpl {
     #[cfg(test)]
     pub fn context_knob_snapshot(
         &self,
-    ) -> (u32, crate::domain::conversation::watermark::Watermark) {
+    ) -> (
+        u32,
+        crate::domain::conversation::services::watermark::Watermark,
+    ) {
         self.context_manager.context_knob_snapshot()
     }
     /// Fire a progress event to the registered callback, if any. Takes a closure
@@ -290,7 +295,9 @@ impl AgentLoopImpl {
     }
     /// Return descriptors for policy/UI callers without exposing concrete tool
     /// implementations.
-    pub fn tool_descriptors(&self) -> Vec<crate::domain::tool_descriptor::ToolDescriptor> {
+    pub fn tool_descriptors(
+        &self,
+    ) -> Vec<crate::domain::tool_policy::value_objects::tool_descriptor::ToolDescriptor> {
         self.tool_catalog().descriptors()
     }
 
@@ -352,7 +359,9 @@ impl AgentLoopImpl {
     }
 
     /// Return all tool definitions (for core name lookups).
-    pub fn tool_definitions(&self) -> &[crate::domain::tool::ToolDefinition] {
+    pub fn tool_definitions(
+        &self,
+    ) -> &[crate::domain::tool_policy::value_objects::tool::ToolDefinition] {
         self.tool_catalog().definitions()
     }
 

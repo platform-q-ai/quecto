@@ -1,7 +1,7 @@
 use crate::application::agent_usage::UsageTotals;
-use crate::domain::conversation::reply_requirement::ReplyRequirement;
+use crate::domain::conversation::services::reply_requirement::ReplyRequirement;
+use crate::domain::conversation::value_objects::message::{LlmResponse, StopReason};
 use crate::domain::error::DomainError;
-use crate::domain::message::{LlmResponse, StopReason};
 
 /// A failed provider request, and whether its reply had already emitted
 /// events (shown output) before it failed.
@@ -37,7 +37,9 @@ pub(super) fn is_empty_streamed_response(response: &LlmResponse) -> bool {
         .trim()
         .is_empty()
         && response.tool_calls.is_empty()
-        && !crate::domain::visible_thinking::has_visible_thinking(&response.thinking_blocks)
+        && !crate::domain::conversation::services::visible_thinking::has_visible_thinking(
+            &response.thinking_blocks,
+        )
 }
 
 /// A reply with nothing in it that ends the turn (#2434): it answers a

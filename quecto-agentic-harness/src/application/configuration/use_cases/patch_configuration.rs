@@ -42,7 +42,7 @@ use crate::application::configuration::removed_keys::{
     WHY_REMOVED, removed_keys_set, without_removed_keys,
 };
 use crate::application::configuration::use_cases::ResolveEffectiveConfig;
-use crate::domain::tool_id::parse_stable_tool_id;
+use crate::domain::tool_policy::value_objects::tool_id::parse_stable_tool_id;
 
 pub struct PatchConfiguration {
     store: Arc<dyn ConfigDocumentStore>,

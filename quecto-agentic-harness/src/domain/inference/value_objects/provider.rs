@@ -3,7 +3,7 @@
 //! (`LlmProvider`), the per-request admission port (`RequestAdmission`) and
 //! the `ChatRequest` they exchange are the application's
 //! (`application::providers::ports`, #1960).
-use crate::domain::message::LlmResponse;
+use crate::domain::conversation::value_objects::message::LlmResponse;
 
 /// Incremental streaming event emitted by `chat_stream_incremental()`.
 ///
@@ -78,7 +78,7 @@ impl ThinkingLevel {
 /// The accepted vocabulary is the union of the providers' documented scales
 /// (#1066): OpenAI's `none, low, medium, high, xhigh` and Anthropic's
 /// `low, medium, high, max`. Which subset a given model accepts is the
-/// catalogue's per-model capability (`domain::catalogue::EffortVocabulary`,
+/// catalogue's per-model capability (`domain::catalogue::value_objects::catalogue::EffortVocabulary`,
 /// #1996); parsing here is syntax only and rejects anything outside the union.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EffortLevel {

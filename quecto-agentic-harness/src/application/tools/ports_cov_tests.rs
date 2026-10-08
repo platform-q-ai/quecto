@@ -239,7 +239,7 @@ fn default_descriptors_map_definitions_to_runtime_source() {
     assert_eq!(descriptors[0].name(), "one");
     assert_eq!(
         descriptors[0].source,
-        crate::domain::tool_descriptor::ToolSource::Runtime
+        crate::domain::tool_policy::value_objects::tool_descriptor::ToolSource::Runtime
     );
     assert!(descriptors[0].availability.is_enabled());
 }

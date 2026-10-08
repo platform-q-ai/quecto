@@ -479,8 +479,7 @@ fn l5_moved_tests_remain_siblings_of_their_production_module() {
         let production = L5_MOVES
             .iter()
             .filter(|(old, new)| {
-                matches!(old.strip_suffix("_tests.rs"), None)
-                    && Path::new(new).parent() == Some(parent)
+                old.strip_suffix("_tests.rs").is_none() && Path::new(new).parent() == Some(parent)
             })
             .any(|(_, production)| {
                 let stem = Path::new(production).file_stem().unwrap().to_str().unwrap();
@@ -514,7 +513,7 @@ fn l5_new_roles_have_at_least_two_approved_production_modules() {
         let approved: Vec<_> = L5_MOVES
             .iter()
             .filter(|(old, new)| {
-                matches!(old.strip_suffix("_tests.rs"), None)
+                old.strip_suffix("_tests.rs").is_none()
                     && Path::new(new).parent() == Some(Path::new(role))
             })
             .map(|(_, new)| *new)
@@ -550,13 +549,7 @@ fn l5_user_kind_and_snapshot_placement_is_explicit() {
     ];
     let missing: Vec<_> = expected
         .into_iter()
-        .filter_map(|path| {
-            if root.join(path).is_file() {
-                None
-            } else {
-                Some(path)
-            }
-        })
+        .filter(|path| matches!(root.join(path).is_file(), false))
         .collect();
     assert!(
         missing.is_empty(),

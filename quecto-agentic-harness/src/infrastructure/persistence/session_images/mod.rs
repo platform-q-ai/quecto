@@ -25,10 +25,10 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::{Arc, Mutex};
 
-use crate::domain::conversation::stored_images::{
+use crate::domain::conversation::value_objects::message::Message;
+use crate::domain::conversation::value_objects::stored_images::{
     ImageRef, MessageImageRefs, VerifiedText, is_storable, restore_images,
 };
-use crate::domain::message::Message;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 pub use sidecar_store::{ImageSidecarStore, SidecarFuture, SidecarRead};
 

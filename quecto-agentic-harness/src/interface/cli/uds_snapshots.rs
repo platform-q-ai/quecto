@@ -15,7 +15,7 @@ use super::uds::DispatchCtx;
 use super::uds_session::{HISTORY_PAGE_SIZE, compute_session_stats_with_usage, history_page_json};
 use super::uds_session_handles::SessionReadHandles;
 use crate::application::sessions::dto::HistoryPage;
-use crate::domain::conversation_view::user_visible_messages;
+use crate::domain::conversation::services::conversation_view::user_visible_messages;
 
 pub(crate) type StateSnapshot = std::sync::Arc<tokio::sync::RwLock<SessionState>>;
 

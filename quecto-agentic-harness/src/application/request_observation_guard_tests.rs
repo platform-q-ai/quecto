@@ -12,7 +12,8 @@ struct Sinks {
 
 impl Sinks {
     fn guard(&self, trace: &Arc<RequestTrace>) -> ObservationGuard<'_> {
-        let messages = vec![crate::domain::message::Message::user("hi")];
+        let messages =
+            vec![crate::domain::conversation::value_objects::message::Message::user("hi")];
         let request = ChatRequest {
             trace: None,
             admission: None,

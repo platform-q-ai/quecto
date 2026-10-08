@@ -8,7 +8,7 @@ use crate::application::durable_prefix::DurablePrefixLatch;
 use crate::application::sessions::dto::SaveTrigger;
 use crate::application::sessions::use_cases::{DepartingChildren, ResumeSavedSession, SaveSession};
 use crate::application::sessions::{active_session::ActiveSessionState, ports::SessionStore};
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session_home::SessionHomeScope;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::infrastructure::persistence::session_layout::FlatSessionLayout;

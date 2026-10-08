@@ -65,7 +65,9 @@ async fn terminal_notifications_do_not_create_extra_report_turns() {
     let prompts: Vec<_> = ctx
         .messages
         .iter()
-        .filter(|message| message.role == crate::domain::message::Role::User)
+        .filter(|message| {
+            message.role == crate::domain::conversation::value_objects::message::Role::User
+        })
         .map(|message| message.content.as_str())
         .collect();
     assert_eq!(prompts, ["final report"]);
@@ -228,7 +230,7 @@ async fn a_resume_wake_re_arms_a_provider_suspended_member() {
     let prompts: Vec<_> = ctx
         .messages
         .iter()
-        .filter(|m| m.role == crate::domain::message::Role::User)
+        .filter(|m| m.role == crate::domain::conversation::value_objects::message::Role::User)
         .map(|m| m.content.clone())
         .collect();
     assert_eq!(prompts.len(), 1, "exactly one resume turn: {prompts:?}");
@@ -296,7 +298,7 @@ fn with_control(ctx: &mut DispatchCtx<'_>, control: Answer) {
 fn user_prompts(ctx: &DispatchCtx<'_>) -> Vec<String> {
     ctx.messages
         .iter()
-        .filter(|m| m.role == crate::domain::message::Role::User)
+        .filter(|m| m.role == crate::domain::conversation::value_objects::message::Role::User)
         .map(|m| m.content.clone())
         .collect()
 }
@@ -420,7 +422,7 @@ impl crate::application::providers::ports::LlmProvider for FailingProvider {
         Box<
             dyn Future<
                     Output = Result<
-                        crate::domain::message::LlmResponse,
+                        crate::domain::conversation::value_objects::message::LlmResponse,
                         crate::domain::error::DomainError,
                     >,
                 > + Send
@@ -654,7 +656,7 @@ impl crate::application::providers::ports::LlmProvider for CountingProvider {
         Box<
             dyn Future<
                     Output = Result<
-                        crate::domain::message::LlmResponse,
+                        crate::domain::conversation::value_objects::message::LlmResponse,
                         crate::domain::error::DomainError,
                     >,
                 > + Send
@@ -663,13 +665,15 @@ impl crate::application::providers::ports::LlmProvider for CountingProvider {
     > {
         self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Box::pin(async {
-            Ok(crate::domain::message::LlmResponse {
-                content: Some("ok".into()),
-                tool_calls: vec![],
-                usage: None,
-                stop_reason: None,
-                thinking_blocks: vec![],
-            })
+            Ok(
+                crate::domain::conversation::value_objects::message::LlmResponse {
+                    content: Some("ok".into()),
+                    tool_calls: vec![],
+                    usage: None,
+                    stop_reason: None,
+                    thinking_blocks: vec![],
+                },
+            )
         })
     }
 }

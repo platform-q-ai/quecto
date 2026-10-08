@@ -9,10 +9,12 @@ use super::{EventSink, PromptOutcome, PromptRun, run_agent_message};
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::application::tools::ports::Tool;
+use crate::domain::conversation::value_objects::message::{
+    LlmResponse, Message, StopReason, ThinkingBlock, ToolCall,
+};
 use crate::domain::error::DomainError;
 use crate::domain::inference::value_objects::provider::StreamEvent;
-use crate::domain::message::{LlmResponse, Message, StopReason, ThinkingBlock, ToolCall};
-use crate::domain::tool::{ToolDefinition, ToolResult};
+use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::interface::cli::uds_session::AgentSession;
 
 /// Streams each scripted reply as its `Done` event, one per request.
@@ -152,7 +154,8 @@ async fn run_limited(
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(max_tool_iterations);
     let mut messages: Vec<Message> = vec![];

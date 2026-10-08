@@ -1,4 +1,4 @@
-use crate::domain::tool::ToolProfileContext;
+use crate::domain::tool_policy::value_objects::tool::ToolProfileContext;
 use crate::interface::tool_runtime::{
     ToolEntrypoint, ToolRuntimeBuildArgs, ToolRuntimeProfileContext, ToolRuntimeWorkflowPolicy,
     build_tool_runtime,
@@ -176,12 +176,12 @@ fn inherited_child_policy_snapshot_includes_agent_control_by_default() {
 
     assert_eq!(
         snapshot.get("spawn"),
-        Some(&crate::domain::tool_descriptor::ProfileAvailabilityScope::Both),
+        Some(&crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope::Both),
         "child-to-grandchild spawn must inherit child-visible spawn policy"
     );
     assert_eq!(
         snapshot.get("agent_cmd"),
-        Some(&crate::domain::tool_descriptor::ProfileAvailabilityScope::Both),
+        Some(&crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope::Both),
         "child-to-grandchild spawn must inherit child-visible agent_cmd policy"
     );
 }

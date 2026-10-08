@@ -1,6 +1,6 @@
 use super::append_feedback;
-use crate::domain::message::Message;
-use crate::domain::turn_origin::{TurnOrigin, instruction, progress_nudge};
+use crate::domain::conversation::services::turn_origin::{TurnOrigin, instruction, progress_nudge};
+use crate::domain::conversation::value_objects::message::Message;
 
 /// #2226: the loop's own feedback is not an instruction: a pushed feedback
 /// message takes the origin of the turn already open when it is added.

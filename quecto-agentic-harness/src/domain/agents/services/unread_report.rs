@@ -6,8 +6,8 @@
 //! Pure rules over typed observations of the messages; the `agent_cmd`
 //! adapter parses the child's wire response into them, applies these
 //! rules, and keeps the transport budget and envelope shaping to itself.
+use crate::domain::conversation::services::turn_origin::{TurnOrigin, report_index};
 use crate::domain::sessions::entities::session::PendingMessageReport;
-use crate::domain::turn_origin::{TurnOrigin, report_index};
 use std::collections::VecDeque;
 
 /// What the policy needs to know about one reported message.

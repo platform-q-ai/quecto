@@ -1,8 +1,8 @@
 use super::super::tests::*;
-use crate::domain::tool::{
+use crate::domain::tool_policy::value_objects::tool::{
     ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationStatus, ToolPolicyRequest,
 };
-use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
 use std::sync::Arc;
 
 #[test]

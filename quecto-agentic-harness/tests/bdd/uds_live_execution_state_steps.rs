@@ -1,6 +1,6 @@
 use super::*;
 use quecto::domain::agents::value_objects::agent::AgentProgressEvent;
-use quecto::domain::message::Message;
+use quecto::domain::conversation::value_objects::message::Message;
 
 fn started(id: &str, name: &str) -> AgentProgressEvent {
     AgentProgressEvent::ToolStarted {

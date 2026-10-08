@@ -2,7 +2,8 @@ use super::*;
 
 /// Images a reader admitted for the command it hands to dispatch (#2422):
 /// dispatch runs them as admitted, so a message's images are decoded once.
-pub(in crate::interface::cli) type AdmittedImages = Vec<crate::domain::message::UserImageBlock>;
+pub(in crate::interface::cli) type AdmittedImages =
+    Vec<crate::domain::conversation::value_objects::message::UserImageBlock>;
 
 /// Admit a message's images through `quecto_image`, the one place images
 /// from outside are validated.

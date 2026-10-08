@@ -1,6 +1,6 @@
 use super::RewindFields;
 use crate::application::sessions::dto::RewindConversationError;
-use crate::domain::conversation_edit::RewindTarget;
+use crate::domain::conversation::services::conversation_edit::RewindTarget;
 use crate::domain::ids::MessageId;
 
 fn fields(message_id: Option<&str>, message_index: Option<usize>) -> RewindFields {

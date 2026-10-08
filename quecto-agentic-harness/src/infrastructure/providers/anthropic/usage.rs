@@ -1,4 +1,4 @@
-use crate::domain::message::UsageInfo;
+use crate::domain::conversation::value_objects::message::UsageInfo;
 
 pub(super) fn context_input_tokens(
     prompt_tokens: u32,

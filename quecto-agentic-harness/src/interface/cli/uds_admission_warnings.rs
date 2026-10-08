@@ -15,7 +15,10 @@ pub(super) fn publish_startup_warnings(
     for slot in &unique {
         eprintln!(
             "warning: {}",
-            crate::domain::state_snapshot::AdmissionBindingWarning::new(slot).message
+            crate::domain::sessions::value_objects::state_snapshot::AdmissionBindingWarning::new(
+                slot
+            )
+            .message
         );
     }
     unique
@@ -33,7 +36,7 @@ pub(super) fn overlay_current(
             .iter()
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
-            .map(|slot| crate::domain::state_snapshot::AdmissionBindingWarning::new(slot))
+            .map(|slot| crate::domain::sessions::value_objects::state_snapshot::AdmissionBindingWarning::new(slot))
             .collect();
     }
 }

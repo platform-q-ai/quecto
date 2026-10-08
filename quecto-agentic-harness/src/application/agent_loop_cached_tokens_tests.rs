@@ -8,7 +8,7 @@ use crate::application::agent_loop::tests::{MockProvider, MockRegistry, test_con
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::audit::ports::AuditSink;
 use crate::domain::audit::AuditEvent;
-use crate::domain::message::{LlmResponse, Message, UsageInfo};
+use crate::domain::conversation::value_objects::message::{LlmResponse, Message, UsageInfo};
 use std::sync::Arc;
 
 /// The `llm_turn_end` records of one turn answered with `usage`.

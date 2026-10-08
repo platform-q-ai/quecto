@@ -2,7 +2,7 @@
 //! whole within the final-report budget, cut with a plain notice beyond it
 //! (never a recovery command), and undelivered when it has no text at all.
 use crate::application::tools::ports::Tool;
-use crate::domain::tool::ToolResult;
+use crate::domain::tool_policy::value_objects::tool::ToolResult;
 use crate::infrastructure::tools::agent_cmd::AgentCmdTool;
 use crate::infrastructure::tools::agent_cmd_report::{
     FINAL_REPORT_BUDGET_BYTES, FINAL_REPORT_NOTICE, bounded_report_messages,

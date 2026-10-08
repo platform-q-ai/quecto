@@ -1,6 +1,6 @@
 use super::messages::{message_collapse_stub, message_stub_without_recall};
 use super::*;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 
 #[test]
 fn test_estimate_tokens() {
@@ -103,7 +103,7 @@ fn test_estimate_total_tokens() {
 
 #[test]
 fn test_estimate_message_tokens_includes_image_blocks() {
-    use crate::domain::tool::ImageBlock;
+    use crate::domain::tool_policy::value_objects::tool::ImageBlock;
     let mut msg = Message::tool("call_1", "abc"); // div_ceil(3,4)=1 token text
     // No PNG header: the 4,784 an unreadable image costs (#2420).
     msg.image_blocks = vec![ImageBlock::unchecked_for_tests(
@@ -117,7 +117,7 @@ fn test_estimate_message_tokens_includes_image_blocks() {
 
 #[test]
 fn test_ceiling_ladder_accounts_for_image_blocks() {
-    use crate::domain::tool::ImageBlock;
+    use crate::domain::tool_policy::value_objects::tool::ImageBlock;
     let mut msg1 = Message::tool("call_1", "abc");
     // Spilled at creation, like every production tool result — the ladder
     // only stubs spill-backed content (unspilled => recall() would dangle).

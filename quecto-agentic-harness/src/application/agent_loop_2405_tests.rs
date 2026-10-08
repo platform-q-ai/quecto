@@ -5,7 +5,9 @@
 use super::*;
 use crate::application::catalogue::dto::ModelLimits;
 use crate::application::catalogue::ports::ModelRuntime;
-use crate::domain::catalogue::PromptLimit::{self, SharedWithRequest, WindowLessOutputCap};
+use crate::domain::catalogue::value_objects::catalogue::PromptLimit::{
+    self, SharedWithRequest, WindowLessOutputCap,
+};
 
 fn agent(max_context_tokens: usize, max_tokens: u32, window: Option<usize>) -> AgentLoopImpl {
     let provider = Arc::new(MockProvider::new(vec![]));
@@ -147,7 +149,8 @@ fn an_unknown_window_is_logged_once_with_the_ceiling_after_the_swarm_cap() {
     let lines = ceiling_log(|runtime| {
         let mut agent = agent(200_000, 8_192, None);
         agent.context_ceiling_cap().lower_to(48_000);
-        let mut messages = vec![crate::domain::message::Message::user("go")];
+        let mut messages =
+            vec![crate::domain::conversation::value_objects::message::Message::user("go")];
         runtime.block_on(agent.apply_context_pruning(&mut messages, 1, false));
         runtime.block_on(agent.apply_context_pruning(&mut messages, 2, false));
         agent.apply_model("test-model".into(), limits(None, None, SharedWithRequest));
@@ -175,7 +178,8 @@ fn a_reserve_past_the_floor_is_warned_once() {
         let tight = limits(Some(128_000), Some(130_000), WindowLessOutputCap);
         agent.apply_model("acme/tight".into(), tight);
         assert_eq!(agent.effective_max_context_tokens(), 1_900);
-        let mut messages = vec![crate::domain::message::Message::user("go")];
+        let mut messages =
+            vec![crate::domain::conversation::value_objects::message::Message::user("go")];
         runtime.block_on(agent.apply_context_pruning(&mut messages, 1, false));
         agent.apply_model("acme/tight".into(), tight);
         runtime.block_on(agent.apply_context_pruning(&mut messages, 2, false));
@@ -196,7 +200,8 @@ fn a_reserve_past_the_floor_is_warned_once() {
 fn each_kind_of_note_is_logged_once_per_model() {
     let lines = ceiling_log(|runtime| {
         let mut agent = agent(300_000, 8_192, None);
-        let mut messages = vec![crate::domain::message::Message::user("go")];
+        let mut messages =
+            vec![crate::domain::conversation::value_objects::message::Message::user("go")];
         runtime.block_on(agent.apply_context_pruning(&mut messages, 1, false));
         let tight = limits(Some(32_000), Some(32_000), SharedWithRequest);
         agent.apply_model("test-model".into(), tight);

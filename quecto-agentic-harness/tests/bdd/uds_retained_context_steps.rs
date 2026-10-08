@@ -137,10 +137,13 @@ fn given_real_retention_agent(world: &mut QuectoWorld, session_name: String) {
         effort: None,
         audit_log: None,
         pin_recent_turns: 0,
-        context_marks: quecto::domain::conversation::watermark::Watermark::new(1_000, 300)
-            .expect("valid marks"),
+        context_marks: quecto::domain::conversation::services::watermark::Watermark::new(
+            1_000, 300,
+        )
+        .expect("valid marks"),
         model_context_window: None,
-        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            quecto::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
     world.retained_context_run = Some(RetainedContextRun {
         agent: Some(agent),

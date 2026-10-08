@@ -12,10 +12,10 @@ use super::{EventSink, PromptOutcome, PromptRun, run_agent_message};
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::application::tools::ports::Tool;
+use crate::domain::conversation::value_objects::message::{LlmResponse, Message, ToolCall};
 use crate::domain::error::DomainError;
 use crate::domain::inference::value_objects::provider::StreamEvent;
-use crate::domain::message::{LlmResponse, Message, ToolCall};
-use crate::domain::tool::{ToolDefinition, ToolResult};
+use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES;
 use crate::interface::cli::uds_session::AgentSession;
 
@@ -358,7 +358,8 @@ async fn run_turn(
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
     let mut messages: Vec<Message> = vec![];
     let mut session = AgentSession::new("stub".into());
@@ -414,7 +415,8 @@ async fn run_streaming_turn(deltas: Vec<&str>, response: &str, prompt: &str) -> 
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
     let mut messages: Vec<Message> = vec![];
     let mut session = AgentSession::new("stub".into());
@@ -534,7 +536,7 @@ async fn production_large_turn_end_of_turn_events_use_refs_not_full_content() {
     // Refs must round-trip domain ids of the messages this run produced.
     let domain_ids: Vec<String> = messages
         .iter()
-        .filter(|m| m.role != crate::domain::message::Role::User)
+        .filter(|m| m.role != crate::domain::conversation::value_objects::message::Role::User)
         .map(|m| m.id().to_string())
         .collect();
     for id in &domain_ids {
@@ -633,7 +635,7 @@ async fn production_tool_turn_agent_end_refs_cover_all_roles() {
     );
     let domain_ids: Vec<String> = messages
         .iter()
-        .filter(|m| m.role != crate::domain::message::Role::User)
+        .filter(|m| m.role != crate::domain::conversation::value_objects::message::Role::User)
         .map(|m| m.id().to_string())
         .collect();
     assert_eq!(

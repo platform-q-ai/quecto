@@ -157,7 +157,7 @@ impl crate::application::providers::ports::LlmProvider for Hanging {
         Box<
             dyn std::future::Future<
                     Output = Result<
-                        crate::domain::message::LlmResponse,
+                        crate::domain::conversation::value_objects::message::LlmResponse,
                         crate::domain::error::DomainError,
                     >,
                 > + Send
@@ -192,7 +192,8 @@ async fn an_aborted_turn_puts_a_cancelled_request_on_the_socket() {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
     let mut messages = Vec::new();
     let mut session = crate::interface::cli::uds_session::AgentSession::new("stub".into());
@@ -212,7 +213,7 @@ async fn an_aborted_turn_puts_a_cancelled_request_on_the_socket() {
             active_session: None,
             session: &mut session,
             sink: &mut sink,
-            message: crate::domain::message::Message::user("hello"),
+            message: crate::domain::conversation::value_objects::message::Message::user("hello"),
             system_prompt: "",
             cancel_rx,
             notification_rx: &mut notification_rx,

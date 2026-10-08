@@ -12,9 +12,9 @@ use crate::application::sessions::active_session::{ActiveSessionHandle, Recovery
 use crate::application::sessions::dto::{
     ContentSelector, RecoveredContent, RecoveryError, RecoveryRequest, Utf8Range,
 };
-use crate::domain::conversation_view::position_by_id;
+use crate::domain::conversation::services::conversation_view::position_by_id;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::ids::MessageId;
-use crate::domain::message::Message;
 
 pub struct RecoverMessage {
     state: ActiveSessionHandle,

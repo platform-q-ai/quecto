@@ -2,7 +2,7 @@
 // entry carries, which gives a way forward (#2215).
 
 use crate::domain::sessions::entities::session::SpillEntries;
-use crate::domain::tool::ToolResult;
+use crate::domain::tool_policy::value_objects::tool::ToolResult;
 use crate::infrastructure::tools::filesystem::{
     MAX_READ_BYTES, bash_paging_example, read_cap_text,
 };

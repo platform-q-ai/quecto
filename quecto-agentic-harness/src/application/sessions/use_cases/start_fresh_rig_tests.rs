@@ -21,8 +21,8 @@ use crate::application::sessions::ports::{
     ContextSpillStore, DelegatedChildrenRoster, FleetSettlement, FreshSessionIdentityGenerator,
     SessionKeyPropagation, SessionStore, SessionSwitchRuntime, SpillIndexList,
 };
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::error::DomainError;
-use crate::domain::message::Message;
 use crate::domain::sessions::entities::session::{
     Session, SessionSummary, SpillEntries, SpillEntry,
 };

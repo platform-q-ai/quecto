@@ -29,8 +29,8 @@ use crate::application::sessions::dto::{
 use crate::application::sessions::ports::{
     FleetSettlement, FreshSessionIdentityGenerator, SessionStore, SessionSwitchRuntime,
 };
-use crate::domain::conversation_edit::clear_conversation;
-use crate::domain::message::Message;
+use crate::domain::conversation::services::conversation_edit::clear_conversation;
+use crate::domain::conversation::value_objects::message::Message;
 
 pub struct StartFreshConversation {
     state: ActiveSessionHandle,

@@ -14,12 +14,14 @@ fn supervise(world: &mut QuectoWorld) {
     })
     .join()
     .unwrap();
-    world.swarm_result = Some(quecto::domain::tool::ToolResult {
-        content: evidence.to_string(),
-        is_error: false,
-        image_blocks: vec![],
-        delivery_metadata: None,
-    });
+    world.swarm_result = Some(
+        quecto::domain::tool_policy::value_objects::tool::ToolResult {
+            content: evidence.to_string(),
+            is_error: false,
+            image_blocks: vec![],
+            delivery_metadata: None,
+        },
+    );
 }
 async fn exercise(workspace: std::path::PathBuf) -> serde_json::Value {
     let runtime = fixture::Runtime::start(&workspace).await;
@@ -128,12 +130,14 @@ fn resume_restores(world: &mut QuectoWorld) {
             .unwrap_or_else(|| "opaque panic".into());
         panic!("resume exercise failed: {text}")
     });
-    world.swarm_result = Some(quecto::domain::tool::ToolResult {
-        content: evidence.to_string(),
-        is_error: false,
-        image_blocks: vec![],
-        delivery_metadata: None,
-    });
+    world.swarm_result = Some(
+        quecto::domain::tool_policy::value_objects::tool::ToolResult {
+            content: evidence.to_string(),
+            is_error: false,
+            image_blocks: vec![],
+            delivery_metadata: None,
+        },
+    );
 }
 
 async fn exercise_resume(workspace: std::path::PathBuf) -> serde_json::Value {
@@ -282,12 +286,14 @@ fn creator_in_git_checkout(world: &mut QuectoWorld) {
         })
         .join()
         .unwrap();
-    world.swarm_result = Some(quecto::domain::tool::ToolResult {
-        content: evidence.to_string(),
-        is_error: false,
-        image_blocks: vec![],
-        delivery_metadata: None,
-    });
+    world.swarm_result = Some(
+        quecto::domain::tool_policy::value_objects::tool::ToolResult {
+            content: evidence.to_string(),
+            is_error: false,
+            image_blocks: vec![],
+            delivery_metadata: None,
+        },
+    );
 }
 
 #[then("the board lives in the checkout's git directory and survives git stash and git clean")]

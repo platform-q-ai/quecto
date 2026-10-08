@@ -5,7 +5,7 @@
 use super::tests::{MockProvider, MockRegistry, MockTool, text_response, tool_call_response};
 use super::*;
 use crate::application::sessions::ports::ContextSpillStore;
-use crate::domain::message::{Message, Role};
+use crate::domain::conversation::value_objects::message::{Message, Role};
 use crate::domain::sessions::entities::session::SpillEntry;
 use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
 use std::future::Future;
@@ -120,7 +120,8 @@ async fn test_spill_preserves_message_content_after_spill() {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
 
     let mut messages = vec![Message::user("run it")];
@@ -166,7 +167,8 @@ fn tight_budget_agent(
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
 }
 
@@ -366,7 +368,8 @@ async fn failed_tool_spill_leaves_no_spill_id_and_blocks_collapse() {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
 
     let mut messages = vec![Message::user("run it")];
@@ -417,7 +420,8 @@ async fn ephemeral_session_spills_both_tool_output_and_conversation_messages() {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
 
     let mut messages = vec![Message::user("run it")];

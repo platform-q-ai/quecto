@@ -5,8 +5,8 @@
 
 use super::active_model_steps::change_active_model_use_case;
 use super::*;
-use quecto::domain::conversation::image_input::not_sent_marker;
-use quecto::domain::message::UserImageBlock;
+use quecto::domain::conversation::services::image_input::not_sent_marker;
+use quecto::domain::conversation::value_objects::message::UserImageBlock;
 
 /// What one request carried: each message's text and its image MIME types.
 type Sent = Vec<(String, Vec<String>)>;
@@ -100,7 +100,8 @@ fn given_recording_agent(world: &mut QuectoWorld, model: String) {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            quecto::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
     world.image_input.agent = Some(agent);
     world.image_input.recorder = Some(recorder);

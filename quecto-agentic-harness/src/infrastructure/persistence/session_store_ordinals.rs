@@ -1,7 +1,9 @@
 //! The file store's ordinal mechanics (`domain::sessions::entities::session::assign_missing_ordinals`)
 //! on what it reads back and writes; a fully numbered write is borrowed, never copied (#2218).
 use crate::domain::sessions::entities::session::assign_missing_ordinals as assign_in_place;
-use crate::domain::{message::Message, sessions::entities::session::Session};
+use crate::domain::{
+    conversation::value_objects::message::Message, sessions::entities::session::Session,
+};
 use std::borrow::Cow;
 
 pub(super) fn with_assigned_ordinals(mut session: Session) -> Session {

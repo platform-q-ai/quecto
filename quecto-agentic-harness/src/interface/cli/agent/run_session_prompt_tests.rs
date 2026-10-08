@@ -6,8 +6,8 @@ use super::super::integration_tests::test_flags;
 use super::super::run_session::run_agent_session;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
+use crate::domain::conversation::value_objects::message::LlmResponse;
 use crate::domain::error::DomainError;
-use crate::domain::message::LlmResponse;
 use crate::interface::cli::run_end_fleet::RunHandles;
 use std::future::Future;
 use std::pin::Pin;
@@ -57,7 +57,8 @@ fn agent() -> AgentLoopImpl {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
 }
 

@@ -4,8 +4,10 @@
 
 use super::ContextManager;
 use crate::application::context_pruning;
-use crate::domain::conversation::stored_images::MessageImageRefs;
-use crate::domain::{message::Message, sessions::entities::session::SpillEntry};
+use crate::domain::conversation::value_objects::stored_images::MessageImageRefs;
+use crate::domain::{
+    conversation::value_objects::message::Message, sessions::entities::session::SpillEntry,
+};
 
 impl ContextManager {
     pub async fn spill_tool_message(&self, tool_msg: &mut Message, spill_id: String) {

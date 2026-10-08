@@ -10,9 +10,9 @@ use super::super::fixture_tests::Fixture;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::application::tools::ports::Tool;
+use crate::domain::conversation::value_objects::message::{LlmResponse, Role, ToolCall};
 use crate::domain::error::DomainError;
-use crate::domain::message::{LlmResponse, Role, ToolCall};
-use crate::domain::tool::{ToolDefinition, ToolResult};
+use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::interface::cli::uds_cancel::{CancelHandle, fire_cancel};
 use crate::interface::uds::sessions::recover_message_controller::GetMessageFields;
 
@@ -123,7 +123,8 @@ fn fixture(replies: Vec<Reply>) -> Fixture {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     }));
     fx
 }

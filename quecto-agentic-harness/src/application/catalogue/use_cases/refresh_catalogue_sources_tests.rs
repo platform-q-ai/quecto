@@ -46,7 +46,7 @@ pub(super) fn use_case(store: &CatalogueSnapshotStore) -> RefreshCatalogueSource
         store.clone(),
     )
 }
-use crate::domain::catalogue::{
+use crate::domain::catalogue::value_objects::catalogue::{
     AuthIdentity, Availability, CatalogueEntry, ModelCapabilities, ModelCost, ModelDescriptor,
     ModelRef, ProviderDescriptor, SourceLayer, TransportKind,
 };

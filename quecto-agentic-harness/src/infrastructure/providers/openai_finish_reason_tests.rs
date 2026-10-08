@@ -3,7 +3,7 @@
 //! non-streaming bodies, whole SSE bodies and the live streaming handler —
 //! so none of them can silently drop it again.
 use super::*;
-use crate::domain::message::StopReason;
+use crate::domain::conversation::value_objects::message::StopReason;
 
 /// `(finish_reason on the wire, expected stop reason)`.
 fn cases() -> Vec<(Option<&'static str>, Option<StopReason>)> {

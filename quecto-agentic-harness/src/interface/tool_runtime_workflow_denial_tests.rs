@@ -9,8 +9,10 @@ use std::collections::BTreeMap;
 use super::inherited_workflow_tests::{
     Launch, build, child_sees_workflow, cli_parent_snapshot, uds_child,
 };
-use crate::domain::tool::{ToolPolicyApplyMode, ToolPolicyMutation, ToolProfileContext};
-use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+use crate::domain::tool_policy::value_objects::tool::{
+    ToolPolicyApplyMode, ToolPolicyMutation, ToolProfileContext,
+};
+use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::tools::inherited_tool_policy::{
     InheritedToolPolicySnapshot, workflow_tool_identity,

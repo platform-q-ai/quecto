@@ -6,7 +6,7 @@
 //! order are the domain's and the use case's; the protocol's history
 //! page size is the wire module's.
 use crate::application::sessions::dto::{RewindConversationError, RewindRequest};
-use crate::domain::conversation_edit::RewindTarget;
+use crate::domain::conversation::services::conversation_edit::RewindTarget;
 use crate::domain::ids::MessageId;
 
 /// The wire fields of a `rewind_to` request, as the client sent them

@@ -1,7 +1,7 @@
 use super::tests::{MockProvider, MockRegistry, MockTool, text_response, tool_call_response};
 use super::*;
 use crate::domain::agents::value_objects::agent::AgentProgressEvent;
-use crate::domain::message::{
+use crate::domain::conversation::value_objects::message::{
     LlmResponse, Message, Role, StopReason, ThinkingBlock, ToolCall,
     reset_tool_call_clone_count_for_tests, tool_call_clone_count_for_tests,
 };
@@ -28,7 +28,8 @@ fn agent_config(
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     }
 }
 

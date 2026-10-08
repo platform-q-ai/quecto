@@ -9,9 +9,9 @@
 //!   ([`last_line`]);
 //! - usage a cut-short reply reported is still counted
 //!   ([`UnfinishedReply`]).
+use crate::domain::conversation::value_objects::message::{LlmResponse, UsageInfo};
 use crate::domain::error::DomainError;
 use crate::domain::inference::events::request_observation::RequestTrace;
-use crate::domain::message::{LlmResponse, UsageInfo};
 
 pub(crate) use crate::domain::inference::services::provider_error::EMPTY_STREAM;
 

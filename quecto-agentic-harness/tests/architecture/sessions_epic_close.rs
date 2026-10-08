@@ -285,8 +285,8 @@ const ADMITTED_PREDICATE_SITES: &[(&str, &str)] = &[
 const DOMAIN_FILES: &[&str] = &[
     "src/domain/sessions/entities/session.rs",
     "src/domain/sessions/entities/session_identity.rs",
-    "src/domain/conversation_view.rs",
-    "src/domain/conversation_edit.rs",
+    "src/domain/conversation/services/conversation_view.rs",
+    "src/domain/conversation/services/conversation_edit.rs",
 ];
 
 /// The interface session modules: the sessions edge, the CLI wire modules

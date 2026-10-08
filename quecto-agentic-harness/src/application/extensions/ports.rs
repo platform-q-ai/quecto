@@ -6,8 +6,8 @@
 use std::sync::Arc;
 
 use crate::application::tools::ports::Tool;
-use crate::domain::extension_tool::ToolInvocation;
-use crate::domain::tool::ToolResult;
+use crate::domain::tool_policy::value_objects::extension_tool::ToolInvocation;
+use crate::domain::tool_policy::value_objects::tool::ToolResult;
 
 /// The handle a forwarded invocation's result is delivered on.
 pub type ToolReply = tokio::sync::oneshot::Sender<ToolResult>;

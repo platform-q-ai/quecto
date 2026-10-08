@@ -27,11 +27,12 @@ fn whitespace_only_returns_none() {
 #[test]
 fn text_with_images_vision_returns_array() {
     let mut m = Message::user("describe this");
-    m.user_image_blocks
-        .push(crate::domain::message::UserImageBlock::unchecked_for_tests(
+    m.user_image_blocks.push(
+        crate::domain::conversation::value_objects::message::UserImageBlock::unchecked_for_tests(
             quecto_image::ImageMime::Png,
             "base64data",
-        ));
+        ),
+    );
     let content = build_user_content(&m);
     assert!(content.is_some());
     let arr = content.unwrap();
@@ -47,7 +48,8 @@ fn text_with_images_vision_returns_array() {
 #[test]
 fn every_admitted_type_is_sent_with_its_wire_spelling() {
     for mime in quecto_image::ImageMime::ALL {
-        let block = crate::domain::message::UserImageBlock::sample(mime);
+        let block =
+            crate::domain::conversation::value_objects::message::UserImageBlock::sample(mime);
         let data = block.data().to_owned();
         let m = Message::user("describe").with_user_images(vec![block]);
         let content = build_user_content(&m).expect("sent");
@@ -59,11 +61,12 @@ fn every_admitted_type_is_sent_with_its_wire_spelling() {
 #[test]
 fn images_only_no_text_vision() {
     let mut m = Message::user("");
-    m.user_image_blocks
-        .push(crate::domain::message::UserImageBlock::unchecked_for_tests(
+    m.user_image_blocks.push(
+        crate::domain::conversation::value_objects::message::UserImageBlock::unchecked_for_tests(
             quecto_image::ImageMime::Jpeg,
             "data",
-        ));
+        ),
+    );
     let content = build_user_content(&m);
     assert!(content.is_some());
     let arr = content.unwrap();
@@ -97,11 +100,12 @@ fn request_for<'a>(
 #[test]
 fn every_model_is_sent_the_images_its_request_carries() {
     let mut m = Message::user("describe this");
-    m.user_image_blocks
-        .push(crate::domain::message::UserImageBlock::unchecked_for_tests(
+    m.user_image_blocks.push(
+        crate::domain::conversation::value_objects::message::UserImageBlock::unchecked_for_tests(
             quecto_image::ImageMime::Png,
             "cG5n",
-        ));
+        ),
+    );
     let messages = [m];
     for model in [
         "unknown-future-model",

@@ -11,8 +11,8 @@ use super::rig_tests::{
     set_watermark, watermark,
 };
 use crate::application::sessions::dto::{SaveMode, SaveOutcome, SaveSessionError, SaveTrigger};
+use crate::domain::conversation::value_objects::message::{Message, Role};
 use crate::domain::error::DomainError;
-use crate::domain::message::{Message, Role};
 use crate::domain::sessions::entities::session::SubagentRestoreReason;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 

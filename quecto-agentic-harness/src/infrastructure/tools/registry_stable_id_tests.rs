@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use super::{ToolRegistration, ToolRegistryImpl};
-use crate::domain::tool::{
+use crate::domain::tool_policy::value_objects::tool::{
     ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationStatus, ToolPolicyRequest,
 };
-use crate::domain::tool_descriptor::ToolAvailability;
+use crate::domain::tool_policy::value_objects::tool_descriptor::ToolAvailability;
 use crate::infrastructure::tools::registry::tests::DummyTestTool;
 
 #[test]

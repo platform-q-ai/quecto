@@ -3,7 +3,7 @@
 //! in the summary shape the TUI resume selector reads.
 
 use super::*;
-use quecto::domain::message::Message;
+use quecto::domain::conversation::value_objects::message::Message;
 use quecto::domain::sessions::entities::session::Session;
 use quecto::domain::sessions::entities::session_identity::SessionIdentity;
 use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;

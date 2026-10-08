@@ -459,11 +459,12 @@ async fn forwarder_cleans_pending_when_writer_has_no_receiver() {
     req_tx
         .send(
             crate::application::extensions::ports::PendingToolInvocation {
-                invocation: crate::domain::extension_tool::ToolInvocation {
-                    tool_call_id: "uds-test-1".into(),
-                    tool_name: "weather".into(),
-                    arguments: "{}".into(),
-                },
+                invocation:
+                    crate::domain::tool_policy::value_objects::extension_tool::ToolInvocation {
+                        tool_call_id: "uds-test-1".into(),
+                        tool_name: "weather".into(),
+                        arguments: "{}".into(),
+                    },
                 reply: reply_tx,
                 timeout: std::time::Duration::from_secs(30),
             },
@@ -529,11 +530,12 @@ async fn forwarder_drains_buffered_requests_on_shutdown() {
     req_tx
         .send(
             crate::application::extensions::ports::PendingToolInvocation {
-                invocation: crate::domain::extension_tool::ToolInvocation {
-                    tool_call_id: "drain-1".into(),
-                    tool_name: "weather".into(),
-                    arguments: "{}".into(),
-                },
+                invocation:
+                    crate::domain::tool_policy::value_objects::extension_tool::ToolInvocation {
+                        tool_call_id: "drain-1".into(),
+                        tool_name: "weather".into(),
+                        arguments: "{}".into(),
+                    },
                 reply: r1_tx,
                 timeout: std::time::Duration::from_secs(30),
             },
@@ -543,11 +545,12 @@ async fn forwarder_drains_buffered_requests_on_shutdown() {
     req_tx
         .send(
             crate::application::extensions::ports::PendingToolInvocation {
-                invocation: crate::domain::extension_tool::ToolInvocation {
-                    tool_call_id: "drain-2".into(),
-                    tool_name: "weather".into(),
-                    arguments: "{}".into(),
-                },
+                invocation:
+                    crate::domain::tool_policy::value_objects::extension_tool::ToolInvocation {
+                        tool_call_id: "drain-2".into(),
+                        tool_name: "weather".into(),
+                        arguments: "{}".into(),
+                    },
                 reply: r2_tx,
                 timeout: std::time::Duration::from_secs(30),
             },
@@ -619,11 +622,12 @@ async fn forwarder_leaves_pending_when_writer_delivered() {
     req_tx
         .send(
             crate::application::extensions::ports::PendingToolInvocation {
-                invocation: crate::domain::extension_tool::ToolInvocation {
-                    tool_call_id: "uds-test-2".into(),
-                    tool_name: "weather".into(),
-                    arguments: "{}".into(),
-                },
+                invocation:
+                    crate::domain::tool_policy::value_objects::extension_tool::ToolInvocation {
+                        tool_call_id: "uds-test-2".into(),
+                        tool_name: "weather".into(),
+                        arguments: "{}".into(),
+                    },
                 reply: reply_tx,
                 timeout: std::time::Duration::from_secs(30),
             },

@@ -12,7 +12,7 @@
 //! and the PR body; flipping the note to imperative would override the #894
 //! anti-flood design and is left as an open design question.
 use super::*;
-use crate::domain::message::Role;
+use crate::domain::conversation::value_objects::message::Role;
 use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 
 /// Owns every value a [`DispatchCtx`] borrows so the helper can build the
@@ -20,7 +20,7 @@ use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 struct ActEnv {
     tmp: tempfile::TempDir,
     agent: crate::application::agent_loop::AgentLoopImpl,
-    messages: Vec<crate::domain::message::Message>,
+    messages: Vec<crate::domain::conversation::value_objects::message::Message>,
     session: AgentSession,
     session_key: String,
     writer: tokio::io::Sink,
@@ -50,7 +50,8 @@ impl ActEnv {
                     pin_recent_turns: 2,
                     context_marks: Default::default(),
                     model_context_window: None,
-                    tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+                    tool_profile_context:
+                        crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
                 },
             ),
             messages: Vec::new(),

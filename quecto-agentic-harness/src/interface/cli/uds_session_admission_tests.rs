@@ -9,9 +9,9 @@ fn advisory_is_read_from_published_runtime_and_deduplicated() {
         ProviderRuntimeFactory, ProviderRuntimeOutcome,
     };
     use crate::application::providers::ports::{ChatRequest, LlmProvider};
-    use crate::domain::catalogue::{CatalogueEntry, SourceLayer};
+    use crate::domain::catalogue::value_objects::catalogue::{CatalogueEntry, SourceLayer};
+    use crate::domain::conversation::value_objects::message::LlmResponse;
     use crate::domain::error::DomainError;
-    use crate::domain::message::LlmResponse;
     use std::sync::Arc;
     #[derive(Debug)]
     struct Stub;

@@ -380,12 +380,13 @@ async fn an_empty_reply_after_tools_is_one_ok_request_with_its_usage() {
         name: "background".into(),
         arguments: "{}".into(),
     }];
-    call.stop_reason = Some(crate::domain::message::StopReason::ToolUse);
+    call.stop_reason =
+        Some(crate::domain::conversation::value_objects::message::StopReason::ToolUse);
     let empty_end = LlmResponse {
         content: None,
         tool_calls: vec![],
         usage: Some(usage(70, 3, Some(9), None)),
-        stop_reason: Some(crate::domain::message::StopReason::EndTurn),
+        stop_reason: Some(crate::domain::conversation::value_objects::message::StopReason::EndTurn),
         thinking_blocks: vec![],
     };
     let provider = Arc::new(MockStreamingProvider::new(vec![

@@ -6,16 +6,18 @@ use std::sync::Arc;
 pub use super::registration::ToolRegistration;
 use crate::application::tools::ports::{Tool, ToolGuard};
 use crate::domain::error::DomainError;
-use crate::domain::tool::{
+use crate::domain::tool_policy::value_objects::tool::{
     ToolDefinition, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationResult,
     ToolPolicyMutationStatus, ToolPolicyOperation, ToolPolicyReconciliation, ToolPolicyRequest,
     ToolProfileContext, ToolResult,
 };
-use crate::domain::tool_descriptor::{
+use crate::domain::tool_policy::value_objects::tool_descriptor::{
     ProfileAvailabilityScope, ToolAvailability, ToolCatalogueEntry, ToolDescriptor,
     ToolRestrictionReason,
 };
-use crate::domain::tool_id::{ToolIdResolveError, equivalent_policy_inputs};
+use crate::domain::tool_policy::value_objects::tool_id::{
+    ToolIdResolveError, equivalent_policy_inputs,
+};
 use crate::infrastructure::config::Config;
 
 /// Registry of all available tools, keyed by name.

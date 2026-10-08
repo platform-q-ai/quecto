@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
-use crate::domain::tool::{ToolDefinition, ToolResult};
+use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::security::sandbox::Sandbox;
 
 use super::fs_failure::{refused, write_failure, write_file, written_note};

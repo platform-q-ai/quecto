@@ -6,7 +6,7 @@
 //! the 750-line source cap.
 
 use super::messages::*;
-use crate::domain::message::{Message, Role};
+use crate::domain::conversation::value_objects::message::{Message, Role};
 
 /// An old spilled conversation message (as production stamps after #1046 AC1).
 fn spilled_msg(role: Role, turn: u32, i: u32) -> Message {

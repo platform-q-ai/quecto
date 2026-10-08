@@ -6,9 +6,9 @@ use super::super::conversation_rewrite_rig::{
 };
 use super::{reset_ledger_to, rewind_to_message_index};
 use crate::application::sessions::dto::{RewindConversationError, RewindRequest};
-use crate::domain::conversation_edit::RewindTarget;
+use crate::domain::conversation::services::conversation_edit::RewindTarget;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::ids::MessageId;
-use crate::domain::message::Message;
 
 const PAGE: usize = 64;
 
@@ -365,8 +365,8 @@ fn the_use_case_debug_names_itself_without_its_handles() {
 /// the storm guard's baseline (held by the old stub) is reset too.
 #[test]
 fn rewinding_rewrites_a_surviving_archive_stub_to_its_dropped_text() {
-    use crate::domain::conversation::UserKind;
-    use crate::domain::conversation::watermark_cut::archive_stub;
+    use crate::domain::conversation::services::watermark_cut::archive_stub;
+    use crate::domain::conversation::value_objects::user_kind::UserKind;
     let stub = archive_stub(12, Some("archive"));
     let old_id = stub.id();
     let mut messages = vec![

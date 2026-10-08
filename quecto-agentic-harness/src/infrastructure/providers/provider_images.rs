@@ -2,7 +2,7 @@
 //! (`codex_input`) and chat-completions (`openai_images`) serializers: an
 //! inline `data:` URL per image, always at `"detail": "high"`.
 
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 
 /// The detail every image is sent at (#2421 review D): `high` caps an
 /// image at about 3,000 tokens on OpenAI's side, within the harness's

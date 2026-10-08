@@ -12,12 +12,12 @@ use quecto::{
     application::providers::ports::{ChatRequest, LlmProvider},
     domain::{
         admission::value_objects::inference_admission::{Feedback, ThrottleFeedback},
+        conversation::value_objects::message::LlmResponse,
         error::DomainError,
         inference::services::provider_error::{
             ProviderErrorClass, classify_provider_error, provider_http_status,
         },
         inference::value_objects::provider::StreamEvent,
-        message::LlmResponse,
     },
     infrastructure::providers::{
         anthropic::AnthropicProvider, codex::CodexProvider, openai::OpenAiProvider,
@@ -174,12 +174,15 @@ impl Leaf {
     }
 }
 fn request() -> ChatRequest<'static> {
-    static MESSAGES: std::sync::LazyLock<Vec<quecto::domain::message::Message>> =
-        std::sync::LazyLock::new(|| {
-            vec![quecto::domain::message::Message::system(
+    static MESSAGES: std::sync::LazyLock<
+        Vec<quecto::domain::conversation::value_objects::message::Message>,
+    > = std::sync::LazyLock::new(|| {
+        vec![
+            quecto::domain::conversation::value_objects::message::Message::system(
                 "Fixture instructions",
-            )]
-        });
+            ),
+        ]
+    });
     ChatRequest {
         trace: None,
         admission: None,

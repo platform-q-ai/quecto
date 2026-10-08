@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
-use crate::domain::tool_descriptor::ProfileAvailabilityScope;
-use crate::domain::tool_policy::inherited_child_policy_from_catalogue;
+use crate::domain::tool_policy::services::tool_policy::inherited_child_policy_from_catalogue;
+use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
 use crate::infrastructure::tools::inherited_tool_policy::{
     entrypoint_only_tools, is_entrypoint_only, recorded_scope,
 };
@@ -27,7 +27,9 @@ impl ToolRegistryImpl {
                     .then(|| policy_id.clone())
             }) else {
                 // #2446: an extension's tool registers later, not a typo.
-                match crate::domain::tool_policy::registers_after_startup(policy_id) {
+                match crate::domain::tool_policy::services::tool_policy::registers_after_startup(
+                    policy_id,
+                ) {
                     true => {}
                     false => warnings.push(policy_id.clone()),
                 }

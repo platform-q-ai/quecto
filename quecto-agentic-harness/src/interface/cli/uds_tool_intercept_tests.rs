@@ -1,5 +1,5 @@
 use crate::domain::agents::value_objects::agent::AgentProgressEvent;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::interface::cli::uds_cancel::{EventSink, forward_progress_event_sink};
 
 #[tokio::test]

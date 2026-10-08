@@ -43,7 +43,9 @@ fn given_big_spilled_history(world: &mut QuectoWorld, count: usize) {
 /// cut keeps) over the small budgets these scenarios configure.
 #[given("a spilled brief exceeding the pruning budget")]
 fn given_spilled_brief(world: &mut QuectoWorld) {
-    let mut brief = quecto::domain::turn_origin::prompt("lorem ipsum dolor sit amet ".repeat(90));
+    let mut brief = quecto::domain::conversation::services::turn_origin::prompt(
+        "lorem ipsum dolor sit amet ".repeat(90),
+    );
     brief.spill_id = Some("turn0:msg:user".to_string());
     world.watermark_history.push(brief);
 }
@@ -99,7 +101,8 @@ fn when_user_sends_through_pruning_agent(world: &mut QuectoWorld, text: String) 
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            quecto::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
 
     let mut messages = world.watermark_history.clone();

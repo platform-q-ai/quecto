@@ -8,9 +8,9 @@
 //! from `offset`) so the rest is reachable without paging history.
 use std::path::PathBuf;
 
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::error::DomainError;
 use crate::domain::ids::MessageId;
-use crate::domain::message::Message;
 use crate::domain::sessions::entities::session::SpillEntry;
 
 /// The report preview budget, in bytes.

@@ -7,8 +7,8 @@
 
 use super::*;
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
-use crate::domain::message::Message;
-use crate::domain::tool::ToolDefinition;
+use crate::domain::conversation::value_objects::message::Message;
+use crate::domain::tool_policy::value_objects::tool::ToolDefinition;
 use crate::infrastructure::config::Config;
 use wiremock::matchers::{method, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -49,7 +49,10 @@ fn config_with_openai_key(api_base: &str) -> Config {
 async fn send_turn_with_tools(
     provider: &std::sync::Arc<dyn LlmProvider>,
     model: &str,
-) -> Result<crate::domain::message::LlmResponse, crate::domain::error::DomainError> {
+) -> Result<
+    crate::domain::conversation::value_objects::message::LlmResponse,
+    crate::domain::error::DomainError,
+> {
     let messages = vec![
         Message::system("You are a coding agent."),
         Message::user("List the files"),
@@ -155,7 +158,10 @@ async fn openai_api_key_non_reasoning_models_stay_on_chat_completions_1066() {
 async fn send_toolless_turn_with_effort(
     provider: &std::sync::Arc<dyn LlmProvider>,
     model: &str,
-) -> Result<crate::domain::message::LlmResponse, crate::domain::error::DomainError> {
+) -> Result<
+    crate::domain::conversation::value_objects::message::LlmResponse,
+    crate::domain::error::DomainError,
+> {
     let messages = vec![
         Message::system("You are a coding agent."),
         Message::user("Summarize this repo"),

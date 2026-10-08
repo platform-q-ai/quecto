@@ -1,6 +1,6 @@
 //! #2157: a Codex response that ends in function calls stops for tool use.
 use super::*;
-use crate::domain::message::StopReason;
+use crate::domain::conversation::value_objects::message::StopReason;
 
 #[test]
 fn a_completed_response_with_function_calls_stops_for_tool_use() {

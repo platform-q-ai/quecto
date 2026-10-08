@@ -5,7 +5,7 @@ use std::sync::Arc;
 use super::{SseAccumulator, dispatch_sse_event};
 use crate::domain::inference::events::request_observation::RequestTrace;
 use crate::domain::inference::value_objects::provider::StreamEvent;
-use crate::domain::tool::ToolDefinition;
+use crate::domain::tool_policy::value_objects::tool::ToolDefinition;
 use crate::infrastructure::providers::sse_common::{SseHandler, SseLineOutcome};
 use crate::infrastructure::providers::sse_end;
 
@@ -58,7 +58,7 @@ impl AnthropicSseHandler {
     #[cfg(any(test, feature = "test-support"))]
     pub(in crate::infrastructure::providers::anthropic) fn into_response(
         self,
-    ) -> crate::domain::message::LlmResponse {
+    ) -> crate::domain::conversation::value_objects::message::LlmResponse {
         self.acc.into_response()
     }
 }

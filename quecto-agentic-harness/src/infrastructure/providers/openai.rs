@@ -1,17 +1,17 @@
+use crate::domain::conversation::value_objects::message::ThinkingBlock;
 use crate::infrastructure::providers::attempt_profile::{Profile, Surface, Vendor};
 // OpenAI adapter: impl LlmProvider for OpenAiProvider.
 
-use super::stream_idle::StreamIdle;
+use super::{openai_images, stream_idle::StreamIdle};
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use super::openai_images;
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
+use crate::domain::conversation::services::visible_thinking::append_visible_thinking;
+use crate::domain::conversation::value_objects::message::{LlmResponse, Message, Role, ToolCall};
 use crate::domain::error::DomainError;
 use crate::domain::inference::value_objects::provider::StreamEvent;
-use crate::domain::message::{LlmResponse, Message, Role, ToolCall};
-use crate::domain::visible_thinking::append_visible_thinking;
 
 struct AbortOnDrop<T> {
     handle: Option<tokio::task::JoinHandle<T>>,
@@ -294,7 +294,7 @@ impl OpenAiProvider {
             .map(|thinking| {
                 let mut capped = String::new();
                 append_visible_thinking(&mut capped, thinking, "OpenAI non-stream reasoning")?;
-                Ok(vec![crate::domain::message::ThinkingBlock::Normal {
+                Ok(vec![ThinkingBlock::Normal {
                     thinking: capped,
                     signature: String::new(),
                 }])

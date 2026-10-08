@@ -13,7 +13,7 @@ use crate::application::environments::use_cases::{
     KillEnvironment, KilledEnvironment, ListContainerConfigs, ListEnvironmentsQuery,
 };
 use crate::domain::environments::entities::environment_registry::EnvironmentTarget;
-use crate::domain::tool::ToolResult;
+use crate::domain::tool_policy::value_objects::tool::ToolResult;
 
 /// The environment control use cases `agent_cmd` invokes (#1369, #1939):
 /// the side-effect-free inventory query and the kill owner, composed once

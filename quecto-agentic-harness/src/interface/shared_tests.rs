@@ -533,7 +533,7 @@ fn test_build_http_client_does_not_panic() {
 mod context_settings {
     use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
     use crate::application::agent_turn::ports::AgentLoop;
-    use crate::domain::message::Message;
+    use crate::domain::conversation::value_objects::message::Message;
     use crate::infrastructure::config::AgentDefaults;
     use crate::infrastructure::tools::registry::ToolRegistryImpl;
     /// Build a loop the way production sites do: the context knobs come from
@@ -559,7 +559,8 @@ mod context_settings {
             pin_recent_turns: defaults.pin_recent_turns,
             context_marks: defaults.context_marks().unwrap(),
             model_context_window,
-            tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+            tool_profile_context:
+                crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
         })
     }
     /// A config-file `pin_recent_turns` value reaches the loop through the
@@ -577,8 +578,8 @@ mod context_settings {
     /// cut once, behind one archive stub, under a roomy ceiling.
     #[tokio::test]
     async fn config_watermark_marks_reach_the_loop() {
-        use crate::domain::conversation::UserKind;
-        use crate::domain::turn_origin::prompt;
+        use crate::domain::conversation::services::turn_origin::prompt;
+        use crate::domain::conversation::value_objects::user_kind::UserKind;
         let defaults: AgentDefaults =
             serde_json::from_str(r#"{"context_high_tokens": 20000, "context_low_tokens": 6000}"#)
                 .unwrap();

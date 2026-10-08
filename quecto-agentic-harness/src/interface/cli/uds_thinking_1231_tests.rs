@@ -1,5 +1,5 @@
 use super::uds_session::{MessageView, message_to_json};
-use crate::domain::message::{Message, ThinkingBlock};
+use crate::domain::conversation::value_objects::message::{Message, ThinkingBlock};
 
 #[test]
 fn message_view_exposes_display_safe_thinking_separate_from_answer() {

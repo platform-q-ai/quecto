@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use crate::application::tools::ports::Tool;
-use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
 use crate::infrastructure::tools::inherited_tool_policy::workflow_tool_identity;
 use crate::infrastructure::tools::spawn::SpawnTool;
 

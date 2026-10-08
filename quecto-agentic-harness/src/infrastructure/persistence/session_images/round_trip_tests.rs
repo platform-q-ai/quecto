@@ -12,12 +12,14 @@ use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
 use crate::application::sessions::ports::SessionStore;
-use crate::domain::conversation::image_input::{GifVerdicts, ImageInput, SentConversation};
-use crate::domain::conversation::stored_images::{ImageKind, unavailable_marker};
-use crate::domain::message::{Message, ToolCall, UserImageBlock};
+use crate::domain::conversation::services::image_input::{
+    GifVerdicts, ImageInput, SentConversation,
+};
+use crate::domain::conversation::value_objects::message::{Message, ToolCall, UserImageBlock};
+use crate::domain::conversation::value_objects::stored_images::{ImageKind, unavailable_marker};
 use crate::domain::sessions::entities::session::Session;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
-use crate::domain::tool::ImageBlock;
+use crate::domain::tool_policy::value_objects::tool::ImageBlock;
 use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::infrastructure::providers::anthropic::AnthropicProvider;
@@ -404,8 +406,9 @@ async fn an_image_the_store_cannot_keep_is_named_and_sent_as_a_marker() {
     let tmp = TempDir::new().unwrap();
     // A tool result's image longer than any image quecto admits (a typed
     // block's type is always one it stores, #2423).
-    let oversized =
-        "A".repeat(crate::domain::conversation::stored_images::MAX_STORED_IMAGE_TEXT + 4);
+    let oversized = "A".repeat(
+        crate::domain::conversation::value_objects::stored_images::MAX_STORED_IMAGE_TEXT + 4,
+    );
     let mut drawn = Message::tool("call-1", "draw");
     drawn.image_blocks = vec![ImageBlock::unchecked_for_tests(
         ImageMime::Png,

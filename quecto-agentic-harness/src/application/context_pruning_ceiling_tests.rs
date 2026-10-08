@@ -5,7 +5,7 @@
 use super::*;
 use crate::application::context_pruning::estimate_message_tokens;
 use crate::application::context_pruning::estimate_total_tokens;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 
 /// A spilled assistant message of about 100 tokens in `turn`.
 fn turn_message(turn: u32) -> Message {
@@ -231,7 +231,7 @@ fn pinned_recent_turns_are_kept_when_they_dominate_the_budget() {
 fn in_flight_tool_call() -> Vec<Message> {
     let mut old = spilled_tool_result(1);
     old.content = "old ".repeat(40);
-    let call = crate::domain::message::ToolCall {
+    let call = crate::domain::conversation::value_objects::message::ToolCall {
         id: "call-2".to_string(),
         name: "bash".to_string(),
         arguments: "{}".to_string(),
@@ -283,7 +283,9 @@ fn the_drop_rung_keeps_the_in_flight_tool_call_and_its_result() {
 #[test]
 fn the_ceiling_never_removes_the_agents_report() {
     use crate::application::sessions::history_paging::newest_window;
-    use crate::domain::turn_origin::{TurnOrigin, instruction, progress_nudge};
+    use crate::domain::conversation::services::turn_origin::{
+        TurnOrigin, instruction, progress_nudge,
+    };
     let mut answer = Message::assistant(format!("ANSWER {}", "a".repeat(400)), vec![]);
     answer.turn = Some(1);
     answer.turn_origin = TurnOrigin::Instruction;
@@ -315,7 +317,9 @@ fn the_ceiling_never_removes_the_agents_report() {
 
 /// A long nudge phase after `answer`, then a nudge in flight.
 fn nudged_after(answer: Message, turns: u32) -> Vec<Message> {
-    use crate::domain::turn_origin::{TurnOrigin, instruction, progress_nudge};
+    use crate::domain::conversation::services::turn_origin::{
+        TurnOrigin, instruction, progress_nudge,
+    };
     let mut messages = vec![instruction("task".into()), answer];
     for turn in 2..=turns {
         let mut nudge = progress_nudge("Workflow incomplete.".into());
@@ -335,7 +339,8 @@ fn nudged_after(answer: Message, turns: u32) -> Vec<Message> {
 fn r4_c1_an_unspilled_huge_report_never_holds_the_ceiling_unmet() {
     let mut answer = Message::assistant(format!("ANSWER {}", "a".repeat(1_000_000)), vec![]);
     answer.turn = Some(1);
-    answer.turn_origin = crate::domain::turn_origin::TurnOrigin::Instruction;
+    answer.turn_origin =
+        crate::domain::conversation::services::turn_origin::TurnOrigin::Instruction;
     answer.spill_id = None;
     let mut messages = nudged_after(answer, 40);
     let budget = 50_000;
@@ -354,7 +359,7 @@ fn r4_c1_an_unspilled_huge_report_never_holds_the_ceiling_unmet() {
 /// while it removes the newer nudge replies.
 #[test]
 fn r4_c2_the_kept_report_is_of_a_finished_turn() {
-    use crate::domain::turn_origin::{TurnOrigin, progress_nudge};
+    use crate::domain::conversation::services::turn_origin::{TurnOrigin, progress_nudge};
     let mut answer = Message::assistant(format!("LEGACY {}", "a".repeat(400)), vec![]);
     answer.turn = Some(1);
     answer.spill_id = Some("turn1:msg:legacy".into());
@@ -389,7 +394,9 @@ fn r4_c2_the_kept_report_is_of_a_finished_turn() {
 /// nudge phase after it, the answer is stubbed, never removed.
 #[test]
 fn a_note_before_the_answer_never_exposes_it_to_removal() {
-    use crate::domain::turn_origin::{TurnOrigin, harness_note, instruction};
+    use crate::domain::conversation::services::turn_origin::{
+        TurnOrigin, harness_note, instruction,
+    };
     let mut answer = Message::assistant(format!("ANSWER {}", "a".repeat(400)), vec![]);
     answer.turn = Some(1);
     answer.turn_origin = TurnOrigin::Instruction;
@@ -415,7 +422,9 @@ fn a_note_before_the_answer_never_exposes_it_to_removal() {
 /// opened by a note, as a stub rather than removing it.
 #[test]
 fn a_finished_latest_turn_keeps_its_answer_under_the_ceiling() {
-    use crate::domain::turn_origin::{TurnOrigin, harness_note, instruction};
+    use crate::domain::conversation::services::turn_origin::{
+        TurnOrigin, harness_note, instruction,
+    };
     let mut messages = vec![instruction("task".into())];
     for turn in 1..=40 {
         let mut step = turn_message(turn);

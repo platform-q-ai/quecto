@@ -33,7 +33,10 @@ impl crate::application::catalogue::CredentialStatusPort for GrantNone {
     ) -> Option<Box<dyn crate::application::catalogue::CredentialStatusPort + '_>> {
         None // this fake's status does not depend on routes
     }
-    fn credential_available(&self, _entry: &crate::domain::catalogue::CatalogueEntry) -> bool {
+    fn credential_available(
+        &self,
+        _entry: &crate::domain::catalogue::value_objects::catalogue::CatalogueEntry,
+    ) -> bool {
         false
     }
 }

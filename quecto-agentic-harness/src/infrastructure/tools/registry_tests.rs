@@ -1,6 +1,6 @@
 use super::*;
 use crate::application::tools::ports::ToolRegistry;
-use crate::domain::tool_descriptor::ToolSource;
+use crate::domain::tool_policy::value_objects::tool_descriptor::ToolSource;
 use crate::infrastructure::security::sandbox::Sandbox;
 use std::pin::Pin;
 use tempfile::TempDir;
@@ -475,7 +475,7 @@ fn descriptors_include_source_and_availability_for_native_and_uds_tools() {
         d.definition.name.as_ref() == "bash"
             && matches!(
                 d.source,
-                crate::domain::tool_descriptor::ToolSource::BundledNative
+                crate::domain::tool_policy::value_objects::tool_descriptor::ToolSource::BundledNative
             )
             && d.availability.is_enabled()
     }));
@@ -488,7 +488,7 @@ fn descriptors_include_source_and_availability_for_native_and_uds_tools() {
     let weather = reg.descriptor("weather").expect("weather descriptor");
     assert!(matches!(
         weather.source,
-        crate::domain::tool_descriptor::ToolSource::Uds
+        crate::domain::tool_policy::value_objects::tool_descriptor::ToolSource::Uds
     ));
     assert_eq!(weather.owner.as_ref(), "uds:client:7");
     assert!(weather.availability.is_enabled());

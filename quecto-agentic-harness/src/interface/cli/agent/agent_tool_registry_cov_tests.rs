@@ -263,7 +263,9 @@ async fn build_tool_registry_exposes_shared_docs_for_both_roles() {
 /// unloadable via the extension lifecycle path.
 #[test]
 fn build_tool_registry_registers_agent_control_tools_as_official_native() {
-    use crate::domain::tool_descriptor::{ToolAvailability, ToolSource};
+    use crate::domain::tool_policy::value_objects::tool_descriptor::{
+        ToolAvailability, ToolSource,
+    };
 
     let tmp = tempfile::TempDir::new().unwrap();
     let config = Config::default();
@@ -340,7 +342,7 @@ fn build_tool_registry_registers_agent_control_tools_as_official_native() {
 /// and keeps the shared engine handle live for guards/binding.
 #[test]
 fn build_tool_registry_registers_workflow_when_uds_and_enabled() {
-    use crate::domain::tool_descriptor::ToolSource;
+    use crate::domain::tool_policy::value_objects::tool_descriptor::ToolSource;
 
     let tmp = tempfile::TempDir::new().unwrap();
     let config = Config::default();
@@ -398,7 +400,7 @@ fn build_tool_registry_registers_workflow_when_uds_and_enabled() {
 /// official tools, not runtime-unloadable extension tools.
 #[test]
 fn build_tool_registry_registers_web_tools_as_bundled_native_official_tools() {
-    use crate::domain::tool_descriptor::ToolSource;
+    use crate::domain::tool_policy::value_objects::tool_descriptor::ToolSource;
 
     let tmp = tempfile::TempDir::new().unwrap();
     let mut config = Config::default();

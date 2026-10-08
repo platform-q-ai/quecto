@@ -1,6 +1,6 @@
 use super::*;
 use crate::application::sessions::dto::SessionListQuery;
-use crate::domain::message::{StopReason, ThinkingBlock, ToolCall};
+use crate::domain::conversation::value_objects::message::{StopReason, ThinkingBlock, ToolCall};
 use crate::domain::sessions::entities::session_identity::{SessionIdentity, SessionKeyPrefix};
 use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
 use tempfile::TempDir;

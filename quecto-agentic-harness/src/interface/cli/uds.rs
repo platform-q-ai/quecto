@@ -18,7 +18,7 @@ use super::uds_workflow_nudge::{
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::sessions::dto::SaveTrigger;
 use crate::application::subagents::use_cases::TerminateAllDelegatedAgents;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::interface::cli::uds_discovery_handles::SessionDiscoveryHandles;
 use futures::FutureExt;
 type ExtRegistry = std::sync::Arc<
