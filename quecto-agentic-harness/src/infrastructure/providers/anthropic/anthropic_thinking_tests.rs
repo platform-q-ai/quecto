@@ -10,8 +10,8 @@
 
 use super::*;
 use crate::application::providers::ports::ChatRequest;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::inference::value_objects::provider::EffortLevel;
-use crate::domain::message::Message;
 
 #[test]
 fn test_build_request_body_with_thinking_adds_thinking_param() {
@@ -524,7 +524,7 @@ fn test_adaptive_thinking_with_effort_combined() {
 
 #[test]
 fn test_opus_4_6_pricing_is_five_dollars_input() {
-    use crate::domain::message::{UsageInfo, model_pricing};
+    use crate::domain::conversation::value_objects::message::{UsageInfo, model_pricing};
     let pricing = model_pricing("claude-opus-4-6").expect("claude-opus-4-6 should have pricing");
     // $5.00 / MTok input
     assert_eq!(
@@ -564,7 +564,7 @@ fn test_opus_4_6_pricing_is_five_dollars_input() {
 
 #[test]
 fn test_opus_4_6_cache_read_pricing() {
-    use crate::domain::message::{UsageInfo, model_pricing};
+    use crate::domain::conversation::value_objects::message::{UsageInfo, model_pricing};
     let pricing = model_pricing("claude-opus-4-6").unwrap();
     // 1M cache-read tokens = $0.50
     let usage = UsageInfo {
@@ -586,7 +586,7 @@ fn test_opus_4_6_cache_read_pricing() {
 
 #[test]
 fn test_haiku_4_5_pricing_present_and_correct() {
-    use crate::domain::message::{UsageInfo, model_pricing};
+    use crate::domain::conversation::value_objects::message::{UsageInfo, model_pricing};
     let pricing = model_pricing("claude-haiku-4-5").expect("claude-haiku-4-5 should have pricing");
     assert_eq!(
         pricing.input_micro_usd_per_million, 1_000_000,
@@ -620,7 +620,7 @@ fn test_haiku_4_5_pricing_present_and_correct() {
 
 #[test]
 fn test_haiku_4_5_dated_variant_matches() {
-    use crate::domain::message::model_pricing;
+    use crate::domain::conversation::value_objects::message::model_pricing;
     assert!(model_pricing("claude-haiku-4-5-20251001").is_some());
 }
 

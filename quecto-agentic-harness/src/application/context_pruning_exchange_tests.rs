@@ -4,7 +4,7 @@
 //! a result without its call (OpenAI chat completions rejects either).
 
 use super::*;
-use crate::domain::message::{Message, Role, ToolCall};
+use crate::domain::conversation::value_objects::message::{Message, Role, ToolCall};
 use std::collections::BTreeSet;
 
 /// Every call has its result and every result its call.

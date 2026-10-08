@@ -8,7 +8,7 @@ use super::{
     forward_subagent_get_messages,
 };
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::infrastructure::tools::subagent_registry::{
     SubagentEntry, SubagentRegistry, new_registry,
@@ -58,7 +58,8 @@ impl Fx {
                 pin_recent_turns: 2,
                 context_marks: Default::default(),
                 model_context_window: None,
-                tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+                tool_profile_context:
+                    crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
             }),
             messages: Vec::new(),
             session: AgentSession::new("stub".into()),

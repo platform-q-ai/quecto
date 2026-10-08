@@ -13,7 +13,7 @@ use super::*;
 
 use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use quecto::composition::runtime::build_agent_provider;
-use quecto::domain::message::Role;
+use quecto::domain::conversation::value_objects::message::Role;
 use quecto::domain::sessions::entities::session::{
     PersistedSubagentRosterEntry, Session, SubagentLiveness, SubagentRestoreReason,
 };
@@ -234,7 +234,8 @@ pub(crate) fn build_uds_agent(
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            quecto::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(max_tool_iterations);
     // Enable streaming when the scenario has set the flag (e.g. SSE mock).

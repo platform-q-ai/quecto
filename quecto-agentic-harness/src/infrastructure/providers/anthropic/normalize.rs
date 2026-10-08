@@ -7,7 +7,7 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
-use crate::domain::message::{Message, Role, StopReason};
+use crate::domain::conversation::value_objects::message::{Message, Role, StopReason};
 
 /// Check whether a tool call ID is already valid (only `[a-zA-Z0-9_-]`, ≤64 chars).
 fn is_valid_tool_call_id(id: &str) -> bool {

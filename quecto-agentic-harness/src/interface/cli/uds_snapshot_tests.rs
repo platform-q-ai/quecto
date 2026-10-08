@@ -6,7 +6,7 @@
 //! pre-turn history by the accept loop even while the dispatch loop holds
 //! `messages` mutably for the whole turn (`agent.process(messages)`).
 
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::interface::cli::protocol::SessionState;
 use crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles;
 use crate::interface::cli::uds_execution_state::{ExecutionSnapshot, ProgressSummary, ToolSummary};

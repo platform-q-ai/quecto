@@ -3,8 +3,10 @@
 //! Kept in a sibling module so `uds_ext_protocol.rs` stays under the line-count gate.
 
 use super::*;
-use crate::domain::extension_tool::ToolInvocation;
-use crate::domain::tool_policy::{configured_extension_key, configured_extension_tool_id};
+use crate::domain::tool_policy::services::tool_policy::{
+    configured_extension_key, configured_extension_tool_id,
+};
+use crate::domain::tool_policy::value_objects::extension_tool::ToolInvocation;
 // ─── Dispatch helpers (called from uds.rs dispatch_command) ───────────────
 
 fn catalogue_values(

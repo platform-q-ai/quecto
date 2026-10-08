@@ -3803,8 +3803,8 @@ fn application_guard_resolves_relative_paths() {
     for source in [
         "use super::spawn_entry::child_socket_path;",
         "use super::super::super::application::ports::SubagentLaunchPorts;",
-        "use super::super::super::domain::tool::ToolResult;",
-        "mod inner { use super::super::super::super::domain::tool::ToolResult; }",
+        "use super::super::super::domain::tool_policy::value_objects::tool::ToolResult;",
+        "mod inner { use super::super::super::super::domain::tool_policy::value_objects::tool::ToolResult; }",
         "use crate::application::subagent_launch::SubagentLaunchUseCase;",
         "#[cfg(test)]\nmod tests { use super::super::super::application::secret::Bad; }",
     ] {

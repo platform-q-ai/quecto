@@ -1,7 +1,7 @@
 use super::{HistoryError, HistoryPage, HistoryQuery};
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::error::DomainError;
 use crate::domain::ids::MessageId;
-use crate::domain::message::Message;
 
 fn page(n: usize, has_more_before: bool) -> HistoryPage {
     let messages: Vec<Message> = (0..n).map(|i| Message::user(format!("m{i}"))).collect();
@@ -98,7 +98,9 @@ fn keeping_none_of_a_non_empty_page_still_keeps_its_newest_message() {
 #[test]
 fn keeping_newest_keeps_the_report() {
     let mut kept = page(4, false);
-    let report = crate::domain::turn_origin::ReportRef::of(&Message::assistant("REPORT", vec![]));
+    let report = crate::domain::conversation::services::turn_origin::ReportRef::of(
+        &Message::assistant("REPORT", vec![]),
+    );
     kept.report = Some(report.clone());
     let kept = kept.keeping_newest(1);
     assert_eq!(kept.messages.len(), 1);

@@ -12,8 +12,10 @@
 use super::AgentLoopImpl;
 use crate::application::catalogue::dto::ModelLimits;
 use crate::application::catalogue::ports::ModelRuntime;
-use crate::domain::catalogue::ModelWindow;
-use crate::domain::conversation::image_input::{GifVerdicts, ImageInput, SentConversation};
+use crate::domain::catalogue::value_objects::catalogue::ModelWindow;
+use crate::domain::conversation::services::image_input::{
+    GifVerdicts, ImageInput, SentConversation,
+};
 
 /// Tokens kept free of the context window when a retry raises the output limit.
 const OUTPUT_ROOM_MARGIN: usize = 1024;
@@ -58,7 +60,7 @@ impl AgentLoopImpl {
     /// message. Dropping it gives the conversation every image back.
     pub(super) fn conversation_for_model<'m>(
         &self,
-        messages: &'m mut [crate::domain::message::Message],
+        messages: &'m mut [crate::domain::conversation::value_objects::message::Message],
     ) -> SentConversation<'m> {
         SentConversation::new(
             messages,
@@ -242,7 +244,7 @@ impl AgentLoopImpl {
 /// the animated-GIF verdicts kept across requests (#2421).
 #[derive(Debug, Default)]
 pub(super) struct ModelTraits {
-    pub(super) prompt_limit: crate::domain::catalogue::PromptLimit,
+    pub(super) prompt_limit: crate::domain::catalogue::value_objects::catalogue::PromptLimit,
     pub(super) image_input: ImageInput,
     /// Which GIFs already seen are animated, kept across model switches.
     pub(super) gif_verdicts: GifVerdicts,

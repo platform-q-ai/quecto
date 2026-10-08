@@ -1,9 +1,6 @@
 use super::durable_prefix::DurablePrefixLatch;
 use crate::application::agent_loop_policy::ToolPolicyState;
-use crate::application::agent_loop_stream::{
-    StreamProviderError, TurnEnd, empty_stream_error_message, is_cut_off_without_answer,
-    is_empty_streamed_response,
-};
+use crate::application::agent_loop_stream;
 use crate::application::agent_turn::ports::AgentLoop;
 pub use crate::application::agent_usage::UsageTotals;
 use crate::application::audit::ports::AuditSink;
@@ -15,18 +12,23 @@ use crate::application::tools::ports::{
 };
 use crate::domain::agents::value_objects::agent::{AgentInfo, AgentProgressEvent};
 use crate::domain::agents::value_objects::agent::{AgentResult, ProgressCallback};
-use crate::domain::conversation::reply_requirement::ReplyRequirement;
-use crate::domain::inference::events::request_observation::{
-    InputBaseline, RequestDiagnostics, RequestObservation,
-};
+use crate::domain::conversation::services::reply_requirement::ReplyRequirement;
+use crate::domain::conversation::services::watermark::Watermark;
+use crate::domain::conversation::value_objects::message::{LlmResponse, Message, ToolCall};
+use crate::domain::inference::events::request_observation;
 use crate::domain::inference::services::provider_error::classify_provider_error;
 use crate::domain::inference::value_objects::provider::{EffortLevel, StreamEvent};
-use crate::domain::message::{LlmResponse, Message, ToolCall};
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
-use crate::domain::tool::{ToolPolicyReconciliation, ToolProfileContext};
+use crate::domain::tool_policy::value_objects::tool;
+use crate::domain::tool_policy::value_objects::tool_descriptor::ToolDescriptor;
 use crate::domain::{audit::AuditEvent, error::DomainError};
+use agent_loop_stream::{
+    StreamProviderError, TurnEnd, empty_stream_error_message, is_cut_off_without_answer,
+    is_empty_streamed_response,
+};
+use request_observation::{InputBaseline, RequestDiagnostics, RequestObservation};
 use std::{pin::Pin, sync::Arc};
-
+use tool::{ToolDefinition, ToolPolicyReconciliation, ToolPolicyRequest, ToolProfileContext};
 pub type ToolPolicyPersistence =
     Arc<dyn Fn(&ToolPolicyReconciliation) -> Result<(), String> + Send + Sync>;
 #[path = "agent_loop_clamp.rs"]
@@ -97,7 +99,7 @@ pub struct AgentLoopConfig {
     pub pin_recent_turns: u32,
     /// #2403/#2414: the watermark marks (cut at the high, down to the low),
     /// before the ceiling scales them. Constructor field for the same reason.
-    pub context_marks: crate::domain::conversation::watermark::Watermark,
+    pub context_marks: Watermark,
     /// #1044: active model context window (`None` unknown); bounds pruning budget.
     pub model_context_window: Option<usize>,
     pub tool_profile_context: ToolProfileContext,
@@ -155,8 +157,7 @@ pub struct AgentLoopImpl {
     /// Context-management boundary for pruning, spilling, dirty-prefix, and
     /// user-facing context gauge decisions.
     context_manager: ContextManager,
-    pub(super) pending_tool_policy_requests:
-        std::sync::Mutex<Vec<crate::domain::tool::ToolPolicyRequest>>,
+    pub(super) pending_tool_policy_requests: std::sync::Mutex<Vec<ToolPolicyRequest>>,
     pub(super) tool_policy_state: std::sync::Mutex<ToolPolicyState>,
     pub(super) turn_in_flight: std::sync::atomic::AtomicBool,
     pub(super) tool_profile_context: ToolProfileContext,
@@ -264,9 +265,7 @@ impl AgentLoopImpl {
     /// detectable from outside the loop (#1045/#1046). Test-gated: it exists
     /// only for wiring tests and must not ship as public API surface.
     #[cfg(test)]
-    pub fn context_knob_snapshot(
-        &self,
-    ) -> (u32, crate::domain::conversation::watermark::Watermark) {
+    pub fn context_knob_snapshot(&self) -> (u32, Watermark) {
         self.context_manager.context_knob_snapshot()
     }
     /// Fire a progress event to the registered callback, if any. Takes a closure
@@ -290,7 +289,7 @@ impl AgentLoopImpl {
     }
     /// Return descriptors for policy/UI callers without exposing concrete tool
     /// implementations.
-    pub fn tool_descriptors(&self) -> Vec<crate::domain::tool_descriptor::ToolDescriptor> {
+    pub fn tool_descriptors(&self) -> Vec<ToolDescriptor> {
         self.tool_catalog().descriptors()
     }
 
@@ -352,7 +351,7 @@ impl AgentLoopImpl {
     }
 
     /// Return all tool definitions (for core name lookups).
-    pub fn tool_definitions(&self) -> &[crate::domain::tool::ToolDefinition] {
+    pub fn tool_definitions(&self) -> &[ToolDefinition] {
         self.tool_catalog().definitions()
     }
 

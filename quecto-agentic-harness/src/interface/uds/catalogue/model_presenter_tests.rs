@@ -1,6 +1,6 @@
 use super::*;
 use crate::application::catalogue::dto::{CatalogueStanding, ModelLimits, ModelSwitchPlan};
-use crate::domain::catalogue::{ModelRef, TransportKind};
+use crate::domain::catalogue::value_objects::catalogue::{ModelRef, TransportKind};
 
 fn switched(verdict: ModelSelectionVerdict) -> ModelSwitched {
     ModelSwitched {

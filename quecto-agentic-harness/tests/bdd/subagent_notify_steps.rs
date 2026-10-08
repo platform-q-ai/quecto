@@ -399,7 +399,9 @@ fn then_busy_not_consumed(world: &mut QuectoWorld) {
 
 /// Drain the first idle note once and cache it, so several assertions in one
 /// scenario inspect the same delivered note instead of re-draining the queue.
-fn idle_note(world: &mut QuectoWorld) -> &quecto::domain::message::Message {
+fn idle_note(
+    world: &mut QuectoWorld,
+) -> &quecto::domain::conversation::value_objects::message::Message {
     if world.notify_drained_note.is_none() {
         let session = world
             .notify_parent_session
@@ -418,7 +420,7 @@ fn idle_note(world: &mut QuectoWorld) -> &quecto::domain::message::Message {
 
 #[then("the parent's next idle note should be delivered on the operator channel")]
 fn then_next_note_is_user_turn(world: &mut QuectoWorld) {
-    use quecto::domain::message::Role;
+    use quecto::domain::conversation::value_objects::message::Role;
     // #1338: notes are Role::User so providers treat them as a real turn.
     // Role::System was hoisted out of messages (Anthropic/Codex) and never
     // reached the model.

@@ -3,7 +3,7 @@
 //! crosses it.
 
 use quecto::application::ports::CredentialStatusPort;
-use quecto::domain::catalogue::{
+use quecto::domain::catalogue::value_objects::catalogue::{
     AuthIdentity, Availability, CatalogueEntry, ModelCapabilities, ModelCost, ModelDescriptor,
     ModelRef, ProviderDescriptor, ProviderId, TransportKind,
 };

@@ -1,7 +1,7 @@
 //! Outcome of the list-models use case (#1845).
 
 use crate::application::catalogue::CatalogueSourceError;
-use crate::domain::catalogue::CatalogueEntry;
+use crate::domain::catalogue::value_objects::catalogue::CatalogueEntry;
 
 /// One catalogue entry as listed: the domain entry plus whether it can run
 /// right now (its availability reached the top of the ladder).

@@ -6,9 +6,9 @@ use std::sync::Arc;
 
 use crate::application::subagents::ports::EndedChildRecords;
 use crate::domain::agents::value_objects::child_end::ChildOrigin;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::crash_record::CrashRecord;
 use crate::domain::ids::AgentUuid;
-use crate::domain::message::Message;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 /// A window of an ended child's persisted transcript. Paged by the durable

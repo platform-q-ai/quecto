@@ -1,8 +1,8 @@
 //! How a member's turn ended and what it used (#2285).
 
+use crate::domain::conversation::value_objects::message::StopReason;
 use crate::domain::external_agent::turn::TurnEnd;
 use crate::domain::external_agent::usage::TurnUsage;
-use crate::domain::message::StopReason;
 
 /// How one turn ended and what it used.
 #[derive(Debug, Clone, PartialEq, Eq)]

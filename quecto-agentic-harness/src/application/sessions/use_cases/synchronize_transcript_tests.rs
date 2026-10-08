@@ -2,7 +2,7 @@ use super::SynchronizeTranscript;
 use crate::application::sessions::active_session::{ActiveSessionHandle, ActiveSessionState};
 use crate::application::sessions::conversation_ledger::{LEDGER_MAX_ENTRIES, LedgerAdvance};
 use crate::application::sessions::dto::{SyncRequest, TranscriptDelta, TranscriptSync};
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use std::sync::Arc;
 

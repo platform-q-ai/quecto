@@ -97,7 +97,7 @@ fn build_agent_from_config_threads_context_knobs_into_the_loop() {
     );
     assert_eq!(
         marks,
-        crate::domain::conversation::watermark::Watermark::new(120_000, 40_000).unwrap(),
+        crate::domain::conversation::services::watermark::Watermark::new(120_000, 40_000).unwrap(),
         "the configured watermark marks must reach the loop (#2414)"
     );
 }
@@ -222,9 +222,9 @@ impl<'writer> tracing_subscriber::fmt::MakeWriter<'writer> for CapturedLog {
 /// cut once, behind one archive stub, and nothing is collapsed in place.
 #[test]
 fn every_construction_runs_the_watermark_pass() {
-    use crate::domain::conversation::UserKind;
-    use crate::domain::message::Message;
-    use crate::domain::turn_origin::prompt;
+    use crate::domain::conversation::services::turn_origin::prompt;
+    use crate::domain::conversation::value_objects::message::Message;
+    use crate::domain::conversation::value_objects::user_kind::UserKind;
     use crate::infrastructure::tools::swarm_bridge::Participation;
     let tmp = tempfile::TempDir::new().unwrap();
     std::fs::write(

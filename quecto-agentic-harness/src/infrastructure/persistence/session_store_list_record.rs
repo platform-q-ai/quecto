@@ -3,7 +3,7 @@
 //! header validated against the layout. Every skip is logged and returned —
 //! a hand-renamed or symlinked file, an unreadable or invalid one, a file
 //! replaced mid-read — so no record ever vanishes from the list silently.
-use crate::domain::message::Role;
+use crate::domain::conversation::value_objects::message::Role;
 use crate::domain::sessions::entities::session::SessionSummary;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 

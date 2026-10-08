@@ -10,8 +10,8 @@ use crate::application::context_pruning::exchanges::{
 use crate::application::context_pruning::{
     collapse_message, estimate_message_tokens, estimate_tokens, estimate_total_tokens,
 };
-use crate::domain::message::{Message, Role};
-use crate::domain::turn_origin::report_to_keep;
+use crate::domain::conversation::services::turn_origin::report_to_keep;
+use crate::domain::conversation::value_objects::message::{Message, Role};
 
 /// The ladder's low-water mark, in percent of the ceiling (#2213): once
 /// crossed, it demotes down to this share of the ceiling, not just back
@@ -50,7 +50,7 @@ pub struct CeilingLadderOutcome {
     pub collapsed_to_stubs: usize,
     /// Stubs removed entirely (second rung); their calls, moved out, follow.
     pub dropped: usize,
-    pub dropped_calls: Vec<crate::domain::message::ToolCall>,
+    pub dropped_calls: Vec<crate::domain::conversation::value_objects::message::ToolCall>,
     /// The pinned/exempt set alone (with the kept report, #2226) is over it.
     pub over_budget: bool,
 }

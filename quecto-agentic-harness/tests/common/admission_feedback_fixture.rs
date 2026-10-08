@@ -128,12 +128,15 @@ impl Leaf {
 }
 
 pub fn request() -> ChatRequest<'static> {
-    static MESSAGES: std::sync::LazyLock<Vec<quecto::domain::message::Message>> =
-        std::sync::LazyLock::new(|| {
-            vec![quecto::domain::message::Message::system(
+    static MESSAGES: std::sync::LazyLock<
+        Vec<quecto::domain::conversation::value_objects::message::Message>,
+    > = std::sync::LazyLock::new(|| {
+        vec![
+            quecto::domain::conversation::value_objects::message::Message::system(
                 "Fixture instructions",
-            )]
-        });
+            ),
+        ]
+    });
     ChatRequest {
         trace: None,
         admission: None,

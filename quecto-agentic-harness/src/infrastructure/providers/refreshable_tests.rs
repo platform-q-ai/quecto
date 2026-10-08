@@ -1,8 +1,8 @@
 use super::*;
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
+use crate::domain::conversation::value_objects::message::LlmResponse;
 use crate::domain::error::DomainError;
 use crate::domain::inference::value_objects::provider::StreamEvent;
-use crate::domain::message::LlmResponse;
 use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
 use std::future::Future;
 use std::pin::Pin;
@@ -354,7 +354,8 @@ async fn test_refreshable_forwards_without_cloning_on_happy_path() {
         factory: noop_factory(),
     });
 
-    let messages = vec![crate::domain::message::Message::user("hello")];
+    let messages =
+        vec![crate::domain::conversation::value_objects::message::Message::user("hello")];
     let original_ptr = messages.as_ptr() as usize;
 
     let request = ChatRequest {
@@ -506,7 +507,7 @@ fn is_refreshable_auth_error_only_true_for_auth() {
 
 #[test]
 fn owned_request_roundtrip_preserves_fields() {
-    let msgs = vec![crate::domain::message::Message::user("hi")];
+    let msgs = vec![crate::domain::conversation::value_objects::message::Message::user("hi")];
     let req = ChatRequest {
         trace: None,
         admission: None,
@@ -533,7 +534,7 @@ fn owned_request_roundtrip_preserves_fields() {
 
 #[test]
 fn owned_request_roundtrip_with_none_session() {
-    let msgs = vec![crate::domain::message::Message::user("yo")];
+    let msgs = vec![crate::domain::conversation::value_objects::message::Message::user("yo")];
     let req = ChatRequest {
         trace: None,
         admission: None,

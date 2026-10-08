@@ -183,7 +183,8 @@ fn when_user_sends_through_member(world: &mut QuectoWorld, text: String) {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: quecto::domain::tool::ToolProfileContext::Child,
+        tool_profile_context:
+            quecto::domain::tool_policy::value_objects::tool::ToolProfileContext::Child,
     });
     // What the composition does when the member's process joins a swarm.
     if let Some(ceiling) = world.member_ceiling {

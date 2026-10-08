@@ -129,7 +129,7 @@ impl crate::application::providers::ports::LlmProvider for ScriptedProgressProvi
         Box<
             dyn std::future::Future<
                     Output = Result<
-                        crate::domain::message::LlmResponse,
+                        crate::domain::conversation::value_objects::message::LlmResponse,
                         crate::domain::error::DomainError,
                     >,
                 > + Send
@@ -140,7 +140,7 @@ impl crate::application::providers::ports::LlmProvider for ScriptedProgressProvi
             .messages
             .iter()
             .rev()
-            .find(|m| m.role == crate::domain::message::Role::User)
+            .find(|m| m.role == crate::domain::conversation::value_objects::message::Role::User)
         {
             self.seen_user_messages
                 .lock()
@@ -166,13 +166,15 @@ impl crate::application::providers::ports::LlmProvider for ScriptedProgressProvi
             }
         }
         Box::pin(async {
-            Ok(crate::domain::message::LlmResponse {
-                content: Some("status".to_string()),
-                tool_calls: vec![],
-                usage: None,
-                stop_reason: None,
-                thinking_blocks: vec![],
-            })
+            Ok(
+                crate::domain::conversation::value_objects::message::LlmResponse {
+                    content: Some("status".to_string()),
+                    tool_calls: vec![],
+                    usage: None,
+                    stop_reason: None,
+                    thinking_blocks: vec![],
+                },
+            )
         })
     }
 }

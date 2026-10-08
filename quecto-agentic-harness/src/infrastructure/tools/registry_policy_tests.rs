@@ -642,7 +642,7 @@ fn replace_request_applies_unlisted_scope_to_current_catalogue_and_preserves_pat
     );
 
     let replace = reg.apply_tool_policy_request(
-        &crate::domain::tool::ToolPolicyRequest::replace(
+        &crate::domain::tool_policy::value_objects::tool::ToolPolicyRequest::replace(
             vec![ToolPolicyMutation::set_scope(
                 "read",
                 ProfileAvailabilityScope::Parent,

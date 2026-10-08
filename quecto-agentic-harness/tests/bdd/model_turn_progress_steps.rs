@@ -398,7 +398,9 @@ fn state_shows_the_model_turn(world: &mut QuectoWorld) {
     assert!(attempt["sinceLastEventMs"].is_u64(), "{state}");
     assert!(attempt["firstTokenMs"].is_u64(), "{state}");
     // The parent's own check of a busy child's snapshot accepts it.
-    use quecto::domain::state_snapshot::{StateSnapshot, UnchangedSnapshot};
+    use quecto::domain::sessions::value_objects::state_snapshot::{
+        StateSnapshot, UnchangedSnapshot,
+    };
     let typed = StateSnapshot::read_forward_compatible(&state["data"]).expect("accepted");
     assert!(typed.model_turn.is_some());
     // Polled at the generation it saw, a parent relays the small unchanged

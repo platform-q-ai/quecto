@@ -7,9 +7,9 @@ use quecto::{
     },
     domain::{
         admission::value_objects::inference_admission::{Feedback, ThrottleFeedback},
+        conversation::value_objects::message::Message,
         error::DomainError,
-        message::Message,
-        tool::ToolProfileContext,
+        tool_policy::value_objects::tool::ToolProfileContext,
     },
     infrastructure::{providers::openai::OpenAiProvider, tools::registry::ToolRegistryImpl},
 };

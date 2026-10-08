@@ -1,7 +1,7 @@
 use super::*;
 use crate::application::agent_loop_stream::ends_turn_empty;
 use crate::application::providers::ports::ChatRequest;
-use crate::domain::conversation::reply_requirement::ReplyRequirement;
+use crate::domain::conversation::services::reply_requirement::ReplyRequirement;
 
 /// Retries for a reply cut off at the output limit with nothing visible.
 pub(super) const MAX_CUT_OFF_RETRIES: u32 = 1;
@@ -300,7 +300,7 @@ impl AgentLoopImpl {
     pub(super) fn build_chat_request<'a>(
         &'a self,
         messages: &'a [Message],
-        tool_defs: &'a [crate::domain::tool::ToolDefinition],
+        tool_defs: &'a [crate::domain::tool_policy::value_objects::tool::ToolDefinition],
     ) -> ChatRequest<'a> {
         // Pass session_key as session_id so providers that support prompt
         // caching (e.g. Codex prompt_cache_key) can use it.
@@ -329,7 +329,7 @@ impl AgentLoopImpl {
     pub(super) fn prepare_provider_request_transition<'a>(
         &'a self,
         messages: &'a [Message],
-        tool_defs: &'a [crate::domain::tool::ToolDefinition],
+        tool_defs: &'a [crate::domain::tool_policy::value_objects::tool::ToolDefinition],
         estimated_context_tokens: usize,
     ) -> ChatRequest<'a> {
         let display_context_tokens = self.reconcile_context_gauge(estimated_context_tokens);

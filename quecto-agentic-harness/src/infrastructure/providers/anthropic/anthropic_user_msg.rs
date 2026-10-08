@@ -2,9 +2,9 @@
 ///
 /// Handles structured content block arrays for user messages containing inline
 /// images, and empty-content skipping. Which images a model is sent is the
-/// application's decision (#2421, `domain::conversation::image_input`): every
+/// application's decision (#2421, `domain::conversation::services::image_input`): every
 /// image a message carries here is sent.
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 
 /// Build the Anthropic API content value for a user message.
 ///

@@ -5,7 +5,7 @@
 //! refs, history, busy-connect snapshots, and on-demand lookup agree (AC6).
 
 use super::{MessageView, message_to_json};
-use crate::domain::message::{Message, ToolCall};
+use crate::domain::conversation::value_objects::message::{Message, ToolCall};
 
 fn wire_id(v: &serde_json::Value) -> Option<&str> {
     v.get("id")

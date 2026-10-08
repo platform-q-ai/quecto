@@ -380,7 +380,9 @@ fn given_store_key_owned_elsewhere(world: &mut QuectoWorld, key: String) {
 async fn when_store_saves_turn(world: &mut QuectoWorld, key: String) {
     let dir = world.hardening.store_dir.as_ref().expect("store dir");
     let store = FileSessionStore::new(FlatSessionLayout::new(dir.path()));
-    let messages = vec![quecto::domain::message::Message::user("a turn".to_string())];
+    let messages = vec![
+        quecto::domain::conversation::value_objects::message::Message::user("a turn".to_string()),
+    ];
     world.hardening.store_save_result = Some(
         store
             .save_clean_delta(

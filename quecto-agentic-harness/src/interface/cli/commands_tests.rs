@@ -291,9 +291,9 @@ fn status_reports_only_published_runtime_admission_warnings() {
         ProviderRuntimeFactory, ProviderRuntimeOutcome,
     };
     use crate::application::providers::ports::{ChatRequest, LlmProvider};
-    use crate::domain::catalogue::{CatalogueEntry, SourceLayer};
+    use crate::domain::catalogue::value_objects::catalogue::{CatalogueEntry, SourceLayer};
+    use crate::domain::conversation::value_objects::message::LlmResponse;
     use crate::domain::error::DomainError;
-    use crate::domain::message::LlmResponse;
     use std::sync::Arc;
 
     #[derive(Debug)]

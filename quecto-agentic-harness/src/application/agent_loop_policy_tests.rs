@@ -1,15 +1,17 @@
 use super::tests::*;
+use crate::domain::tool_policy::value_objects::tool::ToolResult;
+use crate::domain::tool_policy::value_objects::tool_descriptor::ToolRestrictionReason;
 #[path = "agent_loop_policy_cov_tests.rs"]
 mod policy_cov_tests;
 use super::*;
 use crate::application::agent_turn::ports::AgentLoop;
 use crate::application::tools::ports::{RuntimeToolLifecycleRegistry, ToolRegistry};
-use crate::domain::message::Role;
-use crate::domain::tool::{
+use crate::domain::conversation::value_objects::message::Role;
+use crate::domain::tool_policy::value_objects::tool::{
     ToolDefinition, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationResult,
     ToolPolicyMutationStatus, ToolPolicyReconciliation, ToolPolicyRequest, ToolProfileContext,
 };
-use crate::domain::tool_descriptor::{
+use crate::domain::tool_policy::value_objects::tool_descriptor::{
     ProfileAvailabilityScope, ToolAvailability, ToolCatalogueEntry, ToolHealth, ToolLifecycleKind,
     ToolSource,
 };
@@ -88,12 +90,11 @@ impl MockRegistry {
                     {
                         self.cached_definitions.push(tool.definition());
                     } else {
-                        self.cached_definitions
-                            .push(crate::domain::tool::ToolDefinition {
-                                name: mutation.name.to_string().into(),
-                                description: format!("Mock {} tool", mutation.name).into(),
-                                parameters_schema: r#"{"type":"object"}"#.into(),
-                            });
+                        self.cached_definitions.push(ToolDefinition {
+                            name: mutation.name.to_string().into(),
+                            description: format!("Mock {} tool", mutation.name).into(),
+                            parameters_schema: r#"{"type":"object"}"#.into(),
+                        });
                     }
                 }
             }
@@ -186,15 +187,14 @@ impl RestrictedMockRegistry {
 }
 
 impl ToolCatalog for RestrictedMockRegistry {
-    fn definitions(&self) -> &[crate::domain::tool::ToolDefinition] {
+    fn definitions(&self) -> &[ToolDefinition] {
         self.inner.definitions()
     }
 
     fn catalogue_entries(&self) -> Vec<ToolCatalogueEntry> {
         let mut entry = mock_catalogue_entry("alpha", false);
         entry.runtime_availability = ToolAvailability::Disabled;
-        entry.explicit_restriction =
-            Some(crate::domain::tool_descriptor::ToolRestrictionReason::Spawn);
+        entry.explicit_restriction = Some(ToolRestrictionReason::Spawn);
         vec![entry]
     }
 }
@@ -205,11 +205,7 @@ impl ToolExecutor for RestrictedMockRegistry {
         name: &str,
         arguments: &str,
     ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<Output = Result<crate::domain::tool::ToolResult, DomainError>>
-                + Send
-                + '_,
-        >,
+        Box<dyn std::future::Future<Output = Result<ToolResult, DomainError>> + Send + '_>,
     > {
         self.inner.execute(name, arguments)
     }
@@ -503,11 +499,11 @@ fn queued_policy_enable_restores_registry_disabled_tool_manifest() {
 
 struct CatalogueOnlyRegistry {
     entries: Vec<ToolCatalogueEntry>,
-    definitions: Vec<crate::domain::tool::ToolDefinition>,
+    definitions: Vec<ToolDefinition>,
 }
 
 impl ToolCatalog for CatalogueOnlyRegistry {
-    fn definitions(&self) -> &[crate::domain::tool::ToolDefinition] {
+    fn definitions(&self) -> &[ToolDefinition] {
         &self.definitions
     }
 
@@ -529,11 +525,7 @@ impl ToolExecutor for CatalogueOnlyRegistry {
         _name: &str,
         _arguments: &str,
     ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<Output = Result<crate::domain::tool::ToolResult, DomainError>>
-                + Send
-                + '_,
-        >,
+        Box<dyn std::future::Future<Output = Result<ToolResult, DomainError>> + Send + '_>,
     > {
         Box::pin(async move { Err(DomainError::Tool("not implemented".into())) })
     }

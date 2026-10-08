@@ -9,11 +9,13 @@ use super::super::{dispatch_command, handle_resume_session};
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::application::sessions::ports::SessionStore;
+use crate::domain::conversation::value_objects::message::{
+    LlmResponse, Message, Role, ToolCall, UserImageBlock,
+};
 use crate::domain::error::DomainError;
-use crate::domain::message::{LlmResponse, Message, Role, ToolCall, UserImageBlock};
 use crate::domain::sessions::entities::session::Session;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
-use crate::domain::tool::ImageBlock;
+use crate::domain::tool_policy::value_objects::tool::ImageBlock;
 use crate::interface::cli::protocol::AgentCommand;
 
 use quecto_image::{ImageMime, samples};
@@ -79,11 +81,12 @@ fn agent_over(provider: Arc<RecordingProvider>) -> AgentLoopImpl {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
     // A model whose catalogue entry takes images (#2421).
     .with_model_limits(crate::application::catalogue::dto::ModelLimits {
-        image_input: crate::domain::conversation::image_input::ImageInput::AllImages,
+        image_input: crate::domain::conversation::services::image_input::ImageInput::AllImages,
         ..Default::default()
     })
 }
@@ -179,7 +182,8 @@ async fn an_image_a_resume_cannot_read_is_a_marker_in_the_request_and_never_in_t
     let layout =
         crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(fx._tmp.path());
     let png = png();
-    let sha256 = crate::domain::conversation::stored_images::sha256_hex(png.as_bytes());
+    let sha256 =
+        crate::domain::conversation::value_objects::stored_images::sha256_hex(png.as_bytes());
     std::fs::remove_file(layout.image_dir(&identity).join(&sha256)).unwrap();
 
     let mut ctx = fx.ctx();
@@ -192,7 +196,8 @@ async fn an_image_a_resume_cannot_read_is_a_marker_in_the_request_and_never_in_t
     };
     assert!(!dispatch_command(prompt, &mut ctx).await);
 
-    let marker = crate::domain::conversation::stored_images::unavailable_marker(&sha256);
+    let marker =
+        crate::domain::conversation::value_objects::stored_images::unavailable_marker(&sha256);
     {
         let requests = provider.requests.lock().unwrap();
         let request = requests.last().expect("the prompt reached the provider");

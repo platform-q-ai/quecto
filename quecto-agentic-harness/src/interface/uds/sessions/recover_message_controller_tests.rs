@@ -2,7 +2,7 @@ use super::{GetMessageFields, RecoverMessageController};
 use crate::application::sessions::active_session::ActiveSessionState;
 use crate::application::sessions::dto::{RecoveredContent, RecoveryError};
 use crate::application::sessions::use_cases::RecoverMessage;
-use crate::domain::message::{Message, ToolCall};
+use crate::domain::conversation::value_objects::message::{Message, ToolCall};
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use std::sync::Arc;
 

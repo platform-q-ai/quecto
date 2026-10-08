@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::domain::error::DomainError;
-use crate::domain::tool::{ToolDefinition, ToolResult};
+use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use std::future::Future;
 use std::pin::Pin;
 

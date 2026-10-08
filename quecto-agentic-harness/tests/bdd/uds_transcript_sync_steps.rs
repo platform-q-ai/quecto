@@ -10,7 +10,7 @@
 use super::uds_history_recovery_steps::{attach, response, seed_session};
 use super::uds_paged_history_steps::{wait_for_paged_event, write_command};
 use super::*;
-use quecto::domain::message::Message;
+use quecto::domain::conversation::value_objects::message::Message;
 use std::time::Duration;
 
 /// Send `cmd` and record the first response the predicate accepts.

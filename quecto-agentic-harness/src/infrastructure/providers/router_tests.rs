@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use std::sync::Mutex;
 
 /// Test provider that either succeeds or fails.
@@ -403,11 +403,13 @@ async fn test_chat_forwards_tools_without_cloning() {
     let router = ProviderRouter::new(vec![inner.clone() as Arc<dyn LlmProvider>]);
 
     let messages = test_messages();
-    let tools = vec![crate::domain::tool::ToolDefinition {
-        name: "bash".into(),
-        description: "run commands".into(),
-        parameters_schema: "{}".into(),
-    }];
+    let tools = vec![
+        crate::domain::tool_policy::value_objects::tool::ToolDefinition {
+            name: "bash".into(),
+            description: "run commands".into(),
+            parameters_schema: "{}".into(),
+        },
+    ];
     let request = ChatRequest {
         trace: None,
         admission: None,

@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::message::{Message, ToolCall};
+use crate::domain::conversation::value_objects::message::{Message, ToolCall};
 
 fn assistant_call(id: &str, name: &str) -> Message {
     let mut message = Message::assistant("partial answer", vec![]);
@@ -65,8 +65,8 @@ fn finalize_synthesizes_error_for_unanswered_tool_call_and_drops_chatter() {
 /// names, the storm guard's baseline and the chain survive the interrupt.
 #[test]
 fn finalize_keeps_a_watermark_stub_in_place() {
-    use crate::domain::conversation::watermark_cut::archive_stub;
-    let prompt = crate::domain::turn_origin::prompt("run it".into());
+    use crate::domain::conversation::services::watermark_cut::archive_stub;
+    let prompt = crate::domain::conversation::services::turn_origin::prompt("run it".into());
     let prompt_id = prompt.id();
     let stub = archive_stub(7, Some("archive"));
     let (stub_id, stub_text) = (stub.id(), stub.content.clone());
@@ -87,8 +87,8 @@ fn finalize_keeps_a_watermark_stub_in_place() {
 /// reasoning, so the next request still extends the last.
 #[test]
 fn finalize_keeps_sent_tool_call_messages_whole() {
-    use crate::domain::message::ThinkingBlock;
-    let prompt = crate::domain::turn_origin::prompt("run it".into());
+    use crate::domain::conversation::value_objects::message::ThinkingBlock;
+    let prompt = crate::domain::conversation::services::turn_origin::prompt("run it".into());
     let prompt_id = prompt.id();
     let mut call = assistant_call("call-1", "bash");
     call.thinking_blocks = vec![ThinkingBlock::Redacted {

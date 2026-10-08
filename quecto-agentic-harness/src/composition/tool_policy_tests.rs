@@ -4,7 +4,9 @@
 
 use super::*;
 use crate::application::configuration::dto::ConfigSources;
-use crate::domain::tool::{ToolPolicyApplyMode, ToolPolicyReconciliation};
+use crate::domain::tool_policy::value_objects::tool::{
+    ToolPolicyApplyMode, ToolPolicyReconciliation,
+};
 
 fn empty_reconciliation() -> ToolPolicyReconciliation {
     ToolPolicyReconciliation {

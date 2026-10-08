@@ -4,9 +4,9 @@
 //! at a stable-id cursor (or at the newest message), with the cursor a
 //! client continues from and whether older history remains; the transport
 //! encodes and budgets its domain messages.
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::error::DomainError;
 use crate::domain::ids::MessageId;
-use crate::domain::message::Message;
 
 /// One history window: at most `count` messages ending just before the
 /// message `before` names (the newest page when `None`).
@@ -35,7 +35,7 @@ pub struct HistoryPage {
     pub messages: Vec<Message>,
     /// The transcript's report (#2226), wherever it lies, so a reader
     /// finds it without paging back.
-    pub report: Option<crate::domain::turn_origin::ReportRef>,
+    pub report: Option<crate::domain::conversation::services::turn_origin::ReportRef>,
     pub before: Option<MessageId>,
     pub has_more_before: bool,
 }

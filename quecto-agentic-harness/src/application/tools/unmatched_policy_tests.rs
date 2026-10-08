@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::tool_descriptor::ToolSource;
+use crate::domain::tool_policy::value_objects::tool_descriptor::ToolSource;
 
 const TYPO: &str = "tool.v1:bundled-native:21:quecto:official-tools:bsah";
 const WORKFLOW: &str = "tool.v1:bundled-native:15:quecto:workflow:workflow";

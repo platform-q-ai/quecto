@@ -7,11 +7,11 @@ use super::*;
 use crate::application::sessions::ports::SessionStore;
 use crate::application::tools::ports::Tool;
 use crate::domain::agents::value_objects::child_end::ChildOrigin;
+use crate::domain::conversation::services::turn_origin::TurnOrigin;
+use crate::domain::conversation::value_objects::message::ToolCall;
 use crate::domain::ids::AgentUuid;
-use crate::domain::message::ToolCall;
 use crate::domain::sessions::entities::session::Session;
 use crate::domain::sessions::entities::session::SubagentLiveness;
-use crate::domain::turn_origin::TurnOrigin;
 use crate::infrastructure::tools::agent_cmd::AgentCmdTool;
 use crate::infrastructure::tools::agent_cmd_ended::EndedChildSlot;
 use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
@@ -188,8 +188,9 @@ async fn a_report_past_the_budget_is_cut_with_a_notice_and_none_is_said_plainly(
 /// stub from a prompt; an unmarked message names none.
 #[tokio::test]
 async fn an_ended_childs_messages_name_their_user_kind() {
-    let brief = crate::domain::turn_origin::prompt("the brief".into());
-    let stub = crate::domain::conversation::watermark_cut::archive_stub(9, Some("archive"));
+    let brief = crate::domain::conversation::services::turn_origin::prompt("the brief".into());
+    let stub =
+        crate::domain::conversation::services::watermark_cut::archive_stub(9, Some("archive"));
     assert_eq!(wire_message(&brief)["userKind"], "prompt");
     assert_eq!(wire_message(&stub)["userKind"], "archiveStub");
     let unmarked = wire_message(&instruction("go"));

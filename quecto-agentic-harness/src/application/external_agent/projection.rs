@@ -27,13 +27,13 @@ use super::dto::{
     ProjectedToolCall, ProjectionStep, SessionTotals, TOOL_RESULT_CONTENT_BYTES, TRUNCATION_MARKER,
     TurnOutcome, TurnWarning,
 };
+use crate::domain::conversation::value_objects::message::StopReason;
 use crate::domain::external_agent::stream::{
     AssistantContent, BackgroundTask, ExternalAgentEvent, InitEvent, PermissionDenial,
     RateLimitInfo, ResultEvent, TaskNotification, TaskStarted, ToolResultEvent,
 };
 use crate::domain::external_agent::turn::TurnEnd;
 use crate::domain::external_agent::usage::UsageLedger;
-use crate::domain::message::StopReason;
 
 /// Folds [`ExternalAgentEvent`]s into the member's protocol values.
 #[derive(Debug, Default)]

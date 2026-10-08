@@ -10,7 +10,7 @@ use crate::application::search::ports::{
     PortFuture, Relevance, RelevanceCandidate, RelevanceJudge,
 };
 use crate::application::tools::ports::Tool;
-use crate::domain::tool::ToolDefinition;
+use crate::domain::tool_policy::value_objects::tool::ToolDefinition;
 use crate::domain::workflow::{WorkflowConfig, WorkflowEngine};
 use crate::infrastructure::extensions::native::build_official_tool_registry;
 use crate::infrastructure::persistence::context_spill::FileContextSpillStore;

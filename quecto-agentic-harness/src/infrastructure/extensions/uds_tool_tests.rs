@@ -10,7 +10,7 @@ fn test_def(name: &str) -> ToolDefinition {
 
 #[test]
 fn extension_tool_preserves_stateless_delivery_and_spawn_policy_contracts() {
-    use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+    use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
     use std::collections::BTreeMap;
 
     let (tool, _rx) = create_uds_tool(test_def("weather"), std::time::Duration::from_secs(5));

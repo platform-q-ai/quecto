@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::message::CostInfo;
+use crate::domain::conversation::value_objects::message::CostInfo;
 
 #[test]
 fn usage_totals_record_accumulates_billed_usage_and_keeps_latest_context() {

@@ -7,7 +7,7 @@
 // content spills at creation, so `recall()` retrieves stubbed or dropped
 // content.
 //
-// Depends on: domain::message, application::sessions::use_cases (the narrow
+// Depends on: domain::conversation::value_objects::message, application::sessions::use_cases (the narrow
 // retention reader, D9 #1978). Never imports infrastructure or the store.
 
 // #1046: the stub format, creation-time spill and the demotion ladder.
@@ -19,7 +19,7 @@ pub mod messages;
 mod exchanges;
 
 use crate::application::sessions::use_cases::ListRetainedContext;
-use crate::domain::message::{Message, Role};
+use crate::domain::conversation::value_objects::message::{Message, Role};
 
 /// Estimate token count from text content (#305, #2212).
 ///
@@ -37,7 +37,7 @@ use crate::domain::message::{Message, Role};
 /// Not exact: once a provider reports its prompt size, the ceiling is
 /// scaled by the observed residual (`domain::inference::services::context_calibration`, 1x..4x).
 pub fn estimate_tokens(text: &str) -> usize {
-    crate::domain::message::Message::estimate_tokens(text)
+    crate::domain::conversation::value_objects::message::Message::estimate_tokens(text)
 }
 
 pub fn estimate_total_tokens(messages: &[Message]) -> usize {
@@ -78,7 +78,7 @@ fn collapse_message(msg: &mut Message) {
     msg.invalidate_token_cache();
     msg.is_collapsed = true;
     // Release image data — no longer needed after collapse (spilled to disk).
-    crate::domain::conversation::stored_images::release_images(msg);
+    crate::domain::conversation::value_objects::stored_images::release_images(msg);
 }
 
 /// Default number of most-recent turns the emergency ladder never demotes

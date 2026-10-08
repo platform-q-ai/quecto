@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use crate::application::catalogue::CatalogueSnapshotStore;
-use crate::domain::catalogue::ModelRef;
+use crate::domain::catalogue::value_objects::catalogue::ModelRef;
 
 pub trait ModelRefusalSink: Send + Sync + std::fmt::Debug {
     /// Hold the provider's refusal of `reference` for the account in use,

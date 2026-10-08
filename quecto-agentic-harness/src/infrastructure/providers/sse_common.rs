@@ -247,7 +247,7 @@ mod tests;
 #[cfg(test)]
 mod pump_tests {
     use super::*;
-    use crate::domain::message::LlmResponse;
+    use crate::domain::conversation::value_objects::message::LlmResponse;
     use std::sync::{Arc, Mutex};
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -430,7 +430,7 @@ mod pump_tests {
 #[cfg(test)]
 mod pump_w5_cov_tests {
     use super::*;
-    use crate::domain::message::LlmResponse;
+    use crate::domain::conversation::value_objects::message::LlmResponse;
     use std::sync::{Arc, Mutex};
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};

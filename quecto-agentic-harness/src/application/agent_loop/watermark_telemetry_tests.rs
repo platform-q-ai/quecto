@@ -8,9 +8,9 @@ use super::ctx_mgmt_tests::CapturingAuditSink;
 use super::watermark_tests::{HIGH, LOW, Rig, agent_under, default_agent, stubs, text, total};
 use crate::application::audit::ports::AuditSink;
 use crate::domain::audit::{AuditEvent, ContextCutRecord, ContextCutSkippedRecord, CutSkipReason};
-use crate::domain::conversation::watermark::{Fill, Watermark};
-use crate::domain::message::Message;
-use crate::domain::turn_origin::prompt;
+use crate::domain::conversation::services::turn_origin::prompt;
+use crate::domain::conversation::services::watermark::{Fill, Watermark};
+use crate::domain::conversation::value_objects::message::Message;
 use std::sync::Arc;
 
 /// `rig` writing its records to a capturing sink.
@@ -436,7 +436,7 @@ async fn a_floor_over_the_budget_is_recorded_unmet_without_the_ladder() {
     let tools: usize = registry
         .cached_definitions
         .iter()
-        .map(crate::domain::tool::ToolDefinition::estimated_tokens)
+        .map(crate::domain::tool_policy::value_objects::tool::ToolDefinition::estimated_tokens)
         .sum();
     let sink = Arc::new(CapturingAuditSink::default());
     let agent = crate::application::agent_loop::AgentLoopImpl::new(

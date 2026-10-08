@@ -3,10 +3,10 @@
 //! Extracted from `openai.rs` to keep the provider file under the 750-line
 //! limit and to make the parser independently testable.
 
-use crate::domain::error::DomainError;
-use crate::domain::message::ToolCall;
+use crate::domain::conversation::value_objects::message::ToolCall;
 #[cfg(test)]
-use crate::domain::message::{LlmResponse, UsageInfo};
+use crate::domain::conversation::value_objects::message::{LlmResponse, UsageInfo};
+use crate::domain::error::DomainError;
 
 /// Maximum number of tool calls allowed in a single streaming response.
 const MAX_TOOL_CALLS: usize = 128;
@@ -31,11 +31,10 @@ pub(crate) use crate::infrastructure::providers::sse_limits::append_with_limit;
 /// callers keep any reason an earlier chunk already gave.
 pub(crate) fn choice_stop_reason(
     choice: &serde_json::Value,
-) -> Option<crate::domain::message::StopReason> {
-    choice
-        .get("finish_reason")
-        .and_then(|v| v.as_str())
-        .map(crate::domain::message::StopReason::from_openai_finish_reason)
+) -> Option<crate::domain::conversation::value_objects::message::StopReason> {
+    choice.get("finish_reason").and_then(|v| v.as_str()).map(
+        crate::domain::conversation::value_objects::message::StopReason::from_openai_finish_reason,
+    )
 }
 
 /// Whether a Chat Completions `choice` ends its reply (#2236): only a
@@ -158,7 +157,7 @@ pub(crate) fn apply_delta(
                     if chunk.trim_start().starts_with('{')
                         && matches!(
                             tool_calls[idx].argument_shape(),
-                            crate::domain::message::ToolArguments::Object(_)
+                            crate::domain::conversation::value_objects::message::ToolArguments::Object(_)
                         )
                     {
                         tool_calls[idx].arguments.clear();

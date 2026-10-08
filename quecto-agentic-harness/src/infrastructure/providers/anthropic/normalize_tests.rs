@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::message::{Message, Role, StopReason, ToolCall};
+use crate::domain::conversation::value_objects::message::{Message, Role, StopReason, ToolCall};
 
 // --- is_valid_tool_call_id / normalize_tool_call_id ---
 

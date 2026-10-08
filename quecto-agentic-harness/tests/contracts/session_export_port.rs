@@ -10,7 +10,7 @@
 
 use quecto::application::sessions::dto::{ExportManifest, ExportRecord};
 use quecto::application::sessions::ports::export::SessionExportPort;
-use quecto::domain::message::Message;
+use quecto::domain::conversation::value_objects::message::Message;
 use quecto::domain::sessions::entities::session::SpillEntry;
 use quecto::infrastructure::session_export::FileSessionExport;
 use sha2::{Digest, Sha256};

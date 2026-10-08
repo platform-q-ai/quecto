@@ -1,7 +1,7 @@
 use crate::application::sessions::dto::SessionListQuery;
 use crate::application::sessions::ports::{SessionLoad, SessionStore};
-use crate::domain::conversation::stored_images::MessageImageRefs;
-use crate::domain::message::{Message, Role};
+use crate::domain::conversation::value_objects::message::{Message, Role};
+use crate::domain::conversation::value_objects::stored_images::MessageImageRefs;
 use crate::domain::sessions::entities::session::{Session, SessionSummary};
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::domain::{error::DomainError, workflow::WorkflowRunPersisted};

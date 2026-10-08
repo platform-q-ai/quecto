@@ -23,7 +23,7 @@ impl AgentSession {
         self.admission_warnings = slots
             .iter()
             .filter(|slot| unique.insert((*slot).clone()))
-            .map(|slot| crate::domain::state_snapshot::AdmissionBindingWarning::new(slot))
+            .map(|slot| crate::domain::sessions::value_objects::state_snapshot::AdmissionBindingWarning::new(slot))
             .collect();
         self.bump_visible_generation();
     }
@@ -35,7 +35,7 @@ impl AgentSession {
 
     pub(crate) fn current_admission_warnings(
         &self,
-    ) -> Vec<crate::domain::state_snapshot::AdmissionBindingWarning> {
+    ) -> Vec<crate::domain::sessions::value_objects::state_snapshot::AdmissionBindingWarning> {
         let Some(store) = &self.runtime_store else {
             return self.admission_warnings.clone();
         };
@@ -48,7 +48,7 @@ impl AgentSession {
             .unbound_slots
             .iter()
             .filter(|slot| seen.insert((*slot).clone()))
-            .map(|slot| crate::domain::state_snapshot::AdmissionBindingWarning::new(slot))
+            .map(|slot| crate::domain::sessions::value_objects::state_snapshot::AdmissionBindingWarning::new(slot))
             .collect()
     }
 

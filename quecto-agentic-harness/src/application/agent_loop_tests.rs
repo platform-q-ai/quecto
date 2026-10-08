@@ -1,9 +1,12 @@
 use super::*;
 use crate::application::providers::ports::ChatRequest;
 use crate::application::tools::ports::{Tool, ToolCatalog, ToolExecutor, ToolRegistry};
+use crate::domain::conversation::services::watermark::Watermark;
+use crate::domain::conversation::value_objects::message::CostInfo;
+use crate::domain::conversation::value_objects::message::{LlmResponse, Role, ToolCall, UsageInfo};
 use crate::domain::inference::value_objects::provider::StreamEvent;
-use crate::domain::message::{LlmResponse, Role, ToolCall, UsageInfo};
-use crate::domain::tool::{ToolDefinition, ToolResult};
+use crate::domain::tool_policy::value_objects::tool::ToolProfileContext;
+use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug)]
@@ -283,7 +286,7 @@ pub(super) fn test_config(
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context: ToolProfileContext::Parent,
     }
 }
 
@@ -388,7 +391,7 @@ fn text_response_with_usage(content: &str, fixture: UsageFixture) -> LlmResponse
             cache_read_tokens: Some(fixture.2),
             cache_write_tokens: Some(fixture.3),
             context_tokens: None,
-            cost: Some(crate::domain::message::CostInfo {
+            cost: Some(CostInfo {
                 input_cost_micro_usd: 0,
                 output_cost_micro_usd: 0,
                 cache_read_cost_micro_usd: 0,
@@ -415,7 +418,7 @@ fn tool_call_response_with_usage(name: &str, args: &str, fixture: UsageFixture) 
             cache_read_tokens: Some(fixture.2),
             cache_write_tokens: Some(fixture.3),
             context_tokens: None,
-            cost: Some(crate::domain::message::CostInfo {
+            cost: Some(CostInfo {
                 input_cost_micro_usd: 0,
                 output_cost_micro_usd: 0,
                 cache_read_cost_micro_usd: 0,
@@ -689,20 +692,16 @@ fn new_threads_context_knobs_and_model_window_into_observable_budget() {
     let registry = MockRegistry::new();
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         pin_recent_turns: 7,
-        context_marks: crate::domain::conversation::watermark::Watermark::new(50_000, 20_000)
-            .unwrap(),
+        context_marks: Watermark::new(50_000, 20_000).unwrap(),
         max_context_tokens: 10_000,
         model_context_window: Some(4_096),
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context: ToolProfileContext::Parent,
         max_tokens: 512,
         ..test_config(provider, Box::new(registry))
     });
     assert_eq!(
         agent.context_knob_snapshot(),
-        (
-            7,
-            crate::domain::conversation::watermark::Watermark::new(50_000, 20_000).unwrap()
-        )
+        (7, Watermark::new(50_000, 20_000).unwrap())
     );
     // #2405: the window less the 512-token reply reserve.
     assert_eq!(agent.max_context_tokens(), 4_096 - 512);

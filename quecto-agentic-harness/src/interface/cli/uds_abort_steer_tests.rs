@@ -7,6 +7,8 @@
 
 use super::dispatch_test_env::{DispatchTestEnv as Env, make_dispatch_test_agent};
 use crate::application::providers::ports::LlmProvider;
+use crate::domain::conversation::value_objects::message::LlmResponse;
+use crate::domain::conversation::value_objects::message::Role;
 use crate::interface::cli::uds_session::PendingMessage;
 use crate::interface::shared::WorkflowStateHandle;
 
@@ -168,7 +170,7 @@ async fn steer_marker_is_obeyed_after_mid_turn_cancel() {
     let obeyed = env
         .messages
         .iter()
-        .any(|m| m.role == crate::domain::message::Role::User && m.content == MARKER);
+        .any(|m| m.role == Role::User && m.content == MARKER);
     assert!(obeyed, "the unique steer marker instruction must be obeyed");
     assert!(
         !env.turn_control.is_steer_pending(),
@@ -291,12 +293,8 @@ impl crate::application::providers::ports::LlmProvider for AdvanceThenAbortProvi
         _request: crate::application::providers::ports::ChatRequest<'_>,
     ) -> std::pin::Pin<
         Box<
-            dyn std::future::Future<
-                    Output = Result<
-                        crate::domain::message::LlmResponse,
-                        crate::domain::error::DomainError,
-                    >,
-                > + Send
+            dyn std::future::Future<Output = Result<LlmResponse, crate::domain::error::DomainError>>
+                + Send
                 + '_,
         >,
     > {
@@ -311,7 +309,7 @@ impl crate::application::providers::ports::LlmProvider for AdvanceThenAbortProvi
             self.turn_control.mark_abort();
         }
         Box::pin(async {
-            Ok(crate::domain::message::LlmResponse {
+            Ok(LlmResponse {
                 content: Some("step".to_string()),
                 tool_calls: vec![],
                 usage: None,
@@ -449,18 +447,14 @@ impl LlmProvider for SteerDuringPendingTurn {
         _request: crate::application::providers::ports::ChatRequest<'_>,
     ) -> std::pin::Pin<
         Box<
-            dyn std::future::Future<
-                    Output = Result<
-                        crate::domain::message::LlmResponse,
-                        crate::domain::error::DomainError,
-                    >,
-                > + Send
+            dyn std::future::Future<Output = Result<LlmResponse, crate::domain::error::DomainError>>
+                + Send
                 + '_,
         >,
     > {
         self.0.mark_steer();
         Box::pin(async {
-            Ok(crate::domain::message::LlmResponse {
+            Ok(LlmResponse {
                 content: Some("first pending turn ended".into()),
                 tool_calls: vec![],
                 usage: None,
@@ -557,7 +551,7 @@ async fn admitted_steer_burst_precedes_all_buffered_hints() {
     let prompts: Vec<_> = ctx
         .messages
         .iter()
-        .filter(|m| m.role == crate::domain::message::Role::User)
+        .filter(|m| m.role == Role::User)
         .map(|m| m.content.as_str())
         .collect();
     assert_eq!(
@@ -580,12 +574,8 @@ impl LlmProvider for QuotaExhausted {
         _: crate::application::providers::ports::ChatRequest<'_>,
     ) -> std::pin::Pin<
         Box<
-            dyn std::future::Future<
-                    Output = Result<
-                        crate::domain::message::LlmResponse,
-                        crate::domain::error::DomainError,
-                    >,
-                > + Send
+            dyn std::future::Future<Output = Result<LlmResponse, crate::domain::error::DomainError>>
+                + Send
                 + '_,
         >,
     > {

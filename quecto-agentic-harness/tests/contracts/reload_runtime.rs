@@ -11,10 +11,10 @@ use std::sync::Arc;
 use quecto::application::agent_turn::ports::AgentLoop;
 use quecto::application::catalogue::ports::ReloadRuntime;
 use quecto::application::providers::ports::{ChatRequest, LlmProvider};
+use quecto::domain::conversation::value_objects::message::{LlmResponse, Message};
 use quecto::domain::error::DomainError;
-use quecto::domain::message::{LlmResponse, Message};
-use quecto::domain::tool::{ToolPolicyApplyMode, ToolPolicyMutation};
-use quecto::domain::tool_descriptor::ProfileAvailabilityScope;
+use quecto::domain::tool_policy::value_objects::tool::{ToolPolicyApplyMode, ToolPolicyMutation};
+use quecto::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
 
 use super::switch_runtime_fixture::runtime;
 

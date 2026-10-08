@@ -5,7 +5,7 @@
 use std::sync::Mutex;
 
 use super::*;
-use crate::domain::catalogue::{
+use crate::domain::catalogue::value_objects::catalogue::{
     AuthIdentity, AvailabilityStatus, ModelCapabilities, ModelCost, ModelDescriptor, ModelId,
     ModelRef, ProviderDescriptor, ProviderId, UnavailableReason,
 };

@@ -1,8 +1,8 @@
 #[cfg(any(test, feature = "test-support"))]
 use super::{AnthropicProvider, DomainError, Message};
 use crate::application::providers::ports::ChatRequest;
+use crate::domain::conversation::value_objects::message::LlmResponse;
 use crate::domain::inference::value_objects::provider::StreamEvent;
-use crate::domain::message::LlmResponse;
 
 #[cfg(any(test, feature = "test-support"))]
 use super::anthropic_sse::AnthropicSseHandler;
@@ -34,7 +34,7 @@ impl AnthropicProvider {
 
     pub fn parse_sse_response_with_tools_public(
         raw: &str,
-        tool_defs: &[crate::domain::tool::ToolDefinition],
+        tool_defs: &[crate::domain::tool_policy::value_objects::tool::ToolDefinition],
     ) -> Result<LlmResponse, DomainError> {
         Self::parse_sse_response(raw, Some(tool_defs.to_vec()))
     }
@@ -52,7 +52,7 @@ impl AnthropicProvider {
 
     pub async fn parse_sse_events_with_tools_public(
         raw: &str,
-        tool_defs: &[crate::domain::tool::ToolDefinition],
+        tool_defs: &[crate::domain::tool_policy::value_objects::tool::ToolDefinition],
     ) -> Vec<StreamEvent> {
         let (tx, mut rx) = tokio::sync::mpsc::channel(16);
         let mut handler = AnthropicSseHandler::new_for_test(Some(tool_defs.to_vec()));

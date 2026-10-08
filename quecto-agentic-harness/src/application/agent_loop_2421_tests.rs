@@ -5,8 +5,8 @@
 use super::*;
 use crate::application::catalogue::dto::ModelLimits;
 use crate::application::catalogue::ports::ModelRuntime;
-use crate::domain::conversation::image_input::{ImageInput, not_sent_marker};
-use crate::domain::message::{Message, UserImageBlock};
+use crate::domain::conversation::services::image_input::{ImageInput, not_sent_marker};
+use crate::domain::conversation::value_objects::message::{Message, UserImageBlock};
 
 /// What one request carried: each message's text and image count.
 type Sent = Vec<(String, usize)>;
@@ -161,7 +161,7 @@ impl crate::application::tools::ports::Tool for Screenshot {
             Ok(ToolResult {
                 content: "Took a screenshot".into(),
                 is_error: false,
-                image_blocks: vec![crate::domain::tool::ImageBlock::unchecked_for_tests(
+                image_blocks: vec![crate::domain::tool_policy::value_objects::tool::ImageBlock::unchecked_for_tests(
                     quecto_image::ImageMime::Png,
                     "cG5n",
                 )],

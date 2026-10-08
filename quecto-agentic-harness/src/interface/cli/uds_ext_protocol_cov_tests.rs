@@ -1,5 +1,10 @@
 use super::*;
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
+use crate::domain::conversation::value_objects::message::LlmResponse;
+use crate::domain::tool_policy::value_objects::extension_tool::ToolInvocation;
+use crate::domain::tool_policy::value_objects::tool::ToolDefinition;
+use crate::domain::tool_policy::value_objects::tool::ToolProfileContext;
+use crate::domain::tool_policy::value_objects::tool_descriptor::ToolSource;
 use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 
 #[derive(Debug)]
@@ -22,12 +27,8 @@ impl LlmProvider for CovProvider {
         _request: ChatRequest<'a>,
     ) -> std::pin::Pin<
         Box<
-            dyn std::future::Future<
-                    Output = Result<
-                        crate::domain::message::LlmResponse,
-                        crate::domain::error::DomainError,
-                    >,
-                > + Send
+            dyn std::future::Future<Output = Result<LlmResponse, crate::domain::error::DomainError>>
+                + Send
                 + 'a,
         >,
     > {
@@ -124,7 +125,7 @@ pub(super) fn cov_agent_with_registry(
             pin_recent_turns: 2,
             context_marks: Default::default(),
             model_context_window: None,
-            tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+            tool_profile_context: ToolProfileContext::Parent,
         },
     )
 }
@@ -361,7 +362,7 @@ async fn handle_one_request_sends_execute_tool_and_tool_result_resolves_reply() 
     handle_one_request(
         "weather",
         crate::application::extensions::ports::PendingToolInvocation {
-            invocation: crate::domain::extension_tool::ToolInvocation {
+            invocation: ToolInvocation {
                 tool_call_id: "call-1".to_string(),
                 tool_name: "weather".to_string(),
                 arguments: r#"{"city":"Oslo"}"#.to_string(),
@@ -407,7 +408,7 @@ async fn handle_one_request_without_writer_drops_pending_so_caller_fails_fast() 
     handle_one_request(
         "offline",
         crate::application::extensions::ports::PendingToolInvocation {
-            invocation: crate::domain::extension_tool::ToolInvocation {
+            invocation: ToolInvocation {
                 tool_call_id: "call-2".to_string(),
                 tool_name: "offline".to_string(),
                 arguments: "{}".to_string(),
@@ -501,10 +502,7 @@ async fn dispatch_register_tools_adds_extension_and_forwards_real_tool_execute()
         .into_iter()
         .find(|descriptor| descriptor.name() == "cov_ext")
         .expect("cov_ext descriptor");
-    assert!(matches!(
-        descriptor.source,
-        crate::domain::tool_descriptor::ToolSource::Uds
-    ));
+    assert!(matches!(descriptor.source, ToolSource::Uds));
     assert_eq!(descriptor.owner.as_ref(), "uds:client:123");
     let state = registry.lock().unwrap();
     let state = state.get(&123).expect("client state retained");
@@ -527,7 +525,7 @@ async fn dispatch_register_tools_rejects_later_denied_tool_without_unloading_exi
     registry.remove("blocked_ext");
     let mut agent = cov_agent_with_registry(registry);
     let (existing_tool, _) = create_uds_tool(
-        crate::domain::tool::ToolDefinition {
+        ToolDefinition {
             name: "weather".into(),
             description: "Existing weather".into(),
             parameters_schema: r#"{"type":"object"}"#.into(),
@@ -626,7 +624,7 @@ async fn forward_tool_requests_shutdown_drains_buffered_invocations_with_reason(
     let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
     tx.send(
         crate::application::extensions::ports::PendingToolInvocation {
-            invocation: crate::domain::extension_tool::ToolInvocation {
+            invocation: ToolInvocation {
                 tool_call_id: "call-3".to_string(),
                 tool_name: "drainme".to_string(),
                 arguments: "{}".to_string(),
@@ -720,7 +718,7 @@ async fn poisoned_registry_lock_recovered_by_forwarder_paths() {
     handle_one_request(
         "poisoned_forward",
         crate::application::extensions::ports::PendingToolInvocation {
-            invocation: crate::domain::extension_tool::ToolInvocation {
+            invocation: ToolInvocation {
                 tool_call_id: "forward-call".to_string(),
                 tool_name: "poisoned_forward".to_string(),
                 arguments: "{}".to_string(),

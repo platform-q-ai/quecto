@@ -9,10 +9,10 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
+use crate::domain::conversation::value_objects::message::LlmResponse;
 use crate::domain::error::DomainError;
 use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::inference::value_objects::provider::{ModelRoute, route_model};
-use crate::domain::message::LlmResponse;
 
 /// A provider that routes requests to the correct underlying provider
 /// based on `provider/model` syntax. Bare model names (no `/`) are

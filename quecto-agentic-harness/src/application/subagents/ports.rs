@@ -595,7 +595,7 @@ pub trait EndedChildRecords: Send + Sync {
 /// longer changes, so readers share it rather than copy it.
 #[derive(Debug, Clone)]
 pub struct EndedTranscript {
-    pub messages: std::sync::Arc<Vec<crate::domain::message::Message>>,
+    pub messages: std::sync::Arc<Vec<crate::domain::conversation::value_objects::message::Message>>,
     /// Only the newest part was read: older messages exist but are omitted.
     pub older_omitted: bool,
 }

@@ -6,7 +6,7 @@
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-use crate::domain::tool::ToolResult;
+use crate::domain::tool_policy::value_objects::tool::ToolResult;
 use crate::infrastructure::file_replace::{
     FileState, InPlace, WriteFailure, Written, replace_contents,
 };

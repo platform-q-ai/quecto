@@ -14,9 +14,9 @@ use tokio::sync::Notify;
 use super::super::{MultiClientArgs, multi_client_loop};
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
+use crate::domain::conversation::value_objects::message::{LlmResponse, Message, ToolCall};
 use crate::domain::error::DomainError;
 use crate::domain::inference::value_objects::provider::StreamEvent;
-use crate::domain::message::{LlmResponse, Message, ToolCall};
 
 /// The follow-up the extension sends mid-reply.
 const FOLLOW_UP: &str = "the background job finished";
@@ -117,7 +117,8 @@ fn streaming_agent(provider: Arc<HeldReply>) -> AgentLoopImpl {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
 }
 

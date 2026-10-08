@@ -1,7 +1,7 @@
 //! #2434 review round 1: the Responses API `input` after a turn that ended
 //! with no reply, and that it never carries an assistant item with no text.
 use super::*;
-use crate::domain::message::{ThinkingBlock, ToolCall};
+use crate::domain::conversation::value_objects::message::{ThinkingBlock, ToolCall};
 
 fn call() -> Message {
     Message::assistant(

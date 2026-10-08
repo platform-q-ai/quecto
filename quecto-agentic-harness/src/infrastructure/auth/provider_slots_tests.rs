@@ -2,7 +2,7 @@
 //! the routed slots the catalogue credits from (#2451).
 
 use super::*;
-use crate::domain::catalogue::ProviderId;
+use crate::domain::catalogue::value_objects::catalogue::ProviderId;
 
 fn credential(
     vendor: &str,

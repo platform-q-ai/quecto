@@ -1,7 +1,7 @@
 //! #2434 review round 1: what the Messages API is sent after a turn that
 //! ended with no reply, and that it is never sent empty text.
 use super::*;
-use crate::domain::message::{ThinkingBlock, ToolCall};
+use crate::domain::conversation::value_objects::message::{ThinkingBlock, ToolCall};
 
 fn call(text: &str) -> Message {
     Message::assistant(

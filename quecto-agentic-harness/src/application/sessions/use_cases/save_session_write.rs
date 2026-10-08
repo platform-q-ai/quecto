@@ -3,8 +3,8 @@
 //! save is cancelled mid-write.
 use crate::application::sessions::dto::SaveMode;
 use crate::application::sessions::ports::SessionStore;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::error::DomainError;
-use crate::domain::message::Message;
 use crate::domain::sessions::entities::session::{PersistedSubagentRosterEntry, Session};
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::domain::workflow::WorkflowRunPersisted;

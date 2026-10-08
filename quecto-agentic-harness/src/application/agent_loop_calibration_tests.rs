@@ -6,8 +6,8 @@ use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::agent_loop::tests::{
     MockProvider, MockRegistry, MockTool, test_config, text_response, tool_call_response,
 };
+use crate::domain::conversation::value_objects::message::{LlmResponse, Message, UsageInfo};
 use crate::domain::inference::services::context_calibration::EstimateScale;
-use crate::domain::message::{LlmResponse, Message, UsageInfo};
 use std::sync::Arc;
 
 /// Six spilled prior turns of about 500 estimated tokens each.
@@ -56,7 +56,7 @@ async fn run_with_first_report(reported: Option<u32>) -> (AgentLoopImpl, Vec<Mes
 /// The messages a cut archived or the ladder stubbed: a cut leaves its
 /// archive stub, the ladder its recall stubs (#2414).
 fn stubbed(messages: &[Message]) -> usize {
-    use crate::domain::conversation::UserKind;
+    use crate::domain::conversation::value_objects::user_kind::UserKind;
     messages
         .iter()
         .filter(|m| m.is_collapsed || m.user_kind == UserKind::ArchiveStub)
@@ -307,7 +307,7 @@ fn tool_heavy_agent(
     let tools: usize = registry
         .cached_definitions
         .iter()
-        .map(crate::domain::tool::ToolDefinition::estimated_tokens)
+        .map(crate::domain::tool_policy::value_objects::tool::ToolDefinition::estimated_tokens)
         .sum();
     let window = tools * window_tenths_of_tools / 10;
     let audit = Arc::new(PrunedAudit::default());
@@ -379,7 +379,7 @@ async fn the_quarter_floor_over_the_calibrated_budget_is_reported_unmet() {
     let tools: usize = registry
         .cached_definitions
         .iter()
-        .map(crate::domain::tool::ToolDefinition::estimated_tokens)
+        .map(crate::domain::tool_policy::value_objects::tool::ToolDefinition::estimated_tokens)
         .sum();
     let audit = Arc::new(PrunedAudit::default());
     let agent = AgentLoopImpl::new(crate::application::agent_loop::AgentLoopConfig {

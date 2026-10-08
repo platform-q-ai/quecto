@@ -6,8 +6,8 @@
 
 use super::OpenAiProvider;
 use crate::application::providers::ports::ChatRequest;
-use crate::domain::message::{Message, ToolCall, UserImageBlock};
-use crate::domain::tool::ImageBlock;
+use crate::domain::conversation::value_objects::message::{Message, ToolCall, UserImageBlock};
+use crate::domain::tool_policy::value_objects::tool::ImageBlock;
 
 fn body(messages: &[Message]) -> serde_json::Value {
     let request = ChatRequest {

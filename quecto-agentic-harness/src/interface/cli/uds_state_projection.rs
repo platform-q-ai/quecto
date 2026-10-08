@@ -46,8 +46,10 @@ pub(crate) fn slim_state_projection(state: &SessionState) -> serde_json::Value {
     serde_json::to_value(slim_state_snapshot(state)).expect("typed inspection snapshot serializes")
 }
 
-fn slim_state_snapshot(state: &SessionState) -> crate::domain::state_snapshot::StateSnapshot {
-    use crate::domain::state_snapshot::{SnapshotProgress, StateSnapshot};
+fn slim_state_snapshot(
+    state: &SessionState,
+) -> crate::domain::sessions::value_objects::state_snapshot::StateSnapshot {
+    use crate::domain::sessions::value_objects::state_snapshot::{SnapshotProgress, StateSnapshot};
     let progress = slim_progress(state);
     StateSnapshot {
         state: state
@@ -109,10 +111,12 @@ pub(crate) fn slim_state_response_data(
     // A current cursor gets the unchanged marker, which still carries the
     // live measurements `generation` does not track (#2210 review).
     let answer = match since == Some(snapshot.generation) {
-        true => serde_json::to_value(crate::domain::state_snapshot::UnchangedSnapshot::at(
-            snapshot.generation,
-            &snapshot,
-        )),
+        true => serde_json::to_value(
+            crate::domain::sessions::value_objects::state_snapshot::UnchangedSnapshot::at(
+                snapshot.generation,
+                &snapshot,
+            ),
+        ),
         false => serde_json::to_value(snapshot),
     };
     answer.expect("typed inspection snapshot serializes")

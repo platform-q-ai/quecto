@@ -1,3 +1,4 @@
+use crate::domain::tool_policy::value_objects::tool::ToolDefinition;
 use crate::infrastructure::providers::attempt_profile::{Profile, Surface, Vendor};
 use crate::infrastructure::providers::attempt_transport::queue_before_spawn;
 // Anthropic adapter: impl LlmProvider for AnthropicProvider.
@@ -13,11 +14,13 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
+use crate::domain::conversation::services::visible_thinking::append_visible_thinking;
+use crate::domain::conversation::value_objects::message::{
+    LlmResponse, Message, Role, StopReason, ThinkingBlock, ToolCall,
+};
 use crate::domain::error::DomainError;
 use crate::domain::inference::services::usage_accounting;
 use crate::domain::inference::value_objects::provider::{EffortLevel, StreamEvent, ToolChoice};
-use crate::domain::message::{LlmResponse, Message, Role, StopReason, ThinkingBlock, ToolCall};
-use crate::domain::visible_thinking::append_visible_thinking;
 use claude_code::{CLAUDE_CODE_VERSION, sanitize_surrogates, to_claude_code_name};
 
 pub(super) mod anthropic_sse;
@@ -150,7 +153,7 @@ impl AnthropicProvider {
     /// These models require adaptive thinking and reject deprecated sampling /
     /// budget-thinking parameters (Claude 4 ids: `models.json` only, #2435).
     fn model_uses_adaptive_thinking(model: &str) -> bool {
-        use crate::domain::message::starts_with_ci;
+        use crate::domain::conversation::value_objects::message::starts_with_ci;
         starts_with_ci(model, "claude-opus-4-6")
             || starts_with_ci(model, "claude-opus-4-7")
             || starts_with_ci(model, "claude-opus-4-8")
@@ -161,7 +164,7 @@ impl AnthropicProvider {
     }
 
     fn model_omits_interleaved_thinking_beta(model: &str) -> bool {
-        use crate::domain::message::starts_with_ci;
+        use crate::domain::conversation::value_objects::message::starts_with_ci;
         starts_with_ci(model, "claude-opus-4-6")
             || starts_with_ci(model, "claude-opus-5")
             || starts_with_ci(model, "claude-sonnet-4-6")
@@ -422,10 +425,7 @@ impl AnthropicProvider {
         })
     }
 
-    fn build_tool_defs(
-        tools: &[crate::domain::tool::ToolDefinition],
-        is_oauth: bool,
-    ) -> Vec<serde_json::Value> {
+    fn build_tool_defs(tools: &[ToolDefinition], is_oauth: bool) -> Vec<serde_json::Value> {
         tools
             .iter()
             .map(|t| {
@@ -448,7 +448,7 @@ impl AnthropicProvider {
     fn parse_response(
         body: &serde_json::Value,
         is_oauth: bool,
-        tools: &[crate::domain::tool::ToolDefinition],
+        tools: &[ToolDefinition],
     ) -> Result<LlmResponse, DomainError> {
         let content_blocks = body["content"]
             .as_array()
@@ -545,7 +545,7 @@ impl LlmProvider for AnthropicProvider {
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
         let model = request.model.to_string();
         let is_oauth = self.is_oauth;
-        let tools_snapshot: Vec<crate::domain::tool::ToolDefinition> = if is_oauth {
+        let tools_snapshot: Vec<ToolDefinition> = if is_oauth {
             request.tools.to_vec()
         } else {
             vec![]
@@ -606,7 +606,7 @@ impl LlmProvider for AnthropicProvider {
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
         let model = request.model.to_string();
         let is_oauth = self.is_oauth;
-        let tools_snapshot: Option<Vec<crate::domain::tool::ToolDefinition>> = if is_oauth {
+        let tools_snapshot: Option<Vec<ToolDefinition>> = if is_oauth {
             Some(request.tools.to_vec())
         } else {
             None
@@ -658,7 +658,7 @@ impl LlmProvider for AnthropicProvider {
     ) -> Pin<Box<dyn Future<Output = tokio::sync::mpsc::Receiver<StreamEvent>> + Send + '_>> {
         let model = request.model.to_string();
         let is_oauth = self.is_oauth;
-        let tools_snapshot: Option<Vec<crate::domain::tool::ToolDefinition>> = if is_oauth {
+        let tools_snapshot: Option<Vec<ToolDefinition>> = if is_oauth {
             Some(request.tools.to_vec())
         } else {
             None

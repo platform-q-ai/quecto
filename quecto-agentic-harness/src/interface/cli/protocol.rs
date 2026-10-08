@@ -535,13 +535,14 @@ pub use crate::infrastructure::line_cap::{EVENT_LINE_CAP_BYTES, EVENT_LINE_JSON_
 
 // ─── Session state snapshot ──────────────────────────────────────────────────
 
-pub use crate::domain::state_snapshot::{ControlReceipt, ControlStatus};
+pub use crate::domain::sessions::value_objects::state_snapshot::{ControlReceipt, ControlStatus};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionState {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub admission_warnings: Vec<crate::domain::state_snapshot::AdmissionBindingWarning>,
+    pub admission_warnings:
+        Vec<crate::domain::sessions::value_objects::state_snapshot::AdmissionBindingWarning>,
     /// The warnings the startup model drew (#2435, #2126).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub startup_warnings: Vec<String>,

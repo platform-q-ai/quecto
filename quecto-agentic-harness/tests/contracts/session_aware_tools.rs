@@ -12,7 +12,7 @@
 //! Typing this port is future tools-capability work.
 
 use quecto::application::tools::ports::{SessionAwareTools, Tool};
-use quecto::domain::tool::{ToolDefinition, ToolResult};
+use quecto::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
 use std::borrow::Cow;
 use std::future::Future;

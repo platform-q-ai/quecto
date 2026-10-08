@@ -7,9 +7,9 @@
 // here, and the head's entries stay byte-identical across the cut.
 
 use super::*;
-use crate::domain::conversation::watermark_cut::archive_stub;
-use crate::domain::message::ToolCall;
-use crate::domain::turn_origin::prompt;
+use crate::domain::conversation::services::turn_origin::prompt;
+use crate::domain::conversation::services::watermark_cut::archive_stub;
+use crate::domain::conversation::value_objects::message::ToolCall;
 
 fn call(id: &str) -> Message {
     Message::assistant(

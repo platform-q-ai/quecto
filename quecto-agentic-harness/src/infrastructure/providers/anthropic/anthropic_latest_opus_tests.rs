@@ -1,6 +1,6 @@
 use super::*;
 use crate::application::providers::ports::ChatRequest;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 
 #[test]
 fn test_opus_47_and_48_omit_deprecated_temperature() {

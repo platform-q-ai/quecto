@@ -8,10 +8,10 @@ use quecto::application::sessions::ports::{ContextSpillStore, SessionStore};
 use quecto::application::subagent::{SubagentConfig, SubagentContext, validate_agent_id};
 use quecto::application::tools::ports::Tool;
 use quecto::domain::agents::value_objects::agent::{AgentInfo, AgentResult};
+use quecto::domain::conversation::value_objects::message::{LlmResponse, Message, Role, ToolCall};
 use quecto::domain::error::DomainError;
-use quecto::domain::message::{LlmResponse, Message, Role, ToolCall};
 use quecto::domain::sessions::entities::session::Session;
-use quecto::domain::tool::{ToolDefinition, ToolResult};
+use quecto::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use quecto::infrastructure::auth::credential_store::{
     AuthMethod, Credential, CredentialStatus, CredentialStore,
 };
@@ -706,7 +706,7 @@ pub struct QuectoWorld {
     /// Bounded preview output for the efficiency scenarios
     pub efficiency_preview: Option<String>,
     /// Parsed usage from the consolidated parser
-    pub efficiency_usage: Option<quecto::domain::message::UsageInfo>,
+    pub efficiency_usage: Option<quecto::domain::conversation::value_objects::message::UsageInfo>,
     /// Provider entry loaded from a legacy config blob
     pub efficiency_provider_entry: Option<quecto::infrastructure::config::ProviderEntry>,
     /// Temp dir for harness efficiency tool scenarios
@@ -737,7 +737,7 @@ pub struct QuectoWorld {
     /// Workspace path for grep tests
     pub grep_workspace: Option<PathBuf>,
     /// Result from grep tool execution
-    pub grep_result: Option<quecto::domain::tool::ToolResult>,
+    pub grep_result: Option<quecto::domain::tool_policy::value_objects::tool::ToolResult>,
     /// A stand-in relevance judge favouring text with this word (#2136).
     pub grep_favours: Option<String>,
     /// A stand-in relevance judge that cannot answer (#2136).
@@ -760,7 +760,7 @@ pub struct QuectoWorld {
     /// #2210: a real agent's model turn in flight.
     pub model_turn: Option<model_turn_progress_steps::ModelTurnRun>,
     /// Result from the most recent swarm tool execution
-    pub swarm_result: Option<quecto::domain::tool::ToolResult>,
+    pub swarm_result: Option<quecto::domain::tool_policy::value_objects::tool::ToolResult>,
     /// Scenario-scoped swarm tool instance
     pub swarm_tool: Option<DebugSwarm>,
     /// Claim token a swarm member held before the coordinator revoked it
@@ -771,14 +771,14 @@ pub struct QuectoWorld {
     /// Workspace path for find tests
     pub find_workspace: Option<PathBuf>,
     /// Result from find tool execution
-    pub find_result: Option<quecto::domain::tool::ToolResult>,
+    pub find_result: Option<quecto::domain::tool_policy::value_objects::tool::ToolResult>,
     // --- Ls BDD fields ---
     /// Temp dir for ls workspace (kept alive)
     pub _ls_temp_dir: Option<TempDir>,
     /// Workspace path for ls tests
     pub ls_workspace: Option<PathBuf>,
     /// Result from ls tool execution
-    pub ls_result: Option<quecto::domain::tool::ToolResult>,
+    pub ls_result: Option<quecto::domain::tool_policy::value_objects::tool::ToolResult>,
     // --- /reload BDD fields ---
     /// Messages passed to strip_tool_history in /reload scenarios
     pub reload_input_messages: Option<Vec<Message>>,
@@ -810,7 +810,8 @@ pub struct QuectoWorld {
     /// Result of a chat_stream() call for cancellation tests
     pub chat_stream_result: Option<Result<LlmResponse, String>>,
     /// Parsed stop reason for stop_reason parsing tests
-    pub parsed_stop_reason: Option<quecto::domain::message::StopReason>,
+    pub parsed_stop_reason:
+        Option<quecto::domain::conversation::value_objects::message::StopReason>,
     /// Normalized API messages (for normalization scenario assertions)
     pub api_messages: Vec<serde_json::Value>,
     /// Mock OAuth refresh server URI (for OAuth refresh scenarios, issue #254)
@@ -899,7 +900,7 @@ pub struct QuectoWorld {
     pub notify_last_enqueued: Option<bool>,
     /// The parent's first drained idle note, cached so multiple assertions in a
     /// scenario inspect the same note rather than re-draining the queue (#816)
-    pub notify_drained_note: Option<quecto::domain::message::Message>,
+    pub notify_drained_note: Option<quecto::domain::conversation::value_objects::message::Message>,
     // --- Subagent monitor (#522) ---
     /// SubagentEntry under test for monitor BDD scenarios
     pub monitor_entry: Option<quecto::infrastructure::tools::subagent_registry::SubagentEntry>,
@@ -1053,7 +1054,8 @@ pub struct QuectoWorld {
     pub workflow_tool_result: Option<ToolResult>,
     /// Workflow tool BDD (#1113): definition read via "I read the workflow
     /// tool definition".
-    pub workflow_tool_definition: Option<quecto::domain::tool::ToolDefinition>,
+    pub workflow_tool_definition:
+        Option<quecto::domain::tool_policy::value_objects::tool::ToolDefinition>,
     /// Workflow nudge BDD: engine under test for auto-continue nudge wording.
     pub workflow_nudge_engine: Option<quecto::domain::workflow::WorkflowEngine>,
     /// Workflow nudge BDD: captured auto-continue nudge text.

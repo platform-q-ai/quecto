@@ -64,10 +64,10 @@ pub(crate) async fn forward_event(ev: AgentProgressEvent, sink: &mut EventSink<'
                     .collect(),
                 results: reconciliation.results.into_iter().map(to_json).collect(),
                 apply_mode: match reconciliation.mode {
-                    crate::domain::tool::ToolPolicyApplyMode::ImmediateIfIdle => {
+                    crate::domain::tool_policy::value_objects::tool::ToolPolicyApplyMode::ImmediateIfIdle => {
                         "immediateIfIdle".to_string()
                     }
-                    crate::domain::tool::ToolPolicyApplyMode::AtNextTurnBoundary => {
+                    crate::domain::tool_policy::value_objects::tool::ToolPolicyApplyMode::AtNextTurnBoundary => {
                         "atNextTurnBoundary".to_string()
                     }
                 },

@@ -1,5 +1,5 @@
 use crate::application::sessions::ports::SessionStore;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session::Session;
 use crate::infrastructure::tools::subagent_registry::new_registry;
 use crate::interface::cli::protocol::AgentCommand;

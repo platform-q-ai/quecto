@@ -150,7 +150,7 @@ fn an_id_on_a_provider_that_lists_no_models_is_uncatalogued() {
     let runtime = Arc::new(FakeRuntime(Some(Arc::new(
         crate::application::provider_runtime::CatalogueRuntimeSnapshot {
             catalogue: Arc::new(
-                crate::domain::catalogue::resolve_catalogue(
+                crate::domain::catalogue::value_objects::catalogue::resolve_catalogue(
                     1,
                     vec![(SourceLayer::BuiltIn, entries.clone())],
                 )

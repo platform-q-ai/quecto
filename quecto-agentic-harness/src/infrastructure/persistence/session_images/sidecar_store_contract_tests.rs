@@ -13,7 +13,9 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use super::{ImageSidecarStore, SidecarRead};
-use crate::domain::conversation::stored_images::{ImageRef, VerifiedText, sha256_hex};
+use crate::domain::conversation::value_objects::stored_images::{
+    ImageRef, VerifiedText, sha256_hex,
+};
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::infrastructure::persistence::session_images::FileImageSidecarStore;
 use crate::infrastructure::persistence::session_layout::FlatSessionLayout;

@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::message::ToolCall;
+use crate::domain::conversation::value_objects::message::ToolCall;
 
 #[test]
 fn clear_thinking_page_removes_all_thinking_metadata() {
@@ -70,7 +70,7 @@ fn message_to_json_range_carries_the_turn_origin() {
     let mut msg = Message::assistant("REPORT", vec![]);
     let json = message_to_json_range_for_response(&msg, None, None, None, None);
     assert!(json["turnOrigin"].is_null());
-    msg.turn_origin = crate::domain::turn_origin::TurnOrigin::ProgressNudge;
+    msg.turn_origin = crate::domain::conversation::services::turn_origin::TurnOrigin::ProgressNudge;
     let json = message_to_json_range_for_response(&msg, Some(0), None, Some(2), None);
     assert_eq!(json["turnOrigin"], "progressNudge");
 }
@@ -81,9 +81,10 @@ fn message_to_json_range_carries_the_turn_origin() {
 #[test]
 fn message_to_json_range_carries_the_user_kind() {
     let kind = |msg: &Message| message_to_json_range_for_response(msg, None, None, None, None);
-    let prompt = crate::domain::turn_origin::prompt("do the thing".into());
+    let prompt = crate::domain::conversation::services::turn_origin::prompt("do the thing".into());
     assert_eq!(kind(&prompt)["userKind"], "prompt");
-    let stub = crate::domain::conversation::watermark_cut::archive_stub(4, Some("archive"));
+    let stub =
+        crate::domain::conversation::services::watermark_cut::archive_stub(4, Some("archive"));
     assert_eq!(kind(&stub)["userKind"], "archiveStub");
     let json = kind(&Message::user("feedback"));
     assert!(json["userKind"].is_null(), "{json}");

@@ -1,6 +1,6 @@
 use super::fixture_tests::Fixture;
 use crate::application::sessions::ports::SessionStore;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session::Session;
 use crate::interface::cli::protocol::AgentCommand;
 

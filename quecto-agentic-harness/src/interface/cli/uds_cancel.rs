@@ -4,13 +4,13 @@
 //! race-free: whether the cancel signal arrives before or during a prompt run,
 //! the correct outcome (skipped or interrupted) is guaranteed.
 
-use crate::domain::conversation_view::user_visible_messages;
+use crate::domain::conversation::services::conversation_view::user_visible_messages;
 use std::sync::Arc;
 
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::agent_turn::ports::AgentLoop;
 use crate::domain::agents::value_objects::agent::AgentProgressEvent;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::interface::cli::protocol::{AgentEvent, TurnMessage, TurnUsage};
 use crate::interface::cli::uds_session::AgentSession;
 
@@ -405,7 +405,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
     // an interrupted one once its history is finalized, below.
     // #2226: what the turn appended takes its opener's origin before it is
     // saved or reported.
-    crate::domain::turn_origin::stamp_turn(messages, prompt_id);
+    crate::domain::conversation::services::turn_origin::stamp_turn(messages, prompt_id);
     save_turn(turn_save.as_ref().filter(|_| result.is_some()), messages).await;
     match result {
         None => {

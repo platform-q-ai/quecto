@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::domain::error::DomainError;
-use crate::domain::tool::{ToolDefinition, ToolResult};
+use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::extensions::native::OfficialToolDeps;
 use std::future::Future;
 use std::pin::Pin;
@@ -431,7 +431,7 @@ fn build_workflow_tool_extension_supplies_workflow() {
 /// #1276 Phase 3: register_bundled_native_tools uses official (non-extension) path.
 #[test]
 fn register_bundled_native_tools_marks_official_not_extension_tracked() {
-    use crate::domain::tool_descriptor::ToolSource;
+    use crate::domain::tool_policy::value_objects::tool_descriptor::ToolSource;
     use crate::infrastructure::security::sandbox::Sandbox;
     use crate::infrastructure::tools::registry::ToolRegistryImpl;
 

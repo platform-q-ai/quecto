@@ -1,5 +1,5 @@
 use crate::application::sessions::dto::{SearchSessionMetadataRequest, SessionListScope};
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session::Session;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::interface::cli::uds::dispatch_session_roster_tests::composed_sessions;

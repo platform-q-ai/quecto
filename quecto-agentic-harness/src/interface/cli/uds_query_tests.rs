@@ -2,8 +2,8 @@ use super::*;
 use crate::application::agent_loop::UsageTotals;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::tools::ports::Tool;
-use crate::domain::message::{Message, ToolCall};
-use crate::domain::tool::{ToolDefinition, ToolResult};
+use crate::domain::conversation::value_objects::message::{Message, ToolCall};
+use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::domain::workflow::{
     WorkflowConfig, WorkflowEngine, WorkflowTemplate, WorkflowTemplateStep,
 };
@@ -126,7 +126,8 @@ impl Fx {
                 pin_recent_turns: 2,
                 context_marks: Default::default(),
                 model_context_window: None,
-                tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+                tool_profile_context:
+                    crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
             }),
             messages: vec![Message::user("one"), Message::assistant("two", vec![])],
             session: AgentSession::new("stub".into()),

@@ -2,7 +2,7 @@
 //! reasoning) is not a final answer: the model is asked again, concisely,
 //! and a turn that keeps doing it fails instead of ending silently.
 use super::*;
-use crate::domain::message::{StopReason, ThinkingBlock};
+use crate::domain::conversation::value_objects::message::{StopReason, ThinkingBlock};
 
 fn reasoning_only_at_the_limit() -> LlmResponse {
     let mut response = text_response("");
@@ -51,7 +51,8 @@ fn agent_sized(
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
     (agent, provider)
 }
@@ -129,11 +130,13 @@ async fn a_cut_off_reply_with_a_tool_call_is_not_treated_as_empty() {
     let mut cut = text_response("");
     cut.content = None;
     cut.stop_reason = Some(StopReason::MaxTokens);
-    cut.tool_calls = vec![crate::domain::message::ToolCall {
-        id: "c1".into(),
-        name: "missing".into(),
-        arguments: "{}".into(),
-    }];
+    cut.tool_calls = vec![
+        crate::domain::conversation::value_objects::message::ToolCall {
+            id: "c1".into(),
+            name: "missing".into(),
+            arguments: "{}".into(),
+        },
+    ];
     let (mut agent, provider) = agent(vec![Ok(cut), Ok(text_response("done"))]);
     let mut messages = vec![Message::user("question")];
     let result = agent.run_loop(&mut messages).await.unwrap();
@@ -233,11 +236,13 @@ async fn a_full_context_window_reported_as_max_tokens_is_not_an_output_cut_off()
 async fn the_retry_budget_counts_consecutive_cut_offs_not_the_whole_run() {
     let mut tool_call = text_response("");
     tool_call.content = None;
-    tool_call.tool_calls = vec![crate::domain::message::ToolCall {
-        id: "c1".into(),
-        name: "missing".into(),
-        arguments: "{}".into(),
-    }];
+    tool_call.tool_calls = vec![
+        crate::domain::conversation::value_objects::message::ToolCall {
+            id: "c1".into(),
+            name: "missing".into(),
+            arguments: "{}".into(),
+        },
+    ];
     let (mut agent, provider) = agent(vec![
         Ok(reasoning_only_at_the_limit()),
         Ok(tool_call),
@@ -256,11 +261,13 @@ async fn the_retry_budget_counts_consecutive_cut_offs_not_the_whole_run() {
 fn missing_tool_call() -> LlmResponse {
     let mut call = text_response("");
     call.content = None;
-    call.tool_calls = vec![crate::domain::message::ToolCall {
-        id: "c1".into(),
-        name: "missing".into(),
-        arguments: "{}".into(),
-    }];
+    call.tool_calls = vec![
+        crate::domain::conversation::value_objects::message::ToolCall {
+            id: "c1".into(),
+            name: "missing".into(),
+            arguments: "{}".into(),
+        },
+    ];
     call
 }
 

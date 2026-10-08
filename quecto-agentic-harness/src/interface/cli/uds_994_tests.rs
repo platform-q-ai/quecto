@@ -12,7 +12,7 @@ use std::sync::atomic::AtomicU32;
 
 use super::{ClientCommand, ClientMessage, DispatchCtx, handle_client_msg};
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::interface::cli::uds_cancel::{CancelHandle, CancelSlot};
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
 use crate::interface::cli::uds_session::{AgentSession, compute_session_stats};
@@ -34,7 +34,8 @@ fn make_agent() -> AgentLoopImpl {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
 }
 
@@ -182,7 +183,7 @@ async fn command_loops_report_identical_malformed_command_errors() {
 /// every role and for fully-populated tool-call fields.
 #[test]
 fn message_to_json_matches_golden_wire_shape_for_all_roles() {
-    use crate::domain::message::ToolCall;
+    use crate::domain::conversation::value_objects::message::ToolCall;
     use crate::interface::cli::uds_session::message_to_json;
 
     let assistant = Message::assistant(
@@ -231,7 +232,7 @@ fn message_to_json_matches_golden_wire_shape_for_all_roles() {
 /// silently drift if `AgentEvent::Response` changes.
 #[test]
 fn get_messages_snapshot_line_matches_agent_event_envelope() {
-    use crate::domain::message::ToolCall;
+    use crate::domain::conversation::value_objects::message::ToolCall;
     use crate::interface::cli::protocol::AgentEvent;
     use crate::interface::cli::uds_session::message_to_json;
     use crate::interface::cli::uds_snapshots::build_get_messages_line;

@@ -185,8 +185,8 @@ const CANONICAL_FILES: &[&str] = &[
     "src/infrastructure/session_export.rs",
     "src/interface/uds/sessions/synchronize_transcript_controller.rs",
     "src/interface/uds/sessions/rewind_conversation_controller.rs",
-    "src/domain/conversation_view.rs",
-    "src/domain/conversation_edit.rs",
+    "src/domain/conversation/services/conversation_view.rs",
+    "src/domain/conversation/services/conversation_edit.rs",
     "src/infrastructure/persistence/session_layout.rs",
     "src/domain/sessions/entities/session_identity.rs",
     // #2424: a saved session's image sidecars: the store's image steps, the
@@ -995,7 +995,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         "src/interface/uds/sessions/rewind_conversation_controller.rs",
         40,
     ),
-    ("src/domain/conversation_edit.rs", 100),
+    ("src/domain/conversation/services/conversation_edit.rs", 100),
 ];
 
 fn files_under(root: &str) -> Vec<String> {

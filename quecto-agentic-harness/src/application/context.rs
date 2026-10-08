@@ -23,13 +23,13 @@
 //! - durable prefix dirty semantics are latched for every persisted-layout or
 //!   in-place history mutation, including manifest insert/remove, a cut,
 //!   stub demotion, and physical drops.
-
 use crate::application::context_pruning;
 use crate::application::sessions::use_cases::{ListRetainedContext, RetainContext};
-use crate::domain::conversation::watermark::Watermark;
+use crate::domain::catalogue::value_objects::catalogue::ModelWindow;
+use crate::domain::conversation::services::watermark::Watermark;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::inference::services::context_calibration::EstimateScale;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
-use crate::domain::{catalogue::ModelWindow, message::Message};
 use std::sync::{Arc, Mutex};
 
 // #2212: the provider-calibrated gauge and the estimate scale it observes.

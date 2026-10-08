@@ -8,7 +8,7 @@
 
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::sessions::dto::SaveTrigger;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::infrastructure::tools::agent_cmd_containers::EnvironmentControlSlot;
 use crate::infrastructure::tools::owner_exit::OwnerExitFlag;
 

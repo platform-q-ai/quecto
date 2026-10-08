@@ -437,8 +437,11 @@ fn end_reasons_read_as_what_happened() {
     );
 }
 
-fn tool_call(i: usize, arguments: &str) -> crate::domain::message::ToolCall {
-    crate::domain::message::ToolCall {
+fn tool_call(
+    i: usize,
+    arguments: &str,
+) -> crate::domain::conversation::value_objects::message::ToolCall {
+    crate::domain::conversation::value_objects::message::ToolCall {
         id: format!("call-{i}-{}", "i".repeat(600)),
         name: "n".repeat(600),
         arguments: arguments.to_string(),

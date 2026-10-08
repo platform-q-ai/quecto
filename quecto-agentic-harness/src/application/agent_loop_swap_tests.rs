@@ -24,7 +24,8 @@ fn test_swap_registry_replaces_tool_registry() {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
     assert_eq!(agent.info().tool_count, 1);
     assert_eq!(agent.tool_registry.definitions()[0].name.as_ref(), "tool_a");
@@ -65,7 +66,8 @@ fn test_swap_registry_info_reflects_new_count() {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
     assert_eq!(agent.info().tool_count, 0);
 
@@ -80,8 +82,8 @@ fn test_swap_registry_info_reflects_new_count() {
 // ─── Pure helper coverage: provider-error classification + builders ───────────
 
 use crate::application::agent_usage::UsageTotals;
+use crate::domain::conversation::value_objects::message::{LlmResponse, Message, ToolCall};
 use crate::domain::error::DomainError;
-use crate::domain::message::{LlmResponse, Message, ToolCall};
 
 #[test]
 fn is_context_limit_error_matches_known_phrases() {
@@ -162,7 +164,8 @@ fn bare_agent() -> AgentLoopImpl {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
 }
 

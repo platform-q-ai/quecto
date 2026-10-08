@@ -10,7 +10,7 @@ use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::audit::ports::AuditSink;
 use crate::application::sessions::ports::ContextSpillStore;
 use crate::domain::audit::AuditEvent;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session::SpillEntry;
 use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
 use std::future::Future;
@@ -106,7 +106,7 @@ impl AuditSink for CapturingAuditSink {
 }
 
 fn agent(
-    responses: Vec<crate::domain::message::LlmResponse>,
+    responses: Vec<crate::domain::conversation::value_objects::message::LlmResponse>,
     spill_store: Arc<MemSpillStore>,
     max_context_tokens: usize,
     audit_log: Option<Arc<dyn AuditSink>>,
@@ -129,7 +129,8 @@ fn agent(
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
 }
 
@@ -420,7 +421,7 @@ async fn a_prune_that_stubbed_a_message_records_it_in_the_context_pruned_event()
     let store = Arc::new(MemSpillStore::default());
     let sink = Arc::new(CapturingAuditSink::default());
     let big = "x".repeat(2000); // ~500 tokens
-    let brief = crate::domain::turn_origin::prompt(big);
+    let brief = crate::domain::conversation::services::turn_origin::prompt(big);
     let brief_id = brief.id();
     let mut messages = vec![brief, Message::user("new prompt")];
     let mut loop_ = agent(
@@ -512,16 +513,20 @@ fn agent_loop_config_carries_context_knobs_as_constructor_fields() {
         effort: None,
         audit_log: None,
         pin_recent_turns: 5,
-        context_marks: crate::domain::conversation::watermark::Watermark::new(40_000, 12_000)
-            .unwrap(),
+        context_marks: crate::domain::conversation::services::watermark::Watermark::new(
+            40_000, 12_000,
+        )
+        .unwrap(),
         model_context_window: Some(48_000),
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
     assert_eq!(
         agent.context_knob_snapshot(),
         (
             5,
-            crate::domain::conversation::watermark::Watermark::new(40_000, 12_000).unwrap()
+            crate::domain::conversation::services::watermark::Watermark::new(40_000, 12_000)
+                .unwrap()
         )
     );
     assert_eq!(agent.model_context_window, Some(48_000));
@@ -577,7 +582,7 @@ async fn the_context_estimate_includes_the_tool_definitions() {
     let tools = tooled
         .current_tool_definitions()
         .iter()
-        .map(crate::domain::tool::ToolDefinition::estimated_tokens)
+        .map(crate::domain::tool_policy::value_objects::tool::ToolDefinition::estimated_tokens)
         .sum::<usize>();
     assert!(tools > 0);
     assert_eq!(with, without + tools);
@@ -609,7 +614,7 @@ async fn the_tool_definitions_count_against_the_budget() {
         let tool_tokens = registry
             .cached_definitions
             .iter()
-            .map(crate::domain::tool::ToolDefinition::estimated_tokens)
+            .map(crate::domain::tool_policy::value_objects::tool::ToolDefinition::estimated_tokens)
             .sum::<usize>();
         let provider = std::sync::Arc::new(MockProvider::new(vec![]));
         let agent = AgentLoopImpl::new(AgentLoopConfig {
@@ -650,7 +655,7 @@ async fn oversized_tool_definitions_leave_the_messages_a_quarter() {
     let tool_tokens: usize = registry
         .cached_definitions
         .iter()
-        .map(crate::domain::tool::ToolDefinition::estimated_tokens)
+        .map(crate::domain::tool_policy::value_objects::tool::ToolDefinition::estimated_tokens)
         .sum();
     let provider = std::sync::Arc::new(MockProvider::new(vec![]));
     let agent = AgentLoopImpl::new(AgentLoopConfig {

@@ -1,6 +1,6 @@
 //! Find reaches the concrete effect through the production registry runtime.
 use super::tool_runtime::*;
-use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
 use crate::infrastructure::config::{Config, ToolPolicyEntryConfig};
 use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::tools::inherited_tool_policy::InheritedToolPolicySnapshot;
@@ -14,8 +14,8 @@ fn runtime(
     let mut config = Config::default();
     if matches!(restriction, "persisted" | "profile") {
         config.tools.policy.entries.insert(
-            crate::domain::tool_id::stable_tool_id(
-                crate::domain::tool_descriptor::ToolSource::BundledNative,
+            crate::domain::tool_policy::value_objects::tool_id::stable_tool_id(
+                crate::domain::tool_policy::value_objects::tool_descriptor::ToolSource::BundledNative,
                 "quecto:official-tools",
                 "find",
             ),

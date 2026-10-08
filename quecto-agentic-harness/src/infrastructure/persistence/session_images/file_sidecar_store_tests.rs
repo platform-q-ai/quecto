@@ -9,7 +9,7 @@ use std::time::{Duration, SystemTime};
 
 use super::super::sidecar_store::{ImageSidecarStore, SidecarRead};
 use super::FileImageSidecarStore;
-use crate::domain::conversation::stored_images::{
+use crate::domain::conversation::value_objects::stored_images::{
     ImageRef, MAX_STORED_IMAGE_TEXT, VerifiedText, sha256_hex,
 };
 use crate::domain::sessions::entities::session_identity::SessionIdentity;

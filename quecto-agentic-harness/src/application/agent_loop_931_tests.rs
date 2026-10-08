@@ -126,7 +126,8 @@ async fn test_malformed_tool_call_api_rejection_is_addressable_not_fatal() {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
 
     let mut messages = vec![Message::user("call a tool")];
@@ -156,7 +157,7 @@ async fn test_malformed_tool_call_api_rejection_is_addressable_not_fatal() {
         "the sent prompt is unchanged"
     );
     assert!(
-        messages[1].role == crate::domain::message::Role::User
+        messages[1].role == crate::domain::conversation::value_objects::message::Role::User
             && messages[1].content.contains("malformed"),
         "the feedback follows the prompt: {:?}",
         messages.iter().map(|m| &m.role).collect::<Vec<_>>()
@@ -197,7 +198,8 @@ async fn test_terminal_auth_error_fails_the_turn_with_classified_message() {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
 
     let mut messages = vec![Message::user("hi")];
@@ -239,7 +241,8 @@ async fn test_terminal_server_error_fails_the_turn_after_retries() {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
 
     let mut messages = vec![Message::user("hi")];

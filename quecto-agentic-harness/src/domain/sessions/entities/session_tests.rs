@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::message::{Role, ToolCall};
+use crate::domain::conversation::value_objects::message::{Role, ToolCall};
 
 fn make_tool_call(name: &str) -> ToolCall {
     ToolCall {

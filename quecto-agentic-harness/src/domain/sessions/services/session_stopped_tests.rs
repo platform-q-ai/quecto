@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::message::ToolCall;
+use crate::domain::conversation::value_objects::message::ToolCall;
 
 fn call(id: &str, name: &str) -> ToolCall {
     ToolCall {

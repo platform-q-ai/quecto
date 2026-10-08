@@ -7,7 +7,7 @@
 
 use super::uds_history_recovery_steps::{attach, request, response, seed_session};
 use super::*;
-use quecto::domain::message::{Message, ToolCall};
+use quecto::domain::conversation::value_objects::message::{Message, ToolCall};
 use sha2::{Digest, Sha256};
 
 const LONG_REPORT_CHARS: usize = 4000;

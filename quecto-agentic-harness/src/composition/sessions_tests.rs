@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session::Session;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
@@ -86,7 +86,7 @@ async fn production_graph_save_restart_discovery_and_startup_share_home_authorit
     assert_eq!(restored.messages[0].content, "COMPOSED-HOME");
     assert_eq!(
         restored.messages[0].role,
-        crate::domain::message::Role::User
+        crate::domain::conversation::value_objects::message::Role::User
     );
     assert_eq!(restored.messages[0].ordinal, messages[0].ordinal);
     restarted.store.release(&identity);

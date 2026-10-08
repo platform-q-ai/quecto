@@ -1,8 +1,8 @@
 use super::*;
 use crate::application::configuration::dto::ConfigSelection;
 use crate::application::tools::ports::Tool;
-use crate::domain::tool::{ToolDefinition, ToolResult};
-use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
+use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
 use crate::infrastructure::config::{Config, ToolPolicyEntryConfig};
 use crate::interface::cli::catalogue_handles::RuntimeConfigurationInputs;
 use crate::interface::cli::protocol::{AgentCommand, ToolPolicyApplyModeCommand};

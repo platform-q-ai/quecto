@@ -29,7 +29,7 @@ enum Slot {
 
 type CallOutcome = (
     String,
-    Vec<crate::domain::tool::ImageBlock>,
+    Vec<crate::domain::tool_policy::value_objects::tool::ImageBlock>,
     Option<String>,
     bool,
 );
@@ -290,7 +290,7 @@ impl AgentLoopImpl {
         run_ledger.push(result.message.clone());
         messages.push(result.message);
         if !result.is_error {
-            let delivered = crate::domain::tool::ToolResult {
+            let delivered = crate::domain::tool_policy::value_objects::tool::ToolResult {
                 content: messages
                     .last()
                     .map(|m| m.content.clone())
@@ -316,7 +316,7 @@ impl AgentLoopImpl {
         tc: &ToolCall,
     ) -> (
         String,
-        Vec<crate::domain::tool::ImageBlock>,
+        Vec<crate::domain::tool_policy::value_objects::tool::ImageBlock>,
         Option<String>,
         bool,
     ) {
@@ -336,7 +336,7 @@ impl AgentLoopImpl {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .blocks_execution(tc.name.as_str(), self.tool_profile_context);
-        let disabled = || crate::domain::tool::ToolResult {
+        let disabled = || crate::domain::tool_policy::value_objects::tool::ToolResult {
             content: format!("tool '{}' is disabled by runtime policy", tc.name),
             image_blocks: vec![],
             delivery_metadata: None,
@@ -344,16 +344,18 @@ impl AgentLoopImpl {
         };
         let tool_result = match tc.argument_shape() {
             // A disabled tool is reported as disabled, never as "resend it".
-            crate::domain::message::ToolArguments::Invalid(_) if disabled_by_runtime_policy => {
+            crate::domain::conversation::value_objects::message::ToolArguments::Invalid(_)
+                if disabled_by_runtime_policy =>
+            {
                 Ok(disabled())
             }
             // #2123: never run a call whose arguments are not a JSON object;
             // tell the model what it sent so it can resend a whole call.
-            crate::domain::message::ToolArguments::Invalid(raw) => {
+            crate::domain::conversation::value_objects::message::ToolArguments::Invalid(raw) => {
                 Ok(invalid_arguments(&tc.name, raw))
             }
-            crate::domain::message::ToolArguments::Object(_)
-            | crate::domain::message::ToolArguments::Empty => {
+            crate::domain::conversation::value_objects::message::ToolArguments::Object(_)
+            | crate::domain::conversation::value_objects::message::ToolArguments::Empty => {
                 let admission = match &self.tool_admission {
                     Some(policy) => policy.check(&tc.name, &tc.wire_arguments()).await,
                     None => Ok(()),
@@ -369,8 +371,9 @@ impl AgentLoopImpl {
         };
         let duration_ms = start.elapsed().as_millis() as u64;
 
-        let tr =
-            tool_result.unwrap_or_else(|error| crate::domain::tool::ToolResult::from_error(&error));
+        let tr = tool_result.unwrap_or_else(|error| {
+            crate::domain::tool_policy::value_objects::tool::ToolResult::from_error(&error)
+        });
         let (content, image_blocks, delivery_metadata, is_err) = (
             tr.content,
             tr.image_blocks,
@@ -412,7 +415,7 @@ impl AgentLoopImpl {
         &self,
         current_turn: u32,
         tc: &ToolCall,
-    ) -> Result<crate::domain::tool::ToolResult, DomainError> {
+    ) -> Result<crate::domain::tool_policy::value_objects::tool::ToolResult, DomainError> {
         use futures::FutureExt;
         let arguments = tc.wire_arguments();
         let scope = tool_panic_scope::ToolScope::in_turn(tc.name.as_str(), current_turn);
@@ -490,8 +493,11 @@ pub fn shown_panic_message(message: &str) -> String {
 }
 
 /// The error result of a call whose tool panicked (#2192).
-fn crashed_tool_result(tool: &str, message: &str) -> crate::domain::tool::ToolResult {
-    crate::domain::tool::ToolResult {
+fn crashed_tool_result(
+    tool: &str,
+    message: &str,
+) -> crate::domain::tool_policy::value_objects::tool::ToolResult {
+    crate::domain::tool_policy::value_objects::tool::ToolResult {
         content: format!(
             "internal error in tool '{tool}': {message}; the call stopped at the panic, and any \
              partial effects it had already made may remain"
@@ -505,9 +511,12 @@ fn crashed_tool_result(tool: &str, message: &str) -> crate::domain::tool::ToolRe
 /// The error returned for a call whose arguments are not a JSON object
 /// (#2123). It shows both ends of what was received: for a call cut off at
 /// the output limit, the end is where it broke.
-fn invalid_arguments(tool: &str, raw: &str) -> crate::domain::tool::ToolResult {
+fn invalid_arguments(
+    tool: &str,
+    raw: &str,
+) -> crate::domain::tool_policy::value_objects::tool::ToolResult {
     let received = crate::domain::audit::error_preview(raw, 200, 300);
-    crate::domain::tool::ToolResult {
+    crate::domain::tool_policy::value_objects::tool::ToolResult {
         content: format!(
             "the arguments for tool '{tool}' were not a JSON object, so it was not run (they \
              may have been cut off at the output limit). Resend the call with one complete JSON \

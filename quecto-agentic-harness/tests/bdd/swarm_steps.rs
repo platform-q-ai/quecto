@@ -1,7 +1,7 @@
 use crate::{DebugSwarm, QuectoWorld};
 use cucumber::{given, then};
 use quecto::application::tools::ports::Tool;
-use quecto::domain::tool::ToolResult;
+use quecto::domain::tool_policy::value_objects::tool::ToolResult;
 use quecto::infrastructure::tools::swarm::SwarmTool;
 use std::path::PathBuf;
 use std::sync::Arc;

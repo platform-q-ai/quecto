@@ -5,8 +5,10 @@
 use super::super::tests::{MockProvider, MockRegistry, MockTool, test_config};
 use super::super::*;
 use super::mock_catalogue_entry;
-use crate::domain::tool::{ToolPolicyMutation, ToolPolicyMutationStatus};
-use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+use crate::domain::tool_policy::value_objects::tool::{
+    ToolPolicyMutation, ToolPolicyMutationStatus,
+};
+use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
 use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Mutex};
 

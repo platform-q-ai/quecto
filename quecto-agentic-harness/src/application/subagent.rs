@@ -1,7 +1,7 @@
 // Subagent application logic: context construction.
 
 pub use crate::domain::agents::services::subagent::{SubagentConfig, validate_agent_id};
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 
 /// The context for a spawned subagent.
 #[derive(Debug)]

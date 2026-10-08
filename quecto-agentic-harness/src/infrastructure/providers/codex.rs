@@ -11,11 +11,11 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
+#[cfg(any(test, feature = "test-support"))]
+use crate::domain::conversation::value_objects::message::Message;
+use crate::domain::conversation::value_objects::message::{LlmResponse, Role, ThinkingBlock};
 use crate::domain::error::DomainError;
 use crate::domain::inference::value_objects::provider::StreamEvent;
-#[cfg(any(test, feature = "test-support"))]
-use crate::domain::message::Message;
-use crate::domain::message::{LlmResponse, Role, ThinkingBlock};
 
 #[path = "codex_sse_state.rs"]
 mod codex_sse_state;
@@ -194,7 +194,9 @@ impl CodexProvider {
     }
 
     /// Build the Responses API tool definitions.
-    fn build_tools(tools: &[crate::domain::tool::ToolDefinition]) -> Vec<serde_json::Value> {
+    fn build_tools(
+        tools: &[crate::domain::tool_policy::value_objects::tool::ToolDefinition],
+    ) -> Vec<serde_json::Value> {
         tools
             .iter()
             .map(|t| {
@@ -365,11 +367,13 @@ impl CodexProvider {
                         serde_json::Value::Object(_) => item["arguments"].to_string(),
                         _ => String::new(),
                     };
-                    tool_calls.push(crate::domain::message::ToolCall {
-                        id: call_id,
-                        name,
-                        arguments,
-                    });
+                    tool_calls.push(
+                        crate::domain::conversation::value_objects::message::ToolCall {
+                            id: call_id,
+                            name,
+                            arguments,
+                        },
+                    );
                 }
                 Some("reasoning") => {
                     codex_sse_state::append_reasoning_summary(item, &mut reasoning)?;
@@ -385,10 +389,12 @@ impl CodexProvider {
         let thinking_blocks = if reasoning.is_empty() {
             Vec::new()
         } else {
-            vec![crate::domain::message::ThinkingBlock::Normal {
-                thinking: reasoning,
-                signature: String::new(),
-            }]
+            vec![
+                crate::domain::conversation::value_objects::message::ThinkingBlock::Normal {
+                    thinking: reasoning,
+                    signature: String::new(),
+                },
+            ]
         };
 
         Ok(LlmResponse {

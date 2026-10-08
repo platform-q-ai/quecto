@@ -1,7 +1,7 @@
 use super::*;
+use crate::domain::conversation::value_objects::message::ToolCall;
 use crate::domain::inference::value_objects::provider::EffortLevel;
-use crate::domain::message::ToolCall;
-use crate::domain::tool::ToolDefinition;
+use crate::domain::tool_policy::value_objects::tool::ToolDefinition;
 
 #[test]
 fn test_build_input_basic_messages() {

@@ -1,7 +1,7 @@
 //! The Responses API `input` a conversation becomes, including the
 //! encrypted reasoning a turn carries back to its model (#2162).
 use super::CodexProvider;
-use crate::domain::message::{Message, Role, ThinkingBlock};
+use crate::domain::conversation::value_objects::message::{Message, Role, ThinkingBlock};
 use crate::infrastructure::providers::provider_images::{DETAIL, data_url, images};
 
 impl CodexProvider {

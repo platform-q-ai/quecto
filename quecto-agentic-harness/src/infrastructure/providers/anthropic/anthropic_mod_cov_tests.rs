@@ -8,11 +8,11 @@
 
 use super::*;
 use crate::application::providers::ports::ChatRequest;
+use crate::domain::conversation::value_objects::message::{LlmResponse, Message, UsageInfo};
 use crate::domain::inference::value_objects::provider::{
     CancelFlag, RequestMetadata, StreamEvent, ToolChoice,
 };
-use crate::domain::message::{LlmResponse, Message, UsageInfo};
-use crate::domain::tool::{ImageBlock, ToolDefinition};
+use crate::domain::tool_policy::value_objects::tool::{ImageBlock, ToolDefinition};
 
 fn base_req<'a>(
     messages: &'a [Message],
@@ -226,11 +226,13 @@ fn cache_control_applied_to_tool_result_array_message() {
         Message::user("go"),
         Message::assistant(
             "",
-            vec![crate::domain::message::ToolCall {
-                id: "tc1".into(),
-                name: "bash".into(),
-                arguments: "{}".into(),
-            }],
+            vec![
+                crate::domain::conversation::value_objects::message::ToolCall {
+                    id: "tc1".into(),
+                    name: "bash".into(),
+                    arguments: "{}".into(),
+                },
+            ],
         ),
         Message::tool("tc1", "done"),
     ];

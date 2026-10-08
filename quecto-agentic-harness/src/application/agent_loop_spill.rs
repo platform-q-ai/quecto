@@ -9,7 +9,7 @@ use crate::application::context::ToolMessageBuild;
 pub(super) struct ToolMessageArgs<'a> {
     pub(super) tc: &'a ToolCall,
     pub(super) content: String,
-    pub(super) image_blocks: Vec<crate::domain::tool::ImageBlock>,
+    pub(super) image_blocks: Vec<crate::domain::tool_policy::value_objects::tool::ImageBlock>,
     pub(super) is_error: bool,
 }
 

@@ -5,7 +5,7 @@ use crate::{
     application::tools::ports::Tool,
     domain::{
         error::DomainError,
-        tool::{ToolDefinition, ToolResult},
+        tool_policy::value_objects::tool::{ToolDefinition, ToolResult},
     },
 };
 use std::{borrow::Cow, future::Future, pin::Pin, sync::Arc};

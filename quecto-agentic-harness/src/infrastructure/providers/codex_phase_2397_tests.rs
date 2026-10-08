@@ -2,7 +2,7 @@
 //! input a conversation becomes only ever grows at its end and the prompt
 //! cache keeps every earlier item.
 use super::*;
-use crate::domain::message::ToolCall;
+use crate::domain::conversation::value_objects::message::ToolCall;
 
 fn call(id: &str) -> Message {
     let mut assistant = Message::assistant("", vec![]);

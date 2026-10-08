@@ -15,11 +15,11 @@ use super::stream_idle::tests::{GAP, LIVE, SILENT, bounded, servers};
 /// idle bound would end still arrives within it.
 const WHOLE: std::time::Duration = std::time::Duration::from_millis(1200);
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::error::DomainError;
 use crate::domain::inference::events::request_observation::RequestTrace;
 use crate::domain::inference::value_objects::attempt_diagnostics::Termination;
 use crate::domain::inference::value_objects::provider::StreamEvent;
-use crate::domain::message::Message;
 
 const CODEX_EVENT: &str = "data: {\"type\":\"response.created\",\"response\":{}}\n\n";
 const OPENAI_EVENT: &str = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}\n\n";

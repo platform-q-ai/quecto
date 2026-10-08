@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use super::*;
-use quecto::domain::tool_descriptor::ToolAvailability;
+use quecto::domain::tool_policy::value_objects::tool_descriptor::ToolAvailability;
 use quecto::infrastructure::tools::registration::ToolRegistration;
 
 #[given(expr = "a bundled native tool named {string} from provider {string}")]

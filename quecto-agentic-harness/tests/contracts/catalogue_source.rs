@@ -3,7 +3,7 @@
 //! entries or a descriptive error — and parsing stays behind the port.
 
 use quecto::application::ports::CatalogueSource;
-use quecto::domain::catalogue::SourceLayer;
+use quecto::domain::catalogue::value_objects::catalogue::SourceLayer;
 use quecto::infrastructure::catalogue_registry::{
     BuiltinCatalogueSource, ModelsFileCatalogueSource,
 };

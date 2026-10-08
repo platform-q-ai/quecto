@@ -1,4 +1,4 @@
-use crate::domain::message::UsageInfo;
+use crate::domain::conversation::value_objects::message::UsageInfo;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct UsageTotals {

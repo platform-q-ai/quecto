@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use crate::domain::message::Message;
-use crate::domain::tool::ToolPolicyReconciliation;
-use crate::domain::tool_descriptor::ToolCatalogueEntry;
+use crate::domain::conversation::value_objects::message::Message;
+use crate::domain::tool_policy::value_objects::tool::ToolPolicyReconciliation;
+use crate::domain::tool_policy::value_objects::tool_descriptor::ToolCatalogueEntry;
 
 /// A live progress event emitted by the agent loop during processing.
 ///
@@ -66,11 +66,11 @@ pub enum AgentProgressEvent {
         ///
         /// Shared slice so cloning the event (e.g. for broadcast fan-out) is a
         /// cheap refcount bump rather than a deep copy of the turn (#993).
-        messages: Arc<[crate::domain::message::Message]>,
+        messages: Arc<[crate::domain::conversation::value_objects::message::Message]>,
     },
     /// Canonical conversation changed, including pruning or a final append.
     ConversationChanged {
-        messages: Arc<[crate::domain::message::Message]>,
+        messages: Arc<[crate::domain::conversation::value_objects::message::Message]>,
     },
     /// Rich catalogue changed after a real tool registration/unregistration path.
     ToolCatalogueChanged {

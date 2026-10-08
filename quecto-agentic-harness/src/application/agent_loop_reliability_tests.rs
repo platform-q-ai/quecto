@@ -304,14 +304,16 @@ impl crate::application::providers::ports::LlmProvider for CutShortAfterUsage {
     > {
         Box::pin(async move {
             let trace = request.trace.expect("the agent loop traces every request");
-            trace.record_unfinished_usage(crate::domain::message::UsageInfo {
-                prompt_tokens: 1234,
-                completion_tokens: 5,
-                cache_read_tokens: Some(6),
-                cache_write_tokens: None,
-                context_tokens: Some(1240),
-                cost: None,
-            });
+            trace.record_unfinished_usage(
+                crate::domain::conversation::value_objects::message::UsageInfo {
+                    prompt_tokens: 1234,
+                    completion_tokens: 5,
+                    cache_read_tokens: Some(6),
+                    cache_write_tokens: None,
+                    context_tokens: Some(1240),
+                    cost: None,
+                },
+            );
             Err(DomainError::Provider(
                 "Anthropic stream ended without completion: connection closed before message_stop"
                     .into(),
@@ -362,23 +364,27 @@ impl crate::application::providers::ports::LlmProvider for CutShortThenWhole {
     > {
         Box::pin(async move {
             let trace = request.trace.expect("the agent loop traces every request");
-            trace.record_unfinished_usage(crate::domain::message::UsageInfo {
-                prompt_tokens: 1000,
-                completion_tokens: 3,
-                cache_read_tokens: None,
-                cache_write_tokens: None,
-                context_tokens: Some(1000),
-                cost: None,
-            });
+            trace.record_unfinished_usage(
+                crate::domain::conversation::value_objects::message::UsageInfo {
+                    prompt_tokens: 1000,
+                    completion_tokens: 3,
+                    cache_read_tokens: None,
+                    cache_write_tokens: None,
+                    context_tokens: Some(1000),
+                    cost: None,
+                },
+            );
             let mut reply = text_response("done");
-            reply.usage = Some(crate::domain::message::UsageInfo {
-                prompt_tokens: 200,
-                completion_tokens: 7,
-                cache_read_tokens: Some(4),
-                cache_write_tokens: None,
-                context_tokens: Some(1204),
-                cost: None,
-            });
+            reply.usage = Some(
+                crate::domain::conversation::value_objects::message::UsageInfo {
+                    prompt_tokens: 200,
+                    completion_tokens: 7,
+                    cache_read_tokens: Some(4),
+                    cache_write_tokens: None,
+                    context_tokens: Some(1204),
+                    cost: None,
+                },
+            );
             Ok(reply)
         })
     }

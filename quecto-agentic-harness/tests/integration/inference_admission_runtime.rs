@@ -17,7 +17,7 @@ use quecto::application::provider_runtime::{
 };
 use quecto::application::providers::ports::{ChatRequest, LlmProvider};
 use quecto::domain::admission::value_objects::inference_admission::*;
-use quecto::domain::catalogue::{CatalogueEntry, SourceLayer};
+use quecto::domain::catalogue::value_objects::catalogue::{CatalogueEntry, SourceLayer};
 use quecto::domain::error::DomainError;
 use quecto::infrastructure::config::{Config, OpenAiCompatibleEndpoint};
 use quecto::infrastructure::model_registry::ModelRegistry;

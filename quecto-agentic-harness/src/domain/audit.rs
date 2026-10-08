@@ -242,7 +242,7 @@ pub struct ContextCutRecord {
     /// How the kept set compares with the low mark: `within_low`,
     /// `newest_exchange_over_low` (the newest exchange, kept whole, took
     /// it over) or `head_over_low` (the pinned head alone is over it).
-    pub fill: super::conversation::watermark::Fill,
+    pub fill: crate::domain::conversation::services::watermark::Fill,
 }
 
 /// Why a due watermark cut was not made (#2404), adjacently tagged:

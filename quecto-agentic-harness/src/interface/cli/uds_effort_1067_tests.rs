@@ -44,13 +44,14 @@ fn make_effort_test_agent(effort: Option<EffortLevel>) -> AgentLoopImpl {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
 }
 
 struct EffortFx {
     agent: AgentLoopImpl,
-    messages: Vec<crate::domain::message::Message>,
+    messages: Vec<crate::domain::conversation::value_objects::message::Message>,
     session: AgentSession,
     execution_state: crate::interface::cli::uds_execution_state::ExecutionStateHandle,
     session_key: String,

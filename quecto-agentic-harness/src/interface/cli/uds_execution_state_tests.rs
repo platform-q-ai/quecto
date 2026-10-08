@@ -21,7 +21,7 @@ fn finished(id: &str, name: &str, is_error: bool) -> AgentProgressEvent {
 
 #[test]
 fn binding_warning_cursor_changes_once_per_distinct_published_view() {
-    use crate::domain::state_snapshot::AdmissionBindingWarning;
+    use crate::domain::sessions::value_objects::state_snapshot::AdmissionBindingWarning;
     let mut state = ExecutionState::default();
     let initial = state.observe_visible_revisions(1, 0);
     assert_eq!(state.observe_binding_warnings(&[]), initial);
@@ -105,8 +105,8 @@ fn conversation_changes_reconcile_pruning_and_final_append_counts() {
     state.set_message_count(8);
     state.observe(&AgentProgressEvent::ConversationChanged {
         messages: Vec::from([
-            crate::domain::message::Message::user("one"),
-            crate::domain::message::Message::assistant("two", vec![]),
+            crate::domain::conversation::value_objects::message::Message::user("one"),
+            crate::domain::conversation::value_objects::message::Message::assistant("two", vec![]),
         ])
         .into(),
     });

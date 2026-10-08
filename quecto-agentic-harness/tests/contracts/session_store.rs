@@ -17,7 +17,7 @@
 
 use quecto::application::sessions::dto::SessionListQuery;
 use quecto::application::sessions::ports::SessionStore;
-use quecto::domain::message::Message;
+use quecto::domain::conversation::value_objects::message::Message;
 use quecto::domain::sessions::entities::session::Session;
 use quecto::domain::sessions::entities::session_identity::{SessionIdentity, SessionKeyPrefix};
 use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;

@@ -13,12 +13,14 @@ use crate::application::agent_loop::tests::MockRegistry;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::application::tools::ports::Tool;
-use crate::domain::conversation::UserKind;
-use crate::domain::conversation::watermark::Watermark;
+use crate::domain::conversation::services::turn_origin::prompt;
+use crate::domain::conversation::services::watermark::Watermark;
+use crate::domain::conversation::value_objects::message::{
+    LlmResponse, Message, StopReason, ToolCall,
+};
+use crate::domain::conversation::value_objects::user_kind::UserKind;
 use crate::domain::error::DomainError;
-use crate::domain::message::{LlmResponse, Message, StopReason, ToolCall};
-use crate::domain::tool::{ToolDefinition, ToolResult};
-use crate::domain::turn_origin::prompt;
+use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::providers::codex::CodexProvider;
 use std::future::Future;
 use std::pin::Pin;
@@ -280,7 +282,8 @@ fn sim_agent(
         pin_recent_turns: 1,
         context_marks: marks,
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
 }
 

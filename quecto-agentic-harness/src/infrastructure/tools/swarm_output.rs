@@ -1,7 +1,7 @@
 //! Result helpers for the swarm tool (split from `swarm.rs` for the 750-line
 //! cap).
 use crate::domain::error::DomainError;
-use crate::domain::tool::ToolResult;
+use crate::domain::tool_policy::value_objects::tool::ToolResult;
 
 pub(super) fn tool_err(content: String) -> Result<ToolResult, DomainError> {
     Ok(ToolResult {

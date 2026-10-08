@@ -2,8 +2,8 @@ use super::dispatch_command;
 use super::fixture_tests::{
     Fixture, killing_exit, persist_current_session, persist_current_session_with_restore_reason,
 };
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::ids::AgentUuid;
-use crate::domain::message::Message;
 use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
 use crate::interface::cli::protocol::AgentCommand;
 

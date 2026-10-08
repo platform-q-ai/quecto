@@ -11,7 +11,7 @@ use super::super::*;
 use super::integration_tests::composed_ctx;
 use super::selection_for_test;
 use crate::composition::tool_policy::build_tool_policy_persistence;
-use crate::domain::tool::ToolResult;
+use crate::domain::tool_policy::value_objects::tool::ToolResult;
 use crate::infrastructure::test_support::executable::write_executable;
 use crate::interface::cli::run_with_output;
 

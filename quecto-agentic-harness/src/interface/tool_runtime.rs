@@ -1,5 +1,5 @@
-use crate::domain::tool::ToolProfileContext;
-use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+use crate::domain::tool_policy::value_objects::tool::ToolProfileContext;
+use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
 
 /// Entrypoint policy selector for the shared tool runtime/catalogue builder.
 ///
@@ -189,7 +189,8 @@ pub(crate) struct ToolRuntimeBuild {
         Option<crate::infrastructure::tools::agent_cmd_containers::EnvironmentControlSlot>,
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
     pub policy_state: ToolRuntimePolicyState,
-    pub catalogue_entries: Vec<crate::domain::tool_descriptor::ToolCatalogueEntry>,
+    pub catalogue_entries:
+        Vec<crate::domain::tool_policy::value_objects::tool_descriptor::ToolCatalogueEntry>,
 }
 
 /// Report persisted `tools.policy` entries that matched no registered tool
@@ -197,7 +198,7 @@ pub(crate) struct ToolRuntimeBuild {
 /// never applies — is a start-up warning.
 fn report_unmatched_policy_entries(stable_ids: Vec<String>, stderr: &mut String) {
     use crate::application::tools::unmatched_policy::split_unmatched_policy_entries;
-    use crate::domain::tool_policy_catalogue::unknown_policy_entry_warning;
+    use crate::domain::tool_policy::services::tool_policy_catalogue::unknown_policy_entry_warning;
     for stable_id in split_unmatched_policy_entries(stable_ids).unknown {
         stderr.push_str(&format!(
             "WARNING: {}\n",

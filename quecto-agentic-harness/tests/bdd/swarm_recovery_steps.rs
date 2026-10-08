@@ -250,12 +250,14 @@ async fn spawn_exercise(
             .unwrap_or_else(|| "opaque panic".into());
         panic!("recovery exercise failed: {text}")
     });
-    world.swarm_result = Some(quecto::domain::tool::ToolResult {
-        content: evidence.to_string(),
-        is_error: false,
-        image_blocks: vec![],
-        delivery_metadata: None,
-    });
+    world.swarm_result = Some(
+        quecto::domain::tool_policy::value_objects::tool::ToolResult {
+            content: evidence.to_string(),
+            is_error: false,
+            image_blocks: vec![],
+            delivery_metadata: None,
+        },
+    );
 }
 
 // ── Observed exit: confirmed death, run keeps running, recover ─────────────
@@ -597,14 +599,16 @@ fn member_revokes(world: &mut QuectoWorld) {
         "worker",
         json!({"op":"revoke","task_id":1,"reason":"not mine to take"}),
     );
-    world.swarm_result = Some(quecto::domain::tool::ToolResult {
-        content: outcome
-            .clone()
-            .map_or_else(|error| error, |answer| answer.to_string()),
-        is_error: outcome.is_err(),
-        image_blocks: vec![],
-        delivery_metadata: None,
-    });
+    world.swarm_result = Some(
+        quecto::domain::tool_policy::value_objects::tool::ToolResult {
+            content: outcome
+                .clone()
+                .map_or_else(|error| error, |answer| answer.to_string()),
+            is_error: outcome.is_err(),
+            image_blocks: vec![],
+            delivery_metadata: None,
+        },
+    );
 }
 
 #[then("the revoked task is ready without owner, reservation or evidence")]

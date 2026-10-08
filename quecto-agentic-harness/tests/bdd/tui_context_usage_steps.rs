@@ -11,7 +11,7 @@ use super::*;
 use quecto::application::agent_loop::AgentLoopConfig;
 use quecto::application::agent_loop::UsageTotals;
 use quecto::application::context_pruning::estimate_total_tokens;
-use quecto::domain::message::UsageInfo;
+use quecto::domain::conversation::value_objects::message::UsageInfo;
 use quecto::interface::cli::protocol::SessionStats as WireSessionStats;
 use quecto::interface::cli::uds_session::{AgentSession, compute_session_stats_with_usage};
 use quecto_tui::protocol::client::Event;
@@ -88,7 +88,8 @@ fn run_context_turn(world: &mut QuectoWorld, streaming: bool) {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            quecto::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
     let mut messages = vec![Message::user("Hi")];

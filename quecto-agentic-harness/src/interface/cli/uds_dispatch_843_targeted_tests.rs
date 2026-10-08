@@ -1,7 +1,7 @@
 //! #843 child-targeted `agent_cmd` dispatch/forwarding characterization.
 use super::super::uds_dispatch_sync_forward::forward_subagent_sync;
 use super::{AgentCommand, ForwardGetMessage, dispatch_command, forward_subagent_get_message};
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::infrastructure::tools::subagent_registry::new_registry;
 
 use super::tests_843::{

@@ -5,9 +5,9 @@ use super::super::dispatch_test_env::{
     DispatchTestEnv, make_completed_feature_workflow, make_workflow,
 };
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
+use crate::domain::conversation::services::turn_origin::TurnOrigin;
+use crate::domain::conversation::value_objects::message::{LlmResponse, Message, Role};
 use crate::domain::error::DomainError;
-use crate::domain::message::{LlmResponse, Message, Role};
-use crate::domain::turn_origin::TurnOrigin;
 use crate::infrastructure::tools::workflow_tool::WORKFLOW_TOOL_NAME;
 use crate::interface::cli::uds_session::{HISTORY_PAGE_SIZE, messages_page_json};
 use crate::interface::shared::WorkflowStateHandle;
@@ -42,8 +42,8 @@ fn text(reply: &str) -> LlmResponse {
 
 impl AnswerThenStatus {
     fn respond(&self, messages: &[Message]) -> LlmResponse {
-        use crate::domain::message::{StopReason, ToolCall};
-        use crate::domain::turn_origin::TurnOrigin;
+        use crate::domain::conversation::services::turn_origin::TurnOrigin;
+        use crate::domain::conversation::value_objects::message::{StopReason, ToolCall};
         let last = messages.last().expect("a turn has messages");
         let opener = messages
             .iter()
