@@ -15,18 +15,16 @@ pub(super) use super::uds_dispatch_session::{
 };
 #[cfg(not(test))]
 use super::uds_dispatch_session::{handle_new_session, handle_resume_session, handle_rewind_to};
-use super::{AgentCommand, AgentEvent};
-use super::{DispatchCtx, emit_event_to_broadcast_or_writer};
+use super::{AgentCommand, AgentEvent, DispatchCtx, emit_event_to_broadcast_or_writer};
 use crate::application::sessions::dto::SaveTrigger;
 use crate::domain::sessions::entities::session::SubagentRestoreReason;
-use crate::domain::tool_policy::value_objects::tool::{
-    ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyOperation, ToolPolicyRequest,
-};
+use crate::domain::tool_policy::value_objects::tool;
 use crate::interface::cli::protocol::{
     ToolPolicyApplyModeCommand, ToolPolicyMutationCommand, ToolPolicyOperationCommand,
 };
 use crate::interface::cli::uds_ext_protocol;
 use crate::interface::uds::sessions::resume_session_controller::ResumeFields;
+use tool::{ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyOperation, ToolPolicyRequest};
 pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_>) -> bool {
     if let Some(result) = try_forward_subagent_targeted_command(&cmd, ctx).await {
         return result;

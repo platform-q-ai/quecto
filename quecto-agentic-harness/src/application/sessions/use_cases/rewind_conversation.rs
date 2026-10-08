@@ -19,8 +19,6 @@
 //! the rewind goes on); then the session is saved. A save failure is
 //! returned as the persistence error and leaves the rewound state in
 //! place: no rollback, staging or cleanup-status result exists.
-use std::sync::Arc;
-
 use super::SaveSession;
 use super::clear_conversation::{clear_retention_best_effort, retention_of, visible_message_count};
 use crate::application::context_pruning::messages::message_stub_without_recall;
@@ -30,10 +28,10 @@ use crate::application::sessions::dto::{
     RewindConversationError, RewindRequest, RewoundConversation, SaveTrigger,
 };
 use crate::application::sessions::ports::session_runtime::TurnAccountingReset;
-use crate::domain::conversation::services::conversation_edit::{
-    resolve_rewind_target, truncate_at_user_message,
-};
+use crate::domain::conversation::services::conversation_edit;
 use crate::domain::conversation::value_objects::message::{Message, Role};
+use conversation_edit::{resolve_rewind_target, truncate_at_user_message};
+use std::sync::Arc;
 
 pub struct RewindConversation {
     state: ActiveSessionHandle,
