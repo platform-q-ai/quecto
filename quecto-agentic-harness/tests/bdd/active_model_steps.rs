@@ -15,7 +15,7 @@ use quecto::application::catalogue::{
     CatalogueSnapshotStore, CatalogueSource, CredentialStatusPort, SourceEntries,
 };
 use quecto::application::provider_runtime::CatalogueRuntimeSnapshot;
-use quecto::domain::catalogue::{
+use quecto::domain::catalogue::value_objects::catalogue::{
     AuthIdentity, Availability, CatalogueEntry, ModelCapabilities, ModelCost, ModelDescriptor,
     ModelRef, ProviderDescriptor, SourceLayer, TransportKind, UnavailableReason,
 };
@@ -143,7 +143,7 @@ impl quecto::application::providers::ports::LlmProvider for AmProvider {
         Box<
             dyn std::future::Future<
                     Output = Result<
-                        quecto::domain::message::LlmResponse,
+                        quecto::domain::conversation::value_objects::message::LlmResponse,
                         quecto::domain::error::DomainError,
                     >,
                 > + Send

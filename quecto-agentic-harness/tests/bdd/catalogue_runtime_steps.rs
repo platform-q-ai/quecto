@@ -14,7 +14,7 @@ use quecto::application::provider_runtime::{
     ComposeProviderRuntimeUseCase, ComposedRuntime, CompositionPorts, ProviderRuntimeFactory,
     RuntimeCompositionError, RuntimeSnapshotStore, SelectionError, select_in_runtime,
 };
-use quecto::domain::catalogue::{
+use quecto::domain::catalogue::value_objects::catalogue::{
     AuthIdentity, Availability, CatalogueEntry, ModelCapabilities, ModelCost, ModelDescriptor,
     ModelRef, ProviderDescriptor, ProviderId, SourceLayer, TransportKind, UnavailableReason,
 };

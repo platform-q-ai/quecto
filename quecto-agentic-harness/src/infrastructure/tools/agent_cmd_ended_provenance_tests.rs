@@ -233,7 +233,8 @@ async fn a_reported_descendant_cannot_make_its_parent_read_another_session() {
         )
         .unwrap(),
     );
-    secret.messages = vec![crate::domain::message::Message::user("THE SECRET PLAN")];
+    secret.messages =
+        vec![crate::domain::conversation::value_objects::message::Message::user("THE SECRET PLAN")];
     store.save(&secret).await.unwrap();
     let registry = new_registry();
     reported_by_child(

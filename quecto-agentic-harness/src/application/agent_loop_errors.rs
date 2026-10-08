@@ -5,11 +5,11 @@
 //! and the remediation so the agent/parent can react sensibly.
 
 use crate::domain::audit::AuditEvent;
+use crate::domain::conversation::value_objects::message::{Message, Role};
 use crate::domain::error::DomainError;
 use crate::domain::inference::services::provider_error::{
     ProviderErrorClass, classify_provider_error, model_refusal, provider_http_status,
 };
-use crate::domain::message::{Message, Role};
 
 /// The guidance a model refused for the account or auth mode ends with
 /// (#2435). The loop does not know the hold, so the guidance says what a
@@ -90,7 +90,7 @@ pub(super) fn append_feedback(messages: &mut Vec<Message>, feedback: String, cur
     let mut msg = Message::user(feedback);
     msg.turn = Some(current_turn);
     // The loop's own feedback continues the open turn (#2226).
-    msg.turn_origin = crate::domain::turn_origin::current_phase(messages);
+    msg.turn_origin = crate::domain::conversation::services::turn_origin::current_phase(messages);
     messages.push(msg);
 }
 

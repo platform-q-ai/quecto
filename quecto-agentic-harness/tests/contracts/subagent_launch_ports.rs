@@ -7,7 +7,7 @@ use quecto::application::subagent_launch::{
 };
 use quecto::domain::agents::services::subagent::{ContainerSelection, SubagentConfig};
 use quecto::domain::error::DomainError;
-use quecto::domain::tool::ToolResult;
+use quecto::domain::tool_policy::value_objects::tool::ToolResult;
 
 #[derive(Default)]
 struct ContractPorts {
@@ -167,7 +167,7 @@ mod real_adapters {
     use quecto::domain::agents::services::subagent::SubagentConfig;
     use quecto::domain::environments::entities::environment_registry::EnvironmentRegistry;
     use quecto::domain::error::DomainError;
-    use quecto::domain::tool::ToolResult;
+    use quecto::domain::tool_policy::value_objects::tool::ToolResult;
     use quecto::infrastructure::tools::spawn::SpawnTool;
 
     /// Serializes scenarios that set `QUECTO_CHILD_BINARY`.

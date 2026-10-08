@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use crate::application::sessions::dto::{SyncRequest, TranscriptSync};
 use crate::application::sessions::use_cases::SynchronizeTranscript;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 
 /// The wire fields of a parent-local `sync` request.
 #[derive(Debug, Clone, PartialEq, Eq)]

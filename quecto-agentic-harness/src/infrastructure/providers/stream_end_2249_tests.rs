@@ -15,6 +15,7 @@ use std::sync::Arc;
 use super::stream_idle::tests::{LIVE, bounded, servers};
 use super::stream_idle_provider_tests::{Vendor, request, terminations, traced};
 use crate::application::providers::ports::ChatRequest;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::error::DomainError;
 use crate::domain::inference::events::request_observation::RequestTrace;
 use crate::domain::inference::services::provider_error::{
@@ -22,7 +23,6 @@ use crate::domain::inference::services::provider_error::{
 };
 use crate::domain::inference::value_objects::attempt_diagnostics::Termination;
 use crate::domain::inference::value_objects::provider::StreamEvent;
-use crate::domain::message::Message;
 
 const DELTA: &str = "whole";
 
@@ -63,7 +63,12 @@ enum Ending {
 }
 
 impl Ending {
-    fn from_result(result: Result<crate::domain::message::LlmResponse, DomainError>) -> Self {
+    fn from_result(
+        result: Result<
+            crate::domain::conversation::value_objects::message::LlmResponse,
+            DomainError,
+        >,
+    ) -> Self {
         match result {
             Ok(reply) => Ending::Whole(reply.content.unwrap_or_default()),
             Err(DomainError::Provider(message)) => Ending::Failed(message),

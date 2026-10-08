@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::infrastructure::test_support::message_contents;
 use crate::interface::cli::uds_session::HISTORY_PAGE_SIZE;
 

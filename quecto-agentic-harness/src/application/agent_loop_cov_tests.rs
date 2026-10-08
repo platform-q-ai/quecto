@@ -2,7 +2,7 @@ use super::*;
 use crate::application::agent_loop::tests::{MockProvider, MockRegistry, test_config};
 use crate::application::audit::ports::AuditSink;
 use crate::domain::audit::AuditEvent;
-use crate::domain::message::{LlmResponse, Message, Role};
+use crate::domain::conversation::value_objects::message::{LlmResponse, Message, Role};
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 use std::sync::{Arc, Mutex};
 

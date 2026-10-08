@@ -23,7 +23,9 @@ async fn reject_workflow(world: &mut QuectoWorld) {
     world.swarm_result = Some(
         tool.execute(r#"{"agent_id":"worker","workflow":true}"#)
             .await
-            .unwrap_or_else(|error| quecto::domain::tool::ToolResult::from_error(&error)),
+            .unwrap_or_else(|error| {
+                quecto::domain::tool_policy::value_objects::tool::ToolResult::from_error(&error)
+            }),
     );
 }
 
@@ -94,12 +96,14 @@ fn workflow_agent_creates(world: &mut QuectoWorld) {
         Ok(value) => value.to_string(),
         Err(error) => error.to_string(),
     };
-    world.swarm_result = Some(quecto::domain::tool::ToolResult {
-        content,
-        is_error,
-        image_blocks: vec![],
-        delivery_metadata: None,
-    });
+    world.swarm_result = Some(
+        quecto::domain::tool_policy::value_objects::tool::ToolResult {
+            content,
+            is_error,
+            image_blocks: vec![],
+            delivery_metadata: None,
+        },
+    );
 }
 
 #[when("a swarm message recipient rejects its wake hint")]
@@ -315,12 +319,14 @@ fn unblock_owned_task(world: &mut QuectoWorld) {
     let files = op(world, json!({"op":"summary"}))["files"].clone();
     let view =
         json!({"before":token,"after":resumed["token"],"status":resumed["status"],"files":files});
-    world.swarm_result = Some(quecto::domain::tool::ToolResult {
-        content: view.to_string(),
-        is_error: false,
-        image_blocks: vec![],
-        delivery_metadata: None,
-    });
+    world.swarm_result = Some(
+        quecto::domain::tool_policy::value_objects::tool::ToolResult {
+            content: view.to_string(),
+            is_error: false,
+            image_blocks: vec![],
+            delivery_metadata: None,
+        },
+    );
 }
 
 #[then("the resumed swarm task retains its claim and reserved file")]
@@ -396,12 +402,14 @@ fn supervise(world: &mut QuectoWorld, action: quecto::domain::swarm::RunControlA
         ),
         Err(error) => (error.to_string(), true),
     };
-    world.swarm_result = Some(quecto::domain::tool::ToolResult {
-        content,
-        is_error,
-        image_blocks: vec![],
-        delivery_metadata: None,
-    });
+    world.swarm_result = Some(
+        quecto::domain::tool_policy::value_objects::tool::ToolResult {
+            content,
+            is_error,
+            image_blocks: vec![],
+            delivery_metadata: None,
+        },
+    );
     if !is_error {
         run(world, json!({"op":"summary"}));
     }

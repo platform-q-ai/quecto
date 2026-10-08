@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
-use crate::domain::tool::{ToolDefinition, ToolResult};
+use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 
 /// The environment switch that registers the probe.
 pub const PANIC_PROBE_ENV: &str = "QUECTO_TEST_PANIC_PROBE";

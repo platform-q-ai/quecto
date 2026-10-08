@@ -5,8 +5,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
+use crate::domain::conversation::value_objects::message::LlmResponse;
 use crate::domain::error::DomainError;
-use crate::domain::message::LlmResponse;
 
 /// A minimal LLM provider stub that returns a fixed response without
 /// making any HTTP calls. Used by REPL and CLI unit tests.

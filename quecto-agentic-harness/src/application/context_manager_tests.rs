@@ -4,7 +4,7 @@ use crate::application::context_pruning::messages::{
     CeilingLadderOutcome, enforce_context_ceiling_ladder,
 };
 use crate::application::sessions::ports::ContextSpillStore;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session::{SpillEntry, SpillIndex};
 use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
 use std::future::Future;
@@ -119,8 +119,8 @@ fn config_for(max_context_tokens: usize) -> ContextManagerConfig {
 }
 
 /// A known window with nothing reserved for the reply.
-fn window_only(window: usize) -> crate::domain::catalogue::ModelWindow {
-    crate::domain::catalogue::ModelWindow {
+fn window_only(window: usize) -> crate::domain::catalogue::value_objects::catalogue::ModelWindow {
+    crate::domain::catalogue::value_objects::catalogue::ModelWindow {
         window: Some(window),
         ..Default::default()
     }
@@ -213,7 +213,7 @@ fn context_manager_is_the_agent_loop_context_boundary() {
         manager.context_knob_snapshot(),
         (
             2,
-            crate::domain::conversation::watermark::Watermark::default()
+            crate::domain::conversation::services::watermark::Watermark::default()
         )
     );
     let mut msg = Message::assistant("spill me", vec![]);
@@ -556,7 +556,7 @@ fn the_window_budget_ignores_the_swarm_cap() {
 
 #[test]
 fn the_ceiling_keeps_the_reply_reserve_free_of_the_window() {
-    use crate::domain::catalogue::{ModelWindow, PromptLimit};
+    use crate::domain::catalogue::value_objects::catalogue::{ModelWindow, PromptLimit};
     let mut manager = manager(300_000);
     manager.set_model_window(ModelWindow::new(
         Some(400_000),

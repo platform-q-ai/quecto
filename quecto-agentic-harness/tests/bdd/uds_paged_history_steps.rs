@@ -12,8 +12,8 @@ use quecto::application::agent_turn::ports::AgentLoop;
 use quecto::application::providers::ports::{ChatRequest, LlmProvider};
 use quecto::application::sessions::ports::{ContextSpillStore, SessionStore};
 use quecto::composition::runtime::build_agent_provider;
+use quecto::domain::conversation::value_objects::message::{LlmResponse, Message, ToolCall};
 use quecto::domain::error::DomainError;
-use quecto::domain::message::{LlmResponse, Message, ToolCall};
 use quecto::domain::sessions::entities::session::Session;
 use quecto::domain::sessions::entities::session_identity::SessionIdentity;
 use quecto::infrastructure::config::Config;
@@ -737,7 +737,8 @@ fn seed_stub_session(world: &mut QuectoWorld) {
             pin_recent_turns: 0,
             context_marks: Default::default(),
             model_context_window: None,
-            tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
+            tool_profile_context:
+                quecto::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
         });
         let mut messages = vec![Message::user("seed stub")];
         agent.process(&mut messages).await.expect("seed turn");
@@ -967,7 +968,8 @@ fn spawn_paged_agent(world: &mut QuectoWorld, base: &std::path::Path, session_na
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            quecto::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
     let socket_path = base.join(format!("{session_name}.sock"));
     let _ = std::fs::remove_file(&socket_path);

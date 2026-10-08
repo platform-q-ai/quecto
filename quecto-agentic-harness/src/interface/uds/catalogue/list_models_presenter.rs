@@ -5,7 +5,7 @@
 //! `unavailable` the structured reasons it is not runnable (#2435).
 
 use crate::application::catalogue::dto::{ModelCatalogueListing, ModelListingOutcome};
-use crate::domain::catalogue::AuthIdentity;
+use crate::domain::catalogue::value_objects::catalogue::AuthIdentity;
 
 pub fn render(outcome: &ModelListingOutcome) -> serde_json::Value {
     match outcome {

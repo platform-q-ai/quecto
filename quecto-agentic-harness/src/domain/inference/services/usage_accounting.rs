@@ -1,4 +1,4 @@
-use crate::domain::message::{LlmResponse, model_pricing};
+use crate::domain::conversation::value_objects::message::{LlmResponse, model_pricing};
 
 /// Shared normalized cache-hit ratio for cumulative usage stats.
 ///

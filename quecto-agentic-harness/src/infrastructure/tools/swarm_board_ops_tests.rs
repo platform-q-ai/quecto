@@ -14,7 +14,7 @@ use crate::application::swarm::ports::{
 use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
 use crate::domain::swarm::{BoardOpObservation, MemberExit, ProcessIdentity, Snapshot};
-use crate::domain::tool::ToolResult;
+use crate::domain::tool_policy::value_objects::tool::ToolResult;
 use crate::infrastructure::tools::swarm::SwarmTool;
 use crate::infrastructure::tools::swarm_bridge::SwarmContext;
 

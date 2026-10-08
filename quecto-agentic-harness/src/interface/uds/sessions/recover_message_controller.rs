@@ -10,8 +10,8 @@ use crate::application::sessions::dto::{
     ContentSelector, RecoveredContent, RecoveryError, RecoveryRequest,
 };
 use crate::application::sessions::use_cases::RecoverMessage;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::ids::{MessageId, ToolCallId};
-use crate::domain::message::Message;
 
 /// The `get_message` wire fields, already parsed by the transport.
 #[derive(Debug, Clone, PartialEq, Eq)]

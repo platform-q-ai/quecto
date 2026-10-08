@@ -1,0 +1,715 @@
+use crate::domain::conversation::value_objects::image_tokens::estimate_image_tokens;
+use crate::domain::conversation::value_objects::stored_images::UnloadedImage;
+#[cfg(any(test, feature = "test-support"))]
+use std::collections::HashMap;
+use std::sync::OnceLock;
+#[cfg(any(test, feature = "test-support"))]
+use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(any(test, feature = "test-support"))]
+use std::sync::{LazyLock, Mutex};
+
+// Token estimate for a single message. The estimate is cached because the
+// text/image/tool-call content is conceptually immutable once emitted, and
+// context pruning asks for the same value many times per turn (tokens_before,
+// tokens_after, and during sliding-window enforcement). The cached value is
+// cleared when the message is cloned so that the copy re-computes lazily on
+// its first use; this is safe because the estimate is pure and cheap.
+#[derive(Debug, Default)]
+pub struct TokenCache {
+    tokens: OnceLock<usize>,
+    #[cfg(any(test, feature = "test-support"))]
+    build_count: AtomicUsize,
+}
+
+impl Clone for TokenCache {
+    fn clone(&self) -> Self {
+        Self {
+            tokens: OnceLock::new(),
+            #[cfg(any(test, feature = "test-support"))]
+            build_count: AtomicUsize::new(0),
+        }
+    }
+}
+/// A single message in a conversation.
+#[derive(Debug, Default)]
+pub struct Message {
+    /// Runtime identity for locating this message while in-memory history is pruned.
+    /// It is intentionally regenerated on load so old wire cursors cannot alias
+    /// a new process's message ledger after reload/compaction.
+    id: uuid::Uuid,
+    /// Durable append-time sequence assigned by persistence. Unlike vector
+    /// positions, this survives reload and compaction and never resets when the
+    /// in-memory context window prunes older messages.
+    pub ordinal: Option<u64>,
+    pub role: Role,
+    pub content: String,
+    pub tool_calls: Vec<ToolCall>,
+    /// When role is Tool, this holds the tool_call id being responded to.
+    pub tool_call_id: Option<String>,
+    /// Agent-loop turn number when this message was appended.
+    pub turn: Option<u32>,
+    /// Whether this message is pinned (never dropped by sliding window).
+    pub is_pinned: bool,
+    /// Whether this message is the spill manifest.
+    pub is_manifest: bool,
+    /// Whether this tool result has already been collapsed.
+    pub is_collapsed: bool,
+    /// What opened this message's turn, stamped when it is appended (#2226).
+    pub turn_origin: crate::domain::conversation::services::turn_origin::TurnOrigin,
+    /// A prompt, a cut's stub, or neither (#2403); saved with the message.
+    pub user_kind: crate::domain::conversation::value_objects::user_kind::UserKind,
+    /// Tool name for tool result messages.
+    pub tool_name: Option<String>,
+    /// First chars of tool input (for collapse preview).
+    pub input_preview: Option<String>,
+    /// Spill ID for recall() lookup.
+    pub spill_id: Option<String>,
+    /// Image blocks for tool result messages that return image data (e.g. `read` on images).
+    /// Empty for non-image messages. Not sent to context-pruning; passed directly to providers.
+    /// Saved with the session as sidecar references (#2424), restored on load.
+    pub image_blocks: Vec<crate::domain::tool_policy::value_objects::tool::ImageBlock>,
+    /// Whether this tool result represents an error (propagated to Anthropic `is_error` field).
+    pub is_error: bool,
+    /// Stop reason from the LLM for assistant messages.
+    ///
+    /// Used by the normalization pipeline to filter out incomplete assistant
+    /// messages (e.g. those that ended with an error) before sending to the API.
+    pub stop_reason: Option<StopReason>,
+    /// Inline image blocks attached to a **user** message.
+    ///
+    /// Distinct from `image_blocks` (which is for tool results). When non-empty,
+    /// the provider builds a structured content block array instead of a plain string.
+    ///
+    /// Saved with the session like `image_blocks` (#2424): each image once, as a
+    /// sidecar the record references, so a reloaded session replays it.
+    pub user_image_blocks: Vec<UserImageBlock>,
+    /// Images this message carries whose text could not be (or was not) read
+    /// from the session's sidecars (#2424): saved with it, sent as a marker.
+    pub unloaded_images: Vec<UnloadedImage>,
+    /// Extended thinking blocks from assistant messages.
+    ///
+    /// Anthropic's thinking-capable models (Sonnet 4.5+, Opus 4.5+) emit
+    /// `thinking` and `redacted_thinking` content blocks alongside text and
+    /// tool_use blocks. These must be replayed verbatim (with their cryptographic
+    /// signatures) in multi-turn conversations.
+    ///
+    /// Stored as a `Vec` because a single assistant turn can interleave multiple
+    /// thinking blocks with text/tool_use blocks.
+    pub thinking_blocks: Vec<ThinkingBlock>,
+    /// Cached token estimate for this message. Lazily computed on first use
+    /// and reset when the message is cloned.
+    cached_tokens: TokenCache,
+}
+
+/// A thinking content block from an assistant message.
+///
+/// Anthropic's extended thinking produces two block types:
+/// - **Normal**: Contains the reasoning text and a cryptographic signature.
+///   The signature is required for replaying the block in subsequent turns.
+/// - **Redacted**: Contains only an opaque `data` payload (reasoning hidden).
+///   Must be passed back verbatim as `redacted_thinking` in subsequent turns.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ThinkingBlock {
+    /// Normal thinking block with visible reasoning text and signature.
+    Normal {
+        /// The model's chain-of-thought reasoning text.
+        thinking: String,
+        /// Cryptographic signature for the thinking block.
+        /// Required by Anthropic's API for replaying thinking in multi-turn.
+        signature: String,
+    },
+    /// Redacted thinking block (reasoning hidden by safety filters).
+    Redacted {
+        /// Opaque encrypted payload — must be passed back verbatim.
+        data: String,
+    },
+    /// A reasoning item the Responses API returned with its
+    /// `encrypted_content` (#2162): opaque, never shown, and replayed only
+    /// by that provider and only to the model that produced it.
+    EncryptedReasoning {
+        /// Where it came from: the endpoint, account and model that alone
+        /// can decrypt it. Replayed only to the same origin.
+        origin: String,
+        /// The call the reasoning led to, in the response's output order;
+        /// `None` when it led to the reply's text (or to nothing).
+        leads_to: Option<String>,
+        /// The item as it is sent back: a JSON object of `type`,
+        /// `summary` and `encrypted_content`.
+        item: String,
+    },
+}
+
+impl ThinkingBlock {
+    /// Whether the block is reasoning a person may see (text, or the fact
+    /// that it was redacted); an encrypted item is for the provider only.
+    pub fn is_visible(&self) -> bool {
+        matches!(self, Self::Normal { .. } | Self::Redacted { .. })
+    }
+}
+
+/// An image attached to a user message (#2422): defined, and only made,
+/// in `conversation::user_images`.
+pub use crate::domain::conversation::value_objects::user_images::UserImageBlock;
+
+impl Clone for Message {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id,
+            ordinal: self.ordinal,
+            role: self.role.clone(),
+            content: self.content.clone(),
+            tool_calls: self.tool_calls.clone(),
+            tool_call_id: self.tool_call_id.clone(),
+            turn: self.turn,
+            is_pinned: self.is_pinned,
+            is_manifest: self.is_manifest,
+            is_collapsed: self.is_collapsed,
+            turn_origin: self.turn_origin,
+            user_kind: self.user_kind,
+            tool_name: self.tool_name.clone(),
+            input_preview: self.input_preview.clone(),
+            spill_id: self.spill_id.clone(),
+            image_blocks: self.image_blocks.clone(),
+            is_error: self.is_error,
+            stop_reason: self.stop_reason.clone(),
+            user_image_blocks: self.user_image_blocks.clone(),
+            unloaded_images: self.unloaded_images.clone(),
+            thinking_blocks: self.thinking_blocks.clone(),
+            cached_tokens: TokenCache::default(),
+        }
+    }
+}
+
+impl Message {
+    /// Return the stable identity used to track this message across pruning.
+    pub(crate) fn id(&self) -> uuid::Uuid {
+        self.id
+    }
+
+    pub fn system(content: impl Into<String>) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4(),
+            role: Role::System,
+            content: content.into(),
+            is_pinned: true,
+            ..Default::default()
+        }
+    }
+
+    pub fn user(content: impl Into<String>) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4(),
+            role: Role::User,
+            content: content.into(),
+            ..Default::default()
+        }
+    }
+
+    pub fn assistant(content: impl Into<String>, tool_calls: Vec<ToolCall>) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4(),
+            role: Role::Assistant,
+            content: content.into(),
+            tool_calls,
+            ..Default::default()
+        }
+    }
+
+    pub fn tool(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4(),
+            role: Role::Tool,
+            content: content.into(),
+            tool_call_id: Some(tool_call_id.into()),
+            ..Default::default()
+        }
+    }
+
+    /// Estimate token count from text content, by character class: prose,
+    /// dense digit-bearing runs and non-ASCII (#2212). See
+    /// [`crate::domain::inference::value_objects::token_estimate`].
+    pub fn estimate_tokens(text: &str) -> usize {
+        crate::domain::inference::value_objects::token_estimate::estimate_tokens(text)
+    }
+
+    /// Clear the cached token estimate. Call this whenever the fields that
+    /// contribute to the estimate (`content`, `tool_calls`, `tool_call_id`,
+    /// `image_blocks`, `user_image_blocks`) are mutated in place. The cache is
+    /// automatically cleared on `Clone`, but the fields are public so any
+    /// direct mutation must invalidate the cache to keep estimates correct.
+    pub fn invalidate_token_cache(&mut self) {
+        self.cached_tokens.tokens.take();
+    }
+
+    /// Return the cached token estimate for this message, computing it once
+    /// on first access. This avoids the per-turn O(total_history_chars) scans
+    /// that occur when context pruning repeatedly re-estimates every message.
+    pub fn estimated_tokens(&self) -> usize {
+        *self.cached_tokens.tokens.get_or_init(|| {
+            #[cfg(any(test, feature = "test-support"))]
+            self.cached_tokens
+                .build_count
+                .fetch_add(1, Ordering::Relaxed);
+
+            let text_tokens = Self::estimate_tokens(&self.content);
+            let tool_call_tokens: usize = self
+                .tool_calls
+                .iter()
+                .map(|tc| Self::estimate_tokens(&tc.name) + Self::estimate_tokens(&tc.arguments))
+                .sum();
+            let tool_call_id_tokens = self
+                .tool_call_id
+                .as_deref()
+                .map(Self::estimate_tokens)
+                .unwrap_or(0);
+            let user_image_tokens: usize = self
+                .user_image_blocks
+                .iter()
+                .map(|img| estimate_image_tokens(img.mime(), img.data()))
+                .sum();
+            let image_tokens: usize = self
+                .image_blocks
+                .iter()
+                .map(|img| estimate_image_tokens(img.mime(), img.data()))
+                .sum();
+            text_tokens + tool_call_tokens + tool_call_id_tokens + image_tokens + user_image_tokens
+        })
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn cached_token_build_count_for_tests(&self) -> usize {
+        self.cached_tokens.build_count.load(Ordering::Relaxed)
+    }
+}
+
+/// The role of a message sender.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Role {
+    System,
+    #[default]
+    User,
+    Assistant,
+    Tool,
+}
+
+impl Role {
+    /// Canonical lowercase wire/persistence name for the role. The single
+    /// source of truth for role strings — spill ids, session persistence,
+    /// the UDS protocol, and provider adapters all use this so they can
+    /// never diverge (mirrors `ProviderErrorClass::as_str`).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Role::System => "system",
+            Role::User => "user",
+            Role::Assistant => "assistant",
+            Role::Tool => "tool",
+        }
+    }
+}
+
+/// A tool invocation requested by the LLM.
+#[derive(Debug)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    /// JSON-encoded arguments string.
+    pub arguments: String,
+}
+
+/// What a tool call's argument text holds (#2123). Only a JSON object is a
+/// valid argument set: providers reject anything else when it is replayed in
+/// the conversation, which would fail every later request.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ToolArguments<'a> {
+    /// A JSON object, as the model wrote it.
+    Object(&'a str),
+    /// No arguments at all (a streamed call with no argument chunks).
+    Empty,
+    /// Anything else: text cut off at an output limit, or a non-object value.
+    Invalid(&'a str),
+}
+
+impl ToolCall {
+    /// Classifies the argument text as an object, empty, or invalid. This
+    /// runs for every stored call on every request, so it validates without
+    /// building a value tree. Objects serde_json cannot read (nesting deeper
+    /// than 128, unpaired surrogate escapes) count as invalid.
+    pub fn argument_shape(&self) -> ToolArguments<'_> {
+        // Only JSON whitespace: other Unicode spaces around the object would
+        // pass here yet still be rejected when the text is replayed.
+        let text = self.arguments.trim_matches([' ', '\t', '\n', '\r']);
+        if text.is_empty() {
+            return ToolArguments::Empty;
+        }
+        let object_like = text.starts_with('{') && text.ends_with('}');
+        if object_like && serde_json::from_str::<serde::de::IgnoredAny>(text).is_ok() {
+            ToolArguments::Object(&self.arguments)
+        } else {
+            ToolArguments::Invalid(&self.arguments)
+        }
+    }
+
+    /// The argument text to replay to a provider: the model's object as
+    /// written, and `{}` for anything else, so one bad call never poisons
+    /// the conversation (including sessions saved before this rule).
+    pub fn wire_arguments(&self) -> std::borrow::Cow<'_, str> {
+        match self.argument_shape() {
+            ToolArguments::Object(text) => std::borrow::Cow::Borrowed(text),
+            ToolArguments::Empty | ToolArguments::Invalid(_) => std::borrow::Cow::Borrowed("{}"),
+        }
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+static TOOL_CALL_CLONE_COUNTS_FOR_TESTS: LazyLock<Mutex<HashMap<String, usize>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+// Manual `Clone` (rather than `#[derive]`) solely so test/test-support builds
+// can count clones of registered call ids and prove the agent loop's hot path
+// moves tool calls instead of deep-cloning their argument JSON (#993). In
+// release builds this is semantically identical to the derived impl.
+impl Clone for ToolCall {
+    fn clone(&self) -> Self {
+        #[cfg(any(test, feature = "test-support"))]
+        if let Some(count) = TOOL_CALL_CLONE_COUNTS_FOR_TESTS
+            .lock()
+            .unwrap()
+            .get_mut(&self.id)
+        {
+            *count += 1;
+        }
+
+        Self {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            arguments: self.arguments.clone(),
+        }
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub fn tool_call_clone_count_for_tests(id: &str) -> usize {
+    *TOOL_CALL_CLONE_COUNTS_FOR_TESTS
+        .lock()
+        .unwrap()
+        .get(id)
+        .unwrap_or(&0)
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub fn reset_tool_call_clone_count_for_tests(id: &str) {
+    TOOL_CALL_CLONE_COUNTS_FOR_TESTS
+        .lock()
+        .unwrap()
+        .insert(id.to_string(), 0);
+}
+
+/// A complete response from an LLM provider.
+#[derive(Debug, Clone)]
+pub struct LlmResponse {
+    pub content: Option<String>,
+    pub tool_calls: Vec<ToolCall>,
+    pub usage: Option<UsageInfo>,
+    /// The reason the model stopped generating (e.g. end_turn, max_tokens, tool_use).
+    pub stop_reason: Option<StopReason>,
+    /// Thinking blocks from the response (for multi-turn replay).
+    /// Populated by the Anthropic provider when extended thinking is enabled.
+    pub thinking_blocks: Vec<ThinkingBlock>,
+}
+
+/// Why the model stopped generating output.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StopReason {
+    /// Normal end of response.
+    EndTurn,
+    /// Response was truncated due to max_tokens limit.
+    MaxTokens,
+    /// Model is requesting tool execution.
+    ToolUse,
+    /// Model refused the request.
+    Refusal,
+    /// An error occurred (e.g. safety filter).
+    Error,
+    /// Request was cancelled by the caller before or during generation.
+    Aborted,
+    /// Unknown stop reason (future-proofing).
+    Unknown(String),
+}
+
+impl StopReason {
+    /// Parse a stop reason string into a `StopReason` variant.
+    ///
+    /// Accepts the canonical strings used by Anthropic (`end_turn`,
+    /// `max_tokens`, `tool_use`, etc.) which are also used as the
+    /// serialisation format in `FileSessionStore`. Provider-specific
+    /// aliases (`pause_turn`, `stop_sequence`, `sensitive`) are mapped
+    /// to the appropriate canonical variant.
+    pub fn parse(reason: &str) -> Self {
+        match reason {
+            "end_turn" => Self::EndTurn,
+            "max_tokens" | "model_context_window_exceeded" => Self::MaxTokens,
+            "tool_use" => Self::ToolUse,
+            "refusal" => Self::Refusal,
+            "pause_turn" | "stop_sequence" => Self::EndTurn,
+            "sensitive" | "error" => Self::Error,
+            "aborted" => Self::Aborted,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+
+    /// Map an OpenAI Chat Completions `finish_reason` (#2116). Anything
+    /// else goes through [`Self::parse`] — the same reading a persisted
+    /// stop reason gets on reload — so a value (`error`,
+    /// `model_context_window_exceeded`) means the same live and reloaded;
+    /// a truly unknown one is kept verbatim.
+    pub fn from_openai_finish_reason(reason: &str) -> Self {
+        match reason {
+            "stop" => Self::EndTurn,
+            "length" => Self::MaxTokens,
+            "tool_calls" | "function_call" => Self::ToolUse,
+            "content_filter" => Self::Refusal,
+            other => Self::parse(other),
+        }
+    }
+
+    /// Return the canonical string representation for this stop reason.
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::EndTurn => "end_turn",
+            Self::MaxTokens => "max_tokens",
+            Self::ToolUse => "tool_use",
+            Self::Refusal => "refusal",
+            Self::Error => "error",
+            Self::Aborted => "aborted",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl std::fmt::Display for StopReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Token usage information from an LLM call.
+#[derive(Debug, Clone)]
+pub struct UsageInfo {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    /// Tokens served from prompt cache, normalized across providers.
+    pub cache_read_tokens: Option<u32>,
+    /// Tokens written to prompt cache, normalized across providers.
+    pub cache_write_tokens: Option<u32>,
+    /// True context-window occupancy for this turn, normalized across providers.
+    ///
+    /// This exists because providers report prompt size differently when prompt
+    /// caching is active. Adapters normalize `prompt_tokens` to full-price,
+    /// non-cache billable input and set this to the provider full prompt/input
+    /// occupancy when that differs or when the provider reports an explicit
+    /// prompt/input count. Some providers report cached input as a subset of
+    /// the prompt/input count, while others report cache reads and writes as
+    /// separate token buckets; adapters set true occupancy here so gauges do
+    /// not undercount warm sessions.
+    ///
+    /// Billing (`prompt_tokens` + the discounted cache fields, via
+    /// [`ModelPricing::cost_for`]) intentionally does *not* use this field.
+    pub context_tokens: Option<u32>,
+    /// Per-call cost breakdown, if model pricing is available.
+    pub cost: Option<CostInfo>,
+}
+
+impl UsageInfo {
+    /// Tokens occupying the model context window for this turn.
+    ///
+    /// Adapters set `context_tokens` when the provider reports an explicit
+    /// prompt/input occupancy or when cached prompt tokens are represented
+    /// outside normalized billable `prompt_tokens`; otherwise this falls back to
+    /// `prompt_tokens`.
+    pub fn context_input_tokens(&self) -> u32 {
+        self.context_tokens.unwrap_or(self.prompt_tokens)
+    }
+}
+
+/// Per-call cost breakdown calculated from token usage and model pricing.
+///
+/// Costs are stored internally as **micro-USD** (`u64`, i.e. millionths of a US dollar)
+/// to avoid floating-point accumulation errors. Use the `*_usd()` helpers for display.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CostInfo {
+    /// Input token cost in micro-USD.
+    pub input_cost_micro_usd: u64,
+    /// Output token cost in micro-USD.
+    pub output_cost_micro_usd: u64,
+    /// Cache-read input token cost in micro-USD.
+    pub cache_read_cost_micro_usd: u64,
+    /// Cache-write input token cost in micro-USD.
+    pub cache_write_cost_micro_usd: u64,
+    /// Total cost in micro-USD (sum of all components).
+    pub total_cost_micro_usd: u64,
+}
+
+impl CostInfo {
+    /// Input cost in USD.
+    pub fn input_cost_usd(&self) -> f64 {
+        self.input_cost_micro_usd as f64 / 1_000_000.0
+    }
+    /// Output cost in USD.
+    pub fn output_cost_usd(&self) -> f64 {
+        self.output_cost_micro_usd as f64 / 1_000_000.0
+    }
+    /// Cache-read cost in USD.
+    pub fn cache_read_cost_usd(&self) -> f64 {
+        self.cache_read_cost_micro_usd as f64 / 1_000_000.0
+    }
+    /// Total cost in USD.
+    pub fn total_cost_usd(&self) -> f64 {
+        self.total_cost_micro_usd as f64 / 1_000_000.0
+    }
+}
+
+/// Per-million-token pricing for a model, stored as micro-USD per million tokens.
+/// Using integer rates avoids floating-point representation issues at the pricing layer.
+#[derive(Debug, Clone, Copy)]
+pub struct ModelPricing {
+    /// Input token cost in micro-USD per million tokens.
+    pub input_micro_usd_per_million: u64,
+    /// Output token cost in micro-USD per million tokens.
+    pub output_micro_usd_per_million: u64,
+    /// Cache-read input token cost in micro-USD per million tokens.
+    pub cache_read_micro_usd_per_million: u64,
+    /// Cache-write input token cost in micro-USD per million tokens.
+    pub cache_write_micro_usd_per_million: u64,
+}
+
+impl ModelPricing {
+    /// Calculate cost from usage data using integer micro-USD arithmetic.
+    pub fn cost_for(&self, usage: &UsageInfo) -> CostInfo {
+        // tokens * rate_per_million / 1_000_000 — performed in u64 to stay exact.
+        let calc = |tokens: u32, rate: u64| -> u64 { (tokens as u64 * rate) / 1_000_000 };
+        let input = calc(usage.prompt_tokens, self.input_micro_usd_per_million);
+        let output = calc(usage.completion_tokens, self.output_micro_usd_per_million);
+        let cache_read = calc(
+            usage.cache_read_tokens.unwrap_or(0),
+            self.cache_read_micro_usd_per_million,
+        );
+        let cache_write = calc(
+            usage.cache_write_tokens.unwrap_or(0),
+            self.cache_write_micro_usd_per_million,
+        );
+        CostInfo {
+            input_cost_micro_usd: input,
+            output_cost_micro_usd: output,
+            cache_read_cost_micro_usd: cache_read,
+            cache_write_cost_micro_usd: cache_write,
+            total_cost_micro_usd: input + output + cache_read + cache_write,
+        }
+    }
+}
+
+/// Returns true if `model` starts with `prefix`, case-insensitively, using byte
+/// comparison — no heap allocation.
+pub(crate) fn starts_with_ci(model: &str, prefix: &str) -> bool {
+    let m = model.as_bytes();
+    let p = prefix.as_bytes();
+    if m.len() < p.len() {
+        return false;
+    }
+    m[..p.len()]
+        .iter()
+        .zip(p)
+        .all(|(a, b)| a.eq_ignore_ascii_case(b))
+}
+
+/// Published per-model rates, as `[input, output, cache read, cache write]`
+/// micro-USD per million tokens (integer arithmetic, no f64 drift); cache
+/// write is the 5-minute TTL. A prefix another extends comes after it.
+///
+/// Sources:
+///   Anthropic (Claude API pricing, #2435 review round 2):
+///     Fable 5.1: $10 in / $50 out / $12.50 cache-write / $0.25 cache-read per MTok
+///     Fable 5: $10 in / $50 out / $12.50 cache-write / $1.00 cache-read per MTok
+///     Opus 5, Opus 4.8-4.5: $5 in / $25 out / $6.25 cache-write / $0.50 cache-read per MTok
+///     Sonnet 5 (https://www.anthropic.com/news/claude-sonnet-5) and Sonnet 4.x:
+///       $3 in / $15 out / $3.75 cache-write / $0.30 cache-read per MTok
+///     Haiku 4.5: $1 in / $5 out / $1.25 cache-write / $0.10 cache-read per MTok
+///   OpenAI GPT-5.6/GPT-6 tiers mirror the registry pricing in
+///   `model_registry_builtin_tables.rs` (gpt-6.1-sol caches input at $0.10).
+const MODEL_PRICES: &[(&str, [u64; 4])] = &[
+    (
+        "claude-fable-5-1",
+        [10_000_000, 50_000_000, 250_000, 12_500_000],
+    ),
+    (
+        "claude-fable-5",
+        [10_000_000, 50_000_000, 1_000_000, 12_500_000],
+    ),
+    // Opus 5.5 ($4 / $20, $0.20 cache reads; the write rate is the
+    // standard 1.25x) must not be priced as Opus 5, which it extends.
+    (
+        "claude-opus-5-5",
+        [4_000_000, 20_000_000, 200_000, 5_000_000],
+    ),
+    ("claude-opus-5", [5_000_000, 25_000_000, 500_000, 6_250_000]),
+    ("claude-opus-4", [5_000_000, 25_000_000, 500_000, 6_250_000]),
+    // Sonnet 5.5 standard global rates; cache writes use the 5-minute TTL.
+    // Keep this prefix before Sonnet 5 so dated 5.5 ids use the same rates.
+    (
+        "claude-sonnet-5-5",
+        [2_000_000, 10_000_000, 200_000, 2_500_000],
+    ),
+    // Sonnet 5's flat standard rate (deterministic, no clock-based intro
+    // switch).
+    (
+        "claude-sonnet-5",
+        [3_000_000, 15_000_000, 300_000, 3_750_000],
+    ),
+    (
+        "claude-sonnet-4",
+        [3_000_000, 15_000_000, 300_000, 3_750_000],
+    ),
+    ("claude-haiku-4", [1_000_000, 5_000_000, 100_000, 1_250_000]),
+    (
+        "gpt-6-astra",
+        [10_000_000, 50_000_000, 1_000_000, 12_500_000],
+    ),
+    ("gpt-6-sol", [2_000_000, 10_000_000, 200_000, 2_500_000]),
+    ("gpt-6.1-sol", [2_000_000, 10_000_000, 100_000, 2_500_000]),
+    ("gpt-6-luna", [100_000, 500_000, 10_000, 125_000]),
+    ("gpt-5.6-sol", [5_000_000, 30_000_000, 500_000, 6_250_000]),
+    ("gpt-5.6-terra", [2_500_000, 15_000_000, 250_000, 3_125_000]),
+    ("gpt-5.6-luna", [1_000_000, 6_000_000, 100_000, 1_250_000]),
+];
+
+fn pricing(rates: [u64; 4]) -> ModelPricing {
+    let [input, output, cache_read, cache_write] = rates;
+    ModelPricing {
+        input_micro_usd_per_million: input,
+        output_micro_usd_per_million: output,
+        cache_read_micro_usd_per_million: cache_read,
+        cache_write_micro_usd_per_million: cache_write,
+    }
+}
+
+/// Look up pricing for a known model. Returns `None` for unknown models.
+///
+/// **Allowlist**: only the families in [`MODEL_PRICES`] are recognised, by
+/// case-insensitive prefix (dated variants included). Any other model
+/// string returns `None`, preventing a spoofed model name from silently
+/// matching unintended pricing. The Claude 4 families are no longer built
+/// in (#2435); their rates stay so a model declared in `models.json` is
+/// still costed.
+pub fn model_pricing(model: &str) -> Option<ModelPricing> {
+    MODEL_PRICES
+        .iter()
+        .find(|(prefix, _)| starts_with_ci(model, prefix))
+        .map(|(_, rates)| pricing(*rates))
+}
+
+#[cfg(test)]
+#[path = "message_cov_tests.rs"]
+mod cov_tests;
+
+#[cfg(test)]
+#[path = "message_tests.rs"]
+mod tests;

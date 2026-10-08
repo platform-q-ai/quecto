@@ -9,11 +9,13 @@ use super::*;
 #[given("a message list with an assistant function_call \"call_orphan\" but no matching output")]
 fn given_orphaned_function_call(world: &mut QuectoWorld) {
     let mut assistant_msg = Message::assistant("", vec![]);
-    assistant_msg.tool_calls = vec![quecto::domain::message::ToolCall {
-        id: "call_orphan".to_string(),
-        name: "bash".into(),
-        arguments: "{}".to_string(),
-    }];
+    assistant_msg.tool_calls = vec![
+        quecto::domain::conversation::value_objects::message::ToolCall {
+            id: "call_orphan".to_string(),
+            name: "bash".into(),
+            arguments: "{}".to_string(),
+        },
+    ];
     world.context_messages = Some(vec![Message::user("go"), assistant_msg]);
 }
 
@@ -26,11 +28,13 @@ fn given_orphaned_function_call_output(world: &mut QuectoWorld) {
 #[given("a message list with a matched function_call \"call_valid\" and its output")]
 fn given_matched_pair(world: &mut QuectoWorld) {
     let mut assistant_msg = Message::assistant("", vec![]);
-    assistant_msg.tool_calls = vec![quecto::domain::message::ToolCall {
-        id: "call_valid".to_string(),
-        name: "read".into(),
-        arguments: r#"{"path":"foo.rs"}"#.to_string(),
-    }];
+    assistant_msg.tool_calls = vec![
+        quecto::domain::conversation::value_objects::message::ToolCall {
+            id: "call_valid".to_string(),
+            name: "read".into(),
+            arguments: r#"{"path":"foo.rs"}"#.to_string(),
+        },
+    ];
     let tool_msg = Message::tool("call_valid", "file content");
     world.context_messages = Some(vec![Message::user("read it"), assistant_msg, tool_msg]);
 }
@@ -40,18 +44,22 @@ fn given_matched_pair(world: &mut QuectoWorld) {
 )]
 fn given_mixed_valid_and_orphaned(world: &mut QuectoWorld) {
     let mut good_assistant = Message::assistant("", vec![]);
-    good_assistant.tool_calls = vec![quecto::domain::message::ToolCall {
-        id: "call_good".to_string(),
-        name: "read".into(),
-        arguments: "{}".to_string(),
-    }];
+    good_assistant.tool_calls = vec![
+        quecto::domain::conversation::value_objects::message::ToolCall {
+            id: "call_good".to_string(),
+            name: "read".into(),
+            arguments: "{}".to_string(),
+        },
+    ];
     let good_tool = Message::tool("call_good", "result");
     let mut bad_assistant = Message::assistant("", vec![]);
-    bad_assistant.tool_calls = vec![quecto::domain::message::ToolCall {
-        id: "call_bad".to_string(),
-        name: "bash".into(),
-        arguments: "{}".to_string(),
-    }];
+    bad_assistant.tool_calls = vec![
+        quecto::domain::conversation::value_objects::message::ToolCall {
+            id: "call_bad".to_string(),
+            name: "bash".into(),
+            arguments: "{}".to_string(),
+        },
+    ];
     world.context_messages = Some(vec![
         Message::user("start"),
         good_assistant,

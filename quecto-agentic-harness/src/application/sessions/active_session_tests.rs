@@ -2,7 +2,7 @@ use super::{ActiveSessionState, RecallIdentity, RecoveryResolution};
 use crate::application::sessions::use_cases::recover_message::tests::{
     MemSpillStore, NoopSpillStore, collapsed_message, spill_entry,
 };
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use std::sync::Arc;
 

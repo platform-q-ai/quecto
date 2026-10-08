@@ -5,7 +5,7 @@
 
 use super::*;
 use crate::application::providers::ports::ChatRequest;
-use crate::domain::message::{Message, StopReason, ThinkingBlock};
+use crate::domain::conversation::value_objects::message::{Message, StopReason, ThinkingBlock};
 
 // #437: Anthropic provider API parity
 // ===========================================================================
@@ -180,13 +180,15 @@ fn test_to_claude_code_name_passes_unknown_through() {
 #[test]
 fn test_tool_defs_remapped_in_oauth_mode() {
     use std::borrow::Cow;
-    let tools = vec![crate::domain::tool::ToolDefinition {
-        name: Cow::Borrowed("read"),
-        description: Cow::Borrowed("Read a file"),
-        parameters_schema: Cow::Borrowed(
-            r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#,
-        ),
-    }];
+    let tools = vec![
+        crate::domain::tool_policy::value_objects::tool::ToolDefinition {
+            name: Cow::Borrowed("read"),
+            description: Cow::Borrowed("Read a file"),
+            parameters_schema: Cow::Borrowed(
+                r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#,
+            ),
+        },
+    ];
     let messages = vec![Message::user("Hi")];
     let req = ChatRequest {
         trace: None,
@@ -211,13 +213,15 @@ fn test_tool_defs_remapped_in_oauth_mode() {
 #[test]
 fn test_tool_defs_not_remapped_in_api_key_mode() {
     use std::borrow::Cow;
-    let tools = vec![crate::domain::tool::ToolDefinition {
-        name: Cow::Borrowed("read"),
-        description: Cow::Borrowed("Read a file"),
-        parameters_schema: Cow::Borrowed(
-            r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#,
-        ),
-    }];
+    let tools = vec![
+        crate::domain::tool_policy::value_objects::tool::ToolDefinition {
+            name: Cow::Borrowed("read"),
+            description: Cow::Borrowed("Read a file"),
+            parameters_schema: Cow::Borrowed(
+                r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#,
+            ),
+        },
+    ];
     let messages = vec![Message::user("Hi")];
     let req = ChatRequest {
         trace: None,
@@ -243,7 +247,7 @@ fn test_tool_defs_not_remapped_in_api_key_mode() {
 
 #[test]
 fn test_assistant_message_with_normal_thinking_block() {
-    use crate::domain::message::ThinkingBlock;
+    use crate::domain::conversation::value_objects::message::ThinkingBlock;
     let mut msg = Message::assistant("response text", vec![]);
     msg.thinking_blocks.push(ThinkingBlock::Normal {
         thinking: "Let me reason".to_string(),
@@ -264,7 +268,7 @@ fn test_assistant_message_with_normal_thinking_block() {
 
 #[test]
 fn test_assistant_message_with_redacted_thinking_block() {
-    use crate::domain::message::ThinkingBlock;
+    use crate::domain::conversation::value_objects::message::ThinkingBlock;
     let mut msg = Message::assistant("response text", vec![]);
     msg.thinking_blocks.push(ThinkingBlock::Redacted {
         data: "opaque_data_abc".to_string(),
@@ -281,7 +285,7 @@ fn test_assistant_message_with_redacted_thinking_block() {
 /// #2162: another provider's encrypted reasoning is never sent to Anthropic.
 #[test]
 fn test_encrypted_reasoning_is_not_sent_to_anthropic() {
-    use crate::domain::message::ThinkingBlock;
+    use crate::domain::conversation::value_objects::message::ThinkingBlock;
     let mut msg = Message::assistant("response text", vec![]);
     msg.thinking_blocks.push(ThinkingBlock::EncryptedReasoning {
         origin: "gpt-6-sol".to_string(),
@@ -298,7 +302,7 @@ fn test_encrypted_reasoning_is_not_sent_to_anthropic() {
 
 #[test]
 fn test_thinking_block_empty_signature_is_not_replayed_as_text() {
-    use crate::domain::message::ThinkingBlock;
+    use crate::domain::conversation::value_objects::message::ThinkingBlock;
     let mut msg = Message::assistant("response text", vec![]);
     msg.thinking_blocks.push(ThinkingBlock::Normal {
         thinking: "some reasoning".to_string(),
@@ -412,7 +416,7 @@ async fn test_accept_header_is_sent() {
 }
 
 // --- #437-15,16: Stop reason handling ---
-// (These are already covered by StopReason::parse tests in domain/message.rs
+// (These are already covered by StopReason::parse tests in domain/conversation/value_objects/message.rs
 //  but we verify here for completeness)
 
 #[test]
@@ -439,11 +443,13 @@ fn test_sse_batch_reverse_maps_tool_name_with_tool_defs() {
         data: {}\n\n\
         event: message_stop\n\
         data: {}\n\n";
-    let tool_defs = vec![crate::domain::tool::ToolDefinition {
-        name: Cow::Borrowed("read"),
-        description: Cow::Borrowed("Read a file"),
-        parameters_schema: Cow::Borrowed("{}"),
-    }];
+    let tool_defs = vec![
+        crate::domain::tool_policy::value_objects::tool::ToolDefinition {
+            name: Cow::Borrowed("read"),
+            description: Cow::Borrowed("Read a file"),
+            parameters_schema: Cow::Borrowed("{}"),
+        },
+    ];
     let resp = AnthropicProvider::parse_sse_response_with_tools_public(sse, &tool_defs).unwrap();
     assert_eq!(resp.tool_calls.len(), 1);
     assert_eq!(resp.tool_calls[0].name, "read");
@@ -476,11 +482,13 @@ async fn test_sse_events_reverse_maps_tool_name_in_start_and_end() {
         data: {}\n\n\
         event: message_stop\n\
         data: {}\n\n";
-    let tool_defs = vec![crate::domain::tool::ToolDefinition {
-        name: Cow::Borrowed("bash"),
-        description: Cow::Borrowed("Run command"),
-        parameters_schema: Cow::Borrowed("{}"),
-    }];
+    let tool_defs = vec![
+        crate::domain::tool_policy::value_objects::tool::ToolDefinition {
+            name: Cow::Borrowed("bash"),
+            description: Cow::Borrowed("Run command"),
+            parameters_schema: Cow::Borrowed("{}"),
+        },
+    ];
     let events = AnthropicProvider::parse_sse_events_with_tools_public(sse, &tool_defs).await;
     use crate::domain::inference::value_objects::provider::StreamEvent;
 

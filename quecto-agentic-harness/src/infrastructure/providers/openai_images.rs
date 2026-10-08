@@ -3,14 +3,14 @@
 //! batch's images.
 //!
 //! Which images a model is sent is the application's decision
-//! (`domain::conversation::image_input`): these functions serialize every
+//! (`domain::conversation::services::image_input`): these functions serialize every
 //! image they are given. A message with no images is never touched, so a
 //! text-only conversation goes exactly as before.
 
 use std::collections::HashMap;
 
 use super::provider_images::{DETAIL, data_url, images};
-use crate::domain::message::{Message, Role};
+use crate::domain::conversation::value_objects::message::{Message, Role};
 
 fn text_part(text: &str) -> serde_json::Value {
     serde_json::json!({"type": "text", "text": text})

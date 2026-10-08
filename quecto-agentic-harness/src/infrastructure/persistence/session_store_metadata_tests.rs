@@ -1,6 +1,6 @@
 use super::*;
 use crate::application::sessions::dto::SessionListQuery;
-use crate::domain::message::ToolCall;
+use crate::domain::conversation::value_objects::message::ToolCall;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
 use tempfile::TempDir;
@@ -195,7 +195,9 @@ async fn test_is_collapsed_survives_round_trip() {
 /// a name this build does not know loads as unrecognised (ranked last).
 #[tokio::test]
 async fn turn_origin_survives_a_save_and_an_append() {
-    use crate::domain::turn_origin::{TurnOrigin, instruction, progress_nudge};
+    use crate::domain::conversation::services::turn_origin::{
+        TurnOrigin, instruction, progress_nudge,
+    };
     let tmp = TempDir::new().unwrap();
     let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
     let mut answer = Message::assistant("REPORT", vec![]);
@@ -230,9 +232,9 @@ async fn turn_origin_survives_a_save_and_an_append() {
 /// and a kind this build does not know loads unmarked.
 #[tokio::test]
 async fn user_kind_survives_a_save_and_an_append() {
-    use crate::domain::conversation::UserKind;
-    use crate::domain::conversation::watermark_cut::archive_stub;
-    use crate::domain::turn_origin::{harness_note, prompt};
+    use crate::domain::conversation::services::turn_origin::{harness_note, prompt};
+    use crate::domain::conversation::services::watermark_cut::archive_stub;
+    use crate::domain::conversation::value_objects::user_kind::UserKind;
     let tmp = TempDir::new().unwrap();
     let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
     let mut messages = vec![prompt("brief".into()), archive_stub(3, Some("archive"))];
@@ -463,7 +465,9 @@ async fn test_system_is_pinned_default_survives_round_trip() {
 
 #[tokio::test]
 async fn roundtrip_preserves_roles_toolcalls_stop_reason_and_thinking() {
-    use crate::domain::message::{StopReason, ThinkingBlock, ToolCall};
+    use crate::domain::conversation::value_objects::message::{
+        StopReason, ThinkingBlock, ToolCall,
+    };
     let tmp = TempDir::new().unwrap();
     let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
 
@@ -522,7 +526,7 @@ async fn roundtrip_preserves_roles_toolcalls_stop_reason_and_thinking() {
 
 #[test]
 fn stop_reason_to_str_covers_all_variants() {
-    use crate::domain::message::StopReason;
+    use crate::domain::conversation::value_objects::message::StopReason;
     let cases = [
         (StopReason::EndTurn, "end_turn"),
         (StopReason::MaxTokens, "max_tokens"),

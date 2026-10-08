@@ -7,8 +7,8 @@ use crate::application::tools::ports::ToolExecutor;
 struct Named(&'static str);
 
 impl Tool for Named {
-    fn definition(&self) -> crate::domain::tool::ToolDefinition {
-        crate::domain::tool::ToolDefinition {
+    fn definition(&self) -> crate::domain::tool_policy::value_objects::tool::ToolDefinition {
+        crate::domain::tool_policy::value_objects::tool::ToolDefinition {
             name: self.0.into(),
             description: "named".into(),
             parameters_schema: r#"{"type":"object"}"#.into(),
@@ -53,7 +53,7 @@ impl Tool for Overlapping {
     fn overlaps_safely(&self, _arguments: &str) -> bool {
         true
     }
-    fn definition(&self) -> crate::domain::tool::ToolDefinition {
+    fn definition(&self) -> crate::domain::tool_policy::value_objects::tool::ToolDefinition {
         Named(self.0).definition()
     }
     fn execute(
@@ -96,7 +96,7 @@ impl Tool for Forgetting {
     fn result_collapsed(&self, arguments: &str) {
         self.0.lock().unwrap().push(arguments.to_string());
     }
-    fn definition(&self) -> crate::domain::tool::ToolDefinition {
+    fn definition(&self) -> crate::domain::tool_policy::value_objects::tool::ToolDefinition {
         Named("read").definition()
     }
     fn execute(

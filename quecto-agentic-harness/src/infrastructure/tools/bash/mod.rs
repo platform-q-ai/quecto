@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
-use crate::domain::tool::{ToolDefinition, ToolResult};
+use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::security::sandbox::Sandbox;
 
 /// Default per-command capture cap (10 MiB). Output beyond this is truncated.

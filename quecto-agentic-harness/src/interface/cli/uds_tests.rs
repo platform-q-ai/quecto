@@ -68,7 +68,7 @@ fn test_drain_pending_messages() {
 
 #[test]
 fn test_stats_empty_messages() {
-    use crate::domain::message::Message;
+    use crate::domain::conversation::value_objects::message::Message;
     let msgs: Vec<Message> = vec![];
     let stats = compute_session_stats("cli:test", &msgs);
     assert_eq!(stats.user_messages, 0);
@@ -81,7 +81,7 @@ fn test_stats_empty_messages() {
 
 #[test]
 fn test_stats_counts_user_and_assistant() {
-    use crate::domain::message::Message;
+    use crate::domain::conversation::value_objects::message::Message;
     let msgs = vec![
         Message::user("hello".to_string()),
         Message::assistant("hi".to_string(), vec![]),
@@ -95,7 +95,7 @@ fn test_stats_counts_user_and_assistant() {
 
 #[test]
 fn test_stats_counts_tool_calls_and_results() {
-    use crate::domain::message::{Message, ToolCall};
+    use crate::domain::conversation::value_objects::message::{Message, ToolCall};
     let msgs = vec![
         Message::user("hi".to_string()),
         Message::assistant(
@@ -141,7 +141,7 @@ fn test_session_records_cumulative_token_usage_and_cost() {
 
 #[test]
 fn test_stats_include_session_usage_snapshot() {
-    use crate::domain::message::Message;
+    use crate::domain::conversation::value_objects::message::Message;
     let msgs = vec![
         Message::user("hi".to_string()),
         Message::assistant("reply".to_string(), vec![]),
@@ -426,7 +426,10 @@ fn test_inject_system_prompt_prepends_system_message() {
     let mut messages: Vec<Message> = vec![Message::user("hello")];
     inject_system_prompt(&mut messages, "Be helpful.");
     assert_eq!(messages.len(), 2);
-    assert_eq!(messages[0].role, crate::domain::message::Role::System);
+    assert_eq!(
+        messages[0].role,
+        crate::domain::conversation::value_objects::message::Role::System
+    );
     assert_eq!(messages[0].content, "Be helpful.");
     assert_eq!(messages[1].content, "hello");
 }
@@ -537,7 +540,7 @@ fn test_inject_system_prompt_works_when_manifest_at_position_zero() {
     );
     assert_eq!(
         messages[0].role,
-        crate::domain::message::Role::System,
+        crate::domain::conversation::value_objects::message::Role::System,
         "messages[0] should be the injected system prompt"
     );
     assert_eq!(
@@ -574,7 +577,7 @@ fn test_full_session_lifecycle_with_manifest_round_trip() {
     // Context pruning inserts after all System messages.
     let pos = messages
         .iter()
-        .position(|m| m.role != crate::domain::message::Role::System)
+        .position(|m| m.role != crate::domain::conversation::value_objects::message::Role::System)
         .unwrap_or(messages.len());
     messages.insert(pos, manifest);
     // Now: [System(prompt_v1), System(manifest), User, Assistant]

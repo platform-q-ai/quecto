@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 
-use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
 
 use super::inherited_tool_policy::{
     InheritedToolPolicySnapshot, WORKFLOW_TOOL_NAME, recorded_scope, workflow_tool_identity,

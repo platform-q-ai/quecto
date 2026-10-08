@@ -148,7 +148,8 @@ fn when_agent_builds_request_for_model(world: &mut QuectoWorld) {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            quecto::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
     .with_model_max_tokens(Some(cap));
     let mut messages = vec![Message::user("hi")];
@@ -522,11 +523,14 @@ fn given_mock_chat_response(world: &mut QuectoWorld, content: String) {
 fn when_send_chat_with_tool(world: &mut QuectoWorld, message: String, tool_name: String) {
     let provider = world.provider.as_ref().expect("provider not set");
     let messages = vec![Message::user(message)];
-    let tools = vec![quecto::domain::tool::ToolDefinition {
-        name: tool_name.into(),
-        description: "Execute a command".into(),
-        parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string"}}}"#.into(),
-    }];
+    let tools = vec![
+        quecto::domain::tool_policy::value_objects::tool::ToolDefinition {
+            name: tool_name.into(),
+            description: "Execute a command".into(),
+            parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string"}}}"#
+                .into(),
+        },
+    ];
     let req = quecto::application::providers::ports::ChatRequest {
         trace: None,
         admission: None,
@@ -1561,11 +1565,13 @@ fn when_build_with_tool_choice(world: &mut QuectoWorld) {
             _ => None,
         }
     };
-    let tools = vec![quecto::domain::tool::ToolDefinition {
-        name: "bash".into(),
-        description: "Execute".into(),
-        parameters_schema: "{}".into(),
-    }];
+    let tools = vec![
+        quecto::domain::tool_policy::value_objects::tool::ToolDefinition {
+            name: "bash".into(),
+            description: "Execute".into(),
+            parameters_schema: "{}".into(),
+        },
+    ];
     let req = quecto::application::providers::ports::ChatRequest {
         trace: None,
         admission: None,
@@ -1741,7 +1747,8 @@ fn when_build_request_body_with_thinking(world: &mut QuectoWorld) {
         _ => None,
     };
 
-    let messages = vec![quecto::domain::message::Message::user("Think hard")];
+    let messages =
+        vec![quecto::domain::conversation::value_objects::message::Message::user("Think hard")];
     let req = quecto::application::providers::ports::ChatRequest {
         trace: None,
         admission: None,
@@ -1926,7 +1933,7 @@ fn when_calculate_cost(world: &mut QuectoWorld) {
         .parse()
         .unwrap();
     let model = world.env_overrides.get("_cost_model").unwrap().clone();
-    let usage = quecto::domain::message::UsageInfo {
+    let usage = quecto::domain::conversation::value_objects::message::UsageInfo {
         prompt_tokens: prompt,
         completion_tokens: completion,
         cache_read_tokens: None,
@@ -1934,7 +1941,9 @@ fn when_calculate_cost(world: &mut QuectoWorld) {
         context_tokens: None,
         cost: None,
     };
-    if let Some(pricing) = quecto::domain::message::model_pricing(&model) {
+    if let Some(pricing) =
+        quecto::domain::conversation::value_objects::message::model_pricing(&model)
+    {
         let cost = pricing.cost_for(&usage);
         world
             .env_overrides
@@ -2771,7 +2780,7 @@ fn given_two_orphaned_tool_calls(world: &mut QuectoWorld, id_a: String, id_b: St
 
 #[given(expr = "a message history containing an assistant message with stop_reason {string}")]
 fn given_assistant_message_with_stop_reason(world: &mut QuectoWorld, stop_reason: String) {
-    use quecto::domain::message::StopReason;
+    use quecto::domain::conversation::value_objects::message::StopReason;
     let mut asst = Message::assistant("I will help", vec![]);
     asst.stop_reason = if stop_reason.is_empty() {
         None
@@ -2968,7 +2977,7 @@ fn given_user_message_text_only(world: &mut QuectoWorld, text: String) {
 
 #[given(expr = "a user message with text {string} and one image block of type {string}")]
 fn given_user_message_with_one_image(world: &mut QuectoWorld, text: String, mime: String) {
-    use quecto::domain::message::UserImageBlock;
+    use quecto::domain::conversation::value_objects::message::UserImageBlock;
     let mut m = Message::user(text);
     m.user_image_blocks = vec![UserImageBlock::unchecked_for_tests(
         quecto_image::ImageMime::parse_exact(&mime).expect("an admitted type"),
@@ -2979,7 +2988,7 @@ fn given_user_message_with_one_image(world: &mut QuectoWorld, text: String, mime
 
 #[given(expr = "a user message with text {string} and two image blocks of type {string}")]
 fn given_user_message_with_two_images(world: &mut QuectoWorld, text: String, mime: String) {
-    use quecto::domain::message::UserImageBlock;
+    use quecto::domain::conversation::value_objects::message::UserImageBlock;
     let mut m = Message::user(text);
     m.user_image_blocks = vec![
         UserImageBlock::unchecked_for_tests(
@@ -3289,7 +3298,7 @@ fn then_stream_has_error_containing(world: &mut QuectoWorld, expected: String) {
 
 #[given(expr = "a stop reason string {string}")]
 fn given_stop_reason_string(world: &mut QuectoWorld, reason: String) {
-    use quecto::domain::message::StopReason;
+    use quecto::domain::conversation::value_objects::message::StopReason;
     world.parsed_stop_reason = Some(StopReason::parse(&reason));
 }
 
@@ -3304,7 +3313,7 @@ fn when_parse_stop_reason(world: &mut QuectoWorld) {
 
 #[then(expr = "the stop reason should be {word}")]
 fn then_stop_reason_variant(world: &mut QuectoWorld, expected_variant: String) {
-    use quecto::domain::message::StopReason;
+    use quecto::domain::conversation::value_objects::message::StopReason;
     let sr = world
         .parsed_stop_reason
         .as_ref()
@@ -3331,7 +3340,7 @@ fn then_stop_reason_variant(world: &mut QuectoWorld, expected_variant: String) {
 
 #[given("a message list with an aborted assistant turn followed by a new user message")]
 fn given_aborted_message_list(world: &mut QuectoWorld) {
-    use quecto::domain::message::StopReason;
+    use quecto::domain::conversation::value_objects::message::StopReason;
     let mut aborted = Message::assistant("partial response", vec![]);
     aborted.stop_reason = Some(StopReason::Aborted);
     let follow_up = Message::user("please continue");
@@ -3460,7 +3469,8 @@ fn when_build_request_body_with_effort(world: &mut QuectoWorld) {
             _ => panic!("unknown effort level: {}", l),
         });
 
-    let messages = vec![quecto::domain::message::Message::user("test")];
+    let messages =
+        vec![quecto::domain::conversation::value_objects::message::Message::user("test")];
     let req = quecto::application::providers::ports::ChatRequest {
         trace: None,
         admission: None,
@@ -3560,11 +3570,13 @@ fn when_parse_sse_with_oauth_remap(world: &mut QuectoWorld) {
         .get("_sse438_registry_name")
         .expect("no registry name")
         .clone();
-    let tool_defs = vec![quecto::domain::tool::ToolDefinition {
-        name: registry_name.into(),
-        description: "test tool".into(),
-        parameters_schema: "{}".into(),
-    }];
+    let tool_defs = vec![
+        quecto::domain::tool_policy::value_objects::tool::ToolDefinition {
+            name: registry_name.into(),
+            description: "test tool".into(),
+            parameters_schema: "{}".into(),
+        },
+    ];
     let response =
         quecto::infrastructure::providers::anthropic::AnthropicProvider::parse_sse_response_with_tools_public(&sse, &tool_defs)
             .expect("SSE parse should succeed");
@@ -3612,11 +3624,13 @@ async fn when_parse_sse_events_with_oauth_remap(world: &mut QuectoWorld) {
         .get("_sse438_registry_name")
         .expect("no registry name")
         .clone();
-    let tool_defs = vec![quecto::domain::tool::ToolDefinition {
-        name: registry_name.into(),
-        description: "test tool".into(),
-        parameters_schema: "{}".into(),
-    }];
+    let tool_defs = vec![
+        quecto::domain::tool_policy::value_objects::tool::ToolDefinition {
+            name: registry_name.into(),
+            description: "test tool".into(),
+            parameters_schema: "{}".into(),
+        },
+    ];
     world.stream_events =
         quecto::infrastructure::providers::anthropic::AnthropicProvider::parse_sse_events_with_tools_public(&sse, &tool_defs).await;
 }
@@ -3924,7 +3938,7 @@ fn parity_assistant_content(world: &QuectoWorld) -> Vec<serde_json::Value> {
 
 #[given(expr = "an assistant message with a normal thinking block {string} and signature {string}")]
 fn given_asst_normal_thinking(world: &mut QuectoWorld, thinking: String, signature: String) {
-    use quecto::domain::message::ThinkingBlock;
+    use quecto::domain::conversation::value_objects::message::ThinkingBlock;
     let mut asst = Message::assistant("response text", vec![]);
     asst.thinking_blocks.push(ThinkingBlock::Normal {
         thinking,
@@ -3935,7 +3949,7 @@ fn given_asst_normal_thinking(world: &mut QuectoWorld, thinking: String, signatu
 
 #[given(expr = "an assistant message with a redacted thinking block with data {string}")]
 fn given_asst_redacted_thinking(world: &mut QuectoWorld, data: String) {
-    use quecto::domain::message::ThinkingBlock;
+    use quecto::domain::conversation::value_objects::message::ThinkingBlock;
     let mut asst = Message::assistant("response text", vec![]);
     asst.thinking_blocks.push(ThinkingBlock::Redacted { data });
     world.context_messages = Some(vec![Message::user("Hi"), asst]);
@@ -4039,7 +4053,7 @@ fn when_parse_sse_events_parity(world: &mut QuectoWorld) {
 
 #[then(expr = "the accumulated thinking block should have signature {string}")]
 fn then_accumulated_signature(world: &mut QuectoWorld, expected: String) {
-    use quecto::domain::message::ThinkingBlock;
+    use quecto::domain::conversation::value_objects::message::ThinkingBlock;
     let resp = world
         .streaming_response
         .as_ref()

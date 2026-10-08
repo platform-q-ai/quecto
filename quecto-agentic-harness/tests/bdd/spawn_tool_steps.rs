@@ -1,5 +1,5 @@
 use super::*;
-use quecto::domain::tool_descriptor::ProfileAvailabilityScope;
+use quecto::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
 use quecto::infrastructure::test_support::executable::write_executable;
 use quecto::infrastructure::tools::agent_cmd::AgentCmdTool;
 

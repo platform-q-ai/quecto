@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::infrastructure::tools::subagent_registry::{SubagentEntry, SubagentStatus};
 use crate::interface::cli::protocol::SessionState;
 use crate::interface::cli::uds_cancel::CancelSlot;

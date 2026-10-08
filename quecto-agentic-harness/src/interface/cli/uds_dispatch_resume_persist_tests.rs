@@ -8,6 +8,7 @@ use crate::application::context_pruning::build_manifest_text;
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::application::sessions::ports::SessionStore;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
+use crate::domain::tool_policy::value_objects::tool::ToolProfileContext;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
@@ -15,11 +16,11 @@ fn id(key: impl Into<String>) -> SessionIdentity {
     SessionIdentity::from_persisted_key(key)
 }
 use crate::application::tools::ports::Tool;
+use crate::domain::conversation::value_objects::message::{LlmResponse, Message, Role, ToolCall};
 use crate::domain::error::DomainError;
 use crate::domain::ids::AgentUuid;
-use crate::domain::message::{LlmResponse, Message, Role, ToolCall};
 use crate::domain::sessions::entities::session::{Session, SubagentLiveness};
-use crate::domain::tool::{ToolDefinition, ToolResult};
+use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
 use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds::{inject_system_prompt, remove_injected_system_prompt};
@@ -55,7 +56,7 @@ async fn prompt_persists_current_subagent_roster_before_assistant_reply() {
     fx.set_subagent_registry(registry);
     {
         let mut ctx = fx.ctx();
-        let mut prompt = crate::domain::message::Message::user("run after spawn");
+        let mut prompt = Message::user("run after spawn");
         super::persist_user_prompt_before_run(&mut ctx, &mut prompt)
             .await
             .unwrap();
@@ -80,7 +81,7 @@ async fn prompt_persists_user_message_before_assistant_reply() {
     let mut fx = Fixture::new();
     {
         let mut ctx = fx.ctx();
-        let mut prompt = crate::domain::message::Message::user("first only");
+        let mut prompt = Message::user("first only");
         super::persist_user_prompt_before_run(&mut ctx, &mut prompt)
             .await
             .unwrap();
@@ -89,7 +90,7 @@ async fn prompt_persists_user_message_before_assistant_reply() {
 
     let loaded = fx.store.load(&id("cli:test")).await.unwrap().unwrap();
     assert_eq!(loaded.messages.len(), 1);
-    assert_eq!(loaded.messages[0].role, crate::domain::message::Role::User);
+    assert_eq!(loaded.messages[0].role, Role::User);
     assert_eq!(loaded.messages[0].content, "first only");
 
     fx.store
@@ -115,7 +116,7 @@ async fn prompt_persists_user_message_before_assistant_reply() {
 #[tokio::test]
 async fn dispatch_unknown_history_cursor_is_rejected() {
     let mut fx = Fixture::new();
-    fx.messages = vec![crate::domain::message::Message::user("newest")];
+    fx.messages = vec![Message::user("newest")];
     assert!(
         !dispatch_command(
             AgentCommand::GetMessages {
@@ -145,10 +146,7 @@ async fn dispatch_agent_targeted_tail_without_registry_emits_error() {
 #[tokio::test]
 async fn refresh_conversation_snapshot_clones_current_messages() {
     let mut fx = Fixture::new();
-    fx.messages = vec![
-        crate::domain::message::Message::user("hello"),
-        crate::domain::message::Message::assistant("hi", vec![]),
-    ];
+    fx.messages = vec![Message::user("hello"), Message::assistant("hi", vec![])];
     let ctx = fx.ctx();
     let live_len = |ctx: &crate::interface::cli::uds::DispatchCtx<'_>| {
         let session = ctx.sessions.active_session.clone();
@@ -567,7 +565,7 @@ async fn multi_turn_jsonl_start_index_chain_contiguous_with_tools_and_manifest()
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context: ToolProfileContext::Parent,
     }));
 
     // Durable index 0: non-stripped spill manifest (survives inject/strip).

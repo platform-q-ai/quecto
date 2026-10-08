@@ -127,7 +127,12 @@ fn user_override_still_wins_over_refreshed_discovered_data_at_the_interface() {
         let resolved = report.resolved.expect("an updating refresh must republish");
         let entry = resolved
             .snapshot
-            .find(&crate::domain::catalogue::ModelRef::parse_qualified("openrouter/alpha").unwrap())
+            .find(
+                &crate::domain::catalogue::value_objects::catalogue::ModelRef::parse_qualified(
+                    "openrouter/alpha",
+                )
+                .unwrap(),
+            )
             .expect("refreshed model must be published");
         assert_eq!(
             entry.model.display_name.as_deref(),

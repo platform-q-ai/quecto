@@ -11,9 +11,9 @@ use super::attempt_profile::{Profile, Vendor};
 use super::sse_common::{SseHandler, SseLineOutcome};
 use crate::application::ports::{AttemptAdmission, AttemptPermit};
 use crate::domain::admission::value_objects::inference_admission::{Feedback, ThrottleFeedback};
+use crate::domain::conversation::value_objects::message::LlmResponse;
 use crate::domain::error::DomainError;
 use crate::domain::inference::value_objects::provider::{CancelFlag, StreamEvent};
-use crate::domain::message::LlmResponse;
 
 #[path = "attempt_events.rs"]
 mod attempt_events;
@@ -421,7 +421,7 @@ async fn forward(
             if let StreamEvent::Done(response) = &event {
                 let mut state = receipt.0.lock().unwrap();
                 state.diagnostics.stop_reason = response.stop_reason.as_ref().map(|reason| {
-                    use crate::domain::message::StopReason;
+                    use crate::domain::conversation::value_objects::message::StopReason;
                     match reason {
                         StopReason::EndTurn => TerminalStopReason::EndTurn,
                         StopReason::MaxTokens => TerminalStopReason::MaxTokens,
@@ -436,7 +436,7 @@ async fn forward(
                     response.content.as_ref().is_some_and(|s| !s.is_empty());
                 state.diagnostics.generated_tool_call |= !response.tool_calls.is_empty();
                 state.diagnostics.generated_thinking |=
-                    crate::domain::visible_thinking::has_visible_thinking(
+                    crate::domain::conversation::services::visible_thinking::has_visible_thinking(
                         &response.thinking_blocks,
                     );
             }

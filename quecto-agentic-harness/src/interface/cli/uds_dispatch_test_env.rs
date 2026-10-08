@@ -104,7 +104,8 @@ pub(super) fn make_dispatch_test_agent(
             pin_recent_turns: 2,
             context_marks: Default::default(),
             model_context_window: None,
-            tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+            tool_profile_context:
+                crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
         },
     )
 }
@@ -119,7 +120,7 @@ pub(super) struct DispatchTestEnv {
     /// a swapped agent adopts it (`set_agent`).
     latch: std::sync::Arc<crate::application::durable_prefix::DurablePrefixLatch>,
     pub(super) agent: crate::application::agent_loop::AgentLoopImpl,
-    pub(super) messages: Vec<crate::domain::message::Message>,
+    pub(super) messages: Vec<crate::domain::conversation::value_objects::message::Message>,
     pub(super) session: AgentSession,
     pub(super) session_key: String,
     /// The file store of `tmp`, shared with `sessions` so the context's

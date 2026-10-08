@@ -48,9 +48,11 @@ fn missing_binding_warning_is_typed_visible_and_absent_when_all_bound() {
         slim_state_projection(&state)["admissionWarnings"],
         serde_json::json!([])
     );
-    state.admission_warnings = vec![crate::domain::state_snapshot::AdmissionBindingWarning::new(
-        "openai-api",
-    )];
+    state.admission_warnings = vec![
+        crate::domain::sessions::value_objects::state_snapshot::AdmissionBindingWarning::new(
+            "openai-api",
+        ),
+    ];
     let data = slim_state_projection(&state);
     assert_eq!(data["admissionWarnings"][0]["slot"], "openai-api");
     assert_eq!(
@@ -298,7 +300,7 @@ fn failure_circuit_is_visible_in_slim_supervision_state() {
 /// idle state see the shape they know.
 #[test]
 fn the_model_turn_in_flight_is_projected_only_while_present() {
-    use crate::domain::state_snapshot::{
+    use crate::domain::sessions::value_objects::state_snapshot::{
         AttemptProgressSnapshot, ModelTurnSnapshot, StateSnapshot,
     };
     let mut state = state_with_execution(3, "active");

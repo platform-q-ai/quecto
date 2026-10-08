@@ -11,7 +11,9 @@
 //! becomes it. The baseline holds digests only, never the items or the
 //! session key: what a request records is counts, indices, a kind and token
 //! estimates.
-use crate::domain::conversation::image_tokens::{UNREADABLE_IMAGE_TOKENS, estimate_image_tokens};
+use crate::domain::conversation::value_objects::image_tokens::{
+    UNREADABLE_IMAGE_TOKENS, estimate_image_tokens,
+};
 use crate::domain::inference::events::request_observation::{
     InputBaseline, InputItemKind, InputPrefix, InputPrefixParts, RequestTrace,
 };

@@ -179,7 +179,7 @@ fn a_routed_api_key_provider_does_not_credit_a_keyless_sibling() {
 fn snapshot_store_for_reuses_store_per_base_dir() {
     let tmp = tempfile::tempdir().unwrap();
     let first = snapshot_store_for(tmp.path());
-    first.publish(crate::domain::catalogue::CatalogueSnapshot::empty(41));
+    first.publish(crate::domain::catalogue::value_objects::catalogue::CatalogueSnapshot::empty(41));
 
     let second = snapshot_store_for(tmp.path());
 

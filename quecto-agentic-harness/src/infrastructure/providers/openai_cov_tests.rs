@@ -6,8 +6,8 @@
 //! use `RequestBuilder::build()` to inspect headers without any network I/O.
 
 use super::*;
-use crate::domain::message::Message;
-use crate::domain::tool::ToolDefinition;
+use crate::domain::conversation::value_objects::message::Message;
+use crate::domain::tool_policy::value_objects::tool::ToolDefinition;
 
 fn jwt_with_account(account_id: &str) -> String {
     use base64::Engine;

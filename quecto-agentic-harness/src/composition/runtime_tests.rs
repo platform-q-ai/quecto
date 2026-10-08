@@ -4,7 +4,7 @@
 //! published (#1847), driven with on-disk models.json fixtures (no network).
 
 use super::*;
-use crate::domain::catalogue::UnavailableReason;
+use crate::domain::catalogue::value_objects::catalogue::UnavailableReason;
 
 fn write_models_json(dir: &Path, body: &str) {
     std::fs::write(dir.join("models.json"), body).unwrap();

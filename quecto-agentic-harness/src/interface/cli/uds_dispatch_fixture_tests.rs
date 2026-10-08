@@ -4,7 +4,7 @@
 //! active-session state, and offers the save shims the dispatch tests call.
 use super::cov_tests::make_agent;
 use crate::application::agent_loop::AgentLoopImpl;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::interface::cli::uds::DispatchCtx;
 use crate::interface::cli::uds_cancel::{CancelHandle, CancelSlot};

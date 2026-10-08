@@ -7,7 +7,7 @@
 
 use quecto::application::extensions::ports::Extension;
 use quecto::application::tools::ports::Tool;
-use quecto::domain::tool::{ToolDefinition, ToolResult};
+use quecto::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use quecto::infrastructure::extensions::native::NativeExtension;
 use std::borrow::Cow;
 use std::future::Future;

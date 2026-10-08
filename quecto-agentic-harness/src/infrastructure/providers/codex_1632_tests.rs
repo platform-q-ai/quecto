@@ -9,7 +9,10 @@ data: {"type":"response.completed","response":{"status":"completed"}}
 "#;
     let resp = CodexProvider::parse_sse_response(sse).unwrap();
     match &resp.thinking_blocks[0] {
-        crate::domain::message::ThinkingBlock::Normal { thinking, .. } => assert_eq!(
+        crate::domain::conversation::value_objects::message::ThinkingBlock::Normal {
+            thinking,
+            ..
+        } => assert_eq!(
             thinking,
             "Inspecting loop light activation logic\n\nPlanning incremental loop light enhancements\n\nProposing implementing loop IN/OUT lights"
         ),
@@ -25,7 +28,10 @@ data: {"type":"response.completed","response":{"status":"completed"}}
 "#;
     let resp = CodexProvider::parse_sse_response(sse).unwrap();
     match &resp.thinking_blocks[0] {
-        crate::domain::message::ThinkingBlock::Normal { thinking, .. } => {
+        crate::domain::conversation::value_objects::message::ThinkingBlock::Normal {
+            thinking,
+            ..
+        } => {
             assert_eq!(thinking, "Reviewing OpenAI streaming parser");
         }
         other => panic!("unexpected thinking block: {other:?}"),

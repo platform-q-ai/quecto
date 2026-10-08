@@ -12,8 +12,8 @@ use quecto::application::provider_runtime::{
     ComposeProviderRuntimeUseCase, CompositionPorts, ProviderRuntimeFactory, RuntimeSnapshotStore,
 };
 use quecto::application::providers::ports::{ChatRequest, LlmProvider};
-use quecto::domain::catalogue::{CatalogueEntry, SourceLayer};
-use quecto::domain::message::LlmResponse;
+use quecto::domain::catalogue::value_objects::catalogue::{CatalogueEntry, SourceLayer};
+use quecto::domain::conversation::value_objects::message::LlmResponse;
 
 #[derive(Debug)]
 struct Provider;

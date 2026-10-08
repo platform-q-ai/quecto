@@ -1,7 +1,9 @@
 use super::fixture_tests::{Fixture, latch_durable_prefix_dirty, persist_current_session};
 use super::*;
 use crate::application::sessions::ports::SessionStore;
-use crate::domain::{message::Message, sessions::entities::session::Session};
+use crate::domain::{
+    conversation::value_objects::message::Message, sessions::entities::session::Session,
+};
 
 /// Unit test of the save transaction's CONSUMER branch only: the dirty
 /// flag is hand-set here, so this cannot detect a deleted producer. The
@@ -60,8 +62,8 @@ async fn persist_replays_full_history_when_prefix_flagged_dirty() {
 
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
+use crate::domain::conversation::value_objects::message::LlmResponse;
 use crate::domain::error::DomainError;
-use crate::domain::message::LlmResponse;
 use crate::interface::cli::uds_cancel::fire_cancel;
 use std::future::Future;
 use std::pin::Pin;
@@ -198,7 +200,8 @@ fn budgeted_agent(
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
 }
 
@@ -226,7 +229,8 @@ fn stub_demotable_history(big_chars: usize) -> Vec<Message> {
 /// spilled brief over a 300-token budget, which every watermark cut keeps,
 /// and two small replies a cut would save too little by archiving.
 fn ladder_stubbable_history(big_chars: usize) -> Vec<Message> {
-    let mut brief = crate::domain::turn_origin::prompt("z".repeat(big_chars));
+    let mut brief =
+        crate::domain::conversation::services::turn_origin::prompt("z".repeat(big_chars));
     brief.spill_id = Some("turn0:msg:user".into());
     vec![
         brief,
@@ -427,7 +431,8 @@ async fn cancellation_after_physical_drops_preserves_prompt_only() {
     );
     assert!(
         fx.messages.iter().all(|m| m.content == "hi"
-            || m.user_kind == crate::domain::conversation::UserKind::ArchiveStub
+            || m.user_kind
+                == crate::domain::conversation::value_objects::user_kind::UserKind::ArchiveStub
             || (m.content.starts_with('z') && m.turn.is_some())),
         "only pre-existing survivors, a cut's stub and the interrupted prompt may remain after abort"
     );

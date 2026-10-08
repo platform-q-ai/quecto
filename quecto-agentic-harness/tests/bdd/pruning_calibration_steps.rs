@@ -6,7 +6,7 @@
 //! whose estimate is known, and read which pre-run messages it stubbed.
 
 use super::*;
-use quecto::domain::message::UsageInfo;
+use quecto::domain::conversation::value_objects::message::UsageInfo;
 
 /// `seq` output joined by spaces (the #2212 QA content): about 2000
 /// characters per turn.

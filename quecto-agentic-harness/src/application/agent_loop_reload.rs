@@ -8,7 +8,7 @@ use std::sync::Arc;
 use super::AgentLoopImpl;
 use crate::application::catalogue::ports::ReloadRuntime;
 use crate::application::providers::ports::LlmProvider;
-use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
 
 impl ReloadRuntime for AgentLoopImpl {
     fn swap_provider(&mut self, provider: Arc<dyn LlmProvider>) {

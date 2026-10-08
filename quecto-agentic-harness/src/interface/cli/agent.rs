@@ -499,9 +499,9 @@ pub(crate) fn build_agent_from_config_in(
         context_marks,
         model_context_window: limits.context_window,
         tool_profile_context: if flags.spawned {
-            crate::domain::tool::ToolProfileContext::Child
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Child
         } else {
-            crate::domain::tool::ToolProfileContext::Parent
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent
         },
     })
     .with_max_tool_iterations(

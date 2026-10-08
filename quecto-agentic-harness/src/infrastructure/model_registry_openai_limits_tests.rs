@@ -1,7 +1,7 @@
 //! #2405: every built-in OpenAI/Codex entry declares its published window.
 
 use super::ModelRegistry;
-use crate::domain::catalogue::PromptLimit;
+use crate::domain::catalogue::value_objects::catalogue::PromptLimit;
 
 const OPENAI_PROVIDERS: [&str; 2] = ["openai-api", "openai-oauth"];
 

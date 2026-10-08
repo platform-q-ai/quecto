@@ -48,7 +48,7 @@ pub(super) fn to_claude_code_name(name: &str) -> &str {
 /// (e.g. `"Read"`) back to the registered tool names (e.g. `"read"`).
 pub(super) fn from_claude_code_name(
     name: &str,
-    tool_defs: &[crate::domain::tool::ToolDefinition],
+    tool_defs: &[crate::domain::tool_policy::value_objects::tool::ToolDefinition],
 ) -> String {
     for def in tool_defs {
         if def.name.eq_ignore_ascii_case(name) {
@@ -64,10 +64,10 @@ pub(super) fn from_claude_code_name(
 /// left with nothing to send (an empty final answer, or reasoning only
 /// another provider reads) is `None`, left out of the request.
 pub(super) fn build_assistant_message(
-    m: &crate::domain::message::Message,
+    m: &crate::domain::conversation::value_objects::message::Message,
     is_oauth: bool,
 ) -> Option<serde_json::Value> {
-    use crate::domain::message::ThinkingBlock;
+    use crate::domain::conversation::value_objects::message::ThinkingBlock;
 
     let has_text = !m.content.trim().is_empty();
     // If there are no thinking blocks and no tool calls, use simple format.

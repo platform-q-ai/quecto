@@ -1,7 +1,7 @@
 //! Unit tests for the discovery source cache (epic #1193, slice 4).
 
 use super::*;
-use crate::domain::catalogue::ModelRef;
+use crate::domain::catalogue::value_objects::catalogue::ModelRef;
 use tempfile::TempDir;
 
 #[test]

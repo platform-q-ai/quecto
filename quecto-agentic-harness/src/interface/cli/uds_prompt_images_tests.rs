@@ -5,8 +5,10 @@
 
 use super::dispatch_test_env::DispatchTestEnv as Env;
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
+use crate::domain::conversation::value_objects::message::{
+    LlmResponse, Message, Role, UserImageBlock,
+};
 use crate::domain::error::DomainError;
-use crate::domain::message::{LlmResponse, Message, Role, UserImageBlock};
 use crate::interface::cli::protocol::{AgentCommand, ImagePayload, StreamingBehavior};
 use std::future::Future;
 use std::pin::Pin;
@@ -73,7 +75,7 @@ impl LlmProvider for RecordingProvider {
 fn recording_env() -> (Env, Arc<RecordingProvider>) {
     use crate::application::catalogue::dto::ModelLimits;
     use crate::application::catalogue::ports::ModelRuntime as _;
-    use crate::domain::conversation::image_input::ImageInput;
+    use crate::domain::conversation::services::image_input::ImageInput;
     let provider = Arc::new(RecordingProvider::default());
     let mut env = Env::new(super::dispatch_test_env::make_workflow(), provider.clone());
     let limits = ModelLimits {
@@ -358,7 +360,9 @@ fn history_shows_how_many_images_a_message_carried_never_their_data() {
 /// #2424: an image a resumed session could not load still counts, in its place.
 #[test]
 fn history_counts_an_image_a_session_could_not_load() {
-    use crate::domain::conversation::stored_images::{ImageKind, ImageRef, UnloadedImage};
+    use crate::domain::conversation::value_objects::stored_images::{
+        ImageKind, ImageRef, UnloadedImage,
+    };
     let mut message = with_images();
     message.unloaded_images = vec![UnloadedImage {
         kind: ImageKind::User,

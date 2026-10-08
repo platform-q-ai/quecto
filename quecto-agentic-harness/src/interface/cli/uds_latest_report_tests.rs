@@ -1,7 +1,7 @@
 use super::*;
 use crate::application::sessions::dto::{RawExportReceipt, ReportPreview};
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::ids::MessageId;
-use crate::domain::message::Message;
 use crate::interface::cli::uds::dispatch_session_roster_tests::{
     composed_sessions_for, seeded_read_handles,
 };

@@ -14,7 +14,7 @@ use quecto::application::catalogue::{
     CatalogueSnapshotStore, CatalogueSource, CredentialStatusPort, ResolveCatalogueUseCase,
     ResolvedCatalogue, SourceEntries,
 };
-use quecto::domain::catalogue::{
+use quecto::domain::catalogue::value_objects::catalogue::{
     AuthIdentity, Availability, CatalogueEntry, ModelCapabilities, ModelCost, ModelDescriptor,
     ModelRef, ProviderDescriptor, SourceLayer, TransportKind, UnavailableReason,
 };

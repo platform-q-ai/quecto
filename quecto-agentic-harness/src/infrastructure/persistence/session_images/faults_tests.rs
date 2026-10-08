@@ -9,11 +9,11 @@ use quecto_image::{ImageMime, samples};
 use tempfile::TempDir;
 
 use crate::application::sessions::ports::SessionStore;
-use crate::domain::conversation::stored_images::user_image_types;
-use crate::domain::message::{Message, UserImageBlock};
+use crate::domain::conversation::value_objects::stored_images::user_image_types;
+use crate::domain::conversation::value_objects::message::{Message, UserImageBlock};
 use crate::domain::sessions::entities::session::Session;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
-use crate::domain::tool::ImageBlock;
+use crate::domain::tool_policy::value_objects::tool::ImageBlock;
 use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::infrastructure::persistence::session_store::session_store_records::session_store_bounded::UntrustedRead;

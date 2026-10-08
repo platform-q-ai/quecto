@@ -32,7 +32,7 @@ async fn an_unbound_provider_records_attempts_and_time_to_first_token() {
     .unwrap();
     let trace = Arc::new(RequestTrace::default());
     trace.start();
-    let messages = vec![crate::domain::message::Message::user("hi")];
+    let messages = vec![crate::domain::conversation::value_objects::message::Message::user("hi")];
     let request = crate::application::providers::ports::ChatRequest {
         trace: Some(trace.clone()),
         admission: None,
@@ -96,7 +96,8 @@ async fn an_unbound_providers_chat_and_chat_stream_are_observed() {
         let (_server, provider) = served(&body).await;
         let trace = Arc::new(RequestTrace::default());
         trace.start();
-        let messages = vec![crate::domain::message::Message::user("hi")];
+        let messages =
+            vec![crate::domain::conversation::value_objects::message::Message::user("hi")];
         let request = crate::application::providers::ports::ChatRequest {
             trace: Some(trace.clone()),
             admission: None,
@@ -135,7 +136,7 @@ async fn a_reasoning_delta_is_a_first_token() {
     let (_server, provider) = served(&format!("data: {chunk}\n\ndata: [DONE]\n\n")).await;
     let trace = Arc::new(RequestTrace::default());
     trace.start();
-    let messages = vec![crate::domain::message::Message::user("hi")];
+    let messages = vec![crate::domain::conversation::value_objects::message::Message::user("hi")];
     let request = crate::application::providers::ports::ChatRequest {
         trace: Some(trace.clone()),
         admission: None,
@@ -166,7 +167,7 @@ async fn incremental(
 ) {
     let trace = Arc::new(RequestTrace::default());
     trace.start();
-    let messages = vec![crate::domain::message::Message::user("hi")];
+    let messages = vec![crate::domain::conversation::value_objects::message::Message::user("hi")];
     let request = crate::application::providers::ports::ChatRequest {
         trace: Some(trace.clone()),
         admission: None,
@@ -205,7 +206,8 @@ async fn a_mid_stream_rate_limit_chunk_is_observed_without_a_permit() {
     );
     let before = {
         let (_server, provider) = served(&format!("data: {error}\n\n")).await;
-        let messages = vec![crate::domain::message::Message::user("hi")];
+        let messages =
+            vec![crate::domain::conversation::value_objects::message::Message::user("hi")];
         let request = crate::application::providers::ports::ChatRequest {
             trace: None,
             admission: None,
@@ -413,7 +415,7 @@ async fn a_reply_refused_mid_stream_ends_as_rejected() {
 async fn untraced(
     provider: &Arc<dyn crate::application::providers::ports::LlmProvider>,
 ) -> Vec<crate::domain::inference::value_objects::provider::StreamEvent> {
-    let messages = vec![crate::domain::message::Message::user("hi")];
+    let messages = vec![crate::domain::conversation::value_objects::message::Message::user("hi")];
     let request = crate::application::providers::ports::ChatRequest {
         trace: None,
         admission: None,
@@ -445,7 +447,8 @@ async fn a_whole_reply_that_cannot_be_parsed_ends_as_rejected() {
         let (_server, provider) = served(body).await;
         let trace = Arc::new(RequestTrace::default());
         trace.start();
-        let messages = vec![crate::domain::message::Message::user("hi")];
+        let messages =
+            vec![crate::domain::conversation::value_objects::message::Message::user("hi")];
         let request = crate::application::providers::ports::ChatRequest {
             trace: Some(trace.clone()),
             admission: None,
@@ -511,7 +514,7 @@ async fn a_long_error_body_is_typed_from_the_whole_body() {
 
     let trace = Arc::new(RequestTrace::default());
     trace.start();
-    let messages = vec![crate::domain::message::Message::user("hi")];
+    let messages = vec![crate::domain::conversation::value_objects::message::Message::user("hi")];
     let request = crate::application::providers::ports::ChatRequest {
         trace: Some(trace.clone()),
         admission: None,

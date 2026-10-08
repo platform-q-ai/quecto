@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::domain::catalogue::ModelRef;
+use crate::domain::catalogue::value_objects::catalogue::ModelRef;
 
 /// One held refusal: the provider's reason and when the hold ends.
 #[derive(Debug, Clone)]

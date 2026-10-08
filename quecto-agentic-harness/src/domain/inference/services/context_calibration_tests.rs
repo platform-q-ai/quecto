@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 
 #[test]
 fn the_identity_scale_leaves_the_heuristic_unchanged() {

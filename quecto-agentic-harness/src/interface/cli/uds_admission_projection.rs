@@ -7,7 +7,7 @@ use crate::domain::admission::value_objects::inference_admission::{
     AdmissionActivity, CooldownState,
 };
 
-pub use crate::domain::state_snapshot::{
+pub use crate::domain::sessions::value_objects::state_snapshot::{
     AdmissionCounters, AdmissionSnapshot, CooldownSnapshot, GroupSnapshot,
 };
 

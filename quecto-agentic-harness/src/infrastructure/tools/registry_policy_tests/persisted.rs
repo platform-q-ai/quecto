@@ -108,8 +108,8 @@ fn persisted_policy_intersects_with_defaults_profile_restrictions_and_runtime() 
     assert!(
         matches!(
             widen.results[0].status,
-            crate::domain::tool::ToolPolicyMutationStatus::Applied
-                | crate::domain::tool::ToolPolicyMutationStatus::AlreadyInState
+            crate::domain::tool_policy::value_objects::tool::ToolPolicyMutationStatus::Applied
+                | crate::domain::tool_policy::value_objects::tool::ToolPolicyMutationStatus::AlreadyInState
         ),
         "persisted preferences must not lock users out of widening them later"
     );
@@ -392,7 +392,9 @@ fn registry_trait_forwarders_cover_tool_policy_and_catalogue_ports() {
     assert!(!catalog.definitions().is_empty());
     assert!(
         !catalog
-            .definitions_for(crate::domain::tool::ToolProfileContext::Parent)
+            .definitions_for(
+                crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent
+            )
             .is_empty()
     );
     assert!(!catalog.descriptors().is_empty());
@@ -407,7 +409,7 @@ fn registry_trait_forwarders_cover_tool_policy_and_catalogue_ports() {
     let applied =
         mutator.apply_tool_policy_mutations(&[patch], ToolPolicyApplyMode::ImmediateIfIdle);
     assert!(!applied.results.is_empty());
-    let replace = crate::domain::tool::ToolPolicyRequest::replace(
+    let replace = crate::domain::tool_policy::value_objects::tool::ToolPolicyRequest::replace(
         vec![ToolPolicyMutation::set_scope(
             "swarm",
             ProfileAvailabilityScope::Both,

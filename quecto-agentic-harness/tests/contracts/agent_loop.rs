@@ -19,9 +19,11 @@ use quecto::application::tools::ports::{
     RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog, ToolExecutor,
 };
 use quecto::domain::audit::AuditEvent;
+use quecto::domain::conversation::value_objects::message::{
+    LlmResponse, Message, Role, StopReason,
+};
 use quecto::domain::error::DomainError;
-use quecto::domain::message::{LlmResponse, Message, Role, StopReason};
-use quecto::domain::tool::{ToolDefinition, ToolResult};
+use quecto::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -99,7 +101,8 @@ fn agent_loop(reply: &str) -> Box<dyn AgentLoop> {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            quecto::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     }))
 }
 
@@ -157,7 +160,8 @@ fn failing_agent_loop(body: &str, sink: Arc<dyn AuditSink>) -> Box<dyn AgentLoop
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            quecto::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     }))
 }
 

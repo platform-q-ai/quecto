@@ -217,7 +217,8 @@ fn every_claude_5_built_in_declares_its_published_limits_and_price() {
                 Some(128_000),
                 "{provider}/{id} output cap"
             );
-            let published = crate::domain::message::model_pricing(id).expect("priced");
+            let published = crate::domain::conversation::value_objects::message::model_pricing(id)
+                .expect("priced");
             assert_eq!(
                 m.cost.input,
                 published.input_micro_usd_per_million as f64 / 1_000_000.0,

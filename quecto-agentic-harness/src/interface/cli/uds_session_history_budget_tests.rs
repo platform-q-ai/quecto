@@ -1,6 +1,6 @@
 use super::super::messages_page_json;
 use super::{HISTORY_MESSAGE_SUMMARY_PREVIEW_BYTES, HISTORY_PAGE_JSON_BUDGET};
-use crate::domain::message::{Message, ToolCall};
+use crate::domain::conversation::value_objects::message::{Message, ToolCall};
 
 fn message_content<'a>(message: &'a serde_json::Value, field: &str) -> &'a str {
     message
@@ -203,7 +203,7 @@ fn get_messages_keeps_small_messages_complete_and_unstubbed() {
 
 #[test]
 fn collapsed_history_summary_preserves_visible_thinking() {
-    use crate::domain::message::{Message, ThinkingBlock};
+    use crate::domain::conversation::value_objects::message::{Message, ThinkingBlock};
     let mut msg = Message::assistant("x".repeat(super::HISTORY_PAGE_JSON_BUDGET), vec![]);
     msg.thinking_blocks.push(ThinkingBlock::Normal {
         thinking: "visible reasoning".into(),
@@ -220,7 +220,7 @@ fn collapsed_history_summary_preserves_visible_thinking() {
 
 #[test]
 fn collapsed_history_summary_bounds_oversized_visible_thinking() {
-    use crate::domain::message::{Message, ThinkingBlock};
+    use crate::domain::conversation::value_objects::message::{Message, ThinkingBlock};
     let huge_reasoning = "visible reasoning ".repeat(super::HISTORY_PAGE_JSON_BUDGET / 4);
     let mut msg = Message::assistant("x".repeat(super::HISTORY_PAGE_JSON_BUDGET), vec![]);
     msg.thinking_blocks.push(ThinkingBlock::Normal {
@@ -257,7 +257,7 @@ fn collapsed_history_summary_bounds_oversized_visible_thinking() {
 
 #[test]
 fn collapsed_history_summary_bounds_many_visible_thinking_blocks() {
-    use crate::domain::message::{Message, ThinkingBlock};
+    use crate::domain::conversation::value_objects::message::{Message, ThinkingBlock};
     let mut msg = Message::assistant("x".repeat(super::HISTORY_PAGE_JSON_BUDGET), vec![]);
     for idx in 0..(super::HISTORY_PAGE_JSON_BUDGET / 64) {
         msg.thinking_blocks.push(ThinkingBlock::Normal {
@@ -332,7 +332,7 @@ fn budget_trimming_reports_more_history_and_moves_the_cursor_to_the_oldest_kept(
 /// full history message nor a summarised one shows it.
 #[test]
 fn history_never_shows_encrypted_reasoning() {
-    use crate::domain::message::ThinkingBlock;
+    use crate::domain::conversation::value_objects::message::ThinkingBlock;
     for body in [
         "short".to_string(),
         "x".repeat(HISTORY_PAGE_JSON_BUDGET * 2),
@@ -360,7 +360,7 @@ fn history_never_shows_encrypted_reasoning() {
 /// `thinking` field at all, full or summarised.
 #[test]
 fn encrypted_only_thinking_adds_no_thinking_field() {
-    use crate::domain::message::ThinkingBlock;
+    use crate::domain::conversation::value_objects::message::ThinkingBlock;
     for body in [
         "short".to_string(),
         "x".repeat(HISTORY_PAGE_JSON_BUDGET * 2),
@@ -381,7 +381,9 @@ fn encrypted_only_thinking_adds_no_thinking_field() {
 /// the report lies on an older page.
 #[test]
 fn messages_carry_their_turn_origin_and_the_page_names_the_report() {
-    use crate::domain::turn_origin::{TurnOrigin, instruction, progress_nudge};
+    use crate::domain::conversation::services::turn_origin::{
+        TurnOrigin, instruction, progress_nudge,
+    };
     let mut answer = Message::assistant("REPORT", vec![]);
     answer.turn_origin = TurnOrigin::Instruction;
     answer.ordinal = Some(2);
@@ -457,8 +459,8 @@ fn an_unmarked_report_names_no_turn_origin() {
 #[test]
 fn messages_carry_their_user_kind() {
     let messages = vec![
-        crate::domain::turn_origin::prompt("the brief".into()),
-        crate::domain::conversation::watermark_cut::archive_stub(7, Some("archive:2")),
+        crate::domain::conversation::services::turn_origin::prompt("the brief".into()),
+        crate::domain::conversation::services::watermark_cut::archive_stub(7, Some("archive:2")),
         Message::user("feedback"),
         Message::assistant("answer", vec![]),
     ];

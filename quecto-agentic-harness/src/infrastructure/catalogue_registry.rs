@@ -15,7 +15,7 @@ use std::sync::{Mutex, OnceLock};
 use crate::application::ports::{
     CatalogueSnapshotStore, CatalogueSource, CredentialStatusPort, SkippedRecord, SourceEntries,
 };
-use crate::domain::catalogue::{
+use crate::domain::catalogue::value_objects::catalogue::{
     AuthIdentity, Availability, CatalogueEntry, ModelCapabilities, ModelCost as DomainModelCost,
     ModelDescriptor, ModelRef, ProviderDescriptor, ProviderId, SourceLayer, TransportKind,
 };
@@ -49,12 +49,13 @@ fn entry_from_record(record: &ModelRecord) -> Result<CatalogueEntry, String> {
                 .map_err(|e| e.to_string())?,
         },
     };
-    let effort_levels = crate::domain::catalogue::EffortVocabulary::strings_for_model(
-        &provider_id,
-        &transport,
-        &record.id,
-        record.reasoning,
-    );
+    let effort_levels =
+        crate::domain::catalogue::value_objects::catalogue::EffortVocabulary::strings_for_model(
+            &provider_id,
+            &transport,
+            &record.id,
+            record.reasoning,
+        );
     Ok(CatalogueEntry {
         provider: ProviderDescriptor {
             id: provider_id,

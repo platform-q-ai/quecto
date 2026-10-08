@@ -30,8 +30,10 @@ use crate::application::sessions::dto::{
     RewindConversationError, RewindRequest, RewoundConversation, SaveTrigger,
 };
 use crate::application::sessions::ports::session_runtime::TurnAccountingReset;
-use crate::domain::conversation_edit::{resolve_rewind_target, truncate_at_user_message};
-use crate::domain::message::{Message, Role};
+use crate::domain::conversation::services::conversation_edit::{
+    resolve_rewind_target, truncate_at_user_message,
+};
+use crate::domain::conversation::value_objects::message::{Message, Role};
 
 pub struct RewindConversation {
     state: ActiveSessionHandle,
@@ -116,7 +118,7 @@ fn remove_spill_references(messages: &mut Vec<Message>) {
             }
             message.is_collapsed = false;
         }
-        crate::domain::conversation::watermark_cut::forget_retention(message);
+        crate::domain::conversation::services::watermark_cut::forget_retention(message);
     }
 }
 

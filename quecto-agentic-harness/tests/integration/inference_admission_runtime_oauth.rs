@@ -84,12 +84,15 @@ fn credential(token: String) -> Credential {
     }
 }
 fn request() -> ChatRequest<'static> {
-    static MESSAGES: std::sync::LazyLock<Vec<quecto::domain::message::Message>> =
-        std::sync::LazyLock::new(|| {
-            vec![quecto::domain::message::Message::system(
+    static MESSAGES: std::sync::LazyLock<
+        Vec<quecto::domain::conversation::value_objects::message::Message>,
+    > = std::sync::LazyLock::new(|| {
+        vec![
+            quecto::domain::conversation::value_objects::message::Message::system(
                 "Runtime OAuth fixture",
-            )]
-        });
+            ),
+        ]
+    });
     ChatRequest {
         trace: None,
         admission: None,

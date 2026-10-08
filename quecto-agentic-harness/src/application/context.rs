@@ -26,10 +26,12 @@
 
 use crate::application::context_pruning;
 use crate::application::sessions::use_cases::{ListRetainedContext, RetainContext};
-use crate::domain::conversation::watermark::Watermark;
+use crate::domain::conversation::services::watermark::Watermark;
 use crate::domain::inference::services::context_calibration::EstimateScale;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
-use crate::domain::{catalogue::ModelWindow, message::Message};
+use crate::domain::{
+    catalogue::value_objects::catalogue::ModelWindow, conversation::value_objects::message::Message,
+};
 use std::sync::{Arc, Mutex};
 
 // #2212: the provider-calibrated gauge and the estimate scale it observes.

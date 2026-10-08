@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
-use crate::domain::catalogue::{
+use crate::domain::catalogue::value_objects::catalogue::{
     Availability, AvailabilityStatus, CatalogueEntry, CatalogueSnapshot, ModelRef, RejectedEntry,
     SourceLayer, TransportKind, UnavailableReason, resolve_catalogue,
 };

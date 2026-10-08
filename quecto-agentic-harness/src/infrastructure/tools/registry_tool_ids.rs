@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use super::registration::ToolRegistration;
 use super::registry::ToolRegistryImpl;
-use crate::domain::tool_id::{ToolIdResolveError, ToolIdResolver};
+use crate::domain::tool_policy::value_objects::tool_id::{ToolIdResolveError, ToolIdResolver};
 
 impl ToolRegistryImpl {
     pub(super) fn reserve_removed_tool_identity(&mut self, name: &str) {
@@ -15,9 +15,9 @@ impl ToolRegistryImpl {
                     .into_iter()
                     .map(Cow::into_owned),
             ),
-            None => self
-                .denied_policy_ids
-                .extend(crate::domain::tool_id::equivalent_policy_inputs(name)),
+            None => self.denied_policy_ids.extend(
+                crate::domain::tool_policy::value_objects::tool_id::equivalent_policy_inputs(name),
+            ),
         }
     }
 
@@ -55,12 +55,15 @@ impl ToolRegistryImpl {
         &self,
         name: &str,
         metadata: &ToolRegistration,
-    ) -> Option<crate::domain::tool_descriptor::ProfileAvailabilityScope> {
+    ) -> Option<crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope>
+    {
         let identity = metadata.identity_for_name(name);
         // #2446: a configured extension's tool the snapshot does not name
         // is covered by its extension's entry, which records that the parent
         // holds that extension's tools.
-        let extension = crate::domain::tool_policy::configured_extension_key(&identity.stable_id);
+        let extension = crate::domain::tool_policy::services::tool_policy::configured_extension_key(
+            &identity.stable_id,
+        );
         self.inherited_policy_scopes
             .get(identity.stable_id.as_ref())
             .or_else(|| self.inherited_policy_scopes.get(name))
@@ -100,16 +103,17 @@ impl ToolRegistryImpl {
 /// Whether `metadata` may use its stable id: ids in the bundled-native
 /// namespace belong to bundled-native registrations alone.
 fn claims_its_own_namespace(
-    identity: &crate::domain::tool_id::ToolIdentity,
+    identity: &crate::domain::tool_policy::value_objects::tool_id::ToolIdentity,
     metadata: &ToolRegistration,
 ) -> bool {
     let bundled_namespace = format!(
         "{}:{}:",
-        crate::domain::tool_id::TOOL_ID_SCHEME_V1,
-        crate::domain::tool_descriptor::ToolSource::BundledNative.as_str()
+        crate::domain::tool_policy::value_objects::tool_id::TOOL_ID_SCHEME_V1,
+        crate::domain::tool_policy::value_objects::tool_descriptor::ToolSource::BundledNative
+            .as_str()
     );
     match identity.stable_id.starts_with(&bundled_namespace) {
-        true => metadata.source == crate::domain::tool_descriptor::ToolSource::BundledNative,
+        true => metadata.source == crate::domain::tool_policy::value_objects::tool_descriptor::ToolSource::BundledNative,
         false => true,
     }
 }

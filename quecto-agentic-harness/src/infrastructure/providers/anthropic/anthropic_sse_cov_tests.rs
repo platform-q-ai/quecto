@@ -7,8 +7,8 @@
 // channel is drained synchronously.
 
 use super::*;
+use crate::domain::conversation::value_objects::message::{StopReason, ThinkingBlock};
 use crate::domain::inference::value_objects::provider::StreamEvent;
-use crate::domain::message::{StopReason, ThinkingBlock};
 use crate::infrastructure::providers::sse_common::{SseHandler, SseLineOutcome};
 
 fn channel() -> (
@@ -236,11 +236,13 @@ fn remap_tool_name_no_defs_passthrough() {
 #[test]
 fn remap_tool_name_with_defs_maps_and_passes_through() {
     use std::borrow::Cow;
-    let defs = vec![crate::domain::tool::ToolDefinition {
-        name: Cow::Borrowed("read"),
-        description: Cow::Borrowed("read a file"),
-        parameters_schema: Cow::Borrowed("{}"),
-    }];
+    let defs = vec![
+        crate::domain::tool_policy::value_objects::tool::ToolDefinition {
+            name: Cow::Borrowed("read"),
+            description: Cow::Borrowed("read a file"),
+            parameters_schema: Cow::Borrowed("{}"),
+        },
+    ];
     let acc = SseAccumulator::with_tool_defs(defs);
     assert_eq!(acc.remap_tool_name("Read"), "read");
     // Unknown canonical name passes through unchanged (logs debug).
@@ -475,11 +477,13 @@ async fn handler_on_empty_eof_emits_the_empty_stream_error() {
 #[tokio::test]
 async fn handler_with_tool_defs_remaps_name() {
     use std::borrow::Cow;
-    let defs = vec![crate::domain::tool::ToolDefinition {
-        name: Cow::Borrowed("read"),
-        description: Cow::Borrowed("read a file"),
-        parameters_schema: Cow::Borrowed("{}"),
-    }];
+    let defs = vec![
+        crate::domain::tool_policy::value_objects::tool::ToolDefinition {
+            name: Cow::Borrowed("read"),
+            description: Cow::Borrowed("read a file"),
+            parameters_schema: Cow::Borrowed("{}"),
+        },
+    ];
     let (tx, mut rx) = channel();
     let mut handler = AnthropicSseHandler::new(Some(defs));
     let _ = handler
@@ -570,13 +574,15 @@ fn parse_sse_response_empty_max_tokens_stop_preserves_stop_reason() {
     assert!(resp.content.is_none());
     assert_eq!(
         resp.stop_reason,
-        Some(crate::domain::message::StopReason::MaxTokens)
+        Some(crate::domain::conversation::value_objects::message::StopReason::MaxTokens)
     );
 }
 
 #[test]
 fn thinking_and_signature_accumulation_are_capped() {
-    let oversized = "x".repeat(crate::domain::visible_thinking::MAX_VISIBLE_THINKING_BYTES + 1);
+    let oversized = "x".repeat(
+        crate::domain::conversation::services::visible_thinking::MAX_VISIBLE_THINKING_BYTES + 1,
+    );
 
     let mut acc = SseAccumulator::default();
     acc.handle_block_start(&serde_json::json!({"content_block": {"type": "thinking"}}));
@@ -601,7 +607,7 @@ fn thinking_and_signature_accumulation_are_capped() {
 async fn anthropic_live_thinking_uses_aggregate_cap() {
     use crate::domain::inference::value_objects::provider::StreamEvent;
 
-    let cap = crate::domain::visible_thinking::MAX_VISIBLE_THINKING_BYTES;
+    let cap = crate::domain::conversation::services::visible_thinking::MAX_VISIBLE_THINKING_BYTES;
     let (tx, mut rx) = tokio::sync::mpsc::channel(8);
     let mut acc = SseAccumulator::default();
     acc.handle_block_start(&serde_json::json!({"content_block": {"type": "thinking"}}));
@@ -643,7 +649,10 @@ async fn anthropic_live_thinking_uses_aggregate_cap() {
         "live and persist must share one append"
     );
     match &acc.thinking_blocks()[0] {
-        crate::domain::message::ThinkingBlock::Normal { thinking, .. } => {
+        crate::domain::conversation::value_objects::message::ThinkingBlock::Normal {
+            thinking,
+            ..
+        } => {
             assert_eq!(
                 thinking.len(),
                 cap,
@@ -679,7 +688,10 @@ async fn anthropic_live_thinking_persists_once() {
     ));
     acc.handle_block_stop();
     match &acc.thinking_blocks()[0] {
-        crate::domain::message::ThinkingBlock::Normal { thinking, .. } => {
+        crate::domain::conversation::value_objects::message::ThinkingBlock::Normal {
+            thinking,
+            ..
+        } => {
             assert_eq!(thinking, "Let me think");
         }
         other => panic!("expected single persisted thinking block, got {other:?}"),

@@ -18,7 +18,7 @@ use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
 use super::sidecar_store::{ImageSidecarStore, SidecarFuture, SidecarRead};
-use crate::domain::conversation::stored_images::{
+use crate::domain::conversation::value_objects::stored_images::{
     ImageRef, MAX_STORED_IMAGE_TEXT, VerifiedText, is_sha256_hex,
 };
 use crate::domain::error::DomainError;

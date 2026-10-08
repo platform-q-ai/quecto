@@ -5,8 +5,8 @@
 //! message with no images goes exactly as before, so a conversation's cache
 //! prefix never changes.
 use super::*;
-use crate::domain::message::{ToolCall, UserImageBlock};
-use crate::domain::tool::ImageBlock;
+use crate::domain::conversation::value_objects::message::{ToolCall, UserImageBlock};
+use crate::domain::tool_policy::value_objects::tool::ImageBlock;
 
 fn call(id: &str, name: &str) -> Message {
     let mut assistant = Message::assistant("", vec![]);

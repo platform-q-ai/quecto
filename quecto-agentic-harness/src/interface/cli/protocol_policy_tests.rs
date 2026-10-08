@@ -1,5 +1,5 @@
 use super::{AgentCommand, ToolPolicyApplyModeCommand, ToolPolicyOperationCommand};
-use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
 
 #[test]
 fn set_tool_policy_command_deserializes_scope_and_mode() {
@@ -27,11 +27,13 @@ fn set_tool_policy_command_deserializes_scope_and_mode() {
 
 #[test]
 fn tool_policy_apply_mode_wire_uses_camel_case() {
-    let mode = crate::domain::tool::ToolPolicyApplyMode::AtNextTurnBoundary;
+    let mode =
+        crate::domain::tool_policy::value_objects::tool::ToolPolicyApplyMode::AtNextTurnBoundary;
     let value = serde_json::to_value(mode).expect("serialize apply mode");
     assert_eq!(value, serde_json::json!("atNextTurnBoundary"));
 
-    let mode = crate::domain::tool::ToolPolicyApplyMode::ImmediateIfIdle;
+    let mode =
+        crate::domain::tool_policy::value_objects::tool::ToolPolicyApplyMode::ImmediateIfIdle;
     let value = serde_json::to_value(mode).expect("serialize apply mode");
     assert_eq!(value, serde_json::json!("immediateIfIdle"));
 
@@ -40,9 +42,9 @@ fn tool_policy_apply_mode_wire_uses_camel_case() {
             .expect("parse command mode");
     assert_eq!(command_mode, ToolPolicyApplyModeCommand::AtNextTurnBoundary);
 
-    let reconciliation = crate::domain::tool::ToolPolicyReconciliation {
+    let reconciliation = crate::domain::tool_policy::value_objects::tool::ToolPolicyReconciliation {
         correlation_id: None,
-        mode: crate::domain::tool::ToolPolicyApplyMode::AtNextTurnBoundary,
+        mode: crate::domain::tool_policy::value_objects::tool::ToolPolicyApplyMode::AtNextTurnBoundary,
         results: vec![],
     };
     let wire = serde_json::to_value(&reconciliation).expect("serialize reconciliation");

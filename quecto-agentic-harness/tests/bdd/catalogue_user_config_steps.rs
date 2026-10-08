@@ -11,7 +11,9 @@ use super::*;
 use quecto::application::catalogue::ResolvedCatalogue;
 use quecto::composition::catalogue::list_models_wire_for;
 use quecto::composition::catalogue::resolve_catalogue_for;
-use quecto::domain::catalogue::{CatalogueSnapshot, ModelRef, UnavailableReason};
+use quecto::domain::catalogue::value_objects::catalogue::{
+    CatalogueSnapshot, ModelRef, UnavailableReason,
+};
 
 #[derive(Debug, Default)]
 pub struct CatalogueUserConfigState {
@@ -56,7 +58,7 @@ fn ucfg_resolved(world: &QuectoWorld) -> &ResolvedCatalogue {
 fn ucfg_find<'a>(
     resolved: &'a ResolvedCatalogue,
     qualified: &str,
-) -> &'a quecto::domain::catalogue::CatalogueEntry {
+) -> &'a quecto::domain::catalogue::value_objects::catalogue::CatalogueEntry {
     resolved
         .snapshot
         .find(&ModelRef::parse_qualified(qualified).expect("qualified id"))

@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use super::conversation_ledger::{ConversationLedger, LedgerAdvance};
 use super::ports::ContextSpillStore;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
 
 /// Shared, lock-guarded handle on the loop's active session.

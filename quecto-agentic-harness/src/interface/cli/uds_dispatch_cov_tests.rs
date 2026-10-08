@@ -13,9 +13,9 @@ fn id(key: impl Into<String>) -> SessionIdentity {
     SessionIdentity::from_persisted_key(key)
 }
 use crate::application::tools::ports::Tool;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session::{Session, SpillEntry, SpillIndex};
-use crate::domain::tool::{ToolDefinition, ToolResult};
+use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::interface::cli::protocol::{AgentCommand, ToolRegistration};
 use std::sync::Arc;
@@ -151,7 +151,8 @@ pub(super) fn make_agent_with(
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
 }
 
@@ -176,9 +177,9 @@ async fn steer_runs_immediately_when_idle() {
     }
     assert!(fx.session.drain_pending().is_empty(), "idle steer ran");
     assert!(
-        fx.messages
-            .iter()
-            .any(|m| m.role == crate::domain::message::Role::User && m.content == "hello"),
+        fx.messages.iter().any(|m| m.role
+            == crate::domain::conversation::value_objects::message::Role::User
+            && m.content == "hello"),
         "the steered instruction should have been run"
     );
 }

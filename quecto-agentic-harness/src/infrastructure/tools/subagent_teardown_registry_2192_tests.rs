@@ -209,7 +209,8 @@ async fn the_transcript_is_offered_only_when_it_can_be_read() {
         crate::domain::sessions::entities::session_identity::SessionIdentity::named_cli(UUID)
             .unwrap(),
     );
-    session.messages = vec![crate::domain::message::Message::user("the work")];
+    session.messages =
+        vec![crate::domain::conversation::value_objects::message::Message::user("the work")];
     store.save(&session).await.unwrap();
     let clean = || {
         Some(ExitSignal {

@@ -3,7 +3,7 @@
 
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::agent_turn::ports::AgentLoop;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 
 /// Outcome of a deadline-bounded agent run.
 pub(crate) enum DeadlineResult {

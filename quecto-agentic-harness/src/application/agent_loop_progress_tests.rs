@@ -148,7 +148,7 @@ async fn ok_tool_result_is_error_propagates_to_message_and_progress() {
     use crate::application::audit::ports::AuditSink;
     use crate::application::tools::ports::Tool;
     use crate::domain::audit::AuditEvent;
-    use crate::domain::tool::{ToolDefinition, ToolResult};
+    use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
     use std::pin::Pin;
 
     #[derive(Debug)]

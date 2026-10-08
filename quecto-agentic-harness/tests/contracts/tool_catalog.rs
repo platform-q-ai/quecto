@@ -5,7 +5,7 @@
 //! - `tool_count()` matches `definitions().len()` for the default adapter.
 
 use quecto::application::tools::ports::{Tool, ToolCatalog};
-use quecto::domain::tool::{ToolDefinition, ToolResult};
+use quecto::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
 use std::borrow::Cow;
 use std::future::Future;

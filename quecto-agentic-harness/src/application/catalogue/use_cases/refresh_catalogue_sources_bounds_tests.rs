@@ -13,7 +13,7 @@ use super::*;
 use crate::application::catalogue::dto::REGISTRY_FILE_SOURCE;
 use crate::application::catalogue::ports::NoopRedaction;
 use crate::application::catalogue::{CatalogueSource, CredentialStatusPort, SourceEntries};
-use crate::domain::catalogue::SourceLayer;
+use crate::domain::catalogue::value_objects::catalogue::SourceLayer;
 
 /// A fake whose refresh sleeps for a fixed time before reporting an update,
 /// for exercising both sides of the timeout bound.

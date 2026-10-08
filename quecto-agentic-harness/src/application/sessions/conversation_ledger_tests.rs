@@ -1,5 +1,5 @@
 use super::{ConversationLedger, LEDGER_MAX_ENTRIES};
-use crate::domain::message::{Message, ThinkingBlock};
+use crate::domain::conversation::value_objects::message::{Message, ThinkingBlock};
 
 /// #1060 review 1a: the id-addressable ledger keeps a ref resolvable after the
 /// live conversation drops or collapses the referenced message.

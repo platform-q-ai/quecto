@@ -3,7 +3,7 @@
 //! router sends the request to.
 
 use super::*;
-use crate::domain::conversation::image_input::ImageInput;
+use crate::domain::conversation::services::image_input::ImageInput;
 
 /// #2421: what a model takes of a conversation's images, from its entry:
 /// none unless it declares `image`; every image over the Anthropic wire,
@@ -51,9 +51,11 @@ fn a_provider_named_in_another_case_reads_the_same_entry() {
 }
 
 fn routed_over(entries: Vec<CatalogueEntry>, order: Vec<&'static str>) -> Arc<FakeRuntime> {
-    let catalogue =
-        crate::domain::catalogue::resolve_catalogue(1, vec![(SourceLayer::BuiltIn, entries)])
-            .snapshot;
+    let catalogue = crate::domain::catalogue::value_objects::catalogue::resolve_catalogue(
+        1,
+        vec![(SourceLayer::BuiltIn, entries)],
+    )
+    .snapshot;
     Arc::new(FakeRuntime(Some(Arc::new(
         crate::application::provider_runtime::CatalogueRuntimeSnapshot {
             catalogue: Arc::new(catalogue),

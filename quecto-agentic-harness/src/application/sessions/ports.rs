@@ -24,7 +24,10 @@ use crate::domain::sessions::entities::session::{
     Session, SessionSummary, SpillEntries, SpillEntry,
 };
 use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
-use crate::domain::{error::DomainError, message::Message, workflow::WorkflowRunPersisted};
+use crate::domain::{
+    conversation::value_objects::message::Message, error::DomainError,
+    workflow::WorkflowRunPersisted,
+};
 
 pub type SpillIndexList<'a> =
     Pin<Box<dyn Future<Output = Result<SpillEntries, DomainError>> + Send + 'a>>;

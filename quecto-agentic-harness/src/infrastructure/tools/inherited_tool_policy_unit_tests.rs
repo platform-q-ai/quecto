@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use tempfile::TempDir;
 
-use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
 use crate::infrastructure::tools::inherited_tool_policy::{
     InheritedToolPolicySnapshot, load_validate_unlink, write_snapshot,
 };

@@ -1,6 +1,6 @@
 use super::super::sessions::{SessionLoopInputs, build_session_handles};
 use super::*;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 
 #[tokio::test]
 async fn the_composed_loop_exports_under_the_artifacts_directory_of_its_base() {

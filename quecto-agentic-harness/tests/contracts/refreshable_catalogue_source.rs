@@ -7,7 +7,7 @@ use quecto::application::catalogue::dto::RefreshBounds;
 use quecto::application::ports::{
     CatalogueSource, RefreshChange, RefreshContext, RefreshError, RefreshableCatalogueSource,
 };
-use quecto::domain::catalogue::SourceLayer;
+use quecto::domain::catalogue::value_objects::catalogue::SourceLayer;
 use quecto::infrastructure::catalogue_discovery::{
     DiscoveryEndpoint, DiscoverySourceCache, HttpDiscoverySource, UnsupportedRefreshSource,
 };

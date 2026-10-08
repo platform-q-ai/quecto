@@ -12,7 +12,7 @@ use crate::application::catalogue::ports::{
 };
 use crate::application::catalogue::{CatalogueSource, CredentialStatusPort, SourceEntries};
 use crate::application::providers::ports::RouteCheck;
-use crate::domain::catalogue::{
+use crate::domain::catalogue::value_objects::catalogue::{
     AuthIdentity, Availability, CatalogueEntry, ModelCapabilities, ModelCost, ModelDescriptor,
     ModelId, ProviderDescriptor, ProviderId, SourceLayer, TransportKind, UnavailableReason,
 };
@@ -118,7 +118,7 @@ impl crate::application::providers::ports::LlmProvider for SilentProvider {
         Box<
             dyn std::future::Future<
                     Output = Result<
-                        crate::domain::message::LlmResponse,
+                        crate::domain::conversation::value_objects::message::LlmResponse,
                         crate::domain::error::DomainError,
                     >,
                 > + Send
@@ -142,7 +142,7 @@ impl FakeRuntime {
                 order.push(provider);
             }
         }
-        let catalogue = crate::domain::catalogue::resolve_catalogue(
+        let catalogue = crate::domain::catalogue::value_objects::catalogue::resolve_catalogue(
             generation,
             vec![(SourceLayer::BuiltIn, entries)],
         )
@@ -352,7 +352,7 @@ impl crate::application::providers::ports::LlmProvider for OrderedRouter {
         Box<
             dyn std::future::Future<
                     Output = Result<
-                        crate::domain::message::LlmResponse,
+                        crate::domain::conversation::value_objects::message::LlmResponse,
                         crate::domain::error::DomainError,
                     >,
                 > + Send
@@ -450,7 +450,7 @@ fn a_not_runnable_verdict_is_carried_and_the_switch_still_proceeds() {
     let reference = ModelRef::parse_qualified("acme/keyless").unwrap();
     let mut keyless = entry("acme", "keyless", None);
     keyless.model.availability = Availability::unavailable(
-        crate::domain::catalogue::AvailabilityStatus::Available,
+        crate::domain::catalogue::value_objects::catalogue::AvailabilityStatus::Available,
         vec![UnavailableReason::MissingCredential],
     )
     .unwrap();

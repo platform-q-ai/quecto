@@ -1,6 +1,6 @@
 use super::fixture_tests::{Fixture, latch_durable_prefix_dirty, persist_current_session};
 use crate::application::sessions::ports::SessionStore;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::interface::cli::uds_session::{HISTORY_PAGE_SIZE, messages_page_json};
 
 #[tokio::test]

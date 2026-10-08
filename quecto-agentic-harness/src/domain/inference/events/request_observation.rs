@@ -28,7 +28,7 @@ pub struct RequestTrace {
     pub(super) dropping: std::sync::atomic::AtomicBool,
     /// Usage attempts reported before they were cut short (#2249 review):
     /// tokens the provider counted for a reply that never completed.
-    unfinished_usage: Mutex<Vec<crate::domain::message::UsageInfo>>,
+    unfinished_usage: Mutex<Vec<crate::domain::conversation::value_objects::message::UsageInfo>>,
     /// How the request's input relates to its session's previous request
     /// (#2398), as its provider first serialized it.
     input_prefix: Mutex<Option<InputPrefix>>,
@@ -64,14 +64,19 @@ impl RequestTrace {
     }
     /// An attempt was cut short after its provider reported `usage` (#2249
     /// review): those tokens were spent, so they are still counted.
-    pub fn record_unfinished_usage(&self, usage: crate::domain::message::UsageInfo) {
+    pub fn record_unfinished_usage(
+        &self,
+        usage: crate::domain::conversation::value_objects::message::UsageInfo,
+    ) {
         self.unfinished_usage
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .push(usage);
     }
     /// The usage every cut-short attempt of this request reported.
-    pub fn unfinished_usage(&self) -> Vec<crate::domain::message::UsageInfo> {
+    pub fn unfinished_usage(
+        &self,
+    ) -> Vec<crate::domain::conversation::value_objects::message::UsageInfo> {
         self.unfinished_usage
             .lock()
             .unwrap_or_else(|e| e.into_inner())

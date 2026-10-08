@@ -7,8 +7,8 @@
 //! the loop's live `Vec<Message>` only; no session persistence, no store.
 use std::collections::HashSet;
 
-use crate::domain::conversation::UserKind;
-use crate::domain::message::{Message, Role};
+use crate::domain::conversation::value_objects::message::{Message, Role};
+use crate::domain::conversation::value_objects::user_kind::UserKind;
 
 fn prompt_position(messages: &[Message], prompt_id: uuid::Uuid) -> Option<usize> {
     messages

@@ -244,7 +244,7 @@ pub struct ToolPolicyConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolPolicyEntryConfig {
-    pub scope: crate::domain::tool_descriptor::ProfileAvailabilityScope,
+    pub scope: crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

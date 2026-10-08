@@ -6,7 +6,7 @@ use super::run_session_save::TranscriptSave;
 use super::{AgentFlags, AgentOutput, DeadlineResult, run_with_deadline, settle_stopped_run};
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::agent_turn::ports::AgentLoop;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 use crate::interface::cli::uds_session_handles::SessionLoopInputs;
@@ -82,7 +82,7 @@ pub(crate) fn run_agent_session(
     });
 
     let message = flags.message.as_deref().unwrap_or("");
-    let prompt = crate::domain::turn_origin::prompt(message.to_string());
+    let prompt = crate::domain::conversation::services::turn_origin::prompt(message.to_string());
     let run_start = prompt.id();
     messages.push(prompt);
 

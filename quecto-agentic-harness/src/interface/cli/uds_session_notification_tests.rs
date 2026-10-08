@@ -86,8 +86,10 @@ mod passive_subagent_notification_tests {
 /// is progress, and one answered after the task continues the task.
 #[test]
 fn pending_messages_open_turns_of_their_known_origin() {
-    use crate::domain::message::Message;
-    use crate::domain::turn_origin::TurnOrigin::{self, Instruction, ProgressNudge, Unknown};
+    use crate::domain::conversation::services::turn_origin::TurnOrigin::{
+        self, Instruction, ProgressNudge, Unknown,
+    };
+    use crate::domain::conversation::value_objects::message::Message;
     let phase = |origin: TurnOrigin| {
         let mut reply = Message::assistant("reply", vec![]);
         reply.turn_origin = origin;
@@ -131,7 +133,7 @@ fn pending_messages_open_turns_of_their_known_origin() {
 /// note and a swarm wake are the harness's, unmarked.
 #[test]
 fn only_an_instruction_from_a_sender_is_marked_a_prompt() {
-    use crate::domain::conversation::UserKind;
+    use crate::domain::conversation::value_objects::user_kind::UserKind;
     let harness = [
         PendingMessage::subagent_notification("reviewer".into(), 1, "done".into(), true),
         PendingMessage::CoalescedSubagentNotification {

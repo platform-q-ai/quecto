@@ -8,8 +8,8 @@
 
 use super::OpenAiProvider;
 use crate::application::providers::ports::ChatRequest;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::inference::value_objects::provider::EffortLevel;
-use crate::domain::message::Message;
 
 fn request<'a>(
     messages: &'a [Message],

@@ -3,8 +3,10 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::tool_descriptor::{ProfileAvailabilityScope, ToolSource};
-use crate::domain::tool_id::ToolIdentity;
+use crate::domain::tool_policy::value_objects::tool_descriptor::{
+    ProfileAvailabilityScope, ToolSource,
+};
+use crate::domain::tool_policy::value_objects::tool_id::ToolIdentity;
 use crate::infrastructure::tools::registration::ToolRegistration;
 
 const INHERITED_TOOL_POLICY_SNAPSHOT_VERSION: u32 = 1;

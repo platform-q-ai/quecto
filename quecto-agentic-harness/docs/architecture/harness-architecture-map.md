@@ -212,8 +212,8 @@ encodes compact rows (`own`, `session`, `restored`, `config`,
 ## Persistence and session recovery
 
 **Primary code:** session vocabulary in `src/domain/sessions/entities/session.rs`,
-`src/domain/sessions/entities/session_identity.rs`, `src/domain/conversation_view.rs` and
-`src/domain/conversation_edit.rs`; the sessions capability in
+`src/domain/sessions/entities/session_identity.rs`, `src/domain/conversation/services/conversation_view.rs` and
+`src/domain/conversation/services/conversation_edit.rs`; the sessions capability in
 `src/application/sessions/` (`use_cases/`, `ports.rs` + `ports/`, `dto/`,
 `active_session.rs`, `conversation_ledger.rs`, `session_home.rs`); persistence
 adapters in `src/infrastructure/persistence/` and

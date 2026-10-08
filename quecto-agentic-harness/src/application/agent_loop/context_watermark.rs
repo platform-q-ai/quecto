@@ -1,7 +1,7 @@
 //! The watermark context's pass (#2403), the only context mode (#2414): no
 //! earlier message is edited in place: before a request the context either stays
 //! as it is, or, once it reaches the high mark, is cut once down to the low
-//! mark (`domain::conversation::watermark`), the cut messages archived to
+//! mark (`domain::conversation::services::watermark`), the cut messages archived to
 //! session memory under one index entry that `recall` reaches.
 //!
 //! The storm guard's baseline (the messages' size right after the last
@@ -21,13 +21,13 @@ use crate::application::context_pruning;
 use crate::domain::audit::{
     AuditEvent, ContextCutRecord, ContextCutSkippedRecord, CutMarks, CutSkipReason,
 };
-use crate::domain::conversation::watermark::{
+use crate::domain::conversation::services::watermark::{
     CutInput, CutPlan, CutTrigger, NoCut, RequestSize, Watermark, plan_cut,
 };
-use crate::domain::conversation::watermark_cut::{
+use crate::domain::conversation::services::watermark_cut::{
     apply_cut, archive_index, archive_stub, archived, plan_messages, stub_tokens_bound,
 };
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session::SpillEntry;
 use std::sync::Mutex;
 

@@ -1,7 +1,7 @@
 use super::*;
 use crate::application::catalogue::CatalogueSourceError;
 use crate::application::catalogue::dto::{ListedModel, ListingDiagnostic, ModelCatalogueListing};
-use crate::domain::catalogue::{
+use crate::domain::catalogue::value_objects::catalogue::{
     Availability, CatalogueEntry, ModelCapabilities, ModelCost, ModelDescriptor, ModelId, ModelRef,
     ProviderDescriptor, ProviderId, TransportKind,
 };
@@ -131,9 +131,9 @@ fn a_failed_source_renders_no_models_and_the_error() {
 fn renders_why_a_listed_model_cannot_run() {
     let mut refused = entry(true);
     refused.model.availability = Availability::unavailable(
-        crate::domain::catalogue::AvailabilityStatus::Available,
+        crate::domain::catalogue::value_objects::catalogue::AvailabilityStatus::Available,
         vec![
-            crate::domain::catalogue::UnavailableReason::RefusedForAccount(
+            crate::domain::catalogue::value_objects::catalogue::UnavailableReason::RefusedForAccount(
                 "not supported with a ChatGPT account".into(),
             ),
         ],
