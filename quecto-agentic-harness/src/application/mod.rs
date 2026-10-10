@@ -17,6 +17,7 @@ pub mod extensions;
 pub mod external_agent;
 pub mod ports;
 pub mod provider_runtime;
+pub mod project_board;
 pub mod providers;
 mod request_observation;
 pub mod search;

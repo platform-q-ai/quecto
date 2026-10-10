@@ -34,3 +34,4 @@ pub mod inference;
 pub mod swarm;
 
 pub mod state_snapshot;
+pub mod project_board;
