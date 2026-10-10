@@ -24,3 +24,36 @@ fn every_word_reads_back_and_nothing_else_parses() {
         );
     }
 }
+
+#[test]
+fn the_parts_vocabularies_are_spelt_exactly() {
+    let spelt = |words: Vec<&str>| words.join(" ");
+    assert_eq!(
+        spelt(ItemState::ALL.iter().map(|w| w.as_str()).collect()),
+        "todo doing review done blocked"
+    );
+    assert_eq!(
+        spelt(Effort::ALL.iter().map(|w| w.as_str()).collect()),
+        "low medium high max"
+    );
+    assert_eq!(
+        spelt(RunOutcome::ALL.iter().map(|w| w.as_str()).collect()),
+        "succeeded failed stopped lost"
+    );
+    assert_eq!(
+        spelt(Severity::ALL.iter().map(|w| w.as_str()).collect()),
+        "low medium high critical"
+    );
+    assert_eq!(
+        spelt(Verdict::ALL.iter().map(|w| w.as_str()).collect()),
+        "open fixed invalid wont_fix"
+    );
+    assert_eq!(
+        (
+            Effort::parse("xhigh"),
+            Effort::parse("none"),
+            Verdict::parse("wont-fix")
+        ),
+        (None, None, None)
+    );
+}

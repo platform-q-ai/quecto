@@ -6,6 +6,10 @@ use super::super::value_objects::slug::Slug;
 use super::super::value_objects::timestamp::Timestamp;
 use super::super::value_objects::vocabulary::{TaskKind, TaskStatus};
 use super::claim::Claim;
+use super::task_parts::{
+    Item, MAX_ITEMS, MAX_REVIEWS, MAX_RUNS, MAX_STEPS, PlanStep, Review, Run, Team,
+};
+use std::collections::BTreeMap;
 
 /// GitHub's issue title limit.
 pub const MAX_TITLE_CHARS: usize = 256;
@@ -26,7 +30,12 @@ pub struct TaskFields {
     /// Children are not stored: they are the tasks naming this one.
     pub parent: Option<Slug>,
     pub depends_on: Vec<Slug>,
+    pub plan: Vec<PlanStep>,
+    pub items: Vec<Item>,
+    pub team: Option<Team>,
     pub claim: Option<Claim>,
+    pub runs: Vec<Run>,
+    pub reviews: Vec<Review>,
     /// Every pull request delivering the task, each numbered from 1.
     pub prs: Vec<u64>,
     pub created: Timestamp,
@@ -76,7 +85,17 @@ fn validate(task: &TaskFields) -> Result<(), SchemaError> {
             "a task does not depend on itself",
         ));
     }
+    validate_plan_and_items(task)?;
+    if let Some(team) = &task.team {
+        team.validate("team")?;
+    }
     validate_claim(task)?;
+    validate_runs(task)?;
+    let ids: Vec<&Slug> = task.reviews.iter().map(|review| &review.id).collect();
+    distinct("reviews", &ids, MAX_REVIEWS)?;
+    for (index, review) in task.reviews.iter().enumerate() {
+        review.validate(&format!("reviews/{index}"))?;
+    }
     distinct("prs", &task.prs, MAX_PRS)?;
     if let Some(index) = task.prs.iter().position(|number| !matches!(number, 1..)) {
         return Err(SchemaError::new(
@@ -88,6 +107,85 @@ fn validate(task: &TaskFields) -> Result<(), SchemaError> {
         Ok(())
     } else {
         Err(SchemaError::new("updated", "must not be before created"))
+    }
+}
+
+fn validate_plan_and_items(task: &TaskFields) -> Result<(), SchemaError> {
+    if task.plan.len() > MAX_STEPS {
+        return Err(SchemaError::new(
+            "plan",
+            format!("must hold at most {MAX_STEPS} steps"),
+        ));
+    }
+    for (index, step) in task.plan.iter().enumerate() {
+        step.validate(&format!("plan/{index}"))?;
+    }
+    let ids: Vec<&Slug> = task.items.iter().map(|item| &item.id).collect();
+    distinct("items", &ids, MAX_ITEMS)?;
+    for (index, item) in task.items.iter().enumerate() {
+        item.validate(&format!("items/{index}"))?;
+        let siblings = item
+            .depends_on
+            .iter()
+            .all(|dependency| *dependency != item.id && ids.contains(&dependency));
+        if !siblings {
+            return Err(SchemaError::new(
+                format!("items/{index}/depends_on"),
+                "must name other items of this task",
+            ));
+        }
+    }
+    match blocked_by_cycle(&task.items) {
+        Some(index) => Err(SchemaError::new(
+            format!("items/{index}/depends_on"),
+            "is on or behind a dependency cycle",
+        )),
+        None => Ok(()),
+    }
+}
+
+/// The first item that can never start because its dependencies loop:
+/// items are settled once all they depend on are, until none settles.
+/// Every dependency names a sibling (checked before).
+fn blocked_by_cycle(items: &[Item]) -> Option<usize> {
+    let position: BTreeMap<&Slug, usize> = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| (&item.id, index))
+        .collect();
+    let mut settled = vec![false; items.len()];
+    loop {
+        let ready: Vec<usize> = (0..items.len())
+            .filter(|&index| !settled[index])
+            .filter(|&index| {
+                items[index]
+                    .depends_on
+                    .iter()
+                    .all(|dependency| settled[position[dependency]])
+            })
+            .collect();
+        if ready.is_empty() {
+            return settled.iter().position(|done| !done);
+        }
+        ready.into_iter().for_each(|index| settled[index] = true);
+    }
+}
+
+/// Distinct ids; at most one open run, and only while the task is held.
+fn validate_runs(task: &TaskFields) -> Result<(), SchemaError> {
+    let ids: Vec<&Slug> = task.runs.iter().map(|run| &run.id).collect();
+    distinct("runs", &ids, MAX_RUNS)?;
+    for (index, run) in task.runs.iter().enumerate() {
+        run.validate(&format!("runs/{index}"))?;
+    }
+    let open = task.runs.iter().filter(|run| run.is_open()).count();
+    if open == 0 || (open == 1 && task.status.requires_claim()) {
+        Ok(())
+    } else {
+        Err(SchemaError::new(
+            "runs",
+            "at most one run is open, and only while the task is claimed or in progress",
+        ))
     }
 }
 

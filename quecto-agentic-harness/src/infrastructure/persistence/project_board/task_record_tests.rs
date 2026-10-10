@@ -39,6 +39,101 @@ const MINIMAL: &str = r#"{
 }
 "#;
 
+const PARTS: &str = r#"{
+  "schema": 1,
+  "id": "board-store",
+  "title": "Board store",
+  "kind": "task",
+  "status": "in_progress",
+  "plan": [
+    {
+      "title": "Spike",
+      "criteria": [
+        "CAS proved"
+      ]
+    }
+  ],
+  "items": [
+    {
+      "id": "plumbing",
+      "title": "Plumbing",
+      "state": "done",
+      "owner": "worker-1",
+      "evidence": [
+        "log"
+      ]
+    },
+    {
+      "id": "cas",
+      "title": "CAS",
+      "criteria": [
+        "stale lease refused"
+      ],
+      "depends_on": [
+        "plumbing"
+      ],
+      "state": "todo"
+    }
+  ],
+  "team": {
+    "roles": [
+      {
+        "name": "worker",
+        "model": "gpt-5.5",
+        "effort": "high",
+        "limits": {
+          "members": 2,
+          "turns": 200
+        }
+      }
+    ],
+    "budget": {
+      "tokens": 5000000
+    },
+    "deadline": "2026-10-11T00:00:00Z",
+    "image": "ghcr.io/platform-q-ai/quecto:0.107"
+  },
+  "claim": {
+    "holder": {
+      "name": "Ada",
+      "email": "ada@example.com"
+    },
+    "since": "2026-10-10T09:00:00Z",
+    "expires": "2026-10-10T11:00:00Z"
+  },
+  "runs": [
+    {
+      "id": "r1",
+      "started": "2026-10-10T09:01:00Z",
+      "ended": "2026-10-10T09:30:00Z",
+      "outcome": "lost"
+    },
+    {
+      "id": "r2",
+      "started": "2026-10-10T09:31:00Z"
+    }
+  ],
+  "reviews": [
+    {
+      "id": "r1-h1",
+      "round": 1,
+      "reviewer": {
+        "name": "Bob",
+        "email": "bob@example.com"
+      },
+      "at": "2026-10-10T10:00:00Z",
+      "severity": "high",
+      "location": "src/store.rs:42:7",
+      "finding": "Lease not checked",
+      "verdict": "fixed",
+      "proving_test": "stale_lease_is_refused"
+    }
+  ],
+  "created": "2026-10-10T08:00:00Z",
+  "updated": "2026-10-10T10:00:00Z"
+}
+"#;
+
 fn edited(text: &str, from: &str, to: &str) -> Vec<u8> {
     assert!(text.contains(from), "{from:?} is in the file");
     text.replacen(from, to, 1).into_bytes()
@@ -46,7 +141,7 @@ fn edited(text: &str, from: &str, to: &str) -> Vec<u8> {
 
 #[test]
 fn a_task_file_reads_and_writes_back_byte_for_byte_with_schema_first() {
-    for file in [FULL, MINIMAL] {
+    for file in [FULL, MINIMAL, PARTS] {
         let task = decode(file.as_bytes()).expect("valid file");
         assert_eq!(String::from_utf8(encode(&task).unwrap()).unwrap(), file);
     }
@@ -161,4 +256,77 @@ fn a_task_too_large_for_its_file_is_not_written() {
     fields.description = "𝄞".repeat(65_536);
     let task = Task::new(fields).expect("within the character limit");
     assert!(matches!(encode(&task), Err(RecordError::TooLarge { .. })));
+}
+
+#[test]
+fn every_nested_record_refuses_unknown_keys() {
+    let anchors = [
+        "\"title\": \"Spike\"",
+        "\"title\": \"Plumbing\"",
+        "\"roles\"",
+        "\"model\"",
+        "\"members\"",
+        "\"tokens\"",
+        "\"started\": \"2026-10-10T09:31:00Z\"",
+        "\"round\"",
+        "\"name\": \"Bob\"",
+    ];
+    for anchor in anchors {
+        let bytes = edited(PARTS, anchor, &format!("\"extra\": 1, {anchor}"));
+        assert!(
+            matches!(decode(&bytes), Err(RecordError::Malformed(_))),
+            "beside {anchor}"
+        );
+    }
+}
+
+#[test]
+fn nested_values_the_domain_refuses_are_named_by_their_path() {
+    let cases = [
+        ("items/0/state", edited(PARTS, "\"done\"", "\"finished\"")),
+        (
+            "items/1/depends_on/0",
+            edited(PARTS, "\"plumbing\"\n      ]", "\"Plumbing\"\n      ]"),
+        ),
+        (
+            "team/roles/0/effort",
+            edited(
+                PARTS,
+                "\"high\",\n        \"limits\"",
+                "\"xhigh\",\n        \"limits\"",
+            ),
+        ),
+        (
+            "team/deadline",
+            edited(PARTS, "2026-10-11T00:00:00Z", "tomorrow"),
+        ),
+        ("runs/0/outcome", edited(PARTS, "\"lost\"", "\"crashed\"")),
+        (
+            "runs/1",
+            edited(
+                PARTS,
+                "\"started\": \"2026-10-10T09:31:00Z\"",
+                "\"started\": \"2026-10-10T09:31:00Z\", \"outcome\": \"failed\"",
+            ),
+        ),
+        (
+            "reviews/0/severity",
+            edited(
+                PARTS,
+                "\"high\",\n      \"location\"",
+                "\"blocker\",\n      \"location\"",
+            ),
+        ),
+        ("reviews/0/verdict", edited(PARTS, "\"fixed\"", "\"done\"")),
+        (
+            "reviews/0/at",
+            edited(PARTS, "\"at\": \"2026-10-10T10:00:00Z\"", "\"at\": \"now\""),
+        ),
+    ];
+    for (field, bytes) in cases {
+        match decode(&bytes) {
+            Err(RecordError::Invalid(error)) => assert_eq!(error.field, field, "{error}"),
+            other => panic!("{field}: {other:?}"),
+        }
+    }
 }

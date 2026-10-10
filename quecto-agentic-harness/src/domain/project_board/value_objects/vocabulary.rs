@@ -46,6 +46,28 @@ impl TaskStatus {
     }
 }
 
+vocabulary!(
+    /// Where one item of a task's own board stands.
+    ItemState { Todo => "todo", Doing => "doing", Review => "review", Done => "done", Blocked => "blocked" }
+);
+
+vocabulary!(
+    /// How hard a role's model reasons: the board's own scale.
+    Effort { Low => "low", Medium => "medium", High => "high", Max => "max" }
+);
+
+vocabulary!(
+    /// How a run ended; `lost` is a run whose host died.
+    RunOutcome { Succeeded => "succeeded", Failed => "failed", Stopped => "stopped", Lost => "lost" }
+);
+
+vocabulary!(Severity { Low => "low", Medium => "medium", High => "high", Critical => "critical" });
+
+vocabulary!(
+    /// What became of a review finding.
+    Verdict { Open => "open", Fixed => "fixed", Invalid => "invalid", WontFix => "wont_fix" }
+);
+
 #[cfg(test)]
 #[path = "vocabulary_tests.rs"]
 mod tests;
