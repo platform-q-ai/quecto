@@ -1,75 +1,117 @@
-//! A task file, `tasks/<id>.json` on the project's `quecto/board` branch.
-use super::super::value_objects::schema_error::{SchemaError, distinct, line, text};
+//! A task: the overall job a project plans, readies and claims. A [`Task`]
+//! is only ever built from fields that pass [`Task::new`], so an invalid
+//! task cannot exist; change one by taking its fields and building anew.
+use super::super::value_objects::schema_error::{SchemaError, distinct, line, markdown};
 use super::super::value_objects::slug::Slug;
 use super::super::value_objects::timestamp::Timestamp;
 use super::super::value_objects::vocabulary::{TaskKind, TaskStatus};
 use super::claim::Claim;
-use serde::{Deserialize, Serialize};
 
-pub const MAX_TITLE_CHARS: usize = 200;
-pub const MAX_DESCRIPTION_BYTES: usize = 64 * 1024;
-/// The most children or dependencies.
-pub const MAX_LIST: usize = 256;
+/// GitHub's issue title limit.
+pub const MAX_TITLE_CHARS: usize = 256;
+/// GitHub's issue body limit.
+pub const MAX_DESCRIPTION_CHARS: usize = 65_536;
+pub const MAX_DEPENDENCIES: usize = 64;
+pub const MAX_PRS: usize = 16;
 
-/// The overall job. Field order is the file's key order: keep it stable.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Task {
+/// A task's content, unchecked: what [`Task::new`] validates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskFields {
     pub id: Slug,
     pub title: String,
     pub kind: TaskKind,
+    /// Markdown.
     pub description: String,
     pub status: TaskStatus,
+    /// Children are not stored: they are the tasks naming this one.
     pub parent: Option<Slug>,
-    pub children: Vec<Slug>,
     pub depends_on: Vec<Slug>,
     pub claim: Option<Claim>,
-    pub pr: Option<u64>,
+    /// Every pull request delivering the task, each numbered from 1.
+    pub prs: Vec<u64>,
     pub created: Timestamp,
     pub updated: Timestamp,
 }
 
+/// A task whose fields keep every rule of the schema.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Task(TaskFields);
+
 impl Task {
-    /// Every rule a task file must keep; checked on every read and write.
-    pub fn validate(&self) -> Result<(), SchemaError> {
-        line("title", &self.title, MAX_TITLE_CHARS)?;
-        text("description", &self.description, MAX_DESCRIPTION_BYTES)?;
-        distinct("children", &self.children, MAX_LIST)?;
-        distinct("depends_on", &self.depends_on, MAX_LIST)?;
-        if self.parent.as_ref() == Some(&self.id) {
-            return Err(SchemaError::new("parent", "a task is not its own parent"));
-        }
-        if self.children.contains(&self.id) {
-            return Err(SchemaError::new("children", "a task is not its own child"));
-        }
-        if self.depends_on.contains(&self.id) {
-            return Err(SchemaError::new(
-                "depends_on",
-                "a task does not depend on itself",
-            ));
-        }
-        self.validate_claim()?;
-        if self.pr == Some(0) {
-            return Err(SchemaError::new("pr", "a pull request number starts at 1"));
-        }
-        if self.created <= self.updated {
-            Ok(())
-        } else {
-            Err(SchemaError::new("updated", "must not be before created"))
-        }
+    pub fn new(fields: TaskFields) -> Result<Self, SchemaError> {
+        validate(&fields)?;
+        Ok(Self(fields))
     }
 
-    /// Claimed and in-progress tasks have a holder; review and blocked may
-    /// keep one; any other status has none.
-    fn validate_claim(&self) -> Result<(), SchemaError> {
-        match &self.claim {
-            Some(claim) if self.status.may_hold_claim() => claim.validate(),
-            None if !self.status.requires_claim() => Ok(()),
-            _ => Err(SchemaError::new(
-                "claim",
-                format!("does not match status {:?}", self.status),
-            )),
+    pub fn fields(&self) -> &TaskFields {
+        &self.0
+    }
+
+    pub fn into_fields(self) -> TaskFields {
+        self.0
+    }
+}
+
+impl TryFrom<TaskFields> for Task {
+    type Error = SchemaError;
+    fn try_from(fields: TaskFields) -> Result<Self, SchemaError> {
+        Self::new(fields)
+    }
+}
+
+fn validate(task: &TaskFields) -> Result<(), SchemaError> {
+    line("title", &task.title, MAX_TITLE_CHARS)?;
+    markdown("description", &task.description, MAX_DESCRIPTION_CHARS)?;
+    if task.parent.as_ref() == Some(&task.id) {
+        return Err(SchemaError::new("parent", "a task is not its own parent"));
+    }
+    distinct("depends_on", &task.depends_on, MAX_DEPENDENCIES)?;
+    if let Some(index) = task
+        .depends_on
+        .iter()
+        .position(|dependency| *dependency == task.id)
+    {
+        return Err(SchemaError::new(
+            format!("depends_on/{index}"),
+            "a task does not depend on itself",
+        ));
+    }
+    validate_claim(task)?;
+    distinct("prs", &task.prs, MAX_PRS)?;
+    if let Some(index) = task.prs.iter().position(|number| !matches!(number, 1..)) {
+        return Err(SchemaError::new(
+            format!("prs/{index}"),
+            "a pull request number starts at 1",
+        ));
+    }
+    if task.created <= task.updated {
+        Ok(())
+    } else {
+        Err(SchemaError::new("updated", "must not be before created"))
+    }
+}
+
+/// Claimed and in-progress tasks have a holder; review and blocked may
+/// keep one; any other status has none. A claim starts no earlier than
+/// the task.
+fn validate_claim(task: &TaskFields) -> Result<(), SchemaError> {
+    match &task.claim {
+        Some(claim) if task.status.may_hold_claim() => {
+            claim.validate("claim")?;
+            if claim.since >= task.created || claim.since < task.created {
+                Ok(())
+            } else {
+                Err(SchemaError::new(
+                    "claim/since",
+                    "must not be before the task was created",
+                ))
+            }
         }
+        None if !task.status.requires_claim() => Ok(()),
+        _ => Err(SchemaError::new(
+            "claim",
+            format!("does not match status {}", task.status.as_str()),
+        )),
     }
 }
 

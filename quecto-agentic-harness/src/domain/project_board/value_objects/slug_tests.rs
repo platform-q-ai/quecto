@@ -2,8 +2,18 @@ use super::*;
 
 #[test]
 fn a_slug_is_lowercase_ascii_letters_digits_and_inner_hyphens() {
-    for good in ["t1", "2476-s1a", "a", &"x".repeat(MAX_SLUG_BYTES)] {
-        assert_eq!(Slug::parse(good).map(String::from), Ok(good.to_string()));
+    for good in [
+        "t1",
+        "2476-s1a",
+        "a",
+        "console",
+        "com10",
+        &"x".repeat(MAX_SLUG_BYTES),
+    ] {
+        assert_eq!(
+            Slug::parse(good).map(|slug| slug.as_str().to_string()),
+            Ok(good.to_string())
+        );
     }
     let long = "x".repeat(MAX_SLUG_BYTES + 1);
     for bad in [
@@ -18,13 +28,17 @@ fn a_slug_is_lowercase_ascii_letters_digits_and_inner_hyphens() {
         "é",
         long.as_str(),
     ] {
-        assert!(Slug::parse(bad).is_err(), "{bad:?} must be refused");
+        assert_eq!(
+            Slug::parse(bad).map_err(|error| error.field),
+            Err("id".into()),
+            "{bad:?}"
+        );
     }
 }
 
 #[test]
-fn a_slug_is_read_and_written_as_a_json_string() {
-    let slug: Slug = serde_json::from_str("\"t-1\"").unwrap();
-    assert_eq!(serde_json::to_string(&slug).unwrap(), "\"t-1\"");
-    assert!(serde_json::from_str::<Slug>("\"T-1\"").is_err());
+fn windows_device_names_are_refused() {
+    for reserved in ["con", "prn", "aux", "nul", "com1", "com9", "lpt1", "lpt9"] {
+        assert!(Slug::parse(reserved).is_err(), "{reserved}");
+    }
 }

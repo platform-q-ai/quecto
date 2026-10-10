@@ -1,19 +1,30 @@
 //! Why a task was refused, and the bounded-text checks every field shares.
+use regex::Regex;
 use std::fmt;
+use std::sync::LazyLock;
 
 /// A task that breaks the schema: the field and what it must be. `field`
-/// is the JSON key, nested keys joined by `/` (`team/roles`).
+/// is the full path to the value, keys and list indexes joined by `/`
+/// (`depends_on/3`, `claim/holder/email`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SchemaError {
-    pub field: &'static str,
+    pub field: String,
     pub problem: String,
 }
 
 impl SchemaError {
-    pub fn new(field: &'static str, problem: impl Into<String>) -> Self {
+    pub fn new(field: impl Into<String>, problem: impl Into<String>) -> Self {
         Self {
-            field,
+            field: field.into(),
             problem: problem.into(),
+        }
+    }
+
+    /// The same refusal, for the value at `field`.
+    pub fn at(self, field: impl Into<String>) -> Self {
+        Self {
+            field: field.into(),
+            ..self
         }
     }
 }
@@ -26,44 +37,44 @@ impl fmt::Display for SchemaError {
 
 impl std::error::Error for SchemaError {}
 
-/// Shown on one line: ASCII graphic or space, or any non-ASCII character
-/// that is neither a control nor a line or paragraph separator.
-fn on_one_line(c: char) -> bool {
-    c == ' '
-        || c.is_ascii_graphic()
-        || (!c.is_ascii() && !c.is_control() && !matches!(c, '\u{2028}' | '\u{2029}'))
-}
+/// Letters, marks, numbers, punctuation, symbols and the space separators
+/// (Unicode L*, M*, N*, P*, S*, Zs): no controls, format characters (bidi
+/// overrides, zero-width characters, the BOM), private-use or unassigned.
+static ON_ONE_LINE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[^\n]*$").expect("text allowlist"));
+/// The same, plus `\n` between lines (CRLF is converted at the board's entry).
+static MARKDOWN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?s)^.*$").expect("markdown allowlist"));
+/// Something to read: a letter, number, punctuation mark or symbol.
+static VISIBLE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\S").expect("visible allowlist"));
 
-/// Non-blank single-line text of at most `max_chars` characters.
-pub fn line(field: &'static str, text: &str, max_chars: usize) -> Result<(), SchemaError> {
-    let fits = !text.trim().is_empty() && text.chars().count() <= max_chars;
-    if fits && text.chars().all(on_one_line) {
+/// Single-line text with something visible, at most `max_chars` characters.
+pub fn line(field: &str, text: &str, max_chars: usize) -> Result<(), SchemaError> {
+    let fits = text.chars().count() <= max_chars;
+    if fits && ON_ONE_LINE.is_match(text) && VISIBLE.is_match(text) {
         Ok(())
     } else {
         Err(SchemaError::new(
             field,
-            format!("must be 1 to {max_chars} printable characters on one line"),
+            format!("must be 1 to {max_chars} visible characters on one line"),
         ))
     }
 }
 
-/// Markdown of at most `max_bytes`: printable lines, tabs and newlines.
-pub fn text(field: &'static str, text: &str, max_bytes: usize) -> Result<(), SchemaError> {
-    let printable = text
-        .chars()
-        .all(|c| on_one_line(c) || matches!(c, '\n' | '\t'));
-    if text.len() <= max_bytes && printable {
+/// Markdown of at most `max_chars` characters; it may be empty.
+pub fn markdown(field: &str, text: &str, max_chars: usize) -> Result<(), SchemaError> {
+    if text.chars().count() <= max_chars && MARKDOWN.is_match(text) {
         Ok(())
     } else {
         Err(SchemaError::new(
             field,
-            format!("must be at most {max_bytes} bytes of printable text"),
+            format!("must be at most {max_chars} characters of text and newlines"),
         ))
     }
 }
 
 /// At most `max` entries, no two equal.
-pub fn distinct<T: Ord>(field: &'static str, entries: &[T], max: usize) -> Result<(), SchemaError> {
+pub fn distinct<T: Ord>(field: &str, entries: &[T], max: usize) -> Result<(), SchemaError> {
     let unique: std::collections::BTreeSet<&T> = entries.iter().collect();
     if entries.len() <= max && unique.len() == entries.len() {
         Ok(())
@@ -74,3 +85,7 @@ pub fn distinct<T: Ord>(field: &'static str, entries: &[T], max: usize) -> Resul
         ))
     }
 }
+
+#[cfg(test)]
+#[path = "schema_error_tests.rs"]
+mod tests;

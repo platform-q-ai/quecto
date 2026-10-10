@@ -1,134 +1,145 @@
 use super::*;
-use serde_json::{Value, json};
+use crate::domain::project_board::entities::claim::{CLAIM_TTL_SECONDS, Identity};
 
-fn full_json() -> Value {
-    json!({
-        "id": "board-store", "title": "Board store", "kind": "task",
-        "description": "Store **tasks** on a branch.\n\n- one\n- two", "status": "in_progress",
-        "parent": "boards", "children": ["board-index"], "depends_on": ["task-schema"],
-        "claim": {"holder": {"name": "Ada", "email": "ada@example.com"},
-                  "since": "2026-10-10T09:00:00Z", "expires": "2026-10-10T11:00:00Z"},
-        "pr": 2490, "created": "2026-10-10T08:00:00Z", "updated": "2026-10-10T09:05:00Z"
-    })
+fn at(time: &str) -> Timestamp {
+    Timestamp::parse(&format!("2026-10-10T{time}Z")).unwrap()
 }
 
-fn full_task() -> Task {
-    let task: Task = serde_json::from_value(full_json()).expect("full task parses");
-    task.validate().expect("full task is valid");
-    task
+fn slug(text: &str) -> Slug {
+    Slug::parse(text).unwrap()
 }
 
-#[test]
-fn a_task_serialises_every_field_in_schema_order_and_round_trips() {
-    let task = full_task();
-    let text = serde_json::to_string_pretty(&task).unwrap();
-    let value: Value = serde_json::from_str(&text).unwrap();
-    let keys: Vec<_> = value
-        .as_object()
-        .unwrap()
-        .keys()
-        .map(String::as_str)
-        .collect();
-    let schema =
-        "id title kind description status parent children depends_on claim pr created updated";
-    assert_eq!(keys, schema.split(' ').collect::<Vec<_>>());
-    assert_eq!(
-        value,
-        full_json(),
-        "nothing is renamed, defaulted or dropped"
-    );
-    assert_eq!(serde_json::from_str::<Task>(&text).unwrap(), task);
-    assert_eq!(
-        serde_json::to_string_pretty(&task).unwrap(),
-        text,
-        "formatting is stable"
-    );
-}
-
-#[test]
-fn unknown_fields_and_values_outside_the_vocabularies_are_refused() {
-    let edits = [
-        ("extra", json!(1)),
-        ("kind", json!("story")),
-        ("status", json!("wip")),
-    ];
-    for (key, replacement) in edits {
-        let mut value = full_json();
-        value
-            .as_object_mut()
-            .unwrap()
-            .insert(key.into(), replacement);
-        assert!(
-            serde_json::from_value::<Task>(value).is_err(),
-            "{key} must be refused"
-        );
-    }
-    for spelling in [
-        "draft ready claimed in_progress review blocked done archived",
-        "epic task chore",
-    ] {
-        for word in spelling.split(' ') {
-            let field = if spelling.starts_with("epic") {
-                "kind"
-            } else {
-                "status"
-            };
-            let mut value = full_json();
-            value[field] = json!(word);
-            let task: Task = serde_json::from_value(value).expect(word);
-            assert_eq!(serde_json::to_value(&task).unwrap()[field], json!(word));
-        }
+fn fields() -> TaskFields {
+    TaskFields {
+        id: slug("board-store"),
+        title: "Board store".into(),
+        kind: TaskKind::Task,
+        description: "Store **tasks** on a branch.\n\n- one".into(),
+        status: TaskStatus::InProgress,
+        parent: Some(slug("boards")),
+        depends_on: vec![slug("task-schema")],
+        claim: Some(Claim {
+            holder: Identity {
+                name: "Ada Lovelace".into(),
+                email: "Ada@Example.com".into(),
+            },
+            since: at("09:00:00"),
+            expires: at("11:00:00"),
+        }),
+        prs: vec![2482, 2483],
+        created: at("08:00:00"),
+        updated: at("09:05:00"),
     }
 }
 
-/// One change that must make a valid task invalid.
-type Edit = fn(&mut Task);
+#[test]
+fn valid_fields_build_a_task_and_read_back_unchanged() {
+    let task = Task::new(fields()).expect("valid");
+    assert_eq!(task.fields(), &fields());
+    assert_eq!(
+        Task::try_from(fields()).map(Task::into_fields),
+        Ok(fields())
+    );
+}
+
+/// One change that must make valid fields invalid.
+type Edit = fn(&mut TaskFields);
+
+fn claim(task: &mut TaskFields) -> &mut Claim {
+    task.claim.as_mut().unwrap()
+}
 
 #[test]
-fn validation_refuses_out_of_bounds_and_inconsistent_tasks() {
+fn fields_that_break_a_rule_build_no_task() {
     let cases: Vec<(&str, Edit)> = vec![
         ("title", |t| t.title = String::new()),
         ("title", |t| t.title = "two\nlines".into()),
         ("title", |t| t.title = "x".repeat(MAX_TITLE_CHARS + 1)),
         ("description", |t| {
-            t.description = "x".repeat(MAX_DESCRIPTION_BYTES + 1)
+            t.description = "é".repeat(MAX_DESCRIPTION_CHARS + 1)
         }),
-        ("description", |t| t.description = "bell\u{7}".into()),
-        ("children", |t| {
-            t.children = (0..=MAX_LIST)
-                .map(|i| Slug::parse(&format!("c{i}")).unwrap())
+        ("description", |t| t.description = "crlf\r\n".into()),
+        ("parent", |t| t.parent = Some(t.id.clone())),
+        ("depends_on", |t| {
+            t.depends_on = (0..=MAX_DEPENDENCIES)
+                .map(|i| slug(&format!("d{i}")))
                 .collect()
         }),
-        ("children", |t| t.children.push(t.children[0].clone())),
-        ("children", |t| t.children.push(t.id.clone())),
-        ("parent", |t| t.parent = Some(t.id.clone())),
-        ("depends_on", |t| t.depends_on.push(t.id.clone())),
+        ("depends_on", |t| t.depends_on.push(t.depends_on[0].clone())),
+        ("depends_on/1", |t| t.depends_on.push(t.id.clone())),
         ("claim", |t| t.claim = None),
         ("claim", |t| t.status = TaskStatus::Ready),
         ("claim", |t| t.status = TaskStatus::Done),
-        ("claim", |t| {
-            let c = t.claim.as_mut().unwrap();
-            c.expires = c.since.clone()
+        ("claim", |t| claim(t).expires = at("09:00:00")),
+        ("claim", |t| claim(t).expires = at("11:00:01")),
+        ("claim/since", |t| {
+            (claim(t).since, claim(t).expires) = (at("07:59:59"), at("09:00:00"))
         }),
-        ("claim/holder", |t| {
-            t.claim.as_mut().unwrap().holder.email = "ada".into()
+        ("claim/holder/name", |t| {
+            claim(t).holder.name = String::new()
         }),
-        ("claim/holder", |t| {
-            t.claim.as_mut().unwrap().holder.email = "a@b@c".into()
+        ("claim/holder/name", |t| {
+            claim(t).holder.name = "Ada <ada@x>".into()
         }),
-        ("claim/holder", |t| {
-            t.claim.as_mut().unwrap().holder.name = String::new()
+        ("claim/holder/name", |t| {
+            claim(t).holder.name = "Ada.".into()
         }),
-        ("pr", |t| t.pr = Some(0)),
-        ("updated", |t| {
-            t.updated = Timestamp::parse("2026-10-10T07:59:59Z").unwrap()
+        ("claim/holder/name", |t| {
+            claim(t).holder.name = " Ada".into()
         }),
+        ("claim/holder/name", |t| {
+            claim(t).holder.name = "x".repeat(101)
+        }),
+        ("claim/holder/email", |t| {
+            claim(t).holder.email = "ada".into()
+        }),
+        ("claim/holder/email", |t| {
+            claim(t).holder.email = "a@b@c".into()
+        }),
+        ("claim/holder/email", |t| {
+            claim(t).holder.email = "<ada@example.com>".into()
+        }),
+        ("claim/holder/email", |t| {
+            claim(t).holder.email = "ada@example.com\n".into()
+        }),
+        ("claim/holder/email", |t| {
+            claim(t).holder.email = format!("{}@x.io", "a".repeat(250))
+        }),
+        ("prs", |t| t.prs.push(t.prs[0])),
+        ("prs", |t| t.prs = (1..=MAX_PRS as u64 + 1).collect()),
+        ("prs/1", |t| t.prs[1] = 0),
+        ("updated", |t| t.updated = at("07:59:59")),
     ];
     for (field, edit) in cases {
-        let mut task = full_task();
+        let mut task = fields();
         edit(&mut task);
-        let error = task.validate().expect_err(field);
+        let error = Task::new(task).expect_err(field);
         assert_eq!(error.field, field, "{error}");
+    }
+}
+
+#[test]
+fn every_bound_admits_exactly_its_limit() {
+    let cases: Vec<Edit> = vec![
+        |t| t.title = "é".repeat(MAX_TITLE_CHARS),
+        |t| t.description = "日".repeat(MAX_DESCRIPTION_CHARS),
+        |t| {
+            t.depends_on = (0..MAX_DEPENDENCIES)
+                .map(|i| slug(&format!("d{i}")))
+                .collect()
+        },
+        |t| t.prs = (1..=MAX_PRS as u64).collect(),
+        |t| claim(t).expires = claim(t).since.plus_seconds(CLAIM_TTL_SECONDS).unwrap(),
+        |t| (claim(t).since, claim(t).expires) = (at("08:00:00"), at("10:00:00")),
+        |t| claim(t).holder.name = format!("A{}", "x".repeat(99)),
+        |t| claim(t).holder.email = format!("{}@x.io", "a".repeat(249)),
+        |t| t.description = String::new(),
+        |t| (t.parent, t.depends_on, t.prs) = (None, vec![], vec![]),
+    ];
+    for (index, edit) in cases.into_iter().enumerate() {
+        let mut task = fields();
+        edit(&mut task);
+        assert!(Task::new(task).is_ok(), "case {index}");
     }
 }
 
@@ -148,11 +159,29 @@ fn a_claim_is_carried_only_while_the_task_is_held() {
         (Archived, false),
     ];
     for (status, claimed) in allowed {
-        let mut task = full_task();
+        let mut task = fields();
         task.status = status;
         if !claimed {
             task.claim = None;
         }
-        assert_eq!(task.validate(), Ok(()), "{status:?} claimed={claimed}");
+        assert!(Task::new(task).is_ok(), "{status:?} claimed={claimed}");
     }
+}
+
+#[test]
+fn a_committer_is_known_by_email_whatever_its_case() {
+    let ada = Identity {
+        name: "Ada".into(),
+        email: "ada@example.com".into(),
+    };
+    let shouting = Identity {
+        name: "ADA".into(),
+        email: "ADA@EXAMPLE.COM".into(),
+    };
+    let bob = Identity {
+        name: "Ada".into(),
+        email: "bob@example.com".into(),
+    };
+    assert!(ada.is(&shouting));
+    assert!(!ada.is(&bob));
 }

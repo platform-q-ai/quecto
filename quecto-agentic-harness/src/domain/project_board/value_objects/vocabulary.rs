@@ -1,26 +1,38 @@
-//! The closed vocabularies of a task file; any other spelling is refused.
-use serde::{Deserialize, Serialize};
+//! The closed vocabularies of a task; any other spelling is refused.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TaskKind {
-    Epic,
-    Task,
-    Chore,
+/// An enum with its exact spellings: `parse` admits only those.
+macro_rules! vocabulary {
+    ($(#[$meta:meta])* $name:ident { $($variant:ident => $text:literal),+ $(,)? }) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        pub enum $name { $($variant),+ }
+
+        impl $name {
+            pub const ALL: &'static [Self] = &[$(Self::$variant),+];
+
+            pub fn as_str(self) -> &'static str {
+                match self { $(Self::$variant => $text),+ }
+            }
+
+            pub fn parse(text: &str) -> Option<Self> {
+                Self::ALL.iter().copied().find(|word| word.as_str() == text)
+            }
+        }
+    };
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TaskStatus {
-    Draft,
-    Ready,
-    Claimed,
-    InProgress,
-    Review,
-    Blocked,
-    Done,
-    Archived,
-}
+vocabulary!(TaskKind { Epic => "epic", Task => "task", Chore => "chore" });
+
+vocabulary!(TaskStatus {
+    Draft => "draft",
+    Ready => "ready",
+    Claimed => "claimed",
+    InProgress => "in_progress",
+    Review => "review",
+    Blocked => "blocked",
+    Done => "done",
+    Archived => "archived",
+});
 
 impl TaskStatus {
     /// Claimed and in-progress tasks always have a holder.
@@ -33,3 +45,7 @@ impl TaskStatus {
         self.requires_claim() || matches!(self, Self::Review | Self::Blocked)
     }
 }
+
+#[cfg(test)]
+#[path = "vocabulary_tests.rs"]
+mod tests;
