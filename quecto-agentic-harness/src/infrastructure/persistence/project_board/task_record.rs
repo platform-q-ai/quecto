@@ -112,10 +112,13 @@ struct IdentityRecord {
 
 /// The task a file holds, or why it holds none.
 pub fn decode(bytes: &[u8]) -> Result<Task, RecordError> {
+    if bytes.len() > MAX_TASK_FILE_BYTES {
+        return Err(RecordError::TooLarge { bytes: bytes.len() });
+    }
     let malformed = |error: serde_json::Error| RecordError::Malformed(error.to_string());
     let probe: SchemaProbe = serde_json::from_slice(bytes).map_err(malformed)?;
     match probe.schema {
-        _ if probe.schema < u32::MAX => {}
+        1..=SCHEMA_VERSION => {}
         found if found > SCHEMA_VERSION => return Err(RecordError::NewerSchema { found }),
         found => return Err(RecordError::UnknownSchema { found }),
     }
@@ -128,7 +131,7 @@ pub fn encode(task: &Task) -> Result<Vec<u8>, RecordError> {
     let mut bytes = serde_json::to_vec_pretty(&TaskRecord::from_task(task))
         .map_err(|error| RecordError::Malformed(error.to_string()))?;
     bytes.push(b'\n');
-    if bytes.len() < usize::MAX {
+    if bytes.len() <= MAX_TASK_FILE_BYTES {
         Ok(bytes)
     } else {
         Err(RecordError::TooLarge { bytes: bytes.len() })

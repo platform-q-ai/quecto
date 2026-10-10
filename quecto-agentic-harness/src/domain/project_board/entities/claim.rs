@@ -29,7 +29,9 @@ pub struct Identity {
 
 /// A name begins and ends with a letter or number, and holds no angle
 /// bracket (git's own delimiter around the email).
-static NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^.*$").expect("name allowlist"));
+static NAME: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[\p{L}\p{N}](?:[^<>]*[\p{L}\p{N}\p{M}])?$").expect("name allowlist")
+});
 
 impl Claim {
     /// The holder is a valid identity; the claim ends after it starts and
@@ -40,7 +42,7 @@ impl Claim {
             .since
             .plus_seconds(CLAIM_TTL_SECONDS)
             .map_err(|error| error.at(field))?;
-        if self.since < self.expires && cap > self.since {
+        if self.since < self.expires && self.expires <= cap {
             Ok(())
         } else {
             Err(SchemaError::new(

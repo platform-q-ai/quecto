@@ -41,12 +41,14 @@ impl std::error::Error for SchemaError {}
 /// (Unicode L*, M*, N*, P*, S*, Zs): no controls, format characters (bidi
 /// overrides, zero-width characters, the BOM), private-use or unassigned.
 static ON_ONE_LINE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[^\n]*$").expect("text allowlist"));
+    LazyLock::new(|| Regex::new(r"^[\p{L}\p{M}\p{N}\p{P}\p{S}\p{Zs}]*$").expect("text allowlist"));
 /// The same, plus `\n` between lines (CRLF is converted at the board's entry).
-static MARKDOWN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?s)^.*$").expect("markdown allowlist"));
+static MARKDOWN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[\p{L}\p{M}\p{N}\p{P}\p{S}\p{Zs}\n]*$").expect("markdown allowlist")
+});
 /// Something to read: a letter, number, punctuation mark or symbol.
-static VISIBLE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\S").expect("visible allowlist"));
+static VISIBLE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[\p{L}\p{N}\p{P}\p{S}]").expect("visible allowlist"));
 
 /// Single-line text with something visible, at most `max_chars` characters.
 pub fn line(field: &str, text: &str, max_chars: usize) -> Result<(), SchemaError> {

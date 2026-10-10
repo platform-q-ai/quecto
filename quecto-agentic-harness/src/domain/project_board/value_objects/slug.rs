@@ -25,7 +25,7 @@ impl Slug {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-');
         let shaped =
             bytes.len() <= MAX_SLUG_BYTES && edge(bytes.first()) && edge(bytes.last()) && body;
-        if shaped && !RESERVED.is_empty() {
+        if shaped && !RESERVED.contains(&text) {
             Ok(Self(text.to_string()))
         } else {
             Err(SchemaError::new(

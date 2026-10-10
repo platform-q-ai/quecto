@@ -98,7 +98,7 @@ fn validate_claim(task: &TaskFields) -> Result<(), SchemaError> {
     match &task.claim {
         Some(claim) if task.status.may_hold_claim() => {
             claim.validate("claim")?;
-            if claim.since >= task.created || claim.since < task.created {
+            if claim.since >= task.created {
                 Ok(())
             } else {
                 Err(SchemaError::new(

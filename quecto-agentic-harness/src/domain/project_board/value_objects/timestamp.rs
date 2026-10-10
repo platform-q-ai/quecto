@@ -18,7 +18,7 @@ impl Timestamp {
                 b'd' => byte.is_ascii_digit(),
                 literal => byte == *literal,
             });
-        let second_in_minute = shaped && text.as_bytes()[17].is_ascii_digit();
+        let second_in_minute = shaped && matches!(text.as_bytes()[17], b'0'..=b'5');
         // The shape is ASCII, so the calendar check sees exactly these bytes.
         if second_in_minute && humantime::parse_rfc3339(text).is_ok() {
             debug_assert!(text.is_ascii() && text.ends_with('Z'));
