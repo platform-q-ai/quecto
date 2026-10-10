@@ -122,10 +122,8 @@ static LOCATION: LazyLock<Regex> = LazyLock::new(|| {
 /// Distinct single lines, at most `max`.
 fn lines(field: &str, entries: &[String], max: usize) -> Result<(), SchemaError> {
     distinct(field, entries, max)?;
-    let indexed = entries.iter().enumerate();
-    indexed
-        .map(|(index, entry)| line(&format!("{field}/{index}"), entry, MAX_LINE_CHARS))
-        .collect()
+    let mut indexed = entries.iter().enumerate();
+    indexed.try_for_each(|(index, entry)| line(&format!("{field}/{index}"), entry, MAX_LINE_CHARS))
 }
 
 fn shaped(field: &str, text: &str, max_bytes: usize, shape: &Regex) -> Result<(), SchemaError> {

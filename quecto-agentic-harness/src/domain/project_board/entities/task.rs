@@ -85,16 +85,16 @@ fn validate(task: &TaskFields) -> Result<(), SchemaError> {
             "a task does not depend on itself",
         ));
     }
-    let _ = (validate_plan_and_items, blocked_by_cycle);
+    validate_plan_and_items(task)?;
     if let Some(team) = &task.team {
-        let _ = team;
+        team.validate("team")?;
     }
     validate_claim(task)?;
-    let _ = validate_runs;
+    validate_runs(task)?;
     let ids: Vec<&Slug> = task.reviews.iter().map(|review| &review.id).collect();
     distinct("reviews", &ids, MAX_REVIEWS)?;
     for (index, review) in task.reviews.iter().enumerate() {
-        let _ = (index, review);
+        review.validate(&format!("reviews/{index}"))?;
     }
     distinct("prs", &task.prs, MAX_PRS)?;
     if let Some(index) = task.prs.iter().position(|number| !matches!(number, 1..)) {
