@@ -51,15 +51,22 @@ pub fn move_task(
     actor: &Identity,
     now: &Timestamp,
 ) -> Result<Task, BoardRuleError> {
-    let _ = (task, actor, now, TRANSITIONS, held_by, new_claim, settle);
-    let _ = (
-        Actor::Anyone,
-        Actor::Holder,
-        ClaimEffect::Keep,
-        ClaimEffect::Take,
-        ClaimEffect::Clear,
-    );
-    Err(BoardRuleError::NotAllowed { from: Draft, to })
+    let from = task.fields().status;
+    let (_, _, who, effect) = TRANSITIONS
+        .iter()
+        .find(|(row_from, row_to, _, _)| (*row_from, *row_to) == (from, to))
+        .ok_or(BoardRuleError::NotAllowed { from, to })?;
+    if *who == Actor::Holder {
+        held_by(task, actor)?;
+    }
+    let mut next = task.fields().clone();
+    next.status = to;
+    next.claim = match effect {
+        ClaimEffect::Keep => next.claim,
+        ClaimEffect::Take => Some(new_claim(actor, now)?),
+        ClaimEffect::Clear => None,
+    };
+    settle(next, now)
 }
 
 /// The system move behind "a merged PR moves its task to done": a task in
@@ -70,8 +77,29 @@ pub fn complete_merged(
     merged: &BTreeSet<u64>,
     now: &Timestamp,
 ) -> Result<Task, BoardRuleError> {
-    let _ = (task, merged, now);
-    Err(BoardRuleError::NoPrs)
+    let fields = task.fields();
+    if fields.status != Review {
+        return Err(BoardRuleError::NotAllowed {
+            from: fields.status,
+            to: Done,
+        });
+    }
+    if fields.prs.is_empty() {
+        return Err(BoardRuleError::NoPrs);
+    }
+    let open: Vec<u64> = fields
+        .prs
+        .iter()
+        .copied()
+        .filter(|pr| !merged.contains(pr))
+        .collect();
+    if !open.is_empty() {
+        return Err(BoardRuleError::PrsOpen(open));
+    }
+    let mut next = fields.clone();
+    next.status = Done;
+    next.claim = None;
+    settle(next, now)
 }
 
 #[cfg(test)]
