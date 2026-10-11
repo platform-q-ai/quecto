@@ -3,8 +3,8 @@
 use super::project_board_store::{
     Clients, check_bootstrap, check_bootstrap_race, check_committed_as_writer,
     check_compare_and_swap, check_invalid_writes, check_quarantine, check_refused,
-    check_write_after_lost_and_refused, check_write_and_read, check_write_before_bootstrap,
-    check_writer,
+    check_unchanged_write, check_write_after_lost_and_refused, check_write_and_read,
+    check_write_before_bootstrap, check_writer,
 };
 use quecto::domain::project_board::entities::claim::Identity;
 use quecto::infrastructure::persistence::project_board::git::{Git, GitEnvironment};
@@ -160,6 +160,11 @@ fn the_git_store_refuses_without_moving() {
 fn the_git_store_sets_unreadable_files_aside() {
     let remote = Remote::new();
     check_quarantine(remote.clients(), || remote.spoil_b());
+}
+
+#[test]
+fn the_git_store_moves_its_head_on_an_unchanged_write() {
+    check_unchanged_write(Remote::new().clients());
 }
 
 #[test]
