@@ -273,9 +273,14 @@ fn an_identity_cell_reads_back_name_and_email() {
         person("Ada", "odd)@example.com)"),
         person("dependabot[bot]", "bot@example.com"),
         person("A (b) (c", "a(b)@x"),
+        // In a code span a reader shows the email as it is: no math, no
+        // link, a pipe escaped for the table alone.
+        person("Ada", "$x$@b"),
+        person("Ada", "a|b@x"),
+        person("A (`b", "mailto:a@b"),
     ] {
         let cell = cells::identity("Holder", &holder).unwrap();
-        assert_eq!(cell, format!("{} ({})", holder.name, holder.email));
+        assert_eq!(cell, format!("{} (`{}`)", holder.name, holder.email));
         assert_eq!(cells::read_identity("Holder", &cell), Ok(holder.clone()));
         let toy = Toy { holder, ..toy() };
         let file = encode::<ToyCodec>(&toy).unwrap();
@@ -284,11 +289,14 @@ fn an_identity_cell_reads_back_name_and_email() {
     for unread in [
         "Ada",
         "Ada ()",
-        "Ada (a@b",
-        "(a@b)",
-        "Ada (a b@c)",
-        " Ada (a@b)",
-        "Ada (nobody)",
+        "Ada (``)",
+        "Ada (`a@b)",
+        "Ada (a@b`)",
+        "Ada (a@b)",
+        "(`a@b`)",
+        "Ada (`a b@c`)",
+        " Ada (`a@b`)",
+        "Ada (`nobody`)",
     ] {
         assert!(
             matches!(
@@ -301,13 +309,19 @@ fn an_identity_cell_reads_back_name_and_email() {
             "{unread:?}"
         );
     }
-    assert!(matches!(
-        cells::identity("Holder", &person("Ada <x>", "a@b")),
-        Err(CodecError::Cell {
-            field: "Holder",
-            ..
-        })
-    ));
+    // Not an identity, or an email no code span holds.
+    for refused in [person("Ada <x>", "a@b"), person("Ada", "a`b@x")] {
+        assert!(
+            matches!(
+                cells::identity("Holder", &refused),
+                Err(CodecError::Cell {
+                    field: "Holder",
+                    ..
+                })
+            ),
+            "{refused:?}"
+        );
+    }
 }
 
 #[test]
@@ -315,8 +329,9 @@ fn an_identity_the_inline_rules_refuse_is_refused() {
     for holder in [
         person("Ada &amp; Bo", "a@b"),
         person("Ada `x", "a@b"),
-        person("Ada", "$x$@b"),
         person("[x](http://y.example)", "a@b"),
+        person("ada@example.com", "a@b"),
+        person("Ada mailto:x", "a@b"),
     ] {
         let toy = Toy {
             holder: holder.clone(),
