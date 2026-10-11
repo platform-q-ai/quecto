@@ -77,6 +77,13 @@ fn same(left: Result<BoardListing, BoardStoreError>, right: BoardListing, what: 
     assert_eq!(left, Ok(right), "{what}");
 }
 
+/// [`same`], for a listing the cases make non-empty, so the parity is
+/// never two empty lists agreeing.
+fn same_and_some(left: Result<BoardListing, BoardStoreError>, right: BoardListing, what: &str) {
+    assert!(!right.tasks.is_empty(), "{what} lists nothing");
+    same(left, right, what);
+}
+
 /// Before the board exists every listing answers `NoBoard`; after, each
 /// listing equals `QueryBoard`'s over the same store, a file set aside
 /// (`spoil` breaks `tasks/b.json`) included, and follows a write.
@@ -92,7 +99,25 @@ pub fn check_listings_mean_query_board(
     assert!(matches!(seeded, Ok(BoardWrite::Written(_))), "{seeded:?}");
     spoil();
     let query = QueryBoard::new(Arc::clone(&store));
-    same(listings.ready(), query.ready().unwrap(), "ready");
+    same_and_some(listings.ready(), query.ready().unwrap(), "ready");
+    same_and_some(
+        listings.takeable(&at("10:30:00")),
+        query.takeable(&at("10:30:00")).unwrap(),
+        "takeable at 10:30",
+    );
+    same_and_some(
+        listings.by_status(TaskStatus::Ready),
+        query.by_status(TaskStatus::Ready).unwrap(),
+        "ready by status",
+    );
+    for (listing, of) in [("children", "epic"), ("dependents", "b")] {
+        let id = Slug::parse(of).unwrap();
+        let (left, right) = match listing {
+            "children" => (listings.children(&id), query.children(&id).unwrap()),
+            _ => (listings.dependents(&id), query.dependents(&id).unwrap()),
+        };
+        same_and_some(left, right, &format!("{listing} of {of}"));
+    }
     for time in ["09:59:59", "10:00:00", "10:30:00", "11:00:00"] {
         same(
             listings.takeable(&at(time)),

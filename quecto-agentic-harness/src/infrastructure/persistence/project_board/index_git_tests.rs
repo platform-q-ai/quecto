@@ -183,3 +183,64 @@ fn a_snapshot_read_before_the_board_moved_on_never_replaces_the_newer_index() {
     assert_eq!(index.rebuild(&h2, &repo.alice), rebuilt(&h2));
     assert_eq!(ids(index.by_status(TaskStatus::Ready)), ["a"]);
 }
+
+/// Each remote has an index of its own, its name spelt in characters safe
+/// in any file name.
+#[test]
+fn each_remote_has_an_index_of_its_own() {
+    let repo = Repo::new();
+    let alice = repo.dir.path().join("alice");
+    let url = repo.remote();
+    for name in ["upstream", "Up.stream"] {
+        sh(&alice, &["remote", "add", name, url.to_str().unwrap()]);
+    }
+    let named = |remote: &str| {
+        let vars: Vec<(std::ffi::OsString, std::ffi::OsString)> = vec![
+            ("PATH".into(), std::env::var_os("PATH").unwrap()),
+            ("GIT_CONFIG_GLOBAL".into(), "/dev/null".into()),
+            ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
+        ];
+        let identity = Identity {
+            name: "Ada".into(),
+            email: "ada@example.com".into(),
+        };
+        let git = Git::new(&alice, GitEnvironment::allowlisted(vars), identity).unwrap();
+        let store = GitBoardStore::new(git, remote).unwrap();
+        let path = BoardIndex::of(&store).unwrap().path().to_path_buf();
+        path.file_name().unwrap().to_string_lossy().into_owned()
+    };
+    assert_eq!(named("origin"), "project-board-origin.sqlite");
+    assert_eq!(named("upstream"), "project-board-upstream.sqlite");
+    assert_eq!(named("Up.stream"), "project-board-%55p%2Estream.sqlite");
+}
+
+/// A remote that cannot be reached keeps the index as it is.
+#[test]
+fn an_unreachable_remote_keeps_the_index() {
+    let repo = Repo::new();
+    let index = BoardIndex::of(&repo.alice).unwrap();
+    repo.bootstrapped();
+    let board = repo.add("a");
+    assert_eq!(
+        index.refresh(&repo.alice, &repo.alice),
+        Ok(Refreshed::Rebuilt {
+            head: board.head.0.clone()
+        })
+    );
+    let alice = repo.dir.path().join("alice");
+    let nowhere = repo.dir.path().join("nowhere.git");
+    sh(
+        &alice,
+        &["remote", "set-url", "origin", nowhere.to_str().unwrap()],
+    );
+    let refreshed = index.refresh(&repo.alice, &repo.alice);
+    assert!(
+        matches!(
+            &refreshed,
+            Err(IndexError::Store(BoardStoreError::Unavailable(_)))
+        ),
+        "{refreshed:?}"
+    );
+    assert_eq!(index.head(), Ok(Some(board.head.0)));
+    assert_eq!(ids(index.by_status(TaskStatus::Ready)), ["a"]);
+}

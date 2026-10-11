@@ -500,3 +500,7 @@ fn a_crash_mid_rebuild_leaves_the_last_whole_index() {
 mod git;
 #[path = "index_hostile_tests.rs"]
 mod hostile;
+#[path = "index_lock_tests.rs"]
+mod lock;
+#[path = "index_side_file_tests.rs"]
+mod side_files;

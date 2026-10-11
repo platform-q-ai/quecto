@@ -81,6 +81,11 @@ impl From<rusqlite::Error> for IndexError {
     }
 }
 
+/// A failure while building an index: never a reason to rebuild it.
+pub(super) fn built(error: rusqlite::Error) -> IndexError {
+    IndexError::from(error)
+}
+
 fn io(what: &str, path: &Path, error: &std::io::Error) -> IndexError {
     IndexError::Io(format!("{what} {}: {error}", path.display()))
 }
@@ -161,6 +166,13 @@ pub(super) struct Build {
     published: bool,
 }
 
+impl Build {
+    #[cfg(test)]
+    pub(super) fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
 impl Drop for Build {
     fn drop(&mut self) {
         if !self.published {
@@ -201,7 +213,7 @@ pub(super) fn build(
     let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
         | OpenFlags::SQLITE_OPEN_NOFOLLOW
         | OpenFlags::SQLITE_OPEN_NO_MUTEX;
-    let mut connection = Connection::open_with_flags(&build.path, flags)?;
+    let mut connection = Connection::open_with_flags(&build.path, flags).map_err(built)?;
     connection.pragma_update_and_check(None, "journal_mode", "MEMORY", |row| {
         row.get::<_, String>(0)
     })?;
