@@ -278,6 +278,13 @@ const PROCESS_EFFECT_ALLOWLIST: &[(&str, &[&str], &str)] = &[
          (#2173)",
     ),
     (
+        "src/infrastructure/processes/gh_pull_requests.rs",
+        &["kill(", "libc::kill", "libc::SIGKILL"],
+        "the project board's pull request states ending the process group \
+         of its own `gh` Child (a session of its own, by setsid) at its \
+         deadline (#2477)",
+    ),
+    (
         "src/infrastructure/tools/grep_run.rs",
         &["start_kill", "kill_on_drop"],
         "tool invocation containment: the grep tool's own `rg` Child at its \

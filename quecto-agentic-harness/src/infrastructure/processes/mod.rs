@@ -7,6 +7,7 @@ pub mod child_stderr_tail;
 pub mod configured_extensions;
 pub mod containers;
 pub mod direct_child_routing;
+pub mod gh_pull_requests;
 pub mod local;
 pub mod owned_child_supervisor;
 pub mod owned_child_termination;
