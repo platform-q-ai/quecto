@@ -1,6 +1,6 @@
 use super::{
-    AbortOnDrop, BoardHints, BoardViewCtx, Seen, SwarmBoards, answer, changes, intercept,
-    spawn_change_hints,
+    AbortOnDrop, BoardHints, BoardViewCtx, MALFORMED, Seen, SwarmBoards, answer, changes,
+    intercept, spawn_change_hints,
 };
 use crate::application::environments::dto::{
     BoardSighting, HostedBoardRevision, SwarmBoardSnapshot,
@@ -388,11 +388,13 @@ async fn get_swarm_board_is_answered_on_the_reader() {
     let (clients, mut rx) = client();
     let boards = view(read_over(Arc::new(OneBoard)));
     let none: Option<SubagentRegistry> = None;
+    let in_flight = super::board_requests();
     let ctx = || BoardViewCtx {
         boards: Some(&boards),
         clients: &clients,
         subagents: &none,
         client_id: 7,
+        in_flight: &in_flight,
     };
     assert!(intercept(
         r#"{"type":"get_swarm_board","id":"b1","swarm":"C1"}"#,
@@ -416,6 +418,7 @@ async fn get_swarm_board_is_answered_on_the_reader() {
         clients: &clients,
         subagents: &none,
         client_id: 7,
+        in_flight: &in_flight,
     };
     assert!(intercept(
         r#"{"type":"get_swarm_board","id":"b2","swarm":"C1"}"#,
@@ -434,6 +437,7 @@ async fn a_board_asked_of_a_descendant_is_routed_to_it() {
     let (clients, mut rx) = client();
     let boards = view(read_over(Arc::new(OneBoard)));
     let none: Option<SubagentRegistry> = None;
+    let in_flight = super::board_requests();
     assert!(intercept(
         r#"{"type":"get_swarm_board","id":"b3","swarm":"C1","agent_id":"child-1"}"#,
         BoardViewCtx {
@@ -441,6 +445,7 @@ async fn a_board_asked_of_a_descendant_is_routed_to_it() {
             clients: &clients,
             subagents: &none,
             client_id: 7,
+            in_flight: &in_flight,
         }
     ));
     let answered = reply(&mut rx).await;
@@ -465,6 +470,7 @@ async fn a_malformed_get_swarm_board_is_refused_not_queued() {
     let (clients, mut rx) = client();
     let boards = view(read_over(Arc::new(OneBoard)));
     let none: Option<SubagentRegistry> = None;
+    let in_flight = super::board_requests();
     for (line, id) in [
         (
             r#"{"type":"get_swarm_board","id":"b4","swarm":7}"#,
@@ -487,6 +493,7 @@ async fn a_malformed_get_swarm_board_is_refused_not_queued() {
                     clients: &clients,
                     subagents: &none,
                     client_id: 7,
+                    in_flight: &in_flight,
                 }
             ),
             "{line}"
@@ -516,6 +523,7 @@ async fn the_reader_is_not_held_while_a_board_is_read() {
     let gate = Arc::new(tokio::sync::Notify::new());
     let boards = view(read_over(Arc::new(Gated(gate.clone()))));
     let none: Option<SubagentRegistry> = None;
+    let in_flight = super::board_requests();
     assert!(intercept(
         r#"{"type":"get_swarm_board","id":"b5","swarm":"C1"}"#,
         BoardViewCtx {
@@ -523,10 +531,197 @@ async fn the_reader_is_not_held_while_a_board_is_read() {
             clients: &clients,
             subagents: &none,
             client_id: 7,
+            in_flight: &in_flight,
         }
     ));
     tokio::task::yield_now().await;
     assert!(rx.try_recv().is_err(), "the read still waits");
     gate.notify_one();
     assert_eq!(reply(&mut rx).await["success"], json!(true));
+}
+
+/// Round 2 M1 (#2488): a `get_swarm_board` nested deeper than the JSON
+/// reader goes is refused as malformed (or left to the dispatch, which
+/// refuses it), never a panic on the connection's reader.
+#[tokio::test]
+async fn a_deeply_nested_get_swarm_board_does_not_panic_the_reader() {
+    let (clients, mut rx) = client();
+    let boards = view(read_over(Arc::new(OneBoard)));
+    let none: Option<SubagentRegistry> = None;
+    let in_flight = super::board_requests();
+    let deep = format!(
+        r#"{{"type":"get_swarm_board","id":"b6","swarm":"C1","extra":{}{}}}"#,
+        "[".repeat(200),
+        "]".repeat(200)
+    );
+    let taken = intercept(
+        &deep,
+        BoardViewCtx {
+            boards: Some(&boards),
+            clients: &clients,
+            subagents: &none,
+            client_id: 7,
+            in_flight: &in_flight,
+        },
+    );
+    if taken {
+        let refused = reply(&mut rx).await;
+        assert_eq!(
+            (refused["id"].clone(), refused["error"].clone()),
+            (json!("b6"), json!(MALFORMED))
+        );
+    }
+}
+
+/// Round 2 M2 (#2488): subscribing and reading what was seen happen under
+/// the lock the poll publishes under, so a client sees every revision after
+/// the ones it was told on connect: none twice, none missed, in order.
+#[test]
+fn a_client_is_told_each_revision_once_and_in_order() {
+    let (tx, _keep) = tokio::sync::broadcast::channel::<String>(8_192);
+    let hints = BoardHints::default();
+    const LAST: i64 = 3_000;
+    let publisher = {
+        let (hints, tx) = (hints.clone(), tx.clone());
+        std::thread::spawn(move || {
+            for revision in 1..=LAST {
+                hints.publish(&tx, |_| {
+                    let now = Seen::from([(
+                        "C1".to_owned(),
+                        HostedBoardRevision {
+                            run: Some("r1".into()),
+                            revision,
+                        },
+                    )]);
+                    (vec![hint("C1", "r1", revision)], now)
+                });
+            }
+        })
+    };
+    let revision_of = |line: &str| -> i64 {
+        serde_json::from_str::<Value>(line.trim_end()).unwrap()["revision"]
+            .as_i64()
+            .unwrap()
+    };
+    let mut subscribers = Vec::new();
+    while !publisher.is_finished() {
+        let (rx, lines) = hints.subscribe(&tx);
+        let told = lines.first().map_or(0, |line| revision_of(line));
+        subscribers.push((rx, told));
+        std::thread::yield_now();
+    }
+    publisher.join().unwrap();
+    assert!(!subscribers.is_empty());
+    for (mut rx, told) in subscribers {
+        let mut expected = told + 1;
+        while let Ok(line) = rx.try_recv() {
+            assert_eq!(revision_of(&line), expected, "told {told} on connect");
+            expected += 1;
+        }
+        assert_eq!(
+            expected,
+            LAST + 1,
+            "told {told}: every later revision arrived"
+        );
+    }
+}
+
+/// Round 2 M3 (#2488): at most two board requests are in flight per
+/// connection; a third is refused as busy at once.
+#[tokio::test]
+async fn board_requests_in_flight_are_bounded_per_connection() {
+    let (clients, mut rx) = client();
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let boards = view(read_over(Arc::new(Gated(gate.clone()))));
+    let none: Option<SubagentRegistry> = None;
+    let in_flight = super::board_requests();
+    let ask = |id: &str| {
+        intercept(
+            &format!(r#"{{"type":"get_swarm_board","id":"{id}","swarm":"C1"}}"#),
+            BoardViewCtx {
+                boards: Some(&boards),
+                clients: &clients,
+                subagents: &none,
+                client_id: 7,
+                in_flight: &in_flight,
+            },
+        )
+    };
+    assert!(ask("q1") && ask("q2") && ask("q3"));
+    let busy = reply(&mut rx).await;
+    assert_eq!(
+        (busy["id"].clone(), busy["error"].clone()),
+        (
+            json!("q3"),
+            json!("get_swarm_board is busy: at most 2 requests in flight per connection")
+        )
+    );
+    gate.notify_waiters();
+    for _ in 0..2 {
+        assert_eq!(reply(&mut rx).await["success"], json!(true));
+    }
+    assert!(ask("q4"), "a slot is free again");
+    gate.notify_one();
+    assert_eq!(reply(&mut rx).await["id"], json!("q4"));
+}
+
+/// Round 2 L5 (#2488): while no client is connected nothing seen is kept,
+/// so a client connecting later is never told a stale revision.
+#[tokio::test(start_paused = true)]
+async fn what_was_seen_is_forgotten_while_no_client_is_connected() {
+    let (tx, mut rx) = tokio::sync::broadcast::channel(16);
+    let hints = BoardHints::default();
+    let clients = Arc::new(AtomicU32::new(1));
+    let _poll = AbortOnDrop(Some(spawn_change_hints(
+        view(read_over(Arc::new(OneBoard))),
+        hints.clone(),
+        tx,
+        clients.clone(),
+    )));
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    assert_eq!(rx.try_recv().unwrap(), hint("C1", "r1", 7));
+    assert_eq!(hints.connect_lines().len(), 1);
+    clients.store(0, Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_millis(1_000)).await;
+    assert!(
+        hints.connect_lines().is_empty(),
+        "nobody connected: forgotten"
+    );
+    clients.store(1, Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_millis(1_000)).await;
+    assert_eq!(rx.try_recv().unwrap(), hint("C1", "r1", 7), "hinted afresh");
+}
+
+/// A board whose projection names a `swarm` of its own.
+struct Clashing;
+
+impl HostedSwarmBoard for Clashing {
+    fn board<'a>(
+        &'a self,
+        _record: &'a EnvironmentRecord,
+    ) -> PortFuture<'a, Result<Option<SwarmBoardSnapshot>, String>> {
+        Box::pin(async { Ok(SwarmBoardSnapshot::object(json!({"swarm": "C7"}))) })
+    }
+
+    fn revision<'a>(
+        &'a self,
+        _record: &'a EnvironmentRecord,
+    ) -> PortFuture<'a, Result<Option<HostedBoardRevision>, String>> {
+        Box::pin(async { Ok(None) })
+    }
+}
+
+/// Round 2 L6 (#2488): an answer the view cannot present is refused to
+/// the client, never a panic that leaves it unanswered.
+#[tokio::test]
+async fn an_answer_the_view_cannot_present_is_refused() {
+    let read = read_over(Arc::new(Clashing));
+    let refused = wire(answer(Some(&read), Some("b7"), Some("C1")).await);
+    assert_eq!(
+        (refused["success"].clone(), refused["error"].clone()),
+        (
+            json!(false),
+            json!("swarm board answer malformed: it names a swarm of its own")
+        )
+    );
 }
