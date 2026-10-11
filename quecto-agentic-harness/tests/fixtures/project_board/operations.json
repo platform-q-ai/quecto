@@ -968,8 +968,31 @@
   {
     "quarantine": "ghost",
     "request": {
+      "op": "list_ready"
+    },
+    "answer": {
+      "ok": true,
+      "op": "list_ready",
+      "head": "r25",
+      "tasks": [],
+      "quarantined": [
+        {
+          "path": "tasks/ghost.json",
+          "id": "ghost",
+          "reason": "malformed",
+          "object": "0000000000000000000000000000000000000019",
+          "copies": [
+            "0000000000000000000000000000000000000019"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "request": {
       "op": "clear_set_aside",
-      "path": "tasks/ghost.json"
+      "path": "tasks/ghost.json",
+      "object": "0000000000000000000000000000000000000019"
     },
     "answer": {
       "ok": true,
@@ -980,15 +1003,17 @@
   {
     "request": {
       "op": "clear_set_aside",
-      "path": "tasks/cli.json"
+      "path": "tasks/cli.json",
+      "object": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     },
     "answer": {
       "ok": false,
       "op": "clear_set_aside",
       "error": {
         "code": "not_set_aside",
-        "message": "no file is set aside at tasks/cli.json",
-        "path": "tasks/cli.json"
+        "message": "no file is set aside at \"tasks/cli.json\" as \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+        "path": "tasks/cli.json",
+        "object": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
       }
     }
   },

@@ -5,11 +5,12 @@
 //! them, [`BoardOperationParts`]) into one typed outcome. The front ends
 //! (the `quecto board` CLI, the agent `board` tool) read and answer JSON
 //! in the interface layer; here nothing is JSON.
+use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 
 use super::dto::{BoardListing, BoardOp, DraftUpdate, NewBoardTask, ProjectBoardError};
-use super::ports::{BoardClock, BoardHead, BoardListings};
+use super::ports::{BoardClock, BoardHead, BoardListings, KeepCopy};
 use super::use_cases::{
     BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask, CreateBoardTask,
     UpdateDraftTask,
@@ -45,7 +46,13 @@ pub enum BoardRequest {
     UpdateDraft(DraftUpdate),
     Change(Slug, BoardOp),
     Complete(Slug),
-    Clear { path: String, keep: Option<String> },
+    /// Clear the file set aside at `path` whose contents are `object`,
+    /// resolving every name listed more than once (`repeated`).
+    Clear {
+        path: String,
+        object: String,
+        repeated: BTreeMap<String, KeepCopy>,
+    },
 }
 
 impl BoardRequest {

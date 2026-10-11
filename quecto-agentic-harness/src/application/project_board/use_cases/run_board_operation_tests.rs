@@ -126,7 +126,8 @@ fn a_clock_note_only_for_requests_that_read_the_clock_with_no_outside_time() {
         BoardRequest::ListReady,
         BoardRequest::Clear {
             path: "tasks/x.json".into(),
-            keep: None,
+            object: "a".repeat(40),
+            repeated: Default::default(),
         },
     ] {
         assert_eq!(ops.clock_note(&request), None, "{request:?}");

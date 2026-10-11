@@ -5,12 +5,14 @@
 use serde_json::{Map, Value};
 
 use crate::application::project_board::dto::{
-    BoardOp, DraftUpdate, NewBoardTask, NewBoardTaskStatus, plain_board_file,
+    BoardOp, DraftUpdate, NewBoardTask, NewBoardTaskStatus,
 };
 use crate::application::project_board::operations::{BoardRequest, ListFilter};
+use crate::application::project_board::ports::KeepCopy;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Why a request was refused before the board was read: the field (or
 /// `op`) and what it must be.
@@ -50,10 +52,14 @@ pub enum Kind {
     TaskKind,
     /// A pull request number, from 1.
     Pr,
-    /// A board file's path.
+    /// A board file's path, as a listing's `quarantined` shows it.
     Path,
-    /// A git object name.
+    /// A git object name, as a listing's `quarantined` shows it.
     ObjectId,
+    /// For each name a listing shows more than once, by path, which copy
+    /// stays: `{"keep": object, "seen": [objects]}` or `{"drop":
+    /// [objects]}`, naming every copy's object the listing showed.
+    Repeated,
 }
 
 /// One field an op takes.
@@ -128,7 +134,8 @@ pub const OPS: &[(&str, &[Field])] = &[
         "clear_set_aside",
         &[
             required("path", Kind::Path),
-            optional("keep", Kind::ObjectId),
+            required("object", Kind::ObjectId),
+            optional("repeated", Kind::Repeated),
         ],
     ),
 ];
@@ -290,29 +297,7 @@ fn build(op: &str, read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         "link_pr" => change(BoardOp::AddPr(read.pr()?)),
         "unlink_pr" => change(BoardOp::RemovePr(read.pr()?)),
         "complete" => Ok(BoardRequest::Complete(read.task()?)),
-        "clear_set_aside" => {
-            let path = read
-                .value("path")
-                .and_then(Value::as_str)
-                .filter(|path| plain_board_file(path))
-                .ok_or_else(|| {
-                    RequestError::new("path", "must be a board file's path under tasks/")
-                })?;
-            let keep = match read.value("keep") {
-                None => None,
-                Some(value) => Some(
-                    value
-                        .as_str()
-                        .filter(|oid| object_id(oid))
-                        .ok_or_else(|| RequestError::new("keep", "must be a full git object id"))?
-                        .to_string(),
-                ),
-            };
-            Ok(BoardRequest::Clear {
-                path: path.to_string(),
-                keep,
-            })
-        }
+        "clear_set_aside" => clear(read),
         other => unreachable!("op {other} is in OPS but not built"),
     }
 }
@@ -323,6 +308,86 @@ fn object_id(text: &str) -> bool {
         && text
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// The most bytes a path a clear names may take: it is matched against
+/// the listing, which never shows a longer one.
+const MAX_PATH_BYTES: usize = 1024;
+
+/// A clear names files as the listing shows them: whether the board set
+/// them aside is the use case's check, against the board itself.
+fn clear(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
+    let path = read
+        .value("path")
+        .and_then(Value::as_str)
+        .filter(|path| !path.is_empty() && path.len() <= MAX_PATH_BYTES)
+        .ok_or_else(|| RequestError::new("path", "must be a path a listing's quarantined shows"))?;
+    let object = object_value("object", read.value("object"))?;
+    let repeated = match read.value("repeated") {
+        None => BTreeMap::new(),
+        Some(value) => repeated(value)?,
+    };
+    Ok(BoardRequest::Clear {
+        path: path.to_string(),
+        object,
+        repeated,
+    })
+}
+
+fn object_value(name: &str, value: Option<&Value>) -> Result<String, RequestError> {
+    value
+        .and_then(Value::as_str)
+        .filter(|oid| object_id(oid))
+        .map(str::to_owned)
+        .ok_or_else(|| RequestError::new(name, "must be a full object id a listing shows"))
+}
+
+/// The copies a clear keeps or drops, by path.
+fn repeated(value: &Value) -> Result<BTreeMap<String, KeepCopy>, RequestError> {
+    let shape = |at: &str| {
+        RequestError::new(
+            at,
+            "must map each repeated path to {\"keep\", \"seen\"} or {\"drop\"}",
+        )
+    };
+    let names = value.as_object().ok_or_else(|| shape("repeated"))?;
+    names
+        .iter()
+        .map(|(path, copy)| {
+            let at = |key: &str| format!("repeated/{path}/{key}");
+            let copy = copy.as_object().ok_or_else(|| shape(&at("")))?;
+            let mut keys: Vec<&str> = copy.keys().map(String::as_str).collect();
+            keys.sort_unstable();
+            let keep = match keys.as_slice() {
+                ["keep", "seen"] => KeepCopy::Object {
+                    keep: object_value(&at("keep"), copy.get("keep"))?,
+                    seen: objects(&at("seen"), &copy["seen"])?,
+                },
+                ["drop"] => KeepCopy::Drop(objects(&at("drop"), &copy["drop"])?),
+                _ => return Err(shape(&at(""))),
+            };
+            Ok((path.clone(), keep))
+        })
+        .collect()
+}
+
+/// A list of distinct object ids.
+fn objects(at: &str, value: &Value) -> Result<BTreeSet<String>, RequestError> {
+    let items = value
+        .as_array()
+        .filter(|items| !items.is_empty())
+        .ok_or_else(|| RequestError::new(at, "must list the objects the listing showed"))?;
+    let mut seen = BTreeSet::new();
+    for (index, item) in items.iter().enumerate() {
+        let object = object_value(&format!("{at}/{index}"), Some(item))?;
+        if !seen.insert(object) {
+            return Err(RequestError::new(
+                &format!("{at}/{index}"),
+                "is listed twice",
+            ));
+        }
+    }
+    Ok(seen)
 }
 
 fn list(read: &Read<'_>) -> Result<BoardRequest, RequestError> {

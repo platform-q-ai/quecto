@@ -34,7 +34,7 @@ fn keys(code: ErrorCode) -> &'static [&'static str] {
         C::ClockAhead => &["now", "reference"],
         C::Contended => &["attempts"],
         C::Stale => &["task", "expected", "updated"],
-        C::NotSetAside => &["path"],
+        C::NotSetAside => &["path", "object"],
     }
 }
 
@@ -63,7 +63,7 @@ fn variant(error: &ProjectBoardError) -> &'static str {
         E::ClockAhead { .. } => "clock ahead",
         E::Contended { .. } => "contended",
         E::Refused(_) => "refused",
-        E::NotSetAside(_) => "not set aside",
+        E::NotSetAside { .. } => "not set aside",
         E::Stale { .. } => "stale",
     }
 }
@@ -101,7 +101,10 @@ fn every_error() -> Vec<ProjectBoardError> {
         },
         E::Contended { attempts: 5 },
         E::Refused("protected".into()),
-        E::NotSetAside("tasks/x.json".into()),
+        E::NotSetAside {
+            path: "tasks/x.json".into(),
+            object: "a".repeat(40),
+        },
         E::Stale {
             id: slug("a"),
             expected: at("09:00:00"),
@@ -178,9 +181,32 @@ fn text_from_outside_is_redacted_wherever_it_is_shown() {
             path: format!("tasks/{secret}.json"),
             id: None,
             reason: format!("api_key: {secret}"),
+            object: "a".repeat(40),
         })}),
     ] {
         let text = answer.to_string();
         assert!(!text.contains(secret), "{text}");
     }
+}
+
+/// A listing names what a clear needs: each file's object, and for a name
+/// shown more than once every copy's object.
+#[test]
+fn a_listing_shows_each_files_object_and_its_names_copies() {
+    let file = |path: &str, object: char| QuarantinedFile {
+        path: path.into(),
+        id: None,
+        reason: "named more than once".into(),
+        object: object.to_string().repeat(40),
+    };
+    let listed = quarantined_list(&[
+        file("tasks/a.json", 'a'),
+        file("tasks/a.json", 'b'),
+        file("tasks/c.json", 'c'),
+    ]);
+    let (a, b) = ("a".repeat(40), "b".repeat(40));
+    assert_eq!(listed[0]["object"], json!(a));
+    assert_eq!(listed[0]["copies"], json!([a, b]));
+    assert_eq!(listed[1]["copies"], json!([a, b]));
+    assert_eq!(listed[2]["copies"], json!(["c".repeat(40)]));
 }

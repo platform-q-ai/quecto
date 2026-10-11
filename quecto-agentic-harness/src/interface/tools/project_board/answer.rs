@@ -81,7 +81,7 @@ pub enum ErrorCode {
     Refused,
     /// `task`, `expected`, `updated`.
     Stale,
-    /// `path`.
+    /// `path`, `object`.
     NotSetAside,
 }
 
@@ -183,9 +183,29 @@ fn listing_fields(listing: &BoardListing) -> Map<String, Value> {
         ),
         (
             "quarantined".to_string(),
-            Value::Array(listing.quarantined.iter().map(quarantined_json).collect()),
+            quarantined_list(&listing.quarantined),
         ),
     ])
+}
+
+/// The files set aside, each with its `object` and the `copies` (every
+/// object listed at its path, itself included): what a clear names.
+fn quarantined_list(files: &[QuarantinedFile]) -> Value {
+    Value::Array(
+        files
+            .iter()
+            .map(|file| {
+                let copies: Vec<&str> = files
+                    .iter()
+                    .filter(|other| other.path == file.path)
+                    .map(|other| other.object.as_str())
+                    .collect();
+                let mut entry = quarantined_json(file);
+                entry["copies"] = json!(copies);
+                entry
+            })
+            .collect(),
+    )
 }
 
 fn head_json(head: &BoardHead) -> Value {
@@ -209,6 +229,7 @@ fn quarantined_json(file: &QuarantinedFile) -> Value {
         "path": shown(&file.path),
         "id": file.id.as_ref().map(slug_json),
         "reason": shown(&file.reason),
+        "object": file.object,
     })
 }
 
@@ -445,7 +466,10 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
                 ("updated", json!(updated.as_str())),
             ]),
         ),
-        E::NotSetAside(path) => (C::NotSetAside, fields([("path", shown_json(path))])),
+        E::NotSetAside { path, object } => (
+            C::NotSetAside,
+            fields([("path", shown_json(path)), ("object", shown_json(object))]),
+        ),
     }
 }
 

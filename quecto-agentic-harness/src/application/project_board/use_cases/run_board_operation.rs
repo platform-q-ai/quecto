@@ -73,8 +73,12 @@ impl RunBoardOperation {
                 Ok(changed(task, completion))
             }
             BoardRequest::Complete(id) => Ok(changed(self.complete(id)?, None)),
-            BoardRequest::Clear { path, keep } => Ok(BoardOutcome::Cleared {
-                head: self.parts.clear.execute(path, keep.as_deref())?,
+            BoardRequest::Clear {
+                path,
+                object,
+                repeated,
+            } => Ok(BoardOutcome::Cleared {
+                head: self.parts.clear.execute(path, object, repeated)?,
             }),
         }
     }
