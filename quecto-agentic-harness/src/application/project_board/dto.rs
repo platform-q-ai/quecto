@@ -46,6 +46,23 @@ pub fn plain_board_file(path: &str) -> bool {
     })
 }
 
+/// An edit of a draft in place: the fields it sets (`None` keeps one as
+/// it is; `parent: Some(None)` takes the parent away), and the `updated`
+/// the caller read, when it read one: a draft changed since is refused as
+/// stale, never edited over. Drafts are shared planning: anyone with
+/// access to the board edits any draft.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DraftUpdate {
+    pub id: Slug,
+    pub title: Option<String>,
+    /// Markdown.
+    pub description: Option<String>,
+    pub plan: Option<Vec<PlanStep>>,
+    pub parent: Option<Option<Slug>>,
+    pub depends_on: Option<Vec<Slug>>,
+    pub expected_updated: Option<Timestamp>,
+}
+
 /// The statuses a task is created in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NewBoardTaskStatus {
@@ -164,6 +181,13 @@ pub enum ProjectBoardError {
     Refused(String),
     /// No file is set aside at this path.
     NotSetAside(String),
+    /// Task `id` changed since the caller read it (`expected` its
+    /// `updated` then, `updated` now): read it again and decide again.
+    Stale {
+        id: Slug,
+        expected: Timestamp,
+        updated: Timestamp,
+    },
 }
 
 impl From<BoardStoreError> for ProjectBoardError {
@@ -243,6 +267,17 @@ impl fmt::Display for ProjectBoardError {
             }
             Self::Refused(why) => write!(f, "the board refused the write: {why}"),
             Self::NotSetAside(path) => write!(f, "no file is set aside at {path}"),
+            Self::Stale {
+                id,
+                expected,
+                updated,
+            } => write!(
+                f,
+                "task {} changed since it was read (updated {}, not {}); read it again",
+                id.as_str(),
+                updated.as_str(),
+                expected.as_str()
+            ),
         }
     }
 }

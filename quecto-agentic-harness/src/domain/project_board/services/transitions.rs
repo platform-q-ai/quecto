@@ -96,7 +96,7 @@ pub fn move_task(
         _ => {}
     }
     runs_may_stay_open(task, to)?;
-    let at = stamp(task, now);
+    let at = stamp(task, now)?;
     let mut next = task.fields().clone();
     next.status = to;
     next.claim = match effect {
@@ -141,7 +141,7 @@ pub fn complete_merged(
             });
         }
     }
-    let at = stamp(task, now);
+    let at = stamp(task, now)?;
     let mut next = fields.clone();
     for run in next.runs.iter_mut().filter(|run| run.is_open()) {
         run.ended = Some(at.clone());

@@ -321,15 +321,20 @@ fn a_write_from_a_fast_clock_does_not_stop_another_clients_moves() {
     let bob = person("Bob");
     let now = at("10:00:00");
     let readied = move_task(&last_written(task(Draft), &ahead), Ready, &bob, &now).unwrap();
-    assert_eq!(readied.fields().updated, ahead, "stamped max(now, updated)");
+    let second = |n: u64| ahead.plus_seconds(n).unwrap();
+    assert_eq!(
+        readied.fields().updated,
+        second(1),
+        "stamped max(now, updated + 1 s)"
+    );
     let claimed = move_task(&readied, Claimed, &bob, &now).unwrap();
     let claim = claimed.fields().claim.clone().unwrap();
     assert_eq!(
         (&claim.since, &claimed.fields().updated),
-        (&ahead, &ahead),
+        (&second(2), &second(2)),
         "the claim starts at the task's own time"
     );
-    assert_eq!(claim.expires, ahead.plus_seconds(2 * 60 * 60).unwrap());
+    assert_eq!(claim.expires, second(2 + 2 * 60 * 60));
     let started = move_task(&claimed, InProgress, &bob, &now).unwrap();
     assert_eq!(started.fields().status, InProgress);
     let done = complete_merged(
@@ -338,7 +343,7 @@ fn a_write_from_a_fast_clock_does_not_stop_another_clients_moves() {
         &now,
     )
     .unwrap();
-    assert_eq!(done.fields().updated, ahead);
+    assert_eq!(done.fields().updated, second(1));
 }
 
 #[test]
@@ -347,7 +352,10 @@ fn expiry_is_judged_by_the_callers_clock() {
     // 2036: at 11:00 by Bob's clock it has expired.
     let ahead = last_written(task(InProgress), &far_future());
     let taken = super::super::claims::take_over(&ahead, &person("Bob"), &at("11:00:00")).unwrap();
-    assert_eq!(taken.fields().updated, far_future());
+    assert_eq!(
+        taken.fields().updated,
+        far_future().plus_seconds(1).unwrap()
+    );
     assert_eq!(
         move_task(&ahead, Review, &person("Ada"), &at("11:00:00")),
         Err(BoardRuleError::ClaimExpired)

@@ -18,7 +18,7 @@ pub fn end_run_lost(
     now: &Timestamp,
 ) -> Result<Task, BoardRuleError> {
     held_live_by(task, actor, now)?;
-    let at = stamp(task, now);
+    let at = stamp(task, now)?;
     let mut next = task.fields().clone();
     match next.runs.iter_mut().find(|run| run.is_open()) {
         Some(run) => {
