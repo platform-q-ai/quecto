@@ -12,6 +12,7 @@
 //! process group is ended, so nothing it left behind outlives the call,
 //! and its pipes get [`OUTPUT_GRACE`] to deliver what it wrote. Blocking:
 //! callers run it off the async workers.
+use crate::infrastructure::processes::parent_death_signal::arm_in_child;
 use std::collections::VecDeque;
 use std::ffi::{OsStr, OsString};
 use std::io::Read;
@@ -143,15 +144,22 @@ impl GhPullRequestStates {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         // A session of its own: nothing gh starts reaches quecto's
-        // terminal, and its whole group can be ended.
+        // terminal, and its whole group can be ended. Killed with quecto
+        // (on Linux), so a quecto killed outright leaves no gh behind: this
+        // thread forks gh and waits for it.
         // setsid(2) is async-signal-safe and touches no memory of the
         // parent; the closure allocates nothing.
-        // SAFETY: the pre_exec closure only calls setsid.
+        let parent = libc::pid_t::try_from(std::process::id()).unwrap_or(0);
+        debug_assert!(parent > 0, "a process id");
+        // SAFETY: the closure only calls setsid and arm_in_child (async-signal-safe).
         unsafe {
-            std::os::unix::process::CommandExt::pre_exec(&mut command, || match libc::setsid() {
-                -1 => Err(std::io::Error::last_os_error()),
-                _ => Ok(()),
-            });
+            std::os::unix::process::CommandExt::pre_exec(
+                &mut command,
+                move || match libc::setsid() {
+                    -1 => Err(std::io::Error::last_os_error()),
+                    _ => arm_in_child(parent, libc::SIGKILL),
+                },
+            );
         }
         let mut child = command.spawn().map_err(|error| error.to_string())?;
         let pumps = pump(child.stdout.take(), Keep::Head(STDOUT_CAPACITY)).and_then(|stdout| {

@@ -12,6 +12,7 @@
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::value_objects::shown_text::shown_char;
 use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
+use crate::infrastructure::processes::parent_death_signal::arm_in_child;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::io::{Read, Write};
@@ -354,15 +355,22 @@ impl Git {
         }
         // Its own session, so no ssh or helper it starts can reach the
         // terminal quecto runs in, and its own process group, so the
-        // deadline ends git and everything it started.
+        // deadline ends git and everything it started. Killed with quecto
+        // (on Linux), so a quecto killed outright leaves no git behind:
+        // this thread forks git and waits for it.
         // setsid(2) is async-signal-safe and touches no memory of the
         // parent; the closure allocates nothing.
-        // SAFETY: the pre_exec closure only calls setsid.
+        let parent = libc::pid_t::try_from(std::process::id()).unwrap_or(0);
+        debug_assert!(parent > 0, "a process id");
+        // SAFETY: the closure only calls setsid and arm_in_child (async-signal-safe).
         unsafe {
-            std::os::unix::process::CommandExt::pre_exec(&mut command, || match libc::setsid() {
-                -1 => Err(std::io::Error::last_os_error()),
-                _ => Ok(()),
-            });
+            std::os::unix::process::CommandExt::pre_exec(
+                &mut command,
+                move || match libc::setsid() {
+                    -1 => Err(std::io::Error::last_os_error()),
+                    _ => arm_in_child(parent, libc::SIGKILL),
+                },
+            );
         }
         let mut child = command
             .spawn()

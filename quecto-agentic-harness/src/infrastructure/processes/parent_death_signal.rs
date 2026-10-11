@@ -45,6 +45,40 @@ pub fn arm(command: &mut tokio::process::Command, parent_pid: u32) {
 #[cfg(not(target_os = "linux"))]
 pub fn arm(_command: &mut tokio::process::Command, _parent_pid: u32) {}
 
+/// Arms the parent-death `signal` from inside a forked child before it
+/// execs (a `pre_exec` closure of a `std` command, after anything else it
+/// does there, `setsid` included: the signal survives a new session). If
+/// the parent `parent` already died, the signal would never come, so the
+/// child exits at once. The signal comes when the thread that forked exits,
+/// so a caller forks from a thread that waits for the child.
+///
+/// Only on Linux; elsewhere nothing is armed, and a child killed with its
+/// launcher outlives it until its own deadline or exit.
+///
+/// # Errors
+/// The kernel refused to arm it.
+#[cfg(target_os = "linux")]
+pub fn arm_in_child(parent: libc::pid_t, signal: libc::c_int) -> std::io::Result<()> {
+    let signal = libc::c_ulong::try_from(signal).unwrap_or(0);
+    // prctl, getppid and _exit are async-signal-safe, take plain integers
+    // and touch no memory of the parent; nothing here allocates.
+    // SAFETY: called only in a forked child before exec, as above.
+    unsafe {
+        if libc::prctl(libc::PR_SET_PDEATHSIG, signal, 0, 0, 0) != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        if libc::getppid() != parent {
+            libc::_exit(1);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn arm_in_child(_parent: libc::pid_t, _signal: libc::c_int) -> std::io::Result<()> {
+    Ok(())
+}
+
 #[cfg(test)]
 #[path = "parent_death_signal_tests.rs"]
 mod tests;
