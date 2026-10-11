@@ -252,6 +252,23 @@ fn a_board_past_the_byte_budget_is_truncated() {
     assert!(board.to_string().len() < 4 * 1024 * 1024 + 4096);
 }
 
+/// L2 (#2488 review): the budget counts encoded bytes, so a board whose
+/// text escapes (a control character is six bytes in JSON) still answers
+/// inside the budget, far from the socket's 8 MiB line.
+#[test]
+fn an_escaping_board_stays_within_the_budget_once_encoded() {
+    let directory = tempfile::tempdir().unwrap();
+    run_with_items(&directory);
+    sql(
+        &directory,
+        "UPDATE tasks SET title=replace(hex(zeroblob(1572864)), '00', char(1))",
+    );
+    let board = hosted(&directory).board_projection().unwrap().unwrap();
+    assert_eq!(board["truncated"], json!(true));
+    let encoded = board.to_string().len();
+    assert!(encoded < 4 * 1024 * 1024 + 4096, "{encoded} bytes encoded");
+}
+
 /// M4: the projection reads named columns only: a token that is not
 /// UTF-8 or a BLOB column a later schema adds never breaks it, and a
 /// projected column that is not UTF-8 is refused by name, never echoed.

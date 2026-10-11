@@ -265,6 +265,21 @@ fn rows_past_the_byte_budget_are_left_out_and_said_to_be() {
     assert_eq!(projection.totals.items, 4, "totals count every item");
 }
 
+/// L2 (#2488 review): the budget counts a row as the socket line encodes
+/// it. A control character is one byte stored and six encoded (`\u0001`),
+/// so a title that fits raw may not fit once encoded.
+#[test]
+fn rows_are_budgeted_by_their_encoded_length() {
+    let mut state = board();
+    state.tasks[2].columns[1].1 = json!("\u{1}".repeat(1_000));
+    let projection = ReadBoardProjection::new(MemoryBoard::with(state))
+        .within(5_000)
+        .unwrap();
+    let ids: Vec<i64> = projection.items.iter().map(|item| item.id).collect();
+    assert_eq!(ids, [1, 2], "item 3 is 1,000 bytes raw but 6,002 encoded");
+    assert!(projection.truncated);
+}
+
 #[test]
 fn rows_past_a_row_limit_are_left_out_and_said_to_be() {
     let mut state = board();
