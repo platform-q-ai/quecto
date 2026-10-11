@@ -22,21 +22,20 @@ use super::chars::seen;
 use regex::Regex;
 use std::sync::LazyLock;
 
-/// The one link a text may hold: text, then an https address of URL
-/// characters (an allowlist: no space, `<`, backtick, `$`, bracket or
-/// parenthesis), no title.
-static LINK: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\[([^\[\]\\]+)\]\(https://[A-Za-z0-9\-._~:/?#@!&'*+,;=%]+\)")
-        .expect("a valid pattern")
-});
+/// An https address of URL characters (an allowlist: no space, `<`,
+/// backtick, `$`, bracket or parenthesis), with no userinfo: an `@` only
+/// in its path, query or fragment, never in its host part.
+const URL: &str = r"https://[A-Za-z0-9\-._~:!&'*+,;=%]+(?:[/?#][A-Za-z0-9\-._~:/?#@!&'*+,;=%]*)?";
+/// The one link a text may hold: text, then a [`URL`], no title.
+static LINK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(&format!(r"\[([^\[\]\\]+)\]\({URL}\)")).expect("a valid pattern"));
 /// An email a reader would link: an `@` straight after a character an
 /// address's local part may hold.
 static EMAIL: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[A-Za-z0-9.+_-]@").expect("a valid pattern"));
 /// What may follow a link's `]`: its address, as [`LINK`] allows it.
-static ADDRESS: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\(https://[A-Za-z0-9\-._~:/?#@!&'*+,;=%]+\)").expect("a valid pattern")
-});
+static ADDRESS: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(&format!(r"^\({URL}\)")).expect("a valid pattern"));
 /// A named, decimal or hexadecimal character reference.
 static REFERENCE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"&(?:#[0-9]+|#[xX][0-9A-Fa-f]+|[A-Za-z][A-Za-z0-9]*);").expect("a valid pattern")
@@ -46,7 +45,7 @@ static REFERENCE: LazyLock<Regex> = LazyLock::new(|| {
 /// with a link of the one form a text may hold.
 pub fn starts_with_link(text: &str) -> bool {
     outside_code(text, 0)
-        .is_ok_and(|outside| LINK.find(&outside).is_some_and(|link| link.start() == 0))
+        .is_ok_and(|(outside, _)| LINK.find(&outside).is_some_and(|link| link.start() == 0))
 }
 
 /// Whether `text` shows a reader something: a character [`seen`] that is
@@ -57,7 +56,10 @@ fn shows(text: &str) -> bool {
 }
 
 /// Whether `text` holds an address a reader would link: any `scheme://`,
-/// `www.`, `mailto:`, `xmpp:` or an email.
+/// `www.`, `mailto:`, `xmpp:` or an email. These are the forms GitHub turns
+/// into links, so naming them is inherent to finding them; what a pattern
+/// here misses, the oracle's cmark-gfm reader (comrak, with GFM's
+/// autolinks) catches in the tests.
 fn holds_address(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
     ["://", "www.", "mailto:", "xmpp:"]
@@ -96,8 +98,9 @@ fn code_span(from: &str, at: usize) -> Result<(char, &str), MarkdownError> {
 /// to right, a `<` before anything but a space (raw HTML, a comment, an
 /// autolink), a `](` before anything but an allowed address, a backtick a
 /// backslash escapes and a code span left open are refused.
-fn outside_code(text: &str, at: usize) -> Result<String, MarkdownError> {
+fn outside_code(text: &str, at: usize) -> Result<(String, Vec<(usize, String)>), MarkdownError> {
     let mut outside = String::new();
+    let mut spans = vec![];
     let mut rest = text;
     while let Some(next) = rest.find(['`', '<', ']']) {
         let (before, from) = rest.split_at(next);
@@ -106,6 +109,9 @@ fn outside_code(text: &str, at: usize) -> Result<String, MarkdownError> {
             b'`' if before.ends_with('\\') => return Err(MarkdownError::Escape { line: at }),
             b'`' => {
                 let (stands_for, after) = code_span(from, at)?;
+                let run = from.len() - from.trim_start_matches('`').len();
+                let code = &from[run..from.len() - after.len() - run];
+                spans.push((outside.len(), code.to_string()));
                 outside.push(stands_for);
                 after
             }
@@ -134,7 +140,22 @@ fn outside_code(text: &str, at: usize) -> Result<String, MarkdownError> {
         };
     }
     outside.push_str(rest);
-    Ok(outside)
+    Ok((outside, spans))
+}
+
+/// `range` of `outside` as a reader sees it: each code span's contents put
+/// back (`spans`, by their offset in `outside`), and emphasis and
+/// strikethrough markers dropped, so a token they split reads whole.
+fn as_read(outside: &str, spans: &[(usize, String)], range: std::ops::Range<usize>) -> String {
+    let mut read = String::new();
+    for (offset, c) in outside[range.clone()].char_indices() {
+        match spans.binary_search_by_key(&(range.start + offset), |(at, _)| *at) {
+            Ok(span) => read.push_str(&spans[span].1),
+            Err(_) if "*_~".contains(c) => {}
+            Err(_) => read.push(c),
+        }
+    }
+    read
 }
 
 /// The inline rules `text` keeps.
@@ -142,7 +163,7 @@ fn outside_code(text: &str, at: usize) -> Result<String, MarkdownError> {
 /// # Errors
 /// The first rule `text` breaks; `at` is the file line it would be on.
 pub fn check_inline(text: &str, at: usize) -> Result<(), MarkdownError> {
-    let outside = outside_code(text, at)?;
+    let (outside, spans) = outside_code(text, at)?;
     let bytes = outside.as_bytes();
     let touches = |at: usize| bytes.get(at).is_some_and(|byte| *byte != b' ');
     let math = bytes.iter().enumerate().any(|(index, byte)| {
@@ -152,10 +173,12 @@ pub fn check_inline(text: &str, at: usize) -> Result<(), MarkdownError> {
         .windows(2)
         .any(|pair| pair[0] == b'\\' && pair[1].is_ascii_punctuation())
         || outside.ends_with('\\');
-    // A link's text shows something, with no space at its edges.
+    // A link's text shows something, with no space at its edges, and no
+    // address as a reader sees it (code put back, markers dropped).
     let shown = LINK.captures_iter(&outside).all(|link| {
-        let text = &link[1];
-        text.trim() == text && shows(text)
+        let text = link.get(1).expect("LINK has a text group");
+        let edges = text.as_str().trim() == text.as_str();
+        edges && shows(text.as_str()) && !holds_address(&as_read(&outside, &spans, text.range()))
     });
     // The text as shown: each link's address taken out, its text kept, so
     // the address rule below reads link texts too (a link showing

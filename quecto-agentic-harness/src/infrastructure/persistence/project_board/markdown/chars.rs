@@ -41,6 +41,8 @@ fn is(class: &Regex, c: char) -> bool {
     class.is_match(c.encode_utf8(&mut [0; 4]))
 }
 
+/// The bidi controls, named only so their refusal says so: the allowlist
+/// below refuses them anyway (they are format characters).
 fn is_bidi(c: char) -> bool {
     matches!(c, '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
 }

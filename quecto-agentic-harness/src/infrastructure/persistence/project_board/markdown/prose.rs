@@ -1,16 +1,19 @@
 //! Prose: paragraphs, one-level `- ` lists and fenced code, one blank line
 //! between them. Nothing else a block can be survives: a paragraph's line
-//! or a list item that starts as another block would is escaped with a
-//! backslash before its ASCII punctuation, so it reads as text.
+//! or a list item that opens with ASCII punctuation (the backtick aside),
+//! or as an ordered marker, is escaped with a backslash, so it reads as
+//! text; an item opens with `[` only as a link, never a task box.
 use super::inline::{check_inline, starts_with_link};
 use super::{Block, MarkdownError};
 
-/// The punctuation a line that starts as a block starts with: heading,
-/// table, quote, setext underline, list, thematic break, definition,
-/// footnote or link reference, HTML, escape, tilde fence, math. A backtick
-/// needs none: a line of text closes every code span it opens, so three
-/// backticks there are a span, never a fence.
-pub const BLOCK_STARTS: &str = "#|>=-+*_:[<\\~$";
+/// Whether a line opening with `first` is escaped: every ASCII punctuation
+/// (a backslash escape is valid before each), so no block any reader knows
+/// can start, but the backtick: a line of text closes every code span it
+/// opens, so three backticks there are a span, never a fence, and an
+/// escape would leave its span unopened.
+pub fn opens_escaped(first: char) -> bool {
+    first.is_ascii_punctuation() && first != '`'
+}
 /// The languages a fence may name: plain highlighters, each of which a
 /// reader (GitHub's included) shows as code. Others (`math`, `mermaid`,
 /// `geojson`, `topojson`, `stl`) are drawn as something else.
@@ -42,7 +45,7 @@ pub fn escaped(line: &str) -> String {
     match (line.chars().next(), list_number(line)) {
         // A link opens the line: a reference definition it is not.
         (Some('['), _) if starts_with_link(line) => line.to_string(),
-        (Some(first), _) if BLOCK_STARTS.contains(first) => format!("\\{line}"),
+        (Some(first), _) if opens_escaped(first) => format!("\\{line}"),
         (_, Some(digits)) => format!("{}\\{}", &line[..digits], &line[digits..]),
         _ => line.to_string(),
     }
@@ -103,6 +106,14 @@ pub fn render(
             Block::List(items) => {
                 for item in items {
                     text_line(item, lines.len() + 1)?;
+                    // A `[` opening an item is a task box to GitHub, but
+                    // for a link's.
+                    if item.starts_with('[') && !starts_with_link(item) {
+                        return Err(MarkdownError::Structure {
+                            line: lines.len() + 1,
+                            expected: "an item that opens with `[` only as a link",
+                        });
+                    }
                     lines.push(format!("- {}", escaped(item)));
                 }
             }

@@ -27,9 +27,16 @@
 //! refused when it is written, never escaped into something else. Files,
 //! lines and line counts are capped by the caller's [`Limits`].
 //!
-//! One visible change is accepted: GitHub draws an emoji shortcode
-//! (`:smile:`) as its emoji. Nothing is hidden by it, and refusing it would
-//! refuse times such as `12:00:00`.
+//! Accepted, as visible text a reader may misread but which hides nothing:
+//! - GitHub draws an emoji shortcode (`:smile:`) as its emoji; refusing it
+//!   would refuse times such as `12:00:00`.
+//! - A link may show a bare domain other than its address
+//!   (`[paypal.com](https://evil.example)`): telling one apart would refuse
+//!   ordinary text such as `README.md`, and board files are tool-written.
+//!   A link never shows a scheme, `www.` or an email.
+//! - Any script's letters are allowed, so mixed-script confusables,
+//!   fullwidth forms and right-to-left letters (never bidi controls) may
+//!   look like other text.
 //!
 //! The core is generic: each kind's fields and sections, in order, are the
 //! caller's [`Shape`].
@@ -198,7 +205,9 @@ pub enum MarkdownError {
     /// The caller's shape is not one a file can be.
     #[error("a shape no file can be: {0}")]
     Shape(&'static str),
-    /// Parsed, but the file is not the one rendering it gives.
+    /// Parsed, but the file is not the one rendering it gives. Only the
+    /// read side (`parse`, #2503) answers it; it is here so the codec has
+    /// one error type for both sides.
     #[error("not the canonical file for what it holds")]
     NotCanonical,
 }
@@ -343,18 +352,21 @@ impl Layout {
     }
 }
 
+/// What an ASCII cell is made of (an allowlist): an optional leading `@`
+/// (`@scope/pkg`), then letters and digits, `.:/#+-`, and `_` only between
+/// letters or digits, where no reader takes it for emphasis.
+static ASCII_CELL: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"^@?(?:[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*|[.:/#+-])+$").expect("a valid pattern")
+});
+
 /// Whether an ASCII cell shows as written, nothing in it linked or
-/// emphasised (an allowlist): `@` only first (`@scope/pkg`), no `www.` or
-/// `://` anywhere, and each `_` between letters or digits.
+/// emphasised: made as [`ASCII_CELL`] allows, and holding neither `www.`
+/// nor `://`, the two forms GitHub would still link there (naming a form
+/// is inherent to finding it; the oracle's comrak reader catches what a
+/// pattern misses).
 fn plain(value: &str) -> bool {
-    let bytes = value.as_bytes();
     let lower = value.to_ascii_lowercase();
-    let word = |at: Option<&u8>| at.is_some_and(u8::is_ascii_alphanumeric);
-    let at_first = bytes.iter().skip(1).all(|byte| *byte != b'@');
-    let underscores = (0..bytes.len()).filter(|at| bytes[*at] == b'_').all(|at| {
-        word(at.checked_sub(1).and_then(|before| bytes.get(before))) && word(bytes.get(at + 1))
-    });
-    at_first && underscores && !lower.contains("www.") && !lower.contains("://")
+    ASCII_CELL.is_match(value) && !lower.contains("www.") && !lower.contains("://")
 }
 
 /// A cell as a row holds it.
