@@ -105,7 +105,7 @@ fn free(board: &BoardSnapshot, new: &NewBoardTask) -> Result<(), ProjectBoardErr
         .map(|fields| &fields.id)
         .min();
     if let Some(by) = naming {
-        return Err(ProjectBoardError::Referenced {
+        return Err(ProjectBoardError::ClosesCycle {
             id: new.id.clone(),
             by: by.clone(),
         });

@@ -109,10 +109,11 @@ pub enum ProjectBoardError {
     Quarantined(Slug),
     /// A new task names a parent or dependency the board does not hold.
     UnknownReference(Slug),
-    /// A task on the board already names this new id as its parent or a
-    /// dependency (its own task was deleted): creating it could close a
-    /// cycle.
-    Referenced {
+    /// Creating task `id` would close a cycle: its parent and
+    /// dependencies lead, through the board, to task `by`, which already
+    /// names `id` as its parent or a dependency (`id`'s own task was
+    /// deleted).
+    ClosesCycle {
         id: Slug,
         by: Slug,
     },
@@ -189,11 +190,12 @@ impl fmt::Display for ProjectBoardError {
             Self::UnknownReference(id) => {
                 write!(f, "no task {} on the board to refer to", id.as_str())
             }
-            Self::Referenced { id, by } => write!(
+            Self::ClosesCycle { id, by } => write!(
                 f,
-                "task {} already names {} as its parent or a dependency",
-                by.as_str(),
-                id.as_str()
+                "task {id} would close a cycle: it leads to task {by}, which already names {id} \
+                 as its parent or a dependency",
+                id = id.as_str(),
+                by = by.as_str()
             ),
             Self::InvalidWriter(error) => write!(f, "the board's writer is invalid: {error}"),
             Self::PrStateUnknown(pr) => write!(f, "pull request {pr} is not known to the host"),

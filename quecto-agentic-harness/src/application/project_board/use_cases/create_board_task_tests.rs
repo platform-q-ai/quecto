@@ -258,11 +258,9 @@ fn a_parent_quarantined_between_the_read_and_the_write_is_reported() {
     assert_eq!(store.writes(), 1, "only p was written");
 }
 
-/// b's file was quarantined and then deleted, so a still depends on a b
-/// the board no longer holds. A new b depending on a would close a cycle:
-/// a new id any task already names is refused.
-#[test]
-fn a_new_id_another_task_already_names_is_refused() {
+/// b's file was quarantined and then deleted, so a still depends on, and
+/// c is still a child of, a b the board no longer holds.
+fn board_missing_b() -> MemoryBoardStore {
     let store = board();
     create(&store, SetClock::at("10:00:00"))
         .execute(&new_task("b"))
@@ -281,17 +279,47 @@ fn a_new_id_another_task_already_names_is_refused() {
         .unwrap();
     store.quarantine("b", "malformed");
     store.delete_quarantined("b");
+    store
+}
+
+/// A deleted task is made again under its id when that closes no cycle.
+#[test]
+fn a_deleted_task_is_made_again_when_that_closes_no_cycle() {
+    let store = board_missing_b();
+    let again = create(&store, SetClock::at("10:03:00")).execute(&new_task("b"));
+    assert!(again.is_ok(), "{again:?}");
+}
+
+/// A new b depending on a, which depends on b, closes a cycle; so does a
+/// new b whose parent e depends on a, through the board.
+#[test]
+fn a_new_task_that_would_close_a_cycle_is_refused() {
+    let store = board_missing_b();
+    create(&store, SetClock::at("10:03:00"))
+        .execute(&NewBoardTask {
+            depends_on: vec![slug("a")],
+            ..new_task("e")
+        })
+        .unwrap();
     let writes = store.writes();
-    let cycle = create(&store, SetClock::at("10:03:00")).execute(&NewBoardTask {
-        depends_on: vec![slug("a")],
-        ..new_task("b")
+    let cycle = |new: NewBoardTask| create(&store, SetClock::at("10:04:00")).execute(&new);
+    let closes = Err(ProjectBoardError::ClosesCycle {
+        id: slug("b"),
+        by: slug("a"),
     });
     assert_eq!(
-        cycle,
-        Err(ProjectBoardError::Referenced {
-            id: slug("b"),
-            by: slug("a")
-        })
+        cycle(NewBoardTask {
+            depends_on: vec![slug("a")],
+            ..new_task("b")
+        }),
+        closes
+    );
+    assert_eq!(
+        cycle(NewBoardTask {
+            parent: Some(slug("e")),
+            ..new_task("b")
+        }),
+        closes
     );
     assert_eq!(store.writes(), writes);
 }

@@ -1,8 +1,9 @@
 use super::CompleteMergedTask;
-use crate::application::project_board::dto::ProjectBoardError;
+use crate::application::project_board::dto::{BoardOp, ProjectBoardError};
 use crate::application::project_board::ports::{
     ProjectBoardStore, PullRequestState, PullRequestStatesError,
 };
+use crate::application::project_board::use_cases::ChangeBoardTask;
 use crate::application::project_board::use_cases::fixtures_tests::{
     SetClock, at, board, fields, person, slug,
 };
@@ -214,4 +215,95 @@ fn a_task_that_cannot_complete_is_refused_before_the_host_is_read() {
             to: TaskStatus::Done
         }))
     );
+}
+
+/// The pull request had already merged when Ada linked it, so no merge
+/// event follows; running the completion after the link closes the task,
+/// whoever runs it (S2 runs it after every link, on a move to review, on
+/// merge events, and as anyone's "complete").
+#[test]
+fn a_pull_request_merged_before_it_was_linked_completes_the_task() {
+    let store = seeded(&[]);
+    let host = MemoryPullRequests::default();
+    host.set(7, PullRequestState::Merged);
+    ChangeBoardTask::new(
+        Arc::new(store.client_as(person("Ada"))),
+        SetClock::at("09:30:00"),
+    )
+    .unwrap()
+    .execute(&slug("a"), &BoardOp::AddPr(7))
+    .unwrap();
+    let done = complete(&store, &host).execute(&slug("a")).unwrap();
+    assert_eq!(done.fields().status, TaskStatus::Done);
+}
+
+/// Ada links pull request 8 between the completion's read and its write:
+/// the write is lost, the completion is built again on the fresh task, and
+/// the host is asked again, now about 8 too.
+#[test]
+fn a_pull_request_linked_during_the_completion_is_asked_about() {
+    let store = seeded(&[7]);
+    let host = MemoryPullRequests::default();
+    host.set(7, PullRequestState::Merged);
+    host.set(8, PullRequestState::Open);
+    store.before_next_write(|board| {
+        ChangeBoardTask::new(
+            Arc::new(board.client_as(person("Ada"))),
+            SetClock::at("09:30:00"),
+        )
+        .unwrap()
+        .execute(&slug("a"), &BoardOp::AddPr(8))
+        .unwrap();
+    });
+    let writes = store.writes();
+    assert_eq!(
+        complete(&store, &host).execute(&slug("a")),
+        Err(ProjectBoardError::Rule(BoardRuleError::PrsUnmerged(vec![
+            8
+        ])))
+    );
+    assert_eq!(host.asked(), [7, 7, 8], "asked again on the fresh task");
+    assert_eq!(
+        (status(&store), store.writes()),
+        (TaskStatus::Review, writes + 1),
+        "only Ada's link landed"
+    );
+}
+
+/// Once a merge closed the task and ended its run as lost, its former
+/// holder has no claim to end a run under.
+#[test]
+fn ending_a_run_after_completion_finds_no_claim() {
+    let store = board();
+    let held = Task::new(TaskFields {
+        status: TaskStatus::InProgress,
+        claim: Some(Claim {
+            holder: person("Ada"),
+            since: at("09:00:00"),
+            expires: at("11:00:00"),
+        }),
+        runs: vec![Run {
+            id: slug("r1"),
+            started: at("09:05:00"),
+            ended: None,
+            outcome: None,
+        }],
+        prs: vec![7],
+        created: at("08:00:00"),
+        updated: at("09:05:00"),
+        ..fields("a")
+    })
+    .unwrap();
+    let head = store.read().unwrap().head;
+    store.write(&head, &[held], "seed").unwrap();
+    let host = MemoryPullRequests::default();
+    host.set(7, PullRequestState::Merged);
+    complete(&store, &host).execute(&slug("a")).unwrap();
+    let ended = ChangeBoardTask::new(
+        Arc::new(store.client_as(person("Ada"))),
+        SetClock::at("10:05:00"),
+    )
+    .unwrap()
+    .execute(&slug("a"), &BoardOp::EndRunLost);
+    assert_eq!(ended, Err(ProjectBoardError::Rule(BoardRuleError::NoClaim)));
 }

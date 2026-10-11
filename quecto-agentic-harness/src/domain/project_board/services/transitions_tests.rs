@@ -420,6 +420,11 @@ fn a_task_linking_pull_requests_is_done_only_when_they_merge() {
         Err(BoardRuleError::PrsLinked(vec![2482, 2483])),
         "its holder cannot say it is done"
     );
+    assert_eq!(
+        BoardRuleError::PrsLinked(vec![2482, 2483]).to_string(),
+        "the task links pull requests [2482, 2483], so it is done when they merge: \
+         complete it once they have (anyone may), or unlink one first"
+    );
     let mut unlinked = review.into_fields();
     unlinked.prs.clear();
     let unlinked = Task::new(unlinked).unwrap();
