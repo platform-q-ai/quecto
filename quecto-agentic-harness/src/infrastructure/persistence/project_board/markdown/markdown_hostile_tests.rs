@@ -89,6 +89,7 @@ fn hostile_documents_are_refused_when_written() {
         ("a topojson fence", with(|d| d.sections[0].body = code_in("topojson")), |e| matches!(e, E::Fence { .. })),
         ("an stl fence", with(|d| d.sections[0].body = code_in("stl")), |e| matches!(e, E::Fence { .. })),
         ("a link of a space", render(&with_line("[ ](https://example.com)"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        ("a link of two spaces", render(&with_line("[  ](https://example.com)"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
         ("a link of a blank code span", render(&with_line("[` `](https://example.com)"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
         ("a link of a mark", render(&with_line("[\u{301}](https://example.com)"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
         ("a link of a blank note", render(&with_line("[\u{1d159}](https://example.com)"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),

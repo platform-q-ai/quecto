@@ -39,6 +39,16 @@ const PYTHON_AS_DATA: &[(&str, &str)] = &[
         "quecto-agentic-harness/tests/features/security.feature",
         r#"| python -c "print('rm -rf /')"        |"#,
     ),
+    // A fence language the board's markdown lets code blocks name for
+    // highlighting (#2481); nothing is run.
+    (
+        "quecto-agentic-harness/src/infrastructure/persistence/project_board/markdown/prose.rs",
+        "python",
+    ),
+    (
+        "quecto-agentic-harness/src/infrastructure/persistence/project_board/markdown/markdown_hostile_tests.rs",
+        "python",
+    ),
     // The docs must not teach the interpreter the board once ran in, and
     // the starter container must not offer it.
     (
