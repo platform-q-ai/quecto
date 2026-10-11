@@ -3,7 +3,7 @@ use crate::domain::project_board::entities::claim::{MAX_EMAIL_BYTES, MAX_NAME_CH
 use crate::domain::project_board::entities::task::{MAX_DESCRIPTION_CHARS, MAX_TEXT_BYTES};
 use crate::domain::project_board::entities::task_parts::{MAX_LINE_CHARS, PlanStep};
 use crate::domain::project_board::services::fixtures_tests::{
-    at, far_future, last_written, person, task, with_open_run, without_claim,
+    at, far_future, last_written, person, task, with_open_run, without_claim, without_prs,
 };
 use crate::domain::project_board::value_objects::slug::Slug;
 
@@ -51,7 +51,12 @@ const RELEASES: [(TaskStatus, TaskStatus); 4] = [
 fn only_the_table_allows_a_move_even_for_the_holder() {
     for from in ALL {
         for to in ALL {
-            let moved = move_task(&task(from), to, &person("Ada"), &at("10:00:00"));
+            let moved = move_task(
+                &without_prs(task(from)),
+                to,
+                &person("Ada"),
+                &at("10:00:00"),
+            );
             match moved {
                 Ok(next) => {
                     assert!(
@@ -126,7 +131,7 @@ fn a_claim_is_taken_kept_or_cleared_by_the_move() {
     }
     let cleared = RELEASES.iter().chain(&[(Review, Done)]);
     for (from, to) in cleared.copied() {
-        let next = move_task(&task(from), to, &person("Ada"), &now).unwrap();
+        let next = move_task(&without_prs(task(from)), to, &person("Ada"), &now).unwrap();
         assert_eq!(next.fields().claim, None, "{from:?} -> {to:?} clears it");
     }
 }
@@ -235,7 +240,7 @@ fn a_move_to_ready_done_or_archived_with_an_open_run_is_refused() {
     for (from, to) in RELEASES.iter().chain(&[(Review, Done)]).copied() {
         assert_eq!(
             move_task(
-                &with_open_run(task(from)),
+                &with_open_run(without_prs(task(from))),
                 to,
                 &person("Ada"),
                 &at("10:00:00")
@@ -374,5 +379,24 @@ fn a_change_that_cannot_be_spelt_is_refused_as_invalid() {
     assert!(
         matches!(&moved, Err(BoardRuleError::Invalid(error)) if error.field == "claim/expires"),
         "{moved:?}"
+    );
+}
+
+#[test]
+fn a_task_linking_pull_requests_is_done_only_when_they_merge() {
+    let review = task(Review);
+    assert_eq!(
+        move_task(&review, Done, &person("Ada"), &at("10:00:00")),
+        Err(BoardRuleError::PrsOpen(vec![2482, 2483])),
+        "its holder cannot say it is done"
+    );
+    let mut unlinked = review.into_fields();
+    unlinked.prs.clear();
+    let unlinked = Task::new(unlinked).unwrap();
+    let done = move_task(&unlinked, Done, &person("Ada"), &at("10:00:00")).unwrap();
+    assert_eq!(
+        done.fields().status,
+        Done,
+        "work without pull requests is the holder's to finish"
     );
 }

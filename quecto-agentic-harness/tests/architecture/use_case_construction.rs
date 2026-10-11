@@ -49,6 +49,7 @@ const USE_CASES: &[&str] = &[
     "ClaimTask",
     "ClearConversation",
     "CloseRun",
+    "CompleteMergedTask",
     "CompleteRun",
     "ConfigureUsageBudget",
     "ConfirmMemberDead",

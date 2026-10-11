@@ -1,6 +1,7 @@
 use super::ChangeBoardTask;
 use crate::application::project_board::dto::{BoardOp, ProjectBoardError};
 use crate::application::project_board::ports::ProjectBoardStore;
+use crate::application::project_board::use_cases::CompleteMergedTask;
 use crate::application::project_board::use_cases::fixtures_tests::{
     SetClock, at, board, fields, person, slug,
 };
@@ -37,8 +38,9 @@ fn held_by_ada(status: TaskStatus) -> TaskFields {
     }
 }
 
-fn change(store: &MemoryBoardStore, time: &str) -> ChangeBoardTask {
-    ChangeBoardTask::new(Arc::new(store.client()), SetClock::at(time))
+/// The change use case over `store`, writing as `who`.
+fn change(store: &MemoryBoardStore, who: &str, time: &str) -> ChangeBoardTask {
+    ChangeBoardTask::new(Arc::new(store.client_as(person(who))), SetClock::at(time))
 }
 
 fn current(store: &MemoryBoardStore) -> TaskFields {
@@ -49,34 +51,37 @@ fn current(store: &MemoryBoardStore) -> TaskFields {
 fn a_task_is_claimed_worked_linked_and_completed_when_its_pr_merges() {
     let store = board();
     seed(&store, fields("a"));
-    let (ada, bob, a) = (person("Ada"), person("Bob"), slug("a"));
-    let claimed = change(&store, "10:00:00")
-        .execute(&a, &ada, &BoardOp::Claim)
+    let a = slug("a");
+    let claimed = change(&store, "Ada", "10:00:00")
+        .execute(&a, &BoardOp::Move(TaskStatus::Claimed))
         .unwrap();
     let claim = claimed.fields().claim.clone().unwrap();
     assert_eq!(
         (claimed.fields().status, claim.holder, claim.expires),
-        (TaskStatus::Claimed, ada.clone(), at("12:00:00"))
+        (TaskStatus::Claimed, person("Ada"), at("12:00:00"))
     );
     for (time, op) in [
         ("10:05:00", BoardOp::Move(TaskStatus::InProgress)),
         ("10:10:00", BoardOp::AddPr(7)),
         ("10:15:00", BoardOp::Move(TaskStatus::Review)),
     ] {
-        change(&store, time).execute(&a, &ada, &op).unwrap();
+        change(&store, "Ada", time).execute(&a, &op).unwrap();
     }
+    let early = change(&store, "Ada", "10:16:00").execute(&a, &BoardOp::Move(TaskStatus::Done));
     assert_eq!(
-        (current(&store).status, current(&store).prs),
-        (TaskStatus::Review, vec![7])
+        early,
+        Err(ProjectBoardError::Rule(BoardRuleError::PrsOpen(vec![7]))),
+        "a linked PR closes it, not its holder"
     );
-    let merged = BoardOp::CompleteMerged(BTreeSet::from([7]));
-    let done = change(&store, "10:20:00")
-        .execute(&a, &bob, &merged)
-        .unwrap();
+    let system = CompleteMergedTask::new(
+        Arc::new(store.client_as(person("Bob"))),
+        SetClock::at("10:20:00"),
+    );
+    let done = system.execute(&a, &BTreeSet::from([7])).unwrap();
     assert_eq!(
         (done.fields().status, done.fields().claim.clone()),
         (TaskStatus::Done, None),
-        "the system's move, whoever acts"
+        "the system's move, whoever runs it"
     );
 }
 
@@ -97,24 +102,28 @@ fn a_claim_is_renewed_taken_over_and_a_lost_run_ended() {
             ..held_by_ada(TaskStatus::InProgress)
         },
     );
-    let (ada, bob, a) = (person("Ada"), person("Bob"), slug("a"));
-    let renewed = change(&store, "10:30:00")
-        .execute(&a, &ada, &BoardOp::Renew)
+    let a = slug("a");
+    let renewed = change(&store, "Ada", "10:30:00")
+        .execute(&a, &BoardOp::Renew)
         .unwrap();
     assert_eq!(
         renewed.fields().claim.as_ref().unwrap().expires,
         at("12:30:00")
     );
-    let taken = change(&store, "13:00:00")
-        .execute(&a, &bob, &BoardOp::TakeOver)
+    let taken = change(&store, "Bob", "13:00:00")
+        .execute(&a, &BoardOp::TakeOver)
         .unwrap();
-    assert_eq!(taken.fields().claim.as_ref().unwrap().holder, bob);
-    let ended = change(&store, "13:05:00")
-        .execute(&a, &bob, &BoardOp::EndRunLost)
+    assert_eq!(
+        taken.fields().claim.as_ref().unwrap().holder,
+        person("Bob"),
+        "the store's committer acts"
+    );
+    let ended = change(&store, "Bob", "13:05:00")
+        .execute(&a, &BoardOp::EndRunLost)
         .unwrap();
     assert_eq!(ended.fields().runs[0].outcome, Some(RunOutcome::Lost));
-    change(&store, "13:10:00")
-        .execute(&a, &bob, &BoardOp::RemovePr(3))
+    change(&store, "Bob", "13:10:00")
+        .execute(&a, &BoardOp::RemovePr(3))
         .unwrap();
     assert_eq!(current(&store).prs, Vec::<u64>::new());
 }
@@ -123,18 +132,18 @@ fn a_claim_is_renewed_taken_over_and_a_lost_run_ended() {
 fn a_change_the_rules_refuse_writes_nothing() {
     let store = board();
     seed(&store, held_by_ada(TaskStatus::Claimed));
+    store.quarantine("q", "malformed");
     let writes = store.writes();
-    let refused = change(&store, "10:00:00").execute(
-        &slug("a"),
-        &person("Bob"),
-        &BoardOp::Move(TaskStatus::InProgress),
-    );
+    let refused = change(&store, "Bob", "10:00:00")
+        .execute(&slug("a"), &BoardOp::Move(TaskStatus::InProgress));
     assert_eq!(
         refused,
         Err(ProjectBoardError::Rule(BoardRuleError::NotHolder))
     );
-    let missing = change(&store, "10:00:00").execute(&slug("zz"), &person("Ada"), &BoardOp::Renew);
+    let missing = change(&store, "Ada", "10:00:00").execute(&slug("zz"), &BoardOp::Renew);
     assert_eq!(missing, Err(ProjectBoardError::NotFound(slug("zz"))));
+    let set_aside = change(&store, "Ada", "10:00:00").execute(&slug("q"), &BoardOp::Renew);
+    assert_eq!(set_aside, Err(ProjectBoardError::Quarantined(slug("q"))));
     assert_eq!(store.writes(), writes);
 }
 
@@ -145,17 +154,14 @@ fn a_lost_change_is_made_again_on_the_fresh_task() {
     let store = board();
     seed(&store, held_by_ada(TaskStatus::Claimed));
     store.before_next_write(|board| {
-        let ada = ChangeBoardTask::new(Arc::new(board.client()), SetClock::at("10:10:00"));
-        ada.execute(
-            &slug("a"),
-            &person("Ada"),
-            &BoardOp::Move(TaskStatus::InProgress),
-        )
-        .unwrap();
+        let other = ChangeBoardTask::new(Arc::new(board.client()), SetClock::at("10:10:00"));
+        other
+            .execute(&slug("a"), &BoardOp::Move(TaskStatus::InProgress))
+            .unwrap();
     });
-    let renewed = change(&store, "10:20:00")
-        .execute(&slug("a"), &person("Ada"), &BoardOp::Renew)
-        .unwrap();
+    let clock = SetClock::at("10:20:00");
+    let renew = ChangeBoardTask::new(Arc::new(store.client()), clock.clone());
+    let renewed = renew.execute(&slug("a"), &BoardOp::Renew).unwrap();
     assert_eq!(
         renewed.fields().status,
         TaskStatus::InProgress,
@@ -164,6 +170,11 @@ fn a_lost_change_is_made_again_on_the_fresh_task() {
     assert_eq!(
         renewed.fields().claim.as_ref().unwrap().expires,
         at("12:20:00")
+    );
+    assert_eq!(
+        *clock.pauses.lock().unwrap(),
+        [2],
+        "one pause before the second attempt"
     );
 }
 
@@ -174,15 +185,45 @@ fn a_change_no_longer_allowed_on_the_fresh_task_is_refused() {
     let store = board();
     seed(&store, fields("a"));
     store.before_next_write(|board| {
-        let ada = ChangeBoardTask::new(Arc::new(board.client()), SetClock::at("10:00:00"));
-        ada.execute(&slug("a"), &person("Ada"), &BoardOp::Claim)
+        let ada = ChangeBoardTask::new(
+            Arc::new(board.client_as(person("Ada"))),
+            SetClock::at("10:00:00"),
+        );
+        ada.execute(&slug("a"), &BoardOp::Move(TaskStatus::Claimed))
             .unwrap();
     });
-    let refused = change(&store, "10:00:01").execute(&slug("a"), &person("Bob"), &BoardOp::Claim);
+    let refused =
+        change(&store, "Bob", "10:00:01").execute(&slug("a"), &BoardOp::Move(TaskStatus::Claimed));
     let not_allowed = BoardRuleError::NotAllowed {
         from: TaskStatus::Claimed,
         to: TaskStatus::Claimed,
     };
     assert_eq!(refused, Err(ProjectBoardError::Rule(not_allowed)));
     assert_eq!(current(&store).claim.unwrap().holder, person("Ada"));
+}
+
+/// A task stamped past the reference by a clock that ran ahead is not
+/// built on; the store's refusal is reported as it is.
+#[test]
+fn a_task_from_the_future_and_a_refusal_are_reported() {
+    let store = board();
+    seed(&store, held_by_ada(TaskStatus::Claimed));
+    let skewed = ChangeBoardTask::new(
+        Arc::new(store.client()),
+        SetClock::with_reference("09:00:00", Some("09:00:00")),
+    );
+    let ahead = skewed.execute(&slug("a"), &BoardOp::Renew);
+    assert_eq!(
+        ahead,
+        Err(ProjectBoardError::TaskAhead {
+            id: slug("a"),
+            updated: at("09:10:00")
+        })
+    );
+    store.refuse_next_write("a hook said no");
+    let refused = change(&store, "Ada", "10:00:00").execute(&slug("a"), &BoardOp::Renew);
+    assert_eq!(
+        refused,
+        Err(ProjectBoardError::Refused("a hook said no".into()))
+    );
 }

@@ -25,17 +25,24 @@ pub fn person(name: &str) -> Identity {
     }
 }
 
-/// A clock reading a set time, with an optional outside reference.
+/// A clock reading a set time, with an optional outside reference; it
+/// counts the pauses between attempts instead of waiting.
 pub struct SetClock {
     pub now: Mutex<Timestamp>,
     pub reference: Option<Timestamp>,
+    pub pauses: Mutex<Vec<usize>>,
 }
 
 impl SetClock {
     pub fn at(time: &str) -> Arc<Self> {
+        Self::with_reference(time, None)
+    }
+
+    pub fn with_reference(time: &str, reference: Option<&str>) -> Arc<Self> {
         Arc::new(Self {
             now: Mutex::new(at(time)),
-            reference: None,
+            reference: reference.map(at),
+            pauses: Mutex::new(Vec::new()),
         })
     }
 }
@@ -49,7 +56,9 @@ impl BoardClock for SetClock {
         self.reference.clone()
     }
 
-    fn pause(&self, _attempt: usize) {}
+    fn pause(&self, attempt: usize) {
+        self.pauses.lock().unwrap().push(attempt);
+    }
 }
 
 /// A bootstrapped, empty board.

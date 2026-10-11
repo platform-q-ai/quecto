@@ -118,3 +118,10 @@ pub fn last_written(task: Task, updated: &Timestamp) -> Task {
     fields.updated = updated.clone();
     Task::new(fields).expect("a later write keeps the task valid")
 }
+
+/// The task with no linked pull requests: work its holder may finish.
+pub fn without_prs(task: Task) -> Task {
+    let mut fields = task.into_fields();
+    fields.prs.clear();
+    Task::new(fields).unwrap()
+}
