@@ -27,7 +27,7 @@ use crate::application::project_board::ports::{
 };
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::claims::is_live;
-use crate::domain::project_board::value_objects::shown_text::shown_path;
+use crate::domain::project_board::value_objects::shown_text::{shown_char, shown_path};
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
@@ -421,10 +421,15 @@ impl BoardIndex {
                     true => {}
                     false => return Err(corrupt(format!("object {object:?} of {path:?}"))),
                 }
-                // A path as a store shows it, or the row was planted.
+                // A path and reason as a store shows them, or the row was
+                // planted.
                 match shown_path(&path) {
                     true => {}
                     false => return Err(corrupt(format!("path {path:?} no store shows"))),
+                }
+                match reason.chars().all(|c| shown_char(c) || c == ' ') {
+                    true => {}
+                    false => return Err(corrupt(format!("reason of {path:?} no store gives"))),
                 }
                 Ok(QuarantinedFile {
                     path,

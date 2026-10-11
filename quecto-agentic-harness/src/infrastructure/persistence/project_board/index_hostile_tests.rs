@@ -143,3 +143,22 @@ fn a_planted_path_no_store_shows_ends_in_a_rebuild() {
         "{listed:?}"
     );
 }
+
+/// A planted set-aside row whose reason no store gives (a control or
+/// format character in it) is refused as corrupt too.
+#[test]
+fn a_planted_reason_no_store_gives_is_refused_as_corrupt() {
+    for planted in ["char(8238)", "char(27) || '[31m'", "char(10)"] {
+        let (_dir, index) = index();
+        rebuild(&index, &board("a1")).unwrap();
+        tamper(
+            &index,
+            &format!("UPDATE quarantined SET reason = 'bad' || {planted};"),
+        );
+        let read = index.ready();
+        assert!(
+            matches!(&read, Err(IndexError::Corrupt(why)) if why.contains("no store gives")),
+            "{planted}: {read:?}"
+        );
+    }
+}
