@@ -27,15 +27,28 @@ impl ReadSwarmBoard {
     /// An unknown ref, an environment hosting no reachable board, or the
     /// board's own refusal.
     pub async fn board(&self, swarm: &str) -> Result<Value, SwarmBoardRefusal> {
-        let _ = (&self.registry, &self.boards, holds_a_board);
-        Err(SwarmBoardRefusal::NoBoard(swarm.to_owned()))
+        let record = self
+            .registry
+            .get(swarm)
+            .ok_or_else(|| SwarmBoardRefusal::UnknownSwarm(swarm.to_owned()))?;
+        match self.boards.board(&record).await {
+            Ok(Some(board)) => Ok(board),
+            Ok(None) => Err(SwarmBoardRefusal::NoBoard(swarm.to_owned())),
+            Err(error) => Err(SwarmBoardRefusal::Unreadable(error)),
+        }
     }
 
     /// Each hosted board's revision, by environment ref: every environment
     /// that may still hold a board (running or retained) and holds one now.
     /// One that cannot be read is left out until it can.
     pub async fn revisions(&self) -> Vec<(String, i64)> {
-        Vec::new()
+        let mut revisions = Vec::new();
+        for record in self.registry.entries().into_iter().filter(holds_a_board) {
+            if let Ok(Some(revision)) = self.boards.revision(&record).await {
+                revisions.push((record.environment_ref, revision));
+            }
+        }
+        revisions
     }
 }
 

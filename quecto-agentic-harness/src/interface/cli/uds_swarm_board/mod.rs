@@ -108,8 +108,17 @@ pub(super) fn changes(
     seen: &mut BTreeMap<String, i64>,
     revisions: Vec<(String, i64)>,
 ) -> Vec<String> {
-    let _ = (seen, revisions);
-    Vec::new()
+    let mut hints = Vec::new();
+    let mut now = BTreeMap::new();
+    for (swarm, revision) in revisions {
+        if seen.get(&swarm) != Some(&revision) {
+            let hint = serde_json::json!({"type": "swarm_board_changed", "swarm": swarm, "revision": revision});
+            hints.push(hint.to_string());
+        }
+        now.insert(swarm, revision);
+    }
+    *seen = now;
+    hints
 }
 
 /// Polls this harness's swarm boards every [`HINT_INTERVAL`] while a
