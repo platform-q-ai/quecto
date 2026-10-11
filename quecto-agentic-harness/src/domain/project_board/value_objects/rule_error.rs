@@ -55,6 +55,9 @@ pub enum BoardRuleError {
     /// The change was stamped by a clock running ahead of the outside
     /// time: building on it would drag the board ahead too.
     ChangeAhead { change: u32, updated: Timestamp },
+    /// The change's review was stamped by a clock running ahead of the
+    /// outside time: building on it would drag the board ahead too.
+    ReviewAhead { change: u32, updated: Timestamp },
     /// The task links changes: it is done when they merge, through the
     /// completion anyone may run, not by its holder's say-so. The holder
     /// may unlink one deliberately first.
@@ -167,6 +170,11 @@ impl fmt::Display for BoardRuleError {
             Self::ChangeAhead { change, updated } => write!(
                 f,
                 "change {change} was stamped {} by a clock that ran ahead",
+                updated.as_str()
+            ),
+            Self::ReviewAhead { change, updated } => write!(
+                f,
+                "change {change}'s review was stamped {} by a clock that ran ahead",
                 updated.as_str()
             ),
             Self::ChangesLinked(numbers) => write!(

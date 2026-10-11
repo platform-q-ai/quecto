@@ -12,6 +12,7 @@ use crate::application::project_board::dto::{BoardOp, ProjectBoardError};
 use crate::application::project_board::ports::{BoardClock, ProjectBoardStore};
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
+use crate::domain::project_board::services::changes::Linked;
 use crate::domain::project_board::services::claims::{renew, take_over};
 use crate::domain::project_board::services::pull_requests::{add_pr, remove_pr};
 use crate::domain::project_board::services::transitions::move_task;
@@ -57,7 +58,8 @@ impl ChangeBoardTask {
                 let task = task_on(board, id)?;
                 when.may_build_on(task)?;
                 Ok(vec![
-                    apply(task, actor, op, &when.now).map_err(ProjectBoardError::Rule)?,
+                    apply(task, &board.tasks, actor, op, &when.now)
+                        .map_err(ProjectBoardError::Rule)?,
                 ])
             },
         )?;
@@ -65,8 +67,10 @@ impl ChangeBoardTask {
     }
 }
 
+/// `op` on `task`, one of the board's `tasks`.
 fn apply(
     task: &Task,
+    tasks: &[Task],
     actor: &Identity,
     op: &BoardOp,
     now: &Timestamp,
@@ -75,11 +79,19 @@ fn apply(
         BoardOp::Renew => renew(task, actor, now),
         BoardOp::TakeOver => take_over(task, actor, now),
         // No run or change is stored before the run and change artifacts
-        // are (M3): the task has none, so none holds it in review or
-        // already links the pull request. From then the use case passes all
-        // of the task's runs and changes.
+        // are (M3): the task has none, so none holds it in review, and no
+        // change on the board links the pull request. From then the use
+        // case passes the task's runs and changes, and to `add_pr` every
+        // change on the board too. (A quarantined task's pull requests are
+        // unknown until it is mended.)
         BoardOp::Move(to) => move_task(task, *to, actor, &[], &[], now),
-        BoardOp::AddPr(pr) => add_pr(task, actor, *pr, &[], now),
+        BoardOp::AddPr(pr) => {
+            let board = Linked {
+                changes: &[],
+                tasks,
+            };
+            add_pr(task, actor, *pr, board, now)
+        }
         BoardOp::RemovePr(pr) => remove_pr(task, actor, *pr, now),
     }
 }

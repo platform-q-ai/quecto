@@ -72,6 +72,12 @@ pub(super) fn shaped(
     }
 }
 
+/// A finding's place, `path:line` or `path:line:col`: one rule for the
+/// task's findings and a review's.
+pub(super) fn location(field: &str, text: &str) -> Result<(), SchemaError> {
+    shaped(field, text, MAX_LINE_CHARS, &LOCATION)
+}
+
 impl Review {
     pub fn validate(&self, field: &str) -> Result<(), SchemaError> {
         if !matches!(self.round, 1..) {

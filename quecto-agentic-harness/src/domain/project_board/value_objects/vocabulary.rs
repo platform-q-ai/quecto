@@ -61,6 +61,11 @@ vocabulary!(
 );
 
 vocabulary!(
+    /// What a review round concluded of the change at its commit.
+    ReviewVerdict { Approved => "approved", ChangesRequested => "changes_requested" }
+);
+
+vocabulary!(
     /// Where one item of a run's board stands.
     ItemState { Todo => "todo", Doing => "doing", Review => "review", Done => "done", Blocked => "blocked" }
 );

@@ -59,7 +59,7 @@ pub type HostPrs = BTreeMap<u64, HostPr>;
 
 /// Everything on the board a link must not clash with: every task's
 /// changes, and every task's pull requests linked the old way.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct Linked<'a> {
     pub changes: &'a [Change],
     pub tasks: &'a [Task],
@@ -287,24 +287,25 @@ pub fn complete(
         [] => {}
         open => return Err(BoardRuleError::PrsUnmerged(open.to_vec())),
     }
-    let unmerged: Vec<u32> = linked
-        .iter()
-        .filter(|change| merge(change.fields().pr).is_none())
-        .map(|change| change.fields().number)
-        .collect();
+    let mut commits = Vec::with_capacity(linked.len());
+    let mut unmerged = Vec::new();
+    for change in &linked {
+        match merge(change.fields().pr) {
+            Some(commit) => commits.push(commit),
+            None => unmerged.push(change.fields().number),
+        }
+    }
     match (linked.as_slice(), unmerged.as_slice()) {
         ([_, ..], []) => {}
         ([], _) => return Err(BoardRuleError::NoChanges),
         (_, open) => return Err(BoardRuleError::ChangesUnmerged(open.to_vec())),
     }
-    let mut commits = Vec::with_capacity(linked.len());
-    for change in &linked {
-        let fields = change.fields();
-        match (fields.merged.is_none(), merge(fields.pr)) {
-            (true, Some(commit)) => commits.push(commit),
-            (false, _) => return Err(BoardRuleError::ChangeMerged(fields.number)),
-            (true, None) => unreachable!("every linked change has merged"),
-        }
+    let recorded = linked
+        .iter()
+        .find(|change| change.fields().merged.is_some());
+    match recorded {
+        None => {}
+        Some(change) => return Err(BoardRuleError::ChangeMerged(change.fields().number)),
     }
     assert_eq!(
         commits.len(),

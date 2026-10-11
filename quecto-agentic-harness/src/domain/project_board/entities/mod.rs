@@ -1,6 +1,7 @@
 pub mod change;
 pub mod claim;
 pub mod plan;
+pub mod review;
 pub mod run;
 pub mod task;
 pub mod task_parts;

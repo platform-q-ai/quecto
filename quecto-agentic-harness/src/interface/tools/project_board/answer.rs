@@ -475,6 +475,11 @@ fn rule_json(rule: &BoardRuleError) -> Value {
             "change": change,
             "updated": updated.as_str(),
         }),
+        R::ReviewAhead { change, updated } => json!({
+            "code": "review_ahead",
+            "change": change,
+            "updated": updated.as_str(),
+        }),
         R::ChangesLinked(changes) => json!({"code": "changes_linked", "changes": changes}),
         R::PrUnread(pr) => json!({"code": "pr_unread", "pr": pr}),
         R::PrNotOpen(pr) => json!({"code": "pr_not_open", "pr": pr}),

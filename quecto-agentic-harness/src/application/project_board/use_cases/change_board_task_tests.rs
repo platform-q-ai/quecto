@@ -366,3 +366,31 @@ fn quick_writes_from_a_fast_clock_never_lock_out_a_right_one() {
     let renewed = right.execute(&slug("a"), &BoardOp::Renew);
     assert!(renewed.is_ok(), "{renewed:?}");
 }
+
+/// A pull request another task on the board links is not linked again.
+#[test]
+fn a_pull_request_another_task_links_is_not_linked_again() {
+    let store = board();
+    seed(&store, held_by_ada(TaskStatus::Claimed));
+    seed(
+        &store,
+        TaskFields {
+            prs: vec![7],
+            ..fields("b")
+        },
+    );
+    let writes = store.writes();
+    let refused = change(&store, "Ada", "10:00:00").execute(&slug("a"), &BoardOp::AddPr(7));
+    assert_eq!(
+        refused,
+        Err(ProjectBoardError::Rule(
+            BoardRuleError::ChangeAlreadyLinked {
+                task: slug("b"),
+                change: None
+            }
+        ))
+    );
+    assert_eq!(store.writes(), writes);
+    let linked = change(&store, "Ada", "10:00:00").execute(&slug("a"), &BoardOp::AddPr(8));
+    assert_eq!(linked.map(|task| task.fields().prs.clone()), Ok(vec![8]));
+}

@@ -29,16 +29,18 @@ impl CommitId {
     }
 }
 
-/// Names git keeps for itself, which a branch would shadow.
+/// Names git keeps for itself, which a branch would shadow, in lowercase:
+/// they are refused in any case, as a case-insensitive file system would
+/// take `Head` for `HEAD`.
 const RESERVED: &[&str] = &[
-    "HEAD",
-    "FETCH_HEAD",
-    "ORIG_HEAD",
-    "MERGE_HEAD",
-    "CHERRY_PICK_HEAD",
-    "REVERT_HEAD",
-    "BISECT_HEAD",
-    "AUTO_MERGE",
+    "head",
+    "fetch_head",
+    "orig_head",
+    "merge_head",
+    "cherry_pick_head",
+    "revert_head",
+    "bisect_head",
+    "auto_merge",
 ];
 
 /// A branch as git names it (`git check-ref-format --branch`), within
@@ -49,7 +51,7 @@ const RESERVED: &[&str] = &[
 /// a reader would take as something else: `@` (git's own short name for
 /// `HEAD`), one of git's own names (`HEAD`, `FETCH_HEAD`, …), a ref path
 /// (`refs/…`, or one starting `heads/`, `tags/` or `remotes/`), or a bare
-/// commit id in either case.
+/// commit id; all of them in any case.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BranchName(String);
 
@@ -92,16 +94,17 @@ fn git_branch(text: &str) -> bool {
         && !text.ends_with('.')
 }
 
-/// The first components that make a name read as a ref path.
+/// The first components that make a name read as a ref path, in any case.
 const REF_ROOTS: &[&str] = &["refs", "heads", "tags", "remotes"];
 
 /// Names git takes but would read as something else.
 fn ours(text: &str) -> bool {
-    let root = text.split('/').next().unwrap_or(text);
-    text != "@"
-        && !RESERVED.contains(&text)
+    let lower = text.to_ascii_lowercase();
+    let root = lower.split('/').next().unwrap_or(&lower);
+    lower != "@"
+        && !RESERVED.contains(&lower.as_str())
         && !REF_ROOTS.contains(&root)
-        && !full_hex(&text.to_ascii_lowercase())
+        && !full_hex(&lower)
 }
 
 /// The most bytes in each part of a repository's name.

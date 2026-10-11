@@ -81,7 +81,21 @@ fn a_branch_name_is_not_one_git_reads_as_something_else() {
             "{name:?}"
         );
     }
-    assert!(BranchName::parse("head").is_ok(), "git's names are exact");
+    for name in [
+        "head",
+        "Head",
+        "fetch_head",
+        "Refs/x",
+        "HEADS/x",
+        "Tags/v1",
+        "REMOTES/o/m",
+    ] {
+        assert_eq!(
+            BranchName::parse(name).unwrap_err().field,
+            "branch",
+            "{name:?}: refused in any case"
+        );
+    }
     for name in ["feat/heads", "tagsx/y", "headsx", "@a"] {
         assert!(BranchName::parse(name).is_ok(), "{name}");
     }
