@@ -18,7 +18,7 @@ use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::schema_error::SchemaError;
 use super::super::value_objects::timestamp::Timestamp;
 use super::super::value_objects::vocabulary::{PlanState, RunOutcome, TaskStatus};
-use super::claims::{held_live_by, is_live, stamp};
+use super::claims::{held_live_by, stamp};
 
 /// A new run of `task`'s accepted `plan`, begun by `actor`, the holder of
 /// a live claim on it, at `now`, numbered after every run in `runs`.
@@ -100,13 +100,13 @@ pub fn fold_back(
 }
 
 /// The open `run` of `task` ended as [`RunOutcome::Lost`] by `actor`: the
-/// holder of a live claim on the task, or anyone once no live claim
-/// answers for the task (none, or one expired), so a run is never
-/// stranded. It ends at the task's stamp for `now` (never before the
-/// task's last change).
+/// holder of a live claim on the task (whoever finds a claim expired takes
+/// the task over first, and so becomes its holder), or anyone when nobody
+/// claims the task, so a run is never stranded. It ends at the task's
+/// stamp for `now` (never before the task's last change).
 ///
 /// # Errors
-/// A live claim `actor` does not hold; a run of another task, or one that
+/// A claim `actor` does not hold live; a run of another task, or one that
 /// has ended; a stamp the board cannot spell.
 pub fn end_lost(
     task: &Task,
@@ -114,12 +114,9 @@ pub fn end_lost(
     actor: &Identity,
     now: &Timestamp,
 ) -> Result<Run, BoardRuleError> {
-    let answered = task
-        .fields()
-        .claim
-        .as_ref()
-        .is_some_and(|claim| is_live(claim, now));
-    if answered {
+    // A claimed task's run is its holder's (one whose claim expired takes
+    // the task over first); only a task nobody claims leaves it to anyone.
+    if task.fields().claim.is_some() {
         held_live_by(task, actor, now)?;
     }
     of_task(task, std::slice::from_ref(run))?;

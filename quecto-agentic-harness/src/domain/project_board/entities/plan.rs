@@ -49,6 +49,8 @@ pub struct PlanFields {
     pub team: Option<Team>,
     /// Who proposed this version.
     pub proposed_by: Identity,
+    /// Who last edited the draft, when someone did (drafts are anyone's).
+    pub edited_by: Option<Identity>,
     /// Who accepted it and when: set from its acceptance on (accepted,
     /// then superseded), never before.
     pub accepted: Option<(Identity, Timestamp)>,
@@ -128,6 +130,9 @@ fn validate(plan: &PlanFields) -> Result<(), SchemaError> {
     markdown("approach", &plan.approach, MAX_APPROACH_CHARS)?;
     validate_items(&plan.items)?;
     plan.proposed_by.validate("proposed_by")?;
+    if let Some(editor) = &plan.edited_by {
+        editor.validate("edited_by")?;
+    }
     validate_acceptance(plan)?;
     let text = plan.text_bytes();
     if text > MAX_PLAN_TEXT_BYTES {

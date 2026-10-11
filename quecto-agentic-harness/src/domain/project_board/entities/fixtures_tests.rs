@@ -58,6 +58,7 @@ pub fn plan(version: u32, state: PlanState) -> Plan {
         items: vec![item("schema", &[]), item("api", &["schema"])],
         team: Some(team()),
         proposed_by: person("Ada"),
+        edited_by: None,
         accepted: match state {
             PlanState::Accepted | PlanState::Superseded => Some((person("Ada"), at("08:30:00"))),
             PlanState::Draft | PlanState::Discarded => None,

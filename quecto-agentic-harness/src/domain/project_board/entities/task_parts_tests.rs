@@ -57,6 +57,7 @@ fn plan_fields() -> PlanFields {
             image: Some("ghcr.io/platform-q-ai/quecto:0.107".into()),
         }),
         proposed_by: ada(),
+        edited_by: None,
         accepted: None,
         created: at("08:00:00"),
         updated: at("10:00:00"),

@@ -172,6 +172,16 @@ pub fn decode(bytes: &[u8]) -> Result<Task, RecordError> {
         found => return Err(RecordError::UnknownSchema { found }),
     }
     let record: TaskRecord = serde_json::from_slice(bytes).map_err(malformed)?;
+    // Each key belongs to the schemas that have it: `accepted_plan`
+    // arrived in schema 2.
+    match (record.schema, &record.accepted_plan) {
+        (2.., _) | (_, None) => {}
+        (_, Some(_)) => {
+            return Err(RecordError::Malformed(
+                "accepted_plan arrived in schema 2".into(),
+            ));
+        }
+    }
     record.into_task().map_err(RecordError::Invalid)
 }
 

@@ -168,23 +168,29 @@ fn validate(run: &RunFields) -> Result<(), SchemaError> {
             ));
         }
     };
-    if !ended && run.cost.is_some() {
-        return Err(SchemaError::new(
-            "cost",
-            "a run reports its cost when it folds back",
-        ));
+    match (ended, run.cost.is_some(), run.items.is_empty()) {
+        (true, _, _) | (false, false, true) => {}
+        (false, true, _) => {
+            return Err(SchemaError::new(
+                "cost",
+                "a run reports its cost when it folds back",
+            ));
+        }
+        (false, false, false) => {
+            return Err(SchemaError::new(
+                "items",
+                "a run reports its items when it folds back",
+            ));
+        }
     }
-    if !ended && !run.items.is_empty() {
-        return Err(SchemaError::new(
-            "items",
-            "a run reports its items when it folds back",
-        ));
-    }
-    if run.cost.is_some_and(|tokens| tokens > MAX_BUDGET_TOKENS) {
-        return Err(SchemaError::new(
-            "cost",
-            format!("must be at most {MAX_BUDGET_TOKENS}"),
-        ));
+    match run.cost.is_none_or(|tokens| tokens <= MAX_BUDGET_TOKENS) {
+        true => {}
+        false => {
+            return Err(SchemaError::new(
+                "cost",
+                format!("must be at most {MAX_BUDGET_TOKENS}"),
+            ));
+        }
     }
     let ids: Vec<&Slug> = run.items.iter().map(|item| &item.id).collect();
     distinct("items", &ids, MAX_ITEMS)?;

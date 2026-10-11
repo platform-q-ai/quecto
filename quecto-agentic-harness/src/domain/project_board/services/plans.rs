@@ -19,7 +19,7 @@ use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::schema_error::SchemaError;
 use super::super::value_objects::timestamp::Timestamp;
 use super::super::value_objects::vocabulary::{PlanState, TaskStatus};
-use super::claims::{held_live_by, settle, stamp};
+use super::claims::{STAMP_SLACK_SECONDS, held_live_by, settle, stamp};
 use super::runs::open_of;
 
 /// What a plan says: its approach, items and team.
@@ -29,6 +29,38 @@ pub struct PlanContent {
     pub approach: String,
     pub items: Vec<PlanItem>,
     pub team: Option<Team>,
+}
+
+/// When a change happens: the caller's `now`, and the latest time it may
+/// build on, when an outside reference bounds the clock (a plan stamped
+/// past it, plus the stamp's slack, came from a clock running ahead).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Moment {
+    pub now: Timestamp,
+    pub latest: Option<Timestamp>,
+}
+
+impl Moment {
+    /// `plan` is no later than this moment may build on.
+    ///
+    /// # Errors
+    /// A plan stamped past the latest time plus the stamp's slack.
+    fn may_build_on(&self, plan: &Plan) -> Result<(), BoardRuleError> {
+        let updated = &plan.fields().updated;
+        let bound = self.latest.as_ref().map(|latest| {
+            latest
+                .plus_seconds(STAMP_SLACK_SECONDS)
+                .unwrap_or_else(|_| latest.clone())
+        });
+        match bound {
+            None => Ok(()),
+            Some(bound) if *updated <= bound => Ok(()),
+            Some(_) => Err(BoardRuleError::PlanAhead {
+                version: plan.fields().version,
+                updated: updated.clone(),
+            }),
+        }
+    }
 }
 
 /// A task with all its plans and runs, as the board holds them: what an
@@ -69,11 +101,14 @@ pub fn propose(
         .map(|plan| plan.fields().version)
         .max()
         .unwrap_or(0);
-    if last >= MAX_PLAN_VERSION {
-        return Err(BoardRuleError::Invalid(SchemaError::new(
-            "version",
-            format!("the task has reached {MAX_PLAN_VERSION} plan versions"),
-        )));
+    match last < MAX_PLAN_VERSION {
+        true => {}
+        false => {
+            return Err(BoardRuleError::Invalid(SchemaError::new(
+                "version",
+                format!("the task has reached {MAX_PLAN_VERSION} plan versions"),
+            )));
+        }
     }
     Plan::new(PlanFields {
         task: task.fields().id.clone(),
@@ -83,6 +118,7 @@ pub fn propose(
         items: content.items,
         team: content.team,
         proposed_by: actor.clone(),
+        edited_by: None,
         accepted: None,
         created: now.clone(),
         updated: now.clone(),
@@ -90,25 +126,29 @@ pub fn propose(
     .map_err(BoardRuleError::Invalid)
 }
 
-/// The draft `plan` of `task` saying `content` instead, stamped `now`.
+/// The draft `plan` of `task` saying `content` instead, edited by `actor`
+/// (anyone: drafts are shared) at `when`.
 /// With `expected`, the draft must still be as the caller read it (its
 /// `updated`), so a newer edit is never overwritten.
 ///
 /// # Errors
 /// A done or archived task; a plan of another task, or not a draft, or
-/// changed since it was read; an edit that changes nothing; or a plan its
-/// schema refuses.
+/// changed since it was read, or stamped ahead of `when`'s bound; an edit
+/// that changes nothing; or a plan its schema refuses.
 pub fn edit_draft(
     task: &Task,
     plan: &Plan,
     content: PlanContent,
     expected: Option<&Timestamp>,
-    now: &Timestamp,
+    actor: &Identity,
+    when: &Moment,
 ) -> Result<Plan, BoardRuleError> {
+    let now = &when.now;
     open_to_plans(task)?;
     of_task(task, std::slice::from_ref(plan))?;
     draft(plan)?;
     as_read(plan, expected)?;
+    when.may_build_on(plan)?;
     let fields = plan.fields();
     let unchanged = fields.approach == content.approach
         && fields.items == content.items
@@ -120,6 +160,8 @@ pub fn edit_draft(
     next.approach = content.approach;
     next.items = content.items;
     next.team = content.team;
+    // Drafts are anyone's: the last editor is recorded, the proposer kept.
+    next.edited_by = Some(actor.clone());
     restamped(next, plan, now)
 }
 
@@ -133,15 +175,17 @@ pub fn edit_draft(
 /// # Errors
 /// A done or archived task; plans or runs that contradict each other; no
 /// version of that number, or one that is not a draft, or changed since it
-/// was read; an actor who may not decide for the task; a run of the task
-/// still going, or a run of another task.
+/// was read; a plan stamped ahead of `when`'s bound; an actor who may not
+/// decide for the task; a run of the task still going, or a run of another
+/// task.
 pub fn accept(
     board: &TaskPlans<'_>,
     version: u32,
     expected: Option<&Timestamp>,
     actor: &Identity,
-    now: &Timestamp,
+    when: &Moment,
 ) -> Result<Accepted, BoardRuleError> {
+    let now = &when.now;
     let TaskPlans {
         task,
         versions,
@@ -162,6 +206,10 @@ pub fn accept(
     let before = versions
         .iter()
         .find(|plan| plan.fields().state == PlanState::Accepted);
+    // Neither plan the acceptance stamps past may drag the task ahead.
+    for plan in std::iter::once(chosen).chain(before) {
+        when.may_build_on(plan)?;
+    }
     // One stamp, after the task's, the chosen plan's and the superseded
     // plan's last changes.
     let mut at = stamp(task, now)?;

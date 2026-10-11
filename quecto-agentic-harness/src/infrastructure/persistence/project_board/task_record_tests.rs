@@ -164,6 +164,12 @@ fn a_newer_schema_asks_for_an_upgrade_and_an_unknown_one_is_refused() {
     assert!(decode(&edited(MINIMAL, "\"schema\": 2", "\"schema\": 1")).is_ok());
     let old_plan = edited(MINIMAL, "\"schema\": 2,", "\"schema\": 1,\n  \"plan\": [],");
     assert!(matches!(decode(&old_plan), Err(RecordError::Malformed(_))));
+    // A key from a later schema is refused in an earlier one's file.
+    let early = edited(PARTS, "\"schema\": 2", "\"schema\": 1");
+    assert!(
+        matches!(decode(&early), Err(RecordError::Malformed(why)) if why.contains("schema 2")),
+        "accepted_plan in a schema-1 file"
+    );
 }
 
 #[test]

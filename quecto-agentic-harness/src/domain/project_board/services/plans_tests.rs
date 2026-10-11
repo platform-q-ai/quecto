@@ -4,6 +4,14 @@ use crate::domain::project_board::services::fixtures_tests::{at, open_run, perso
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::vocabulary::{RunOutcome, TaskStatus::*};
 
+/// `now`, with no outside bound.
+fn when(now: &Timestamp) -> Moment {
+    Moment {
+        now: now.clone(),
+        latest: None,
+    }
+}
+
 fn content() -> PlanContent {
     let draft = plan(1, PlanState::Draft).into_fields();
     PlanContent {
@@ -75,7 +83,14 @@ fn a_finished_tasks_plans_are_settled() {
             Err(refused.clone())
         );
         assert_eq!(
-            edit_draft(&finished, &plan(2, PlanState::Draft), content(), None, &now),
+            edit_draft(
+                &finished,
+                &plan(2, PlanState::Draft),
+                content(),
+                None,
+                &person("Ada"),
+                &when(&now)
+            ),
             Err(refused.clone())
         );
         assert_eq!(
@@ -93,7 +108,7 @@ fn a_finished_tasks_plans_are_settled() {
                 2,
                 None,
                 &ada,
-                &now
+                &when(&now)
             )
             .map(|a| a.plan),
             Err(refused)
@@ -109,6 +124,24 @@ fn plans_that_contradict_each_other_are_refused_not_built_on() {
     let ada = person("Ada");
     let now = at("10:00:00");
     let held = task(InProgress);
+    let two = accept(
+        &TaskPlans {
+            task: &held,
+            versions: &[plan(1, PlanState::Accepted), plan(2, PlanState::Accepted)],
+            runs: &[],
+        },
+        1,
+        None,
+        &ada,
+        &when(&now),
+    )
+    .map(|accepted| accepted.plan);
+    assert_eq!(
+        two,
+        Err(BoardRuleError::PlansInconsistent(
+            "versions 1, 2 are accepted; the task names version 1".into()
+        ))
+    );
     for versions in [
         vec![plan(1, PlanState::Accepted), plan(1, PlanState::Draft)],
         vec![plan(1, PlanState::Accepted), plan(2, PlanState::Accepted)],
@@ -125,7 +158,7 @@ fn plans_that_contradict_each_other_are_refused_not_built_on() {
             1,
             None,
             &ada,
-            &now,
+            &when(&now),
         )
         .map(|a| a.plan);
         assert!(
@@ -145,11 +178,26 @@ fn only_a_draft_is_edited_and_only_by_an_edit_that_changes_something() {
     let mut changed = content();
     changed.team = None;
     let held = task(InProgress);
-    let edited = edit_draft(&held, &draft, changed.clone(), None, &at("08:30:00")).unwrap();
+    let edited = edit_draft(
+        &held,
+        &draft,
+        changed.clone(),
+        None,
+        &person("Ada"),
+        &when(&at("08:30:00")),
+    )
+    .unwrap();
     assert_eq!(edited.fields().team, None);
     assert_eq!(edited.fields().updated, at("08:30:01"), "always moves on");
     assert_eq!(
-        edit_draft(&held, &draft, content(), None, &at("10:00:00")),
+        edit_draft(
+            &held,
+            &draft,
+            content(),
+            None,
+            &person("Ada"),
+            &when(&at("10:00:00"))
+        ),
         Err(BoardRuleError::NoEdit)
     );
     for state in [
@@ -163,13 +211,21 @@ fn only_a_draft_is_edited_and_only_by_an_edit_that_changes_something() {
                 &plan(2, state),
                 changed.clone(),
                 None,
-                &at("10:00:00")
+                &person("Ada"),
+                &when(&at("10:00:00"))
             ),
             Err(BoardRuleError::PlanNotDraft(state))
         );
     }
     assert_eq!(
-        edit_draft(&held, &other_tasks(2), changed, None, &at("10:00:00")),
+        edit_draft(
+            &held,
+            &other_tasks(2),
+            changed,
+            None,
+            &person("Ada"),
+            &when(&at("10:00:00"))
+        ),
         Err(BoardRuleError::NotThisTasks)
     );
 }
@@ -186,7 +242,7 @@ fn accepting_names_the_version_records_who_and_supersedes_the_one_before() {
         2,
         None,
         &person("Ada"),
-        &at("10:00:00"),
+        &when(&at("10:00:00")),
     )
     .unwrap();
     assert_eq!(accepted.task.fields().accepted_plan, Some(2));
@@ -215,7 +271,7 @@ fn accepting_names_the_version_records_who_and_supersedes_the_one_before() {
         1,
         None,
         &person("Bob"),
-        &at("10:00:00"),
+        &when(&at("10:00:00")),
     )
     .unwrap();
     assert_eq!(first.superseded, None, "nothing was accepted before");
@@ -238,7 +294,7 @@ fn an_older_draft_accepted_over_a_newer_version_is_a_rollback() {
         1,
         None,
         &person("Ada"),
-        &at("10:00:00"),
+        &when(&at("10:00:00")),
     )
     .unwrap();
     assert_eq!(rolled.task.fields().accepted_plan, Some(1));
@@ -260,7 +316,7 @@ fn the_holder_decides_for_a_held_task_and_anyone_for_an_unclaimed_one() {
                 2,
                 None,
                 &person("Bob"),
-                &at("10:00:00")
+                &when(&at("10:00:00"))
             )
             .map(|accepted| accepted.plan),
             Err(BoardRuleError::NotHolder),
@@ -276,7 +332,7 @@ fn the_holder_decides_for_a_held_task_and_anyone_for_an_unclaimed_one() {
                 2,
                 None,
                 &person("Ada"),
-                &at("11:00:00")
+                &when(&at("11:00:00"))
             )
             .map(|accepted| accepted.plan),
             Err(BoardRuleError::ClaimExpired),
@@ -298,7 +354,7 @@ fn the_holder_decides_for_a_held_task_and_anyone_for_an_unclaimed_one() {
                 2,
                 None,
                 &person("Bob"),
-                &at("10:00:00")
+                &when(&at("10:00:00"))
             )
             .is_ok(),
             "{status:?}"
@@ -322,7 +378,7 @@ fn an_acceptance_waits_for_a_known_unchanged_draft_and_no_run_going() {
             version,
             expected,
             &ada,
-            &now,
+            &when(&now),
         )
         .map(|a| a.plan)
     };
@@ -406,7 +462,7 @@ fn a_plan_from_a_clock_running_ahead_is_accepted_after_it() {
         2,
         None,
         &person("Ada"),
-        &at("10:00:00"),
+        &when(&at("10:00:00")),
     )
     .unwrap();
     let stamp = at("12:00:01");
@@ -434,7 +490,7 @@ fn runs_that_contradict_each_other_are_refused() {
         2,
         None,
         &person("Ada"),
-        &at("10:00:00"),
+        &when(&at("10:00:00")),
     );
     assert!(
         matches!(&refused, Err(BoardRuleError::RunsInconsistent(why)) if why.contains("1, 2")),
@@ -455,7 +511,8 @@ fn a_draft_edit_pinned_to_an_older_read_is_refused() {
             &draft,
             changed.clone(),
             Some(&at("08:00:00")),
-            &at("10:00:00")
+            &person("Ada"),
+            &when(&at("10:00:00"))
         ),
         Err(BoardRuleError::PlanChanged {
             version: 2,
@@ -468,8 +525,99 @@ fn a_draft_edit_pinned_to_an_older_read_is_refused() {
             &draft,
             changed,
             Some(&at("08:30:00")),
-            &at("10:00:00")
+            &person("Ada"),
+            &when(&at("10:00:00"))
         )
         .is_ok()
+    );
+}
+
+/// A plan stamped by a clock that ran far ahead is never built on: an
+/// acceptance or an edit with an outside bound refuses it, as the task's
+/// own changes refuse a task stamped ahead. The bound covers the plan
+/// accepted and the plan it would supersede.
+#[test]
+fn a_plan_stamped_ahead_of_the_outside_time_is_never_built_on() {
+    let far = Timestamp::parse("9999-01-01T00:00:00Z").unwrap();
+    let ahead = |state: PlanState, version: u32| {
+        let mut fields = plan(version, state).into_fields();
+        (fields.created, fields.updated) = (far.clone(), far.clone());
+        if let Some((by, _)) = fields.accepted.clone() {
+            fields.accepted = Some((by, far.clone()));
+        }
+        Plan::new(fields).unwrap()
+    };
+    let bounded = Moment {
+        now: at("10:00:00"),
+        latest: Some(at("10:00:00")),
+    };
+    let held = task(InProgress);
+    let ada = person("Ada");
+    let accept_in = |versions: &[Plan]| {
+        accept(
+            &TaskPlans {
+                task: &held,
+                versions,
+                runs: &[],
+            },
+            2,
+            None,
+            &ada,
+            &bounded,
+        )
+        .map(|accepted| accepted.plan)
+    };
+    let chosen = [plan(1, PlanState::Accepted), ahead(PlanState::Draft, 2)];
+    assert_eq!(
+        accept_in(&chosen),
+        Err(BoardRuleError::PlanAhead {
+            version: 2,
+            updated: far.clone(),
+        })
+    );
+    let superseded = [ahead(PlanState::Accepted, 1), plan(2, PlanState::Draft)];
+    assert_eq!(
+        accept_in(&superseded),
+        Err(BoardRuleError::PlanAhead {
+            version: 1,
+            updated: far.clone(),
+        }),
+        "only the plan it would supersede is ahead"
+    );
+    assert_eq!(
+        edit_draft(
+            &held,
+            &ahead(PlanState::Draft, 2),
+            content(),
+            None,
+            &ada,
+            &bounded
+        ),
+        Err(BoardRuleError::PlanAhead {
+            version: 2,
+            updated: far,
+        })
+    );
+    assert!(accept_in(&[plan(1, PlanState::Accepted), plan(2, PlanState::Draft)]).is_ok());
+}
+
+/// Drafts are anyone's: an edit records who made it, and keeps who
+/// proposed the plan.
+#[test]
+fn an_edit_records_its_editor_and_keeps_the_proposer() {
+    let mut changed = content();
+    changed.team = None;
+    let edited = edit_draft(
+        &task(InProgress),
+        &plan(2, PlanState::Draft),
+        changed,
+        None,
+        &person("Bob"),
+        &when(&at("10:00:00")),
+    )
+    .unwrap();
+    assert_eq!(
+        (&edited.fields().proposed_by, &edited.fields().edited_by),
+        (&person("Ada"), &Some(person("Bob")))
     );
 }

@@ -34,6 +34,9 @@ pub enum BoardRuleError {
     /// The plan changed since the caller read it (`updated` now): read it
     /// again and decide again.
     PlanChanged { version: u32, updated: Timestamp },
+    /// The plan was stamped by a clock running ahead of the outside time:
+    /// building on it would drag the task ahead too.
+    PlanAhead { version: u32, updated: Timestamp },
     /// The task's plans contradict each other (a hand edit, a hostile
     /// push): mend them before deciding on one.
     PlansInconsistent(String),
@@ -106,6 +109,11 @@ impl fmt::Display for BoardRuleError {
                 updated.as_str()
             ),
             Self::PlansInconsistent(why) => write!(f, "the task's plans contradict: {why}"),
+            Self::PlanAhead { version, updated } => write!(
+                f,
+                "plan version {version} was stamped {} by a clock that ran ahead",
+                updated.as_str()
+            ),
             Self::RunsInconsistent(why) => write!(f, "the task's runs contradict: {why}"),
             Self::PlanNotAccepted(version) => {
                 write!(f, "plan version {version} is not the task's accepted plan")

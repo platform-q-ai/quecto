@@ -459,6 +459,11 @@ fn rule_json(rule: &BoardRuleError) -> Value {
             "updated": updated.as_str(),
         }),
         R::PlansInconsistent(why) => json!({"code": "plans_inconsistent", "reason": shown(why)}),
+        R::PlanAhead { version, updated } => json!({
+            "code": "plan_ahead",
+            "version": version,
+            "updated": updated.as_str(),
+        }),
         R::RunsInconsistent(why) => json!({"code": "runs_inconsistent", "reason": shown(why)}),
         R::PlanNotAccepted(version) => json!({"code": "plan_not_accepted", "version": version}),
         R::NotTakeable(status) => json!({"code": "not_takeable", "status": status.as_str()}),

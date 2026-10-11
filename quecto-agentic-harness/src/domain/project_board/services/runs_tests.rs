@@ -268,10 +268,12 @@ fn a_task_leaves_its_holder_only_once_its_run_has_ended() {
     assert_eq!(may_move_with(&held, &[], Ready), Ok(()));
 }
 
-/// A run no live claim answers for (none, or one expired) is never
-/// stranded: anyone ends it as lost. A live claim's run is its holder's.
+/// A run of a task nobody claims is never stranded: anyone ends it as
+/// lost. A claimed task's run is its holder's: until 11:00 Ada's claim is
+/// live and Bob can neither end the run nor take the task over; from
+/// 11:00 he takes it over, and then ends the run as its holder.
 #[test]
-fn a_run_no_live_claim_answers_for_is_ended_by_anyone() {
+fn a_run_of_a_task_nobody_claims_is_ended_by_anyone() {
     for status in [Ready, Draft] {
         assert!(
             end_lost(
@@ -284,16 +286,23 @@ fn a_run_no_live_claim_answers_for_is_ended_by_anyone() {
             "{status:?}: no claim"
         );
     }
-    assert!(
-        end_lost(
-            &task(InProgress),
-            &open_run(1, 1),
-            &person("Bob"),
-            &at("11:30:00")
-        )
-        .is_ok(),
-        "an expired claim"
+    let held = task(InProgress);
+    let bob = person("Bob");
+    assert_eq!(
+        end_lost(&held, &open_run(1, 1), &bob, &at("10:59:59")),
+        Err(BoardRuleError::NotHolder)
     );
+    assert_eq!(
+        take_over(&held, &bob, &at("10:59:59")),
+        Err(BoardRuleError::ClaimLive)
+    );
+    assert_eq!(
+        end_lost(&held, &open_run(1, 1), &bob, &at("11:00:00")),
+        Err(BoardRuleError::NotHolder),
+        "an expired claim is still Ada's until it is taken over"
+    );
+    let taken = take_over(&held, &bob, &at("11:00:00")).unwrap();
+    assert!(end_lost(&taken, &open_run(1, 1), &bob, &at("11:00:01")).is_ok());
 }
 
 /// A run ends by the task's clock rule: never before the task's last
