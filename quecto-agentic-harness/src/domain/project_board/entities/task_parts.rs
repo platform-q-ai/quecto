@@ -24,6 +24,9 @@ pub const MAX_LINE_CHARS: usize = 500;
 pub const MAX_OWNER_CHARS: usize = 100;
 pub const MAX_MODEL_BYTES: usize = 100;
 pub const MAX_IMAGE_BYTES: usize = 255;
+/// Red stubs.
+pub const MAX_BUDGET_TOKENS: u64 = u64::MAX - 1;
+pub const MAX_FINDING_CHARS: usize = MAX_LINE_CHARS;
 
 /// One step of the plan and how its completion is judged.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,7 +94,7 @@ pub struct Review {
     pub reviewer: Identity,
     pub at: Timestamp,
     pub severity: Severity,
-    pub location: String,
+    pub location: Option<String>,
     pub finding: String,
     pub verdict: Verdict,
     /// The test that proves a fix.
@@ -243,12 +246,14 @@ impl Review {
             ));
         }
         self.reviewer.validate(&format!("{field}/reviewer"))?;
-        shaped(
-            &format!("{field}/location"),
-            &self.location,
-            MAX_LINE_CHARS,
-            &LOCATION,
-        )?;
+        if let Some(location) = &self.location {
+            shaped(
+                &format!("{field}/location"),
+                location,
+                MAX_LINE_CHARS,
+                &LOCATION,
+            )?;
+        }
         line(&format!("{field}/finding"), &self.finding, MAX_LINE_CHARS)?;
         match &self.proving_test {
             Some(test) => line(&format!("{field}/proving_test"), test, MAX_LINE_CHARS),

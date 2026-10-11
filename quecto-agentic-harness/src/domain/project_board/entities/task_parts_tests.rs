@@ -87,7 +87,7 @@ fn fields() -> TaskFields {
             reviewer: ada(),
             at: at("10:00:00"),
             severity: Severity::High,
-            location: "src/store.rs:42:7".into(),
+            location: Some("src/store.rs:42:7".into()),
             finding: "Lease not checked".into(),
             verdict: Verdict::Fixed,
             proving_test: Some("stale_lease_is_refused".into()),
@@ -185,6 +185,18 @@ fn parts_that_break_a_rule_build_no_task() {
         ("team/budget/tokens", |t| {
             team(t).budget = Some(Budget { tokens: 0 })
         }),
+        ("team/budget/tokens", |t| {
+            team(t).budget = Some(Budget {
+                tokens: MAX_BUDGET_TOKENS + 1,
+            })
+        }),
+        ("team/deadline", |t| team(t).deadline = Some(at("08:00:00"))),
+        ("team/deadline", |t| team(t).deadline = Some(at("07:00:00"))),
+        ("team/image", |t| team(t).image = Some("Foo/bar".into())),
+        ("team/image", |t| {
+            team(t).image = Some("registry/Team".into())
+        }),
+        ("team/image", |t| team(t).image = Some("Quecto".into())),
         ("team/image", |t| {
             team(t).image = Some("img; rm -rf /".into())
         }),
@@ -203,37 +215,53 @@ fn parts_that_break_a_rule_build_no_task() {
                 ..t.runs[0].clone()
             }
         }),
-        ("runs", |t| t.status = TaskStatus::Review),
+        ("runs", |t| (t.status, t.claim) = (TaskStatus::Ready, None)),
+        ("runs", |t| (t.status, t.claim) = (TaskStatus::Done, None)),
+        ("runs", |t| {
+            (t.status, t.claim) = (TaskStatus::Archived, None)
+        }),
         ("runs/0", |t| t.runs[0].outcome = None),
         ("runs/1", |t| t.runs[1].outcome = Some(RunOutcome::Failed)),
-        ("runs/0", |t| {
-            t.runs[0].ended = Some(t.runs[0].started.clone())
-        }),
+        ("runs/0", |t| t.runs[0].ended = Some(at("09:00:59"))),
+        ("runs/0/started", |t| t.runs[0].started = at("07:59:59")),
         ("reviews", |t| t.reviews.push(t.reviews[0].clone())),
         ("reviews/0/round", |t| t.reviews[0].round = 0),
+        ("reviews/0/at", |t| t.reviews[0].at = at("07:59:59")),
         ("reviews/0/reviewer/email", |t| {
             t.reviews[0].reviewer.email = "ada".into()
         }),
         ("reviews/0/location", |t| {
-            t.reviews[0].location = "src/store.rs".into()
+            t.reviews[0].location = Some("src/store.rs".into())
         }),
         ("reviews/0/location", |t| {
-            t.reviews[0].location = "src/store.rs:0".into()
+            t.reviews[0].location = Some("src/store.rs:0".into())
         }),
         ("reviews/0/location", |t| {
-            t.reviews[0].location = "src/store.rs:042".into()
+            t.reviews[0].location = Some("src/store.rs:042".into())
         }),
         ("reviews/0/location", |t| {
-            t.reviews[0].location = "src/store.rs:4:0".into()
+            t.reviews[0].location = Some("src/store.rs:4:0".into())
         }),
         ("reviews/0/location", |t| {
-            t.reviews[0].location = "src/a b.rs:4".into()
+            t.reviews[0].location = Some("src/a b.rs:4".into())
         }),
         ("reviews/0/location", |t| {
-            t.reviews[0].location = "../etc/passwd:1".into()
+            t.reviews[0].location = Some("../etc/passwd:1".into())
+        }),
+        ("reviews/0/location", |t| {
+            t.reviews[0].location = Some("-rf.rs:1".into())
+        }),
+        ("reviews/0/location", |t| {
+            t.reviews[0].location = Some("/etc/passwd:1".into())
         }),
         ("reviews/0/finding", |t| {
             t.reviews[0].finding = String::new()
+        }),
+        ("reviews/0/finding", |t| {
+            t.reviews[0].finding = "\n\t".into()
+        }),
+        ("reviews/0/finding", |t| {
+            t.reviews[0].finding = "x".repeat(MAX_FINDING_CHARS + 1)
         }),
         ("reviews/0/proving_test", |t| {
             t.reviews[0].proving_test = Some(" ".into())
@@ -277,8 +305,29 @@ fn every_part_bound_admits_exactly_its_limit() {
                 r.id = slug(&format!("f{n}"))
             })
         },
-        |t| t.reviews[0].location = "src/store.rs:1".into(),
+        |t| t.reviews[0].location = Some("src/store.rs:1".into()),
+        |t| t.reviews[0].location = Some("./.github/ci.yml:3".into()),
+        |t| t.reviews[0].location = None,
+        |t| t.reviews[0].finding = "é".repeat(MAX_FINDING_CHARS),
+        |t| t.reviews[0].finding = "**Lease**\n\n\tnot checked".into(),
         |t| t.reviews[0].verdict = Verdict::WontFix,
+        |t| t.reviews[0].at = at("08:00:00"),
+        |t| (t.runs[0].started, t.runs[0].ended) = (at("08:00:00"), Some(at("08:00:00"))),
+        |t| t.status = TaskStatus::Review,
+        |t| t.status = TaskStatus::Blocked,
+        |t| (t.status, t.claim) = (TaskStatus::Review, None),
+        |t| team(t).deadline = Some(at("08:00:01")),
+        |t| {
+            team(t).budget = Some(Budget {
+                tokens: MAX_BUDGET_TOKENS,
+            })
+        },
+        |t| team(t).image = Some("quecto".into()),
+        |t| team(t).image = Some("library/ubuntu:24.04".into()),
+        |t| team(t).image = Some("localhost/x".into()),
+        |t| team(t).image = Some("registry:5000/team/app_1__b".into()),
+        |t| team(t).image = Some("Registry.Example.com/team/app".into()),
+        |t| team(t).image = Some("[::1]:5000/x".into()),
     ];
     for (index, edit) in cases.into_iter().enumerate() {
         let mut task = fields();

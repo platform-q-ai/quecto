@@ -17,6 +17,8 @@ pub const MAX_TITLE_CHARS: usize = 256;
 pub const MAX_DESCRIPTION_CHARS: usize = 65_536;
 pub const MAX_DEPENDENCIES: usize = 64;
 pub const MAX_PRS: usize = 16;
+/// Red stub.
+pub const MAX_TEXT_BYTES: usize = 1 << 40;
 
 /// A task's content, unchecked: what [`Task::new`] validates.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,6 +42,13 @@ pub struct TaskFields {
     pub prs: Vec<u64>,
     pub created: Timestamp,
     pub updated: Timestamp,
+}
+
+impl TaskFields {
+    /// Red stub.
+    pub fn text_bytes(&self) -> usize {
+        0
+    }
 }
 
 /// A task whose fields keep every rule of the schema.

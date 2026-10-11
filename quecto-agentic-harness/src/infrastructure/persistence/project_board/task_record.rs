@@ -226,7 +226,8 @@ struct ReviewRecord {
     reviewer: IdentityRecord,
     at: String,
     severity: String,
-    location: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    location: Option<String>,
     finding: String,
     verdict: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -551,3 +552,7 @@ impl ReviewRecord {
 #[cfg(test)]
 #[path = "task_record_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "task_record_size_tests.rs"]
+mod size_tests;

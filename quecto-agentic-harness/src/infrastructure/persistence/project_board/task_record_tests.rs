@@ -127,6 +127,18 @@ const PARTS: &str = r#"{
       "finding": "Lease not checked",
       "verdict": "fixed",
       "proving_test": "stale_lease_is_refused"
+    },
+    {
+      "id": "r1-m1",
+      "round": 1,
+      "reviewer": {
+        "name": "dependabot[bot]",
+        "email": "bot@example.com"
+      },
+      "at": "2026-10-10T10:00:00Z",
+      "severity": "medium",
+      "finding": "Two **lines**:\n\tthe second indented",
+      "verdict": "open"
     }
   ],
   "created": "2026-10-10T08:00:00Z",
