@@ -51,7 +51,9 @@ pub struct GitEnvironment(Vec<(OsString, OsString)>);
 
 impl GitEnvironment {
     pub fn allowlisted(vars: impl IntoIterator<Item = (OsString, OsString)>) -> Self {
-        let kept = vars.into_iter();
+        let kept = vars
+            .into_iter()
+            .filter(|(key, _)| INHERITED.iter().any(|name| OsStr::new(name) == key));
         Self(kept.collect())
     }
 

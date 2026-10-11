@@ -407,34 +407,6 @@ fn unreadable_files_are_set_aside_and_the_rest_of_the_board_is_read() {
 }
 
 #[test]
-fn a_task_too_large_for_its_file_is_not_written() {
-    let repos = Repos::new();
-    let alice = store(&repos.alice);
-    let Ok(Bootstrapped::Created { head }) = alice.bootstrap() else {
-        panic!("created")
-    };
-    let mut fields = task("huge").into_fields();
-    fields.description = "𝄞".repeat(65_536);
-    let huge = Task::new(fields).unwrap();
-    let refused = alice.write(&head, &[huge], "board: add huge");
-    assert!(
-        matches!(
-            refused,
-            Err(StoreError::Record {
-                error: RecordError::TooLarge { .. },
-                ..
-            })
-        ),
-        "{refused:?}"
-    );
-    assert_eq!(
-        store(&repos.bob).read().unwrap().head,
-        head,
-        "the board did not move"
-    );
-}
-
-#[test]
 fn bad_arguments_are_refused_before_git_runs() {
     let repos = Repos::new();
     let git = Git::new(

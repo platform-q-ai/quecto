@@ -149,20 +149,71 @@ impl GitBoardStore {
 
     /// Creates the board with only its README, unless it exists.
     pub fn bootstrap(&self) -> Result<Bootstrapped, StoreError> {
-        let _ = (README, Self::push, Self::tree, Self::blob);
-        Err(StoreError::Invalid("not yet".into()))
+        let local = self.git.run(
+            &["rev-parse", "--verify", "--quiet", "refs/heads/quecto"],
+            None,
+            self.git.local_timeout,
+        )?;
+        let tracking = format!("refs/remotes/{}/quecto", self.remote);
+        let tracked = self.git.run(
+            &["rev-parse", "--verify", "--quiet", &tracking],
+            None,
+            self.git.local_timeout,
+        )?;
+        if local.status.success()
+            || tracked.status.success()
+            || self.remote_head("refs/heads/quecto")?.is_some()
+        {
+            return Err(StoreError::Clash(format!(
+                "a branch named `quecto` exists here or on {}; rename it so `quecto/board` can exist",
+                self.remote
+            )));
+        }
+        if self.remote_head(BOARD_REF)?.is_some() {
+            return Ok(Bootstrapped::Existing {
+                head: self.fetch()?,
+            });
+        }
+        let readme = self.blob(README)?;
+        let tree = self.git.text(
+            &["mktree", "-z"],
+            Some(format!("100644 blob {readme}\tREADME.md\0").as_bytes()),
+        )?;
+        let commit = self
+            .git
+            .text(&["commit-tree", &tree, "-m", "board: bootstrap"], None)?;
+        match self.push(None, &commit) {
+            Ok(head) => Ok(Bootstrapped::Created { head }),
+            Err(StoreError::Lost { .. }) => Ok(Bootstrapped::Existing {
+                head: self.fetch()?,
+            }),
+            Err(error) => Err(error),
+        }
     }
 
     /// The board as the remote holds it now.
     pub fn read(&self) -> Result<BoardSnapshot, StoreError> {
-        let _ = (
-            Self::fetch,
-            Self::remote_head,
-            Self::subtree,
-            Self::entries,
-            Self::task_at,
-        );
-        Err(StoreError::Invalid("not yet".into()))
+        if self.remote_head(BOARD_REF)?.is_none() {
+            return Err(StoreError::NoBoard);
+        }
+        let head = self.fetch()?;
+        let mut snapshot = BoardSnapshot {
+            head: head.clone(),
+            tasks: vec![],
+            quarantined: vec![],
+        };
+        let Some(tasks) = self.subtree(&head)? else {
+            return Ok(snapshot);
+        };
+        for entry in self.entries(&tasks, true)? {
+            let path = format!("tasks/{}", entry.name);
+            match self.task_at(&entry) {
+                Ok(Some(task)) => snapshot.tasks.push(task),
+                Ok(None) => {}
+                Err(reason) => snapshot.quarantined.push(Quarantined { path, reason }),
+            }
+        }
+        Ok(snapshot)
     }
 
     /// The task in one `tasks/` entry, `None` for a summary, or why the
@@ -199,18 +250,55 @@ impl GitBoardStore {
     /// Writes `tasks` and their summaries on top of `base` in one commit and
     /// pushes it only if the board is still at `base`; the new head.
     pub fn write(&self, base: &str, tasks: &[Task], message: &str) -> Result<String, StoreError> {
-        let _ = (
-            base,
-            tasks,
-            message,
-            summary,
-            tree_line,
-            line,
-            encode,
-            BTreeSet::<u8>::new,
-            BTreeMap::<u8, u8>::new,
-        );
-        Err(StoreError::Invalid("not yet".into()))
+        let base = object_id(base)?;
+        line("message", message, 200).map_err(|error| StoreError::Invalid(error.to_string()))?;
+        let ids: BTreeSet<&str> = tasks.iter().map(|task| task.fields().id.as_str()).collect();
+        if ids.len() != tasks.len() || tasks.is_empty() {
+            return Err(StoreError::Invalid(
+                "write one or more tasks, each once".into(),
+            ));
+        }
+        let mut files: BTreeMap<String, String> = match self.subtree(&base)? {
+            Some(tree) => self
+                .entries(&tree, false)?
+                .into_iter()
+                .map(|e| (e.name.clone(), tree_line(&e)))
+                .collect(),
+            None => BTreeMap::new(),
+        };
+        for task in tasks {
+            let id = task.fields().id.as_str();
+            let record = |error| StoreError::Record {
+                id: id.into(),
+                error,
+            };
+            let bytes = encode(task).map_err(record)?;
+            if decode(&bytes).ok().as_ref() != Some(task) {
+                return Err(StoreError::Invalid(format!(
+                    "task {id} does not read back as written"
+                )));
+            }
+            files.insert(
+                format!("{id}.json"),
+                format!("100644 blob {}", self.blob(&bytes)?),
+            );
+            files.insert(
+                format!("{id}.md"),
+                format!("100644 blob {}", self.blob(summary(task).as_bytes())?),
+            );
+        }
+        let tasks_tree = self.tree(&files)?;
+        let mut root: BTreeMap<String, String> = self
+            .entries(&base, false)?
+            .into_iter()
+            .map(|e| (e.name.clone(), tree_line(&e)))
+            .collect();
+        root.insert("tasks".into(), format!("040000 tree {tasks_tree}"));
+        let tree = self.tree(&root)?;
+        let commit = self
+            .git
+            .text(&["commit-tree", &tree, "-p", &base, "-m", message], None)?;
+        self.push(Some(&base), &commit)
     }
 
     /// Moves the remote board from `base` (absent when `None`) to `commit`.
