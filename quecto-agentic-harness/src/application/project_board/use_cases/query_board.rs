@@ -21,19 +21,25 @@ impl QueryBoard {
         Self { store }
     }
 
-    /// Ready tasks whose every dependency is on the board and done: the
-    /// ones anyone may start now. (`by_status(Ready)` lists them all.)
+    /// Ready tasks whose every dependency is on the board and done or
+    /// archived (finished or cancelled: either way it no longer blocks):
+    /// the ones anyone may start now. (`by_status(Ready)` lists them all.)
     ///
     /// # Errors
     /// The store's.
     pub fn ready(&self) -> Result<BoardListing, ProjectBoardError> {
         self.matching(|task, board| {
-            let done = |id: &Slug| {
+            let satisfied = |id: &Slug| {
                 board.iter().any(|other| {
-                    other.fields().id == *id && other.fields().status == TaskStatus::Done
+                    other.fields().id == *id
+                        && matches!(
+                            other.fields().status,
+                            TaskStatus::Done | TaskStatus::Archived
+                        )
                 })
             };
-            task.fields().status == TaskStatus::Ready && task.fields().depends_on.iter().all(done)
+            task.fields().status == TaskStatus::Ready
+                && task.fields().depends_on.iter().all(satisfied)
         })
     }
 

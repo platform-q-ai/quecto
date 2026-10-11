@@ -26,6 +26,8 @@ struct Board {
     interleaved: Vec<Interleaved>,
     refusal: Option<String>,
     writes: usize,
+    /// Who made the board at each revision a write made.
+    committers: BTreeMap<u64, Identity>,
 }
 
 #[derive(Clone)]
@@ -52,7 +54,9 @@ impl MemoryBoardStore {
         self.clone()
     }
 
-    /// Another client of the same board, writing as `writer`.
+    /// Another client of the same board, writing as `writer`. Unlike a
+    /// real store, it takes any identity, so the use cases' own check of
+    /// an invalid one can be shown.
     pub fn client_as(&self, writer: Identity) -> Self {
         Self {
             board: self.board.clone(),
@@ -72,9 +76,18 @@ impl MemoryBoardStore {
     }
 
     /// Sets the file `tasks/<id>.json` aside, as a store that found it
-    /// unreadable does: its task is no longer read.
+    /// unreadable does: its task is no longer read. Spoiling the file is a
+    /// change to the board, so the head moves, as a commit moves the git
+    /// store's.
+    ///
+    /// # Panics
+    /// Before the board is bootstrapped: there is no file to spoil.
     pub fn quarantine(&self, id: &str, reason: &str) {
         let mut board = self.lock();
+        let revision = board
+            .head
+            .expect("a bootstrapped board to quarantine a file of");
+        board.head = Some(revision + 1);
         board.tasks.remove(id);
         let id = Slug::parse(id).ok();
         let path = format!("tasks/{}.json", id.as_ref().map_or("?", Slug::as_str));
@@ -86,8 +99,13 @@ impl MemoryBoardStore {
     }
 
     /// The committer of the board at `head`, when a write made it.
-    pub fn committed_by(&self, _head: &BoardHead) -> Option<Identity> {
-        None
+    pub fn committed_by(&self, at: &BoardHead) -> Option<Identity> {
+        let board = self.lock();
+        board
+            .committers
+            .iter()
+            .find(|(revision, _)| head(**revision) == *at)
+            .map(|(_, committer)| committer.clone())
     }
 
     /// The writes the board accepted.
@@ -169,6 +187,7 @@ impl ProjectBoardStore for MemoryBoardStore {
         }
         board.head = Some(revision + 1);
         board.writes += 1;
+        board.committers.insert(revision + 1, self.writer.clone());
         Ok(BoardWrite::Written(head(revision + 1)))
     }
 

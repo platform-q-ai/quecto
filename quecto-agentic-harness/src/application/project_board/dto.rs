@@ -60,11 +60,15 @@ impl fmt::Display for ProjectBoardError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Store(BoardStoreError::NoBoard) => f.write_str("the project has no board yet"),
-            Self::Store(
-                BoardStoreError::Clash(why)
-                | BoardStoreError::InvalidWrite(why)
-                | BoardStoreError::Unavailable(why),
-            ) => f.write_str(why),
+            Self::Store(BoardStoreError::Clash(why)) => {
+                write!(f, "the board clashes with the repository: {why}")
+            }
+            Self::Store(BoardStoreError::InvalidWrite(why)) => {
+                write!(f, "the board refused an invalid write: {why}")
+            }
+            Self::Store(BoardStoreError::Unavailable(why)) => {
+                write!(f, "the board store is unavailable: {why}")
+            }
             Self::Rule(error) => write!(f, "{error}"),
             Self::Clock(BoardClockError::OutOfRange(read)) => {
                 write!(
