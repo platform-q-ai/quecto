@@ -358,6 +358,74 @@ exec git-receive-pack \"$@\"\n",
     );
 }
 
+/// A board whose README was deleted by hand is still a board: read and
+/// written as one, found by bootstrap, and its README regenerated.
+#[test]
+fn a_board_without_its_readme_is_still_a_board() {
+    let repos = Repos::new();
+    let alice = store(&repos.alice);
+    let head = created(&alice);
+    written(alice.write(&head, &[task("a")], "board: add a"));
+    let remote = repos.remote();
+    let tip = sh(&remote, &["rev-parse", BOARD_REF]);
+    let tasks = sh(&remote, &["rev-parse", &format!("{tip}:tasks")]);
+    let root = sh_with(
+        &remote,
+        &["mktree"],
+        format!("040000 tree {tasks}\ttasks\n").as_bytes(),
+    );
+    let commit = sh(
+        &remote,
+        &["commit-tree", &root, "-p", &tip, "-m", "no readme"],
+    );
+    sh(&remote, &["update-ref", BOARD_REF, &commit]);
+    let bob = store(&repos.bob);
+    assert_eq!(
+        bob.bootstrap(),
+        Ok(BoardBootstrap::Existing(BoardHead(commit.clone())))
+    );
+    let snapshot = bob.read().unwrap();
+    assert_eq!(ids(&snapshot), ["a"]);
+    let moved = written(bob.write(&snapshot.head, &[task("b")], "board: add b"));
+    assert_eq!(
+        sh(
+            &remote,
+            &["cat-file", "blob", &format!("{}:README.md", moved.0)]
+        ) + "\n",
+        String::from_utf8_lossy(README)
+    );
+}
+
+/// A write that would hold more task-file bytes than a read takes is
+/// refused before anything is built, so no valid write leaves a board no
+/// one can read; a write up to the bound is written and read back.
+#[test]
+fn a_write_past_the_read_bound_is_invalid_and_one_at_it_is_written() {
+    let repos = Repos::new();
+    let size = |id: &str| encode(&task(id)).unwrap().len();
+    let mut alice = store(&repos.alice);
+    alice.max_board_bytes = size("a") + size("b");
+    let head = created(&alice);
+    let full = written(alice.write(&head, &[task("a"), task("b")], "board: add a, b"));
+    let mut bob = store(&repos.bob);
+    bob.max_board_bytes = alice.max_board_bytes;
+    assert_eq!(ids(&bob.read().unwrap()), ["a", "b"]);
+    let refused = alice.write(&full, &[task("c")], "board: add c");
+    assert!(
+        matches!(&refused, Err(BoardStoreError::InvalidWrite(why)) if why.contains("bytes")),
+        "{refused:?}"
+    );
+    let mut longer = task("a").into_fields();
+    longer.title.push('!');
+    let longer = Task::new(longer).unwrap();
+    let refused = alice.write(&full, &[longer], "board: rename a");
+    assert!(
+        matches!(&refused, Err(BoardStoreError::InvalidWrite(_))),
+        "{refused:?}"
+    );
+    written(alice.write(&full, &[task("a")], "board: write a again"));
+}
+
 /// A write starts only from the board's head or one of its ancestors:
 /// another local commit, even one on top of the board, is no board head.
 #[test]

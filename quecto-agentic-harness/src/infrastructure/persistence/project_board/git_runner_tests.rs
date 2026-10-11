@@ -1,7 +1,7 @@
 //! The git runner: its environment, its session, and its one deadline for
 //! the process and its output.
 use super::*;
-use crate::infrastructure::persistence::project_board::git::SHORT_OUTPUT;
+use crate::infrastructure::persistence::project_board::git::{MAX_STDERR, SHORT_OUTPUT, quoted};
 
 #[test]
 fn a_git_that_hangs_is_stopped_with_its_whole_process_group() {
@@ -245,11 +245,12 @@ fn stderr_is_bounded_and_stripped_of_control_characters() {
         "#!/bin/sh\nprintf '\\033[31mred\\007\\r\\nline\\n' >&2\nhead -c 200000 /dev/zero | tr '\\0' e >&2\nexit 1\n",
         &[],
     );
+    let output = git.local(&["anything"], None, SHORT_OUTPUT).unwrap();
+    assert_eq!(output.stderr.len(), MAX_STDERR);
     let failed = git.ok(&["anything"], None);
     let Err(GitError::Failed { stderr, .. }) = failed else {
         panic!("{failed:?}");
     };
-    assert!(stderr.len() <= 16 * 1024, "{} bytes", stderr.len());
     assert!(
         stderr.contains("red") && stderr.contains("line"),
         "{stderr:.80}"
@@ -266,4 +267,62 @@ fn a_git_that_exited_is_not_timed_out_while_its_output_drains() {
     let mut git = shim(&repos, "#!/bin/sh\nsetsid sleep 0.6 &\necho done\n", &[]);
     git.local_timeout = std::time::Duration::from_millis(300);
     assert_eq!(git.text(&["anything"], None), Ok("done".to_string()));
+}
+
+/// Only letters, marks, numbers, punctuation, symbols and spaces are
+/// quoted; anything else (zero-width, byte-order and tag characters, any
+/// control) is one space.
+#[test]
+fn quoted_text_keeps_only_visible_categories() {
+    assert_eq!(
+        quoted("a\u{200b}b\u{feff}c\u{e0041}d\u{2028}e\u{85}f".as_bytes()),
+        "a b c d e f"
+    );
+    assert_eq!(
+        quoted("Zoe\u{308} ✓ 1.5% «x»".as_bytes()),
+        "Zoe\u{308} ✓ 1.5% «x»"
+    );
+}
+
+/// Once git has exited, its output drains for a short grace, never for
+/// the rest of its deadline, however long something outside its group
+/// holds the pipe.
+#[test]
+fn a_git_that_exited_drains_its_output_for_the_grace_alone() {
+    let repos = Repos::new();
+    let git = shim(&repos, "#!/bin/sh\nsetsid sleep 6 &\necho done\n", &[]);
+    assert_eq!(git.local_timeout, std::time::Duration::from_secs(30));
+    let started = std::time::Instant::now();
+    let read = git.text(&["anything"], None);
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(4),
+        "{:?}: {read:?}",
+        started.elapsed()
+    );
+}
+
+/// Only what git says about the identity is an identity error; a git that
+/// cannot run here says so.
+#[test]
+fn only_an_identity_git_refuses_is_an_identity_error() {
+    let repos = Repos::new();
+    let env = || GitEnvironment::allowlisted(vars(&repos.alice, &[]));
+    let as_named = |repo: &Path, name: &str| {
+        let identity = Identity {
+            name: name.into(),
+            email: "ada@x.io".into(),
+        };
+        Git::new(repo, env(), identity).map(|_| ())
+    };
+    let refused = as_named(&repos.alice, ",,");
+    assert!(
+        matches!(&refused, Err(GitError::Identity(why)) if why.contains("disallowed")),
+        "{refused:?}"
+    );
+    let nowhere = repos.dir.path().join("nowhere");
+    let failed = as_named(&nowhere, "Ada");
+    assert!(
+        matches!(&failed, Err(GitError::Failed { stderr, .. }) if stderr.contains("cannot change")),
+        "{failed:?}"
+    );
 }

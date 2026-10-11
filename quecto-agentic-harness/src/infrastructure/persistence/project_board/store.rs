@@ -22,8 +22,8 @@
 //! fetched with a filter before) is fetched in one call per tree level,
 //! never one object at a time.
 use super::board_tree::{
-    Board, MAX_SUMMARY_BYTES, MAX_TASK_ENTRIES, REGULAR_FILE, TREE, Unread, contents, object_id,
-    read_board, unavailable,
+    Board, MAX_BOARD_BYTES, MAX_SUMMARY_BYTES, MAX_TASK_ENTRIES, REGULAR_FILE, TREE, Unread,
+    contents, object_id, read_board, unavailable,
 };
 use super::git::{Git, GitError, SHORT_OUTPUT, failed, quoted};
 use super::push_report::{PushReport, RefStatus, ref_status};
@@ -55,6 +55,8 @@ pub struct GitBoardStore {
     /// The board last read, by its commit: a commit never changes, so a
     /// write from the head just read does not read the board again.
     last: Mutex<Option<(String, Arc<Board>)>>,
+    /// The most task-file bytes a read takes ([`MAX_BOARD_BYTES`]).
+    pub(super) max_board_bytes: usize,
 }
 
 /// What became of a push.
@@ -90,6 +92,7 @@ impl GitBoardStore {
                 git,
                 remote: remote.to_string(),
                 last: Mutex::new(None),
+                max_board_bytes: MAX_BOARD_BYTES,
             }),
             Err(error) => Err(BoardStoreError::Unavailable(format!(
                 "{remote:?} is not a remote of this repository: {error:?}"
@@ -126,7 +129,7 @@ impl GitBoardStore {
     fn read_fetching(&self, commit: &str) -> Result<Board, BoardStoreError> {
         let mut fetched: BTreeSet<String> = BTreeSet::new();
         for round in 0..=FETCH_ROUNDS {
-            let missing = match read_board(&self.git, commit) {
+            let missing = match read_board(&self.git, commit, self.max_board_bytes) {
                 Ok(board) => return Ok(board),
                 Err(Unread::Failed(BoardStoreError::Clash(why))) => {
                     return Err(BoardStoreError::Clash(format!(

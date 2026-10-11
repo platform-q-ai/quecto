@@ -164,7 +164,7 @@ fn kind_of_mode(mode: &str) -> Option<&'static str> {
 /// # Errors
 /// Objects this clone does not hold; git fails, a tree is past its bounds,
 /// or the commit is not a board (a clash).
-pub fn read_board(git: &Git, commit: &str) -> Result<Board, Unread> {
+pub fn read_board(git: &Git, commit: &str, max_bytes: usize) -> Result<Board, Unread> {
     let root = listed(git, &tree_of(git, commit)?)?;
     let kinds = objects(git, looked_up(&root))?;
     let tasks = root.iter().find(|entry| entry.name == "tasks");
@@ -172,7 +172,7 @@ pub fn read_board(git: &Git, commit: &str) -> Result<Board, Unread> {
     // as the root, so a partial clone fetches what both miss at once.
     let read = tasks
         .filter(|entry| is_tree(entry, &kinds))
-        .map(|entry| read_tasks(git, &entry.oid));
+        .map(|entry| read_tasks(git, &entry.oid, max_bytes));
     let mut missing = missing(&root, &kinds);
     let board = match read {
         Some(Ok(board)) => Some(board),
@@ -302,7 +302,7 @@ fn disposition(entry: &Entry, found: Option<&Object>, count: usize) -> Dispositi
     }
 }
 
-fn read_tasks(git: &Git, tree: &str) -> Result<Board, Unread> {
+fn read_tasks(git: &Git, tree: &str, max_bytes: usize) -> Result<Board, Unread> {
     let entries = listed(git, tree)?;
     if entries.len() > MAX_TASK_ENTRIES {
         return Err(Unread::Failed(BoardStoreError::Unavailable(format!(
@@ -368,9 +368,9 @@ fn read_tasks(git: &Git, tree: &str) -> Result<Board, Unread> {
         .map(|(name, _)| (*name).to_string())
         .collect();
     let total: usize = to_read.iter().map(|(_, _, size)| size).sum();
-    if total > MAX_BOARD_BYTES {
+    if total > max_bytes {
         return Err(Unread::Failed(BoardStoreError::Unavailable(format!(
-            "the board's task files hold {total} bytes; the most read is {MAX_BOARD_BYTES}"
+            "the board's task files hold {total} bytes; the most read is {max_bytes}"
         ))));
     }
     let wanted: Vec<(&str, usize)> = to_read

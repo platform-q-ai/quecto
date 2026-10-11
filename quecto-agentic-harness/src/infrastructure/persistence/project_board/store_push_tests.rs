@@ -198,6 +198,40 @@ fn any_push_outcome_but_updated_is_judged_by_the_board() {
         alice.judge(Some(&base.0), &stale, &rejected("[rejected] (stale info)")),
         Ok(Pushed::Lost)
     );
+    // The remote rejected it for a reason it gives when it declines a
+    // push: refused. For a race on its ref: lost. For any other reason:
+    // unknown.
+    for (reason, judged) in [
+        (
+            "(protected branch hook declined)",
+            Some(Pushed::Refused(String::new())),
+        ),
+        ("(hook declined)", Some(Pushed::Refused(String::new()))),
+        (
+            "(push declined due to repository rule violations)",
+            Some(Pushed::Refused(String::new())),
+        ),
+        (
+            "(cannot lock ref 'refs/heads/quecto/board': is at x but expected y)",
+            Some(Pushed::Lost),
+        ),
+        ("(failed to update ref)", Some(Pushed::Lost)),
+        ("(incorrect old value provided)", Some(Pushed::Lost)),
+        ("(shallow update not allowed)", None),
+    ] {
+        let summary = format!("[remote rejected] {reason}");
+        let outcome = alice.judge(Some(&landed.0), &ours, &rejected(&summary));
+        match (judged, &outcome) {
+            (Some(Pushed::Refused(_)), Ok(Pushed::Refused(why))) => {
+                assert!(why.contains(reason), "{why}")
+            }
+            (Some(Pushed::Lost), Ok(Pushed::Lost)) => {}
+            (None, Err(BoardStoreError::Unavailable(why))) => {
+                assert!(why.contains("may have moved"), "{why}")
+            }
+            (judged, outcome) => panic!("{reason}: {outcome:?}, not {judged:?}"),
+        }
+    }
     // Nothing reported, or a failure the remote did not explain, and the
     // board did not move: it may still.
     for report in [
@@ -241,7 +275,7 @@ fn a_push_that_fails_outright_says_why() {
     );
     let write = alice.write(&head, &[task("a")], "board: add a");
     assert!(
-        matches!(&write, Err(BoardStoreError::Unavailable(why)) if why.contains("does not appear to be a git repository")),
+        matches!(&write, Err(BoardStoreError::Unavailable(why)) if why.contains("does not appear to be a git repository") && !why.contains("Failed {") && !why.contains("stderr:")),
         "{write:?}"
     );
 }
@@ -268,4 +302,9 @@ fn ref_status_reads_only_our_ref_line() {
     );
     assert_eq!(ref_status(b"error: failed\n"), None);
     assert_eq!(ref_status(line("?", "odd").as_bytes()), None);
+    // The remote's reason is quoted, never passed through raw.
+    assert_eq!(
+        ref_status(line("!", "[remote rejected] (\u{1b}[31mno\u{202e}pe\u{200b})").as_bytes()),
+        Some(RefStatus::Rejected("[remote rejected] (no pe )".into()))
+    );
 }

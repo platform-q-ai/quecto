@@ -4,6 +4,9 @@
 use super::*;
 use crate::infrastructure::persistence::project_board::task_record::MAX_TASK_FILE_BYTES;
 
+/// How the README and a refusal tell someone to undo a hand edit.
+const RECOVERY: &str = "move `quecto/board` back to the commit before that edit";
+
 #[test]
 fn only_regular_task_files_are_read_and_the_rest_is_set_aside_by_id() {
     let repos = Repos::new();
@@ -91,9 +94,10 @@ fn only_regular_task_files_are_read_and_the_rest_is_set_aside_by_id() {
         );
     }
     assert_eq!(sh(&remote, &["rev-parse", BOARD_REF]), snapshot.head.0);
-    // A write carries forward every task file it did not read, as it is
-    // and with its own mode: links, executables and modules included.
-    // Strays (names that are not `<id>.json`, and subtrees) are dropped.
+    // A write carries forward every `.json` file it did not read, as it is
+    // and with its own mode: links, executables, modules and names a later
+    // quecto may take as ids included. Strays (other names, subtrees) are
+    // dropped.
     let moved = written(bob.write(&snapshot.head, &[task("fresh")], "board: add fresh"));
     let listing = |commit: &str| {
         sh(&remote, &["ls-tree", &format!("{commit}:tasks")])
@@ -108,6 +112,7 @@ fn only_regular_task_files_are_read_and_the_rest_is_set_aside_by_id() {
     assert_eq!(
         after.keys().map(String::as_str).collect::<Vec<_>>(),
         [
+            "Upper.json",
             "big.json",
             "broken.json",
             "exec.json",
@@ -121,6 +126,7 @@ fn only_regular_task_files_are_read_and_the_rest_is_set_aside_by_id() {
         ]
     );
     for name in [
+        "Upper.json",
         "big.json",
         "broken.json",
         "exec.json",
@@ -423,13 +429,30 @@ fn a_task_file_named_twice_refuses_every_write_and_drops_neither() {
             ("tasks/dup.json", Some("dup"))
         ]
     );
+    let blobs: Vec<String> = [encode(&task("dup")).unwrap(), encode(&other).unwrap()]
+        .iter()
+        .map(|bytes| sh_with(&repos.bob, &["hash-object", "--stdin"], bytes))
+        .collect();
     for id in ["dup", "ok", "fresh"] {
         let refused = bob.write(&snapshot.head, &[task(id)], &format!("board: write {id}"));
+        let Ok(BoardWrite::Refused(why)) = &refused else {
+            panic!("{id}: {refused:?}");
+        };
         assert!(
-            matches!(&refused, Ok(BoardWrite::Refused(why)) if why.contains("tasks/dup.json") && why.contains("more than once")),
-            "{id}: {refused:?}"
+            why.contains("tasks/dup.json") && why.contains("more than once"),
+            "{why}"
         );
+        // Both copies, so whoever mends the board can choose, and how to.
+        assert!(
+            blobs.iter().all(|blob| why.contains(blob.as_str())),
+            "{why}"
+        );
+        assert!(why.contains(RECOVERY), "{why}");
     }
+    assert!(
+        String::from_utf8_lossy(README).contains(RECOVERY),
+        "the README gives the same way back"
+    );
     assert_eq!(
         sh(&repos.remote(), &["rev-parse", BOARD_REF]),
         snapshot.head.0
@@ -459,6 +482,40 @@ fn a_tasks_entry_that_is_not_a_tree_is_not_a_board() {
     assert!(
         matches!(&read, Err(BoardStoreError::Clash(why)) if why.contains("tasks")),
         "{read:?}"
+    );
+}
+
+/// An entry of a mode git never writes is a stray, whatever it names: it
+/// is not looked up, so even an object held nowhere never stops a read.
+#[test]
+fn an_entry_of_a_mode_git_never_writes_is_never_looked_up() {
+    let repos = Repos::new();
+    let alice = store(&repos.alice);
+    created(&alice);
+    let head = raw_board(
+        &repos.remote(),
+        &[
+            (
+                "100644",
+                "ok.json",
+                Object::Blob(encode(&task("ok")).unwrap()),
+            ),
+            ("100664", "odd.json", Object::Absent(b"odd".to_vec())),
+        ],
+        &[&repos.bob],
+    );
+    let board = store(&repos.bob).board_at(&head.0).unwrap();
+    assert_eq!(
+        board.tasks.keys().map(Slug::as_str).collect::<Vec<_>>(),
+        ["ok"]
+    );
+    assert_eq!(
+        board
+            .quarantined
+            .iter()
+            .map(|q| (q.path.as_str(), q.id.as_ref().map(Slug::as_str)))
+            .collect::<Vec<_>>(),
+        [("tasks/odd.json", Some("odd"))]
     );
 }
 
