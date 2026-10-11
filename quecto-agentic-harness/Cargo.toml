@@ -112,6 +112,9 @@ regex = "1"
 # The markdown codec's oracle: what a CommonMark/GFM reader makes of a
 # rendered board file (#2481).
 pulldown-cmark = { version = "0.13", default-features = false }
+# A second reader for the board markdown oracle (#2481): a port of cmark-gfm,
+# with GFM's extended autolinks, which pulldown-cmark does not read.
+comrak = { version = "0.39", default-features = false }
 filetime = "0.2"
 serial_test = "3"
 rcgen = "0.13"

@@ -1,19 +1,43 @@
 //! The oracle: what a CommonMark/GFM reader makes of a file, block by
 //! block, against the document it was rendered from.
 //!
-//! The reader is pulldown-cmark with every extension on but three GitHub
-//! does not have, which only change what text shows: smart punctuation,
-//! heading attributes (`{#id}`) and `^superscript^`.
+//! Two readers: pulldown-cmark with every extension on but four GitHub
+//! does not have or reads otherwise, which only change what text shows
+//! (smart punctuation, heading attributes `{#id}`, `^superscript^`, and
+//! `~subscript~`, which GitHub draws as strikethrough); and comrak, a port
+//! of cmark-gfm, with GFM's tables, strikethrough and extended autolinks
+//! (a bare `www.`, `https://` or email), which pulldown-cmark does not read.
 use super::*;
+use comrak::nodes::{AstNode, ListType, NodeValue};
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, LinkType, Options, Parser, Tag};
 use regex::Regex;
 
-/// The reader's options: every extension but the three named above.
+/// pulldown-cmark's options: every extension but the four named above.
 fn options() -> Options {
     Options::all()
         - Options::ENABLE_SMART_PUNCTUATION
         - Options::ENABLE_HEADING_ATTRIBUTES
         - Options::ENABLE_SUPERSCRIPT
+        - Options::ENABLE_SUBSCRIPT
+}
+
+/// comrak's options: GFM's autolinks, tables and strikethrough.
+fn comrak_options() -> comrak::Options<'static> {
+    let mut options = comrak::Options::default();
+    options.extension.autolink = true;
+    options.extension.table = true;
+    options.extension.strikethrough = true;
+    options
+}
+
+/// A link's address as a text writes it, after its `]`.
+static ADDRESS: std::sync::LazyLock<Regex> =
+    std::sync::LazyLock::new(|| Regex::new(r"\]\(https://[^)\s]*\)").expect("a valid pattern"));
+
+/// Whether `text` shows a reader something: a letter, number, punctuation
+/// or symbol that is not an emphasis or strikethrough marker.
+fn shows(text: &str) -> bool {
+    text.chars().any(|c| chars::seen(c) && !"*_~".contains(c))
 }
 
 /// A text's characters, checked as a run (a reader splits text at a `*`,
@@ -30,8 +54,6 @@ fn checked(text: &str) -> Result<(), String> {
 /// strikethrough markers, a code span's backticks and padding, and a
 /// link's brackets and address.
 fn drops_only_markup(written: &str, shown: &str) -> bool {
-    static ADDRESS: std::sync::LazyLock<Regex> =
-        std::sync::LazyLock::new(|| Regex::new(r"\]\(https://[^)\s]*\)").expect("a valid pattern"));
     let written = ADDRESS.replace_all(written, "]");
     let mut shown = shown.chars().peekable();
     for c in written.chars() {
@@ -62,9 +84,20 @@ struct Outline {
     ragged: bool,
     text: String,
     run: String,
+    /// Links of the top-level block, and the text each shows.
+    links: usize,
+    link_texts: Vec<String>,
 }
 
 impl Outline {
+    /// `text`, shown in the block (and in the link it is in, if any).
+    fn shown(&mut self, text: &str) {
+        self.text.push_str(text);
+        if let (true, Some(link)) = (self.open.contains(&"link"), self.link_texts.last_mut()) {
+            link.push_str(text);
+        }
+    }
+
     fn start(&mut self, tag: &Tag<'_>) -> Result<(), String> {
         let open = self.open.as_slice();
         let kind = match tag {
@@ -85,22 +118,32 @@ impl Outline {
             Tag::TableHead if open == ["table"] => "head",
             Tag::TableRow if open == ["table"] => "row",
             Tag::TableCell if matches!(open, ["table", "head" | "row"]) => "cell",
-            Tag::Emphasis | Tag::Strong | Tag::Strikethrough | Tag::Subscript => "inline",
+            Tag::Emphasis | Tag::Strong | Tag::Strikethrough => "inline",
             Tag::Link {
                 link_type: LinkType::Inline,
                 dest_url,
                 title,
                 ..
-            } if dest_url.starts_with("https://") && title.is_empty() => "inline",
+            } if dest_url.starts_with("https://")
+                && title.is_empty()
+                && !open.contains(&"link") =>
+            {
+                "link"
+            }
             other => return Err(format!("{other:?} in {open:?}")),
         };
         if self.open.is_empty() {
             (self.count, self.cells, self.width, self.ragged) = (0, 0, None, false);
             self.text.clear();
+            self.links = 0;
         }
         match kind {
             "item" | "row" => self.count += 1,
             "cell" => self.cells += 1,
+            "link" => {
+                self.links += 1;
+                self.link_texts.push(String::new());
+            }
             _ => {}
         }
         self.open.push(kind);
@@ -126,14 +169,15 @@ impl Outline {
             _ => {}
         }
         if self.open.is_empty() {
-            self.kinds.push(match closed {
+            let kind = match closed {
                 "paragraph" => format!("paragraph:{}", self.count + 1),
                 "list" => format!("list:{}", self.count),
                 "code" => format!("code:{}", self.text.matches('\n').count()),
                 "table" if self.ragged => "table:ragged".to_string(),
                 "table" => format!("table:{}x{}", self.width.unwrap_or(0), self.count),
                 other => other.to_string(),
-            });
+            };
+            self.kinds.push(format!("{kind}+{}", self.links));
             self.texts.push(std::mem::take(&mut self.text));
         }
         Ok(())
@@ -148,11 +192,11 @@ impl Outline {
             Event::End(_) => self.end()?,
             Event::Text(text) => {
                 self.run.push_str(text);
-                self.text.push_str(text);
+                self.shown(text);
             }
             Event::Code(text) => {
                 checked(text)?;
-                self.text.push_str(text);
+                self.shown(text);
             }
             Event::Html(_) if self.kinds.is_empty() => {}
             Event::SoftBreak if self.open == ["paragraph"] => {
@@ -177,6 +221,17 @@ fn table_text<'a>(header: impl Iterator<Item = &'a str>, rows: &[Vec<String>]) -
 /// `document`'s outline: per top-level block its kind and counts, and its
 /// text as written.
 fn expected(document: &Document) -> (Vec<String>, Vec<String>) {
+    let (kinds, texts) = unlinked_expected(document);
+    let kinds = kinds
+        .into_iter()
+        .zip(&texts)
+        .map(|(kind, text)| format!("{kind}+{}", ADDRESS.find_iter(text).count()))
+        .collect();
+    (kinds, texts)
+}
+
+/// [`expected`] without the links each block holds.
+fn unlinked_expected(document: &Document) -> (Vec<String>, Vec<String>) {
     let mut kinds = vec!["marker".to_string(), "h1".to_string()];
     let mut texts = vec![String::new(), document.title.clone()];
     if !document.fields.is_empty() {
@@ -245,17 +300,173 @@ pub(super) fn outline(file: &str, document: &Document) -> Result<(), String> {
     }
     checked(&outline.run)?;
     let (kinds, texts) = expected(document);
-    if outline.kinds != kinds {
-        return Err(format!("{:?}, not {kinds:?}", outline.kinds));
+    let comrak = comrak_outline(file).map_err(|error| format!("comrak: {error}"))?;
+    for (reader, shown) in [
+        (
+            "pulldown-cmark",
+            &(outline.kinds, outline.texts, outline.link_texts),
+        ),
+        ("comrak", &comrak),
+    ] {
+        compared(reader, shown, &kinds, &texts)?;
     }
-    for ((kind, shown), written) in kinds.iter().zip(&outline.texts).zip(&texts) {
+    Ok(())
+}
+
+/// One reader's outline (kinds, texts, link texts) against the document's.
+fn compared(
+    reader: &str,
+    (shown_kinds, shown_texts, link_texts): &(Vec<String>, Vec<String>, Vec<String>),
+    kinds: &[String],
+    texts: &[String],
+) -> Result<(), String> {
+    if shown_kinds != kinds {
+        return Err(format!("{reader}: {shown_kinds:?}, not {kinds:?}"));
+    }
+    for ((kind, shown), written) in kinds.iter().zip(shown_texts).zip(texts) {
         let same = match kind.starts_with("code:") {
             true => shown == written,
             false => drops_only_markup(written, shown),
         };
         if !same {
-            return Err(format!("{kind} shows {shown:?}, written {written:?}"));
+            return Err(format!(
+                "{reader}: {kind} shows {shown:?}, written {written:?}"
+            ));
+        }
+        // Each title, cell, paragraph line and list item shows something.
+        let units: Vec<&str> = match kind.split([':', '+']).next() {
+            Some("h1") => vec![shown.as_str()],
+            Some("paragraph" | "list") => shown.lines().collect(),
+            Some("table") => shown.lines().flat_map(|row| row.split('\t')).collect(),
+            _ => vec![],
+        };
+        if let Some(blank) = units.iter().find(|unit| !shows(unit)) {
+            return Err(format!("{reader}: {kind} shows nothing in {blank:?}"));
         }
     }
-    Ok(())
+    match link_texts.iter().find(|text| !shows(text)) {
+        Some(blank) => Err(format!("{reader}: a link shows nothing: {blank:?}")),
+        None => Ok(()),
+    }
+}
+
+/// The inline text `node` shows, and the links in it (each link's text
+/// added to `link_texts`). Only text, code, emphasis, strikethrough, soft
+/// breaks and inline https links with no title are allowed.
+fn comrak_inline<'a>(
+    node: &'a AstNode<'a>,
+    link_texts: &mut Vec<String>,
+) -> Result<(String, usize), String> {
+    let (mut text, mut links) = (String::new(), 0);
+    for child in node.children() {
+        match &child.data.borrow().value {
+            NodeValue::Text(shown) => text.push_str(shown),
+            NodeValue::Code(code) => text.push_str(&code.literal),
+            NodeValue::SoftBreak => text.push('\n'),
+            NodeValue::Emph | NodeValue::Strong | NodeValue::Strikethrough => {
+                let (shown, inner) = comrak_inline(child, link_texts)?;
+                text.push_str(&shown);
+                links += inner;
+            }
+            NodeValue::Link(link) if link.url.starts_with("https://") && link.title.is_empty() => {
+                let mut nested = vec![];
+                let (shown, inner) = comrak_inline(child, &mut nested)?;
+                if inner > 0 {
+                    return Err(format!("a link in a link: {shown:?}"));
+                }
+                link_texts.push(shown.clone());
+                text.push_str(&shown);
+                links += 1;
+            }
+            other => return Err(format!("{other:?}")),
+        }
+    }
+    Ok((text, links))
+}
+
+/// comrak's outline of `file`, block by block, as [`Outline`] keeps it.
+fn comrak_outline(file: &str) -> Result<(Vec<String>, Vec<String>, Vec<String>), String> {
+    let arena = comrak::Arena::new();
+    let root = comrak::parse_document(&arena, file, &comrak_options());
+    let (mut kinds, mut texts, mut link_texts) = (vec![], vec![], vec![]);
+    for block in root.children() {
+        let (kind, text, links) = match &block.data.borrow().value {
+            NodeValue::HtmlBlock(_) if kinds.is_empty() => ("marker".to_string(), String::new(), 0),
+            NodeValue::Heading(heading) if heading.level == 1 && kinds.len() == 1 => {
+                let (text, links) = comrak_inline(block, &mut link_texts)?;
+                ("h1".to_string(), text, links)
+            }
+            NodeValue::Heading(heading) if heading.level == 2 => {
+                let (text, links) = comrak_inline(block, &mut link_texts)?;
+                ("h2".to_string(), text, links)
+            }
+            NodeValue::Paragraph => {
+                let (text, links) = comrak_inline(block, &mut link_texts)?;
+                (
+                    format!("paragraph:{}", text.matches('\n').count() + 1),
+                    text,
+                    links,
+                )
+            }
+            NodeValue::List(list) if list.list_type == ListType::Bullet => {
+                let (mut text, mut links, mut items) = (String::new(), 0, 0);
+                for item in block.children() {
+                    let paragraphs: Vec<_> = item.children().collect();
+                    match (&item.data.borrow().value, paragraphs.as_slice()) {
+                        (NodeValue::Item(_), [paragraph])
+                            if matches!(paragraph.data.borrow().value, NodeValue::Paragraph) =>
+                        {
+                            let (shown, inner) = comrak_inline(paragraph, &mut link_texts)?;
+                            text += &format!("{shown}\n");
+                            links += inner;
+                            items += 1;
+                        }
+                        (other, _) => return Err(format!("{other:?} in a list")),
+                    }
+                }
+                (format!("list:{items}"), text, links)
+            }
+            NodeValue::CodeBlock(code) if code.fenced => (
+                format!("code:{}", code.literal.matches('\n').count()),
+                code.literal.clone(),
+                0,
+            ),
+            NodeValue::Table(_) => comrak_table(block, &mut link_texts)?,
+            other => return Err(format!("{other:?}")),
+        };
+        kinds.push(format!("{kind}+{links}"));
+        texts.push(text);
+    }
+    Ok((kinds, texts, link_texts))
+}
+
+/// A table's kind, text and links, as [`Outline`] keeps them.
+fn comrak_table<'a>(
+    table: &'a AstNode<'a>,
+    link_texts: &mut Vec<String>,
+) -> Result<(String, String, usize), String> {
+    let (mut text, mut links, mut rows, mut width, mut ragged) = (String::new(), 0, 0, None, false);
+    for row in table.children() {
+        let header = match &row.data.borrow().value {
+            NodeValue::TableRow(header) => *header,
+            other => return Err(format!("{other:?} in a table")),
+        };
+        let mut cells = vec![];
+        for cell in row.children() {
+            let (shown, inner) = comrak_inline(cell, link_texts)?;
+            cells.push(shown);
+            links += inner;
+        }
+        match width {
+            None => width = Some(cells.len()),
+            Some(header) => ragged |= header != cells.len(),
+        }
+        rows += usize::from(!header);
+        text += &(cells.join("\t") + "\n");
+    }
+    let kind = match ragged {
+        true => "table:ragged".to_string(),
+        false => format!("table:{}x{rows}", width.unwrap_or(0)),
+    };
+    Ok((kind, text, links))
 }

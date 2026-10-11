@@ -72,7 +72,7 @@ pub(super) fn example() -> Document {
             ("Status".into(), "review".into()),
             (
                 "Claim".into(),
-                "Ada (ada@example.com) until 2026-10-11T14:00:00Z".into(),
+                "Ada (`ada@example.com`) until 2026-10-11T14:00:00Z".into(),
             ),
         ],
         sections: vec![
@@ -118,7 +118,7 @@ pub(super) const EXAMPLE: &str = r##"<!-- quecto-task schema=1 -->
 |---|---|
 | Id | board-cli |
 | Status | review |
-| Claim | Ada (ada@example.com) until 2026-10-11T14:00:00Z |
+| Claim | Ada (`ada@example.com`) until 2026-10-11T14:00:00Z |
 
 ## Outcome
 Agents read the board, `Vec<T>` and all.
@@ -200,13 +200,14 @@ impl Seeded {
             "a", "Z", "9", "1.", "2)", "#", "##", "|", ">", "=", "-", "---", "+", "*", "_", ":",
             "[x]", "<", "\\", "`code`", "`Vec<T>`", "~~~", "~", "é", "日本", "🦀", "👩🏽‍💻",
             "👨‍👩‍👧", "❤️", " ", "!", "(", ")", "\"", "'", ".", ",", "{", "}", "&", "%", "$ ",
-            "[a link](https://example.com/x)", "x\u{301}\u{302}",
+            "[a link](https://example.com/x)", "[a `]` b](https://x.example)", "x\u{301}\u{302}",
         ];
         #[rustfmt::skip]
         const HOSTILE: &[&str] = &[
             "\u{1}", "\u{202e}", "\u{200b}", "\u{fe0f}", "e\u{301}", "&amp;", "&#65;", "$x$",
             "![i](https://example.com/i.png)", "<b>", "http://x", "www.x", "\u{2800}", "\u{3164}",
-            "a\u{fe0f}\u{200d}🦀", "\u{a0}", "[r][ref]", "[[w]]", "[^1]", "ftp://x", "<1@b.co>", "x\u{301}\u{302}\u{303}\u{304}\u{305}",
+            "a\u{fe0f}\u{200d}🦀", "\u{a0}", "[r][ref]", "[[w]]", "[^1]", "ftp://x", "<1@b.co>", "ada@example.com",
+            "_www.x", "*` `*", "_\u{301}_", "mailto:x", "[www.x](https://example.com)", "x\u{301}\u{302}\u{303}\u{304}\u{305}",
         ];
         let mut line: String = (0..1 + self.below(6)).map(|_| self.pick(SAFE)).collect();
         line = line.trim().to_string();
