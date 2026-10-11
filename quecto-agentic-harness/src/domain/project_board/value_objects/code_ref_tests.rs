@@ -31,7 +31,7 @@ fn a_branch_name_is_one_git_takes() {
         "a/@",
         "a#b+c,d=e",
         "a{b}",
-        "a'b\"c!d$e%f&g(h)i<j>k|l`m",
+        "a'b\"c!d$e%f&g(h)i<j>k;l]m_n",
         "a.lock.b",
         "a./b",
         "+",
@@ -43,6 +43,8 @@ fn a_branch_name_is_one_git_takes() {
         "", "-rf", "/main", "main/", "a//b", "a..b", "aa..", ".a", "a/.b", "x.lock", "a.lock/b",
         "a/b.lock", "a.", "a/b.", "a@{b", "a b", "a\tb", "a\u{7f}b", "a~1", "a^b", "a:b", "a?b",
         "a*b", "a[b", "a\\b",
+        // No board file holds these: a table cell's edge, a code span's.
+        "a|b", "a`b", "|", "`",
     ] {
         assert_eq!(
             BranchName::parse(name).unwrap_err().field,
@@ -92,15 +94,47 @@ fn a_branch_name_is_not_one_git_reads_as_something_else() {
 fn a_repository_is_named_owner_slash_name() {
     let longest = format!(
         "{}/{}",
-        "o".repeat(MAX_REPO_PART_BYTES),
+        "o".repeat(MAX_OWNER_BYTES),
         "n".repeat(MAX_REPO_PART_BYTES)
     );
-    for name in ["platform-q-ai/quecto", "a/.github", "a_b/c.d-e", &longest] {
+    for name in [
+        "platform-q-ai/quecto",
+        "a/.github",
+        "a-b/c.d-e",
+        "A1/__init__",
+        "a/www.site",
+        "a--b/c",
+        &longest,
+    ] {
         assert!(RepoName::parse(name).is_ok(), "{name}");
     }
     let too_long = format!("o/{}", "n".repeat(MAX_REPO_PART_BYTES + 1));
+    let owner_too_long = format!("{}/n", "o".repeat(MAX_OWNER_BYTES + 1));
     for name in [
-        "", "quecto", "a/b/c", "/b", "a/", "./b", "a/..", "a b/c", "a/b~", "ä/b", &too_long,
+        "",
+        "quecto",
+        "a/b/c",
+        "/b",
+        "a/",
+        "./b",
+        "a/..",
+        "a/.",
+        "a b/c",
+        "a/b~",
+        "ä/b",
+        &too_long,
+        &owner_too_long,
+        // GitHub's owners: letters, digits and inner hyphens only.
+        "a_b/c",
+        "_a/b",
+        "a./b",
+        ".a/b",
+        "-a/b",
+        "a-/b",
+        "-/b",
+        "a.b/c",
+        "a/b|c",
+        "a/b`c",
     ] {
         assert_eq!(RepoName::parse(name).unwrap_err().field, "repo", "{name:?}");
     }
