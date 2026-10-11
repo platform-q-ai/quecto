@@ -126,7 +126,12 @@ fn a_read_needs_no_committer_and_a_write_says_none_is_configured() {
 #[test]
 fn a_directory_that_is_no_repository_says_so() {
     let dir = tempfile::tempdir().unwrap();
-    let refused = build_project_board_handles(&environment(dir.path(), Access::Write));
+    let mut env = environment(dir.path(), Access::Write);
+    // Discovery stops at the temporary directory: a repository above it
+    // (a stray `/tmp/.git`) is never found.
+    let parent = dir.path().parent().unwrap().as_os_str().to_owned();
+    env.vars.push(("GIT_CEILING_DIRECTORIES".into(), parent));
+    let refused = build_project_board_handles(&env);
     assert!(
         matches!(&refused, Err(BuildError::Unavailable(why)) if why.contains("rev-parse")),
         "{:?}",

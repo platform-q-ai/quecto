@@ -111,7 +111,10 @@ fn read_line(args: &[String]) -> Result<Line, RequestError> {
             "--repo" => line.repo = Some(PathBuf::from(own("--repo", rest.next())?)),
             "--remote" => line.remote = own("--remote", rest.next())?,
             flag if flag.starts_with("--") => {
-                let value = rest.next().ok_or_else(|| invalid(flag, "needs a value"))?;
+                // An unknown flag is never echoed back as a field.
+                let value = rest
+                    .next()
+                    .ok_or_else(|| invalid("flags", "a --<field> needs a value"))?;
                 line.fields.extend([flag.to_string(), value.clone()]);
             }
             op if line.op.is_none() => line.op = Some(op.to_string()),

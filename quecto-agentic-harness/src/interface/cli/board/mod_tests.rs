@@ -37,7 +37,7 @@ fn the_command_line_builds_the_request_the_tool_would_send() {
         (Some(PathBuf::from("/srv/x")), "board".into())
     );
     for (line, stdin, field) in [
-        (&["renew", "--task"][..], "", "task"),
+        (&["renew", "--task"][..], "", "flags"),
         (&["renew", "extra"][..], "", "arguments"),
         (
             &["create", "--input", "{}", "--title", "A"][..],
@@ -283,5 +283,33 @@ fn a_config_flag_after_board_is_the_requests() {
     assert_eq!(
         super::super::config_flag::strip_global_config_flag(&global),
         args(&["quecto", "board", "x", "--config", "y"])
+    );
+}
+
+/// A flag with no value, or one the op does not take, is answered on a
+/// fixed field in fixed words: its text is never echoed back.
+#[test]
+fn a_stray_flag_is_never_echoed_back() {
+    for line in [
+        &["renew", "--<script>"][..],
+        &["renew", "--<script>", "x"][..],
+    ] {
+        let (code, answer, _) = cli(Some(never_built), line);
+        assert_eq!(code, 1, "{line:?}");
+        assert_eq!(answer["error"]["field"], json!("flags"), "{answer}");
+        assert!(!answer.to_string().contains("script"), "{answer}");
+    }
+    let (_, answer, _) = cli(Some(never_built), &["<script>", "--task", "a"]);
+    assert_eq!(
+        (
+            &answer["error"]["field"],
+            &answer["error"]["problem"],
+            &answer["error"]["message"]
+        ),
+        (
+            &json!("op"),
+            &json!("is not an op of the board"),
+            &json!("op: is not an op of the board")
+        )
     );
 }

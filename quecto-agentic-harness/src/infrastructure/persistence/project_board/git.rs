@@ -38,6 +38,8 @@ pub const INHERITED: &[&str] = &[
     "GIT_SSH_COMMAND",
     "GIT_CONFIG_GLOBAL",
     "GIT_CONFIG_NOSYSTEM",
+    // Where repository discovery stops: it only narrows what git finds.
+    "GIT_CEILING_DIRECTORIES",
     "GH_TOKEN",
     "GITHUB_TOKEN",
     "GH_CONFIG_DIR",
