@@ -83,3 +83,39 @@ pub fn open_run(number: u32, version: u32) -> Run {
     })
     .expect("fixture run is valid")
 }
+
+/// Change `number` of the fixture task linking branch `feat/b<number>` of
+/// the board's repository and pull request `pr`, linked by Ada at 09:00.
+pub fn change(number: u32, pr: Option<u64>) -> super::change::Change {
+    super::change::Change::new(super::change::ChangeFields {
+        task: slug("board-store"),
+        number,
+        head_repo: repo("platform-q-ai/quecto"),
+        branch: branch(&format!("feat/b{number}")),
+        pr,
+        merged: None,
+        linked_by: person("Ada"),
+        unlinked: None,
+        created: at("09:00:00"),
+        updated: at("09:00:00"),
+    })
+    .expect("fixture change is valid")
+}
+
+/// A full commit id of `digit`s.
+pub fn commit(digit: char) -> crate::domain::project_board::value_objects::code_ref::CommitId {
+    crate::domain::project_board::value_objects::code_ref::CommitId::parse(
+        &digit.to_string().repeat(40),
+    )
+    .unwrap()
+}
+
+/// A branch name.
+pub fn branch(name: &str) -> crate::domain::project_board::value_objects::code_ref::BranchName {
+    crate::domain::project_board::value_objects::code_ref::BranchName::parse(name).unwrap()
+}
+
+/// A repository's `owner/name`.
+pub fn repo(name: &str) -> crate::domain::project_board::value_objects::code_ref::RepoName {
+    crate::domain::project_board::value_objects::code_ref::RepoName::parse(name).unwrap()
+}

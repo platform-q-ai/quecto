@@ -74,10 +74,12 @@ fn apply(
     match op {
         BoardOp::Renew => renew(task, actor, now),
         BoardOp::TakeOver => take_over(task, actor, now),
-        // No run is stored before the run artifacts are (M3): the task has
-        // none. From then the use case passes all of the task's runs.
-        BoardOp::Move(to) => move_task(task, *to, actor, &[], now),
-        BoardOp::AddPr(pr) => add_pr(task, actor, *pr, now),
+        // No run or change is stored before the run and change artifacts
+        // are (M3): the task has none, so none holds it in review or
+        // already links the pull request. From then the use case passes all
+        // of the task's runs and changes.
+        BoardOp::Move(to) => move_task(task, *to, actor, &[], &[], now),
+        BoardOp::AddPr(pr) => add_pr(task, actor, *pr, &[], now),
         BoardOp::RemovePr(pr) => remove_pr(task, actor, *pr, now),
     }
 }

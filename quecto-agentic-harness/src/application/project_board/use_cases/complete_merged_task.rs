@@ -80,10 +80,11 @@ impl CompleteMergedTask {
             // its pull requests merged: a draft, done or archived task, or
             // one linking none, is refused by the rule first.
             let linked: BTreeSet<u64> = task.fields().prs.iter().copied().collect();
-            // No run is stored before the run artifacts are (M3): the task
-            // has none. From then all of its runs are passed, and the one
-            // going is written back ended.
-            complete_merged(task, &linked, &[], &when.now).map_err(ProjectBoardError::Rule)?;
+            // No run or change is stored before the run and change
+            // artifacts are (M3): the task has none, so no open change holds
+            // this completion. From then all of its runs and changes are
+            // passed, and the run going is written back ended.
+            complete_merged(task, &linked, &[], &[], &when.now).map_err(ProjectBoardError::Rule)?;
             let reads = Reads {
                 host: &*self.prs,
                 clock: &*self.clock,
@@ -91,8 +92,8 @@ impl CompleteMergedTask {
                 budget: self.read_budget,
             };
             let merged = merged(&reads, &task.fields().prs)?;
-            let Completed { task, run } =
-                complete_merged(task, &merged, &[], &when.now).map_err(ProjectBoardError::Rule)?;
+            let Completed { task, run } = complete_merged(task, &merged, &[], &[], &when.now)
+                .map_err(ProjectBoardError::Rule)?;
             assert!(run.is_none(), "no run is stored before M3");
             Ok(vec![task])
         })?;
