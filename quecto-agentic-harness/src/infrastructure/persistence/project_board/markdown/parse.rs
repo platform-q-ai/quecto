@@ -4,7 +4,7 @@
 //! writing it gives the same bytes: what the reader lets through, the
 //! writer's rules still refuse.
 use super::chars::check_line;
-use super::prose::{language, unescaped};
+use super::prose::{LANGUAGE_RULE, language, unescaped};
 use super::{Block, Body, BodyShape, Column, Document, MarkdownError, Section, Shape};
 use super::{check_shape, write};
 
@@ -28,13 +28,16 @@ pub fn parse(bytes: &[u8], shape: &Shape<'_>) -> Result<Document, MarkdownError>
     let Some(body) = text.strip_suffix('\n').filter(|body| !body.ends_with('\n')) else {
         return Err(MarkdownError::FinalNewline);
     };
-    let lines: Vec<&str> = body.split('\n').collect();
-    if lines.len() > limits.lines {
+    // Counted before any line is collected.
+    let count = body.bytes().filter(|byte| *byte == b'\n').count() + 1;
+    if count > limits.lines {
         return Err(MarkdownError::TooManyLines {
-            lines: lines.len(),
+            lines: count,
             most: limits.lines,
         });
     }
+    let lines: Vec<&str> = body.split('\n').collect();
+    debug_assert_eq!(lines.len(), count, "the lines counted are the lines read");
     for (index, line) in lines.iter().enumerate() {
         if line.len() > limits.line_bytes {
             return Err(MarkdownError::LineTooLong {
@@ -276,7 +279,7 @@ impl<'a> Reader<'a> {
             _ => {
                 return Err(MarkdownError::Fence {
                     line: opened,
-                    why: "a language of a-z, 0-9, + and -, at most twenty",
+                    why: LANGUAGE_RULE,
                 });
             }
         };

@@ -22,6 +22,9 @@ pub const LANGUAGES: &[&str] = &[
     "kotlin", "java", "go", "sql", "html", "css", "markdown", "c", "cpp",
 ];
 
+/// Why a fence's language is refused, as render and parse both say it.
+pub const LANGUAGE_RULE: &str = "a language from the list of plain highlighters";
+
 /// A fence's language: one of [`LANGUAGES`].
 pub fn language(name: &str) -> bool {
     LANGUAGES.contains(&name)
@@ -144,7 +147,7 @@ pub fn render(
                 let fence = |why| MarkdownError::Fence { line: at, why };
                 match name.as_deref().is_none_or(language) {
                     true => lines.push(format!("```{}", name.as_deref().unwrap_or(""))),
-                    false => return Err(fence("a language from the list of plain highlighters")),
+                    false => return Err(fence(LANGUAGE_RULE)),
                 }
                 for line in code {
                     // A reader closes the fence on a line of three or more
