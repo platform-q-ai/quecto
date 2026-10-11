@@ -61,8 +61,9 @@ pub struct Limits {
 }
 
 /// What a cell holds: text; an id or pointer of ASCII letters, digits and
-/// `._:/#@+_-` (a slug, a word, a commit, a time, an address); or code,
-/// shown in backticks (a branch, an image, a reference).
+/// `._:/#@+_-`, a `_` only between two letters or digits (a slug, a word,
+/// a commit, a time, an address); or code, shown in backticks (a branch,
+/// an image, a reference).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CellKind {
     Text,
@@ -75,6 +76,7 @@ pub enum CellKind {
 
 /// The punctuation an ASCII cell may hold besides letters and digits.
 const ASCII_PUNCTUATION: &[u8] = b"._:/#@+_-";
+
 /// The punctuation a code cell may hold besides letters and digits: every
 /// printable ASCII one but `|` (a cell's edge), a backtick (a span's edge)
 /// and `\` (an escape a table reads).
