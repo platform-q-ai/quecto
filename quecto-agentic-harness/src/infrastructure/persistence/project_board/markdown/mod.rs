@@ -168,8 +168,147 @@ pub enum MarkdownError {
 /// # Errors
 /// What in the document is refused, and where its file would hold it.
 pub fn render(document: &Document, shape: &Shape<'_>) -> Result<String, MarkdownError> {
-    let _ = (document, shape);
-    Err(MarkdownError::NotCanonical)
+    let mut lines = vec![
+        format!("<!-- quecto-{} schema={} -->", shape.kind, document.schema),
+        format!("# {}", title(&document.title)?),
+    ];
+    if !document.fields.is_empty() {
+        lines.extend(["", "| Field | Value |", "|---|---|"].map(String::from));
+    }
+    let mut order = shape.fields.iter();
+    for (name, value) in &document.fields {
+        match (
+            shape.fields.contains(&name.as_str()),
+            order.any(|field| field == name),
+        ) {
+            (true, true) => {}
+            (false, _) => return Err(MarkdownError::UnknownField { name: name.clone() }),
+            (true, false) => return Err(out_of_order(&lines, "fields in the kind's order")),
+        }
+        text::check_cell(value, lines.len() + 1)?;
+        lines.push(format!("| {name} | {} |", text::escaped_cell(value)));
+    }
+    let mut order = shape.sections.iter();
+    for section in &document.sections {
+        let unknown = || MarkdownError::UnknownSection {
+            heading: section.heading.clone(),
+        };
+        let known = shape
+            .sections
+            .iter()
+            .find(|known| known.heading == section.heading);
+        let known = known.ok_or_else(unknown)?;
+        match order.any(|next| next.heading == section.heading) {
+            true => lines.extend([String::new(), format!("## {}", section.heading)]),
+            false => return Err(out_of_order(&lines, "sections in the kind's order")),
+        }
+        match (&section.body, known.body) {
+            (Body::Prose(prose), BodyShape::Prose) => {
+                push_prose(&mut lines, &section.heading, prose)?
+            }
+            (Body::Table(rows), BodyShape::Table(columns)) => {
+                push_table(&mut lines, columns, rows)?
+            }
+            _ => return Err(unknown()),
+        }
+    }
+    within(&lines, shape.limits)?;
+    Ok(lines.join("\n") + "\n")
+}
+
+fn out_of_order(lines: &[String], expected: &'static str) -> MarkdownError {
+    MarkdownError::Structure {
+        line: lines.len() + 1,
+        expected,
+    }
+}
+
+/// A title: one line, nothing at its edges, and no closing `#` (which a
+/// heading drops).
+fn title(title: &str) -> Result<&str, MarkdownError> {
+    text::check_text(title, 2)?;
+    let edges = title.trim() != title || title.ends_with('#');
+    match title.is_empty() || title.contains('\n') || edges {
+        true => Err(MarkdownError::Title),
+        false => Ok(title),
+    }
+}
+
+/// Prose: paragraphs of lines, one blank line between them, each line that
+/// starts like a block escaped.
+fn push_prose(lines: &mut Vec<String>, heading: &str, prose: &str) -> Result<(), MarkdownError> {
+    let paragraphs: Vec<&str> = prose.split('\n').collect();
+    let blank_twice = paragraphs.windows(2).any(|pair| pair == ["", ""]);
+    let blank_edge = paragraphs.first() == Some(&"") || paragraphs.last() == Some(&"");
+    match (prose.is_empty(), blank_twice || blank_edge) {
+        (true, _) => {
+            return Err(MarkdownError::EmptyProse {
+                heading: heading.into(),
+            });
+        }
+        (false, true) => return Err(out_of_order(lines, "one blank line between paragraphs")),
+        (false, false) => {}
+    }
+    for line in paragraphs {
+        text::check_text(line, lines.len() + 1)?;
+        let escape = if text::starts_like_block(line) {
+            "\\"
+        } else {
+            ""
+        };
+        lines.push(format!("{escape}{line}"));
+    }
+    Ok(())
+}
+
+/// A table: its header, its separator, and each row as wide as the header.
+fn push_table(
+    lines: &mut Vec<String>,
+    columns: &[&str],
+    rows: &[Vec<String>],
+) -> Result<(), MarkdownError> {
+    lines.push(format!("| {} |", columns.join(" | ")));
+    lines.push(format!("|{}", "---|".repeat(columns.len())));
+    for row in rows {
+        let at = lines.len() + 1;
+        if row.len() != columns.len() {
+            return Err(MarkdownError::Cell {
+                line: at,
+                why: "a row of another width",
+            });
+        }
+        let cells: Vec<String> = row
+            .iter()
+            .map(|cell| text::check_cell(cell, at).map(|()| text::escaped_cell(cell)))
+            .collect::<Result<_, _>>()?;
+        lines.push(format!("| {} |", cells.join(" | ")));
+    }
+    Ok(())
+}
+
+/// The file's lines keep the character rules and the limits.
+fn within(lines: &[String], limits: Limits) -> Result<(), MarkdownError> {
+    for (index, line) in lines.iter().enumerate() {
+        text::check_line(line, index + 1)?;
+        if line.len() > limits.line_bytes {
+            return Err(MarkdownError::LineTooLong {
+                line: index + 1,
+                most: limits.line_bytes,
+            });
+        }
+    }
+    let bytes = lines.iter().map(|line| line.len() + 1).sum::<usize>();
+    match (lines.len() <= limits.lines, bytes <= limits.file_bytes) {
+        (true, true) => Ok(()),
+        (false, _) => Err(MarkdownError::TooManyLines {
+            lines: lines.len(),
+            most: limits.lines,
+        }),
+        (true, false) => Err(MarkdownError::TooLarge {
+            bytes,
+            most: limits.file_bytes,
+        }),
+    }
 }
 
 #[cfg(test)]
