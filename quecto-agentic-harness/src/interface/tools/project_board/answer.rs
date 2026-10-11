@@ -229,6 +229,11 @@ fn identity_json(identity: &Identity) -> Value {
 }
 
 fn quarantined_json(file: &QuarantinedFile) -> Value {
+    assert!(
+        plain_path(&file.path),
+        "a store shows every path it sets aside sanitised: {:?}",
+        file.path
+    );
     json!({
         // Raw: the store allowlists or quotes every name it sets aside,
         // a path is no secret, and a clear names it exactly as shown.
@@ -236,6 +241,20 @@ fn quarantined_json(file: &QuarantinedFile) -> Value {
         "id": file.id.as_ref().map(slug_json),
         "reason": shown(&file.reason),
         "object": file.object,
+    })
+}
+
+/// Whether `path` holds only characters a store shows: no control or
+/// format characters (bidirectional overrides, zero-width and tag
+/// characters), which a path shown raw must never carry.
+fn plain_path(path: &str) -> bool {
+    path.chars().all(|c| {
+        !c.is_control()
+            && !matches!(c,
+                '\u{ad}' | '\u{600}'..='\u{605}' | '\u{61c}' | '\u{6dd}' | '\u{70f}'
+                | '\u{180e}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}'
+                | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206f}' | '\u{feff}'
+                | '\u{fff9}'..='\u{fffb}' | '\u{e0001}' | '\u{e0020}'..='\u{e007f}')
     })
 }
 

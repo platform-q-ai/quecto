@@ -251,3 +251,27 @@ fn twins_of_one_path_and_object_are_one_file() {
         .unwrap();
     assert_eq!(store.read().unwrap().quarantined, vec![]);
 }
+
+/// A clear removes its object, so it cannot also keep that object: the
+/// contradiction is refused before the board is read, and nothing moves.
+#[test]
+fn a_clear_never_keeps_the_object_it_removes() {
+    let store = seeded();
+    store.show_twice("b");
+    let object = object_of(&store, "tasks/b.json");
+    let before = store.read().unwrap().head;
+    let clear = ClearSetAside::new(Arc::new(store.client()), SetClock::at("10:00:00")).unwrap();
+    let keeping = BTreeMap::from([(
+        "tasks/b.json".to_string(),
+        KeepCopy::Object {
+            keep: object.clone(),
+            seen: BTreeSet::from([object.clone()]),
+        },
+    )]);
+    let refused = clear.execute("tasks/b.json", &object, &keeping);
+    assert!(
+        matches!(&refused, Err(ProjectBoardError::Store(BoardStoreError::InvalidWrite(why))) if why.contains("removes")),
+        "{refused:?}"
+    );
+    assert_eq!(store.read().unwrap().head, before);
+}

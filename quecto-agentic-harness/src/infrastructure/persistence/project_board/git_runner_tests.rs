@@ -2,7 +2,7 @@
 //! the process and its output.
 use super::*;
 use crate::infrastructure::persistence::project_board::git::{
-    MAX_QUOTED_CHARS, MAX_STDERR, SHORT_OUTPUT, quoted, redacted_stderr,
+    MAX_QUOTED_CHARS, MAX_STDERR, SHORT_OUTPUT, quoted, redacted_stderr, shown_name,
 };
 
 #[test]
@@ -248,7 +248,14 @@ fn stderr_is_bounded_and_stripped_of_control_characters() {
         &[],
     );
     let output = git.local(&["anything"], None, SHORT_OUTPUT).unwrap();
-    assert_eq!(output.stderr.len(), MAX_STDERR);
+    // git printed more than is read, ending in one unbroken run the read
+    // cut: that run goes (it could be a secret cut short), the lines
+    // before it stay.
+    assert!(output.stderr.len() <= MAX_STDERR);
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr).trim_end(),
+        "\u{1b}[31mred\u{7}\r\nline"
+    );
     let failed = git.ok(&["anything"], None);
     let Err(GitError::Failed { stderr, .. }) = failed else {
         panic!("{failed:?}");
@@ -336,11 +343,27 @@ fn only_an_identity_git_refuses_is_an_identity_error() {
 fn a_secret_straddling_a_cap_is_redacted_whole() {
     let secret = "ghp_abcdefghijklmnopqrstuvwxyz0123";
     let at_cap = format!("{} {secret} tail", "x".repeat(MAX_STDERR - 10));
-    let kept = String::from_utf8(redacted_stderr(at_cap.as_bytes())).unwrap();
+    let kept = String::from_utf8(redacted_stderr(at_cap.as_bytes(), false)).unwrap();
     assert!(kept.len() <= MAX_STDERR);
     assert!(!kept.contains("ghp_"), "{}", &kept[kept.len() - 20..]);
+    // The read itself cut the secret (git printed more): its raw tail goes
+    // before redaction, so no prefix of it survives.
+    let cut = format!("{} {}", "z".repeat(100), &secret[..12]);
+    let tail = String::from_utf8(redacted_stderr(cut.as_bytes(), true)).unwrap();
+    assert!(!tail.contains("ghp_"), "{tail}");
+    assert_eq!(tail, "z".repeat(100));
     let at_quote = format!("{} {secret} tail", "y".repeat(MAX_QUOTED_CHARS - 10));
     let quote = quoted(at_quote.as_bytes());
     assert!(!quote.contains("ghp_"), "{}", &quote[quote.len() - 20..]);
     assert!(quoted(format!("https://u:{secret}@host/x").as_bytes()).contains("***@host"));
+    // An escape sequence splitting a secret is dropped before redaction.
+    let split = format!("{}\u{1b}[31m{}", &secret[..10], &secret[10..]);
+    assert!(
+        !quoted(split.as_bytes()).contains("ghp_"),
+        "{}",
+        quoted(split.as_bytes())
+    );
+    // A name is shown as it is: sanitised, never redacted.
+    assert_eq!(shown_name(b"sk-abcdefgh.json"), "sk-abcdefgh.json");
+    assert_eq!(shown_name(b"token=x.json"), "token=x.json");
 }

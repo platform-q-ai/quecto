@@ -492,6 +492,44 @@ fn a_file_set_aside_once_is_cleared_without_a_copy_to_keep() {
     written(bob.write(&cleared, &[task("broken")], "board: write broken"));
 }
 
+/// A file whose name looks like a secret is listed by its name, never
+/// redacted (two such names stay two paths), and a clear by that name
+/// removes it: a read afterwards finds neither.
+#[test]
+fn a_file_whose_name_looks_like_a_secret_is_cleared_by_its_name() {
+    let (repos, bob, head) = board_of(&[
+        ("100644", "token=x.json", Object::Blob(b"{".to_vec())),
+        ("100644", "sk-abcdefgh.json", Object::Blob(b"[".to_vec())),
+        ("100644", "ok.json", json(&task("ok"))),
+    ]);
+    let board = bob.read().unwrap();
+    let mut paths: Vec<&str> = board
+        .quarantined
+        .iter()
+        .map(|file| file.path.as_str())
+        .collect();
+    paths.sort_unstable();
+    assert_eq!(paths, ["tasks/sk-abcdefgh.json", "tasks/token=x.json"]);
+    let mut at = head;
+    for (path, bytes) in [
+        ("tasks/token=x.json", &b"{"[..]),
+        ("tasks/sk-abcdefgh.json", b"["),
+    ] {
+        let object = oid_of(&repos.bob, bytes);
+        at = written(bob.clear_set_aside(&at, &clearing(path, &object, &[]), "board: clear"));
+    }
+    let after = bob.read().unwrap();
+    assert_eq!(after.head, at);
+    assert_eq!(after.quarantined, vec![], "both are gone");
+    let names = listing(&repos.remote(), &at);
+    assert!(
+        names
+            .iter()
+            .all(|name| !name.contains("token=") && !name.contains("sk-")),
+        "{names:?}"
+    );
+}
+
 /// A clear names what the listing shows at a repeated path: copies a
 /// write carries, a copy it drops (a mode over another type) and a twin
 /// that shows the same path. Only a carried copy may be kept.

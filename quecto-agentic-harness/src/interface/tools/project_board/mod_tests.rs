@@ -156,6 +156,17 @@ fn a_command_line_reaches_the_same_request_as_the_tools_json() {
     ] {
         assert_eq!(line(op, flags).unwrap_err().field, field, "{op} {flags:?}");
     }
+    // An op that is none is refused in fixed words, never echoed.
+    let stranger = line("<script>alert(1)</script>", &[]).unwrap_err();
+    assert_eq!(
+        (stranger.field.as_str(), stranger.problem.as_str()),
+        ("op", "is not an op of the board")
+    );
+    let answer = answer::request_refused(None, &stranger);
+    assert_eq!(
+        answer["error"]["message"],
+        json!("op: is not an op of the board")
+    );
 }
 
 #[test]

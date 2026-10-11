@@ -21,7 +21,8 @@ pub fn request(op: &str, flags: &[String]) -> Result<Value, RequestError> {
         problem: problem.into(),
     };
     let op = op.replace('-', "_");
-    let fields = fields_of(&op).ok_or_else(|| refused("op", &format!("no op {op}")))?;
+    // A name that is no op is never echoed back.
+    let fields = fields_of(&op).ok_or_else(|| refused("op", "is not an op of the board"))?;
     let mut object = Map::new();
     object.insert("op".into(), Value::String(op.clone()));
     let mut rest = flags.iter();

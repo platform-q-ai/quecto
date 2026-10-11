@@ -410,7 +410,7 @@ impl Git {
                 limit,
             });
         }
-        let stderr = redacted_stderr(&stderr.bytes);
+        let stderr = redacted_stderr(&stderr.bytes, stderr.past_limit);
         debug_assert!(stdout.bytes.len() <= limit && stderr.len() <= MAX_STDERR);
         Ok(Output {
             status,
@@ -512,9 +512,18 @@ fn recorded_identity(ident: &str) -> Option<(String, String)> {
 
 /// git's standard error with credentials and secret-shaped spans redacted
 /// while whole, then cut to [`MAX_STDERR`] bytes (at a character's edge):
-/// a secret the cap would cut is never kept in part.
-pub(crate) fn redacted_stderr(bytes: &[u8]) -> Vec<u8> {
-    let text = String::from_utf8_lossy(bytes);
+/// a secret the cap would cut is never kept in part. When git printed more
+/// than was read (`past_limit`), the read itself may have cut a secret, so
+/// the raw tail after the last whitespace goes before anything is redacted.
+pub(crate) fn redacted_stderr(bytes: &[u8], past_limit: bool) -> Vec<u8> {
+    let whole = match past_limit {
+        true => {
+            let last = bytes.iter().rposition(u8::is_ascii_whitespace);
+            &bytes[..last.unwrap_or(0)]
+        }
+        false => bytes,
+    };
+    let text = String::from_utf8_lossy(whole);
     let redacted = redact_secrets(&redact_url_userinfo(&text));
     let mut end = redacted.len().min(MAX_STDERR);
     while !redacted.is_char_boundary(end) {
@@ -523,16 +532,31 @@ pub(crate) fn redacted_stderr(bytes: &[u8]) -> Vec<u8> {
     redacted.as_bytes()[..end].to_vec()
 }
 
-/// git's message as text fit to quote: escape sequences dropped; letters,
-/// marks, numbers, punctuation and symbols kept; anything else (spaces,
-/// controls, format characters such as bidirectional overrides, zero-width
-/// and tag characters, unassigned code points) one space between them;
-/// at most [`MAX_QUOTED_CHARS`] characters.
+/// A name from git (a tree entry's, a path) as text fit to show: escape
+/// sequences dropped; letters, marks, numbers, punctuation and symbols
+/// kept; anything else (spaces, controls, format characters such as
+/// bidirectional overrides, zero-width and tag characters, unassigned code
+/// points) one space between them; at most [`MAX_QUOTED_CHARS`]
+/// characters. A name is shown as it is, never redacted: a clear names a
+/// file exactly as a listing shows it.
+pub fn shown_name(bytes: &[u8]) -> String {
+    capped(&sanitised(bytes))
+}
+
+/// git's message as text fit to quote: sanitised as [`shown_name`] is,
+/// then credentials and secret-shaped spans redacted (after the escape
+/// sequences are gone, so none splits a secret past the redaction), then
+/// capped (after, so the cap never cuts a secret).
 pub fn quoted(bytes: &[u8]) -> String {
-    // Redacted whole, before the character cap could cut a secret.
-    let text = redact_secrets(&redact_url_userinfo(&String::from_utf8_lossy(bytes)));
+    capped(&redact_secrets(&redact_url_userinfo(&sanitised(bytes))))
+}
+
+/// `bytes` with escape sequences dropped and every run of characters not
+/// shown as one space between shown ones.
+fn sanitised(bytes: &[u8]) -> String {
+    let text = String::from_utf8_lossy(bytes);
     let mut chars = text.chars().peekable();
-    let (mut out, mut count, mut gap) = (String::new(), 0usize, false);
+    let (mut out, mut gap) = (String::new(), false);
     while let Some(c) = chars.next() {
         if c == '\u{1b}' {
             // An escape sequence: ESC, `[`, parameters, then a final byte.
@@ -546,22 +570,24 @@ pub fn quoted(bytes: &[u8]) -> String {
             continue;
         }
         if !shown(c) {
-            gap = count > 0;
+            gap = !out.is_empty();
             continue;
-        }
-        if count + usize::from(gap) >= MAX_QUOTED_CHARS {
-            out.push_str(" …");
-            break;
         }
         if gap {
             out.push(' ');
-            count += 1;
             gap = false;
         }
         out.push(c);
-        count += 1;
     }
     out
+}
+
+/// At most [`MAX_QUOTED_CHARS`] characters of `text`, marked when cut.
+fn capped(text: &str) -> String {
+    match text.chars().count() > MAX_QUOTED_CHARS {
+        true => text.chars().take(MAX_QUOTED_CHARS).collect::<String>() + " …",
+        false => text.to_string(),
+    }
 }
 
 /// The characters quoted as they are: letters, marks, numbers,

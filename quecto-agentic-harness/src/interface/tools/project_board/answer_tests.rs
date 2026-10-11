@@ -39,89 +39,88 @@ fn keys(code: ErrorCode) -> &'static [&'static str] {
     }
 }
 
-/// How many variants [`ProjectBoardError`] has, counted beside
-/// [`variant`]: bump it with the match.
-const VARIANTS: usize = 23;
+/// Every [`ProjectBoardError`] variant, once: the pattern that matches it
+/// and an error of it. [`variant`], [`every_error`] and [`VARIANTS`] are
+/// all made from this one table, and `variant`'s match is exhaustive, so a
+/// new variant fails to compile until it has its row here, and then it is
+/// built and counted with the rest.
+macro_rules! board_errors {
+    ($($pattern:pat => $error:expr,)*) => {
+        const VARIANTS: usize = [$(stringify!($pattern)),*].len();
 
-/// Which variant `error` is, numbered `0..VARIANTS`. The match is
-/// exhaustive, so a new variant fails to compile until it is numbered
-/// here; [`every_board_error_answers_its_codes_one_shape`] then fails
-/// until [`every_error`] builds it and [`VARIANTS`] counts it.
-fn variant(error: &ProjectBoardError) -> usize {
-    use ProjectBoardError as E;
-    match error {
-        E::Store(BoardStoreError::NoBoard) => 0,
-        E::Store(BoardStoreError::Clash(_)) => 1,
-        E::Store(BoardStoreError::InvalidWrite(_)) => 2,
-        E::Store(BoardStoreError::Unavailable(_)) => 3,
-        E::Rule(_) => 4,
-        E::Invalid(_) => 5,
-        E::NotFound(_) => 6,
-        E::Exists(_) => 7,
-        E::Clock(BoardClockError::OutOfRange(_)) => 8,
-        E::Quarantined(_) => 9,
-        E::UnknownReference(_) => 10,
-        E::ClosesCycle { .. } => 11,
-        E::InvalidWriter(_) => 12,
-        E::PrStateUnknown(_) => 13,
-        E::PullRequests(PullRequestStatesError::Unavailable(_)) => 14,
-        E::TaskAhead { .. } => 15,
-        E::ClockOutOfRange(_) => 16,
-        E::ClockAhead { .. } => 17,
-        E::Contended { .. } => 18,
-        E::Refused(_) => 19,
-        E::NotSetAside { .. } => 20,
-        E::Stale { .. } => 21,
-        E::NoPullRequestHost(_) => 22,
-    }
+        /// Which row of the table `error` is.
+        fn variant(error: &ProjectBoardError) -> usize {
+            use ProjectBoardError as E;
+            let mut row = 0;
+            $(
+                if matches!(error, $pattern) {
+                    return row;
+                }
+                row += 1;
+            )*
+            // Exhaustive: every variant has a row, so none falls through.
+            match error {
+                $($pattern => unreachable!("matched above at row {row}"),)*
+            }
+        }
+
+        fn every_error() -> Vec<ProjectBoardError> {
+            use ProjectBoardError as E;
+            vec![$($error),*]
+        }
+    };
 }
 
-fn every_error() -> Vec<ProjectBoardError> {
-    use ProjectBoardError as E;
-    let schema = || SchemaError::new("title", "is empty");
-    vec![
-        E::Store(BoardStoreError::NoBoard),
-        E::Store(BoardStoreError::Clash("a file".into())),
-        E::Store(BoardStoreError::InvalidWrite("too big".into())),
-        E::Store(BoardStoreError::Unavailable("offline".into())),
-        E::Rule(BoardRuleError::NotHolder),
-        E::Invalid(schema()),
-        E::NotFound(slug("a")),
-        E::Exists(slug("a")),
-        E::Clock(BoardClockError::OutOfRange("1969".into())),
-        E::Quarantined(slug("a")),
-        E::UnknownReference(slug("a")),
-        E::ClosesCycle {
-            id: slug("a"),
-            by: slug("b"),
-        },
-        E::InvalidWriter(schema()),
-        E::PrStateUnknown(7),
-        E::PullRequests(PullRequestStatesError::Unavailable("no gh".into())),
-        E::TaskAhead {
-            id: slug("a"),
-            updated: at("10:00:00"),
-        },
-        E::ClockOutOfRange(at("10:00:00")),
-        E::ClockAhead {
-            now: at("10:00:00"),
-            reference: at("09:00:00"),
-        },
-        E::Contended { attempts: 5 },
-        E::Refused("protected".into()),
-        E::NotSetAside {
-            path: "tasks/x.json".into(),
-            object: "a".repeat(40),
-        },
-        E::Stale {
-            id: slug("a"),
-            expected: at("09:00:00"),
-            updated: at("10:00:00"),
-        },
-        E::NoPullRequestHost(
-            crate::application::project_board::dto::NoPullRequestHost::NotAPullRequestHost,
-        ),
-    ]
+board_errors! {
+    E::Store(BoardStoreError::NoBoard) => E::Store(BoardStoreError::NoBoard),
+    E::Store(BoardStoreError::Clash(_)) => E::Store(BoardStoreError::Clash("a file".into())),
+    E::Store(BoardStoreError::InvalidWrite(_)) => {
+        E::Store(BoardStoreError::InvalidWrite("too big".into()))
+    },
+    E::Store(BoardStoreError::Unavailable(_)) => {
+        E::Store(BoardStoreError::Unavailable("offline".into()))
+    },
+    E::Rule(_) => E::Rule(BoardRuleError::NotHolder),
+    E::Invalid(_) => E::Invalid(SchemaError::new("title", "is empty")),
+    E::NotFound(_) => E::NotFound(slug("a")),
+    E::Exists(_) => E::Exists(slug("a")),
+    E::Clock(BoardClockError::OutOfRange(_)) => {
+        E::Clock(BoardClockError::OutOfRange("1969".into()))
+    },
+    E::Quarantined(_) => E::Quarantined(slug("a")),
+    E::UnknownReference(_) => E::UnknownReference(slug("a")),
+    E::ClosesCycle { .. } => E::ClosesCycle {
+        id: slug("a"),
+        by: slug("b"),
+    },
+    E::InvalidWriter(_) => E::InvalidWriter(SchemaError::new("title", "is empty")),
+    E::PrStateUnknown(_) => E::PrStateUnknown(7),
+    E::PullRequests(PullRequestStatesError::Unavailable(_)) => {
+        E::PullRequests(PullRequestStatesError::Unavailable("no gh".into()))
+    },
+    E::TaskAhead { .. } => E::TaskAhead {
+        id: slug("a"),
+        updated: at("10:00:00"),
+    },
+    E::ClockOutOfRange(_) => E::ClockOutOfRange(at("10:00:00")),
+    E::ClockAhead { .. } => E::ClockAhead {
+        now: at("10:00:00"),
+        reference: at("09:00:00"),
+    },
+    E::Contended { .. } => E::Contended { attempts: 5 },
+    E::Refused(_) => E::Refused("protected".into()),
+    E::NotSetAside { .. } => E::NotSetAside {
+        path: "tasks/x.json".into(),
+        object: "a".repeat(40),
+    },
+    E::NoPullRequestHost(_) => E::NoPullRequestHost(
+        crate::application::project_board::dto::NoPullRequestHost::NotAPullRequestHost,
+    ),
+    E::Stale { .. } => E::Stale {
+        id: slug("a"),
+        expected: at("09:00:00"),
+        updated: at("10:00:00"),
+    },
 }
 
 #[test]
@@ -238,4 +237,20 @@ fn a_listing_shows_each_files_object_and_its_names_copies() {
     assert_eq!(listed[1]["copies"], json!([a, b]));
     assert_eq!(listed[2]["copies"], json!(["c".repeat(40)]));
     assert_eq!(listed[3]["copies"], json!(["c".repeat(40)]), "each once");
+}
+
+#[test]
+fn a_path_shown_raw_holds_no_control_or_format_character() {
+    assert!(plain_path("tasks/token=x.json"));
+    assert!(plain_path("tasks/é ✓.json"));
+    for hostile in [
+        "tasks/a\u{0}.json",
+        "tasks/a\u{1b}[31m.json",
+        "tasks/a\u{202e}nosj.exe",
+        "tasks/a\u{200b}.json",
+        "tasks/a\u{e0041}.json",
+        "tasks/a\u{feff}.json",
+    ] {
+        assert!(!plain_path(hostile), "{hostile:?}");
+    }
 }
