@@ -112,3 +112,34 @@ fn planted_triggers_views_and_tables_never_survive_a_rebuild() {
         assert_eq!(index.head(), Ok(Some(board("a1").head.0)), "{plant}");
     }
 }
+
+/// A planted set-aside row whose path no store would show (a right-to-left
+/// override, say) is refused as corrupt, which the listings answer by
+/// discarding the index and rebuilding it, never by showing the row.
+#[test]
+fn a_planted_path_no_store_shows_ends_in_a_rebuild() {
+    let (_dir, index) = index();
+    rebuild(&index, &board("a1")).unwrap();
+    tamper(
+        &index,
+        "UPDATE quarantined SET path = 'tasks/a' || char(8238) || 'x.json';",
+    );
+    let read = index.ready();
+    assert!(
+        matches!(&read, Err(IndexError::Corrupt(why)) if why.contains("no store shows")),
+        "{read:?}"
+    );
+    // As the listings do with a corrupt index: discard it and rebuild.
+    index.discard().unwrap();
+    assert_eq!(
+        rebuild(&index, &board("a1")),
+        Ok(Refreshed::Rebuilt {
+            head: board("a1").head.0
+        })
+    );
+    let listed = index.ready().unwrap().quarantined;
+    assert!(
+        listed.iter().all(|file| shown_path(&file.path)),
+        "{listed:?}"
+    );
+}

@@ -11,8 +11,7 @@ use super::MAX_WRITE_ATTEMPTS;
 use super::board_change::checked_writer;
 use crate::application::project_board::dto::ProjectBoardError;
 use crate::application::project_board::ports::{
-    BoardClock, BoardHead, BoardStoreError, BoardWrite, KeepCopy, ProjectBoardStore,
-    QuarantinedFile, SetAsideClear,
+    BoardClock, BoardHead, BoardWrite, KeepCopy, ProjectBoardStore, QuarantinedFile, SetAsideClear,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -136,8 +135,9 @@ fn keeps_another(
     let only_object = objects.len() == 1 && objects.contains(object);
     match (keeps_its_own, only_object) {
         (false, _) | (true, true) => Ok(()),
-        (true, false) => Err(ProjectBoardError::Store(BoardStoreError::InvalidWrite(
-            format!("{path} keeps {object}, the object this clear removes, and holds others"),
+        (true, false) => Err(ProjectBoardError::Refused(format!(
+            "{path} keeps {object}, the object this clear removes, and holds others: name \
+             another of its objects as the clear's object to keep this one"
         ))),
     }
 }

@@ -42,6 +42,7 @@ use super::git::{Git, GitError, quoted, shown_name};
 use super::task_record::{MAX_TASK_FILE_BYTES, decode};
 use crate::application::project_board::ports::{BoardStoreError, QuarantinedFile};
 use crate::domain::project_board::entities::task::Task;
+use crate::domain::project_board::value_objects::shown_text::shown_char;
 use crate::domain::project_board::value_objects::slug::{MAX_SLUG_BYTES, Slug};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -267,9 +268,10 @@ impl Entry {
     /// write carries and every one shows as itself.
     fn kept_name(&self) -> bool {
         let allowed = |b: &u8| b.is_ascii_alphanumeric() || NAME_PUNCTUATION.as_bytes().contains(b);
+        let shown = |b: &u8| shown_char(char::from(*b));
         self.raw.len() <= MAX_NAME_BYTES
             && self.raw.first().is_some_and(u8::is_ascii_alphanumeric)
-            && self.raw.iter().all(allowed)
+            && self.raw.iter().all(|b| allowed(b) && shown(b))
     }
 
     /// Whether a write carries this entry as it is: its object is what its
@@ -523,13 +525,9 @@ fn read_tasks(git: &Git, tree: &str, limits: Limits) -> Result<Board, Unread> {
         });
     };
     let keep = |board: &mut Board, entry: &Entry| {
-        // A name a write keeps is one quecto keeps, so it shows exactly as
-        // it is: a clear finds it by the path the listing shows.
-        assert_eq!(
-            shown_name(&entry.raw),
-            entry.name,
-            "a kept name shows as it is"
-        );
+        // A clear finds a kept name by the path the listing shows.
+        let shown = shown_name(&entry.raw);
+        assert_eq!(shown, entry.name, "a kept name shows as it is");
         let kind = kind_of_mode(&entry.mode);
         debug_assert!(kind.is_some(), "only entries of git's own modes are kept");
         let kind = kind.unwrap_or("blob");
@@ -745,3 +743,7 @@ pub fn object_id(text: &str) -> Result<String, BoardStoreError> {
         ))),
     }
 }
+
+#[cfg(test)]
+#[path = "board_tree_tests.rs"]
+mod tests;

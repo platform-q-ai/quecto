@@ -239,23 +239,6 @@ fn a_listing_shows_each_files_object_and_its_names_copies() {
     assert_eq!(listed[3]["copies"], json!(["c".repeat(40)]), "each once");
 }
 
-#[test]
-fn a_path_shown_raw_holds_no_control_or_format_character() {
-    assert!(plain_path("tasks/token=x.json"));
-    assert!(plain_path("tasks/é ✓.json"));
-    for hostile in [
-        "tasks/a\u{0}.json",
-        "tasks/a\u{1b}[31m.json",
-        "tasks/a\u{a0}.json",
-        "tasks/a\u{202e}nosj.exe",
-        "tasks/a\u{200b}.json",
-        "tasks/a\u{e0041}.json",
-        "tasks/a\u{feff}.json",
-    ] {
-        assert!(!plain_path(hostile), "{hostile:?}");
-    }
-}
-
 /// A store never shows a path with a control or format character; an
 /// answer that would show one stops rather than pass it on.
 #[test]
