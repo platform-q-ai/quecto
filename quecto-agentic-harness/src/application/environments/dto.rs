@@ -696,3 +696,6 @@ pub struct PersistedContainerConfig {
     pub path: std::path::PathBuf,
     pub created: bool,
 }
+
+mod swarm_board;
+pub use swarm_board::{BoardSighting, HostedBoardRevision, SwarmBoardRefusal, SwarmBoardSnapshot};

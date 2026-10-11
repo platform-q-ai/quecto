@@ -169,3 +169,19 @@ fn a_host_side_loss_is_recorded_in_the_process_boards_event_log() {
     assert!(loss.lost, "{loss:?}");
     assert_eq!(*recorded.0.lock().unwrap(), ["_lose_coordinator"]);
 }
+
+/// L4 (#2488 review): the board view reads through a board of its own, so
+/// polling many boards never evicts the handles of the board this harness
+/// runs on as a member (or the host board's).
+#[test]
+fn the_board_view_reads_through_a_board_of_its_own() {
+    let view = super::supervisor_board();
+    assert!(
+        view.is_the_same_board(&super::supervisor_board()),
+        "one view board"
+    );
+    assert!(!view.is_the_same_board(&super::host_board()));
+    if let Some(process) = crate::infrastructure::tools::swarm_bridge::process_board() {
+        assert!(!view.is_the_same_board(process));
+    }
+}

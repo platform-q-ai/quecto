@@ -161,6 +161,7 @@ async fn approval_exchange(busy: bool) {
     let accept = crate::interface::cli::uds_multi::spawn_accept_loop(
         crate::interface::cli::uds_multi::AcceptLoopArgs {
             extensions: Default::default(),
+            swarm_boards: None,
             listener: tokio::net::UnixListener::bind(&socket).unwrap(),
             broadcast_tx: broadcast,
             cmd_tx: commands,
@@ -271,6 +272,7 @@ async fn rejected_socket_steer_does_not_cancel_but_explicit_abort_does() {
     let accept = crate::interface::cli::uds_multi::spawn_accept_loop(
         crate::interface::cli::uds_multi::AcceptLoopArgs {
             extensions: Default::default(),
+            swarm_boards: None,
             listener: tokio::net::UnixListener::bind(&socket).unwrap(),
             broadcast_tx: broadcast,
             cmd_tx: commands,
