@@ -344,8 +344,10 @@ fn no_wait_outlasts_the_read_timeout() {
         "{:?}",
         started.elapsed()
     );
-    let _ = release.send(());
+    // The first reader ends by its own read timeout: joined before the
+    // source is released, so a slow runner cannot hand it the reading.
     assert_eq!(first.join().unwrap(), None, "abandoned at the read timeout");
+    let _ = release.send(());
 }
 
 #[test]

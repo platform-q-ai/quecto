@@ -42,7 +42,6 @@ use super::git::{Git, GitError, quoted, shown_name};
 use super::task_record::{MAX_TASK_FILE_BYTES, decode};
 use crate::application::project_board::ports::{BoardStoreError, QuarantinedFile};
 use crate::domain::project_board::entities::task::Task;
-use crate::domain::project_board::value_objects::shown_text::shown_char;
 use crate::domain::project_board::value_objects::slug::{MAX_SLUG_BYTES, Slug};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -268,10 +267,9 @@ impl Entry {
     /// write carries and every one shows as itself.
     fn kept_name(&self) -> bool {
         let allowed = |b: &u8| b.is_ascii_alphanumeric() || NAME_PUNCTUATION.as_bytes().contains(b);
-        let shown = |b: &u8| shown_char(char::from(*b));
         self.raw.len() <= MAX_NAME_BYTES
             && self.raw.first().is_some_and(u8::is_ascii_alphanumeric)
-            && self.raw.iter().all(|b| allowed(b) && shown(b))
+            && self.raw.iter().all(allowed)
     }
 
     /// Whether a write carries this entry as it is: its object is what its
