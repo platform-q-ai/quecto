@@ -1,8 +1,9 @@
 use super::*;
+use crate::domain::project_board::entities::task_parts::MAX_LINE_CHARS;
 
 /// One change that must make valid fields invalid.
 type Change = Box<dyn Fn(&mut RunFields)>;
-use crate::domain::project_board::services::fixtures_tests::{at, open_run, plan};
+use crate::domain::project_board::entities::fixtures_tests::{at, open_run, plan};
 use crate::domain::project_board::value_objects::vocabulary::PlanState;
 
 fn slug(text: &str) -> Slug {
@@ -61,8 +62,61 @@ fn fields_that_break_a_rule_build_no_run() {
     early.cost = Some(1);
     assert_eq!(
         Run::new(early).unwrap_err().field,
-        "items",
+        "cost",
         "a cost waits for the end"
+    );
+    let mut early = open_run(1, 1).into_fields();
+    early.items = ended().items;
+    assert_eq!(
+        Run::new(early).unwrap_err().field,
+        "items",
+        "items wait for the end"
+    );
+    let mut far = open_run(1, 1).into_fields();
+    far.plan_version = MAX_PLAN_VERSION + 1;
+    assert_eq!(Run::new(far).unwrap_err().field, "plan_version");
+}
+
+/// A run's text is bounded: owners and evidence together, exactly to the
+/// budget and not a byte past it.
+#[test]
+fn a_runs_text_is_bounded_by_its_budget() {
+    let mut fields = ended();
+    fields.items[0].owner = None;
+    fields.items[0].evidence.clear();
+    // Distinct ASCII lines of `len` bytes, numbered.
+    let line = |n: usize, len: usize| {
+        let number = format!("{n}-");
+        format!("{number}{}", "x".repeat(len - number.len()))
+    };
+    let mut left = MAX_RUN_TEXT_BYTES;
+    let mut n = 0;
+    while left > MAX_OWNER_CHARS {
+        let len = (left - 1).min(MAX_LINE_CHARS);
+        let item = n / MAX_PER_ITEM;
+        if fields.items.len() <= item {
+            let mut next = fields.items[0].clone();
+            next.id = slug(&format!("i{item}"));
+            next.evidence.clear();
+            fields.items.push(next);
+        }
+        fields.items[item].evidence.push(line(n, len));
+        left -= len;
+        n += 1;
+    }
+    fields.items[0].owner = Some("o".repeat(left));
+    assert_eq!(fields.text_bytes(), MAX_RUN_TEXT_BYTES);
+    let exact = Run::new(fields.clone());
+    assert!(exact.is_ok(), "exactly the budget: {:?}", exact.err());
+    let mut over = fields.items[0].clone();
+    over.id = slug("over");
+    over.owner = None;
+    over.evidence = vec!["y".into()];
+    fields.items.push(over);
+    assert_eq!(
+        Run::new(fields).unwrap_err().field,
+        "text",
+        "a byte past it"
     );
 }
 

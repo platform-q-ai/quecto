@@ -2,6 +2,8 @@ use super::*;
 use crate::domain::project_board::entities::claim::Claim;
 use crate::domain::project_board::entities::plan::{Plan, PlanFields, PlanItem};
 use crate::domain::project_board::entities::task::{Task, TaskFields};
+use crate::domain::project_board::entities::team::*;
+use crate::domain::project_board::value_objects::vocabulary::Effort;
 use crate::domain::project_board::value_objects::vocabulary::{PlanState, TaskKind, TaskStatus};
 
 fn at(time: &str) -> Timestamp {
@@ -54,6 +56,8 @@ fn plan_fields() -> PlanFields {
             deadline: Some(at("23:00:00")),
             image: Some("ghcr.io/platform-q-ai/quecto:0.107".into()),
         }),
+        proposed_by: ada(),
+        accepted: None,
         created: at("08:00:00"),
         updated: at("10:00:00"),
     }

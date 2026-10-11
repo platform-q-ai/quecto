@@ -80,7 +80,9 @@ impl CompleteMergedTask {
             // its pull requests merged: a draft, done or archived task, or
             // one linking none, is refused by the rule first.
             let linked: BTreeSet<u64> = task.fields().prs.iter().copied().collect();
-            complete_merged(task, &linked, &when.now).map_err(ProjectBoardError::Rule)?;
+            // No run is stored before the run artifacts are (M3), so none
+            // is going; from then the task's open run is passed and ended.
+            complete_merged(task, &linked, None, &when.now).map_err(ProjectBoardError::Rule)?;
             let reads = Reads {
                 host: &*self.prs,
                 clock: &*self.clock,
@@ -89,7 +91,9 @@ impl CompleteMergedTask {
             };
             let merged = merged(&reads, &task.fields().prs)?;
             Ok(vec![
-                complete_merged(task, &merged, &when.now).map_err(ProjectBoardError::Rule)?,
+                complete_merged(task, &merged, None, &when.now)
+                    .map_err(ProjectBoardError::Rule)?
+                    .task,
             ])
         })?;
         Ok(tasks.into_iter().next().expect("a change writes its task"))

@@ -6,12 +6,18 @@
 use super::super::value_objects::schema_error::{SchemaError, distinct, line};
 use super::super::value_objects::slug::Slug;
 use super::super::value_objects::timestamp::Timestamp;
+use super::super::value_objects::vocabulary::PlanState;
 use super::super::value_objects::vocabulary::{ItemState, RunOutcome};
-use super::plan::Plan;
+use super::plan::{MAX_PLAN_VERSION, Plan};
 use super::task_parts::{MAX_BUDGET_TOKENS, MAX_ITEMS, MAX_OWNER_CHARS, MAX_PER_ITEM, lines};
 
 /// The most runs a task starts.
 pub const MAX_RUN_NUMBER: u32 = 999;
+/// All of a run's text together, in UTF-8 bytes: its items' owners and
+/// evidence. Runs hold summaries and links, never logs; this budget keeps
+/// every run inside the one file it is stored in, with room to spare (its
+/// codec, M2, proves the fit).
+pub const MAX_RUN_TEXT_BYTES: usize = 256 * 1024;
 
 /// Where one of the plan's items stood when the run folded back.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,6 +52,20 @@ pub struct RunFields {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Run(RunFields);
 
+impl RunFields {
+    /// The UTF-8 bytes of every free text in the run: its items' owners
+    /// and evidence.
+    pub fn text_bytes(&self) -> usize {
+        self.items
+            .iter()
+            .map(|item| {
+                item.owner.as_ref().map_or(0, String::len)
+                    + item.evidence.iter().map(String::len).sum::<usize>()
+            })
+            .sum()
+    }
+}
+
 impl Run {
     pub fn new(fields: RunFields) -> Result<Self, SchemaError> {
         validate(&fields)?;
@@ -65,13 +85,24 @@ impl Run {
         self.0.ended.is_none()
     }
 
-    /// The run ran `plan`: the same task and version, and every item it
-    /// reports is one of the plan's.
+    /// The run ran `plan`: an accepted plan (or one superseded since), of
+    /// the same task and version, and every item it reports is one of the
+    /// plan's.
     ///
     /// # Errors
-    /// The field that names another task, version or item.
+    /// The field that names a plan never accepted, or another task,
+    /// version or item.
     pub fn ran(&self, plan: &Plan) -> Result<(), SchemaError> {
         let planned = plan.fields();
+        match planned.state {
+            PlanState::Accepted | PlanState::Superseded => {}
+            state @ (PlanState::Draft | PlanState::Discarded) => {
+                return Err(SchemaError::new(
+                    "plan",
+                    format!("a {} plan never ran", state.as_str()),
+                ));
+            }
+        }
         if planned.task != self.0.task {
             return Err(SchemaError::new("task", "is not the plan's task"));
         }
@@ -115,8 +146,11 @@ fn validate(run: &RunFields) -> Result<(), SchemaError> {
             format!("must be 1 to {MAX_RUN_NUMBER}"),
         ));
     }
-    if run.plan_version == 0 {
-        return Err(SchemaError::new("plan_version", "must be at least 1"));
+    if !(1..=MAX_PLAN_VERSION).contains(&run.plan_version) {
+        return Err(SchemaError::new(
+            "plan_version",
+            format!("must be 1 to {MAX_PLAN_VERSION}"),
+        ));
     }
     let ended = match (&run.ended, &run.outcome) {
         (None, None) => false,
@@ -128,10 +162,16 @@ fn validate(run: &RunFields) -> Result<(), SchemaError> {
             ));
         }
     };
-    if !ended && (run.cost.is_some() || !run.items.is_empty()) {
+    if !ended && run.cost.is_some() {
+        return Err(SchemaError::new(
+            "cost",
+            "a run reports its cost when it folds back",
+        ));
+    }
+    if !ended && !run.items.is_empty() {
         return Err(SchemaError::new(
             "items",
-            "a run reports its cost and items when it folds back",
+            "a run reports its items when it folds back",
         ));
     }
     if run.cost.is_some_and(|tokens| tokens > MAX_BUDGET_TOKENS) {
@@ -145,7 +185,14 @@ fn validate(run: &RunFields) -> Result<(), SchemaError> {
     for (index, item) in run.items.iter().enumerate() {
         item.validate(&format!("items/{index}"))?;
     }
-    Ok(())
+    let text = run.text_bytes();
+    match text <= MAX_RUN_TEXT_BYTES {
+        true => Ok(()),
+        false => Err(SchemaError::new(
+            "text",
+            format!("the run's text is {text} bytes; the most is {MAX_RUN_TEXT_BYTES}"),
+        )),
+    }
 }
 
 #[cfg(test)]

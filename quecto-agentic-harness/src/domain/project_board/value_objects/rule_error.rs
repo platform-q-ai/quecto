@@ -1,5 +1,6 @@
 //! Why the board's rules refused a move, renewal, takeover or completion.
 use super::schema_error::SchemaError;
+use super::timestamp::Timestamp;
 use super::vocabulary::{PlanState, TaskStatus};
 use std::fmt;
 
@@ -25,8 +26,19 @@ pub enum BoardRuleError {
     /// The plan or run belongs to another task, or the run to another
     /// plan version.
     NotThisTasks,
-    /// A done or archived task takes no new plan.
+    /// A done or archived task's plans are settled: none is proposed,
+    /// edited, accepted or discarded.
     TaskFinished(TaskStatus),
+    /// The task has no plan of that version.
+    UnknownPlanVersion(u32),
+    /// The plan changed since the caller read it (`updated` now): read it
+    /// again and decide again.
+    PlanChanged { version: u32, updated: Timestamp },
+    /// The task's plans contradict each other (a hand edit, a hostile
+    /// push): mend them before deciding on one.
+    PlansInconsistent(String),
+    /// A run opens only while its task is held.
+    NotHeld,
     /// A takeover is only of a task that may hold a claim (claimed, in
     /// progress, in review or blocked).
     NotTakeable(TaskStatus),
@@ -80,8 +92,18 @@ impl fmt::Display for BoardRuleError {
             ),
             Self::NotThisTasks => f.write_str("it belongs to another task or plan version"),
             Self::TaskFinished(status) => {
-                write!(f, "a {} task takes no new plan", status.as_str())
+                write!(f, "a {} task's plans are settled", status.as_str())
             }
+            Self::UnknownPlanVersion(version) => {
+                write!(f, "the task has no plan version {version}")
+            }
+            Self::PlanChanged { version, updated } => write!(
+                f,
+                "plan version {version} changed since it was read (updated {}); read it again",
+                updated.as_str()
+            ),
+            Self::PlansInconsistent(why) => write!(f, "the task's plans contradict: {why}"),
+            Self::NotHeld => f.write_str("a run opens only while its task is held"),
             Self::NotTakeable(status) => {
                 write!(f, "a {} task cannot be taken over", status.as_str())
             }

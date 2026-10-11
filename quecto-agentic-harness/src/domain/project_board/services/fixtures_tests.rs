@@ -1,14 +1,13 @@
 //! A valid task in any status, with every part, held by Ada from 09:00 to
 //! 11:00 when it may be; and versions of its plan and runs of them.
 use crate::domain::project_board::entities::claim::{Claim, Identity};
-use crate::domain::project_board::entities::plan::{Plan, PlanFields, PlanItem};
-use crate::domain::project_board::entities::run::{Run, RunFields};
+pub use crate::domain::project_board::entities::fixtures_tests::{open_run, plan};
 use crate::domain::project_board::entities::task::{Task, TaskFields};
-use crate::domain::project_board::entities::task_parts::{Review, Role, RoleLimits, Team};
+use crate::domain::project_board::entities::task_parts::Review;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{
-    Effort, PlanState, Severity, TaskKind, TaskStatus, Verdict,
+    Severity, TaskKind, TaskStatus, Verdict,
 };
 
 pub fn at(time: &str) -> Timestamp {
@@ -80,63 +79,4 @@ pub fn without_prs(task: Task) -> Task {
     let mut fields = task.into_fields();
     fields.prs.clear();
     Task::new(fields).unwrap()
-}
-
-fn slug(text: &str) -> Slug {
-    Slug::parse(text).unwrap()
-}
-
-/// The team a plan of the fixture task names.
-pub fn team() -> Team {
-    Team {
-        roles: vec![Role {
-            name: slug("worker"),
-            model: "gpt-5.5".into(),
-            effort: Effort::High,
-            limits: RoleLimits {
-                members: 2,
-                turns: None,
-            },
-        }],
-        budget: None,
-        deadline: None,
-        image: None,
-    }
-}
-
-/// Version `version` of the fixture task's plan, in `state`, written at
-/// 08:30, with two items (`api` after `schema`).
-pub fn plan(version: u32, state: PlanState) -> Plan {
-    let item = |id: &str, depends_on: &[&str]| PlanItem {
-        id: slug(id),
-        title: format!("Item {id}"),
-        criteria: vec![format!("{id} proved")],
-        depends_on: depends_on.iter().map(|id| slug(id)).collect(),
-    };
-    Plan::new(PlanFields {
-        task: slug("board-store"),
-        version,
-        state,
-        approach: "Spike, then build.\n".into(),
-        items: vec![item("schema", &[]), item("api", &["schema"])],
-        team: Some(team()),
-        created: at("08:30:00"),
-        updated: at("08:30:00"),
-    })
-    .expect("fixture plan is valid")
-}
-
-/// Run `number` of the fixture task's plan `version`, going since 09:00.
-pub fn open_run(number: u32, version: u32) -> Run {
-    Run::new(RunFields {
-        task: slug("board-store"),
-        number,
-        plan_version: version,
-        started: at("09:00:00"),
-        ended: None,
-        outcome: None,
-        cost: None,
-        items: vec![],
-    })
-    .expect("fixture run is valid")
 }

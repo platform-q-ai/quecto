@@ -251,8 +251,6 @@ fn a_pull_request_linked_during_the_completion_is_asked_about() {
     );
 }
 
-/// Once a merge closed the task and ended its run as lost, its former
-/// holder has no claim to end a run under.
 /// The reads share one budget: once it is spent no further pull request
 /// is asked about, and the completion is refused as the host's failure.
 #[test]

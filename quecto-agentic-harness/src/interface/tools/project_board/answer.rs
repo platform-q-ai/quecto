@@ -450,6 +450,16 @@ fn rule_json(rule: &BoardRuleError) -> Value {
         R::PlanNotDraft(state) => json!({"code": "plan_not_draft", "state": state.as_str()}),
         R::NotThisTasks => json!({"code": "not_this_tasks"}),
         R::TaskFinished(status) => json!({"code": "task_finished", "status": status.as_str()}),
+        R::UnknownPlanVersion(version) => {
+            json!({"code": "unknown_plan_version", "version": version})
+        }
+        R::PlanChanged { version, updated } => json!({
+            "code": "plan_changed",
+            "version": version,
+            "updated": updated.as_str(),
+        }),
+        R::PlansInconsistent(why) => json!({"code": "plans_inconsistent", "reason": shown(why)}),
+        R::NotHeld => json!({"code": "not_held"}),
         R::NotTakeable(status) => json!({"code": "not_takeable", "status": status.as_str()}),
         R::AlreadyHolder => json!({"code": "already_holder"}),
         R::NoPrs => json!({"code": "no_prs"}),

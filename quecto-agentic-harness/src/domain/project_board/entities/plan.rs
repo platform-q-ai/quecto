@@ -8,13 +8,21 @@ use super::super::value_objects::schema_error::{SchemaError, distinct, line, mar
 use super::super::value_objects::slug::Slug;
 use super::super::value_objects::timestamp::Timestamp;
 use super::super::value_objects::vocabulary::PlanState;
-use super::task_parts::{MAX_ITEMS, MAX_LINE_CHARS, MAX_PER_ITEM, Team, lines};
+use super::claim::Identity;
+use super::task_parts::{MAX_ITEMS, MAX_LINE_CHARS, MAX_PER_ITEM, lines};
+use super::team::Team;
 use std::collections::BTreeMap;
 
 /// The most characters of a plan's approach (GitHub's issue body limit).
 pub const MAX_APPROACH_CHARS: usize = 65_536;
 /// The most versions a task's plan reaches.
 pub const MAX_PLAN_VERSION: u32 = 999;
+/// All of a plan's text together, in UTF-8 bytes: the approach, the
+/// items' titles and criteria, the team's models and image. The field
+/// limits alone would add up to megabytes; this budget keeps every plan
+/// the domain admits inside the one file it is stored in, with room to
+/// spare (its codec, M2, proves the fit).
+pub const MAX_PLAN_TEXT_BYTES: usize = 320 * 1024;
 
 /// One item the plan seeds the swarm board with, and how its completion
 /// is judged. Where an item stands is a run's, not the plan's.
@@ -39,8 +47,32 @@ pub struct PlanFields {
     pub approach: String,
     pub items: Vec<PlanItem>,
     pub team: Option<Team>,
+    /// Who proposed this version.
+    pub proposed_by: Identity,
+    /// Who accepted it and when: set from its acceptance on (accepted,
+    /// then superseded), never before.
+    pub accepted: Option<(Identity, Timestamp)>,
     pub created: Timestamp,
     pub updated: Timestamp,
+}
+
+impl PlanFields {
+    /// The UTF-8 bytes of every free text in the plan: the approach, the
+    /// items' titles and criteria, the team's models and image. Ids,
+    /// words, numbers, times and identities are bounded by the field
+    /// limits.
+    pub fn text_bytes(&self) -> usize {
+        let items: usize = self
+            .items
+            .iter()
+            .map(|item| item.title.len() + item.criteria.iter().map(String::len).sum::<usize>())
+            .sum();
+        let team = self.team.as_ref().map_or(0, |team| {
+            let models: usize = team.roles.iter().map(|role| role.model.len()).sum();
+            models + team.image.as_ref().map_or(0, String::len)
+        });
+        self.approach.len() + items + team
+    }
 }
 
 /// A plan whose fields keep every rule of its schema.
@@ -92,6 +124,15 @@ fn validate(plan: &PlanFields) -> Result<(), SchemaError> {
     }
     markdown("approach", &plan.approach, MAX_APPROACH_CHARS)?;
     validate_items(&plan.items)?;
+    plan.proposed_by.validate("proposed_by")?;
+    validate_acceptance(plan)?;
+    let text = plan.text_bytes();
+    if text > MAX_PLAN_TEXT_BYTES {
+        return Err(SchemaError::new(
+            "text",
+            format!("the plan's text is {text} bytes; the most is {MAX_PLAN_TEXT_BYTES}"),
+        ));
+    }
     match &plan.team {
         Some(team) => {
             team.validate("team")?;
@@ -105,6 +146,33 @@ fn validate(plan: &PlanFields) -> Result<(), SchemaError> {
             }
         }
         None => Ok(()),
+    }
+}
+
+/// An acceptance is recorded from the plan's acceptance on (accepted, and
+/// superseded after), never on a draft or a discarded draft, and falls
+/// while the plan exists.
+fn validate_acceptance(plan: &PlanFields) -> Result<(), SchemaError> {
+    let was_accepted = match plan.state {
+        PlanState::Accepted | PlanState::Superseded => true,
+        PlanState::Draft | PlanState::Discarded => false,
+    };
+    match (&plan.accepted, was_accepted) {
+        (None, false) => Ok(()),
+        (Some((by, at)), true) => {
+            by.validate("accepted/by")?;
+            match plan.created <= *at && *at <= plan.updated {
+                true => Ok(()),
+                false => Err(SchemaError::new(
+                    "accepted/at",
+                    "must be from when the plan was created to when it was updated",
+                )),
+            }
+        }
+        (_, _) => Err(SchemaError::new(
+            "accepted",
+            format!("does not match state {}", plan.state.as_str()),
+        )),
     }
 }
 

@@ -140,7 +140,7 @@ fn ready_counts_an_archived_dependency_as_satisfied() {
             status: from,
             ..fields(id)
         });
-        let after = move_task(&before, TaskStatus::Archived, &ada, &at("09:00:00")).unwrap();
+        let after = move_task(&before, TaskStatus::Archived, &ada, None, &at("09:00:00")).unwrap();
         assert_eq!(after.fields().status, TaskStatus::Archived);
         after
     };

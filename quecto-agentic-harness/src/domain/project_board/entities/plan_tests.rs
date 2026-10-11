@@ -2,7 +2,8 @@ use super::*;
 
 /// One change that must make valid fields invalid.
 type Change = Box<dyn Fn(&mut PlanFields)>;
-use crate::domain::project_board::services::fixtures_tests::{at, plan, team};
+use crate::domain::project_board::entities::fixtures_tests::{at, plan, team};
+use crate::domain::project_board::entities::task_parts::{MAX_ITEMS, MAX_LINE_CHARS, MAX_PER_ITEM};
 
 fn slug(text: &str) -> Slug {
     Slug::parse(text).unwrap()
@@ -86,4 +87,82 @@ fn every_bound_admits_exactly_its_limit() {
         Plan::new(no_team).is_ok(),
         "a plan may name no items or team"
     );
+}
+
+/// Who accepted a plan, and when, is recorded from its acceptance on and
+/// never before; who proposed it is always a valid identity.
+#[test]
+fn an_acceptance_is_recorded_only_once_the_plan_was_accepted() {
+    let accepted = || plan(1, PlanState::Accepted).into_fields();
+    let cases: Vec<(&str, Change)> = vec![
+        (
+            "accepted",
+            Box::new(|p| p.accepted = Some((p.proposed_by.clone(), at("08:30:00")))),
+        ),
+        (
+            "proposed_by/email",
+            Box::new(|p| p.proposed_by.email = "ada".into()),
+        ),
+    ];
+    for (field, change) in cases {
+        let mut broken = fields();
+        change(&mut broken);
+        assert_eq!(Plan::new(broken).unwrap_err().field, field);
+    }
+    let mut unrecorded = accepted();
+    unrecorded.accepted = None;
+    assert_eq!(Plan::new(unrecorded).unwrap_err().field, "accepted");
+    let mut early = accepted();
+    early.accepted = Some((early.proposed_by.clone(), at("08:00:00")));
+    assert_eq!(Plan::new(early).unwrap_err().field, "accepted/at");
+    let mut superseded = accepted();
+    superseded.state = PlanState::Superseded;
+    assert!(Plan::new(superseded).is_ok(), "a superseded plan keeps it");
+}
+
+/// The items are capped at their limit, and a plan's text at its budget,
+/// exactly.
+#[test]
+fn the_items_and_the_text_stop_exactly_at_their_limits() {
+    let item = |n: usize| PlanItem {
+        id: slug(&format!("i{n}")),
+        title: format!("Item {n}"),
+        criteria: vec![],
+        depends_on: vec![],
+    };
+    let mut full = fields();
+    full.items = (0..MAX_ITEMS).map(item).collect();
+    assert!(Plan::new(full.clone()).is_ok(), "{MAX_ITEMS} items");
+    full.items.push(item(MAX_ITEMS));
+    assert_eq!(Plan::new(full).unwrap_err().field, "items");
+
+    let mut wide = fields();
+    wide.team = None;
+    wide.items = vec![item(0)];
+    wide.approach = "\u{1d11e}".repeat(MAX_APPROACH_CHARS);
+    let mut left = MAX_PLAN_TEXT_BYTES - wide.text_bytes();
+    let mut n = 0;
+    while left > 0 {
+        let len = left.min(MAX_LINE_CHARS);
+        let number = format!("{n}-");
+        let line = format!("{number}{}", "x".repeat(len.saturating_sub(number.len())));
+        let line = match line.len() == len {
+            true => line,
+            false => "y".repeat(len),
+        };
+        let at = n / MAX_PER_ITEM;
+        if wide.items.len() <= at {
+            wide.items.push(item(at));
+            left -= wide.items[at].title.len();
+            continue;
+        }
+        wide.items[at].criteria.push(line);
+        left -= len;
+        n += 1;
+    }
+    assert_eq!(wide.text_bytes(), MAX_PLAN_TEXT_BYTES);
+    let exact = Plan::new(wide.clone());
+    assert!(exact.is_ok(), "exactly the budget: {:?}", exact.err());
+    wide.items[0].title.push('x');
+    assert_eq!(Plan::new(wide).unwrap_err().field, "text", "a byte past it");
 }
