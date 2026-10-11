@@ -462,7 +462,7 @@ fn every_edit_of_a_file_is_refused_or_read_as_a_reader_reads_it() {
                         .strip_prefix("line ")
                         .and_then(|rest| rest.split_once(':'))
                         .map(|(line, _)| line.parse::<usize>().unwrap());
-                    let lines = file.split('\n').count();
+                    let lines = file.lines().count();
                     assert!(
                         line.is_none_or(|line| (1..=lines).contains(&line)),
                         "{said}: {file}"

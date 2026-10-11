@@ -132,6 +132,12 @@ fn every_hostile_file_is_refused_with_its_reason() {
         ("an escaped task box", edited("- Every op answers one JSON line", "- \\[x] done"), |e| matches!(e, E::Structure { line: 25, .. })),
         ("a task box", edited("- Every op answers one JSON line", "- [x] done"), |e| matches!(e, E::BlockLike { line: 25 })),
         ("punctuation opening a line, unescaped", edited(first, "(a note)"), |e| matches!(e, E::BlockLike { line: 11 })),
+        ("a link showing a www address in padded code", edited(first, "see [www` . `evil.example](https://good.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a link showing an email in padded code", edited(first, "see [ada` @ `evil.example](https://good.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a link showing a scheme in padded code", edited(first, "see [https:` // `evil.example](https://good.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a link showing mailto in padded code", edited(first, "see [mailto` : `ada](https://good.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a link showing an email after an underscore in code", edited(first, "see [_`@`evil.example](https://good.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a link showing an email after an underscore in strikethrough", edited(first, "see [_~@evil.example~](https://good.example)"), |e| matches!(e, E::Link { line: 11 })),
         ("a table's header renamed", edited("| Item | State |", "| Item | Status |"), |e| matches!(e, E::Structure { line: 28, .. })),
     ];
     for (name, bytes, named) in cases {
