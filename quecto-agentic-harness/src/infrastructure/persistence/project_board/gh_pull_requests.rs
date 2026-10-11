@@ -12,6 +12,7 @@
 //! process group is ended, so nothing it left behind outlives the call,
 //! and its pipes get [`OUTPUT_GRACE`] to deliver what it wrote. Blocking:
 //! callers run it off the async workers.
+use super::own_group::{end_group, exited_unreaped};
 use crate::infrastructure::processes::parent_death_signal::own_session_dying_with_us;
 use std::collections::VecDeque;
 use std::ffi::{OsStr, OsString};
@@ -147,7 +148,9 @@ impl GhPullRequestStates {
         // terminal, and its whole group can be ended), sent SIGTERM if quecto
         // dies (on Linux): this thread forks gh and waits for it.
         own_session_dying_with_us(&mut command);
-        let mut child = command.spawn().map_err(|error| error.to_string())?;
+        let mut child = command.spawn().map_err(|error| {
+            format!("starting gh (making its session, arming the death signal): {error}")
+        })?;
         let pumps = pump(child.stdout.take(), Keep::Head(STDOUT_CAPACITY)).and_then(|stdout| {
             Ok((
                 stdout,
@@ -334,39 +337,6 @@ fn pump(
             let _ = sender.send(Vec::from(kept));
         })?;
     Ok(receiver)
-}
-
-/// Whether our unreaped child `pid` has exited, observed without reaping
-/// it (`WNOWAIT`) or blocking (`WNOHANG`). An interrupted call is "not
-/// yet".
-fn exited_unreaped(pid: u32) -> std::io::Result<bool> {
-    let pid = libc::id_t::from(pid);
-    // SAFETY: zero is a valid initial siginfo_t; waitid initializes it.
-    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-    let options = libc::WEXITED | libc::WNOHANG | libc::WNOWAIT;
-    // SAFETY: pid is our own unreaped child and info is writable.
-    match unsafe { libc::waitid(libc::P_PID, pid, &mut info, options) } {
-        // SAFETY: a successful waitid initialized the siginfo union.
-        0 => Ok(unsafe { info.si_pid() } != 0),
-        _ => {
-            let error = std::io::Error::last_os_error();
-            match error.kind() {
-                std::io::ErrorKind::Interrupted => Ok(false),
-                _ => Err(error),
-            }
-        }
-    }
-}
-
-/// Ends the process group `leader` leads (`setsid` made the child its
-/// leader). The leader is not yet reaped, so the group is still its own.
-fn end_group(leader: u32) {
-    if let Ok(group) = i32::try_from(leader) {
-        // SAFETY: kill(2) takes plain integers and touches no memory.
-        unsafe {
-            libc::kill(-group, libc::SIGKILL);
-        }
-    }
 }
 
 /// The first executable regular file named `program` in an absolute `PATH`

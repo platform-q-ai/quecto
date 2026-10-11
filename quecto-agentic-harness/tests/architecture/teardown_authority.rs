@@ -224,6 +224,7 @@ const PROCESS_EFFECT_PATTERNS: &[&str] = &[
     "process_group(",
     "setpgid",
     "prctl",
+    "libc::setsid",
     "libc::SIGKILL",
     "libc::SIGTERM",
     "/proc/",
@@ -249,7 +250,7 @@ const PROCESS_EFFECT_ALLOWLIST: &[(&str, &[&str], &str)] = &[
     ),
     (
         "src/infrastructure/processes/parent_death_signal.rs",
-        &["prctl", "libc::SIGTERM"],
+        &["prctl", "libc::setsid", "libc::SIGTERM"],
         "arms PR_SET_PDEATHSIG (SIGTERM only, a typed choice) on a process \
          this harness spawns, and gives the board's git and gh children their \
          own session that dies with quecto (the child is signalled by the \
@@ -280,20 +281,13 @@ const PROCESS_EFFECT_ALLOWLIST: &[(&str, &[&str], &str)] = &[
          (#2173)",
     ),
     (
-        "src/infrastructure/persistence/project_board/git.rs",
-        &["kill(", "libc::kill", "libc::SIGKILL"],
-        "the project board store ending the process group of its own git \
-         Child (a session of its own that dies with quecto, armed by \
-         parent_death_signal) once git exits or at its deadline, observed \
-         unreaped by waitid (#2476, #2501)",
-    ),
-    (
-        "src/infrastructure/persistence/project_board/gh_pull_requests.rs",
-        &["kill(", "libc::kill", "libc::SIGKILL"],
-        "the project board's pull request states ending the process group \
-         of its own `gh` Child (a session of its own that dies with quecto, \
-         armed by parent_death_signal) once it exits and at its deadline \
-         (#2477, #2501)",
+        "src/infrastructure/persistence/project_board/own_group.rs",
+        &["kill(", "libc::kill", "libc::SIGTERM", "libc::SIGKILL"],
+        "the project board's git and gh runners ending the process group of \
+         their own Child (a session of its own that dies with quecto, armed \
+         by parent_death_signal), observed unreaped by waitid, once it exits \
+         or at its deadline: SIGTERM, then SIGKILL after a short grace \
+         (#2476, #2477, #2501)",
     ),
     (
         "src/infrastructure/tools/grep_run.rs",

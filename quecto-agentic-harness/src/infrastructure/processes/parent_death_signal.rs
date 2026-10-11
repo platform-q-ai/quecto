@@ -1,7 +1,8 @@
-//! Linux `PR_SET_PDEATHSIG` as defence in depth (#1935).
-//!
-//! The portable parent-loss contract is the launch-bound control connection;
-//! this only shortens the window on Linux when the parent is killed outright.
+//! Linux `PR_SET_PDEATHSIG`: a child this harness spawns is signalled when
+//! its launcher dies outright (#1935, #2501). For tool children it backs
+//! the portable parent-loss contract, the launch-bound control connection;
+//! for the board's git and gh children it is what ends them with quecto.
+//! Arming is fail-closed: a child it cannot be armed for is never run.
 //! It is armed in `pre_exec` and made race-safe by re-checking `getppid()`
 //! after arming: if the parent already died between `fork` and `prctl`, the
 //! signal would never arrive, so the child exits immediately instead.
@@ -35,12 +36,22 @@ impl DeathSignal {
     }
 }
 
+/// `pid` as the parent id [`arm_in_child`] takes: itself when it is a
+/// positive `pid_t`, else 0, which [`arm_in_child`] refuses, so the spawn
+/// fails rather than run a child unarmed.
+fn parent_id(pid: u32) -> libc::pid_t {
+    match libc::pid_t::try_from(pid) {
+        Ok(parent) if parent > 0 => parent,
+        _ => 0,
+    }
+}
+
 /// Arm the parent-death signal on `command`. `parent_pid` is the launcher's
 /// pid captured before spawning, so the post-arm check compares against the
 /// process that actually forked.
 #[cfg(target_os = "linux")]
 pub fn arm(command: &mut tokio::process::Command, parent_pid: u32) {
-    let parent = libc::pid_t::try_from(parent_pid).unwrap_or(0);
+    let parent = parent_id(parent_pid);
     // The closure runs in the forked child before exec.
     // SAFETY: it only calls arm_in_child, whose own contract that is.
     unsafe {
@@ -72,14 +83,15 @@ pub unsafe fn arm_in_child(parent: libc::pid_t, signal: DeathSignal) -> std::io:
     }
     // SAFETY: in a forked child before exec, per this function's contract.
     unsafe {
-        if libc::prctl(libc::PR_SET_PDEATHSIG, signal.number(), 0, 0, 0) != 0 {
-            return Err(std::io::Error::last_os_error());
+        match libc::prctl(libc::PR_SET_PDEATHSIG, signal.number(), 0, 0, 0) {
+            0 => {}
+            _ => return Err(std::io::Error::last_os_error()),
         }
-        if libc::getppid() != parent {
-            libc::_exit(1);
+        match libc::getppid() == parent {
+            true => Ok(()),
+            false => libc::_exit(1),
         }
     }
-    Ok(())
 }
 
 /// Off Linux nothing is armed.
@@ -98,20 +110,15 @@ pub unsafe fn arm_in_child(_parent: libc::pid_t, _signal: DeathSignal) -> std::i
 /// starts reaches this process's terminal, and its group can be ended as
 /// one) that is sent SIGTERM when this process dies (on Linux), so a
 /// quecto killed outright leaves no child behind. The calling thread must
-/// wait for the child (see the caveat above).
-///
-/// # Panics
-/// A process id that is not positive, which the kernel never gives.
+/// wait for the child (see the caveat above). A process id that is no
+/// process's is refused by [`arm_in_child`], so the spawn fails.
 pub fn own_session_dying_with_us(command: &mut std::process::Command) {
-    let parent = libc::pid_t::try_from(std::process::id())
-        .ok()
-        .filter(|pid| *pid > 0)
-        .expect("a positive process id");
+    let parent = parent_id(std::process::id());
     // SAFETY: the closure only calls setsid and arm_in_child (async-signal-safe).
     unsafe {
         std::os::unix::process::CommandExt::pre_exec(command, move || match libc::setsid() {
-            -1 => Err(std::io::Error::last_os_error()),
-            _ => arm_in_child(parent, DeathSignal::Terminate),
+            session if session > 0 => arm_in_child(parent, DeathSignal::Terminate),
+            _ => Err(std::io::Error::last_os_error()),
         });
     }
 }
