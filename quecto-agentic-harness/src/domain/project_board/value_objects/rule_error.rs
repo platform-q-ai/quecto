@@ -46,10 +46,10 @@ pub enum BoardRuleError {
     RunsInconsistent(String),
     /// A run runs the task's accepted plan; this version is not it.
     PlanNotAccepted(u32),
-    /// A change of `task` already links the branch or pull request: a
-    /// pull request is linked to one task, for good, and a branch to one
-    /// change until it merges.
-    ChangeAlreadyLinked { task: Slug, change: u32 },
+    /// `task` already links the branch or pull request: by its change
+    /// `change`, or the old way when `None`. A pull request is linked to
+    /// one task, for good, and a branch to one change until it merges.
+    ChangeAlreadyLinked { task: Slug, change: Option<u32> },
     /// The task has no change of that number.
     NoSuchChange(u32),
     /// The change was stamped by a clock running ahead of the outside
@@ -76,9 +76,6 @@ pub enum BoardRuleError {
     NoChanges,
     /// These linked changes have not merged.
     ChangesUnmerged(Vec<u32>),
-    /// This change's pull request merged from another branch than the
-    /// change names.
-    ChangeHeadMismatch(u32),
     /// The task's changes contradict each other (a number twice, a
     /// branch or pull request linked twice): mend them before acting.
     ChangesInconsistent(String),
@@ -155,11 +152,17 @@ impl fmt::Display for BoardRuleError {
             Self::PlanNotAccepted(version) => {
                 write!(f, "plan version {version} is not the task's accepted plan")
             }
-            Self::ChangeAlreadyLinked { task, change } => write!(
+            Self::ChangeAlreadyLinked {
+                task,
+                change: Some(change),
+            } => write!(
                 f,
                 "change {change} of task {} already links that branch or pull request",
                 task.as_str()
             ),
+            Self::ChangeAlreadyLinked { task, change: None } => {
+                write!(f, "task {} already links that pull request", task.as_str())
+            }
             Self::NoSuchChange(number) => write!(f, "the task has no change {number}"),
             Self::ChangeAhead { change, updated } => write!(
                 f,
@@ -181,10 +184,6 @@ impl fmt::Display for BoardRuleError {
             Self::ChangeMerged(number) => write!(f, "change {number} merged: it stays linked"),
             Self::NoChanges => f.write_str("the task links no change"),
             Self::ChangesUnmerged(numbers) => write!(f, "changes {numbers:?} have not merged"),
-            Self::ChangeHeadMismatch(number) => write!(
-                f,
-                "change {number}'s pull request merged from another repository or branch than it names"
-            ),
             Self::ChangesInconsistent(why) => write!(f, "the task's changes contradict: {why}"),
             Self::NotTakeable(status) => {
                 write!(f, "a {} task cannot be taken over", status.as_str())

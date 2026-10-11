@@ -298,7 +298,7 @@ board_rules! {
     R::PrAlreadyLinked(_) => R::PrAlreadyLinked(7), "pr_already_linked", ["pr"];
     R::NotDraft(_) => R::NotDraft(TaskStatus::Ready), "not_draft", ["status"];
     R::NoEdit => R::NoEdit, "no_edit", [];
-    R::ChangeAlreadyLinked { .. } => R::ChangeAlreadyLinked { task: Slug::parse("board-store").unwrap(), change: 1 }, "change_already_linked", ["task", "change"];
+    R::ChangeAlreadyLinked { .. } => R::ChangeAlreadyLinked { task: Slug::parse("board-store").unwrap(), change: Some(1) }, "change_already_linked", ["task", "change"];
     R::NoSuchChange(_) => R::NoSuchChange(4), "no_such_change", ["change"];
     R::ChangeAhead { .. } => R::ChangeAhead { change: 1, updated: at("10:00:00") }, "change_ahead", ["change", "updated"];
     R::ChangesLinked(_) => R::ChangesLinked(vec![1]), "changes_linked", ["changes"];
@@ -309,7 +309,6 @@ board_rules! {
     R::ChangeMerged(_) => R::ChangeMerged(1), "change_merged", ["change"];
     R::NoChanges => R::NoChanges, "no_changes", [];
     R::ChangesUnmerged(_) => R::ChangesUnmerged(vec![1]), "changes_unmerged", ["changes"];
-    R::ChangeHeadMismatch(_) => R::ChangeHeadMismatch(1), "change_head_mismatch", ["change"];
     R::ChangesInconsistent(_) => R::ChangesInconsistent("number 1 twice".into()), "changes_inconsistent", ["reason"];
     R::PlanAhead { .. } => R::PlanAhead { version: 2, updated: at("10:00:00") }, "plan_ahead", ["version", "updated"];
     R::Invalid(_) => R::Invalid(SchemaError::new("title", "is empty")), "invalid", ["field", "problem"];
@@ -334,4 +333,14 @@ fn every_rule_answers_its_code_and_its_own_keys() {
     }
     // A run is named by its number.
     assert_eq!(rule_json(&BoardRuleError::RunOpen(3))["run"], json!(3));
+    // A pull request linked the old way names no change.
+    let old_way = BoardRuleError::ChangeAlreadyLinked {
+        task: Slug::parse("board-store").unwrap(),
+        change: None,
+    };
+    assert_eq!(rule_json(&old_way)["change"], json!(null));
+    assert_eq!(
+        old_way.to_string(),
+        "task board-store already links that pull request"
+    );
 }

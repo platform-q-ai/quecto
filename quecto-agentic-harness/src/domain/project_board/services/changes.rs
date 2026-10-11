@@ -10,8 +10,10 @@
 //! taken from a caller: [`HostPrs`], the host's reading of the pull
 //! requests a rule needs. A rule refuses a pull request it was given no
 //! reading of (`pr_unread`) rather than guess its state. The link use case
-//! also gives `link` every change on the board, the task's and every other
-//! task's.
+//! also gives `link` everything linked on the board ([`Linked`]): every
+//! task's changes and every task's pull requests linked the old way, so a
+//! pull request is linked once whichever way; `add_pr` likewise takes the
+//! task's changes.
 //!
 //! A pull request is linked to one task on the board, for good (merged
 //! ones stay linked); a branch, named by its repository and name, to one
@@ -45,13 +47,23 @@ pub enum PrState {
 /// comes from, and where it stands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostPr {
-    pub head_repo: RepoName,
+    /// `None` once the repository is gone (a deleted fork): only a merged
+    /// or closed pull request reads so, and none is linked then.
+    pub head_repo: Option<RepoName>,
     pub head_ref: BranchName,
     pub state: PrState,
 }
 
 /// The host's reading of pull requests, by number.
 pub type HostPrs = BTreeMap<u64, HostPr>;
+
+/// Everything on the board a link must not clash with: every task's
+/// changes, and every task's pull requests linked the old way.
+#[derive(Debug, Clone, Copy)]
+pub struct Linked<'a> {
+    pub changes: &'a [Change],
+    pub tasks: &'a [Task],
+}
 
 /// What a change links: a branch of a repository, and its pull request
 /// once there is one.
@@ -72,18 +84,18 @@ pub struct ChangesMerged {
 
 /// A new change of `task` linking `head`, linked by `actor`, the holder of
 /// a live claim, `when`, numbered after the task's changes. `board` is
-/// every change on the board; `host` reads `head`'s pull request, which
-/// must be open and come from `head`'s repository and branch.
+/// everything linked on the board; `host` reads `head`'s pull request,
+/// which must be open and come from `head`'s repository and branch.
 ///
 /// # Errors
 /// Not the holder of a live claim; the task's changes contradicting each
-/// other or stamped ahead; a pull request the task links already, unread,
-/// not open or from another head; a change anywhere on the board linking
-/// the pull request, or the branch while open; no number left; or a
-/// change its schema refuses.
+/// other or stamped ahead; a pull request unread, not open or from another
+/// head; a task anywhere on the board linking the pull request (as a
+/// change, or the old way), or a change linking the branch while open; no
+/// number left; or a change its schema refuses.
 pub fn link(
     task: &Task,
-    board: &[Change],
+    board: Linked<'_>,
     head: Head,
     host: &HostPrs,
     actor: &Identity,
@@ -91,6 +103,7 @@ pub fn link(
 ) -> Result<Change, BoardRuleError> {
     held_live_by(task, actor, &when.now)?;
     let own: Vec<Change> = board
+        .changes
         .iter()
         .filter(|change| change.fields().task == task.fields().id)
         .cloned()
@@ -99,19 +112,22 @@ pub fn link(
     not_ahead(&own, when)?;
     match head.pr {
         None => {}
-        Some(pr) => linkable(task, pr, &head, host)?,
+        Some(pr) => {
+            linkable(pr, &head, host)?;
+            old_way(task, board.tasks, pr)?;
+        }
     }
     let taken = |change: &&Change| {
         let pr_taken = change.is_linked() && head.pr.is_some() && change.fields().pr == head.pr;
         let branch_taken = change.is_open() && change.head() == (&head.repo, &head.branch);
         pr_taken || branch_taken
     };
-    match board.iter().find(taken) {
+    match board.changes.iter().find(taken) {
         None => {}
         Some(linked) => {
             return Err(BoardRuleError::ChangeAlreadyLinked {
                 task: linked.fields().task.clone(),
-                change: linked.fields().number,
+                change: Some(linked.fields().number),
             });
         }
     }
@@ -144,15 +160,24 @@ pub fn link(
     .map_err(BoardRuleError::Invalid)
 }
 
-/// Pull request `pr` may be linked to `task` as `head`: the task does not
-/// link it the old way, and the host reads it open, from `head`.
-fn linkable(task: &Task, pr: u64, head: &Head, host: &HostPrs) -> Result<(), BoardRuleError> {
-    match task.fields().prs.contains(&pr) {
-        false => {}
-        true => return Err(BoardRuleError::PrAlreadyLinked(pr)),
+/// No task, `task` or one of `tasks`, links pull request `pr` the old way.
+fn old_way(task: &Task, tasks: &[Task], pr: u64) -> Result<(), BoardRuleError> {
+    let linking = std::iter::once(task)
+        .chain(tasks)
+        .find(|other| other.fields().prs.contains(&pr));
+    match linking {
+        None => Ok(()),
+        Some(other) => Err(BoardRuleError::ChangeAlreadyLinked {
+            task: other.fields().id.clone(),
+            change: None,
+        }),
     }
+}
+
+/// The host reads pull request `pr` open, from `head`.
+fn linkable(pr: u64, head: &Head, host: &HostPrs) -> Result<(), BoardRuleError> {
     let read = host.get(&pr).ok_or(BoardRuleError::PrUnread(pr))?;
-    let same_head = (&read.head_repo, &read.head_ref) == (&head.repo, &head.branch);
+    let same_head = (read.head_repo.as_ref(), &read.head_ref) == (Some(&head.repo), &head.branch);
     match (&read.state, same_head) {
         (PrState::Open, true) => Ok(()),
         (PrState::Open, false) => Err(BoardRuleError::PrHeadMismatch(pr)),
@@ -219,11 +244,10 @@ pub fn unlink(
 ///
 /// # Errors
 /// A task not ready or held; changes contradicting each other or stamped
-/// ahead; a pull request linked the old way not merged; no change linked;
-/// linked changes not merged (no pull request, or one the host has not
-/// merged); a pull request merged from another head than its change
-/// names; a change that already records a merge; runs that contradict
-/// each other.
+/// ahead; a pull request the host's reading of is missing; a pull request
+/// linked the old way not merged; no change linked; linked changes not
+/// merged (no pull request, or one the host has not merged); a change that
+/// already records a merge; runs that contradict each other.
 pub fn complete(
     task: &Task,
     changes: &[Change],
@@ -234,25 +258,38 @@ pub fn complete(
     completable(task)?;
     consistent(task, changes)?;
     not_ahead(changes, when)?;
-    let merged = |pr: &u64| match host.get(pr).map(|read| &read.state) {
-        Some(PrState::Merged(_)) => true,
-        None | Some(PrState::Open | PrState::Closed) => false,
+    let linked: Vec<&Change> = changes.iter().filter(|change| change.is_linked()).collect();
+    let asked = task
+        .fields()
+        .prs
+        .iter()
+        .copied()
+        .chain(linked.iter().filter_map(|change| change.fields().pr));
+    for pr in asked {
+        host.get(&pr).ok_or(BoardRuleError::PrUnread(pr))?;
+    }
+    // Every pull request asked about has a reading: its merge commit, if
+    // merged, whatever head the host now reads (a deleted or renamed
+    // fork); the head was checked when it was linked, and a pull
+    // request's head never changes.
+    let merge = |pr: Option<u64>| match pr.and_then(|pr| host.get(&pr)).map(|read| &read.state) {
+        Some(PrState::Merged(commit)) => Some(commit.clone()),
+        None | Some(PrState::Open | PrState::Closed) => None,
     };
     let old_open: Vec<u64> = task
         .fields()
         .prs
         .iter()
-        .filter(|pr| !merged(pr))
         .copied()
+        .filter(|pr| merge(Some(*pr)).is_none())
         .collect();
     match old_open.as_slice() {
         [] => {}
         open => return Err(BoardRuleError::PrsUnmerged(open.to_vec())),
     }
-    let linked: Vec<&Change> = changes.iter().filter(|change| change.is_linked()).collect();
     let unmerged: Vec<u32> = linked
         .iter()
-        .filter(|change| !change.fields().pr.is_some_and(|pr| merged(&pr)))
+        .filter(|change| merge(change.fields().pr).is_none())
         .map(|change| change.fields().number)
         .collect();
     match (linked.as_slice(), unmerged.as_slice()) {
@@ -263,18 +300,10 @@ pub fn complete(
     let mut commits = Vec::with_capacity(linked.len());
     for change in &linked {
         let fields = change.fields();
-        let read = fields.pr.and_then(|pr| host.get(&pr));
-        match (fields.merged.is_none(), read) {
-            (
-                true,
-                Some(HostPr {
-                    head_repo,
-                    head_ref,
-                    state: PrState::Merged(commit),
-                }),
-            ) if (head_repo, head_ref) == change.head() => commits.push(commit.clone()),
+        match (fields.merged.is_none(), merge(fields.pr)) {
+            (true, Some(commit)) => commits.push(commit),
             (false, _) => return Err(BoardRuleError::ChangeMerged(fields.number)),
-            (true, _) => return Err(BoardRuleError::ChangeHeadMismatch(fields.number)),
+            (true, None) => unreachable!("every linked change has merged"),
         }
     }
     assert_eq!(

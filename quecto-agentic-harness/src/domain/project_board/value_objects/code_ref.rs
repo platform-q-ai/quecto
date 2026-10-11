@@ -45,9 +45,11 @@ const RESERVED: &[&str] = &[
 /// printable ASCII: at most [`MAX_BRANCH_BYTES`]; none of `~^:?*[\`;
 /// `/`-separated components, none empty, none starting with `.` or ending
 /// with `.lock`; no `..` or `@{`; not starting with `-`, not ending with
-/// `.`, not `@`. Besides git's rules, a name git or a reader would take as
-/// something else is refused: one of git's own names (`HEAD`,
-/// `FETCH_HEAD`, …), a ref path (`refs/…`), or a bare commit id.
+/// `.`. Besides git's rules, the board refuses names git takes but git or
+/// a reader would take as something else: `@` (git's own short name for
+/// `HEAD`), one of git's own names (`HEAD`, `FETCH_HEAD`, …), a ref path
+/// (`refs/…`, or one starting `heads/`, `tags/` or `remotes/`), or a bare
+/// commit id in either case.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BranchName(String);
 
@@ -88,12 +90,18 @@ fn git_branch(text: &str) -> bool {
         && !text.contains("@{")
         && !text.starts_with('-')
         && !text.ends_with('.')
-        && text != "@"
 }
+
+/// The first components that make a name read as a ref path.
+const REF_ROOTS: &[&str] = &["refs", "heads", "tags", "remotes"];
 
 /// Names git takes but would read as something else.
 fn ours(text: &str) -> bool {
-    !RESERVED.contains(&text) && !text.starts_with("refs/") && !full_hex(text)
+    let root = text.split('/').next().unwrap_or(text);
+    text != "@"
+        && !RESERVED.contains(&text)
+        && !REF_ROOTS.contains(&root)
+        && !full_hex(&text.to_ascii_lowercase())
 }
 
 /// The most bytes in each part of a repository's name.
@@ -103,8 +111,41 @@ pub const MAX_REPO_PART_BYTES: usize = 100;
 /// letters, digits, `.`, `_` and `-`, each at most
 /// [`MAX_REPO_PART_BYTES`], neither `.` nor `..`. A change names the one
 /// its branch lives in, which a fork makes another than the board's.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct RepoName(String);
+///
+/// The host names repositories without regard to case, so two names that
+/// differ only in case are the same repository: equality, order and hash
+/// go by the lowercased name, and the name is shown as it was given.
+#[derive(Debug, Clone)]
+pub struct RepoName {
+    shown: String,
+    key: String,
+}
+
+impl PartialEq for RepoName {
+    fn eq(&self, other: &Self) -> bool {
+        self.key == other.key
+    }
+}
+
+impl Eq for RepoName {}
+
+impl PartialOrd for RepoName {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for RepoName {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.key.cmp(&other.key)
+    }
+}
+
+impl std::hash::Hash for RepoName {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.key.hash(state);
+    }
+}
 
 impl RepoName {
     /// # Errors
@@ -120,7 +161,10 @@ impl RepoName {
                         .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
             });
         match named {
-            true => Ok(Self(text.to_string())),
+            true => Ok(Self {
+                shown: text.to_string(),
+                key: text.to_ascii_lowercase(),
+            }),
             false => Err(SchemaError::new(
                 "repo",
                 format!("{text:?} is not a repository's owner/name"),
@@ -128,11 +172,13 @@ impl RepoName {
         }
     }
 
+    /// The name as it was given.
     pub fn as_str(&self) -> &str {
-        &self.0
+        &self.shown
     }
 }
 
+/// A full commit id's length, in lowercase hex.
 fn full_hex(text: &str) -> bool {
     matches!(text.len(), 40 | 64)
         && text

@@ -14,6 +14,15 @@ fn of(status: TaskStatus) -> Task {
     without_prs(task(status))
 }
 
+/// Everything linked on the board: `changes`, and no pull request linked
+/// the old way.
+fn on(changes: &[Change]) -> Linked<'_> {
+    Linked {
+        changes,
+        tasks: &[],
+    }
+}
+
 fn now() -> Moment {
     Moment {
         now: at("10:00:00"),
@@ -35,7 +44,7 @@ fn host(prs: &[(u64, &str, PrState)]) -> HostPrs {
     prs.iter()
         .map(|(pr, name, state)| {
             let read = HostPr {
-                head_repo: repo(OURS),
+                head_repo: Some(repo(OURS)),
                 head_ref: branch(name),
                 state: state.clone(),
             };
@@ -88,7 +97,7 @@ fn the_holder_links_a_change_numbered_after_the_tasks_last() {
     let read = host(&[(8, "feat/second", PrState::Open)]);
     let linked = link(
         &of(InProgress),
-        &board,
+        on(&board),
         head("feat/second", Some(8)),
         &read,
         &person("Ada"),
@@ -105,7 +114,7 @@ fn the_holder_links_a_change_numbered_after_the_tasks_last() {
     assert_eq!(
         link(
             &of(InProgress),
-            &[],
+            on(&[]),
             head("feat/x", None),
             &none,
             &person("Bob"),
@@ -116,7 +125,7 @@ fn the_holder_links_a_change_numbered_after_the_tasks_last() {
     assert_eq!(
         link(
             &of(Ready),
-            &[],
+            on(&[]),
             head("feat/x", None),
             &none,
             &person("Ada"),
@@ -129,7 +138,7 @@ fn the_holder_links_a_change_numbered_after_the_tasks_last() {
     let full = Change::new(full).unwrap();
     let past = link(
         &of(InProgress),
-        &[full],
+        on(&[full]),
         head("feat/x", None),
         &none,
         &person("Ada"),
@@ -165,8 +174,18 @@ fn a_pull_request_or_open_branch_is_linked_once_on_the_board() {
         ("feat/o2", None, other, 2),
     ] {
         assert_eq!(
-            link(&of(InProgress), &board, head(name, pr), &read, &ada, &now()),
-            Err(BoardRuleError::ChangeAlreadyLinked { task, change }),
+            link(
+                &of(InProgress),
+                on(&board),
+                head(name, pr),
+                &read,
+                &ada,
+                &now()
+            ),
+            Err(BoardRuleError::ChangeAlreadyLinked {
+                task,
+                change: Some(change)
+            }),
             "{name} {pr:?}"
         );
     }
@@ -175,7 +194,7 @@ fn a_pull_request_or_open_branch_is_linked_once_on_the_board() {
         branch: branch("feat/b1"),
         pr: None,
     };
-    let forked = link(&of(InProgress), &board, fork, &read, &ada, &now());
+    let forked = link(&of(InProgress), on(&board), fork, &read, &ada, &now());
     assert_eq!(
         forked.map(|change| change.fields().number),
         Ok(2),
@@ -184,7 +203,7 @@ fn a_pull_request_or_open_branch_is_linked_once_on_the_board() {
     let read = host(&[(7, "feat/b1", PrState::Open)]);
     let again = link(
         &of(InProgress),
-        &[unlinked(1, 7)],
+        on(&[unlinked(1, 7)]),
         head("feat/b1", Some(7)),
         &read,
         &ada,
@@ -198,7 +217,7 @@ fn a_pull_request_or_open_branch_is_linked_once_on_the_board() {
     let done = [recorded(1, Some(7), 'a')];
     let reused = link(
         &of(InProgress),
-        &done,
+        on(&done),
         head("feat/b1", None),
         &read,
         &ada,
@@ -212,7 +231,7 @@ fn a_pull_request_or_open_branch_is_linked_once_on_the_board() {
     assert_eq!(
         link(
             &of(InProgress),
-            &done,
+            on(&done),
             head("feat/b1", Some(7)),
             &read,
             &ada,
@@ -220,13 +239,13 @@ fn a_pull_request_or_open_branch_is_linked_once_on_the_board() {
         ),
         Err(BoardRuleError::ChangeAlreadyLinked {
             task: of(InProgress).fields().id.clone(),
-            change: 1
+            change: Some(1)
         }),
         "merged: the pull request is linked for good, whatever the host says"
     );
     let bare = link(
         &of(InProgress),
-        &[change(1, None)],
+        on(&[change(1, None)]),
         head("feat/two", None),
         &read,
         &ada,
@@ -240,8 +259,9 @@ fn a_pull_request_or_open_branch_is_linked_once_on_the_board() {
 #[test]
 fn a_pull_request_is_linked_as_the_host_reads_it() {
     let ada = person("Ada");
-    let linking =
-        |task: &Task, read: &HostPrs| link(task, &[], head("feat/x", Some(7)), read, &ada, &now());
+    let linking = |task: &Task, read: &HostPrs| {
+        link(task, on(&[]), head("feat/x", Some(7)), read, &ada, &now())
+    };
     assert_eq!(
         linking(&of(InProgress), &HostPrs::new()),
         Err(BoardRuleError::PrUnread(7))
@@ -257,20 +277,11 @@ fn a_pull_request_is_linked_as_the_host_reads_it() {
         Err(BoardRuleError::PrHeadMismatch(7))
     );
     let mut fork = host(&[(7, "feat/x", PrState::Open)]);
-    fork.get_mut(&7).unwrap().head_repo = repo("someone/quecto");
+    fork.get_mut(&7).unwrap().head_repo = Some(repo("someone/quecto"));
     assert_eq!(
         linking(&of(InProgress), &fork),
         Err(BoardRuleError::PrHeadMismatch(7))
     );
-    let old_way = link(
-        &task(InProgress),
-        &[],
-        head("feat/x", Some(2482)),
-        &host(&[(2482, "feat/x", PrState::Open)]),
-        &ada,
-        &now(),
-    );
-    assert_eq!(old_way, Err(BoardRuleError::PrAlreadyLinked(2482)));
     assert!(linking(&of(InProgress), &host(&[(7, "feat/x", PrState::Open)])).is_ok());
 }
 
@@ -404,7 +415,7 @@ fn a_change_stamped_later_keeps_its_order_unless_it_ran_ahead() {
     );
     let linking = link(
         &of(InProgress),
-        &late,
+        on(&late),
         head("feat/x", None),
         &open,
         &person("Ada"),
@@ -438,20 +449,13 @@ fn a_task_is_not_done_while_something_it_links_has_not_merged() {
         Err(BoardRuleError::NoChanges)
     );
     assert_eq!(
-        refused(
-            &of(Review),
-            &[change(1, Some(7))],
-            &host(&[(7, "feat/b2", merged('a'))])
-        ),
-        Err(BoardRuleError::ChangeHeadMismatch(1)),
-        "merged from another branch"
+        refused(&of(Review), &[change(1, Some(7))], &HostPrs::new()),
+        Err(BoardRuleError::PrUnread(7))
     );
-    let mut fork = one.clone();
-    fork.get_mut(&7).unwrap().head_repo = repo("someone/quecto");
     assert_eq!(
-        refused(&of(Review), &[change(1, Some(7))], &fork),
-        Err(BoardRuleError::ChangeHeadMismatch(1)),
-        "merged from a fork's branch of that name"
+        refused(&task(Review), &[change(1, Some(7))], &one),
+        Err(BoardRuleError::PrUnread(2482)),
+        "a pull request linked the old way is read too"
     );
     assert_eq!(
         refused(&of(Review), &[recorded(1, Some(7), 'b')], &one),
@@ -471,17 +475,22 @@ fn a_task_is_not_done_while_something_it_links_has_not_merged() {
         refused(&of(Review), &[elsewhere(1, Some(7))], &one),
         Err(BoardRuleError::NotThisTasks)
     );
-    let old_way = host(&[(7, "feat/b1", merged('a')), (2482, "feat/x", merged('c'))]);
+    let old_way = host(&[
+        (7, "feat/b1", merged('a')),
+        (2482, "feat/x", merged('c')),
+        (2483, "feat/y", PrState::Open),
+    ]);
     assert_eq!(
         refused(&task(Review), &[change(1, Some(7))], &old_way),
         Err(BoardRuleError::PrsUnmerged(vec![2483])),
         "the pull requests linked the old way merge too"
     );
     let mut all = old_way.clone();
+    all.remove(&2483);
     all.insert(
         2483,
         HostPr {
-            head_repo: repo(OURS),
+            head_repo: Some(repo(OURS)),
             head_ref: branch("feat/y"),
             state: merged('d'),
         },
@@ -518,7 +527,7 @@ fn changes_that_contradict_each_other_are_refused() {
         assert!(
             inconsistent(link(
                 &of(InProgress),
-                &contradiction,
+                on(&contradiction),
                 head("feat/z", None),
                 &read,
                 &ada,
@@ -547,7 +556,7 @@ fn changes_that_contradict_each_other_are_refused() {
     assert!(
         link(
             &of(InProgress),
-            &relinked,
+            on(&relinked),
             head("feat/z", None),
             &read,
             &ada,
@@ -561,4 +570,173 @@ fn changes_that_contradict_each_other_are_refused() {
         complete(&of(Review), &relinked, &merged_both, &[], &now()).map(|done| done.changes.len()),
         Ok(1)
     );
+}
+
+/// The head is checked when a pull request is linked, and a pull request's
+/// head never changes: a merged one completes whatever head the host now
+/// reads, its fork deleted or renamed.
+#[test]
+fn a_merged_pull_request_completes_whatever_its_head_reads_now() {
+    let mut gone = host(&[(7, "feat/b1", merged('a'))]);
+    gone.get_mut(&7).unwrap().head_repo = None;
+    let mut renamed = host(&[(7, "feat/renamed", merged('a'))]);
+    renamed.get_mut(&7).unwrap().head_repo = Some(repo("someone/renamed"));
+    for read in [gone, renamed] {
+        let done = complete(&of(Review), &[change(1, Some(7))], &read, &[], &now()).unwrap();
+        assert_eq!(done.changes[0].fields().merged, Some(commit('a')));
+    }
+}
+
+/// The host names repositories without regard to case: an open branch of
+/// one is taken whatever case another link names it in, and a host
+/// reading that differs only in case is the same head.
+#[test]
+fn a_repository_differing_only_in_case_is_the_same_head() {
+    let ada = person("Ada");
+    let shouted = |name: &str, pr: Option<u64>| Head {
+        repo: repo("Platform-Q-AI/Quecto"),
+        branch: branch(name),
+        pr,
+    };
+    assert_eq!(
+        link(
+            &of(InProgress),
+            on(&[change(1, None)]),
+            shouted("feat/b1", None),
+            &HostPrs::new(),
+            &ada,
+            &now()
+        ),
+        Err(BoardRuleError::ChangeAlreadyLinked {
+            task: of(InProgress).fields().id.clone(),
+            change: Some(1)
+        })
+    );
+    let read = host(&[(7, "feat/x", PrState::Open)]);
+    assert!(
+        link(
+            &of(InProgress),
+            on(&[]),
+            shouted("feat/x", Some(7)),
+            &read,
+            &ada,
+            &now()
+        )
+        .is_ok()
+    );
+    let mut gone = read.clone();
+    gone.get_mut(&7).unwrap().head_repo = None;
+    assert_eq!(
+        link(
+            &of(InProgress),
+            on(&[]),
+            head("feat/x", Some(7)),
+            &gone,
+            &ada,
+            &now()
+        ),
+        Err(BoardRuleError::PrHeadMismatch(7)),
+        "an open pull request's head is known"
+    );
+}
+
+/// A pull request is linked once whichever way: one any task on the board
+/// links the old way is refused, naming that task and no change.
+#[test]
+fn a_pull_request_linked_the_old_way_is_not_linked_again() {
+    let ada = person("Ada");
+    let mut theirs = task(Review).into_fields();
+    theirs.id = Slug::parse("other").unwrap();
+    theirs.prs = vec![40];
+    let theirs = Task::new(theirs).unwrap();
+    let board = Linked {
+        changes: &[],
+        tasks: std::slice::from_ref(&theirs),
+    };
+    let read = host(&[
+        (40, "feat/x", PrState::Open),
+        (2482, "feat/x", PrState::Open),
+    ]);
+    assert_eq!(
+        link(
+            &of(InProgress),
+            board,
+            head("feat/x", Some(40)),
+            &read,
+            &ada,
+            &now()
+        ),
+        Err(BoardRuleError::ChangeAlreadyLinked {
+            task: Slug::parse("other").unwrap(),
+            change: None
+        })
+    );
+    assert_eq!(
+        link(
+            &task(InProgress),
+            board,
+            head("feat/x", Some(2482)),
+            &read,
+            &ada,
+            &now()
+        ),
+        Err(BoardRuleError::ChangeAlreadyLinked {
+            task: task(InProgress).fields().id.clone(),
+            change: None
+        }),
+        "the task's own, linked the old way"
+    );
+    assert!(
+        link(
+            &of(InProgress),
+            board,
+            head("feat/x", None),
+            &read,
+            &ada,
+            &now()
+        )
+        .is_ok()
+    );
+}
+
+/// Pairs that share a branch or pull request without contradiction pass
+/// every rule: a merged change and an open one on one branch, and an
+/// unlinked change and the change that links its pull request again.
+#[test]
+fn changes_that_share_a_branch_or_pull_request_in_turn_agree() {
+    let ada = person("Ada");
+    let mut again = change(2, None).into_fields();
+    again.branch = branch("feat/b1");
+    let after_merge = [recorded(1, None, 'a'), Change::new(again).unwrap()];
+    let none = HostPrs::new();
+    assert!(
+        link(
+            &of(InProgress),
+            on(&after_merge),
+            head("feat/z", None),
+            &none,
+            &ada,
+            &now()
+        )
+        .is_ok()
+    );
+    assert!(unlink(&of(InProgress), &after_merge, 2, &none, &ada, &now()).is_ok());
+    let mut relinked = change(2, Some(7)).into_fields();
+    relinked.branch = branch("feat/b2");
+    let same_pr = [unlinked(1, 7), Change::new(relinked).unwrap()];
+    let open = host(&[(7, "feat/b2", PrState::Open)]);
+    assert!(
+        link(
+            &of(InProgress),
+            on(&same_pr),
+            head("feat/z", None),
+            &open,
+            &ada,
+            &now()
+        )
+        .is_ok()
+    );
+    assert!(unlink(&of(InProgress), &same_pr, 2, &open, &ada, &now()).is_ok());
+    let merged_now = host(&[(7, "feat/b2", merged('b'))]);
+    assert!(complete(&of(Review), &same_pr, &merged_now, &[], &now()).is_ok());
 }

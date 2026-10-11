@@ -65,8 +65,14 @@ fn a_branch_name_is_not_one_git_reads_as_something_else() {
         "ORIG_HEAD",
         "MERGE_HEAD",
         "refs/heads/x",
+        "refs",
+        "heads/x",
+        "tags/v1",
+        "remotes/origin/main",
         &"a".repeat(40),
         &"f".repeat(64),
+        &"A".repeat(40),
+        &"aB".repeat(32),
         &"x".repeat(MAX_BRANCH_BYTES + 1),
     ] {
         assert_eq!(
@@ -76,6 +82,9 @@ fn a_branch_name_is_not_one_git_reads_as_something_else() {
         );
     }
     assert!(BranchName::parse("head").is_ok(), "git's names are exact");
+    for name in ["feat/heads", "tagsx/y", "headsx", "@a"] {
+        assert!(BranchName::parse(name).is_ok(), "{name}");
+    }
     assert!(BranchName::parse(&"a".repeat(41)).is_ok());
 }
 
@@ -95,4 +104,18 @@ fn a_repository_is_named_owner_slash_name() {
     ] {
         assert_eq!(RepoName::parse(name).unwrap_err().field, "repo", "{name:?}");
     }
+}
+
+/// The host names repositories without regard to case: names that differ
+/// only in case are one repository, shown as given.
+#[test]
+fn a_repository_is_the_same_whatever_its_case() {
+    let upper = RepoName::parse("Platform-Q-AI/Quecto").unwrap();
+    let lower = RepoName::parse("platform-q-ai/quecto").unwrap();
+    assert_eq!(upper, lower);
+    assert_eq!(upper.cmp(&lower), std::cmp::Ordering::Equal);
+    let hashes = std::collections::HashSet::from([upper.clone(), lower]);
+    assert_eq!(hashes.len(), 1);
+    assert_eq!(upper.as_str(), "Platform-Q-AI/Quecto");
+    assert_ne!(upper, RepoName::parse("platform-q-ai/quecto2").unwrap());
 }
