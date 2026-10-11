@@ -1,13 +1,15 @@
 //! The board's rules: which status moves a task makes and who makes them,
 //! how claims are renewed and taken over, which pull requests a task links,
-//! how a lost run is ended and how a draft is edited. Every rule returns a new
-//! [`Task`](super::entities::task::Task), so the schema holds after each.
+//! how a draft is edited, how a task's plan versions are proposed and
+//! accepted, and how a run folds back or is ended as lost. Every rule
+//! returns new artifacts, so each one's schema holds after it.
 pub mod claims;
 pub mod drafts;
+pub mod plans;
 pub mod pull_requests;
 pub mod runs;
 pub mod transitions;
 
 #[cfg(test)]
 #[path = "fixtures_tests.rs"]
-mod fixtures_tests;
+pub(in crate::domain::project_board) mod fixtures_tests;
