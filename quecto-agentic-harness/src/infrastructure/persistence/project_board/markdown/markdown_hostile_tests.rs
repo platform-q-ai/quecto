@@ -1,8 +1,85 @@
-//! Hostile documents: each refused when written, with its reason named;
-//! and the near misses a file must keep.
+//! Hostile documents and files: each refused, with its reason named; and
+//! the near misses a file must keep.
 use super::*;
 
 type Named = fn(&MarkdownError) -> bool;
+
+/// The example file with `from` replaced by `to` (once).
+fn edited(from: &str, to: &str) -> Vec<u8> {
+    assert!(EXAMPLE.contains(from), "{from:?}");
+    EXAMPLE.replacen(from, to, 1).into_bytes()
+}
+
+#[test]
+fn every_hostile_file_is_refused_with_its_reason() {
+    let mut huge = EXAMPLE.as_bytes().to_vec();
+    huge.resize(LIMITS.file_bytes + 1, b'x');
+    let not_utf8 = [
+        &EXAMPLE.as_bytes()[..20],
+        &[0xff],
+        &EXAMPLE.as_bytes()[20..],
+    ]
+    .concat();
+    let first = "Agents read the board, `Vec<T>` and all.";
+    use MarkdownError as E;
+    #[rustfmt::skip]
+    let cases: Vec<(&str, Vec<u8>, Named)> = vec![
+        ("raw HTML", edited("and all.", "and <b>all</b>."), |e| matches!(e, E::Html { line: 11 })),
+        ("a comment", edited("and all.", "and <!-- x -->"), |e| matches!(e, E::Html { line: 11 })),
+        ("a character reference", edited("and all.", "and &amp; all."), |e| matches!(e, E::CharacterReference { line: 11 })),
+        ("dollar math", edited("and all.", "and $x$."), |e| matches!(e, E::Math { line: 11 })),
+        ("an image", edited("and all.", "![i](https://example.com/i.png)"), |e| matches!(e, E::Image { line: 11 })),
+        ("an http link", edited("https://example.com/docs", "http://example.com/docs"), |e| matches!(e, E::Link { line: 16 })),
+        ("a stray escape", edited("and all.", "and all\\."), |e| matches!(e, E::Escape { line: 11 })),
+        ("an open code span", edited("and all.", "and `all."), |e| matches!(e, E::UnbalancedCode { line: 11 })),
+        ("a setext underline", edited("1\\. not a list\n", "1\\. not a list\n===\n"), |e| matches!(e, E::BlockLike { line: 14 })),
+        ("a heading in a paragraph", edited("\\# not a heading", "# not a heading"), |e| matches!(e, E::BlockLike { line: 12 })),
+        ("an ordered list in a paragraph", edited("1\\. not a list", "1. not a list"), |e| matches!(e, E::BlockLike { line: 13 })),
+        ("a link reference definition", edited(first, "[a]: https://example.com"), |e| matches!(e, E::BlockLike { line: 11 })),
+        ("a list in a paragraph", edited("\\# not a heading", "- an item"), |e| matches!(e, E::BlockLike { line: 12 })),
+        ("an indented line", edited("\\# not a heading", "    code"), |e| matches!(e, E::Structure { line: 12, .. })),
+        ("a lazy line after a list", edited("- read\n", "- read\nlazy\n"), |e| matches!(e, E::Structure { line: 16, .. })),
+        ("a lazy line after a table", edited("| open |\n", "| open |\nlazy\n"), |e| matches!(e, E::Structure { line: 32, .. })),
+        ("two blank lines", edited("1\\. not a list\n\n", "1\\. not a list\n\n\n"), |e| matches!(e, E::Structure { line: 15, .. })),
+        ("an empty section", edited("## Acceptance\n- Every op answers one JSON line\n", "## Acceptance\n"), |e| matches!(e, E::EmptyProse { .. })),
+        ("a fence left open", edited("}\n```\n", "}\n"), |e| matches!(e, E::Fence { line: 18, .. })),
+        ("a fence's language in capitals", edited("```rust", "```Rust"), |e| matches!(e, E::Fence { line: 18, .. })),
+        ("an indented close in code", edited("    let x = 1;", "   ```"), |e| matches!(e, E::Fence { line: 20, .. })),
+        ("a longer close in code", edited("    let x = 1;", "````"), |e| matches!(e, E::Fence { line: 20, .. })),
+        ("a bidi override", edited("and all.", "and a\u{202e}ll."), |e| matches!(e, E::Bidi { line: 11 })),
+        ("a joiner between letters", edited("and all.", "and a\u{200d}ll."), |e| matches!(e, E::Invisible { line: 11 })),
+        ("a zero-width space", edited("and all.", "and a\u{200b}ll."), |e| matches!(e, E::Invisible { line: 11 })),
+        ("text not in NFC", edited("and all.", "and alle\u{301}."), |e| matches!(e, E::NotNfc { line: 11 })),
+        ("a tab", edited("and all.", "and\tall."), |e| matches!(e, E::Control { line: 11 })),
+        ("a CR", edited("and all.\n", "and all.\r\n"), |e| matches!(e, E::CarriageReturn { line: 11 })),
+        ("a BOM", [&[0xef, 0xbb, 0xbf][..], EXAMPLE.as_bytes()].concat(), |e| matches!(e, E::ByteOrderMark)),
+        ("a trailing space", edited("and all.", "and all. "), |e| matches!(e, E::TrailingSpace { line: 11 })),
+        ("an oversize file", huge, |e| matches!(e, E::TooLarge { .. })),
+        ("bytes that are not UTF-8", not_utf8, |e| matches!(e, E::NotUtf8)),
+        ("no final newline", EXAMPLE.trim_end().as_bytes().to_vec(), |e| matches!(e, E::FinalNewline)),
+        ("a blank last line", format!("{EXAMPLE}\n").into_bytes(), |e| matches!(e, E::FinalNewline)),
+        ("another kind's marker", edited("quecto-task", "quecto-plan"), |e| matches!(e, E::Marker)),
+        ("a schema with a leading zero", edited("schema=1", "schema=01"), |e| matches!(e, E::Marker)),
+        ("no title", edited("# Boards", "Boards"), |e| matches!(e, E::Title)),
+        ("a title closed by hashes", edited("CLI\n", "CLI #\n"), |e| matches!(e, E::Title)),
+        ("a field no task has", edited("| Status |", "| Owner |"), |e| matches!(e, E::UnknownField { .. })),
+        ("fields out of order", edited("| Id | board-cli |\n| Status | review |", "| Status | review |\n| Id | board-cli |"), |e| matches!(e, E::Structure { line: 7, .. })),
+        ("a section no task has", edited("## Items", "## Notes"), |e| matches!(e, E::UnknownSection { .. })),
+        ("a heading with no blank line", edited("\n## Acceptance", "## Acceptance"), |e| matches!(e, E::Structure { line: 23, .. })),
+        ("a backslash opening a line", edited(first, "\\plain"), |e| matches!(e, E::BlockLike { line: 11 })),
+        ("a link line escaped", edited(first, "\\[a](https://example.com)"), |e| matches!(e, E::NotCanonical)),
+        ("a row of three cells", edited("| done |", "| done | x |"), |e| matches!(e, E::Cell { line: 30, .. })),
+        ("a pipe that is no edge", edited("| review |", "| rev|iew |"), |e| matches!(e, E::Cell { line: 7, .. })),
+        ("an escaped pipe in an id", edited("| review |", "| rev\\|iew |"), |e| matches!(e, E::Cell { line: 7, .. })),
+        ("a cell padded twice", edited("| review |", "|  review |"), |e| matches!(e, E::Cell { line: 7, .. })),
+        ("a pipe left unescaped in code", edited("`a\\|b`", "`a|b`"), |e| matches!(e, E::Cell { line: 30, .. })),
+        ("a table's header renamed", edited("| Item | State |", "| Item | Status |"), |e| matches!(e, E::Structure { line: 28, .. })),
+    ];
+    for (name, bytes, named) in cases {
+        let refused = parse(&bytes, &SHAPE);
+        assert!(refused.as_ref().is_err_and(named), "{name}: {refused:?}");
+    }
+}
 
 /// The example with its first paragraph's first line `text`.
 fn with_line(text: &str) -> Document {
@@ -237,11 +314,13 @@ fn near_misses_are_kept() {
         let document = with_line(line);
         let file = render(&document, &SHAPE).unwrap_or_else(|error| panic!("{line:?}: {error:?}"));
         assert_eq!(outline(&file, &document), Ok(()), "{line:?}");
+        assert_eq!(parse(file.as_bytes(), &SHAPE), Ok(document), "{line:?}");
     }
     let document = with_claim("`C:\\x` and `a|b`");
     let file = render(&document, &SHAPE).unwrap();
     assert!(file.contains("| Claim | `C:\\x` and `a\\|b` |"), "{file}");
     assert_eq!(outline(&file, &document), Ok(()));
+    assert_eq!(parse(file.as_bytes(), &SHAPE), Ok(document));
 }
 
 /// The text around each link is read once: many links on one long line
@@ -389,6 +468,11 @@ fn a_shape_no_file_can_be_is_refused() {
     ];
     for shape in cases {
         let refused = render(&example(), &shape);
+        assert!(
+            matches!(refused, Err(E::Shape(_))),
+            "{shape:?}: {refused:?}"
+        );
+        let refused = parse(EXAMPLE.as_bytes(), &shape);
         assert!(
             matches!(refused, Err(E::Shape(_))),
             "{shape:?}: {refused:?}"

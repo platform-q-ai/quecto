@@ -42,7 +42,10 @@
 //! caller's [`Shape`].
 mod chars;
 mod inline;
+mod parse;
 mod prose;
+
+pub use parse::parse;
 
 /// How large a file, how many lines and how long a line may be: the
 /// caller's.
