@@ -2,6 +2,7 @@ mod admission_broker;
 pub mod admission_handles;
 mod agent;
 mod auth;
+pub mod board;
 pub mod catalogue_handles;
 pub mod claude_member;
 mod commands;
@@ -358,6 +359,9 @@ pub struct CliContext {
     /// Composition's `board_op_log` (#2303): the session's event log the
     /// board records its `swarm_op`s in, while the event log is on.
     pub swarm_board_log: Option<swarm_board_handles::SwarmBoardOpLogBuilder>,
+    /// Composition's project board builder (#2477); `quecto board`
+    /// refuses to run without it.
+    pub project_board: Option<board::ProjectBoardHandlesBuilder>,
     /// Output reaches the real terminal (`run`, not `run_with_output`): a
     /// one-shot run writes its answer out before it settles its children.
     pub live_output: bool,
@@ -450,6 +454,8 @@ pub struct CliComposition {
     /// Composition's `board_op_log` (#2303, #2278).
     pub swarm_board_log: swarm_board_handles::SwarmBoardOpLogBuilder,
     pub claude_member: claude_member::ClaudeMemberHandlesBuilder,
+    /// Composition's project board builder (#2477).
+    pub project_board: board::ProjectBoardHandlesBuilder,
 }
 
 /// Run the CLI with the given args and the required outer-owned builders,
@@ -525,6 +531,7 @@ fn composed_context(
         container_status: Some(composition.container_status),
         run_end_fleet: Some(composition.run_end_fleet),
         claude_member: Some(composition.claude_member),
+        project_board: Some(composition.project_board),
         swarm_board: Some(composition.swarm_board),
         swarm_board_wire: Some(composition.swarm_board_wire),
         swarm_board_log: Some(composition.swarm_board_log),
@@ -579,6 +586,7 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
                 admission_broker::cmd_admission_broker(ctx, &args[2..], &mut stdout, &mut stderr)
             }
             "container" => container::cmd_container(ctx, &args[2..], &mut stdout, &mut stderr),
+            "board" => board::cmd_board(ctx, &args[2..], &mut stdout, &mut stderr),
             "help" | "--help" | "-h" => {
                 help::help_text(&mut stdout);
                 0

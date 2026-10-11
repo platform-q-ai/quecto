@@ -57,6 +57,7 @@ fn test_composition() -> CliComposition {
         swarm_board: crate::composition::swarm::build_swarm_board_handles,
         swarm_board_wire: crate::composition::swarm::board_wire(),
         swarm_board_log: crate::composition::swarm::board_op_log,
+        project_board: crate::composition::bootstrap::project_board::build_project_board_handles,
         claude_member: crate::composition::claude_member::build_claude_member_handles,
     }
 }

@@ -62,6 +62,23 @@ pub(super) fn help_text(out: &mut String) {
     out.push_str(
         "              trust [--path <file>]  Approve the repo-local overlay's current content\n",
     );
+    out.push_str("  board       The project board on the repository's quecto/board branch\n");
+    out.push_str(
+        "              <op> [--<field> <value>]... [--input <json>|-] [--repo <path>] [--remote <name>]\n",
+    );
+    out.push_str(
+        "                  ops: bootstrap list list-ready list-takeable show create update-draft\n",
+    );
+    out.push_str(
+        "                  move renew take-over link-pr unlink-pr complete clear-set-aside\n",
+    );
+    out.push_str(
+        "                  prints one JSON answer; a write needs git's user.name and user.email.\n",
+    );
+    out.push_str(
+        "                  Changes are attributed to that local identity: the board is cooperative,\n",
+    );
+    out.push_str("                  and branch protection or a server hook is the real control\n");
     out.push_str("  container   Container runtimes for subagents\n");
     out.push_str(
         "              init [--project <abs dir>] [--repo <url>] [--image <tag>] [--refresh] [--dry-run]\n",

@@ -196,3 +196,35 @@ fn a_name_may_start_with_a_dot_and_enterprise_tokens_reach_only_their_configured
         "the host travels with the repository"
     );
 }
+
+#[test]
+fn a_github_remote_names_its_repository_without_its_user_and_any_other_host_none() {
+    for remote in [
+        "https://github.com/platform-q-ai/quecto.git",
+        "https://github.com/platform-q-ai/quecto",
+        "https://user:token@github.com/platform-q-ai/quecto.git",
+        "git@github.com:platform-q-ai/quecto.git",
+        "ssh://git@GitHub.com/platform-q-ai/quecto.git",
+    ] {
+        assert_eq!(
+            github_repository(remote, None).as_deref(),
+            Some("github.com/platform-q-ai/quecto"),
+            "{remote}"
+        );
+    }
+    assert_eq!(
+        github_repository("https://ghe.example.com/a/b.git", Some("GHE.example.com")).as_deref(),
+        Some("ghe.example.com/a/b"),
+        "an enterprise host when configured"
+    );
+    for remote in [
+        "https://ghe.example.com/a/b.git",
+        "https://gitlab.com/group/repo.git",
+        "https://github.com/a/b/c",
+        "https://github.com/../x",
+        "http://github.com/a/b",
+        "/srv/repo.git",
+    ] {
+        assert_eq!(github_repository(remote, None), None, "{remote}");
+    }
+}

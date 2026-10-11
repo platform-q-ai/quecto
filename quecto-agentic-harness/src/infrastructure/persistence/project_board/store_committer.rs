@@ -34,4 +34,14 @@ impl GitBoardStore {
             email: email.into(),
         })
     }
+
+    /// The remote's fetch URL, as git resolves it (`insteadOf` applied).
+    ///
+    /// # Errors
+    /// No such remote, or git fails.
+    pub fn remote_url(&self) -> Result<String, BoardStoreError> {
+        self.git
+            .text(&["remote", "get-url", "--", self.remote.as_str()], None)
+            .map_err(unavailable)
+    }
 }

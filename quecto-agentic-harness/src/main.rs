@@ -32,6 +32,8 @@ fn main() {
             swarm_board_wire: quecto::composition::swarm::board_wire(),
             swarm_board_log: quecto::composition::swarm::board_op_log,
             claude_member: quecto::composition::claude_member::build_claude_member_handles,
+            project_board:
+                quecto::composition::bootstrap::project_board::build_project_board_handles,
         },
     ));
 }
