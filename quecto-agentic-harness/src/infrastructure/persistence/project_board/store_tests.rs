@@ -227,6 +227,8 @@ fn branches_that_would_shadow_the_board_block_bootstrap_ignoring_case() {
         (None, Some("QUECTO/board")),
         (None, Some("quecto/Board")),
         (None, Some("Quecto/other")),
+        (None, Some("quecto/board/x")),
+        (Some("quecto/Board/x"), None),
     ] {
         let repos = Repos::new();
         if let Some(branch) = local {
@@ -249,6 +251,7 @@ fn branches_that_would_shadow_the_board_block_bootstrap_ignoring_case() {
         "refs/heads/quecto/board",
         "refs/heads/main",
         "refs/heads/quectoboard",
+        "refs/heads/quecto/boardx",
     ];
     assert_eq!(
         GitBoardStore::clashing(names.into_iter(), "refs/heads/"),
@@ -268,6 +271,198 @@ fn a_quecto_board_branch_that_is_not_a_board_blocks_bootstrap() {
         matches!(&bootstrap, Err(BoardStoreError::Clash(why)) if why.contains("not a board")),
         "{bootstrap:?}"
     );
+}
+
+/// What bootstrap calls a board is what read and write take as one: a
+/// README, a `tasks` tree, and stray files at the root (each write drops
+/// them). A branch with directories of its own is someone's code, never a
+/// board: reading it, writing it and bootstrapping over it all clash.
+#[test]
+fn bootstrap_read_and_write_agree_on_what_a_board_is() {
+    let repos = Repos::new();
+    let alice = store(&repos.alice);
+    let head = created(&alice);
+    written(alice.write(&head, &[task("a")], "board: add a"));
+    let remote = repos.remote();
+    let tip = sh(&remote, &["rev-parse", BOARD_REF]);
+    let stray = sh_with(&remote, &["hash-object", "-w", "--stdin"], b"notes");
+    let listing = sh(&remote, &["ls-tree", &tip]);
+    let root = sh_with(
+        &remote,
+        &["mktree"],
+        format!("{listing}\n100644 blob {stray}\tnotes.txt\n").as_bytes(),
+    );
+    let commit = sh(&remote, &["commit-tree", &root, "-p", &tip, "-m", "stray"]);
+    sh(&remote, &["update-ref", BOARD_REF, &commit]);
+    let bob = store(&repos.bob);
+    assert_eq!(
+        bob.bootstrap(),
+        Ok(BoardBootstrap::Existing(BoardHead(commit.clone())))
+    );
+    let snapshot = bob.read().unwrap();
+    assert_eq!(ids(&snapshot), ["a"]);
+    let moved = written(bob.write(&snapshot.head, &[task("b")], "board: add b"));
+    assert_eq!(
+        sh(&remote, &["ls-tree", "--name-only", &moved.0]),
+        "README.md\ntasks"
+    );
+
+    // Someone's code pushed over the board.
+    std::fs::write(repos.alice.join("README.md"), "code").unwrap();
+    std::fs::create_dir(repos.alice.join("src")).unwrap();
+    std::fs::write(repos.alice.join("src/lib.rs"), "").unwrap();
+    sh(&repos.alice, &["add", "README.md", "src"]);
+    sh(&repos.alice, &["commit", "-q", "-m", "code"]);
+    sh(
+        &repos.alice,
+        &["push", "-q", "-f", "origin", "HEAD:refs/heads/quecto/board"],
+    );
+    let code = sh(&repos.alice, &["rev-parse", "HEAD"]);
+    let bob = store(&repos.bob);
+    let clashes = |result: &str| result.starts_with("Err(Clash(");
+    assert!(clashes(&format!("{:?}", bob.bootstrap())));
+    assert!(clashes(&format!("{:?}", bob.read())));
+    let write = bob.write(&BoardHead(code.clone()), &[task("c")], "board: add c");
+    assert!(clashes(&format!("{write:?}")), "{write:?}");
+    assert_eq!(sh(&remote, &["rev-parse", BOARD_REF]), code);
+}
+
+/// A bootstrap that loses the race to a branch that is not a board clashes;
+/// it never answers that branch as the existing board.
+#[test]
+fn a_bootstrap_lost_to_a_branch_that_is_not_a_board_clashes() {
+    let repos = Repos::new();
+    let main = sh(&repos.alice, &["rev-parse", "HEAD"]);
+    let wrapper = repos.dir.path().join("receive-pack");
+    executable(
+        &wrapper,
+        &format!(
+            "#!/bin/sh
+git --git-dir='{}' update-ref {BOARD_REF} {main}
+exec git-receive-pack \"$@\"\n",
+            repos.remote().display()
+        ),
+    );
+    sh(
+        &repos.alice,
+        &[
+            "config",
+            "remote.origin.receivepack",
+            wrapper.to_str().unwrap(),
+        ],
+    );
+    let bootstrap = store(&repos.alice).bootstrap();
+    assert!(
+        matches!(&bootstrap, Err(BoardStoreError::Clash(why)) if why.contains("not a board")),
+        "{bootstrap:?}"
+    );
+}
+
+/// A write starts only from the board's head or one of its ancestors:
+/// another local commit, even one on top of the board, is no board head.
+#[test]
+fn a_write_from_a_commit_that_is_not_on_the_board_is_invalid() {
+    let repos = Repos::new();
+    let alice = store(&repos.alice);
+    let head = created(&alice);
+    let main = sh(&repos.alice, &["rev-parse", "HEAD"]);
+    let unpushed = sh(
+        &repos.alice,
+        &[
+            "commit-tree",
+            &format!("{}^{{tree}}", head.0),
+            "-p",
+            &head.0,
+            "-m",
+            "unpushed",
+        ],
+    );
+    for base in [main, unpushed] {
+        let write = alice.write(&BoardHead(base.clone()), &[task("a")], "board: add a");
+        assert!(
+            matches!(&write, Err(BoardStoreError::InvalidWrite(_))),
+            "{base}: {write:?}"
+        );
+    }
+    assert_eq!(sh(&repos.remote(), &["rev-parse", BOARD_REF]), head.0);
+}
+
+/// The remote is a configured remote of the repository, never a path or
+/// URL that happens to be spelled like a name.
+#[test]
+fn a_remote_that_is_not_configured_is_refused() {
+    let repos = Repos::new();
+    for remote in ["nowhere", "remote.git"] {
+        let git = Git::new(
+            &repos.alice,
+            GitEnvironment::allowlisted(vars(&repos.alice, &[])),
+            person("Ada"),
+        )
+        .unwrap();
+        let built = GitBoardStore::new(git, remote).map(|_| ());
+        assert!(
+            matches!(&built, Err(BoardStoreError::Unavailable(why)) if why.contains(remote)),
+            "{remote}: {built:?}"
+        );
+    }
+}
+
+/// In a partial clone (`--filter=blob:none`) the board's blobs come in one
+/// fetch, never one lazy fetch per blob, and the store reads and writes as
+/// in a full clone.
+#[test]
+fn a_partial_clone_fetches_the_board_once_and_reads_and_writes_it() {
+    let repos = Repos::new();
+    sh(
+        &repos.remote(),
+        &["config", "uploadpack.allowFilter", "true"],
+    );
+    let alice = store(&repos.alice);
+    let head = created(&alice);
+    let many: Vec<Task> = (0..8).map(|n| task(&format!("t{n}"))).collect();
+    written(alice.write(&head, &many, "board: add eight"));
+    let url = format!("file://{}", repos.remote().display());
+    sh(
+        repos.dir.path(),
+        &["clone", "-q", "--filter=blob:none", &url, "carol"],
+    );
+    let carol = repos.dir.path().join("carol");
+    let count = repos.dir.path().join("upload-packs");
+    let wrapper = repos.dir.path().join("upload-pack");
+    executable(
+        &wrapper,
+        &format!(
+            "#!/bin/sh
+echo x >> '{}'
+exec git-upload-pack \"$@\"\n",
+            count.display()
+        ),
+    );
+    sh(
+        &carol,
+        &[
+            "config",
+            "remote.origin.uploadpack",
+            wrapper.to_str().unwrap(),
+        ],
+    );
+    let fetches = || {
+        std::fs::read_to_string(&count)
+            .map(|text| text.lines().count())
+            .unwrap_or(0)
+    };
+    let partial = store(&carol);
+    let snapshot = partial.read().unwrap();
+    assert_eq!(snapshot.tasks, many);
+    assert!(
+        fetches() <= 3,
+        "{} upload-pack runs to read the board",
+        fetches()
+    );
+    let moved = written(partial.write(&snapshot.head, &[task("carol")], "board: add carol"));
+    let read = store(&repos.bob).read().unwrap();
+    assert_eq!(read.head, moved);
+    assert_eq!(read.tasks.len(), 9);
 }
 
 #[test]

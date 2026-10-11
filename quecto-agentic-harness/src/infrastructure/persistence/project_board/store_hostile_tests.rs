@@ -83,7 +83,7 @@ fn only_regular_task_files_are_read_and_the_rest_is_set_aside_by_id() {
     );
     assert!(found["tasks/link.json"].1.contains("regular"), "{found:?}");
 
-    for id in ["broken", "link", "named"] {
+    for id in ["broken", "link", "named", "exec", "module"] {
         let refused = bob.write(&snapshot.head, &[task(id)], &format!("board: write {id}"));
         assert!(
             matches!(refused, Ok(BoardWrite::Refused(_))),
@@ -91,25 +91,48 @@ fn only_regular_task_files_are_read_and_the_rest_is_set_aside_by_id() {
         );
     }
     assert_eq!(sh(&remote, &["rev-parse", BOARD_REF]), snapshot.head.0);
-    // A write carries forward only regular task files, never links,
-    // modules, subtrees or strays.
+    // A write carries forward every task file it did not read, as it is
+    // and with its own mode: links, executables and modules included.
+    // Strays (names that are not `<id>.json`, and subtrees) are dropped.
     let moved = written(bob.write(&snapshot.head, &[task("fresh")], "board: add fresh"));
-    let kept = sh(
-        &remote,
-        &["ls-tree", "--name-only", &format!("{}:tasks", moved.0)],
-    );
+    let listing = |commit: &str| {
+        sh(&remote, &["ls-tree", &format!("{commit}:tasks")])
+            .lines()
+            .map(|row| {
+                let (meta, name) = row.split_once('\t').unwrap();
+                (name.to_string(), meta.to_string())
+            })
+            .collect::<BTreeMap<String, String>>()
+    };
+    let (before, after) = (listing(&snapshot.head.0), listing(&moved.0));
     assert_eq!(
-        kept.lines().collect::<Vec<_>>(),
+        after.keys().map(String::as_str).collect::<Vec<_>>(),
         [
             "big.json",
             "broken.json",
+            "exec.json",
             "fresh.json",
             "fresh.md",
             "good.json",
             "good.md",
+            "link.json",
+            "module.json",
             "named.json"
         ]
     );
+    for name in [
+        "big.json",
+        "broken.json",
+        "exec.json",
+        "link.json",
+        "module.json",
+        "named.json",
+    ] {
+        assert_eq!(after[name], before[name], "{name} carried as it was");
+    }
+    assert!(after["exec.json"].starts_with("100755 blob "));
+    assert!(after["link.json"].starts_with("120000 blob "));
+    assert!(after["module.json"].starts_with("160000 commit "));
 }
 
 #[test]
@@ -134,10 +157,12 @@ fn a_board_tree_past_its_entry_bound_is_not_read() {
     );
 }
 
-/// What a raw tree entry names: a blob of these bytes, or the empty tree.
+/// What a raw tree entry names: a blob of these bytes, the empty tree, or
+/// a blob of these bytes that no repository holds.
 enum Object {
     Blob(Vec<u8>),
     EmptyTree,
+    Absent(Vec<u8>),
 }
 
 /// A raw `tasks/` tree of exactly `entries` (mode, name, object), written
@@ -155,11 +180,21 @@ fn raw_board(remote: &Path, entries: &[(&str, &str, Object)], clones: &[&Path]) 
 }
 
 fn raw_board_in(repo: &Path, entries: &[(&str, &str, Object)]) -> BoardHead {
+    let tasks = raw_tree(repo, entries);
+    let readme = sh_with(repo, &["hash-object", "-w", "--stdin"], README);
+    let root = format!("100644 blob {readme}\tREADME.md\n040000 tree {tasks}\ttasks\n");
+    let root = sh_with(repo, &["mktree"], root.as_bytes());
+    raw_commit(repo, &root)
+}
+
+/// A tree of exactly `entries`, written raw, as git would never write one.
+fn raw_tree(repo: &Path, entries: &[(&str, &str, Object)]) -> String {
     let mut bytes = vec![];
     for (mode, name, object) in entries {
         let oid = match object {
             Object::Blob(content) => sh_with(repo, &["hash-object", "-w", "--stdin"], content),
             Object::EmptyTree => sh_with(repo, &["mktree"], b""),
+            Object::Absent(content) => sh_with(repo, &["hash-object", "--stdin"], content),
         };
         bytes.extend(format!("{mode} {name}\0").as_bytes());
         let raw: Vec<u8> = (0..oid.len())
@@ -168,19 +203,19 @@ fn raw_board_in(repo: &Path, entries: &[(&str, &str, Object)]) -> BoardHead {
             .collect();
         bytes.extend(raw);
     }
-    let tasks = sh_with(
+    sh_with(
         repo,
         &["hash-object", "-t", "tree", "--literally", "-w", "--stdin"],
         &bytes,
-    );
-    let readme = sh_with(repo, &["hash-object", "-w", "--stdin"], README);
-    let root = format!("100644 blob {readme}\tREADME.md\n040000 tree {tasks}\ttasks\n");
-    let root = sh_with(repo, &["mktree"], root.as_bytes());
+    )
+}
+
+fn raw_commit(repo: &Path, root: &str) -> BoardHead {
     // A fixed date, so every repository makes the same commit.
     let at = "2026-10-10T08:00:00Z";
     let commit = Command::new("git")
         .current_dir(repo)
-        .args(["commit-tree", &root, "-m", "hand edit"])
+        .args(["commit-tree", root, "-m", "hand edit"])
         .env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap())
         .envs([
@@ -217,7 +252,11 @@ fn paths(snapshot: &BoardSnapshot) -> Vec<(&str, Option<&str>)> {
 
 /// git's own transport refuses this shape (upload-pack: "entry has blob
 /// mode, but is not a blob"), so it reaches a store only through objects
-/// it already holds; the store still never trusts a mode over a type.
+/// it already holds; the store still never trusts a mode over a type. A
+/// task file of that shape is set aside and dropped by the next write
+/// (carrying it would make a board no one can fetch); a summary of that
+/// shape is a stray, regenerated by the next write, and never sets its task
+/// aside.
 #[test]
 fn a_file_mode_over_a_tree_object_is_set_aside_and_never_stops_a_write() {
     let repos = Repos::new();
@@ -240,29 +279,111 @@ fn a_file_mode_over_a_tree_object_is_set_aside_and_never_stops_a_write() {
         .iter()
         .map(|q| (q.path.as_str(), q.id.as_ref().map(Slug::as_str)))
         .collect();
+    assert_eq!(paths, [("tasks/tree.json", Some("tree"))]);
     assert_eq!(
-        paths,
-        [
-            ("tasks/good.md", Some("good")),
-            ("tasks/tree.json", Some("tree"))
-        ]
+        board.tasks.keys().map(Slug::as_str).collect::<Vec<_>>(),
+        ["good"],
+        "a bad summary never sets its task aside"
     );
-    assert!(
-        board.tasks.is_empty(),
-        "a task with a part set aside is not read"
-    );
-    let refused = bob.write(&head, &[task("good")], "board: write good");
+    let refused = bob.write(&head, &[task("tree")], "board: write tree");
     assert!(matches!(refused, Ok(BoardWrite::Refused(_))), "{refused:?}");
     let moved = written(bob.write(&head, &[task("fresh")], "board: add fresh"));
-    let kept = sh(&repos.remote(), &["ls-tree", "-r", "--name-only", &moved.0]);
+    let kept = sh(&repos.remote(), &["ls-tree", "-r", &moved.0]);
+    let kept: Vec<(&str, &str)> = kept
+        .lines()
+        .map(|row| {
+            let (meta, name) = row.split_once('\t').unwrap();
+            (name, &meta[..12])
+        })
+        .collect();
     assert_eq!(
-        kept.lines().collect::<Vec<_>>(),
-        ["README.md", "tasks/fresh.json", "tasks/fresh.md"]
+        kept,
+        [
+            ("README.md", "100644 blob "),
+            ("tasks/fresh.json", "100644 blob "),
+            ("tasks/fresh.md", "100644 blob "),
+            ("tasks/good.json", "100644 blob "),
+            ("tasks/good.md", "100644 blob "),
+        ]
+    );
+    assert_eq!(
+        sh(
+            &repos.remote(),
+            &["cat-file", "blob", &format!("{}:tasks/good.md", moved.0)]
+        ),
+        summary(&task("good")).trim_end()
     );
 }
 
+/// A summary is derived, so one that is not a regular file of its own
+/// name (an executable, a link, a name listed twice) is a stray: its task
+/// is read, and the next write regenerates it.
 #[test]
-fn a_name_listed_twice_sets_its_task_aside() {
+fn a_bad_summary_never_sets_its_task_aside_and_is_regenerated() {
+    let repos = Repos::new();
+    let alice = store(&repos.alice);
+    created(&alice);
+    let summary_of = |id: &str| Object::Blob(summary(&task(id)).into_bytes());
+    let json = |id: &str| Object::Blob(encode(&task(id)).unwrap());
+    let head = raw_board(
+        &repos.remote(),
+        &[
+            ("100644", "dup.json", json("dup")),
+            ("100644", "dup.md", summary_of("dup")),
+            ("100644", "dup.md", Object::Blob(b"other".to_vec())),
+            ("100644", "exec.json", json("exec")),
+            ("100755", "exec.md", summary_of("exec")),
+            ("100644", "link.json", json("link")),
+            ("120000", "link.md", Object::Blob(b"../README.md".to_vec())),
+        ],
+        &[&repos.bob],
+    );
+    let bob = store(&repos.bob);
+    let board = bob.board_at(&head.0).unwrap();
+    assert_eq!(board.quarantined, vec![]);
+    assert_eq!(
+        board.tasks.keys().map(Slug::as_str).collect::<Vec<_>>(),
+        ["dup", "exec", "link"]
+    );
+    let moved = written(bob.write(&head, &[task("exec")], "board: write exec"));
+    let listing = sh(&repos.remote(), &["ls-tree", &format!("{}:tasks", moved.0)]);
+    let names: Vec<(&str, &str)> = listing
+        .lines()
+        .map(|row| {
+            let (meta, name) = row.split_once('\t').unwrap();
+            (name, &meta[..12])
+        })
+        .collect();
+    assert_eq!(
+        names,
+        [
+            ("dup.json", "100644 blob "),
+            ("dup.md", "100644 blob "),
+            ("exec.json", "100644 blob "),
+            ("exec.md", "100644 blob "),
+            ("link.json", "100644 blob "),
+            ("link.md", "100644 blob "),
+        ]
+    );
+    for id in ["dup", "exec", "link"] {
+        assert_eq!(
+            sh(
+                &repos.remote(),
+                &["cat-file", "blob", &format!("{}:tasks/{id}.md", moved.0)]
+            ),
+            summary(&task(id)).trim_end()
+        );
+    }
+}
+
+/// A task file named twice in one tree: git itself rejects such a tree
+/// (`fsck`: duplicateEntries, which GitHub and any remote with
+/// `receive.fsckObjects` run on every push), so carrying both forward
+/// would make every later push fail, and keeping one would silently drop
+/// the other. Every write is refused, naming the file, and the board stays
+/// as it is until someone mends it.
+#[test]
+fn a_task_file_named_twice_refuses_every_write_and_drops_neither() {
     let repos = Repos::new();
     let alice = store(&repos.alice);
     created(&alice);
@@ -296,14 +417,71 @@ fn a_name_listed_twice_sets_its_task_aside() {
             ("tasks/dup.json", Some("dup"))
         ]
     );
-    let refused = bob.write(&snapshot.head, &[task("dup")], "board: write dup");
-    assert!(matches!(refused, Ok(BoardWrite::Refused(_))), "{refused:?}");
-    let moved = written(bob.write(&snapshot.head, &[task("ok")], "board: write ok"));
-    let kept = sh(
-        &repos.remote(),
-        &["ls-tree", "--name-only", &format!("{}:tasks", moved.0)],
+    for id in ["dup", "ok", "fresh"] {
+        let refused = bob.write(&snapshot.head, &[task(id)], &format!("board: write {id}"));
+        assert!(
+            matches!(&refused, Ok(BoardWrite::Refused(why)) if why.contains("tasks/dup.json") && why.contains("more than once")),
+            "{id}: {refused:?}"
+        );
+    }
+    assert_eq!(
+        sh(&repos.remote(), &["rev-parse", BOARD_REF]),
+        snapshot.head.0
     );
-    assert_eq!(kept.lines().collect::<Vec<_>>(), ["ok.json", "ok.md"]);
+}
+
+/// The root's `tasks` entry is trusted only for what it really is: a
+/// directory mode over a blob is not a board.
+#[test]
+fn a_tasks_entry_that_is_not_a_tree_is_not_a_board() {
+    let repos = Repos::new();
+    let alice = store(&repos.alice);
+    created(&alice);
+    let mut heads = vec![];
+    for repo in [&repos.remote(), &repos.bob] {
+        let root = raw_tree(
+            repo,
+            &[
+                ("100644", "README.md", Object::Blob(README.to_vec())),
+                ("40000", "tasks", Object::Blob(b"not a tree".to_vec())),
+            ],
+        );
+        heads.push(raw_commit(repo, &root));
+    }
+    assert_eq!(heads[0], heads[1]);
+    let read = store(&repos.bob).board_at(&heads[1].0);
+    assert!(
+        matches!(&read, Err(BoardStoreError::Clash(why)) if why.contains("tasks")),
+        "{read:?}"
+    );
+}
+
+/// An object the tree names but no repository holds is an error, never a
+/// file set aside as "not regular".
+#[test]
+fn an_object_missing_everywhere_is_an_error_not_a_file_set_aside() {
+    let repos = Repos::new();
+    let alice = store(&repos.alice);
+    created(&alice);
+    let absent = b"held by no repository".to_vec();
+    let oid = sh_with(&repos.bob, &["hash-object", "--stdin"], &absent);
+    let head = raw_board(
+        &repos.remote(),
+        &[
+            (
+                "100644",
+                "ok.json",
+                Object::Blob(encode(&task("ok")).unwrap()),
+            ),
+            ("100644", "gone.json", Object::Absent(absent)),
+        ],
+        &[&repos.bob],
+    );
+    let read = store(&repos.bob).board_at(&head.0);
+    assert!(
+        matches!(&read, Err(BoardStoreError::Unavailable(why)) if why.contains(&oid) && why.contains("missing")),
+        "{read:?}"
+    );
 }
 
 #[test]

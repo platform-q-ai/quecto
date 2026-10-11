@@ -159,11 +159,24 @@ fn any_push_outcome_but_updated_is_judged_by_the_board() {
         alice.judge(Some(&base.0), &landed.0, Err("no report".into())),
         Ok(Pushed::Landed)
     );
-    // The board is where we left it: a rejection refused us.
+    // The board is where we left it: only the remote's own rejection
+    // refused us.
     let ours = unpushed(&repos, &landed);
     assert_eq!(
-        alice.judge(Some(&landed.0), &ours, Ok("[remote rejected]".into())),
-        Ok(Pushed::Refused("[remote rejected]".into()))
+        alice.judge(
+            Some(&landed.0),
+            &ours,
+            Ok("[remote rejected] (pre-receive hook declined)".into())
+        ),
+        Ok(Pushed::Refused(
+            "[remote rejected] (pre-receive hook declined)".into()
+        ))
+    );
+    // A stale lease is git's own rejection: another writer moved the board
+    // (and it may have moved back since), so the write is lost.
+    assert_eq!(
+        alice.judge(Some(&landed.0), &ours, Ok("[rejected] (stale info)".into())),
+        Ok(Pushed::Lost)
     );
     // It moved past where we started: lost.
     let stale = unpushed(&repos, &base);
@@ -171,11 +184,34 @@ fn any_push_outcome_but_updated_is_judged_by_the_board() {
         alice.judge(Some(&base.0), &stale, Ok("[rejected] (stale info)".into())),
         Ok(Pushed::Lost)
     );
-    // Nothing reported and the board did not move: it may still.
-    let unknown = alice.judge(Some(&landed.0), &ours, Err("the push timed out".into()));
+    // Nothing reported, or a failure the remote did not explain, and the
+    // board did not move: it may still.
+    for report in [
+        Err("the push timed out".to_string()),
+        Ok("[remote failure] (remote failed to report status)".to_string()),
+    ] {
+        let unknown = alice.judge(Some(&landed.0), &ours, report.clone());
+        assert!(
+            matches!(&unknown, Err(BoardStoreError::Unavailable(why)) if why.contains("may have moved")),
+            "{report:?}: {unknown:?}"
+        );
+    }
+}
+
+/// A bootstrap whose push fails outright (no push rights, say) says the
+/// push's own error, not what reading the absent board said.
+#[test]
+fn a_bootstrap_push_that_fails_says_why() {
+    let repos = Repos::new();
+    let nowhere = repos.dir.path().join("nowhere.git");
+    sh(
+        &repos.alice,
+        &["config", "remote.origin.pushurl", nowhere.to_str().unwrap()],
+    );
+    let bootstrap = store(&repos.alice).bootstrap();
     assert!(
-        matches!(&unknown, Err(BoardStoreError::Unavailable(why)) if why.contains("timed out") && why.contains("may have moved")),
-        "{unknown:?}"
+        matches!(&bootstrap, Err(BoardStoreError::Unavailable(why)) if why.contains("does not appear to be a git repository")),
+        "{bootstrap:?}"
     );
 }
 
