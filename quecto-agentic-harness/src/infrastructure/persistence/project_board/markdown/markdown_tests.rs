@@ -200,14 +200,15 @@ impl Seeded {
             "a", "Z", "9", "1.", "2)", "#", "##", "|", ">", "=", "-", "---", "+", "*", "_", ":",
             "[x]", "<", "\\", "`code`", "`Vec<T>`", "~~~", "~", "é", "日本", "🦀", "👩🏽‍💻",
             "👨‍👩‍👧", "❤️", " ", "!", "(", ")", "\"", "'", ".", ",", "{", "}", "&", "%", "$ ",
-            "[a link](https://example.com/x)", "[a `]` b](https://x.example)", "x\u{301}\u{302}",
+            "[a link](https://example.com/x)", "[a `]` b](https://x.example)", "` . `", "` @ `", "x\u{301}\u{302}",
         ];
         #[rustfmt::skip]
         const HOSTILE: &[&str] = &[
             "\u{1}", "\u{202e}", "\u{200b}", "\u{fe0f}", "e\u{301}", "&amp;", "&#65;", "$x$",
             "![i](https://example.com/i.png)", "<b>", "http://x", "www.x", "\u{2800}", "\u{3164}",
             "a\u{fe0f}\u{200d}🦀", "\u{a0}", "[r][ref]", "[[w]]", "[^1]", "ftp://x", "<1@b.co>", "ada@example.com",
-            "_www.x", "*` `*", "_\u{301}_", "mailto:x", "[www.x](https://example.com)", "x\u{301}\u{302}\u{303}\u{304}\u{305}",
+            "_www.x", "*` `*", "_\u{301}_", "mailto:x", "[www.x](https://example.com)",
+            "[www` . `x.y](https://example.com)", "[_`@`x.y](https://example.com)", "x\u{301}\u{302}\u{303}\u{304}\u{305}",
         ];
         let mut line: String = (0..1 + self.below(6)).map(|_| self.pick(SAFE)).collect();
         line = line.trim().to_string();
@@ -340,7 +341,8 @@ fn block_starts_read_as_text() {
             '<' => "< x".to_string(),
             c => format!("{c}x"),
         })
-        .chain(["1. x".into(), "2) x".into(), "3.".into()]);
+        .chain(["1. x".into(), "2) x".into(), "3.".into()])
+        .chain(["```a``` x".into(), "``~~~`` x".into()]);
     for start in starts {
         let mut blocks = vec![Block::Paragraph(vec![start.clone(), start.clone()])];
         // An item opens with `[` only as a link.

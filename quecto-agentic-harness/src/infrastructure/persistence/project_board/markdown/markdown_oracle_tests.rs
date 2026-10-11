@@ -365,10 +365,26 @@ fn compared(
             return Err(format!("{reader}: {kind} shows nothing in {blank:?}"));
         }
     }
-    match link_texts.iter().find(|text| !shows(text)) {
-        Some(blank) => Err(format!("{reader}: a link shows nothing: {blank:?}")),
+    if let Some(blank) = link_texts.iter().find(|text| !shows(text)) {
+        return Err(format!("{reader}: a link shows nothing: {blank:?}"));
+    }
+    match link_texts.iter().find(|text| shows_address(text)) {
+        Some(address) => Err(format!("{reader}: a link shows an address: {address:?}")),
         None => Ok(()),
     }
+}
+
+/// Whether a link's shown text (code contents included) shows an address
+/// a reader would take for its own: a scheme, `www.`, `mailto:`, `xmpp:` or
+/// an email.
+fn shows_address(text: &str) -> bool {
+    static EMAIL: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"[A-Za-z0-9.+_-]@").expect("a valid pattern"));
+    let lower = text.to_ascii_lowercase();
+    ["://", "www.", "mailto:", "xmpp:"]
+        .iter()
+        .any(|form| lower.contains(form))
+        || EMAIL.is_match(text)
 }
 
 /// The inline text `node` shows, and the links in it (each link's text
