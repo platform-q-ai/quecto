@@ -3,7 +3,14 @@
 use super::*;
 
 /// A history of known ancestry; `remote_head` records whether the index's
-/// writer lock was free when it was asked.
+/// writer had taken its lock when it was asked: the lock file exists only
+/// once a writer's `lock` makes it, so a test that removes it first sees it
+/// again only if the remote is asked after the lock was taken.
+///
+/// Whether the lock is held is not asked of `flock` itself: a process
+/// another test forks (to run git) holds a copy of every open file of this
+/// process until it execs, the writer's lock file included, so a lock the
+/// writer already let go can still look held for a moment.
 struct Ancestry {
     remote: Option<String>,
     ancestors: Vec<(String, String)>,
@@ -28,12 +35,7 @@ impl Ancestry {
 impl BoardRevisions for Ancestry {
     fn remote_head(&self) -> Result<Option<String>, BoardStoreError> {
         if let Some(lock) = &self.lock {
-            let file = std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(lock)
-                .unwrap();
-            if file.try_lock().is_err() {
+            if std::fs::symlink_metadata(lock).is_ok() {
                 *self.asked_under_lock.lock().unwrap() = true;
             }
         }
@@ -60,6 +62,8 @@ fn the_remote_is_never_asked_while_the_writer_lock_is_held() {
     let (_dir, index) = index();
     let (older, newer) = (board("a1"), moved("e2"));
     rebuild(&index, &newer).unwrap();
+    // Gone until a writer takes its lock again.
+    std::fs::remove_file(lock_path(&index)).unwrap();
     let mut revisions = Ancestry::new(Some(&head(&newer)), &[(&head(&older), &head(&newer))]);
     revisions.lock = Some(lock_path(&index));
     assert_eq!(

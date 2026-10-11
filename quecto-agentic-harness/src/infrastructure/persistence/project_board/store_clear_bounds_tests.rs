@@ -255,3 +255,22 @@ fn mktree_board(files: &[(String, Vec<u8>)]) -> (Repos, GitBoardStore, BoardHead
     let head = bob.read().unwrap().head;
     (repos, bob, head)
 }
+
+/// A copy kept whose name is no task id is never read as a task, so it
+/// never counts toward the task-file bytes a read takes.
+#[test]
+fn a_copy_kept_under_a_name_that_is_no_id_counts_no_read_bytes() {
+    let (repos, mut bob, head) = board_of(&[
+        ("100644", "a.json", json(&task("a"))),
+        ("100644", "Upper.json", Object::Blob(b"one".to_vec())),
+        ("100644", "Upper.json", Object::Blob(b"two".to_vec())),
+    ]);
+    let [one, two] = [&b"one"[..], b"two"].map(|bytes| oid_of(&repos.bob, bytes));
+    bob.limits.board_bytes = encode(&task("a")).unwrap().len();
+    let path = "tasks/Upper.json";
+    written(bob.clear_set_aside(
+        &head,
+        &clearing(path, &one, &[(path, keep(&two, &[&one, &two]))]),
+        "board: clear Upper",
+    ));
+}
