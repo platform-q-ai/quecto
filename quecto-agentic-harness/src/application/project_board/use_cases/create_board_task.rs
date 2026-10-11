@@ -1,9 +1,11 @@
 //! Puts a new task on the board: only what a plan sets ([`NewBoardTask`]), a
 //! draft or ready task with no claim, runs, reviews, pull requests or
-//! items yet, whose parent and dependencies are already on the board (so
-//! a new task never closes a dependency cycle), stamped with the time it
-//! was created. Blocking: a lost write pauses the calling thread before
+//! items yet, whose parent and dependencies are already on the board,
+//! stamped with the time it was created. It never closes a cycle: not
+//! through new references, which must exist, nor through a task still
+//! naming the id of one that was deleted. Blocking: a lost write pauses the calling thread before
 //! it is tried again.
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use super::board_change::{checked_writer, commit};
@@ -76,11 +78,9 @@ fn created_at(new: &NewBoardTask, now: &Timestamp) -> TaskFields {
     fields
 }
 
-/// The id is free: neither held, nor set aside, nor named by any task as
-/// its parent or a dependency (a task whose own file was deleted, so a
-/// new one under that id could close a cycle). The parent and every
-/// dependency are tasks on the board; one whose file is set aside is
-/// reported as such.
+/// The id is free (neither held nor set aside); the parent and every
+/// dependency are tasks on the board (one whose file is set aside is
+/// reported as such); and the new task closes no cycle.
 fn free(board: &BoardSnapshot, new: &NewBoardTask) -> Result<(), ProjectBoardError> {
     let held = |id: &Slug| board.tasks.iter().any(|task| task.fields().id == *id);
     let set_aside = |id: &Slug| {
@@ -95,21 +95,6 @@ fn free(board: &BoardSnapshot, new: &NewBoardTask) -> Result<(), ProjectBoardErr
     if set_aside(&new.id) {
         return Err(ProjectBoardError::Quarantined(new.id.clone()));
     }
-    let naming = board
-        .tasks
-        .iter()
-        .map(Task::fields)
-        .filter(|fields| {
-            fields.parent.as_ref() == Some(&new.id) || fields.depends_on.contains(&new.id)
-        })
-        .map(|fields| &fields.id)
-        .min();
-    if let Some(by) = naming {
-        return Err(ProjectBoardError::ClosesCycle {
-            id: new.id.clone(),
-            by: by.clone(),
-        });
-    }
     for reference in new.parent.iter().chain(&new.depends_on) {
         match (held(reference), set_aside(reference)) {
             (true, _) => {}
@@ -117,7 +102,41 @@ fn free(board: &BoardSnapshot, new: &NewBoardTask) -> Result<(), ProjectBoardErr
             (false, false) => return Err(ProjectBoardError::UnknownReference(reference.clone())),
         }
     }
-    Ok(())
+    match cycle_closer(board, new) {
+        None => Ok(()),
+        Some(by) => Err(ProjectBoardError::ClosesCycle {
+            id: new.id.clone(),
+            by,
+        }),
+    }
+}
+
+/// The task that would close a cycle through the new task: one reached
+/// from its parent and dependencies, following each board task's own
+/// parent and dependencies, that names the new id (whose earlier task was
+/// deleted). The least such id, so every store order answers alike.
+fn cycle_closer(board: &BoardSnapshot, new: &NewBoardTask) -> Option<Slug> {
+    let on_board: BTreeMap<&Slug, &TaskFields> = board
+        .tasks
+        .iter()
+        .map(|task| (&task.fields().id, task.fields()))
+        .collect();
+    let mut reached: BTreeSet<&Slug> = BTreeSet::new();
+    let mut next: Vec<&Slug> = new.parent.iter().chain(&new.depends_on).collect();
+    while let Some(id) = next.pop() {
+        // Each id is followed once, and only when the board holds it.
+        if let (true, Some(fields)) = (reached.insert(id), on_board.get(id)) {
+            next.extend(fields.parent.iter().chain(&fields.depends_on));
+        }
+    }
+    reached
+        .into_iter()
+        .filter_map(|id| on_board.get(id))
+        .filter(|fields| {
+            fields.parent.as_ref() == Some(&new.id) || fields.depends_on.contains(&new.id)
+        })
+        .map(|fields| fields.id.clone())
+        .min()
 }
 
 #[cfg(test)]

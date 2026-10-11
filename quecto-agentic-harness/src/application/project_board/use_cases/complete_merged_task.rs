@@ -1,13 +1,18 @@
 //! The system's move behind "a merged PR moves its task to done" (epic
 //! #2481): a task (ready or held) whose linked pull requests have all
 //! merged is done, whoever holds it; its claim is cleared and an open run
-//! ended as lost. Not an agent's operation: S2 wires it from the
-//! repository's merge events only. Each event just asks again: the
-//! states of every linked pull request are read from the host
-//! ([`PullRequestStates`]) and the task completes only when all read
-//! merged, so a task linking several closes on the last merge. Blocking:
-//! the host's reads, and a pause before a retried write, hold the calling
-//! thread.
+//! ended as lost. The states of every linked pull request are read from
+//! the host ([`PullRequestStates`]), never taken from the caller, so it is
+//! safe for anyone to run, and running it again only asks again: a task
+//! linking several closes on the run after the last merge.
+//!
+//! S2 runs it after every successful `AddPr` (a pull request may have
+//! merged before it was linked, and no merge event follows), on every
+//! `Move(Review)`, and on the repository's merge events; and the holder or
+//! any user can run it as a "complete" op.
+//!
+//! Blocking: the host's reads, and a pause before a retried write, hold
+//! the calling thread.
 use std::collections::BTreeSet;
 use std::sync::Arc;
 

@@ -31,8 +31,10 @@ pub enum BoardRuleError {
     /// merging.
     PrsUnmerged(Vec<u64>),
     /// The task links these pull requests: it is done when they merge,
-    /// not by its holder's say-so. The holder may unlink one deliberately
-    /// (a wrong or abandoned pull request) first.
+    /// through the completion anyone may run (`CompleteMergedTask`, which
+    /// reads their states from the host), not by its holder's say-so. The
+    /// holder may unlink one deliberately (a wrong or abandoned pull
+    /// request) first.
     PrsLinked(Vec<u64>),
     /// The task does not link this pull request.
     PrNotLinked(u64),
@@ -67,7 +69,8 @@ impl fmt::Display for BoardRuleError {
             Self::PrsUnmerged(open) => write!(f, "pull requests {open:?} are not merged"),
             Self::PrsLinked(prs) => write!(
                 f,
-                "the task links pull requests {prs:?}: it is done when they merge"
+                "the task links pull requests {prs:?}, so it is done when they merge: \
+                 complete it once they have (anyone may), or unlink one first"
             ),
             Self::PrNotLinked(pr) => write!(f, "the task does not link pull request {pr}"),
             Self::PrAlreadyLinked(pr) => write!(f, "the task already links pull request {pr}"),
