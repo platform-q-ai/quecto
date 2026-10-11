@@ -1,7 +1,8 @@
 //! The cells a kind's fields and rows are made of, each with the one
 //! spelling it is written in and read back from. Slugs, numbers, times,
 //! words and `#n` references go in ASCII cells; an [`Identity`] goes in a
-//! text cell as `Name (email)`. An optional ASCII cell holds [`ABSENT`],
+//! text cell as ``Name (`email`)``, the email in a code span so a reader
+//! shows it as it is, never as a link. An optional ASCII cell holds [`ABSENT`],
 //! only where `-` is no value of its own.
 use super::CodecError;
 use crate::domain::project_board::entities::claim::Identity;
@@ -104,11 +105,12 @@ pub fn read_optional(cell: &str) -> Option<&str> {
     }
 }
 
-/// `Name (email)`. The email holds no space, so the last ` (` starts it,
-/// whatever parentheses the name holds.
+/// ``Name (`email`)``. The email holds no space, so the last `` (` ``
+/// starts it, whatever the name holds; in a code span a reader shows it as
+/// it is (a table's `\|` aside), so it may not hold a backtick.
 ///
 /// # Errors
-/// An identity that is not a valid one.
+/// An identity that is not a valid one, or an email with a backtick.
 pub fn identity(field: &'static str, identity: &Identity) -> Result<String, CodecError> {
     identity
         .validate(field)
@@ -117,19 +119,25 @@ pub fn identity(field: &'static str, identity: &Identity) -> Result<String, Code
         !identity.email.contains(' '),
         "a valid email holds no space"
     );
-    Ok(format!("{} ({})", identity.name, identity.email))
+    match identity.email.contains('`') {
+        false => Ok(format!("{} (`{}`)", identity.name, identity.email)),
+        true => Err(refused(
+            field,
+            "an email a code span holds, without a backtick",
+        )),
+    }
 }
 
-/// The identity `Name (email)` holds: the email what follows the last
-/// ` (`, up to the final `)`.
+/// The identity ``Name (`email`)`` holds: the email what follows the last
+/// `` (` ``, up to the final `` `) ``.
 ///
 /// # Errors
 /// A cell of another shape, or an identity that is not a valid one.
 pub fn read_identity(field: &'static str, cell: &str) -> Result<Identity, CodecError> {
     let shaped = cell
-        .strip_suffix(')')
-        .and_then(|cell| cell.rsplit_once(" ("));
-    let (name, email) = shaped.ok_or_else(|| refused(field, "Name (email)"))?;
+        .strip_suffix("`)")
+        .and_then(|cell| cell.rsplit_once(" (`"));
+    let (name, email) = shaped.ok_or_else(|| refused(field, "Name (`email`)"))?;
     let identity = Identity {
         name: name.to_string(),
         email: email.to_string(),

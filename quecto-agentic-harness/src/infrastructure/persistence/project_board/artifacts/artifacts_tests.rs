@@ -277,7 +277,7 @@ fn an_identity_cell_reads_back_name_and_email() {
         // link, a pipe escaped for the table alone.
         person("Ada", "$x$@b"),
         person("Ada", "a|b@x"),
-        person("A (`b", "mailto:a@b"),
+        person("A (b", "mailto:a.b+c_d@x"),
     ] {
         let cell = cells::identity("Holder", &holder).unwrap();
         assert_eq!(cell, format!("{} (`{}`)", holder.name, holder.email));
