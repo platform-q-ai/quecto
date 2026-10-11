@@ -7,8 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use crate::application::project_board::ports::{
-    BoardBootstrap, BoardHead, BoardSnapshot, BoardStoreError, BoardWrite, ProjectBoardStore,
-    QuarantinedFile, SetAsideClear,
+    BoardBootstrap, BoardHead, BoardSnapshot, BoardStoreError, BoardWrite, KeepCopy,
+    ProjectBoardStore, QuarantinedFile, SetAsideClear,
 };
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
@@ -239,7 +239,8 @@ impl ProjectBoardStore for MemoryBoardStore {
         Ok(BoardWrite::Written(head(revision + 1)))
     }
 
-    /// A name is never listed twice in memory, so any `keep` is refused.
+    /// A name is never listed twice in memory, so a clear that resolves a
+    /// name listed twice is refused.
     fn clear_set_aside(
         &self,
         expected: &BoardHead,
@@ -247,9 +248,18 @@ impl ProjectBoardStore for MemoryBoardStore {
         message: &str,
     ) -> Result<BoardWrite, BoardStoreError> {
         let path = clear.path.as_str();
-        let keep = clear.repeated.get(path);
         line("message", message, 200)
             .map_err(|error| BoardStoreError::InvalidWrite(error.to_string()))?;
+        let hex = |text: &str| text.len() == 40 && text.bytes().all(|b| b.is_ascii_hexdigit());
+        let kept = clear.repeated.values().filter_map(|keep| match keep {
+            KeepCopy::Object(oid) => Some(oid),
+            KeepCopy::DropAll => None,
+        });
+        if let Some(oid) = clear.object.iter().chain(kept).find(|oid| !hex(oid)) {
+            return Err(BoardStoreError::InvalidWrite(format!(
+                "{oid:?} is not an object id"
+            )));
+        }
         let interleaved = std::mem::take(&mut self.lock().interleaved);
         interleaved.into_iter().for_each(|change| change(self));
         let mut board = self.lock();
@@ -260,15 +270,28 @@ impl ProjectBoardStore for MemoryBoardStore {
         if *expected != head(revision) {
             return Ok(BoardWrite::Lost);
         }
-        if !board.quarantined.iter().any(|file| file.path == path) {
-            return Ok(BoardWrite::Refused(format!("{path} is not set aside")));
-        }
-        if keep.is_some() {
+        if let Some(path) = clear.repeated.keys().next() {
             return Ok(BoardWrite::Refused(format!(
-                "{path} is named once; an object to keep is for a name named more than once"
+                "{path:?} is not listed more than once"
             )));
         }
-        board.quarantined.retain(|file| file.path != path);
+        let named = |file: &QuarantinedFile| {
+            file.path == path
+                && clear
+                    .object
+                    .as_ref()
+                    .is_none_or(|object| *object == file.object)
+        };
+        match board.quarantined.iter().filter(|file| named(file)).count() {
+            1 => {}
+            0 => return Ok(BoardWrite::Refused(format!("{path:?} is not set aside"))),
+            _ => {
+                return Ok(BoardWrite::Refused(format!(
+                    "files set aside show {path:?}: name the object of the one to clear"
+                )));
+            }
+        }
+        board.quarantined.retain(|file| !named(file));
         board.head = Some(revision + 1);
         board.writes += 1;
         board.committers.insert(revision + 1, self.writer.clone());

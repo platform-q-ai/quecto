@@ -43,7 +43,7 @@ use super::task_record::{MAX_TASK_FILE_BYTES, decode};
 use crate::application::project_board::ports::{BoardStoreError, QuarantinedFile};
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::slug::{MAX_SLUG_BYTES, Slug};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The punctuation a name kept in `tasks/` may hold besides letters and
 /// numbers.
@@ -133,17 +133,44 @@ pub struct Board {
     /// Task files set aside that every write carries forward as they are:
     /// by name, their tree entry (`<mode> <type> <oid>`).
     pub kept: BTreeMap<String, String>,
-    /// `.json` names listed more than once, each with every object it
-    /// names. git rejects such a tree (`fsck`: duplicateEntries, run by
-    /// GitHub and any remote with `receive.fsckObjects` on every push), so
-    /// carrying all of them would make every later push fail, and keeping
-    /// one would drop the rest unseen: every write is refused until the
-    /// board is moved back past the edit that made it.
-    pub repeated: Vec<(String, Vec<String>)>,
+    /// `.json` names listed more than once, each with every copy a write
+    /// would carry. git rejects such a tree (`fsck`: duplicateEntries, run
+    /// by GitHub and any remote with `receive.fsckObjects` on every push),
+    /// so carrying all of them would make every later push fail, and
+    /// keeping one would drop the rest unseen: every write is refused until
+    /// a clear (`clear_set_aside`) resolves them all, naming the copy each
+    /// keeps or that none is.
+    pub repeated: Vec<(String, Vec<TreeCopy>)>,
     /// The size of every task file a read of this board reads, by name:
     /// what a write checks against the read bound.
     pub read_bytes: BTreeMap<String, usize>,
 }
+
+/// One copy of a name a write would carry, as its tree entry holds it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TreeCopy {
+    pub mode: String,
+    pub kind: String,
+    pub oid: String,
+    pub size: usize,
+}
+
+impl TreeCopy {
+    /// The tree entry a write carries it by: `<mode> <type> <oid>`.
+    pub fn entry(&self) -> String {
+        format!("{} {} {}", self.mode, self.kind, self.oid)
+    }
+
+    /// Its size, when a read of the board reads it (a regular file of at
+    /// most a task file's size).
+    pub fn read_size(&self) -> Option<usize> {
+        let read = self.mode == REGULAR_FILE && self.kind == "blob";
+        (read && self.size <= MAX_TASK_FILE_BYTES).then_some(self.size)
+    }
+}
+
+/// Where a board keeps its task files.
+pub const TASKS: &str = "tasks/";
 
 /// How the README and a refusal say to undo a hand edit.
 pub const RECOVERY: &str = "move `quecto/board` back to the commit before that edit";
@@ -151,15 +178,60 @@ pub const RECOVERY: &str = "move `quecto/board` back to the commit before that e
 impl Board {
     /// Why no write is taken, when a `.json` name is listed twice.
     pub fn repeated_refusal(&self, head: &str) -> Option<String> {
-        let (name, oids) = self.repeated.first()?;
+        let (name, copies) = self.repeated.first()?;
+        let oids: Vec<&str> = copies.iter().map(|copy| copy.oid.as_str()).collect();
         Some(format!(
             "tasks/{} is named more than once in board commit {head} (objects {}). quecto \
              never writes such a tree, so a hand edit did, and git rejects it (fsck: \
              duplicateEntries): no write can carry it forward, and quecto will not choose a \
-             copy. To mend the board, {RECOVERY}",
+             copy. To mend the board, clear it (clear set-aside), naming the copy to keep for \
+             every name listed more than once, or {RECOVERY}",
             quoted(name.as_bytes()),
             oids.join(", ")
         ))
+    }
+
+    /// The board, with `written` in place, keeps within what a read takes:
+    /// the entries of its `tasks/` tree (each task a file and a summary,
+    /// each file set aside one) and the task-file bytes a read reads. Every
+    /// change checks it before it builds anything.
+    ///
+    /// # Errors
+    /// An invalid write past either bound.
+    pub fn within_bounds(
+        &self,
+        written: &[(&Task, Vec<u8>)],
+        limits: Limits,
+    ) -> Result<(), BoardStoreError> {
+        let invalid = |why: String| Err(BoardStoreError::InvalidWrite(why));
+        let ids: BTreeSet<&Slug> = written.iter().map(|(task, _)| &task.fields().id).collect();
+        let after: BTreeSet<&Slug> = self.tasks.keys().chain(ids.iter().copied()).collect();
+        let copies: usize = self.repeated.iter().map(|(_, copies)| copies.len()).sum();
+        let entries = 2 * after.len() + self.kept.len() + copies;
+        if entries > MAX_TASK_ENTRIES {
+            return invalid(format!(
+                "the board would hold {} tasks and {} files set aside; it holds at most {MAX_TASKS} tasks",
+                after.len(),
+                self.kept.len() + copies
+            ));
+        }
+        let replaced: BTreeSet<String> = ids
+            .iter()
+            .map(|id| format!("{}.json", id.as_str()))
+            .collect();
+        let carried = self
+            .read_bytes
+            .iter()
+            .filter(|(name, _)| !replaced.contains(*name));
+        let bytes = carried.map(|(_, size)| size).sum::<usize>()
+            + written.iter().map(|(_, bytes)| bytes.len()).sum::<usize>();
+        match bytes <= limits.board_bytes {
+            true => Ok(()),
+            false => invalid(format!(
+                "the board would hold {bytes} bytes of task files; a read takes at most {}",
+                limits.board_bytes
+            )),
+        }
     }
 
     pub fn is_quarantined(&self, id: &Slug) -> Option<&QuarantinedFile> {
@@ -478,14 +550,23 @@ fn read_tasks(git: &Git, tree: &str, limits: Limits) -> Result<Board, Unread> {
     }
     // Only names a write would carry: a stray is dropped, however often
     // it is named.
-    let mut repeated: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    let mut repeated: BTreeMap<&str, Vec<TreeCopy>> = BTreeMap::new();
     for entry in &entries {
         let record = task_name(&entry.name).is_some_and(|(_, file)| file == TaskFile::Record);
-        if entry.kept_name() && record && entry.carried(&kinds) && count(entry) > 1 {
-            repeated
-                .entry(&entry.name)
-                .or_default()
-                .push(entry.oid.clone());
+        let found = match kinds.get(&entry.oid) {
+            Some(Found::Present(object)) => Some(object),
+            Some(Found::Missing) | None => None,
+        };
+        match (entry.kept_name() && record && count(entry) > 1, found) {
+            (true, Some(object)) if entry.carried(&kinds) => {
+                repeated.entry(&entry.name).or_default().push(TreeCopy {
+                    mode: entry.mode.clone(),
+                    kind: object.kind.clone(),
+                    oid: entry.oid.clone(),
+                    size: object.size,
+                });
+            }
+            _ => {}
         }
     }
     board.repeated = repeated

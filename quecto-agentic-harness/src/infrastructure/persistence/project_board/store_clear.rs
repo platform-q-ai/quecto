@@ -1,24 +1,24 @@
-//! Clearing a file the board set aside (#2477): one commit without it,
-//! every other file carried forward as a write carries it, made as the
-//! store's committer so the board records who cleared it.
+//! Clearing files the board set aside (#2477): one commit without the
+//! file a clear names, every other file carried forward as a write carries
+//! it, made as the store's committer so the board records who cleared it.
 //!
-//! A `.json` name listed more than once (a hand edit git rejects) is
-//! cleared only by naming the object to keep (`keep`): that one stays as
-//! the name's file and the rest go, so nothing is dropped unseen. Names
-//! are cleared one at a time: another name still listed more than once is
-//! carried forward exactly as it was, every entry of it, so clearing one
-//! never decides another.
+//! A file is named by its path and, when two files set aside show the same
+//! path, its object. While the board lists any name more than once (a hand
+//! edit git rejects), one clear resolves them all: for each, the copy to
+//! keep, which stays as it was (mode and type), or none. A clear that left
+//! a name listed twice would push a tree no remote that checks its objects
+//! takes.
+//!
+//! A clear is judged against the board's head first: from a head the board
+//! moved past it is lost, whatever else it says. It keeps every bound a
+//! write keeps, checked before anything is built.
+//!
+//! The clear works on the board's own view of its files (tasks, files
+//! carried as they are, names listed twice), never on one folder's
+//! layout, so it holds however many folders the board grows.
 use super::*;
-use crate::application::project_board::ports::{KeepCopy, SetAsideClear};
-use crate::infrastructure::persistence::project_board::board_tree::TREE;
-
-/// A tree entry as git lists it: mode, type, object and raw name.
-struct RawEntry {
-    mode: String,
-    kind: String,
-    oid: String,
-    name: Vec<u8>,
-}
+use crate::application::project_board::ports::{KeepCopy, QuarantinedFile, SetAsideClear};
+use crate::infrastructure::persistence::project_board::board_tree::{TASKS, TreeCopy};
 
 impl GitBoardStore {
     pub(super) fn clear(
@@ -27,170 +27,143 @@ impl GitBoardStore {
         clear: &SetAsideClear,
         message: &str,
     ) -> Result<BoardWrite, BoardStoreError> {
-        let path = clear.path.as_str();
-        let keep = match clear.repeated.get(path) {
-            Some(KeepCopy::Object(oid)) => Some(oid.as_str()),
-            Some(KeepCopy::DropAll) | None => None,
-        };
-        line("message", message, 200)
-            .map_err(|error| BoardStoreError::InvalidWrite(error.to_string()))?;
+        let invalid = |why: String| BoardStoreError::InvalidWrite(why);
+        line("message", message, 200).map_err(|error| invalid(error.to_string()))?;
+        let kept = clear.repeated.values().filter_map(|keep| match keep {
+            KeepCopy::Object(oid) => Some(oid),
+            KeepCopy::DropAll => None,
+        });
+        for oid in clear.object.iter().chain(kept) {
+            object_id(oid)
+                .map_err(|_| invalid(format!("{} is not an object id", quoted(oid.as_bytes()))))?;
+        }
         let base = self.base(expected)?;
+        // The head first: a clear from a head the board moved past is lost,
+        // whatever else it says.
+        match self.remote_head(BOARD_REF)? {
+            Some(head) if head == base => {}
+            Some(_) => return Ok(BoardWrite::Lost),
+            None => return Err(BoardStoreError::NoBoard),
+        }
         let board = self.board_at(&base)?;
-        if !board.quarantined.iter().any(|file| file.path == path) {
-            // From a head the board moved past, that is a lost race, as a
-            // write's is: the file may be set aside now.
-            return match self.remote_head(BOARD_REF)?.as_deref() == Some(base.as_str()) {
-                true => Ok(BoardWrite::Refused(format!("{path} is not set aside"))),
-                false => Ok(BoardWrite::Lost),
-            };
+        let after = match cleared(&board, clear) {
+            Ok(after) => after,
+            Err(refusal) => return Ok(BoardWrite::Refused(refusal)),
+        };
+        assert!(after.repeated.is_empty(), "a clear resolves every name");
+        after.within_bounds(&[], self.limits)?;
+        let tasks = self.tasks_tree(&after, &[])?;
+        self.land(&base, &tasks, message)
+    }
+}
+
+/// `board` once `clear` is made, or why it is refused.
+fn cleared(board: &Board, clear: &SetAsideClear) -> Result<Board, String> {
+    let shown = |text: &str| quoted(text.as_bytes());
+    let objects = |copies: &[TreeCopy]| {
+        let oids: Vec<&str> = copies.iter().map(|copy| copy.oid.as_str()).collect();
+        oids.join(", ")
+    };
+    let repeated: BTreeMap<String, &[TreeCopy]> = board
+        .repeated
+        .iter()
+        .map(|(name, copies)| (format!("{TASKS}{name}"), copies.as_slice()))
+        .collect();
+    let unresolved: Vec<String> = repeated
+        .iter()
+        .filter(|(path, _)| !clear.repeated.contains_key(*path))
+        .map(|(path, copies)| format!("{path} (objects {})", objects(copies)))
+        .collect();
+    match unresolved.as_slice() {
+        [] => {}
+        _ => {
+            return Err(format!(
+                "every name listed more than once is resolved in the same clear, naming the copy \
+                 to keep or none: {}",
+                unresolved.join("; ")
+            ));
         }
-        let name = path.strip_prefix("tasks/").unwrap_or(path).to_string();
-        let mut cleared = (*board).clone();
-        cleared.quarantined.retain(|file| file.path != path);
-        let repeated = board
-            .repeated
-            .iter()
-            .find(|(repeated, _)| *repeated == name)
-            .map(|(_, oids)| oids.clone());
-        cleared.repeated.retain(|(repeated, _)| *repeated != name);
-        match (repeated, keep) {
-            (Some(oids), Some(keep)) if oids.iter().any(|oid| oid == keep) => {
-                if !self.is_blob(keep)? {
-                    return Ok(BoardWrite::Refused(format!("{keep} is not a file")));
+    }
+    let mut after = board.clone();
+    for (path, keep) in &clear.repeated {
+        let (Some(copies), Some(name)) = (repeated.get(path), path.strip_prefix(TASKS)) else {
+            return Err(format!("{} is not listed more than once", shown(path)));
+        };
+        match keep {
+            KeepCopy::DropAll => {}
+            KeepCopy::Object(oid) => {
+                let Some(copy) = copies.iter().find(|copy| copy.oid == *oid) else {
+                    return Err(format!(
+                        "{oid} is not one of {path}'s copies a write carries ({})",
+                        objects(copies)
+                    ));
+                };
+                after.kept.insert(name.to_string(), copy.entry());
+                if let Some(size) = copy.read_size() {
+                    after.read_bytes.insert(name.to_string(), size);
                 }
-                cleared
-                    .kept
-                    .insert(name.clone(), format!("{REGULAR_FILE} blob {keep}"));
-            }
-            (Some(oids), Some(keep)) => {
-                return Ok(BoardWrite::Refused(format!(
-                    "{keep} is not one of {path}'s objects ({})",
-                    oids.join(", ")
-                )));
-            }
-            (Some(oids), None) => {
-                return Ok(BoardWrite::Refused(format!(
-                    "{path} is named more than once: name the object to keep, one of {}",
-                    oids.join(", ")
-                )));
-            }
-            (None, Some(_)) => {
-                return Ok(BoardWrite::Refused(format!(
-                    "{path} is named once; an object to keep is for a name named more than once"
-                )));
-            }
-            (None, None) => {
-                cleared.kept.remove(&name);
             }
         }
-        let built = self.tasks_tree(&cleared, &[])?;
-        let tasks = self.with_repeated(&base, &built, &cleared.repeated)?;
-        let readme = self.blob(README)?;
-        let root = BTreeMap::from([
-            (
-                "README.md".to_string(),
-                format!("{REGULAR_FILE} blob {readme}"),
-            ),
-            ("tasks".to_string(), format!("{TREE} tree {tasks}")),
-        ]);
-        let tree = self.tree(&root)?;
-        let args = [
-            "commit-tree",
-            tree.as_str(),
-            "-p",
-            base.as_str(),
-            "-m",
-            message,
-        ];
-        let commit = self.git.text(&args, None).map_err(unavailable)?;
-        match self.push(Some(&base), &commit)? {
-            Pushed::Landed => Ok(BoardWrite::Written(BoardHead(commit))),
-            Pushed::Lost => Ok(BoardWrite::Lost),
-            Pushed::Refused(reason) => Ok(BoardWrite::Refused(reason)),
+        after.quarantined.retain(|file| file.path != *path);
+    }
+    after.repeated.clear();
+    match repeated.contains_key(&clear.path) {
+        // Resolved with the rest above.
+        true => Ok(after),
+        false => {
+            let file = named(board, clear)?;
+            drop_file(&mut after, file);
+            Ok(after)
         }
     }
+}
 
-    /// `built` (a tasks tree a write made) with every entry of each name
-    /// still `repeated` restored exactly as `base` lists them.
-    fn with_repeated(
-        &self,
-        base: &str,
-        built: &str,
-        repeated: &[(String, Vec<String>)],
-    ) -> Result<String, BoardStoreError> {
-        if repeated.is_empty() {
-            return Ok(built.to_string());
+/// The one file set aside that `clear` names by path and object.
+fn named<'a>(board: &'a Board, clear: &SetAsideClear) -> Result<&'a QuarantinedFile, String> {
+    let path = quoted(clear.path.as_bytes());
+    let matching: Vec<&QuarantinedFile> = board
+        .quarantined
+        .iter()
+        .filter(|file| file.path == clear.path)
+        .filter(|file| {
+            clear
+                .object
+                .as_ref()
+                .is_none_or(|object| *object == file.object)
+        })
+        .collect();
+    match matching.as_slice() {
+        [file] => Ok(file),
+        [] => Err(match &clear.object {
+            Some(object) => format!("no file set aside at {path} has object {object}"),
+            None => format!("{path} is not set aside"),
+        }),
+        several => {
+            let objects: Vec<&str> = several.iter().map(|file| file.object.as_str()).collect();
+            Err(format!(
+                "{} files set aside show {path}: name the object of the one to clear, one of {}",
+                several.len(),
+                objects.join(", ")
+            ))
         }
-        let names: BTreeSet<&[u8]> = repeated.iter().map(|(name, _)| name.as_bytes()).collect();
-        let original = self.raw_entries(&format!("{base}:tasks"))?;
-        let mut entries: Vec<RawEntry> = self
-            .raw_entries(built)?
-            .into_iter()
-            .filter(|entry| !names.contains(entry.name.as_slice()))
-            .collect();
-        entries.extend(
-            original
-                .into_iter()
-                .filter(|entry| names.contains(entry.name.as_slice())),
-        );
-        let mut input = Vec::new();
-        for entry in &entries {
-            input.extend(format!("{} {} {}\t", entry.mode, entry.kind, entry.oid).as_bytes());
-            input.extend(&entry.name);
-            input.push(0);
-        }
-        if input.len() > self.limits.tree_bytes {
-            return Err(BoardStoreError::InvalidWrite(format!(
-                "the board would hold a tree of {} bytes; a read takes at most {}",
-                input.len(),
-                self.limits.tree_bytes
-            )));
-        }
-        object_id(
-            &self
-                .git
-                .text(&["mktree", "-z"], Some(&input))
-                .map_err(unavailable)?,
-        )
     }
+}
 
-    /// The entries of `tree` as git lists them, names raw.
-    fn raw_entries(&self, tree: &str) -> Result<Vec<RawEntry>, BoardStoreError> {
-        let listing = self
-            .git
-            .ok_up_to(&["ls-tree", "-z", tree], None, self.limits.tree_bytes * 2)
-            .map_err(unavailable)?;
-        listing
-            .split(|byte| *byte == 0)
-            .filter(|row| !row.is_empty())
-            .map(|row| {
-                let malformed =
-                    || BoardStoreError::Unavailable(format!("ls-tree listed {:?}", quoted(row)));
-                let tab = row
-                    .iter()
-                    .position(|byte| *byte == b'\t')
-                    .ok_or_else(malformed)?;
-                let meta = String::from_utf8_lossy(&row[..tab]).into_owned();
-                match meta.split(' ').collect::<Vec<_>>().as_slice() {
-                    [mode, kind, oid] => Ok(RawEntry {
-                        mode: (*mode).into(),
-                        kind: (*kind).into(),
-                        oid: object_id(oid)?,
-                        name: row[tab + 1..].to_vec(),
-                    }),
-                    _ => Err(malformed()),
-                }
-            })
-            .collect()
+/// `board` without `file`: the file carried as it is goes when it is that
+/// object, so a file of another name that shows the same path stays.
+fn drop_file(board: &mut Board, file: &QuarantinedFile) {
+    let name = file.path.strip_prefix(TASKS);
+    assert!(name.is_some(), "every file set aside is under {TASKS}");
+    let name = name.unwrap_or_default();
+    let carried = board
+        .kept
+        .get(name)
+        .and_then(|entry| entry.rsplit(' ').next());
+    if carried == Some(file.object.as_str()) {
+        board.kept.remove(name);
+        board.read_bytes.remove(name);
     }
-
-    fn is_blob(&self, oid: &str) -> Result<bool, BoardStoreError> {
-        let oid = object_id(oid)?;
-        let args = ["cat-file", "-t", oid.as_str()];
-        let output = self
-            .git
-            .local(&args, None, SHORT_OUTPUT)
-            .map_err(unavailable)?;
-        Ok(output.status.success() && output.stdout == b"blob\n")
-    }
+    board.quarantined.retain(|other| {
+        (other.path.as_str(), other.object.as_str()) != (file.path.as_str(), file.object.as_str())
+    });
 }

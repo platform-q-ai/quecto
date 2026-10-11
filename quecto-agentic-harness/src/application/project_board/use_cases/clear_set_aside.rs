@@ -9,9 +9,9 @@ use std::sync::Arc;
 
 use super::MAX_WRITE_ATTEMPTS;
 use super::board_change::checked_writer;
-use crate::application::project_board::dto::{ProjectBoardError, plain_board_file};
+use crate::application::project_board::dto::ProjectBoardError;
 use crate::application::project_board::ports::{
-    BoardClock, BoardHead, BoardWrite, KeepCopy, ProjectBoardStore, SetAsideClear,
+    BoardClock, BoardHead, BoardWrite, KeepCopy, ProjectBoardStore, QuarantinedFile, SetAsideClear,
 };
 use std::collections::BTreeMap;
 
@@ -48,15 +48,21 @@ impl ClearSetAside {
             object: object.map(str::to_string),
             repeated: repeated.clone(),
         };
-        let message = message(path, repeated);
+
         for attempt in 1..=MAX_WRITE_ATTEMPTS {
             if attempt > 1 {
                 self.clock.pause(attempt);
             }
             let board = self.store.read()?;
-            if !board.quarantined.iter().any(|file| file.path == path) {
+            // The path is one the board set aside: the store's own list is
+            // the check, and the store owns what a name may be.
+            let named = |file: &&QuarantinedFile| {
+                file.path == path && object.is_none_or(|object| object == file.object)
+            };
+            let Some(file) = board.quarantined.iter().find(named) else {
                 return Err(ProjectBoardError::NotSetAside(path.to_string()));
-            }
+            };
+            let message = message(&file.path, repeated);
             match self.store.clear_set_aside(&board.head, &clear, &message)? {
                 BoardWrite::Written(head) => {
                     assert_ne!(head, board.head, "a clear the board holds moves its head");
@@ -72,13 +78,33 @@ impl ClearSetAside {
     }
 }
 
-/// The commit message of a clear.
-fn message(path: &str, _repeated: &BTreeMap<String, KeepCopy>) -> String {
-    let shown = match plain_board_file(path) {
-        true => path,
-        false => "a file",
-    };
-    format!("board: clear set-aside {shown}")
+/// The commit message of a clear: the file it clears and, for each name
+/// listed more than once, the copy kept (its object's first twelve
+/// characters) or that none is. `path` is one the board set aside, so it
+/// is already quoted. Past one line's 200 characters, it says only how many
+/// it clears.
+fn message(path: &str, repeated: &BTreeMap<String, KeepCopy>) -> String {
+    let resolved: Vec<String> = repeated
+        .iter()
+        .map(|(name, keep)| match keep {
+            KeepCopy::Object(oid) => {
+                let short: String = oid.chars().take(12).collect();
+                format!("{name} keeps {short}")
+            }
+            KeepCopy::DropAll => format!("{name} drops every copy"),
+        })
+        .collect();
+    let full = std::iter::once(format!("board: clear set-aside {path}"))
+        .chain(resolved)
+        .collect::<Vec<_>>()
+        .join("; ");
+    match (full.chars().count() <= 200, repeated.len()) {
+        (true, _) => full,
+        (false, 0) => "board: clear set-aside 1 file".into(),
+        (false, names) => {
+            format!("board: clear set-aside 1 file and {names} names listed more than once")
+        }
+    }
 }
 
 #[cfg(test)]

@@ -29,23 +29,6 @@ pub struct NewBoardTask {
     pub team: Option<Team>,
 }
 
-/// A board file's path as quecto names one plainly: `tasks/` and a name of
-/// letters, digits, `.`, `_` and `-`, starting with a letter, digit or
-/// `_`, at most 120 bytes. Shared by every front end's path check and the
-/// clear's commit message, which names only such a path.
-pub fn plain_board_file(path: &str) -> bool {
-    path.strip_prefix("tasks/").is_some_and(|name| {
-        name.len() <= 120
-            && name
-                .bytes()
-                .next()
-                .is_some_and(|b| b.is_ascii_alphanumeric() || b == b'_')
-            && name
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
-    })
-}
-
 /// The statuses a task is created in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NewBoardTaskStatus {
@@ -242,7 +225,7 @@ impl fmt::Display for ProjectBoardError {
                 write!(f, "the board kept moving: {attempts} attempts lost")
             }
             Self::Refused(why) => write!(f, "the board refused the write: {why}"),
-            Self::NotSetAside(path) => write!(f, "no file is set aside at {path}"),
+            Self::NotSetAside(path) => write!(f, "no file is set aside at {path:?}"),
         }
     }
 }

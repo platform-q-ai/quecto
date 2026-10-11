@@ -164,7 +164,9 @@ fn every_name_listed_twice_is_resolved_in_one_clear_a_checking_remote_takes() {
         .iter()
         .map(|row| row.split_once('\t').unwrap().1.to_string())
         .collect();
-    assert_eq!(names, ["dup.json", "dup.md", "two.json", "two.md"]);
+    // The copies kept are carried as they are; the next write regenerates
+    // their summaries.
+    assert_eq!(names, ["dup.json", "two.json"]);
     let board = bob.read().unwrap();
     assert_eq!(board.quarantined, vec![]);
     written(bob.write(&board.head, &[task("fresh")], "board: add fresh"));
@@ -332,7 +334,7 @@ fn a_clear_keeps_every_bound_a_write_keeps() {
     bob.limits.board_bytes += 1;
     // The tasks tree the clear makes: each entry its mode, a space, its
     // name, a NUL and a 20-byte object name.
-    let cleared: usize = ["a.json", "a.md", "b.json", "b.md", "dup.json", "dup.md"]
+    let cleared: usize = ["a.json", "a.md", "b.json", "b.md", "dup.json"]
         .iter()
         .map(|name| "100644".len() + 1 + name.len() + 1 + 20)
         .sum();
