@@ -146,7 +146,10 @@ pub enum ProjectBoardError {
     /// The store refused the write.
     Refused(String),
     /// No file is set aside at this path.
-    NotSetAside(String),
+    NotSetAside {
+        path: String,
+        object: String,
+    },
 }
 
 impl From<BoardStoreError> for ProjectBoardError {
@@ -225,7 +228,9 @@ impl fmt::Display for ProjectBoardError {
                 write!(f, "the board kept moving: {attempts} attempts lost")
             }
             Self::Refused(why) => write!(f, "the board refused the write: {why}"),
-            Self::NotSetAside(path) => write!(f, "no file is set aside at {path:?}"),
+            Self::NotSetAside { path, object } => {
+                write!(f, "no file is set aside at {path:?} as {object:?}")
+            }
         }
     }
 }

@@ -252,10 +252,13 @@ impl ProjectBoardStore for MemoryBoardStore {
             .map_err(|error| BoardStoreError::InvalidWrite(error.to_string()))?;
         let hex = |text: &str| text.len() == 40 && text.bytes().all(|b| b.is_ascii_hexdigit());
         let kept = clear.repeated.values().filter_map(|keep| match keep {
-            KeepCopy::Object(oid) => Some(oid),
-            KeepCopy::DropAll => None,
+            KeepCopy::Object { keep, .. } => Some(keep),
+            KeepCopy::Drop(_) => None,
         });
-        if let Some(oid) = clear.object.iter().chain(kept).find(|oid| !hex(oid)) {
+        if let Some(oid) = std::iter::once(&clear.object)
+            .chain(kept)
+            .find(|oid| !hex(oid))
+        {
             return Err(BoardStoreError::InvalidWrite(format!(
                 "{oid:?} is not an object id"
             )));
@@ -275,13 +278,7 @@ impl ProjectBoardStore for MemoryBoardStore {
                 "{path:?} is not listed more than once"
             )));
         }
-        let named = |file: &QuarantinedFile| {
-            file.path == path
-                && clear
-                    .object
-                    .as_ref()
-                    .is_none_or(|object| *object == file.object)
-        };
+        let named = |file: &QuarantinedFile| file.path == path && file.object == clear.object;
         match board.quarantined.iter().filter(|file| named(file)).count() {
             1 => {}
             0 => return Ok(BoardWrite::Refused(format!("{path:?} is not set aside"))),

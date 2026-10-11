@@ -40,12 +40,12 @@ impl ClearSetAside {
     pub fn execute(
         &self,
         path: &str,
-        object: Option<&str>,
+        object: &str,
         repeated: &BTreeMap<String, KeepCopy>,
     ) -> Result<BoardHead, ProjectBoardError> {
         let clear = SetAsideClear {
             path: path.to_string(),
-            object: object.map(str::to_string),
+            object: object.to_string(),
             repeated: repeated.clone(),
         };
 
@@ -56,11 +56,12 @@ impl ClearSetAside {
             let board = self.store.read()?;
             // The path is one the board set aside: the store's own list is
             // the check, and the store owns what a name may be.
-            let named = |file: &&QuarantinedFile| {
-                file.path == path && object.is_none_or(|object| object == file.object)
-            };
+            let named = |file: &&QuarantinedFile| file.path == path && file.object == object;
             let Some(file) = board.quarantined.iter().find(named) else {
-                return Err(ProjectBoardError::NotSetAside(path.to_string()));
+                return Err(ProjectBoardError::NotSetAside {
+                    path: path.to_string(),
+                    object: object.to_string(),
+                });
             };
             let message = message(&file.path, repeated);
             match self.store.clear_set_aside(&board.head, &clear, &message)? {
@@ -87,11 +88,11 @@ fn message(path: &str, repeated: &BTreeMap<String, KeepCopy>) -> String {
     let resolved: Vec<String> = repeated
         .iter()
         .map(|(name, keep)| match keep {
-            KeepCopy::Object(oid) => {
-                let short: String = oid.chars().take(12).collect();
+            KeepCopy::Object { keep, .. } => {
+                let short: String = keep.chars().take(12).collect();
                 format!("{name} keeps {short}")
             }
-            KeepCopy::DropAll => format!("{name} drops every copy"),
+            KeepCopy::Drop(_) => format!("{name} drops every copy"),
         })
         .collect();
     let full = std::iter::once(format!("board: clear set-aside {path}"))

@@ -22,29 +22,35 @@ pub struct QuarantinedFile {
     pub path: String,
     pub id: Option<Slug>,
     pub reason: String,
-    /// The object the file's entry names (the git store's object id):
-    /// with `path`, which file this is, since two files may show the same
-    /// path.
+    /// The store's name for the file's contents (an object id): with
+    /// `path`, which file this is, since two files may show the same path.
     pub object: String,
 }
 
-/// What a clear does with a name listed more than once.
+/// What a clear does with a name listed more than once. Each names every
+/// copy's object the caller saw (`seen`), so a copy it never saw is never
+/// dropped: a name whose copies are not exactly those is refused.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KeepCopy {
-    /// The copy whose object this is stays as the name's file, as it was.
-    Object(String),
-    /// Every copy goes.
-    DropAll,
+    /// The copy whose object is `keep` stays as it was; every other copy,
+    /// each of `seen`, goes. `keep` is one of `seen`.
+    Object {
+        keep: String,
+        seen: std::collections::BTreeSet<String>,
+    },
+    /// Every copy goes: exactly the copies whose objects these are.
+    Drop(std::collections::BTreeSet<String>),
 }
 
-/// A clear of files the board set aside.
+/// A clear of files the board set aside, naming each as the caller saw it
+/// in the board's listing.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SetAsideClear {
     /// The [`QuarantinedFile::path`] of the file to clear.
     pub path: String,
-    /// Its [`QuarantinedFile::object`]: needed when two files set aside
-    /// show the same path.
-    pub object: Option<String>,
+    /// Its [`QuarantinedFile::object`]: a file at that path with other
+    /// contents is never cleared in its place.
+    pub object: String,
     /// For every name the board lists more than once, by path, which copy
     /// stays: one clear resolves them all, since a board that lists a name
     /// twice is one no remote that checks its objects takes.

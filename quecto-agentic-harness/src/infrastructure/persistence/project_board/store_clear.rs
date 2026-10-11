@@ -30,10 +30,10 @@ impl GitBoardStore {
         let invalid = |why: String| BoardStoreError::InvalidWrite(why);
         line("message", message, 200).map_err(|error| invalid(error.to_string()))?;
         let kept = clear.repeated.values().filter_map(|keep| match keep {
-            KeepCopy::Object(oid) => Some(oid),
-            KeepCopy::DropAll => None,
+            KeepCopy::Object { keep, .. } => Some(keep),
+            KeepCopy::Drop(_) => None,
         });
-        for oid in clear.object.iter().chain(kept) {
+        for oid in std::iter::once(&clear.object).chain(kept) {
             object_id(oid)
                 .map_err(|_| invalid(format!("{} is not an object id", quoted(oid.as_bytes()))))?;
         }
@@ -90,8 +90,8 @@ fn cleared(board: &Board, clear: &SetAsideClear) -> Result<Board, String> {
             return Err(format!("{} is not listed more than once", shown(path)));
         };
         match keep {
-            KeepCopy::DropAll => {}
-            KeepCopy::Object(oid) => {
+            KeepCopy::Drop(_) => {}
+            KeepCopy::Object { keep: oid, .. } => {
                 let Some(copy) = copies.iter().find(|copy| copy.oid == *oid) else {
                     return Err(format!(
                         "{oid} is not one of {path}'s copies a write carries ({})",
@@ -125,19 +125,14 @@ fn named<'a>(board: &'a Board, clear: &SetAsideClear) -> Result<&'a QuarantinedF
         .quarantined
         .iter()
         .filter(|file| file.path == clear.path)
-        .filter(|file| {
-            clear
-                .object
-                .as_ref()
-                .is_none_or(|object| *object == file.object)
-        })
+        .filter(|file| file.object == clear.object)
         .collect();
     match matching.as_slice() {
         [file] => Ok(file),
-        [] => Err(match &clear.object {
-            Some(object) => format!("no file set aside at {path} has object {object}"),
-            None => format!("{path} is not set aside"),
-        }),
+        [] => Err(format!(
+            "no file set aside at {path} has object {}",
+            clear.object
+        )),
         several => {
             let objects: Vec<&str> = several.iter().map(|file| file.object.as_str()).collect();
             Err(format!(

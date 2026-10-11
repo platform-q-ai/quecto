@@ -13,7 +13,7 @@ use quecto::domain::project_board::value_objects::slug::Slug;
 use quecto::domain::project_board::value_objects::timestamp::Timestamp;
 use quecto::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
 use quecto::infrastructure::test_support::memory_board_store::MemoryBoardStore;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Barrier;
 
 /// Two clients of one board that is not bootstrapped yet.
@@ -215,15 +215,14 @@ pub fn check_quarantine((alice, bob): Clients, spoil: impl FnOnce()) {
 /// rest of the board stands. A path that is not set aside, or a copy to
 /// keep for a name listed once, is refused.
 pub fn check_clear_set_aside((alice, bob): Clients, spoil: impl FnOnce()) {
-    let clearing =
-        |path: &str, object: Option<&str>, repeated: &[(&str, KeepCopy)]| SetAsideClear {
-            path: path.into(),
-            object: object.map(str::to_string),
-            repeated: repeated
-                .iter()
-                .map(|(path, keep)| ((*path).to_string(), keep.clone()))
-                .collect(),
-        };
+    let clearing = |path: &str, object: &str, repeated: &[(&str, KeepCopy)]| SetAsideClear {
+        path: path.into(),
+        object: object.into(),
+        repeated: repeated
+            .iter()
+            .map(|(path, keep)| ((*path).to_string(), keep.clone()))
+            .collect(),
+    };
     alice.bootstrap().unwrap();
     let head = alice.read().unwrap().head;
     let before = written(alice.write(
@@ -239,13 +238,14 @@ pub fn check_clear_set_aside((alice, bob): Clients, spoil: impl FnOnce()) {
     );
     assert_eq!(path, "tasks/b.json");
     let zeros = "0".repeat(object.len());
+    let seen = BTreeSet::from([object.clone()]);
     for clear in [
-        clearing("tasks/a.json", None, &[]),
-        clearing(&path, Some(&zeros), &[]),
+        clearing("tasks/a.json", &object, &[]),
+        clearing(&path, &zeros, &[]),
         clearing(
             &path,
-            None,
-            &[(path.as_str(), KeepCopy::Object(object.clone()))],
+            &object,
+            &[(path.as_str(), KeepCopy::Drop(seen.clone()))],
         ),
     ] {
         let refused = bob.clear_set_aside(&board.head, &clear, "board: clear");
@@ -255,18 +255,18 @@ pub fn check_clear_set_aside((alice, bob): Clients, spoil: impl FnOnce()) {
         );
     }
     assert_eq!(
-        alice.clear_set_aside(&before, &clearing(&path, None, &[]), "board: clear b"),
+        alice.clear_set_aside(&before, &clearing(&path, &object, &[]), "board: clear b"),
         Ok(BoardWrite::Lost),
         "a clear from before the file was spoiled"
     );
-    let invalid = bob.clear_set_aside(&board.head, &clearing(&path, None, &[]), "two\nlines");
+    let invalid = bob.clear_set_aside(&board.head, &clearing(&path, &object, &[]), "two\nlines");
     assert!(
         matches!(invalid, Err(BoardStoreError::InvalidWrite(_))),
         "{invalid:?}"
     );
     let cleared = written(bob.clear_set_aside(
         &board.head,
-        &clearing(&path, Some(&object), &[]),
+        &clearing(&path, &object, &[]),
         "board: clear b",
     ));
     let after = alice.read().unwrap();
