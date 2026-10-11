@@ -1,4 +1,7 @@
 use super::*;
+use crate::domain::project_board::entities::discussion::{
+    MAX_DISCUSSION_LINES, MAX_MESSAGE_LINE_CHARS, MAX_MESSAGE_LINES, MAX_MESSAGES,
+};
 use crate::domain::project_board::services::fixtures_tests::{at, person, task};
 use crate::domain::project_board::value_objects::vocabulary::{DiscussionState, TaskStatus};
 
@@ -66,7 +69,7 @@ fn a_discussion_begins_with_the_messages_said_so_far() {
         task: Some(&about),
         ..opening(vec![message("Ada", "09:00:00", "Lease?")])
     };
-    let linked = begin(with_task, &when("08:00:00")).unwrap();
+    let linked = begin(with_task, &when("08:59:45")).unwrap();
     assert_eq!(linked.fields().task, Some(about.fields().id.clone()));
     assert_eq!(
         linked.fields().updated,
@@ -100,7 +103,7 @@ fn a_batch_of_messages_is_added_to_an_open_discussion() {
         message("Ada", "09:20:00", "Agreed."),
         message("Carol", "09:30:00", "Ship it."),
     ];
-    let added = append(&discussion, batch, &when("09:00:00")).unwrap();
+    let added = append(&discussion, batch, &when("09:29:45")).unwrap();
     let fields = added.fields();
     assert_eq!(fields.messages.len(), 4);
     assert_eq!(
@@ -113,7 +116,7 @@ fn a_batch_of_messages_is_added_to_an_open_discussion() {
     let late = append(
         &discussion,
         vec![message("Ada", "09:06:00", "Late.")],
-        &when("09:00:00"),
+        &when("09:05:45"),
     )
     .unwrap();
     assert_eq!(
@@ -138,9 +141,55 @@ fn a_batch_of_messages_is_added_to_an_open_discussion() {
         &when("10:00:00"),
     );
     assert!(
-        matches!(&before, Err(BoardRuleError::Invalid(error)) if error.field == "messages/2/at"),
-        "{before:?}"
+        matches!(&before, Err(BoardRuleError::Invalid(error)) if error.field == "batch/0/at"),
+        "a batch's message is named by its place in the batch: {before:?}"
     );
+    let second = append(
+        &discussion,
+        vec![
+            message("Ada", "09:20:00", "ok"),
+            message("Bob", "09:21:00", " "),
+        ],
+        &when("10:00:00"),
+    );
+    assert!(
+        matches!(&second, Err(BoardRuleError::Invalid(error)) if error.field == "batch/1/text/0"),
+        "{second:?}"
+    );
+}
+
+/// A batch that would take a discussion past its most messages, lines or
+/// bytes is refused as full, naming which.
+#[test]
+fn a_batch_that_would_overfill_a_discussion_is_refused_as_full() {
+    let discussion = begun();
+    let full = |result: Result<Discussion, BoardRuleError>, what: &str| {
+        matches!(result, Err(BoardRuleError::DiscussionFull { discussion, reason })
+            if discussion == id() && reason.contains(what))
+    };
+    let one = |text: &str| message("Ada", "09:20:00", text);
+    let at_most = vec![one("x"); MAX_MESSAGES - 2];
+    assert!(
+        append(&discussion, at_most.clone(), &when("10:00:00")).is_ok(),
+        "exactly the most"
+    );
+    let past = [at_most, vec![one("x")]].concat();
+    assert!(full(
+        append(&discussion, past, &when("10:00:00")),
+        "messages"
+    ));
+    let long = vec!["x"; MAX_MESSAGE_LINES].join("\n");
+    let many_lines = vec![one(&long); MAX_DISCUSSION_LINES / MAX_MESSAGE_LINES];
+    assert!(full(
+        append(&discussion, many_lines, &when("10:00:00")),
+        "lines"
+    ));
+    let wide = vec!["|".repeat(MAX_MESSAGE_LINE_CHARS); MAX_MESSAGE_LINES].join("\n");
+    let many_bytes = vec![one(&wide); 9];
+    assert!(full(
+        append(&discussion, many_bytes, &when("10:00:00")),
+        "bytes"
+    ));
 }
 
 #[test]
@@ -209,16 +258,48 @@ fn a_discussion_or_message_stamped_ahead_is_refused() {
         ahead("09:10:00")
     );
     assert_eq!(close(&discussion, &early), ahead("09:10:00"));
+    let message_ahead = |stamp: &str| {
+        Err(BoardRuleError::MessageAhead {
+            discussion: id(),
+            at: at(stamp),
+        })
+    };
     let now = bounded("10:00:00", "10:00:00");
     assert_eq!(
         append(&discussion, vec![message("Ada", "10:00:31", "x")], &now),
-        ahead("10:00:31")
+        message_ahead("10:00:31")
     );
     let first = opening(vec![message("Ada", "10:00:31", "x")]);
-    assert_eq!(begin(first, &now), ahead("10:00:31"));
+    assert_eq!(begin(first, &now), message_ahead("10:00:31"));
     assert!(
         append(&discussion, vec![message("Ada", "10:00:30", "x")], &now).is_ok(),
         "within the slack"
     );
     assert!(close(&discussion, &bounded("09:00:00", "09:09:30")).is_ok());
+}
+
+/// With no outside time, a message is still bounded by the caller's own:
+/// one stamped far ahead would leave no later time for any other.
+#[test]
+fn a_message_from_far_ahead_is_refused_without_an_outside_time() {
+    let discussion = begun();
+    let far = Timestamp::parse("9999-12-31T23:59:59Z").unwrap();
+    let from_far = Message {
+        at: far.clone(),
+        ..message("Ada", "09:00:00", "x")
+    };
+    let refused = Err(BoardRuleError::MessageAhead {
+        discussion: id(),
+        at: far,
+    });
+    assert_eq!(
+        append(&discussion, vec![from_far.clone()], &when("10:00:00")),
+        refused
+    );
+    assert_eq!(begin(opening(vec![from_far]), &when("10:00:00")), refused);
+    let near = message("Ada", "10:00:31", "x");
+    assert!(append(&discussion, vec![near.clone()], &when("10:00:00")).is_err());
+    let slack = message("Ada", "10:00:30", "x");
+    let taken = append(&discussion, vec![slack], &when("10:00:00")).unwrap();
+    assert_eq!(taken.fields().updated, at("10:00:30"));
 }

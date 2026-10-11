@@ -23,11 +23,25 @@ pub const MAX_MESSAGE_LINE_CHARS: usize = 1_000;
 /// The most lines in all of a discussion's messages together: one row
 /// each in its file.
 pub const MAX_DISCUSSION_LINES: usize = 16_000;
-/// All of a discussion's text together, in UTF-8 bytes: its title, who
-/// started it, and each message line with its author (written on every
-/// row of the message). This budget keeps every discussion inside the one
-/// file it is stored in (its codec, M2, proves the fit).
-pub const MAX_DISCUSSION_TEXT_BYTES: usize = 320 * 1024;
+/// The largest discussion file (the codec's cap, S13).
+pub const MAX_DISCUSSION_FILE_BYTES: usize = 1024 * 1024;
+/// The fixed bytes of one message row in its file, `| n | Name (email) |
+/// at | text |` and its newline: `| ` (2), the message number (at most 4
+/// digits, [`MAX_MESSAGES`]), ` | ` (3), ` (` and `)` around the email
+/// (3), ` | ` (3), the time (20), ` | ` (3) and ` |\n` (3): 41.
+pub const ROW_OVERHEAD_BYTES: usize = 41;
+/// Room in the file for what [`DiscussionFields::text_bytes`] does not
+/// count: the kind marker, the fields table's rows other than its title
+/// and starter (an id and a task of at most 64 bytes each, a state word,
+/// two times, and their labels and pipes), the headings and the message
+/// table's header. Together they are well under 1 KiB; 4 KiB keeps room
+/// to spare.
+pub const FILE_RESERVE_BYTES: usize = 4 * 1024;
+/// The most bytes a discussion's text takes in its file, as
+/// [`DiscussionFields::text_bytes`] counts them. With the reserve, every
+/// discussion fits its file: `text_bytes + FILE_RESERVE_BYTES <=
+/// 1_044_480 + 4_096 = 1_048_576 = MAX_DISCUSSION_FILE_BYTES`.
+pub const MAX_DISCUSSION_TEXT_BYTES: usize = MAX_DISCUSSION_FILE_BYTES - FILE_RESERVE_BYTES;
 
 /// One message: who said what, and when.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,7 +54,8 @@ pub struct Message {
 }
 
 impl Message {
-    fn lines(&self) -> usize {
+    /// How many lines it holds: one row each in its file.
+    pub fn lines(&self) -> usize {
         self.text.split('\n').count()
     }
 }
@@ -62,18 +77,39 @@ pub struct DiscussionFields {
     pub updated: Timestamp,
 }
 
+/// The bytes `text` takes in a table cell, where each `|` is written `\|`.
+fn escaped(text: &str) -> usize {
+    text.len() + text.matches('|').count()
+}
+
+fn identity(who: &Identity) -> usize {
+    escaped(&who.name) + escaped(&who.email)
+}
+
 impl DiscussionFields {
-    /// The UTF-8 bytes of every free text in the discussion: its title,
-    /// who started it, and its messages with their authors' names and
-    /// addresses, once per line (as its file writes them).
+    /// The bytes the discussion's text takes in its file: its title, who
+    /// started it, and each message line as its row writes it (the line,
+    /// its author, and [`ROW_OVERHEAD_BYTES`]), every `|` counted twice as
+    /// it is escaped. The `\n` between a message's lines is not written:
+    /// each line is a row of its own.
     pub fn text_bytes(&self) -> usize {
-        let identity = |who: &Identity| who.name.len() + who.email.len();
-        let messages: usize = self
+        let rows: usize = self
             .messages
             .iter()
-            .map(|message| message.text.len() + identity(&message.author) * message.lines())
+            .flat_map(|message| {
+                let author = identity(&message.author);
+                message
+                    .text
+                    .split('\n')
+                    .map(move |line| escaped(line) + author + ROW_OVERHEAD_BYTES)
+            })
             .sum();
-        self.title.len() + identity(&self.started_by) + messages
+        escaped(&self.title) + identity(&self.started_by) + rows
+    }
+
+    /// The lines in all of its messages: its file's rows.
+    pub fn lines(&self) -> usize {
+        self.messages.iter().map(Message::lines).sum()
     }
 }
 
@@ -101,8 +137,7 @@ fn validate(discussion: &DiscussionFields) -> Result<(), SchemaError> {
         true => {}
         false => return Err(SchemaError::new("updated", "must not be before created")),
     }
-    line("title", &discussion.title, MAX_TITLE_CHARS)?;
-    discussion.started_by.validate("started_by")?;
+    // The cheap caps first: counts and sizes, before any text is read.
     match discussion.messages.len() {
         1..=MAX_MESSAGES => {}
         _ => {
@@ -112,6 +147,30 @@ fn validate(discussion: &DiscussionFields) -> Result<(), SchemaError> {
             ));
         }
     }
+    let lines = discussion.lines();
+    match lines <= MAX_DISCUSSION_LINES {
+        true => {}
+        false => {
+            return Err(SchemaError::new(
+                "messages",
+                format!("its messages hold {lines} lines; the most is {MAX_DISCUSSION_LINES}"),
+            ));
+        }
+    }
+    let bytes = discussion.text_bytes();
+    match bytes <= MAX_DISCUSSION_TEXT_BYTES {
+        true => {}
+        false => {
+            return Err(SchemaError::new(
+                "text",
+                format!(
+                    "the discussion's text takes {bytes} bytes; the most is {MAX_DISCUSSION_TEXT_BYTES}"
+                ),
+            ));
+        }
+    }
+    line("title", &discussion.title, MAX_TITLE_CHARS)?;
+    discussion.started_by.validate("started_by")?;
     // It began with its first message.
     match discussion.messages.first().map(|first| &first.at) {
         Some(at) if *at == discussion.created => {}
@@ -125,8 +184,6 @@ fn validate(discussion: &DiscussionFields) -> Result<(), SchemaError> {
     let mut last = &discussion.created;
     for (index, message) in discussion.messages.iter().enumerate() {
         let field = format!("messages/{index}");
-        message.author.validate(&format!("{field}/author"))?;
-        text(&field, message)?;
         // Messages are said in order, while the discussion exists.
         match *last <= message.at && message.at <= discussion.updated {
             true => last = &message.at,
@@ -137,27 +194,10 @@ fn validate(discussion: &DiscussionFields) -> Result<(), SchemaError> {
                 ));
             }
         }
+        message.author.validate(&format!("{field}/author"))?;
+        text(&field, message)?;
     }
-    let lines: usize = discussion.messages.iter().map(Message::lines).sum();
-    match lines <= MAX_DISCUSSION_LINES {
-        true => {}
-        false => {
-            return Err(SchemaError::new(
-                "messages",
-                format!("its messages hold {lines} lines; the most is {MAX_DISCUSSION_LINES}"),
-            ));
-        }
-    }
-    let text = discussion.text_bytes();
-    match text <= MAX_DISCUSSION_TEXT_BYTES {
-        true => Ok(()),
-        false => Err(SchemaError::new(
-            "text",
-            format!(
-                "the discussion's text is {text} bytes; the most is {MAX_DISCUSSION_TEXT_BYTES}"
-            ),
-        )),
-    }
+    Ok(())
 }
 
 /// A message's text: one to [`MAX_MESSAGE_LINES`] lines, each a single

@@ -1,5 +1,6 @@
 use super::*;
 use crate::domain::project_board::entities::fixtures_tests::{at, person, slug};
+use crate::domain::project_board::entities::task::MAX_TITLE_CHARS;
 
 /// One edit that must make valid fields invalid.
 type Edit = Box<dyn Fn(&mut DiscussionFields)>;
@@ -113,6 +114,18 @@ fn fields_that_break_a_rule_build_no_discussion() {
         ),
         (
             "messages/1/text/0",
+            Box::new(|d| d.messages[1].text = "line\u{2028}separator".into()),
+        ),
+        (
+            "messages/1/text/0",
+            Box::new(|d| d.messages[1].text = "paragraph\u{2029}separator".into()),
+        ),
+        (
+            "messages/1/text/0",
+            Box::new(|d| d.messages[1].text = "next\u{85}line".into()),
+        ),
+        (
+            "messages/1/text/0",
             Box::new(|d| d.messages[1].text = "x".repeat(MAX_MESSAGE_LINE_CHARS + 1)),
         ),
         (
@@ -159,52 +172,116 @@ fn a_discussion_holds_its_widest_message_and_its_most_lines() {
     assert_eq!(Discussion::new(most).unwrap_err().field, "messages");
 }
 
-/// A discussion's text is bounded: its title, who started it, and its
-/// message lines each with its author, exactly to the budget and not a
-/// byte past it.
+/// The bytes one message row of `author` writing `line` takes in its
+/// file, as the codec writes it (`|` escaped), with the widest message
+/// number: what `text_bytes` must never undercount.
+fn row(author: &Identity, at: &Timestamp, line: &str) -> usize {
+    let cell = |text: &str| text.replace('|', "\\|");
+    format!(
+        "| {MAX_MESSAGES} | {} ({}) | {} | {} |\n",
+        cell(&author.name),
+        cell(&author.email),
+        at.as_str(),
+        cell(line)
+    )
+    .len()
+}
+
+/// A discussion's text is bounded by what it takes in its file: the
+/// worst case, every character a `|` written `\|` and every row as short
+/// and as many as can be, fills the budget exactly, and its rows as the
+/// codec writes them fit inside the budget, so the whole file fits its
+/// cap with the reserve.
 #[test]
-fn a_discussions_text_is_bounded_by_its_budget() {
+fn a_discussions_text_is_bounded_by_what_its_file_takes() {
     let mut full = fields();
+    full.title = "|".repeat(MAX_TITLE_CHARS);
     full.messages.truncate(1);
-    let mut left = MAX_DISCUSSION_TEXT_BYTES - full.text_bytes();
     let author = full.messages[0].author.clone();
-    let per_line = author.name.len() + author.email.len();
-    // Single-line messages, the widest that leave room for one more.
-    while left > 0 {
-        let room = left - per_line;
-        let len = match room > MAX_MESSAGE_LINE_CHARS {
-            true if room - MAX_MESSAGE_LINE_CHARS <= per_line => {
-                MAX_MESSAGE_LINE_CHARS - per_line - 1
-            }
-            true => MAX_MESSAGE_LINE_CHARS,
-            false => room,
-        };
-        full.messages.push(Message {
-            author: author.clone(),
+    let wide = vec!["|".repeat(MAX_MESSAGE_LINE_CHARS); MAX_MESSAGE_LINES].join("\n");
+    let per_wide = full.messages[0].clone();
+    loop {
+        let mut next = full.clone();
+        next.messages.push(Message {
+            text: wide.clone(),
             at: at("09:05:00"),
-            text: "x".repeat(len),
+            ..per_wide.clone()
         });
-        left -= len + per_line;
+        match next.text_bytes() <= MAX_DISCUSSION_TEXT_BYTES {
+            true => full = next,
+            false => break,
+        }
     }
-    assert_eq!(full.text_bytes(), MAX_DISCUSSION_TEXT_BYTES);
+    // The rest in one message of `|`s, to the byte.
+    let per_line = identity_bytes(&author) + ROW_OVERHEAD_BYTES;
+    let mut left = MAX_DISCUSSION_TEXT_BYTES - full.text_bytes() - per_line;
+    let mut lines = vec![];
+    while left > 0 {
+        let take = (left / 2).min(MAX_MESSAGE_LINE_CHARS);
+        assert!(take > 0, "an even remainder: {left}");
+        lines.push("|".repeat(take));
+        left -= 2 * take;
+        if left > 0 {
+            left -= per_line;
+        }
+    }
+    full.messages.push(Message {
+        author: author.clone(),
+        at: at("09:05:00"),
+        text: lines.join("\n"),
+    });
+    assert_eq!(
+        full.text_bytes(),
+        MAX_DISCUSSION_TEXT_BYTES,
+        "the budget, to the byte"
+    );
+    let rows: usize = full
+        .messages
+        .iter()
+        .flat_map(|message| {
+            message
+                .text
+                .split('\n')
+                .map(|line| row(&message.author, &message.at, line))
+        })
+        .sum();
+    assert!(
+        rows <= full.text_bytes(),
+        "{rows} written > {} counted",
+        full.text_bytes()
+    );
+    assert!(MAX_DISCUSSION_TEXT_BYTES + FILE_RESERVE_BYTES <= MAX_DISCUSSION_FILE_BYTES);
     assert!(Discussion::new(full.clone()).is_ok(), "exactly the budget");
     let last = full.messages.len() - 1;
     full.messages[last].text.push('x');
     assert_eq!(Discussion::new(full).unwrap_err().field, "text");
 }
 
+fn identity_bytes(who: &Identity) -> usize {
+    let escaped = |text: &str| text.len() + text.matches('|').count();
+    escaped(&who.name) + escaped(&who.email)
+}
+
 /// The text counted is the title, who started it, and every message line
-/// with its author: a two-line message counts its author twice.
+/// as its row writes it: the line, its author and the row's fixed bytes,
+/// each `|` twice, and no `\n` between lines.
 #[test]
-fn a_discussions_text_counts_each_lines_author() {
+fn a_discussions_text_counts_each_row_as_written() {
     let discussion = fields();
     let ada = "Ada".len() + "ada@example.com".len();
     let bob = "Bob".len() + "bob@example.com".len();
+    let row = ROW_OVERHEAD_BYTES;
     let expected = "How the store locks".len()
         + ada
-        + "Should the store take a lease?".len()
-        + ada
-        + "Yes, with a **TTL**.\nAnd a renewal.".len()
-        + 2 * bob;
+        + ("Should the store take a lease?".len() + ada + row)
+        + ("Yes, with a **TTL**.".len() + bob + row)
+        + ("And a renewal.".len() + bob + row);
     assert_eq!(discussion.text_bytes(), expected);
+    let mut piped = fields();
+    piped.title = "a|b".into();
+    assert_eq!(
+        piped.text_bytes(),
+        expected - "How the store locks".len() + 4,
+        "a | counts twice"
+    );
 }

@@ -60,13 +60,18 @@ pub enum BoardRuleError {
     DiscussionClosed(Slug),
     /// The discussion is about `task` already: it is linked once.
     DiscussionLinked { discussion: Slug, task: Slug },
-    /// The discussion, or a message added to it, was stamped by a clock
-    /// running ahead of the outside time: building on it would drag the
-    /// board ahead too.
+    /// The discussion was stamped by a clock running ahead of the outside
+    /// time: building on it would drag the board ahead too.
     DiscussionAhead {
         discussion: Slug,
         updated: Timestamp,
     },
+    /// A message to the discussion was stamped `at`, later than the
+    /// caller's time or the outside time allows: a clock running ahead.
+    MessageAhead { discussion: Slug, at: Timestamp },
+    /// The discussion is full: the batch would take it past its most
+    /// messages, lines or bytes (`reason`). Begin another to go on.
+    DiscussionFull { discussion: Slug, reason: String },
     /// The task links changes: it is done when they merge, through the
     /// completion anyone may run, not by its holder's say-so. The holder
     /// may unlink one deliberately first.
@@ -196,6 +201,17 @@ impl fmt::Display for BoardRuleError {
                 "discussion {} was stamped {} by a clock that ran ahead",
                 discussion.as_str(),
                 updated.as_str()
+            ),
+            Self::MessageAhead { discussion, at } => write!(
+                f,
+                "a message to discussion {} was stamped {} by a clock that ran ahead",
+                discussion.as_str(),
+                at.as_str()
+            ),
+            Self::DiscussionFull { discussion, reason } => write!(
+                f,
+                "discussion {} is full ({reason}): begin another to go on",
+                discussion.as_str()
             ),
             Self::ChangesLinked(numbers) => write!(
                 f,

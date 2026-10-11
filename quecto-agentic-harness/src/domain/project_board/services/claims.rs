@@ -122,12 +122,25 @@ pub fn within_slack(updated: &Timestamp, latest: Option<&Timestamp>) -> bool {
 /// # Errors
 /// A task stamped at the last moment the board can spell.
 pub(super) fn stamp(task: &Task, now: &Timestamp) -> Result<Timestamp, BoardRuleError> {
-    let next = task
-        .fields()
-        .updated
+    after_last(&task.fields().updated, now)
+}
+
+/// When a change to an artifact last changed at `updated` happens: `now`,
+/// or a second past `updated` if `now` reads no later. One rule for every
+/// artifact, so each change moves its `updated` strictly forward.
+///
+/// # Errors
+/// An artifact stamped at the last moment the board can spell.
+pub(super) fn after_last(
+    updated: &Timestamp,
+    now: &Timestamp,
+) -> Result<Timestamp, BoardRuleError> {
+    let next = updated
         .plus_seconds(1)
         .map_err(|error| BoardRuleError::Invalid(error.at("updated")))?;
-    Ok(now.max(&next).clone())
+    let at = now.max(&next).clone();
+    assert!(at > *updated, "a change moves updated strictly forward");
+    Ok(at)
 }
 
 /// A claim for `holder` from `at` (a [`stamp`]) for two hours.
