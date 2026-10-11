@@ -87,3 +87,22 @@ pub fn task(status: TaskStatus) -> Task {
     })
     .expect("fixture is valid")
 }
+
+/// `task` with a run still going since 09:00.
+pub fn with_open_run(task: Task) -> Task {
+    let mut fields = task.into_fields();
+    fields.runs.push(Run {
+        id: Slug::parse("r2").unwrap(),
+        started: at("09:00:00"),
+        ended: None,
+        outcome: None,
+    });
+    Task::new(fields).expect("an open run while the task may hold a claim")
+}
+
+/// `task` with no claim (a review or blocked task may have none).
+pub fn without_claim(task: Task) -> Task {
+    let mut fields = task.into_fields();
+    fields.claim = None;
+    Task::new(fields).expect("review and blocked tasks may drop their claim")
+}

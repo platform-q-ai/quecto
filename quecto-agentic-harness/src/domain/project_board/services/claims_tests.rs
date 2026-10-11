@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::project_board::services::fixtures_tests::{at, person, task};
+use crate::domain::project_board::services::fixtures_tests::{at, person, task, without_claim};
 use TaskStatus::*;
 
 #[test]
@@ -8,8 +8,8 @@ fn the_holder_renews_for_two_hours_from_now() {
     let fields = renewed.fields();
     let claim = fields.claim.clone().unwrap();
     assert_eq!(
-        (claim.holder, claim.since, claim.expires),
-        (person("Ada"), at("10:30:00"), at("12:30:00"))
+        (claim.holder.email, claim.since, claim.expires),
+        (person("Ada").email, at("10:30:00"), at("12:30:00"))
     );
     assert_eq!(
         (fields.status, &fields.updated),
@@ -40,30 +40,40 @@ fn only_a_held_task_is_renewed_and_only_by_its_holder() {
 }
 
 #[test]
-fn an_expired_claim_is_taken_over_while_claimed_or_in_progress() {
-    for status in [Claimed, InProgress] {
+fn an_expired_claim_is_taken_over_while_the_task_may_hold_one() {
+    for status in [Claimed, InProgress, Review, Blocked] {
         let taken = take_over(&task(status), &person("Bob"), &at("11:00:00")).unwrap();
         let fields = taken.fields();
         let claim = fields.claim.clone().unwrap();
         assert_eq!(
-            (claim.holder, claim.since, claim.expires),
-            (person("Bob"), at("11:00:00"), at("13:00:00"))
+            (claim.holder.email, claim.since, claim.expires),
+            (person("Bob").email, at("11:00:00"), at("13:00:00")),
+            "{status:?}"
         );
         assert_eq!((fields.status, &fields.updated), (status, &at("11:00:00")));
     }
 }
 
 #[test]
-fn a_live_claim_another_status_or_the_holder_cannot_take_over() {
+fn a_live_claim_another_status_no_claim_or_the_holder_cannot_take_over() {
     let bob = person("Bob");
-    assert_eq!(
-        take_over(&task(Claimed), &bob, &at("10:59:59")),
-        Err(BoardRuleError::ClaimLive)
-    );
-    for status in [Draft, Ready, Review, Blocked, Done, Archived] {
+    for status in [Claimed, InProgress, Review, Blocked] {
+        assert_eq!(
+            take_over(&task(status), &bob, &at("10:59:59")),
+            Err(BoardRuleError::ClaimLive),
+            "{status:?}"
+        );
+    }
+    for status in [Draft, Ready, Done, Archived] {
         assert_eq!(
             take_over(&task(status), &bob, &at("12:00:00")),
             Err(BoardRuleError::NotTakeable(status))
+        );
+    }
+    for status in [Review, Blocked] {
+        assert_eq!(
+            take_over(&without_claim(task(status)), &bob, &at("12:00:00")),
+            Err(BoardRuleError::NoClaim)
         );
     }
     let shouting = Identity {
@@ -73,5 +83,19 @@ fn a_live_claim_another_status_or_the_holder_cannot_take_over() {
     assert_eq!(
         take_over(&task(Claimed), &shouting, &at("12:00:00")),
         Err(BoardRuleError::AlreadyHolder)
+    );
+}
+
+#[test]
+fn renewing_or_taking_over_refuses_a_clock_behind_the_task() {
+    let behind = at("08:59:59");
+    let refused = Err(BoardRuleError::ClockBehind {
+        now: behind.clone(),
+        updated: at("09:00:00"),
+    });
+    assert_eq!(renew(&task(InProgress), &person("Ada"), &behind), refused);
+    assert_eq!(
+        take_over(&task(InProgress), &person("Bob"), &behind),
+        refused
     );
 }

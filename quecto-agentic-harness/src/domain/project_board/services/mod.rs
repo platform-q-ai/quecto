@@ -2,6 +2,7 @@
 //! and how claims are renewed and taken over. Every rule returns a new
 //! [`Task`](super::entities::task::Task), so the schema holds after each.
 pub mod claims;
+pub mod pull_requests;
 pub mod transitions;
 
 #[cfg(test)]

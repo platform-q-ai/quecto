@@ -1,5 +1,7 @@
 //! Why the board's rules refused a move, renewal, takeover or completion.
 use super::schema_error::SchemaError;
+use super::slug::Slug;
+use super::timestamp::Timestamp;
 use super::vocabulary::TaskStatus;
 use std::fmt;
 
@@ -13,6 +15,12 @@ pub enum BoardRuleError {
     NoClaim,
     /// The claim has not expired yet.
     ClaimLive,
+    /// The holder's claim has expired: renew it first.
+    ClaimExpired,
+    /// The clock reads earlier than the task's last change.
+    ClockBehind { now: Timestamp, updated: Timestamp },
+    /// This run is still going: end it before the task leaves its holder.
+    RunOpen(Slug),
     /// A takeover is only of a claimed or in-progress task.
     NotTakeable(TaskStatus),
     /// The holder renews; a takeover is someone else's.
@@ -21,6 +29,8 @@ pub enum BoardRuleError {
     NoPrs,
     /// These linked pull requests are not merged yet.
     PrsOpen(Vec<u64>),
+    /// The task does not link this pull request.
+    PrNotLinked(u64),
     /// The result would break the task schema.
     Invalid(SchemaError),
 }
@@ -39,12 +49,21 @@ impl fmt::Display for BoardRuleError {
             Self::NotHolder => f.write_str("only the claim's holder may do this"),
             Self::NoClaim => f.write_str("the task has no claim"),
             Self::ClaimLive => f.write_str("the claim has not expired"),
+            Self::ClaimExpired => f.write_str("the claim has expired; renew it first"),
+            Self::ClockBehind { now, updated } => write!(
+                f,
+                "the clock reads {} but the task changed at {}",
+                now.as_str(),
+                updated.as_str()
+            ),
+            Self::RunOpen(run) => write!(f, "run {} is still open", run.as_str()),
             Self::NotTakeable(status) => {
                 write!(f, "a {} task cannot be taken over", status.as_str())
             }
             Self::AlreadyHolder => f.write_str("the holder renews rather than takes over"),
             Self::NoPrs => f.write_str("the task links no pull request"),
             Self::PrsOpen(open) => write!(f, "pull requests {open:?} are not merged"),
+            Self::PrNotLinked(pr) => write!(f, "the task does not link pull request {pr}"),
             Self::Invalid(error) => write!(f, "invalid task: {error}"),
         }
     }
