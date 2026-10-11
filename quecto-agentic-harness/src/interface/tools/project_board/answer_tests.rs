@@ -302,6 +302,8 @@ board_rules! {
     R::ChangeMerged(_) => R::ChangeMerged(1), "change_merged", ["change"];
     R::NoChanges => R::NoChanges, "no_changes", [];
     R::ChangesUnmerged(_) => R::ChangesUnmerged(vec![1]), "changes_unmerged", ["changes"];
+    R::ChangeHeadMismatch(_) => R::ChangeHeadMismatch(1), "change_head_mismatch", ["change"];
+    R::ChangesInconsistent(_) => R::ChangesInconsistent("number 1 twice".into()), "changes_inconsistent", ["reason"];
     R::PlanAhead { .. } => R::PlanAhead { version: 2, updated: at("10:00:00") }, "plan_ahead", ["version", "updated"];
     R::Invalid(_) => R::Invalid(SchemaError::new("title", "is empty")), "invalid", ["field", "problem"];
 }

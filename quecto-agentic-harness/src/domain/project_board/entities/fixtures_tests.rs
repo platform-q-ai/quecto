@@ -90,7 +90,10 @@ pub fn change(number: u32, pr: Option<u64>) -> super::change::Change {
     super::change::Change::new(super::change::ChangeFields {
         task: slug("board-store"),
         number,
-        branch: format!("feat/b{number}"),
+        branch: crate::domain::project_board::value_objects::code_ref::BranchName::parse(&format!(
+            "feat/b{number}"
+        ))
+        .unwrap(),
         pr,
         merged: None,
         linked_by: person("Ada"),
@@ -102,6 +105,14 @@ pub fn change(number: u32, pr: Option<u64>) -> super::change::Change {
 }
 
 /// A full commit id of `digit`s.
-pub fn commit(digit: char) -> String {
-    digit.to_string().repeat(40)
+pub fn commit(digit: char) -> crate::domain::project_board::value_objects::code_ref::CommitId {
+    crate::domain::project_board::value_objects::code_ref::CommitId::parse(
+        &digit.to_string().repeat(40),
+    )
+    .unwrap()
+}
+
+/// A branch name.
+pub fn branch(name: &str) -> crate::domain::project_board::value_objects::code_ref::BranchName {
+    crate::domain::project_board::value_objects::code_ref::BranchName::parse(name).unwrap()
 }

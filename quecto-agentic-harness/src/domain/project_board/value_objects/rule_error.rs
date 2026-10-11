@@ -55,6 +55,12 @@ pub enum BoardRuleError {
     NoChanges,
     /// These linked changes have not merged.
     ChangesUnmerged(Vec<u32>),
+    /// This change's pull request merged from another branch than the
+    /// change names.
+    ChangeHeadMismatch(u32),
+    /// The task's changes contradict each other (a number twice, a
+    /// branch or pull request linked twice): mend them before acting.
+    ChangesInconsistent(String),
     /// A takeover is only of a task that may hold a claim (claimed, in
     /// progress, in review or blocked).
     NotTakeable(TaskStatus),
@@ -138,6 +144,11 @@ impl fmt::Display for BoardRuleError {
             Self::ChangeMerged(number) => write!(f, "change {number} merged: it stays linked"),
             Self::NoChanges => f.write_str("the task links no change"),
             Self::ChangesUnmerged(numbers) => write!(f, "changes {numbers:?} have not merged"),
+            Self::ChangeHeadMismatch(number) => write!(
+                f,
+                "change {number}'s pull request merged from another branch than it names"
+            ),
+            Self::ChangesInconsistent(why) => write!(f, "the task's changes contradict: {why}"),
             Self::NotTakeable(status) => {
                 write!(f, "a {} task cannot be taken over", status.as_str())
             }
