@@ -130,7 +130,6 @@ pub fn build_teardown_graph(inputs: TeardownLoopInputs) -> TeardownHandles {
         inputs.broadcast_tx.clone(),
         inputs.notify_tx.clone(),
     );
-    let environment_control = inputs.environment_control.clone().unwrap_or_default();
     let execute = Arc::new(ExecuteHarnessShutdown::new(
         transaction.clone(),
         ExecuteHarnessShutdownPorts {
@@ -144,7 +143,9 @@ pub fn build_teardown_graph(inputs: TeardownLoopInputs) -> TeardownHandles {
             exit: exit.clone(),
             spawner: Arc::new(TokioShutdownRunSpawner),
             owner_exit: inputs.owner_exit.clone(),
-            retained: SlotRetainedEnvironmentTeardown::new(environment_control.clone()),
+            retained: SlotRetainedEnvironmentTeardown::new(
+                inputs.environment_control.unwrap_or_default(),
+            ),
         },
     ));
     // The receiver of a selected termination is the direct owner of the
@@ -175,7 +176,6 @@ pub fn build_teardown_graph(inputs: TeardownLoopInputs) -> TeardownHandles {
             fleet: fleet.clone(),
             busy: inputs.busy,
             owner_exit: inputs.owner_exit,
-            swarm_boards: environment_control,
         }),
         controller,
         fleet,

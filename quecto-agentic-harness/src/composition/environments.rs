@@ -50,11 +50,28 @@ fn hosted_store_observation() -> HostedStoreObservation {
 /// The observation over `process`, the board admission bound, when there
 /// is one; else over the process's one host board.
 fn hosted_store_observation_over(process: Option<&SwarmBoard>) -> HostedStoreObservation {
-    static HOST_BOARD: OnceLock<SwarmBoard> = OnceLock::new();
     HostedStoreObservation::new(match process {
         Some(board) => board.clone(),
-        None => HOST_BOARD.get_or_init(super::swarm::swarm_board).clone(),
+        None => host_board(),
     })
+}
+
+/// The process's one host board, when admission bound none.
+fn host_board() -> SwarmBoard {
+    static HOST_BOARD: OnceLock<SwarmBoard> = OnceLock::new();
+    HOST_BOARD.get_or_init(super::swarm::swarm_board).clone()
+}
+
+/// The board the supervising session's board view reads through (#2488
+/// review L4): its own, whose handle cache only the view's polls fill, so
+/// polling many boards never evicts the handles of the board this harness
+/// runs on as a member. Its reads are the supervisor's, which write no
+/// event-log record, so it keeps no session log.
+fn supervisor_board() -> SwarmBoard {
+    static SUPERVISOR_BOARD: OnceLock<SwarmBoard> = OnceLock::new();
+    SUPERVISOR_BOARD
+        .get_or_init(super::swarm::swarm_board)
+        .clone()
 }
 
 /// The final-member use case over the production script adapters, for one
@@ -79,7 +96,7 @@ pub fn build_environment_control(
         list: Arc::new(ListEnvironmentsQuery::new(environments.clone())),
         boards: Arc::new(ReadSwarmBoard::new(
             environments.clone(),
-            Arc::new(hosted_store_observation()),
+            Arc::new(HostedStoreObservation::new(supervisor_board())),
         )),
         kill: Arc::new(KillEnvironment::new(
             environments,

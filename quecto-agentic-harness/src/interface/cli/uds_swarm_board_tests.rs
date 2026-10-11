@@ -2,14 +2,16 @@ use super::{
     AbortOnDrop, BoardHints, BoardViewCtx, Seen, SwarmBoards, answer, changes, intercept,
     spawn_change_hints,
 };
-use crate::application::environments::dto::{BoardSighting, HostedBoardRevision};
+use crate::application::environments::dto::{
+    BoardSighting, HostedBoardRevision, SwarmBoardSnapshot,
+};
 use crate::application::environments::ports::{HostedSwarmBoard, PortFuture};
 use crate::application::environments::use_cases::ReadSwarmBoard;
 use crate::domain::environments::entities::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,
 };
 use crate::infrastructure::tools::subagent_registry::SubagentRegistry;
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, AtomicU32, Ordering};
@@ -22,14 +24,12 @@ impl HostedSwarmBoard for OneBoard {
     fn board<'a>(
         &'a self,
         record: &'a EnvironmentRecord,
-    ) -> PortFuture<'a, Result<Option<Map<String, Value>>, String>> {
+    ) -> PortFuture<'a, Result<Option<SwarmBoardSnapshot>, String>> {
         let board = (record.environment_ref == "C1").then(|| {
-            Map::from_iter([
-                ("revision".to_owned(), json!(7)),
-                ("run".to_owned(), json!(null)),
-                ("items".to_owned(), json!([])),
-                ("truncated".to_owned(), json!(false)),
-            ])
+            SwarmBoardSnapshot::object(
+                json!({"revision": 7, "run": null, "items": [], "truncated": false}),
+            )
+            .unwrap()
         });
         Box::pin(async move { Ok(board) })
     }
@@ -46,8 +46,8 @@ impl HostedSwarmBoard for OneBoard {
     }
 }
 
-/// The board at `C1`, run `r1`, at the revision the test holds; each read
-/// of it moves it on by `step`.
+/// The board at `C1` only, run `r1`, at the revision the test holds; each
+/// read of it moves it on by `step`.
 struct Moving {
     revision: Arc<AtomicI64>,
     step: i64,
@@ -57,21 +57,19 @@ impl HostedSwarmBoard for Moving {
     fn board<'a>(
         &'a self,
         _record: &'a EnvironmentRecord,
-    ) -> PortFuture<'a, Result<Option<Map<String, Value>>, String>> {
-        Box::pin(async { Ok(Some(Map::new())) })
+    ) -> PortFuture<'a, Result<Option<SwarmBoardSnapshot>, String>> {
+        Box::pin(async { Ok(SwarmBoardSnapshot::object(json!({}))) })
     }
 
     fn revision<'a>(
         &'a self,
-        _record: &'a EnvironmentRecord,
+        record: &'a EnvironmentRecord,
     ) -> PortFuture<'a, Result<Option<HostedBoardRevision>, String>> {
-        let revision = self.revision.fetch_add(self.step, Ordering::SeqCst);
-        Box::pin(async move {
-            Ok(Some(HostedBoardRevision {
-                run: Some("r1".into()),
-                revision,
-            }))
-        })
+        let revision = (record.environment_ref == "C1").then(|| HostedBoardRevision {
+            run: Some("r1".into()),
+            revision: self.revision.fetch_add(self.step, Ordering::SeqCst),
+        });
+        Box::pin(async move { Ok(revision) })
     }
 }
 
@@ -82,11 +80,11 @@ impl HostedSwarmBoard for Gated {
     fn board<'a>(
         &'a self,
         _record: &'a EnvironmentRecord,
-    ) -> PortFuture<'a, Result<Option<Map<String, Value>>, String>> {
+    ) -> PortFuture<'a, Result<Option<SwarmBoardSnapshot>, String>> {
         let gate = self.0.clone();
         Box::pin(async move {
             gate.notified().await;
-            Ok(Some(Map::new()))
+            Ok(SwarmBoardSnapshot::object(json!({})))
         })
     }
 

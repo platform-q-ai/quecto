@@ -4,7 +4,9 @@
 //! store the supervising session reads by path ([`HostedSwarmRunObservation`],
 //! #1924). Mechanics only: whether and when each runs is decided by the
 //! application use cases.
-use crate::application::environments::dto::EnvironmentLiveness;
+use crate::application::environments::dto::{
+    EnvironmentLiveness, HostedBoardRevision, SwarmBoardSnapshot,
+};
 use crate::application::environments::ports::EnvironmentProcess;
 use crate::application::environments::ports::{
     EnvironmentProcessCommands, HostedSwarmBoard, HostedSwarmRunInspection,
@@ -464,30 +466,71 @@ impl HostedSwarmRunObservation for HostedStoreObservation {
 
 /// The board an environment hosts, read by path from the supervising
 /// session through composition's board handles (#2478): `None` when the
-/// environment advertises no checkout with a board on this host.
+/// environment's checkout is proven to hold no board on this host. One
+/// whose checkout cannot be told is unreadable, never "no board" (#2488
+/// review L6). Finding the checkout canonicalises and stats paths, so it
+/// runs off the async workers with the read (review L1).
 impl HostedSwarmBoard for HostedStoreObservation {
     fn board<'a>(
         &'a self,
         record: &'a EnvironmentRecord,
-    ) -> PortFuture<'a, Result<Option<serde_json::Value>, String>> {
-        let store = hosted_store(record, &self.board);
+    ) -> PortFuture<'a, Result<Option<SwarmBoardSnapshot>, String>> {
+        let (record, board) = (record.clone(), self.board.clone());
         Box::pin(async move {
-            let Some(store) = store else { return Ok(None) };
-            off_the_workers(move || store.board_projection().map_err(|error| error.to_string()))
-                .await?
+            off_the_workers(move || {
+                let Some(store) = supervised_store(&record, board)? else {
+                    return Ok(None);
+                };
+                match store
+                    .board_projection()
+                    .map_err(|error| error.to_string())?
+                {
+                    None => Ok(None),
+                    Some(projection) => SwarmBoardSnapshot::object(projection)
+                        .map(Some)
+                        .ok_or_else(|| "the swarm board's projection is not an object".to_owned()),
+                }
+            })
+            .await?
         })
     }
 
     fn revision<'a>(
         &'a self,
         record: &'a EnvironmentRecord,
-    ) -> PortFuture<'a, Result<Option<i64>, String>> {
-        let store = hosted_store(record, &self.board);
+    ) -> PortFuture<'a, Result<Option<HostedBoardRevision>, String>> {
+        let (record, board) = (record.clone(), self.board.clone());
         Box::pin(async move {
-            let Some(store) = store else { return Ok(None) };
-            off_the_workers(move || store.board_revision().map_err(|error| error.to_string()))
-                .await?
+            off_the_workers(move || {
+                let Some(store) = supervised_store(&record, board)? else {
+                    return Ok(None);
+                };
+                let revision = store.board_revision().map_err(|error| error.to_string())?;
+                Ok(revision.map(|revision| HostedBoardRevision {
+                    run: revision.run,
+                    revision: revision.revision,
+                }))
+            })
+            .await?
         })
+    }
+}
+
+/// The store at `record`'s checkout for the supervising session's reads:
+/// `None` when the checkout is proven to hold no board, or lies off this
+/// host; refused when the host could not tell.
+fn supervised_store(
+    record: &EnvironmentRecord,
+    board: SwarmBoard,
+) -> Result<Option<super::swarm_bridge::HostedStore>, String> {
+    match hosted_checkout(record) {
+        HostedCheckout::At(checkout) => {
+            Ok(Some(super::swarm_bridge::HostedStore::at(checkout, board)))
+        }
+        HostedCheckout::NoBoard | HostedCheckout::NotOnHost => Ok(None),
+        HostedCheckout::Unknown(reason) => Err(format!(
+            "the swarm board's checkout could not be told: {reason}"
+        )),
     }
 }
 

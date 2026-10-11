@@ -86,8 +86,18 @@ async fn a_hosted_board_answers_the_snapshot_shape_at_its_revision() {
     let context = store(temp.path());
     create_run(&context);
     let record = record(temp.path());
-    let board = port().board(&record).await.unwrap().expect("a board");
-    let keys: Vec<&str> = board.keys().map(String::as_str).collect();
+    let board = port()
+        .board(&record)
+        .await
+        .unwrap()
+        .expect("a board")
+        .into_value();
+    let keys: Vec<&str> = board
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
     assert_eq!(
         keys,
         [
@@ -141,7 +151,7 @@ async fn a_hosted_board_answers_the_snapshot_shape_at_its_revision() {
              INSERT INTO events (actor, time, action, detail) VALUES ('coordinator', 1.0, 'task_created', '{}');",
         )
         .unwrap();
-    let after = port().board(&record).await.unwrap().unwrap();
+    let after = port().board(&record).await.unwrap().unwrap().into_value();
     assert!(
         port().revision(&record).await.unwrap().unwrap().revision > revision.revision,
         "a write moves it"

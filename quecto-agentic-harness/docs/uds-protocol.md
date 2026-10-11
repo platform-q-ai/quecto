@@ -923,7 +923,9 @@ Return the latest assistant report of the session and, on request, write a retai
 
 ### `get_swarm_board`
 
-Answers the board of a swarm this harness hosts, as one snapshot (#2475, #2478). `swarm` is the environment ref (`C1`) of the container the swarm runs in, as `agent_cmd get_containers` lists it. The harness reads the board through its own adapter, membership-free and in one read transaction: no client opens the board file. Answered on the connection's reader task, so a running turn does not delay it. Add `agent_id` to ask a descendant for a board it hosts, as `swarm_control` routes.
+Answers the board of a swarm this session hosts, as one snapshot (#2475, #2478). `swarm` is the environment ref (`C` and digits, such as `C1`) of the container the swarm runs in, as `agent_cmd get_containers` lists it. Only this session's own environments are read, as `get_containers` lists them without `all`, and only while they are running or retained. The harness reads the board through its own adapter, membership-free and in one read transaction: no client opens the board file. The answer is made by a task of its own, so neither a running turn nor a slow board delays the connection's next line.
+
+Add `agent_id` to ask a descendant for a board it hosts. It is routed as `swarm_control` is: to a child directly, and to a deeper descendant through its ancestors. A descendant's `swarm_board_changed` carries the `agent_id` to ask.
 
 ```json
 {"type":"get_swarm_board","id":"b1","swarm":"C1"}
@@ -933,15 +935,26 @@ Answers the board of a swarm this harness hosts, as one snapshot (#2475, #2478).
 
 | Field | Meaning |
 |---|---|
-| `revision` | Grows with every board write the snapshot shows (the latest board event plus the usage ledger's latest row); the `swarm_board_changed` hint carries it |
+| `revision` | Grows with every board write the snapshot shows (the latest board event plus the usage ledger's latest row). A board made again starts again, under another `run.id`; `swarm_board_changed` carries both |
 | `run` | `null` before a run is created; else `id`, `goal`, `status`, `outcome`, `outcome_reason`, `generation` (the latest pause or resume), `criteria`, `member_limit`, `deadline`, `coordinator`, `integrator` and `budget` (`token_limit`, `strict_unknown`, `warned`, `observed_tokens`, `unknown_usage_requests`) |
-| `items` | The board's tasks, by id: `id`, `title`, `criteria`, `depends_on`, `state` (`ready`, `claimed`, `blocked`, `submitted`, `completed`), `waiting` (ready, but a dependency is not completed), `owner`, `blocker`, `reserved_paths` and `evidence` |
-| `members` | `id`, `role` (`coordinator`, `integrator`, `worker`), `status`, `claims` (items held claimed, blocked or submitted) and `last_activity` (the time of its latest board event, or `null`) |
+| `items` | The board's tasks, by id: `id`, `title`, `criteria`, `depends_on`, `state` (the swarm's own: `ready`, `claimed`, `blocked`, `submitted`, `completed`), `waiting` (ready, but a dependency is not completed), `owner`, `blocker`, `reserved_paths` and `evidence` |
+| `members` | `id`, `role` (`coordinator`, `integrator`, `worker`), `status` (`live`, `reserved`, `dead`), `claims` (every item it holds claimed, blocked or submitted, listed or not) and `last_activity` (the time of its latest board event, or `null`) |
 | `evidence` | The run's criterion evidence: `criterion`, `artifact`, `revision`, `kind`, `actor`, `accepted` |
 | `totals` | Over every item and member, whatever was left out: `items`, `ready`, `waiting`, `claimed`, `blocked`, `submitted`, `completed`, `members`, `members_without_claim`, `members_dead` |
-| `truncated` | `true` when rows were left out: past 1,000 items, 2,000 reservations, 100 members or 500 evidence rows, or past 4 MiB of rows |
+| `truncated` | `true` when rows were left out: past 2,000 reservations, 100 members or 500 evidence rows, or past 4 MiB of rows (counted both as stored and as encoded on this socket) |
 
-No claim or reservation token, and no member's process, socket or launcher, is ever in it. An item's `state` maps onto a project board item's state as `ready` → `todo`, `claimed` → `doing`, `submitted` → `review`, `completed` → `done`, `blocked` → `blocked`. Errors: `swarm is required (an environment ref such as C1)`, `unknown swarm C9`, `swarm C1 hosts no board this session can read`, `swarm board unreadable: …` (a value the board never writes, contention), and `swarm boards are unavailable in this harness`.
+No claim or reservation token, and no member's process, socket or launcher, is ever in it.
+
+Errors:
+- `swarm is required (an environment ref such as C1)`;
+- `swarm must be an environment ref such as C1` (what was sent is not echoed);
+- `unknown swarm C9`;
+- `swarm C4 is another session's; this view reads this session's own`;
+- `swarm C5 is neither running nor retained; its board is not read`;
+- `swarm C1 hosts no board this session can read`;
+- `swarm board unreadable: …` (the registry or the board could not be read: contention, a checkout that could not be told, a value or size the board never writes);
+- `swarm boards are unavailable in this harness`;
+- `get_swarm_board takes string fields: id, swarm and agent_id`.
 
 ### `get_session_stats`
 
@@ -1559,10 +1572,13 @@ Once a launched coordinator has sent one, its parent holds each `agent_end` note
 
 ### `swarm_board_changed`
 
-Pushed to every client when the board of a swarm this harness hosts moved (#2478): when a swarm's board is first read, and whenever its `revision` changes after. The harness polls each hosted board's revision once a second while a client is connected, so a swarm is hinted at most once a second. Fetch the snapshot with `get_swarm_board`; the hint carries no rows.
+Pushed to every client when a board this session hosts changed (#2478): when a swarm's board is first read, whenever its `revision` or `run` changes after (another `run` is a board made again), and when it is no longer read (`removed: true`, with `run` and `revision` null: the environment stopped, went, or holds no board). The harness polls this session's running and retained environments once a second, only while a client is connected, so a swarm is hinted at most once a second. A board that cannot be read in one poll is not hinted, and what was last seen of it stands.
+
+A client that connects later is sent one hint per board already seen, on connect, after `get_state`. To read every board at once, call `agent_cmd get_containers` and then `get_swarm_board` for each swarm. Fetch the snapshot with `get_swarm_board`; the hint carries no rows. A hint from a descendant's harness carries `agent_id`, the agent hosting that board, to pass to `get_swarm_board`.
 
 ```json
-{"type":"swarm_board_changed","swarm":"C1","revision":42}
+{"type":"swarm_board_changed","swarm":"C1","run":"9f0c…","revision":42,"removed":false}
+{"type":"swarm_board_changed","swarm":"C1","run":null,"revision":null,"removed":true}
 ```
 
 ### `reply_ready`

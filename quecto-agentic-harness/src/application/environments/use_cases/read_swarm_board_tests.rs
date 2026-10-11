@@ -1,13 +1,13 @@
 use super::ReadSwarmBoard;
 use crate::application::environments::dto::{
-    BoardSighting, HostedBoardRevision, SwarmBoardRefusal,
+    BoardSighting, HostedBoardRevision, SwarmBoardRefusal, SwarmBoardSnapshot,
 };
 use crate::application::environments::ports::{HostedSwarmBoard, PortFuture};
 use crate::domain::environments::entities::environment_registry::{
     EnvironmentJournal, EnvironmentOrigin, EnvironmentRecord, EnvironmentRegistry,
     EnvironmentStatus, JournalWrite,
 };
-use serde_json::{Map, Value, json};
+use serde_json::json;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -66,9 +66,9 @@ impl HostedSwarmBoard for Boards {
     fn board<'a>(
         &'a self,
         record: &'a EnvironmentRecord,
-    ) -> PortFuture<'a, Result<Option<Map<String, Value>>, String>> {
+    ) -> PortFuture<'a, Result<Option<SwarmBoardSnapshot>, String>> {
         let found = self.find(record).map(|board| {
-            board.map(|revision| Map::from_iter([("revision".to_owned(), json!(revision))]))
+            board.and_then(|revision| SwarmBoardSnapshot::object(json!({"revision": revision})))
         });
         Box::pin(async move { found })
     }
@@ -107,7 +107,7 @@ async fn a_swarm_is_read_by_its_environment_ref() {
     let read = read(boards, records);
     assert_eq!(
         read.board("C1").await,
-        Ok(Map::from_iter([("revision".to_owned(), json!(7))]))
+        Ok(SwarmBoardSnapshot::object(json!({"revision": 7})).unwrap())
     );
     assert_eq!(
         read.board("C2").await,

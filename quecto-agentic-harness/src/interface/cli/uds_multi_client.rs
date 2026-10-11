@@ -47,6 +47,9 @@ pub(crate) struct ClientHandlerArgs {
     /// Launch-bound parent control and teardown edge (#1935). `None` only
     /// for test rigs that exercise the plain reader path.
     pub(crate) teardown: Option<Arc<ConnectionTeardown>>,
+    /// The board view's handle (#2478): `get_swarm_board` is answered off
+    /// this reader.
+    pub(crate) swarm_boards: Option<super::super::uds_swarm_board::SwarmBoards>,
     /// RAII guard — decrements `live_clients` and sends `Disconnected` on drop.
     pub(crate) _guard: ClientGuard,
 }
@@ -64,6 +67,7 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
         session,
         subagent_registry,
         teardown,
+        swarm_boards,
         _guard,
     } = args;
     use tokio::io::BufReader;
@@ -172,13 +176,13 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
         }
         if super::super::uds_swarm_board::intercept(
             &line,
-            teardown.as_deref().map(|teardown| &teardown.swarm_boards),
-            &client_tool_registry,
-            &subagent_registry,
-            client_id,
-        )
-        .await
-        {
+            super::super::uds_swarm_board::BoardViewCtx {
+                boards: swarm_boards.as_ref(),
+                clients: &client_tool_registry,
+                subagents: &subagent_registry,
+                client_id,
+            },
+        ) {
             continue;
         }
         if !super::super::uds_reader_dispatch::dispatch(

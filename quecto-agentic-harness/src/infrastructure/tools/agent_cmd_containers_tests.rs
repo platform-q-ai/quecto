@@ -5,10 +5,13 @@ use crate::application::environments::ports::{
     EnvironmentMemberShutdown, MemberShutdownReport, MemberShutdownResult, PortFuture,
     SettledMember,
 };
-use crate::application::environments::use_cases::{KillEnvironment, ListEnvironmentsQuery};
+use crate::application::environments::use_cases::{
+    KillEnvironment, ListEnvironmentsQuery, ReadSwarmBoard,
+};
 use crate::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, mint_environment_uuid,
 };
+use crate::infrastructure::tools::environment_commands::HostedStoreObservation;
 
 /// Settles every member gracefully without asking anyone: the adapter's
 /// presentation is what these tests pin.
@@ -218,19 +221,15 @@ fn use_case_debug_is_redacted_but_present() {
 fn query_only_tool(query: Arc<ListEnvironmentsQuery>) -> super::super::agent_cmd::AgentCmdTool {
     super::super::agent_cmd::AgentCmdTool::new(super::super::subagent_registry::new_registry())
         .with_environment_control(super::EnvironmentControl {
-        list: query,
-        kill: use_case(EnvironmentRegistry::new()),
-        boards: Arc::new(
-            crate::application::environments::use_cases::ReadSwarmBoard::new(
+            list: query,
+            kill: use_case(EnvironmentRegistry::new()),
+            boards: Arc::new(ReadSwarmBoard::new(
                 EnvironmentRegistry::new(),
-                Arc::new(
-                    crate::infrastructure::tools::environment_commands::HostedStoreObservation::new(
-                        crate::composition::swarm::swarm_board(),
-                    ),
-                ),
-            ),
-        ),
-    })
+                Arc::new(HostedStoreObservation::new(
+                    crate::composition::swarm::swarm_board(),
+                )),
+            )),
+        })
 }
 
 #[test]

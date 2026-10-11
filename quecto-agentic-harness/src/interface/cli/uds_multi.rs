@@ -267,6 +267,11 @@ pub(super) async fn multi_client_loop(
         .as_ref()
         .map(|launch| launch.bind_deadline.clone());
     clients::end_with_the_fleet(&extensions, harness_lifecycle.clone());
+    // The board view's own handle (#2478): the boards the environment
+    // control carries, once composition has installed it.
+    let swarm_boards = environment_control.clone().map(|slot| {
+        super::uds_swarm_board::SwarmBoards::new(move || slot.get().map(|control| control.boards))
+    });
     let teardown = teardown_graph.map(|build| {
         build(super::uds_teardown_handles::TeardownLoopInputs {
             owner: crate::domain::ids::AgentUuid::new(if session_key.is_empty() {
@@ -324,6 +329,7 @@ pub(super) async fn multi_client_loop(
         workspace_path: workspace.to_path_buf(),
         teardown: connections,
         extensions: extensions.clone(),
+        swarm_boards,
     });
 
     // Drop our clone so cmd_rx closes when all client senders (accept loop)
