@@ -2,7 +2,8 @@
 //! documents read back by a CommonMark/GFM reader (the oracle), block
 //! starts kept as text, and the limits.
 use super::*;
-use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, LinkType, Options, Parser, Tag};
+use oracle::outline;
+use pulldown_cmark::{Event, Options, Parser, Tag};
 
 const FIELDS: &[Column<'static>] = &[
     Column {
@@ -143,145 +144,6 @@ fn main() {
 | path `C:\x` | open |
 "##;
 
-/// What a CommonMark/GFM reader (every extension on) makes of `file` is
-/// exactly the outline `document` has, block by block: the marker, one H1,
-/// the field table, then per section one H2 and its paragraphs (of as many
-/// lines), one-level `- ` lists (of as many items, nothing but inline text
-/// in one), fenced code (of as many lines) and tables (as many rows, under
-/// a header as wide as the shape's columns; a reader pads or cuts each
-/// row to the header, so a row's own width is the renderer's to keep). No HTML, math, image, footnote, quote, rule,
-/// hard break, ordered or nested list, or other link than an inline https
-/// one; and every text it decodes keeps the character rules.
-pub(super) fn outline(file: &str, document: &Document) -> Result<(), String> {
-    // A run may end before inline markup with a space: the characters are
-    // what is checked here.
-    let checked = |text: &str| {
-        text.split('\n')
-            .map(|line| line.trim_end_matches(' '))
-            .try_for_each(|line| {
-                chars::check_line(line, 0).map_err(|error| format!("{line:?}: {error:?}"))
-            })
-    };
-    let mut top: Vec<String> = vec![];
-    // Open tags, outermost first; and the counts of the top-level block.
-    let mut open: Vec<&'static str> = vec![];
-    let (mut count, mut cells, mut code) = (0usize, 0usize, String::new());
-    // The header's width, and whether any row is of another.
-    let (mut width, mut ragged) = (None, false);
-    // Text a reader splits (at a `*`, say) is checked as the run it is.
-    let mut run = String::new();
-    for event in Parser::new_ext(file, Options::all()) {
-        match &event {
-            Event::Text(_) => {}
-            _ => checked(&std::mem::take(&mut run))?,
-        }
-        match &event {
-            Event::Start(tag) => {
-                let kind = match tag {
-                    Tag::HtmlBlock if top.is_empty() => "marker",
-                    Tag::Heading {
-                        level: HeadingLevel::H1,
-                        ..
-                    } if top.len() == 1 => "h1",
-                    Tag::Heading {
-                        level: HeadingLevel::H2,
-                        ..
-                    } if open.is_empty() => "h2",
-                    Tag::Paragraph if open.is_empty() => "paragraph",
-                    Tag::List(None) if open.is_empty() => "list",
-                    Tag::Item if open == ["list"] => "item",
-                    Tag::CodeBlock(CodeBlockKind::Fenced(_)) if open.is_empty() => "code",
-                    Tag::Table(_) if open.is_empty() => "table",
-                    Tag::TableHead if open == ["table"] => "head",
-                    Tag::TableRow if open == ["table"] => "row",
-                    Tag::TableCell if matches!(open.as_slice(), ["table", "head" | "row"]) => {
-                        "cell"
-                    }
-                    Tag::Emphasis | Tag::Strong | Tag::Strikethrough => "inline",
-                    Tag::Superscript | Tag::Subscript => "inline",
-                    Tag::Link {
-                        link_type: LinkType::Inline,
-                        dest_url,
-                        title,
-                        ..
-                    } if dest_url.starts_with("https://") && title.is_empty() => "inline",
-                    other => return Err(format!("{other:?} in {open:?}")),
-                };
-                if open.is_empty() {
-                    (count, cells, width, ragged) = (0, 0, None, false);
-                    code.clear();
-                }
-                match kind {
-                    "item" | "row" => count += 1,
-                    "cell" => cells += 1,
-                    _ => {}
-                }
-                open.push(kind);
-            }
-            Event::End(_) => {
-                let closed = open.pop().ok_or("an end with nothing open")?;
-                if let "head" | "row" = closed {
-                    match width {
-                        None => width = Some(cells),
-                        Some(header) => ragged |= header != cells,
-                    }
-                    cells = 0;
-                }
-                if open.is_empty() {
-                    top.push(match closed {
-                        "paragraph" => format!("paragraph:{}", count + 1),
-                        "list" => format!("list:{count}"),
-                        "code" => format!("code:{}", code.matches('\n').count()),
-                        "table" if ragged => "table:ragged".to_string(),
-                        "table" => format!("table:{}x{count}", width.unwrap_or(0)),
-                        other => other.to_string(),
-                    });
-                }
-            }
-            Event::Text(text) => {
-                if open.first() == Some(&"code") {
-                    code.push_str(text);
-                }
-                run.push_str(text);
-            }
-            Event::Code(text) => checked(text)?,
-            Event::Html(_) if top.is_empty() => {}
-            Event::SoftBreak if open == ["paragraph"] => count += 1,
-            other => return Err(format!("{other:?} in {open:?}")),
-        }
-    }
-    checked(&run)?;
-    let mut expected = vec!["marker".to_string(), "h1".to_string()];
-    if !document.fields.is_empty() {
-        expected.push(format!("table:2x{}", document.fields.len()));
-    }
-    for section in &document.sections {
-        expected.push("h2".into());
-        match &section.body {
-            Body::Prose(blocks) => expected.extend(blocks.iter().map(|block| match block {
-                Block::Paragraph(lines) => format!("paragraph:{}", lines.len()),
-                Block::List(items) => format!("list:{}", items.len()),
-                Block::Code { lines, .. } => format!("code:{}", lines.len()),
-            })),
-            Body::Table(rows) => {
-                let columns = SHAPE
-                    .sections
-                    .iter()
-                    .find(|known| known.heading == section.heading)
-                    .map_or(0, |known| match known.body {
-                        BodyShape::Table(columns) => columns.len(),
-                        BodyShape::Prose => 0,
-                    });
-                expected.push(format!("table:{columns}x{}", rows.len()));
-            }
-        }
-    }
-    match top == expected {
-        true => Ok(()),
-        false => Err(format!("{top:?}, not {expected:?}")),
-    }
-}
-
 /// The oracle tells apart what the codec must never write: each file
 /// below is the example with one block changed as a reader would see it.
 #[test]
@@ -344,7 +206,7 @@ impl Seeded {
         const HOSTILE: &[&str] = &[
             "\u{1}", "\u{202e}", "\u{200b}", "\u{fe0f}", "e\u{301}", "&amp;", "&#65;", "$x$",
             "![i](https://example.com/i.png)", "<b>", "http://x", "www.x", "\u{2800}", "\u{3164}",
-            "a\u{fe0f}\u{200d}🦀", "\u{a0}", "[r][ref]", "[[w]]", "x\u{301}\u{302}\u{303}\u{304}\u{305}",
+            "a\u{fe0f}\u{200d}🦀", "\u{a0}", "[r][ref]", "[[w]]", "[^1]", "ftp://x", "<1@b.co>", "x\u{301}\u{302}\u{303}\u{304}\u{305}",
         ];
         let mut line: String = (0..1 + self.below(6)).map(|_| self.pick(SAFE)).collect();
         line = line.trim().to_string();
@@ -538,6 +400,9 @@ fn files_lines_and_line_counts_are_capped_at_their_bounds() {
         })
     );
 }
+
+#[path = "markdown_oracle_tests.rs"]
+mod oracle;
 
 #[path = "markdown_hostile_tests.rs"]
 mod hostile;

@@ -217,6 +217,15 @@ pub enum MarkdownError {
     NotCanonical,
 }
 
+impl std::fmt::Display for MarkdownError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let _ = self;
+        f.write_str("")
+    }
+}
+
+impl std::error::Error for MarkdownError {}
+
 /// A name of a field, heading or column: an ASCII capital, then letters,
 /// digits and single spaces, at most forty.
 fn name(name: &str) -> bool {

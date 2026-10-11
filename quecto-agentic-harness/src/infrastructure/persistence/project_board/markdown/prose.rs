@@ -14,7 +14,7 @@ pub const BLOCK_STARTS: &str = "#|>=-+*_:[<\\~$";
 /// The languages a fence may name: plain highlighters, each of which a
 /// reader (GitHub's included) shows as code. Others (`math`, `mermaid`,
 /// `geojson`, `topojson`, `stl`) are drawn as something else.
-const LANGUAGES: &[&str] = &[
+pub const LANGUAGES: &[&str] = &[
     "text", "sh", "bash", "console", "rust", "toml", "json", "yaml", "diff", "python", "js", "ts",
     "kotlin", "java", "go", "sql", "html", "css", "markdown", "c", "cpp",
 ];

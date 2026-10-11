@@ -102,6 +102,35 @@ fn hostile_documents_are_refused_when_written() {
         ("a selector after a digit", render(&with_line("1\u{fe0f} x"), &SHAPE), |e| matches!(e, E::Invisible { line: 11 })),
         ("a selector after a digit, then no keycap", render(&with_line("1\u{fe0f}x\u{20e3}"), &SHAPE), |e| matches!(e, E::Invisible { line: 11 })),
         ("a subdivision flag", render(&with_line("\u{1f3f4}\u{e0067}\u{e0062}\u{e0073}\u{e0063}\u{e0074}\u{e007f}"), &SHAPE), |e| matches!(e, E::Invisible { line: 11 })),
+        ("an autolink hiding a span", render(&with_line("a <1`@b.co> <!-- secret --> <img src=x> &amp; $x$ http://evil.example `"), &SHAPE), |e| matches!(e, E::Html { line: 11 })),
+        ("a destination hiding a span", render(&with_line("see [a](https://b.co/`)<!-- secret --> <b>bold</b> &#65; `)"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        ("a span in a destination", render(&with_line("[a](https://x.co` `http://evil.example)"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        ("a title hiding a span", with(|d| d.title = "a <1`@b.co> <!-- x --> `".into()), |e| matches!(e, E::Html { line: 2 })),
+        ("a list item hiding a span", with(|d| d.sections[1].body = Body::Prose(vec![Block::List(vec!["see [a](https://b.co/`)<b>x</b> `)".into()])])), |e| matches!(e, E::Link { line: 25 })),
+        ("a text cell hiding a span", render(&with_claim("[a](https://b.co/`)<b>x</b> `)"), &SHAPE), |e| matches!(e, E::Link { line: 8 })),
+        ("an email autolink of a digit", render(&with_line("mail <1@b.co> now"), &SHAPE), |e| matches!(e, E::Html { line: 11 })),
+        ("an email autolink of a plus", render(&with_line("<+x@b.co>"), &SHAPE), |e| matches!(e, E::Html { line: 11 })),
+        ("an email autolink of an underscore", render(&with_line("<_x@b.co>"), &SHAPE), |e| matches!(e, E::Html { line: 11 })),
+        ("an ftp address", render(&with_line("see ftp://evil.example"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        ("any scheme", render(&with_line("see gopher://evil.example"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        ("an ftp address in a text cell", render(&with_claim("ftp://evil.example"), &SHAPE), |e| matches!(e, E::Link { line: 8 })),
+        ("an http address in an id", with(|d| d.fields[0].1 = "http://evil.example".into()), |e| matches!(e, E::Cell { line: 6, .. })),
+        ("an ftp address in an id", with(|d| d.fields[0].1 = "ftp://evil.example".into()), |e| matches!(e, E::Cell { line: 6, .. })),
+        ("a www address in an id", with(|d| d.fields[0].1 = "www.evil.example".into()), |e| matches!(e, E::Cell { line: 6, .. })),
+        ("a www address after a separator in an id", with(|d| d.fields[0].1 = "see:www.evil.example".into()), |e| matches!(e, E::Cell { line: 6, .. })),
+        ("an email address in an id", with(|d| d.fields[0].1 = "a@b.co".into()), |e| matches!(e, E::Cell { line: 6, .. })),
+        ("a footnote", render(&with_line("a note[^1]"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        ("a line longer than a file's lines, before anything renders", with(|d| {
+            d.sections[0].body = Body::Prose(vec![Block::Paragraph(vec!["x".repeat(5_000)])]);
+            d.sections[1].body = Body::Prose(vec![Block::Paragraph(vec!["<b>x</b>".into()])]);
+        }), |e| matches!(e, E::LineTooLong { line: 11, most: 4_096 })),
+        ("a Khitan filler", render(&with_line("a\u{16fe4}b"), &SHAPE), |e| matches!(e, E::Invisible { line: 11 })),
+        ("a line of a mark alone", render(&with_line("\u{301}"), &SHAPE), |e| matches!(e, E::Invisible { line: 11 })),
+        ("a line of a blank span alone", render(&with_line("` `"), &SHAPE), |e| matches!(e, E::Invisible { line: 11 })),
+        ("a title of a mark alone", with(|d| d.title = "\u{301}".into()), |e| matches!(e, E::Invisible { line: 2 })),
+        ("a text cell of a mark alone", render(&with_claim("\u{301}"), &SHAPE), |e| matches!(e, E::Invisible { line: 8 })),
+        ("a title of hashes alone", with(|d| d.title = "###".into()), |e| matches!(e, E::Title)),
+        ("a title closed by two hashes", with(|d| d.title = "a ##".into()), |e| matches!(e, E::Title)),
         ("a fence language with a space", with(|d| d.sections[0].body = Body::Prose(vec![Block::Code { language: Some("a b".into()), lines: vec![] }])), |e| matches!(e, E::Fence { .. })),
         ("a row of one cell", with(|d| d.sections[2].body = Body::Table(vec![vec!["x".into()]])), |e| matches!(e, E::Cell { .. })),
         ("a field no task has", with(|d| d.fields[0].0 = "Owner".into()), |e| matches!(e, E::UnknownField { .. })),
@@ -128,6 +157,8 @@ fn near_misses_are_kept() {
         "x\u{301}\u{302}\u{303}\u{304}",
         "keycaps 1\u{fe0f}\u{20e3} #\u{fe0f}\u{20e3} *\u{fe0f}\u{20e3} and 2\u{20e3}",
         "[`code`](https://example.com) and [a b](https://example.com)",
+        "a < b, 1 < 2 and a trailing <",
+        "times 12:00:00 and :smile: stay as written",
     ] {
         let document = with_line(line);
         let file = render(&document, &SHAPE).unwrap_or_else(|error| panic!("{line:?}: {error:?}"));
@@ -142,10 +173,7 @@ fn near_misses_are_kept() {
 /// Every fence language on the list is kept, read as code by a reader.
 #[test]
 fn every_listed_fence_language_is_kept() {
-    for language in [
-        "text", "sh", "bash", "console", "rust", "toml", "json", "yaml", "diff", "python", "js",
-        "ts", "kotlin", "java", "go", "sql", "html", "css", "markdown", "c", "cpp",
-    ] {
+    for &language in prose::LANGUAGES {
         let mut document = example();
         document.sections[0].body = Body::Prose(vec![Block::Code {
             language: Some(language.into()),
@@ -176,6 +204,62 @@ fn lines_are_counted_before_anything_is_rendered() {
         ),
         "{refused:?}"
     );
+}
+
+/// Ids, times, issue numbers and `path:line` locations are ASCII cells a
+/// file keeps, as written.
+#[test]
+fn ascii_cells_keep_ids_times_and_locations() {
+    for id in [
+        "2026-10-11T12:00:00Z",
+        "src/a.rs:88",
+        "#2494",
+        "board-cli",
+        "v1.2.3+build",
+    ] {
+        let mut document = example();
+        document.fields[0].1 = id.into();
+        let file = render(&document, &SHAPE).unwrap_or_else(|error| panic!("{id}: {error:?}"));
+        assert!(file.contains(&format!("| Id | {id} |")), "{id}");
+        assert_eq!(outline(&file, &document), Ok(()), "{id}");
+    }
+}
+
+/// A title may end in a `#` that is part of a word; only a closing run
+/// (a space then hashes) or hashes alone are refused.
+#[test]
+fn a_title_may_end_in_a_hash_of_its_own() {
+    for title in ["Port to C#", "C#", "F# and C##"] {
+        let mut document = example();
+        document.title = title.into();
+        let file = render(&document, &SHAPE).unwrap_or_else(|error| panic!("{title}: {error:?}"));
+        assert_eq!(outline(&file, &document), Ok(()), "{title}");
+    }
+}
+
+/// Every refusal says what was refused, and where when it knows; it is a
+/// standard error.
+#[test]
+fn every_refusal_says_what_and_where() {
+    use MarkdownError as E;
+    let refusals = [
+        (E::Html { line: 11 }, "line 11"),
+        (E::Link { line: 3 }, "line 3"),
+        (
+            E::Fence {
+                line: 18,
+                why: "a language from the list of plain highlighters",
+            },
+            "plain highlighters",
+        ),
+        (E::TooManyLines { lines: 9, most: 8 }, "9"),
+        (E::Title, "title"),
+        (E::NotCanonical, "canonical"),
+    ];
+    for (refusal, says) in refusals {
+        let error: &dyn std::error::Error = &refusal;
+        assert!(error.to_string().contains(says), "{refusal:?}: {error}");
+    }
 }
 
 /// A shape is checked before anything is rendered.
