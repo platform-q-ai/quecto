@@ -76,6 +76,9 @@ fn only_json_names_quecto_can_show_are_carried() {
             ("100644", b"a/b.json", &odder),
             ("100644", b"a\\b.json", &odder),
             ("100644", b"..json", &odder),
+            ("100644", b"a[x](y).json", &odder),
+            ("100644", "\u{3164}.json".as_bytes(), &odder),
+            ("100644", "e\u{301}.json".as_bytes(), &odder),
         ],
         &[&repos.bob],
     );
@@ -179,4 +182,47 @@ fn a_clash_quotes_the_root_name_it_names() {
         !why.chars().any(|c| c.is_control() || c == '\u{202e}'),
         "{why:?}"
     );
+}
+
+/// A name twice where one copy's mode and object disagree (a write drops
+/// it): the copy a write carries is read, the other is set aside with no
+/// id, so no task is both read and set aside, and writes go on.
+#[test]
+fn a_name_twice_where_one_copy_disagrees_with_its_mode_is_read_once() {
+    for (mode, object) in [
+        (
+            "40000",
+            Object::Blob(b"a blob under a directory mode".to_vec()),
+        ),
+        ("100644", Object::EmptyTree),
+    ] {
+        let repos = Repos::new();
+        let alice = store(&repos.alice);
+        created(&alice);
+        let head = raw_board(
+            &repos.remote(),
+            &[
+                (
+                    "100644",
+                    "dup.json",
+                    Object::Blob(encode(&task("dup")).unwrap()),
+                ),
+                (mode, "dup.json", object),
+            ],
+            &[&repos.bob],
+        );
+        let bob = store(&repos.bob);
+        let board = bob.board_at(&head.0).unwrap();
+        assert_eq!(
+            board.tasks.keys().map(Slug::as_str).collect::<Vec<_>>(),
+            ["dup"],
+            "{mode}"
+        );
+        assert!(
+            board.quarantined.iter().all(|file| file.id.is_none()),
+            "{mode}: {:?}",
+            board.quarantined
+        );
+        written(bob.write(&head, &[task("fresh")], "board: add fresh"));
+    }
 }
