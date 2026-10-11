@@ -590,7 +590,7 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "Internal",
     ),
     (
-        "src/infrastructure/tools/swarm_board_dispatch.rs:call_deciding",
+        "src/infrastructure/tools/swarm_board_dispatch_records.rs:origin_refusal",
         "the supervising session reads only _board and _board_revision, not {method}",
         "Calling",
     ),

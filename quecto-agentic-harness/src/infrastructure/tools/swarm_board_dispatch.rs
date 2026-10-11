@@ -17,10 +17,9 @@
 //! (#2270) and the harness's membership methods `_admit`, `_activate`,
 //! `_record_launch`, `_release_unlaunched` and `_socket` (#2271); later
 //! slices add methods, and `SwarmContext` and `HostedStore` call it
-//! through `swarm_bridge::SwarmBoard` (#2278). Every
-//! membership argument (member, reservation, pid, start time, socket)
-//! reaches the use case as the JSON value passed (#2271 round-1 review
-//! M1): Python binds each untyped, so the store binds it as Python's
+//! through `swarm_bridge::SwarmBoard` (#2278). Every membership argument
+//! (member, reservation, pid, start time, socket) reaches the use case as
+//! the JSON value passed (#2271 round-1 review M1): Python binds each untyped, so the store binds it as Python's
 //! `sqlite3` does and the board compares it by Python's `==`; no type is
 //! refused here. `create_run`, `bootstrap_run` and `bootstrap_join` (the
 //! transactional halves of `create` and `_bootstrap`, and `_bootstrap`'s
@@ -30,18 +29,16 @@
 //! method is listed on [`method`].
 //!
 //! The summaries keep Python's order: `create` commits and then reads the
-//! creator's summary, which can still refuse (a created run answered with
-//! a refusal); `_join` and `_bootstrap` end every branch of the join with
-//! the coordinator's summary after its writes commit, the already-live
-//! branch (which writes nothing) included, so its gate can refuse a
-//! coordinator that is nobody.
+//! creator's summary, which can still refuse; `_join` and `_bootstrap` end
+//! every branch of the join with the coordinator's summary after its
+//! writes commit (the already-live branch too), so its gate can refuse a
+//! coordinator that is nobody. The supervising session's origin reaches
+//! the projection reads only (`records::origin_refusal`).
 //!
 //! `JoinRun` runs `AdmitMember`'s and `ActivateMember`'s work by a
 //! deliberate decision (#2271 round-1 review L3): Python's `join_process`
-//! calls those two `Workbench` methods, so the use case sequences them (as
-//! shared functions over its own repository, so a metered call measures
-//! all of it, #2303), and the dispatcher still calls one use case per
-//! method.
+//! calls both, so the use case sequences them (shared functions over its
+//! own repository, all metered, #2303); the dispatcher calls one use case.
 //!
 //! Each call leaves one `tracing` record on [`TELEMETRY_TARGET`] (DEBUG
 //! for a read-only method, unless the token budget warned or paused the
@@ -312,16 +309,6 @@ pub fn call_as(
     call_deciding(handles, member, method, args, origin).0
 }
 
-/// Whether `origin` may call `known`: the supervising session only the
-/// projection reads, every other origin any method (an allowlist).
-fn origin_may_call(origin: CallOrigin, known: Option<Method>) -> bool {
-    match (origin, known) {
-        (CallOrigin::Supervisor, Some(Method::Board | Method::BoardRevision))
-        | (CallOrigin::Member | CallOrigin::Harness | CallOrigin::Watch, _) => true,
-        (CallOrigin::Supervisor, _) => false,
-    }
-}
-
 /// [`call_as`], answering also whether the op changed the run's control
 /// state (#2390): as its serving said, for an answer or a refusal met after
 /// its writes committed; `false` for an op refused before it decided.
@@ -334,13 +321,7 @@ pub fn call_deciding(
 ) -> (Result<Value, BoardError>, bool) {
     let started = Instant::now();
     let known = Method::parse(method);
-    // The supervising session's origin writes no event-log record, so it
-    // reaches the two projection reads and nothing else (#2487 round 2).
-    if !origin_may_call(origin, known) {
-        let refusal = BoardError::new(
-            RefusalKind::Calling,
-            format!("the supervising session reads only _board and _board_revision, not {method}"),
-        );
+    if let Some(refusal) = records::origin_refusal(origin, known, method) {
         return (Err(refusal), false);
     }
     let role = records::recorded_role(origin, known);

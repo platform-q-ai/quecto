@@ -19,7 +19,7 @@ use crate::application::swarm::dto::CallMeasure;
 use crate::application::swarm::ports::BoardOpLog;
 use crate::domain::redaction::Redacted;
 use crate::domain::swarm::watch_polls::{PollTally, WATCH_POLL_OP};
-use crate::domain::swarm::{BoardOpObservation, BoardRole, RefusalKind};
+use crate::domain::swarm::{BoardError, BoardOpObservation, BoardRole, RefusalKind};
 
 /// Whom a board call is made for (#2279 S15 final review): the calling
 /// member, whose role in the run a member-facing op records, or the
@@ -37,6 +37,25 @@ pub enum CallOrigin {
     /// client watches the board: recorded as `host` by `tracing` alone,
     /// never as an event-log `swarm_op`, so a poll writes no record.
     Supervisor,
+}
+
+/// The refusal of a call `origin` may not make, `None` for one it may
+/// (#2487 round 2): the supervising session's origin writes no event-log
+/// record, so it reaches the two projection reads and nothing else; every
+/// other origin reaches any method (an allowlist of what each may call).
+pub(super) fn origin_refusal(
+    origin: CallOrigin,
+    known: Option<Method>,
+    method: &str,
+) -> Option<BoardError> {
+    match (origin, known) {
+        (CallOrigin::Supervisor, Some(Method::Board | Method::BoardRevision))
+        | (CallOrigin::Member | CallOrigin::Harness | CallOrigin::Watch, _) => None,
+        (CallOrigin::Supervisor, _) => Some(BoardError::new(
+            RefusalKind::Calling,
+            format!("the supervising session reads only _board and _board_revision, not {method}"),
+        )),
+    }
 }
 
 /// The run watch's `unchanged` ticks not yet written (#2338), held with the
