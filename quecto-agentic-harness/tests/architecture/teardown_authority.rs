@@ -279,9 +279,9 @@ const PROCESS_EFFECT_ALLOWLIST: &[(&str, &[&str], &str)] = &[
     ),
     (
         "src/infrastructure/persistence/project_board/git.rs",
-        &["kill("],
-        "the project board store ending its own git Child at its deadline \
-         (#2476)",
+        &["kill(", "libc::kill", "process_group(", "libc::SIGKILL"],
+        "the project board store ending its own git Child, in its own \
+         process group, with that whole group at its deadline (#2476)",
     ),
     (
         "src/infrastructure/tools/grep_run.rs",

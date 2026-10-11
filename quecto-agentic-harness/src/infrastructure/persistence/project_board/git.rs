@@ -24,10 +24,13 @@ pub const INHERITED: &[&str] = &[
     "GIT_CONFIG_GLOBAL",
     "GIT_CONFIG_NOSYSTEM",
 ];
-/// Settings every call carries: no hooks, no automatic gc or maintenance.
+/// Settings every call carries: no hooks, no filesystem monitor, no
+/// automatic gc or maintenance.
 const SETTINGS: &[&str] = &[
     "-c",
     "core.hooksPath=/dev/null",
+    "-c",
+    "core.fsmonitor=false",
     "-c",
     "gc.auto=0",
     "-c",
@@ -117,6 +120,11 @@ impl Git {
         }
     }
 
+    /// The committer every write is made as.
+    pub fn identity(&self) -> &Identity {
+        &self.identity
+    }
+
     /// A local call's trimmed text output.
     pub fn text(&self, args: &[&str], input: Option<&[u8]>) -> Result<String, GitError> {
         Ok(String::from_utf8_lossy(&self.ok(args, input)?)
@@ -156,6 +164,9 @@ impl Git {
             })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        // Its own process group, so a deadline ends git and everything it
+        // started (an ssh, a remote helper), never only git.
+        std::os::unix::process::CommandExt::process_group(&mut command, 0);
         let mut child = command
             .spawn()
             .map_err(|error| GitError::Spawn(error.to_string()))?;
@@ -174,6 +185,7 @@ impl Git {
                 Some(status) => break status,
                 None if Instant::now() < deadline => thread::sleep(Duration::from_millis(2)),
                 None => {
+                    end_group(child.id());
                     let _ = child.kill();
                     let _ = child.wait();
                     return Err(GitError::TimedOut {
@@ -188,6 +200,18 @@ impl Git {
             stdout: joined(stdout),
             stderr: joined(stderr),
         })
+    }
+}
+
+/// Ends the process group `leader` leads (`process_group(0)` made the
+/// child its leader): git and whatever it started.
+fn end_group(leader: u32) {
+    if let Ok(group) = i32::try_from(leader) {
+        // The group is this call's own child's.
+        // SAFETY: kill(2) takes plain integers and touches no memory.
+        unsafe {
+            libc::kill(-group, libc::SIGKILL);
+        }
     }
 }
 

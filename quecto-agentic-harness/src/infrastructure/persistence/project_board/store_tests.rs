@@ -1,5 +1,4 @@
 use super::*;
-use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::TaskFields;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
@@ -118,12 +117,51 @@ fn task(id: &str) -> Task {
         status: TaskStatus::Ready,
         parent: None,
         depends_on: vec![],
+        plan: vec![],
+        items: vec![],
+        team: None,
         claim: None,
+        runs: vec![],
+        reviews: vec![],
         prs: vec![],
         created: at.clone(),
         updated: at,
     })
     .unwrap()
+}
+
+fn created(store: &GitBoardStore) -> BoardHead {
+    match store.bootstrap() {
+        Ok(BoardBootstrap::Created(head)) => head,
+        other => panic!("not created: {other:?}"),
+    }
+}
+
+fn written(write: Result<BoardWrite, BoardStoreError>) -> BoardHead {
+    match write {
+        Ok(BoardWrite::Written(head)) => head,
+        other => panic!("not written: {other:?}"),
+    }
+}
+
+/// Moves the remote board to a commit of `tasks/` entries `extra` (name,
+/// `mode type oid`) beside the ones at the head.
+fn hand_edit(remote: &Path, extra: &[(&str, String)]) -> BoardHead {
+    let head = sh(remote, &["rev-parse", BOARD_REF]);
+    let mut listing = sh(remote, &["ls-tree", &format!("{head}:tasks")]);
+    for (name, meta) in extra {
+        listing += &format!("\n{meta}\t{name}");
+    }
+    let tasks = sh_with(remote, &["mktree"], format!("{listing}\n").as_bytes());
+    let readme = sh(remote, &["rev-parse", &format!("{head}:README.md")]);
+    let root = format!("100644 blob {readme}\tREADME.md\n040000 tree {tasks}\ttasks\n");
+    let root = sh_with(remote, &["mktree"], root.as_bytes());
+    let commit = sh(
+        remote,
+        &["commit-tree", &root, "-p", &head, "-m", "hand edit"],
+    );
+    sh(remote, &["update-ref", BOARD_REF, &commit]);
+    BoardHead(commit)
 }
 
 fn ids(snapshot: &BoardSnapshot) -> Vec<&str> {
@@ -137,17 +175,15 @@ fn ids(snapshot: &BoardSnapshot) -> Vec<&str> {
 #[test]
 fn bootstrap_creates_the_board_once_with_only_its_readme() {
     let repos = Repos::new();
-    assert_eq!(store(&repos.alice).read(), Err(StoreError::NoBoard));
-    let Ok(Bootstrapped::Created { head }) = store(&repos.alice).bootstrap() else {
-        panic!("created")
-    };
+    assert_eq!(store(&repos.alice).read(), Err(BoardStoreError::NoBoard));
+    let head = created(&store(&repos.alice));
     assert_eq!(
         store(&repos.bob).bootstrap(),
-        Ok(Bootstrapped::Existing { head: head.clone() })
+        Ok(BoardBootstrap::Existing(head.clone()))
     );
     assert_eq!(
         store(&repos.alice).bootstrap(),
-        Ok(Bootstrapped::Existing { head: head.clone() })
+        Ok(BoardBootstrap::Existing(head.clone()))
     );
     assert_eq!(
         sh(&repos.remote(), &["ls-tree", "--name-only", BOARD_REF]),
@@ -166,12 +202,12 @@ fn a_branch_named_quecto_here_or_on_the_remote_blocks_bootstrap() {
     sh(&repos.alice, &["branch", "quecto"]);
     assert!(matches!(
         store(&repos.alice).bootstrap(),
-        Err(StoreError::Clash(_))
+        Err(BoardStoreError::Clash(_))
     ));
     sh(&repos.alice, &["push", "-q", "origin", "quecto"]);
     assert!(matches!(
         store(&repos.bob).bootstrap(),
-        Err(StoreError::Clash(_))
+        Err(BoardStoreError::Clash(_))
     ));
     assert_eq!(
         sh(&repos.remote(), &["for-each-ref", "refs/heads/quecto/"]),
@@ -183,17 +219,10 @@ fn a_branch_named_quecto_here_or_on_the_remote_blocks_bootstrap() {
 fn tasks_and_their_summaries_are_written_in_one_commit_and_read_back() {
     let repos = Repos::new();
     let alice = store(&repos.alice);
-    let Ok(Bootstrapped::Created { head }) = alice.bootstrap() else {
-        panic!("created")
-    };
-    let written = alice
-        .write(&head, &[task("a"), task("b")], "board: add a and b")
-        .unwrap();
+    let head = created(&alice);
+    let moved = written(alice.write(&head, &[task("a"), task("b")], "board: add a and b"));
     let snapshot = store(&repos.bob).read().unwrap();
-    assert_eq!(
-        (snapshot.head.as_str(), ids(&snapshot)),
-        (written.as_str(), vec!["a", "b"])
-    );
+    assert_eq!((&snapshot.head, ids(&snapshot)), (&moved, vec!["a", "b"]));
     assert_eq!(snapshot.tasks, vec![task("a"), task("b")]);
     let file = |path: &str| {
         sh(
@@ -212,37 +241,9 @@ fn tasks_and_their_summaries_are_written_in_one_commit_and_read_back() {
     );
     assert_eq!(
         log.lines().next().unwrap(),
-        format!("Ada <ada@example.com>|Ada|{head}|board: add a and b")
+        format!("Ada <ada@example.com>|Ada|{}|board: add a and b", head.0)
     );
-}
-
-#[test]
-fn a_write_from_a_stale_base_loses_and_refetches_then_succeeds_on_the_new_head() {
-    let repos = Repos::new();
-    let (alice, bob) = (store(&repos.alice), store(&repos.bob));
-    let Ok(Bootstrapped::Created { head }) = alice.bootstrap() else {
-        panic!("created")
-    };
-    let stale = bob.read().unwrap().head;
-    let won = alice.write(&head, &[task("a")], "board: add a").unwrap();
-    assert_eq!(
-        bob.write(&stale, &[task("b")], "board: add b"),
-        Err(StoreError::Lost {
-            head: Some(won.clone())
-        })
-    );
-    assert_eq!(
-        sh(
-            &repos.bob,
-            &["rev-parse", "refs/remotes/origin/quecto/board"]
-        ),
-        won,
-        "the loser refetched"
-    );
-    let fresh = bob.read().unwrap();
-    bob.write(&fresh.head, &[task("b")], "board: add b")
-        .unwrap();
-    assert_eq!(ids(&alice.read().unwrap()), vec!["a", "b"]);
+    assert_eq!(alice.writer(), person("Ada"));
 }
 
 #[test]
@@ -251,28 +252,23 @@ fn the_checkout_keeps_its_index_head_branches_and_fetch_head() {
     std::fs::write(repos.alice.join("staged.txt"), "staged").unwrap();
     sh(&repos.alice, &["add", "staged.txt"]);
     std::fs::write(repos.alice.join("staged.txt"), "edited").unwrap();
-    let before = [
-        "--no-optional-locks status --porcelain",
-        "rev-parse HEAD",
-        "symbolic-ref HEAD",
-        "branch --list",
-    ]
-    .map(|args| sh(&repos.alice, &args.split(' ').collect::<Vec<_>>()));
+    let state = || {
+        [
+            "--no-optional-locks status --porcelain",
+            "rev-parse HEAD",
+            "symbolic-ref HEAD",
+            "branch --list",
+            "tag --list",
+        ]
+        .map(|args| sh(&repos.alice, &args.split(' ').collect::<Vec<_>>()))
+    };
+    let before = state();
     let index = std::fs::read(repos.alice.join(".git/index")).unwrap();
     let alice = store(&repos.alice);
-    let Ok(Bootstrapped::Created { head }) = alice.bootstrap() else {
-        panic!("created")
-    };
-    alice.write(&head, &[task("a")], "board: add a").unwrap();
+    let head = created(&alice);
+    written(alice.write(&head, &[task("a")], "board: add a"));
     alice.read().unwrap();
-    let after = [
-        "--no-optional-locks status --porcelain",
-        "rev-parse HEAD",
-        "symbolic-ref HEAD",
-        "branch --list",
-    ]
-    .map(|args| sh(&repos.alice, &args.split(' ').collect::<Vec<_>>()));
-    assert_eq!(after, before);
+    assert_eq!(state(), before);
     assert_eq!(
         std::fs::read(repos.alice.join(".git/index")).unwrap(),
         index
@@ -284,32 +280,38 @@ fn the_checkout_keeps_its_index_head_branches_and_fetch_head() {
     );
 }
 
+fn executable(path: &Path, script: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::write(path, script).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
 #[test]
-fn hooks_never_run() {
+fn hooks_and_fsmonitor_never_run() {
     let repos = Repos::new();
     let marker = repos.dir.path().join("hook-ran");
+    let script = format!("#!/bin/sh\ntouch '{}'\nexit 1\n", marker.display());
     for hook in [
         "pre-push",
         "pre-commit",
         "post-commit",
         "reference-transaction",
         "pre-auto-gc",
+        "fsmonitor-watchman",
     ] {
-        let path = repos.alice.join(".git/hooks").join(hook);
-        std::fs::write(
-            &path,
-            format!("#!/bin/sh\ntouch '{}'\nexit 1\n", marker.display()),
-        )
-        .unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        executable(&repos.alice.join(".git/hooks").join(hook), &script);
     }
+    let monitor = repos.dir.path().join("fsmonitor");
+    executable(&monitor, &script);
+    sh(
+        &repos.alice,
+        &["config", "core.fsmonitor", monitor.to_str().unwrap()],
+    );
     let alice = store(&repos.alice);
-    let Ok(Bootstrapped::Created { head }) = alice.bootstrap() else {
-        panic!("created")
-    };
-    alice.write(&head, &[task("a")], "board: add a").unwrap();
-    assert!(!marker.exists(), "a hook ran");
+    let head = created(&alice);
+    written(alice.write(&head, &[task("a")], "board: add a"));
+    alice.read().unwrap();
+    assert!(!marker.exists(), "a hook or fsmonitor ran");
 }
 
 #[test]
@@ -328,81 +330,140 @@ fn inherited_git_dir_index_and_work_tree_are_ignored() {
         .map(|(key, value)| (*key, value.as_path()))
         .collect();
     let alice = store_with(&repos.alice, vars(&repos.alice, &extra));
-    let Ok(Bootstrapped::Created { head }) = alice.bootstrap() else {
-        panic!("created")
-    };
-    alice.write(&head, &[task("a")], "board: add a").unwrap();
+    let head = created(&alice);
+    written(alice.write(&head, &[task("a")], "board: add a"));
     assert_eq!(ids(&store(&repos.bob).read().unwrap()), vec!["a"]);
     assert_eq!(sh(&elsewhere, &["for-each-ref"]), "");
     assert!(!index.exists());
 }
 
 #[test]
-fn unreadable_files_are_set_aside_and_the_rest_of_the_board_is_read() {
+fn only_regular_task_files_are_read_and_the_rest_is_set_aside_by_id() {
     let repos = Repos::new();
     let alice = store(&repos.alice);
-    let Ok(Bootstrapped::Created { head }) = alice.bootstrap() else {
-        panic!("created")
-    };
-    let head = alice
-        .write(&head, &[task("good")], "board: add good")
-        .unwrap();
+    let head = created(&alice);
+    written(alice.write(&head, &[task("good")], "board: add good"));
     let remote = repos.remote();
-    let blob = |bytes: &[u8]| sh_with(&remote, &["hash-object", "-w", "--stdin"], bytes);
+    let blob = |bytes: &[u8]| {
+        format!(
+            "100644 blob {}",
+            sh_with(&remote, &["hash-object", "-w", "--stdin"], bytes)
+        )
+    };
     let mut oversize = encode(&task("big")).unwrap();
     oversize.resize(MAX_TASK_FILE_BYTES + 1, b' ');
-    let bad = [
-        ("broken.json", blob(b"{")),
-        ("Upper.json", blob(&encode(&task("upper")).unwrap())),
-        ("named.json", blob(&encode(&task("other")).unwrap())),
-        ("big.json", blob(&oversize)),
-        ("notes.txt", blob(b"notes")),
-    ];
-    let mut listing = sh(&remote, &["ls-tree", &format!("{head}:tasks")]);
-    for (name, oid) in bad {
-        listing += &format!("\n100644 blob {oid}\t{name}");
-    }
-    listing += &format!(
-        "\n040000 tree {}\tsub\n",
-        sh_with(&remote, &["mktree"], b"")
-    );
-    let tasks = sh_with(&remote, &["mktree"], listing.as_bytes());
-    let readme = sh(&remote, &["rev-parse", &format!("{head}:README.md")]);
-    let root = format!("100644 blob {readme}\tREADME.md\n040000 tree {tasks}\ttasks\n");
-    let root = sh_with(&remote, &["mktree"], root.as_bytes());
-    let commit = sh(
+    let target = sh_with(
         &remote,
-        &["commit-tree", &root, "-p", &head, "-m", "hand edit"],
+        &["hash-object", "-w", "--stdin"],
+        b"../../etc/passwd",
     );
-    sh(&remote, &["update-ref", BOARD_REF, &commit]);
-
-    let snapshot = store(&repos.bob).read().unwrap();
+    let commit = sh(&remote, &["rev-parse", BOARD_REF]);
+    let empty = sh_with(&remote, &["mktree"], b"");
+    hand_edit(
+        &remote,
+        &[
+            ("broken.json", blob(b"{")),
+            ("Upper.json", blob(&encode(&task("upper")).unwrap())),
+            ("named.json", blob(&encode(&task("other")).unwrap())),
+            ("big.json", blob(&oversize)),
+            ("notes.txt", blob(b"notes")),
+            (
+                "exec.json",
+                blob(&encode(&task("exec")).unwrap()).replace("100644", "100755"),
+            ),
+            ("link.json", format!("120000 blob {target}")),
+            ("module.json", format!("160000 commit {commit}")),
+            ("sub", format!("040000 tree {empty}")),
+        ],
+    );
+    let bob = store(&repos.bob);
+    let snapshot = bob.read().unwrap();
     assert_eq!(ids(&snapshot), vec!["good"]);
-    let reasons: BTreeMap<&str, &str> = snapshot
+    let found: BTreeMap<&str, (Option<&str>, &str)> = snapshot
         .quarantined
         .iter()
-        .map(|q| (q.path.as_str(), q.reason.as_str()))
+        .map(|q| {
+            (
+                q.path.as_str(),
+                (q.id.as_ref().map(Slug::as_str), q.reason.as_str()),
+            )
+        })
         .collect();
-    let paths: Vec<&str> = reasons.keys().copied().collect();
+    let by_id: Vec<(&str, Option<&str>)> =
+        found.iter().map(|(path, (id, _))| (*path, *id)).collect();
     assert_eq!(
-        paths,
+        by_id,
         [
-            "tasks/Upper.json",
-            "tasks/big.json",
-            "tasks/broken.json",
-            "tasks/named.json",
-            "tasks/notes.txt",
-            "tasks/sub"
+            ("tasks/Upper.json", None),
+            ("tasks/big.json", Some("big")),
+            ("tasks/broken.json", Some("broken")),
+            ("tasks/exec.json", Some("exec")),
+            ("tasks/link.json", Some("link")),
+            ("tasks/module.json", Some("module")),
+            ("tasks/named.json", Some("named")),
+            ("tasks/notes.txt", None),
+            ("tasks/sub", None),
         ]
     );
-    assert!(reasons["tasks/big.json"].contains("bytes"), "{reasons:?}");
+    assert!(found["tasks/big.json"].1.contains("bytes"), "{found:?}");
     assert!(
-        reasons["tasks/named.json"].contains("\"other\""),
-        "{reasons:?}"
+        found["tasks/named.json"].1.contains("\"other\""),
+        "{found:?}"
     );
     assert!(
-        reasons["tasks/broken.json"].contains("malformed"),
-        "{reasons:?}"
+        found["tasks/broken.json"].1.contains("malformed"),
+        "{found:?}"
+    );
+    assert!(found["tasks/link.json"].1.contains("regular"), "{found:?}");
+
+    for id in ["broken", "link", "named"] {
+        let refused = bob.write(&snapshot.head, &[task(id)], &format!("board: write {id}"));
+        assert!(
+            matches!(refused, Ok(BoardWrite::Refused(_))),
+            "{id}: {refused:?}"
+        );
+    }
+    assert_eq!(sh(&remote, &["rev-parse", BOARD_REF]), snapshot.head.0);
+    // A write carries forward only regular task files, never links,
+    // modules, subtrees or strays.
+    let moved = written(bob.write(&snapshot.head, &[task("fresh")], "board: add fresh"));
+    let kept = sh(
+        &remote,
+        &["ls-tree", "--name-only", &format!("{}:tasks", moved.0)],
+    );
+    assert_eq!(
+        kept.lines().collect::<Vec<_>>(),
+        [
+            "big.json",
+            "broken.json",
+            "fresh.json",
+            "fresh.md",
+            "good.json",
+            "good.md",
+            "named.json"
+        ]
+    );
+}
+
+#[test]
+fn a_board_tree_past_its_entry_bound_is_not_read() {
+    let repos = Repos::new();
+    let alice = store(&repos.alice);
+    created(&alice);
+    written(alice.write(&alice.read().unwrap().head, &[task("a")], "board: add a"));
+    let blob = sh_with(&repos.remote(), &["hash-object", "-w", "--stdin"], b"x");
+    let many: Vec<(String, String)> = (0..MAX_TASK_ENTRIES)
+        .map(|n| (format!("n{n}.md"), format!("100644 blob {blob}")))
+        .collect();
+    let many: Vec<(&str, String)> = many
+        .iter()
+        .map(|(name, meta)| (name.as_str(), meta.clone()))
+        .collect();
+    hand_edit(&repos.remote(), &many);
+    let read = store(&repos.bob).read();
+    assert!(
+        matches!(&read, Err(BoardStoreError::Unavailable(why)) if why.contains("entries")),
+        "{read:?}"
     );
 }
 
@@ -415,38 +476,39 @@ fn bad_arguments_are_refused_before_git_runs() {
         person("Ada"),
     )
     .unwrap();
-    assert!(matches!(
-        GitBoardStore::new(git, "--upload-pack=x"),
-        Err(StoreError::Invalid(_))
-    ));
+    assert!(GitBoardStore::new(git, "--upload-pack=x").is_err());
     let alice = store(&repos.alice);
-    let Ok(Bootstrapped::Created { head }) = alice.bootstrap() else {
-        panic!("created")
-    };
+    let head = created(&alice);
     for (base, tasks, message) in [
         ("HEAD", vec![task("a")], "ok"),
-        (head.as_str(), vec![task("a")], "two\nlines"),
-        (head.as_str(), vec![task("a"), task("a")], "ok"),
-        (head.as_str(), vec![], "ok"),
+        ("--all", vec![task("a")], "ok"),
+        (&"0".repeat(40), vec![task("a")], "ok"),
+        (head.0.as_str(), vec![task("a")], "two\nlines"),
+        (head.0.as_str(), vec![task("a"), task("a")], "ok"),
+        (head.0.as_str(), vec![], "ok"),
     ] {
+        let refused = alice.write(&BoardHead(base.into()), &tasks, message);
         assert!(
-            matches!(
-                alice.write(base, &tasks, message),
-                Err(StoreError::Invalid(_))
-            ),
-            "{base} {message:?}"
+            matches!(refused, Err(BoardStoreError::InvalidWrite(_))),
+            "{base} {message:?}: {refused:?}"
         );
     }
+    assert_eq!(alice.read().unwrap().head, head);
 }
 
 #[test]
-fn a_git_that_hangs_is_stopped_at_its_deadline() {
+fn a_git_that_hangs_is_stopped_with_its_whole_process_group() {
     let repos = Repos::new();
     let bin = repos.dir.path().join("bin");
     std::fs::create_dir(&bin).unwrap();
-    std::fs::write(bin.join("git"), "#!/bin/sh\nexec sleep 30\n").unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(bin.join("git"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let marker = repos.dir.path().join("grandchild-lived");
+    executable(
+        &bin.join("git"),
+        &format!(
+            "#!/bin/sh\n(sleep 1; touch '{}') &\nexec sleep 30\n",
+            marker.display()
+        ),
+    );
     let mut path = bin.into_os_string();
     path.push(":");
     path.push(std::env::var_os("PATH").unwrap());
@@ -456,10 +518,12 @@ fn a_git_that_hangs_is_stopped_at_its_deadline() {
     let started = std::time::Instant::now();
     let read = GitBoardStore::new(git, "origin").unwrap().read();
     assert!(
-        matches!(read, Err(StoreError::Git(GitError::TimedOut { .. }))),
+        matches!(&read, Err(BoardStoreError::Unavailable(why)) if why.contains("TimedOut")),
         "{read:?}"
     );
     assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    assert!(!marker.exists(), "the timed-out git's child outlived it");
 }
 
 #[test]
@@ -489,3 +553,6 @@ fn only_allowlisted_variables_reach_git() {
         assert!(!kept.contains(key), "{key}");
     }
 }
+
+#[path = "store_push_tests.rs"]
+mod push;

@@ -173,6 +173,8 @@ mod metered_call;
 mod mock_claude;
 #[path = "contracts/overlay_trust_store.rs"]
 mod overlay_trust_store;
+#[path = "contracts/project_board_git_store.rs"]
+mod project_board_git_store;
 #[path = "contracts/project_board_store.rs"]
 mod project_board_store;
 
