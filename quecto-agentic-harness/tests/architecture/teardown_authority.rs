@@ -406,6 +406,7 @@ const NO_PID_FILES: &[&str] = &[
     "src/application/environments/dto/assets.rs",
     "src/application/environments/dto/gc.rs",
     "src/application/environments/dto/standard_image.rs",
+    "src/application/environments/dto/swarm_board.rs",
     "src/application/environments/use_cases/diagnose_container_runtime.rs",
     "src/application/environments/use_cases/list_container_configs.rs",
     "src/application/environments/use_cases/initialise_standard_container.rs",
