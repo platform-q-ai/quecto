@@ -3,6 +3,7 @@ use std::collections::BTreeSet;
 use super::*;
 use crate::domain::project_board::value_objects::schema_error::SchemaError;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
+use crate::domain::project_board::value_objects::vocabulary::{PlanState, TaskStatus};
 
 fn slug(text: &str) -> Slug {
     Slug::parse(text).unwrap()
@@ -250,4 +251,73 @@ fn an_unsanitised_path_is_never_shown() {
         reason: "a stray".into(),
         object: "a".repeat(40),
     });
+}
+
+/// Every board rule, once: the pattern that matches it, a rule of it, its
+/// code and the keys its answer carries. The test's match is exhaustive,
+/// so a new rule fails to compile until it has its row here.
+macro_rules! board_rules {
+    ($($pattern:pat => $rule:expr, $code:literal, [$($key:literal),*];)*) => {
+        fn every_rule() -> Vec<(BoardRuleError, &'static str, Vec<&'static str>)> {
+            use BoardRuleError as R;
+            vec![$(($rule, $code, vec!["code" $(, $key)*])),*]
+        }
+
+        fn rule_row(rule: &BoardRuleError) -> &'static str {
+            use BoardRuleError as R;
+            match rule {
+                $($pattern => $code,)*
+            }
+        }
+    };
+}
+
+board_rules! {
+    R::NotAllowed { .. } => R::NotAllowed { from: TaskStatus::Draft, to: TaskStatus::Done }, "not_allowed", ["from", "to"];
+    R::NotHolder => R::NotHolder, "not_holder", [];
+    R::NoClaim => R::NoClaim, "no_claim", [];
+    R::ClaimLive => R::ClaimLive, "claim_live", [];
+    R::ClaimExpired => R::ClaimExpired, "claim_expired", [];
+    R::RunOpen(_) => R::RunOpen(1), "run_open", ["run"];
+    R::RunEnded(_) => R::RunEnded(1), "run_ended", ["run"];
+    R::PlanNotDraft(_) => R::PlanNotDraft(PlanState::Accepted), "plan_not_draft", ["state"];
+    R::NotThisTasks => R::NotThisTasks, "not_this_tasks", [];
+    R::TaskFinished(_) => R::TaskFinished(TaskStatus::Done), "task_finished", ["status"];
+    R::UnknownPlanVersion(_) => R::UnknownPlanVersion(3), "unknown_plan_version", ["version"];
+    R::PlanChanged { .. } => R::PlanChanged { version: 2, updated: at("10:00:00") }, "plan_changed", ["version", "updated"];
+    R::PlansInconsistent(_) => R::PlansInconsistent("two accepted".into()), "plans_inconsistent", ["reason"];
+    R::RunsInconsistent(_) => R::RunsInconsistent("two going".into()), "runs_inconsistent", ["reason"];
+    R::PlanNotAccepted(_) => R::PlanNotAccepted(2), "plan_not_accepted", ["version"];
+    R::NotTakeable(_) => R::NotTakeable(TaskStatus::Ready), "not_takeable", ["status"];
+    R::AlreadyHolder => R::AlreadyHolder, "already_holder", [];
+    R::NoPrs => R::NoPrs, "no_prs", [];
+    R::PrsUnmerged(_) => R::PrsUnmerged(vec![7]), "prs_unmerged", ["prs"];
+    R::PrsLinked(_) => R::PrsLinked(vec![7]), "prs_linked", ["prs"];
+    R::PrNotLinked(_) => R::PrNotLinked(7), "pr_not_linked", ["pr"];
+    R::PrAlreadyLinked(_) => R::PrAlreadyLinked(7), "pr_already_linked", ["pr"];
+    R::NotDraft(_) => R::NotDraft(TaskStatus::Ready), "not_draft", ["status"];
+    R::NoEdit => R::NoEdit, "no_edit", [];
+    R::PlanAhead { .. } => R::PlanAhead { version: 2, updated: at("10:00:00") }, "plan_ahead", ["version", "updated"];
+    R::Invalid(_) => R::Invalid(SchemaError::new("title", "is empty")), "invalid", ["field", "problem"];
+}
+
+#[test]
+fn every_rule_answers_its_code_and_its_own_keys() {
+    let rules = every_rule();
+    let codes: BTreeSet<&str> = rules.iter().map(|(rule, ..)| rule_row(rule)).collect();
+    assert_eq!(codes.len(), rules.len(), "every rule, each once");
+    for (rule, code, keys) in rules {
+        let shown = rule_json(&rule);
+        assert_eq!(shown["code"], json!(code), "{rule:?}");
+        let got: BTreeSet<&str> = shown
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        let want: BTreeSet<&str> = keys.into_iter().collect();
+        assert_eq!(got, want, "{rule:?}");
+    }
+    // A run is named by its number.
+    assert_eq!(rule_json(&BoardRuleError::RunOpen(3))["run"], json!(3));
 }

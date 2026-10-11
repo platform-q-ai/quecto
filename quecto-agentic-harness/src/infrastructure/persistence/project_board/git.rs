@@ -579,7 +579,7 @@ pub(super) fn sanitised(bytes: &[u8]) -> String {
 }
 
 /// At most [`MAX_QUOTED_CHARS`] characters of `text`, marked when cut.
-fn capped(text: &str) -> String {
+pub(super) fn capped(text: &str) -> String {
     match text.chars().count() > MAX_QUOTED_CHARS {
         true => text.chars().take(MAX_QUOTED_CHARS).collect::<String>() + " …",
         false => text.to_string(),

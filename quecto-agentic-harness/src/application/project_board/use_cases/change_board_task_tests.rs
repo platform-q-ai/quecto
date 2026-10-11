@@ -7,10 +7,9 @@ use crate::application::project_board::use_cases::fixtures_tests::{
 };
 use crate::domain::project_board::entities::claim::{Claim, Identity};
 use crate::domain::project_board::entities::task::{Task, TaskFields};
-use crate::domain::project_board::entities::task_parts::Run;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
-use crate::domain::project_board::value_objects::vocabulary::{RunOutcome, TaskStatus};
+use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use crate::infrastructure::test_support::memory_pull_requests::MemoryPullRequests;
 use std::sync::Arc;
@@ -91,18 +90,11 @@ fn a_task_is_claimed_worked_linked_and_completed_when_its_pr_merges() {
 }
 
 #[test]
-fn a_claim_is_renewed_taken_over_and_a_lost_run_ended() {
+fn a_claim_is_renewed_taken_over_and_a_pull_request_unlinked() {
     let store = board();
-    let run = Run {
-        id: slug("r1"),
-        started: at("09:05:00"),
-        ended: None,
-        outcome: None,
-    };
     seed(
         &store,
         TaskFields {
-            runs: vec![run],
             prs: vec![3],
             ..held_by_ada(TaskStatus::InProgress)
         },
@@ -123,10 +115,6 @@ fn a_claim_is_renewed_taken_over_and_a_lost_run_ended() {
         person("Bob"),
         "the store's committer acts"
     );
-    let ended = change(&store, "Bob", "13:05:00")
-        .execute(&a, &BoardOp::EndRunLost)
-        .unwrap();
-    assert_eq!(ended.fields().runs[0].outcome, Some(RunOutcome::Lost));
     change(&store, "Bob", "13:10:00")
         .execute(&a, &BoardOp::RemovePr(3))
         .unwrap();
