@@ -21,4 +21,4 @@ pub use update_draft_task::UpdateDraftTask;
 
 #[cfg(test)]
 #[path = "fixtures_tests.rs"]
-mod fixtures_tests;
+pub(in crate::application::project_board) mod fixtures_tests;

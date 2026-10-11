@@ -193,6 +193,12 @@ pub trait BoardListings: Send + Sync {
     /// No board, or the view's or store's failure.
     fn takeable(&self, now: &Timestamp) -> Result<BoardListing, BoardStoreError>;
 
+    /// Every task on the board, from one refresh of the view.
+    ///
+    /// # Errors
+    /// No board, or the view's or store's failure.
+    fn all(&self) -> Result<BoardListing, BoardStoreError>;
+
     /// # Errors
     /// No board, or the view's or store's failure.
     fn by_status(&self, status: TaskStatus) -> Result<BoardListing, BoardStoreError>;
