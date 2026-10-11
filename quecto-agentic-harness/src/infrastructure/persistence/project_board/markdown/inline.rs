@@ -153,24 +153,63 @@ fn shown_code(code: &str) -> &str {
     }
 }
 
-/// `range` of `outside` as a reader sees it: each code span's contents put
-/// back as shown (`spans`, by their offset in `outside`), and the markers
-/// in `dropped` taken out, so a token they split reads whole.
-fn as_read(
-    outside: &str,
-    spans: &[(usize, String)],
-    range: std::ops::Range<usize>,
-    dropped: &str,
-) -> String {
-    let mut read = String::new();
-    for (offset, c) in outside[range.clone()].char_indices() {
-        match spans.binary_search_by_key(&(range.start + offset), |(at, _)| *at) {
-            Ok(span) => read.push_str(&spans[span].1),
+/// The run of text around each link of `outside` as a reader sees it run
+/// together: what precedes the link up to a space, its text, and what
+/// follows it up to a space. Every link's brackets and address are taken
+/// out, each code span is shown as a reader shows it (`spans`, by their
+/// offset in `outside`), and the markers in `dropped` are taken out, so an
+/// address split by the link's edge, by code or by a marker reads whole.
+fn link_runs(outside: &str, spans: &[(usize, String)], dropped: &str) -> Vec<String> {
+    let links: Vec<(usize, std::ops::Range<usize>, usize)> = LINK
+        .captures_iter(outside)
+        .map(|link| {
+            let whole = link.get(0).expect("a match");
+            let text = link.get(1).expect("LINK has a text group");
+            (whole.start(), text.range(), whole.end())
+        })
+        .collect();
+    // What a reader reads, piece by piece, with the offset each is from.
+    let (mut read, mut next, mut skip_to) = (Vec::<(usize, String)>::new(), 0, 0);
+    for (offset, c) in outside.char_indices() {
+        match links.get(next) {
+            _ if offset < skip_to => continue,
+            Some((open, _, _)) if offset == *open => continue,
+            Some((_, text, end)) if offset == text.end => {
+                (skip_to, next) = (*end, next + 1);
+                continue;
+            }
+            _ => {}
+        }
+        match spans.binary_search_by_key(&offset, |(at, _)| *at) {
+            Ok(span) => read.push((offset, spans[span].1.clone())),
             Err(_) if dropped.contains(c) => {}
-            Err(_) => read.push(c),
+            Err(_) => read.push((offset, c.to_string())),
         }
     }
-    read
+    let space = |(_, piece): &(usize, String)| piece == " ";
+    links
+        .iter()
+        .map(|(_, text, _)| {
+            let first = read
+                .iter()
+                .position(|(at, _)| *at >= text.start)
+                .unwrap_or(read.len());
+            let last = read
+                .iter()
+                .rposition(|(at, _)| *at < text.end)
+                .map_or(first, |at| at + 1);
+            debug_assert!(last >= first, "the pieces are in order");
+            let start = read[..first].iter().rposition(space).map_or(0, |at| at + 1);
+            let end = read[last..]
+                .iter()
+                .position(space)
+                .map_or(read.len(), |at| last + at);
+            read[start..end]
+                .iter()
+                .map(|(_, piece)| piece.as_str())
+                .collect()
+        })
+        .collect()
 }
 
 /// The inline rules `text` keeps.
@@ -188,18 +227,18 @@ pub fn check_inline(text: &str, at: usize) -> Result<(), MarkdownError> {
         .windows(2)
         .any(|pair| pair[0] == b'\\' && pair[1].is_ascii_punctuation())
         || outside.ends_with('\\');
-    // A link's text shows something, with no space at its edges, and no
-    // address as a reader sees it (code put back, markers dropped).
-    // Read twice: with every marker dropped, and with `_` kept, since `_`
-    // is both a marker and a character an email holds (the only one an
-    // address pattern shares with the markers).
+    // A link's text shows something, with no space at its edges.
     let shown = LINK.captures_iter(&outside).all(|link| {
-        let text = link.get(1).expect("LINK has a text group");
-        let edges = text.as_str().trim() == text.as_str();
-        let address = ["*_~", "*~"]
+        let text = link.get(1).expect("LINK has a text group").as_str();
+        text.trim() == text && shows(text)
+    });
+    // No address shows in or around a link, read twice: with every marker
+    // dropped, and with `_` kept, since `_` is both a marker and a character
+    // an email holds (the only one an address pattern shares with them).
+    let around = ["*_~", "*~"].iter().any(|dropped| {
+        link_runs(&outside, &spans, dropped)
             .iter()
-            .any(|dropped| holds_address(&as_read(&outside, &spans, text.range(), dropped)));
-        edges && shows(text.as_str()) && !address
+            .any(|run| holds_address(run))
     });
     // The text as shown: each link's address taken out, its text kept, so
     // the address rule below reads link texts too (a link showing
@@ -214,7 +253,7 @@ pub fn check_inline(text: &str, at: usize) -> Result<(), MarkdownError> {
         () if REFERENCE.is_match(&outside) => Err(MarkdownError::CharacterReference { line: at }),
         () if math => Err(MarkdownError::Math { line: at }),
         () if outside.contains("![") => Err(MarkdownError::Image { line: at }),
-        () if bare || !shown => Err(MarkdownError::Link { line: at }),
+        () if bare || !shown || around => Err(MarkdownError::Link { line: at }),
         () if escaped => Err(MarkdownError::Escape { line: at }),
         () if !shows(&unaddressed) => Err(MarkdownError::Invisible { line: at }),
         () => Ok(()),
