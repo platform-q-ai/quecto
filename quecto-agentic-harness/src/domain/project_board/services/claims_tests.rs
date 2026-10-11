@@ -1,5 +1,7 @@
 use super::*;
-use crate::domain::project_board::services::fixtures_tests::{at, person, task, without_claim};
+use crate::domain::project_board::services::fixtures_tests::{
+    at, far_future, last_written, person, task, without_claim,
+};
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus::*;
 
 #[test]
@@ -8,8 +10,8 @@ fn the_holder_renews_for_two_hours_from_now() {
     let fields = renewed.fields();
     let claim = fields.claim.clone().unwrap();
     assert_eq!(
-        (claim.holder.email, claim.since, claim.expires),
-        (person("Ada").email, at("10:30:00"), at("12:30:00"))
+        (claim.holder, claim.since, claim.expires),
+        (person("Ada"), at("10:30:00"), at("12:30:00"))
     );
     assert_eq!(
         (fields.status, &fields.updated),
@@ -46,8 +48,8 @@ fn an_expired_claim_is_taken_over_while_the_task_may_hold_one() {
         let fields = taken.fields();
         let claim = fields.claim.clone().unwrap();
         assert_eq!(
-            (claim.holder.email, claim.since, claim.expires),
-            (person("Bob").email, at("11:00:00"), at("13:00:00")),
+            (claim.holder, claim.since, claim.expires),
+            (person("Bob"), at("11:00:00"), at("13:00:00")),
             "{status:?}"
         );
         assert_eq!((fields.status, &fields.updated), (status, &at("11:00:00")));
@@ -87,15 +89,30 @@ fn a_live_claim_another_status_no_claim_or_the_holder_cannot_take_over() {
 }
 
 #[test]
-fn renewing_or_taking_over_refuses_a_clock_behind_the_task() {
-    let behind = at("08:59:59");
-    let refused = Err(BoardRuleError::ClockBehind {
-        now: behind.clone(),
-        updated: at("09:00:00"),
-    });
-    assert_eq!(renew(&task(InProgress), &person("Ada"), &behind), refused);
+fn a_renewal_by_another_name_keeps_the_holder_as_claimed() {
+    let renamed = Identity {
+        name: "A. Lovelace".into(),
+        email: "ada@EXAMPLE.com".into(),
+    };
+    let renewed = renew(&task(InProgress), &renamed, &at("10:30:00")).unwrap();
     assert_eq!(
-        take_over(&task(InProgress), &person("Bob"), &behind),
-        refused
+        renewed.fields().claim.as_ref().map(|claim| &claim.holder),
+        Some(&person("Ada"))
     );
+}
+
+#[test]
+fn renewing_or_taking_over_behind_the_task_stamps_the_task_s_own_time() {
+    let ahead = last_written(task(InProgress), &far_future());
+    let in_two_hours = far_future().plus_seconds(CLAIM_TTL_SECONDS).unwrap();
+    for changed in [
+        renew(&ahead, &person("Ada"), &at("10:30:00")).unwrap(),
+        take_over(&ahead, &person("Bob"), &at("11:00:00")).unwrap(),
+    ] {
+        let claim = changed.fields().claim.clone().unwrap();
+        assert_eq!(
+            (&claim.since, &claim.expires, &changed.fields().updated),
+            (&far_future(), &in_two_hours, &far_future())
+        );
+    }
 }

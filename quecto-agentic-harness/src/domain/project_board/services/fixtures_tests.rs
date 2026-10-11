@@ -106,3 +106,15 @@ pub fn without_claim(task: Task) -> Task {
     fields.claim = None;
     Task::new(fields).expect("review and blocked tasks may drop their claim")
 }
+
+/// A moment from a client whose clock ran far ahead.
+pub fn far_future() -> Timestamp {
+    Timestamp::parse("2036-01-01T00:00:00Z").unwrap()
+}
+
+/// `task` as last written at `updated` (by a fast clock, say).
+pub fn last_written(task: Task, updated: &Timestamp) -> Task {
+    let mut fields = task.into_fields();
+    fields.updated = updated.clone();
+    Task::new(fields).expect("a later write keeps the task valid")
+}

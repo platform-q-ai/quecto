@@ -3,6 +3,7 @@
 //! [`Task`](super::entities::task::Task), so the schema holds after each.
 pub mod claims;
 pub mod pull_requests;
+pub mod runs;
 pub mod transitions;
 
 #[cfg(test)]

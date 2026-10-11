@@ -1,6 +1,9 @@
 use super::*;
+use crate::domain::project_board::entities::claim::{MAX_EMAIL_BYTES, MAX_NAME_CHARS};
+use crate::domain::project_board::entities::task::{MAX_DESCRIPTION_CHARS, MAX_TEXT_BYTES};
+use crate::domain::project_board::entities::task_parts::{MAX_LINE_CHARS, PlanStep};
 use crate::domain::project_board::services::fixtures_tests::{
-    at, person, task, with_open_run, without_claim,
+    at, far_future, last_written, person, task, with_open_run, without_claim,
 };
 use crate::domain::project_board::value_objects::slug::Slug;
 
@@ -104,8 +107,8 @@ fn a_claim_is_taken_kept_or_cleared_by_the_move() {
     let claimed = move_task(&task(Ready), Claimed, &person("Bob"), &now).unwrap();
     let claim = claimed.fields().claim.clone().unwrap();
     assert_eq!(
-        (claim.holder.email, claim.since, claim.expires),
-        (person("Bob").email, now.clone(), at("12:00:00"))
+        (claim.holder, claim.since, claim.expires),
+        (person("Bob"), now.clone(), at("12:00:00"))
     );
     for (from, to) in [
         (Claimed, InProgress),
@@ -277,21 +280,88 @@ fn a_held_task_is_done_once_all_its_prs_merge_whoever_merged_them() {
 }
 
 #[test]
-fn every_change_refuses_a_clock_behind_the_task() {
-    let behind = at("08:59:59");
-    let refused = BoardRuleError::ClockBehind {
-        now: behind.clone(),
-        updated: at("09:00:00"),
+fn a_write_from_a_fast_clock_does_not_stop_another_clients_moves() {
+    // Someone's clock ran ten years ahead and stamped the task in 2036.
+    let ahead = far_future();
+    let bob = person("Bob");
+    let now = at("10:00:00");
+    let readied = move_task(&last_written(task(Draft), &ahead), Ready, &bob, &now).unwrap();
+    assert_eq!(readied.fields().updated, ahead, "stamped max(now, updated)");
+    let claimed = move_task(&readied, Claimed, &bob, &now).unwrap();
+    let claim = claimed.fields().claim.clone().unwrap();
+    assert_eq!(
+        (&claim.since, &claimed.fields().updated),
+        (&ahead, &ahead),
+        "the claim starts at the task's own time"
+    );
+    assert_eq!(claim.expires, ahead.plus_seconds(2 * 60 * 60).unwrap());
+    let started = move_task(&claimed, InProgress, &bob, &now).unwrap();
+    assert_eq!(started.fields().status, InProgress);
+    let done = complete_merged(
+        &last_written(task(Review), &ahead),
+        &BTreeSet::from([2482, 2483]),
+        &now,
+    )
+    .unwrap();
+    assert_eq!(done.fields().updated, ahead);
+}
+
+#[test]
+fn expiry_is_judged_by_the_callers_clock() {
+    // Ada's claim runs 09:00 to 11:00 though the task was last written in
+    // 2036: at 11:00 by Bob's clock it has expired.
+    let ahead = last_written(task(InProgress), &far_future());
+    let taken = super::super::claims::take_over(&ahead, &person("Bob"), &at("11:00:00")).unwrap();
+    assert_eq!(taken.fields().updated, far_future());
+    assert_eq!(
+        move_task(&ahead, Review, &person("Ada"), &at("11:00:00")),
+        Err(BoardRuleError::ClaimExpired)
+    );
+}
+
+#[test]
+fn the_same_committer_under_another_name_moves_the_task_and_keeps_the_claim() {
+    let renamed = Identity {
+        name: "A. Lovelace".into(),
+        email: "ADA@example.com".into(),
     };
+    let moved = move_task(&task(Claimed), InProgress, &renamed, &at("10:00:00")).unwrap();
     assert_eq!(
-        move_task(&task(Draft), Ready, &person("Bob"), &behind),
-        Err(refused.clone())
+        moved.fields().claim,
+        task(Claimed).fields().claim,
+        "the holder keeps the name it claimed under"
     );
+}
+
+#[test]
+fn a_ready_task_at_its_text_budget_is_claimed_by_a_holder_at_its_widest() {
+    let mut fields = task(Ready).into_fields();
+    let mut left = MAX_TEXT_BYTES - fields.text_bytes();
+    let wide = (left / 4).min(MAX_DESCRIPTION_CHARS);
+    fields.description = "\u{1d11e}".repeat(wide);
+    left -= 4 * wide;
+    while left >= 4 {
+        let chars = (left / 4).min(MAX_LINE_CHARS);
+        fields.plan.push(PlanStep {
+            title: "\u{1d11e}".repeat(chars),
+            criteria: vec![],
+        });
+        left -= 4 * chars;
+    }
+    fields.plan.push(PlanStep {
+        title: "x".repeat(left.max(1)),
+        criteria: vec![],
+    });
+    let full = Task::new(fields).expect("at most the text budget");
+    let widest = Identity {
+        name: "\u{1d11e}".repeat(MAX_NAME_CHARS),
+        email: format!("{}@x.io", "a".repeat(MAX_EMAIL_BYTES - 5)),
+    };
+    let claimed = move_task(&full, Claimed, &widest, &at("10:00:00")).unwrap();
     assert_eq!(
-        complete_merged(&task(Review), &BTreeSet::from([2482, 2483]), &behind),
-        Err(refused)
+        claimed.fields().claim.as_ref().map(|claim| &claim.holder),
+        Some(&widest)
     );
-    assert!(move_task(&task(Draft), Ready, &person("Bob"), &at("09:00:00")).is_ok());
 }
 
 #[test]
@@ -301,5 +371,8 @@ fn a_change_that_cannot_be_spelt_is_refused_as_invalid() {
     ready.updated = late.clone();
     let ready = Task::new(ready).unwrap();
     let moved = move_task(&ready, Claimed, &person("Bob"), &late);
-    assert!(matches!(moved, Err(BoardRuleError::Invalid(error)) if error.field == "timestamp"));
+    assert!(
+        matches!(&moved, Err(BoardRuleError::Invalid(error)) if error.field == "claim/expires"),
+        "{moved:?}"
+    );
 }

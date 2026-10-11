@@ -21,6 +21,8 @@ pub enum BoardRuleError {
     ClockBehind { now: Timestamp, updated: Timestamp },
     /// This run is still going: end it before the task leaves its holder.
     RunOpen(Slug),
+    /// The task has no open run to end.
+    NoOpenRun,
     /// A takeover is only of a claimed or in-progress task.
     NotTakeable(TaskStatus),
     /// The holder renews; a takeover is someone else's.
@@ -57,6 +59,7 @@ impl fmt::Display for BoardRuleError {
                 updated.as_str()
             ),
             Self::RunOpen(run) => write!(f, "run {} is still open", run.as_str()),
+            Self::NoOpenRun => f.write_str("the task has no open run"),
             Self::NotTakeable(status) => {
                 write!(f, "a {} task cannot be taken over", status.as_str())
             }

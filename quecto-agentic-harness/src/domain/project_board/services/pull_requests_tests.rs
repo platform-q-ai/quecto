@@ -1,5 +1,7 @@
 use super::*;
-use crate::domain::project_board::services::fixtures_tests::{at, person, task, without_claim};
+use crate::domain::project_board::services::fixtures_tests::{
+    at, far_future, last_written, person, task, without_claim,
+};
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus::*;
 
 #[test]
@@ -28,7 +30,6 @@ fn only_the_holder_of_a_live_claim_unlinks_a_linked_pull_request() {
         ),
         (task(Done), person("Ada"), 2483, at("10:00:00")),
         (task(InProgress), person("Ada"), 7, at("10:00:00")),
-        (task(InProgress), person("Ada"), 2483, at("08:59:59")),
     ];
     let refusals = [
         BoardRuleError::NotHolder,
@@ -36,12 +37,15 @@ fn only_the_holder_of_a_live_claim_unlinks_a_linked_pull_request() {
         BoardRuleError::NoClaim,
         BoardRuleError::NoClaim,
         BoardRuleError::PrNotLinked(7),
-        BoardRuleError::ClockBehind {
-            now: at("08:59:59"),
-            updated: at("09:00:00"),
-        },
     ];
     for ((held, actor, pr, now), refusal) in cases.into_iter().zip(refusals) {
         assert_eq!(remove_pr(&held, &actor, pr, &now), Err(refusal));
     }
+}
+
+#[test]
+fn unlinking_behind_the_task_stamps_the_task_s_own_time() {
+    let ahead = last_written(task(InProgress), &far_future());
+    let unlinked = remove_pr(&ahead, &person("Ada"), 2483, &at("10:00:00")).unwrap();
+    assert_eq!(unlinked.fields().updated, far_future());
 }
