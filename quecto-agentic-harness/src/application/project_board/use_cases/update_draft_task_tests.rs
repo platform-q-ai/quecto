@@ -5,7 +5,6 @@ use crate::application::project_board::use_cases::fixtures_tests::{
     SetClock, at, board, fields, slug,
 };
 use crate::domain::project_board::entities::task::{Task, TaskFields};
-use crate::domain::project_board::entities::task_parts::PlanStep;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
@@ -43,7 +42,6 @@ fn of(id: &str) -> DraftUpdate {
         id: slug(id),
         title: None,
         description: None,
-        plan: None,
         parent: None,
         depends_on: None,
         expected_updated: None,
@@ -221,10 +219,6 @@ fn crlf_line_ends_become_lf_before_the_schema_reads_them() {
     let store = holding(&[("a", TaskStatus::Draft, None, &[])]);
     let edit = DraftUpdate {
         description: Some("Why.\r\nHow.\r\n".into()),
-        plan: Some(vec![PlanStep {
-            title: "Spike".into(),
-            criteria: vec!["Proved".into()],
-        }]),
         ..of("a")
     };
     let edited = update(&store).execute(&edit).unwrap();

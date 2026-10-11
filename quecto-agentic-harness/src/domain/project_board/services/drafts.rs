@@ -1,9 +1,8 @@
-//! Editing a draft in place: its title, description, plan, parent and
+//! Editing a draft in place: its title, description, parent and
 //! dependencies. A draft has no holder (a claim starts when it is claimed,
 //! after it is ready), so anyone with access to the board edits it; a task
 //! past its draft changes only through its moves.
 use super::super::entities::task::Task;
-use super::super::entities::task_parts::PlanStep;
 use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::slug::Slug;
 use super::super::value_objects::timestamp::Timestamp;
@@ -16,7 +15,6 @@ use super::claims::{settle, stamp};
 pub struct DraftEdit {
     pub title: Option<String>,
     pub description: Option<String>,
-    pub plan: Option<Vec<PlanStep>>,
     pub parent: Option<Option<Slug>>,
     pub depends_on: Option<Vec<Slug>>,
 }
@@ -38,9 +36,6 @@ pub fn edit_draft(task: &Task, edit: &DraftEdit, now: &Timestamp) -> Result<Task
     }
     if let Some(description) = &edit.description {
         next.description = description.clone();
-    }
-    if let Some(plan) = &edit.plan {
-        next.plan = plan.clone();
     }
     if let Some(parent) = &edit.parent {
         next.parent = parent.clone();

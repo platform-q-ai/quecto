@@ -6,7 +6,6 @@ use crate::application::project_board::use_cases::fixtures_tests::{
     SetClock, at, board, fields, new_task, slug,
 };
 use crate::domain::project_board::entities::task::{Task, TaskFields};
-use crate::domain::project_board::entities::task_parts::PlanStep;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use std::sync::Arc;
@@ -40,21 +39,16 @@ fn a_task_is_created_and_stamped_now() {
     assert_eq!(store.read().unwrap().tasks, vec![task]);
 }
 
-/// A new task holds only what a plan sets: it is created a draft or
-/// ready, with its plan, and no claim, runs, reviews, pull requests or
-/// items, which `NewBoardTask` cannot carry.
+/// A new task holds only its own fields: it is created a draft or ready,
+/// with no plan, team, claim, runs, reviews, pull requests or items,
+/// which `NewBoardTask` cannot carry (a plan is its own artifact).
 #[test]
-fn a_new_task_holds_only_what_a_plan_sets() {
+fn a_new_task_holds_only_its_own_fields() {
     let store = board();
-    let plan = vec![PlanStep {
-        title: "Spike".into(),
-        criteria: vec!["CAS proved".into()],
-    }];
     let draft = create(&store, SetClock::at("10:00:00"))
         .execute(&NewBoardTask {
             status: NewBoardTaskStatus::Draft,
             description: "Why and how.".into(),
-            plan: plan.clone(),
             ..new_task("a")
         })
         .unwrap();
@@ -63,7 +57,6 @@ fn a_new_task_holds_only_what_a_plan_sets() {
         TaskFields {
             status: TaskStatus::Draft,
             description: "Why and how.".into(),
-            plan,
             created: at("10:00:00"),
             updated: at("10:00:00"),
             ..fields("a")
@@ -459,10 +452,6 @@ fn crlf_line_ends_become_lf_before_the_schema_reads_them() {
     let created = create(&store, SetClock::at("10:00:00"))
         .execute(&NewBoardTask {
             description: "Why.\r\nHow.\r\n".into(),
-            plan: vec![PlanStep {
-                title: "Spike".into(),
-                criteria: vec!["Proved".into()],
-            }],
             ..new_task("a")
         })
         .unwrap();

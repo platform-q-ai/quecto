@@ -5,16 +5,16 @@ use super::ports::{
     BoardClockError, BoardHead, BoardStoreError, PullRequestStatesError, QuarantinedFile,
 };
 use crate::domain::project_board::entities::task::Task;
-use crate::domain::project_board::entities::task_parts::{PlanStep, Team};
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::schema_error::SchemaError;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
 
-/// A new task: only what a plan sets. Its claim, runs, reviews, pull
-/// requests and items' progress are made by the board's later changes,
-/// so none can be supplied here.
+/// A new task: only the task's own fields. Its plan and team are plan
+/// artifacts (#2481's artifact model), and its claim, runs, reviews, pull
+/// requests and items are made by the board's later changes, so none can
+/// be supplied here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewBoardTask {
     pub id: Slug,
@@ -25,8 +25,6 @@ pub struct NewBoardTask {
     pub status: NewBoardTaskStatus,
     pub parent: Option<Slug>,
     pub depends_on: Vec<Slug>,
-    pub plan: Vec<PlanStep>,
-    pub team: Option<Team>,
 }
 
 /// An edit of a draft in place: the fields it sets (`None` keeps one as
@@ -40,7 +38,6 @@ pub struct DraftUpdate {
     pub title: Option<String>,
     /// Markdown.
     pub description: Option<String>,
-    pub plan: Option<Vec<PlanStep>>,
     pub parent: Option<Option<Slug>>,
     pub depends_on: Option<Vec<Slug>>,
     pub expected_updated: Option<Timestamp>,

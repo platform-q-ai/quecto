@@ -7,16 +7,11 @@ fn slug(text: &str) -> Slug {
 }
 
 #[test]
-fn a_draft_takes_a_new_title_description_plan_and_references() {
+fn a_draft_takes_a_new_title_description_and_references() {
     let draft = task(Draft);
-    let plan = vec![PlanStep {
-        title: "Spike again".into(),
-        criteria: vec![],
-    }];
     let edit = DraftEdit {
         title: Some("Board store, again".into()),
         description: Some("Why.\n".into()),
-        plan: Some(plan.clone()),
         parent: Some(Some(slug("epic"))),
         depends_on: Some(vec![slug("schema")]),
     };
@@ -24,7 +19,6 @@ fn a_draft_takes_a_new_title_description_plan_and_references() {
     let mut expected = draft.fields().clone();
     expected.title = "Board store, again".into();
     expected.description = "Why.\n".into();
-    expected.plan = plan;
     expected.parent = Some(slug("epic"));
     expected.depends_on = vec![slug("schema")];
     expected.updated = at("10:00:00");
@@ -43,7 +37,7 @@ fn only_what_the_edit_sets_changes_and_a_parent_can_be_taken_away() {
     let edited = edit_draft(&draft, &edit, &at("10:00:00")).unwrap();
     assert_eq!(edited.fields().parent, None);
     assert_eq!(edited.fields().title, draft.fields().title);
-    assert_eq!(edited.fields().plan, draft.fields().plan);
+    assert_eq!(edited.fields().description, draft.fields().description);
 }
 
 #[test]

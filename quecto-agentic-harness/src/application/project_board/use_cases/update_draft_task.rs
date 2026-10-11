@@ -1,4 +1,4 @@
-//! Edits a draft in place (its title, description, plan, parent and
+//! Edits a draft in place (its title, description, parent and
 //! dependencies) as a compare-and-swap, as every change is. Drafts are
 //! shared planning: anyone with access to the board edits any draft (it has
 //! no holder). A caller that read the draft passes the `updated` it read,
@@ -14,7 +14,7 @@
 use std::sync::Arc;
 
 use super::board_change::{checked_writer, commit, task_on};
-use super::line_ends::{lf, plan_lf};
+use super::line_ends::lf;
 use super::references::{References, references_hold};
 use crate::application::project_board::dto::{DraftUpdate, ProjectBoardError};
 use crate::application::project_board::ports::{BoardClock, ProjectBoardStore};
@@ -49,7 +49,6 @@ impl UpdateDraftTask {
         let edit = DraftEdit {
             title: update.title.as_deref().map(lf),
             description: update.description.as_deref().map(lf),
-            plan: update.plan.as_deref().map(plan_lf),
             parent: update.parent.clone(),
             depends_on: update.depends_on.clone(),
         };

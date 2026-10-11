@@ -1,6 +1,6 @@
-//! Puts a new task on the board: only what a plan sets ([`NewBoardTask`]), a
-//! draft or ready task with no claim, runs, reviews, pull requests or
-//! items yet, whose parent and dependencies are already on the board,
+//! Puts a new task on the board: only the task's own fields
+//! ([`NewBoardTask`]), a draft or ready task with no plan, team, claim,
+//! runs, reviews, pull requests or items yet, whose parent and dependencies are already on the board,
 //! stamped with the time it was created. It never closes a cycle: not
 //! through new references, which must exist, nor through a task still
 //! naming the id of one that was deleted. Blocking: a lost write pauses the calling thread before
@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use super::board_change::{checked_writer, commit};
-use super::line_ends::{lf, plan_lf};
+use super::line_ends::lf;
 use super::references::{References, references_hold};
 use crate::application::project_board::dto::{NewBoardTask, ProjectBoardError};
 use crate::application::project_board::ports::{BoardClock, BoardSnapshot, ProjectBoardStore};
@@ -50,8 +50,8 @@ impl CreateBoardTask {
     }
 }
 
-/// The new task's fields, created and updated `now`, with no claim, runs,
-/// reviews, pull requests or items yet.
+/// The new task's fields, created and updated `now`, with no plan, team,
+/// claim, runs, reviews, pull requests or items yet.
 fn created_at(new: &NewBoardTask, now: &Timestamp) -> TaskFields {
     let fields = TaskFields {
         id: new.id.clone(),
@@ -61,9 +61,9 @@ fn created_at(new: &NewBoardTask, now: &Timestamp) -> TaskFields {
         status: new.status.into(),
         parent: new.parent.clone(),
         depends_on: new.depends_on.clone(),
-        plan: plan_lf(&new.plan),
+        plan: vec![],
         items: vec![],
-        team: new.team.clone(),
+        team: None,
         claim: None,
         runs: vec![],
         reviews: vec![],
