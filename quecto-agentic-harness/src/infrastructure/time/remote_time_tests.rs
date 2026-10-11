@@ -302,7 +302,10 @@ fn held(
 
 #[test]
 fn a_caller_finding_a_reading_in_flight_waits_for_it_within_the_read_timeout() {
-    let (clock, was_asked, release, reads) = held(Duration::from_secs(5));
+    // A long read timeout, so "woken by the reading" and "woken by the
+    // timeout" stay far apart however loaded the runner is.
+    let timeout = Duration::from_secs(30);
+    let (clock, was_asked, release, reads) = held(timeout);
     let first = {
         let clock = Arc::clone(&clock);
         std::thread::spawn(move || clock.reference())
@@ -319,7 +322,7 @@ fn a_caller_finding_a_reading_in_flight_waits_for_it_within_the_read_timeout() {
     let (served, at) = second.join().unwrap();
     assert!(served.is_some(), "served the reading it waited for");
     assert!(
-        at.saturating_duration_since(released) < Duration::from_secs(1),
+        at.saturating_duration_since(released) < timeout / 3,
         "woken when the reading ended, not at the read timeout"
     );
     assert_eq!(reads.load(Ordering::Relaxed), 1, "one reading at a time");

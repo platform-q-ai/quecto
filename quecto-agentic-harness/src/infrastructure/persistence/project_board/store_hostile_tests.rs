@@ -2,7 +2,12 @@
 //! that is not a task file the store wrote is set aside, never trusted, and
 //! never stops a write.
 use super::*;
+use crate::application::project_board::ports::BoardListings;
+use crate::domain::project_board::value_objects::shown_text::shown_char;
+use crate::infrastructure::persistence::project_board::index::{BoardIndex, Refreshed};
+use crate::infrastructure::persistence::project_board::indexed_listings::IndexedBoardListings;
 use crate::infrastructure::persistence::project_board::task_record::MAX_TASK_FILE_BYTES;
+use std::sync::Arc;
 
 /// How the README and a refusal tell someone to undo a hand edit.
 const RECOVERY: &str = "move `quecto/board` back to the commit before that edit";
@@ -597,6 +602,58 @@ fn a_write_past_the_task_bound_is_refused_before_anything_is_built() {
         store(&repos.alice).read().unwrap().head,
         moved,
         "a full board still takes changes"
+    );
+}
+
+/// A task file whose unknown key holds an escape sequence, a right-to-left
+/// override or an ideographic space is set aside with a reason that shows
+/// only what shows as itself, so the index takes the reason and every
+/// listing answers, with no rebuild after the first.
+#[test]
+fn a_hostile_key_never_reaches_a_reason_or_stops_a_listing() {
+    let repos = Repos::new();
+    let alice = store(&repos.alice);
+    let head = created(&alice);
+    written(alice.write(&head, &[task("good")], "board: add good"));
+    let hostile = |id: &str, key: &str| {
+        let text = String::from_utf8(encode(&task(id)).unwrap()).unwrap();
+        let planted = text.replacen('{', &format!("{{\n  \"{key}\": 1,"), 1);
+        Object::Blob(planted.into_bytes())
+    };
+    let good = Object::Blob(encode(&task("good")).unwrap());
+    raw_board(
+        &repos.remote(),
+        &[
+            ("100644", "good.json", good),
+            ("100644", "esc.json", hostile("esc", "x\\u001b[31m")),
+            ("100644", "rtl.json", hostile("rtl", "x\\u202ey")),
+            ("100644", "wide.json", hostile("wide", "x\\u3000y")),
+        ],
+        &[],
+    );
+    let bob = Arc::new(store(&repos.bob));
+    let snapshot = bob.read().unwrap();
+    assert_eq!(snapshot.quarantined.len(), 3, "{snapshot:?}");
+    for file in &snapshot.quarantined {
+        assert!(
+            file.reason.chars().all(|c| shown_char(c) || c == ' '),
+            "{:?}",
+            file.reason
+        );
+    }
+    let index = BoardIndex::of(&bob).unwrap();
+    let listings = IndexedBoardListings::new(index, bob.clone(), bob.clone());
+    for _ in 0..2 {
+        let ready = listings.ready().unwrap();
+        assert_eq!(ready.quarantined.len(), 3);
+    }
+    let index = BoardIndex::of(&bob).unwrap();
+    assert_eq!(
+        index.refresh(&*bob, &*bob),
+        Ok(Refreshed::Unchanged {
+            head: snapshot.head.0.clone()
+        }),
+        "the index holds: no rebuild loop"
     );
 }
 
