@@ -51,6 +51,26 @@ pub fn escaped(line: &str) -> String {
     }
 }
 
+/// The text a line of a paragraph or list item holds: [`escaped`] undone.
+/// `None` when the line starts as a block would, unescaped.
+pub fn unescaped(line: &str) -> Option<String> {
+    let mut chars = line.chars();
+    let (first, second) = (chars.next(), chars.next());
+    let digits = line.bytes().take_while(u8::is_ascii_digit).count();
+    // An ordered marker the writer escaped: digits, `\`, then `.` or `)`.
+    let marker = (digits > 0 && line[digits..].starts_with('\\'))
+        .then(|| format!("{}{}", &line[..digits], &line[digits + 1..]))
+        .filter(|marker| list_number(marker) == Some(digits));
+    match (first, second, marker) {
+        (Some('\\'), Some(next), _) if opens_escaped(next) => Some(line[1..].to_string()),
+        (_, _, Some(marker)) => Some(marker),
+        (Some('['), ..) if starts_with_link(line) => Some(line.to_string()),
+        (Some(first), ..) if opens_escaped(first) => None,
+        _ if list_number(line).is_some() => None,
+        _ => Some(line.to_string()),
+    }
+}
+
 /// One line of text in a paragraph or list: not empty, no leading space,
 /// and the inline rules.
 fn text_line(text: &str, at: usize) -> Result<(), MarkdownError> {

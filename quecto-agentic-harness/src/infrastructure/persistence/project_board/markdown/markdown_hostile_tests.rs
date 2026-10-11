@@ -310,6 +310,7 @@ fn near_misses_are_kept() {
         "a profile [here](https://example.com/@ada) and [paypal.com](https://example.com)",
         "README.md and C:\\x",
         "snake_case and a_b_c",
+        "```a``` opens the line as code, not a fence",
     ] {
         let document = with_line(line);
         let file = render(&document, &SHAPE).unwrap_or_else(|error| panic!("{line:?}: {error:?}"));
