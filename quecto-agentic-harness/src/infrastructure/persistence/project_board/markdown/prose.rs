@@ -114,7 +114,9 @@ pub fn render(
                     false => return Err(fence("a language of a-z, 0-9, + and -, at most twenty")),
                 }
                 for line in code {
-                    match line.starts_with("```") {
+                    // A reader closes a fence on up to three spaces of
+                    // indentation, then the fence or a longer one.
+                    match line.trim_start_matches(' ').starts_with("```") {
                         true => {
                             return Err(MarkdownError::Fence {
                                 line: lines.len() + 1,
