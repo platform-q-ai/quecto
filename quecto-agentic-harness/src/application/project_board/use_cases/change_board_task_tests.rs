@@ -286,7 +286,11 @@ fn a_task_stamped_at_the_bound_is_built_on_and_a_second_past_it_is_not() {
         .execute(&slug("a"), &BoardOp::Renew)
     };
     let at_bound = built_on("09:01:00").unwrap();
-    assert_eq!(at_bound.fields().updated, at("09:01:00"));
+    assert_eq!(
+        at_bound.fields().updated,
+        at("09:01:01"),
+        "a second past the task it built on"
+    );
     assert_eq!(
         built_on("09:01:01"),
         Err(ProjectBoardError::TaskAhead {

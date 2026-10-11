@@ -230,3 +230,30 @@ fn crlf_line_ends_become_lf_before_the_schema_reads_them() {
     let edited = update(&store).execute(&edit).unwrap();
     assert_eq!(edited.fields().description, "Why.\nHow.\n");
 }
+
+#[test]
+fn two_edits_in_one_second_are_told_apart() {
+    let store = holding(&[("a", TaskStatus::Draft, None, &[])]);
+    let first = update(&store).execute(&retitle("a")).unwrap();
+    let read = first.fields().updated.clone();
+    let second = DraftUpdate {
+        title: Some("Second".into()),
+        expected_updated: Some(read.clone()),
+        ..of("a")
+    };
+    let second = update(&store).execute(&second).unwrap();
+    assert_ne!(
+        second.fields().updated,
+        read,
+        "the same second moves updated on"
+    );
+    let late = DraftUpdate {
+        title: Some("Late".into()),
+        expected_updated: Some(read),
+        ..of("a")
+    };
+    assert!(matches!(
+        update(&store).execute(&late),
+        Err(ProjectBoardError::Stale { .. })
+    ));
+}

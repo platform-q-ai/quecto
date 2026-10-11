@@ -106,7 +106,9 @@ fn a_repository_is_owner_slash_name_and_gh_must_be_on_the_path() {
         "platform-q-ai/quecto",
         "github.com/a/b/c",
         "github.com/../x",
-        "github.com/a/.git",
+        "github.com/a/.",
+        "github.com/a/..",
+        "github.com/a/-x",
         "github.com/-o/x",
         "github.com/a b/c",
         "localhost/a/b",
@@ -155,5 +157,31 @@ fn a_child_gh_leaves_holding_its_output_costs_the_grace_and_ends() {
     assert!(
         !dir.path().join("child-lived.held").exists(),
         "gh's child outlived it"
+    );
+}
+
+#[test]
+fn a_name_may_start_with_a_dot_and_enterprise_tokens_reach_only_their_configured_host() {
+    let (dir, mut vars) = fake_gh();
+    assert!(GhPullRequestStates::new("github.com/platform-q-ai/.github", vars.clone()).is_ok());
+    vars.push(("GH_ENTERPRISE_TOKEN".into(), "enterprise".into()));
+    let read_env = |repo: &str, vars: Vec<(OsString, OsString)>| {
+        let host = GhPullRequestStates::new(repo, vars).unwrap();
+        let _ = host.state(1);
+        std::fs::read_to_string(dir.path().join("log.env")).unwrap()
+    };
+    assert!(!read_env("github.com/a/b", vars.clone()).contains("GH_ENTERPRISE_TOKEN"));
+    assert!(
+        !read_env("ghe.example.com/a/b", vars.clone()).contains("GH_ENTERPRISE_TOKEN"),
+        "not configured"
+    );
+    let mut configured = vars.clone();
+    configured.retain(|(key, _)| key != "GH_HOST");
+    configured.push(("GH_HOST".into(), "ghe.example.com".into()));
+    let env = read_env("ghe.example.com/a/b", configured);
+    assert!(env.contains("GH_ENTERPRISE_TOKEN=enterprise"), "{env}");
+    assert!(
+        !env.contains("GH_HOST"),
+        "the host travels with the repository"
     );
 }

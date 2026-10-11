@@ -27,7 +27,7 @@ pub const CLOCK_AHEAD_SECONDS: u64 = 60;
 /// expired claim is renewed too, until someone takes it over.
 pub fn renew(task: &Task, holder: &Identity, now: &Timestamp) -> Result<Task, BoardRuleError> {
     let claim = held_by(task, holder)?;
-    let at = stamp(task, now);
+    let at = stamp(task, now)?;
     let mut next = task.fields().clone();
     next.claim = Some(Claim {
         holder: claim.holder.clone(),
@@ -51,7 +51,7 @@ pub fn take_over(task: &Task, taker: &Identity, now: &Timestamp) -> Result<Task,
     if is_live(claim, now) {
         return Err(BoardRuleError::ClaimLive);
     }
-    let at = stamp(task, now);
+    let at = stamp(task, now)?;
     let mut next = fields.clone();
     next.claim = Some(new_claim(taker, &at)?);
     settle(next, &at)
@@ -88,10 +88,21 @@ pub fn is_live(claim: &Claim, now: &Timestamp) -> bool {
     *now < claim.expires
 }
 
-/// When a change to `task` happens: the caller's `now`, or the task's own
-/// `updated` if the caller's clock reads earlier.
-pub(super) fn stamp(task: &Task, now: &Timestamp) -> Timestamp {
-    now.max(&task.fields().updated).clone()
+/// When a change to `task` happens: the caller's `now`, or a second past
+/// the task's own `updated` if the caller's clock reads no later. Every
+/// change moves `updated` strictly forward, so two changes in one second,
+/// or one from a clock running behind, never share a stamp (a caller's
+/// `expected_updated` tells them apart).
+///
+/// # Errors
+/// A task stamped at the last moment the board can spell.
+pub(super) fn stamp(task: &Task, now: &Timestamp) -> Result<Timestamp, BoardRuleError> {
+    let next = task
+        .fields()
+        .updated
+        .plus_seconds(1)
+        .map_err(|error| BoardRuleError::Invalid(error.at("updated")))?;
+    Ok(now.max(&next).clone())
 }
 
 /// A claim for `holder` from `at` (a [`stamp`]) for two hours.

@@ -35,8 +35,6 @@ pub const INHERITED: &[&str] = &[
     "GH_CONFIG_DIR",
     "GH_TOKEN",
     "GITHUB_TOKEN",
-    "GH_ENTERPRISE_TOKEN",
-    "GITHUB_ENTERPRISE_TOKEN",
     "HTTPS_PROXY",
     "https_proxy",
     "HTTP_PROXY",
@@ -46,6 +44,10 @@ pub const INHERITED: &[&str] = &[
     "SSL_CERT_FILE",
     "SSL_CERT_DIR",
 ];
+/// Tokens for a GitHub Enterprise host: passed on only when the
+/// repository's host is not github.com and is the host the environment
+/// names in `GH_HOST`, so no token reaches a host it was not meant for.
+pub const ENTERPRISE_TOKENS: &[&str] = &["GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"];
 pub const READ_TIMEOUT: Duration = Duration::from_secs(20);
 /// How long `gh`'s pipes get to end once it has exited.
 pub const OUTPUT_GRACE: Duration = Duration::from_millis(500);
@@ -84,10 +86,18 @@ impl GhPullRequestStates {
         if !repository_name(repo) {
             return Err(unavailable(format!("{repo:?} is not host/owner/name")));
         }
-        let env: Vec<(OsString, OsString)> = vars
-            .into_iter()
-            .filter(|(key, _)| INHERITED.iter().any(|name| OsStr::new(name) == key))
-            .collect();
+        let vars: Vec<(OsString, OsString)> = vars.into_iter().collect();
+        let host = repo.split('/').next().unwrap_or_default();
+        let configured = vars
+            .iter()
+            .any(|(key, value)| key == "GH_HOST" && value.to_str() == Some(host));
+        let enterprise = host != "github.com" && configured;
+        let wanted = |key: &OsStr| {
+            INHERITED.iter().any(|name| OsStr::new(name) == key)
+                || (enterprise && ENTERPRISE_TOKENS.iter().any(|name| OsStr::new(name) == key))
+        };
+        let env: Vec<(OsString, OsString)> =
+            vars.into_iter().filter(|(key, _)| wanted(key)).collect();
         let program = env
             .iter()
             .find(|(key, _)| key == "PATH")
@@ -135,8 +145,22 @@ impl GhPullRequestStates {
             });
         }
         let mut child = command.spawn().map_err(|error| error.to_string())?;
-        let stdout = pump(child.stdout.take(), Keep::Head(STDOUT_CAPACITY));
-        let stderr = pump(child.stderr.take(), Keep::Tail(STDERR_TAIL_CAPACITY));
+        let pumps = pump(child.stdout.take(), Keep::Head(STDOUT_CAPACITY)).and_then(|stdout| {
+            Ok((
+                stdout,
+                pump(child.stderr.take(), Keep::Tail(STDERR_TAIL_CAPACITY))?,
+            ))
+        });
+        let (stdout, stderr) = match pumps {
+            Ok(pumps) => pumps,
+            Err(error) => {
+                // No reader for its output: gh is ended rather than left
+                // to block on a full pipe.
+                end_group(child.id());
+                let _ = child.wait();
+                return Err(format!("gh's output could not be read: {error}"));
+            }
+        };
         let deadline = Instant::now() + self.timeout;
         // Watch for gh's exit without reaping it, so its group stays its
         // own until the group is ended.
@@ -200,21 +224,33 @@ impl PullRequestStates for GhPullRequestStates {
     }
 }
 
-/// `host/owner/name`: a host name, and GitHub's own characters in the
-/// owner and name, each part starting with a letter or digit.
+/// `host/owner/name`: a host name; an owner of letters, digits and `-`
+/// starting with a letter or digit; and a name of letters, digits, `-`,
+/// `_` and `.` (a leading dot too: `.github`), never `.` or `..` and never
+/// starting with `-`.
 fn repository_name(repo: &str) -> bool {
-    let part = |text: &str, extra: &[u8]| {
-        text.as_bytes()
-            .first()
-            .is_some_and(u8::is_ascii_alphanumeric)
+    let made_of = |text: &str, extra: &[u8]| {
+        !text.is_empty()
             && text
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || extra.contains(&b))
     };
+    let starts =
+        |text: &str, allowed: &dyn Fn(u8) -> bool| text.bytes().next().is_some_and(allowed);
+    let host = |text: &str| {
+        made_of(text, b".-") && text.contains('.') && starts(text, &|b| b.is_ascii_alphanumeric())
+    };
+    let owner = |text: &str| made_of(text, b"-") && starts(text, &|b| b.is_ascii_alphanumeric());
+    let name = |text: &str| {
+        made_of(text, b"-_.")
+            && !matches!(text, "." | "..")
+            && starts(text, &|b| {
+                b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_')
+            })
+    };
     matches!(
         repo.split('/').collect::<Vec<_>>().as_slice(),
-        [host, owner, name]
-            if part(host, b".-") && host.contains('.') && part(owner, b"-") && part(name, b"-_.")
+        [h, o, n] if host(h) && owner(o) && name(n)
     )
 }
 
@@ -230,35 +266,40 @@ enum Keep {
 /// Reads a pipe to its end on its own thread, keeping a bounded part; the
 /// bytes arrive on the channel, so the caller waits only as long as it
 /// chooses.
-fn pump(pipe: Option<impl Read + Send + 'static>, keep: Keep) -> mpsc::Receiver<Vec<u8>> {
+fn pump(
+    pipe: Option<impl Read + Send + 'static>,
+    keep: Keep,
+) -> std::io::Result<mpsc::Receiver<Vec<u8>>> {
     let (sender, receiver) = mpsc::channel();
-    std::thread::spawn(move || {
-        let mut kept: VecDeque<u8> = VecDeque::new();
-        if let Some(mut pipe) = pipe {
-            let mut buffer = [0u8; 1024];
-            loop {
-                match pipe.read(&mut buffer) {
-                    Ok(0) | Err(_) => break,
-                    Ok(read) => {
-                        for &byte in &buffer[..read] {
-                            match keep {
-                                Keep::Head(most) if kept.len() < most => kept.push_back(byte),
-                                Keep::Head(_) => {}
-                                Keep::Tail(most) => {
-                                    if kept.len() == most {
-                                        kept.pop_front();
+    std::thread::Builder::new()
+        .name("gh-output".into())
+        .spawn(move || {
+            let mut kept: VecDeque<u8> = VecDeque::new();
+            if let Some(mut pipe) = pipe {
+                let mut buffer = [0u8; 1024];
+                loop {
+                    match pipe.read(&mut buffer) {
+                        Ok(0) | Err(_) => break,
+                        Ok(read) => {
+                            for &byte in &buffer[..read] {
+                                match keep {
+                                    Keep::Head(most) if kept.len() < most => kept.push_back(byte),
+                                    Keep::Head(_) => {}
+                                    Keep::Tail(most) => {
+                                        if kept.len() == most {
+                                            kept.pop_front();
+                                        }
+                                        kept.push_back(byte);
                                     }
-                                    kept.push_back(byte);
                                 }
                             }
                         }
                     }
                 }
             }
-        }
-        let _ = sender.send(Vec::from(kept));
-    });
-    receiver
+            let _ = sender.send(Vec::from(kept));
+        })?;
+    Ok(receiver)
 }
 
 /// Whether our unreaped child `pid` has exited, observed without reaping
