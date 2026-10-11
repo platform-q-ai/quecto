@@ -49,6 +49,8 @@ mod board_events;
 mod board_evidence;
 #[path = "contracts/board_files.rs"]
 mod board_files;
+#[path = "contracts/board_listings.rs"]
+mod board_listings;
 #[path = "contracts/board_loss.rs"]
 mod board_loss;
 #[path = "contracts/board_members.rs"]
@@ -173,6 +175,8 @@ mod metered_call;
 mod mock_claude;
 #[path = "contracts/overlay_trust_store.rs"]
 mod overlay_trust_store;
+#[path = "contracts/project_board_git_store.rs"]
+mod project_board_git_store;
 #[path = "contracts/project_board_store.rs"]
 mod project_board_store;
 
