@@ -16,6 +16,10 @@ fn the_system_clock_reads_this_machines_time_to_the_second() {
         "{before} {now:?} {after}"
     );
     assert_eq!(SystemBoardClock::default().reference(), None);
+    assert!(matches!(
+        SystemBoardClock::default().reference_status(),
+        quecto::application::project_board::ports::ReferenceStatus::NoReference(_)
+    ));
 }
 
 /// A clock set before 1970 or past 9999 is an error, not a panic.
@@ -125,8 +129,8 @@ fn create_against(
     use std::sync::Arc;
     let store = MemoryBoardStore::default();
     store.bootstrap().unwrap();
-    let source = HttpDate::new(serves_date(offset_seconds));
-    let clock = ReferencedBoardClock::new(Ok(Box::new(source)), REFRESH_EVERY, |_| {});
+    let source = HttpDate::without_proxy(serves_date(offset_seconds));
+    let clock = ReferencedBoardClock::new(Ok(Arc::new(source)), REFRESH_EVERY, |_| {});
     let create = CreateBoardTask::new(Arc::new(store), Arc::new(clock)).unwrap();
     create.execute(&NewBoardTask {
         id: Slug::parse("a").unwrap(),

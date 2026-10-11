@@ -7,7 +7,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-use crate::application::project_board::ports::{BoardClock, BoardClockError};
+use crate::application::project_board::ports::{BoardClock, BoardClockError, ReferenceStatus};
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 
 /// The pause before a retried write grows by this much each attempt, plus
@@ -98,6 +98,10 @@ impl BoardClock for SystemBoardClock {
 
     fn reference(&self) -> Option<Timestamp> {
         None
+    }
+
+    fn reference_status(&self) -> ReferenceStatus {
+        ReferenceStatus::NoReference("this machine's clock reads no outside time".into())
     }
 
     /// Blocks the calling thread for [`Self::pause_for`].
