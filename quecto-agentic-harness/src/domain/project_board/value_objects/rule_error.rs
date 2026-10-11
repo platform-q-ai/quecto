@@ -99,6 +99,14 @@ pub enum BoardRuleError {
     PrNotLinked(u64),
     /// The task already links this pull request.
     PrAlreadyLinked(u64),
+    /// Other tasks took this one over (`by`): it is archived as
+    /// superseded, never done.
+    Superseded { by: Vec<Slug> },
+    /// Two tasks name the same issue.
+    IssueShared { issue: u64, task: Slug },
+    /// A task's issue is a pull request on the board (the host numbers
+    /// issues and pull requests from one sequence).
+    IssueIsPr { issue: u64, task: Slug },
     /// Only a draft is edited in place; a task past its draft changes
     /// through its moves.
     NotDraft(TaskStatus),
@@ -204,6 +212,22 @@ impl fmt::Display for BoardRuleError {
                 status.as_str()
             ),
             Self::NoEdit => f.write_str("the edit changes nothing"),
+            Self::Superseded { by } => {
+                let by: Vec<&str> = by.iter().map(Slug::as_str).collect();
+                write!(
+                    f,
+                    "other tasks took this one over ({}): archive it as superseded instead",
+                    by.join(", ")
+                )
+            }
+            Self::IssueShared { issue, task } => {
+                write!(f, "task {} already has issue {issue}", task.as_str())
+            }
+            Self::IssueIsPr { issue, task } => write!(
+                f,
+                "issue {issue} of task {} is a pull request on the board",
+                task.as_str()
+            ),
             Self::Invalid(error) => write!(f, "invalid task: {error}"),
         }
     }

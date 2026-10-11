@@ -338,7 +338,11 @@ fn a_tasks_closure_is_schema_3_and_keeps_the_domains_rules() {
             fields.resolution,
             fields.references.len()
         ),
-        (Some(2481), Some(Resolution::Superseded), 3)
+        (
+            Some(IssueNumber::new(2481).unwrap()),
+            Some(Resolution::Superseded),
+            3
+        )
     );
     for key in ["github_issue", "resolution", "superseded_by", "references"] {
         let only = match key {
@@ -436,4 +440,33 @@ fn a_schema_3_key_holding_no_value_reads_as_not_set_in_any_schema() {
             "{list}"
         );
     }
+}
+
+/// A done task is completed: one written before schema 3 has no
+/// resolution and is read as completed; one written at schema 3 without
+/// one breaks the schema.
+#[test]
+fn an_older_done_task_is_read_as_completed() {
+    let older = edited(MINIMAL, "\"schema\": 3,", "\"schema\": 2,");
+    let older = String::from_utf8(older)
+        .unwrap()
+        .replace("\"draft\"", "\"done\"");
+    let task = decode(older.as_bytes()).unwrap();
+    assert_eq!(task.fields().resolution, Some(Resolution::Completed));
+    let first = older.replace("\"schema\": 2,", "\"schema\": 1,");
+    assert_eq!(
+        decode(first.as_bytes()).unwrap().fields().resolution,
+        Some(Resolution::Completed)
+    );
+    let current = older.replace("\"schema\": 2,", "\"schema\": 3,");
+    assert!(
+        matches!(decode(current.as_bytes()), Err(RecordError::Invalid(error)) if error.field == "resolution"),
+        "a schema-3 done task without its resolution"
+    );
+    let reread = encode(&task).unwrap();
+    assert!(
+        String::from_utf8(reread)
+            .unwrap()
+            .contains("\"resolution\": \"completed\"")
+    );
 }

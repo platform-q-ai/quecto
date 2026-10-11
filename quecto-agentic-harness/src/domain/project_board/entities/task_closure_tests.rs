@@ -1,8 +1,22 @@
-//! Where a task came from and how it ended (#2481 S8).
+//! Where a task came from and how it ended (#2481 S8). How a reference
+//! itself is judged and keyed is the value object's (`reference_tests`).
 use super::tests::{fields, slug};
 use super::*;
-use crate::domain::project_board::entities::task_parts::{MAX_ISSUE_NUMBER, MAX_REFERENCE_BYTES};
 use crate::domain::project_board::value_objects::vocabulary::Resolution::*;
+
+/// One change that must make valid fields invalid.
+type Edit = fn(&mut TaskFields);
+
+fn issue(number: u64) -> IssueNumber {
+    IssueNumber::new(number).unwrap()
+}
+
+fn refs(texts: &[&str]) -> Vec<Reference> {
+    texts
+        .iter()
+        .map(|text| Reference::parse(text).unwrap())
+        .collect()
+}
 
 /// An archived task superseded by another, from an issue, pointing at
 /// work outside the board.
@@ -10,14 +24,14 @@ fn closed() -> TaskFields {
     TaskFields {
         status: TaskStatus::Archived,
         claim: None,
-        github_issue: Some(2481),
+        github_issue: Some(issue(2481)),
         resolution: Some(Superseded),
         superseded_by: vec![slug("board-store-v2")],
-        references: vec![
-            "#2470".into(),
-            "platform-q-ai/.github#7".into(),
-            "https://example.com:8443/a/b?c=d&e=f#g".into(),
-        ],
+        references: refs(&[
+            "#2470",
+            "platform-q-ai/.github#7",
+            "https://example.com:8443/a/b?c=d&e=f#g",
+        ]),
         ..fields()
     }
 }
@@ -32,9 +46,6 @@ fn at_status(status: TaskStatus) -> TaskFields {
     }
 }
 
-/// One change that must make valid fields invalid.
-type Edit = fn(&mut TaskFields);
-
 fn refused(task: TaskFields) -> String {
     Task::new(task).unwrap_err().field
 }
@@ -44,9 +55,9 @@ fn an_archived_task_holds_where_it_came_from_and_how_it_ended() {
     assert!(Task::new(closed()).is_ok());
     let open = TaskFields {
         resolution: None,
-        github_issue: Some(1),
+        github_issue: Some(issue(1)),
         superseded_by: vec![slug("next")],
-        references: vec!["#2".into()],
+        references: refs(&["#2"]),
         ..fields()
     };
     assert!(
@@ -57,9 +68,10 @@ fn an_archived_task_holds_where_it_came_from_and_how_it_ended() {
 
 /// Every resolution at every status, with and without what took the task
 /// over, against the rule written out independently of the code: a done
-/// task is completed or unresolved, an archived one anything, any other
-/// unresolved; `superseded` and `duplicate` name a task or a reference;
-/// a task superseded by others is unresolved, superseded or duplicate.
+/// task is completed and superseded by none, an archived one anything, any
+/// other unresolved; `superseded` and `duplicate` name a task or a
+/// reference; a task superseded by others is unresolved, superseded or
+/// duplicate.
 #[test]
 fn a_resolution_fits_its_status_and_what_took_the_task_over() {
     let resolutions = [
@@ -76,21 +88,24 @@ fn a_resolution_fits_its_status_and_what_took_the_task_over() {
         TaskStatus::Archived,
     ] {
         for resolution in resolutions {
-            for (by, refs) in [(false, false), (true, false), (false, true), (true, true)] {
+            for (by, with_refs) in [(false, false), (true, false), (false, true), (true, true)] {
                 let task = TaskFields {
                     resolution,
                     superseded_by: if by { vec![slug("next")] } else { vec![] },
-                    references: if refs { vec!["#9".into()] } else { vec![] },
+                    references: if with_refs { refs(&["#9"]) } else { vec![] },
                     ..at_status(status)
                 };
                 let by_status = matches!(
                     (resolution, status),
-                    (None, _)
-                        | (Some(Completed), TaskStatus::Done)
+                    (Some(Completed), TaskStatus::Done)
                         | (Some(_), TaskStatus::Archived)
+                        | (
+                            None,
+                            TaskStatus::Ready | TaskStatus::Review | TaskStatus::Archived
+                        )
                 );
                 let names =
-                    matches!(resolution, Some(Duplicate | Superseded)).then_some(by || refs);
+                    matches!(resolution, Some(Duplicate | Superseded)).then_some(by || with_refs);
                 let fits = !by || matches!(resolution, None | Some(Duplicate | Superseded));
                 let valid = by_status && names.unwrap_or(true) && fits;
                 let built = Task::new(task);
@@ -100,36 +115,37 @@ fn a_resolution_fits_its_status_and_what_took_the_task_over() {
                         .map(|_| ())
                         .map_err(|error| error.field.as_str()),
                     if valid { Ok(()) } else { Err("resolution") },
-                    "{status:?} {resolution:?} superseded_by={by} references={refs}"
+                    "{status:?} {resolution:?} superseded_by={by} references={with_refs}"
                 );
             }
         }
     }
 }
 
-/// An issue is numbered as a reference is, to ten digits, and is never
-/// one of the task's own pull requests nor one of its references.
+/// An issue is never one of the task's own pull requests (reported where
+/// the pull request is listed), and neither is named by `#n` in its
+/// references.
 #[test]
-fn a_tasks_issue_is_its_own() {
-    let widest = TaskFields {
-        github_issue: Some(MAX_ISSUE_NUMBER),
+fn a_tasks_issue_and_pull_requests_are_its_own() {
+    let clash = TaskFields {
+        prs: vec![1, 2481],
         ..closed()
     };
-    assert!(Task::new(widest).is_ok());
-    for issue in [0, MAX_ISSUE_NUMBER + 1, 2482] {
-        let task = TaskFields {
-            github_issue: Some(issue),
-            ..closed()
-        };
-        assert_eq!(refused(task), "github_issue", "{issue}");
-    }
-    let own = TaskFields {
-        references: vec!["#1".into(), "#2481".into()],
+    assert_eq!(refused(clash), "prs/1");
+    let own_issue = TaskFields {
+        references: refs(&["#1", "#2481"]),
         ..closed()
     };
-    assert_eq!(refused(own), "references/1");
+    assert_eq!(refused(own_issue), "references/1");
+    let own_pr = TaskFields {
+        prs: vec![2482],
+        references: refs(&["#2482"]),
+        ..closed()
+    };
+    assert_eq!(refused(own_pr), "references/0");
     let elsewhere = TaskFields {
-        references: vec!["platform-q-ai/quecto#2481".into()],
+        prs: vec![2482],
+        references: refs(&["platform-q-ai/quecto#2481", "platform-q-ai/quecto#2482"]),
         ..closed()
     };
     assert!(
@@ -153,7 +169,9 @@ fn the_tasks_that_superseded_it_are_others_named_once() {
                 .collect();
         }),
         ("references", |t| {
-            t.references = (1..=MAX_REFERENCES + 1).map(|n| format!("#{n}")).collect();
+            t.references = (1..=MAX_REFERENCES + 1)
+                .map(|n| Reference::parse(&format!("o/r#{n}")).unwrap())
+                .collect();
         }),
     ];
     for (field, edit) in cases {
@@ -163,115 +181,25 @@ fn the_tasks_that_superseded_it_are_others_named_once() {
     }
 }
 
-/// A reference is named once by its key: a repository in any case is one
-/// repository, and so is a URL's host; a URL's path keeps its case.
+/// A reference is named once by its key.
 #[test]
 fn a_reference_is_named_once_by_its_key() {
     for pair in [
         ["#1", "#1"],
         ["Owner/Repo#1", "owner/repo#1"],
-        ["https://EXAMPLE.com/a", "https://example.com/a"],
+        ["https://EXAMPLE.com", "https://example.com/"],
     ] {
         let task = TaskFields {
-            references: pair.map(String::from).to_vec(),
+            references: refs(&pair),
             ..closed()
         };
         assert_eq!(refused(task), "references", "{pair:?}");
     }
-    for pair in [
-        ["https://example.com/A", "https://example.com/a"],
-        ["#1", "owner/repo#1"],
-        ["owner/repo#1", "owner/repo#2"],
-    ] {
-        let task = TaskFields {
-            references: pair.map(String::from).to_vec(),
-            ..closed()
-        };
-        assert!(Task::new(task).is_ok(), "{pair:?}");
-    }
-}
-
-/// A reference is `#n`, `owner/repo#n` or an https URL: a host of
-/// dot-joined labels, a port from 1 to 65535, then printable ASCII with
-/// no space, `|`, backtick or `\`, whose `%`s escape.
-#[test]
-fn a_reference_is_an_issue_or_an_https_url() {
-    let label = "a".repeat(63);
-    let fine = [
-        "#1".to_string(),
-        "#9999999999".into(),
-        "o/r#1".into(),
-        "https://a".into(),
-        "https://a-b.c1".into(),
-        format!("https://{label}.com"),
-        "https://a:1".into(),
-        "https://a:65535/x".into(),
-        "https://a/%2Fb%e9".into(),
-        "https://a?q=1&r=%20".into(),
-        "https://a#frag".into(),
-        "https://a#123".into(),
-        "https://a/b#42".into(),
-    ];
-    for text in fine {
-        let task = TaskFields {
-            references: vec![text.clone()],
-            ..closed()
-        };
-        assert!(Task::new(task).is_ok(), "{text}");
-    }
-    let bad = [
-        "#0".to_string(),
-        "#01".into(),
-        "#12345678901".into(),
-        "2470".into(),
-        "a/b/c#1".into(),
-        "./repo#1".into(),
-        "owner/..#1".into(),
-        "own er/repo#1".into(),
-        "http://example.com".into(),
-        "https://".into(),
-        "https://a..b".into(),
-        "https://a.".into(),
-        "https://a-".into(),
-        "https://-a".into(),
-        format!("https://{label}a.com"),
-        "https://a:0".into(),
-        "https://a:99999".into(),
-        "https://a:".into(),
-        "https://a:8x".into(),
-        "https://a/%zz".into(),
-        "https://a/%2".into(),
-        "https://a/%".into(),
-        "https://user@a".into(),
-        "https://a/b c".into(),
-        "https://a/b|c".into(),
-        "https://a/b`c".into(),
-        "https://a/b\\c".into(),
-        "https://ex\u{e4}mple.com".into(),
-        String::new(),
-    ];
-    for text in bad {
-        let task = TaskFields {
-            references: vec![text.clone()],
-            ..closed()
-        };
-        assert_eq!(refused(task), "references/0", "{text:?}");
-    }
-    let url = format!(
-        "https://example.com/{}",
-        "a".repeat(MAX_REFERENCE_BYTES - 20)
-    );
-    assert_eq!(url.len(), MAX_REFERENCE_BYTES);
-    let longest = TaskFields {
-        references: vec![url.clone()],
+    let two = TaskFields {
+        references: refs(&["https://example.com/A", "https://example.com/a"]),
         ..closed()
     };
-    assert!(Task::new(longest).is_ok(), "the longest reference");
-    let past = TaskFields {
-        references: vec![format!("{url}a")],
-        ..closed()
-    };
-    assert_eq!(refused(past), "references/0");
+    assert!(Task::new(two).is_ok());
 }
 
 /// References are text: they count toward the task's budget.
@@ -281,6 +209,10 @@ fn a_tasks_references_count_toward_its_text() {
         references: vec![],
         ..closed()
     };
-    let refs: usize = closed().references.iter().map(String::len).sum();
-    assert_eq!(closed().text_bytes(), without.text_bytes() + refs);
+    let bytes: usize = closed()
+        .references
+        .iter()
+        .map(|reference| reference.as_str().len())
+        .sum();
+    assert_eq!(closed().text_bytes(), without.text_bytes() + bytes);
 }

@@ -10,7 +10,7 @@ use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::TaskFields;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
-use crate::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
+use crate::domain::project_board::value_objects::vocabulary::{Resolution, TaskKind, TaskStatus};
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 
 pub fn at(time: &str) -> Timestamp {
@@ -128,5 +128,17 @@ pub fn fields(id: &str) -> TaskFields {
         references: vec![],
         created: at("00:00:00"),
         updated: at("00:00:00"),
+    }
+}
+
+/// `fields` as the board holds them: a done task is completed.
+pub fn finished(fields: TaskFields) -> TaskFields {
+    let resolution = match fields.status {
+        TaskStatus::Done => Some(Resolution::Completed),
+        _ => fields.resolution,
+    };
+    TaskFields {
+        resolution,
+        ..fields
     }
 }

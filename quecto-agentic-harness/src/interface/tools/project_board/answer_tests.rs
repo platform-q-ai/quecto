@@ -298,6 +298,9 @@ board_rules! {
     R::PrAlreadyLinked(_) => R::PrAlreadyLinked(7), "pr_already_linked", ["pr"];
     R::NotDraft(_) => R::NotDraft(TaskStatus::Ready), "not_draft", ["status"];
     R::NoEdit => R::NoEdit, "no_edit", [];
+    R::Superseded { .. } => R::Superseded { by: vec![Slug::parse("next").unwrap()] }, "superseded", ["by"];
+    R::IssueShared { .. } => R::IssueShared { issue: 7, task: Slug::parse("other").unwrap() }, "issue_shared", ["issue", "task"];
+    R::IssueIsPr { .. } => R::IssueIsPr { issue: 7, task: Slug::parse("other").unwrap() }, "issue_is_pr", ["issue", "task"];
     R::ChangeAlreadyLinked { .. } => R::ChangeAlreadyLinked { task: Slug::parse("board-store").unwrap(), change: Some(1) }, "change_already_linked", ["task", "change"];
     R::NoSuchChange(_) => R::NoSuchChange(4), "no_such_change", ["change"];
     R::ChangeAhead { .. } => R::ChangeAhead { change: 1, updated: at("10:00:00") }, "change_ahead", ["change", "updated"];

@@ -1,13 +1,14 @@
 //! A task: the overall job a project plans, readies and claims. A [`Task`]
 //! is only ever built from fields that pass [`Task::new`], so an invalid
 //! task cannot exist; change one by taking its fields and building anew.
+use super::super::value_objects::reference::{IssueNumber, Points, Reference};
 use super::super::value_objects::schema_error::{SchemaError, distinct, line, markdown};
 use super::super::value_objects::slug::Slug;
 use super::super::value_objects::timestamp::Timestamp;
 use super::super::value_objects::vocabulary::{Resolution, TaskKind, TaskStatus};
 use super::claim::{Claim, Identity};
 use super::plan::MAX_PLAN_VERSION;
-use super::task_parts::{MAX_ISSUE_NUMBER, MAX_REVIEWS, Review, reference};
+use super::task_parts::{MAX_REVIEWS, Review};
 
 /// GitHub's issue title limit.
 pub const MAX_TITLE_CHARS: usize = 256;
@@ -43,16 +44,17 @@ pub struct TaskFields {
     pub reviews: Vec<Review>,
     /// Every pull request delivering the task, each numbered from 1.
     pub prs: Vec<u64>,
-    /// The host issue the task came from or is mirrored by, from 1.
-    pub github_issue: Option<u64>,
+    /// The host issue the task came from or is mirrored by.
+    pub github_issue: Option<IssueNumber>,
     /// How the task was resolved: only a done or archived task is.
     pub resolution: Option<Resolution>,
     /// The tasks that took over its work.
     pub superseded_by: Vec<Slug>,
-    /// Plain pointers to work outside the board's tasks: closed or
-    /// out-of-board issues and pull requests (`#n`, `owner/repo#n`) and
-    /// https URLs. They are not dependencies.
-    pub references: Vec<String>,
+    /// Plain pointers to any issue, pull request or page, on the board or
+    /// not (`#n`, `owner/repo#n`, an https URL): closed work, work outside
+    /// the board, or what delivered the task (as #2265 was delivered by an
+    /// on-board task). They are not dependencies.
+    pub references: Vec<Reference>,
     pub created: Timestamp,
     pub updated: Timestamp,
 }
@@ -77,7 +79,11 @@ impl TaskFields {
                     + optional(&review.proving_test)
             })
             .sum();
-        let references: usize = self.references.iter().map(String::len).sum();
+        let references: usize = self
+            .references
+            .iter()
+            .map(|reference| reference.as_str().len())
+            .sum();
         self.title.len() + self.description.len() + parts + references
     }
 }
@@ -168,41 +174,34 @@ fn validate(task: &TaskFields) -> Result<(), SchemaError> {
 }
 
 /// Where the task came from and how it ended:
-/// - its issue, numbered from 1 to [`MAX_ISSUE_NUMBER`], and never one of
-///   its own pull requests (the host numbers both from one sequence);
+/// - its issue ([`IssueNumber`]), never one of its own pull requests (the
+///   host numbers both from one sequence; a pull request that clashes is
+///   reported where it is listed, `prs`);
 /// - its resolution: none until it is done or archived; a done task's is
-///   `completed` (or none, from an older file); an archived task's any;
+///   `completed` (an older file's done task is read as completed), and it
+///   is superseded by none; an archived task's any;
 /// - `superseded` and `duplicate` name what took it over, a task in
 ///   `superseded_by` or a reference (a closed issue is only a reference),
 ///   and a task superseded by others is unresolved, `superseded` or
 ///   `duplicate`;
 /// - the tasks that superseded it, never itself;
-/// - its references, each a pointer named once (by its key) and never its
-///   own issue.
+/// - its references, each named once (by its key), any issue, pull request
+///   or page, on the board or not, but never its own issue or one of its
+///   own pull requests by `#n`.
 ///
-/// The board's own checks are the importer's and M4's: no two tasks share
-/// an issue, no issue is a pull request on the board, and `superseded_by`
-/// names tasks the board holds, without cycles.
+/// The board's own checks are the importer's and M4's, through
+/// [`issue_numbers_hold`](super::super::services::issue_numbers::issue_numbers_hold):
+/// no two tasks share an issue and no issue is a pull request on the
+/// board; and `superseded_by` names tasks the board holds, without cycles.
 fn validate_closure(task: &TaskFields) -> Result<(), SchemaError> {
-    let issue = task.github_issue;
-    match issue.map(|issue| {
-        (
-            (1..=MAX_ISSUE_NUMBER).contains(&issue),
-            task.prs.contains(&issue),
-        )
-    }) {
-        None | Some((true, false)) => {}
-        Some((false, _)) => {
+    let issue = task.github_issue.map(IssueNumber::get);
+    match task.prs.iter().position(|pr| Some(*pr) == issue) {
+        None => {}
+        Some(index) => {
             return Err(SchemaError::new(
-                "github_issue",
-                format!("an issue number is from 1 to {MAX_ISSUE_NUMBER}"),
-            ));
-        }
-        Some((true, true)) => {
-            return Err(SchemaError::new(
-                "github_issue",
-                "is one of the task's pull requests: the host numbers issues and pull requests \
-                 from one sequence",
+                format!("prs/{index}"),
+                "is the task's own issue: the host numbers issues and pull requests from one \
+                 sequence",
             ));
         }
     }
@@ -221,19 +220,17 @@ fn validate_closure(task: &TaskFields) -> Result<(), SchemaError> {
             ));
         }
     }
-    let keys = task
-        .references
-        .iter()
-        .enumerate()
-        .map(|(index, text)| reference(&format!("references/{index}"), text))
-        .collect::<Result<Vec<String>, SchemaError>>()?;
+    let keys: Vec<&str> = task.references.iter().map(Reference::key).collect();
     distinct("references", &keys, MAX_REFERENCES)?;
-    let own = issue.map(|issue| format!("#{issue}"));
-    match keys.iter().position(|key| Some(key) == own.as_ref()) {
+    let own = |reference: &Reference| match reference.points() {
+        Points::Own(number) => Some(number.get()) == issue || task.prs.contains(&number.get()),
+        Points::Elsewhere(_) | Points::Page => false,
+    };
+    match task.references.iter().position(own) {
         None => Ok(()),
         Some(index) => Err(SchemaError::new(
             format!("references/{index}"),
-            "is the task's own issue",
+            "is the task's own issue or pull request",
         )),
     }
 }
@@ -241,10 +238,13 @@ fn validate_closure(task: &TaskFields) -> Result<(), SchemaError> {
 /// The task's resolution fits its status and what superseded it.
 fn resolution_holds(task: &TaskFields) -> Result<(), SchemaError> {
     use Resolution::{Completed, Duplicate, NotPlanned, Superseded};
+    use TaskStatus::{Archived, Blocked, Claimed, Done, Draft, InProgress, Ready, Review};
     let status = task.status;
     let by_status = match (task.resolution, status) {
-        (None, _) | (Some(Completed), TaskStatus::Done) | (Some(_), TaskStatus::Archived) => Ok(()),
-        (Some(_), TaskStatus::Done) => Err("a done task is completed"),
+        (Some(Completed), Done)
+        | (Some(_), Archived)
+        | (None, Draft | Ready | Claimed | InProgress | Review | Blocked | Archived) => Ok(()),
+        (_, Done) => Err("a done task is completed"),
         (Some(_), _) => Err("only a done or archived task is resolved"),
     };
     let named = !task.superseded_by.is_empty() || !task.references.is_empty();

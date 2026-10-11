@@ -18,6 +18,7 @@
 use crate::domain::project_board::entities::claim::{Claim, Identity};
 use crate::domain::project_board::entities::task::{Task, TaskFields};
 use crate::domain::project_board::entities::task_parts::Review;
+use crate::domain::project_board::value_objects::reference::{IssueNumber, Reference};
 use crate::domain::project_board::value_objects::schema_error::SchemaError;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
@@ -210,6 +211,17 @@ pub fn decode(bytes: &[u8]) -> Result<Task, RecordError> {
             ));
         }
     }
+    // A done task is completed. One written before schema 3 has no
+    // resolution: it is read as completed, as it ended.
+    let mut record = record;
+    let upgraded = matches!(
+        (record.schema, record.status.as_str(), &record.resolution),
+        (1..=2, "done", None)
+    );
+    record.resolution = match upgraded {
+        true => Some(Resolution::Completed.as_str().into()),
+        false => record.resolution,
+    };
     record.into_task().map_err(RecordError::Invalid)
 }
 
@@ -277,13 +289,18 @@ impl TaskRecord {
             claim: self.claim.map(ClaimRecord::into_claim).transpose()?,
             reviews: indexed("reviews", self.reviews, ReviewRecord::into_review)?,
             prs: self.prs,
-            github_issue: self.github_issue,
+            github_issue: self
+                .github_issue
+                .map(|number| IssueNumber::new(number).map_err(|error| error.at("github_issue")))
+                .transpose()?,
             resolution: self
                 .resolution
                 .map(|word_| word("resolution", &word_, Resolution::parse))
                 .transpose()?,
             superseded_by: slugs("superseded_by", &self.superseded_by)?,
-            references: self.references,
+            references: indexed("references", self.references, |text, field| {
+                Reference::parse(&text).map_err(|error| error.at(field))
+            })?,
             created: time("created", &self.created)?,
             updated: time("updated", &self.updated)?,
         })
@@ -308,14 +325,18 @@ impl TaskRecord {
             claim: task.claim.as_ref().map(ClaimRecord::from_claim),
             reviews: task.reviews.iter().map(ReviewRecord::from_review).collect(),
             prs: task.prs.clone(),
-            github_issue: task.github_issue,
+            github_issue: task.github_issue.map(IssueNumber::get),
             resolution: task.resolution.map(|resolution| resolution.as_str().into()),
             superseded_by: task
                 .superseded_by
                 .iter()
                 .map(|slug| slug.as_str().into())
                 .collect(),
-            references: task.references.clone(),
+            references: task
+                .references
+                .iter()
+                .map(|reference| reference.as_str().into())
+                .collect(),
             created: task.created.as_str().into(),
             updated: task.updated.as_str().into(),
         }

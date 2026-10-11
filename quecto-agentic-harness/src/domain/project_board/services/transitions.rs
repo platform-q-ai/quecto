@@ -109,6 +109,10 @@ pub fn move_task(
         }
         _ => {}
     }
+    match to {
+        Done => not_superseded(task)?,
+        Draft | Ready | Claimed | InProgress | Review | Blocked | Archived => {}
+    }
     may_move_with(task, runs, to)?;
     let at = stamp(task, now)?;
     let mut next = task.fields().clone();
@@ -183,8 +187,17 @@ fn numbers(
 /// may be completed; any other may not.
 pub(super) fn completable(task: &Task) -> Result<(), BoardRuleError> {
     match task.fields().status {
-        Ready | Claimed | InProgress | Review | Blocked => Ok(()),
+        Ready | Claimed | InProgress | Review | Blocked => not_superseded(task),
         from @ (Draft | Done | Archived) => Err(BoardRuleError::NotAllowed { from, to: Done }),
+    }
+}
+
+/// `task` is not superseded: a task others took over is archived as
+/// superseded, never done.
+fn not_superseded(task: &Task) -> Result<(), BoardRuleError> {
+    match task.fields().superseded_by.as_slice() {
+        [] => Ok(()),
+        by => Err(BoardRuleError::Superseded { by: by.to_vec() }),
     }
 }
 

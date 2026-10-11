@@ -610,3 +610,31 @@ fn a_completion_refuses_another_tasks_run_and_two_going() {
         Err(BoardRuleError::RunsInconsistent(_))
     ));
 }
+
+/// A task others took over is archived as superseded, never done: its
+/// holder's move and the completion by merged pull requests are refused,
+/// naming who took it over.
+#[test]
+fn a_superseded_task_is_never_done() {
+    let superseded = |task: Task| {
+        let mut fields = task.into_fields();
+        fields.superseded_by = vec![Slug::parse("next").unwrap()];
+        Task::new(fields).unwrap()
+    };
+    let refused = Err(BoardRuleError::Superseded {
+        by: vec![Slug::parse("next").unwrap()],
+    });
+    let now = at("10:00:00");
+    let review = superseded(without_prs(task(Review)));
+    assert_eq!(
+        move_task(&review, Done, &person("Ada"), &[], &[], &now),
+        refused
+    );
+    let merged = BTreeSet::from([2482, 2483]);
+    let linked = superseded(task(Review));
+    assert_eq!(
+        complete_merged(&linked, &merged, &[], &[], &now).map(|done| done.task),
+        refused
+    );
+    assert!(move_task(&review, InProgress, &person("Ada"), &[], &[], &now).is_ok());
+}

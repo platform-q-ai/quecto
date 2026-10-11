@@ -498,6 +498,16 @@ fn rule_json(rule: &BoardRuleError) -> Value {
         R::PrAlreadyLinked(pr) => json!({"code": "pr_already_linked", "pr": pr}),
         R::NotDraft(status) => json!({"code": "not_draft", "status": status.as_str()}),
         R::NoEdit => json!({"code": "no_edit"}),
+        R::Superseded { by } => {
+            let by: Vec<&str> = by.iter().map(Slug::as_str).collect();
+            json!({"code": "superseded", "by": by})
+        }
+        R::IssueShared { issue, task } => {
+            json!({"code": "issue_shared", "issue": issue, "task": task.as_str()})
+        }
+        R::IssueIsPr { issue, task } => {
+            json!({"code": "issue_is_pr", "issue": issue, "task": task.as_str()})
+        }
         R::Invalid(schema) => json!({
             "code": "invalid",
             "field": shown(&schema.field),

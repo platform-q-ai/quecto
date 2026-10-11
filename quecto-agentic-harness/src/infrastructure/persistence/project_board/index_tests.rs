@@ -2,7 +2,7 @@ use super::*;
 use crate::application::project_board::ports::{BoardBootstrap, BoardHead, BoardWrite};
 use crate::domain::project_board::entities::claim::{Claim, Identity};
 use crate::domain::project_board::entities::task::TaskFields;
-use crate::domain::project_board::value_objects::vocabulary::TaskKind;
+use crate::domain::project_board::value_objects::vocabulary::{Resolution, TaskKind};
 use crate::infrastructure::persistence::project_board::git::{Git, GitEnvironment};
 use std::process::Command;
 
@@ -60,7 +60,10 @@ fn task(id: &str, status: TaskStatus, parent: Option<&str>, depends_on: &[&str])
         reviews: vec![],
         prs: vec![],
         github_issue: None,
-        resolution: None,
+        resolution: match status {
+            TaskStatus::Done => Some(Resolution::Completed),
+            _ => None,
+        },
         superseded_by: vec![],
         references: vec![],
         created: at.clone(),

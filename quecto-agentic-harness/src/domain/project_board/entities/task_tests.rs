@@ -187,6 +187,9 @@ fn a_claim_is_carried_only_while_the_task_is_held() {
         if !claimed {
             task.claim = None;
         }
+        if status == Done {
+            task.resolution = Some(Resolution::Completed);
+        }
         assert!(Task::new(task).is_ok(), "{status:?} claimed={claimed}");
     }
 }
