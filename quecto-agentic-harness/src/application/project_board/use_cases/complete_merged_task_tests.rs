@@ -188,3 +188,30 @@ fn a_merge_closes_a_held_task_and_ends_its_open_run_as_lost() {
         )
     );
 }
+
+/// A task the rule would not complete is refused before the host is
+/// asked: a done task linking a pull request the host does not know is
+/// still `NotAllowed`, not unknown.
+#[test]
+fn a_task_that_cannot_complete_is_refused_before_the_host_is_read() {
+    let store = board();
+    let done = Task::new(TaskFields {
+        status: TaskStatus::Done,
+        prs: vec![7],
+        created: at("08:00:00"),
+        updated: at("09:00:00"),
+        ..fields("a")
+    })
+    .unwrap();
+    let head = store.read().unwrap().head;
+    store.write(&head, &[done], "seed").unwrap();
+    let host = MemoryPullRequests::default();
+    host.fail("must not be asked");
+    assert_eq!(
+        complete(&store, &host).execute(&slug("a")),
+        Err(ProjectBoardError::Rule(BoardRuleError::NotAllowed {
+            from: TaskStatus::Done,
+            to: TaskStatus::Done
+        }))
+    );
+}
