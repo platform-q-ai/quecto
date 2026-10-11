@@ -3,7 +3,6 @@ use super::super::entities::claim::Identity;
 use super::super::entities::task::Task;
 use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::timestamp::Timestamp;
-use super::super::value_objects::vocabulary::RunOutcome;
 use super::super::value_objects::vocabulary::TaskStatus::{self, *};
 use super::claims::{held_by, held_live_by, is_live, new_claim, settle, stamp};
 use std::collections::BTreeSet;
@@ -95,7 +94,6 @@ pub fn move_task(
         ((Review, Done), linked) => return Err(BoardRuleError::PrsLinked(linked.to_vec())),
         _ => {}
     }
-    runs_may_stay_open(task, to)?;
     let at = stamp(task, now)?;
     let mut next = task.fields().clone();
     next.status = to;
@@ -111,9 +109,10 @@ pub fn move_task(
 /// that is ready (released with its pull requests linked) or held
 /// (claimed, in progress, in review or blocked), whose linked pull
 /// requests are all in `merged`, is done, whoever holds it and whoever
-/// merged them. Its claim is cleared, and a run still open is ended as
-/// [`RunOutcome::Lost`] at the change's stamp: it can no longer report
-/// its end to a done task, as a run whose host died cannot.
+/// merged them. Its claim is cleared. A run still open is its own
+/// artifact: the completion ends it as lost in the same change
+/// ([`end_lost`](super::runs::end_lost)), since it can no longer report its
+/// end to a done task.
 pub fn complete_merged(
     task: &Task,
     merged: &BTreeSet<u64>,
@@ -143,27 +142,9 @@ pub fn complete_merged(
     }
     let at = stamp(task, now)?;
     let mut next = fields.clone();
-    for run in next.runs.iter_mut().filter(|run| run.is_open()) {
-        run.ended = Some(at.clone());
-        run.outcome = Some(RunOutcome::Lost);
-    }
     next.status = Done;
     next.claim = None;
-    assert!(
-        next.runs.iter().all(|run| !run.is_open()),
-        "a done task has no open run"
-    );
     settle(next, &at)
-}
-
-/// A run may stay open only while the task may hold a claim; leaving for
-/// ready, done or archived waits until it ends.
-fn runs_may_stay_open(task: &Task, to: TaskStatus) -> Result<(), BoardRuleError> {
-    match task.fields().runs.iter().find(|run| run.is_open()) {
-        None => Ok(()),
-        Some(_) if to.may_hold_claim() => Ok(()),
-        Some(run) => Err(BoardRuleError::RunOpen(run.id.clone())),
-    }
 }
 
 #[cfg(test)]

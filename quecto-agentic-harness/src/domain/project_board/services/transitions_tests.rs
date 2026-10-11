@@ -1,12 +1,11 @@
 use super::*;
 use crate::domain::project_board::entities::claim::{MAX_EMAIL_BYTES, MAX_NAME_CHARS};
 use crate::domain::project_board::entities::task::{MAX_DESCRIPTION_CHARS, MAX_TEXT_BYTES};
-use crate::domain::project_board::entities::task_parts::{MAX_LINE_CHARS, PlanStep};
+use crate::domain::project_board::entities::task_parts::{MAX_FINDING_CHARS, Review};
 use crate::domain::project_board::services::fixtures_tests::{
-    at, far_future, last_written, person, task, with_open_run, without_claim, without_prs,
+    at, far_future, last_written, person, task, without_claim, without_prs,
 };
 use crate::domain::project_board::value_objects::slug::Slug;
-use crate::domain::project_board::value_objects::vocabulary::RunOutcome;
 
 const ALL: [TaskStatus; 8] = [
     Draft, Ready, Claimed, InProgress, Review, Blocked, Done, Archived,
@@ -217,74 +216,6 @@ fn a_two_move_steal_of_a_live_claim_is_refused() {
 }
 
 #[test]
-fn an_open_run_stays_through_moves_that_keep_the_task_held() {
-    let ada = person("Ada");
-    for (from, to) in [
-        (Claimed, InProgress),
-        (Claimed, Blocked),
-        (InProgress, Review),
-        (InProgress, Blocked),
-        (Review, InProgress),
-        (Blocked, InProgress),
-    ] {
-        let moved = move_task(&with_open_run(task(from)), to, &ada, &at("10:00:00")).unwrap();
-        assert!(
-            moved.fields().runs.iter().any(|run| run.is_open()),
-            "{from:?} -> {to:?}"
-        );
-    }
-}
-
-#[test]
-fn a_move_to_ready_done_or_archived_with_an_open_run_is_refused() {
-    let open = BoardRuleError::RunOpen(Slug::parse("r2").unwrap());
-    for (from, to) in RELEASES.iter().chain(&[(Review, Done)]).copied() {
-        assert_eq!(
-            move_task(
-                &with_open_run(without_prs(task(from))),
-                to,
-                &person("Ada"),
-                &at("10:00:00")
-            ),
-            Err(open.clone()),
-            "{from:?} -> {to:?}"
-        );
-    }
-}
-
-/// A merged pull request closes the task whoever holds it: a run still
-/// open can no longer report its end to a done task, so it is ended as
-/// lost, at the change's stamp, as a run that will never report is.
-#[test]
-fn completing_a_task_ends_its_open_run_as_lost() {
-    let merged = BTreeSet::from([2482, 2483]);
-    for from in [Claimed, InProgress, Review, Blocked] {
-        let done = complete_merged(&with_open_run(task(from)), &merged, &at("10:00:00")).unwrap();
-        let run = done
-            .fields()
-            .runs
-            .iter()
-            .find(|run| run.id.as_str() == "r2")
-            .unwrap();
-        assert_eq!(
-            (
-                done.fields().status,
-                &run.ended,
-                run.outcome,
-                &done.fields().claim
-            ),
-            (Done, &Some(at("10:00:00")), Some(RunOutcome::Lost), &None),
-            "{from:?}"
-        );
-        assert_eq!(
-            done.fields().runs[0].outcome,
-            Some(RunOutcome::Succeeded),
-            "an ended run keeps its outcome"
-        );
-    }
-}
-
-#[test]
 fn a_held_task_is_done_once_all_its_prs_merge_whoever_merged_them() {
     let merged = |prs: &[u64]| prs.iter().copied().collect::<BTreeSet<u64>>();
     // Ready too: a holder released it with its pull requests linked, and
@@ -379,22 +310,32 @@ fn the_same_committer_under_another_name_moves_the_task_and_keeps_the_claim() {
 #[test]
 fn a_ready_task_at_its_text_budget_is_claimed_by_a_holder_at_its_widest() {
     let mut fields = task(Ready).into_fields();
+    // The budget spent on the description and review findings, the task's
+    // text; each finding's reviewer counts too.
+    let finding = fields.reviews[0].clone();
+    fields.reviews.clear();
     let mut left = MAX_TEXT_BYTES - fields.text_bytes();
     let wide = (left / 4).min(MAX_DESCRIPTION_CHARS);
     fields.description = "\u{1d11e}".repeat(wide);
     left -= 4 * wide;
-    while left >= 4 {
-        let chars = (left / 4).min(MAX_LINE_CHARS);
-        fields.plan.push(PlanStep {
-            title: "\u{1d11e}".repeat(chars),
-            criteria: vec![],
+    let reviewer = person("Ada");
+    let per_review = reviewer.name.len() + reviewer.email.len();
+    let mut count = 0;
+    while left >= per_review + 4 {
+        let chars = ((left - per_review) / 4).min(MAX_FINDING_CHARS);
+        left -= per_review + 4 * chars;
+        fields.reviews.push(Review {
+            id: Slug::parse(&format!("f{count}")).unwrap(),
+            reviewer: reviewer.clone(),
+            location: None,
+            finding: "\u{1d11e}".repeat(chars),
+            proving_test: None,
+            ..finding.clone()
         });
-        left -= 4 * chars;
+        count += 1;
     }
-    fields.plan.push(PlanStep {
-        title: "x".repeat(left.max(1)),
-        criteria: vec![],
-    });
+    fields.title.push_str(&"x".repeat(left));
+    assert_eq!(fields.text_bytes(), MAX_TEXT_BYTES);
     let full = Task::new(fields).expect("at most the text budget");
     let widest = Identity {
         name: "\u{1d11e}".repeat(MAX_NAME_CHARS),

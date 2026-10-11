@@ -14,7 +14,6 @@ use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::claims::{renew, take_over};
 use crate::domain::project_board::services::pull_requests::{add_pr, remove_pr};
-use crate::domain::project_board::services::runs::end_run_lost;
 use crate::domain::project_board::services::transitions::move_task;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::slug::Slug;
@@ -78,7 +77,6 @@ fn apply(
         BoardOp::Move(to) => move_task(task, *to, actor, now),
         BoardOp::AddPr(pr) => add_pr(task, actor, *pr, now),
         BoardOp::RemovePr(pr) => remove_pr(task, actor, *pr, now),
-        BoardOp::EndRunLost => end_run_lost(task, actor, now),
     }
 }
 

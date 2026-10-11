@@ -45,54 +45,7 @@ const PARTS: &str = r#"{
   "title": "Board store",
   "kind": "task",
   "status": "in_progress",
-  "plan": [
-    {
-      "title": "Spike",
-      "criteria": [
-        "CAS proved"
-      ]
-    }
-  ],
-  "items": [
-    {
-      "id": "plumbing",
-      "title": "Plumbing",
-      "state": "done",
-      "owner": "worker-1",
-      "evidence": [
-        "log"
-      ]
-    },
-    {
-      "id": "cas",
-      "title": "CAS",
-      "criteria": [
-        "stale lease refused"
-      ],
-      "depends_on": [
-        "plumbing"
-      ],
-      "state": "todo"
-    }
-  ],
-  "team": {
-    "roles": [
-      {
-        "name": "worker",
-        "model": "gpt-5.5",
-        "effort": "high",
-        "limits": {
-          "members": 2,
-          "turns": 200
-        }
-      }
-    ],
-    "budget": {
-      "tokens": 5000000
-    },
-    "deadline": "2026-10-11T00:00:00Z",
-    "image": "ghcr.io/platform-q-ai/quecto:0.107"
-  },
+  "accepted_plan": 3,
   "claim": {
     "holder": {
       "name": "Ada",
@@ -101,18 +54,6 @@ const PARTS: &str = r#"{
     "since": "2026-10-10T09:00:00Z",
     "expires": "2026-10-10T11:00:00Z"
   },
-  "runs": [
-    {
-      "id": "r1",
-      "started": "2026-10-10T09:01:00Z",
-      "ended": "2026-10-10T09:30:00Z",
-      "outcome": "lost"
-    },
-    {
-      "id": "r2",
-      "started": "2026-10-10T09:31:00Z"
-    }
-  ],
   "reviews": [
     {
       "id": "r1-h1",
@@ -311,17 +252,7 @@ fn a_newer_schema_names_the_least_quecto_that_can_read_it() {
 
 #[test]
 fn every_nested_record_refuses_unknown_keys() {
-    let anchors = [
-        "\"title\": \"Spike\"",
-        "\"title\": \"Plumbing\"",
-        "\"roles\"",
-        "\"model\"",
-        "\"members\"",
-        "\"tokens\"",
-        "\"started\": \"2026-10-10T09:31:00Z\"",
-        "\"round\"",
-        "\"name\": \"Bob\"",
-    ];
+    let anchors = ["\"round\"", "\"name\": \"Bob\"", "\"name\": \"Ada\""];
     for anchor in anchors {
         let bytes = edited(PARTS, anchor, &format!("\"extra\": 1, {anchor}"));
         assert!(
@@ -334,31 +265,9 @@ fn every_nested_record_refuses_unknown_keys() {
 #[test]
 fn nested_values_the_domain_refuses_are_named_by_their_path() {
     let cases = [
-        ("items/0/state", edited(PARTS, "\"done\"", "\"finished\"")),
         (
-            "items/1/depends_on/0",
-            edited(PARTS, "\"plumbing\"\n      ]", "\"Plumbing\"\n      ]"),
-        ),
-        (
-            "team/roles/0/effort",
-            edited(
-                PARTS,
-                "\"high\",\n        \"limits\"",
-                "\"xhigh\",\n        \"limits\"",
-            ),
-        ),
-        (
-            "team/deadline",
-            edited(PARTS, "2026-10-11T00:00:00Z", "tomorrow"),
-        ),
-        ("runs/0/outcome", edited(PARTS, "\"lost\"", "\"crashed\"")),
-        (
-            "runs/1",
-            edited(
-                PARTS,
-                "\"started\": \"2026-10-10T09:31:00Z\"",
-                "\"started\": \"2026-10-10T09:31:00Z\", \"outcome\": \"failed\"",
-            ),
+            "accepted_plan",
+            edited(PARTS, "\"accepted_plan\": 3", "\"accepted_plan\": 0"),
         ),
         (
             "reviews/0/severity",

@@ -2,13 +2,11 @@
 //! budget never add up past the file cap.
 use super::*;
 use crate::domain::project_board::entities::claim::{MAX_EMAIL_BYTES, MAX_NAME_CHARS};
+use crate::domain::project_board::entities::plan::MAX_PLAN_VERSION;
 use crate::domain::project_board::entities::task::{
     MAX_DEPENDENCIES, MAX_DESCRIPTION_CHARS, MAX_PRS, MAX_TEXT_BYTES, MAX_TITLE_CHARS,
 };
-use crate::domain::project_board::entities::task_parts::{
-    MAX_BUDGET_TOKENS, MAX_ITEMS, MAX_LINE_CHARS, MAX_MEMBERS, MAX_PER_ITEM, MAX_REVIEWS,
-    MAX_ROLES, MAX_RUNS, MAX_STEPS,
-};
+use crate::domain::project_board::entities::task_parts::{MAX_FINDING_CHARS, MAX_REVIEWS};
 use crate::domain::project_board::value_objects::slug::MAX_SLUG_BYTES;
 
 fn at(time: &str) -> Timestamp {
@@ -38,44 +36,11 @@ fn person() -> Identity {
     }
 }
 
-/// One-character criteria, distinct within their list.
-fn short_lines() -> Vec<String> {
-    (0..MAX_PER_ITEM).map(|n| format!("{n:x}")).collect()
-}
-
 /// The widest structure a task can have, from the caps: every list full,
-/// every optional key set, every id, number and word its longest, every run
-/// ended (an ended run writes more keys), the holder at its widest, and
-/// each text a single character. A new field fails to build here until it
+/// every optional key set, every id, number and word its longest, the
+/// holder at its widest, and each text a single character. A new field fails to build here until it
 /// is set.
 fn widest_structure() -> TaskFields {
-    let item = |n: usize| Item {
-        id: wide_id('i', n),
-        title: "a".into(),
-        criteria: short_lines(),
-        // Each item depends on up to 16 earlier ones: no cycle.
-        depends_on: (n.saturating_sub(MAX_PER_ITEM)..n)
-            .map(|earlier| wide_id('i', earlier))
-            .collect(),
-        state: ItemState::Blocked,
-        owner: Some("a".into()),
-        evidence: short_lines(),
-    };
-    let role = |n: usize| Role {
-        name: wide_id('r', n),
-        model: "a".into(),
-        effort: Effort::Medium,
-        limits: RoleLimits {
-            members: MAX_MEMBERS,
-            turns: Some(u32::MAX),
-        },
-    };
-    let run = |n: usize| Run {
-        id: wide_id('u', n),
-        started: at("09:00:00"),
-        ended: Some(at("09:00:00")),
-        outcome: Some(RunOutcome::Succeeded),
-    };
     let review = |n: usize| Review {
         id: wide_id('v', n),
         round: u8::MAX,
@@ -95,27 +60,12 @@ fn widest_structure() -> TaskFields {
         status: TaskStatus::InProgress,
         parent: Some(wide_id('t', 1)),
         depends_on: (0..MAX_DEPENDENCIES).map(|n| wide_id('d', n)).collect(),
-        plan: (0..MAX_STEPS)
-            .map(|_| PlanStep {
-                title: "a".into(),
-                criteria: short_lines(),
-            })
-            .collect(),
-        items: (0..MAX_ITEMS).map(item).collect(),
-        team: Some(Team {
-            roles: (0..MAX_ROLES).map(role).collect(),
-            budget: Some(Budget {
-                tokens: MAX_BUDGET_TOKENS,
-            }),
-            deadline: Some(at("23:59:59")),
-            image: Some("a".into()),
-        }),
+        accepted_plan: Some(MAX_PLAN_VERSION),
         claim: Some(Claim {
             holder: widest_holder(),
             since: at("09:00:00"),
             expires: at("11:00:00"),
         }),
-        runs: (0..MAX_RUNS).map(run).collect(),
         reviews: (0..MAX_REVIEWS).map(review).collect(),
         prs: (0..MAX_PRS as u64).map(|n| u64::MAX - n).collect(),
         created: at("08:00:00"),
@@ -151,10 +101,8 @@ fn fill_text_budget(fields: &mut TaskFields) {
     let mut left = MAX_TEXT_BYTES - fields.text_bytes();
     left -= widen(&mut fields.title, MAX_TITLE_CHARS, left);
     left -= widen(&mut fields.description, MAX_DESCRIPTION_CHARS, left);
-    for item in &mut fields.items {
-        for criterion in &mut item.criteria {
-            left -= widen(criterion, MAX_LINE_CHARS, left);
-        }
+    for review in &mut fields.reviews {
+        left -= widen(&mut review.finding, MAX_FINDING_CHARS, left);
     }
     assert_eq!(left, 0, "the budget is spent");
 }
@@ -174,7 +122,12 @@ fn a_task_filled_to_its_text_budget_with_quotes_is_written_and_read_back() {
 fn a_task_over_its_text_budget_is_refused_by_the_domain() {
     let mut fields = widest_structure();
     fill_text_budget(&mut fields);
-    fields.plan[0].title.push('x');
+    let short = fields
+        .reviews
+        .iter_mut()
+        .find(|review| review.finding.chars().count() < MAX_FINDING_CHARS)
+        .expect("a finding with room left");
+    short.finding.push('x');
     let error = Task::new(fields).expect_err("one byte over the budget");
     assert_eq!(error.field, "text", "{error}");
 }

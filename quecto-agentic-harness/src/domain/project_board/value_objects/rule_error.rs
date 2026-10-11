@@ -1,7 +1,6 @@
 //! Why the board's rules refused a move, renewal, takeover or completion.
 use super::schema_error::SchemaError;
-use super::slug::Slug;
-use super::vocabulary::TaskStatus;
+use super::vocabulary::{PlanState, TaskStatus};
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,10 +15,18 @@ pub enum BoardRuleError {
     ClaimLive,
     /// The holder's claim has expired: renew it first.
     ClaimExpired,
-    /// This run is still going: end it before the task leaves its holder.
-    RunOpen(Slug),
-    /// The task has no open run to end.
-    NoOpenRun,
+    /// This run is still going: end it before the task leaves its holder,
+    /// or before another plan is accepted.
+    RunOpen(u32),
+    /// The run has already ended: a run folds back once.
+    RunEnded(u32),
+    /// Only a draft plan is edited, accepted or discarded.
+    PlanNotDraft(PlanState),
+    /// The plan or run belongs to another task, or the run to another
+    /// plan version.
+    NotThisTasks,
+    /// A done or archived task takes no new plan.
+    TaskFinished(TaskStatus),
     /// A takeover is only of a task that may hold a claim (claimed, in
     /// progress, in review or blocked).
     NotTakeable(TaskStatus),
@@ -64,8 +71,17 @@ impl fmt::Display for BoardRuleError {
             Self::NoClaim => f.write_str("the task has no claim"),
             Self::ClaimLive => f.write_str("the claim has not expired"),
             Self::ClaimExpired => f.write_str("the claim has expired; renew it first"),
-            Self::RunOpen(run) => write!(f, "run {} is still open", run.as_str()),
-            Self::NoOpenRun => f.write_str("the task has no open run"),
+            Self::RunOpen(run) => write!(f, "run {run} is still open"),
+            Self::RunEnded(run) => write!(f, "run {run} has already ended"),
+            Self::PlanNotDraft(state) => write!(
+                f,
+                "a {} plan is not a draft: only drafts are edited, accepted or discarded",
+                state.as_str()
+            ),
+            Self::NotThisTasks => f.write_str("it belongs to another task or plan version"),
+            Self::TaskFinished(status) => {
+                write!(f, "a {} task takes no new plan", status.as_str())
+            }
             Self::NotTakeable(status) => {
                 write!(f, "a {} task cannot be taken over", status.as_str())
             }

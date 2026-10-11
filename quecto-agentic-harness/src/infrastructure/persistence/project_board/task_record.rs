@@ -17,23 +17,23 @@
 //! keys. The store also checks that `id` matches the file name.
 use crate::domain::project_board::entities::claim::{Claim, Identity};
 use crate::domain::project_board::entities::task::{Task, TaskFields};
-use crate::domain::project_board::entities::task_parts::{
-    Budget, Item, PlanStep, Review, Role, RoleLimits, Run, Team,
-};
+use crate::domain::project_board::entities::task_parts::Review;
 use crate::domain::project_board::value_objects::schema_error::SchemaError;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{
-    Effort, ItemState, RunOutcome, Severity, TaskKind, TaskStatus, Verdict,
+    Severity, TaskKind, TaskStatus, Verdict,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Each schema this quecto reads, oldest first, with the quecto release
 /// that introduced it. A new schema adds a row here. Schema 1 is the
-/// format as the task parts complete it (#2483, 0.107.251), the last change
-/// to the record in its stack; the pull request that first ships the board
-/// store (S1d) sets this row to the release it ships in.
+/// format as the task parts complete it (#2483, 0.107.251); no board holds
+/// data yet, so the artifact model's slimmer task (#2481 M1a: its plan,
+/// items, team and runs are artifacts of their own, and it names its
+/// `accepted_plan`) keeps the number until canonical markdown replaces the
+/// record (M2).
 pub const SCHEMAS: &[(u32, &str)] = &[(1, "0.107.251")];
 /// The schema every task file is written at: the last row of [`SCHEMAS`].
 pub const SCHEMA_VERSION: u32 = 1;
@@ -117,16 +117,10 @@ struct TaskRecord {
     parent: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     depends_on: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    plan: Vec<PlanStepRecord>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    items: Vec<ItemRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    team: Option<TeamRecord>,
+    accepted_plan: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     claim: Option<ClaimRecord>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    runs: Vec<RunRecord>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     reviews: Vec<ReviewRecord>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -148,76 +142,6 @@ struct ClaimRecord {
 struct IdentityRecord {
     name: String,
     email: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PlanStepRecord {
-    title: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    criteria: Vec<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ItemRecord {
-    id: String,
-    title: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    criteria: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    depends_on: Vec<String>,
-    state: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    owner: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    evidence: Vec<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct TeamRecord {
-    roles: Vec<RoleRecord>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    budget: Option<BudgetRecord>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    deadline: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    image: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RoleRecord {
-    name: String,
-    model: String,
-    effort: String,
-    limits: LimitsRecord,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct LimitsRecord {
-    members: u16,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    turns: Option<u32>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct BudgetRecord {
-    tokens: u64,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RunRecord {
-    id: String,
-    started: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    ended: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    outcome: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -312,15 +236,8 @@ impl TaskRecord {
                 .map(|parent| slug("parent", &parent))
                 .transpose()?,
             depends_on: slugs("depends_on", &self.depends_on)?,
-            plan: self
-                .plan
-                .into_iter()
-                .map(PlanStepRecord::into_step)
-                .collect(),
-            items: indexed("items", self.items, ItemRecord::into_item)?,
-            team: self.team.map(TeamRecord::into_team).transpose()?,
+            accepted_plan: self.accepted_plan,
             claim: self.claim.map(ClaimRecord::into_claim).transpose()?,
-            runs: indexed("runs", self.runs, RunRecord::into_run)?,
             reviews: indexed("reviews", self.reviews, ReviewRecord::into_review)?,
             prs: self.prs,
             created: time("created", &self.created)?,
@@ -343,11 +260,8 @@ impl TaskRecord {
                 .iter()
                 .map(|slug| slug.as_str().into())
                 .collect(),
-            plan: task.plan.iter().map(PlanStepRecord::from_step).collect(),
-            items: task.items.iter().map(ItemRecord::from_item).collect(),
-            team: task.team.as_ref().map(TeamRecord::from_team),
+            accepted_plan: task.accepted_plan,
             claim: task.claim.as_ref().map(ClaimRecord::from_claim),
-            runs: task.runs.iter().map(RunRecord::from_run).collect(),
             reviews: task.reviews.iter().map(ReviewRecord::from_review).collect(),
             prs: task.prs.clone(),
             created: task.created.as_str().into(),
@@ -386,133 +300,6 @@ impl IdentityRecord {
         Self {
             name: identity.name.clone(),
             email: identity.email.clone(),
-        }
-    }
-}
-
-impl PlanStepRecord {
-    fn into_step(self) -> PlanStep {
-        PlanStep {
-            title: self.title,
-            criteria: self.criteria,
-        }
-    }
-
-    fn from_step(step: &PlanStep) -> Self {
-        Self {
-            title: step.title.clone(),
-            criteria: step.criteria.clone(),
-        }
-    }
-}
-
-impl ItemRecord {
-    fn into_item(self, field: &str) -> Result<Item, SchemaError> {
-        Ok(Item {
-            id: slug(&format!("{field}/id"), &self.id)?,
-            title: self.title,
-            criteria: self.criteria,
-            depends_on: slugs(&format!("{field}/depends_on"), &self.depends_on)?,
-            state: word(&format!("{field}/state"), &self.state, ItemState::parse)?,
-            owner: self.owner,
-            evidence: self.evidence,
-        })
-    }
-
-    fn from_item(item: &Item) -> Self {
-        Self {
-            id: item.id.as_str().into(),
-            title: item.title.clone(),
-            criteria: item.criteria.clone(),
-            depends_on: item
-                .depends_on
-                .iter()
-                .map(|slug| slug.as_str().into())
-                .collect(),
-            state: item.state.as_str().into(),
-            owner: item.owner.clone(),
-            evidence: item.evidence.clone(),
-        }
-    }
-}
-
-impl TeamRecord {
-    fn into_team(self) -> Result<Team, SchemaError> {
-        Ok(Team {
-            roles: indexed("team/roles", self.roles, RoleRecord::into_role)?,
-            budget: self.budget.map(|budget| Budget {
-                tokens: budget.tokens,
-            }),
-            deadline: self
-                .deadline
-                .map(|deadline| time("team/deadline", &deadline))
-                .transpose()?,
-            image: self.image,
-        })
-    }
-
-    fn from_team(team: &Team) -> Self {
-        Self {
-            roles: team.roles.iter().map(RoleRecord::from_role).collect(),
-            budget: team.budget.as_ref().map(|budget| BudgetRecord {
-                tokens: budget.tokens,
-            }),
-            deadline: team
-                .deadline
-                .as_ref()
-                .map(|deadline| deadline.as_str().into()),
-            image: team.image.clone(),
-        }
-    }
-}
-
-impl RoleRecord {
-    fn into_role(self, field: &str) -> Result<Role, SchemaError> {
-        Ok(Role {
-            name: slug(&format!("{field}/name"), &self.name)?,
-            model: self.model,
-            effort: word(&format!("{field}/effort"), &self.effort, Effort::parse)?,
-            limits: RoleLimits {
-                members: self.limits.members,
-                turns: self.limits.turns,
-            },
-        })
-    }
-
-    fn from_role(role: &Role) -> Self {
-        Self {
-            name: role.name.as_str().into(),
-            model: role.model.clone(),
-            effort: role.effort.as_str().into(),
-            limits: LimitsRecord {
-                members: role.limits.members,
-                turns: role.limits.turns,
-            },
-        }
-    }
-}
-
-impl RunRecord {
-    fn into_run(self, field: &str) -> Result<Run, SchemaError> {
-        let outcome =
-            |outcome: String| word(&format!("{field}/outcome"), &outcome, RunOutcome::parse);
-        Ok(Run {
-            id: slug(&format!("{field}/id"), &self.id)?,
-            started: time(&format!("{field}/started"), &self.started)?,
-            ended: self
-                .ended
-                .map(|ended| time(&format!("{field}/ended"), &ended))
-                .transpose()?,
-            outcome: self.outcome.map(outcome).transpose()?,
-        })
-    }
-
-    fn from_run(run: &Run) -> Self {
-        Self {
-            id: run.id.as_str().into(),
-            started: run.started.as_str().into(),
-            ended: run.ended.as_ref().map(|ended| ended.as_str().into()),
-            outcome: run.outcome.map(|outcome| outcome.as_str().into()),
         }
     }
 }

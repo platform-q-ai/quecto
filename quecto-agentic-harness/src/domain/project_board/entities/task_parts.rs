@@ -1,24 +1,20 @@
-//! The structured parts of a task: its plan, its own board of items, the
-//! team its swarm runs, the runs started from it and their review findings.
-//!
-//! Runs and reviews are capped. When a long-lived task reaches a cap, the
-//! swarm fold-back (S4) records a summary entry in place of older ones;
-//! until then a write past the cap is refused.
+//! The structured parts the board's artifacts share: the team a plan
+//! names for its swarm, and (until reviews become their own artifact, M1b)
+//! a task's review findings. Reviews are capped; a write past the cap is
+//! refused.
 use super::super::value_objects::schema_error::{SchemaError, distinct, filled_markdown, line};
 use super::super::value_objects::slug::Slug;
 use super::super::value_objects::timestamp::Timestamp;
-use super::super::value_objects::vocabulary::{Effort, ItemState, RunOutcome, Severity, Verdict};
+use super::super::value_objects::vocabulary::{Effort, Severity, Verdict};
 use super::claim::Identity;
 use regex::Regex;
 use std::sync::LazyLock;
 
-pub const MAX_STEPS: usize = 64;
 pub const MAX_ITEMS: usize = 128;
-/// Criteria per step or item, evidence per item, dependencies per item.
+/// Criteria, evidence and dependencies per item.
 pub const MAX_PER_ITEM: usize = 16;
 pub const MAX_ROLES: usize = 16;
 pub const MAX_MEMBERS: u16 = 32;
-pub const MAX_RUNS: usize = 64;
 pub const MAX_REVIEWS: usize = 128;
 pub const MAX_LINE_CHARS: usize = 500;
 pub const MAX_OWNER_CHARS: usize = 100;
@@ -28,27 +24,7 @@ pub const MAX_IMAGE_BYTES: usize = 255;
 pub const MAX_BUDGET_TOKENS: u64 = (1 << 53) - 1;
 pub const MAX_FINDING_CHARS: usize = 4_000;
 
-/// One step of the plan and how its completion is judged.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PlanStep {
-    pub title: String,
-    pub criteria: Vec<String>,
-}
-
-/// One entry of the task's own board, taken by members of its swarm.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Item {
-    pub id: Slug,
-    pub title: String,
-    pub criteria: Vec<String>,
-    /// Other items of the same task; never a cycle.
-    pub depends_on: Vec<Slug>,
-    pub state: ItemState,
-    pub owner: Option<String>,
-    pub evidence: Vec<String>,
-}
-
-/// The team the task sheet names for its swarm.
+/// The team a plan names for its swarm.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Team {
     pub roles: Vec<Role>,
@@ -75,16 +51,6 @@ pub struct RoleLimits {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Budget {
     pub tokens: u64,
-}
-
-/// A swarm run started from the task; `ended` and `outcome` arrive together,
-/// no earlier than `started`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Run {
-    pub id: Slug,
-    pub started: Timestamp,
-    pub ended: Option<Timestamp>,
-    pub outcome: Option<RunOutcome>,
 }
 
 /// A review finding, at `path:line` or `path:line:col` when it has a place.
@@ -139,7 +105,7 @@ static LOCATION: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// Distinct single lines, at most `max`.
-fn lines(field: &str, entries: &[String], max: usize) -> Result<(), SchemaError> {
+pub(super) fn lines(field: &str, entries: &[String], max: usize) -> Result<(), SchemaError> {
     distinct(field, entries, max)?;
     let mut indexed = entries.iter().enumerate();
     indexed.try_for_each(|(index, entry)| line(&format!("{field}/{index}"), entry, MAX_LINE_CHARS))
@@ -153,30 +119,6 @@ fn shaped(field: &str, text: &str, max_bytes: usize, shape: &Regex) -> Result<()
             field,
             format!("{text:?} is not an allowed reference of at most {max_bytes} bytes"),
         ))
-    }
-}
-
-impl PlanStep {
-    pub fn validate(&self, field: &str) -> Result<(), SchemaError> {
-        line(&format!("{field}/title"), &self.title, MAX_LINE_CHARS)?;
-        lines(&format!("{field}/criteria"), &self.criteria, MAX_PER_ITEM)
-    }
-}
-
-impl Item {
-    /// Its own fields; dependencies on sibling items are the task's check.
-    pub fn validate(&self, field: &str) -> Result<(), SchemaError> {
-        line(&format!("{field}/title"), &self.title, MAX_LINE_CHARS)?;
-        lines(&format!("{field}/criteria"), &self.criteria, MAX_PER_ITEM)?;
-        distinct(
-            &format!("{field}/depends_on"),
-            &self.depends_on,
-            MAX_PER_ITEM,
-        )?;
-        if let Some(owner) = &self.owner {
-            line(&format!("{field}/owner"), owner, MAX_OWNER_CHARS)?;
-        }
-        lines(&format!("{field}/evidence"), &self.evidence, MAX_PER_ITEM)
     }
 }
 
@@ -232,25 +174,6 @@ impl Role {
                 "must be at least 1",
             ))
         }
-    }
-}
-
-impl Run {
-    /// Open, or ended with an outcome no earlier than it started (a run
-    /// can end within the second it starts).
-    pub fn validate(&self, field: &str) -> Result<(), SchemaError> {
-        match (&self.ended, &self.outcome) {
-            (None, None) => Ok(()),
-            (Some(ended), Some(_)) if *ended >= self.started => Ok(()),
-            _ => Err(SchemaError::new(
-                field,
-                "an ended run has an outcome and ends no earlier than it starts",
-            )),
-        }
-    }
-
-    pub fn is_open(&self) -> bool {
-        self.ended.is_none()
     }
 }
 
