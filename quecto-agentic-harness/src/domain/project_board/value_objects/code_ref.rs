@@ -42,7 +42,8 @@ const RESERVED: &[&str] = &[
 ];
 
 /// A branch as git names it (`git check-ref-format --branch`), within
-/// printable ASCII: at most [`MAX_BRANCH_BYTES`]; none of `~^:?*[\`;
+/// printable ASCII: at most [`MAX_BRANCH_BYTES`]; none of `~^:?*[\`, and
+/// none of `|` and a backtick, which no board file holds;
 /// `/`-separated components, none empty, none starting with `.` or ending
 /// with `.lock`; no `..` or `@{`; not starting with `-`, not ending with
 /// `.`. Besides git's rules, the board refuses names git takes but git or
@@ -71,14 +72,18 @@ impl BranchName {
     }
 }
 
-/// The printable characters git refuses in a ref name.
-const GIT_SPECIAL: &[u8] = b"~^:?*[\\";
+/// The punctuation a branch may hold besides letters and digits: every
+/// printable ASCII one git takes in a ref name (not `~^:?*[\`), less the
+/// two no board file holds as text: `|`, a table cell's edge, and a
+/// backtick, a code span's.
+const BRANCH_PUNCTUATION: &[u8] = b"!\"#$%&'()+,-./;<=>@]_{}";
 
-/// git's own rules for a branch name, within printable ASCII.
+/// git's own rules for a branch name, within the characters a board file
+/// holds ([`BRANCH_PUNCTUATION`]).
 fn git_branch(text: &str) -> bool {
     let printable = text
         .bytes()
-        .all(|byte| byte.is_ascii_graphic() && !GIT_SPECIAL.contains(&byte));
+        .all(|byte| byte.is_ascii_alphanumeric() || BRANCH_PUNCTUATION.contains(&byte));
     let components = text.split('/').all(|component| {
         matches!(component.as_bytes().first(), Some(first) if *first != b'.')
             && !component.ends_with(".lock")
@@ -104,11 +109,14 @@ fn ours(text: &str) -> bool {
         && !full_hex(&text.to_ascii_lowercase())
 }
 
-/// The most bytes in each part of a repository's name.
+/// The most bytes in a repository's name.
 pub const MAX_REPO_PART_BYTES: usize = 100;
+/// The most bytes in a repository owner's name (GitHub's limit).
+pub const MAX_OWNER_BYTES: usize = 39;
 
-/// A repository as its host names it, `owner/name`: two parts of
-/// letters, digits, `.`, `_` and `-`, each at most
+/// A repository as GitHub names it, `owner/name`: the owner letters,
+/// digits and hyphens, at most [`MAX_OWNER_BYTES`], not starting or ending
+/// with a hyphen; the name letters, digits, `.`, `_` and `-`, at most
 /// [`MAX_REPO_PART_BYTES`], neither `.` nor `..`. A change names the one
 /// its branch lives in, which a fork makes another than the board's.
 ///
@@ -151,15 +159,10 @@ impl RepoName {
     /// # Errors
     /// Anything but `owner/name` in those characters.
     pub fn parse(text: &str) -> Result<Self, SchemaError> {
-        let parts: Vec<&str> = text.split('/').collect();
-        let named = parts.len() == 2
-            && parts.iter().all(|part| {
-                (1..=MAX_REPO_PART_BYTES).contains(&part.len())
-                    && !matches!(*part, "." | "..")
-                    && part
-                        .bytes()
-                        .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
-            });
+        let named = match text.split('/').collect::<Vec<_>>().as_slice() {
+            [owner, name] => owner_name(owner) && repo_name(name),
+            _ => false,
+        };
         match named {
             true => Ok(Self {
                 shown: text.to_string(),
@@ -176,6 +179,29 @@ impl RepoName {
     pub fn as_str(&self) -> &str {
         &self.shown
     }
+}
+
+/// A GitHub owner: letters, digits and hyphens, at most
+/// [`MAX_OWNER_BYTES`], a letter or digit at each edge.
+fn owner_name(owner: &str) -> bool {
+    let edge = |byte: Option<&u8>| byte.is_some_and(u8::is_ascii_alphanumeric);
+    let bytes = owner.as_bytes();
+    (1..=MAX_OWNER_BYTES).contains(&bytes.len())
+        && edge(bytes.first())
+        && edge(bytes.last())
+        && bytes
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || *b == b'-')
+}
+
+/// A GitHub repository's name: letters, digits, `.`, `_` and `-`, at most
+/// [`MAX_REPO_PART_BYTES`], neither `.` nor `..`.
+fn repo_name(name: &str) -> bool {
+    (1..=MAX_REPO_PART_BYTES).contains(&name.len())
+        && !matches!(name, "." | "..")
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
 }
 
 /// A full commit id's length, in lowercase hex.
