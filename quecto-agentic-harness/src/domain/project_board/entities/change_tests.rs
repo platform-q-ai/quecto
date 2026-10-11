@@ -1,5 +1,7 @@
 use super::*;
-use crate::domain::project_board::entities::fixtures_tests::{at, branch, change, commit, person};
+use crate::domain::project_board::entities::fixtures_tests::{
+    at, branch, change, commit, person, repo,
+};
 
 /// One change that must make valid fields invalid.
 type Edit = Box<dyn Fn(&mut ChangeFields)>;
@@ -24,12 +26,21 @@ fn a_change_builds_linked_merged_or_unlinked() {
         Change::new(branch_only).is_ok(),
         "a branch with no pull request yet"
     );
-    let mut widest = fields();
-    widest.branch = branch(&"x".repeat(MAX_CHANGE_TEXT_BYTES));
-    assert_eq!(
-        Change::new(widest).unwrap().fields().text_bytes(),
-        MAX_CHANGE_TEXT_BYTES
-    );
+    let mut fork = fields();
+    fork.head_repo = repo("someone/quecto");
+    let fork = Change::new(fork).unwrap();
+    assert_eq!(fork.head(), (&repo("someone/quecto"), &branch("feat/b1")));
+}
+
+/// Open is linked and not merged: the branch is still in use.
+#[test]
+fn a_change_is_open_while_linked_and_unmerged() {
+    let mut merged = fields();
+    merged.merged = Some(commit('a'));
+    let mut unlinked = fields();
+    unlinked.unlinked = Some((person("Ada"), at("09:00:00")));
+    let open = [fields(), merged, unlinked].map(|fields| Change::new(fields).unwrap().is_open());
+    assert_eq!(open, [true, false, false]);
 }
 
 #[test]
@@ -53,6 +64,10 @@ fn fields_that_break_a_rule_build_no_change() {
         (
             "unlinked/at",
             Box::new(|c| c.unlinked = Some((person("Ada"), at("08:00:00")))),
+        ),
+        (
+            "unlinked/at",
+            Box::new(|c| c.unlinked = Some((person("Ada"), at("09:30:00")))),
         ),
         (
             "unlinked/by/email",

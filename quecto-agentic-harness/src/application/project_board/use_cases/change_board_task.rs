@@ -76,7 +76,7 @@ fn apply(
         BoardOp::TakeOver => take_over(task, actor, now),
         // No run is stored before the run artifacts are (M3): the task has
         // none. From then the use case passes all of the task's runs.
-        BoardOp::Move(to) => move_task(task, *to, actor, &[], now),
+        BoardOp::Move(to) => move_task(task, *to, actor, &[], &[], now),
         BoardOp::AddPr(pr) => add_pr(task, actor, *pr, now),
         BoardOp::RemovePr(pr) => remove_pr(task, actor, *pr, now),
     }

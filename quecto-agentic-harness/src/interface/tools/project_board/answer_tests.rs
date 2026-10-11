@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 
 use super::*;
 use crate::domain::project_board::value_objects::schema_error::SchemaError;
+use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{PlanState, TaskStatus};
 
@@ -297,7 +298,13 @@ board_rules! {
     R::PrAlreadyLinked(_) => R::PrAlreadyLinked(7), "pr_already_linked", ["pr"];
     R::NotDraft(_) => R::NotDraft(TaskStatus::Ready), "not_draft", ["status"];
     R::NoEdit => R::NoEdit, "no_edit", [];
-    R::ChangeAlreadyLinked(_) => R::ChangeAlreadyLinked(1), "change_already_linked", ["change"];
+    R::ChangeAlreadyLinked { .. } => R::ChangeAlreadyLinked { task: Slug::parse("board-store").unwrap(), change: 1 }, "change_already_linked", ["task", "change"];
+    R::NoSuchChange(_) => R::NoSuchChange(4), "no_such_change", ["change"];
+    R::ChangeAhead { .. } => R::ChangeAhead { change: 1, updated: at("10:00:00") }, "change_ahead", ["change", "updated"];
+    R::ChangesLinked(_) => R::ChangesLinked(vec![1]), "changes_linked", ["changes"];
+    R::PrUnread(_) => R::PrUnread(7), "pr_unread", ["pr"];
+    R::PrNotOpen(_) => R::PrNotOpen(7), "pr_not_open", ["pr"];
+    R::PrHeadMismatch(_) => R::PrHeadMismatch(7), "pr_head_mismatch", ["pr"];
     R::ChangeUnlinked(_) => R::ChangeUnlinked(1), "change_unlinked", ["change"];
     R::ChangeMerged(_) => R::ChangeMerged(1), "change_merged", ["change"];
     R::NoChanges => R::NoChanges, "no_changes", [];

@@ -14,33 +14,56 @@ fn a_commit_id_is_full_lowercase_hex() {
     }
 }
 
+/// Every name here was checked with `git check-ref-format --branch`
+/// (git 2.55): the names it takes, and the names it refuses.
 #[test]
-fn a_branch_name_is_one_git_takes_as_it_is() {
+fn a_branch_name_is_one_git_takes() {
     for name in [
         "main",
         "feat/2481-m1b",
         "a.b_c-d/e",
         "v1.2",
-        "a_",
+        "_a",
+        "a/-b",
+        "a@b",
+        "@a",
+        "a@",
+        "a/@",
+        "a#b+c,d=e",
+        "a{b}",
+        "a'b\"c!d$e%f&g(h)i<j>k|l`m",
+        "a.lock.b",
+        "a./b",
+        "+",
         &"x".repeat(MAX_BRANCH_BYTES),
     ] {
         assert!(BranchName::parse(name).is_ok(), "{name}");
     }
     for name in [
-        "",
-        "-rf",
-        "/main",
-        "main/",
-        "a//b",
-        "a..b",
-        "x.lock",
-        "a.lock/b",
-        "a.",
-        "a b",
+        "", "-rf", "/main", "main/", "a//b", "a..b", "aa..", ".a", "a/.b", "x.lock", "a.lock/b",
+        "a/b.lock", "a.", "a/b.", "a@{b", "a b", "a\tb", "a\u{7f}b", "a~1", "a^b", "a:b", "a?b",
+        "a*b", "a[b", "a\\b",
+    ] {
+        assert_eq!(
+            BranchName::parse(name).unwrap_err().field,
+            "branch",
+            "{name:?}"
+        );
+    }
+}
+
+/// Names git takes that the board refuses: names git or a reader would
+/// take for something else, names past printable ASCII, and the length
+/// git does not bound.
+#[test]
+fn a_branch_name_is_not_one_git_reads_as_something_else() {
+    for name in [
         "ä",
-        "a~1",
-        "a:b",
+        "@",
         "HEAD",
+        "FETCH_HEAD",
+        "ORIG_HEAD",
+        "MERGE_HEAD",
         "refs/heads/x",
         &"a".repeat(40),
         &"f".repeat(64),
@@ -51,5 +74,25 @@ fn a_branch_name_is_one_git_takes_as_it_is() {
             "branch",
             "{name:?}"
         );
+    }
+    assert!(BranchName::parse("head").is_ok(), "git's names are exact");
+    assert!(BranchName::parse(&"a".repeat(41)).is_ok());
+}
+
+#[test]
+fn a_repository_is_named_owner_slash_name() {
+    let longest = format!(
+        "{}/{}",
+        "o".repeat(MAX_REPO_PART_BYTES),
+        "n".repeat(MAX_REPO_PART_BYTES)
+    );
+    for name in ["platform-q-ai/quecto", "a/.github", "a_b/c.d-e", &longest] {
+        assert!(RepoName::parse(name).is_ok(), "{name}");
+    }
+    let too_long = format!("o/{}", "n".repeat(MAX_REPO_PART_BYTES + 1));
+    for name in [
+        "", "quecto", "a/b/c", "/b", "a/", "./b", "a/..", "a b/c", "a/b~", "ä/b", &too_long,
+    ] {
+        assert_eq!(RepoName::parse(name).unwrap_err().field, "repo", "{name:?}");
     }
 }

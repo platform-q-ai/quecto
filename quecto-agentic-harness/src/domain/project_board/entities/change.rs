@@ -1,10 +1,13 @@
 //! A change: a pointer to the code that delivers a task (#2481's artifact
-//! model). It names a branch, the pull request while GitHub hosts pull
-//! requests, and the merge commit once merged; commits, CI and merge state
-//! are read live from git and GitHub, never copied. Its parent is the
-//! task. An unlinked change (a wrong or abandoned one) is kept, marked, so
-//! nothing is deleted.
-use super::super::value_objects::code_ref::{BranchName, CommitId, MAX_BRANCH_BYTES};
+//! model). It names a branch in its repository (a fork's, or the board's
+//! own), the pull request while the host keeps them, and the merge commit
+//! once merged; commits, CI and merge state are read live from git and the
+//! host, never copied. Its parent is the task. An unlinked change (a wrong
+//! or abandoned one) is kept, marked, so nothing is deleted.
+//!
+//! Its text is bounded by its parts (a branch, a repository and two
+//! identities, each bounded), so it needs no budget of its own.
+use super::super::value_objects::code_ref::{BranchName, CommitId, RepoName};
 use super::super::value_objects::schema_error::SchemaError;
 use super::super::value_objects::slug::Slug;
 use super::super::value_objects::timestamp::Timestamp;
@@ -12,8 +15,6 @@ use super::claim::Identity;
 
 /// The most changes a task links.
 pub const MAX_CHANGE_NUMBER: u32 = 999;
-/// A change's text (its branch name), budgeted like every artifact's.
-pub const MAX_CHANGE_TEXT_BYTES: usize = MAX_BRANCH_BYTES;
 
 /// A change's content, unchecked: what [`Change::new`] validates.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,8 +23,10 @@ pub struct ChangeFields {
     pub task: Slug,
     /// From 1, per task.
     pub number: u32,
+    /// The repository the branch lives in: the board's own, or a fork.
+    pub head_repo: RepoName,
     pub branch: BranchName,
-    /// The pull request, from 1, while GitHub hosts pull requests.
+    /// The pull request, from 1, while the host keeps pull requests.
     pub pr: Option<u64>,
     /// The merge commit, once merged: a branch may be deleted or
     /// rewritten, a commit id stays.
@@ -33,13 +36,6 @@ pub struct ChangeFields {
     pub unlinked: Option<(Identity, Timestamp)>,
     pub created: Timestamp,
     pub updated: Timestamp,
-}
-
-impl ChangeFields {
-    /// The UTF-8 bytes of the change's free text: its branch name.
-    pub fn text_bytes(&self) -> usize {
-        self.branch.as_str().len()
-    }
 }
 
 /// A change whose fields keep every rule of its schema.
@@ -64,6 +60,16 @@ impl Change {
     pub fn is_linked(&self) -> bool {
         self.0.unlinked.is_none()
     }
+
+    /// Linked and not merged yet: its branch is in use.
+    pub fn is_open(&self) -> bool {
+        self.is_linked() && self.0.merged.is_none()
+    }
+
+    /// Its repository and branch: the head it delivers from.
+    pub fn head(&self) -> (&RepoName, &BranchName) {
+        (&self.0.head_repo, &self.0.branch)
+    }
 }
 
 fn validate(change: &ChangeFields) -> Result<(), SchemaError> {
@@ -85,16 +91,6 @@ fn validate(change: &ChangeFields) -> Result<(), SchemaError> {
         false => return Err(SchemaError::new("pr", "a pull request number starts at 1")),
     }
     change.linked_by.validate("linked_by")?;
-    let text = change.text_bytes();
-    match text <= MAX_CHANGE_TEXT_BYTES {
-        true => {}
-        false => {
-            return Err(SchemaError::new(
-                "text",
-                format!("the change's text is {text} bytes; the most is {MAX_CHANGE_TEXT_BYTES}"),
-            ));
-        }
-    }
     match (&change.unlinked, &change.merged) {
         (None, _) => Ok(()),
         (Some(_), Some(_)) => Err(SchemaError::new("unlinked", "a merged change stays linked")),
