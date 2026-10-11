@@ -24,6 +24,7 @@ struct Board {
     tasks: BTreeMap<String, Task>,
     quarantined: Vec<QuarantinedFile>,
     interleaved: Vec<Interleaved>,
+    after_read: Vec<Interleaved>,
     refusal: Option<String>,
     writes: usize,
     /// Who made the board at each revision a write made.
@@ -68,6 +69,13 @@ impl MemoryBoardStore {
     /// the next write is judged.
     pub fn before_next_write(&self, change: impl FnOnce(&MemoryBoardStore) + Send + 'static) {
         self.lock().interleaved.push(Box::new(change));
+    }
+
+    /// Runs `change` (another writer's, through this store) just after the
+    /// next read is answered: the board moves on from the snapshot the
+    /// reader holds.
+    pub fn after_next_read(&self, change: impl FnOnce(&MemoryBoardStore) + Send + 'static) {
+        self.lock().after_read.push(Box::new(change));
     }
 
     /// The next write is refused with `reason`.
@@ -142,13 +150,18 @@ fn checked(tasks: &[Task], message: &str) -> Result<(), BoardStoreError> {
 
 impl ProjectBoardStore for MemoryBoardStore {
     fn read(&self) -> Result<BoardSnapshot, BoardStoreError> {
-        let board = self.lock();
-        let revision = board.head.ok_or(BoardStoreError::NoBoard)?;
-        Ok(BoardSnapshot {
-            head: head(revision),
-            tasks: board.tasks.values().cloned().collect(),
-            quarantined: board.quarantined.clone(),
-        })
+        let (snapshot, after) = {
+            let mut board = self.lock();
+            let revision = board.head.ok_or(BoardStoreError::NoBoard)?;
+            let snapshot = BoardSnapshot {
+                head: head(revision),
+                tasks: board.tasks.values().cloned().collect(),
+                quarantined: board.quarantined.clone(),
+            };
+            (snapshot, std::mem::take(&mut board.after_read))
+        };
+        after.into_iter().for_each(|change| change(self));
+        Ok(snapshot)
     }
 
     fn write(

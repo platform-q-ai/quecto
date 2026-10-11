@@ -171,21 +171,45 @@ fn ready_counts_an_archived_dependency_as_satisfied() {
     assert_eq!(ids, ["after-both", "after-cancelled", "after-finished"]);
 }
 
-/// Every listing names the head it was read at, so a caller knows which
-/// board it reflects.
+/// Every listing names the head its tasks were read at: the board moves
+/// on just after each read (another writer adds a ready task `z`), so a
+/// listing that read the board twice would pair the new head with the old
+/// tasks, or the old head with `z`.
 #[test]
-fn every_listing_names_the_head_it_was_read_at() {
-    let store = seeded();
-    let head = store.read().unwrap().head;
-    let query = QueryBoard::new(Arc::new(store));
-    let listings = [
-        query.ready().unwrap(),
-        query.takeable(&at("10:00:00")).unwrap(),
-        query.by_status(TaskStatus::Ready).unwrap(),
-        query.children(&slug("a")).unwrap(),
-        query.dependents(&slug("a")).unwrap(),
+fn every_listing_names_the_head_its_tasks_were_read_at() {
+    type Listing = fn(&QueryBoard) -> BoardListing;
+    let listings: [Listing; 5] = [
+        |query| query.ready().unwrap(),
+        |query| query.takeable(&at("10:00:00")).unwrap(),
+        |query| query.by_status(TaskStatus::Ready).unwrap(),
+        |query| query.children(&slug("a")).unwrap(),
+        |query| query.dependents(&slug("a")).unwrap(),
     ];
     for listing in listings {
-        assert_eq!(listing.head, head);
+        let store = seeded();
+        let read_at = store.read().unwrap().head;
+        store.after_next_read(|board| {
+            let head = board.read().unwrap().head;
+            let z = Task::new(TaskFields {
+                created: at("08:00:00"),
+                updated: at("08:00:00"),
+                parent: Some(slug("a")),
+                depends_on: vec![slug("a")],
+                ..fields("z")
+            })
+            .unwrap();
+            board.write(&head, &[z], "board: add z").unwrap();
+        });
+        let found = listing(&QueryBoard::new(Arc::new(store.client())));
+        assert_eq!(found.head, read_at);
+        assert!(
+            found
+                .tasks
+                .iter()
+                .all(|task| task.fields().id.as_str() != "z"),
+            "{:?}",
+            found.tasks
+        );
+        assert_ne!(store.read().unwrap().head, read_at, "the board moved on");
     }
 }

@@ -105,6 +105,21 @@ pub fn check_write_and_read((alice, bob): Clients) {
     );
 }
 
+/// A write of tasks identical to the board's is still a change: it
+/// answers `Written` and moves the head (a git commit always has a new
+/// id), so a writer can always tell its write landed.
+pub fn check_unchanged_write((alice, bob): Clients) {
+    alice.bootstrap().unwrap();
+    let head = alice.read().unwrap().head;
+    let first = written(alice.write(&head, &[task("a", "One")], "board: add a"));
+    let again = written(bob.write(&first, &[task("a", "One")], "board: add a again"));
+    assert_ne!(again, first, "an unchanged write moves the head");
+    assert_eq!(
+        (alice.read().unwrap().head, tasks(&*alice)),
+        (again, set(&[task("a", "One")]))
+    );
+}
+
 /// A write from a head another client moved past is lost: the board does
 /// not hold it, and keeps the winner's change.
 pub fn check_compare_and_swap((alice, bob): Clients) {
@@ -301,6 +316,11 @@ fn the_memory_store_writes_and_reads_back() {
 #[test]
 fn the_memory_store_writes_only_at_the_head() {
     check_compare_and_swap(memory().1);
+}
+
+#[test]
+fn the_memory_store_moves_the_head_on_an_unchanged_write() {
+    check_unchanged_write(memory().1);
 }
 
 #[test]
