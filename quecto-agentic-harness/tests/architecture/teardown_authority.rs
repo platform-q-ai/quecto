@@ -285,6 +285,13 @@ const PROCESS_EFFECT_ALLOWLIST: &[(&str, &[&str], &str)] = &[
          deadline, observed unreaped by waitid (#2476)",
     ),
     (
+        "src/infrastructure/persistence/project_board/gh_pull_requests.rs",
+        &["kill(", "libc::kill", "libc::SIGKILL"],
+        "the project board's pull request states ending the process group \
+         of its own `gh` Child (a session of its own, by setsid) once it \
+         exits and at its deadline (#2477)",
+    ),
+    (
         "src/infrastructure/tools/grep_run.rs",
         &["start_kill", "kill_on_drop"],
         "tool invocation containment: the grep tool's own `rg` Child at its \

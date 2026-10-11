@@ -12,7 +12,7 @@ use crate::application::project_board::ports::{
 };
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
-use crate::domain::project_board::services::claims::CLOCK_AHEAD_SECONDS;
+use crate::domain::project_board::services::claims::{CLOCK_AHEAD_SECONDS, STAMP_SLACK_SECONDS};
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 
 /// How many attempts, in all, a change gets before the board is reported
@@ -29,11 +29,16 @@ pub(super) struct When {
 
 impl When {
     /// Refuses to build on `task` when a clock ran ahead stamped it past
-    /// the latest time: its claims would hold everyone up. The bound is
-    /// inclusive, as the clock's own is (`now <= latest`): a task stamped
-    /// exactly at the latest time is built on.
+    /// the latest time plus [`STAMP_SLACK_SECONDS`] (the room the
+    /// strictly-forward stamp needs): its claims would hold everyone up.
+    /// The bound is inclusive, as the clock's own is.
     pub fn may_build_on(&self, task: &Task) -> Result<(), ProjectBoardError> {
-        match &self.latest {
+        let bound = self.latest.as_ref().map(|latest| {
+            latest
+                .plus_seconds(STAMP_SLACK_SECONDS)
+                .unwrap_or_else(|_| latest.clone())
+        });
+        match &bound {
             None => Ok(()),
             Some(latest) if task.fields().updated <= *latest => Ok(()),
             Some(_) => Err(ProjectBoardError::TaskAhead {

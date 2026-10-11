@@ -104,7 +104,8 @@ fn a_renewal_by_another_name_keeps_the_holder_as_claimed() {
 #[test]
 fn renewing_or_taking_over_behind_the_task_stamps_the_task_s_own_time() {
     let ahead = last_written(task(InProgress), &far_future());
-    let in_two_hours = far_future().plus_seconds(CLAIM_TTL_SECONDS).unwrap();
+    let next = far_future().plus_seconds(1).unwrap();
+    let in_two_hours = next.plus_seconds(CLAIM_TTL_SECONDS).unwrap();
     for changed in [
         renew(&ahead, &person("Ada"), &at("10:30:00")).unwrap(),
         take_over(&ahead, &person("Bob"), &at("11:00:00")).unwrap(),
@@ -112,7 +113,36 @@ fn renewing_or_taking_over_behind_the_task_stamps_the_task_s_own_time() {
         let claim = changed.fields().claim.clone().unwrap();
         assert_eq!(
             (&claim.since, &claim.expires, &changed.fields().updated),
-            (&far_future(), &in_two_hours, &far_future())
+            (&next, &in_two_hours, &next)
         );
     }
+}
+
+/// Two changes in one second, or one from a clock behind the task, never
+/// share a stamp: `updated` moves strictly forward on every change.
+#[test]
+fn every_change_moves_updated_strictly_forward() {
+    let renewed = renew(&task(InProgress), &person("Ada"), &at("10:00:00")).unwrap();
+    let again = renew(&renewed, &person("Ada"), &at("10:00:00")).unwrap();
+    assert_eq!(
+        (&renewed.fields().updated, &again.fields().updated),
+        (&at("10:00:00"), &at("10:00:01"))
+    );
+    let behind = renew(&again, &person("Ada"), &at("09:30:00")).unwrap();
+    assert_eq!(behind.fields().updated, at("10:00:02"));
+}
+
+/// A task stamped at the last moment the board can spell takes no further
+/// change: its next stamp cannot be spelt.
+#[test]
+fn a_task_at_the_last_spellable_second_takes_no_further_stamp() {
+    let last = Timestamp::parse("9999-12-31T23:59:59Z").unwrap();
+    let mut fields = task(Draft).into_fields();
+    fields.updated = last.clone();
+    let at_the_end = Task::new(fields).unwrap();
+    let moved = super::super::transitions::move_task(&at_the_end, Ready, &person("Ada"), &last);
+    assert!(
+        matches!(moved, Err(BoardRuleError::Invalid(_))),
+        "{moved:?}"
+    );
 }

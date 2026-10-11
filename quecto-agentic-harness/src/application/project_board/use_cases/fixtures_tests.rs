@@ -83,7 +83,7 @@ pub fn board() -> MemoryBoardStore {
     store
 }
 
-/// A new ready task, as a plan describes it.
+/// A new ready task.
 pub fn new_task(id: &str) -> NewBoardTask {
     NewBoardTask {
         id: slug(id),
@@ -93,8 +93,6 @@ pub fn new_task(id: &str) -> NewBoardTask {
         status: NewBoardTaskStatus::Ready,
         parent: None,
         depends_on: vec![],
-        plan: vec![],
-        team: None,
     }
 }
 

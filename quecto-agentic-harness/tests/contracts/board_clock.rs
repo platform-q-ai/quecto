@@ -140,8 +140,6 @@ fn create_against(
         status: NewBoardTaskStatus::Ready,
         parent: None,
         depends_on: vec![],
-        plan: vec![],
-        team: None,
     })
 }
 

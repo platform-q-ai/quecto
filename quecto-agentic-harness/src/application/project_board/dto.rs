@@ -5,16 +5,16 @@ use super::ports::{
     BoardClockError, BoardHead, BoardStoreError, PullRequestStatesError, QuarantinedFile,
 };
 use crate::domain::project_board::entities::task::Task;
-use crate::domain::project_board::entities::task_parts::{PlanStep, Team};
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::schema_error::SchemaError;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
 
-/// A new task: only what a plan sets. Its claim, runs, reviews, pull
-/// requests and items' progress are made by the board's later changes,
-/// so none can be supplied here.
+/// A new task: only the task's own fields. Its plan and team are plan
+/// artifacts (#2481's artifact model), and its claim, runs, reviews, pull
+/// requests and items are made by the board's later changes, so none can
+/// be supplied here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewBoardTask {
     pub id: Slug,
@@ -25,8 +25,22 @@ pub struct NewBoardTask {
     pub status: NewBoardTaskStatus,
     pub parent: Option<Slug>,
     pub depends_on: Vec<Slug>,
-    pub plan: Vec<PlanStep>,
-    pub team: Option<Team>,
+}
+
+/// An edit of a draft in place: the fields it sets (`None` keeps one as
+/// it is; `parent: Some(None)` takes the parent away), and the `updated`
+/// the caller read, when it read one: a draft changed since is refused as
+/// stale, never edited over. Drafts are shared planning: anyone with
+/// access to the board edits any draft.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DraftUpdate {
+    pub id: Slug,
+    pub title: Option<String>,
+    /// Markdown.
+    pub description: Option<String>,
+    pub parent: Option<Option<Slug>>,
+    pub depends_on: Option<Vec<Slug>>,
+    pub expected_updated: Option<Timestamp>,
 }
 
 /// The statuses a task is created in.
@@ -145,6 +159,13 @@ pub enum ProjectBoardError {
     },
     /// The store refused the write.
     Refused(String),
+    /// Task `id` changed since the caller read it (`expected` its
+    /// `updated` then, `updated` now): read it again and decide again.
+    Stale {
+        id: Slug,
+        expected: Timestamp,
+        updated: Timestamp,
+    },
     /// No file is set aside at this path.
     NotSetAside {
         path: String,
@@ -228,6 +249,17 @@ impl fmt::Display for ProjectBoardError {
                 write!(f, "the board kept moving: {attempts} attempts lost")
             }
             Self::Refused(why) => write!(f, "the board refused the write: {why}"),
+            Self::Stale {
+                id,
+                expected,
+                updated,
+            } => write!(
+                f,
+                "task {} changed since it was read (updated {}, not {}); read it again",
+                id.as_str(),
+                updated.as_str(),
+                expected.as_str()
+            ),
             Self::NotSetAside { path, object } => {
                 write!(f, "no file is set aside at {path:?} as {object:?}")
             }

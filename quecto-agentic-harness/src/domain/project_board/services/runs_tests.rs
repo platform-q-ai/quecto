@@ -65,5 +65,8 @@ fn only_the_holder_of_a_live_claim_ends_an_open_run() {
 fn a_run_ended_behind_the_task_ends_at_the_task_s_own_time() {
     let ahead = last_written(with_open_run(task(InProgress)), &far_future());
     let ended = end_run_lost(&ahead, &person("Ada"), &at("10:00:00")).unwrap();
-    assert_eq!(the_run(&ended).ended, Some(far_future()));
+    assert_eq!(
+        the_run(&ended).ended,
+        Some(far_future().plus_seconds(1).unwrap())
+    );
 }
