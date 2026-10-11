@@ -41,6 +41,7 @@ fn hostile_documents_are_refused_when_written() {
         ("an empty link", render(&with_line("[](https://example.com)"), &SHAPE), |e| matches!(e, E::Link { .. })),
         ("a titled link", render(&with_line("[a](https://example.com \"t\")"), &SHAPE), |e| matches!(e, E::Link { .. })),
         ("a reference link", render(&with_line("[a][r]"), &SHAPE), |e| matches!(e, E::Link { .. })),
+        ("a wikilink", render(&with_line("a [[x]] b"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
         ("a bare address", render(&with_line("see https://example.com"), &SHAPE), |e| matches!(e, E::Link { .. })),
         ("an autolink", render(&with_line("<https://example.com>"), &SHAPE), |e| matches!(e, E::Html { .. })),
         ("an escape", render(&with_line("a\\*b"), &SHAPE), |e| matches!(e, E::Escape { .. })),

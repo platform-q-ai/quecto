@@ -268,7 +268,7 @@ impl Seeded {
         const HOSTILE: &[&str] = &[
             "\u{1}", "\u{202e}", "\u{200b}", "\u{fe0f}", "e\u{301}", "&amp;", "&#65;", "$x$",
             "![i](https://example.com/i.png)", "<b>", "http://x", "www.x", "\u{2800}", "\u{3164}",
-            "a\u{fe0f}\u{200d}🦀", "\u{a0}", "[r][ref]", "x\u{301}\u{302}\u{303}\u{304}\u{305}",
+            "a\u{fe0f}\u{200d}🦀", "\u{a0}", "[r][ref]", "[[w]]", "x\u{301}\u{302}\u{303}\u{304}\u{305}",
         ];
         let mut line: String = (0..1 + self.below(6)).map(|_| self.pick(SAFE)).collect();
         line = line.trim().to_string();
