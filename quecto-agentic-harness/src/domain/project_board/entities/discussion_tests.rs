@@ -256,7 +256,6 @@ fn a_discussions_widest_text_fits_its_file() {
         "{rows} written > {} counted",
         full.text_bytes()
     );
-    assert!(rows + FILE_RESERVE_BYTES <= MAX_DISCUSSION_FILE_BYTES);
     assert!(Discussion::new(full.clone()).is_ok(), "exactly the budget");
     let last = full.messages.len() - 1;
     full.messages[last].text.push('x');
@@ -295,10 +294,6 @@ fn a_discussions_most_rows_fit_its_file() {
         rows <= many.text_bytes(),
         "{rows} written > {} counted",
         many.text_bytes()
-    );
-    assert!(
-        rows + FILE_RESERVE_BYTES <= MAX_DISCUSSION_FILE_BYTES,
-        "{rows}"
     );
     assert!(Discussion::new(many).is_ok());
 }

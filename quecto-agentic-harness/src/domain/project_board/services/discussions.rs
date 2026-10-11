@@ -99,13 +99,23 @@ pub fn append(
         Some(last) => last.at.clone(),
         None => return Err(BoardRuleError::NoEdit),
     };
-    // Each message's own shape first, so a message out of shape is named
-    // as such, never read as the discussion being full.
+    // The count first, before any message is read; then each message's
+    // own shape, so a message out of shape is named as such, never read
+    // as the discussion being full of lines or text; then that room.
+    let before = fields.messages.len();
+    match before + messages.len() <= MAX_MESSAGES {
+        true => {}
+        false => {
+            return Err(BoardRuleError::DiscussionFull {
+                discussion: fields.id.clone(),
+                limit: DiscussionLimit::Messages,
+            });
+        }
+    }
     let mut shapes = messages.iter().enumerate();
     shapes
         .try_for_each(|(index, message)| message_shape(&format!("batch/{index}"), message))
         .map_err(BoardRuleError::Invalid)?;
-    let before = fields.messages.len();
     let mut next = fields.clone();
     next.updated = after_last(&fields.updated, &when.now)?.max(last);
     next.messages.extend(messages);

@@ -331,3 +331,19 @@ fn a_message_from_far_ahead_is_refused_without_an_outside_time() {
     let taken = append(&discussion, vec![slack], &when("10:00:00")).unwrap();
     assert_eq!(taken.fields().updated, at("10:00:30"));
 }
+
+/// A batch past the most messages is refused by its count before any of
+/// its messages is read: one out of shape past the cap is never reached.
+#[test]
+fn a_batch_past_the_most_messages_is_refused_before_its_messages_are_read() {
+    let discussion = begun();
+    let mut batch = vec![message("Ada", "09:20:00", "x"); MAX_MESSAGES - 2];
+    batch.push(message("Ada", "09:20:00", " "));
+    assert_eq!(
+        append(&discussion, batch, &when("10:00:00")),
+        Err(BoardRuleError::DiscussionFull {
+            discussion: id(),
+            limit: DiscussionLimit::Messages
+        })
+    );
+}
