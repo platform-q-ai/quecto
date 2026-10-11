@@ -1,0 +1,25 @@
+//! Creates a project's empty board, once.
+use std::sync::Arc;
+
+use crate::application::project_board::dto::ProjectBoardError;
+use crate::application::project_board::ports::{BoardBootstrap, ProjectBoardStore};
+
+pub struct BootstrapProjectBoard {
+    store: Arc<dyn ProjectBoardStore>,
+}
+
+impl BootstrapProjectBoard {
+    pub fn new(store: Arc<dyn ProjectBoardStore>) -> Self {
+        Self { store }
+    }
+
+    /// # Errors
+    /// The store's clash or failure.
+    pub fn execute(&self) -> Result<BoardBootstrap, ProjectBoardError> {
+        Ok(self.store.bootstrap()?)
+    }
+}
+
+#[cfg(test)]
+#[path = "bootstrap_project_board_tests.rs"]
+mod tests;

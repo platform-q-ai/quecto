@@ -57,3 +57,15 @@ fn the_parts_vocabularies_are_spelt_exactly() {
         (None, None, None)
     );
 }
+
+/// A dependency done or archived (finished or cancelled) releases its
+/// dependents; in any other status it holds them back.
+#[test]
+fn only_a_done_or_archived_dependency_releases_its_dependents() {
+    let releasing: Vec<_> = TaskStatus::ALL
+        .iter()
+        .copied()
+        .filter(|status| status.releases_dependents())
+        .collect();
+    assert_eq!(releasing, [TaskStatus::Done, TaskStatus::Archived]);
+}

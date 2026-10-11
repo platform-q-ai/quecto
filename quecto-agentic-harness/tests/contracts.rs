@@ -39,6 +39,8 @@ mod authority_admin;
 mod authority_service_manager;
 #[path = "contracts/board_call_meter.rs"]
 mod board_call_meter;
+#[path = "contracts/board_clock.rs"]
+mod board_clock;
 #[path = "contracts/board_encoding.rs"]
 mod board_encoding;
 #[path = "contracts/board_events.rs"]
@@ -171,6 +173,8 @@ mod metered_call;
 mod mock_claude;
 #[path = "contracts/overlay_trust_store.rs"]
 mod overlay_trust_store;
+#[path = "contracts/project_board_store.rs"]
+mod project_board_store;
 #[path = "contracts/provider_runtime_factory.rs"]
 mod provider_runtime_factory;
 #[path = "contracts/refresh_inputs_loader.rs"]
