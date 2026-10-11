@@ -37,6 +37,11 @@ use crate::domain::swarm::BoardRole;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Method {
     Status,
+    /// The supervising session's projection of the board (#2478).
+    Board,
+    /// The board's revision alone (#2478), which the supervising session
+    /// polls.
+    BoardRevision,
     EventCursor,
     Snapshot,
     /// The run watch's tick (#2338): Rust-only.
@@ -119,6 +124,8 @@ impl Method {
     pub(super) fn parse(name: &str) -> Option<Self> {
         match name {
             "_status" => Some(Self::Status),
+            "_board" => Some(Self::Board),
+            "_board_revision" => Some(Self::BoardRevision),
             "_event_cursor" => Some(Self::EventCursor),
             "_snapshot" => Some(Self::Snapshot),
             "_watch" => Some(Self::Watch),
@@ -187,6 +194,8 @@ impl Method {
     pub(super) fn name(self) -> &'static str {
         match self {
             Self::Status => "_status",
+            Self::Board => "_board",
+            Self::BoardRevision => "_board_revision",
             Self::EventCursor => "_event_cursor",
             Self::Snapshot => "_snapshot",
             Self::Watch => "_watch",
@@ -259,6 +268,8 @@ impl Method {
             // read Python's `read_only` operation makes it, unless the
             // budget warned or paused (`served_level`).
             Self::Status
+            | Self::Board
+            | Self::BoardRevision
             | Self::EventCursor
             | Self::Snapshot
             | Self::Watch
@@ -329,6 +340,8 @@ impl Method {
             // around a member's call.
             Self::EventCursor => Some(BoardRole::Host),
             Self::Status
+            | Self::Board
+            | Self::BoardRevision
             | Self::Snapshot
             | Self::Watch
             | Self::RunTotals
@@ -411,6 +424,8 @@ impl Method {
             #[cfg(any(test, feature = "test-support"))]
             Self::CreateRun => true,
             Self::Status
+            | Self::Board
+            | Self::BoardRevision
             | Self::EventCursor
             | Self::Snapshot
             | Self::Watch
@@ -474,6 +489,8 @@ impl Method {
             | Self::ConfirmedDead
             | Self::LoseCoordinator
             | Self::Status
+            | Self::Board
+            | Self::BoardRevision
             | Self::EventCursor
             | Self::Snapshot
             | Self::Watch
@@ -525,7 +542,7 @@ impl Method {
     pub(super) fn answers_members_only(self) -> bool {
         match self {
             // Membership-free, like `_status` (#2279).
-            Self::Status | Self::EventCursor => false,
+            Self::Status | Self::Board | Self::BoardRevision | Self::EventCursor => false,
             // Through the operation gate, which refuses a caller that is
             // no member of the run (or whose death was confirmed).
             Self::Snapshot
@@ -617,6 +634,8 @@ impl Method {
     pub(super) fn parameters(self) -> &'static [Parameter] {
         match self {
             Self::Status
+            | Self::Board
+            | Self::BoardRevision
             | Self::EventCursor
             | Self::Snapshot
             | Self::RunTotals

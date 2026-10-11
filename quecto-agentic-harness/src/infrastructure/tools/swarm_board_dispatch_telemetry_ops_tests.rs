@@ -15,6 +15,8 @@ use std::sync::Arc;
 fn every_method() -> Vec<Method> {
     let all = vec![
         Method::Status,
+        Method::Board,
+        Method::BoardRevision,
         Method::EventCursor,
         Method::Snapshot,
         Method::Watch,
@@ -76,6 +78,8 @@ fn every_method() -> Vec<Method> {
     for method in &all {
         match method {
             Method::Status
+            | Method::Board
+            | Method::BoardRevision
             | Method::EventCursor
             | Method::Snapshot
             | Method::Watch
@@ -200,6 +204,8 @@ fn acted_on(
     };
     match method {
         Method::Status
+        | Method::Board
+        | Method::BoardRevision
         | Method::EventCursor
         | Method::Snapshot
         | Method::Watch

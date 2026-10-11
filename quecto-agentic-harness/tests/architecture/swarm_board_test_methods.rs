@@ -21,8 +21,10 @@ const TEST_ONLY: [(&str, &str); 4] = [
 ];
 
 /// Method names every build serves.
-const SERVED: [(&str, &str); 54] = [
+const SERVED: [(&str, &str); 56] = [
     ("_status", "Status"),
+    ("_board", "Board"),
+    ("_board_revision", "BoardRevision"),
     ("_event_cursor", "EventCursor"),
     ("_snapshot", "Snapshot"),
     ("_watch", "Watch"),
