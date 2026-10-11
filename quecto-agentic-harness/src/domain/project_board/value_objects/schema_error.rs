@@ -37,15 +37,26 @@ impl fmt::Display for SchemaError {
 
 impl std::error::Error for SchemaError {}
 
-/// Letters, marks, numbers, punctuation, symbols and the space separators
-/// (Unicode L*, M*, N*, P*, S*, Zs): no controls, format characters (bidi
-/// overrides, zero-width characters, the BOM), private-use or unassigned.
-static ON_ONE_LINE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[\p{L}\p{M}\p{N}\p{P}\p{S}\p{Zs}]*$").expect("text allowlist"));
-/// The same, plus `\n` between lines (CRLF is converted at the board's entry).
-static MARKDOWN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^[\p{L}\p{M}\p{N}\p{P}\p{S}\p{Zs}\n]*$").expect("markdown allowlist")
-});
+/// One visible character (Unicode L*, M*, N*, P*, S*), or an emoji tag
+/// sequence: a black flag U+1F3F4, then tag characters U+E0020 to U+E007E,
+/// ended by the cancel tag U+E007F (subdivision flags such as England's).
+const GLYPH: &str = r"(?:[\p{L}\p{M}\p{N}\p{P}\p{S}]|\x{1F3F4}[\x{E0020}-\x{E007E}]+\x{E007F})";
+/// ZWNJ U+200C and ZWJ U+200D, each only ever between two glyphs (👩‍💻,
+/// 🏳️‍🌈, Persian ZWNJ). Every other format character (bidi marks such as
+/// LRM, RLM and ALM, the soft hyphen, zero-width spaces, the BOM), every
+/// control, private-use and unassigned character is refused.
+const JOINER: &str = r"[\x{200C}\x{200D}]";
+
+/// Glyphs, possibly joined, and the given separators.
+fn text(separators: &str) -> Regex {
+    Regex::new(&format!("^(?:{GLYPH}(?:{JOINER}{GLYPH})*|{separators})*$")).expect("text allowlist")
+}
+
+/// Single-line text: glyphs and the space separators (Unicode Zs).
+static ON_ONE_LINE: LazyLock<Regex> = LazyLock::new(|| text(r"\p{Zs}"));
+/// The same, plus `\n` between lines and `\t` (CRLF is converted at the
+/// board's entry).
+static MARKDOWN: LazyLock<Regex> = LazyLock::new(|| text(r"[\p{Zs}\n\t]"));
 /// Something to read: a letter, number, punctuation mark or symbol.
 static VISIBLE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[\p{L}\p{N}\p{P}\p{S}]").expect("visible allowlist"));
@@ -70,7 +81,7 @@ pub fn markdown(field: &str, text: &str, max_chars: usize) -> Result<(), SchemaE
     } else {
         Err(SchemaError::new(
             field,
-            format!("must be at most {max_chars} characters of text and newlines"),
+            format!("must be at most {max_chars} characters of text, newlines and tabs"),
         ))
     }
 }

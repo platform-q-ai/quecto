@@ -20,17 +20,32 @@ pub struct Claim {
 /// A git committer identity, as the store is given it. It is self-asserted
 /// (anyone can commit as any name and email), so it attributes board
 /// writes; it does not authenticate them. Two identities are the same
-/// person when their emails match ignoring ASCII case.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// person, and equal (`==`), when their emails match ignoring ASCII case:
+/// the name is only how they are shown.
+#[derive(Debug, Clone)]
 pub struct Identity {
     pub name: String,
     pub email: String,
 }
 
-/// A name begins and ends with a letter or number, and holds no angle
-/// bracket (git's own delimiter around the email).
+impl PartialEq for Identity {
+    /// Agrees with [`Identity::is`]: the same committer, whatever the name.
+    fn eq(&self, other: &Self) -> bool {
+        self.is(other)
+    }
+}
+
+/// Equal emails ignoring ASCII case is an equivalence.
+impl Eq for Identity {}
+
+/// A name is one line of text (checked by `line`) that begins and ends
+/// with a visible character and holds no angle bracket, git's own
+/// delimiter around the email: `dependabot[bot]`, `Ada Jr.` and
+/// `Shane (work)` are names; ` Ada` and `Ada <a@b>` are not.
 static NAME: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^[\p{L}\p{N}](?:[^<>]*[\p{L}\p{N}\p{M}])?$").expect("name allowlist")
+    let edge = r"[[\p{L}\p{M}\p{N}\p{P}\p{S}\x{E007F}]--[<>]]";
+    let inner = r"[[\p{L}\p{M}\p{N}\p{P}\p{S}\p{Zs}\x{200C}\x{200D}\x{E0020}-\x{E007F}]--[<>]]";
+    Regex::new(&format!("^{edge}(?:{inner}*{edge})?$")).expect("name allowlist")
 });
 
 impl Claim {
@@ -60,7 +75,7 @@ impl Identity {
         if !NAME.is_match(&self.name) {
             return Err(SchemaError::new(
                 name,
-                "must start and end with a letter or number, without < or >",
+                "must start and end with a visible character, without < or >",
             ));
         }
         let shaped = self.email.split_once('@').is_some_and(|(local, domain)| {

@@ -60,6 +60,10 @@ impl TryFrom<TaskFields> for Task {
 }
 
 fn validate(task: &TaskFields) -> Result<(), SchemaError> {
+    // Other times are ordered against these two, so they come first.
+    if task.created > task.updated {
+        return Err(SchemaError::new("updated", "must not be before created"));
+    }
     line("title", &task.title, MAX_TITLE_CHARS)?;
     markdown("description", &task.description, MAX_DESCRIPTION_CHARS)?;
     if task.parent.as_ref() == Some(&task.id) {
@@ -84,26 +88,23 @@ fn validate(task: &TaskFields) -> Result<(), SchemaError> {
             "a pull request number starts at 1",
         ));
     }
-    if task.created <= task.updated {
-        Ok(())
-    } else {
-        Err(SchemaError::new("updated", "must not be before created"))
-    }
+    Ok(())
 }
 
 /// Claimed and in-progress tasks have a holder; review and blocked may
-/// keep one; any other status has none. A claim starts no earlier than
-/// the task.
+/// keep one; any other status has none. A claim starts while the task
+/// exists: no earlier than `created` and no later than `updated`, the
+/// change that took it.
 fn validate_claim(task: &TaskFields) -> Result<(), SchemaError> {
     match &task.claim {
         Some(claim) if task.status.may_hold_claim() => {
             claim.validate("claim")?;
-            if claim.since >= task.created {
+            if task.created <= claim.since && claim.since <= task.updated {
                 Ok(())
             } else {
                 Err(SchemaError::new(
                     "claim/since",
-                    "must not be before the task was created",
+                    "must be from when the task was created to when it was updated",
                 ))
             }
         }

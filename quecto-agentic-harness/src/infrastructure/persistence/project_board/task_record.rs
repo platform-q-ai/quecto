@@ -24,13 +24,21 @@ use crate::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStat
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+/// Each schema this quecto reads, oldest first, with the quecto release
+/// that introduced it. A new schema adds a row here.
+pub const SCHEMAS: &[(u32, &str)] = &[(1, "0.107.250")];
+/// The schema every task file is written at: the last row of [`SCHEMAS`].
 pub const SCHEMA_VERSION: u32 = 1;
-pub const MAX_TASK_FILE_BYTES: usize = 256 * 1024;
-/// Each schema and the quecto release that introduced it (red stub).
-pub const SCHEMAS: &[(u32, &str)] = &[];
+const _: () = assert!(SCHEMAS[SCHEMAS.len() - 1].0 == SCHEMA_VERSION);
+/// The largest task file read or written. Every task the domain admits is
+/// written well under it (the largest is about 270 KiB), so a write is
+/// never refused only because the field limits add up past the cap.
+pub const MAX_TASK_FILE_BYTES: usize = 1024 * 1024;
 
-pub fn introduced_in(_schema: u32) -> Option<&'static str> {
-    None
+/// The quecto release that introduced `schema`, when this quecto knows it.
+pub fn introduced_in(schema: u32) -> Option<&'static str> {
+    let row = SCHEMAS.iter().find(|(number, _)| *number == schema);
+    row.map(|(_, release)| *release)
 }
 
 /// Why a task file could not be read or written.
@@ -59,10 +67,16 @@ impl fmt::Display for RecordError {
                 "task file is {bytes} bytes; the most is {MAX_TASK_FILE_BYTES}"
             ),
             Self::Malformed(reason) => write!(f, "task file is malformed: {reason}"),
+            // A newer schema came with a release after this one; that
+            // release is the least that reads it, and this quecto cannot
+            // know its number.
             Self::NewerSchema { found } => write!(
                 f,
-                "this board's task file uses schema {found}, newer than quecto {} reads (schema {SCHEMA_VERSION}); upgrade quecto",
-                env!("CARGO_PKG_VERSION")
+                "this board's task file uses schema {found}, which needs a quecto newer than {} \
+                 (it reads schemas 1 to {SCHEMA_VERSION}; schema {SCHEMA_VERSION} arrived in quecto {}); \
+                 upgrade quecto",
+                env!("CARGO_PKG_VERSION"),
+                introduced_in(SCHEMA_VERSION).unwrap_or("?"),
             ),
             Self::UnknownSchema { found } => {
                 write!(f, "task file schema {found} is not a known schema")
@@ -137,6 +151,10 @@ pub fn encode(task: &Task) -> Result<Vec<u8>, RecordError> {
     let mut bytes = serde_json::to_vec_pretty(&TaskRecord::from_task(task))
         .map_err(|error| RecordError::Malformed(error.to_string()))?;
     bytes.push(b'\n');
+    debug_assert!(
+        bytes.len() <= MAX_TASK_FILE_BYTES,
+        "every valid task fits its file"
+    );
     if bytes.len() <= MAX_TASK_FILE_BYTES {
         Ok(bytes)
     } else {
