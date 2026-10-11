@@ -2,4 +2,5 @@
 //! marks ready and claims, kept as one JSON file per task on the repository's
 //! `quecto/board` branch. Not the swarm's run board (`domain::swarm`).
 pub mod entities;
+pub mod services;
 pub mod value_objects;
