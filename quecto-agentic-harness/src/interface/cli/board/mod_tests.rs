@@ -38,7 +38,7 @@ fn the_command_line_builds_the_request_the_tool_would_send() {
     );
     for (line, stdin, field) in [
         (&["renew", "--task"][..], "", "task"),
-        (&["renew", "extra"][..], "", "extra"),
+        (&["renew", "extra"][..], "", "arguments"),
         (
             &["create", "--input", "{}", "--title", "A"][..],
             "",
@@ -213,13 +213,22 @@ fn an_unknown_op_is_not_echoed_back() {
 
 #[test]
 fn the_command_lines_own_flags_are_given_once_with_a_value() {
-    for (line, field) in [
-        (&["list", "--repo", "a", "--repo", "b"][..], "repo"),
-        (&["list", "--remote", "a", "--remote", "b"][..], "remote"),
-        (&["list", "--input", "{}", "--input", "{}"][..], "input"),
-        (&["list", "--repo", ""][..], "repo"),
-        (&["list", "--remote", ""][..], "remote"),
-        (&["list", "--input", ""][..], "input"),
+    let (twice, empty) = ("is given twice", "needs a value");
+    for (line, field, problem) in [
+        (&["list", "--repo", "a", "--repo", "b"][..], "repo", twice),
+        (
+            &["list", "--remote", "a", "--remote", "b"][..],
+            "remote",
+            twice,
+        ),
+        (
+            &["list", "--input", "{}", "--input", "{}"][..],
+            "input",
+            twice,
+        ),
+        (&["list", "--repo", ""][..], "repo", empty),
+        (&["list", "--remote", ""][..], "remote", empty),
+        (&["list", "--input", ""][..], "input", empty),
     ] {
         let (code, answer, _) = cli(Some(never_built), line);
         assert_eq!(code, 1, "{line:?}");
@@ -229,6 +238,7 @@ fn the_command_lines_own_flags_are_given_once_with_a_value() {
             "{line:?}"
         );
         assert_eq!(answer["error"]["field"], json!(field), "{line:?}");
+        assert_eq!(answer["error"]["problem"], json!(problem), "{line:?}");
     }
 }
 

@@ -115,10 +115,11 @@ fn read_line(args: &[String]) -> Result<Line, RequestError> {
                 line.fields.extend([flag.to_string(), value.clone()]);
             }
             op if line.op.is_none() => line.op = Some(op.to_string()),
-            other => {
+            _ => {
+                // A fixed field: the stray text is never echoed back.
                 return Err(RequestError {
-                    field: other.into(),
-                    problem: "is not a flag; fields are --<field> <value>".into(),
+                    field: "arguments".into(),
+                    problem: "hold one op, then --<field> <value> pairs".into(),
                 });
             }
         }

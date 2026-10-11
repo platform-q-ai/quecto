@@ -61,20 +61,7 @@ pub fn build_project_board_handles(
         Arc::clone(&store) as _,
         Arc::clone(&store) as _,
     ));
-    let configured_host = environment
-        .vars
-        .iter()
-        .find(|(key, _)| key == "GH_HOST")
-        .and_then(|(_, value)| value.to_str());
-    let prs: Result<Arc<dyn PullRequestStates>, NoPullRequestHost> =
-        match github_repository(&url, configured_host) {
-            Some(repo) => GhPullRequestStates::new(&repo, environment.vars.iter().cloned())
-                .map(|states| Arc::new(states) as _)
-                .map_err(|error| match error {
-                    PullRequestStatesError::Unavailable(why) => NoPullRequestHost::Unreachable(why),
-                }),
-            None => Err(NoPullRequestHost::NotAPullRequestHost),
-        };
+    let prs = pull_request_states(&url, &environment.vars);
     let store: Arc<dyn ProjectBoardStore> = store;
     let built = |error: crate::application::project_board::dto::ProjectBoardError| {
         unavailable(error.to_string())
@@ -100,6 +87,27 @@ pub fn build_project_board_handles(
     })
 }
 
+/// Pull request states of the remote at `url`, read with `gh` when it is
+/// on GitHub or the configured enterprise host (`GH_HOST` in `vars`); or
+/// why none are.
+fn pull_request_states(
+    url: &str,
+    vars: &[(std::ffi::OsString, std::ffi::OsString)],
+) -> Result<Arc<dyn PullRequestStates>, NoPullRequestHost> {
+    let configured_host = vars
+        .iter()
+        .find(|(key, _)| key == "GH_HOST")
+        .and_then(|(_, value)| value.to_str());
+    match github_repository(url, configured_host) {
+        Some(repo) => GhPullRequestStates::new(&repo, vars.iter().cloned())
+            .map(|states| Arc::new(states) as _)
+            .map_err(|error| match error {
+                PullRequestStatesError::Unavailable(why) => NoPullRequestHost::Unreachable(why),
+            }),
+        None => Err(NoPullRequestHost::NotAPullRequestHost),
+    }
+}
+
 /// Why a write's store cannot be built: an identity problem (none
 /// configured, or one git would not record as given) is the committer's;
 /// anything else (no git, a timeout, a repository git cannot run in) is
@@ -107,7 +115,13 @@ pub fn build_project_board_handles(
 fn write_refusal(error: GitError) -> BuildError {
     match error {
         GitError::Identity(why) => BuildError::NoCommitter(why),
-        other => BuildError::Unavailable(format!("git cannot run here: {other}")),
+        unavailable @ (GitError::NotFound
+        | GitError::Spawn(_)
+        | GitError::TimedOut { .. }
+        | GitError::TooMuchOutput { .. }
+        | GitError::Failed { .. }) => {
+            BuildError::Unavailable(format!("git cannot run here: {unavailable}"))
+        }
     }
 }
 

@@ -89,7 +89,7 @@ fn the_board_runs_end_to_end_over_git_and_the_index() {
     let complete = ops(json!({"op": "complete", "task": "a"}));
     assert_eq!(
         complete["error"]["code"],
-        json!("pull_requests_unavailable"),
+        json!("no_pull_request_host"),
         "{complete}"
     );
 }
@@ -119,6 +119,19 @@ fn a_read_needs_no_committer_and_a_write_says_none_is_configured() {
         build_project_board_handles(&nowhere),
         Err(BuildError::Unavailable(_))
     ));
+}
+
+/// A directory git cannot use as a repository fails with that cause, not
+/// as one with no committer configured.
+#[test]
+fn a_directory_that_is_no_repository_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    let refused = build_project_board_handles(&environment(dir.path(), Access::Write));
+    assert!(
+        matches!(&refused, Err(BuildError::Unavailable(why)) if why.contains("rev-parse")),
+        "{:?}",
+        refused.as_ref().err()
+    );
 }
 
 /// Only "not set" is a missing committer: git failing to read its
@@ -155,30 +168,29 @@ fn a_committer_git_cannot_read_is_not_a_missing_one() {
     );
 }
 
-/// A board on GitHub with no `gh` to ask answers why completion cannot
-/// run: there is no gh on the PATH.
+/// A remote on GitHub with no `gh` to ask reads no pull requests, and
+/// says why: there is no gh on the PATH. One on no such host says that.
 #[test]
 fn a_github_remote_with_no_gh_says_so() {
-    let (dir, work) = repository();
-    sh(
-        &work,
-        &["remote", "set-url", "origin", "https://github.com/o/r.git"],
+    let dir = tempfile::tempdir().unwrap();
+    // git's own directory, every program but gh, as a PATH might be.
+    let no_gh = dir.path().join("bin");
+    std::fs::create_dir(&no_gh).unwrap();
+    let git_dir = which("git").parent().unwrap().to_path_buf();
+    for entry in std::fs::read_dir(&git_dir).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_name() != "gh" {
+            std::os::unix::fs::symlink(entry.path(), no_gh.join(entry.file_name())).unwrap();
+        }
+    }
+    let vars = vec![(OsString::from("PATH"), no_gh.into_os_string())];
+    let missing = pull_request_states("https://github.com/o/r.git", &vars).err();
+    assert!(
+        matches!(&missing, Some(NoPullRequestHost::Unreachable(why)) if why.contains("no gh on the PATH")),
+        "{missing:?}"
     );
-    let only_git = dir.path().join("bin");
-    std::fs::create_dir(&only_git).unwrap();
-    let git = which("git");
-    std::os::unix::fs::symlink(&git, only_git.join("git")).unwrap();
-    let mut env = environment(&work, Access::Read);
-    env.vars[0].1 = only_git.into_os_string();
-    let handles = build_project_board_handles(&env).unwrap();
-    let complete = run(&handles.operations, r#"{"op": "complete", "task": "a"}"#);
-    assert_eq!(
-        complete["error"]["code"],
-        json!("pull_requests_unavailable"),
-        "{complete}"
-    );
-    let reason = complete["error"]["reason"].as_str().unwrap();
-    assert!(reason.contains("no gh on the PATH"), "{reason}");
+    let elsewhere = pull_request_states("/srv/r.git", &vars).err();
+    assert_eq!(elsewhere, Some(NoPullRequestHost::NotAPullRequestHost));
 }
 
 /// Where `program` is on this process's PATH.

@@ -21,6 +21,10 @@ impl Git {
             .and_then(|path| on_path(path, "git"))
             .ok_or(GitError::NotFound)?;
         let asking = Self::unidentified(program, repo, env);
+        // A repository git cannot use (not one, or one it distrusts as
+        // another user's) fails here with its own cause, rather than
+        // reading as one with no committer configured.
+        asking.ok(&["rev-parse", "--git-dir"], None)?;
         let configured = |key: &str| match config_get(&asking, key)? {
             Some(value) => Ok(value),
             None => Err(GitError::Identity(format!(
@@ -73,20 +77,41 @@ impl Git {
     }
 }
 
+/// What `git config --get` answered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ConfigAnswer {
+    /// The value it resolves.
+    Set(String),
+    /// Nothing sets it: git's own answer for that is exit status 1 and no
+    /// message.
+    Unset,
+    /// Anything else: git failed to read its configuration.
+    Failed,
+}
+
+/// The answer an exit `code` (`None` for a signal), `stdout` and `stderr`
+/// of `git config --get` mean.
+fn config_answer(code: Option<i32>, stdout: &[u8], stderr: &[u8]) -> ConfigAnswer {
+    match (code, stderr.is_empty()) {
+        (Some(0), _) => ConfigAnswer::Set(String::from_utf8_lossy(stdout).trim_end().to_string()),
+        (Some(1), true) => ConfigAnswer::Unset,
+        (Some(_) | None, _) => ConfigAnswer::Failed,
+    }
+}
+
 /// The value `git config --get key` resolves, or `None` when nothing sets
-/// it: git's own answer for that is exit status 1 and no message. Any
-/// other failure (no repository there, a timeout, a broken configuration)
-/// is git's error, with its cause.
+/// it. Any other failure (a timeout, a broken configuration) is git's
+/// error, with its cause.
 fn config_get(git: &Git, key: &str) -> Result<Option<String>, GitError> {
     let args = ["config", "--get", key];
     let output = git.local(&args, None, SHORT_OUTPUT)?;
-    match (output.status.code(), output.stderr.is_empty()) {
-        (Some(0), _) => Ok(Some(
-            String::from_utf8_lossy(&output.stdout)
-                .trim_end()
-                .to_string(),
-        )),
-        (Some(1), true) => Ok(None),
-        (Some(_) | None, _) => Err(failed(&args, &output)),
+    match config_answer(output.status.code(), &output.stdout, &output.stderr) {
+        ConfigAnswer::Set(value) => Ok(Some(value)),
+        ConfigAnswer::Unset => Ok(None),
+        ConfigAnswer::Failed => Err(failed(&args, &output)),
     }
 }
+
+#[cfg(test)]
+#[path = "git_committer_tests.rs"]
+mod tests;

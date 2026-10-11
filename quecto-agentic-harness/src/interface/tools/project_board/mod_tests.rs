@@ -144,13 +144,15 @@ fn a_command_line_reaches_the_same_request_as_the_tools_json() {
     );
     for (op, flags, field) in [
         ("ready", &[][..], "op"),
-        ("renew", &["--holder", "Ada"][..], "holder"),
+        // A field the op does not take, or text that is no flag, is never
+        // echoed back as a field.
+        ("renew", &["--holder", "Ada"][..], "flags"),
         ("renew", &["--task"][..], "task"),
-        ("renew", &["task", "a"][..], "task"),
+        ("renew", &["task", "a"][..], "flags"),
         ("renew", &["--task", "a", "--task", "b"][..], "task"),
         ("create", &["--depends-on", "a,,b"][..], "depends_on"),
         ("create", &["--depends-on", "a,"][..], "depends_on"),
-        ("create", &["--plan", "[]"][..], "plan"),
+        ("create", &["--plan", "[]"][..], "flags"),
     ] {
         assert_eq!(line(op, flags).unwrap_err().field, field, "{op} {flags:?}");
     }
