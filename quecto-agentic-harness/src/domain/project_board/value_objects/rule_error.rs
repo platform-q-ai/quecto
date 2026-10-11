@@ -45,6 +45,16 @@ pub enum BoardRuleError {
     RunsInconsistent(String),
     /// A run runs the task's accepted plan; this version is not it.
     PlanNotAccepted(u32),
+    /// This change already links the branch or pull request.
+    ChangeAlreadyLinked(u32),
+    /// This change was unlinked: it delivers nothing now.
+    ChangeUnlinked(u32),
+    /// This change merged: it stays linked.
+    ChangeMerged(u32),
+    /// The task links no change to complete it.
+    NoChanges,
+    /// These linked changes have not merged.
+    ChangesUnmerged(Vec<u32>),
     /// A takeover is only of a task that may hold a claim (claimed, in
     /// progress, in review or blocked).
     NotTakeable(TaskStatus),
@@ -118,6 +128,16 @@ impl fmt::Display for BoardRuleError {
             Self::PlanNotAccepted(version) => {
                 write!(f, "plan version {version} is not the task's accepted plan")
             }
+            Self::ChangeAlreadyLinked(number) => {
+                write!(
+                    f,
+                    "change {number} already links that branch or pull request"
+                )
+            }
+            Self::ChangeUnlinked(number) => write!(f, "change {number} was unlinked"),
+            Self::ChangeMerged(number) => write!(f, "change {number} merged: it stays linked"),
+            Self::NoChanges => f.write_str("the task links no change"),
+            Self::ChangesUnmerged(numbers) => write!(f, "changes {numbers:?} have not merged"),
             Self::NotTakeable(status) => {
                 write!(f, "a {} task cannot be taken over", status.as_str())
             }

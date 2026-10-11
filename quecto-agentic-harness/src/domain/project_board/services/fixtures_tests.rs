@@ -1,7 +1,7 @@
 //! A valid task in any status, with every part, held by Ada from 09:00 to
 //! 11:00 when it may be; and versions of its plan and runs of them.
 use crate::domain::project_board::entities::claim::{Claim, Identity};
-pub use crate::domain::project_board::entities::fixtures_tests::{open_run, plan};
+pub use crate::domain::project_board::entities::fixtures_tests::{change, commit, open_run, plan};
 use crate::domain::project_board::entities::task::{Task, TaskFields};
 use crate::domain::project_board::entities::task_parts::Review;
 use crate::domain::project_board::value_objects::slug::Slug;

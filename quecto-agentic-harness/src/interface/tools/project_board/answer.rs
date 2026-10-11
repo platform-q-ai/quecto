@@ -466,6 +466,13 @@ fn rule_json(rule: &BoardRuleError) -> Value {
         }),
         R::RunsInconsistent(why) => json!({"code": "runs_inconsistent", "reason": shown(why)}),
         R::PlanNotAccepted(version) => json!({"code": "plan_not_accepted", "version": version}),
+        R::ChangeAlreadyLinked(change) => {
+            json!({"code": "change_already_linked", "change": change})
+        }
+        R::ChangeUnlinked(change) => json!({"code": "change_unlinked", "change": change}),
+        R::ChangeMerged(change) => json!({"code": "change_merged", "change": change}),
+        R::NoChanges => json!({"code": "no_changes"}),
+        R::ChangesUnmerged(changes) => json!({"code": "changes_unmerged", "changes": changes}),
         R::NotTakeable(status) => json!({"code": "not_takeable", "status": status.as_str()}),
         R::AlreadyHolder => json!({"code": "already_holder"}),
         R::NoPrs => json!({"code": "no_prs"}),

@@ -83,3 +83,25 @@ pub fn open_run(number: u32, version: u32) -> Run {
     })
     .expect("fixture run is valid")
 }
+
+/// Change `number` of the fixture task linking branch `b<number>` and pull
+/// request `pr`, linked by Ada at 09:00.
+pub fn change(number: u32, pr: Option<u64>) -> super::change::Change {
+    super::change::Change::new(super::change::ChangeFields {
+        task: slug("board-store"),
+        number,
+        branch: format!("feat/b{number}"),
+        pr,
+        merged: None,
+        linked_by: person("Ada"),
+        unlinked: None,
+        created: at("09:00:00"),
+        updated: at("09:00:00"),
+    })
+    .expect("fixture change is valid")
+}
+
+/// A full commit id of `digit`s.
+pub fn commit(digit: char) -> String {
+    digit.to_string().repeat(40)
+}

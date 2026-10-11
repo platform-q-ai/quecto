@@ -123,6 +123,7 @@ pub fn complete_merged(
     runs: &[Run],
     now: &Timestamp,
 ) -> Result<Completed, BoardRuleError> {
+    completable(task)?;
     let fields = task.fields();
     let unmerged: Vec<u64> = fields
         .prs
@@ -130,21 +131,31 @@ pub fn complete_merged(
         .copied()
         .filter(|pr| !merged.contains(pr))
         .collect();
-    let completable = matches!(
-        fields.status,
-        Ready | Claimed | InProgress | Review | Blocked
-    );
-    match (completable, &fields.prs[..], &unmerged[..]) {
-        (true, [_, ..], []) => {}
-        (true, [], _) => return Err(BoardRuleError::NoPrs),
-        (true, _, open) => return Err(BoardRuleError::PrsUnmerged(open.to_vec())),
-        (false, _, _) => {
-            return Err(BoardRuleError::NotAllowed {
-                from: fields.status,
-                to: Done,
-            });
-        }
+    match (&fields.prs[..], &unmerged[..]) {
+        ([_, ..], []) => {}
+        ([], _) => return Err(BoardRuleError::NoPrs),
+        (_, open) => return Err(BoardRuleError::PrsUnmerged(open.to_vec())),
     }
+    finish(task, runs, now).map(|(completed, _)| completed)
+}
+
+/// A task that is ready (released with what delivers it linked) or held
+/// may be completed; any other may not.
+pub(super) fn completable(task: &Task) -> Result<(), BoardRuleError> {
+    match task.fields().status {
+        Ready | Claimed | InProgress | Review | Blocked => Ok(()),
+        from @ (Draft | Done | Archived) => Err(BoardRuleError::NotAllowed { from, to: Done }),
+    }
+}
+
+/// `task` done at its stamp for `now`, its claim cleared and its run
+/// going, if one of `runs` is, ended as lost at that stamp; with the stamp.
+pub(super) fn finish(
+    task: &Task,
+    runs: &[Run],
+    now: &Timestamp,
+) -> Result<(Completed, Timestamp), BoardRuleError> {
+    let fields = task.fields();
     let at = stamp(task, now)?;
     let open = open_of(task, runs)?;
     let run = open.map(|run| lost_at(run, &at)).transpose()?;
@@ -156,10 +167,8 @@ pub fn complete_merged(
     let mut next = fields.clone();
     next.status = Done;
     next.claim = None;
-    Ok(Completed {
-        task: settle(next, &at)?,
-        run,
-    })
+    let task = settle(next, &at)?;
+    Ok((Completed { task, run }, at))
 }
 
 /// A task completed: done, and its run ended as lost if one was going.

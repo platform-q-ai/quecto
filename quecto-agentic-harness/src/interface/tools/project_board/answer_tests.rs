@@ -297,6 +297,11 @@ board_rules! {
     R::PrAlreadyLinked(_) => R::PrAlreadyLinked(7), "pr_already_linked", ["pr"];
     R::NotDraft(_) => R::NotDraft(TaskStatus::Ready), "not_draft", ["status"];
     R::NoEdit => R::NoEdit, "no_edit", [];
+    R::ChangeAlreadyLinked(_) => R::ChangeAlreadyLinked(1), "change_already_linked", ["change"];
+    R::ChangeUnlinked(_) => R::ChangeUnlinked(1), "change_unlinked", ["change"];
+    R::ChangeMerged(_) => R::ChangeMerged(1), "change_merged", ["change"];
+    R::NoChanges => R::NoChanges, "no_changes", [];
+    R::ChangesUnmerged(_) => R::ChangesUnmerged(vec![1]), "changes_unmerged", ["changes"];
     R::PlanAhead { .. } => R::PlanAhead { version: 2, updated: at("10:00:00") }, "plan_ahead", ["version", "updated"];
     R::Invalid(_) => R::Invalid(SchemaError::new("title", "is empty")), "invalid", ["field", "problem"];
 }
