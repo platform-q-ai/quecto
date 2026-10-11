@@ -83,6 +83,8 @@ pub enum ErrorCode {
     Stale,
     /// `path`, `object`.
     NotSetAside,
+    /// `reason`: the board's remote reports no pull requests.
+    NoPullRequestHost,
 }
 
 impl ErrorCode {
@@ -112,6 +114,7 @@ impl ErrorCode {
             Self::Refused => "refused",
             Self::Stale => "stale",
             Self::NotSetAside => "not_set_aside",
+            Self::NoPullRequestHost => "no_pull_request_host",
         }
     }
 }
@@ -189,13 +192,14 @@ fn listing_fields(listing: &BoardListing) -> Map<String, Value> {
 }
 
 /// The files set aside, each with its `object` and the `copies` (every
-/// object listed at its path, itself included): what a clear names.
+/// distinct object listed at its path, itself included): what a clear
+/// names.
 fn quarantined_list(files: &[QuarantinedFile]) -> Value {
     Value::Array(
         files
             .iter()
             .map(|file| {
-                let copies: Vec<&str> = files
+                let copies: std::collections::BTreeSet<&str> = files
                     .iter()
                     .filter(|other| other.path == file.path)
                     .map(|other| other.object.as_str())
@@ -226,7 +230,9 @@ fn identity_json(identity: &Identity) -> Value {
 
 fn quarantined_json(file: &QuarantinedFile) -> Value {
     json!({
-        "path": shown(&file.path),
+        // Raw: the store allowlists or quotes every name it sets aside,
+        // a path is no secret, and a clear names it exactly as shown.
+        "path": file.path,
         "id": file.id.as_ref().map(slug_json),
         "reason": shown(&file.reason),
         "object": file.object,
@@ -465,6 +471,10 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
                 ("expected", json!(expected.as_str())),
                 ("updated", json!(updated.as_str())),
             ]),
+        ),
+        E::NoPullRequestHost(why) => (
+            C::NoPullRequestHost,
+            fields([("reason", shown_json(&why.to_string()))]),
         ),
         E::NotSetAside { path, object } => (
             C::NotSetAside,

@@ -310,9 +310,11 @@ fn object_id(text: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-/// The most bytes a path a clear names may take: it is matched against
-/// the listing, which never shows a longer one.
-const MAX_PATH_BYTES: usize = 1024;
+/// The most bytes a path a clear names may take. A listing's path is at
+/// most a few kilobytes (a kept name is an id and its extension; a stray's
+/// is quoted to at most 2,048 characters, each at most four bytes), so this
+/// bound refuses only what no listing could show.
+const MAX_PATH_BYTES: usize = 9 * 1024;
 
 /// A clear names files as the listing shows them: whether the board set
 /// them aside is the use case's check, against the board itself.
@@ -327,6 +329,15 @@ fn clear(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         None => BTreeMap::new(),
         Some(value) => repeated(value)?,
     };
+    // A clear removes `object`: it cannot also keep it.
+    if let Some(KeepCopy::Object { keep, .. }) = repeated.get(path)
+        && *keep == object
+    {
+        return Err(RequestError::new(
+            &format!("repeated/{path}/keep"),
+            "is the object this clear removes: name another copy to keep",
+        ));
+    }
     Ok(BoardRequest::Clear {
         path: path.to_string(),
         object,

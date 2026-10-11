@@ -35,36 +35,44 @@ fn keys(code: ErrorCode) -> &'static [&'static str] {
         C::Contended => &["attempts"],
         C::Stale => &["task", "expected", "updated"],
         C::NotSetAside => &["path", "object"],
+        C::NoPullRequestHost => &["reason"],
     }
 }
 
-/// Which variant `error` is: an exhaustive match, so a new variant fails
-/// to compile until it is added to [`every_error`].
-fn variant(error: &ProjectBoardError) -> &'static str {
+/// How many variants [`ProjectBoardError`] has, counted beside
+/// [`variant`]: bump it with the match.
+const VARIANTS: usize = 23;
+
+/// Which variant `error` is, numbered `0..VARIANTS`. The match is
+/// exhaustive, so a new variant fails to compile until it is numbered
+/// here; [`every_board_error_answers_its_codes_one_shape`] then fails
+/// until [`every_error`] builds it and [`VARIANTS`] counts it.
+fn variant(error: &ProjectBoardError) -> usize {
     use ProjectBoardError as E;
     match error {
-        E::Store(BoardStoreError::NoBoard) => "no board",
-        E::Store(BoardStoreError::Clash(_)) => "clash",
-        E::Store(BoardStoreError::InvalidWrite(_)) => "invalid write",
-        E::Store(BoardStoreError::Unavailable(_)) => "unavailable",
-        E::Rule(_) => "rule",
-        E::Invalid(_) => "invalid",
-        E::NotFound(_) => "not found",
-        E::Exists(_) => "exists",
-        E::Clock(BoardClockError::OutOfRange(_)) => "clock",
-        E::Quarantined(_) => "quarantined",
-        E::UnknownReference(_) => "unknown reference",
-        E::ClosesCycle { .. } => "closes cycle",
-        E::InvalidWriter(_) => "invalid writer",
-        E::PrStateUnknown(_) => "pr state unknown",
-        E::PullRequests(PullRequestStatesError::Unavailable(_)) => "pull requests",
-        E::TaskAhead { .. } => "task ahead",
-        E::ClockOutOfRange(_) => "clock out of range",
-        E::ClockAhead { .. } => "clock ahead",
-        E::Contended { .. } => "contended",
-        E::Refused(_) => "refused",
-        E::NotSetAside { .. } => "not set aside",
-        E::Stale { .. } => "stale",
+        E::Store(BoardStoreError::NoBoard) => 0,
+        E::Store(BoardStoreError::Clash(_)) => 1,
+        E::Store(BoardStoreError::InvalidWrite(_)) => 2,
+        E::Store(BoardStoreError::Unavailable(_)) => 3,
+        E::Rule(_) => 4,
+        E::Invalid(_) => 5,
+        E::NotFound(_) => 6,
+        E::Exists(_) => 7,
+        E::Clock(BoardClockError::OutOfRange(_)) => 8,
+        E::Quarantined(_) => 9,
+        E::UnknownReference(_) => 10,
+        E::ClosesCycle { .. } => 11,
+        E::InvalidWriter(_) => 12,
+        E::PrStateUnknown(_) => 13,
+        E::PullRequests(PullRequestStatesError::Unavailable(_)) => 14,
+        E::TaskAhead { .. } => 15,
+        E::ClockOutOfRange(_) => 16,
+        E::ClockAhead { .. } => 17,
+        E::Contended { .. } => 18,
+        E::Refused(_) => 19,
+        E::NotSetAside { .. } => 20,
+        E::Stale { .. } => 21,
+        E::NoPullRequestHost(_) => 22,
     }
 }
 
@@ -110,14 +118,22 @@ fn every_error() -> Vec<ProjectBoardError> {
             expected: at("09:00:00"),
             updated: at("10:00:00"),
         },
+        E::NoPullRequestHost(
+            crate::application::project_board::dto::NoPullRequestHost::NotAPullRequestHost,
+        ),
     ]
 }
 
 #[test]
 fn every_board_error_answers_its_codes_one_shape() {
     let errors = every_error();
-    let covered: BTreeSet<&str> = errors.iter().map(variant).collect();
-    assert_eq!(covered.len(), errors.len(), "each variant listed once");
+    let covered: BTreeSet<usize> = errors.iter().map(variant).collect();
+    assert_eq!(
+        covered,
+        (0..VARIANTS).collect(),
+        "every_error builds every variant, each once"
+    );
+    assert_eq!(errors.len(), VARIANTS);
     for error in &errors {
         let answer = board_refused("show", error);
         assert_eq!(answer["ok"], json!(false));
@@ -156,7 +172,9 @@ fn a_front_ends_own_refusals_have_their_codes_shapes() {
 }
 
 /// Every text an answer carries from outside the harness is redacted:
-/// URL credentials and secret-shaped spans alike.
+/// URL credentials and secret-shaped spans alike. A set-aside file's path
+/// is the one exception: the store allowlists or quotes it, and a clear
+/// must name it exactly as shown.
 #[test]
 fn text_from_outside_is_redacted_wherever_it_is_shown() {
     let secret = "ghp_abcdefghijklmnopqrstuvwxyz0123";
@@ -178,7 +196,7 @@ fn text_from_outside_is_redacted_wherever_it_is_shown() {
             &format!("password={secret}"),
         ),
         json!({"quarantined": quarantined_json(&QuarantinedFile {
-            path: format!("tasks/{secret}.json"),
+            path: "tasks/x.json".into(),
             id: None,
             reason: format!("api_key: {secret}"),
             object: "a".repeat(40),
@@ -187,6 +205,14 @@ fn text_from_outside_is_redacted_wherever_it_is_shown() {
         let text = answer.to_string();
         assert!(!text.contains(secret), "{text}");
     }
+    let path = format!("tasks/{secret}.json");
+    let shown = quarantined_json(&QuarantinedFile {
+        path: path.clone(),
+        id: None,
+        reason: "a stray".into(),
+        object: "a".repeat(40),
+    });
+    assert_eq!(shown["path"], json!(path), "a path is shown as it is");
 }
 
 /// A listing names what a clear needs: each file's object, and for a name
@@ -203,10 +229,13 @@ fn a_listing_shows_each_files_object_and_its_names_copies() {
         file("tasks/a.json", 'a'),
         file("tasks/a.json", 'b'),
         file("tasks/c.json", 'c'),
+        // Two entries of one object (names no one can tell apart).
+        file("tasks/c.json", 'c'),
     ]);
     let (a, b) = ("a".repeat(40), "b".repeat(40));
     assert_eq!(listed[0]["object"], json!(a));
     assert_eq!(listed[0]["copies"], json!([a, b]));
     assert_eq!(listed[1]["copies"], json!([a, b]));
     assert_eq!(listed[2]["copies"], json!(["c".repeat(40)]));
+    assert_eq!(listed[3]["copies"], json!(["c".repeat(40)]), "each once");
 }

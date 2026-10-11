@@ -109,6 +109,23 @@ impl MemoryBoardStore {
         });
     }
 
+    /// Sets aside a stray file at `path` (a name that spells no task id),
+    /// as a commit adding it does: the head moves.
+    ///
+    /// # Panics
+    /// Before the board is bootstrapped.
+    pub fn set_aside_path(&self, path: &str, reason: &str) {
+        let mut board = self.lock();
+        let revision = board.head.expect("a bootstrapped board");
+        board.head = Some(revision + 1);
+        board.quarantined.push(QuarantinedFile {
+            path: path.into(),
+            id: None,
+            reason: reason.into(),
+            object: format!("{:040x}", revision + 1),
+        });
+    }
+
     /// Deletes the quarantined file of `id`, as a commit removing it
     /// does: the head moves, and tasks naming `id` now name no task.
     ///

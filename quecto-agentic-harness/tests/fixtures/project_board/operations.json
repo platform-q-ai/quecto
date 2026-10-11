@@ -1412,5 +1412,58 @@
         }
       }
     }
+  },
+  {
+    "request": {
+      "op": "create",
+      "task": "d1",
+      "title": "Depends on epic",
+      "depends_on": [
+        "epic"
+      ]
+    },
+    "answer": {
+      "ok": true,
+      "op": "create",
+      "task": {
+        "id": "d1",
+        "title": "Depends on epic",
+        "kind": "task",
+        "description": "",
+        "status": "draft",
+        "parent": null,
+        "depends_on": [
+          "epic"
+        ],
+        "plan": [],
+        "items": [],
+        "team": null,
+        "claim": null,
+        "runs": [],
+        "reviews": [],
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:00Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "update_draft",
+      "task": "epic",
+      "depends_on": [
+        "d1"
+      ]
+    },
+    "answer": {
+      "ok": false,
+      "op": "update_draft",
+      "error": {
+        "code": "closes_cycle",
+        "message": "task epic would close a cycle: it leads to task d1, which already names epic as its parent or a dependency",
+        "task": "epic",
+        "by": "d1"
+      }
+    }
   }
 ]

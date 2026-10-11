@@ -22,6 +22,30 @@ fn the_system_clock_reads_this_machines_time_to_the_second() {
     ));
 }
 
+/// Its monotonic time starts near zero when it is made and never runs
+/// back, whichever clock reads it, referenced to a remote or not.
+#[test]
+fn the_monotonic_time_starts_at_the_clock_and_never_runs_back() {
+    let clocks: [Box<dyn BoardClock>; 2] = [
+        Box::new(SystemBoardClock::default()),
+        Box::new(
+            quecto::infrastructure::time::remote_time::ReferencedBoardClock::for_remote(
+                "/srv/local.git",
+            ),
+        ),
+    ];
+    for clock in clocks {
+        let first = clock.elapsed();
+        assert!(first < Duration::from_secs(5), "{first:?}");
+        std::thread::sleep(Duration::from_millis(5));
+        let second = clock.elapsed();
+        assert!(
+            second >= first + Duration::from_millis(5),
+            "{first:?} {second:?}"
+        );
+    }
+}
+
 /// A clock set before 1970 or past 9999 is an error, not a panic.
 #[test]
 fn a_time_the_board_cannot_spell_is_an_error() {

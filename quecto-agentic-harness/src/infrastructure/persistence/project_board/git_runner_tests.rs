@@ -1,7 +1,9 @@
 //! The git runner: its environment, its session, and its one deadline for
 //! the process and its output.
 use super::*;
-use crate::infrastructure::persistence::project_board::git::{MAX_STDERR, SHORT_OUTPUT, quoted};
+use crate::infrastructure::persistence::project_board::git::{
+    MAX_QUOTED_CHARS, MAX_STDERR, SHORT_OUTPUT, quoted, redacted_stderr,
+};
 
 #[test]
 fn a_git_that_hangs_is_stopped_with_its_whole_process_group() {
@@ -325,4 +327,20 @@ fn only_an_identity_git_refuses_is_an_identity_error() {
         matches!(&failed, Err(GitError::Failed { stderr, .. }) if stderr.contains("cannot change")),
         "{failed:?}"
     );
+}
+
+/// A secret git prints where a cap would cut it is redacted while whole,
+/// so no part of it is kept: at the standard error cap, and at the
+/// quoted message's.
+#[test]
+fn a_secret_straddling_a_cap_is_redacted_whole() {
+    let secret = "ghp_abcdefghijklmnopqrstuvwxyz0123";
+    let at_cap = format!("{} {secret} tail", "x".repeat(MAX_STDERR - 10));
+    let kept = String::from_utf8(redacted_stderr(at_cap.as_bytes())).unwrap();
+    assert!(kept.len() <= MAX_STDERR);
+    assert!(!kept.contains("ghp_"), "{}", &kept[kept.len() - 20..]);
+    let at_quote = format!("{} {secret} tail", "y".repeat(MAX_QUOTED_CHARS - 10));
+    let quote = quoted(at_quote.as_bytes());
+    assert!(!quote.contains("ghp_"), "{}", &quote[quote.len() - 20..]);
+    assert!(quoted(format!("https://u:{secret}@host/x").as_bytes()).contains("***@host"));
 }

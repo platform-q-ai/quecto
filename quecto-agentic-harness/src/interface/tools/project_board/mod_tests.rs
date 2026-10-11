@@ -35,6 +35,10 @@ impl BoardClock for Fixed {
     }
 
     fn pause(&self, _: usize) {}
+
+    fn elapsed(&self) -> std::time::Duration {
+        std::time::Duration::ZERO
+    }
 }
 
 fn fixture_path() -> PathBuf {
@@ -196,4 +200,33 @@ fn a_request_is_bounded_and_read_strictly_before_it_is_run() {
     assert!(big.problem.contains("at most"), "{}", big.problem);
     let fits = format!(r#"{{"op": "list"}}{}"#, " ".repeat(MAX_REQUEST_BYTES - 14));
     assert_eq!(read(&fits), Ok(json!({"op": "list"})));
+}
+
+/// A file set aside under a name that looks like a secret is listed as it
+/// is, and cleared by that name.
+#[test]
+fn a_file_whose_name_looks_like_a_secret_is_listed_and_cleared_as_it_is() {
+    for path in ["tasks/sk-abcdefgh.json", "tasks/token=x.json"] {
+        let store = MemoryBoardStore::default();
+        use crate::application::project_board::ports::ProjectBoardStore;
+        store.bootstrap().unwrap();
+        store.set_aside_path(path, "a stray");
+        let operations = assembled(
+            Arc::new(store.client()),
+            Arc::new(Fixed {
+                at: Timestamp::parse("2026-10-10T10:00:00Z").unwrap(),
+                referenced: true,
+            }),
+            Arc::new(QueryListings(QueryBoard::new(Arc::new(store.client())))),
+            Ok(Arc::new(MemoryPullRequests::default())),
+        )
+        .unwrap();
+        let listed = run(&operations, r#"{"op": "list"}"#);
+        let file = &listed["quarantined"][0];
+        assert_eq!(file["path"], json!(path), "{listed}");
+        let clear =
+            json!({"op": "clear_set_aside", "path": file["path"], "object": file["object"]});
+        let cleared = run(&operations, &clear.to_string());
+        assert_eq!(cleared["ok"], json!(true), "{cleared}");
+    }
 }

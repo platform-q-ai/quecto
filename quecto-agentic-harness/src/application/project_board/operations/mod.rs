@@ -6,9 +6,9 @@
 //! (the `quecto board` CLI, the agent `board` tool) read and answer JSON
 //! in the interface layer; here nothing is JSON.
 use std::collections::BTreeMap;
-use std::fmt;
 use std::sync::Arc;
 
+pub use super::dto::NoPullRequestHost;
 use super::dto::{BoardListing, BoardOp, DraftUpdate, NewBoardTask, ProjectBoardError};
 use super::ports::{BoardClock, BoardHead, BoardListings, KeepCopy};
 use super::use_cases::{
@@ -123,27 +123,6 @@ pub enum BoardOutcome {
     },
 }
 
-/// Why the board's remote reports no pull requests.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NoPullRequestHost {
-    /// The remote is on no host pull requests are read from.
-    NotAPullRequestHost,
-    /// The host is one, but cannot be asked (no `gh`, say): why.
-    Unreachable(String),
-}
-
-impl fmt::Display for NoPullRequestHost {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NotAPullRequestHost => f.write_str(
-                "the board remote is not on GitHub or the configured host, so no pull request \
-                 states are read",
-            ),
-            Self::Unreachable(why) => write!(f, "pull request states cannot be read: {why}"),
-        }
-    }
-}
-
 /// The use cases and ports one run of [`RunBoardOperation`] is made of,
 /// built by composition over one board.
 ///
@@ -157,11 +136,4 @@ pub struct BoardOperationParts {
     pub change: ChangeBoardTask,
     pub clear: ClearSetAside,
     pub complete: Result<CompleteMergedTask, NoPullRequestHost>,
-}
-
-/// The error a completion that cannot be run answers.
-pub(crate) fn no_host(why: &NoPullRequestHost) -> ProjectBoardError {
-    ProjectBoardError::PullRequests(super::ports::PullRequestStatesError::Unavailable(
-        why.to_string(),
-    ))
 }

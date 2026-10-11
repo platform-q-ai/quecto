@@ -11,7 +11,7 @@
 //! callers run operations off the async workers.
 use crate::application::project_board::dto::{BoardListing, BoardOp, ProjectBoardError};
 use crate::application::project_board::operations::{
-    BoardOperationParts, BoardOutcome, BoardRequest, Completion, ListFilter, no_host,
+    BoardOperationParts, BoardOutcome, BoardRequest, Completion, ListFilter,
 };
 use crate::application::project_board::ports::{BoardBootstrap, ReferenceStatus};
 use crate::domain::project_board::entities::task::Task;
@@ -93,10 +93,15 @@ impl RunBoardOperation {
         }
     }
 
+    /// Task `id` completed; with no pull request host, a task not on the
+    /// board is answered as such first.
     fn complete(&self, id: &Slug) -> Result<Task, ProjectBoardError> {
         match &self.parts.complete {
             Ok(complete) => complete.execute(id),
-            Err(why) => Err(no_host(why)),
+            Err(why) => {
+                self.show(id)?;
+                Err(ProjectBoardError::NoPullRequestHost(why.clone()))
+            }
         }
     }
 
