@@ -25,11 +25,72 @@ async fn a_wrong_expected_parent_makes_the_child_exit_before_exec() {
     assert_eq!(status.code(), Some(0));
 }
 
+/// A zero parent is no process: the child is refused, never run unarmed.
+#[cfg(target_os = "linux")]
 #[tokio::test]
-async fn arming_is_inert_for_a_zero_parent() {
+async fn a_zero_parent_is_refused() {
     let mut cmd = tokio::process::Command::new("true");
     arm(&mut cmd, 0);
-    assert!(cmd.status().await.unwrap().success());
+    let refused = cmd.status().await;
+    assert!(
+        matches!(&refused, Err(error) if error.kind() == std::io::ErrorKind::InvalidInput),
+        "{refused:?}"
+    );
+}
+
+/// A `std` child that arms the death signal for `parent` before it execs
+/// `sh -c script`: its exit code, or the spawn's error.
+fn armed_for(parent: libc::pid_t, script: &str) -> std::io::Result<Option<i32>> {
+    let mut command = std::process::Command::new("sh");
+    command
+        .args(["-c", script])
+        .stdin(std::process::Stdio::null());
+    // SAFETY: the closure only calls arm_in_child, in the child before exec.
+    unsafe {
+        std::os::unix::process::CommandExt::pre_exec(&mut command, move || {
+            arm_in_child(parent, DeathSignal::Terminate)
+        });
+    }
+    command.status().map(|status| status.code())
+}
+
+/// The race: a parent already gone (here, one that never forked it) makes
+/// the child exit before it execs, since the signal would never come.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_child_whose_parent_is_already_gone_exits_before_it_runs() {
+    let parent = libc::pid_t::try_from(std::process::id()).unwrap();
+    assert_eq!(armed_for(parent, "exit 7").unwrap(), Some(7));
+    assert_eq!(armed_for(1, "exit 7").unwrap(), Some(1));
+}
+
+/// A parent id that is no process's is refused, and the child never runs.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_parent_id_that_is_no_process_is_refused() {
+    for parent in [0, -1] {
+        let refused = armed_for(parent, "exit 7");
+        assert!(
+            matches!(&refused, Err(error) if error.kind() == std::io::ErrorKind::InvalidInput),
+            "{parent}: {refused:?}"
+        );
+    }
+}
+
+/// A child of `own_session_dying_with_us` leads a session of its own.
+#[test]
+fn own_session_dying_with_us_leads_a_session_of_its_own() {
+    let mut command = std::process::Command::new("sh");
+    command.args([
+        "-c",
+        "read -r pid _ _ _ group session _ < /proc/$$/stat; echo \"$pid $group $session\"",
+    ]);
+    own_session_dying_with_us(&mut command);
+    let output = command.output().unwrap();
+    let printed = String::from_utf8_lossy(&output.stdout);
+    let ids: Vec<&str> = printed.split_whitespace().collect();
+    assert_eq!(ids.len(), 3, "{printed}");
+    assert!(ids.iter().all(|id| *id == ids[0]), "{printed}");
 }
 
 /// One process a test watches: its pid and its start time, so a pid the

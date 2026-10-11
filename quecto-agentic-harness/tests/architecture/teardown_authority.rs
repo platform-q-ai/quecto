@@ -250,8 +250,10 @@ const PROCESS_EFFECT_ALLOWLIST: &[(&str, &[&str], &str)] = &[
     (
         "src/infrastructure/processes/parent_death_signal.rs",
         &["prctl", "libc::SIGTERM"],
-        "arms PR_SET_PDEATHSIG on a process this harness spawns (the child is \
-         signalled by the kernel when its launcher dies; nothing is sent from here)",
+        "arms PR_SET_PDEATHSIG (SIGTERM only, a typed choice) on a process \
+         this harness spawns, and gives the board's git and gh children their \
+         own session that dies with quecto (the child is signalled by the \
+         kernel when its launcher dies; nothing is sent from here)",
     ),
     (
         "src/infrastructure/tools/bash/mod.rs",
@@ -281,15 +283,17 @@ const PROCESS_EFFECT_ALLOWLIST: &[(&str, &[&str], &str)] = &[
         "src/infrastructure/persistence/project_board/git.rs",
         &["kill(", "libc::kill", "libc::SIGKILL"],
         "the project board store ending the process group of its own git \
-         Child (a session of its own, by setsid) once git exits or at its \
-         deadline, observed unreaped by waitid (#2476)",
+         Child (a session of its own that dies with quecto, armed by \
+         parent_death_signal) once git exits or at its deadline, observed \
+         unreaped by waitid (#2476, #2501)",
     ),
     (
         "src/infrastructure/persistence/project_board/gh_pull_requests.rs",
         &["kill(", "libc::kill", "libc::SIGKILL"],
         "the project board's pull request states ending the process group \
-         of its own `gh` Child (a session of its own, by setsid) once it \
-         exits and at its deadline (#2477)",
+         of its own `gh` Child (a session of its own that dies with quecto, \
+         armed by parent_death_signal) once it exits and at its deadline \
+         (#2477, #2501)",
     ),
     (
         "src/infrastructure/tools/grep_run.rs",
