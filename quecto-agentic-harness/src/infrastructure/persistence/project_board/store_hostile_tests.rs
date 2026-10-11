@@ -575,6 +575,9 @@ fn only_json_names_quecto_can_show_are_carried() {
             ("100644", b"ok.json", &ok),
             ("100644", b"\xfe.json", &odd),
             ("100644", b"\xff.json", &odder),
+            ("100644", b"a/b.json", &odder),
+            ("100644", b"a\\b.json", &odder),
+            ("100644", b"..json", &odder),
         ],
         &[&repos.bob],
     );
@@ -612,6 +615,71 @@ fn only_json_names_quecto_can_show_are_carried() {
             .filter(|name| !name.is_empty())
             .collect::<Vec<_>>(),
         expected
+    );
+}
+
+/// A name twice, one copy of which a write drops (a gitlink), is no
+/// duplicate: the copy a write carries is read, and writes go on.
+#[test]
+fn a_name_twice_where_a_write_drops_one_copy_is_no_duplicate() {
+    let repos = Repos::new();
+    let alice = store(&repos.alice);
+    created(&alice);
+    let head = raw_board(
+        &repos.remote(),
+        &[
+            (
+                "100644",
+                "dup.json",
+                Object::Blob(encode(&task("dup")).unwrap()),
+            ),
+            ("160000", "dup.json", Object::Blob(b"a gitlink".to_vec())),
+        ],
+        &[&repos.bob],
+    );
+    let bob = store(&repos.bob);
+    let board = bob.board_at(&head.0).unwrap();
+    assert!(board.repeated.is_empty(), "{:?}", board.repeated);
+    assert_eq!(
+        board.tasks.keys().map(Slug::as_str).collect::<Vec<_>>(),
+        ["dup"]
+    );
+    let moved = written(bob.write(&head, &[task("fresh")], "board: add fresh"));
+    assert_eq!(
+        sh(&repos.remote(), &["ls-tree", &format!("{}:tasks", moved.0)])
+            .lines()
+            .filter(|row| row.ends_with("\tdup.json"))
+            .count(),
+        1
+    );
+}
+
+/// A name at the root of a branch that is not a board is quoted in the
+/// clash that names it.
+#[test]
+fn a_clash_quotes_the_root_name_it_names() {
+    let repos = Repos::new();
+    let alice = store(&repos.alice);
+    created(&alice);
+    let mut heads = vec![];
+    for repo in [&repos.remote(), &repos.bob] {
+        let root = raw_tree(
+            repo,
+            &[
+                ("100644", "README.md", Object::Blob(README.to_vec())),
+                ("40000", "evil\u{1b}[2J\u{202e}", Object::EmptyTree),
+            ],
+        );
+        heads.push(raw_commit(repo, &root));
+    }
+    let read = store(&repos.bob).board_at(&heads[1].0);
+    let Err(BoardStoreError::Clash(why)) = &read else {
+        panic!("{read:?}");
+    };
+    assert!(why.contains("evil"), "{why}");
+    assert!(
+        !why.chars().any(|c| c.is_control() || c == '\u{202e}'),
+        "{why:?}"
     );
 }
 
