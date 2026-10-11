@@ -47,16 +47,16 @@ impl GitBoardStore {
     ) -> Result<BoardWrite, BoardStoreError> {
         let invalid = |why: String| BoardStoreError::InvalidWrite(why);
         line("message", message, 200).map_err(|error| invalid(error.to_string()))?;
-        let objects: Vec<&String> = std::iter::once(&clear.object)
-            .chain(clear.repeated.values().flat_map(|keep| match keep {
-                KeepCopy::Object { keep, seen } => std::iter::once(keep).chain(seen).collect(),
-                KeepCopy::Drop(seen) => seen.iter().collect::<Vec<_>>(),
-            }))
-            .collect();
-        // A board holds at most so many names listed twice, and copies.
+        let seen = |keep: &KeepCopy| match keep {
+            KeepCopy::Object { seen, .. } | KeepCopy::Drop(seen) => seen.len(),
+        };
+        // A board holds at most so many names listed twice, and entries:
+        // what a clear saw is bounded by them; the copy it keeps is one it
+        // saw, not counted again.
+        let saw: usize = clear.repeated.values().map(seen).sum();
         match (
             clear.repeated.len() <= MAX_TASK_ENTRIES / 2,
-            objects.len() <= MAX_TASK_ENTRIES + 1,
+            saw <= MAX_TASK_ENTRIES,
         ) {
             (true, true) => {}
             _ => {
@@ -66,6 +66,12 @@ impl GitBoardStore {
                 )));
             }
         }
+        let objects = std::iter::once(&clear.object).chain(clear.repeated.values().flat_map(
+            |keep| match keep {
+                KeepCopy::Object { keep, seen } => std::iter::once(keep).chain(seen).collect(),
+                KeepCopy::Drop(seen) => seen.iter().collect::<Vec<_>>(),
+            },
+        ));
         for oid in objects {
             object_id(oid)
                 .map_err(|_| invalid(format!("{} is not an object id", quoted(oid.as_bytes()))))?;
@@ -119,19 +125,25 @@ fn cleared(board: &Board, clear: &SetAsideClear) -> Result<Board, String> {
         let (Some(copies), Some(name)) = (repeated.get(path), path.strip_prefix(TASKS)) else {
             return Err(format!("{} is not listed more than once", shown(path)));
         };
-        resolve(&mut after, path, name, copies, keep)?;
+        resolve(
+            &mut after,
+            path,
+            name,
+            copies,
+            &listed_at(board, path),
+            keep,
+        )?;
         after.quarantined.retain(|file| file.path != *path);
     }
     after.repeated.clear();
     match repeated.get(&clear.path) {
         // Resolved with the rest above; the object named is one of its copies.
-        Some(copies) => match copies.iter().any(|copy| copy.oid == clear.object) {
+        Some(_) => match listed_at(board, &clear.path).contains(clear.object.as_str()) {
             true => Ok(after),
             false => Err(format!(
-                "{} is not one of {}'s copies ({})",
+                "{} is not one of the files set aside at {}",
                 clear.object,
-                shown(&clear.path),
-                objects(copies)
+                shown(&clear.path)
             )),
         },
         None => {
@@ -150,20 +162,21 @@ fn resolve(
     path: &str,
     name: &str,
     copies: &[TreeCopy],
+    shown: &BTreeSet<&str>,
     keep: &KeepCopy,
 ) -> Result<(), String> {
     let (kept, seen) = match keep {
         KeepCopy::Object { keep, seen } => (Some(keep), seen),
         KeepCopy::Drop(seen) => (None, seen),
     };
-    let held: BTreeSet<&str> = copies.iter().map(|copy| copy.oid.as_str()).collect();
     let saw: BTreeSet<&str> = seen.iter().map(String::as_str).collect();
-    match held == saw {
+    match *shown == saw {
         true => {}
         false => {
             return Err(format!(
-                "{path}'s copies are {}, not the ones the clear saw ({}): read the board again",
-                listed(held.iter().map(|oid| (*oid).to_string())),
+                "the files set aside at {path} are {}, not the ones the clear saw ({}): read the \
+                 board again",
+                listed(shown.iter().map(|oid| (*oid).to_string())),
                 listed(saw.iter().map(|oid| quoted(oid.as_bytes())))
             ));
         }
@@ -176,9 +189,10 @@ fn resolve(
     match (candidates.first(), modes.len()) {
         (Some(copy), 1) => {
             after.kept.insert(name.to_string(), copy.entry());
-            if let Some(size) = copy.read_size() {
+            // A read reads it, as a task, only when its name spells an id.
+            if let (Some(size), true) = (copy.read_size(), spells_id(name)) {
                 after.read_bytes.insert(name.to_string(), size);
-                after.pending_summaries += usize::from(spells_id(name));
+                after.pending_summaries += 1;
             }
             Ok(())
         }
@@ -187,8 +201,22 @@ fn resolve(
              guess; drop them all",
             listed(modes.iter().map(|mode| (*mode).to_string()))
         )),
-        (None, _) => Err(format!("{keep} is not one of {path}'s copies")),
+        (None, _) => Err(format!(
+            "{keep} is not one of {path}'s copies a write carries, the only ones a clear keeps"
+        )),
     }
+}
+
+/// The objects of every file set aside at `path`, as the listing shows
+/// them: the copies a write carries, copies it drops, and twins that show
+/// the same path.
+fn listed_at<'a>(board: &'a Board, path: &str) -> BTreeSet<&'a str> {
+    board
+        .quarantined
+        .iter()
+        .filter(|file| file.path == path)
+        .map(|file| file.object.as_str())
+        .collect()
 }
 
 /// The file set aside that `clear` names by path and object. Entries that
@@ -201,6 +229,7 @@ fn named<'a>(board: &'a Board, clear: &SetAsideClear) -> Result<&'a QuarantinedF
         .find(|file| file.path == clear.path && file.object == clear.object)
         .ok_or_else(|| format!("no file set aside at {path} has object {}", clear.object))
 }
+
 /// `board` without `file`: the file carried as it is goes when it is that
 /// object, so a file of another name that shows the same path stays.
 fn drop_file(board: &mut Board, file: &QuarantinedFile) {

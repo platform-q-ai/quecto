@@ -304,14 +304,11 @@ impl ProjectBoardStore for MemoryBoardStore {
             )));
         }
         let named = |file: &QuarantinedFile| file.path == path && file.object == clear.object;
-        match board.quarantined.iter().filter(|file| named(file)).count() {
-            1 => {}
-            0 => return Ok(BoardWrite::Refused(format!("{path:?} is not set aside"))),
-            _ => {
-                return Ok(BoardWrite::Refused(format!(
-                    "files set aside show {path:?}: name the object of the one to clear"
-                )));
-            }
+        // Entries that share path and object are one file, as on a git
+        // board.
+        match board.quarantined.iter().any(named) {
+            true => {}
+            false => return Ok(BoardWrite::Refused(format!("{path:?} is not set aside"))),
         }
         board.quarantined.retain(|file| !named(file));
         board.head = Some(revision + 1);
