@@ -224,6 +224,41 @@ impl ProjectBoardStore for MemoryBoardStore {
         Ok(BoardWrite::Written(head(revision + 1)))
     }
 
+    /// A name is never listed twice in memory, so any `keep` is refused.
+    fn clear_set_aside(
+        &self,
+        expected: &BoardHead,
+        path: &str,
+        keep: Option<&str>,
+        message: &str,
+    ) -> Result<BoardWrite, BoardStoreError> {
+        line("message", message, 200)
+            .map_err(|error| BoardStoreError::InvalidWrite(error.to_string()))?;
+        let interleaved = std::mem::take(&mut self.lock().interleaved);
+        interleaved.into_iter().for_each(|change| change(self));
+        let mut board = self.lock();
+        let revision = board.head.ok_or(BoardStoreError::NoBoard)?;
+        if let Some(reason) = board.refusal.take() {
+            return Ok(BoardWrite::Refused(reason));
+        }
+        if *expected != head(revision) {
+            return Ok(BoardWrite::Lost);
+        }
+        if !board.quarantined.iter().any(|file| file.path == path) {
+            return Ok(BoardWrite::Refused(format!("{path} is not set aside")));
+        }
+        if keep.is_some() {
+            return Ok(BoardWrite::Refused(format!(
+                "{path} is named once; an object to keep is for a name named more than once"
+            )));
+        }
+        board.quarantined.retain(|file| file.path != path);
+        board.head = Some(revision + 1);
+        board.writes += 1;
+        board.committers.insert(revision + 1, self.writer.clone());
+        Ok(BoardWrite::Written(head(revision + 1)))
+    }
+
     fn bootstrap(&self) -> Result<BoardBootstrap, BoardStoreError> {
         let mut board = self.lock();
         match board.head {

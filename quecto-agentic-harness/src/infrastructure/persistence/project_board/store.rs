@@ -362,39 +362,6 @@ impl GitBoardStore {
         }
     }
 
-    /// The committer of `commit`, exactly as recorded, fetching the board
-    /// first when this clone does not hold it yet.
-    ///
-    /// # Errors
-    /// The commit is not on the board, or git fails.
-    pub fn committed_by(&self, commit: &str) -> Result<Identity, BoardStoreError> {
-        let commit = object_id(commit)?;
-        let args = [
-            "log",
-            "-1",
-            "--no-show-signature",
-            "--format=%cn%x00%ce",
-            commit.as_str(),
-        ];
-        let bytes = match self.git.ok(&args, None) {
-            Ok(bytes) => bytes,
-            Err(GitError::Failed { .. }) => {
-                self.fetch()?;
-                self.git.ok(&args, None).map_err(unavailable)?
-            }
-            Err(error) => return Err(unavailable(error)),
-        };
-        let text = String::from_utf8_lossy(&bytes);
-        let (name, email) = text
-            .trim_end_matches('\n')
-            .split_once('\0')
-            .ok_or_else(|| BoardStoreError::Unavailable(format!("no committer in {commit}")))?;
-        Ok(Identity {
-            name: name.into(),
-            email: email.into(),
-        })
-    }
-
     /// The commit `expected` names: the board's head or one of its
     /// ancestors, fetching the board when this clone does not hold it yet
     /// (another client's head). Refused as invalid when it is any other
@@ -739,10 +706,25 @@ impl ProjectBoardStore for GitBoardStore {
         }
     }
 
+    fn clear_set_aside(
+        &self,
+        expected: &BoardHead,
+        path: &str,
+        keep: Option<&str>,
+        message: &str,
+    ) -> Result<BoardWrite, BoardStoreError> {
+        self.clear(expected, path, keep, message)
+    }
+
     fn writer(&self) -> Identity {
         self.git.identity().clone()
     }
 }
+
+#[path = "store_clear.rs"]
+mod clear;
+#[path = "store_committer.rs"]
+mod committer;
 
 #[cfg(test)]
 #[path = "store_tests.rs"]

@@ -209,6 +209,52 @@ pub fn check_quarantine((alice, bob): Clients, spoil: impl FnOnce()) {
     assert_eq!(alice.read().unwrap().head, board.head);
 }
 
+/// A file set aside (`spoil` breaks `tasks/b.json`) is cleared in one
+/// change, only from the head that holds it: its id is free again, and the
+/// rest of the board stands. A path that is not set aside, or a copy to
+/// keep for a name listed once, is refused.
+pub fn check_clear_set_aside((alice, bob): Clients, spoil: impl FnOnce()) {
+    alice.bootstrap().unwrap();
+    let head = alice.read().unwrap().head;
+    let before = written(alice.write(
+        &head,
+        &[task("a", "One"), task("b", "Two")],
+        "board: add a, b",
+    ));
+    spoil();
+    let board = bob.read().unwrap();
+    let path = board.quarantined[0].path.clone();
+    assert_eq!(path, "tasks/b.json");
+    for (path, keep) in [
+        ("tasks/a.json", None),
+        (path.as_str(), Some("0".repeat(40))),
+    ] {
+        let refused = bob.clear_set_aside(&board.head, path, keep.as_deref(), "board: clear");
+        assert!(
+            matches!(refused, Ok(BoardWrite::Refused(_))),
+            "{path} {keep:?}: {refused:?}"
+        );
+    }
+    assert_eq!(
+        alice.clear_set_aside(&before, &path, None, "board: clear b"),
+        Ok(BoardWrite::Lost),
+        "a clear from before the file was spoiled"
+    );
+    let invalid = bob.clear_set_aside(&board.head, &path, None, "two\nlines");
+    assert!(
+        matches!(invalid, Err(BoardStoreError::InvalidWrite(_))),
+        "{invalid:?}"
+    );
+    let cleared = written(bob.clear_set_aside(&board.head, &path, None, "board: clear b"));
+    let after = alice.read().unwrap();
+    assert_eq!(
+        (after.head.clone(), after.quarantined, tasks(&*alice)),
+        (cleared.clone(), vec![], set(&[task("a", "One")]))
+    );
+    written(alice.write(&cleared, &[task("b", "Mended")], "board: write b"));
+    assert_eq!(tasks(&*bob), set(&[task("a", "One"), task("b", "Mended")]));
+}
+
 /// A client whose write was lost, or refused, writes again from a fresh
 /// read: no stale local state holds it back.
 pub fn check_write_after_lost_and_refused((alice, bob): Clients, refuse: impl FnOnce()) {
@@ -332,6 +378,12 @@ fn the_memory_store_refuses_invalid_writes() {
 fn the_memory_store_refuses_without_moving() {
     let (store, clients) = memory();
     check_refused(clients, || store.refuse_next_write("a hook said no"));
+}
+
+#[test]
+fn the_memory_store_clears_a_file_set_aside() {
+    let (store, clients) = memory();
+    check_clear_set_aside(clients, || store.quarantine("b", "malformed"));
 }
 
 #[test]

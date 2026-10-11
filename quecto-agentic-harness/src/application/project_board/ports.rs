@@ -95,6 +95,31 @@ pub trait ProjectBoardStore: Send + Sync {
         message: &str,
     ) -> Result<BoardWrite, BoardStoreError>;
 
+    /// Removes the file set aside at `path` (a [`QuarantinedFile::path`]
+    /// of the board at `expected`) in one change, made by
+    /// [`Self::writer`] so the board records who did, only if the board is
+    /// still at `expected`. Any member may clear: the trust model is
+    /// cooperative (anyone who can push could push raw commits), and branch
+    /// protection or a server hook is the real control.
+    ///
+    /// A name listed more than once is cleared only by naming the object to
+    /// `keep`: it stays as the name's file and the rest go. Names are
+    /// cleared one at a time; another name listed more than once is carried
+    /// forward as it was. A path that is not set aside, a `keep` that is not
+    /// one of a repeated name's objects, or a `keep` for a name listed once
+    /// is [`BoardWrite::Refused`].
+    ///
+    /// # Errors
+    /// A message that is not one short line, or the store's failure;
+    /// losing the race is [`BoardWrite::Lost`].
+    fn clear_set_aside(
+        &self,
+        expected: &BoardHead,
+        path: &str,
+        keep: Option<&str>,
+        message: &str,
+    ) -> Result<BoardWrite, BoardStoreError>;
+
     /// Creates the empty board, unless it exists.
     ///
     /// # Errors
