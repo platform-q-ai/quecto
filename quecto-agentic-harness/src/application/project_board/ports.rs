@@ -1,10 +1,13 @@
 //! The project board capability's ports (#2476): where the board lives
 //! (the S1d git store implements [`ProjectBoardStore`] over the
-//! repository's `quecto/board` branch) and what time it is.
+//! repository's `quecto/board` branch), its listings from a local view of
+//! it (the S1e index implements [`BoardListings`]) and what time it is.
+use super::dto::BoardListing;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
+use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 
 /// The board's head: the store's revision a write must start from (the
 /// git store's commit id).
@@ -103,6 +106,49 @@ pub trait ProjectBoardStore: Send + Sync {
     /// checks it is a valid one ([`Identity::validate`]), when it is built,
     /// and refuses to be built without one.
     fn writer(&self) -> Identity;
+}
+
+/// The board's listings, answered from a local view kept in step with the
+/// store: each means what [`QueryBoard`]'s listing of the same name means,
+/// and carries the head it was read at and every file set aside.
+/// Blocking: callers run it off the async workers.
+///
+/// Listings are advice. The local view lives in the repository (the
+/// index under `.git/quecto`), so anyone who can write there, an agent
+/// included, can forge what it lists. Act on a listing only through the
+/// store: every write is a compare-and-swap against the board's real head,
+/// so a forged listing can never move the board.
+///
+/// [`QueryBoard`]: super::use_cases::QueryBoard
+pub trait BoardListings: Send + Sync {
+    /// Ready tasks whose every dependency is on the board and releases its
+    /// dependents.
+    ///
+    /// # Errors
+    /// No board, or the view's or store's failure.
+    fn ready(&self) -> Result<BoardListing, BoardStoreError>;
+
+    /// Held tasks whose claim expired by `now`.
+    ///
+    /// # Errors
+    /// No board, or the view's or store's failure.
+    fn takeable(&self, now: &Timestamp) -> Result<BoardListing, BoardStoreError>;
+
+    /// # Errors
+    /// No board, or the view's or store's failure.
+    fn by_status(&self, status: TaskStatus) -> Result<BoardListing, BoardStoreError>;
+
+    /// The tasks naming `parent` as their parent.
+    ///
+    /// # Errors
+    /// No board, or the view's or store's failure.
+    fn children(&self, parent: &Slug) -> Result<BoardListing, BoardStoreError>;
+
+    /// The tasks that depend on `task`.
+    ///
+    /// # Errors
+    /// No board, or the view's or store's failure.
+    fn dependents(&self, task: &Slug) -> Result<BoardListing, BoardStoreError>;
 }
 
 /// Why the clock could not tell the time.
