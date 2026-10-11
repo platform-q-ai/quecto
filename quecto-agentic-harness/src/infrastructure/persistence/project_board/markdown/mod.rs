@@ -313,10 +313,6 @@ fn cell(value: &str, kind: CellKind, at: usize) -> Result<String, MarkdownError>
 /// What in the shape or document is refused, and where its file would
 /// hold it.
 pub fn render(document: &Document, shape: &Shape<'_>) -> Result<String, MarkdownError> {
-    let stub = true;
-    if stub {
-        return Err(MarkdownError::NotCanonical);
-    }
     check_shape(shape)?;
     let limits = shape.limits;
     match text_bytes(document) <= limits.file_bytes {
