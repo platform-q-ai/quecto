@@ -22,9 +22,10 @@ pub enum CodecError {
     /// kind and schema disagree with what it wrote.
     Schema,
     /// A newer quecto wrote it, at a schema past the one this codec reads.
-    NewerSchema { found: u32, known: u32 },
+    /// `found` may be past what a `u32` holds.
+    NewerSchema { found: u64, known: u32 },
     /// A schema before the one this codec reads, which none reads.
-    UnknownSchema { found: u32 },
+    UnknownSchema { found: u64 },
     /// Read, but not the file its value writes: its document is not the
     /// one the value gives, or its bytes are not the ones it renders to.
     NotCanonical,
@@ -42,7 +43,8 @@ impl From<MarkdownError> for CodecError {
 /// One kind's codec: its value, its marker's kind, the one schema it reads
 /// and writes, its file's shape, and the mapping both ways.
 pub trait ArtifactCodec {
-    type Value;
+    /// Compared with what its file gives back.
+    type Value: PartialEq;
     /// The marker's kind, the same as [`Self::SHAPE`]'s.
     const KIND: &'static str;
     const SCHEMA: u32;
@@ -76,10 +78,17 @@ fn one_kind<C: ArtifactCodec>() -> Result<(), CodecError> {
 pub fn encode<C: ArtifactCodec>(value: &C::Value) -> Result<String, CodecError> {
     one_kind::<C>()?;
     let document = C::to_document(value)?;
-    match document.schema == C::SCHEMA {
+    let file = match document.schema == C::SCHEMA {
         // `render` reads what it writes back, release builds included.
-        true => Ok(render(&document, &C::SHAPE)?),
-        false => Err(CodecError::Schema),
+        true => render(&document, &C::SHAPE)?,
+        false => return Err(CodecError::Schema),
+    };
+    // The file reads back as `document`; it is taken only if that document
+    // is `value` again, so nothing is stored that `decode` would refuse or
+    // read as another value.
+    match C::from_document(&document)? == *value {
+        true => Ok(file),
+        false => Err(CodecError::NotCanonical),
     }
 }
 
@@ -93,8 +102,8 @@ pub fn encode<C: ArtifactCodec>(value: &C::Value) -> Result<String, CodecError> 
 pub fn decode<C: ArtifactCodec>(bytes: &[u8]) -> Result<C::Value, CodecError> {
     one_kind::<C>()?;
     match schema_of(bytes, C::KIND) {
-        Some(found) if found == C::SCHEMA => {}
-        Some(found) if found > C::SCHEMA => {
+        Some(found) if found == u64::from(C::SCHEMA) => {}
+        Some(found) if found > u64::from(C::SCHEMA) => {
             return Err(CodecError::NewerSchema {
                 found,
                 known: C::SCHEMA,

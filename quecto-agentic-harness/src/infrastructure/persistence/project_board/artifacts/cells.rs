@@ -8,14 +8,50 @@ use super::CodecError;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
+use crate::infrastructure::persistence::project_board::markdown::{
+    CellKind, Column, Document, check_text_cell, code_cell_holds,
+};
 
 /// What an optional ASCII cell holds when it holds nothing.
 pub const ABSENT: &str = "-";
 
-fn refused(field: &'static str, problem: impl Into<String>) -> CodecError {
+/// A cell `field` refused, and why.
+pub fn refused(field: &'static str, problem: impl Into<String>) -> CodecError {
     CodecError::Cell {
         field,
         problem: problem.into(),
+    }
+}
+
+/// A field or table column of a codec's shape.
+pub const fn column(name: &'static str, cell: CellKind) -> Column<'static> {
+    Column { name, cell }
+}
+
+/// A document's field rows, by name: what a codec's `from_document` reads.
+pub struct Fields<'a>(&'a Document);
+
+impl<'a> Fields<'a> {
+    pub fn of(document: &'a Document) -> Self {
+        Self(document)
+    }
+
+    /// The cell of the row `name`, if the document has one (a missing
+    /// optional row is "not set").
+    pub fn get(&self, name: &str) -> Option<&'a str> {
+        self.0
+            .fields
+            .iter()
+            .find(|(known, _)| known == name)
+            .map(|(_, cell)| cell.as_str())
+    }
+
+    /// The cell of the row `name`, which every value of the kind has.
+    ///
+    /// # Errors
+    /// The row is missing.
+    pub fn required(&self, name: &'static str) -> Result<&'a str, CodecError> {
+        self.get(name).ok_or_else(|| refused(name, "missing"))
     }
 }
 
@@ -75,8 +111,14 @@ pub fn read_word<T>(
 }
 
 /// A pull request or issue: `#n`.
-pub fn reference(number: u64) -> String {
-    format!("#{number}")
+///
+/// # Errors
+/// 0, which no pull request or issue is (`read_reference` refuses it).
+pub fn reference(field: &'static str, number: u64) -> Result<String, CodecError> {
+    match number {
+        0 => Err(refused(field, "# and a number from 1")),
+        number => Ok(format!("#{number}")),
+    }
 }
 
 /// # Errors
@@ -93,8 +135,15 @@ pub fn read_reference(field: &'static str, cell: &str) -> Result<u64, CodecError
 }
 
 /// An optional cell: [`ABSENT`] for none.
-pub fn optional(cell: Option<String>) -> String {
-    cell.unwrap_or_else(|| ABSENT.to_string())
+///
+/// # Errors
+/// A cell that holds [`ABSENT`] itself, which would read back as none.
+pub fn optional(field: &'static str, cell: Option<String>) -> Result<String, CodecError> {
+    match cell {
+        None => Ok(ABSENT.to_string()),
+        Some(held) if held == ABSENT => Err(refused(field, "a value other than -, which is none")),
+        Some(held) => Ok(held),
+    }
 }
 
 /// The cell an optional cell holds, `None` for [`ABSENT`].
@@ -119,13 +168,16 @@ pub fn identity(field: &'static str, identity: &Identity) -> Result<String, Code
         !identity.email.contains(' '),
         "a valid email holds no space"
     );
-    match identity.email.contains('`') {
-        false => Ok(format!("{} (`{}`)", identity.name, identity.email)),
-        true => Err(refused(
+    if !code_cell_holds(&identity.email) {
+        return Err(refused(
             field,
             "an email a code span holds, without a backtick",
-        )),
+        ));
     }
+    let cell = format!("{} (`{}`)", identity.name, identity.email);
+    // The inline rules, here, so the error names the field.
+    check_text_cell(&cell).map_err(|error| refused(field, error.to_string()))?;
+    Ok(cell)
 }
 
 /// The identity ``Name (`email`)`` holds: the email what follows the last

@@ -25,37 +25,16 @@ struct Toy {
 }
 
 const FIELDS: &[Column<'static>] = &[
-    Column {
-        name: "Id",
-        cell: CellKind::Ascii,
-    },
-    Column {
-        name: "Status",
-        cell: CellKind::Ascii,
-    },
-    Column {
-        name: "Pr",
-        cell: CellKind::Ascii,
-    },
-    Column {
-        name: "Holder",
-        cell: CellKind::Text,
-    },
-    Column {
-        name: "Branch",
-        cell: CellKind::Code,
-    },
+    cells::column("Id", CellKind::Ascii),
+    cells::column("Status", CellKind::Ascii),
+    cells::column("Pr", CellKind::Ascii),
+    cells::column("Holder", CellKind::Text),
+    cells::column("Branch", CellKind::Code),
 ];
 
 const TIMES: &[Column<'static>] = &[
-    Column {
-        name: "Round",
-        cell: CellKind::Ascii,
-    },
-    Column {
-        name: "At",
-        cell: CellKind::Ascii,
-    },
+    cells::column("Round", CellKind::Ascii),
+    cells::column("At", CellKind::Ascii),
 ];
 
 const SECTIONS: &[SectionShape<'static>] = &[
@@ -127,17 +106,8 @@ impl ArtifactCodec for ToyCodec {
     }
 
     fn from_document(document: &Document) -> Result<Toy, CodecError> {
-        let field = |name: &'static str| {
-            document
-                .fields
-                .iter()
-                .find(|(known, _)| known == name)
-                .map(|(_, value)| value.as_str())
-                .ok_or(CodecError::Cell {
-                    field: name,
-                    problem: "missing".into(),
-                })
-        };
+        let fields = cells::Fields::of(document);
+        let field = |name: &'static str| fields.required(name);
         let pr = match cells::read_optional(field("Pr")?) {
             Some(cell) => Some(cells::read_reference("Pr", cell)?),
             None => None,

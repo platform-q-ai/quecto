@@ -65,17 +65,24 @@ pub fn parse(bytes: &[u8], shape: &Shape<'_>) -> Result<Document, MarkdownError>
 /// The schema the marker of `kind` on the first line of `bytes` names,
 /// read from that line alone (whatever follows it), so a file a newer
 /// schema wrote is told apart before anything else in it is read.
-pub fn schema_of(bytes: &[u8], kind: &str) -> Option<u32> {
+/// Up to ten digits: one past what a `u32` holds still reads, as a schema
+/// newer than any.
+pub fn schema_of(bytes: &[u8], kind: &str) -> Option<u64> {
     let end = bytes
         .iter()
         .take(MOST_MARKER_BYTES + 1)
         .position(|b| *b == b'\n')?;
-    marker(std::str::from_utf8(&bytes[..end]).ok()?, kind)
+    marker_number(std::str::from_utf8(&bytes[..end]).ok()?, kind)
 }
 
-/// The schema a marker line of `kind` names, written without a leading
-/// zero.
+/// The schema a marker line of `kind` names, when a document holds it.
 fn marker(line: &str, kind: &str) -> Option<u32> {
+    marker_number(line, kind).and_then(|schema| u32::try_from(schema).ok())
+}
+
+/// The number a marker line of `kind` names, written without a leading
+/// zero, in at most ten digits.
+fn marker_number(line: &str, kind: &str) -> Option<u64> {
     let digits = line
         .strip_prefix("<!-- quecto-")?
         .strip_prefix(kind)?

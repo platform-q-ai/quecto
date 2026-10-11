@@ -83,19 +83,31 @@ fn checked(text: &str) -> Result<(), String> {
         })
 }
 
+/// What a reader shows at each edge of a code span: so a code cell (whose
+/// expected text carries it) must be shown as code, never as plain text.
+const SPAN: char = '\u{1}';
+
+/// `text` as a code span shows it, its edges marked.
+fn spanned(text: &str) -> String {
+    format!("{SPAN}{text}{SPAN}")
+}
+
 /// Whether `shown` is `written` with only markup taken out: emphasis and
-/// strikethrough markers, a code span's backticks and padding, and a
-/// link's brackets and address.
+/// strikethrough markers, a code span's backticks (each edge a reader
+/// marks matching one) and padding, and a link's brackets and address.
 fn drops_only_markup(written: &str, shown: &str) -> bool {
     let written = ADDRESS.replace_all(written, "]");
     let mut shown = shown.chars().peekable();
     for c in written.chars() {
-        match shown.peek() == Some(&c) {
-            true => {
+        match (shown.peek().copied(), c) {
+            (Some(next), c) if next == c => {
                 shown.next();
             }
-            false if "*_~`[] ".contains(c) => {}
-            false => return false,
+            (Some(SPAN), '`') => {
+                shown.next();
+            }
+            (_, c) if "*_~`[] ".contains(c) => {}
+            _ => return false,
         }
     }
     shown.next().is_none()
@@ -239,7 +251,7 @@ impl Outline {
             }
             Event::Code(text) => {
                 checked(text)?;
-                self.shown(text);
+                self.shown(&spanned(text));
             }
             Event::Html(_) if self.kinds.is_empty() => {}
             // Emphasis may span a line, so a break may come inside it.
@@ -291,7 +303,13 @@ fn unlinked_expected(document: &Document) -> (Vec<String>, Vec<String>) {
         let rows: Vec<Vec<String>> = document
             .fields
             .iter()
-            .map(|(name, value)| vec![name.clone(), value.clone()])
+            .map(|(name, value)| {
+                let kind = SHAPE.fields.iter().find(|field| field.name == name);
+                vec![
+                    name.clone(),
+                    shown_cell(value, kind.map(|field| field.cell)),
+                ]
+            })
             .collect();
         kinds.push(format!("table:2x{}", rows.len()));
         texts.push(table_text(["Field", "Value"].into_iter(), &rows));
@@ -329,7 +347,16 @@ fn unlinked_expected(document: &Document) -> (Vec<String>, Vec<String>) {
                         BodyShape::Prose => &[],
                     });
                 kinds.push(format!("table:{}x{}", columns.len(), rows.len()));
-                texts.push(table_text(columns.iter().map(|column| column.name), rows));
+                let rows: Vec<Vec<String>> = rows
+                    .iter()
+                    .map(|row| {
+                        row.iter()
+                            .zip(columns)
+                            .map(|(value, column)| shown_cell(value, Some(column.cell)))
+                            .collect()
+                    })
+                    .collect();
+                texts.push(table_text(columns.iter().map(|column| column.name), &rows));
             }
         }
     }
@@ -446,7 +473,7 @@ fn comrak_inline<'a>(
     for child in node.children() {
         match &child.data.borrow().value {
             NodeValue::Text(shown) => text.push_str(shown),
-            NodeValue::Code(code) => text.push_str(&code.literal),
+            NodeValue::Code(code) => text.push_str(&spanned(&code.literal)),
             NodeValue::SoftBreak if !in_link => text.push('\n'),
             NodeValue::Emph | NodeValue::Strong | NodeValue::Strikethrough => {
                 let (shown, inner) = comrak_inline(child, link_texts, in_link)?;
@@ -565,4 +592,27 @@ fn comrak_table<'a>(
         false => format!("table:{}x{rows}", width.unwrap_or(0)),
     };
     Ok((kind, text, links))
+}
+
+/// A cell's text as a reader must show it: a code cell as a code span.
+fn shown_cell(value: &str, kind: Option<CellKind>) -> String {
+    match kind {
+        Some(CellKind::Code) => spanned(value),
+        Some(CellKind::Text | CellKind::Ascii) | None => value.to_string(),
+    }
+}
+
+/// A code cell shown as plain text is caught: its expected text is a span.
+#[test]
+fn a_code_cell_a_reader_shows_as_text_is_caught() {
+    let document = Document {
+        schema: 1,
+        title: "Code".into(),
+        fields: vec![("Branch".into(), "main".into())],
+        sections: vec![],
+    };
+    let file = render(&document, &SHAPE).unwrap();
+    assert_eq!(outline(&file, &document), Ok(()));
+    let plain = file.replacen("`main`", "main", 1);
+    assert!(outline(&plain, &document).is_err(), "{plain}");
 }

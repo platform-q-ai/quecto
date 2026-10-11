@@ -68,9 +68,10 @@ pub struct Limits {
 pub enum CellKind {
     Text,
     Ascii,
-    /// Printable ASCII but `|`, a backtick and `\` ([`CODE_PUNCTUATION`]),
-    /// never empty: nothing in it can end its code span or its cell, and a
-    /// span shows the rest as it is.
+    /// Printable ASCII but a backtick ([`CODE_PUNCTUATION`]), never empty
+    /// ([`code_cell_holds`]): nothing in it can end its code span, a `|`
+    /// is written `\|` as a text cell writes it, and a reader shows the
+    /// rest as it is.
     Code,
 }
 
@@ -78,9 +79,30 @@ pub enum CellKind {
 const ASCII_PUNCTUATION: &[u8] = b"._:/#@+_-";
 
 /// The punctuation a code cell may hold besides letters and digits: every
-/// printable ASCII one but `|` (a cell's edge), a backtick (a span's edge)
-/// and `\` (an escape a table reads).
-const CODE_PUNCTUATION: &[u8] = b"!\"#$%&'()*+,-./:;<=>?@[]^_{}~";
+/// printable ASCII one but a backtick, which would end its span.
+const CODE_PUNCTUATION: &[u8] = b"!\"#$%&'()*+,-./:;<=>?@[\\]^_{|}~";
+
+/// Whether a code span in a board file holds `value` as it is: printable
+/// ASCII but a backtick, never empty (an allowlist). A code cell, and an
+/// identity's email, hold only such values.
+pub fn code_cell_holds(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || CODE_PUNCTUATION.contains(&b))
+}
+
+/// Whether a text cell holds `value`: what a cell holds at all, the inline
+/// rules and the character rules, checked as it would be written. A
+/// codec's helper checks a cell it builds before any render, so its error
+/// names the field.
+///
+/// # Errors
+/// The rule the cell breaks, at line 1.
+pub fn check_text_cell(value: &str) -> Result<(), MarkdownError> {
+    let written = cell(value, CellKind::Text, 1)?;
+    chars::check_line(&written, 1)
+}
 
 /// A field or a table's column: its name and what its cells hold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -398,7 +420,6 @@ fn plain(value: &str) -> bool {
 fn cell(value: &str, kind: CellKind, at: usize) -> Result<String, MarkdownError> {
     let refused = |why| Err(MarkdownError::Cell { line: at, why });
     let ascii = |b: u8| b.is_ascii_alphanumeric() || ASCII_PUNCTUATION.contains(&b);
-    let code = |b: u8| b.is_ascii_alphanumeric() || CODE_PUNCTUATION.contains(&b);
     match (kind, value) {
         (_, "") => refused("an empty cell"),
         (_, value) if value.contains('\n') => refused("a newline in a cell"),
@@ -412,8 +433,10 @@ fn cell(value: &str, kind: CellKind, at: usize) -> Result<String, MarkdownError>
             refused("an address a reader would link, or an underscore it would read as emphasis")
         }
         (CellKind::Ascii, _) => refused("an id or pointer of ASCII letters, digits and ._:/#@+_-"),
-        (CellKind::Code, value) if value.bytes().all(code) => Ok(format!("`{value}`")),
-        (CellKind::Code, _) => refused("code of printable ASCII but |, ` and \\"),
+        (CellKind::Code, value) if code_cell_holds(value) => {
+            Ok(format!("`{}`", value.replace('|', "\\|")))
+        }
+        (CellKind::Code, _) => refused("code of printable ASCII but a backtick"),
         (CellKind::Text, value) => {
             inline::check_inline(value, at).map(|()| value.replace('|', "\\|"))
         }

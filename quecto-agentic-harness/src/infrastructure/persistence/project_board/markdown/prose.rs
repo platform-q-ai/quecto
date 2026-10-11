@@ -236,10 +236,11 @@ pub fn blocks_of(text: &str) -> Result<Vec<Block>, MarkdownError> {
     for (index, line) in rendered.iter().enumerate() {
         check_line(line, index + 1)?;
     }
-    match text_of(&blocks) == text {
-        true => Ok(blocks),
-        false => Err(MarkdownError::NotCanonical),
-    }
+    // Every chunk is kept whole (a paragraph's lines verbatim, a list's
+    // items after their `- `, a fence's lines and info), one blank line
+    // apart, so writing the blocks back gives the text.
+    debug_assert_eq!(text_of(&blocks), text, "blocks give their text back");
+    Ok(blocks)
 }
 
 /// The fenced code `lines[at]` opens with `info`, and the line after its
