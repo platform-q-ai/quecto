@@ -24,7 +24,6 @@ pub enum Found {
     Missing,
 }
 
-/// The two files a task has in `tasks/`.
 /// The real type and size of each object, or that it is missing, from one
 /// `cat-file --batch-check`; every object asked for is reported, or it is
 /// an error.

@@ -12,12 +12,11 @@
 //! bootstrapping all take the same view of it ([`Unread::Failed`] with a
 //! clash).
 //!
-//! In `tasks/`, only names quecto keeps are anything but strays: UTF-8 of
-//! letters, numbers and a few punctuation marks (no path separator),
-//! starting with a letter or number, no longer than an id and its
-//! extension ([`MAX_NAME_BYTES`]), so `mktree` takes every name a write
-//! carries, every one can be shown, and no write makes a tree a read
-//! refuses.
+//! In `tasks/`, only names quecto keeps are anything but strays: ASCII
+//! letters, digits and `-_.+=@,`, starting with a letter or digit, no
+//! longer than an id and its extension ([`MAX_NAME_BYTES`]), so `mktree`
+//! takes every name a write carries, every one shows as itself, and no
+//! write makes a tree a read refuses.
 //!
 //! A regular file `<id>.json` named once is a task and is read. Any other
 //! `.json` file of a kept name is set aside (under its id, when its name
@@ -48,7 +47,7 @@ use std::collections::BTreeMap;
 
 /// The punctuation a name kept in `tasks/` may hold besides letters and
 /// numbers.
-const NAME_PUNCTUATION: &str = "-_.~+=@,()[]{}";
+const NAME_PUNCTUATION: &str = "-_.+=@,";
 /// The longest name kept in `tasks/`: an id and its five-byte `.json`.
 pub const MAX_NAME_BYTES: usize = MAX_SLUG_BYTES + 5;
 /// The most entries the board's `tasks/` tree may hold.
@@ -181,16 +180,16 @@ struct Entry {
 }
 
 impl Entry {
-    /// Whether quecto keeps this name: UTF-8 of letters, numbers and
-    /// [`NAME_PUNCTUATION`], starting with a letter or number, at most
-    /// [`MAX_NAME_BYTES`]. No path separator, so `mktree` takes every name
-    /// a write carries, and nothing a terminal would act on.
+    /// Whether quecto keeps this name: ASCII letters, digits and
+    /// [`NAME_PUNCTUATION`], starting with a letter or digit, at most
+    /// [`MAX_NAME_BYTES`]. Every id fits; no path separator, no bracket, no
+    /// invisible or combining character, so `mktree` takes every name a
+    /// write carries and every one shows as itself.
     fn kept_name(&self) -> bool {
-        let allowed = |c: char| c.is_alphanumeric() || NAME_PUNCTUATION.contains(c);
+        let allowed = |b: &u8| b.is_ascii_alphanumeric() || NAME_PUNCTUATION.as_bytes().contains(b);
         self.raw.len() <= MAX_NAME_BYTES
-            && std::str::from_utf8(&self.raw).is_ok_and(|name| {
-                name.chars().next().is_some_and(char::is_alphanumeric) && name.chars().all(allowed)
-            })
+            && self.raw.first().is_some_and(u8::is_ascii_alphanumeric)
+            && self.raw.iter().all(allowed)
     }
 
     /// Whether a write carries this entry as it is: its object is what its
@@ -203,6 +202,7 @@ impl Entry {
     }
 }
 
+/// The two files a task has in `tasks/`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TaskFile {
     Record,
@@ -389,12 +389,19 @@ fn disposition(entry: &Entry, found: Option<&Object>, count: usize) -> Dispositi
             format!("not a regular file (mode {mode}); carried forward as it is"),
             true,
         ),
-        (TaskFile::Record, id, _, mode, _) if kind_of_mode(mode).is_none() => aside(
+        // A copy a write drops names its id only when no copy a write
+        // carries does: the carried copy is the task, read or set aside.
+        (TaskFile::Record, id, 0, mode, _) if kind_of_mode(mode).is_none() => aside(
             id,
             format!("mode {mode} is not one git writes, so the next write drops it"),
             false,
         ),
-        (TaskFile::Record, id, _, mode, _) => aside(
+        (TaskFile::Record, _, 1.., mode, _) => aside(
+            None,
+            format!("a copy of mode {mode} beside one a write carries; the next write drops it"),
+            false,
+        ),
+        (TaskFile::Record, id, 0, mode, _) => aside(
             id,
             format!(
                 "mode {mode} over a {}: git cannot send such a tree, so the next write drops it",
@@ -526,13 +533,21 @@ fn read_tasks(git: &Git, tree: &str, limits: Limits) -> Result<Board, Unread> {
             }
         }
     }
-    assert!(
-        board
-            .tasks
-            .keys()
-            .all(|id| board.is_quarantined(id).is_none()),
-        "a task read is never one set aside"
-    );
+    // A task read is never one set aside; a tree that made one both is
+    // refused, never read half-trusted.
+    match board
+        .tasks
+        .keys()
+        .find(|id| board.is_quarantined(id).is_some())
+    {
+        None => {}
+        Some(id) => {
+            return Err(Unread::Failed(BoardStoreError::Unavailable(format!(
+                "task {:?} is both read and set aside in tree {tree}",
+                id.as_str()
+            ))));
+        }
+    }
     board
         .quarantined
         .sort_by(|left, right| left.path.cmp(&right.path));
