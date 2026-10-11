@@ -1,6 +1,34 @@
-//! The codec over well-formed documents: an exact file, round trips over
-//! generated documents, prose that never makes a block, and the limits.
+//! The codec over well-formed documents: an exact file, generated
+//! documents read back by a CommonMark/GFM reader (the oracle), block
+//! starts kept as text, and the limits.
 use super::*;
+use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, LinkType, Options, Parser, Tag};
+
+const FIELDS: &[Column<'static>] = &[
+    Column {
+        name: "Id",
+        cell: CellKind::Ascii,
+    },
+    Column {
+        name: "Status",
+        cell: CellKind::Ascii,
+    },
+    Column {
+        name: "Claim",
+        cell: CellKind::Text,
+    },
+];
+
+const ITEMS: &[Column<'static>] = &[
+    Column {
+        name: "Item",
+        cell: CellKind::Text,
+    },
+    Column {
+        name: "State",
+        cell: CellKind::Ascii,
+    },
+];
 
 const SECTIONS: &[SectionShape<'static>] = &[
     SectionShape {
@@ -13,77 +41,202 @@ const SECTIONS: &[SectionShape<'static>] = &[
     },
     SectionShape {
         heading: "Items",
-        body: BodyShape::Table(&["Item", "State"]),
+        body: BodyShape::Table(ITEMS),
     },
 ];
 
+pub(super) const LIMITS: Limits = Limits {
+    file_bytes: 1 << 20,
+    lines: 8_192,
+    line_bytes: 4_096,
+};
+
 pub(super) const SHAPE: Shape<'static> = Shape {
     kind: "task",
-    fields: &["Id", "Status", "Claim"],
+    fields: FIELDS,
     sections: SECTIONS,
     limits: LIMITS,
 };
+
+fn texts(texts: &[&str]) -> Vec<String> {
+    texts.iter().map(|text| (*text).to_string()).collect()
+}
 
 pub(super) fn example() -> Document {
     Document {
         schema: 1,
         title: "Boards S2a: quecto board CLI".into(),
         fields: vec![
-            ("Id".into(), "`board-cli`".into()),
+            ("Id".into(), "board-cli".into()),
             ("Status".into(), "review".into()),
             (
                 "Claim".into(),
-                "Ada <ada@example.com> until 2026-10-11T14:00:00Z".replace(['<', '>'], ""),
+                "Ada (ada@example.com) until 2026-10-11T14:00:00Z".into(),
             ),
         ],
         sections: vec![
             Section {
                 heading: "Outcome".into(),
-                body: Body::Prose(
-                    "Agents read the board.\n- not a list\n\n# not a heading\nplain".into(),
-                ),
+                body: Body::Prose(vec![
+                    Block::Paragraph(texts(&[
+                        "Agents read the board, `Vec<T>` and all.",
+                        "# not a heading",
+                        "1. not a list",
+                    ])),
+                    Block::List(texts(&[
+                        "read",
+                        "write [the docs](https://example.com/docs)",
+                    ])),
+                    Block::Code {
+                        language: Some("rust".into()),
+                        lines: texts(&["fn main() {", "    let x = 1;", "}"]),
+                    },
+                ]),
+            },
+            Section {
+                heading: "Acceptance".into(),
+                body: Body::Prose(vec![Block::List(texts(&[
+                    "Every op answers one JSON line",
+                ]))]),
             },
             Section {
                 heading: "Items".into(),
                 body: Body::Table(vec![
-                    vec!["parse a|b".into(), "done".into()],
-                    vec!["path C:\\x".into(), "open".into()],
+                    texts(&["parse `a|b`", "done"]),
+                    texts(&["path `C:\\x`", "open"]),
                 ]),
             },
         ],
     }
 }
 
-pub(super) const EXAMPLE: &str = "<!-- quecto-task schema=1 -->
+pub(super) const EXAMPLE: &str = r##"<!-- quecto-task schema=1 -->
 # Boards S2a: quecto board CLI
 
 | Field | Value |
 |---|---|
-| Id | `board-cli` |
+| Id | board-cli |
 | Status | review |
-| Claim | Ada ada@example.com until 2026-10-11T14:00:00Z |
+| Claim | Ada (ada@example.com) until 2026-10-11T14:00:00Z |
 
 ## Outcome
-Agents read the board.
-\\- not a list
+Agents read the board, `Vec<T>` and all.
+\# not a heading
+1\. not a list
 
-\\# not a heading
-plain
+- read
+- write [the docs](https://example.com/docs)
+
+```rust
+fn main() {
+    let x = 1;
+}
+```
+
+## Acceptance
+- Every op answers one JSON line
 
 ## Items
 | Item | State |
 |---|---|
-| parse a\\|b | done |
-| path C:\\\\x | open |
-";
+| parse `a\|b` | done |
+| path `C:\x` | open |
+"##;
+
+/// What a CommonMark/GFM reader (every extension on) makes of `file` is
+/// exactly the outline `document` has: the marker, one H1, the field
+/// table, then per section one H2 and its paragraphs, one-level `- `
+/// lists, fenced code and tables. No HTML, math, image, footnote, quote,
+/// rule, hard break, ordered or nested list, or other link than an inline
+/// https one; and every text it decodes keeps the character rules.
+pub(super) fn outline(file: &str, document: &Document) -> Result<(), String> {
+    let (mut top, mut depth, mut lists) = (vec![], 0usize, 0usize);
+    for event in Parser::new_ext(file, Options::all()) {
+        match &event {
+            Event::Start(tag) => {
+                let kind = match tag {
+                    Tag::HtmlBlock if top.is_empty() => "marker",
+                    Tag::Heading {
+                        level: HeadingLevel::H1,
+                        ..
+                    } if top.len() == 1 => "h1",
+                    Tag::Heading {
+                        level: HeadingLevel::H2,
+                        ..
+                    } if depth == 0 => "h2",
+                    Tag::Paragraph => "paragraph",
+                    Tag::List(None) if lists == 0 => "list",
+                    Tag::Item | Tag::Emphasis | Tag::Strong | Tag::Strikethrough => "inline",
+                    Tag::Superscript | Tag::Subscript => "inline",
+                    Tag::CodeBlock(CodeBlockKind::Fenced(_)) => "code",
+                    Tag::Table(_) | Tag::TableHead | Tag::TableRow | Tag::TableCell => "table",
+                    Tag::Link {
+                        link_type: LinkType::Inline,
+                        dest_url,
+                        title,
+                        ..
+                    } if dest_url.starts_with("https://") && title.is_empty() => "inline",
+                    other => return Err(format!("{other:?}")),
+                };
+                if depth == 0 {
+                    top.push(kind);
+                }
+                lists += usize::from(matches!(tag, Tag::List(_)));
+                depth += 1;
+            }
+            Event::End(end) => {
+                depth -= 1;
+                lists -= usize::from(matches!(end, pulldown_cmark::TagEnd::List(_)));
+            }
+            Event::Text(text) | Event::Code(text) => {
+                // A fragment may end before inline markup with a space: the
+                // characters are what is checked here.
+                for line in text.split('\n').map(|line| line.trim_end_matches(' ')) {
+                    chars::check_line(line, 0).map_err(|error| format!("{line:?}: {error:?}"))?;
+                }
+            }
+            Event::Html(_) if top == ["marker"] => {}
+            Event::SoftBreak => {}
+            other => return Err(format!("{other:?}")),
+        }
+    }
+    let count = |kind: &str| top.iter().filter(|top| **top == kind).count();
+    let blocks = document
+        .sections
+        .iter()
+        .flat_map(|section| match &section.body {
+            Body::Prose(blocks) => blocks
+                .iter()
+                .map(|block| match block {
+                    Block::Paragraph(_) => "paragraph",
+                    Block::List(_) => "list",
+                    Block::Code { .. } => "code",
+                })
+                .collect::<Vec<_>>(),
+            Body::Table(_) => vec!["table"],
+        });
+    let mut expected = vec!["marker", "h1"];
+    expected.extend((!document.fields.is_empty()).then_some("table"));
+    let blocks: Vec<&str> = blocks.collect();
+    expected.extend(blocks.iter().copied());
+    let headings = count("h2");
+    top.retain(|kind| *kind != "h2");
+    match (top == expected, headings == document.sections.len()) {
+        (true, true) => Ok(()),
+        _ => Err(format!(
+            "{top:?} with {headings} sections, not {expected:?}"
+        )),
+    }
+}
 
 #[test]
-fn a_document_renders_to_one_exact_file() {
+fn a_document_renders_to_one_exact_file_a_reader_outlines_as_it() {
     assert_eq!(render(&example(), &SHAPE).as_deref(), Ok(EXAMPLE));
+    assert_eq!(outline(EXAMPLE, &example()), Ok(()));
 }
 
 /// A small, seeded generator: the same documents on every run.
-struct Seeded(u64);
+pub(super) struct Seeded(pub(super) u64);
 
 impl Seeded {
     fn next(&mut self) -> u64 {
@@ -97,30 +250,76 @@ impl Seeded {
         usize::try_from(self.next() % (n as u64)).unwrap_or(0)
     }
 
-    /// Text of pieces that start blocks, escape, and stretch Unicode.
-    fn text(&mut self, most: usize) -> String {
+    fn pick(&mut self, pieces: &[&str]) -> String {
+        pieces[self.below(pieces.len())].to_string()
+    }
+
+    /// A line: pieces that start blocks, escape and stretch Unicode, now
+    /// and then a hostile one, now and then a leading space.
+    pub(super) fn line(&mut self) -> String {
         #[rustfmt::skip]
-        const PIECES: &[&str] = &[
-            "a", "Z", "9", "1.", "#", "##", "|", ">", "=", "-", "---", "+", "*", "_", ":",
-            "[x]", "<", "\\", "`code`", "~~~", "é", "Zoe\u{308}", "🦀", "👨\u{200d}👩\u{200d}👧",
-            "€", "日本", " ", "  ", "!", "(", ")", "\"", "'", ".", ",", "{", "}", "&", "%", "$",
+        const SAFE: &[&str] = &[
+            "a", "Z", "9", "1.", "2)", "#", "##", "|", ">", "=", "-", "---", "+", "*", "_", ":",
+            "[x]", "<", "\\", "`code`", "`Vec<T>`", "~~~", "~", "é", "日本", "🦀", "👩🏽‍💻",
+            "👨‍👩‍👧", "❤️", " ", "!", "(", ")", "\"", "'", ".", ",", "{", "}", "&", "%", "$ ",
+            "[a link](https://example.com/x)", "x\u{301}\u{302}",
         ];
-        let mut text = String::new();
-        for _ in 0..1 + self.below(most) {
-            text.push_str(PIECES[self.below(PIECES.len())]);
+        #[rustfmt::skip]
+        const HOSTILE: &[&str] = &[
+            "\u{1}", "\u{202e}", "\u{200b}", "\u{fe0f}", "e\u{301}", "&amp;", "&#65;", "$x$",
+            "![i](https://example.com/i.png)", "<b>", "http://x", "www.x", "\u{2800}", "\u{3164}",
+            "a\u{fe0f}\u{200d}🦀", "\u{a0}", "[r][ref]", "x\u{301}\u{302}\u{303}\u{304}\u{305}",
+        ];
+        let mut line: String = (0..1 + self.below(6)).map(|_| self.pick(SAFE)).collect();
+        line = line.trim().to_string();
+        if self.below(25) == 0 {
+            line.push_str(&self.pick(HOSTILE));
         }
-        text
+        if self.below(40) == 0 {
+            line.insert(0, ' ');
+        }
+        line
     }
 
-    fn line(&mut self) -> String {
-        self.text(8).trim().to_string()
+    fn ascii(&mut self) -> String {
+        const ASCII: &[&str] = &["a", "z", "0", "9", ".", "_", ":", "/", "#", "@", "+", "-"];
+        let mut cell: String = (0..1 + self.below(8)).map(|_| self.pick(ASCII)).collect();
+        if self.below(40) == 0 {
+            cell.push_str(&self.pick(&[" ", "é", "|"]));
+        }
+        cell
     }
 
-    fn document(&mut self) -> Document {
+    fn texts(&mut self) -> Vec<String> {
+        (0..1 + self.below(3)).map(|_| self.line()).collect()
+    }
+
+    fn block(&mut self) -> Block {
+        match self.below(3) {
+            0 => Block::Paragraph(self.texts()),
+            1 => Block::List(self.texts()),
+            _ => Block::Code {
+                language: [None, Some("rust".to_string()), Some("C++".to_string())][self.below(3)]
+                    .clone(),
+                lines: (0..self.below(3))
+                    .map(|_| format!("  {}", self.line()))
+                    .collect(),
+            },
+        }
+    }
+
+    fn cell(&mut self, kind: CellKind) -> String {
+        match kind {
+            CellKind::Text => self.line(),
+            CellKind::Ascii => self.ascii(),
+        }
+    }
+
+    pub(super) fn document(&mut self) -> Document {
         let mut fields = vec![];
-        for name in SHAPE.fields {
+        for field in SHAPE.fields {
             if self.below(3) > 0 {
-                fields.push(((*name).to_string(), self.line()));
+                fields.push((field.name.to_string(), self.cell(field.cell)));
             }
         }
         let mut sections = vec![];
@@ -130,17 +329,16 @@ impl Seeded {
             }
             let body = match section.body {
                 BodyShape::Prose => {
-                    let lines: Vec<String> = (0..1 + self.below(5))
-                        .map(|_| match self.below(4) {
-                            0 => String::new(),
-                            _ => self.line(),
-                        })
-                        .collect();
-                    Body::Prose(lines.join("\n"))
+                    Body::Prose((0..1 + self.below(3)).map(|_| self.block()).collect())
                 }
                 BodyShape::Table(columns) => Body::Table(
-                    (0..self.below(4))
-                        .map(|_| columns.iter().map(|_| self.line()).collect())
+                    (0..self.below(3))
+                        .map(|_| {
+                            columns
+                                .iter()
+                                .map(|column| self.cell(column.cell))
+                                .collect()
+                        })
                         .collect(),
                 ),
             };
@@ -151,72 +349,74 @@ impl Seeded {
         }
         Document {
             schema: u32::try_from(self.below(1_000)).unwrap_or(0),
-            title: self.line(),
+            title: self.line().trim_end_matches('#').trim().to_string(),
             fields,
             sections,
         }
     }
 }
 
-/// Every generated document renders or is refused with its reason named,
-/// and a fair share of them render.
+/// Every generated document the renderer takes, a CommonMark/GFM reader
+/// outlines as the document; a fair share are taken, and a fair share
+/// refused.
 #[test]
-fn every_generated_document_renders_or_is_refused_by_name() {
+fn every_rendered_document_is_outlined_as_itself() {
     let mut seeded = Seeded(0x9e37_79b9_7f4a_7c15);
-    let mut taken = 0;
+    let (mut taken, mut refused) = (0, 0);
     for _ in 0..3_000 {
         let document = seeded.document();
         match render(&document, &SHAPE) {
-            Ok(_) => taken += 1,
-            Err(MarkdownError::NotCanonical) => panic!("{document:?}: refused unnamed"),
-            Err(_) => {}
+            Ok(file) => {
+                taken += 1;
+                assert_eq!(outline(&file, &document), Ok(()), "{file}");
+            }
+            Err(_) => refused += 1,
         }
     }
-    assert!(taken > 1_000, "{taken} of 3000 taken");
+    assert!(
+        taken > 300 && refused > 300,
+        "{taken} taken, {refused} refused"
+    );
 }
 
-/// Prose can never make a heading, a table row, a marker or any other
-/// block: every line of it in a file that starts as a block might (by this
-/// test's own list, CommonMark's and GFM's block starts) is escaped.
+/// A paragraph line or list item that starts with any block start, or as
+/// an ordered list item, reads as text in a paragraph or a list.
 #[test]
-fn prose_never_makes_a_heading_a_table_row_or_a_marker() {
-    let starts_a_block = |line: &str| {
-        line.chars()
-            .next()
-            .is_some_and(|c| c.is_ascii_digit() || "#|>=-+*_:[<`~ ".contains(c))
-    };
-    let mut seeded = Seeded(7);
-    let mut taken = 0;
-    for _ in 0..2_000 {
-        let prose = (0..3).map(|_| seeded.line()).collect::<Vec<_>>().join("\n");
+fn block_starts_read_as_text() {
+    let starts = prose::BLOCK_STARTS
+        .chars()
+        .map(|c| match c {
+            '`' => "`a` x".to_string(),
+            '$' => "$ x".to_string(),
+            '<' => "< x".to_string(),
+            c => format!("{c}x"),
+        })
+        .chain(["1. x".into(), "2) x".into(), "3.".into()]);
+    for start in starts {
         let document = Document {
             schema: 1,
             title: "T".into(),
             fields: vec![],
             sections: vec![Section {
                 heading: "Outcome".into(),
-                body: Body::Prose(prose),
+                body: Body::Prose(vec![
+                    Block::Paragraph(vec![start.clone(), start.clone()]),
+                    Block::List(vec![start.clone()]),
+                ]),
             }],
         };
-        let Ok(file) = render(&document, &SHAPE) else {
-            continue;
-        };
-        taken += 1;
-        let body = file.split_once("## Outcome\n").unwrap().1;
-        for line in body.lines() {
-            assert!(!starts_a_block(line), "{line:?} in {file}");
-        }
+        let file = render(&document, &SHAPE);
+        let file = file.unwrap_or_else(|error| panic!("{start:?}: {error:?}"));
+        assert_eq!(outline(&file, &document), Ok(()), "{start:?}: {file}");
     }
-    assert!(taken > 500, "{taken} of 2000 taken");
 }
 
-/// A document of `line` lines of prose `width` wide.
+/// A document of `lines` lines of prose `width` wide.
 fn sized(lines: usize, width: usize) -> Document {
     let mut document = example();
-    let prose = vec!["x".repeat(width); lines].join("\n");
     document.sections = vec![Section {
         heading: "Outcome".into(),
-        body: Body::Prose(prose),
+        body: Body::Prose(vec![Block::Paragraph(vec!["x".repeat(width); lines])]),
     }];
     document
 }
@@ -240,6 +440,21 @@ fn files_lines_and_line_counts_are_capped_at_their_bounds() {
         let rendered = render(&sized(3, 10), &shape);
         assert_eq!(rendered.is_ok(), fits, "{limits:?}: {rendered:?}");
     }
+    // The text a document holds is counted before anything is rendered.
+    let shape = Shape {
+        limits: Limits {
+            file_bytes: 99,
+            ..LIMITS
+        },
+        ..SHAPE
+    };
+    assert_eq!(
+        render(&sized(1, 100), &shape),
+        Err(MarkdownError::TooLarge {
+            bytes: text_bytes(&sized(1, 100)),
+            most: 99
+        })
+    );
 }
 
 #[path = "markdown_hostile_tests.rs"]

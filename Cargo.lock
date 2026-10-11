@@ -1641,6 +1641,7 @@ dependencies = [
  "humantime",
  "libc",
  "proc-macro2",
+ "pulldown-cmark",
  "quecto-fail-fast",
  "quecto-image",
  "quecto-line-io",
