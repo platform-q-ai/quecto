@@ -23,7 +23,7 @@
 //! never one object at a time.
 use super::board_tree::{
     Board, LIMITS, Limits, MAX_SUMMARY_BYTES, MAX_TASK_ENTRIES, REGULAR_FILE, TREE, Unread,
-    contents, object_id, read_board, told, unavailable,
+    contents, object_id, read_board, told, unavailable, within,
 };
 use super::git::{Git, GitError, SHORT_OUTPUT, failed, quoted};
 use super::push_report::{PushReport, RefStatus, Rejection, ref_status, remote_rejection};
@@ -436,7 +436,10 @@ impl GitBoardStore {
         )
     }
 
+    /// A tree of `entries`, refused as invalid past the tree bound a read
+    /// takes.
     fn tree(&self, entries: &BTreeMap<String, String>) -> Result<String, BoardStoreError> {
+        within(entries, self.limits)?;
         let listing: String = entries
             .iter()
             .map(|(name, meta)| format!("{meta}\t{name}\0"))

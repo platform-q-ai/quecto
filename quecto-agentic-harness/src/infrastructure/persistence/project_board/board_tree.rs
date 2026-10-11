@@ -12,30 +12,38 @@
 //! bootstrapping all take the same view of it ([`Unread::Failed`] with a
 //! clash).
 //!
-//! In `tasks/`, a regular file `<id>.json` named once is a task and is
-//! read. Any other `.json` file is set aside (under its id, when its name
-//! spells one) and carried forward by every write as it is, whatever its
-//! mode or name, so no write loses it, a later quecto's included, unless
-//! its mode and its object disagree (a file mode over a tree): git's own
-//! transport refuses such a tree, so carrying it would leave a board no
-//! one can fetch. A `.json` named twice refuses every write (see
-//! [`Board::repeated`]). Summaries are derived, so a `<id>.md` that is
-//! not a regular file named once is a stray, never sets its task aside,
-//! and the next write regenerates it. Any other name, or an entry of a
-//! mode git never writes, is a stray, set aside with no id, and dropped by
-//! the next write.
+//! In `tasks/`, only names quecto keeps are anything but strays: UTF-8 of
+//! letters, marks, numbers, punctuation and symbols, no longer than an id
+//! and its extension ([`MAX_NAME_BYTES`]), so every name a write carries
+//! can be shown, and no write makes a tree a read refuses.
+//!
+//! A regular file `<id>.json` named once is a task and is read. Any other
+//! `.json` file of a kept name is set aside (under its id, when its name
+//! spells one) and carried forward by every write as it is, a later
+//! quecto's included, when its object is what its mode names: a file or a
+//! link (100644, 100755, 120000) over a blob, or a directory (040000) over
+//! a tree. Anything else is dropped by the next write: a gitlink (160000:
+//! `mktree` refuses one over an object of another type, and git reads any
+//! odd mode as one), or a mode over an object of another type (git's
+//! transport refuses such a tree). A `.json` named twice refuses every
+//! write (see [`Board::repeated`]). Summaries are derived, so a `<id>.md`
+//! that is not a regular file named once is a stray, never sets its task
+//! aside, and the next write regenerates it. Any other entry is a stray,
+//! set aside with no id, and dropped by the next write.
 //!
 //! An object a partial clone does not hold yet is not fetched here (every
 //! local call runs with `GIT_NO_LAZY_FETCH`): the read answers
 //! [`Unread::Missing`] with every object it found missing, so the store
 //! fetches them in one call and reads again.
-use super::git::{Git, GitError, failed};
+use super::git::{Git, GitError, failed, quoted, shown};
 use super::task_record::{MAX_TASK_FILE_BYTES, decode};
 use crate::application::project_board::ports::{BoardStoreError, QuarantinedFile};
 use crate::domain::project_board::entities::task::Task;
-use crate::domain::project_board::value_objects::slug::Slug;
+use crate::domain::project_board::value_objects::slug::{MAX_SLUG_BYTES, Slug};
 use std::collections::{BTreeMap, BTreeSet};
 
+/// The longest name kept in `tasks/`: an id and its five-byte `.json`.
+pub const MAX_NAME_BYTES: usize = MAX_SLUG_BYTES + 5;
 /// The most entries the board's `tasks/` tree may hold.
 pub const MAX_TASK_ENTRIES: usize = 4_096;
 /// The most tasks a board holds: each is a file and its summary.
@@ -142,10 +150,11 @@ impl Board {
     pub fn repeated_refusal(&self, head: &str) -> Option<String> {
         let (name, oids) = self.repeated.first()?;
         Some(format!(
-            "tasks/{name} is named more than once in board commit {head} (objects {}). quecto \
+            "tasks/{} is named more than once in board commit {head} (objects {}). quecto \
              never writes such a tree, so a hand edit did, and git rejects it (fsck: \
              duplicateEntries): no write can carry it forward, and quecto will not choose a \
              copy. To mend the board, {RECOVERY}",
+            quoted(name.as_bytes()),
             oids.join(", ")
         ))
     }
@@ -161,7 +170,19 @@ impl Board {
 struct Entry {
     mode: String,
     oid: String,
+    /// As shown: invalid UTF-8 replaced.
     name: String,
+    /// As the tree holds it.
+    raw: Vec<u8>,
+}
+
+impl Entry {
+    /// Whether quecto keeps this name: UTF-8 of shown characters, at most
+    /// [`MAX_NAME_BYTES`].
+    fn kept_name(&self) -> bool {
+        self.raw.len() <= MAX_NAME_BYTES
+            && std::str::from_utf8(&self.raw).is_ok_and(|name| name.chars().all(shown))
+    }
 }
 
 /// An object's real type and size, by `cat-file --batch-check`.
@@ -312,22 +333,33 @@ enum Disposition {
 fn disposition(entry: &Entry, found: Option<&Object>, count: usize) -> Disposition {
     let aside =
         |id: Option<Slug>, reason: String, kept: bool| Disposition::Aside { id, reason, kept };
+    if !entry.kept_name() {
+        let reason = format!(
+            "not a name quecto keeps (UTF-8 letters, marks, numbers, punctuation and symbols, \
+             at most {MAX_NAME_BYTES} bytes); the next write drops it"
+        );
+        return aside(None, reason, false);
+    }
     let Some((id, file)) = task_name(&entry.name) else {
         let reason = "not a task file: only <id>.json and <id>.md belong in tasks/".into();
         return aside(None, reason, false);
     };
     let kind = found.map(|object| object.kind.as_str());
     let size = found.map_or(usize::MAX, |object| object.size);
-    // A gitlink's commit is not looked up; any other kept entry's object
-    // is the kind its mode names.
+    // Carried only when its object is what its mode names: a file or link
+    // over a blob, a directory over a tree.
     let agrees = match kind_of_mode(&entry.mode) {
-        Some("commit") => true,
-        Some(named) => kind == Some(named),
-        None => false,
+        Some(named @ ("blob" | "tree")) => kind == Some(named),
+        Some(_) | None => false,
     };
     match (file, id, count, entry.mode.as_str(), kind) {
         (TaskFile::Summary, Some(id), 1, REGULAR_FILE, Some("blob")) => Disposition::Summary(id),
         (TaskFile::Summary, _, _, _, _) => Disposition::Stray,
+        (TaskFile::Record, _, _, GITLINK, _) => aside(
+            None,
+            "a gitlink is not a task file; the next write drops it".into(),
+            false,
+        ),
         (TaskFile::Record, id, 2.., _, _) => {
             aside(id, "named more than once in the tree".into(), false)
         }
@@ -381,14 +413,14 @@ fn read_tasks(git: &Git, tree: &str, limits: Limits) -> Result<Board, Unread> {
     if !missing.is_empty() {
         return Err(Unread::Missing(missing));
     }
-    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut counts: BTreeMap<&[u8], usize> = BTreeMap::new();
     for entry in &entries {
-        *counts.entry(entry.name.as_str()).or_default() += 1;
+        *counts.entry(entry.raw.as_slice()).or_default() += 1;
     }
     let mut board = Board::default();
     let set_aside = |board: &mut Board, entry: &Entry, id: Option<Slug>, reason: String| {
         board.quarantined.push(QuarantinedFile {
-            path: format!("tasks/{}", entry.name),
+            path: format!("tasks/{}", quoted(&entry.raw)),
             id,
             reason,
         });
@@ -408,7 +440,7 @@ fn read_tasks(git: &Git, tree: &str, limits: Limits) -> Result<Board, Unread> {
             Some(Found::Present(object)) => Some(object),
             Some(Found::Missing) | None => None,
         };
-        match disposition(entry, found, counts[entry.name.as_str()]) {
+        match disposition(entry, found, counts[entry.raw.as_slice()]) {
             Disposition::Read(id) => {
                 let size = found.map_or(0, |object| object.size);
                 board.read_bytes.insert(entry.name.clone(), size);
@@ -427,18 +459,21 @@ fn read_tasks(git: &Git, tree: &str, limits: Limits) -> Result<Board, Unread> {
             Disposition::Stray => {}
         }
     }
-    board.repeated = counts
-        .iter()
-        .filter(|(name, count)| {
-            **count > 1 && task_name(name).is_some_and(|(_, file)| file == TaskFile::Record)
-        })
-        .map(|(name, _)| {
-            let oids = entries.iter().filter(|entry| entry.name == *name);
-            (
-                (*name).to_string(),
-                oids.map(|entry| entry.oid.clone()).collect(),
-            )
-        })
+    // Only names a write would carry: a stray is dropped, however often
+    // it is named.
+    let mut repeated: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    for entry in &entries {
+        let record = task_name(&entry.name).is_some_and(|(_, file)| file == TaskFile::Record);
+        if entry.kept_name() && record && counts[entry.raw.as_slice()] > 1 {
+            repeated
+                .entry(&entry.name)
+                .or_default()
+                .push(entry.oid.clone());
+        }
+    }
+    board.repeated = repeated
+        .into_iter()
+        .map(|(name, oids)| (name.to_string(), oids))
         .collect();
     let total: usize = to_read.iter().map(|(_, _, size)| size).sum();
     if total > max_bytes {
@@ -532,17 +567,49 @@ fn listed(git: &Git, tree: &str, max_bytes: usize) -> Result<Vec<Entry>, Unread>
 }
 
 fn entry(row: &[u8]) -> Result<Entry, BoardStoreError> {
-    let row = String::from_utf8_lossy(row);
-    let malformed = || BoardStoreError::Unavailable(format!("unexpected ls-tree row {row:?}"));
-    let (meta, name) = row.split_once('\t').ok_or_else(malformed)?;
+    let malformed =
+        || BoardStoreError::Unavailable(format!("unexpected ls-tree row {:?}", quoted(row)));
+    let tab = row
+        .iter()
+        .position(|byte| *byte == b'\t')
+        .ok_or_else(malformed)?;
+    let (meta, raw) = (String::from_utf8_lossy(&row[..tab]), &row[tab + 1..]);
     match meta.split(' ').collect::<Vec<_>>().as_slice() {
         [mode, _kind, oid] => Ok(Entry {
             mode: (*mode).into(),
             oid: object_id(oid)?,
-            name: name.into(),
+            name: String::from_utf8_lossy(raw).into_owned(),
+            raw: raw.to_vec(),
         }),
         _ => Err(malformed()),
     }
+}
+
+/// A tree of `entries` fits what a read takes, or it is an invalid write,
+/// so no write makes a board no one can read.
+pub fn within(entries: &BTreeMap<String, String>, limits: Limits) -> Result<(), BoardStoreError> {
+    match tree_bytes(entries) {
+        bytes if bytes <= limits.tree_bytes => Ok(()),
+        bytes => Err(BoardStoreError::InvalidWrite(format!(
+            "the board would hold a tree of {bytes} bytes; a read takes at most {}",
+            limits.tree_bytes
+        ))),
+    }
+}
+
+/// The bytes git takes to hold a tree of `entries` (name to `<mode> <type>
+/// <oid>`): each is its mode without leading zeros, a space, its name, a
+/// NUL and its raw object name.
+fn tree_bytes(entries: &BTreeMap<String, String>) -> usize {
+    entries
+        .iter()
+        .map(|(name, meta)| {
+            let mut fields = meta.split(' ');
+            let mode = fields.next().unwrap_or("").trim_start_matches('0');
+            let oid = fields.nth(1).unwrap_or("");
+            mode.len() + 1 + name.len() + 1 + oid.len() / 2
+        })
+        .sum()
 }
 
 /// The real type and size of each object, or that it is missing, from one

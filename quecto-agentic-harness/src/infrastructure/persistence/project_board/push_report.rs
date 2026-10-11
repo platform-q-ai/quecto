@@ -65,20 +65,21 @@ pub enum Rejection {
 /// branches ("protected branch hook declined") and rulesets ("push declined
 /// due to repository rule violations").
 const DECLINED: &[&str] = &["hook declined", "protected branch", "push declined"];
-/// The reasons a remote gives when another update of the ref won: it
-/// could not lock it, or found another value than the lease's.
-const RACED: &[&str] = &[
-    "cannot lock ref",
-    "failed to update ref",
-    "incorrect old value",
-];
+/// The reasons a remote gives when another update of the ref won: it found
+/// another value than the lease's, or could not lock the ref because it is
+/// at another value ("cannot lock ref '<ref>': is at <a> but expected
+/// <b>"). Any other lock failure (a stale lock file, say) is unknown.
+fn raced(reason: &str) -> bool {
+    reason.contains("incorrect old value")
+        || (reason.contains("cannot lock ref") && reason.contains("but expected"))
+}
 
 /// What a `[remote rejected] (<reason>)` summary says; `None` for any
 /// other summary.
 pub fn remote_rejection(summary: &str) -> Option<Rejection> {
     let reason = summary.strip_prefix("[remote rejected]")?;
     let said = |reasons: &[&str]| reasons.iter().any(|known| reason.contains(known));
-    Some(match (said(DECLINED), said(RACED)) {
+    Some(match (said(DECLINED), raced(reason)) {
         (true, false) => Rejection::Declined,
         (false, true) => Rejection::Raced,
         _ => Rejection::Unknown,

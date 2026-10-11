@@ -538,7 +538,7 @@ pub fn quoted(bytes: &[u8]) -> String {
 static SHOWN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[\p{L}\p{M}\p{N}\p{P}\p{S}]$").expect("a valid class"));
 
-fn shown(c: char) -> bool {
+pub fn shown(c: char) -> bool {
     SHOWN.is_match(c.encode_utf8(&mut [0; 4]))
 }
 
