@@ -220,7 +220,7 @@ fn a_suspend_makes_the_reading_stale_and_it_is_read_again() {
 }
 
 #[test]
-fn a_failure_stands_for_the_period_says_why_and_is_warned_about_once() {
+fn a_failure_stands_its_shorter_period_says_why_and_is_warned_about_once() {
     let clocks = SetClocks::new();
     let (clock, reads, warnings) = clock_of(
         Err("no route to host".into()),
@@ -241,6 +241,13 @@ fn a_failure_stands_for_the_period_says_why_and_is_warned_about_once() {
     );
     assert!(clock.now().is_ok(), "the clock still tells the time");
     assert_eq!(*warnings.lock().unwrap(), ["no route to host"]);
+    clocks.advance(RETRY_FAILED_AFTER + Duration::from_secs(1), true);
+    clock.reference();
+    assert_eq!(
+        reads.load(Ordering::Relaxed),
+        2,
+        "a failure is tried again sooner"
+    );
 }
 
 #[test]
@@ -260,42 +267,165 @@ fn an_outside_time_a_day_away_is_not_believed() {
 struct Held {
     asked: Mutex<mpsc::Sender<()>>,
     release: Mutex<mpsc::Receiver<()>>,
+    reads: Arc<AtomicUsize>,
 }
 
 impl TimeReading for Held {
     fn read(&self) -> Result<SystemTime, String> {
+        self.reads.fetch_add(1, Ordering::Relaxed);
         let _ = self.asked.lock().unwrap().send(());
         let _ = self.release.lock().unwrap().recv();
         Ok(SystemTime::now())
     }
 }
 
-#[test]
-fn one_reading_runs_at_a_time_and_none_outlasts_the_read_timeout() {
+fn held(
+    timeout: Duration,
+) -> (
+    Arc<ReferencedBoardClock>,
+    mpsc::Receiver<()>,
+    mpsc::Sender<()>,
+    Arc<AtomicUsize>,
+) {
     let (asked, was_asked) = mpsc::channel();
     let (release, released) = mpsc::channel();
+    let reads = Arc::new(AtomicUsize::new(0));
     let source = Held {
         asked: Mutex::new(asked),
         release: Mutex::new(released),
+        reads: Arc::clone(&reads),
     };
-    let clock = Arc::new(
-        ReferencedBoardClock::new(Ok(Arc::new(source)), Duration::from_secs(3600), |_| {})
-            .with_read_timeout(Duration::from_millis(1500)),
-    );
+    let clock = ReferencedBoardClock::new(Ok(Arc::new(source)), Duration::from_secs(3600), |_| {})
+        .with_read_timeout(timeout);
+    (Arc::new(clock), was_asked, release, reads)
+}
+
+#[test]
+fn a_caller_finding_a_reading_in_flight_waits_for_it_within_the_read_timeout() {
+    let (clock, was_asked, release, reads) = held(Duration::from_secs(5));
     let first = {
         let clock = Arc::clone(&clock);
         std::thread::spawn(move || clock.reference())
     };
-    was_asked.recv().unwrap();
+    was_asked.recv_timeout(Duration::from_secs(5)).unwrap();
+    let second = {
+        let clock = Arc::clone(&clock);
+        std::thread::spawn(move || clock.reference())
+    };
+    std::thread::sleep(Duration::from_millis(200));
+    release.send(()).unwrap();
+    assert!(first.join().unwrap().is_some());
+    assert!(
+        second.join().unwrap().is_some(),
+        "served the reading it waited for"
+    );
+    assert_eq!(reads.load(Ordering::Relaxed), 1, "one reading at a time");
+}
+
+#[test]
+fn no_wait_outlasts_the_read_timeout() {
+    let (clock, was_asked, release, _) = held(Duration::from_millis(800));
+    let first = {
+        let clock = Arc::clone(&clock);
+        std::thread::spawn(move || clock.reference())
+    };
+    was_asked.recv_timeout(Duration::from_secs(5)).unwrap();
     let started = Instant::now();
+    assert_eq!(clock.reference(), None, "still in flight at the timeout");
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "{:?}",
+        started.elapsed()
+    );
+    let _ = release.send(());
+    assert_eq!(first.join().unwrap(), None, "abandoned at the read timeout");
+}
+
+#[test]
+fn a_reading_that_merely_aged_out_serves_while_a_new_one_is_in_flight() {
+    let clocks = SetClocks::new();
+    let (asked, was_asked) = mpsc::channel();
+    let (release, released) = mpsc::channel();
+    let reads = Arc::new(AtomicUsize::new(0));
+    let source = Held {
+        asked: Mutex::new(asked),
+        release: Mutex::new(released),
+        reads: Arc::clone(&reads),
+    };
+    let clock = Arc::new(
+        ReferencedBoardClock::new(Ok(Arc::new(source)), Duration::from_secs(60), |_| {})
+            .with_local_clocks(clocks.clone()),
+    );
+    release.send(()).unwrap();
+    assert!(clock.reference().is_some());
+    clocks.advance(Duration::from_secs(61), true);
+    let refreshing = {
+        let clock = Arc::clone(&clock);
+        std::thread::spawn(move || clock.reference())
+    };
+    was_asked.recv_timeout(Duration::from_secs(5)).unwrap();
+    was_asked.recv_timeout(Duration::from_secs(5)).unwrap();
+    let started = Instant::now();
+    assert!(clock.reference().is_some(), "the aged reading serves");
+    assert!(started.elapsed() < Duration::from_millis(500));
+    release.send(()).unwrap();
+    assert!(refreshing.join().unwrap().is_some());
+}
+
+/// A source that panics.
+struct Panics;
+
+impl TimeReading for Panics {
+    fn read(&self) -> Result<SystemTime, String> {
+        panic!("the source broke")
+    }
+}
+
+#[test]
+fn a_reading_that_panics_is_its_own_reason_and_never_blocks_the_next() {
+    let clocks = SetClocks::new();
+    let clock = ReferencedBoardClock::new(Ok(Arc::new(Panics)), Duration::from_secs(3600), |_| {})
+        .with_local_clocks(clocks.clone());
+    assert_eq!(
+        clock.reference_status(),
+        ReferenceStatus::NoReference("the reading failed before it answered".into())
+    );
+    clocks.advance(RETRY_FAILED_AFTER + Duration::from_secs(1), true);
+    let started = Instant::now();
+    assert_eq!(clock.reference(), None, "read again, not stuck in flight");
+    assert!(started.elapsed() < Duration::from_secs(2));
+}
+
+/// A source whose answer takes `took` by the local clocks.
+struct Slow {
+    clocks: SetClocks,
+    took: Duration,
+    time: SystemTime,
+}
+
+impl TimeReading for Slow {
+    fn read(&self) -> Result<SystemTime, String> {
+        self.clocks.advance(self.took, true);
+        Ok(self.time)
+    }
+}
+
+#[test]
+fn a_reading_is_stamped_when_its_answer_came() {
+    let clocks = SetClocks::new();
+    let outside = clocks.wall();
+    let source = Slow {
+        clocks: clocks.clone(),
+        took: Duration::from_secs(3),
+        time: outside,
+    };
+    let clock = ReferencedBoardClock::new(Ok(Arc::new(source)), Duration::from_secs(3600), |_| {})
+        .with_local_clocks(clocks.clone());
     assert_eq!(
         clock.reference(),
-        None,
-        "a reading in flight is not waited for"
+        Some(spelt(outside)),
+        "the request's own time is not added"
     );
-    assert!(started.elapsed() < Duration::from_millis(500));
-    assert_eq!(first.join().unwrap(), None, "abandoned at the read timeout");
-    let _ = release.send(());
 }
 
 #[test]

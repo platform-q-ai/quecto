@@ -12,8 +12,9 @@
 //!   end to show, and a warning is logged once.
 //!
 //! **How it is read.** A `HEAD` with `Cache-Control: no-cache`, whose
-//! `Date` plus any `Age` is the reference. One client is kept for the
-//! clock's life. Each reading runs on its own thread and is waited for at
+//! `Date` plus any `Age` is the reference, stamped when the answer came.
+//! One client is kept for the clock's life, built on the first reading's
+//! own thread. Each reading runs on its own thread and is waited for at
 //! most [`READ_TIMEOUT`], DNS included; a reading that has not answered by
 //! then is abandoned. The client honours the usual `HTTPS_PROXY` and
 //! `NO_PROXY` variables, and trusts the public web roots only, so a forge
@@ -25,11 +26,12 @@
 //! It is read again after [`REFRESH_EVERY`], or as soon as the two clocks
 //! disagree by more than [`SUSPEND_TOLERANCE`] (a suspend stops the
 //! monotonic clock, which would make the reference lag the real time). A
-//! failed reading stands as long, so an unreachable host costs one timeout
-//! per period. One reading runs at a time: a caller that finds one in
-//! flight has no reference rather than waiting for it.
+//! failed reading stands [`RETRY_FAILED_AFTER`], so an unreachable host
+//! costs one timeout that often. One reading runs at a time: a caller that
+//! finds one in flight is served the last reading if it merely aged out,
+//! and otherwise waits for the one in flight, at most the read timeout.
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError, mpsc};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError, mpsc};
 use std::time::{Duration, Instant, SystemTime};
 
 use reqwest::Url;
@@ -50,8 +52,10 @@ pub const KNOWN_FORGES: &[(&str, &str)] = &[
 ];
 /// The longest a reading of the reference may take, DNS included.
 pub const READ_TIMEOUT: Duration = Duration::from_secs(5);
-/// How long a reading (or a failure to read) stands.
+/// How long a reading stands.
 pub const REFRESH_EVERY: Duration = Duration::from_secs(10 * 60);
+/// How long a failure to read stands before it is tried again.
+pub const RETRY_FAILED_AFTER: Duration = Duration::from_secs(45);
 /// How far the wall and monotonic clocks may drift apart over a reading's
 /// life before it is read again.
 pub const SUSPEND_TOLERANCE: Duration = Duration::from_secs(5);
@@ -146,38 +150,52 @@ pub trait TimeReading: Send + Sync {
     fn read(&self) -> Result<SystemTime, String>;
 }
 
-/// The `Date` (plus `Age`) of a `HEAD` request to one URL.
+/// The `Date` (plus `Age`) of a `HEAD` request to one URL. Its client is
+/// built on the first reading's own thread (a blocking client runs a
+/// runtime of its own, which a caller's thread need not host) and kept.
 pub struct HttpDate {
     url: String,
-    client: Result<reqwest::blocking::Client, String>,
+    proxied: bool,
+    client: OnceLock<Result<reqwest::blocking::Client, String>>,
 }
 
 impl HttpDate {
     pub fn new(url: impl Into<String>) -> Self {
-        Self::built(url, reqwest::blocking::Client::builder())
+        Self {
+            url: url.into(),
+            proxied: true,
+            client: OnceLock::new(),
+        }
     }
 
     /// The same, never through a proxy: for a source on this machine.
     pub fn without_proxy(url: impl Into<String>) -> Self {
-        Self::built(url, reqwest::blocking::Client::builder().no_proxy())
+        Self {
+            proxied: false,
+            ..Self::new(url)
+        }
     }
 
-    fn built(url: impl Into<String>, builder: reqwest::blocking::ClientBuilder) -> Self {
-        let client = builder
-            .timeout(READ_TIMEOUT)
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|error| error.to_string());
-        Self {
-            url: url.into(),
-            client,
-        }
+    fn client(&self) -> Result<&reqwest::blocking::Client, String> {
+        let built = self.client.get_or_init(|| {
+            let builder = reqwest::blocking::Client::builder();
+            let builder = match self.proxied {
+                true => builder,
+                false => builder.no_proxy(),
+            };
+            builder
+                .timeout(READ_TIMEOUT)
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .map_err(|error| error.to_string())
+        });
+        built.as_ref().map_err(Clone::clone)
     }
 }
 
 impl TimeReading for HttpDate {
     fn read(&self) -> Result<SystemTime, String> {
-        let client = self.client.as_ref().map_err(Clone::clone)?;
+        let client = self.client()?;
         let response = client
             .head(&self.url)
             .header(reqwest::header::CACHE_CONTROL, "no-cache")
@@ -235,6 +253,19 @@ struct State {
     in_flight: bool,
 }
 
+/// Clears the in-flight mark when the reading ends, however it ends, and
+/// wakes the callers waiting for it.
+struct InFlight<'a>(&'a ReferencedBoardClock);
+
+impl Drop for InFlight<'_> {
+    fn drop(&mut self) {
+        let mut state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.in_flight = false;
+        drop(state);
+        self.0.read_done.notify_all();
+    }
+}
+
 /// The board clock with an outside reference: this machine's time, checked
 /// against a reading of an outside source kept fresh per process.
 pub struct ReferencedBoardClock {
@@ -244,6 +275,7 @@ pub struct ReferencedBoardClock {
     every: Duration,
     read_timeout: Duration,
     state: Mutex<State>,
+    read_done: Condvar,
     warned: AtomicBool,
     warn: Box<dyn Fn(&str) + Send + Sync>,
 }
@@ -277,6 +309,7 @@ impl ReferencedBoardClock {
             every,
             read_timeout: READ_TIMEOUT,
             state: Mutex::new(State::default()),
+            read_done: Condvar::new(),
             warned: AtomicBool::new(false),
             warn: Box::new(warn),
         }
@@ -300,9 +333,9 @@ impl ReferencedBoardClock {
         }
     }
 
-    /// The reading still standing: younger than the period, and taken with
-    /// the two local clocks still agreeing.
-    fn standing(&self, reading: &Reading) -> bool {
+    /// The monotonic and wall times since `reading` was taken, and whether
+    /// the two clocks still agree (no suspend between).
+    fn age(&self, reading: &Reading) -> (Duration, bool) {
         let monotonic = self
             .local
             .instant()
@@ -312,26 +345,56 @@ impl ReferencedBoardClock {
             .wall()
             .duration_since(reading.taken_wall)
             .unwrap_or(Duration::MAX);
-        let drift = wall.abs_diff(monotonic);
-        monotonic < self.every && drift <= SUSPEND_TOLERANCE
+        (monotonic, wall.abs_diff(monotonic) <= SUSPEND_TOLERANCE)
     }
 
-    /// The standing reading, or a fresh one taken now (outside the lock);
-    /// `None` while another caller's reading is in flight.
+    /// The reading still standing: younger than its period (a failure's
+    /// is shorter), and taken with the two local clocks still agreeing.
+    fn standing(&self, reading: &Reading) -> bool {
+        let (monotonic, agreeing) = self.age(reading);
+        let period = match reading.outside {
+            Ok(_) => self.every,
+            Err(_) => self.every.min(RETRY_FAILED_AFTER),
+        };
+        monotonic < period && agreeing
+    }
+
+    /// The standing reading, or a fresh one taken now (outside the lock).
+    /// While another caller's reading is in flight, a reading that merely
+    /// aged out (no suspend since) still serves; otherwise the caller waits
+    /// for the reading in flight, at most the read timeout.
     fn current(&self) -> Option<Reading> {
-        {
-            let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        loop {
             match (&state.last, state.in_flight) {
                 (Some(last), _) if self.standing(last) => return Some(last.clone()),
-                (_, true) => return None,
-                (_, false) => state.in_flight = true,
+                (Some(last), true) if last.outside.is_ok() && self.age(last).1 => {
+                    return Some(last.clone());
+                }
+                (_, true) => {
+                    let (waited, timeout) = self
+                        .read_done
+                        .wait_timeout_while(state, self.read_timeout, |state| state.in_flight)
+                        .unwrap_or_else(PoisonError::into_inner);
+                    state = waited;
+                    if timeout.timed_out() {
+                        return None;
+                    }
+                }
+                (_, false) => {
+                    state.in_flight = true;
+                    break;
+                }
             }
         }
-        let reading = self.read_now();
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        state.in_flight = false;
-        state.last = Some(reading.clone());
         drop(state);
+        let in_flight = InFlight(self);
+        let reading = self.read_now();
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .last = Some(reading.clone());
+        drop(in_flight);
         if let Err(why) = &reading.outside {
             self.warn_once(why);
         }
@@ -339,29 +402,33 @@ impl ReferencedBoardClock {
     }
 
     /// A reading taken now, waited for at most the read timeout
-    /// ([`READ_TIMEOUT`] unless set).
+    /// ([`READ_TIMEOUT`] unless set), and stamped when its answer came.
     fn read_now(&self) -> Reading {
-        debug_assert!(
-            !std::thread::current()
-                .name()
-                .is_some_and(|name| name.contains("tokio-runtime-worker")),
-            "the board clock blocks: call it off the async workers"
-        );
-        let (taken, taken_wall) = (self.local.instant(), self.local.wall());
         let outside = match &self.source {
             Err(why) => Err(why.clone()),
             Ok(source) => {
                 let source = Arc::clone(source);
                 let (sender, receiver) = mpsc::channel();
-                std::thread::spawn(move || {
-                    let _ = sender.send(source.read());
-                });
-                match receiver.recv_timeout(self.read_timeout) {
-                    Ok(read) => read,
-                    Err(_) => Err(format!("no answer within {:?}", self.read_timeout)),
+                let spawned = std::thread::Builder::new()
+                    .name("board-clock-reading".into())
+                    .spawn(move || {
+                        let _ = sender.send(source.read());
+                    });
+                match spawned {
+                    Err(error) => Err(format!("the reading could not start: {error}")),
+                    Ok(_) => match receiver.recv_timeout(self.read_timeout) {
+                        Ok(read) => read,
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
+                            Err(format!("no answer within {:?}", self.read_timeout))
+                        }
+                        Err(mpsc::RecvTimeoutError::Disconnected) => {
+                            Err("the reading failed before it answered".into())
+                        }
+                    },
                 }
             }
         };
+        let (taken, taken_wall) = (self.local.instant(), self.local.wall());
         let outside = outside.and_then(|time| {
             let offset = time
                 .duration_since(taken_wall)
