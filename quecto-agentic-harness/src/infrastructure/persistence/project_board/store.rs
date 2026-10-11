@@ -31,6 +31,7 @@ use super::summary::summary;
 use super::task_record::{decode, encode};
 use crate::application::project_board::ports::{
     BoardBootstrap, BoardHead, BoardSnapshot, BoardStoreError, BoardWrite, ProjectBoardStore,
+    SetAsideClear,
 };
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
@@ -362,39 +363,6 @@ impl GitBoardStore {
         }
     }
 
-    /// The committer of `commit`, exactly as recorded, fetching the board
-    /// first when this clone does not hold it yet.
-    ///
-    /// # Errors
-    /// The commit is not on the board, or git fails.
-    pub fn committed_by(&self, commit: &str) -> Result<Identity, BoardStoreError> {
-        let commit = object_id(commit)?;
-        let args = [
-            "log",
-            "-1",
-            "--no-show-signature",
-            "--format=%cn%x00%ce",
-            commit.as_str(),
-        ];
-        let bytes = match self.git.ok(&args, None) {
-            Ok(bytes) => bytes,
-            Err(GitError::Failed { .. }) => {
-                self.fetch()?;
-                self.git.ok(&args, None).map_err(unavailable)?
-            }
-            Err(error) => return Err(unavailable(error)),
-        };
-        let text = String::from_utf8_lossy(&bytes);
-        let (name, email) = text
-            .trim_end_matches('\n')
-            .split_once('\0')
-            .ok_or_else(|| BoardStoreError::Unavailable(format!("no committer in {commit}")))?;
-        Ok(Identity {
-            name: name.into(),
-            email: email.into(),
-        })
-    }
-
     /// The commit `expected` names: the board's head or one of its
     /// ancestors, fetching the board when this clone does not hold it yet
     /// (another client's head). Refused as invalid when it is any other
@@ -545,6 +513,27 @@ impl GitBoardStore {
         self.tree(&files)
     }
 
+    /// A commit of the README and `tasks` on `base`, as the store's
+    /// writer, pushed only if the board is still at `base`.
+    fn land(&self, base: &str, tasks: &str, message: &str) -> Result<BoardWrite, BoardStoreError> {
+        let readme = self.blob(README)?;
+        let root = BTreeMap::from([
+            (
+                "README.md".to_string(),
+                format!("{REGULAR_FILE} blob {readme}"),
+            ),
+            ("tasks".to_string(), format!("{TREE} tree {tasks}")),
+        ]);
+        let tree = self.tree(&root)?;
+        let args = ["commit-tree", tree.as_str(), "-p", base, "-m", message];
+        let commit = self.git.text(&args, None).map_err(unavailable)?;
+        match self.push(Some(base), &commit)? {
+            Pushed::Landed => Ok(BoardWrite::Written(BoardHead(commit))),
+            Pushed::Lost => Ok(BoardWrite::Lost),
+            Pushed::Refused(reason) => Ok(BoardWrite::Refused(reason)),
+        }
+    }
+
     /// Branches that would hide or shadow `quecto/board`, as `prefix` +
     /// name: `quecto` itself, any under `quecto/board/` (a branch cannot be
     /// both a file and a directory of refs), and any whose name matches
@@ -640,15 +629,6 @@ impl ProjectBoardStore for GitBoardStore {
                 file.path, file.reason
             )));
         }
-        let after: BTreeSet<&Slug> = board.tasks.keys().chain(ids.iter().copied()).collect();
-        let entries = 2 * after.len() + board.kept.len();
-        if entries > MAX_TASK_ENTRIES {
-            return Err(invalid(format!(
-                "the board would hold {} tasks and {} files set aside; it holds at most {MAX_TASKS} tasks",
-                after.len(),
-                board.kept.len()
-            )));
-        }
         let encoded = tasks
             .iter()
             .map(|task| {
@@ -660,50 +640,11 @@ impl ProjectBoardStore for GitBoardStore {
                 }
             })
             .collect::<Result<Vec<_>, _>>()?;
-        // A read takes at most `limits.board_bytes` of task files, so no write
-        // makes a board that cannot be read.
-        let replaced: BTreeSet<String> = ids
-            .iter()
-            .map(|id| format!("{}.json", id.as_str()))
-            .collect();
-        let carried = board
-            .read_bytes
-            .iter()
-            .filter(|(name, _)| !replaced.contains(*name));
-        let bytes = carried.map(|(_, size)| size).sum::<usize>()
-            + encoded.iter().map(|(_, bytes)| bytes.len()).sum::<usize>();
-        if bytes > self.limits.board_bytes {
-            return Err(invalid(format!(
-                "the board would hold {bytes} bytes of task files; a read takes at most {}",
-                self.limits.board_bytes
-            )));
-        }
-        let readme = self.blob(README)?;
-        let root = BTreeMap::from([
-            (
-                "README.md".to_string(),
-                format!("{REGULAR_FILE} blob {readme}"),
-            ),
-            (
-                "tasks".to_string(),
-                format!("{TREE} tree {}", self.tasks_tree(&board, &encoded)?),
-            ),
-        ]);
-        let tree = self.tree(&root)?;
-        let commit_args = [
-            "commit-tree",
-            tree.as_str(),
-            "-p",
-            base.as_str(),
-            "-m",
-            message,
-        ];
-        let commit = self.git.text(&commit_args, None).map_err(unavailable)?;
-        match self.push(Some(&base), &commit)? {
-            Pushed::Landed => Ok(BoardWrite::Written(BoardHead(commit))),
-            Pushed::Lost => Ok(BoardWrite::Lost),
-            Pushed::Refused(reason) => Ok(BoardWrite::Refused(reason)),
-        }
+        // A read takes at most so much, so no write makes a board that
+        // cannot be read.
+        board.within_bounds(&encoded, self.limits)?;
+        let tasks = self.tasks_tree(&board, &encoded)?;
+        self.land(&base, &tasks, message)
     }
 
     /// Creates the board with only its README, unless it exists. An
@@ -739,10 +680,24 @@ impl ProjectBoardStore for GitBoardStore {
         }
     }
 
+    fn clear_set_aside(
+        &self,
+        expected: &BoardHead,
+        clear: &SetAsideClear,
+        message: &str,
+    ) -> Result<BoardWrite, BoardStoreError> {
+        self.clear(expected, clear, message)
+    }
+
     fn writer(&self) -> Identity {
         self.git.identity().clone()
     }
 }
+
+#[path = "store_clear.rs"]
+mod clear;
+#[path = "store_committer.rs"]
+mod committer;
 
 #[cfg(test)]
 #[path = "store_tests.rs"]

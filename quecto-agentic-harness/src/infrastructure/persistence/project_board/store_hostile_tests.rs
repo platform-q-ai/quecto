@@ -600,5 +600,7 @@ fn a_write_past_the_task_bound_is_refused_before_anything_is_built() {
     );
 }
 
+#[path = "store_clear_tests.rs"]
+mod clear;
 #[path = "store_names_tests.rs"]
 mod names;

@@ -22,6 +22,39 @@ pub struct QuarantinedFile {
     pub path: String,
     pub id: Option<Slug>,
     pub reason: String,
+    /// The store's name for the file's contents (an object id): with
+    /// `path`, which file this is, since two files may show the same path.
+    pub object: String,
+}
+
+/// What a clear does with a name listed more than once. Each names every
+/// copy's object the caller saw (`seen`), so a copy it never saw is never
+/// dropped: a name whose copies are not exactly those is refused.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeepCopy {
+    /// The copy whose object is `keep` stays as it was; every other copy,
+    /// each of `seen`, goes. `keep` is one of `seen`.
+    Object {
+        keep: String,
+        seen: std::collections::BTreeSet<String>,
+    },
+    /// Every copy goes: exactly the copies whose objects these are.
+    Drop(std::collections::BTreeSet<String>),
+}
+
+/// A clear of files the board set aside, naming each as the caller saw it
+/// in the board's listing.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SetAsideClear {
+    /// The [`QuarantinedFile::path`] of the file to clear.
+    pub path: String,
+    /// Its [`QuarantinedFile::object`]: a file at that path with other
+    /// contents is never cleared in its place.
+    pub object: String,
+    /// For every name the board lists more than once, by path, which copy
+    /// stays: one clear resolves them all, since a board that lists a name
+    /// twice is one no remote that checks its objects takes.
+    pub repeated: std::collections::BTreeMap<String, KeepCopy>,
 }
 
 /// The board at its head: every readable task, and what was set aside.
@@ -92,6 +125,32 @@ pub trait ProjectBoardStore: Send + Sync {
         &self,
         expected: &BoardHead,
         tasks: &[Task],
+        message: &str,
+    ) -> Result<BoardWrite, BoardStoreError>;
+
+    /// Removes the file set aside that `clear` names (a
+    /// [`QuarantinedFile`] of the board at `expected`, by path and, when
+    /// two share a path, object) in one change, made by [`Self::writer`]
+    /// so the board records who did, only if the board is still at
+    /// `expected`. Any member may clear: the trust model is cooperative
+    /// (anyone who can push could push raw commits), and branch protection
+    /// or a server hook is the real control.
+    ///
+    /// While the board lists any name more than once, a clear resolves
+    /// every such name ([`SetAsideClear::repeated`]): the copy to keep, or
+    /// none. A file that is not set aside, a path two files share with no
+    /// object to tell them apart, a name listed more than once left
+    /// unresolved, or a copy to keep that is not one of a name's copies is
+    /// [`BoardWrite::Refused`]. A clear from a head the board moved past is
+    /// [`BoardWrite::Lost`], before anything else is judged.
+    ///
+    /// # Errors
+    /// A message that is not one short line, an object that is not an
+    /// object id, a board past its bounds, or the store's failure.
+    fn clear_set_aside(
+        &self,
+        expected: &BoardHead,
+        clear: &SetAsideClear,
         message: &str,
     ) -> Result<BoardWrite, BoardStoreError>;
 

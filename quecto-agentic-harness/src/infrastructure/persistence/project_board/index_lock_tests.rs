@@ -198,11 +198,13 @@ fn a_path_set_aside_twice_is_listed_twice() {
             path: "tasks/x.json".into(),
             id: Some(slug("x")),
             reason: "named more than once in the tree".into(),
+            object: "c".repeat(40),
         },
         QuarantinedFile {
             path: "tasks/x.json".into(),
             id: Some(slug("x")),
             reason: "named more than once in the tree".into(),
+            object: "d".repeat(40),
         },
     ];
     rebuild(&index, &snapshot).unwrap();
@@ -287,4 +289,15 @@ fn clearing_the_lock_place_never_removes_a_regular_file() {
     std::os::unix::fs::symlink(dir.path().join("elsewhere"), &lock).unwrap();
     index_file::clear_non_regular(&lock).unwrap();
     assert!(std::fs::symlink_metadata(&lock).is_err());
+}
+
+/// An object the index holds for a file set aside is an object id, or the
+/// index is corrupt.
+#[test]
+fn a_set_aside_object_that_is_no_object_id_is_corrupt() {
+    let (_dir, index) = index();
+    rebuild(&index, &board("a1")).unwrap();
+    tamper(&index, "UPDATE quarantined SET object = 'zz\u{1b}[2J';");
+    let read = index.ready();
+    assert!(matches!(read, Err(IndexError::Corrupt(_))), "{read:?}");
 }
