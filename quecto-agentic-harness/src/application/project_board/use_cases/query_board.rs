@@ -93,6 +93,7 @@ impl QueryBoard {
             .collect();
         tasks.sort_by(|left, right| left.fields().id.cmp(&right.fields().id));
         Ok(BoardListing {
+            head: crate::application::project_board::ports::BoardHead(String::new()),
             tasks,
             quarantined: board.quarantined,
         })

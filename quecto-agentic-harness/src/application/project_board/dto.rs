@@ -1,7 +1,7 @@
 //! What the project board's use cases answer and refuse.
 use std::fmt;
 
-use super::ports::{BoardClockError, BoardStoreError, QuarantinedFile};
+use super::ports::{BoardClockError, BoardHead, BoardStoreError, QuarantinedFile};
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::schema_error::SchemaError;
@@ -9,9 +9,12 @@ use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 
 /// Tasks a query found, by id, and every file the board set aside, so a
-/// listing never hides that part of the board could not be read.
+/// listing never hides that part of the board could not be read; both as
+/// the board stood at `head`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoardListing {
+    /// The head the listing was read at.
+    pub head: BoardHead,
     pub tasks: Vec<Task>,
     pub quarantined: Vec<QuarantinedFile>,
 }

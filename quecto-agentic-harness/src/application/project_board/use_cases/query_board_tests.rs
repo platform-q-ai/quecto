@@ -6,12 +6,18 @@ use crate::domain::project_board::entities::claim::{Claim, Identity};
 use crate::domain::project_board::entities::task::{Task, TaskFields};
 use crate::domain::project_board::services::transitions::move_task;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
+use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use std::sync::Arc;
 
 /// c (draft, child of a), b (ready, child of a, depends on a), a (ready),
 /// d (done, depends on a and b), e (ready, depends on d), f (claimed by Ada
 /// until 10:00), written out of order; g's file is quarantined.
 fn query() -> QueryBoard {
+    QueryBoard::new(Arc::new(seeded()))
+}
+
+/// The board [`query`] reads.
+fn seeded() -> MemoryBoardStore {
     let store = board();
     let task = |fields: TaskFields| {
         Task::new(TaskFields {
@@ -60,7 +66,7 @@ fn query() -> QueryBoard {
     let head = store.read().unwrap().head;
     store.write(&head, &tasks, "seed").unwrap();
     store.quarantine("g", "malformed");
-    QueryBoard::new(Arc::new(store))
+    store
 }
 
 fn ids(listing: BoardListing) -> Vec<String> {
@@ -163,4 +169,23 @@ fn ready_counts_an_archived_dependency_as_satisfied() {
         .map(|task| task.fields().id.as_str().to_owned())
         .collect();
     assert_eq!(ids, ["after-both", "after-cancelled", "after-finished"]);
+}
+
+/// Every listing names the head it was read at, so a caller knows which
+/// board it reflects.
+#[test]
+fn every_listing_names_the_head_it_was_read_at() {
+    let store = seeded();
+    let head = store.read().unwrap().head;
+    let query = QueryBoard::new(Arc::new(store));
+    let listings = [
+        query.ready().unwrap(),
+        query.takeable(&at("10:00:00")).unwrap(),
+        query.by_status(TaskStatus::Ready).unwrap(),
+        query.children(&slug("a")).unwrap(),
+        query.dependents(&slug("a")).unwrap(),
+    ];
+    for listing in listings {
+        assert_eq!(listing.head, head);
+    }
 }
