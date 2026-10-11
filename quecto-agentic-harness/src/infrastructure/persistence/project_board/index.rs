@@ -40,7 +40,8 @@ pub use index_file::{BUSY_TIMEOUT, INDEX_SCHEMA, MAX_VALUE_BYTES};
 pub enum IndexError {
     Store(BoardStoreError),
     /// No index, one of another layout or record schema, or a file that is
-    /// not one: refresh it.
+    /// not one: refresh it. Carries why (SQLite's own cause, when it gave
+    /// one), so an error that outlives the rebuild says what it was.
     NeedsRebuild(String),
     /// The index holds something that does not read back: discard it and
     /// refresh.

@@ -21,9 +21,11 @@
 //! waiting on a FIFO, and reads only a regular file. SQLite then opens the
 //! path again; something swapped in between those two opens (a FIFO, say)
 //! is not seen by the first. The directory is checked to be this user's
-//! and writable by no one else ([`directory`]), so only this user's own
-//! processes can swap it, and the window stays open: SQLite resolves links
-//! itself, so it cannot be handed the checked file.
+//! and writable by no one else ([`private`]), so within it only this
+//! user's own processes can swap the file. Whoever may write its parent
+//! (`.git/quecto`, which the swarm store shares) could still swap the whole
+//! directory between the check and SQLite's open. The window stays open:
+//! SQLite resolves links itself, so it cannot be handed the checked file.
 use super::index::IndexError;
 use super::task_record::{MAX_TASK_FILE_BYTES, SCHEMA_VERSION};
 use rusqlite::limits::Limit;
@@ -84,16 +86,41 @@ fn objects(connection: &Connection) -> rusqlite::Result<Vec<Object>> {
     rows.collect()
 }
 
-/// A failure on the reader's path: a value over the read cap is corrupt,
-/// and any other is a file SQLite cannot read as this index (not a
-/// database, another format, a planted side file), which a rebuild mends:
-/// it replaces the file and its side files under the writer lock. A
+/// A failure on the reader's path, by an explicit list. A value over the
+/// read cap is corrupt. A file SQLite cannot read as this index (not a
+/// database, damaged, another format or a plain `SQLITE_ERROR` such as
+/// "unsupported file format", unopenable, a read-only rollback or an I/O
+/// error from a planted side file) or a value of another type needs a
+/// rebuild, which replaces the file and its side files under the writer
+/// lock; it carries SQLite's own cause. Any other failure is SQLite's. A
 /// build's failures never come here ([`built`]).
 impl From<rusqlite::Error> for IndexError {
     fn from(error: rusqlite::Error) -> Self {
-        match error.sqlite_error_code() {
-            Some(ErrorCode::TooBig) => Self::Corrupt(format!("a value over the read cap: {error}")),
-            _ => Self::NeedsRebuild(error.to_string()),
+        let mistyped = matches!(
+            error,
+            rusqlite::Error::InvalidColumnType(..)
+                | rusqlite::Error::FromSqlConversionFailure(..)
+                | rusqlite::Error::IntegralValueOutOfRange(..)
+                | rusqlite::Error::Utf8Error(..)
+        );
+        match (error.sqlite_error_code(), mistyped) {
+            (Some(ErrorCode::TooBig), _) => {
+                Self::Corrupt(format!("a value over the read cap: {error}"))
+            }
+            (
+                Some(
+                    ErrorCode::NotADatabase
+                    | ErrorCode::DatabaseCorrupt
+                    | ErrorCode::Unknown
+                    | ErrorCode::CannotOpen
+                    | ErrorCode::ReadOnly
+                    | ErrorCode::SystemIoFailure
+                    | ErrorCode::SchemaChanged,
+                ),
+                _,
+            )
+            | (None, true) => Self::NeedsRebuild(error.to_string()),
+            _ => Self::Sqlite(error.to_string()),
         }
     }
 }
@@ -118,37 +145,64 @@ fn io(what: &str, path: &Path, error: &std::io::Error) -> IndexError {
 }
 
 /// The index's directory, private to this user: made (with any missing
-/// parent) private if it is missing, made private again if it is this
-/// user's but others may write to it, and refused if it is a link,
-/// anything but a directory, or another user's.
+/// parent) private if it is missing, then checked as [`private`] checks
+/// it.
 pub(super) fn directory(index: &Path) -> Result<PathBuf, IndexError> {
-    use std::os::unix::fs::{MetadataExt, PermissionsExt};
-    let dir = index
-        .parent()
-        .filter(|dir| !dir.as_os_str().is_empty())
-        .ok_or_else(|| IndexError::Io(format!("{} has no directory", index.display())))?;
+    let dir = parent(index)?;
     match DirBuilder::new().recursive(true).mode(0o700).create(dir) {
         Ok(()) => {}
         Err(error) => return Err(io("cannot create", dir, &error)),
     }
+    private(dir)?;
+    Ok(dir.to_path_buf())
+}
+
+fn parent(index: &Path) -> Result<&Path, IndexError> {
+    index
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .ok_or_else(|| IndexError::Io(format!("{} has no directory", index.display())))
+}
+
+/// Checks `dir` through one handle opened on it, never through a link: a
+/// directory of this user's that no one else may write to. One of this
+/// user's that others may write to is made private again through that same
+/// handle (`fchmod`); a link, anything but a directory, or another user's
+/// is refused. Its parent (`.git/quecto`) is shared with the swarm store
+/// and may be group-writable, so whoever may write there can remove or
+/// rename this directory, but never make a reader take theirs: a directory
+/// of theirs, or a link, is refused here.
+fn private(dir: &Path) -> Result<(), IndexError> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
     let refused = |why: &str| IndexError::Io(format!("{} {why}", dir.display()));
+    let opened = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(dir);
+    let handle = match opened {
+        Ok(handle) => handle,
+        Err(error) if matches!(error.raw_os_error(), Some(libc::ELOOP | libc::ENOTDIR)) => {
+            return Err(refused("is not a directory"));
+        }
+        Err(error) => return Err(io("cannot open", dir, &error)),
+    };
     // SAFETY: geteuid(2) takes nothing and cannot fail.
     let me = unsafe { libc::geteuid() };
-    let meta = std::fs::symlink_metadata(dir).map_err(|error| io("cannot inspect", dir, &error))?;
-    match (
-        meta.file_type().is_dir(),
-        meta.uid() == me,
-        meta.mode() & 0o022 == 0,
-    ) {
-        (true, true, true) => Ok(dir.to_path_buf()),
+    let shape = |handle: &File| -> Result<(bool, bool, bool), IndexError> {
+        let meta = handle
+            .metadata()
+            .map_err(|error| io("cannot inspect", dir, &error))?;
+        Ok((meta.is_dir(), meta.uid() == me, meta.mode() & 0o022 == 0))
+    };
+    match shape(&handle)? {
+        (true, true, true) => Ok(()),
         (true, true, false) => {
-            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+            handle
+                .set_permissions(std::fs::Permissions::from_mode(0o700))
                 .map_err(|error| io("cannot make private", dir, &error))?;
-            let again = std::fs::symlink_metadata(dir)
-                .map_err(|error| io("cannot inspect", dir, &error))?;
-            match again.file_type().is_dir() && again.uid() == me && again.mode() & 0o022 == 0 {
-                true => Ok(dir.to_path_buf()),
-                false => Err(refused("did not stay private")),
+            match shape(&handle)? {
+                (true, true, true) => Ok(()),
+                _ => Err(refused("did not stay private")),
             }
         }
         (true, false, _) => Err(refused("belongs to another user")),
@@ -160,6 +214,15 @@ pub(super) fn directory(index: &Path) -> Result<PathBuf, IndexError> {
 /// `immutable` and never through a link, with values capped at
 /// [`MAX_VALUE_BYTES`].
 pub(super) fn reader(path: &Path) -> Result<Connection, IndexError> {
+    // The directory first, as writers check it: no index without one.
+    let dir = parent(path)?;
+    match std::fs::symlink_metadata(dir) {
+        Ok(_) => private(dir)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(IndexError::NeedsRebuild("no index directory".into()));
+        }
+        Err(error) => return Err(io("cannot inspect", dir, &error)),
+    }
     // Never through a link, and never waiting on a FIFO.
     let opened = OpenOptions::new()
         .read(true)
@@ -345,9 +408,15 @@ fn remove_side_files(target: &Path) -> Result<(), IndexError> {
     Ok(())
 }
 
-/// Removes what is at `path` unless it is a regular file.
+/// Removes what is at `path` unless it is a regular file: a lock file
+/// another writer made there since this one looked stays.
 pub(super) fn clear_non_regular(path: &Path) -> Result<(), IndexError> {
-    remove_at(path)
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_file() => Ok(()),
+        Ok(_) => remove_at(path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(io("cannot inspect", path, &error)),
+    }
 }
 
 /// Removes whatever is at `path`, never following a link: a directory
