@@ -62,7 +62,7 @@ pub enum ErrorCode {
     ClockUnreadable,
     /// `task`.
     SetAside,
-    /// `path`.
+    /// `path`, `object`.
     SetAsideFile,
     /// `task`.
     UnknownReference,
@@ -384,7 +384,17 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
             (C::ClockUnreadable, fields([("read", shown_json(read))]))
         }
         E::Quarantined(id) => (C::SetAside, fields([("task", slug_json(id))])),
-        E::SetAsideFile(path) => (C::SetAsideFile, fields([("path", shown_json(path))])),
+        E::SetAsideFile { path, object } => {
+            assert!(
+                shown_path(path),
+                "a store shows every path it sets aside sanitised: {path:?}"
+            );
+            // Raw, as a listing shows it: a clear names the file exactly.
+            (
+                C::SetAsideFile,
+                fields([("path", json!(path)), ("object", json!(object))]),
+            )
+        }
         E::UnknownReference(id) => (C::UnknownReference, fields([("task", slug_json(id))])),
         E::ClosesCycle { id, by } => (
             C::ClosesCycle,

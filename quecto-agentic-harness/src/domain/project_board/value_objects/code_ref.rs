@@ -6,8 +6,8 @@
 //! of git's own refs. That list is a denylist by nature, since git defines
 //! the names: its boundary is the names git itself writes in `$GIT_DIR`
 //! (`HEAD`-like root refs, `refs/` and its siblings, worktree and remote
-//! namespaces). A name git adds later is caught by the rules' shape
-//! (`*_HEAD`) or added here.
+//! namespaces), plus the hosts' ref namespaces (`pull/`). A name git adds
+//! later is caught by the rules' shape (`*_HEAD`) or added here.
 use super::schema_error::SchemaError;
 
 /// The longest branch name.
@@ -139,14 +139,16 @@ fn git_head(lower: &str) -> bool {
 /// lowercase: `.lock` too, as a case-insensitive file system would.
 fn ours(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
-    let root = lower.split('/').next().unwrap_or(&lower);
+    // A root reads as a namespace only with a `/` after it: a bare
+    // `notes` or `bisect` resolves as a branch.
+    let root = lower.split_once('/').map(|(root, _)| root);
     let unlocked = lower
         .split('/')
         .all(|component| !component.ends_with(".lock"));
     lower != "@"
         && !RESERVED.contains(&lower.as_str())
         && !git_head(&lower)
-        && !REF_ROOTS.contains(&root)
+        && root.is_none_or(|root| !REF_ROOTS.contains(&root))
         && unlocked
         && !full_hex(&lower)
 }

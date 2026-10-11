@@ -304,8 +304,10 @@ fn the_verdict_is_the_reviewers_call() {
 /// clock, and taken within the slack.
 #[test]
 fn a_first_round_on_a_change_stamped_ahead_is_refused() {
+    // Linked in time, last changed by a clock running ahead: the check
+    // reads its last change.
     let mut fields = change(1, Some(7)).into_fields();
-    fields.created = at("10:30:00");
+    fields.created = at("10:00:00");
     fields.updated = at("10:30:00");
     let fast = Change::new(fields).unwrap();
     let first_round = |latest: &str| {
@@ -329,7 +331,7 @@ fn a_first_round_on_a_change_stamped_ahead_is_refused() {
         })
     );
     let taken = first_round("10:29:30").unwrap();
-    assert_eq!(taken.fields().created, at("10:30:00"));
+    assert_eq!(taken.fields().created, at("10:00:00"));
 }
 
 /// A review holds at most its most rounds: the next is refused.

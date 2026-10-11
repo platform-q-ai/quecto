@@ -11,6 +11,7 @@ use super::super::value_objects::schema_error::{SchemaError, line};
 use super::super::value_objects::slug::Slug;
 use super::super::value_objects::timestamp::Timestamp;
 use super::super::value_objects::vocabulary::{ReviewVerdict, Severity};
+use super::change::MAX_CHANGE_NUMBER;
 use super::claim::Identity;
 use super::task_parts::{MAX_FINDING_CHARS, location};
 
@@ -105,6 +106,15 @@ fn validate(review: &ReviewFields) -> Result<(), SchemaError> {
     match review.created <= review.updated {
         true => {}
         false => return Err(SchemaError::new("updated", "must not be before created")),
+    }
+    match review.change {
+        1..=MAX_CHANGE_NUMBER => {}
+        _ => {
+            return Err(SchemaError::new(
+                "change",
+                format!("must be a change number from 1 to {MAX_CHANGE_NUMBER}"),
+            ));
+        }
     }
     match review.rounds.len() {
         1..=MAX_ROUNDS => {}

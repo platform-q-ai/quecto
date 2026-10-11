@@ -65,7 +65,6 @@ fn a_branch_name_is_not_one_git_reads_as_something_else() {
         "ORIG_HEAD",
         "MERGE_HEAD",
         "refs/heads/x",
-        "refs",
         "heads/x",
         "tags/v1",
         "remotes/origin/main",
@@ -137,6 +136,13 @@ fn a_branch_name_is_not_one_git_reads_as_something_else() {
         "pulls/x",
         "feat/pull",
         "worktreex/y",
+        "refs",
+        "notes",
+        "prefetch",
+        "replace",
+        "bisect",
+        "rewritten",
+        "pull",
     ] {
         assert!(BranchName::parse(name).is_ok(), "{name}");
     }

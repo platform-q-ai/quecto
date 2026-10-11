@@ -63,6 +63,8 @@ fn fields_that_break_a_rule_build_no_review() {
         ("rounds/0/at", Box::new(|r| r.rounds[0].at = at("09:00:00"))),
         ("rounds/1/at", Box::new(|r| r.rounds[1].at = at("09:30:00"))),
         ("rounds/0/at", Box::new(|r| r.created = at("09:05:00"))),
+        ("change", Box::new(|r| r.change = 0)),
+        ("change", Box::new(|r| r.change = 1000)),
         ("updated", Box::new(|r| r.updated = at("09:25:00"))),
         (
             "rounds/0/findings/0/location",

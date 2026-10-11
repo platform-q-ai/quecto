@@ -13,7 +13,9 @@
 //! also gives `link` everything linked on the board ([`Linked`]): every
 //! task's changes and every task's pull requests linked the old way, so a
 //! pull request is linked once whichever way; `add_pr` likewise takes
-//! everything linked on the board ([`Linked`]).
+//! everything linked on the board ([`Linked`]). M4's `link` use case must
+//! fail closed like `AddPr` while a kept file is set aside: what that file
+//! holds is unknown.
 //!
 //! A pull request is linked to one task on the board while a change links
 //! it (merged ones stay linked); unlinking the change frees it. A branch,
