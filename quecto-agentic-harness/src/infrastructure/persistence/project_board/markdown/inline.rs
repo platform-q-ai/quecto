@@ -6,6 +6,7 @@
 //! renderer adds the only ones a file holds). Matching uses the `regex`
 //! crate alone, which never backtracks.
 use super::MarkdownError;
+use super::chars::seen;
 use regex::Regex;
 use std::sync::LazyLock;
 
@@ -23,9 +24,14 @@ pub fn starts_with_link(text: &str) -> bool {
     LINK.find(text).is_some_and(|link| link.start() == 0)
 }
 
-/// `text` with every closed code span replaced by `x`, so what is left is
-/// what markdown reads as markup. A code span left open, or a backtick a
-/// backslash escapes (markdown opens no span there), is refused.
+/// What a closed code span holding nothing a reader sees stands for in
+/// [`outside_code`]: a character that is not itself seen.
+const BLANK_SPAN: char = '\u{7f}';
+
+/// `text` with every closed code span replaced by `x` (or by
+/// [`BLANK_SPAN`] when it shows nothing), so what is left is what markdown
+/// reads as markup. A code span left open, or a backtick a backslash
+/// escapes (markdown opens no span there), is refused.
 fn outside_code(text: &str, at: usize) -> Result<String, MarkdownError> {
     let mut outside = String::new();
     let mut rest = text;
@@ -44,7 +50,10 @@ fn outside_code(text: &str, at: usize) -> Result<String, MarkdownError> {
             !before && !beyond
         });
         let close = close.ok_or(MarkdownError::UnbalancedCode { line: at })?;
-        outside.push('x');
+        outside.push(match after[..close.0].chars().any(seen) {
+            true => 'x',
+            false => BLANK_SPAN,
+        });
         rest = &after[close.0 + run..];
     }
     outside.push_str(rest);
@@ -69,6 +78,11 @@ pub fn check_inline(text: &str, at: usize) -> Result<(), MarkdownError> {
         .windows(2)
         .any(|pair| pair[0] == b'\\' && pair[1].is_ascii_punctuation())
         || outside.ends_with('\\');
+    // A link's text shows something, with no space at its edges.
+    let shown = LINK.find_iter(&outside).all(|link| {
+        let text = &link.as_str()[1..link.as_str().find("](").unwrap_or(1)];
+        text.trim() == text && text.chars().any(seen)
+    });
     let unlinked = LINK.replace_all(&outside, "x");
     let lower = unlinked.to_ascii_lowercase();
     let bare = ["](", "][", "[[", "http://", "https://", "www."]
@@ -79,7 +93,7 @@ pub fn check_inline(text: &str, at: usize) -> Result<(), MarkdownError> {
         () if REFERENCE.is_match(&outside) => Err(MarkdownError::CharacterReference { line: at }),
         () if math => Err(MarkdownError::Math { line: at }),
         () if outside.contains("![") => Err(MarkdownError::Image { line: at }),
-        () if bare => Err(MarkdownError::Link { line: at }),
+        () if bare || !shown => Err(MarkdownError::Link { line: at }),
         () if escaped => Err(MarkdownError::Escape { line: at }),
         () => Ok(()),
     }

@@ -289,6 +289,32 @@ fn text_bytes(document: &Document) -> usize {
     document.title.len() + fields.sum::<usize>() + sections.sum::<usize>()
 }
 
+/// The lines `document`'s file has, counted before anything is rendered
+/// (a text holding a newline is refused as it is rendered).
+fn file_lines(document: &Document) -> usize {
+    let fields = match document.fields.len() {
+        0 => 0,
+        rows => 3 + rows,
+    };
+    let sections = document.sections.iter().map(|section| {
+        2 + match &section.body {
+            Body::Table(rows) => 2 + rows.len(),
+            Body::Prose(blocks) => {
+                let between = blocks.len().saturating_sub(1);
+                between
+                    + blocks
+                        .iter()
+                        .map(|block| match block {
+                            Block::Paragraph(texts) | Block::List(texts) => texts.len(),
+                            Block::Code { lines, .. } => 2 + lines.len(),
+                        })
+                        .sum::<usize>()
+            }
+        }
+    });
+    2 + fields + sections.sum::<usize>()
+}
+
 /// A cell as a row holds it.
 fn cell(value: &str, kind: CellKind, at: usize) -> Result<String, MarkdownError> {
     let refused = |why| Err(MarkdownError::Cell { line: at, why });
@@ -323,6 +349,13 @@ pub fn render(document: &Document, shape: &Shape<'_>) -> Result<String, Markdown
                 most: limits.file_bytes,
             });
         }
+    }
+    let counted = file_lines(document);
+    if counted > limits.lines {
+        return Err(MarkdownError::TooManyLines {
+            lines: counted,
+            most: limits.lines,
+        });
     }
     let mut lines = vec![
         format!("<!-- quecto-{} schema={} -->", shape.kind, document.schema),
@@ -365,6 +398,11 @@ pub fn render(document: &Document, shape: &Shape<'_>) -> Result<String, Markdown
         }
     }
     within(&lines, limits)?;
+    debug_assert_eq!(
+        lines.len(),
+        counted,
+        "the lines counted are the lines written"
+    );
     Ok(lines.join("\n") + "\n")
 }
 

@@ -10,6 +10,10 @@ use unicode_normalization::is_nfc;
 static SHOWN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[\p{L}\p{M}\p{N}\p{P}\p{S}]$").expect("a valid class"));
 static MARK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\p{M}$").expect("a valid class"));
+/// What a reader sees as something: letters, numbers, punctuation and
+/// symbols (a mark alone, or a space, is nothing to see).
+static SEEN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[\p{L}\p{N}\p{P}\p{S}]$").expect("a valid class"));
 /// Code points shown as nothing: refused but for an emoji's joiner and
 /// presentation selector.
 static IGNORABLE: LazyLock<Regex> =
@@ -20,6 +24,18 @@ static EMOJI: LazyLock<Regex> =
 /// The most combining marks one base carries.
 pub const MOST_MARKS: usize = 4;
 const JOINER: char = '\u{200d}';
+/// Symbols drawn as nothing: the braille blank and the null notehead.
+/// (The Hangul fillers U+115F, U+1160, U+3164 and U+FFA0 are default
+/// ignorable, refused as such.)
+const BLANK: [char; 2] = ['\u{2800}', '\u{1d159}'];
+/// What a keycap is made on: `0`-`9`, `#` and `*`.
+const KEYCAP_BASES: &str = "0123456789#*";
+const KEYCAP: char = '\u{20e3}';
+
+/// Whether `c` is drawn as something a reader sees.
+pub fn seen(c: char) -> bool {
+    is(&SEEN, c) && !BLANK.contains(&c)
+}
 
 fn is(class: &Regex, c: char) -> bool {
     class.is_match(c.encode_utf8(&mut [0; 4]))
@@ -47,12 +63,17 @@ fn ends_an_emoji(chars: &[char]) -> bool {
 
 /// Whether `chars[at]`, an ignorable code point, is one an emoji sequence
 /// writes: a joiner between an emoji (as [`ends_an_emoji`]) and an emoji,
-/// or one presentation selector straight after an emoji base.
+/// one presentation selector straight after an emoji base, or FE0F in a
+/// keycap (`0`-`9`, `#` or `*`, FE0F, U+20E3). A subdivision flag needs
+/// tag characters, which are refused.
 fn in_emoji(chars: &[char], at: usize) -> bool {
     let before = &chars[..at];
+    let after = chars.get(at + 1).copied();
+    let keycap = before.last().is_some_and(|c| KEYCAP_BASES.contains(*c)) && after == Some(KEYCAP);
     match chars[at] {
-        JOINER => ends_an_emoji(before) && chars.get(at + 1).is_some_and(|c| is(&EMOJI, *c)),
-        '\u{fe0e}' | '\u{fe0f}' => before.last().is_some_and(|c| is(&EMOJI, *c)),
+        JOINER => ends_an_emoji(before) && after.is_some_and(|c| is(&EMOJI, c)),
+        '\u{fe0e}' | '\u{fe0f}' if before.last().is_some_and(|c| is(&EMOJI, *c)) => true,
+        '\u{fe0f}' => keycap,
         _ => false,
     }
 }
@@ -80,7 +101,7 @@ pub fn check_line(line: &str, at: usize) -> Result<(), MarkdownError> {
                 return Err(MarkdownError::Invisible { line: at });
             }
             c if is(&IGNORABLE, c) => {}
-            '\u{2800}' => return Err(MarkdownError::Invisible { line: at }),
+            c if BLANK.contains(&c) => return Err(MarkdownError::Invisible { line: at }),
             c if !is(&SHOWN, c) => return Err(MarkdownError::Invisible { line: at }),
             _ if marks > MOST_MARKS => return Err(MarkdownError::Marks { line: at }),
             _ => {}

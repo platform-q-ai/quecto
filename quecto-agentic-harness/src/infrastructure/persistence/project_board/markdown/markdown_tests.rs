@@ -147,18 +147,34 @@ fn main() {
 /// exactly the outline `document` has, block by block: the marker, one H1,
 /// the field table, then per section one H2 and its paragraphs (of as many
 /// lines), one-level `- ` lists (of as many items, nothing but inline text
-/// in one), fenced code (of as many lines) and tables (as many rows, each
-/// as wide as the header). No HTML, math, image, footnote, quote, rule,
+/// in one), fenced code (of as many lines) and tables (as many rows, under
+/// a header as wide as the shape's columns; a reader pads or cuts each
+/// row to the header, so a row's own width is the renderer's to keep). No HTML, math, image, footnote, quote, rule,
 /// hard break, ordered or nested list, or other link than an inline https
 /// one; and every text it decodes keeps the character rules.
 pub(super) fn outline(file: &str, document: &Document) -> Result<(), String> {
+    // A run may end before inline markup with a space: the characters are
+    // what is checked here.
+    let checked = |text: &str| {
+        text.split('\n')
+            .map(|line| line.trim_end_matches(' '))
+            .try_for_each(|line| {
+                chars::check_line(line, 0).map_err(|error| format!("{line:?}: {error:?}"))
+            })
+    };
     let mut top: Vec<String> = vec![];
     // Open tags, outermost first; and the counts of the top-level block.
     let mut open: Vec<&'static str> = vec![];
     let (mut count, mut cells, mut code) = (0usize, 0usize, String::new());
     // The header's width, and whether any row is of another.
     let (mut width, mut ragged) = (None, false);
+    // Text a reader splits (at a `*`, say) is checked as the run it is.
+    let mut run = String::new();
     for event in Parser::new_ext(file, Options::all()) {
+        match &event {
+            Event::Text(_) => {}
+            _ => checked(&std::mem::take(&mut run))?,
+        }
         match &event {
             Event::Start(tag) => {
                 let kind = match tag {
@@ -222,21 +238,19 @@ pub(super) fn outline(file: &str, document: &Document) -> Result<(), String> {
                     });
                 }
             }
-            Event::Text(text) | Event::Code(text) => {
+            Event::Text(text) => {
                 if open.first() == Some(&"code") {
                     code.push_str(text);
                 }
-                // A fragment may end before inline markup with a space: the
-                // characters are what is checked here.
-                for line in text.split('\n').map(|line| line.trim_end_matches(' ')) {
-                    chars::check_line(line, 0).map_err(|error| format!("{line:?}: {error:?}"))?;
-                }
+                run.push_str(text);
             }
+            Event::Code(text) => checked(text)?,
             Event::Html(_) if top.is_empty() => {}
             Event::SoftBreak if open == ["paragraph"] => count += 1,
             other => return Err(format!("{other:?} in {open:?}")),
         }
     }
+    checked(&run)?;
     let mut expected = vec!["marker".to_string(), "h1".to_string()];
     if !document.fields.is_empty() {
         expected.push(format!("table:2x{}", document.fields.len()));
@@ -265,6 +279,29 @@ pub(super) fn outline(file: &str, document: &Document) -> Result<(), String> {
     match top == expected {
         true => Ok(()),
         false => Err(format!("{top:?}, not {expected:?}")),
+    }
+}
+
+/// The oracle tells apart what the codec must never write: each file
+/// below is the example with one block changed as a reader would see it.
+#[test]
+fn the_oracle_refuses_a_file_outlined_otherwise() {
+    #[rustfmt::skip]
+    let cases = [
+        ("a loose list", "- read\n- write", "- read\n\n- write"),
+        ("a block in an item", "- read\n", "- read\n\n  more\n"),
+        ("a nested list", "- read\n", "- read\n  - deeper\n"),
+        ("a paragraph line lost", "\\# not a heading\n", ""),
+        ("a paragraph line gained", "1\\. not a list\n", "1\\. not a list\nmore\n"),
+        ("a code line gained", "}\n```", "}\nx\n```"),
+        ("a table row gained", "| path `C:\\x` | open |\n", "| path `C:\\x` | open |\n| x | y |\n"),
+        ("a header of another width", "| Item | State |\n|---|---|", "| Item | State | More |\n|---|---|---|"),
+        ("an ordered list", "- Every op", "1. Every op"),
+    ];
+    for (name, from, to) in cases {
+        assert!(EXAMPLE.contains(from), "{name}");
+        let file = EXAMPLE.replacen(from, to, 1);
+        assert!(outline(&file, &example()).is_err(), "{name}: {file}");
     }
 }
 

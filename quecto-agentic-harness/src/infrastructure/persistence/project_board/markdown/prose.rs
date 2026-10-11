@@ -11,15 +11,17 @@ use super::{Block, MarkdownError};
 /// needs none: a line of text closes every code span it opens, so three
 /// backticks there are a span, never a fence.
 pub const BLOCK_STARTS: &str = "#|>=-+*_:[<\\~$";
-/// The longest language a fence names.
-const MOST_LANGUAGE: usize = 20;
+/// The languages a fence may name: plain highlighters, each of which a
+/// reader (GitHub's included) shows as code. Others (`math`, `mermaid`,
+/// `geojson`, `topojson`, `stl`) are drawn as something else.
+const LANGUAGES: &[&str] = &[
+    "text", "sh", "bash", "console", "rust", "toml", "json", "yaml", "diff", "python", "js", "ts",
+    "kotlin", "java", "go", "sql", "html", "css", "markdown", "c", "cpp",
+];
 
-/// A fence's language: `a-z`, `0-9`, `+` and `-`, at most twenty.
+/// A fence's language: one of [`LANGUAGES`].
 pub fn language(name: &str) -> bool {
-    (1..=MOST_LANGUAGE).contains(&name.len())
-        && name
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'+' || b == b'-')
+    LANGUAGES.contains(&name)
 }
 
 /// The digits an ordered list's marker starts with, and the `.` or `)`
@@ -111,11 +113,12 @@ pub fn render(
                 let fence = |why| MarkdownError::Fence { line: at, why };
                 match name.as_deref().is_none_or(language) {
                     true => lines.push(format!("```{}", name.as_deref().unwrap_or(""))),
-                    false => return Err(fence("a language of a-z, 0-9, + and -, at most twenty")),
+                    false => return Err(fence("a language from the list of plain highlighters")),
                 }
                 for line in code {
-                    // A reader closes a fence on up to three spaces of
-                    // indentation, then the fence or a longer one.
+                    // A reader closes the fence on a line of three or more
+                    // backticks after up to three spaces; any line that
+                    // starts with three, after any spaces, is refused.
                     match line.trim_start_matches(' ').starts_with("```") {
                         true => {
                             return Err(MarkdownError::Fence {
