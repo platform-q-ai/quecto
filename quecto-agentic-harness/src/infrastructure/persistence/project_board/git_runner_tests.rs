@@ -367,3 +367,76 @@ fn a_secret_straddling_a_cap_is_redacted_whole() {
     assert_eq!(shown_name(b"sk-abcdefgh.json"), "sk-abcdefgh.json");
     assert_eq!(shown_name(b"token=x.json"), "token=x.json");
 }
+
+/// Set for the test binary run as the parent that is killed: the
+/// repository and the `PATH` its git runs with.
+const KILLED_PARENT: [&str; 2] = [
+    "QUECTO_TEST_KILLED_PARENT_REPO",
+    "QUECTO_TEST_KILLED_PARENT_PATH",
+];
+
+/// As the parent the next test kills: git through the runner, hanging.
+#[test]
+fn a_parent_that_runs_a_hanging_git() {
+    let (Some(repo), Some(path)) = (
+        std::env::var_os(KILLED_PARENT[0]),
+        std::env::var_os(KILLED_PARENT[1]),
+    ) else {
+        return;
+    };
+    let env = GitEnvironment::allowlisted([("PATH".into(), path)]);
+    let git = Git::new(Path::new(&repo), env, person("Ada")).unwrap();
+    let _ = git.network(&["fetch"]);
+}
+
+/// Whether process `pid` is gone: no such process, or a zombie no one
+/// has reaped yet.
+fn gone(pid: &str) -> bool {
+    std::fs::read_to_string(format!("/proc/{pid}/stat")).map_or(true, |stat| {
+        stat.rsplit_once(") ")
+            .is_some_and(|(_, rest)| rest.starts_with('Z'))
+    })
+}
+
+/// When quecto is killed outright (a relay's timeout, say), the git it
+/// was running dies with it, its own session notwithstanding.
+#[test]
+fn a_git_ends_when_the_quecto_running_it_is_killed() {
+    let repos = Repos::new();
+    let pid_file = repos.dir.path().join("git-pid");
+    let script = format!(
+        "#!/bin/sh\necho $$ > '{}'\nexec sleep 60\n",
+        pid_file.display()
+    );
+    drop(shim(&repos, &script, &[]));
+    let mut path = repos.dir.path().join("bin").into_os_string();
+    path.push(":");
+    path.push(std::env::var_os("PATH").unwrap());
+    let name = "infrastructure::persistence::project_board::store::tests::runner::a_parent_that_runs_a_hanging_git";
+    let mut parent = Command::new(std::env::current_exe().unwrap())
+        .args([name, "--exact", "--test-threads=1"])
+        .env(KILLED_PARENT[0], &repos.alice)
+        .env(KILLED_PARENT[1], &path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let pid = loop {
+        match std::fs::read_to_string(&pid_file).map(|pid| pid.trim().to_string()) {
+            Ok(pid) if !pid.is_empty() => break pid,
+            _ if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            _ => panic!("git never started"),
+        }
+    };
+    parent.kill().unwrap();
+    parent.wait().unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !gone(&pid) && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(gone(&pid), "git {pid} outlived the quecto that ran it");
+}

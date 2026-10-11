@@ -228,3 +228,72 @@ fn a_github_remote_names_its_repository_without_its_user_and_any_other_host_none
         assert_eq!(github_repository(remote, None), None, "{remote}");
     }
 }
+
+/// Set for the test binary run as the parent that is killed: the `PATH`
+/// its gh runs with.
+const KILLED_PARENT: &str = "QUECTO_TEST_KILLED_PARENT_GH_PATH";
+
+/// As the parent the next test kills: gh through the runner, hanging.
+#[test]
+fn a_parent_that_runs_a_hanging_gh() {
+    let Some(path) = std::env::var_os(KILLED_PARENT) else {
+        return;
+    };
+    let vars = [("PATH".into(), path), ("GH_TOKEN".into(), "token".into())];
+    let host = GhPullRequestStates::new("github.com/platform-q-ai/quecto", vars).unwrap();
+    let _ = host.state(1);
+}
+
+/// When quecto is killed outright, the gh it was running dies with it,
+/// its own session notwithstanding.
+#[test]
+fn a_gh_ends_when_the_quecto_running_it_is_killed() {
+    let dir = tempfile::tempdir().unwrap();
+    let bin = dir.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let pid_file = dir.path().join("gh-pid");
+    let gh = bin.join("gh");
+    std::fs::write(
+        &gh,
+        format!(
+            "#!/bin/sh\necho $$ > '{}'\nexec sleep 60\n",
+            pid_file.display()
+        ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut path = bin.into_os_string();
+    path.push(":");
+    path.push(std::env::var_os("PATH").unwrap());
+    let name = "infrastructure::persistence::project_board::gh_pull_requests::tests::a_parent_that_runs_a_hanging_gh";
+    let mut parent = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([name, "--exact", "--test-threads=1"])
+        .env(KILLED_PARENT, &path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let pid = loop {
+        match std::fs::read_to_string(&pid_file).map(|pid| pid.trim().to_string()) {
+            Ok(pid) if !pid.is_empty() => break pid,
+            _ if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
+            _ => panic!("gh never started"),
+        }
+    };
+    parent.kill().unwrap();
+    parent.wait().unwrap();
+    let gone = || {
+        std::fs::read_to_string(format!("/proc/{pid}/stat")).map_or(true, |stat| {
+            stat.rsplit_once(") ")
+                .is_some_and(|(_, rest)| rest.starts_with('Z'))
+        })
+    };
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !gone() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(gone(), "gh {pid} outlived the quecto that ran it");
+}
