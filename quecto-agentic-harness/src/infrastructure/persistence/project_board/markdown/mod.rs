@@ -399,19 +399,15 @@ fn cell(value: &str, kind: CellKind, at: usize) -> Result<String, MarkdownError>
 }
 
 /// The file `document` is, refused when it holds anything a file must not.
-/// What is written reads back as `document`.
+/// What is written reads back as `document`, or is refused.
 ///
 /// # Errors
 /// What in the shape or document is refused, and where its file would
-/// hold it.
+/// hold it; `NotCanonical` for a file that would not read back as it.
 pub fn render(document: &Document, shape: &Shape<'_>) -> Result<String, MarkdownError> {
-    let file = write(document, shape)?;
-    debug_assert_eq!(
-        parse(file.as_bytes(), shape).as_ref(),
-        Ok(document),
-        "a written file reads back as its document"
-    );
-    Ok(file)
+    // A real check, release builds included: a file that would not read
+    // back as its document is never handed on to be stored.
+    read_back(write(document, shape)?, document, shape)
 }
 
 /// `file`, written from `document`, if it reads back as `document`.
@@ -423,8 +419,10 @@ fn read_back(
     document: &Document,
     shape: &Shape<'_>,
 ) -> Result<String, MarkdownError> {
-    let _ = (document, shape);
-    Ok(file)
+    match parse(file.as_bytes(), shape) {
+        Ok(read) if read == *document => Ok(file),
+        _ => Err(MarkdownError::NotCanonical),
+    }
 }
 
 /// [`render`] without the read back, which [`parse`] compares against.
