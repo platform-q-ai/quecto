@@ -16,13 +16,13 @@ use crate::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStat
 /// requests and items' progress are made by the board's later changes,
 /// so none can be supplied here.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NewTask {
+pub struct NewBoardTask {
     pub id: Slug,
     pub title: String,
     pub kind: TaskKind,
     /// Markdown.
     pub description: String,
-    pub status: NewTaskStatus,
+    pub status: NewBoardTaskStatus,
     pub parent: Option<Slug>,
     pub depends_on: Vec<Slug>,
     pub plan: Vec<PlanStep>,
@@ -31,16 +31,16 @@ pub struct NewTask {
 
 /// The statuses a task is created in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NewTaskStatus {
+pub enum NewBoardTaskStatus {
     Draft,
     Ready,
 }
 
-impl From<NewTaskStatus> for TaskStatus {
-    fn from(status: NewTaskStatus) -> Self {
+impl From<NewBoardTaskStatus> for TaskStatus {
+    fn from(status: NewBoardTaskStatus) -> Self {
         match status {
-            NewTaskStatus::Draft => Self::Draft,
-            NewTaskStatus::Ready => Self::Ready,
+            NewBoardTaskStatus::Draft => Self::Draft,
+            NewBoardTaskStatus::Ready => Self::Ready,
         }
     }
 }

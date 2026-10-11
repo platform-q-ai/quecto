@@ -2,7 +2,7 @@
 //! with clients, and new tasks' fields.
 use std::sync::{Arc, Mutex};
 
-use crate::application::project_board::dto::{NewTask, NewTaskStatus};
+use crate::application::project_board::dto::{NewBoardTask, NewBoardTaskStatus};
 use crate::application::project_board::ports::{BoardClock, BoardClockError, ProjectBoardStore};
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::TaskFields;
@@ -75,13 +75,13 @@ pub fn board() -> MemoryBoardStore {
 }
 
 /// A new ready task, as a plan describes it.
-pub fn new_task(id: &str) -> NewTask {
-    NewTask {
+pub fn new_task(id: &str) -> NewBoardTask {
+    NewBoardTask {
         id: slug(id),
         title: format!("Task {id}"),
         kind: TaskKind::Task,
         description: String::new(),
-        status: NewTaskStatus::Ready,
+        status: NewBoardTaskStatus::Ready,
         parent: None,
         depends_on: vec![],
         plan: vec![],

@@ -34,11 +34,12 @@ impl When {
     /// exactly at the latest time is built on.
     pub fn may_build_on(&self, task: &Task) -> Result<(), ProjectBoardError> {
         match &self.latest {
-            Some(latest) if task.fields().updated > *latest => Err(ProjectBoardError::TaskAhead {
+            None => Ok(()),
+            Some(latest) if task.fields().updated <= *latest => Ok(()),
+            Some(_) => Err(ProjectBoardError::TaskAhead {
                 id: task.fields().id.clone(),
                 updated: task.fields().updated.clone(),
             }),
-            Some(_) | None => Ok(()),
         }
     }
 }

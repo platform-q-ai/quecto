@@ -87,11 +87,13 @@ pub fn move_task(
             }
         }
     }
-    // A task that links pull requests is done when they merge
-    // (`complete_merged`), never by its holder's say-so; the holder may
-    // unlink one deliberately (`remove_pr`), and then finish.
-    if (from, to) == (Review, Done) && !task.fields().prs.is_empty() {
-        return Err(BoardRuleError::PrsLinked(task.fields().prs.clone()));
+    // The holder finishes a task only when it links no pull request: one
+    // that links them is done when they merge (`complete_merged`). The
+    // holder may unlink one deliberately (`remove_pr`), and then finish.
+    match ((from, to), &task.fields().prs[..]) {
+        ((Review, Done), []) => {}
+        ((Review, Done), linked) => return Err(BoardRuleError::PrsLinked(linked.to_vec())),
+        _ => {}
     }
     runs_may_stay_open(task, to)?;
     let at = stamp(task, now);

@@ -1,4 +1,4 @@
-//! Puts a new task on the board: only what a plan sets ([`NewTask`]), a
+//! Puts a new task on the board: only what a plan sets ([`NewBoardTask`]), a
 //! draft or ready task with no claim, runs, reviews, pull requests or
 //! items yet, whose parent and dependencies are already on the board (so
 //! a new task never closes a dependency cycle), stamped with the time it
@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use super::board_change::{checked_writer, commit};
-use crate::application::project_board::dto::{NewTask, ProjectBoardError};
+use crate::application::project_board::dto::{NewBoardTask, ProjectBoardError};
 use crate::application::project_board::ports::{BoardClock, BoardSnapshot, ProjectBoardStore};
 use crate::domain::project_board::entities::task::{Task, TaskFields};
 use crate::domain::project_board::value_objects::slug::Slug;
@@ -36,7 +36,7 @@ impl CreateBoardTask {
     /// A parent or dependency not on the board, or set aside; an id a
     /// task already names; the schema's refusal; an id the board holds or
     /// has set aside; the clock's; or the store's.
-    pub fn execute(&self, new: &NewTask) -> Result<Task, ProjectBoardError> {
+    pub fn execute(&self, new: &NewBoardTask) -> Result<Task, ProjectBoardError> {
         let message = format!("board: create {}", new.id.as_str());
         let tasks = commit(&*self.store, &*self.clock, &message, |board, when| {
             free(board, new)?;
@@ -50,7 +50,7 @@ impl CreateBoardTask {
 
 /// The new task's fields, created and updated `now`, with no claim, runs,
 /// reviews, pull requests or items yet.
-fn created_at(new: &NewTask, now: &Timestamp) -> TaskFields {
+fn created_at(new: &NewBoardTask, now: &Timestamp) -> TaskFields {
     let fields = TaskFields {
         id: new.id.clone(),
         title: new.title.clone(),
@@ -81,7 +81,7 @@ fn created_at(new: &NewTask, now: &Timestamp) -> TaskFields {
 /// new one under that id could close a cycle). The parent and every
 /// dependency are tasks on the board; one whose file is set aside is
 /// reported as such.
-fn free(board: &BoardSnapshot, new: &NewTask) -> Result<(), ProjectBoardError> {
+fn free(board: &BoardSnapshot, new: &NewBoardTask) -> Result<(), ProjectBoardError> {
     let held = |id: &Slug| board.tasks.iter().any(|task| task.fields().id == *id);
     let set_aside = |id: &Slug| {
         board

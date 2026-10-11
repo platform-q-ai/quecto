@@ -1,5 +1,5 @@
 use super::CreateBoardTask;
-use crate::application::project_board::dto::{NewTask, NewTaskStatus, ProjectBoardError};
+use crate::application::project_board::dto::{NewBoardTask, NewBoardTaskStatus, ProjectBoardError};
 use crate::application::project_board::ports::{BoardStoreError, ProjectBoardStore};
 use crate::application::project_board::use_cases::MAX_WRITE_ATTEMPTS;
 use crate::application::project_board::use_cases::fixtures_tests::{
@@ -42,7 +42,7 @@ fn a_task_is_created_and_stamped_now() {
 
 /// A new task holds only what a plan sets: it is created a draft or
 /// ready, with its plan, and no claim, runs, reviews, pull requests or
-/// items, which `NewTask` cannot carry.
+/// items, which `NewBoardTask` cannot carry.
 #[test]
 fn a_new_task_holds_only_what_a_plan_sets() {
     let store = board();
@@ -51,8 +51,8 @@ fn a_new_task_holds_only_what_a_plan_sets() {
         criteria: vec!["CAS proved".into()],
     }];
     let draft = create(&store, SetClock::at("10:00:00"))
-        .execute(&NewTask {
-            status: NewTaskStatus::Draft,
+        .execute(&NewBoardTask {
+            status: NewBoardTaskStatus::Draft,
             description: "Why and how.".into(),
             plan: plan.clone(),
             ..new_task("a")
@@ -76,13 +76,13 @@ fn a_new_task_holds_only_what_a_plan_sets() {
 #[test]
 fn a_parent_or_dependency_not_on_the_board_is_refused() {
     let store = board();
-    let a_on_b = NewTask {
+    let a_on_b = NewBoardTask {
         depends_on: vec![slug("b")],
         ..new_task("a")
     };
     let refused = create(&store, SetClock::at("10:00:00")).execute(&a_on_b);
     assert_eq!(refused, Err(ProjectBoardError::UnknownReference(slug("b"))));
-    let orphan = create(&store, SetClock::at("10:00:00")).execute(&NewTask {
+    let orphan = create(&store, SetClock::at("10:00:00")).execute(&NewBoardTask {
         parent: Some(slug("p")),
         ..new_task("a")
     });
@@ -227,12 +227,12 @@ fn a_quarantined_parent_or_dependency_is_reported_as_quarantined() {
             .unwrap();
         store.quarantine(id, "malformed");
     }
-    let child = create(&store, SetClock::at("10:01:00")).execute(&NewTask {
+    let child = create(&store, SetClock::at("10:01:00")).execute(&NewBoardTask {
         parent: Some(slug("p")),
         ..new_task("a")
     });
     assert_eq!(child, Err(ProjectBoardError::Quarantined(slug("p"))));
-    let dependent = create(&store, SetClock::at("10:01:00")).execute(&NewTask {
+    let dependent = create(&store, SetClock::at("10:01:00")).execute(&NewBoardTask {
         depends_on: vec![slug("d")],
         ..new_task("a")
     });
@@ -249,7 +249,7 @@ fn a_parent_quarantined_between_the_read_and_the_write_is_reported() {
         .unwrap();
     store.before_next_write(|board| board.quarantine("p", "malformed"));
     let clock = SetClock::at("10:01:00");
-    let child = create(&store, clock.clone()).execute(&NewTask {
+    let child = create(&store, clock.clone()).execute(&NewBoardTask {
         parent: Some(slug("p")),
         ..new_task("a")
     });
@@ -268,13 +268,13 @@ fn a_new_id_another_task_already_names_is_refused() {
         .execute(&new_task("b"))
         .unwrap();
     create(&store, SetClock::at("10:01:00"))
-        .execute(&NewTask {
+        .execute(&NewBoardTask {
             depends_on: vec![slug("b")],
             ..new_task("a")
         })
         .unwrap();
     create(&store, SetClock::at("10:02:00"))
-        .execute(&NewTask {
+        .execute(&NewBoardTask {
             parent: Some(slug("b")),
             ..new_task("c")
         })
@@ -282,7 +282,7 @@ fn a_new_id_another_task_already_names_is_refused() {
     store.quarantine("b", "malformed");
     store.delete_quarantined("b");
     let writes = store.writes();
-    let cycle = create(&store, SetClock::at("10:03:00")).execute(&NewTask {
+    let cycle = create(&store, SetClock::at("10:03:00")).execute(&NewBoardTask {
         depends_on: vec![slug("a")],
         ..new_task("b")
     });
