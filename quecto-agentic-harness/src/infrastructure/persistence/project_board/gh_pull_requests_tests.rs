@@ -99,6 +99,63 @@ fn a_gh_that_hangs_is_ended_with_its_group_at_the_deadline() {
     );
 }
 
+/// A gh that cannot be started says so, naming the session its spawn
+/// makes first, and the death signal it arms where one is armed (Linux).
+#[test]
+fn a_gh_that_cannot_start_names_what_its_spawn_arms() {
+    let (dir, vars) = fake_gh();
+    let host = GhPullRequestStates::new("github.com/platform-q-ai/quecto", vars).unwrap();
+    std::fs::remove_file(dir.path().join("bin").join("gh")).unwrap();
+    let refused = host.state(1);
+    assert!(
+        matches!(&refused, Err(PullRequestStatesError::Unavailable(why)) if names_what_its_spawn_arms(why)),
+        "{refused:?}"
+    );
+}
+
+/// At its deadline gh is asked to stop with SIGTERM first. The stub says
+/// it is ready once its trap is set, and only a run that saw that before
+/// its deadline counts.
+#[test]
+fn a_gh_past_its_deadline_is_asked_to_stop_first() {
+    use crate::infrastructure::persistence::project_board::own_group::tests::ready_before_its_deadline;
+    let (dir, mut vars) = fake_gh();
+    let (ready, signal) = (dir.path().join("ready"), dir.path().join("signal"));
+    let script = format!(
+        "#!/bin/sh\ntrap 'echo TERM > \"{}\"; exit 0' TERM\necho > '{}'\nsleep 30 &\nwait\n",
+        signal.display(),
+        ready.display()
+    );
+    let gh = dir.path().join("only").join("gh");
+    std::fs::create_dir(gh.parent().unwrap()).unwrap();
+    std::fs::write(&gh, script).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut path = gh.parent().unwrap().as_os_str().to_os_string();
+    path.push(":");
+    path.push(std::env::var_os("PATH").unwrap());
+    vars.retain(|(key, _)| key != "PATH");
+    vars.push(("PATH".into(), path));
+    let (answer, ()) = ready_before_its_deadline(
+        &[&ready, &signal],
+        || ready.exists().then_some(()),
+        |deadline| {
+            GhPullRequestStates::new("github.com/platform-q-ai/quecto", vars.clone())
+                .unwrap()
+                .with_timeout(deadline)
+                .state(1)
+        },
+    );
+    assert!(
+        matches!(answer, Err(PullRequestStatesError::Unavailable(_))),
+        "{answer:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&signal).ok().as_deref(),
+        Some("TERM\n")
+    );
+}
+
 #[test]
 fn a_repository_is_owner_slash_name_and_gh_must_be_on_the_path() {
     let (_dir, vars) = fake_gh();
@@ -227,4 +284,63 @@ fn a_github_remote_names_its_repository_without_its_user_and_any_other_host_none
     ] {
         assert_eq!(github_repository(remote, None), None, "{remote}");
     }
+}
+
+/// Set for the test binary run as the parent that is killed: the `PATH`
+/// its gh runs with.
+#[cfg(target_os = "linux")]
+const KILLED_PARENT: &str = "QUECTO_TEST_KILLED_PARENT_GH_PATH";
+
+/// As the parent the next test kills: gh through the runner, hanging.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_parent_that_runs_a_hanging_gh() {
+    let Some(path) = std::env::var_os(KILLED_PARENT) else {
+        return;
+    };
+    let vars = [("PATH".into(), path), ("GH_TOKEN".into(), "token".into())];
+    let host = GhPullRequestStates::new("github.com/platform-q-ai/quecto", vars).unwrap();
+    let _ = host.state(1);
+}
+
+/// When quecto is killed outright, the gh it was running is asked to stop
+/// with SIGTERM, its own session notwithstanding.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_gh_is_terminated_when_the_quecto_running_it_is_killed() {
+    use crate::infrastructure::processes::parent_death_signal::tests::KilledParent;
+    let dir = tempfile::tempdir().unwrap();
+    let bin = dir.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let (pid, signal) = (dir.path().join("pid"), dir.path().join("signal"));
+    let gh = bin.join("gh");
+    let script = format!(
+        "#!/bin/sh\ntrap 'echo TERM > \"{}\"; kill $!; exit 0' TERM\necho $$ > '{}'\nsleep 60 &\nwait\n",
+        signal.display(),
+        pid.display()
+    );
+    std::fs::write(&gh, script).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut path = bin.into_os_string();
+    path.push(":");
+    path.push(std::env::var_os("PATH").unwrap());
+    let name = "infrastructure::persistence::project_board::gh_pull_requests::tests::a_parent_that_runs_a_hanging_gh";
+    let mut parent = KilledParent::start(name, &[(KILLED_PARENT, path.as_os_str())], &[&pid]);
+    assert_eq!(
+        parent.kill(Duration::from_secs(5), &[true]),
+        [true],
+        "gh outlived quecto"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&signal).ok().as_deref(),
+        Some("TERM\n")
+    );
+}
+
+/// Names the session a spawn makes, and the death signal only where one is
+/// armed.
+fn names_what_its_spawn_arms(why: &str) -> bool {
+    why.contains("making its session")
+        && why.contains("arming the death signal") == cfg!(target_os = "linux")
 }
