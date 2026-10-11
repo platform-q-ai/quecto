@@ -147,10 +147,6 @@ pub struct Board {
     /// Files a clear keeps that a read will read as tasks, each needing a
     /// summary the next write adds: they count as two entries each.
     pub pending_summaries: usize,
-    /// Each file set aside, by its listed path and object: its name in the
-    /// tree, as [`Self::kept`] keys it. A clear finds the file by it, never
-    /// by the path as shown.
-    pub names: BTreeMap<(String, String), String>,
 }
 
 /// One copy of a name a write would carry, as its tree entry holds it.
@@ -519,18 +515,21 @@ fn read_tasks(git: &Git, tree: &str, limits: Limits) -> Result<Board, Unread> {
     let count = |entry: &Entry| counts.get(entry.raw.as_slice()).copied().unwrap_or(0);
     let mut board = Board::default();
     let set_aside = |board: &mut Board, entry: &Entry, id: Option<Slug>, reason: String| {
-        let path = format!("tasks/{}", shown_name(&entry.raw));
-        board
-            .names
-            .insert((path.clone(), entry.oid.clone()), entry.name.clone());
         board.quarantined.push(QuarantinedFile {
-            path,
+            path: format!("tasks/{}", shown_name(&entry.raw)),
             id,
             reason,
             object: entry.oid.clone(),
         });
     };
     let keep = |board: &mut Board, entry: &Entry| {
+        // A name a write keeps is one quecto keeps, so it shows exactly as
+        // it is: a clear finds it by the path the listing shows.
+        assert_eq!(
+            shown_name(&entry.raw),
+            entry.name,
+            "a kept name shows as it is"
+        );
         let kind = kind_of_mode(&entry.mode);
         debug_assert!(kind.is_some(), "only entries of git's own modes are kept");
         let kind = kind.unwrap_or("blob");

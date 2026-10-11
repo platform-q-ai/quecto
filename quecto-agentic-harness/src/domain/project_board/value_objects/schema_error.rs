@@ -69,6 +69,18 @@ static ON_ONE_LINE: LazyLock<Regex> = LazyLock::new(|| text(r"\p{Zs}"));
 /// The same, plus `\n` between lines and `\t` (CRLF is converted at the
 /// board's entry).
 static MARKDOWN: LazyLock<Regex> = LazyLock::new(|| text(r"[\p{Zs}\n\t]"));
+/// The characters a name from outside is shown with as they are: letters,
+/// marks, numbers, punctuation and symbols. Anything else (spaces,
+/// controls, format characters such as bidirectional overrides,
+/// zero-width and tag characters, unassigned code points) is not.
+static SHOWN_CHAR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[\p{L}\p{M}\p{N}\p{P}\p{S}]$").expect("a valid class"));
+
+/// Whether `c` is shown as it is ([`SHOWN_CHAR`]).
+pub fn shown_char(c: char) -> bool {
+    SHOWN_CHAR.is_match(c.encode_utf8(&mut [0; 4]))
+}
+
 /// Something to read: a letter, number, punctuation mark or symbol that
 /// shows (not a default ignorable or the braille blank).
 static VISIBLE: LazyLock<Regex> = LazyLock::new(|| {
