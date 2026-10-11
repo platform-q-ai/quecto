@@ -657,10 +657,11 @@ async fn board_requests_in_flight_are_bounded_per_connection() {
             json!("get_swarm_board is busy: at most 2 requests in flight per connection")
         )
     );
-    // One permit per waiting read: no reliance on when each one waits.
-    gate.notify_one();
-    gate.notify_one();
+    // One permit per read, each given once the last was answered: a permit
+    // given before a read waits is kept for it, so nothing relies on when
+    // each one starts waiting, nor on the runtime's flavour.
     for _ in 0..2 {
+        gate.notify_one();
         assert_eq!(reply(&mut rx).await["success"], json!(true));
     }
     assert!(ask("q4"), "a slot is free again");

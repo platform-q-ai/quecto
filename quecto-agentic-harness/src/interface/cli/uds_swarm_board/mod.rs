@@ -134,17 +134,11 @@ pub(super) fn intercept(line: &str, ctx: BoardViewCtx<'_>) -> bool {
         let id = serde_json::from_str::<Tagged<'_>>(line)
             .ok()
             .and_then(|tagged| tagged.id);
-        tokio::spawn(async move {
-            let event = AgentEvent::err(id.as_deref(), COMMAND, MALFORMED);
-            write(&clients, client_id, id.as_deref(), &event).await;
-        });
+        refuse(&clients, client_id, id.as_deref(), MALFORMED);
         return true;
     };
     let Ok(permit) = ctx.in_flight.clone().try_acquire_owned() else {
-        tokio::spawn(async move {
-            let event = AgentEvent::err(id.as_deref(), COMMAND, BUSY);
-            write(&clients, client_id, id.as_deref(), &event).await;
-        });
+        refuse(&clients, client_id, id.as_deref(), BUSY);
         return true;
     };
     match agent_id {
@@ -172,6 +166,29 @@ pub(super) fn intercept(line: &str, ctx: BoardViewCtx<'_>) -> bool {
         }
     }
     true
+}
+
+/// A refusal written at once when the client's channel has room, and
+/// dropped when it has none: no task waits on a client that does not read
+/// (verification item 1).
+fn refuse(clients: &ClientToolRegistry, client_id: u64, id: Option<&str>, error: &str) {
+    let Some(writer) = super::uds_ext_protocol::client_writer_tx(clients, client_id) else {
+        return;
+    };
+    let mut line = serde_json::to_string(&AgentEvent::err(id, COMMAND, error)).unwrap_or_default();
+    if line.len() > crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET {
+        line = serde_json::to_string(&AgentEvent::err(None, COMMAND, error)).unwrap_or_default();
+    }
+    line.push('\n');
+    match writer.try_send(line) {
+        Ok(()) | Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {}
+        Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+            tracing::debug!(
+                client_id,
+                "get_swarm_board refusal dropped: the client is not reading"
+            );
+        }
+    }
 }
 
 async fn write(clients: &ClientToolRegistry, client_id: u64, id: Option<&str>, event: &AgentEvent) {
@@ -267,10 +284,14 @@ impl BoardHints {
         }
     }
 
-    /// Forgets what was seen (round 2 L5): no client is connected, so the
-    /// next one is told only what the poll sees from then on.
-    fn forget(&self) {
-        self.lock().clear();
+    /// Forgets what was seen (round 2 L5), under the lock and only while
+    /// nobody is subscribed (the test `publish` makes): the next connection
+    /// is told only what the poll sees from then on.
+    pub(super) fn forget(&self, broadcast_tx: &tokio::sync::broadcast::Sender<String>) {
+        let mut seen = self.lock();
+        if broadcast_tx.receiver_count() == 0 {
+            seen.clear();
+        }
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Seen> {
@@ -361,7 +382,7 @@ pub(super) fn spawn_change_hints(
             let read = match (live_clients.load(Ordering::SeqCst), boards.current()) {
                 (1.., Some(read)) => read,
                 (0, _) => {
-                    hints.forget();
+                    hints.forget(&broadcast_tx);
                     continue;
                 }
                 (_, None) => continue,

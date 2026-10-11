@@ -293,7 +293,20 @@ impl HostedStore {
     /// [`Self::hosted_run`] keeps: that board is the one its members run
     /// on. Each answer says so itself (the run's deadline, or `created`),
     /// so one read decides (round 3 L3).
-    fn supervised(&self, method: &str) -> Result<Option<serde_json::Value>, DomainError> {
+    pub(super) fn supervised(
+        &self,
+        method: &str,
+    ) -> Result<Option<serde_json::Value>, DomainError> {
+        // An allowlist, checked before anything is looked for or called.
+        let read = match method {
+            "_board" => SupervisedRead::Board,
+            "_board_revision" => SupervisedRead::Revision,
+            other => {
+                return Err(DomainError::Tool(format!(
+                    "the supervising session reads only _board and _board_revision, not {other}"
+                )));
+            }
+        };
         let displaced = match self.contained()? {
             Found::Store { displaced } => displaced,
             Found::Nothing => return Ok(None),
@@ -308,16 +321,11 @@ impl HostedStore {
         let Some(displaced) = displaced else {
             return Ok(Some(answer));
         };
-        let created = match method {
-            "_board" => answer["run"]["deadline"]
+        let created = match read {
+            SupervisedRead::Board => answer["run"]["deadline"]
                 .as_f64()
                 .is_some_and(crate::domain::swarm::participates),
-            "_board_revision" => answer["created"].as_bool() == Some(true),
-            other => {
-                return Err(DomainError::Tool(format!(
-                    "the supervising session reads only _board and _board_revision, not {other}"
-                )));
-            }
+            SupervisedRead::Revision => answer["created"].as_bool() == Some(true),
         };
         match created {
             true => Ok(Some(answer)),
@@ -362,6 +370,13 @@ impl HostedStore {
             },
         )
     }
+}
+
+/// The supervising session's two reads of a board.
+#[derive(Clone, Copy)]
+enum SupervisedRead {
+    Board,
+    Revision,
 }
 
 /// What the host finds where a container's store should be.
