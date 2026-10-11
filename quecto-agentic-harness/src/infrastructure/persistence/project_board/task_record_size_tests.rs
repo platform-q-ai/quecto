@@ -1,6 +1,7 @@
 //! Every task the domain admits is written: the field limits and the text
 //! budget never add up past the file cap.
 use super::*;
+use crate::domain::project_board::entities::claim::{MAX_EMAIL_BYTES, MAX_NAME_CHARS};
 use crate::domain::project_board::entities::task::{
     MAX_DEPENDENCIES, MAX_DESCRIPTION_CHARS, MAX_PRS, MAX_TEXT_BYTES, MAX_TITLE_CHARS,
 };
@@ -8,14 +9,26 @@ use crate::domain::project_board::entities::task_parts::{
     MAX_BUDGET_TOKENS, MAX_ITEMS, MAX_LINE_CHARS, MAX_MEMBERS, MAX_PER_ITEM, MAX_REVIEWS,
     MAX_ROLES, MAX_RUNS, MAX_STEPS,
 };
+use crate::domain::project_board::value_objects::slug::MAX_SLUG_BYTES;
 
 fn at(time: &str) -> Timestamp {
     Timestamp::parse(&format!("2026-10-10T{time}Z")).unwrap()
 }
 
-/// A 64-byte id, distinct for each `(tag, n)`.
+/// An id of the most bytes, distinct for each `(tag, n)`.
 fn wide_id(tag: char, n: usize) -> Slug {
-    Slug::parse(&format!("{tag}{n:0>63}")).unwrap()
+    let width = MAX_SLUG_BYTES - 1;
+    Slug::parse(&format!("{tag}{n:0>width$}")).unwrap()
+}
+
+/// A holder at its widest in JSON: four-byte characters to the name's
+/// limit and an email of escaped `"`s to its limit. A holder is structure,
+/// not text, so it may be this wide at any text budget.
+fn widest_holder() -> Identity {
+    Identity {
+        name: "\u{1d11e}".repeat(MAX_NAME_CHARS),
+        email: format!("{}@x", "\"".repeat(MAX_EMAIL_BYTES - 2)),
+    }
 }
 
 fn person() -> Identity {
@@ -30,9 +43,11 @@ fn short_lines() -> Vec<String> {
     (0..MAX_PER_ITEM).map(|n| format!("{n:x}")).collect()
 }
 
-/// The widest structure a task can have: every list full, every optional
-/// key set, every id 64 bytes, every number and word its longest, and
-/// each text a single character.
+/// The widest structure a task can have, from the caps: every list full,
+/// every optional key set, every id, number and word its longest, every run
+/// ended (an ended run writes more keys), the holder at its widest, and
+/// each text a single character. A new field fails to build here until it
+/// is set.
 fn widest_structure() -> TaskFields {
     let item = |n: usize| Item {
         id: wide_id('i', n),
@@ -58,8 +73,8 @@ fn widest_structure() -> TaskFields {
     let run = |n: usize| Run {
         id: wide_id('u', n),
         started: at("09:00:00"),
-        ended: (n + 1 < MAX_RUNS).then(|| at("09:00:00")),
-        outcome: (n + 1 < MAX_RUNS).then_some(RunOutcome::Succeeded),
+        ended: Some(at("09:00:00")),
+        outcome: Some(RunOutcome::Succeeded),
     };
     let review = |n: usize| Review {
         id: wide_id('v', n),
@@ -96,7 +111,7 @@ fn widest_structure() -> TaskFields {
             image: Some("a".into()),
         }),
         claim: Some(Claim {
-            holder: person(),
+            holder: widest_holder(),
             since: at("09:00:00"),
             expires: at("11:00:00"),
         }),
@@ -162,4 +177,15 @@ fn a_task_over_its_text_budget_is_refused_by_the_domain() {
     fields.plan[0].title.push('x');
     let error = Task::new(fields).expect_err("one byte over the budget");
     assert_eq!(error.field, "text", "{error}");
+}
+
+#[test]
+fn a_task_at_its_text_budget_takes_a_holder_at_its_widest() {
+    let mut fields = widest_structure();
+    fields.claim.as_mut().unwrap().holder = person();
+    fill_text_budget(&mut fields);
+    fields.claim.as_mut().unwrap().holder = widest_holder();
+    let task = Task::new(fields).expect("a holder is not text");
+    let bytes = encode(&task).expect("a valid task is always written");
+    assert!(bytes.len() <= MAX_TASK_FILE_BYTES, "{} bytes", bytes.len());
 }

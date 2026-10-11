@@ -173,6 +173,15 @@ fn parts_that_break_a_rule_build_no_task() {
         ("team/roles/0/model", |t| {
             team(t).roles[0].model = "gpt 5".into()
         }),
+        ("team/roles/0/model", |t| {
+            team(t).roles[0].model = "a/.b".into()
+        }),
+        ("team/roles/0/model", |t| {
+            team(t).roles[0].model = "a//b".into()
+        }),
+        ("team/roles/0/model", |t| {
+            team(t).roles[0].model = "a/".into()
+        }),
         ("team/roles/0/limits/members", |t| {
             team(t).roles[0].limits.members = 0
         }),
@@ -224,9 +233,16 @@ fn parts_that_break_a_rule_build_no_task() {
         ("runs/1", |t| t.runs[1].outcome = Some(RunOutcome::Failed)),
         ("runs/0", |t| t.runs[0].ended = Some(at("09:00:59"))),
         ("runs/0/started", |t| t.runs[0].started = at("07:59:59")),
+        ("runs/1/started", |t| t.runs[1].started = at("10:00:01")),
+        ("runs/0/ended", |t| t.runs[0].ended = Some(at("10:00:01"))),
+        ("runs", |t| (t.status, t.claim) = (TaskStatus::Review, None)),
+        ("runs", |t| {
+            (t.status, t.claim) = (TaskStatus::Blocked, None)
+        }),
         ("reviews", |t| t.reviews.push(t.reviews[0].clone())),
         ("reviews/0/round", |t| t.reviews[0].round = 0),
         ("reviews/0/at", |t| t.reviews[0].at = at("07:59:59")),
+        ("reviews/0/at", |t| t.reviews[0].at = at("10:00:01")),
         ("reviews/0/reviewer/email", |t| {
             t.reviews[0].reviewer.email = "ada".into()
         }),
@@ -250,6 +266,18 @@ fn parts_that_break_a_rule_build_no_task() {
         }),
         ("reviews/0/location", |t| {
             t.reviews[0].location = Some("-rf.rs:1".into())
+        }),
+        ("reviews/0/location", |t| {
+            t.reviews[0].location = Some("./a.rs:1".into())
+        }),
+        ("reviews/0/location", |t| {
+            t.reviews[0].location = Some("a/./b.rs:1".into())
+        }),
+        ("reviews/0/location", |t| {
+            t.reviews[0].location = Some("a//b.rs:1".into())
+        }),
+        ("reviews/0/location", |t| {
+            t.reviews[0].location = Some("a/:1".into())
         }),
         ("reviews/0/location", |t| {
             t.reviews[0].location = Some("/etc/passwd:1".into())
@@ -306,7 +334,13 @@ fn every_part_bound_admits_exactly_its_limit() {
             })
         },
         |t| t.reviews[0].location = Some("src/store.rs:1".into()),
-        |t| t.reviews[0].location = Some("./.github/ci.yml:3".into()),
+        |t| t.reviews[0].location = Some(".github/ci.yml:3".into()),
+        |t| t.reviews[0].location = Some("src/a..b.rs:1".into()),
+        |t| t.reviews[0].location = Some("a/-b.rs:1".into()),
+        |t| team(t).image = Some("ghcr.io/team/app:1..2".into()),
+        |t| team(t).roles[0].model = "fireworks/models/glm-4.6:thinking".into(),
+        |t| team(t).roles[0].model = "gpt..5".into(),
+        |t| (t.runs[1].started, t.reviews[0].at) = (at("10:00:00"), at("10:00:00")),
         |t| t.reviews[0].location = None,
         |t| t.reviews[0].finding = "é".repeat(MAX_FINDING_CHARS),
         |t| t.reviews[0].finding = "**Lease**\n\n\tnot checked".into(),
@@ -315,7 +349,7 @@ fn every_part_bound_admits_exactly_its_limit() {
         |t| (t.runs[0].started, t.runs[0].ended) = (at("08:00:00"), Some(at("08:00:00"))),
         |t| t.status = TaskStatus::Review,
         |t| t.status = TaskStatus::Blocked,
-        |t| (t.status, t.claim) = (TaskStatus::Review, None),
+        |t| (t.status, t.claim, t.runs) = (TaskStatus::Review, None, vec![t.runs[0].clone()]),
         |t| team(t).deadline = Some(at("08:00:01")),
         |t| {
             team(t).budget = Some(Budget {
