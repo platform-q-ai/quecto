@@ -4,6 +4,7 @@ use super::*;
 use crate::infrastructure::persistence::project_board::git::{
     MAX_QUOTED_CHARS, MAX_STDERR, SHORT_OUTPUT, quoted, redacted_stderr, shown_name,
 };
+use crate::infrastructure::persistence::project_board::own_group::tests::ready_before_its_deadline;
 
 #[test]
 fn a_git_that_hangs_is_stopped_with_its_whole_process_group() {
@@ -21,6 +22,93 @@ fn a_git_that_hangs_is_stopped_with_its_whole_process_group() {
     assert!(started.elapsed() < std::time::Duration::from_secs(5));
     std::thread::sleep(std::time::Duration::from_millis(1500));
     assert!(!marker.exists(), "the timed-out git's child outlived it");
+}
+
+/// A git that cannot be started says so, naming the session its spawn
+/// makes first, and the death signal it arms where one is armed (Linux; a
+/// refusal to arm fails the spawn too).
+#[test]
+fn a_git_that_cannot_start_names_what_its_spawn_arms() {
+    let repos = Repos::new();
+    let git = shim(&repos, "#!/bin/sh\nexit 0\n", &[]);
+    std::fs::remove_file(repos.dir.path().join("bin").join("git")).unwrap();
+    let run = git.network(&["fetch"]).map(|_| ());
+    assert!(
+        matches!(&run, Err(GitError::Spawn(why)) if why.contains("making its session")
+            && why.contains("arming the death signal") == cfg!(target_os = "linux")),
+        "{run:?}"
+    );
+}
+
+/// At its deadline git is asked to stop with SIGTERM first, so it can
+/// remove a ref lock as it goes. The stub says it is ready once its trap
+/// is set, and only a run that saw that before its deadline counts.
+#[test]
+fn a_git_past_its_deadline_is_asked_to_stop_first() {
+    let repos = Repos::new();
+    let (ready, signal) = (
+        repos.dir.path().join("ready"),
+        repos.dir.path().join("signal"),
+    );
+    let script = format!(
+        "#!/bin/sh\ntrap 'echo TERM > \"{}\"; exit 0' TERM\necho > '{}'\nsleep 30 &\nwait\n",
+        signal.display(),
+        ready.display()
+    );
+    let git = shim(&repos, &script, &[]);
+    let (run, ()) = ready_before_its_deadline(
+        &[&ready, &signal],
+        || ready.exists().then_some(()),
+        |deadline| {
+            let mut git = git.clone();
+            git.network_timeout = deadline;
+            git.network(&["fetch"]).map(|_| ())
+        },
+    );
+    assert!(matches!(&run, Err(GitError::TimedOut { .. })), "{run:?}");
+    assert_eq!(
+        std::fs::read_to_string(&signal).ok().as_deref(),
+        Some("TERM\n")
+    );
+}
+
+/// A git group that ignores SIGTERM is killed after a short grace, not
+/// left running. The stub names its child once its trap is set, so the
+/// child is watched by its start time while it still runs.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_git_that_ignores_the_request_is_killed_after_a_grace() {
+    use crate::infrastructure::processes::parent_death_signal::tests::Watched;
+    let repos = Repos::new();
+    let pid = repos.dir.path().join("pid");
+    let script = format!(
+        "#!/bin/sh\ntrap '' TERM\nsleep 30 &\necho $! > '{}'\nwait\n",
+        pid.display()
+    );
+    let git = shim(&repos, &script, &[]);
+    let ((run, took, deadline), sleeper) = ready_before_its_deadline(
+        &[&pid],
+        || Watched::named_in(&pid),
+        |deadline| {
+            let mut git = git.clone();
+            git.network_timeout = deadline;
+            let started = std::time::Instant::now();
+            let run = git.network(&["fetch"]).map(|_| ());
+            (run, started.elapsed(), deadline)
+        },
+    );
+    assert!(matches!(&run, Err(GitError::TimedOut { .. })), "{run:?}");
+    assert!(
+        took < deadline + std::time::Duration::from_secs(3),
+        "{took:?}"
+    );
+    let by = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while !sleeper.gone() && std::time::Instant::now() < by {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let gone = sleeper.gone();
+    sleeper.end();
+    assert!(gone, "the sleeper outlived git");
 }
 
 /// The real git on `PATH`.
@@ -366,4 +454,101 @@ fn a_secret_straddling_a_cap_is_redacted_whole() {
     // A name is shown as it is: sanitised, never redacted.
     assert_eq!(shown_name(b"sk-abcdefgh.json"), "sk-abcdefgh.json");
     assert_eq!(shown_name(b"token=x.json"), "token=x.json");
+}
+
+/// Set for the test binary run as the parent that is killed: the
+/// repository and the `PATH` its git runs with.
+#[cfg(target_os = "linux")]
+const KILLED_PARENT: [&str; 2] = [
+    "QUECTO_TEST_KILLED_PARENT_REPO",
+    "QUECTO_TEST_KILLED_PARENT_PATH",
+];
+
+/// As the parent the next tests kill: git through the runner, hanging.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_parent_that_runs_a_hanging_git() {
+    let (Some(repo), Some(path)) = (
+        std::env::var_os(KILLED_PARENT[0]),
+        std::env::var_os(KILLED_PARENT[1]),
+    ) else {
+        return;
+    };
+    let env = GitEnvironment::allowlisted([("PATH".into(), path)]);
+    let git = Git::new(Path::new(&repo), env, person("Ada")).unwrap();
+    let _ = git.network(&["fetch"]);
+}
+
+/// A quecto running `script` as its git, killed outright: whether each
+/// process named in `pid_files` was gone, once that is `expected` or
+/// within five seconds.
+#[cfg(target_os = "linux")]
+fn killed_with_git(
+    repos: &Repos,
+    script: &str,
+    pid_files: &[&Path],
+    expected: &[bool],
+) -> Vec<bool> {
+    use crate::infrastructure::processes::parent_death_signal::tests::KilledParent;
+    drop(shim(repos, script, &[]));
+    let mut path = repos.dir.path().join("bin").into_os_string();
+    path.push(":");
+    path.push(std::env::var_os("PATH").unwrap());
+    let name = "infrastructure::persistence::project_board::store::tests::runner::a_parent_that_runs_a_hanging_git";
+    let vars = [
+        (KILLED_PARENT[0], repos.alice.as_os_str()),
+        (KILLED_PARENT[1], path.as_os_str()),
+    ];
+    KilledParent::start(name, &vars, pid_files).kill(std::time::Duration::from_secs(5), expected)
+}
+
+/// When quecto is killed outright (a relay's timeout, say), the git it
+/// was running is asked to stop with SIGTERM, so it can clean up (a ref
+/// lock, the children it waits on) as it goes, its own session
+/// notwithstanding.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_git_is_terminated_when_the_quecto_running_it_is_killed() {
+    let repos = Repos::new();
+    let (pid, signal) = (
+        repos.dir.path().join("pid"),
+        repos.dir.path().join("signal"),
+    );
+    let script = format!(
+        "#!/bin/sh\ntrap 'echo TERM > \"{}\"; kill $!; exit 0' TERM\necho $$ > '{}'\nsleep 60 &\nwait\n",
+        signal.display(),
+        pid.display()
+    );
+    assert_eq!(
+        killed_with_git(&repos, &script, &[&pid], &[true]),
+        [true],
+        "git outlived quecto"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&signal).ok().as_deref(),
+        Some("TERM\n")
+    );
+}
+
+/// The limit, made explicit: the death signal reaches git alone. A process
+/// git starts and leaves running (an ssh, a credential helper) is not
+/// signalled; real git ends the children it waits on when it is
+/// terminated, which this stub does not.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_grandchild_git_leaves_running_outlives_the_killed_quecto() {
+    let repos = Repos::new();
+    let (pid, grandchild) = (
+        repos.dir.path().join("pid"),
+        repos.dir.path().join("grandchild"),
+    );
+    let script = format!(
+        "#!/bin/sh\nsh -c 'echo $$ > \"{}\"; exec sleep 60' &\necho $$ > '{}'\nwait\n",
+        grandchild.display(),
+        pid.display()
+    );
+    assert_eq!(
+        killed_with_git(&repos, &script, &[&pid, &grandchild], &[true, false]),
+        [true, false]
+    );
 }
