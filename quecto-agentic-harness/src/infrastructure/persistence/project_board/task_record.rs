@@ -36,7 +36,7 @@ use std::fmt;
 /// 3 adds where a task came from and how it ended (#2481 S8):
 /// `github_issue`, `resolution`, `superseded_by` and `references`; an
 /// older file holding any of them is malformed.
-pub const SCHEMAS: &[(u32, &str)] = &[(1, "0.107.251"), (2, "0.107.274"), (3, "0.107.286")];
+pub const SCHEMAS: &[(u32, &str)] = &[(1, "0.107.251"), (2, "0.107.274"), (3, "0.107.287")];
 /// The schema every task file is written at: the last row of [`SCHEMAS`].
 pub const SCHEMA_VERSION: u32 = 3;
 const _: () = assert!(SCHEMAS[SCHEMAS.len() - 1].0 == SCHEMA_VERSION);

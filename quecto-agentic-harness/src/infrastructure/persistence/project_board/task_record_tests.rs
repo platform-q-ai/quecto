@@ -276,7 +276,7 @@ fn a_newer_schema_names_the_least_quecto_that_can_read_it() {
     let wanted = [
         "schema 4".to_string(),
         format!("needs a quecto newer than {}", env!("CARGO_PKG_VERSION")),
-        "schema 3 arrived in quecto 0.107.286".to_string(),
+        "schema 3 arrived in quecto 0.107.287".to_string(),
         "upgrade quecto".to_string(),
     ];
     for part in wanted {
