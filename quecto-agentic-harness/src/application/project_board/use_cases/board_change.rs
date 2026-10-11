@@ -47,7 +47,7 @@ pub(super) fn commit(
         assert!(!tasks.is_empty(), "a board change writes at least one task");
         match store.write(&snapshot.head, &tasks, message)? {
             BoardWrite::Written(head) => return Ok((tasks, head)),
-            BoardWrite::Lost => break,
+            BoardWrite::Lost => continue,
             BoardWrite::Refused(reason) => return Err(ProjectBoardError::Refused(reason)),
         }
     }

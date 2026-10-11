@@ -15,9 +15,9 @@ pub fn add_pr(
     pr: u64,
     now: &Timestamp,
 ) -> Result<Task, BoardRuleError> {
-    let _ = (holder, now);
+    held_live_by(task, holder, now)?;
     let mut next = task.fields().clone();
-    match next.prs.contains(&pr) && false {
+    match next.prs.contains(&pr) {
         true => Err(BoardRuleError::PrAlreadyLinked(pr)),
         false => {
             next.prs.push(pr);

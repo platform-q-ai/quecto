@@ -60,21 +60,6 @@ fn apply(
     op: &BoardOp,
     now: &Timestamp,
 ) -> Result<Task, crate::domain::project_board::value_objects::rule_error::BoardRuleError> {
-    let _ = (
-        renew,
-        take_over,
-        add_pr,
-        remove_pr,
-        end_run_lost,
-        complete_merged,
-        move_task,
-    );
-    let _ = (task, actor, now);
-    if true {
-        return Err(
-            crate::domain::project_board::value_objects::rule_error::BoardRuleError::NoClaim,
-        );
-    }
     match op {
         BoardOp::Claim => move_task(task, TaskStatus::Claimed, actor, now),
         BoardOp::Renew => renew(task, actor, now),
